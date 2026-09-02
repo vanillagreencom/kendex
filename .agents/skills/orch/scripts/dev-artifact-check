@@ -82,7 +82,11 @@ back to the per-wake check alone.
 
 Round mode (the production path): resolves WT/tmp/dev-return-ISSUE-RID.json,
 requires it exists, its internal .round_id == RID, then the scalar/kind, commit
-object (against WT's git repo, kendex#994), and items gates.
+object (against WT's git repo, kendex#994), and items gates. A kind fix receipt
+additionally REQUIRES --expect-items-from-round and exits 2 without it: its
+delegated set and authorized additions live in the round record, and omitting
+the flag would check neither. Implement and analysis write no round record and
+stay flagless.
 An accepted round-mode implement receipt sets workflow state pr.baseline_lines
 only when that field is null. File mode: validates one explicit JSON file (round_id checked only when --round-id
 is supplied). It is a test/parity affordance — round-trip checks and known-path
@@ -99,9 +103,11 @@ fix/bundled artifact only needs a non-empty, well-formed items[].
 --expect-items-from-round (round mode only; excludes --expect-items): derive
 the expected set and the authorized protected additions from the round record
 WT/tmp/dev-round-ISSUE-RID.json that dev-round-write stamped at delegation
-time. Missing, symlinked, mismatched, or malformed records refuse with exit 2.
-Never recreate the record after delegation and never downgrade to
---expect-items; mint a fresh round.
+time. Missing, symlinked, mismatched, or malformed records refuse with exit 2 —
+including a base_sha outside 40 lowercase hex, which reaches `git diff` as a
+revision argument and would otherwise let an option-shaped value empty the
+additions probe. Never recreate the record after delegation and never downgrade
+to --expect-items; mint a fresh round.
 Protected-addition scope: skills/orch/schemas/dev-round.md § Protected additions.
 
 Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
@@ -345,6 +351,11 @@ is_protected_addition() {
   return 1
 }
 
+# base_sha reaches `git diff` as a revision argument, so the schema arm above
+# constrains it to 40 hex before it gets here: a value git parses as an OPTION
+# never reaches revision parsing, and git would exit 0 over an empty probe with
+# the gate reporting valid. A `--` separator does not close that — git reads
+# options past it — so the grammar is what keeps this argument a revision.
 collect_unapproved_additions() {
   local repo="$1" round_record="$2" result="$3" base_sha path probe
   local additions=()
@@ -577,7 +588,8 @@ elif [[ "${1:-}" == --* ]]; then
     jq -e --arg issue "$issue" '
       (.schema_version? == 2)
       and ((.issue? | type) == "string") and (.issue == $issue)
-      and ((.base_sha? | type) == "string") and (.base_sha != "")
+      and ((.base_sha? | type) == "string")
+      and (.base_sha | test("^[0-9a-f]{40}$"))
       and ((.adds? | type) == "array")
       and all(.adds[];
             (type == "string") and (. != "") and (startswith("/") | not)
@@ -592,7 +604,7 @@ elif [[ "${1:-}" == --* ]]; then
             and ((.text | gsub("[[:space:]]"; "")) != ""))
       and (([.items[].n] | length) == ([.items[].n] | unique | length))
     ' "$round_record" >/dev/null 2>&1 \
-      || die "round record $round_record fails the dev-round schema (schema_version 2, issue '$issue', base_sha, unique whitespace-free repository-relative adds[], non-empty items[] of unique integer n + non-empty text) — see skills/orch/schemas/dev-round.md"
+      || die "round record $round_record fails the dev-round schema (schema_version 2, issue '$issue', 40-hex base_sha, unique whitespace-free repository-relative adds[], non-empty items[] of unique integer n + non-empty text) — see skills/orch/schemas/dev-round.md"
     expect_items="$(jq -r '[.items[].n | tostring] | join(",")' "$round_record")"
   fi
 else
@@ -602,8 +614,23 @@ else
   exit 2
 fi
 
+# Round mode checks a fix receipt against its round record or not at all.
+# Without --expect-items-from-round there is no delegated set and no authorized
+# additions list, so validate_artifact would fall back to the weak
+# non-empty-items rule and skip the protected-additions gate entirely — a
+# bypass reachable by omitting a flag. Implement and analysis rounds write no
+# round record and stay flagless. This replaces the re-exec that used to
+# silently upgrade the invocation: refusing keeps the caller's command honest.
+require_round_record_flag() {
+  [[ "$round_mode" == "true" && "$expect_from_round" != "true" && -f "$file" ]] || return 0
+  if jq -e '(.kind? // "") == "fix"' "$file" >/dev/null 2>&1; then
+    die "round-mode receipt $file is kind fix: pass --expect-items-from-round so the delegated item set and its protected additions are checked"
+  fi
+}
+
 check_once() {
   local out rc=0 verdict kind
+  require_round_record_flag
   out="$(validate_artifact "$file" "$want_round" "$expect_items" "$repo" "$round_record")" || rc=$?
   if (( rc == 0 )); then
     verdict="$(jq -r '.verdict' <<<"$out")" || {

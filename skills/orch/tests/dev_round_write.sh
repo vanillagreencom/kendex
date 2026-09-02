@@ -229,7 +229,7 @@ assert_eq "$([[ -f "$growth_wt/tmp/dev-round-KEN-GROWTH-5-5.json" && "$("$STATE"
 
 # A record is never rewritten after delegation, and a record that cannot supply
 # the expected set fails acceptance closed rather than falling back.
-"$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 6-6 --item 1 partial >/dev/null
+"$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 6-6 --item 1 partial "$OK_REACH" >/dev/null
 partial_round="$worktree/tmp/dev-round-issue-1230-6-6.json"
 rm -f "$partial_round"
 set +e
@@ -237,7 +237,7 @@ set +e
 assert_eq "$?" "2" "acceptance fails closed when the round record is missing"
 set -e
 
-"$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 8-8 --item 1 schema >/dev/null
+"$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 8-8 --item 1 schema "$OK_REACH" >/dev/null
 round8="$worktree/tmp/dev-round-issue-1230-8-8.json"
 jq '.base_sha = 42' "$round8" > "$TMP_ROOT/round8.json"
 mv "$TMP_ROOT/round8.json" "$round8"
@@ -246,7 +246,7 @@ set +e
 assert_eq "$?" "2" "a record with a non-string base_sha fails its schema arm"
 set -e
 
-"$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 9-9 --item 1 schema >/dev/null
+"$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 9-9 --item 1 schema "$OK_REACH" >/dev/null
 round9="$worktree/tmp/dev-round-issue-1230-9-9.json"
 jq '.adds = ["tools/"]' "$round9" > "$TMP_ROOT/round9.json"
 mv "$TMP_ROOT/round9.json" "$round9"
@@ -344,7 +344,7 @@ reach_auth="$worktree/.git/kendex/dev-round-authorizations/issue-1230-61-61.json
 assert_eq "$(jq -c '.items' "$reach_auth")" "$(jq -c '.items' "$reach_ok")" \
   "authorization binds the reach alongside the item text"
 
-printf '%s' '[{"n":1,"text":"t"}]' > "$items_file"
+printf '%s' '[{"n":1,"text":"t","reach":"tools/guard on a staged render"}]' > "$items_file"
 assert_exit2 "--items-file element without reach exits 2" \
   --worktree "$worktree" --issue i --round-id 62-1 --items-file "$items_file"
 printf '%s' '[{"n":1,"text":"t","reach":"   "}]' > "$items_file"
@@ -428,6 +428,23 @@ assert_exit2 "whitespace-only --adds exits 2 (no path to authorize)" \
   --worktree "$worktree" --issue i --round-id a8-8 --item 1 t "$OK_REACH" --adds "   "
 assert_exit2 "duplicate --adds exits 2 (no silent last-wins)" \
   --worktree "$worktree" --issue i --round-id a9-9 --item 1 t "$OK_REACH" --adds "tools/a" --adds "tools/b"
+# `read -r -a` consumes one line of its here-string whatever IFS says, so a
+# newline anywhere in the value would truncate the authorized list (or empty it
+# outright when it leads) and still exit 0. The grammar refuses first.
+assert_exit2 "a newline between --adds paths exits 2 (never a silent truncation)" \
+  --worktree "$worktree" --issue i --round-id a10-10 --item 1 t "$OK_REACH" --adds "$(printf 'tools/a.sh\ntools/b.sh')"
+assert_exit2 "a leading newline in --adds exits 2 (never a silently empty list)" \
+  --worktree "$worktree" --issue i --round-id a11-11 --item 1 t "$OK_REACH" --adds "$(printf '\ntools/a.sh')"
+assert_exit2 "a carriage return in --adds exits 2" \
+  --worktree "$worktree" --issue i --round-id a12-12 --item 1 t "$OK_REACH" --adds "$(printf 'tools/a.sh\rtools/b.sh')"
+assert_exit2 "a shell metacharacter in an --adds path exits 2" \
+  --worktree "$worktree" --issue i --round-id a13-13 --item 1 t "$OK_REACH" --adds 'tools/check;safe'
+assert_exit2 "a quote in an --adds path exits 2" \
+  --worktree "$worktree" --issue i --round-id a14-14 --item 1 t "$OK_REACH" --adds 'tools/say"hi"'
+newline_adds="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id a15-15 --item 1 t "$OK_REACH" \
+  --adds "$(printf 'tools/a.sh\ntools/b.sh')" 2>/dev/null || true)"
+assert_eq "$([[ -z "$newline_adds" ]] && echo none || jq -c '.adds' "$newline_adds")" "none" \
+  "the refused newline value records nothing at all"
 split_out="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 17-17 --item 1 split "$OK_REACH" \
   --adds "  tools/a   skills/x/scripts/b  ")"
 assert_eq "$(jq -c '.adds' "$split_out")" '["tools/a","skills/x/scripts/b"]' \
@@ -445,7 +462,7 @@ git -C "$linked_main" config commit.gpgsign false
 git -C "$linked_main" commit -q --allow-empty -m base
 git -C "$linked_main" worktree add -q -b linked "$linked_wt"
 init_growth_state "$STATE" "$linked_wt" issue-826 seed 1000000
-"$WRITE" --worktree "$linked_wt" --issue issue-826 --round-id 30-30 --item 1 linked >/dev/null
+"$WRITE" --worktree "$linked_wt" --issue issue-826 --round-id 30-30 --item 1 linked "$OK_REACH" >/dev/null
 linked_record="$linked_wt/tmp/dev-round-issue-826-30-30.json"
 assert_eq "$([[ -f "$linked_record" && ! -e "$linked_main/.git/kendex" ]] && echo yes)" \
   "yes" "a linked worktree keeps its round record in its own tmp/"
@@ -528,15 +545,25 @@ product_out="$("$CHECK" --worktree "$linked_wt" --issue issue-826 --round-id 32-
 assert_eq "$(jq -r '.reason' <<<"$product_out")" "valid" \
   "product and documentation helper basenames remain outside the protected scope"
 
-"$WRITE" --worktree "$linked_wt" --issue issue-826 --round-id 31-31 --item 1 symlink >/dev/null
+# Only the symlink changes between the two halves: the record's bytes, its
+# token, its schema and the missing receipt are identical, so a refusal here
+# can come from nothing but the symlink itself. The control half must NOT
+# refuse at exit 2 — it stops at the absent receipt, verdict wait.
+"$WRITE" --worktree "$linked_wt" --issue issue-826 --round-id 31-31 --item 1 symlink "$OK_REACH" >/dev/null
 symlink_record="$linked_wt/tmp/dev-round-issue-826-31-31.json"
+set +e
+"$CHECK" --worktree "$linked_wt" --issue issue-826 --round-id 31-31 --expect-items-from-round >/dev/null 2>&1
+symlink_control_rc=$?
+set -e
+assert_eq "$([[ "$symlink_control_rc" == "2" ]] && echo refused || echo "read")" "read" \
+  "control: the same record as a regular file passes the record gates"
 cp "$symlink_record" "$TMP_ROOT/symlink-target.json"
 rm -f "$symlink_record"
 ln -s "$TMP_ROOT/symlink-target.json" "$symlink_record"
 set +e
 "$CHECK" --worktree "$linked_wt" --issue issue-826 --round-id 31-31 --expect-items-from-round >/dev/null 2>&1
 assert_eq "$?" "2" "a symlinked round record fails closed"
-"$WRITE" --worktree "$linked_wt" --issue issue-826 --round-id 31-31 --item 1 symlink >/dev/null 2>&1
+"$WRITE" --worktree "$linked_wt" --issue issue-826 --round-id 31-31 --item 1 symlink "$OK_REACH" >/dev/null 2>&1
 assert_eq "$?" "2" "the writer refuses to place a record over a symlink"
 set -e
 rm -f "$symlink_record"
@@ -587,7 +614,7 @@ for adds_doc in "${adds_contract_docs[@]}"; do
   assert_text_matches "$adds_text" 'Adds: tools/one-helper\.sh[^ ]' \
     "$(basename "$adds_doc") shows the single-path Adds line"
   assert_text_matches "$adds_text" 'Adds: tools/one-helper\.sh skills/x/scripts/check' \
-    "$(basename "$adds_doc") shows the whitespace-separated multi-path Adds line"
+    "$(basename "$adds_doc") shows the blank-separated multi-path Adds line"
 done
 
 ADDS_PATHS="tools/future-helper.sh skills/x/scripts/future-check"

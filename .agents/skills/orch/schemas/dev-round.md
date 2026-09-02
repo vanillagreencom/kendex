@@ -8,6 +8,8 @@ Before writing the record, `dev-round-write` compares the branch with workflow s
 
 The record is `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json` and carries `"round_id": ROUND_ID`; readers require a regular file — never a symlink — whose internal token, issue, and schema match what they were called with.
 
+The record sits inside the delegated worktree, so it is trusted the way every other instruction to that agent is: the orchestrator writes it before delegating, and the delegated agent is trusted not to edit it. Immutability is enforced against a second `dev-round-write` invocation, not against the agent holding the worktree.
+
 `[ISSUE_ID]` is the normalized workflow-state key — dev-side workflows name the same value `[ARTIFACT_KEY]`, and a bundled round uses the Parent ID. It and `[ROUND_ID]` must match `^[A-Za-z0-9._-]+$` with no `..`.
 
 ## Schema
@@ -30,7 +32,7 @@ The record is `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json` and car
 | `schema_version` | Yes | constant `2` | Record schema version |
 | `round_id` | Yes | `--round-id` | Per-delegation token; equals the filename token and the round's `dev_round_id` |
 | `issue` | Yes | `--issue` | Normalized workflow-state key |
-| `base_sha` | Yes | captured from `HEAD` | Commit at delegation time |
+| `base_sha` | Yes | captured from `HEAD` | Commit at delegation time; 40 lowercase hex, and readers refuse anything else — it reaches `git diff` as a revision argument |
 | `adds` | Yes | `--adds "PATH [PATH...]"` | Exact protected additions the round may make; an empty array allows none in the protected scope |
 | `items` | Yes (>=1) | `--items-file` or `--item N TEXT REACH` | `n` is the delegated item number (a unique integer >= 0), `text` the item's formatted block verbatim, `reach` the shipped producer, user action, or fixture that reaches the finding |
 
@@ -40,9 +42,9 @@ The record is `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json` and car
 
 What the writer itself refuses is a short list, not a scanner: an empty or whitespace-only reach, a `PRRT_` review-thread node id anywhere in the value, and a few literal values. A value outside those shapes is recorded, not approved. The classes [`../references/finding-disposition.md` § Decision flow](../references/finding-disposition.md#decision-flow) excludes at Step 0 are the orchestrator's judgement at disposition time, before any round is delegated; `skills/orch/tests/dev_round_write.sh` pins the writer's verdict.
 
-The `Adds:` delegation line and `--adds` carry the same whitespace-separated path list. The writer and reader reject absolute paths, leading or trailing empty components, double slashes, `.` and `..` components, whitespace inside a path, and duplicates. Omit the line and flag when no additions are allowed.
+The `Adds:` delegation line and `--adds` carry the same blank-separated path list. The writer refuses any path outside `[A-Za-z0-9._/-]`, so a path carrying whitespace, a newline, or a shell metacharacter cannot be expressed rather than being silently split; the reader refuses a recorded path containing whitespace. Both reject absolute paths, leading or trailing empty components, double slashes, `.` and `..` components, and duplicates. Omit the line and flag when no additions are allowed.
 
-**Immutable per round**: `dev-round-write --help` carries the contract. Mint a new round and never fall back to an unbound item list. An analysis round has no delegated items and writes no record. While a round's record exists with no matching `dev-return` receipt, `worktree-push` refuses to push — a rebase would move the branch off the base the record pins.
+**Immutable per round**: `dev-round-write --help` carries the contract. Mint a new round and never fall back to an unbound item list. An analysis round has no delegated items and writes no record. While the ACTIVE round's record — the one whose token equals workflow state `dev_round_id` — has no matching `dev-return` receipt, `worktree-push` refuses to push: a rebase would move the branch off the base that record pins, and the receipt is what releases it.
 
 ## Readers
 

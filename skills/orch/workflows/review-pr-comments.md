@@ -226,7 +226,7 @@ Persist this group's slice of the `fix set`: write `[WORKTREE_PATH]/tmp/dev-roun
 
 Decide whether this fix round may add protected files. [`../schemas/dev-round.md` § Protected additions](../schemas/dev-round.md#protected-additions) is the sole scope definition. The default is none.
 
-When the list is non-empty, pass those exact repository-relative paths to the writer as one whitespace-separated `--adds` value, and render the same list after `Adds:` in the delegation — one path is `Adds: tools/one-helper.sh`, several are `Adds: tools/one-helper.sh skills/x/scripts/check`. A path containing whitespace cannot be authorized.
+When the list is non-empty, pass those exact repository-relative paths to the writer as one blank-separated `--adds` value, and render the same list after `Adds:` in the delegation — one path is `Adds: tools/one-helper.sh`, several are `Adds: tools/one-helper.sh skills/x/scripts/check`. Every path must be made of `[A-Za-z0-9._/-]` alone; the writer refuses the whole value otherwise, so a path carrying whitespace or a shell metacharacter cannot be authorized at all.
 
 ```bash
 .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json [--adds "[REPO_RELATIVE_PATHS]"]

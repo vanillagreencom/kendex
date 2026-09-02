@@ -79,6 +79,12 @@ source "$SCRIPT_DIR/lib/branch-growth.sh"
 # whitespace, so a value can never escape the tmp/ directory. Shared verbatim
 # with dev-return-write and dev-artifact-check.
 ID_GRAMMAR='^[A-Za-z0-9._-]+$'
+# --adds is one blank-separated list of repository-relative paths. The path
+# character set is deliberately narrow: it admits every tracked path in this
+# repository and, in one rule, refuses newline and carriage return (which the
+# splitter below cannot see past), the whitespace the delegation's Adds: line
+# cannot express, and the shell metacharacters an argv transport would carry.
+ADDS_GRAMMAR='^[[:blank:]]*[A-Za-z0-9._/-]+([[:blank:]]+[A-Za-z0-9._/-]+)*[[:blank:]]*$'
 
 die() {
   printf '%s: %s\n' "$PROG" "$1" >&2
@@ -114,11 +120,13 @@ delegation needs a NEW round id. The record is read back by
 dev-artifact-check --expect-items-from-round, by a respawned dev agent
 recovering its items, and by the tail-reconciliation nudge.
 Protected-addition scope: skills/orch/schemas/dev-round.md § Protected additions.
---adds carries the authorized protected paths as one whitespace-separated
-list, the same list the delegation's Adds: line renders. Absolute, traversing,
-empty-component, and duplicate paths are rejected; a path containing
-whitespace cannot be expressed. The record captures the worktree's current
-HEAD as base_sha; a worktree with no resolvable HEAD is rejected.
+--adds carries the authorized protected paths as one blank-separated list,
+the same list the delegation's Adds: line renders. Every path must be made of
+[A-Za-z0-9._/-] alone, so a path carrying whitespace, a newline, or a shell
+metacharacter is refused rather than split or truncated; absolute, traversing,
+empty-component, and duplicate paths are rejected too. The record captures the
+worktree's current HEAD as base_sha; a worktree with no resolvable HEAD is
+rejected.
 Before the record is written, the branch's additions plus deletions must be
 at most twice workflow state pr.baseline_lines. Full implementation acceptance
 sets it; a null or invalid value refuses before the record is written.
@@ -305,27 +313,27 @@ else
   )"
 fi
 
-# --- Protected additions: one whitespace-separated path list ---
+# --- Protected additions: one blank-separated path list ---
 # The delegation renders the same list after `Adds:`, so writer and delegation
-# cannot drift; a path carrying whitespace is unrepresentable in both, and this
-# repository tracks none.
+# cannot drift. The grammar runs BEFORE the split: `read -r -a` reads one line
+# out of its here-string whatever IFS says, so a value carrying a newline would
+# otherwise record a silent truncation — or, with a leading newline, an empty
+# list at exit 0 while the delegation names paths the record never authorized.
 adds_json='[]'
 if [[ "$adds_given" == "true" ]]; then
-  # Non-empty before the split, so the expansion below never dereferences an
-  # empty array (bash 3.2 refuses that under set -u).
-  [[ -n "${adds//[[:space:]]/}" ]] \
-    || die "--adds requires at least one path"
+  [[ "$adds" =~ $ADDS_GRAMMAR ]] \
+    || die "--adds '$adds' must be blank-separated repository-relative paths of [A-Za-z0-9._/-] only (no newline, quote, or shell metacharacter), at least one"
   read -r -a adds_paths <<< "$adds"
-  adds_json="$(jq -n '$ARGS.positional' --args "${adds_paths[@]}")" \
+  adds_json="$(jq -nc '$ARGS.positional' --args ${adds_paths[@]+"${adds_paths[@]}"})" \
     || die "--adds '$adds' could not be recorded as a path list"
   jq -e '
-    all(.[];
+    (length > 0)
+    and all(.[];
           (startswith("/") | not)
           and (split("/") | all(. != "" and . != "." and . != "..")))
     and (length == (unique | length))
   ' <<<"$adds_json" >/dev/null 2>&1 \
     || die "--adds '$adds' must be unique repository-relative paths with no empty, '.', or '..' components"
-  adds_json="$(jq -c '.' <<<"$adds_json")"
 fi
 
 # --- Compute the absolute, round-scoped out path ---

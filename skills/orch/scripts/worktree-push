@@ -23,9 +23,12 @@
 # A fix round in flight is refused rather than reconciled. Its record
 # (`tmp/dev-round-<issue>-<round>.json`, written at delegation time) pins the
 # base snapshot dev-artifact-check compares against, and the rebase this
-# command runs would move every commit out from under it. A round is in flight
-# while its record exists for the active `dev_round_id` and no dev-return
-# receipt for that round has landed; accept or abandon the round, then push.
+# command runs would move every commit out from under it. The round in flight
+# is the ACTIVE one — the record whose token equals workflow state
+# `dev_round_id` — and it stays in flight until that round's dev-return
+# receipt lands, which is the only thing that releases it. An earlier round's
+# leftover record does not block, and neither does a worktree with no state
+# file. Accept the round, then push.
 #
 # The rebase happens BEFORE the network push, so a rejected push can still
 # have rewritten the branch: the map is applied to workflow state whatever the
@@ -83,6 +86,9 @@ WORKFLOW_STATE="$SCRIPT_DIR/workflow-state"
 
 SHA_GRAMMAR='^[0-9a-f]{40}$'
 ISSUE_GRAMMAR='^[A-Za-z0-9][A-Za-z0-9._-]*$'
+# The round token, shared verbatim with dev-round-write and dev-artifact-check.
+# It is path-forming here, so it is validated before it composes a probe.
+ROUND_GRAMMAR='^[A-Za-z0-9._-]+$'
 
 # The leading comment block is the contract, printed by shape rather than by
 # line number so --help cannot drift as that block grows.
@@ -240,16 +246,35 @@ fi
 
 # A live fix round pins the snapshot dev-artifact-check compares against, and
 # the rebase below would move the branch out from under it. Refuse before the
-# push: nothing is rebased, so nothing needs repair. A round is live from the
-# moment dev-round-write stamps its record until the dev-return receipt for
-# that same round lands; with no state file there is no active round to read.
+# push: nothing is rebased, so nothing needs repair. The ACTIVE round is live
+# from the moment dev-round-write stamps its record until the dev-return
+# receipt for that same round lands; with no state file there is no active
+# round to read, and a record from an earlier round does not block.
+#
+# Three details decide correctly rather than conveniently. The token is
+# path-forming, so it is validated before it composes a probe. Both the raw
+# --issue and the normalized state key are probed: the writers name their
+# files with the value the delegation carried, which the bare-numeric alias
+# (issue 7 under issue-7) makes differ from the key resolved here. And the two
+# probes fail in opposite directions — a record counts as present on anything
+# at that path, a dangling symlink included, while a receipt counts as landed
+# only on the regular file dev-artifact-check itself requires, so a directory
+# planted at the receipt path cannot disarm the gate.
 if [[ "$state_present" == "true" ]]; then
 	active_round="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.dev_round_id // ""')" \
 		|| fail "could not read the active dev round for $issue"
-	if [[ -n "$active_round" ]] \
-		&& [[ -e "$worktree_abs/tmp/dev-round-$state_key-$active_round.json" ]] \
-		&& [[ ! -e "$worktree_abs/tmp/dev-return-$state_key-$active_round.json" ]]; then
-		fail "fix round $active_round is live in $worktree_abs (its round record has no dev-return receipt); a rebase would invalidate the base it pins — accept or abandon the round, then push"
+	if [[ -n "$active_round" ]]; then
+		[[ "$active_round" =~ $ROUND_GRAMMAR && "$active_round" != *..* ]] \
+			|| fail "workflow state has invalid dev_round_id: $active_round"
+		for round_key in "$issue" "$state_key"; do
+			round_record="$worktree_abs/tmp/dev-round-$round_key-$active_round.json"
+			round_receipt="$worktree_abs/tmp/dev-return-$round_key-$active_round.json"
+			[[ -e "$round_record" || -L "$round_record" ]] || continue
+			if [[ -f "$round_receipt" && ! -L "$round_receipt" ]]; then
+				continue
+			fi
+			fail "fix round $active_round is live in $worktree_abs ($round_record has no dev-return receipt); a rebase would invalidate the base it pins — accept the round (its dev-return receipt is what releases it), then push"
+		done
 	fi
 fi
 

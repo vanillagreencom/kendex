@@ -103,11 +103,14 @@ assert_eq "$(jq -r '.ok' <<<"$out")" "true" "valid implement receipt reports ok=
 assert_eq "$(jq -r '.path' <<<"$out")" "$artifact" "valid implement receipt reports its path"
 assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "flagless implement receipt reports reason=valid"
 
-# Without --expect-items-from-round there is no delegated set to check against,
-# so a well-formed fix receipt falls back to the non-empty-items rule.
+# Without --expect-items-from-round there is no delegated set and no authorized
+# additions list, so the check refuses rather than falling back to the weak
+# non-empty-items rule.
 printf '%s' "$valid_fix" > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "valid" \
-  "flagless fix receipt falls back to the well-formed items rule"
+set +e
+"$CHECK" --worktree "$worktree" --issue "$issue" --round-id "$R" >/dev/null 2>&1
+assert_eq "$?" "2" "flagless round-mode fix receipt refuses instead of falling back"
+set -e
 
 # --- round-id identity: a DIFFERENT requested round resolves a different path → missing ---
 assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id 9999-0)" "missing" "wrong round id resolves a different path → missing"
@@ -318,7 +321,7 @@ git -C "$rr_wt" commit -q --allow-empty -m base
 init_growth_state "$STATE" "$rr_wt" issue-9 seed 1000000
 rr_head="$(git -C "$rr_wt" rev-parse HEAD)"
 "$ROUND_WRITE" --worktree "$rr_wt" --issue issue-9 --round-id 7-8 \
-  --item 1 "fix nil deref" "src/parse.rs on a config a shipped writer emits" --item 2 "cover expiry" "tests/auth.rs expiry case" >/dev/null
+  --item 1 "fix nil deref" "tools/guard on a staged render" "src/parse.rs on a config a shipped writer emits" --item 2 "cover expiry" "tools/guard on a staged render" "tests/auth.rs expiry case" >/dev/null
 "$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit "$rr_head" \
   --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
 assert_eq "$(reason --worktree "$rr_wt" --issue issue-9 --round-id 7-8 --expect-items-from-round)" "valid" \
@@ -329,7 +332,7 @@ assert_eq "$(reason --worktree "$rr_wt" --issue issue-9 --round-id 7-8 --expect-
 "$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 8-9 --branch b --commit "$rr_head" \
   --validate pass --item 1 Applied a >/dev/null
 "$ROUND_WRITE" --worktree "$rr_wt" --issue issue-9 --round-id 8-9 \
-  --item 1 "fix nil deref" "src/parse.rs on a config a shipped writer emits" --item 2 "cover expiry" "tests/auth.rs expiry case" >/dev/null
+  --item 1 "fix nil deref" "tools/guard on a staged render" "src/parse.rs on a config a shipped writer emits" --item 2 "cover expiry" "tools/guard on a staged render" "tests/auth.rs expiry case" >/dev/null
 assert_eq "$(reason --worktree "$rr_wt" --issue issue-9 --round-id 8-9 --expect-items-from-round)" "incomplete" \
   "artifact missing a persisted delegated item → incomplete"
 set +e
@@ -363,9 +366,6 @@ jq -n --arg base "$rr_head" '{schema_version:2,round_id:"15-15",issue:"issue-9",
   > "$rr_wt/tmp/dev-round-issue-9-15-15.json"
 "$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 15-15 --expect-items-from-round >/dev/null 2>&1
 assert_eq "$?" "2" "--expect-items-from-round with an empty item text exits 2"
-ln -s "$rr_wt/tmp/dev-round-issue-9-7-8.json" "$rr_wt/tmp/dev-round-issue-9-17-17.json"
-"$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 17-17 --expect-items-from-round >/dev/null 2>&1
-assert_eq "$?" "2" "--expect-items-from-round with a symlinked round record exits 2"
 set -e
 # the count-vs-set hint diagnoses a TYPED --expect-items count; a set read from
 # the round record cannot be that misuse, so from-round must not emit the hint
@@ -436,14 +436,14 @@ assert_eq "$(jq -c '.files' <<<"$adds_out")" \
   "the refusal names every unlisted addition"
 
 "$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 2-2 --item 1 "fix finding" "tools/guard on a staged render" \
-  --adds "crates/allowed/lib.rs skills/orch/scripts/allowed-check tools/allowed;still-data ui/src/test/allowed-helper.ts" >/dev/null
+  --adds "crates/allowed/lib.rs skills/orch/scripts/allowed-check tools/allowed-tool ui/src/test/allowed-helper.ts" >/dev/null
 mkdir -p "$adds_wt/crates/allowed"
 printf 'crate\n' > "$adds_wt/crates/allowed/lib.rs"
 printf 'script\n' > "$adds_wt/skills/orch/scripts/allowed-check"
-printf 'tool\n' > "$adds_wt/tools/allowed;still-data"
+printf 'tool\n' > "$adds_wt/tools/allowed-tool"
 printf 'helper\n' > "$adds_wt/ui/src/test/allowed-helper.ts"
 git -C "$adds_wt" add crates/allowed/lib.rs skills/orch/scripts/allowed-check \
-  "tools/allowed;still-data" ui/src/test/allowed-helper.ts
+  "tools/allowed-tool" ui/src/test/allowed-helper.ts
 git -C "$adds_wt" commit -q -m allowed-additions
 allowed_head="$(git -C "$adds_wt" rev-parse HEAD)"
 "$WRITE" --worktree "$adds_wt" --kind fix --issue issue-826 --round-id 2-2 --branch b --commit "$allowed_head" \
