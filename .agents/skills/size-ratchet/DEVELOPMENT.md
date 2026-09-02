@@ -200,6 +200,9 @@ suffix and read as line counts, which is what they were.
 
 A unit migration re-measures the row in `--update`, then applies the HEAD
 comparison from [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
+The re-measured number is the tool's own, so a frozen row adopting it is not a
+raise: a consumer picking up a class whose unit changed adopts it in one
+`--update`, with no declaration and nothing to hand-edit.
 
 A repo adopting the `400` default over a looser one gains offenders in the
 range between the two thresholds. Order matters: declare

@@ -683,8 +683,8 @@ report() { # VIOLATIONS-FILE — human diagnostics on stdout
         ;;
       FROZEN_UNITS)
         if [ "$PU" = "b" ]; then shown="${n}b"; else shown="$n"; fi
-        echo "size-ratchet FAIL frozen baseline row unit changed: $path — row $raw -> $shown; a frozen class cannot replace its trusted quantity"
-        echo "  remedy: split the file below its new threshold before changing the class unit"
+        echo "size-ratchet FAIL frozen baseline row unit changed: $path — row $raw -> $shown, which is not the measured size; across a unit change a frozen class takes only its own re-measure"
+        echo "  remedy: run size-ratchet --update to write the measured size"
         ;;
     esac
   done <"$1"
@@ -878,7 +878,7 @@ rows_raised() { # CURRENT-BASELINE — violations on stdout
     rowunit($2) != unit[$1] { next }
     !($1 in had) { if (raise_ok != "1") print "ADDED", $1, rowsize($2), "-"; next }
     rowunit($2) != rowunit(was[$1]) {
-      if ($3 == "frozen") print "FROZEN_UNITS", $1, rowsize($2), was[$1]
+      if ($3 == "frozen") { if (rowsize($2) != now[$1]) print "FROZEN_UNITS", $1, rowsize($2), was[$1] }
       else if (raise_ok != "1") print "REUNIT", $1, rowsize($2), was[$1]
       next
     }
