@@ -1,3 +1,7 @@
+//! Installing beside: the edited copy becomes the user's own package under
+//! a new name and the source's version comes back under the old one — with
+//! everything proven before anything is written.
+
 use std::fs;
 
 use kendex_core::error::CoreError;
@@ -6,6 +10,9 @@ use super::*;
 
 const REV_AGENT: &str = "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n";
 
+/// Installing beside: the edits become the user's own package under the
+/// new name, answering to it, and the original name goes back to its
+/// source — the newest version when the hold moves along.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_beside_keeps_the_edit_under_a_new_name_and_lands_the_source_under_the_old() {
@@ -26,6 +33,8 @@ fn fork_beside_keeps_the_edit_under_a_new_name_and_lands_the_source_under_the_ol
     write_skill(&w.upstream, "gh", "Upstream v2.");
     commit(&w.upstream, "two");
     let two = head_commit(&w.upstream);
+    // The edit holds the place through a refresh; the mirror still learns
+    // about the newer commit.
     sync_and_apply(&w);
     assert!(
         fs::read_to_string(skill_file(&w))
@@ -47,6 +56,8 @@ fn fork_beside_keeps_the_edit_under_a_new_name_and_lands_the_source_under_the_ol
     let report = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
 
+    // The fork's bytes live in the local source under the new name and say
+    // that name; they render there too.
     let own =
         fs::read_to_string(w.home.join("app/.kendex-local/skills/gh-edited/SKILL.md")).unwrap();
     assert!(
@@ -58,6 +69,7 @@ fn fork_beside_keeps_the_edit_under_a_new_name_and_lands_the_source_under_the_ol
             .unwrap()
             .contains("My fork.")
     );
+    // The original name carries the source's newest version, held there.
     assert!(
         fs::read_to_string(skill_file(&w))
             .unwrap()
