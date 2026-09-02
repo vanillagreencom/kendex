@@ -1,11 +1,11 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
 	CONFIG_ID,
 	bridgeCavemanHookEnabled,
 	configurationSource,
+	expandHome,
 	instructions,
 	normalizeActiveMode,
 	normalizeMode,
@@ -24,11 +24,6 @@ const STATE_TYPE = "kendex-caveman:state";
 const STATUS_KEY = "caveman";
 const SETTINGS_EVENT = "kendex:extension-settings-changed";
 
-function expandHome(input: string): string {
-	if (input === "~") return homedir();
-	if (input.startsWith("~/")) return join(homedir(), input.slice(2));
-	return input;
-}
 
 function piUserDir(): string {
 	return resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
@@ -70,7 +65,7 @@ const SUBCOMMAND_DESCRIPTIONS: Record<string, string> = {
 	ultra: "Caveman ultra — maximum compression",
 	micro: "Caveman micro — prompt-minimized compression",
 	toggle: "Toggle caveman mode on/off",
-	debug: "Show resolved mode, settings paths, legacy-key conflicts, and the rendered prompt block",
+	debug: "Show resolved mode, settings paths, and the rendered prompt block",
 };
 
 function debugReport(state: CavemanState, ctx: ExtensionContext): string {
@@ -85,9 +80,6 @@ function debugReport(state: CavemanState, ctx: ExtensionContext): string {
 	const sourceLine = src.source === "default"
 		? "Source: default (no `mode` key found in any settings.json)"
 		: `Source: ${src.source} (${src.path})`;
-	const legacyLine = src.legacyKeys.length > 0
-		? `Legacy keys present alongside \`mode\`: ${src.legacyKeys.join(", ")} (harmless but stale; remove via the extension manager)`
-		: "Legacy keys: none";
 	const bridgeLine = bridgeHook === undefined
 		? "Bridge `includeCavemanHook`: not set (defaults apply; if you use claude-bridge, check its config separately)"
 		: `Bridge \`includeCavemanHook\`: ${bridgeHook}`;
@@ -99,7 +91,6 @@ function debugReport(state: CavemanState, ctx: ExtensionContext): string {
 		overrideLine,
 		sourceLine,
 		`Settings paths consulted (in order): ${src.userPath}, ${src.projectPath}`,
-		legacyLine,
 		bridgeLine,
 		"",
 		"--- Rendered prompt block ---",
@@ -117,17 +108,11 @@ interface PersistedState {
 	override?: Mode | null;
 	lastActiveMode?: Mode;
 	updatedAt?: string;
-	mode?: Mode;
-	source?: "default" | "session";
 }
 
 function configuredMode(cwd?: string): Mode {
 	const config = readkendexConfig(cwd);
-	const explicit = normalizeMode(typeof config.mode === "string" ? config.mode : undefined);
-	if (explicit) return explicit;
-	const legacyEnabled = typeof config.enabled === "boolean" ? config.enabled : false;
-	if (!legacyEnabled) return "off";
-	return normalizeActiveMode(typeof config.defaultMode === "string" ? config.defaultMode : undefined) ?? "full";
+	return normalizeMode(typeof config.mode === "string" ? config.mode : undefined) ?? "off";
 }
 
 function effectiveMode(state: CavemanState, cwd?: string): Mode {
@@ -174,9 +159,6 @@ function restoreState(ctx: ExtensionContext): CavemanState {
 			override = null;
 		} else if (typeof data.override === "string") {
 			override = normalizeMode(data.override) ?? null;
-		} else if (typeof data.mode === "string") {
-			const legacyMode = normalizeMode(data.mode);
-			override = data.source === "session" && legacyMode ? legacyMode : null;
 		} else {
 			override = state.override;
 		}
@@ -302,10 +284,6 @@ export default function caveman(pi: ExtensionAPI): void {
 		}
 		syncStatus(ctx);
 		notifyListeners();
-		const legacy = configurationSource(ctx.cwd).legacyKeys;
-		if (legacy.length > 0 && ctx.hasUI) {
-			ctx.ui.notify(`pi-caveman: legacy settings keys detected (${legacy.join(", ")}) alongside \`mode\`. They are ignored; remove them in the extension manager. Run /caveman debug for details.`, "info");
-		}
 		// Bridge users hit a silent failure mode: caveman mode is active but the
 		// claude-bridge `includeCavemanHook` flag defaults to off, so the
 		// directive never reaches Claude. Surface this once per session so the

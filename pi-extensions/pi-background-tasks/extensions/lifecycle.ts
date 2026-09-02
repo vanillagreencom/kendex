@@ -98,7 +98,7 @@ function resolveTerminationReason(
 // Replay 'exit' wakeups for any restored task that hit terminal state
 // without an exit notification. Returns the number of tasks replayed.
 // selectMissedExits gates on (status != running, notifyOnExit, exitNotified === false)
-// so backward-compat snapshots and cross-session leaks are filtered upstream.
+// so cross-session leaks are filtered upstream.
 export function replayMissedExitsLifecycle(
 	tasks: Iterable<ManagedTask>,
 	hooks: LifecycleHooks,

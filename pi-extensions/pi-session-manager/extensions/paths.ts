@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -60,6 +60,21 @@ export function piSettingsPaths(cwd = process.cwd()): string[] {
 	const user = join(userDir, "settings.json");
 	const project = projectSettingsPath(cwd);
 	return projectSettingsTrusted(project) ? [user, project] : [user];
+}
+
+export function readPackageConfig(packageId: string, cwd?: string): Record<string, unknown> {
+	const merged: Record<string, unknown> = {};
+	for (const settingsPath of piSettingsPaths(cwd)) {
+		if (!existsSync(settingsPath)) continue;
+		try {
+			const parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
+			const config = parsed?.kendex?.extensionManager?.config?.[packageId];
+			if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
+		} catch {
+			// Ignore malformed optional manager config.
+		}
+	}
+	return merged;
 }
 
 export function resolveSettingsRelativePath(value: string, settingsPath: string): string {

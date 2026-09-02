@@ -21,8 +21,9 @@ export function extractRetryAfterMs(event: unknown): number | null {
 				if (key === "retry_after_ms" || key === "retryAfterMs") return Math.floor(value);
 				return Math.floor(value * 1000);
 			}
-			if (typeof value === "string" && /^[0-9]+(?:\.[0-9]+)?$/.test(value)) {
+			if (typeof value === "string" && value.trim()) {
 				const parsed = Number(value);
+				if (!Number.isFinite(parsed) || parsed <= 0) continue;
 				if (key === "retry_after_ms" || key === "retryAfterMs") return Math.floor(parsed);
 				return Math.floor(parsed * 1000);
 			}
@@ -43,12 +44,6 @@ export function extractResetAtMs(event: unknown, now: number = Date.now()): numb
 	return extractResetAtMsFromText(extractAssistantErrorText(message), now);
 }
 
-export interface RateLimitScheduleBasis {
-	delayMs: number;
-	resetAtMs: number | null;
-	resetSource: RateLimitResetSource;
-	degradedResetSource: boolean;
-}
 
 export const RESET_AT_MS_KEYS = new Set(["resetAtMs", "reset_at_ms", "resetsAtMs", "resets_at_ms"]);
 export const RESET_AT_KEYS = new Set(["resetAt", "reset_at", "resetsAt", "resets_at"]);

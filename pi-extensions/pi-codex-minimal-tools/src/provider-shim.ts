@@ -1,6 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type * as NodeOs from "node:os";
-import type * as NodeZlib from "node:zlib";
+import { readFileSync } from "node:fs";
+import { access } from "node:fs/promises";
+import { arch, platform, release } from "node:os";
+import { dirname, join, normalize, relative } from "node:path";
+import { constants as zlibConstants, zstdCompressSync } from "node:zlib";
 import { glyphs, treeGlyph } from "./glyphs.js";
 import { loadSettings } from "./settings.js";
 import { saveBase64Image } from "./utils/images.js";
@@ -59,35 +62,14 @@ export async function getEnvApiKeyCompat(
 	return typeof compat.getEnvApiKey === "function" ? compat.getEnvApiKey(provider) : undefined;
 }
 
-type ProcessWithOsBuiltinModule = typeof process & {
-	getBuiltinModule?: (id: "node:os") => typeof NodeOs;
-};
-
-type ProcessWithZlibBuiltinModule = typeof process & {
-	getBuiltinModule?: (id: "node:zlib") => typeof NodeZlib;
-};
-
-function loadNodeOs(): typeof NodeOs | null {
-	if (typeof process === "undefined" || !(process.versions?.node || process.versions?.bun)) return null;
-	return (process as ProcessWithOsBuiltinModule).getBuiltinModule?.("node:os") ?? null;
-}
-
-function loadNodeZlib(): typeof NodeZlib | null {
-	if (typeof process === "undefined" || !(process.versions?.node || process.versions?.bun)) return null;
-	return (process as ProcessWithZlibBuiltinModule).getBuiltinModule?.("node:zlib") ?? null;
-}
-
 export function buildCodexUserAgent(): string {
-	const os = loadNodeOs();
-	return os ? `pi (${os.platform()} ${os.release()}; ${os.arch()})` : "pi (browser)";
+	return `pi (${platform()} ${release()}; ${arch()})`;
 }
 
 export function compressRequestBodyZstd(bodyJson: string): Uint8Array | null {
-	const zlib = loadNodeZlib();
-	if (!zlib || typeof zlib.zstdCompressSync !== "function") return null;
 	try {
-		const compressed = zlib.zstdCompressSync(bodyJson, {
-			params: { [zlib.constants.ZSTD_c_compressionLevel]: REQUEST_COMPRESSION_ZSTD_LEVEL },
+		const compressed = zstdCompressSync(bodyJson, {
+			params: { [zlibConstants.ZSTD_c_compressionLevel]: REQUEST_COMPRESSION_ZSTD_LEVEL },
 		});
 		return new Uint8Array(compressed.buffer, compressed.byteOffset, compressed.byteLength);
 	} catch {
@@ -175,10 +157,7 @@ interface CachedWebSocketContinuationState {
 	lastResponseItems: unknown[];
 }
 
-let fsPromisesPromise: Promise<typeof import("node:fs/promises")> | undefined;
 const workspaceRootCache = new Map<string, Promise<string>>();
-
-const PATH_SEPARATOR = "/";
 
 interface ResponsesBody {
 	model: string;
@@ -274,85 +253,9 @@ function shortHash(str: string): string {
 	return (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36);
 }
 
-function normalizePath(value: string): string {
-	if (!value) return ".";
-	const normalized = value.replace(/\/+/g, PATH_SEPARATOR);
-	if (normalized === PATH_SEPARATOR) return normalized;
-	return normalized.replace(/\/+$/g, "") || PATH_SEPARATOR;
-}
-
-function joinPaths(...parts: string[]): string {
-	if (parts.length === 0) return ".";
-	let result = parts[0] ?? "";
-	for (let i = 1; i < parts.length; i++) {
-		const part = parts[i];
-		if (!part) continue;
-		if (!result || result.endsWith(PATH_SEPARATOR)) {
-			result += part.replace(/^\/+/, "");
-		} else {
-			result += `${PATH_SEPARATOR}${part.replace(/^\/+/, "")}`;
-		}
-	}
-	return normalizePath(result);
-}
-
-function dirnamePath(value: string): string {
-	const normalized = normalizePath(value);
-	if (normalized === PATH_SEPARATOR) return PATH_SEPARATOR;
-	const index = normalized.lastIndexOf(PATH_SEPARATOR);
-	if (index < 0) return ".";
-	if (index === 0) return PATH_SEPARATOR;
-	return normalized.slice(0, index);
-}
-
-function splitPathSegments(value: string): string[] {
-	const normalized = normalizePath(value);
-	if (normalized === PATH_SEPARATOR) return [];
-	return normalized.replace(/^\/+/, "").split(PATH_SEPARATOR).filter(Boolean);
-}
-
-function relativePath(from: string, to: string): string {
-	const normalizedFrom = normalizePath(from);
-	const normalizedTo = normalizePath(to);
-	if (normalizedFrom === normalizedTo) return "";
-	const fromSegments = splitPathSegments(normalizedFrom);
-	const toSegments = splitPathSegments(normalizedTo);
-	let shared = 0;
-	while (shared < fromSegments.length && shared < toSegments.length && fromSegments[shared] === toSegments[shared]) {
-		shared++;
-	}
-	const upSegments = new Array(fromSegments.length - shared).fill("..");
-	const downSegments = toSegments.slice(shared);
-	return [...upSegments, ...downSegments].join(PATH_SEPARATOR);
-}
-
-async function getNodeFsPromises(): Promise<typeof import("node:fs/promises")> {
-	if (!fsPromisesPromise) {
-		fsPromisesPromise = dynamicImport("node:fs/promises") as Promise<typeof import("node:fs/promises")>;
-	}
-	return fsPromisesPromise;
-}
-
-function getNodeFsSync(): { readFileSync(path: string): Buffer } | null {
-	if (typeof process === "undefined" || !(process.versions?.node || process.versions?.bun)) {
-		return null;
-	}
-	const builtinProcess = process as typeof process & { getBuiltinModule?: (specifier: string) => unknown };
-	if (typeof builtinProcess.getBuiltinModule !== "function") {
-		return null;
-	}
-	try {
-		const module = builtinProcess.getBuiltinModule("node:fs") as { readFileSync?: (path: string) => Buffer } | undefined;
-		return typeof module?.readFileSync === "function" ? { readFileSync: module.readFileSync } : null;
-	} catch {
-		return null;
-	}
-}
-
 async function pathExists(value: string): Promise<boolean> {
 	try {
-		const fs = await getNodeFsPromises();
-		await fs.access(value);
+		await access(value);
 		return true;
 	} catch {
 		return false;
@@ -360,17 +263,17 @@ async function pathExists(value: string): Promise<boolean> {
 }
 
 async function resolveWorkspaceRoot(cwd: string): Promise<string> {
-	const normalizedCwd = normalizePath(cwd);
+	const normalizedCwd = normalize(cwd);
 	const cached = workspaceRootCache.get(normalizedCwd);
 	if (cached) return cached;
 
 	const promise = (async () => {
 		let current = normalizedCwd;
 		while (true) {
-			if (await pathExists(joinPaths(current, ".git"))) {
+			if (await pathExists(join(current, ".git"))) {
 				return current;
 			}
-			const parent = dirnamePath(current);
+			const parent = dirname(current);
 			if (parent === current || parent === ".") {
 				return normalizedCwd;
 			}
@@ -383,18 +286,18 @@ async function resolveWorkspaceRoot(cwd: string): Promise<string> {
 }
 
 export function getOpenAICodexImageDirectory(cwd: string): string {
-	return joinPaths(cwd, OPENAI_CODEX_IMAGE_DIR);
+	return join(cwd, OPENAI_CODEX_IMAGE_DIR);
 }
 
 export function getOpenAICodexImagePath(cwd: string, responseId: string | undefined, callId: string, outputFormat?: string): string {
 	const ext = normalizeImageOutputFormat(outputFormat);
 	const safeCallId = shortenFilePart(callId, "image");
 	const safeResponseId = shortenFilePart(responseId, "response");
-	return joinPaths(getOpenAICodexImageDirectory(cwd), `${safeCallId}-${safeResponseId}.${ext}`);
+	return join(getOpenAICodexImageDirectory(cwd), `${safeCallId}-${safeResponseId}.${ext}`);
 }
 
 export function getOpenAICodexLatestImagePath(cwd: string): string {
-	return joinPaths(getOpenAICodexImageDirectory(cwd), OPENAI_CODEX_LATEST_IMAGE_NAME);
+	return join(getOpenAICodexImageDirectory(cwd), OPENAI_CODEX_LATEST_IMAGE_NAME);
 }
 
 export function buildGeneratedImageDisplayText(savedImage: SavedGeneratedImage, options?: { expanded?: boolean }): string {
@@ -423,8 +326,8 @@ export async function saveOpenAICodexGeneratedImage(
 	const absolutePath = saved.path;
 	const latestAbsolutePath = saved.latestPath ?? getOpenAICodexLatestImagePath(workspaceRoot);
 
-	const relativeFilePath = relativePath(workspaceRoot, absolutePath);
-	const latestRelativeFilePath = relativePath(workspaceRoot, latestAbsolutePath);
+	const relativeFilePath = relative(workspaceRoot, absolutePath);
+	const latestRelativeFilePath = relative(workspaceRoot, latestAbsolutePath);
 	const relativePathValue = relativeFilePath && !relativeFilePath.startsWith("..") ? relativeFilePath : absolutePath;
 	const latestRelativePathValue =
 		latestRelativeFilePath && !latestRelativeFilePath.startsWith("..") ? latestRelativeFilePath : latestAbsolutePath;
@@ -1605,10 +1508,8 @@ function makeCachedImagePreview(data: string, mimeType: string, bytes?: number):
 function loadCachedImagePreview(savedImage: SavedGeneratedImage, imagePreviewCache: Map<string, CachedImagePreview>): CachedImagePreview | undefined {
 	const cached = imagePreviewCache.get(savedImage.absolutePath);
 	if (cached) return cached;
-	const fs = getNodeFsSync();
-	if (!fs) return undefined;
 	try {
-		const buffer = fs.readFileSync(savedImage.absolutePath);
+		const buffer = readFileSync(savedImage.absolutePath);
 		const data = buffer.toString("base64");
 		const mimeType = `image/${savedImage.outputFormat}`;
 		const preview = makeCachedImagePreview(data, mimeType, buffer.byteLength);

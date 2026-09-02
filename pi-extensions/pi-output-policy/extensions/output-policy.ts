@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -171,59 +171,6 @@ const SESSION_FOLDER = "pi-output-policy";
 
 function artifactDir(ctx: ExtensionContext): string {
 	return join(piUserDir(), "kendex", "sessions", safeFileName(sessionIdForContext(ctx)), SESSION_FOLDER, "artifacts");
-}
-
-function legacyPackageArtifactDir(ctx: ExtensionContext): string {
-	return join(piUserDir(), "kendex", SESSION_FOLDER, "sessions", safeFileName(sessionIdForContext(ctx)), "artifacts");
-}
-
-function migrateLegacyPackageArtifacts(ctx: ExtensionContext): void {
-	const legacyDir = legacyPackageArtifactDir(ctx);
-	const targetDir = artifactDir(ctx);
-	if (resolve(legacyDir) === resolve(targetDir) || !existsSync(legacyDir)) return;
-	if (existsSync(targetDir)) return;
-	try {
-		mkdirSync(dirname(targetDir), { recursive: true, mode: 0o700 });
-		renameSync(legacyDir, targetDir);
-	} catch {
-		try {
-			cpSync(legacyDir, targetDir, { recursive: true, force: false });
-			rmSync(legacyDir, { recursive: true, force: true });
-		} catch {
-			// Leave legacy artifacts in place if filesystem refuses migration; new
-			// artifacts still land at targetDir.
-		}
-	}
-}
-
-function legacyProjectArtifactDirs(cwd: string): string[] {
-	const candidates = [join(cwd, ".pi", "artifacts", "output-policy")];
-	try {
-		candidates.push(join(dirname(projectSettingsPath(cwd)), "artifacts", "output-policy"));
-	} catch {
-		// Ignore project-root probing failures; the direct cwd candidate is enough.
-	}
-	return [...new Set(candidates.map((candidate) => resolve(candidate)))];
-}
-
-function migrateLegacyProjectArtifacts(ctx: ExtensionContext): void {
-	migrateLegacyPackageArtifacts(ctx);
-	const targetRoot = artifactDir(ctx);
-	for (const legacyDir of legacyProjectArtifactDirs(ctx.cwd)) {
-		if (legacyDir === resolve(targetRoot) || !existsSync(legacyDir)) continue;
-		mkdirSync(targetRoot, { recursive: true, mode: 0o700 });
-		const target = join(targetRoot, `legacy-project-artifacts-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-		try {
-			renameSync(legacyDir, target);
-		} catch {
-			try {
-				cpSync(legacyDir, target, { recursive: true, force: false });
-				rmSync(legacyDir, { recursive: true, force: true });
-			} catch {
-				// New artifacts use the global per-session path even if legacy cleanup fails.
-			}
-		}
-	}
 }
 
 function projectSettingsPath(cwd: string): string {
@@ -588,8 +535,6 @@ export function minimizeShellOutput(text: string, command: string, cwd?: string)
 
 function writeArtifact(ctx: ExtensionContext, toolName: string, toolCallId: string | undefined, text: string): { path?: string; error?: string } {
 	if (!settingBoolean("preserveFullOutput", true, ctx.cwd)) return {};
-	migrateLegacyPackageArtifacts(ctx);
-	if (projectSettingsTrustedForCwd(ctx.cwd)) migrateLegacyProjectArtifacts(ctx);
 	const safeTool = toolName.replaceAll(/[^a-z0-9_.-]+/gi, "-").slice(0, 40) || "tool";
 	const safeId = (toolCallId ?? Date.now().toString(36)).replaceAll(/[^a-z0-9_.-]+/gi, "-").slice(0, 80);
 	const candidates = [artifactDir(ctx), join(tmpdir(), "pi-output-policy", safeFileName(sessionIdForContext(ctx)))];
@@ -759,10 +704,6 @@ export default function outputPolicy(pi: ExtensionAPI): void {
 		resetModelOutputState();
 		recordProjectTrust(ctx);
 		SESSION_COUNTERS.delete(sessionIdForContext(ctx));
-		if (settingBoolean("enabled", true, ctx.cwd)) {
-			migrateLegacyPackageArtifacts(ctx);
-			if (projectSettingsTrustedForCwd(ctx.cwd)) migrateLegacyProjectArtifacts(ctx);
-		}
 	});
 
 	pi.on("turn_start", async (_event, ctx: ExtensionContext) => {

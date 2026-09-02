@@ -275,22 +275,6 @@ describe("session_start E2E (restore + replay)", () => {
 		expect(hooks.record.events).toHaveLength(0);
 	});
 
-	test("backward-compat restore: pre-1.2.1 terminal snapshot does not replay", () => {
-		const hooks = recordingHooks();
-		const persisted = fakeSnapshot({
-			id: "bg-historical",
-			status: "completed",
-			exitCode: 0,
-			notifyOnExit: true,
-		});
-		delete (persisted as Partial<BackgroundTaskSnapshot>).exitNotified;
-		delete (persisted as Partial<BackgroundTaskSnapshot>).sessionId;
-		const restored = restoredTaskFromSnapshot(persisted, { identityProbe: probeDead, sessionId: "sess-1" });
-		expect(selectMissedExits([restored])).toHaveLength(0);
-		const replayed = replayMissedExitsLifecycle([restored], hooks);
-		expect(replayed).toBe(0);
-	});
-
 	test("cross-session restore: snapshot from different sessionId does not replay", () => {
 		const hooks = recordingHooks();
 		const persisted = fakeSnapshot({

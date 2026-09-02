@@ -2,7 +2,6 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { findAppendSystemScopeRoot } from "../extensions/manager/append-system.ts";
 import { planUninstall, planUpdate, toggleItem } from "../extensions/manager/actions.ts";
 import { applyUpdateMetadata, buildInventory } from "../extensions/manager/inventory.ts";
 import { npmCachePath } from "../extensions/manager/paths.ts";
@@ -170,12 +169,6 @@ test("npm update and uninstall plans use Pi scope-local npm directories", () => 
 	expect(uninstall?.command).toBe(`(cd '${join(userPi, "npm")}' && npm uninstall @scope/updatable)`);
 });
 
-test("append-system scope root resolves only Pi npm package directories", () => {
-	const userPi = process.env.PI_CODING_AGENT_DIR!;
-	expect(findAppendSystemScopeRoot(join(userPi, "npm", "node_modules", "@scope", "pkg"))).toBe(userPi);
-	expect(findAppendSystemScopeRoot(join(rootTmp, "not-pi", "npm", "node_modules", "@scope", "pkg"))).toBeUndefined();
-});
-
 test("vendored append-system script installs and removes from Pi npm scope", () => {
 	const userPi = process.env.PI_CODING_AGENT_DIR!;
 	const packageDir = join(userPi, "npm", "node_modules", "@scope", "append-test");
@@ -194,6 +187,36 @@ test("vendored append-system script installs and removes from Pi npm scope", () 
 	expect(Bun.spawnSync(["node", script, "remove"], { env: childEnv }).exitCode).toBe(0);
 	const target = join(userPi, "APPEND_SYSTEM.md");
 	expect(existsSync(target) ? readFileSync(target, "utf8") : "").not.toContain("Append instructions");
+});
+
+test("toggle runs the package's own append-system script", () => {
+	const project = join(rootTmp, "project");
+	const projectPi = join(project, ".pi");
+	const packageDir = join(projectPi, "npm", "node_modules", "@scope", "append-toggle");
+	const settingsPath = join(projectPi, "settings.json");
+	writeJson(settingsPath, { packages: ["npm:@scope/append-toggle"] });
+	writePackage(packageDir, "@scope/append-toggle", "Append Toggle", "enabled");
+	writeJson(join(packageDir, "package.json"), {
+		name: "@scope/append-toggle",
+		pi: { extensions: ["./extensions/index.ts"], appendSystem: "instructions.md" },
+		kendex: { extensionManager: { displayName: "Append Toggle", settings: [] } },
+	});
+	writeFileSync(join(packageDir, "instructions.md"), "Toggle instructions\n");
+	mkdirSync(join(packageDir, "scripts"), { recursive: true });
+	writeFileSync(
+		join(packageDir, "scripts", "append-system.mjs"),
+		readFileSync(join(import.meta.dir, "..", "..", "pi-session-bridge", "scripts", "append-system.mjs"), "utf8"),
+	);
+	const target = join(projectPi, "APPEND_SYSTEM.md");
+	const ctx = { cwd: project, ui: { notify() {} } } as never;
+
+	const disable = inventoryWithTrust(project, true);
+	toggleItem({} as never, ctx, disable, disable.packages.find((pkg) => pkg.packageName === "@scope/append-toggle")!);
+	expect(existsSync(target) ? readFileSync(target, "utf8") : "").not.toContain("Toggle instructions");
+
+	const enable = inventoryWithTrust(project, true);
+	toggleItem({} as never, ctx, enable, enable.packages.find((pkg) => pkg.packageName === "@scope/append-toggle")!);
+	expect(readFileSync(target, "utf8")).toContain("Toggle instructions");
 });
 
 test("reads settings schemas from project git package clones", () => {

@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,6 +61,27 @@ export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () =>
 
 export function projectSettingsTrusted(cwd = process.cwd()): boolean {
 	return projectTrustRegistry().projectSettings?.get(projectSettingsPath(cwd)) === true;
+}
+
+export function piSettingsPaths(cwd = process.cwd()): string[] {
+	const user = join(userPiDir(), "settings.json");
+	const project = projectSettingsPath(cwd);
+	return projectSettingsTrusted(cwd) ? [user, project] : [user];
+}
+
+export function readPackageConfig(packageId: string, cwd?: string): Record<string, unknown> {
+	const merged: Record<string, unknown> = {};
+	for (const settingsPath of piSettingsPaths(cwd)) {
+		if (!existsSync(settingsPath)) continue;
+		try {
+			const parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
+			const config = parsed?.kendex?.extensionManager?.config?.[packageId];
+			if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
+		} catch {
+			// Ignore malformed optional manager config.
+		}
+	}
+	return merged;
 }
 
 function normalizeDir(path: string): string {

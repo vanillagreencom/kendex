@@ -4,7 +4,7 @@ import {
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
 import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from "@earendil-works/pi-tui";
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { frameGlyphs, glyphs } from "./glyphs.js";
@@ -74,24 +74,6 @@ function sessionStoreDir(ctx: ExtensionContext): string {
 	return join(piUserDir(), "kendex", "sessions", safeFileName(sessionIdForContext(ctx)), SESSION_FOLDER);
 }
 
-function legacyPackageSessionStoreDir(ctx: ExtensionContext): string {
-	return join(piUserDir(), "kendex", SESSION_FOLDER, "sessions", safeFileName(sessionIdForContext(ctx)));
-}
-
-function migrateLegacyPackageStore(ctx: ExtensionContext): void {
-	const legacyDir = legacyPackageSessionStoreDir(ctx);
-	const targetDir = sessionStoreDir(ctx);
-	if (resolve(legacyDir) === resolve(targetDir) || !existsSync(legacyDir)) return;
-	if (existsSync(targetDir)) return;
-	try {
-		mkdirSync(dirname(targetDir), { recursive: true, mode: 0o700 });
-		renameSync(legacyDir, targetDir);
-	} catch {
-		// Leave legacy tree in place if filesystem refuses migration; new state
-		// still lands at targetDir on first stash.
-	}
-}
-
 function projectSettingsPath(cwd: string): string {
 	let current = resolve(cwd);
 	while (true) {
@@ -146,19 +128,23 @@ function piSettingsPaths(cwd = process.cwd()): string[] {
 	return projectSettingsTrustedForCwd(cwd) ? [user, project] : [user];
 }
 
-function readkendexConfig(cwd?: string): kendexConfig {
-	const merged: kendexConfig = {};
-	for (const path of piSettingsPaths(cwd)) {
-		if (!existsSync(path)) continue;
+export function readPackageConfig(packageId: string, cwd?: string): Record<string, unknown> {
+	const merged: Record<string, unknown> = {};
+	for (const settingsPath of piSettingsPaths(cwd)) {
+		if (!existsSync(settingsPath)) continue;
 		try {
-			const parsed = JSON.parse(readFileSync(path, "utf8"));
-			const config = parsed?.kendex?.extensionManager?.config?.[PACKAGE_ID];
+			const parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
+			const config = parsed?.kendex?.extensionManager?.config?.[packageId];
 			if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
 		} catch {
 			// Ignore malformed optional manager config.
 		}
 	}
 	return merged;
+}
+
+function readkendexConfig(cwd?: string): kendexConfig {
+	return readPackageConfig(PACKAGE_ID, cwd) as kendexConfig;
 }
 
 function settingNumber(key: string, fallback: number, cwd?: string): number {
@@ -177,23 +163,6 @@ function settingString(key: string, fallback: string, cwd?: string): string {
 	return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
 }
 
-function projectRoot(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		if (
-			existsSync(join(current, ".git")) ||
-			existsSync(join(current, ".kendex-lock.json")) ||
-			existsSync(join(current, ".pi")) ||
-			existsSync(join(current, ".agents"))
-		) {
-			return current;
-		}
-		const parent = dirname(current);
-		if (parent === current) return resolve(cwd);
-		current = parent;
-	}
-}
-
 function configuredStoreFile(ctx: ExtensionContext): string {
 	// Historical config accepted a project-local path. Treat it as a file name
 	// only so prompt text never lands back in the repository's .pi directory.
@@ -202,29 +171,7 @@ function configuredStoreFile(ctx: ExtensionContext): string {
 }
 
 function storePath(ctx: ExtensionContext): string {
-	migrateLegacyPackageStore(ctx);
 	return join(sessionStoreDir(ctx), configuredStoreFile(ctx));
-}
-
-function legacyProjectStorePath(ctx: ExtensionContext): string {
-	return join(projectRoot(ctx.cwd), ".pi", configuredStoreFile(ctx));
-}
-
-function migrateLegacyProjectStore(ctx: ExtensionContext, nextPath: string): void {
-	const legacyPath = legacyProjectStorePath(ctx);
-	if (!existsSync(legacyPath)) return;
-	const legacyItems = loadItems(legacyPath);
-	if (legacyItems.length === 0) return;
-	const existingItems = loadItems(nextPath);
-	const seen = new Set(existingItems.map((item) => item.id));
-	const merged = [...existingItems, ...legacyItems.filter((item) => !seen.has(item.id))].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-	saveItems(nextPath, merged);
-	try {
-		unlinkSync(legacyPath);
-	} catch {
-		// Migration succeeded; leave an undeletable legacy file alone rather than
-		// failing prompt stash startup.
-	}
 }
 
 function loadItems(path: string): StashItem[] {
@@ -262,7 +209,6 @@ function makeId(): string {
 
 function stashPrompt(ctx: ExtensionContext, text: string): number {
 	const path = storePath(ctx);
-	if (projectSettingsTrustedForCwd(ctx.cwd)) migrateLegacyProjectStore(ctx, path);
 	const now = new Date().toISOString();
 	const loaded = loadItems(path);
 	const existing = settingBoolean("deduplicate", true, ctx.cwd) ? loaded.filter((item) => item.text !== text) : loaded;
@@ -362,7 +308,6 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 
 	const listRows = Math.max(1, Math.floor(settingNumber("listRows", LIST_ROWS, ctx.cwd)));
 	const path = storePath(ctx);
-	if (projectSettingsTrustedForCwd(ctx.cwd)) migrateLegacyProjectStore(ctx, path);
 	let items = loadItems(path);
 	if (items.length === 0) {
 		ctx.ui.notify("Prompt stash is empty", "info");
@@ -592,7 +537,6 @@ export default function promptStash(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		recordProjectTrust(ctx);
-		if (enabledForContext(ctx) && projectSettingsTrustedForCwd(ctx.cwd)) migrateLegacyProjectStore(ctx, storePath(ctx));
 	});
 
 	const shortcut = settingString("shortcut", DEFAULT_SHORTCUT);

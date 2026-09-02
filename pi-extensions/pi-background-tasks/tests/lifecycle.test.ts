@@ -127,7 +127,7 @@ describe("restoredTaskFromSnapshot", () => {
 		expect(selectMissedExits([restored])).toHaveLength(0);
 	});
 
-	test("pre-1.2.2 snapshot with no procIdent degrades to PID-only liveness", () => {
+	test("snapshot with no procIdent degrades to PID-only liveness", () => {
 		const snapshot = fakeSnapshot({ status: "running", pid: 4242 });
 		delete (snapshot as Partial<BackgroundTaskSnapshot>).procIdent;
 		const restored = restoredTaskFromSnapshot(snapshot, { identityProbe: probeAlive, sessionId: "sess-1" });
@@ -140,14 +140,6 @@ describe("restoredTaskFromSnapshot", () => {
 		expect(restored.status).toBe("completed");
 		expect(restored.exitNotified).toBe(true);
 		expect(restored.stopReason).toBeNull();
-	});
-
-	test("backward-compat: terminal snapshot without exitNotified is treated as notified", () => {
-		const snapshot = fakeSnapshot({ status: "completed", exitCode: 0 });
-		delete (snapshot as Partial<BackgroundTaskSnapshot>).exitNotified;
-		const restored = restoredTaskFromSnapshot(snapshot, { identityProbe: probeDead });
-		expect(restored.exitNotified).toBe(true);
-		expect(selectMissedExits([restored])).toHaveLength(0);
 	});
 
 	test("terminal-but-explicitly-never-notified task replays exit", () => {

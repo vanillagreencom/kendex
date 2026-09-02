@@ -3,7 +3,6 @@ import type { SessionManager, ExtensionCommandContext, ExtensionContext } from "
 export const INSTALL_SYMBOL = Symbol.for("kendex.pi-session-manager.installed");
 export const KENDEX_MODAL_LOCK_SYMBOL = Symbol.for("kendex.pi.modal-lock");
 export const PACKAGE_ID = "@vanillagreen/pi-session-manager";
-export const LEGACY_STATUS_KEY = "session-manager";
 export const DEFAULT_SHORTCUT = "f1";
 export const DEFAULT_WIDTH = 112;
 export const DEFAULT_ROWS = 12;

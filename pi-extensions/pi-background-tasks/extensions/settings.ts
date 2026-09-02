@@ -63,19 +63,23 @@ function piSettingsPaths(cwd = process.cwd()): string[] {
 	return projectSettingsTrusted(project) ? [user, project] : [user];
 }
 
-export function readkendexConfig(cwd?: string): kendexConfig {
-	const merged: kendexConfig = {};
-	for (const path of piSettingsPaths(cwd)) {
-		if (!existsSync(path)) continue;
+export function readPackageConfig(packageId: string, cwd?: string): Record<string, unknown> {
+	const merged: Record<string, unknown> = {};
+	for (const settingsPath of piSettingsPaths(cwd)) {
+		if (!existsSync(settingsPath)) continue;
 		try {
-			const parsed = JSON.parse(readFileSync(path, "utf8"));
-			const config = parsed?.kendex?.extensionManager?.config?.[CONFIG_ID];
+			const parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
+			const config = parsed?.kendex?.extensionManager?.config?.[packageId];
 			if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
 		} catch {
-			// Ignore malformed optional manager config; keep safe defaults.
+			// Ignore malformed optional manager config.
 		}
 	}
 	return merged;
+}
+
+export function readkendexConfig(cwd?: string): kendexConfig {
+	return readPackageConfig(CONFIG_ID, cwd) as kendexConfig;
 }
 
 export function settingNumber(key: string, fallback: number, cwd?: string): number {

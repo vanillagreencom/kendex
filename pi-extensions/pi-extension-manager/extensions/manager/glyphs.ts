@@ -1,18 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { expandHome } from "./paths.js";
 
 export type GlyphStyle = "unicode" | "ascii";
 export type GlobalGlyphStyleOverride = "inherit" | GlyphStyle;
 
 const LOCAL_CONFIG_ID = "@vanillagreen/pi-extension-manager";
 const GLOBAL_CONFIG_ID = "@vanillagreen/pi-tool-renderer";
-
-function expandHome(input: string): string {
-	if (input === "~") return homedir();
-	if (input.startsWith("~/")) return join(homedir(), input.slice(2));
-	return input;
-}
 
 function projectSettingsPath(cwd: string): string {
 	let current = resolve(cwd);

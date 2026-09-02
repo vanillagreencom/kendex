@@ -612,11 +612,9 @@ export function formatToolCall(
 		case "bash": {
 			const command = (args.command as string) || "...";
 			const compactCommand = command.replace(/\s+/g, " ").trim();
-			const preview = /pi-(?:sub)?agents-tmux\/sessions\/.*\/outbox\//.test(compactCommand)
-				? "complete_subagent (legacy shell completion)"
-				: /^sleep\s+\d+\b/.test(compactCommand)
-					? compactCommand.replace(/^sleep\s+/, "wait ")
-					: oneLinePreview(compactCommand, 60);
+			const preview = /^sleep\s+\d+\b/.test(compactCommand)
+				? compactCommand.replace(/^sleep\s+/, "wait ")
+				: oneLinePreview(compactCommand, 60);
 			return themeFg("muted", "$ ") + themeFg("toolOutput", preview);
 		}
 		case "read": {

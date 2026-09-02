@@ -14,7 +14,6 @@ import {
 	completionPath,
 	hasSavedPaneSession,
 	inboxDir,
-	legacyProjectRuntimeDirs,
 	paneSessionPath,
 } from "./paths.js";
 import { randomHex } from "./random.js";
@@ -33,7 +32,6 @@ const PI_BRIDGE_CHILD_ROLE_ENV = "PI_BRIDGE_CHILD_ROLE";
 const PI_BRIDGE_SUBAGENT_ROLE = "subagent";
 export const PI_SUBAGENT_CHILD_PANE_ENV = "PI_SUBAGENT_CHILD_PANE";
 import {
-	legacyPackageSessionRuntimeDir,
 	piUserDir,
 	projectSettingsPath,
 	selectedEffortForAgent,
@@ -1049,59 +1047,6 @@ export async function restoreArchivedPaneSession(runtimeRoot: string, agentName:
 	await fs.promises.mkdir(path.dirname(paneSessionPath(runtimeRoot, agentName)), { recursive: true, mode: 0o700 });
 	await fs.promises.copyFile(selected, paneSessionPath(runtimeRoot, agentName));
 	return selected;
-}
-
-async function stopLegacyPanes(legacyRoot: string): Promise<void> {
-	try {
-		const content = await fs.promises.readFile(path.join(legacyRoot, "panes.json"), "utf-8");
-		const registry = JSON.parse(content) as PaneRegistry;
-		for (const entry of Object.values(registry)) {
-			if (entry.paneId) await tmux(["kill-pane", "-t", entry.paneId]);
-		}
-	} catch {
-		// Best-effort only. The migration still moves files out of the project.
-	}
-}
-
-export async function migrateLegacyProjectRuntime(cwd: string, runtimeRoot: string): Promise<void> {
-	for (const legacyRoot of legacyProjectRuntimeDirs(cwd)) {
-		if (legacyRoot === path.resolve(runtimeRoot) || !fs.existsSync(legacyRoot)) continue;
-		await stopLegacyPanes(legacyRoot);
-		await fs.promises.mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
-		const target = path.join(runtimeRoot, `legacy-project-runtime-${Date.now()}-${randomHex(8)}`);
-		try {
-			await fs.promises.rename(legacyRoot, target);
-		} catch {
-			try {
-				await fs.promises.cp(legacyRoot, target, { recursive: true, force: false });
-				await fs.promises.rm(legacyRoot, { recursive: true, force: true });
-			} catch {
-				// If the filesystem refuses migration, leave the legacy tree in place
-				// rather than breaking startup. New runtime state still uses runtimeRoot.
-			}
-		}
-	}
-}
-
-// Migrate from the per-package layout `kendex/pi-agents-tmux/sessions/<id>/`
-// to the per-session layout `kendex/sessions/<id>/pi-agents-tmux/`. Lazy: runs
-// on session_start so live sessions keep their pane registry/inbox/transcripts.
-export async function migrateLegacyPackageRuntime(sessionId: string, runtimeRoot: string): Promise<void> {
-	const legacyRoot = legacyPackageSessionRuntimeDir(sessionId);
-	if (legacyRoot === path.resolve(runtimeRoot) || !fs.existsSync(legacyRoot)) return;
-	if (fs.existsSync(runtimeRoot) && fs.readdirSync(runtimeRoot).length > 0) return;
-	await fs.promises.mkdir(path.dirname(runtimeRoot), { recursive: true, mode: 0o700 });
-	try {
-		await fs.promises.rename(legacyRoot, runtimeRoot);
-	} catch {
-		try {
-			await fs.promises.cp(legacyRoot, runtimeRoot, { recursive: true, force: false });
-			await fs.promises.rm(legacyRoot, { recursive: true, force: true });
-		} catch {
-			// Leave legacy tree alone if filesystem refuses migration; new state still
-			// lands at runtimeRoot.
-		}
-	}
 }
 
 export async function runPersistentPaneAgent(

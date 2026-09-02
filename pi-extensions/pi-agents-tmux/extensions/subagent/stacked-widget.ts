@@ -30,7 +30,6 @@ interface StackHandle {
 interface MiniDashboardRegistry {
 	entries: Map<string, MiniDashboardEntry>;
 	handles: Record<MiniDashboardPlacement, StackHandle>;
-	legacyCleared: Set<string>;
 	nextSequence: number;
 }
 
@@ -50,7 +49,6 @@ function registry(): MiniDashboardRegistry {
 				aboveEditor: { active: false },
 				belowEditor: { active: false },
 			},
-			legacyCleared: new Set(),
 			nextSequence: 1,
 		};
 		globals[REGISTRY_SYMBOL] = value;
@@ -132,11 +130,6 @@ export function setMiniDashboardWidget(
 	options: { placement?: MiniDashboardPlacement } = {},
 ): void {
 	const value = registry();
-	if (!value.legacyCleared.has(key)) {
-		ctx.ui.setWidget(key, undefined);
-		value.legacyCleared.add(key);
-	}
-
 	const previous = value.entries.get(key);
 	const previousPlacement = previous?.placement;
 	if (!ctx.hasUI || !factory) {

@@ -127,6 +127,10 @@ export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: b
 		const args = ["uninstall", plan.method.npmName];
 		const prepared = ensureWorkingDir(plan.method.cwd);
 		if (!prepared.ok) return prepared;
+		// Before npm deletes the package tree: npm 7+ does not reliably run a
+		// removed package's own `preuninstall`, and the script that owns the
+		// APPEND_SYSTEM.md block goes with the tree.
+		removeAppendSystemBlockForUninstall(plan.item);
 		const result = runCommand(plan.method.command, [...plan.method.argsPrefix, ...args], { cwd: plan.method.cwd });
 		if (result.error) return { ok: false, message: `Failed to launch ${plan.method.command}: ${stringifyError(result.error)}` };
 		if ((result.status ?? 1) !== 0) {
@@ -134,15 +138,11 @@ export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: b
 			return { ok: false, message: `npm uninstall failed: ${stderr}` };
 		}
 		const stripped = removePackageEntryFromSettings(plan.item, inventory.settingsFiles);
-		// Backstop: npm's preuninstall script should have removed the block,
-		// but call removeAppendSystemBlockForUninstall too — idempotent if the
-		// preuninstall already won the race.
-		removeAppendSystemBlockForUninstall(plan.item);
 		return { ok: true, message: `npm uninstall ${plan.method.npmName} succeeded${stripped ? "; removed Pi settings entry." : " (no settings entry to remove)."}` };
 	}
 	const stripped = removePackageEntryFromSettings(plan.item, inventory.settingsFiles);
-	// Orphan branch: settings.json strip is the only underlying cleanup, so
-	// remove any APPEND_SYSTEM.md block keyed by this package name as well.
+	// Orphan branch: the settings.json strip is the only other cleanup, so
+	// remove this package's APPEND_SYSTEM.md block too.
 	removeAppendSystemBlockForUninstall(plan.item);
 	return stripped
 		? { ok: true, message: `Removed ${plan.item.sourceName} from ${plan.item.scope} settings.json.` }

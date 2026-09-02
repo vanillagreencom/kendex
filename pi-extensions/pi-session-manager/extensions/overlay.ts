@@ -1,6 +1,6 @@
 import type { ExtensionAPI, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
 import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from "@earendil-works/pi-tui";
-import { acquirekendexModalLock, clearLegacySessionStatus, deleteSessionFile, loadSessionsForScope, renameSession } from "./actions.js";
+import { acquirekendexModalLock, deleteSessionFile, loadSessionsForScope, renameSession } from "./actions.js";
 import { currentModelInfo, modelLabel, sameModel, sessionModelInfo } from "./model.js";
 import { canonicalPath, samePath } from "./paths.js";
 import { buildSnippet, matchSession, parseQuery, styleSearchMatches } from "./search.js";
@@ -238,7 +238,6 @@ class SessionManagerOverlay implements Focusable {
 		try {
 			if (this.isCurrent(target)) {
 				this.pi.setSessionName(next);
-				clearLegacySessionStatus(this.ctx);
 			} else {
 				renameSession(target.path, next);
 			}

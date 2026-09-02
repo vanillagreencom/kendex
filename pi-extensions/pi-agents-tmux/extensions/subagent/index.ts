@@ -78,8 +78,6 @@ import {
 	ensurePersistentPane,
 	execCapture,
 	createCachedPiBridgeResolver,
-	migrateLegacyPackageRuntime,
-	migrateLegacyProjectRuntime,
 	PI_SUBAGENT_CHILD_PANE_ENV,
 	paneExists,
 	queuePersistentPaneTask,
@@ -164,7 +162,6 @@ import {
 	runtimeSessionId,
 	sessionRuntimeDir,
 	recordProjectTrust,
-	projectSettingsTrustedForCwd,
 	settingBoolean,
 	settingNumber,
 } from "./settings.js";
@@ -1434,8 +1431,6 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		ctx.ui.setStatus("agent", undefined);
-		await migrateLegacyPackageRuntime(runtimeSessionId(ctx), runtimeRoot);
-		if (projectSettingsTrustedForCwd(ctx.cwd)) await migrateLegacyProjectRuntime(ctx.cwd, runtimeRoot);
 		await restoreRuntimeSnapshot(ctx, runtimeRoot);
 		try {
 			await withDashboardBatch(async () => {

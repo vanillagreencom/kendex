@@ -312,13 +312,6 @@ test("web_fetch single-URL behavior is unchanged when textMaxCharacters omitted"
 	assert.match(text, /Preview returned \(4000\/4005 chars shown\)/);
 });
 
-test("web_fetch backwards-compatible positional maxCharacters argument still works", () => {
-	const stored = makeStored(1, 4005);
-	const result = buildWebFetchToolResult(stored, "http", 4000);
-	const text = textOfResult(result);
-	assert.match(text, /Preview returned \(4000\/4005 chars shown\)/);
-});
-
 test("web_fetch extracts local PDF file paths into session storage", async () => {
 	clearMemoryForTests();
 	const dir = mkdtempSync(join(tmpdir(), "pi-web-tools-local-pdf-"));

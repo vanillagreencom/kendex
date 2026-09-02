@@ -47,9 +47,6 @@ export function sessionRuntimeDir(sessionId: string): string {
 	return path.join(piUserDir(), "kendex", "sessions", safeFileName(sessionId), PACKAGE_ID);
 }
 
-export function legacyPackageSessionRuntimeDir(sessionId: string): string {
-	return path.join(piUserDir(), "kendex", PACKAGE_ID, "sessions", safeFileName(sessionId));
-}
 
 export function runtimeDirForContext(ctx: ExtensionContext): string {
 	return sessionRuntimeDir(runtimeSessionId(ctx));
@@ -99,7 +96,7 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 	return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
 }
 
-export function projectSettingsTrustedForCwd(cwd = process.cwd()): boolean {
+function projectSettingsTrustedForCwd(cwd = process.cwd()): boolean {
 	return projectSettingsTrusted(projectSettingsPath(cwd));
 }
 
@@ -109,19 +106,23 @@ export function piSettingsPaths(cwd = process.cwd()): string[] {
 	return projectSettingsTrustedForCwd(cwd) ? [user, project] : [user];
 }
 
-export function readkendexConfig(cwd?: string): kendexConfig {
-	const merged: kendexConfig = {};
+export function readPackageConfig(packageId: string, cwd?: string): Record<string, unknown> {
+	const merged: Record<string, unknown> = {};
 	for (const settingsPath of piSettingsPaths(cwd)) {
 		if (!fs.existsSync(settingsPath)) continue;
 		try {
 			const parsed = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
-			const config = parsed?.kendex?.extensionManager?.config?.[CONFIG_ID];
+			const config = parsed?.kendex?.extensionManager?.config?.[packageId];
 			if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
 		} catch {
 			// Ignore malformed optional manager config.
 		}
 	}
 	return merged;
+}
+
+export function readkendexConfig(cwd?: string): kendexConfig {
+	return readPackageConfig(CONFIG_ID, cwd) as kendexConfig;
 }
 
 export function settingNumber(key: string, fallback: number, cwd?: string): number {

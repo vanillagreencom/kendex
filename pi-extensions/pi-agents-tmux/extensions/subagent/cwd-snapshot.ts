@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { stringifyError } from "./format.js";
 import type { CwdSnapshot } from "./types.js";
@@ -9,10 +8,7 @@ type ExecFileProcess = typeof execFile;
 let execFileProcess: ExecFileProcess = execFile;
 const GIT_SNAPSHOT_TIMEOUT_MS = 5_000;
 const GIT_SNAPSHOT_MAX_BUFFER = 256 * 1024;
-const GIT_INDEX_DEBUG_MAX_BUFFER = 8 * 1024 * 1024;
-const DIRTY_SCAN_DEADLINE_MS = 750;
-const DIRTY_SCAN_MAX_ENTRIES = 2_000;
-const DIRTY_SCAN_MAX_LSTAT_DIAGNOSTICS = 5;
+const GIT_STATUS_MAX_BUFFER = 8 * 1024 * 1024;
 const ANSI_ESCAPE_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g;
 
 export function setGitExecFileForTests(execFileOverride?: ExecFileProcess): void {
@@ -137,191 +133,35 @@ function formatStatusLine(prefix: string, filePath: string): string | undefined 
 	return safePath ? `${prefix} ${safePath}` : undefined;
 }
 
-function stagedStatusLines(raw: string | undefined): string[] {
-	const parts = splitZ(raw);
+function porcelainStatusLines(raw: string | undefined): string[] {
+	// `git status --porcelain -z` emits NUL-terminated `XY <path>` records; a
+	// rename or copy is followed by one more record holding the origin path.
+	const fields = splitZ(raw);
 	const lines: string[] = [];
-	for (let i = 0; i + 1 < parts.length; i += 2) {
-		const status = parts[i]?.trim().charAt(0) || "M";
-		const line = formatStatusLine(`${status} `, parts[i + 1] ?? "");
+	for (let i = 0; i < fields.length; i += 1) {
+		const record = fields[i] ?? "";
+		if (record.length < 4) continue;
+		const code = record.slice(0, 2);
+		const filePath = record.slice(3);
+		if (code.includes("R") || code.includes("C")) {
+			const origin = fields[i + 1];
+			i += 1;
+			const line = origin === undefined
+				? formatStatusLine(code, filePath)
+				: formatStatusLine(code, `${origin} -> ${filePath}`);
+			if (line) lines.push(line);
+			continue;
+		}
+		const line = formatStatusLine(code, filePath);
 		if (line) lines.push(line);
-	}
-	return lines;
-}
-
-interface IndexDebugEntry {
-	path: string;
-	ctimeSec: number;
-	ctimeNsec: number;
-	mtimeSec: number;
-	mtimeNsec: number;
-	size: number;
-}
-
-interface LstatDiffResult {
-	deadlineExpired: boolean;
-	differs: boolean;
-}
-
-function parseIndexDebug(raw: string | undefined, addDiagnostic: (diagnostic: string) => void): IndexDebugEntry[] {
-	if (!raw) return [];
-	const entries: IndexDebugEntry[] = [];
-	let offset = 0;
-	while (offset < raw.length) {
-		const nul = raw.indexOf("\0", offset);
-		if (nul < 0) {
-			addDiagnostic(`cwdSnapshot dirty scan incomplete: unable to parse git ls-files --debug output after ${entries.length} tracked paths`);
-			break;
-		}
-		const filePath = raw.slice(offset, nul);
-		offset = nul + 1;
-		const meta = raw.slice(offset).match(/^  ctime: (\d+):(\d+)\n  mtime: (\d+):(\d+)\n  dev: .*\n  uid: .*\n  size: (\d+)\tflags: .*(?:\n|$)/);
-		if (!meta) {
-			const safePath = safeStatusPath(filePath) || "(empty path)";
-			addDiagnostic(`cwdSnapshot dirty scan incomplete: unable to parse git ls-files --debug metadata for ${safePath} after ${entries.length} tracked paths`);
-			break;
-		}
-		entries.push({
-			path: filePath,
-			ctimeSec: Number(meta[1]),
-			ctimeNsec: Number(meta[2]),
-			mtimeSec: Number(meta[3]),
-			mtimeNsec: Number(meta[4]),
-			size: Number(meta[5]),
-		});
-		offset += meta[0].length;
-	}
-	return entries;
-}
-
-async function lstatDiffersFromIndex(
-	cwd: string,
-	entry: IndexDebugEntry,
-	addDiagnostic: (diagnostic: string) => void,
-	deadlineExpired: () => boolean,
-): Promise<LstatDiffResult> {
-	const components = trackedPathComponents(entry.path);
-	if (!components) {
-		const safePath = safeStatusPath(entry.path) || "(empty path)";
-		addDiagnostic(`cwdSnapshot dirty scan incomplete: unsafe tracked path ${safePath}; skipping lstat probe`);
-		return { deadlineExpired: false, differs: false };
-	}
-	const parentState = await trackedPathParentsSafe(cwd, entry.path, components, addDiagnostic, deadlineExpired);
-	if (parentState === "deadline") return { deadlineExpired: true, differs: false };
-	if (parentState === "unsafe") return { deadlineExpired: false, differs: false };
-	if (deadlineExpired()) return { deadlineExpired: true, differs: false };
-	try {
-		const lstat = await fs.promises.lstat(path.join(cwd, ...components), { bigint: true });
-		const mtimeSec = Number(lstat.mtimeNs / 1_000_000_000n);
-		const mtimeNsec = Number(lstat.mtimeNs % 1_000_000_000n);
-		const ctimeSec = Number(lstat.ctimeNs / 1_000_000_000n);
-		const ctimeNsec = Number(lstat.ctimeNs % 1_000_000_000n);
-		const differs = Number(lstat.size) !== entry.size
-			|| mtimeSec !== entry.mtimeSec
-			|| mtimeNsec !== entry.mtimeNsec
-			|| ctimeSec !== entry.ctimeSec
-			|| ctimeNsec !== entry.ctimeNsec;
-		return { deadlineExpired: false, differs };
-	} catch (error) {
-		const safePath = safeStatusPath(entry.path) || "(empty path)";
-		addDiagnostic(`cwdSnapshot dirty scan incomplete: unable to lstat tracked path ${safePath}: ${stringifyError(error)}`);
-		return { deadlineExpired: false, differs: false };
-	}
-}
-
-function trackedPathComponents(filePath: string): string[] | undefined {
-	if (!filePath || filePath.includes("\0") || path.posix.isAbsolute(filePath)) return undefined;
-	if (path.win32.isAbsolute(filePath) || filePath.includes("\\")) return undefined;
-	const components = filePath.split("/");
-	if (components.some((component) => component === "" || component === "." || component === "..")) return undefined;
-	return components;
-}
-
-async function trackedPathParentsSafe(
-	cwd: string,
-	filePath: string,
-	components: string[],
-	addDiagnostic: (diagnostic: string) => void,
-	deadlineExpired: () => boolean,
-): Promise<"safe" | "unsafe" | "deadline"> {
-	let current = cwd;
-	for (let index = 0; index < components.length - 1; index += 1) {
-		current = path.join(current, components[index]!);
-		const safePath = safeStatusPath(filePath) || "(empty path)";
-		const safeParent = safeStatusPath(components.slice(0, index + 1).join("/")) || "(cwd)";
-		if (deadlineExpired()) return "deadline";
-		try {
-			const parentLstat = await fs.promises.lstat(current, { bigint: true });
-			if (parentLstat.isSymbolicLink()) {
-				addDiagnostic(`cwdSnapshot dirty scan incomplete: tracked path ${safePath} is under symlinked parent ${safeParent}; skipping lstat probe`);
-				return "unsafe";
-			}
-		} catch (error) {
-			addDiagnostic(`cwdSnapshot dirty scan incomplete: unable to lstat parent ${safeParent} for tracked path ${safePath}: ${stringifyError(error)}`);
-			return "unsafe";
-		}
-	}
-	return "safe";
-}
-
-async function unstagedModifiedStatusLines(cwd: string, rawDebug: string | undefined, deleted: Set<string>, addDiagnostic: (diagnostic: string) => void): Promise<string[]> {
-	const entries = parseIndexDebug(rawDebug, addDiagnostic);
-	const lines: string[] = [];
-	const deadline = Date.now() + DIRTY_SCAN_DEADLINE_MS;
-	let checked = 0;
-	let lstatDiagnostics = 0;
-	let deadlineDiagnosticEmitted = false;
-	const addLstatDiagnostic = (diagnostic: string) => {
-		lstatDiagnostics += 1;
-		if (lstatDiagnostics <= DIRTY_SCAN_MAX_LSTAT_DIAGNOSTICS) addDiagnostic(diagnostic);
-	};
-	const deadlineExpired = (): boolean => {
-		if (Date.now() < deadline) return false;
-		if (!deadlineDiagnosticEmitted) {
-			deadlineDiagnosticEmitted = true;
-			addDiagnostic(`cwdSnapshot dirty scan incomplete: checked ${checked} tracked paths before ${DIRTY_SCAN_DEADLINE_MS}ms deadline`);
-		}
-		return true;
-	};
-	for (const entry of entries) {
-		if (checked >= DIRTY_SCAN_MAX_ENTRIES) {
-			addDiagnostic(`cwdSnapshot dirty scan incomplete: checked ${checked} tracked paths; ${entries.length - checked} skipped by file cap`);
-			break;
-		}
-		if (deadlineExpired()) break;
-		checked += 1;
-		if (deleted.has(entry.path)) continue;
-		const diff = await lstatDiffersFromIndex(cwd, entry, addLstatDiagnostic, deadlineExpired);
-		if (diff.deadlineExpired) break;
-		if (!diff.differs) continue;
-		const line = formatStatusLine(" M", entry.path);
-		if (line) lines.push(line);
-	}
-	if (lstatDiagnostics > DIRTY_SCAN_MAX_LSTAT_DIAGNOSTICS) {
-		addDiagnostic(`cwdSnapshot dirty scan incomplete: ${lstatDiagnostics - DIRTY_SCAN_MAX_LSTAT_DIAGNOSTICS} additional tracked path lstat diagnostics omitted`);
 	}
 	return lines;
 }
 
 async function readDirtyStatus(cwd: string, addDiagnostic: (diagnostic: string) => void): Promise<string | undefined> {
-	// Avoid `git status` / worktree content hashing here: clean/process filters from
-	// local .gitattributes can execute arbitrary commands. This lstat-based view is
-	// intentionally conservative and uses only index metadata, directory listing,
-	// and index-vs-HEAD diff metadata.
-	const [stagedRaw, debugRaw, deletedRaw, untrackedRaw] = await Promise.all([
-		readGit(cwd, ["diff", "--cached", "--name-status", "-z", "--no-ext-diff", "--no-textconv", "--no-renames", "--"], addDiagnostic),
-		readGit(cwd, ["ls-files", "--debug", "-z"], addDiagnostic, { maxBuffer: GIT_INDEX_DEBUG_MAX_BUFFER }),
-		readGit(cwd, ["ls-files", "--deleted", "-z"], addDiagnostic),
-		readGit(cwd, ["ls-files", "--others", "--exclude-standard", "-z"], addDiagnostic),
-	]);
-	if (stagedRaw == null || debugRaw == null || deletedRaw == null || untrackedRaw == null) return undefined;
-	const deleted = new Set(splitZ(deletedRaw));
-	const lines = [
-		...stagedStatusLines(stagedRaw),
-		...(await unstagedModifiedStatusLines(cwd, debugRaw, deleted, addDiagnostic)),
-		...Array.from(deleted).map((filePath) => formatStatusLine(" D", filePath)).filter((line): line is string => Boolean(line)),
-		...splitZ(untrackedRaw).map((filePath) => formatStatusLine("??", filePath)).filter((line): line is string => Boolean(line)),
-	];
-	return lines.join("\n");
+	const raw = await readGit(cwd, ["status", "--porcelain", "-z", "--untracked-files=all"], addDiagnostic, { maxBuffer: GIT_STATUS_MAX_BUFFER });
+	if (raw == null) return undefined;
+	return porcelainStatusLines(raw).join("\n");
 }
 
 export async function snapshotCwdGitState(cwd: string | undefined, addDiagnostic: (diagnostic: string) => void): Promise<CwdSnapshot | undefined> {
@@ -331,8 +171,6 @@ export async function snapshotCwdGitState(cwd: string | undefined, addDiagnostic
 	if (insideWorkTree !== "true") return undefined;
 	// Snapshot commands are read-only and run with --no-optional-locks plus GIT_OPTIONAL_LOCKS=0
 	// so agent triage never creates .git/index.lock or blocks concurrent worker git operations.
-	// Dirty-state collection deliberately avoids `git status` so repository clean/process
-	// filters cannot execute during needs_completion triage.
 	const [rawHead, dirtyStatus, lastCommitSubject] = await Promise.all([
 		readGit(resolvedCwd, ["rev-parse", "HEAD"], addDiagnostic),
 		readDirtyStatus(resolvedCwd, addDiagnostic),

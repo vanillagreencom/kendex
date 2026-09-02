@@ -102,18 +102,15 @@ export interface ConfigurationSource {
 	path?: string;
 	userPath: string;
 	projectPath: string;
-	legacyKeys: string[];
 }
 
 // Walks user → project settings.json files (matching readkendexConfig order)
-// and reports which file's `mode` key won the merge, plus any legacy keys
-// (`enabled`, `defaultMode`) present alongside `mode`. Project wins on tie.
+// and reports which file's `mode` key won the merge. Project wins on tie.
 export function configurationSource(cwd?: string): ConfigurationSource {
 	const userDir = resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
 	const userPath = join(userDir, "settings.json");
 	const projectPath = projectSettingsPath(cwd ?? process.cwd());
 	const activePaths = new Set(piSettingsPaths(cwd));
-	const legacyKeys = new Set<string>();
 	let sourcePath: string | undefined;
 	let sourceLabel: "user" | "project" | "default" = "default";
 	for (const [label, path] of [["user", userPath], ["project", projectPath]] as const) {
@@ -127,14 +124,11 @@ export function configurationSource(cwd?: string): ConfigurationSource {
 				sourceLabel = label;
 				sourcePath = path;
 			}
-			for (const key of ["enabled", "defaultMode"]) {
-				if (key in config) legacyKeys.add(key);
-			}
 		} catch {
 			// Ignore malformed optional manager config.
 		}
 	}
-	return { source: sourceLabel, path: sourcePath, userPath, projectPath, legacyKeys: [...legacyKeys] };
+	return { source: sourceLabel, path: sourcePath, userPath, projectPath };
 }
 
 // Best-effort read of the pi-claude-bridge extension-manager setting that

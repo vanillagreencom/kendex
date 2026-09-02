@@ -85,7 +85,6 @@ function ansiGreen(text: string): string { return `${ANSI_GREEN_FG}${text}${ANSI
 function ansiYellow(text: string): string { return `${ANSI_YELLOW_FG}${text}${ANSI_FG_RESET}`; }
 
 type Status = "pending" | "in_progress" | "completed" | "abandoned";
-type kendexConfig = Record<string, unknown>;
 
 interface TaskItem {
 	id: string;
@@ -167,7 +166,6 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 	return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
 }
 
-
 function piSettingsPaths(cwd = process.cwd()): string[] {
 	const userDir = resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
 	const user = join(userDir, "settings.json");
@@ -195,13 +193,13 @@ function sidecarStatePath(ctx: ExtensionContext): string {
 	return join(piUserDir(), "kendex", "sessions", safeFileName(sessionIdForContext(ctx)), "pi-task-panel", "state.json");
 }
 
-function readkendexConfig(cwd?: string): kendexConfig {
-	const merged: kendexConfig = {};
-	for (const path of piSettingsPaths(cwd)) {
-		if (!existsSync(path)) continue;
+export function readPackageConfig(packageId: string, cwd?: string): Record<string, unknown> {
+	const merged: Record<string, unknown> = {};
+	for (const settingsPath of piSettingsPaths(cwd)) {
+		if (!existsSync(settingsPath)) continue;
 		try {
-			const parsed = JSON.parse(readFileSync(path, "utf8"));
-			const config = parsed?.kendex?.extensionManager?.config?.[CONFIG_ID];
+			const parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
+			const config = parsed?.kendex?.extensionManager?.config?.[packageId];
 			if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
 		} catch {
 			// Ignore malformed optional manager config.
@@ -211,18 +209,18 @@ function readkendexConfig(cwd?: string): kendexConfig {
 }
 
 function settingNumber(key: string, fallback: number, cwd?: string): number {
-	const value = readkendexConfig(cwd)[key];
+	const value = readPackageConfig(CONFIG_ID, cwd)[key];
 	const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
 	return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function settingBoolean(key: string, fallback: boolean, cwd?: string): boolean {
-	const value = readkendexConfig(cwd)[key];
+	const value = readPackageConfig(CONFIG_ID, cwd)[key];
 	return typeof value === "boolean" ? value : fallback;
 }
 
 function settingString(key: string, fallback: string, cwd?: string): string {
-	const value = readkendexConfig(cwd)[key];
+	const value = readPackageConfig(CONFIG_ID, cwd)[key];
 	return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
 }
 

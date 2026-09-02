@@ -193,7 +193,6 @@ describe("configurationSource() and bridgeCavemanHookEnabled()", () => {
 		const src = configurationSource(projectDir);
 		assert.equal(src.source, "default");
 		assert.equal(src.path, undefined);
-		assert.deepEqual(src.legacyKeys, []);
 	});
 
 	it("returns source='user' when only user settings declares mode", () => {
@@ -211,12 +210,6 @@ describe("configurationSource() and bridgeCavemanHookEnabled()", () => {
 		const src = configurationSource(projectDir);
 		assert.equal(src.source, "project");
 		assert.equal(src.path, join(projectDir, ".pi", "settings.json"));
-	});
-
-	it("detects legacy keys (enabled, defaultMode) alongside mode", () => {
-		writeUserConfig({ mode: "full", enabled: true, defaultMode: "full" });
-		const src = configurationSource(projectDir);
-		assert.deepEqual(src.legacyKeys.sort(), ["defaultMode", "enabled"]);
 	});
 
 	it("reads bridge includeCavemanHook from manager config", () => {
@@ -240,7 +233,7 @@ describe("configurationSource() and bridgeCavemanHookEnabled()", () => {
 	});
 
 	// Reset between describe blocks so the clarity-escape phrase tests below
-	// don't see leftover legacy keys from this block's last writeUserConfig.
+	// do not see this block's last writeUserConfig.
 	after(() => {
 		writeFileSync(join(userDir, "settings.json"), "{}");
 		writeFileSync(join(projectDir, ".pi", "settings.json"), "{}");

@@ -1,6 +1,5 @@
 import { basename } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { clearLegacySessionStatus } from "./actions.js";
 import { pinSessionModel } from "./model.js";
 import { openManager } from "./overlay.js";
 import { recordProjectTrust, samePath } from "./paths.js";
@@ -33,7 +32,6 @@ async function runSessionManagerAction(ctx: SessionManagerContext, pi: Extension
 	const result = await switchSession.call(ctx, action.path, {
 		withSession: async (replacementCtx) => {
 			if (currentModel) replacementCtx.ui.notify(`Using current model: ${currentModel.provider}/${currentModel.id}`, "info");
-			clearLegacySessionStatus(replacementCtx);
 			replacementCtx.ui.notify(`Resumed ${targetTitle}${currentModel ? " with current model" : ""}`, "info");
 		},
 	});
@@ -65,8 +63,6 @@ export default function sessionManagerExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		recordProjectTrust(ctx);
-		if (!settingBoolean("enabled", true, ctx.cwd)) return;
-		clearLegacySessionStatus(ctx);
 	});
 
 	pi.registerCommand("sessions", {

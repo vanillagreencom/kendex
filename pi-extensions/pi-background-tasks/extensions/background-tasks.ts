@@ -510,26 +510,6 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		orphanWatcher.start();
 	};
 
-	// kendex#15 round 5 reviewer-error MINOR: pre-1.2.2 snapshots have
-	// no procIdent, so liveness on restore falls back to PID-only. That
-	// is intentional backward-compat but unobservable in operations.
-	// Emit a one-time warning per legacy task so operators notice when
-	// long-running pre-upgrade bg_tasks linger across restarts. Dedup by
-	// task id so repeated session_start calls don't spam.
-	const legacyFallbackWarned = new Set<string>();
-	const warnLegacyFallback = () => {
-		for (const task of tasks.values()) {
-			if (task.status !== "running") continue;
-			if (task.restored !== true) continue;
-			if (task.procIdent !== undefined) continue;
-			if (legacyFallbackWarned.has(task.id)) continue;
-			legacyFallbackWarned.add(task.id);
-			const msg = `Background task ${task.id} (pid ${task.pid}) restored from a pre-1.2.2 snapshot without process identity. Liveness will degrade to PID-only, so a pid reuse could falsely keep the task alive. Restart will recapture identity for any task spawned after this upgrade.`;
-			logBackgroundDiagnostic(msg);
-			activeCtx?.ui.notify?.(msg, "warning");
-		}
-	};
-
 	// Replay 'exit' wakeups for any task we restored in a terminal state
 	// without ever notifying the agent. The canonical failure path: a long-
 	// running session_shutdown or a mid-session restore coerced status
@@ -863,7 +843,6 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		// gets its exit wake without waiting one poll cycle.
 		ensureOrphanWatcher();
 		orphanWatcher?.checkOnce();
-		warnLegacyFallback();
 		syncWidget(ctx);
 	});
 	pi.on("before_agent_start", (_event, ctx) => {

@@ -106,20 +106,24 @@ function asRecord(value: unknown): SettingsRecord | undefined {
 	return value && typeof value === "object" && !Array.isArray(value) ? (value as SettingsRecord) : undefined;
 }
 
-export function readRawkendexConfig(cwd?: string): SettingsRecord {
+export function readPackageConfig(packageId: string, cwd?: string): SettingsRecord {
 	const merged: SettingsRecord = {};
 	for (const path of piSettingsPaths(cwd)) {
 		if (!existsSync(path)) continue;
 		try {
 			const parsed = JSON.parse(readFileSync(path, "utf8"));
 			settingsParseWarnings.delete(path);
-			const config = asRecord(asRecord(asRecord(parsed?.kendex)?.extensionManager)?.config)?.[PACKAGE_ID];
+			const config = asRecord(asRecord(asRecord(parsed?.kendex)?.extensionManager)?.config)?.[packageId];
 			if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
 		} catch (error) {
 			settingsParseWarnings.set(path, error instanceof Error ? error.message : String(error));
 		}
 	}
 	return merged;
+}
+
+export function readRawkendexConfig(cwd?: string): SettingsRecord {
+	return readPackageConfig(PACKAGE_ID, cwd);
 }
 
 export function settingsDiagnostics(cwd?: string): string[] {

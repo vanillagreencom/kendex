@@ -42,7 +42,7 @@ Restart Pi after installation.
 | `/caveman:toggle` | Toggle the session override between off and the last active mode. |
 | `/caveman off` | Disable caveman mode for the current session. |
 | `/caveman status` | Show current mode and whether it comes from settings or a session override. |
-| `/caveman debug` | Show resolved mode, settings paths, legacy-key conflicts, and the rendered prompt block. |
+| `/caveman debug` | Show resolved mode, settings paths, and the rendered prompt block. |
 
 Arguments support autocomplete.
 

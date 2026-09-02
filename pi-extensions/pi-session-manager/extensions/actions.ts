@@ -4,11 +4,11 @@ import { appendFileSync, existsSync } from "node:fs";
 import { rm, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { canonicalPath, expandHome } from "./paths.js";
 import { forEachSessionJsonlLine } from "./session-lines.js";
 import { configuredSessionDir, settingBoolean } from "./settings.js";
-import { LEGACY_STATUS_KEY, KENDEX_MODAL_LOCK_SYMBOL, type Scope, type SessionInfo, type kendexModalLock } from "./types.js";
+import { KENDEX_MODAL_LOCK_SYMBOL, type Scope, type SessionInfo, type kendexModalLock } from "./types.js";
 
 function piUserDir(): string {
 	return resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
@@ -26,19 +26,8 @@ function perSessionkendexDir(sessionId: string): string {
 	return join(piUserDir(), "kendex", "sessions", safeFileName(sessionId));
 }
 
-// Legacy per-package layout (pre path-flip):
-//   ~/.pi/agent/kendex/<package>/sessions/<id>/...
-// Cleaned up here in case migration on session_start never ran (session was
-// never reopened before deletion).
-function legacyPerPackageSessionDirs(sessionId: string): string[] {
-	const safe = safeFileName(sessionId);
-	const root = join(piUserDir(), "kendex");
-	const legacyPackages = ["pi-agents-tmux", "prompt-stash", "pi-output-policy"];
-	return legacyPackages.map((pkg) => join(root, pkg, "sessions", safe));
-}
-
 async function removeExtensionSessionData(sessionId: string): Promise<void> {
-	const targets = [perSessionkendexDir(sessionId), ...legacyPerPackageSessionDirs(sessionId)];
+	const targets = [perSessionkendexDir(sessionId)];
 	for (const dir of targets) {
 		if (!existsSync(dir)) continue;
 		try {
@@ -121,11 +110,6 @@ export async function loadSessionsForScope(cwd: string, scope: Scope, onProgress
 		return sessions.filter((session) => canonicalPath(session.cwd) === current);
 	}
 	return scope === "all" ? SessionManager.listAll(onProgress) : SessionManager.list(cwd, undefined, onProgress);
-}
-
-export function clearLegacySessionStatus(ctx: ExtensionContext): void {
-	if (!ctx.hasUI) return;
-	ctx.ui.setStatus(LEGACY_STATUS_KEY, undefined);
 }
 
 export function acquirekendexModalLock(): () => void {

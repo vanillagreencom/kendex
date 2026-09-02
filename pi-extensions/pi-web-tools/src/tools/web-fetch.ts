@@ -296,15 +296,11 @@ function previewStats(content: string, maxCharacters: number): WebFetchPreviewIt
 export function buildWebFetchToolResult(
 	stored: StoredWebContent[],
 	provider: string,
-	optionsOrMaxCharacters: BuildWebFetchToolResultOptions | number = {},
-	legacyPageImages: Array<{ type: "image"; mimeType: string; data: string; pageNumber?: number }> = []
+	options: BuildWebFetchToolResultOptions = {}
 ) {
-	const options: BuildWebFetchToolResultOptions = typeof optionsOrMaxCharacters === "number"
-		? { maxCharacters: optionsOrMaxCharacters, pageImages: legacyPageImages }
-		: optionsOrMaxCharacters;
 	const requestedMax = options.maxCharacters ?? DEFAULT_WEB_FETCH_PREVIEW_CHARACTERS;
 	const explicit = options.explicit ?? false;
-	const pageImages = options.pageImages ?? legacyPageImages ?? [];
+	const pageImages = options.pageImages ?? [];
 
 	const presentationPolicy = aggregatePolicy(stored.length, requestedMax, explicit);
 	const aggregateCap = aggregatePolicy(options.batchSize ?? stored.length, requestedMax, explicit).aggregateCap;
