@@ -137,19 +137,6 @@ earlier capped run before entering another post-PR gate:
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.post_pr_stop = null'
 ```
 
-### 2.1 Consumer Admin-Merge Offer
-
-Bind eligibility to the repository, resolved base, and current PR head:
-
-```bash
-gh repo view --json nameWithOwner --jq .nameWithOwner
-git -C "[WORKTREE_PATH]" rev-parse "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"
-git -C "[WORKTREE_PATH]" rev-parse HEAD
-.agents/skills/orch/scripts/workflow-state admin-merge classify [ISSUE_ID] [OWNER/REPO] [PR_NUMBER] [BASE_SHA] [HEAD_SHA] [WORKTREE_PATH]
-```
-
-An ineligible result skips the offer. Otherwise explicitly ask `Admin-merge, skipping review and CI` | `Continue through review and CI`; `ORCH_DECISION_MODE` never answers it. On admin consent, rerun the command with `authorize`, append its class and head to the PR body's `## Merge decision`, then invoke `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7` with `merge_mode: admin`. The merge workflow revalidates the stored head. Continue-through-review goes to § 3.
-
 ---
 
 ## 3. Async Comment Triage
@@ -351,7 +338,15 @@ Re-run the gate-3 command once. If threads remain and the external-round cap is 
 
 `MERGE_READY = true` only when all four gates are met.
 
-### 6.2 Standalone Summary
+### 6.2 Consumer Admin-Merge Question
+
+**Skip if** the repository is `vanillagreencom/kendex`, where these files are the product, or `MERGE_READY = true`, where the gates already cleared the merge.
+
+When the diff touches no product code, only harness renders, settings, or prose, an unmet gate has nothing left to judge. Whether to merge past it anyway is a question orch poses and never answers. Under `auto-recommended` orch takes the recommended `Continue through the gates` and moves on; under `ask` a person or the overseer answers.
+
+Ask once, naming what the diff touches and which gate is unmet: `Admin-merge past the unmet gate` | `Continue through the gates`, with `Continue through the gates` recommended. Both the reason and the answer go in the PR body under `## Merge decision`. An admin answer invokes `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7` with `merge_mode: admin`. Anything else continues to § 6.3.
+
+### 6.3 Standalone Summary
 
 **Skip if** managed → § 7.
 

@@ -78,24 +78,6 @@ assert_eq "$(ORCH_STATE_DIR="$state_dir" CI_FIX_MAX_CYCLES=1 "$WS" head-budget t
 assert_eq "$(ORCH_STATE_DIR="$state_dir" CI_FIX_MAX_CYCLES=1 "$WS" head-budget take issue-404 ci-fix ci-head-b)" "continue 1/1" \
   "ci-fix budget resets for a new authoritative head"
 
-admin_repo="$TMP_ROOT/admin-repo"; git init -q "$admin_repo"; git -C "$admin_repo" config user.email test@example.com; git -C "$admin_repo" config user.name Test
-printf 'base\n' >"$admin_repo/README"; git -C "$admin_repo" add .; git -C "$admin_repo" commit -qm base; admin_base="$(git -C "$admin_repo" rev-parse HEAD)"
-printf 'safe prose\n' >"$admin_repo/notes.md"; git -C "$admin_repo" add .; git -C "$admin_repo" commit -qm prose; admin_head="$(git -C "$admin_repo" rev-parse HEAD)"
-assert_eq "$(ORCH_STATE_DIR="$state_dir" "$WS" admin-merge classify issue-404 acme/widgets 42 "$admin_base" "$admin_head" "$admin_repo")" prose "admin classifier accepts inert prose"
-ORCH_STATE_DIR="$state_dir" "$WS" admin-merge authorize issue-404 acme/widgets 42 "$admin_base" "$admin_head" "$admin_repo" >/dev/null
-assert_eq "$(ORCH_STATE_DIR="$state_dir" "$WS" admin-merge verify issue-404 acme/widgets 42 "$admin_base" "$admin_head")" prose "admin authorization binds repository, PR, base, and head"
-set +e; ORCH_STATE_DIR="$state_dir" "$WS" admin-merge verify issue-404 acme/widgets 42 "$admin_base" "$admin_base" >/dev/null 2>&1; admin_rc=$?; set -e
-assert_eq "$admin_rc" 1 "admin authorization rejects a different head"
-set +e; ORCH_STATE_DIR="$state_dir" "$WS" admin-merge verify issue-404 acme/widgets 42 "$admin_head" "$admin_head" >/dev/null 2>&1; admin_rc=$?; set -e
-assert_eq "$admin_rc" 1 "admin authorization rejects a different base"
-git -C "$admin_repo" checkout -q -b executable "$admin_base"; mkdir -p "$admin_repo/.agents/skills/demo"; printf '# hostile\n' >"$admin_repo/.agents/skills/demo/SKILL.md"; git -C "$admin_repo" add .; git -C "$admin_repo" commit -qm executable
-set +e; ORCH_STATE_DIR="$state_dir" "$WS" admin-merge classify issue-404 acme/widgets 42 "$admin_base" "$(git -C "$admin_repo" rev-parse HEAD)" "$admin_repo" >/dev/null 2>&1; admin_rc=$?; set -e
-assert_eq "$admin_rc" 1 "admin classifier rejects arbitrary executable harness paths"
-git -C "$admin_repo" checkout -q -B rendered "$admin_base"; mkdir -p "$admin_repo/.agents/skills/demo" "$TMP_ROOT/bin"; printf 'demo\n' >"$admin_repo/.agents/skills/demo/SKILL.md"
-jq -n --arg root "$admin_repo" '{version:10,root:$root,entries:{demo:{emitted:{paths:[($root+"/.agents/skills/demo")]}}}}' >"$admin_repo/.kendex-lock.json"; git -C "$admin_repo" add .; git -C "$admin_repo" commit -qm rendered
-printf '#!/bin/sh\nexit 0\n' >"$TMP_ROOT/bin/kendex"; chmod +x "$TMP_ROOT/bin/kendex"; admin_head="$(git -C "$admin_repo" rev-parse HEAD)"
-assert_eq "$(PATH="$TMP_ROOT/bin:$PATH" ORCH_STATE_DIR="$state_dir" "$WS" admin-merge classify issue-404 acme/widgets 42 "$admin_base" "$admin_head" "$admin_repo")" verified-renders "admin classifier requires lock provenance and kendex verification"
-
 # Round-id identity: the token is the ONLY thing binding an artifact to its
 # delegation, so rapid consecutive mints must all differ. A regression to a
 # non-injective form (e.g. concatenated $RANDOM$RANDOM) is caught here.

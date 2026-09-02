@@ -287,36 +287,6 @@ cmd_head_budget() {
     esac
 }
 
-cmd_admin_merge() {
-    local action="${1:-}" issue="${2:-}" repo="${3:-}" pr="${4:-}" base="${5:-}" head="${6:-}" root="${7:-}"
-    [[ -n "$issue" && "$repo" == */* && "$pr" =~ ^[0-9]+$ ]] || { echo "Error: admin-merge needs an issue, owner/repo, and PR" >&2; return 2; }
-    local state_file; state_file=$(get_state_file "$issue"); ensure_state_exists "$state_file"
-    if [[ "$action" == verify ]]; then
-        [[ $# -eq 6 && "$base" =~ ^[0-9a-f]{40}$ && "$head" =~ ^[0-9a-f]{40}$ ]] || return 2
-        jq -e --arg repo "$repo" --argjson pr "$pr" --arg base "$base" --arg head "$head" '.admin_merge | .repository == $repo and .pr == $pr and .base == $base and .head == $head' "$state_file" >/dev/null || { echo "Error: no admin authorization for $repo#$pr at base $base and head $head" >&2; return 1; }
-        jq -r '.admin_merge.class' "$state_file"; return
-    fi
-    [[ $# -eq 7 && "$base" =~ ^[0-9a-f]{40}$ && "$head" =~ ^[0-9a-f]{40}$ ]] || return 2
-    [[ "$action" == classify || "$action" == authorize ]] || { echo "Error: admin-merge action must be classify, authorize, or verify" >&2; return 2; }
-    [[ "$repo" != vanillagreencom/kendex ]] || { echo "ineligible: kendex product repository" >&2; return 1; }
-    git -C "$root" cat-file -e "$base^{commit}" && git -C "$root" cat-file -e "$head^{commit}" || { echo "ineligible: unresolved base or head" >&2; return 1; }
-    local roots="" path mode count=0 settings=0 prose=0 renders=0 class=""
-    [[ ! -e "$root/.kendex-lock.json" ]] || roots=$(jq -r '. as $l | .entries[]?.emitted.paths[]? | select(startswith($l.root + "/")) | ltrimstr($l.root + "/")' "$root/.kendex-lock.json") || { echo "ineligible: unreadable render provenance" >&2; return 1; }
-    git -C "$root" diff --name-only "$base...$head" >/dev/null || { echo "ineligible: could not read the exact diff" >&2; return 1; }
-    while IFS= read -r -d '' path; do
-        count=$((count + 1)); mode=$(git -C "$root" ls-tree "$head" -- "$path" | awk 'NR==1 {print $1}'); [[ -n "$mode" ]] || mode=$(git -C "$root" ls-tree "$base" -- "$path" | awk 'NR==1 {print $1}')
-        case "$path" in
-            kendex.settings.toml|.kendex/settings.toml) [[ "$mode" == 100644 ]] || return 1; settings=$((settings + 1)) ;;
-            .kendex-lock.json) [[ "$mode" == 100644 ]] || return 1; renders=$((renders + 1)) ;;
-            *) local managed=false emitted; while IFS= read -r emitted; do [[ "$path" == "$emitted" || "$path" == "$emitted/"* ]] && managed=true; done <<<"$roots"; if [[ "$managed" == true ]]; then renders=$((renders + 1)); else case "$path" in .agents/*|.claude/*|.codex/*|.pi/*|.opencode/*|.cursor/*) echo "ineligible unmanaged harness path: $path" >&2; return 1 ;; *.md|*.txt) [[ "$mode" == 100644 ]] || return 1; prose=$((prose + 1)) ;; *) echo "ineligible unmanaged path: $path" >&2; return 1 ;; esac; fi ;;
-        esac
-    done < <(git -C "$root" diff --name-only -z "$base...$head")
-    [[ "$count" -gt 0 ]] || { echo "ineligible: empty diff" >&2; return 1; }
-    if [[ "$settings" -eq "$count" ]]; then class=settings; elif [[ "$prose" -eq "$count" ]]; then class=prose; elif [[ "$renders" -eq "$count" ]] && (cd "$root" && kendex verify --scope project >/dev/null); then class=verified-renders; else echo "ineligible: mixed or unverified file semantics" >&2; return 1; fi
-    [[ "$action" != authorize ]] || atomic_update "$state_file" '.admin_merge = {repository:$repo, pr:$pr, base:$base, head:$head, class:$class}' --arg repo "$repo" --argjson pr "$pr" --arg base "$base" --arg head "$head" --arg class "$class"
-    printf '%s\n' "$class"
-}
-
 cmd_append() {
     local issue_id="$1"
     local field="$2"
@@ -622,8 +592,6 @@ Commands:
                                 render its Markdown comment
   head-budget take <issue_id> <review-wait|ci-fix> <head>
                                 Atomically spend a head-bound retry budget
-  admin-merge classify|authorize <issue> <repo> <pr> <base> <head> <worktree>  Classify or persist exact-head consent
-  admin-merge verify <issue> <repo> <pr> <base> <head>  Verify exact-head consent
   append <issue_id> <field> <value>   Append to array field
   append-file <issue_id> <field> <file>
                                 Append the one JSON value in <file> to the
@@ -761,7 +729,6 @@ case "$1" in
     update-report) shift; cmd_update_report "$@" ;;
     post-pr-stop) shift; cmd_post_pr_stop "$@" ;;
     head-budget) shift; cmd_head_budget "$@" ;;
-    admin-merge) shift; cmd_admin_merge "$@" ;;
     append)    shift; cmd_append "$@" ;;
     append-file) shift; cmd_append_file "$@" ;;
     cap)       shift; cmd_cap "$@" ;;
