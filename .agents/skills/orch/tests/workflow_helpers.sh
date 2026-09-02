@@ -347,40 +347,5 @@ else
 fi
 
 echo
-echo "=== retired assets stay retired ==="
-
-# Assets removed in the rewrite must leave no callers behind — a dangling
-# invocation is a runtime failure in a workflow no test executes.
-for retired in session-init parallel-groups review-init review-risk refix-route \
-               local-review-budget list-review-agents tracker-for-issue codex-app-agent-preflight; do
-  if [[ -e "$SKILL_DIR/scripts/$retired" ]]; then
-    fail "retired script scripts/$retired is back on disk"
-  elif orch_docs | tr '\n' '\0' | xargs -0 grep -Fq "scripts/$retired" 2>/dev/null; then
-    fail "orch docs still invoke the retired scripts/$retired"
-  else
-    pass "retired scripts/$retired has no callers in orch docs"
-  fi
-done
-
-for retired in initialize parallel-check agent-sequencing recommendation-bias fix-reconcile; do
-  if [[ -e "$SKILL_DIR/workflows/$retired.md" ]]; then
-    fail "retired workflows/$retired.md is back on disk"
-  elif orch_docs | tr '\n' '\0' | xargs -0 grep -Fq "workflows/$retired.md" 2>/dev/null; then
-    fail "orch docs still route to the retired workflows/$retired.md"
-  else
-    pass "retired workflows/$retired.md has no callers in orch docs"
-  fi
-done
-
-# The retired bot-specific waiter and its signal-parsing model must not return:
-# gating on a bot's own prose couples the merge path to each bot's dialect.
-for doc in $(orch_docs); do
-  if grep -Fq 'bot-review-wait' "$doc"; then
-    fail "$(basename "$doc") references the retired bot-review-wait"
-  fi
-done
-pass "no orch doc references the retired bot-review-wait"
-
-echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -15,7 +15,7 @@ Ad-hoc whole-codebase reviewer fanout. No PR, no issue, no diff, no fix delegati
 
 Not a git worktree → report `review-codebase requires a git worktree` and **END**. Otherwise use the output as `WT_PATH` and `mkdir -p "$WT_PATH/tmp"`.
 
-Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 `[DIR]` is the `[PATH_OR_PWD]` § 1 resolves `WT_PATH` from.
 
 ## 2. Delegate
@@ -34,7 +34,6 @@ Resolve the reviewer mode per [SKILL.md § Agent Lifecycle](../SKILL.md#agent-li
 Follow workflow: .agents/skills/reviewer/workflows/codebase-review.md
 
 Worktree: [WT_PATH]
-Worktree Check: `pwd -P` before any repo-relative command; it must print [WT_PATH]. On any other path, stop and report where the shell started.
 Scope: Whole codebase. Inspect tracked, non-generated project code, plus the tests, configs, and docs relevant to your review domain. Do not sample or restrict to changed files. No PR, no issue, no diff.
 Exclusions: generated artifacts, dependency and vendor directories, build outputs, binary assets, harness mirrors, and lockfiles unless your domain specifically requires them.
 </delegation_format>

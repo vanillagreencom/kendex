@@ -61,7 +61,7 @@ With no match, ask the user:
 
 Otherwise, match `FEATURE` keywords and component paths to domain agents (project-configurable) to get `RELEVANT_AGENTS[]`, then delegate to each in parallel.
 
-Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 `[DIR]` is the caller's own checkout, main checkout included.
 
 <delegation_format>
@@ -69,7 +69,6 @@ Feature: [FEATURE]
 Research: [RESEARCH_PATH or "None"]
 Spec: [SPEC_PATH or "None"] — when set, its approach and workstreams are binding: do not re-litigate them; cut its phases into PR-sized issues
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 
 List implementation issues for your domain only. Reply as a table with these columns:
 
@@ -95,7 +94,7 @@ Build `PROPOSED_ISSUES[]` per [roadmap-plan-input.md](../schemas/roadmap-plan-in
 
 Write the input file per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md) to `tmp/roadmap-input-YYYYMMDD-HHMMSS.json`, including `origin_issue`, `planner_handoff`, and `spec_path` (each null when absent; `spec_path` is set exactly when the artifact in hand — the `@[path]` input or the § 1 disk match — classified as a SPEC). Delegate to a one-shot `[TPM]` sub-agent.
 
-Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 `[DIR]` is the caller's own checkout, main checkout included.
 
 <delegation_format>
@@ -103,7 +102,6 @@ Follow workflow: .agents/skills/project-management/workflows/tpm-roadmap-plan.md
 
 Arguments: --input [INPUT_FILE_PATH]
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 </delegation_format>
 
 Materialize the returned artifact the same way as audit-issues § 4.2. Read `hierarchy_recommendation`, `cross_project_findings`, `architecture_gaps[]`, `organized_issues[]`, and `project_placement`.
@@ -114,7 +112,7 @@ Materialize the returned artifact the same way as audit-issues § 4.2. Read `hie
 
 Delegate to the architecture review agent.
 
-Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 `[DIR]` is the caller's own checkout, main checkout included.
 
 <delegation_format>
@@ -123,7 +121,6 @@ Review proposed roadmap for: [FEATURE]
 Proposed project: [project_placement.project_name]
 Spec: [SPEC_PATH or "None"] — when set, the spec's phases bound the roadmap: report anything beyond them as out-of-spec, with why it is needed
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 
 Organized issues:
 [organized_issues]

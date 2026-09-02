@@ -29,7 +29,7 @@ Apply the Ancestor gate ([SKILL.md § Coordination](../SKILL.md#coordination)). 
 
 Apply [Worktree Scope](../SKILL.md#workflow-execution) and resolve `WT_PATH` as `git-context repo-root "[DIR]"`. Inside a worktree `[DIR]` is `.`; from the main repo it is `worktree path [ISSUE_ID]` when that exists, and ask the user before creating one when it does not.
 
-Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
 Initialize state unless it exists:
 
@@ -88,7 +88,6 @@ Follow workflow: .agents/skills/dev/workflows/dev-implement.md
 
 Issue: [ISSUE_ID]
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 Worktree Lease: [WORKTREE_LEASE]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
@@ -103,7 +102,7 @@ Group pending sub-issues by `agent:[TYPE]` label and order them per [SKILL.md §
 
 Between groups, read each completed sub-issue's comments for a `Handoff Notes` section and combine them into the next delegation. Re-run all four § 2 stamps immediately before each group's delegation.
 
-Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
 <delegation_format>
 Follow workflow: .agents/skills/dev/workflows/dev-implement.md
@@ -115,7 +114,6 @@ Sub-Issues:
 ↳ [SUB_ISSUE_3]: [TITLE] | blocked by: [SUB_ISSUE_2]
 
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 Worktree Lease: [WORKTREE_LEASE]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]

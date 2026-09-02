@@ -6,6 +6,8 @@ The workflow for a dev agent receiving a review-fix delegation. Every path is wo
 
 ## 1. Read Context
 
+Confirm the shell's real working directory is the delegation's `Worktree:` path before any repo-relative command, by the check [dev-implement.md § 1](./dev-implement.md#1-environment-setup) states.
+
 Verify possession before reading or writing anything else. **Skip if** the delegation carries no `Worktree Lease:` line.
 
 ```bash
@@ -53,8 +55,8 @@ Run the project's validation command — the one `.agents/skills/orch/scripts/or
 **Visual QA** — **skip if** the issue has no `design` label or the fix touches no UI code. Otherwise confirm what the fix changes renders correctly, not the full checklist.
 
 ```bash
-git add -A
-git commit -m "[PREFIX]([ISSUE_ID]): [MESSAGE]"
+git -C [WORKTREE_PATH] add -A
+git -C [WORKTREE_PATH] commit -m "[PREFIX]([ISSUE_ID]): [MESSAGE]"
 ```
 
 | Source | Commit Message |

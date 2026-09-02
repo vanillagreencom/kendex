@@ -2,6 +2,8 @@
 
 The workflow for a dev or QA agent receiving a work-item delegation. Skip every tracker update for ad-hoc requests (no issue reference).
 
+Run `pwd -P` before the first repo-relative command; it must print the delegation's `Worktree:` path. On any other path, stop and report where the shell started.
+
 | Delegation | Detection | Flow |
 |------|-----------|------|
 | Single | `Issue: [ISSUE_ID]`, `GitHub Issue: OWNER/REPO#N`, or ad-hoc | § 1 → § 2 → § 4-10 → return |
@@ -20,7 +22,7 @@ In the sub-issue tree, complete blockers before the issues they block; entries m
 
 ## 1. Environment Setup
 
-Every path is worktree-scoped: `git -C [WORKTREE_PATH] ...` for Bash, `[WORKTREE_PATH]/...` for file tools.
+Every path is worktree-scoped: `git -C [WORKTREE_PATH] ...` for Bash, `[WORKTREE_PATH]/...` for file tools, once the working-directory check at the top of this file has passed.
 
 Verify possession before reading or writing anything else. **Skip if** the delegation carries no `Worktree Lease:` line.
 

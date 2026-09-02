@@ -82,14 +82,13 @@ Map each domain label to its agent type (project-configurable) and delegate in p
 
 Re-delegate to `[CONSULTATION_AGENT_NAME]` when the caller supplied one, omitting the reading block below. Otherwise start a fresh agent with the full block.
 
-Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 `[DIR]` is the caller's own checkout, main checkout included.
 
 <delegation_format>
 Research: [RESEARCH_ISSUE_ID] - [TOPIC]
 
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 
 Blocked issue: [BLOCKED_ISSUE_ID]
 Read it: `.agents/skills/linear/scripts/linear.sh cache issues get [BLOCKED_ISSUE_ID]`
@@ -156,14 +155,13 @@ Run `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/run.sh`, or use Pi `web_research` 
 
 Otherwise delegate to `researcher` (or `[RESEARCHER_AGENT_NAME]`).
 
-Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 `[DIR]` is the caller's own checkout, main checkout included.
 
 <delegation_format>
 Research issue: [RESEARCH_ISSUE_ID] - [TOPIC]
 
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 
 Read:
 - [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/prompt.txt

@@ -64,7 +64,7 @@ Stamp the round as separate tool calls immediately before delegating, and arm th
 
 `worktree-claim` exit 75 aborts the delegation (another session holds this worktree; stderr names the holder); exit 1 stops the workflow and is reported. Its printed owner is the delegation's `Worktree Lease:` line.
 
-Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
 This agent pushes its fix directly and writes **no** dev-return artifact; the round-mode check for this token reports `ok == false`, which is expected. Accept this round on the agent's return message plus the pushed fix commit; on an absent return follow the escalation ladder.
 
@@ -78,16 +78,15 @@ Error output:
 [truncated error logs]
 
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 Worktree Lease: [WORKTREE_LEASE]
 
-1. Refresh possession before changing anything: `.agents/skills/worktree/scripts/worktree-session-guard refresh [WORKTREE_PATH] --owner [ISSUE_ID]`. Any non-zero exit ends the round here — change nothing and report its stderr verbatim.
+1. Refresh possession before changing anything: `[WORKTREE_PATH]/.agents/skills/worktree/scripts/worktree-session-guard refresh [WORKTREE_PATH] --owner [ISSUE_ID]`. Any non-zero exit ends the round here — change nothing and report its stderr verbatim.
 2. Analyze the error; if it is a test failure in concurrent code, check for flaky-test patterns first.
-3. Fix the issue.
-4. Run the project's validation command.
+3. Fix the issue, editing files under `[WORKTREE_PATH]` by absolute path.
+4. Run the project's validation command from `[WORKTREE_PATH]`.
 5. If the target failure is fixed but OTHER failures remain: still commit, and note them in the message.
-6. Commit: "fix([ISSUE_ID]): [DESCRIPTION]", appending `[validate: FAILING_CHECK]` when other failures remain.
-7. Push to the branch.
+6. Stage and commit: `git -C [WORKTREE_PATH] add -A`, then `git -C [WORKTREE_PATH] commit -m "fix([ISSUE_ID]): [DESCRIPTION]"`, appending `[validate: FAILING_CHECK]` to the message when other failures remain.
+7. Push: `git -C [WORKTREE_PATH] push`.
 
 Report: what was fixed, the validate status, and any unrelated failures.
 </delegation_format>
@@ -106,7 +105,7 @@ Cross-reference those commits with the original PRs to identify which file faile
 
 For an integration issue, create a worktree from the draft branch (`worktree create [ISSUE_ID] "[DRAFT_BRANCH]" --pr [DRAFT_PR_NUMBER]`) and delegate analysis.
 
-Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 `[DIR]` is the worktree just created from the draft branch.
 
 <delegation_format>
@@ -114,7 +113,6 @@ Merge queue CI failure — integration issue across stacked PRs.
 
 Draft PR: #[PR_NUMBER]
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 Stack: [PRs in the stack with their domains]
 
 Error output:

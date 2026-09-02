@@ -15,19 +15,10 @@
 #   rule NAME FILE HEADING TOKEN...   one line under HEADING holds every TOKEN
 #   rule_fenced NAME FILE HEADING T…  the same, but the line must be a command
 #                                     inside a ```bash/```sh fence
-#   absent[_i] NAME FILE HEADING RE SAMPLE
-#                                     no line under HEADING matches RE
-#   order NAME FILE RE_A RE_B         RE_A's first match precedes RE_B's
 #   forbid NAME RE SAMPLE FILE...     no line in any FILE matches RE
 #   forbid_fenced NAME RE SAMPLE F... no ```bash/```sh command line matches RE
-#   permits[_fenced] NAME RE PROBE SAMPLE FILE
+#   permits_fenced NAME RE PROBE SAMPLE FILE
 #                                     SAMPLE is not flagged where PROBE is
-#   check NAME CMD...                 a bespoke predicate, for what the above
-#                                     cannot express
-#   section FILE HEADING              the section body, for a `check` predicate
-#   line_has TEXT TOKEN...            one line of TEXT holds every TOKEN
-#   fenced FILE                       "blockid<TAB>lineno<TAB>text" per fenced
-#                                     command line
 #
 # One rule is one token set on one line. A rule that needs a second token set
 # is a second rule, and a contract too subtle for that is uncovered here rather
@@ -88,25 +79,17 @@
 #                      nothing has no teeth. Both fail. A rule already red on
 #                      the unmutated tree is left out: it reported its own
 #                      failure, and counting it here would blame this control.
-#   order              A's matched line is moved to just below B's, and the
-#                      comparison must reverse. A rule whose regex matches a
-#                      second line ahead of B does not reverse, and is
-#                      reported as not discriminating.
-#   absent             the SAMPLE is inserted directly under the heading and
-#                      must be flagged.
 #   forbid, forbid_fenced
 #                      the SAMPLE is appended to a scratch copy of EVERY
 #                      registered file in turn, and each must be flagged.
-#   permits            no registry and no control loop: it carries its own
+#   permits_fenced     no registry and no control loop: it carries its own
 #                      positive half, the PROBE, in line.
-#   check              no automatic control. A suite using it owns proving its
-#                      teeth.
 #
-# Three forms can pass on an empty search result — `absent`, `forbid` and
-# `permits` — and each now carries a positive control, so none of them can
-# report a proof it did not perform. That enumeration is the whole of it: every
-# other `pass` here follows a match that was found, or a mutation that was
-# verified to have planted something.
+# Both forms that can pass on an empty search result — `forbid` and
+# `permits_fenced` — carry a positive control, so neither can report a proof it
+# did not perform. That is the whole of it: every other `pass` here follows a
+# match that was found, or a mutation that was verified to have planted
+# something.
 #
 # The rule control re-evaluates every held rule once per rule, so a suite's
 # control pass costs O(N^2) file reads in its rule count. Measure the law
@@ -145,9 +128,7 @@ trap 'rm -rf "$MD_TMP"' EXIT
 PASS=0
 FAIL=0
 MD_RULES=()
-MD_ORDERS=()
 MD_FORBIDS=()
-MD_ABSENTS=()
 MD_PERMITS=0
 MD_SEP=$'\037'
 
@@ -249,9 +230,6 @@ _md_head_lines() {
   '
 }
 
-# _md_head_line FILE HEADING — the first such line number, or empty.
-_md_head_line() { _md_head_lines "$1" "$2" | head -1; }
-
 # _md_head_fault FILE HEADING — a diagnostic when the heading does not name
 # exactly one section, else nothing. An empty HEADING always names the file.
 _md_head_fault() {
@@ -290,29 +268,11 @@ _md_lines() {
   '
 }
 
-# section FILE HEADING — the section body as plain text.
-section() { _md_lines "$1" "$2" | cut -f2-; }
-
-# line_has TEXT TOKEN... — true iff one line of TEXT holds every TOKEN.
-line_has() {
-  local text="$1"
-  shift
-  local line tok ok
-  while IFS= read -r line; do
-    ok=1
-    for tok in "$@"; do
-      case "$line" in *"$tok"*) ;; *) ok=0; break ;; esac
-    done
-    [ "$ok" = 1 ] && return 0
-  done <<<"$text"
-  return 1
-}
-
-# fenced FILE — "blockid<TAB>lineno<TAB>text" per non-comment command line
+# _md_fenced FILE — "blockid<TAB>lineno<TAB>text" per non-comment command line
 # inside a ```bash or ```sh fence, blockid being the opening fence's line
 # number so a caller can group by block. Prose, inline code, comment lines and
 # other fences never appear.
-fenced() {
+_md_fenced() {
   _md_scan "$1" | awk -F'\t' -v strip="$MD_STRIP" '
     $1 == 1 && ($3 == "bash" || $3 == "sh") {
       text = $0; sub(strip, "", text)
@@ -330,7 +290,7 @@ fenced() {
 _md_body() {
   if [ "$1" = fenced ]; then
     local keep
-    keep="$(fenced "$2" | cut -f2)"
+    keep="$(_md_fenced "$2" | cut -f2)"
     _md_lines "$2" "$3" | awk -F'\t' -v k="$keep" '
       BEGIN { n = split(k, a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") keep[a[i]] = 1 }
       ($1 in keep) { print }
@@ -407,63 +367,6 @@ _md_holds() {
   [ -n "$(_md_match "${MD_F[1]}" "$f" "${MD_F[3]}" "${MD_F[@]:4}")" ]
 }
 
-# _md_first FILE RE — the first line number matching RE, or empty. Reads its
-# input to the end: an early `exit` would SIGPIPE the stripper feeding it, and
-# under `pipefail` that 141 reads as a failed check.
-_md_first() {
-  local out
-  out="$(_md_text "$1" | grep -nE -e "$2" || true)"
-  [ -n "$out" ] || return 0
-  printf '%s\n' "${out%%$'\n'*}" | cut -d: -f1
-}
-
-# order NAME FILE RE_A RE_B — A's first match precedes B's.
-order() {
-  MD_ORDERS+=("$1$MD_SEP$(_md_path "$2")$MD_SEP$3$MD_SEP$4")
-  local a b
-  a="$(_md_first "$2" "$3")"
-  b="$(_md_first "$2" "$4")"
-  if [ -z "$a" ] || [ -z "$b" ]; then
-    fail "$1 — ${2##*/} carries no match for /$3/ or /$4/"
-  elif [ "$a" -lt "$b" ]; then
-    pass "$1"
-  else
-    fail "$1 — /$3/ is at line $a, behind /$4/ at line $b"
-  fi
-}
-
-# absent NAME FILE HEADING RE SAMPLE — no line under HEADING matches RE.
-# absent_i is the same, case-insensitively, for a shape whose capitalization is
-# the author's rather than the contract's: a reintroduced `apply fixes?` menu
-# is the menu whatever case it is written in. A heading that names no section,
-# or two, is a failure rather than an empty read: an absence check over nothing
-# passes for the wrong reason.
-_md_absent() {
-  local fold="$1"
-  shift
-  MD_ABSENTS+=("$1$MD_SEP$(_md_path "$2")$MD_SEP$3$MD_SEP$4$MD_SEP$5$MD_SEP$fold")
-  local fault body hit
-  fault="$(_md_head_fault "$2" "$3")"
-  if [ -n "$fault" ]; then
-    fail "$1 — $fault"
-    return
-  fi
-  body="$(section "$2" "$3")"
-  if [ -z "$body" ]; then
-    fail "$1 — '$3' in ${2##*/} has an empty body, so there is nothing to check"
-    return
-  fi
-  hit="$(grep -nE $fold -e "$4" <<<"$body" || true)"
-  if [ -z "$hit" ]; then
-    pass "$1"
-  else
-    fail "$1"
-    printf '%s\n' "$hit" | sed 's/^/          /'
-  fi
-}
-absent() { _md_absent "" "$@"; }
-absent_i() { _md_absent -i "$@"; }
-
 # _md_scannable F — true when F is a regular file this process can read. A
 # directory passes `-r`, and awk then warns and skips it while grep's no-match
 # 1 is the rightmost status `pipefail` reports, so an unreadable target would
@@ -501,7 +404,7 @@ _md_fenced_hits() {
       printf '%s: not a readable file\n' "${f#$REPO_ROOT/}"
       continue
     fi
-    out="$(fenced "$f" | md_re="$re" awk -F'\t' -v p="${f#$REPO_ROOT/}" '
+    out="$(_md_fenced "$f" | md_re="$re" awk -F'\t' -v p="${f#$REPO_ROOT/}" '
       BEGIN { re = ENVIRON["md_re"] }
       { t = $0; sub(/^[0-9]+\t[0-9]+\t/, "", t); if (t ~ re) printf "%s:%s: %s\n", p, $2, t }
     ')" && rc=0 || rc=$?
@@ -520,9 +423,9 @@ _md_fenced_hits() {
 _md_forbid() {
   local mode="$1" name="$2" re="$3" sample="$4"
   shift 4
-  # An absence check over no files passes for the wrong reason, exactly as one
-  # over an empty section does. A suite building its list conditionally is the
-  # reachable shape; an unexpanded glob is caught below as an unreadable path.
+  # An absence check over no files passes for the wrong reason. A suite
+  # building its list conditionally is the reachable shape; an unexpanded glob
+  # is caught below as an unreadable path.
   if [ "$#" -eq 0 ]; then
     fail "$name — no scan target was registered, so there is nothing to check"
     return
@@ -547,11 +450,11 @@ _md_forbid() {
 forbid() { _md_forbid line "$@"; }
 forbid_fenced() { _md_forbid fenced "$@"; }
 
-# permits NAME RE PROBE SAMPLE FILE — the near-miss half of a `forbid`: SAMPLE
-# appended to FILE must NOT be flagged.
+# permits_fenced NAME RE PROBE SAMPLE FILE — the near-miss half of a
+# `forbid_fenced`: SAMPLE appended to FILE must NOT be flagged.
 #
 # PROBE is the positive half, and it is what makes the pass mean something.
-# `permits` is the third of the three forms that pass on an empty search
+# `permits_fenced` is the second of the two forms that pass on an empty search
 # result, and the only one with no control loop behind it, so nothing else
 # would notice that the scan never reached the appended line at all. Two real
 # shapes do exactly that: a base whose last line opens an HTML comment that
@@ -560,47 +463,31 @@ forbid_fenced() { _md_forbid fenced "$@"; }
 # fence already open. PROBE goes down the same append path, in the same mode,
 # and must be flagged — so "the scanner read my appended line" is a
 # precondition of the near-miss verdict rather than an assumption.
-_md_permits() {
-  local name="$1" re="$2" probe="$3" sample="$4" file="$5" mode="$6"
+permits_fenced() {
+  local name="$1" re="$2" probe="$3" sample="$4" file="$5"
   if ! _md_scannable "$file"; then
     fail "$name — ${file#$REPO_ROOT/} is not a readable file"
     return
   fi
   local hit
-  hit="$(_md_permit_hits "$re" "$file" "$probe" "$mode")"
+  hit="$(_md_permit_hits "$re" "$file" "$probe")"
   if [ -z "$hit" ]; then
     fail "$name — the probe line was not flagged, so the scan never reached what it appended"
     return
   fi
-  hit="$(_md_permit_hits "$re" "$file" "$sample" "$mode")"
+  hit="$(_md_permit_hits "$re" "$file" "$sample")"
   if [ -z "$hit" ]; then pass "$name"; else fail "$name — flagged: $hit"; fi
 }
 
-# _md_permit_hits RE FILE LINE MODE — offenders after appending LINE to a
-# scratch copy of FILE, through the mode's own append path.
+# _md_permit_hits RE FILE LINE — offenders after appending LINE inside a
+# ```bash fence on a scratch copy of FILE, the same append path a
+# `forbid_fenced` control uses.
 _md_permit_hits() {
   MD_PERMITS=$((MD_PERMITS + 1))
   local scratch="$MD_TMP/permit-$MD_PERMITS.md"
   cp "$2" "$scratch"
-  if [ "$4" = fenced ]; then
-    printf '\n```bash\n%s\n```\n' "$3" >>"$scratch"
-    _md_fenced_hits "$1" "$scratch"
-  else
-    printf '\n%s\n' "$3" >>"$scratch"
-    _md_offenders "$1" "$scratch"
-  fi
-}
-permits() { _md_permits "$1" "$2" "$3" "$4" "$5" line; }
-permits_fenced() { _md_permits "$1" "$2" "$3" "$4" "$5" fenced; }
-
-# check NAME CMD... — a bespoke predicate, for a contract the rule forms above
-# cannot express: a count across a directory, a containment, a rendered
-# template. It carries no automatic control, so a suite using it owns proving
-# its teeth.
-check() {
-  local name="$1"
-  shift
-  if "$@"; then pass "$name"; else fail "$name"; fi
+  printf '\n```bash\n%s\n```\n' "$3" >>"$scratch"
+  _md_fenced_hits "$1" "$scratch"
 }
 
 # _md_strike FILE LINE TOKEN SCRATCH — copies FILE to SCRATCH with EVERY
@@ -669,55 +556,6 @@ _md_controls() {
       fail "control for '$name' reddened nothing — the rule has no teeth"
     else
       fail "control for '$name' reddened:$reddened — the rules overlap"
-    fi
-  done
-
-  # An order control MOVES A's line to just below B's rather than swapping the
-  # two, so it can fail: a regex matching a second line ahead of B does not
-  # reverse, and the rule is not pinning what it names.
-  for i in $(_md_indices "${#MD_ORDERS[@]}"); do
-    _md_fields "${MD_ORDERS[$i]}"
-    local oname="${MD_F[0]}" ofile="${MD_F[1]}" ore_a="${MD_F[2]}" ore_b="${MD_F[3]}"
-    local a b ca cb
-    a="$(_md_first "$ofile" "$ore_a")"
-    b="$(_md_first "$ofile" "$ore_b")"
-    if [ -z "$a" ] || [ -z "$b" ]; then continue; fi
-    scratch="$MD_TMP/order-$i.md"
-    awk -v x="$a" -v y="$b" '
-      { l[NR] = $0 }
-      END {
-        for (k = 1; k <= NR; k++) {
-          if (k == x) continue
-          print l[k]
-          if (k == y) print l[x]
-        }
-      }
-    ' "$ofile" >"$scratch"
-    ca="$(_md_first "$scratch" "$ore_a")"
-    cb="$(_md_first "$scratch" "$ore_b")"
-    if [ -n "$ca" ] && [ -n "$cb" ] && [ "$cb" -lt "$ca" ]; then
-      pass "control: '$oname' goes red when /$ore_a/ moves below /$ore_b/"
-    else
-      fail "control for '$oname' — moving /$ore_a/ below /$ore_b/ did not reverse the order; the regex matches a second line ahead of it"
-    fi
-  done
-
-  for i in $(_md_indices "${#MD_ABSENTS[@]}"); do
-    _md_fields "${MD_ABSENTS[$i]}"
-    local aname="${MD_F[0]}" afile="${MD_F[1]}" ahead="${MD_F[2]}" are="${MD_F[3]}"
-    local asample="${MD_F[4]}" afold="${MD_F[5]:-}" hl
-    hl="$(_md_head_line "$afile" "$ahead")"
-    scratch="$MD_TMP/absent-$i.md"
-    if [ -z "$hl" ]; then
-      fail "control for '$aname' — ${afile##*/} carries no heading '$ahead'"
-      continue
-    fi
-    awk -v ln="$hl" -v s="$asample" 'NR == ln { print; print ""; print s; next } { print }' \
-      "$afile" >"$scratch"
-    if [ -n "$(section "$scratch" "$ahead" | grep -E $afold -e "$are" || true)" ]; then
-      pass "control: '$aname' flags its sample"
-    else
-      fail "control for '$aname' — the sample under '$ahead' is not flagged"
     fi
   done
 

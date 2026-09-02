@@ -46,7 +46,7 @@ gh api user -q .login
 
 **Issue context.** `issue_id` from the caller, else `git-context issue-from-branch .`; ask the user if nothing matches. Resolve `WT_PATH` as `git-context repo-root "[DIR]"`, `[DIR]` being `worktree exists`/`worktree path` when they match and `.` otherwise.
 
-Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
 Then gather decisions:
 
@@ -76,7 +76,6 @@ Analyze these PR review comments for your domain.
 PR: #[PR_NUMBER] - [TITLE]
 Parent Issue: [ISSUE_ID]
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 
 Decision context (read before classifying — do NOT suggest changes that contradict these):
 [For each verified decision: "[DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
@@ -237,7 +236,7 @@ Exit 3 is the branch-size refusal. Stop before delegation, discard this fix set,
 
 ⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` is the technical fix; the agent owns its own process.
 
-Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
 <delegation_format>
 Follow workflow: .agents/skills/dev/workflows/dev-fix.md
@@ -246,7 +245,6 @@ Source: pr-comments
 Issue: [ISSUE_ID]
 PR: #[PR_NUMBER]
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 Worktree Lease: [WORKTREE_LEASE]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]

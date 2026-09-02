@@ -55,8 +55,7 @@ jobs:
       # it reports, so the rule lives here rather than in a suite. A step
       # naming a shard the matrix dropped is skipped on every run and reads as
       # one that passed; a shard no step names runs this guard and nothing
-      # else, green and empty. package-policy.test.mjs executes THIS script
-      # against mutated copies — it carries the control, not a second rule.
+      # else, green and empty.
       - name: shard names agree with the matrix
         env:
           SHARD: ${{ matrix.shard }}

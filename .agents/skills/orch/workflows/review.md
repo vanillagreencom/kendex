@@ -19,7 +19,7 @@ On-demand review of local changes: review, present findings, and offer to fix th
 
 Use the outputs as `BRANCH`, `ISSUE_ID` (empty means skip every workflow-state step), and `BASE_BRANCH`; `WT_PATH` is `git-context repo-root .`.
 
-Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 `[DIR]` is the `.` the line above resolves `WT_PATH` from.
 
 | Argument | `DIFF_RANGE` |
@@ -63,7 +63,6 @@ A failed check omits the path and carries `- decision index lookup failed for [D
 Follow workflow: .agents/skills/reviewer/workflows/review.md
 
 Worktree: [WT_PATH]
-Worktree Check: `pwd -P` before any repo-relative command; it must print [WT_PATH]. On any other path, stop and report where the shell started.
 Branch: [BRANCH]
 Diff-range: [DIFF_RANGE]
 

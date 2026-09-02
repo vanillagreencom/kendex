@@ -1,5 +1,5 @@
 .github/workflows/review-gate-writer.yml	662
-.github/workflows/skill-tests.yml	547
+.github/workflows/skill-tests.yml	546
 crates/core/src/engine/detach.rs	417
 crates/core/src/error.rs	473
 crates/core/src/mapping.rs	411
@@ -110,7 +110,6 @@ skills/orch/tests/dev_artifact_check.sh	815
 skills/orch/tests/lanes.sh	888
 skills/orch/tests/oversee_watch_lanes.sh	815
 skills/orch/tests/queue_wait.sh	896
-skills/orch/tests/worktree-cwd-precondition-lint.test.sh	940
 skills/preflight/scripts/preflight	1065
 skills/review-gate/scripts/pr-watch.sh	871
 skills/review-gate/scripts/review-predicate-selftest.sh	2477
