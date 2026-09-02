@@ -13,11 +13,15 @@ vi.mock("@/bindings", () => ({
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), info: vi.fn(), error: vi.fn() },
 }));
+// Named rather than fresh per call: what an apply does about the two reads
+// the whole app derives from is asserted below.
+const scanRefresh = vi.hoisted(() => vi.fn());
+const auditRefresh = vi.hoisted(() => vi.fn());
 vi.mock("@/stores/scan", () => ({
-  useScanStore: { getState: () => ({ refresh: vi.fn() }) },
+  useScanStore: { getState: () => ({ refresh: scanRefresh }) },
 }));
 vi.mock("@/stores/audit", () => ({
-  useAuditStore: { getState: () => ({ refresh: vi.fn() }) },
+  useAuditStore: { getState: () => ({ refresh: auditRefresh }) },
 }));
 const showError = vi.hoisted(() => vi.fn());
 vi.mock("@/stores/problems", () => ({
@@ -105,6 +109,23 @@ describe("packageVersionActions", () => {
     ]);
     expect(commands.packageSetRev).not.toHaveBeenCalled();
     expect(toast.success).toHaveBeenCalledWith("Updated gh");
+  });
+
+  // An apply moves the very bytes the scan lists and the audit scored, and
+  // neither read knows it happened. Forced on the audit, whose freshness
+  // window would otherwise answer from before the write.
+  it("reads the app's derived state back after a write lands", async () => {
+    const reload = vi.fn();
+    vi.mocked(commands.packageSetRev).mockResolvedValue(
+      answer({ moved: [stale("claude")] }),
+    );
+
+    actions(false, reload).switchTo(version("c".repeat(40)));
+    await vi.waitFor(() => expect(toast.success).toHaveBeenCalled());
+
+    expect(reload).toHaveBeenCalled();
+    expect(scanRefresh).toHaveBeenCalled();
+    expect(auditRefresh).toHaveBeenCalledWith({ force: true });
   });
 
   it("says what was held back rather than claiming the package moved", async () => {

@@ -10,7 +10,6 @@ import { packageVersionActions } from "@/components/package/package-version-acti
 import {
   diffHarness,
   type PackageView,
-  packageReadNote,
   useManifestBusy,
   usePackageData,
   usePackageDiff,
@@ -19,6 +18,7 @@ import { groupItems, groupScopes, installationAt } from "@/lib/derive";
 import { packageDisplayName } from "@/lib/labels";
 import { usePackageMark } from "@/lib/package-mark";
 import { vendorAt } from "@/lib/package-places";
+import { packageReadNote } from "@/lib/package-read-state";
 import { packageRequiredBy, packageUpdateNote } from "@/lib/updates-read-state";
 import {
   hasNewer,

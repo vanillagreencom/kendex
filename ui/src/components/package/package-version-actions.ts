@@ -13,14 +13,13 @@ import {
   VERSION_ERROR_TITLE,
 } from "@/lib/copy";
 import { UPDATES_ONE_AT_A_TIME_NOTE } from "@/lib/copy-updates";
+import { rescanEverything } from "@/lib/rescan";
 import { settled } from "@/lib/settled";
 import { saying } from "@/lib/undone";
 import { workOut } from "@/lib/updates-read-state";
 import { versionRowLabel } from "@/lib/versions";
-import { useAuditStore } from "@/stores/audit";
 import type { PackageRef } from "@/stores/nav";
 import { useProblemsStore } from "@/stores/problems";
-import { useScanStore } from "@/stores/scan";
 import { holdingBusy, useUpdatesStore } from "@/stores/updates";
 import { sayApply } from "@/stores/updates-apply";
 
@@ -40,8 +39,10 @@ export function packageVersionActions(
       .showError({ title: VERSION_ERROR_TITLE, message });
   const afterChange = () => {
     reload();
-    void useScanStore.getState().refresh();
-    void useAuditStore.getState().refresh({ force: true });
+    // The package's own reads, then the two the whole app derives from —
+    // the same call the updates store's own apply makes, which is where the
+    // reasoning for reading both back lives.
+    void rescanEverything();
   };
   // Every one of these applies a plan that can refuse a rendering, so
   // none of them toasts off the click: the command's own report says what
@@ -95,7 +96,11 @@ export function packageVersionActions(
 
   // A held package moves its hold to the latest; a follower is brought
   // current by the single-package apply — Update never silently pins a
-  // follower, and does not move the scope's other followers along.
+  // follower, and does not move the scope's other followers along. The
+  // choice between those two commands is `updates-apply.ts` [`applyRow`]'s
+  // to document; this is that rule read off the page's own record instead
+  // of off the row, because the page's controls have to work where the
+  // update read never spoke for this place and there is no row to ask.
   const updateToLatest = (latest: VersionRow) =>
     held
       ? switchTo(latest)

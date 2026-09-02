@@ -1,6 +1,8 @@
-// Updates page copy: the table, the edited-copy row, and the toasts that
-// say what a bulk update did — kept apart from the rest so the wording is
-// reviewed in one place.
+// Update copy: the Updates page's table, the edited-copy row, the toasts
+// that say what a bulk update did, and every note the package page puts
+// where its own Update would have been — whichever of its two reads the
+// reason comes from. Kept apart from the rest so the wording is reviewed in
+// one place, and one slot's strings are read side by side.
 import { relativeTime } from "@/lib/relative-time";
 
 export const NEVER_CHECKED = "Not checked for updates yet";

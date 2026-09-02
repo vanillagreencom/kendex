@@ -73,7 +73,17 @@ vi.mock("@/bindings", async (importOriginal) => ({
   },
 }));
 
-beforeEach(resetPage);
+beforeEach(() => {
+  resetPage();
+  // The three commands this file adds to the mock are reset with it, for
+  // the reason resetPage states for the audit: clearAllMocks leaves
+  // implementations standing, and the update tests below hand these a
+  // closure that answers as if an update had landed — which it would go on
+  // answering for every test after them.
+  vi.mocked(commands.packageUpdate).mockReset();
+  vi.mocked(commands.updatesOverview).mockReset();
+  vi.mocked(commands.scanMachine).mockReset();
+});
 
 /** A refusal core sent on the row. Pass-through is the whole property, so
  *  this is a string core would never send: core's own wording here would
@@ -229,7 +239,7 @@ describe("what the package page says when its own reads fail", () => {
 
     const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
 
-    expect(host.textContent).toContain(
+    expect(header(host)).toContain(
       packageReadFailedNote("the manifest is unreadable"),
     );
     expect(header(host)).not.toContain(UPDATE_LABEL);
@@ -252,9 +262,7 @@ describe("what the package page says when its own reads fail", () => {
 
     const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
 
-    expect(host.textContent).toContain(
-      packageReadFailedNote("the mirror is gone"),
-    );
+    expect(header(host)).toContain(packageReadFailedNote("the mirror is gone"));
     expect(header(host)).not.toContain(UPDATE_LABEL);
   });
 
@@ -272,7 +280,7 @@ describe("what the package page says when its own reads fail", () => {
 
     const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
 
-    expect(host.textContent).toContain(packageReadFailedNote("ipc down"));
+    expect(header(host)).toContain(packageReadFailedNote("ipc down"));
     expect(header(host)).not.toContain(UPDATE_LABEL);
   });
 

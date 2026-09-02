@@ -61,7 +61,7 @@ export function PackageActions({
    *  a place the read never covered, an edit of the reader's own
    *  (`updates-read-state.ts` [`packageUpdateNote`]) — and where that says
    *  nothing about this place, this page's own record and timeline reads
-   *  failing (`use-package-data.ts` [`packageReadNote`]). Rendered whenever
+   *  failing (`package-read-state.ts` [`packageReadNote`]). Rendered whenever
    *  `updateAvailable` is false and this is set. The page has other reasons
    *  to offer nothing, an unmappable installed commit among them, and those
    *  it does not word. */

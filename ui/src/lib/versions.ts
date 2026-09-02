@@ -67,7 +67,7 @@ export interface UpdateOffer {
  *  The update read answers first, on the terms it always had: core's refusal
  *  for the kind, a hold, an edit of the reader's own, a place no check
  *  covered (`updates-read-state.ts` [`packageUpdateNote`]). The page's own
- *  reads speak only into its silence (`use-package-data.ts`
+ *  reads speak only into its silence (`package-read-state.ts`
  *  [`packageReadNote`]), which is a row that exists with nothing withholding
  *  it — a declared package from a repository source whose kind plans one at
  *  a time. That is the one state none of the permanent refusals core answers

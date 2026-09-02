@@ -8,8 +8,8 @@ import {
   type Scope,
   type VersionRow,
 } from "@/bindings";
-import { packageReadFailedNote } from "@/lib/copy-updates";
 import { installedCommits } from "@/lib/package-places";
+import type { PackageReads } from "@/lib/package-read-state";
 import {
   READ_PENDING,
   type ReadState,
@@ -45,37 +45,6 @@ export const diffHarness = (
   primary: HarnessId | null,
 ): HarnessId | null =>
   view.mode === "diff" && view.harness ? view.harness : primary;
-
-/** How the page's own two gating reads went. Kept apart rather than folded
- *  into one answer: either one failing is a package this page could not
- *  read, and the timeline's failing on its own is separately why "there is
- *  nothing newer to move to" cannot be read off an empty version list. The
- *  file list is in neither — no Update ever turned on it, and folding it in
- *  would withhold the button over a read it does not depend on. */
-export interface PackageReads {
-  /** The record that says held or following. */
-  record: ReadState;
-  /** The timeline Update moves along. */
-  timeline: ReadState;
-}
-
-const failedNote = ({ status, error }: ReadState): string | null =>
-  status === "failed" && error !== null ? packageReadFailedNote(error) : null;
-
-/** Why the package page has no Update when its own reads are the reason, or
- *  null when they are not. Silent while they are pending: the page is still
- *  filling in, and a header note on every open is noise rather than news.
- *
- *  This is not the page's first reason and must never be ranked as one. The
- *  commands behind these reads answer `Err` for a package that is not a
- *  managed one here as readily as for a read that went wrong — an undeclared
- *  item, a plugin, a path source — and their text is about declarations and
- *  revisions, not about a failure. `package.tsx` puts this behind everything
- *  the update read says for that reason: what is left is a declared package
- *  from a repository source whose kind plans one at a time, which is a read
- *  that genuinely did not land. */
-export const packageReadNote = (reads: PackageReads): string | null =>
-  failedNote(reads.record) ?? failedNote(reads.timeline);
 
 /** The package page's reads, refetchable as one unit after a mutation.
  *
