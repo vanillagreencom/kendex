@@ -16,7 +16,9 @@
 # one leaves both directions green.
 #
 # Every check runs once per tree: the sources under skills/ and the committed
-# render under .agents/skills/, which is the copy a lane reads.
+# render under .agents/skills/, which is the copy a lane reads. That includes
+# the detach-line check, which is registered per tree rather than against this
+# suite's own — `tools/guard` enforces render presence, not byte equality.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
@@ -78,6 +80,32 @@ table_is_read() { # doc — an empty harvest passes both set comparisons
   [ -n "$(route_labels "$1")" ]
 }
 
+# Every backgrounded command in the workflow is a detach arm — which launcher
+# runs is the document's choice, `setsid` where it exists and `nohup` where it
+# does not, so the launcher's name is not the contract. What is: each arm runs
+# the waiter with --json, writes to the part file, and publishes by moving that
+# onto the verdict file. An arm that redirects straight at the verdict file
+# hands the reader a present-but-empty file for the whole wait, which the four
+# states in § 5 step 1 read as a finished wait.
+#
+# Both halves are needed. Per-arm conformance alone passes when every arm is
+# deleted; an existence check alone passes while a second arm drifts.
+detach_arms() { # doc
+  fenced "$1" | cut -f3- | grep -E '&[[:space:]]*$' || true
+}
+detach_arms_publish() { # doc
+  local arms bad
+  arms="$(detach_arms "$1")"
+  if [ -z "$arms" ]; then
+    printf '        no backgrounded command in the workflow: the detach is gone\n'
+    return 1
+  fi
+  bad="$(grep -vE '/queue-wait .*--json .*> *"\[VERDICT_FILE\]\.part".*mv .*"\[VERDICT_FILE\].part" "\[VERDICT_FILE\]"' <<<"$arms" || true)"
+  [ -z "$bad" ] && return 0
+  printf '        detach arm that does not publish through the part file: %s\n' "$bad"
+  return 1
+}
+
 waiter_usable() { [ -x "$1" ]; }
 # The planted run's own diagnostic is the expected answer here, not a finding.
 reds() { ! "$@" >/dev/null 2>&1; }
@@ -99,6 +127,15 @@ for root in "${ROOTS[@]}"; do
     every_route_real "$qw" "$doc"
   check "$label: every verdict's route is one row, not several" \
     one_row_per_verdict "$doc"
+  check "$label: every detach arm publishes through the part file" \
+    detach_arms_publish "$doc"
+  # `worktree remove` runs `git worktree remove --force` and then `rm -rf`, so
+  # it issues no dirty-tree refusal of its own: step 6's own re-read is the
+  # only thing between a build artifact and its deletion. Step 4 judged the
+  # tree two steps earlier, so its check does not stand in for this one.
+  rule_fenced "$label: the removal step re-reads the tree before removing it" \
+    "$doc" "## 5. Execute The Merge" \
+    'status' '--porcelain' '[WT_PATH]'
 done
 
 if [ "$checked" -eq 0 ]; then
@@ -145,17 +182,21 @@ check "control: a verdict routed by two rows reds the one-row direction" \
 check "control: that same duplicate leaves the coverage direction green" \
   every_verdict_routed "$CTL_QW" "$DUPED"
 
+NO_PUBLISH="$MD_TMP/merge-pr-no-publish.md"
+sed 's|; mv -f -- "\[VERDICT_FILE\].part" "\[VERDICT_FILE\]"||' "$CTL_DOC" > "$NO_PUBLISH"
+check "control: a detach arm redirecting straight at the verdict file reds" \
+  reds detach_arms_publish "$NO_PUBLISH"
+
+NO_DETACH="$MD_TMP/merge-pr-no-detach.md"
+grep -v -e '^   setsid sh -c ' -e '^   nohup sh -c ' "$CTL_DOC" > "$NO_DETACH"
+check "control: deleting every detach arm reds the same check" \
+  reds detach_arms_publish "$NO_DETACH"
+
 # The harvest's own control: a renamed table header takes the whole range with
 # it, and both set comparisons then pass on nothing.
 NO_TABLE="$MD_TMP/merge-pr-no-table.md"
 sed 's/^   | `verdict` | Route |$/   | `outcome` | Route |/' "$CTL_DOC" > "$NO_TABLE"
 check "control: a renamed table header reds the read check" \
   reds table_is_read "$NO_TABLE"
-
-# The detached form is the one shape the lane starts; its verdict file is what
-# the boundary read above resolves.
-rule_fenced "the detached wait writes its verdict to the file the lane reads" \
-  "$SKILL_DIR/workflows/merge-pr.md" "## 5. Execute The Merge" \
-  'setsid' '/queue-wait' '[VERDICT_FILE]'
 
 md_report

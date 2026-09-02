@@ -142,7 +142,10 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Resolve the repository, gate mode, and exact head before any merge attempt.
    `[RECOVERY_COUNT]` is `0` initially and one more per recovery cycle taken in
-   this run.
+   this run. Nothing persists it, so the cap below is per invocation: a lane
+   resumed after a compaction, or relaunched by oversee's `window-gone` rule,
+   starts a fresh budget. Read a run that keeps returning to ci-fix as the
+   signal the cap is there for, whatever the count says.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner
@@ -155,9 +158,11 @@ Use the output as `MAIN_REPO_ROOT`.
    ```
 
    That head is `[PREPARED_HEAD]`, and `[VERDICT_FILE]` is
-   `[MAIN_REPO_ROOT]/tmp/queue-verdict-[STATE_KEY].json`. `[ALREADY_MERGED]=true`
-   skips the mutation and the wait and continues to step 2. Otherwise attempt
-   only the prepared head:
+   `[MAIN_REPO_ROOT]/tmp/queue-verdict-[STATE_KEY]-[PREPARED_HEAD].json` — the
+   head is in the name because a verdict belongs to the arm that produced it,
+   and a re-armed or restacked head must not read the previous arm's result.
+   `[ALREADY_MERGED]=true` skips the mutation and the wait and continues to
+   step 2. Otherwise attempt only the prepared head:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] [--force] --expected-head [PREPARED_HEAD]
@@ -176,28 +181,77 @@ Use the output as `MAIN_REPO_ROOT`.
    Exit `0` merged the prepared head immediately — continue to step 2. Any exit
    but `0` or `75` is an exact-head arm failure: surface it and return to § 3.2.
 
-   Exit `75` means queued or armed. Start the wait detached so the lane is
-   released while the queue runs, then return with the § 6 ARMED result:
+   Exit `75` means queued or armed. Detach the wait so the lane is released
+   while the queue runs. `tmp/` is gitignored and a fresh clone carries none,
+   so create it first — the launch redirections fail silently in a forked child
+   otherwise:
 
    ```bash
-   setsid .agents/skills/orch/scripts/queue-wait [PR_NUMBER] --json > [VERDICT_FILE] 2>> [VERDICT_FILE].log &
+   mkdir -p [MAIN_REPO_ROOT]/tmp
+   ```
+   ```bash
+   command -v setsid
    ```
 
-   **Reading the verdict.** At the next lane boundary, read `[VERDICT_FILE]` and
-   route on its `verdict` and `cause`. A file that is absent or does not parse
-   as JSON means the wait has not written its result yet or died with the lane;
-   run the same wait again in the foreground and route on its stdout:
+   `setsid` is util-linux and absent on stock macOS, so its presence decides
+   which arm launches. Present:
 
    ```bash
-   .agents/skills/orch/scripts/queue-wait [PR_NUMBER] --json
+   setsid sh -c '[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] --json > "[VERDICT_FILE].part" 2>> "[VERDICT_FILE].log"; mv -f -- "[VERDICT_FILE].part" "[VERDICT_FILE]"' </dev/null &
    ```
 
-   Every run re-derives its verdict from the live PR, so repeating one costs
-   nothing; what no run can do is observe a transition that is over —
-   `queue-wait --help` § Verdicts is the rule. Under Codex, where
-   redirection and `&` are rejected shapes ([references/codex-runtime.md](../references/codex-runtime.md)),
-   the foreground form is the only form: run it once as a blocking command and
-   stay on it until it returns. Never poll merge state by hand.
+   Absent:
+
+   ```bash
+   nohup sh -c '[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] --json > "[VERDICT_FILE].part" 2>> "[VERDICT_FILE].log"; mv -f -- "[VERDICT_FILE].part" "[VERDICT_FILE]"' </dev/null >> [VERDICT_FILE].log 2>&1 &
+   ```
+
+   The wait writes its whole result in one terminal block, so a `.part` file is
+   an unfinished wait and `[VERDICT_FILE]` appearing is the publish. The
+   separator before `mv` is `;`, not `&&`: every non-merged verdict exits `1`
+   and still has a result to publish. Confirm the start before returning the
+   § 6 ARMED result — the child opens its redirection immediately, so by the
+   next command one of the two paths exists:
+
+   ```bash
+   ls -l [VERDICT_FILE].part [VERDICT_FILE]
+   ```
+
+   Neither present means nothing started: report that and take the foreground
+   wait below instead of claiming a released lane.
+
+   **Reading the verdict.** At the next lane boundary, stat both paths and take
+   the one state they name:
+
+   | State | Meaning |
+   |-------|---------|
+   | `[VERDICT_FILE]` present and parses as JSON | The wait finished. Delete the file, then route on its `verdict` and `cause` — consuming it first is what keeps a later boundary from re-routing a spent verdict |
+   | `[VERDICT_FILE]` present, does not parse | Hand back with the file's contents and `[VERDICT_FILE].log`; never retry it |
+   | absent, `[VERDICT_FILE].part` present | The wait is still running. Return and re-read at the next boundary — never start a second wait on the same PR |
+   | both absent | Nothing is running. Start the wait again |
+
+   A second concurrent `queue-wait` on one PR is the thing to avoid: the
+   late-findings guard disarms and dequeues, so two of them race one dequeue
+   and the loser reports `late_findings_dequeue_failed` for no reason, and the
+   check probe delegates to `ci-wait`, which may re-run a workflow. A wait is
+   not read-only, so it is started only in the two states above that say
+   nothing is running.
+
+   Restart it detached the same way, or in the foreground when the lane can
+   block on it:
+
+   ```bash
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] --json
+   ```
+
+   A foreground run that emits no result object is a hand-back naming its exit,
+   not a retry: `queue-wait --help` § Exit codes gives exit `2` to a usage error
+   and exit `4` to a repository deleted mid-wait, and neither prints anything
+   the table below can route. Under Codex, where redirection and `&` are
+   rejected shapes ([references/codex-runtime.md](../references/codex-runtime.md)),
+   nothing is detached and the foreground run is the read: run it once as a
+   blocking command and stay on it until it returns. Never poll merge state by
+   hand.
 
    | `verdict` | Route |
    |-----------|-------|
@@ -318,37 +372,56 @@ Use the output as `MAIN_REPO_ROOT`.
 
    For `merge-pr all` or an explicit user request, also sweep the project. Check each local branch with `env -u GH_REPO -u GITHUB_REPOSITORY gh pr list --head [BRANCH] --base [BASE_BRANCH] --state all --json number,state,headRefOid,isCrossRepository`, and auto-delete only a branch with no worktree whose tip equals the `headRefOid` of one of its **merged**, non-cross-repository PRs — the predicate `worktree cleanup` applies. Neither state nor a merge into another base is the test: a closed PR merged nothing, a PR merged into a release or other side branch left its commit out of `[BASE_BRANCH]` with this ref possibly the last ordinary one holding it, and a merged PR whose head differs from the tip left the extra commits reachable from this ref alone. Leave every other branch alone, and ask before removing a stale worktree or a branch with no PR. Compare `ls [TREES_DIR]/` against `worktree list --porcelain` for orphan directories, asking before removing any.
 
-5. **Answer the threads that arrived after admission.** The merge queue never
-   re-checks thread resolution once a PR is admitted, so a finding posted after
-   admission rides the merge in. Read the merged PR's unresolved threads once
-   and answer each:
+5. **Answer the threads the wait's guard did not catch.** GitHub's merge queue
+   never re-checks thread resolution once a PR is admitted. `queue-wait`'s
+   late-findings guard does, but on its own probe clock
+   (`QUEUE_WAIT_PROBE_INTERVAL`, 120 seconds by default), so a finding landing
+   inside that gap, or after the merge itself, rides the merge in. Read the
+   merged PR's unresolved threads once and answer each. Resolve the merge
+   commit first — the queue merged a head this lane never saw:
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved
+   env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json mergeCommit --jq .mergeCommit.oid
+   ```
+   ```bash
+   [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-threads [PR_NUMBER] --unresolved
    ```
 
-   Each reply is one of the three dispositions
+   That oid is `[MERGE_SHA]`. Each reply is one of the three dispositions
    ([references/finding-disposition.md](../references/finding-disposition.md)):
    `Declined: [reason]`, `Fixed in [MERGE_SHA]`, or `Tracked: [ISSUE_ID]` with
    the issue created first, carrying its `Reached by` line. Reply and resolve
-   through `github.sh post-reply` and `github.sh resolve-thread`. This read
-   happens once; a thread arriving after it stays on the PR for the overseer's
-   check-in sweep.
+   through `github.sh -C [MAIN_REPO_ROOT] post-reply` and `github.sh -C
+   [MAIN_REPO_ROOT] resolve-thread` — an inherited `GH_REPO` or
+   `GITHUB_REPOSITORY` points these mutations at another repository, the same
+   hazard step 4 clears for its reads. This read happens once. A thread landing
+   after it is unhandled: nothing else reads a merged PR's threads.
 
 6. **Verify the project and remove the worktree.** Run the build, install, and
    verification work the project's own instructions require after a merge; this
    workflow defines no generic command and does not infer one. On failure,
    report the command and its diagnostic in § 6 and keep the worktree.
 
-   On success, remove the issue worktree when § 5 step 4 ruled it removable —
-   from `[MAIN_REPO_ROOT]`, so the lane is not deleting its own cwd:
+   On success, remove the issue worktree when § 5 step 4 ruled it removable.
+   Re-read the tree first: step 4 judged it two steps ago, and step 5's replies
+   and this step's build can each leave a file behind. `worktree remove` runs
+   `git worktree remove --force` and then `rm -rf`, so it issues no
+   dirty-tree refusal of its own and uncommitted or untracked content goes with
+   the directory:
+
+   ```bash
+   git -C [WT_PATH] status --porcelain
+   ```
+
+   Any output keeps the worktree with cause `dirty tree`. Empty removes it,
+   run from `[MAIN_REPO_ROOT]` so the lane is not deleting its own cwd:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree remove [ISSUE]
    ```
 
-   A foreign-lease or dirty-tree refusal keeps the worktree; carry the helper's
-   diagnostic into the § 6 `Worktree` row.
+   A foreign-lease refusal keeps the worktree; carry the helper's diagnostic
+   into the § 6 `Worktree` row.
 
 ## 6. Present Results
 

@@ -25,10 +25,12 @@ These are known, deliberate trade-offs. Raising them again is noise:
 - **A gate success just before a push is not a fail-open.** The next
   convergence supersedes it, and the merge queue re-checks at admission.
 - **Threads arriving after merge-queue admission are procedural, not a
-  gate defect.** Admission is the cut-off: a thread opened after it never
-  dequeues the PR. merge-pr's post-merge step reads the merged PR's unresolved
-  threads once and answers each with the standard disposition, and a thread
-  landing after that read stays on the PR for the overseer's check-in sweep.
+  gate defect.** GitHub's merge queue does not re-check resolution after
+  admission; `queue-wait`'s late-findings guard does, dequeuing what it
+  observes while the PR is queued or armed. What escapes both is a thread
+  landing inside the guard's probe gap or after the merge, and merge-pr's
+  post-merge step reads those once and answers each with the standard
+  disposition. A thread landing after that read is unhandled.
 - **An adopted review-gate workflow is validated by verbatim EQUALITY
   against the shipped template.** `validate-workflow.sh` asks one question —
   is this copy still `templates/review-gate-writer.yml`? — and re-derives

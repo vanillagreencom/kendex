@@ -97,7 +97,7 @@ The three waiters exit `3` on hard auth failure — [references/gates.md](refere
 
 **Review-gate modes.** Read the effective gate mode (`approval`, `review`, or `off`) only through `approval-wait --resolve-mode`. [references/gates.md](references/gates.md).
 
-**Detached merge boundary.** A queued merge detaches one `queue-wait` per arm, writing its `--json` result to a verdict file. At every lane boundary, read that file before unrelated work and route on its verdict — `merge-pr.md` § 5 step 1 holds the table, `queue-wait --help` § Verdicts the semantics. An absent or unparsable file means the wait has not finished: run `queue-wait` again. The overseer wakes the lane; it never routes the verdict itself.
+**Detached merge boundary.** A queued merge detaches one `queue-wait` per arm, publishing its `--json` result to a verdict file named for that arm's head. At every lane boundary, stat that file and its `.part` before unrelated work — `merge-pr.md` § 5 step 1 holds the four states, the routing table and the consume, and `queue-wait --help` § Verdicts the semantics. A second wait on one PR is never started while one is running: the guard inside it dequeues. The overseer wakes the lane on `queue-verdict`; it never reads or routes the verdict itself.
 
 ## Schemas
 
