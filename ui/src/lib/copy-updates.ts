@@ -138,19 +138,21 @@ export const UPDATE_NEEDS_CHECK_HERE = NEEDS_A_CHECK;
 export const UPDATES_ONE_AT_A_TIME_NOTE =
   "A check or an update is already running — try again when it finishes";
 
-// A project whose lock or manifest this build refuses has no standing at
-// all, while every other project's rows are as good as ever. The page names
-// the project rather than reporting the whole machine unchecked, and sends
+// A place whose lock or manifest this build refuses has no standing at
+// all, while every other place's rows are as good as ever. The page names
+// the place rather than reporting the whole machine unchecked, and sends
 // the reader to Problems, which carries the reason and the way out.
-export const UPDATES_UNREADABLE_TITLE = "Some projects couldn't be read";
-export const unreadableProjectsLabel = (names: string[]): string =>
+//
+// "Places", not "projects": the update read folds every scope, personal
+// included, so an unreadable personal lock lands here too and calling it a
+// project would be a plain untruth about the one place that is not one.
+export const UPDATES_UNREADABLE_TITLE = "Some places couldn't be read";
+export const unreadablePlacesLabel = (names: string[]): string =>
   `No update standing for ${names.join(", ")}.`;
-/** One project's line where there is room for the reason the read gave —
+/** One place's line where there is room for the reason the read gave —
  * the note on the Updates page. The badge tooltip and Home's row have a
- * line each and name the projects only. Which kind of failure it was is
+ * line each and name the places only. Which kind of failure it was is
  * typed on the audit's card, which Problems draws; this is the words the
  * read itself came back with. */
-export const unreadableProjectLine = (
-  project: string,
-  reason: string,
-): string => `${project} — ${reason}`;
+export const unreadablePlaceLine = (place: string, reason: string): string =>
+  `${place} — ${reason}`;

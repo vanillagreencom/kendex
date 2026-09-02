@@ -1,5 +1,15 @@
 //! `marketplace browse`: the listing across subscriptions, human lines
 //! or the versioned JSON rows.
+//!
+//! `--json` stays at `"schema": 1`. A lock this build refuses widened
+//! `package.state` by one value, `"unknown"` — every key a schema-1
+//! consumer reads is still there and still means what it did, so the change
+//! is additive rather than a bump. Two things did change for a script: a
+//! scope whose lock will not read now contributes rows instead of none, and
+//! the command exits 0 where that scope used to fail it. What a marketplace
+//! offers is a fact about the source, and the lock has no say in it; a
+//! consumer that matches `state` exhaustively needs an arm for `"unknown"`,
+//! which means the installed state alone could not be settled.
 
 use kendex_core::env::Env;
 use kendex_core::source_ops;

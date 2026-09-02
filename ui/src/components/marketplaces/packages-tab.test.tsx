@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { AvailablePackage, MarketplaceRow } from "@/bindings";
+import type {
+  AvailablePackage,
+  MarketplaceRow,
+  UnreadableScope,
+} from "@/bindings";
 import {
   SEE_PROBLEMS_LABEL,
   unreadableRecordsLine,
@@ -13,6 +17,7 @@ import {
   useMarketplacesStore,
 } from "@/stores/marketplaces";
 import { usePreinstallSafety } from "@/stores/preinstall-safety";
+import { useUpdatesStore } from "@/stores/updates";
 import { mount } from "@/test/dom";
 import { PackagesTab } from "./packages-tab";
 
@@ -69,6 +74,9 @@ beforeEach(() => {
   });
   // A mounted row asks for its safety score, and no backend answers here.
   usePreinstallSafety.setState({ want: () => {} });
+  // Which places have no readable lock is the update read's answer; the
+  // tab subscribes to it rather than inferring one from its rows.
+  useUpdatesStore.setState({ unreadable: [] });
 });
 
 const listed = async (needle: string): Promise<string[]> => {
@@ -111,6 +119,11 @@ describe("naming what could not be read", () => {
     name,
   });
 
+  const unreadableLock = (scope: MarketplaceRow["scope"]): UnreadableScope => ({
+    scope,
+    message: "this project's lock was written by a newer kendex",
+  });
+
   const lines = (): string[] => {
     const host = mount(<PackagesTab />);
     return [...host.querySelectorAll("p.text-warning")].map(
@@ -149,9 +162,9 @@ describe("naming what could not be read", () => {
     ]);
   });
 
-  // The catalog read succeeded — the packages are listed — but the rows
-  // carry no installed state, and the Problems page is where the record
-  // that would answer is explained.
+  // The catalog read succeeded — the packages are listed — but the lock
+  // that would say what is installed could not be read, and the Problems
+  // page is where that is explained.
   it("names the project whose records left its rows unknown, and links to Problems", () => {
     const row = projectRow("/home/dev/hyprtrade", "kendex");
     useMarketplacesStore.setState({
@@ -161,9 +174,82 @@ describe("naming what could not be read", () => {
       },
       readErrors: {},
     });
+    useUpdatesStore.setState({ unreadable: [unreadableLock(row.scope)] });
     const host = mount(<PackagesTab />);
     expect(host.textContent).toContain(unreadableRecordsLine("hyprtrade"));
     expect(host.textContent).toContain(SEE_PROBLEMS_LABEL);
+  });
+
+  // Both failures at once is where a `records` inferred from row states
+  // breaks: the catalog read failed, so there are no cached rows to carry
+  // an "unknown" state, and the project would get the sources line with no
+  // way to the reason. The scope-level fact does not depend on rows.
+  it("names a project with both failures once, under sources, still linking to Problems", () => {
+    const row = projectRow("/home/dev/hyprtrade", "kendex");
+    useMarketplacesStore.setState({
+      rows: [row],
+      packages: {},
+      readErrors: {
+        [readErrorKey(marketKey(row.scope, row.name), "packages")]: "no",
+      },
+    });
+    useUpdatesStore.setState({ unreadable: [unreadableLock(row.scope)] });
+    const host = mount(<PackagesTab />);
+    expect(
+      [...host.querySelectorAll("p.text-warning")].map(
+        (line) => line.textContent ?? "",
+      ),
+    ).toEqual([`${unreadableSourcesLine("hyprtrade")} ${SEE_PROBLEMS_LABEL}`]);
+  });
+
+  // A subscription turned off contributes no rows to the table, so a read
+  // error left over from when it was on has nothing under it to explain.
+  it("says nothing for a disabled subscription that once failed to read", () => {
+    const row = {
+      ...projectRow("/home/dev/hyprtrade", "kendex"),
+      enabled: false,
+    };
+    useMarketplacesStore.setState({
+      rows: [row],
+      packages: {},
+      readErrors: {
+        [readErrorKey(marketKey(row.scope, row.name), "packages")]: "no",
+      },
+    });
+    expect(lines()).toEqual([]);
+  });
+
+  // scopeName is a basename, so two projects in different parents would
+  // print the same line twice with nothing to say which had the problem.
+  it("tells apart two projects whose folders share a name", () => {
+    const here = projectRow("/home/dev/kendex", "kit");
+    const there = projectRow("/home/work/kendex", "kit");
+    useMarketplacesStore.setState({
+      rows: [here, there],
+      packages: {},
+      readErrors: {
+        [readErrorKey(marketKey(here.scope, here.name), "packages")]: "no",
+        [readErrorKey(marketKey(there.scope, there.name), "packages")]: "no",
+      },
+    });
+    expect(lines()).toEqual([
+      unreadableSourcesLine("/home/dev/kendex"),
+      unreadableSourcesLine("/home/work/kendex"),
+    ]);
+  });
+
+  // The personal scope holds a lock of its own, so it lands in the same
+  // list — named as what it is rather than called a project.
+  it("names the personal scope by its own name", () => {
+    useMarketplacesStore.setState({
+      rows: [kit],
+      packages: { [marketKey(kit.scope, kit.name)]: offered },
+      readErrors: {},
+    });
+    useUpdatesStore.setState({ unreadable: [unreadableLock(kit.scope)] });
+    expect(lines()).toEqual([
+      `${unreadableRecordsLine("Personal")} ${SEE_PROBLEMS_LABEL}`,
+    ]);
   });
 
   it("says nothing when every read landed", () => {

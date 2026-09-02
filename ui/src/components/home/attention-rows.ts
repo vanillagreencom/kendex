@@ -12,9 +12,9 @@ import {
 import { SEE_PROBLEMS_LABEL } from "@/lib/copy-marketplaces";
 import {
   UPDATES_UNREADABLE_TITLE,
-  unreadableProjectsLabel,
+  unreadablePlacesLabel,
 } from "@/lib/copy-updates";
-import { scopeName } from "@/lib/labels";
+import { scopeNames } from "@/lib/labels";
 
 /** Everything Home's attention list is derived from, with the way into
  *  each row's destination handed in — the derivation emits the rows in a
@@ -30,8 +30,9 @@ export interface AttentionSource {
    *  audit that could not finish, so what needs attention may be missing
    *  from this very list. */
   auditError: string | null;
-  /** Projects with no update standing at all. Their rows are missing from
-   *  every count above, and the reason is on Problems, not here. */
+  /** Places with no update standing at all — the personal scope included,
+   *  since it has a lock of its own. Their rows are missing from every
+   *  count above, and the reason is on Problems, not here. */
   unreadable: UnreadableScope[];
   onProjects: () => void;
   onProblems: () => void;
@@ -101,8 +102,8 @@ export function attentionRows(source: AttentionSource): AttentionRow[] {
       key: "updates-unreadable",
       tone: "warning",
       title: UPDATES_UNREADABLE_TITLE,
-      detail: unreadableProjectsLabel(
-        unreadable.map((place) => scopeName(place.scope)),
+      detail: unreadablePlacesLabel(
+        scopeNames(unreadable.map((place) => place.scope)),
       ),
       action: { label: SEE_PROBLEMS_LABEL, onClick: source.onProblems },
     });

@@ -67,6 +67,8 @@ describe("updates store", () => {
     // opposite set loaded themselves.
     useUpdatesStore.setState({
       rows: [],
+      warnings: [],
+      unreadable: [],
       busy: false,
       checking: false,
       pendingFollows: [],
@@ -122,6 +124,37 @@ describe("updates store", () => {
     });
     await useUpdatesStore.getState().check();
     expect(useUpdatesStore.getState().lastFetched).toBe(CHECKED_AT);
+  });
+
+  // The other two lists the report carries. Every consumer test stubs the
+  // store, so this is the only place the seam between the IPC report and
+  // the store is proved: with either field dropped on the way in, the
+  // Updates page's note, the sidebar's tooltip and Home's attention row all
+  // go quiet over a machine kendex knows it could not fully read.
+  it("lands the places it could not read and the packages it could not settle", async () => {
+    const place = {
+      scope: { scope: "project" as const, root: "/home/dev/hyprtrade" },
+      message: "written by a newer kendex",
+    };
+    const warning = {
+      kind: "skill" as const,
+      name: "gh",
+      harness: null,
+      message: "no standing",
+      remediation: null,
+    };
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: {
+        rows: [],
+        warnings: [warning],
+        unreadable: [place],
+        lastFetched: CHECKED_AT,
+      },
+    });
+    await useUpdatesStore.getState().reload();
+    expect(useUpdatesStore.getState().unreadable).toEqual([place]);
+    expect(useUpdatesStore.getState().warnings).toEqual([warning]);
   });
 
   it("counts only unmuted updates for the badge — held ones still count", () => {

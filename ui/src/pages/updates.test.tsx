@@ -15,7 +15,7 @@ import {
   UPDATES_CHECKING,
   UPDATES_UNCONFIRMED_TITLE,
   UPDATES_UNREADABLE_TITLE,
-  unreadableProjectLine,
+  unreadablePlaceLine,
 } from "@/lib/copy-updates";
 import { UpdatesPage } from "./updates";
 
@@ -215,7 +215,7 @@ describe("the Updates page with a project kendex cannot read", () => {
   };
 
   const named = esc(
-    unreadableProjectLine("hyprtrade", "it is a version 5 record"),
+    unreadablePlaceLine("hyprtrade", "it is a version 5 record"),
   );
 
   // The reason travels on the wire with the scope, so the note says it
@@ -240,5 +240,40 @@ describe("the Updates page with a project kendex cannot read", () => {
     const html = renderToStaticMarkup(<UpdatesPage />);
     expect(html).toContain("gh");
     expect(html).toContain(named);
+  });
+
+  // `overview` folds every registered scope, the personal one included, so
+  // a personal lock this build refuses lands in the same list. The note
+  // names it as what it is; calling it a project would be untrue of the one
+  // place that is not one.
+  it("names the personal scope as Personal", () => {
+    stub.unreadable = [
+      { scope: { scope: "global" }, message: "it is a version 5 record" },
+    ];
+    expect(renderToStaticMarkup(<UpdatesPage />)).toContain(
+      esc(unreadablePlaceLine("Personal", "it is a version 5 record")),
+    );
+  });
+
+  // Two projects whose folders share a basename would otherwise read as
+  // the same line twice, with the reasons beside them the only difference.
+  it("tells apart two projects whose folders share a name", () => {
+    stub.unreadable = [
+      {
+        scope: { scope: "project", root: "/home/dev/kendex" },
+        message: "it is a version 5 record",
+      },
+      {
+        scope: { scope: "project", root: "/home/work/kendex" },
+        message: "damaged bytes",
+      },
+    ];
+    const html = renderToStaticMarkup(<UpdatesPage />);
+    expect(html).toContain(
+      esc(unreadablePlaceLine("/home/dev/kendex", "it is a version 5 record")),
+    );
+    expect(html).toContain(
+      esc(unreadablePlaceLine("/home/work/kendex", "damaged bytes")),
+    );
   });
 });

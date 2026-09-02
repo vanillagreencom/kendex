@@ -15,8 +15,8 @@ import { SidebarAccount } from "@/components/sidebar-account";
 import { SidebarNotice } from "@/components/sidebar-notice";
 import { Button } from "@/components/ui/button";
 import { UPDATES_ATTENTION_TITLE } from "@/lib/copy";
-import { unreadableProjectsLabel } from "@/lib/copy-updates";
-import { scopeName } from "@/lib/labels";
+import { unreadablePlacesLabel } from "@/lib/copy-updates";
+import { scopeNames } from "@/lib/labels";
 import { SIDEBAR_ROW } from "@/lib/layout";
 import { rescanEverything } from "@/lib/rescan";
 import { isSearchShortcutKey } from "@/lib/search-shortcut";
@@ -125,8 +125,8 @@ export function Sidebar() {
                   updatesUnchecked
                     ? UPDATES_ATTENTION_TITLE
                     : unreadable.length > 0
-                      ? unreadableProjectsLabel(
-                          unreadable.map((place) => scopeName(place.scope)),
+                      ? unreadablePlacesLabel(
+                          scopeNames(unreadable.map((place) => place.scope)),
                         )
                       : undefined
                 }

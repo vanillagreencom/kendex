@@ -13,7 +13,7 @@ import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
 import { updatesBeforeList } from "@/components/updates-before-list";
 import { UpdatesTable } from "@/components/updates-table";
-import { UnreadableProjectsNote } from "@/components/updates-unreadable-note";
+import { UnreadablePlacesNote } from "@/components/updates-unreadable-note";
 import {
   CHECK_FOR_UPDATES_LABEL,
   hiddenUpdatesLabel,
@@ -160,7 +160,7 @@ export function UpdatesPage() {
               {read.error}
             </StatusNote>
           ) : null}
-          <UnreadableProjectsNote places={unreadable} />
+          <UnreadablePlacesNote places={unreadable} />
           {visible.length === 0 ? (
             // Only a read that covered every project may call the machine
             // up to date: a project with no standing is not a project with

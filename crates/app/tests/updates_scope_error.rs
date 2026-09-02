@@ -78,6 +78,40 @@ fn an_unreadable_project_is_named_and_leaves_the_other_scopes_alone() {
     );
 }
 
+/// The personal scope has a lock of its own, and `updates_overview` folds
+/// it through `all_scopes` alongside every project. A build that refuses it
+/// lands the global scope here, which is why the surfaces drawing this list
+/// name places rather than projects — "Personal" is not one.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unreadable_personal_lock_is_carried_the_same_way() {
+    let f = fixture("app");
+    let manifest = kendex_core::manifest::manifest_path(&f.env, &Scope::Global);
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest,
+        format!(
+            "schema = {}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+            kendex_core::manifest::MANIFEST_SCHEMA
+        ),
+    )
+    .unwrap();
+    let personal = kendex_core::lock::lock_path(&f.env, &Scope::Global);
+    fs::create_dir_all(personal.parent().unwrap()).unwrap();
+    fs::write(&personal, r#"{"version":1,"entries":{}}"#).unwrap();
+
+    let report = overview(&f.env, &[Scope::Global, f.project.clone()]);
+    assert_eq!(
+        report
+            .unreadable
+            .iter()
+            .map(|place| place.scope.clone())
+            .collect::<Vec<_>>(),
+        vec![Scope::Global],
+        "the project reads fine; only the personal scope is named"
+    );
+}
+
 /// Damaged bytes take the same route, and a second readable project's
 /// standing is untouched by the first one's failure.
 #[test]

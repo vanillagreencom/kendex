@@ -1,24 +1,23 @@
-import type { AvailablePackage, MarketplaceRow, Scope } from "@/bindings";
+import type { MarketplaceRow, Scope, UnreadableScope } from "@/bindings";
 import {
   SEE_PROBLEMS_LABEL,
   unreadableRecordsLine,
   unreadableSourcesLine,
 } from "@/lib/copy-marketplaces";
 import { scopeLabel } from "@/lib/derive";
-import { recordsUnreadable } from "@/lib/install-state";
-import { scopeName } from "@/lib/labels";
+import { scopeName, scopeNames } from "@/lib/labels";
 import { marketKey, readErrorKey } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
 
-/** One project the Packages tab could not fully answer for, and why.
+/** One place the Packages tab could not fully answer for, and why.
  *
- * Keyed by project, not by marketplace alias: one alias subscribed in three
+ * Keyed by place, not by marketplace alias: one alias subscribed in three
  * projects printed three identical lines naming nothing a reader could act
  * on. `sources` is a marketplace here that refused to load, so its packages
- * are missing from the table; `records` is this project's lock, which the
- * engine reports per row as an unknown installed state and the Problems
- * page explains. A project with both is named once, under `sources` — the
- * missing rows are the larger fact. */
+ * are missing from the table; `records` is this place's lock, which the
+ * update read reports for the place as a whole and the Problems page
+ * explains. A place with both is named once, under `sources` — the missing
+ * rows are the larger fact. */
 export interface TroubledScope {
   key: string;
   scope: Scope;
@@ -26,11 +25,18 @@ export interface TroubledScope {
   records: boolean;
 }
 
+/** `records` is read off the update read's own list of places it could not
+ * read, not inferred from the rows: a row's "unknown" state is one symptom
+ * of the unreadable lock, and it is missing in exactly the case the line
+ * matters most — a place whose marketplaces ALSO failed has no cached
+ * packages to carry the symptom, so an inference from rows leaves it with
+ * the sources line and no way to the reason. */
 export function troubledScopes(
   rows: MarketplaceRow[],
-  packages: Record<string, AvailablePackage[]>,
   readErrors: Record<string, string>,
+  unreadable: UnreadableScope[],
 ): TroubledScope[] {
+  const noRecords = new Set(unreadable.map((place) => scopeLabel(place.scope)));
   const places = new Map<string, TroubledScope>();
   for (const row of rows) {
     if (!row.enabled) continue;
@@ -39,13 +45,10 @@ export function troubledScopes(
       key,
       scope: row.scope,
       sources: false,
-      records: false,
+      records: noRecords.has(key),
     };
     const market = marketKey(row.scope, row.name);
     if (readErrors[readErrorKey(market, "packages")]) place.sources = true;
-    if ((packages[market] ?? []).some((pkg) => recordsUnreadable(pkg.state))) {
-      place.records = true;
-    }
     if (place.sources || place.records) places.set(key, place);
   }
   return [...places.values()];
@@ -80,17 +83,20 @@ export function RecordsUnreadableNote({ scope }: { scope: Scope }) {
 }
 
 /** What the Packages tab says above its table when something under it
- * could not be read: one line per project, and — where the Problems page
- * carries the reason — the way to it. */
+ * could not be read: one line per place, and — where the Problems page
+ * carries the reason — the way to it. Names come from [scopeNames], so two
+ * projects whose folders share a basename are told apart by their paths
+ * rather than printing the same line twice. */
 export function TroubleLines({ places }: { places: TroubledScope[] }) {
   if (places.length === 0) return null;
+  const names = scopeNames(places.map((place) => place.scope));
   return (
     <div className="mb-3 space-y-1">
-      {places.map((place) => (
+      {places.map((place, index) => (
         <p key={place.key} className="text-xs text-warning">
           {place.sources
-            ? unreadableSourcesLine(scopeName(place.scope))
-            : unreadableRecordsLine(scopeName(place.scope))}
+            ? unreadableSourcesLine(names[index] ?? "")
+            : unreadableRecordsLine(names[index] ?? "")}
           {place.records ? (
             <>
               {" "}

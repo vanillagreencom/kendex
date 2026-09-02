@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { SEE_PROBLEMS_LABEL } from "@/lib/copy-marketplaces";
 import {
   UPDATES_UNREADABLE_TITLE,
-  unreadableProjectsLabel,
+  unreadablePlacesLabel,
 } from "@/lib/copy-updates";
 import { type AttentionSource, attentionRows } from "./attention-rows";
 
@@ -40,7 +40,41 @@ describe("a project Home has no update standing for", () => {
     });
     expect(rows).toHaveLength(1);
     expect(rows[0]?.title).toBe(UPDATES_UNREADABLE_TITLE);
-    expect(rows[0]?.detail).toBe(unreadableProjectsLabel(["hyprtrade"]));
+    expect(rows[0]?.detail).toBe(unreadablePlacesLabel(["hyprtrade"]));
     expect(rows[0]?.action?.label).toBe(SEE_PROBLEMS_LABEL);
+  });
+
+  // The update read folds every scope, so a personal lock this build
+  // refuses lands here too. It is named as what it is rather than being
+  // counted among the projects.
+  it("names the personal scope as Personal, not as a project", () => {
+    const rows = attentionRows({
+      ...clean,
+      unreadable: [
+        { scope: { scope: "global" }, message: "it is a version 5 record" },
+      ],
+    });
+    expect(rows[0]?.detail).toBe(unreadablePlacesLabel(["Personal"]));
+  });
+
+  // A folder basename is not unique: two projects with the same one would
+  // be named twice over identically, with nothing saying which failed.
+  it("tells apart two projects whose folders share a name", () => {
+    const rows = attentionRows({
+      ...clean,
+      unreadable: [
+        {
+          scope: { scope: "project", root: "/home/dev/kendex" },
+          message: "it is a version 5 record",
+        },
+        {
+          scope: { scope: "project", root: "/home/work/kendex" },
+          message: "it is a version 5 record",
+        },
+      ],
+    });
+    expect(rows[0]?.detail).toBe(
+      unreadablePlacesLabel(["/home/dev/kendex", "/home/work/kendex"]),
+    );
   });
 });

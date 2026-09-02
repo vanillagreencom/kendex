@@ -9,23 +9,24 @@ export const MARKETPLACES_EMPTY_TITLE = "No marketplaces yet";
 export const MARKETPLACES_UNCONFIRMED_TITLE =
   "These are the last subscriptions kendex could check";
 
-/** A row in a project whose lock kendex cannot read. What the source
+/** A row in a place whose lock kendex cannot read. What the source
  * offers is still listed — that is a fact about the source — but the row
  * says nothing about what is installed, because the record that would
  * answer could not be read. */
 export const PACKAGE_STATE_UNKNOWN = "Not known";
 
-/** One project whose records could not be read, named once however many
+/** One place whose records could not be read, named once however many
  * marketplaces it subscribes to. The Problems page carries the reason and
  * the way out, so the line sends the reader there rather than repeating a
- * shortened version of it. */
-export const unreadableRecordsLine = (project: string): string =>
-  `kendex can't read ${project}'s records, so its rows don't say what's installed.`;
+ * shortened version of it. The name is a place, not a project: the
+ * personal scope has a lock of its own and reads as "Personal" here. */
+export const unreadableRecordsLine = (place: string): string =>
+  `kendex can't read ${place}'s records, so its rows don't say what's installed.`;
 
-/** One project whose marketplaces themselves could not be read. Their
+/** One place whose marketplaces themselves could not be read. Their
  * packages are missing from the table, which is what the reader needs to
  * know before trusting an empty result. */
-export const unreadableSourcesLine = (project: string): string =>
-  `kendex couldn't read some of ${project}'s marketplaces, so their packages aren't listed.`;
+export const unreadableSourcesLine = (place: string): string =>
+  `kendex couldn't read some of ${place}'s marketplaces, so their packages aren't listed.`;
 
 export const SEE_PROBLEMS_LABEL = "See Problems";

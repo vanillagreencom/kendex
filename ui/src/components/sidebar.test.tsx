@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UPDATES_ATTENTION_TITLE } from "@/lib/copy";
-import { unreadableProjectsLabel } from "@/lib/copy-updates";
+import { unreadablePlacesLabel } from "@/lib/copy-updates";
 import { SIDEBAR_ROW } from "@/lib/layout";
 import { Sidebar } from "./sidebar";
 import { updateRow } from "./updates-test-rows";
@@ -115,7 +115,7 @@ describe("the Updates badge with a project kendex cannot read", () => {
     const html = renderToStaticMarkup(<Sidebar />);
     expect(html).toContain(">?<");
     expect(html).toContain("text-warning");
-    expect(html).toContain(esc(unreadableProjectsLabel(["hyprtrade"])));
+    expect(html).toContain(esc(unreadablePlacesLabel(["hyprtrade"])));
     expect(html).not.toContain(esc(UPDATES_ATTENTION_TITLE));
   });
 
@@ -128,6 +128,20 @@ describe("the Updates badge with a project kendex cannot read", () => {
     const html = renderToStaticMarkup(<Sidebar />);
     expect(html).toContain(">1<");
     expect(html).toContain("text-warning");
-    expect(html).toContain(esc(unreadableProjectsLabel(["hyprtrade"])));
+    expect(html).toContain(esc(unreadablePlacesLabel(["hyprtrade"])));
+  });
+
+  // The personal scope has a lock of its own, so it reaches the badge on
+  // the same route — under its own name rather than as a project.
+  it("names the personal scope as Personal", () => {
+    stub.updates = {
+      rows: [],
+      unreadable: [
+        { scope: { scope: "global" }, message: "it is a version 5 record" },
+      ],
+      read: { status: "landed", error: null },
+    };
+    const html = renderToStaticMarkup(<Sidebar />);
+    expect(html).toContain(esc(unreadablePlacesLabel(["Personal"])));
   });
 });
