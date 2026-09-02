@@ -72,11 +72,14 @@ export interface UpdateOffer {
  *  answers — true whatever any read does next.
  *
  *  Then this page's own reads (`package-read-state.ts` [`packageReadNote`]).
- *  Every answer that reaches them is a read that could have gone
- *  otherwise: the two commands hand back an absent value where core is
- *  saying there is no managed package here rather than that a read failed
- *  (`crates/app/src/packages.rs` `no_managed_package`), so the UI never
- *  classifies an error and [`retry`] is live wherever this note is shown.
+ *  Two of core's answers never arrive here as errors: nothing declared under
+ *  this name, and a source with no repository. The command layer folds both
+ *  into an absent value (`crates/app/src/packages.rs` `no_managed_package`),
+ *  so the page never tells an answer about the manifest apart from a read
+ *  that failed, and [`retry`] offers a read of this package again rather
+ *  than a button over something no read can change. A failure whose remedy
+ *  lies outside this page — a source nobody has fetched yet — names it in
+ *  the text core sent with it.
  *
  *  The update read's own standing comes last (`updates-read-state.ts`
  *  [`updatesReadNote`]): a check still running or one that failed says

@@ -93,6 +93,12 @@ const TIMELINE: VersionRow[] = [
   },
 ];
 
+/** The button carrying this label, or null. */
+const button = (host: HTMLElement, label: string) =>
+  [...host.querySelectorAll("button")].find(
+    (one) => one.textContent === label,
+  ) ?? null;
+
 // The Update on this page and the note where it would have been are one
 // string, and this block is the update read's half of it. What that read
 // says about the package — the kind's refusal, the row's own reasons, a
@@ -123,9 +129,12 @@ describe("what the package page says instead of Update", () => {
     return openPage(VG, [VG], { [scopeKey(VG)]: PLAIN }, null, kind);
   };
 
+  // No Try again beside either of these two: the standing is what has not
+  // answered, and reading this package again would not touch it.
   it("says a check is running before the first read answers", async () => {
     const host = await openWith({ read: READ_PENDING });
     expect(host.textContent).toContain(UPDATES_CHECKING);
+    expect(button(host, TRY_AGAIN_LABEL)).toBeNull();
   });
 
   // The page's own timeline read landed, so the versions on screen are
@@ -136,6 +145,19 @@ describe("what the package page says instead of Update", () => {
     const host = await openWith({ read: readFailed("no network") });
     expect(host.textContent).toContain(UPDATE_NEEDS_CHECK_HERE);
     expect(host.textContent).not.toContain(UPDATE_NEEDS_CHECK_NOTE);
+    expect(button(host, TRY_AGAIN_LABEL)).toBeNull();
+  });
+
+  // A read that failed leaves the rows here last-known, and a last-known
+  // row is not a fact to state about this place: what the read is doing is
+  // the whole of what can be said until one lands.
+  it("holds a last-known row back while the read that brought it failed", async () => {
+    const host = await openWith({
+      read: readFailed("no network"),
+      rows: [{ ...updateRow(VG), blockedByLocalEdit: true }],
+    });
+    expect(host.textContent).toContain(UPDATE_NEEDS_CHECK_HERE);
+    expect(host.textContent).not.toContain(EDITED_CANT_UPDATE_NOTE);
   });
 
   // The kind's refusal is core's own, derived from the kind alone, so no
@@ -191,21 +213,17 @@ describe("what the package page says instead of Update", () => {
 // The page's own two gating reads, and what the header says when one of
 // them does not land.
 //
-// Every answer that reaches them is a read that could have gone otherwise:
-// the two commands hand back an absent value where core is saying there is
-// no managed package here — undeclared, a plugin, a fork or another
-// non-repository source — rather than that a read failed, so the page never
-// tells an error apart from an answer and Try again is never dead.
+// Two of core's answers never arrive here as errors: nothing declared under
+// this name — an undeclared item, a plugin, a derived member — and a source
+// with no repository, which is every fork and path install. The command
+// layer folds both into an absent value, so the page never tells an answer
+// about the manifest apart from a read that failed, and Try again offers a
+// read of this package again rather than a button over something no read
+// can change.
 describe("what the package page says when its own reads fail", () => {
   /** This place's row with nothing withholding an update, which is what
    *  leaves the update read with nothing to say about the package. */
   const HEALTHY = [updateRow(VG)];
-
-  /** The button carrying this label, or null. */
-  const button = (host: HTMLElement, label: string) =>
-    [...host.querySelectorAll("button")].find(
-      (one) => one.textContent === label,
-    ) ?? null;
 
   /** What the commands answer where there is no managed package here: an
    *  absent record and an empty timeline, neither of them an error. */
@@ -431,6 +449,50 @@ describe("what the package page says when its own reads fail", () => {
       expect(button(host, TRY_AGAIN_LABEL)).not.toBeNull();
     },
   );
+
+  // A package already at its newest is nothing to explain, whatever else is
+  // going on behind it. A check running is not a reason to word: there is
+  // no Update to withhold.
+  it("says nothing over a package the timeline shows already current", async () => {
+    useUpdatesStore.setState({ rows: [], read: READ_LANDED, checking: true });
+    vi.mocked(commands.packageMeta).mockResolvedValue({
+      status: "ok",
+      data: RECORD,
+    });
+    vi.mocked(commands.packageVersions).mockResolvedValue({
+      status: "ok",
+      data: [{ ...TIMELINE[1], installed: true }],
+    });
+
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+
+    expect(header(host)).not.toContain(UPDATES_CHECKING);
+    expect(header(host)).not.toContain(UPDATE_LABEL);
+  });
+
+  // The edit is a fact about this copy and outranks the record read that did
+  // not land. Try again belongs to the note it can lift, and this is not
+  // one: no read of this package settles an edit of the reader's own.
+  it("offers no read again beside a reason reading cannot lift", async () => {
+    useUpdatesStore.setState({
+      rows: [{ ...updateRow(VG), blockedByLocalEdit: true }],
+      read: READ_LANDED,
+    });
+    vi.mocked(commands.packageVersions).mockResolvedValue({
+      status: "ok",
+      data: TIMELINE,
+    });
+    vi.mocked(commands.packageMeta).mockResolvedValue({
+      status: "error",
+      error: "the manifest is unreadable",
+    });
+
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+
+    expect(header(host)).toContain(EDITED_CANT_UPDATE_NOTE);
+    expect(header(host)).not.toContain(PACKAGE_READ_FAILED);
+    expect(button(host, TRY_AGAIN_LABEL)).toBeNull();
+  });
 
   // A plugin is declared nowhere, so core has no record and no timeline for
   // it. That is an answer about the manifest, not a read that failed: the
