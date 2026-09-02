@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AuditView_Serialize,
   ObservedItem,
+  PackageMeta_Serialize,
   ScanResult,
   Scope,
   UpdateRow,
@@ -22,6 +23,7 @@ import { ADOPTABLE } from "@/lib/adoptable";
 import { UPDATE_LABEL } from "@/lib/copy";
 import { OVERVIEW_TAB } from "@/lib/copy-customize";
 import { PROJECTS_TAB, updateInLabel } from "@/lib/copy-projects";
+import { UPDATES_CHECKING } from "@/lib/copy-updates";
 import { READ_LANDED } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
@@ -104,6 +106,20 @@ const rowAt = (commit: string, waiting: boolean): UpdateRow => ({
   noPerPackageUpdate: null,
 });
 
+/** The place's own record: a following package with nothing held. */
+const RECORD: PackageMeta_Serialize = {
+  source: "cat",
+  repo: "o/r",
+  repoUrl: null,
+  rev: null,
+  current: null,
+  installedAt: null,
+  harnesses: ["claude"],
+  enabled: true,
+  fork: null,
+  catalog: null,
+};
+
 const version = (
   id: string,
   label: string,
@@ -146,6 +162,14 @@ beforeEach(() => {
     data: { applies: true, skills: [], base: null },
   });
   useAuditStore.setState({ views: [], auditedAt: null, read: READ_LANDED });
+  // Reset with the rest: `checking` is what one case below turns on, and a
+  // store touch merges, so it would still be on under the other.
+  useUpdatesStore.setState({
+    rows: [],
+    read: READ_LANDED,
+    checking: false,
+    pendingFollows: [],
+  });
 });
 
 /** The page open on gh in vg, with the scan holding the one installation. */
@@ -181,6 +205,37 @@ const openTab = async (host: HTMLElement, name: string) => {
   await settle();
 };
 
+// A check runs on every return to the window, and the row it will replace is
+// still the truth about this place until it lands. The page keeps Update on
+// screen through one and disables it; swapping it for the checking note takes
+// the control away and says the check has not spoken for a place it has.
+describe("the package page while a check is running", () => {
+  it("keeps the Update its landed row offers", async () => {
+    vi.mocked(commands.packageMeta).mockResolvedValue({
+      status: "ok",
+      data: RECORD,
+    });
+    vi.mocked(commands.packageVersions).mockResolvedValue({
+      status: "ok",
+      data: [version(NEW, "v2", false), version(OLD, "v1", true)],
+    });
+    vi.mocked(commands.packageFiles).mockResolvedValue({
+      status: "ok",
+      data: [{ path: "SKILL.md", size: 10, isReadme: false }],
+    });
+    useUpdatesStore.setState({
+      rows: [rowAt(OLD, true)],
+      read: READ_LANDED,
+      checking: true,
+    });
+
+    const host = await openPage();
+
+    expect(header(host)).toContain(UPDATE_LABEL);
+    expect(header(host)).not.toContain(UPDATES_CHECKING);
+  });
+});
+
 describe("the package page after an update started from its Projects tab", () => {
   it("re-reads its files, its version and its update offer", async () => {
     // What the engine answers before and after the apply lands: core stamps
@@ -189,18 +244,7 @@ describe("the package page after an update started from its Projects tab", () =>
     let landed = false;
     vi.mocked(commands.packageMeta).mockResolvedValue({
       status: "ok",
-      data: {
-        source: "cat",
-        repo: "o/r",
-        repoUrl: null,
-        rev: null,
-        current: null,
-        installedAt: null,
-        harnesses: ["claude"],
-        enabled: true,
-        fork: null,
-        catalog: null,
-      },
+      data: RECORD,
     });
     vi.mocked(commands.packageVersions).mockImplementation(() =>
       Promise.resolve({

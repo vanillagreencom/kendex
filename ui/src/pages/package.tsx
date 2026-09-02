@@ -95,9 +95,10 @@ export function PackagePage() {
   // string, so this selector answers the same value on every render that
   // changes nothing.
   const withheld = useUpdatesStore((s) => packageUpdateNote(s, ref));
-  // How the update read itself is standing, which is about the machine
-  // rather than about this package. A string, for the same reason.
-  const standing = useUpdatesStore(updatesReadNote);
+  // How the update read itself is standing, which is about the machine rather
+  // than about this package, and silent where it has a row for this place. A
+  // string, for the same reason.
+  const standing = useUpdatesStore((s) => updatesReadNote(s, ref));
   // Why this package is installed when nobody asked for it: the package
   // that requires it, named. A string, so this selector answers the same
   // value on every render that changes nothing.

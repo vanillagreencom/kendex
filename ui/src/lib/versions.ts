@@ -85,7 +85,10 @@ export interface UpdateOffer {
  *  [`updatesReadNote`]): a check still running or one that failed says
  *  nothing about this package, and letting it speak first was how a real
  *  failure of this page's reads went unsaid in exactly the correlated case —
- *  the transport being down takes the standing out too.
+ *  the transport being down takes the standing out too. It is silent where a
+ *  landed row already covers the place, which is that function's own rule:
+ *  the page keeps its version-changing controls on screen through a check
+ *  rather than swapping them for a note.
  *
  *  `installed` and `latest` gate all of it: only a timeline showing the
  *  installed version already at its newest is nothing to explain. No
@@ -104,9 +107,8 @@ export const updateOffer = (page: {
   standing: string | null;
 }): UpdateOffer => {
   const reason = page.withheld ?? page.readNote ?? page.standing;
-  // The button and the note come from the one string: whatever withholds an
-  // Update hides it, an unconfirmed standing included — acting on rows no
-  // read confirmed is the fail-open this closes.
+  // The button and the note come from the one string, so whatever withholds
+  // an Update is also what is said in its place.
   const current = page.installed != null && !hasNewer(page.latest);
   return {
     can: canUpdatePackage({ ...page, withheld: reason }),
