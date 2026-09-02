@@ -20,6 +20,8 @@ The highest-value question is not "is there a test?" but "**can this test still 
 
 Coverage of changed paths (branches, error paths, boundaries), test quality, determinism, environment assumptions. Leave the underlying product bug to `reviewer-correctness` — you report the missing or weak test. Demand tests that catch real bugs, not coverage theater.
 
+A race, a concurrent writer, a symlink or `..` shape, or a malformed input is a finding only when you name the shipped producer or user action that reaches it. Without that name, do not write the finding.
+
 ## Probes
 
 - **Must-fail control**: every NEW test, guard arm, or verdict path must be shown able to fail — a planted-defect fixture, red-first evidence, or a mutation check. A guard nobody has seen fail is unverified. A control that deletes the code under test only proves the assertion runs; for any guard matching source text, the required control is the inverse — keep the matched text, remove the behavior — and the guard must still fail. Plant every satisfied-but-inert form the scanned language allows: a comment, a string or template-literal interior, a nested occurrence, alternate quoting, a braceless statement, a dead `&& false` branch, a discarded result, and a textually earlier but unrelated conditional. Authoring copy: `.agents/skills/code-quality/SKILL.md` § Prove Your Guards.

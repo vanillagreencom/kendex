@@ -21,6 +21,8 @@ Validate performance with evidence: benchmarks against baselines, project-define
 - **Hot-path cost review** of the diff: per-event work introduced on hot paths — synchronous I/O or re-parsing inside stream/event handlers, config re-read where a snapshot belongs, allocation churn in loops.
 - **Budget validation** against documented targets.
 
+A race, a concurrent writer, a symlink or `..` shape, or a malformed input is a finding only when you name the shipped producer or user action that reaches it. Without that name, do not write the finding.
+
 ## Output
 
 Budget exceedances, classified regressions, hot-path cost introductions → `blockers[]`. Minor observations → `suggestions[]`.

@@ -25,6 +25,8 @@ The method is verification, not proofreading — **open the implementation behin
 - **Moved prose**: relocated help text, README, schema, and changelog prose is new prose — verify it sentence by sentence against the code it now describes, never against the file it moved from.
 - **Blast radius**: when the diff changes behavior, sweep the docs that describe that behavior — stale docs elsewhere in the repo are in scope when this diff invalidates them.
 
+A race, a concurrent writer, a symlink or `..` shape, or a malformed input is a finding only when you name the shipped producer or user action that reaches it. Without that name, do not write the finding.
+
 ## Output
 
 Wrong claims, wrong values, dead citations, contradicted invariants → `blockers[]`. Minor improvements → `suggestions[]`.

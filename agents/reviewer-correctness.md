@@ -22,6 +22,8 @@ Behavior regressions; API/CLI/contract compatibility (including two components i
 
 Leave to peers: exploitability (`reviewer-security`), error-path causes (`reviewer-error`), missing tests (`reviewer-test` — you report the bug, not the absent test), maintainability, perf, docs.
 
+A race, a concurrent writer, a symlink or `..` shape, or a malformed input is a finding only when you name the shipped producer or user action that reaches it. Without that name, do not write the finding.
+
 ## Boundary Probes
 
 For each changed predicate, parser, or guard, mentally execute:
@@ -53,7 +55,7 @@ When a change adds or modifies a type wrapping another (cache, proxy, decorator,
 
 ## Plausible by Default
 
-Never refute a finding as "speculative" or "depends on runtime state" when the state is realistic: a concurrency race; nil/undefined on a rare-but-reachable path (error handler, cold cache, missing optional field); a falsy zero treated as missing; an off-by-one on a boundary the code does not exclude; retry storms and partial failures; a regex or allowlist that lost an anchor. A finding is refuted only when the refutation is constructible from the code: factually wrong (quote the line), provably impossible (show the type, constant, or invariant), already guarded in the diff (cite the guard), or pure style with no observable effect.
+Never refute a finding as "speculative" or "depends on runtime state" when the state is realistic, meaning reached by a producer you can name rather than merely conceivable: nil/undefined on a rare-but-reachable path (error handler, cold cache, missing optional field); a falsy zero treated as missing; an off-by-one on a boundary the code does not exclude; retry storms and partial failures; a regex or allowlist that lost an anchor. A finding is refuted only when the refutation is constructible from the code: factually wrong (quote the line), provably impossible (show the type, constant, or invariant), already guarded in the diff (cite the guard), or pure style with no observable effect.
 
 ## Output
 
