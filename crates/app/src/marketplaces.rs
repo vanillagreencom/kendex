@@ -162,10 +162,11 @@ pub fn marketplace_package_preview(
     catalog: Catalog,
     kind: ItemKind,
     name: String,
+    destination: Option<Scope>,
 ) -> Result<PackageView, String> {
     let env = env()?;
-    let preview =
-        browse::package_preview(&env, &catalog, kind, &name).map_err(|e| e.to_string())?;
+    let preview = browse::package_preview(&env, &catalog, kind, &name, destination.as_ref())
+        .map_err(|e| e.to_string())?;
     let safety = browse::package_safety(&env, &catalog, kind, &name).map_err(|e| e.to_string())?;
     Ok(PackageView { preview, safety })
 }

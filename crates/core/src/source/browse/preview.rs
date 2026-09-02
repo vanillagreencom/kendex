@@ -35,13 +35,21 @@ pub struct PackagePreview {
     pub collision: Option<String>,
 }
 
+/// `destination` redirects an install into a project. The package's bytes
+/// still come from the subscription; only the dependency state join moves,
+/// because what is already installed and what was kept removed are facts
+/// about the scope the install would land in.
 pub fn package_preview(
     env: &Env,
     catalog: &Catalog,
     kind: ItemKind,
     name: &str,
+    destination: Option<&crate::model::Scope>,
 ) -> Result<PackagePreview> {
     let browsed = super::open(env, catalog)?;
+    let redirected = destination
+        .map(|scope| super::opened::records_of(env, scope))
+        .transpose()?;
     let Some(path) = crate::source::find_item(&browsed.sealed, &browsed.config, kind, name) else {
         return Err(CoreError::ItemNotInSource {
             name: name.to_owned(),
@@ -92,6 +100,11 @@ pub fn package_preview(
         dependencies: super::deps::dependencies(
             &browsed,
             &crate::engine::deps::OfferedSkills::default(),
+            &super::deps::Where {
+                manifest: redirected.as_ref().map_or(&browsed.manifest, |r| &r.0),
+                lock: redirected.as_ref().map_or(&browsed.lock, |r| &r.1),
+                subscription: browsed.subscription(),
+            },
             kind,
             name,
             text.as_deref(),

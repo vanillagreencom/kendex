@@ -41,7 +41,7 @@ fn root_skill_fixture() -> (tempfile::TempDir, Env, Catalog) {
 #[test]
 fn a_repo_root_skill_lists_and_reads_only_its_own_tree() {
     let (_tmp, env, catalog) = root_skill_fixture();
-    let preview = package_preview(&env, &catalog, ItemKind::Skill, "root").unwrap();
+    let preview = package_preview(&env, &catalog, ItemKind::Skill, "root", None).unwrap();
     let listed: Vec<&str> = preview.files.iter().map(|f| f.path.as_str()).collect();
     assert!(listed.contains(&"notes.md"), "{listed:?}");
     assert!(

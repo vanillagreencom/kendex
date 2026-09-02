@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::engine::deps::OfferedSkills;
+use crate::lock::Lock;
+use crate::manifest::Manifest;
 use crate::model::ItemKind;
 use crate::names;
 
@@ -53,13 +55,41 @@ impl PackageDependencies {
     }
 }
 
-/// What this package declares it needs, against this catalog and scope.
-/// `offered` is the catalog's bare-name index, shared across every package
-/// in one read; `text` is the package's own SKILL.md, already read by the
-/// caller that also wants its header.
+/// Which scope's records a dependency's state is read from: what is
+/// already installed there, and what was kept removed. The browsed scope
+/// answers unless the install is being redirected, in which case the
+/// destination does — that is where the install lands, so its removals and
+/// its installations are the ones the row is about.
+pub(super) struct Where<'a> {
+    pub(super) manifest: &'a Manifest,
+    pub(super) lock: &'a Lock,
+    /// The subscription the catalog is browsed as. A redirected install
+    /// installs from the same subscription name in the destination.
+    pub(super) subscription: Option<&'a str>,
+}
+
+impl Where<'_> {
+    fn state(&self, kind: ItemKind, name: &str) -> InstallState {
+        let locked = self.lock.entries.values().any(|entry| {
+            entry.kind == kind
+                && entry.name == name
+                && self.subscription == Some(entry.source.as_str())
+        });
+        match locked {
+            true => InstallState::Installed,
+            false => InstallState::Available,
+        }
+    }
+}
+
+/// What this package declares it needs, against this catalog and the scope
+/// the install would land in. `offered` is the catalog's bare-name index,
+/// shared across every package in one read; `text` is the package's own
+/// SKILL.md, already read by the caller that also wants its header.
 pub(super) fn dependencies(
     browsed: &Browsed,
     offered: &OfferedSkills,
+    landing: &Where<'_>,
     kind: ItemKind,
     name: &str,
     text: Option<&str>,
@@ -74,7 +104,7 @@ pub(super) fn dependencies(
     let rows = |names: &[String]| {
         names
             .iter()
-            .filter_map(|dep| row(browsed, offered, name, dep))
+            .filter_map(|dep| row(browsed, offered, landing, name, dep))
             .collect()
     };
     PackageDependencies {
@@ -92,14 +122,13 @@ pub(super) fn dependencies(
 fn row(
     browsed: &Browsed,
     offered: &OfferedSkills,
+    landing: &Where<'_>,
     package: &str,
     declared: &str,
 ) -> Option<PackageDependency> {
     let kind = ItemKind::Skill;
-    let resolved = offered
-        .resolve(&browsed.sealed, &browsed.config, declared)
-        .ok();
-    if resolved.as_deref() == Some(package) {
+    let resolved = offered.resolve(&browsed.sealed, &browsed.config, declared);
+    if resolved.as_deref().ok() == Some(package) {
         return None;
     }
     Some(PackageDependency {
@@ -109,12 +138,15 @@ fn row(
             // their choice rather than offering to install it. The same
             // ladder a bundle member's row climbs, and the same predicate
             // `engine::deps::wanted_by` refuses on.
-            Some(name) if browsed.manifest.is_held_back(kind, name) => InstallState::RemovedByYou,
-            // A name the catalog does not carry, or carries more than once
-            // under different plugins: the engine refuses to guess between
-            // them, so nothing here is on offer either.
-            Some(name) => browsed.state(kind, name),
-            None => InstallState::NotOffered,
+            Ok(name) if landing.manifest.is_held_back(kind, name) => InstallState::RemovedByYou,
+            Ok(name) => landing.state(kind, name),
+            // The two ways a name resolves to nothing are not one state:
+            // the catalog carrying it twice under different plugins is
+            // what `engine::deps::resolve` warns about by name at install
+            // time, and calling that "not offered" says the opposite of
+            // what the catalog holds.
+            Err(candidates) if candidates.is_empty() => InstallState::NotOffered,
+            Err(_) => InstallState::OfferedMoreThanOnce,
         },
         shown: names::shown(declared),
         name: declared.to_owned(),

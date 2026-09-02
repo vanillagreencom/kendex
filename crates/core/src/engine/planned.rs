@@ -24,9 +24,10 @@ pub struct PlannedDeclaration {
     /// two graphs. Empty for a package the person declared and for a
     /// bundle member.
     pub required_by: Vec<String>,
-    /// The requiring package whose derivation supplied `decl`, and so owns
-    /// the revision this item reads. `None` where a bundle got there first:
-    /// that hold is released at the bundle, not at anything requiring it.
+    /// The requiring package a hold on this item is released at, when
+    /// there is one to name. `None` where a bundle got there first, and
+    /// `None` where the requirer is itself derived — see
+    /// [`held_by_requirer`].
     pub held_by_requirer: Option<String>,
 }
 
@@ -47,6 +48,28 @@ fn required_by(expanded: &expansion::Expansion, kind: ItemKind, name: &str) -> V
     parents.sort();
     parents.dedup();
     parents
+}
+
+/// Where a hold on this item is released, when the reader can be sent
+/// somewhere. The derivation that created the entry owns the revision, but
+/// only a package the person declared has a declaration they can edit: a
+/// bundle holding `dev`, which requires `gh`, holds `gh` through a `dev`
+/// that is itself derived, and naming `dev` sends the reader to a
+/// declaration that is not there. Unnamed is then the honest answer — it
+/// reads as the bundle or package it came with, which is true.
+fn held_by_requirer(
+    expanded: &expansion::Expansion,
+    manifest: &Manifest,
+    kind: ItemKind,
+    name: &str,
+) -> Option<String> {
+    let Some(crate::lock::Reason::RequiredBy { by }) = expanded.derived_from(kind, name) else {
+        return None;
+    };
+    manifest
+        .declared(by.kind)
+        .contains_key(&by.name)
+        .then(|| by.name.clone())
 }
 
 /// The full planned set — declared items plus derived members and
@@ -74,10 +97,7 @@ pub fn planned_declarations(
                     true => required_by(&expanded, kind, name),
                     false => Vec::new(),
                 },
-                held_by_requirer: match expanded.derived_from(kind, name) {
-                    Some(crate::lock::Reason::RequiredBy { by }) => Some(by.name.clone()),
-                    _ => None,
-                },
+                held_by_requirer: held_by_requirer(&expanded, manifest, kind, name),
                 name: name.clone(),
                 decl: planned.decl.clone(),
                 derived,

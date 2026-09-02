@@ -11,7 +11,6 @@ use crate::model::{HarnessId, Scope};
 use test_util::source_path;
 
 mod deps;
-mod deps_state;
 mod repo;
 mod root_skill;
 mod safety_budget;
@@ -468,7 +467,7 @@ fn preview_carries_readme_files_tags_and_sets() {
     fs::write(catalog.join("skills/gh/notes.md"), "extra notes\n").unwrap();
     let (env, scope) = project(tmp.path(), &sources_decl(&catalog));
 
-    let preview = package_preview(&env, &cat(&scope), ItemKind::Skill, "gh").unwrap();
+    let preview = package_preview(&env, &cat(&scope), ItemKind::Skill, "gh", None).unwrap();
     assert_eq!(preview.description.as_deref(), Some("does gh things"));
     assert_eq!(preview.tags, vec![Tag::Review]);
     assert_eq!(preview.readme.as_deref(), Some("body"));
@@ -480,7 +479,7 @@ fn preview_carries_readme_files_tags_and_sets() {
     assert_eq!(paths, ["SKILL.md", "notes.md"]);
     assert_eq!(preview.bundles, vec!["starter".to_owned()]);
 
-    let hook = package_preview(&env, &cat(&scope), ItemKind::Hook, "guard").unwrap();
+    let hook = package_preview(&env, &cat(&scope), ItemKind::Hook, "guard", None).unwrap();
     assert_eq!(hook.readme.as_deref(), Some("#!/bin/sh\necho ok"));
     assert_eq!(hook.files.len(), 1);
 }
@@ -494,7 +493,7 @@ fn preview_shows_control_characters_instead_of_acting_on_them() {
     skill(&catalog, "skills", "gh", "red \u{1b}[31m text");
     let (env, scope) = project(tmp.path(), &sources_decl(&catalog));
 
-    let preview = package_preview(&env, &cat(&scope), ItemKind::Skill, "gh").unwrap();
+    let preview = package_preview(&env, &cat(&scope), ItemKind::Skill, "gh", None).unwrap();
     let readme = preview.readme.unwrap();
     assert!(!readme.contains('\u{1b}'), "{readme:?}");
     assert!(readme.contains("\\u{1b}"), "{readme:?}");
@@ -515,7 +514,7 @@ fn preview_reads_only_through_the_sealed_source() {
     let (env, scope) = project(tmp.path(), &sources_decl(&catalog));
 
     assert!(matches!(
-        package_preview(&env, &cat(&scope), ItemKind::Skill, "gh"),
+        package_preview(&env, &cat(&scope), ItemKind::Skill, "gh", None),
         Err(CoreError::SourceEscape { .. })
     ));
     let rows = packages(&env, &cat(&scope)).unwrap();

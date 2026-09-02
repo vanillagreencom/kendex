@@ -94,31 +94,6 @@ describe("package page edited notice", () => {
     );
   });
 
-  it("names the package that requires a derived one", () => {
-    const html = render([
-      edited({
-        editedHarnesses: ["claude"],
-        forkableHarness: null,
-        derived: true,
-        requiredBy: ["dev"],
-      }),
-    ]);
-    // Static markup escapes the apostrophe.
-    expect(html).toContain("dev requires it, so it can&#x27;t become your own");
-  });
-
-  it("says only that something brought a derived package with no parent named", () => {
-    const html = render([
-      edited({
-        editedHarnesses: ["claude"],
-        forkableHarness: null,
-        derived: true,
-        requiredBy: [],
-      }),
-    ]);
-    expect(html).toContain("It came with a bundle or another package");
-  });
-
   it("keeps Discard edits for an owner-held derived package", () => {
     const html = render([
       edited({

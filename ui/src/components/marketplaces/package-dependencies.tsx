@@ -2,6 +2,7 @@ import type { InstallState, PackageDependencies } from "@/bindings";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {
+  DEPENDENCY_AMBIGUOUS_NOTE,
   DEPENDENCY_INSTALLED_NOTE,
   DEPENDENCY_NOT_OFFERED_NOTE,
   DEPENDENCY_REMOVED_NOTE,
@@ -13,22 +14,27 @@ import {
 
 /** What a dependency's state adds to its name, or nothing when it is
  *  simply on offer. A package already here is not installed twice, one the
- *  person removed stays removed until they add it back, and one the
- *  catalog no longer carries cannot be installed at all — each a fact
- *  about the row, said beside it and never blamed on the catalog. */
+ *  person removed stays removed until they add it back, one the catalog
+ *  carries twice is one the engine will not choose between, and one it no
+ *  longer carries cannot be installed at all — each a fact about the row,
+ *  said beside it and never blamed on the wrong party. */
 export function dependencyNote(state: InstallState): string | null {
   if (state === "installed") return DEPENDENCY_INSTALLED_NOTE;
   if (state === "removed-by-you") return DEPENDENCY_REMOVED_NOTE;
+  if (state === "offered-more-than-once") return DEPENDENCY_AMBIGUOUS_NOTE;
   if (state === "available") return null;
   return DEPENDENCY_NOT_OFFERED_NOTE;
 }
 
 /** A dependency the install cannot take: the catalog no longer offers it,
- *  or the person removed it themselves and that removal is recorded — the
- *  engine keeps a held-back name out of every plan, so ticking it here
- *  would ask for something no install brings. */
+ *  offers it under more than one plugin and will not guess, or the person
+ *  removed it themselves and that removal is recorded — the engine keeps
+ *  each of those out of every plan, so ticking it here would ask for
+ *  something no install brings. */
 const unavailable = (state: InstallState): boolean =>
-  state === "not-offered" || state === "removed-by-you";
+  state === "not-offered" ||
+  state === "removed-by-you" ||
+  state === "offered-more-than-once";
 
 /** The package page's dependency facts: what comes with this package, and
  *  what it offers to bring. Read-only — the choosing happens in the install

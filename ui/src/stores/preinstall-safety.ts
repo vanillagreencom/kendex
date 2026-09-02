@@ -67,6 +67,9 @@ export const usePreinstallSafety = create<PreinstallSafetyState>(
                 item.catalog,
                 item.kind,
                 item.name,
+                // The safety reading is about the package's bytes, which
+                // no destination changes.
+                null,
               );
               // A drop while this was in flight emptied the slot it would
               // fill, and cleared `queued` with it: storing the old score

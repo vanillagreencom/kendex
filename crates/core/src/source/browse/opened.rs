@@ -27,6 +27,13 @@ pub(crate) struct Browsed {
     subscription: Option<String>,
 }
 
+/// One scope's records, read for a state join that is not the browsed
+/// scope's: an install redirected into a project lands there, so what is
+/// already installed and what was kept removed are that project's answers.
+pub(crate) fn records_of(env: &Env, scope: &Scope) -> Result<(Manifest, Lock)> {
+    records(env, scope)
+}
+
 fn records(env: &Env, scope: &Scope) -> Result<(Manifest, Lock)> {
     let manifest = crate::manifest::load_current(&crate::manifest::manifest_path(env, scope))?
         .unwrap_or_default();
@@ -98,6 +105,13 @@ impl Browsed {
     /// "from here" and every declared name is a collision.
     pub(super) fn owned_here(&self, source: &str) -> bool {
         self.subscription.as_deref() == Some(source)
+    }
+
+    /// The subscription this catalog is browsed as, for a join reading
+    /// another scope's records: an install redirected into a project
+    /// installs from that same subscription name.
+    pub(super) fn subscription(&self) -> Option<&str> {
+        self.subscription.as_deref()
     }
 
     pub(super) fn locked_here(&self, kind: ItemKind, name: &str) -> bool {

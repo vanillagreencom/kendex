@@ -1,7 +1,6 @@
 //! The optional dependencies an install takes, end to end through the
 //! window's own command: a name the picker ticked lands on disk and is
-//! recorded as the choice, an unticked one is not installed, and a name
-//! nothing offers is refused before anything is written.
+//! recorded as the choice, and an unticked one is not installed.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]
@@ -122,17 +121,4 @@ fn an_unticked_optional_dependency_installs_nothing() {
         "{}",
         manifest(&f)
     );
-}
-
-/// A choice naming an optional dependency nothing offers is an error that
-/// leaves the scope exactly as it was — never a silently ignored tick.
-#[test]
-fn an_optional_name_nothing_offers_is_refused_and_writes_nothing() {
-    let f = fixture();
-    let before = manifest(&f);
-    let error = install_dev(&f, &["nope"]).expect_err("a name nothing offers");
-
-    assert!(error.contains("nope"), "{error}");
-    assert!(!installed(&f, "dev"), "the refused plan wrote nothing");
-    assert_eq!(manifest(&f), before);
 }

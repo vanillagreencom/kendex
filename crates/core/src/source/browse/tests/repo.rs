@@ -232,7 +232,7 @@ fn only_a_github_repository_is_browsable_blind() {
 #[test]
 fn preview_and_safety_read_the_repository_and_the_score_is_shared_with_a_later_subscription() {
     let (_tmp, env, _upstream) = fixture();
-    let preview = package_preview(&env, &repo(), ItemKind::Skill, "gh").unwrap();
+    let preview = package_preview(&env, &repo(), ItemKind::Skill, "gh", None).unwrap();
     assert!(
         preview
             .readme

@@ -15,6 +15,7 @@ import { PageHeader } from "@/components/page-header";
 import { SafetyPanel } from "@/components/safety-panel";
 import { TagBadges } from "@/components/tag-badge";
 import { Button } from "@/components/ui/button";
+import { scopeLabel } from "@/lib/derive";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
@@ -53,10 +54,15 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   });
 
   // Null until the catalog is ready: a repository's first fetch holds the
-  // store's lock, and a read racing it would be refused.
-  const address = ready ? `${catalogKey(catalog)}::${kind}::${name}` : null;
+  // store's lock, and a read racing it would be refused. The destination is
+  // part of the address: a dependency's state — already installed there,
+  // or kept removed there — is a fact about the scope the install lands
+  // in, so choosing another place is a different read.
+  const address = ready
+    ? `${catalogKey(catalog)}::${kind}::${name}::${destination ? scopeLabel(destination) : ""}`
+    : null;
   const read = useOrderedRead<PackageView>(address, () =>
-    commands.marketplacePackagePreview(catalog, kind, name),
+    commands.marketplacePackagePreview(catalog, kind, name, destination),
   );
   const view = read.status === "ok" ? read.data : null;
   const error = read.status === "error" ? read.error : null;

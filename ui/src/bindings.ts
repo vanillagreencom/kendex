@@ -246,7 +246,7 @@ export const commands = {
 	 *  what the marketplace page's Bundles tab lists.
 	 */
 	marketplaceBundles: (catalog: Catalog) => typedError<BundleDetail[], string>(__TAURI_INVOKE("marketplace_bundles", { catalog })),
-	marketplacePackagePreview: (catalog: Catalog, kind: ItemKind, name: string) => typedError<PackageView, string>(__TAURI_INVOKE("marketplace_package_preview", { catalog, kind, name })),
+	marketplacePackagePreview: (catalog: Catalog, kind: ItemKind, name: string, destination: { scope: "global" } | { scope: "project"; root: string } | null) => typedError<PackageView, string>(__TAURI_INVOKE("marketplace_package_preview", { catalog, kind, name, destination })),
 	/**
 	 *  One offered file's content before install — the same read an installed
 	 *  package's file gets, confined to the package inside the catalog.
@@ -1581,7 +1581,14 @@ export type InstallState =
  *  derives it back. The row says it was their choice and offers Restore —
  *  installing it again clears the record (invariant 2 stays intact).
  */
-"removed-by-you";
+"removed-by-you" | 
+/**
+ *  A bare dependency name the catalog offers under more than one
+ *  plugin. The engine refuses to guess between them and warns naming
+ *  what it found, so nothing installs — but the catalog does carry the
+ *  name, and saying it is not offered would be the opposite of true.
+ */
+"offered-more-than-once";
 
 /**
  *  One row of the install picker: a tool the scope can install to, whether

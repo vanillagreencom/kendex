@@ -51,6 +51,11 @@ pub enum InstallState {
     /// derives it back. The row says it was their choice and offers Restore —
     /// installing it again clears the record (invariant 2 stays intact).
     RemovedByYou,
+    /// A bare dependency name the catalog offers under more than one
+    /// plugin. The engine refuses to guess between them and warns naming
+    /// what it found, so nothing installs — but the catalog does carry the
+    /// name, and saying it is not offered would be the opposite of true.
+    OfferedMoreThanOnce,
 }
 
 /// One package a subscription offers, as the Packages table lists it.
@@ -147,7 +152,18 @@ pub fn packages(env: &Env, catalog: &Catalog) -> Result<Vec<AvailablePackage>> {
                 summary: header.summary_or_description().map(names::shown),
                 tags: header.tags,
                 bundles,
-                dependencies: deps::dependencies(&browsed, &offered, kind, &name, text.as_deref()),
+                dependencies: deps::dependencies(
+                    &browsed,
+                    &offered,
+                    &deps::Where {
+                        manifest: &browsed.manifest,
+                        lock: &browsed.lock,
+                        subscription: browsed.subscription(),
+                    },
+                    kind,
+                    &name,
+                    text.as_deref(),
+                ),
                 kind,
                 name,
             });

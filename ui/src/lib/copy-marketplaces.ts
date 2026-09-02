@@ -21,3 +21,5 @@ export const DEPENDENCY_INSTALLED_NOTE = "already installed";
 export const DEPENDENCY_NOT_OFFERED_NOTE = "not offered here";
 export const DEPENDENCY_REMOVED_NOTE =
   "you removed it — add it back to restore it";
+export const DEPENDENCY_AMBIGUOUS_NOTE =
+  "this marketplace offers it more than once — nothing to choose between them";
