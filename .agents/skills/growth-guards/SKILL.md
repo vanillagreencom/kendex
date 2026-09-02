@@ -23,11 +23,6 @@ repo-effects:
   companions:
     - "size-ratchet"
     - "preflight"
-  notes:
-    - "An existing pre-commit or commit-msg hook keeps its content and its exit status: one marked line goes in after the shebang and falls through to what was already there. core.hooksPath is never set."
-    - "The chain runs in order: size-ratchet --staged, preflight --staged, the growth-guards batch at commit scope (todo-ban --staged, byte-ceiling, suppression-ban, conflict-markers, changelog-entries, prose), then the repo-root executable named by GROWTH_GUARDS_PRE_COMMIT_LOCAL. A companion that is not installed is an announced skip, never a silently missing check, and one that is installed but cannot run stops the commit rather than skipping it; the stated skips are preflight on a repository's first commit and a repo-local size-ratchet that rejects --staged."
-    - "Both hooks block on any nonzero verdict and fail closed on a guard that could not run. Passing git's no-verify flag bypasses one commit, and skips the message gate with it."
-    - "The gate needs no kendex binary once armed: git runs this package's committed scripts, so a machine that never installed kendex still gates commits. Arming does not travel, though — git clones no hooks and this package never sets core.hooksPath — so every clone is armed once, by whoever clones it."
 ---
 
 # Growth Guards
@@ -50,59 +45,25 @@ Each check is also invocable as `scripts/CHECK`.
 
 | Check | Verdict |
 |---|---|
-| **todo-ban** | Any work marker (TODO, FIXME, HACK, XXX in comment-marker shapes) in a tracked, non-excluded file fails. No baseline. Prose naming a marker word does not fire. Two scopes: the default reads the whole index (the CI subject); `--staged` judges only the lines the staged diff ADDS, so a marker the commit does not add is CI's finding rather than this commit's. Content decides what either scope reads and an attributes rule never does; a blob carrying a NUL in its leading bytes is named as unmeasured. |
-| **byte-ceiling** | A tracked file over the ceiling (default 200 KB) fails. `--staged` (default) gates every file the commit adds, modifies or changes the type of; `--base REF` only the files added since merge-base; `--all` sweeps every tracked file. Lockfiles are exempt built-in. |
-| **suppression-ban** | Blanket lint suppressions fail flat: module-wide rust `allow` inner attributes, file-level ruff/flake8 noqa, the bare `eslint-disable` block form, bare or `all` nolint, biome's `biome-ignore-all` / unscoped `biome-ignore-start` / rule-less `biome-ignore lint` and group forms. Bare rust `allow(dead_code)`/`allow(unused*)` attributes are counted per file against a tighten-only baseline; `--update` lowers/removes rows, never adds or raises one. A per-line suppression naming its lint with a stated reason stays legal. |
-| **conflict-markers** | An unresolved merge-conflict marker in a tracked, non-excluded file fails: the open/base/close trio (seven `<`, seven vertical bars, seven `>`) at column 0, each followed by a space or end of line. No baseline. Indented or quoted occurrences and the bare seven-equals separator do not fire. |
-| **changelog-entries** | The changelog, over two scopes. Fragments (`GROWTH_GUARDS_CHANGELOG_PATHS`): each matched tracked path must be a real text file — a symlink, a gitlink or a binary blob is refused — be placed by a configured pattern — a pattern is `<root…>/<section>/<name>`, so its own last two segments say where the section sits and its own depth says which paths it places, and `*` crossing `/` matches a deeper path without placing it — with that directory a Keep a Changelog section (`added`, `changed`, `deprecated`, `removed`, `fixed`, `security`), hold exactly one Markdown list item (first non-blank line opens with a hyphen and a space and says something; every later non-blank line indents under it, so an indented second paragraph is part of the entry), and measure within the character cap (default 200). Measuring joins the fragment's lines with CR stripped and whitespace runs collapsed to one space, counted in characters — so wrapping spends no cap. Every OTHER tracked path in the fragment tree is refused too, excepting a `README.md` directly under a root and the configured record itself — both settled before any pattern is consulted, so the exemption does not turn on the pattern shape; `--collate` is the release commit's write: on a clean verdict the same run folds every fragment it just accepted into the record's `[Unreleased]` section under the heading its own section names, in Keep a Changelog order and filename order within a section, then deletes the fragment files and the section directory each leaves empty — replacing the record whole or not at all, and refusing without writing when git and the working tree disagree about the record or any fragment. The record (`GROWTH_GUARDS_CHANGELOG_RECORD`): a line the index carries under its `## [Unreleased]` heading that HEAD does not is refused, so two branches never insert at the same place; the heading is found by ATX structure outside fenced code and matched whole rather than by prefix (a fence closes only on a run of at least its opening length in the same character; an unterminated one, and a second such heading, are exit 2; every shape rule judges the STAGED copy, and a HEAD this guard would not accept is a comparison skipped with its reason rather than a refusal, so the commit repairing history is never the one blocked); a record with no such heading at all is refused, whether the commit staged it away or the file never carried one, and so is a level-3 heading inside the section that names no section; a record HEAD carries that the index stages away is refused rather than read as a repository that never had one, and `GROWTH_GUARDS_CHANGELOG_COLLATE=1` declares the collator's own write, read at one point and bypassing that comparison alone — the type and text rules, the heading rules and the deletion refusal all still judge under it. Text that is not valid UTF-8 is a collection error; paths matching no tracked file are a clean pass. |
-| **prose** | A history reference in a configured markdown file fails: a calendar date, a three- or four-digit issue number after `#` (the hex digits are excluded, so a longer token passes; three- and four-digit shorthand cannot be told from an issue number and fails), or a word naming a past state. Scope is the path list — by default what an agent harness loads on its own (`SKILL.md`, `workflows/*.md`, `agents/*.md`, `AGENTS.md`, `CLAUDE.md`), so a reference doc, a changelog and a design record are out of scope by not being named. Matching is case-insensitive and whole-word. A symlink, a gitlink or a blob carrying a NUL at a configured path is named as unmeasured rather than counted clean — the lane measures the file at the path it was pointed at and does not read through a link — and paths matching no tracked file are a clean pass. No baseline; the word list is in CHECKS.md. |
-| **commit-msg** | Every commit-message rule: only this hook sees the subject. Header must be `type(scope)!: subject` (scope and `!` optional; uppercase issue keys `fix(ABC-123)` and `#`-number scopes pass) and at most `GROWTH_GUARDS_SUBJECT_MAX` characters. A commit staging a path `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS` names must also write a changelog entry — a path under `GROWTH_GUARDS_CHANGELOG_PATHS`, or `GROWTH_GUARDS_CHANGELOG_RECORD` under `GROWTH_GUARDS_CHANGELOG_COLLATE=1`, which is the release commit collating the fragments — or carry `[no-changelog]` in the header. Git-generated messages (Merge/Revert/Reapply, fixup!/squash!/amend!) skip shape and length only; the changelog rule still runs over them. Every applicable rule reports before the verdict. Takes the message file or stdin. |
+| **todo-ban** | Any work marker (TODO, FIXME, HACK, XXX in comment-marker shapes) in a tracked, non-excluded file fails. No baseline. |
+| **byte-ceiling** | A tracked file over the configured ceiling fails; lockfiles are exempt. |
+| **suppression-ban** | Blanket lint suppressions fail; reasonless Rust dead or unused allows may only tighten against the baseline. |
+| **conflict-markers** | An unresolved merge-conflict marker in a tracked, non-excluded file fails. |
+| **changelog-entries** | Each `GROWTH_GUARDS_CHANGELOG_PATHS` fragment is one Markdown list item in a Keep a Changelog section and at most `GROWTH_GUARDS_CHANGELOG_CAP` characters. |
+| **prose** | A history reference in Markdown named by `GROWTH_GUARDS_PROSE_PATHS` fails; `GROWTH_GUARDS_CHECKS` controls whether the lane runs. |
+| **commit-msg** | The header must be `type(scope)!: subject` within `GROWTH_GUARDS_SUBJECT_MAX`; a commit touching `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS` also owes a changelog entry or `[no-changelog]`. |
 
-Exit codes everywhere: `0` clean, `1` violations, `2` usage/config/collection
-error. Any failure to collect (unreadable file, git/grep execution failure) is
-exit 2, never a silent pass. The batch dispatcher exits 2 if any check could
-not complete.
+Full check shapes and scopes: [CHECKS.md](CHECKS.md).
 
-Scans read INDEX content (`git grep --cached`, staged blobs). A scan whose
-paths include an UNMERGED entry exits 2 naming them: finish or abort the merge,
-then re-run.
+Exit codes: `0` clean, `1` violations, `2` usage, configuration, or collection error. An unmerged entry in a scanned path is a collection error.
 
 ## Git hooks
 
-`scripts/install-git-hooks [--repo PATH]` writes `.git/hooks` shims.
-`pre-commit` runs, in order: `size-ratchet --staged` and `preflight --staged`
-when the committing work tree or this install carries those skills (the work
-tree's copy wins; a first commit skips preflight with a note; a size-ratchet
-that rejects `--staged` in its first-line parser diagnostic is a stated skip —
-any other failure blocks); `growth-guards all --staged`, which hands `--staged`
-to the checks that take it and leaves the rest at their own default scope; then
-the repo-root-relative executable named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`.
-`commit-msg` runs the message gate, changelog rule included. Both BLOCK on the exit contract, fail
-closed on a guard that could not run; `git commit --no-verify` is the bypass.
-The `kendex guard` verbs invoke this installer: `install`, `uninstall`
-(`--uninstall`) and `check` (`--check`). Arming and disarming are
-repository-level: every work tree and nested project shares one hooks
-directory, so an uninstall from any of them disarms the repository. Disarm
-before removing this skill: shims whose scripts are gone block every commit. `kendex check` relays
-this installer's own `--check` verdict where there is something to report — a clean result folds
-into kendex's own all-clear — and asks for it only where
-`.git/hooks/kendex-guards` is already there: git clones no hooks, so that
-file is a local act, and without it nothing is run out of the checkout at
-all. The verdicts are:
-(0 armed in `.git/hooks`; 1 drifted, absent, or `core.hooksPath` set and
-empty, which switches git hooks off; 2 could not determine — an unreadable
-hooks directory, or any `core.hooksPath` naming a directory, which is
-outside this verifier's contract: it reads `.git/hooks` only). Repeat runs
-are no-ops and repairs; `core.hooksPath` is never set; existing hooks keep
-their content and exit status. Full install and refusal behaviour:
-[DEVELOPMENT.md](DEVELOPMENT.md).
+Run `scripts/install-git-hooks [--repo PATH]` to arm the shims.
 
-The git hooks are the authoritative gate: they run for every committer, and
-they need no kendex binary — the shim execs this skill's committed scripts.
-kendex arms and reports, and implements no check of its own. The
-`pre-commit-check` harness hook stands aside where BOTH git hooks are armed,
-refuses commands that would sidestep them, and refuses the commit otherwise — it never runs these scripts on a repository's behalf.
-Layering and reasoning: [README](README.md).
+Pre-commit order: `size-ratchet --staged` when installed -> `preflight --staged` when installed -> `growth-guards all --staged` -> `GROWTH_GUARDS_PRE_COMMIT_LOCAL` when configured. `commit-msg` runs the message gate.
+
+Arming and disarming apply to the whole repository. Disarm before removing the skill. Ownership and layering: [README.md § Who gates a commit](README.md#who-gates-a-commit); install mechanics: [DEVELOPMENT.md § Git hook install contract](DEVELOPMENT.md#git-hook-install-contract).
 
 ## Configuration
 
@@ -124,23 +85,11 @@ Layering and reasoning: [README](README.md).
 | `GROWTH_GUARDS_SUBJECT_MAX` | `72` | Characters allowed in a hand-written commit header. |
 | `GROWTH_GUARDS_PRE_COMMIT_LOCAL` | *(empty)* | Repo-root-relative executable the pre-commit shim runs last. |
 
-Resolution order for every key: explicit environment > `.env.local` >
-`.kendex/settings.toml` > the repo's committed `kendex.settings.toml` (flat
-`KEY = "value"` under `[env]`; other tables are ignored) > built-in default;
-a `.env` file is never read. Only an ABSENT source is skipped; one that
-exists but is unusable is a config error (exit 2).
-`GROWTH_GUARDS_SETTINGS_FILE=/dev/null` skips `.env.local` and the settings
-files, leaving environment variables and defaults.
-`GROWTH_GUARDS_CHANGELOG_COLLATE=1` is read from the environment alone: it
-declares the collator's own write under `[Unreleased]` for one run, the way
-`RATCHET_RAISE=1` declares a baseline. It bypasses that comparison and
-nothing else — what the record IS is judged either way.
+Settings follow [README.md § Configuration](README.md#configuration).
+`GROWTH_GUARDS_SETTINGS_FILE=/dev/null` skips file sources; `GROWTH_GUARDS_CHANGELOG_COLLATE=1` is environment-only and bypasses only the record comparison.
 
 **Excludes format** — `pattern<TAB>reason` per line (shell glob against the
 full repo-relative path; `*` crosses `/`); a pattern without a reason is a
 config error. **Baseline format** — `path<TAB>count`, `LC_ALL=C` sorted,
 unique paths, positive counts.
-
-What each check bans and how it is scoped: [CHECKS.md](CHECKS.md). Seeding
-a first baseline and CI wiring: [README.md](README.md). Marker shapes, per-language suppression patterns,
-and the hook install and removal contract: [DEVELOPMENT.md](DEVELOPMENT.md).
+Seeding a first baseline and CI wiring: [README.md](README.md). Hook install and removal details: [DEVELOPMENT.md](DEVELOPMENT.md).
