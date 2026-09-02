@@ -128,6 +128,8 @@ cleanup_active() {
   ACTIVE_PID="" ACTIVE_GROUP=""
 }
 
+request_cancel() { CANCEL_RC="$1"; }
+
 cleanup() {
   trap - EXIT HUP INT TERM
   cleanup_active
@@ -157,6 +159,12 @@ extract() { # extract SHA into $1, stamped past the build before it
 run_command() { # run $2 in $1, capture output in $3, label it $4
   dir="$1" command="$2" log="$3" label="$4"
 
+  # A handler cannot stop the new group until the fork's pid is assigned.
+  # Record cancellation across that window, then exit once cleanup owns it.
+  CANCEL_RC=""
+  trap 'request_cancel 129' HUP
+  trap 'request_cancel 130' INT
+  trap 'request_cancel 143' TERM
   set -m
   (
     cd "$dir" || exit 2
@@ -167,6 +175,10 @@ run_command() { # run $2 in $1, capture output in $3, label it $4
   ACTIVE_PID=$!
   ACTIVE_GROUP=$ACTIVE_PID
   set +m
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  [ -z "$CANCEL_RC" ] || exit "$CANCEL_RC"
 
   status=0 ticks=0 max_ticks=$((10#$TIMEOUT * 10)) timed_out=0
   while kill -0 "$ACTIVE_PID" 2>/dev/null; do

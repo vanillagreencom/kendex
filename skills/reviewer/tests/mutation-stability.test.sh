@@ -30,6 +30,25 @@ echo $$ > "$HANG_PID_FILE"
 trap '' TERM
 while :; do :; done
 T
+cat > "$TMP/launch-window.bashenv" <<'T'
+case "$0" in
+  *mutation-stability)
+    set -T
+    trap '
+      if [ "$BASH_COMMAND" = "ACTIVE_PID=\$!" ]; then
+        trap - DEBUG
+        tries=0
+        while [ ! -s "$HANG_PID_FILE" ] && [ "$tries" -lt 100 ]; do
+          sleep 0.01
+          tries=$((tries + 1))
+        done
+        : > "$LAUNCH_WINDOW_SIGNALLED"
+        kill -TERM "$$"
+      fi
+    ' DEBUG
+    ;;
+esac
+T
 git -C "$REPO" add -A
 git -C "$REPO" -c user.email=t@t -c user.name=t commit -qm x
 SHA=$(git -C "$REPO" rev-parse HEAD)
@@ -205,6 +224,30 @@ if [ -n "$exit_child" ] && stopped "$exit_child"; then
 else
   bad "exit cleanup reaps the active test process" "pid=${exit_child:-missing}"
   [ -z "$exit_child" ] || kill -KILL "$exit_child" 2>/dev/null || true
+fi
+
+export HANG_PID_FILE="$TMP/launch-window-child.pid"
+export LAUNCH_WINDOW_SIGNALLED="$TMP/launch-window-signalled"
+rc=0
+BASH_ENV="$TMP/launch-window.bashenv" "$MS" --worktree "$REPO" --sha "$SHA" \
+  --test 'true' --build 'bash hang.sh & wait' --mutate 'true' \
+  --stability 1 --timeout 2 >/dev/null 2>&1 || rc=$?
+if [ "$rc" = 143 ]; then
+  ok "a launch-window TERM exits 143"
+else
+  bad "a launch-window TERM exits 143" "rc=$rc"
+fi
+if [ -f "$LAUNCH_WINDOW_SIGNALLED" ]; then
+  ok "the fixture signals before process ownership is recorded"
+else
+  bad "the fixture signals before process ownership is recorded" "DEBUG trap did not fire"
+fi
+launch_window_child=$(cat "$HANG_PID_FILE" 2>/dev/null || true)
+if [ -n "$launch_window_child" ] && stopped "$launch_window_child"; then
+  ok "launch-window cancellation reaps the command process"
+else
+  bad "launch-window cancellation reaps the command process" "pid=${launch_window_child:-missing}"
+  [ -z "$launch_window_child" ] || kill -KILL "$launch_window_child" 2>/dev/null || true
 fi
 
 # flaky test: passes only on its first run in a copy (state file marks reruns)
