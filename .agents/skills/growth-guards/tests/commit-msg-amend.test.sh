@@ -3,10 +3,8 @@
 # the changelog a commit owes is read against the parent the commit will HAVE,
 # so an amend is judged against HEAD's parent, not the HEAD it replaces. Three
 # kinds of pin, because the answer is read off a process — a real `git commit`
-# for the rule end to end, each firing pin against the control that reds when
-# the widening stops being bound to the amend; an argv FILE for which argv IS
-# an amend, one spelling per line; and a FAKE `git`, a copy of bash under that
-# name, for the arms that need a process.
+# for the rule end to end, each firing pin against its control; an argv FILE for
+# which argv IS an amend; and a FAKE `git`, for the arms that need a process.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,11 +24,18 @@ bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 skip() { printf '  skip  %s\n' "$1"; }
 
 # The widening is read off /proc/<pid>/cmdline and nowhere else, so a host
-# without procfs — macOS, which this family supports — answers "not an amend".
-# A pin asserting the widening is skipped there, named, rather than reporting a
-# portability fact as a defect; the refusal controls and argv pins are not.
+# without procfs — macOS, which this family supports — answers "not an amend",
+# and a pin asserting the widening is SKIPPED there rather than reporting a
+# portability fact as a defect. On Linux it is not a portability fact: a
+# hardened kernel or a break in the detection would hide every widening pin
+# below behind a green run, so that pair REDS rather than skipping.
 HAVE_PROC=0
 if [ -r "/proc/$$/cmdline" ]; then HAVE_PROC=1; fi
+if [ "$(uname -s)" = Linux ] && [ "$HAVE_PROC" -eq 0 ]; then
+  bad "the /proc gate is honest" "Linux with /proc/$$/cmdline unreadable: every widening pin would skip"
+else
+  ok "the /proc gate is honest — a skip below means /proc is absent by design"
+fi
 
 mk_repo() { # DIR — a repo with the commit-msg hook installed and the rule armed
   mkdir -p "$1/crates/core" "$1/changelog.d/fixed"
