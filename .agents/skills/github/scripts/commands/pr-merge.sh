@@ -380,7 +380,7 @@ gh_with_token() {
     if [ -n "$auth_token" ]; then
         GH_TOKEN="$auth_token" gh "$@"
     else
-        env -u GH_TOKEN -u GITHUB_TOKEN gh "$@"
+        gh "$@"
     fi
 }
 
