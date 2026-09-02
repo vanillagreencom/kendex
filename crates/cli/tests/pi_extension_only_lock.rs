@@ -243,6 +243,40 @@ fn verify_refuses_a_scope_with_no_install_record() {
     );
 }
 
+/// A plugin declares through a table of its own, carrying an enabled flag
+/// and nothing else, so it reaches the gate through neither
+/// `Manifest::declared` nor the expanded plan. It is still a scope asking
+/// for something, and a scope asking for something with no record is the
+/// state this verb refuses.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn verify_refuses_a_plugin_only_scope_with_no_install_record() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    write(
+        &project.join("kendex.toml"),
+        "schema = 6\n\n[plugins.\"fmt@main\"]\nenabled = true\n",
+    );
+    assert!(!project.join(".kendex-lock.json").exists());
+
+    let output = kendex(&home, &project, &["verify"]);
+
+    assert!(!output.status.success(), "{output:?}");
+    assert_eq!(
+        said(&output).lines().next(),
+        Some(
+            format!(
+                "! {}: no install record at {} — this scope was not checked",
+                kendex_core::paths::slashed(&project),
+                project.join(".kendex-lock.json").display()
+            )
+            .as_str()
+        )
+    );
+}
+
 /// The global scope is the shape the bug was found on: Pi extensions
 /// declared in `~/.config/kendex/kendex.toml`, and a lock the version
 /// floor's remedy had moved aside. Its record sits under the app's own
