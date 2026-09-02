@@ -5,7 +5,11 @@ import { BundleCards } from "@/components/marketplaces/bundle-cards";
 import { DetailHeader } from "@/components/marketplaces/detail-header";
 import { MarketplacePlaces } from "@/components/marketplaces/marketplace-places";
 import { PackagesTable } from "@/components/marketplaces/packages-table";
-import { marketplaceIdentity } from "@/components/marketplaces/subscribed-grouping";
+import {
+  marketplaceIdentity,
+  openPlace,
+  personalFirst,
+} from "@/components/marketplaces/subscribed-grouping";
 import {
   useCachedRead,
   useCatalog,
@@ -99,7 +103,12 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
       return;
     const held = lastIdentity.current;
     if (!held) return;
-    const elsewhere = rows.find((r) => marketplaceIdentity(r) === held);
+    // The same pick the card makes, from the same helper: a place actually
+    // offering packages, personal before a project. First-in-overview-order
+    // would land the reader on a switched-off place.
+    const elsewhere = openPlace(
+      rows.filter((r) => marketplaceIdentity(r) === held).sort(personalFirst),
+    );
     if (elsewhere) {
       goToMarketplace(subscription(elsewhere.scope, elsewhere.name));
     } else {

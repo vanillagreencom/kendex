@@ -42,6 +42,13 @@ export {
 /** Subscribing either declared a source under an alias or was refused. */
 export type SubscribeOutcome = { name: string } | { error: string };
 
+/** Unsubscribing either happened or was refused. The same shape, for the
+ * same reason: a caller learns the outcome from what it was handed, never
+ * by reading `error` back out of the store. That slot is written for a
+ * dialog to display and cleared by every landing overview read, so a read
+ * landing in the gap leaves a caller with nothing to report. */
+export type UnsubscribeOutcome = { done: true } | { error: string };
+
 // The cached reads come from [CatalogCaches], declared once beside the drop
 // that empties them so a field cannot be renamed here alone.
 interface MarketplacesState extends InstallActions, CatalogCaches {
@@ -53,7 +60,12 @@ interface MarketplacesState extends InstallActions, CatalogCaches {
    * rewrites the reason the stale-read notices show. */
   read: ReadState;
   busy: boolean;
+  /** The last refusal, for a dialog to display. Written here, read only by
+   * the surface showing it — never by a caller deciding what happened. */
   error: string | null;
+  /** Emptied by whichever surface is about to show its own refusals, so a
+   * message left by another action cannot open under it. */
+  clearError: () => void;
   load: () => Promise<void>;
   loadPackages: (catalog: Catalog) => Promise<void>;
   loadSummary: (catalog: Catalog) => Promise<void>;
@@ -81,7 +93,7 @@ interface MarketplacesState extends InstallActions, CatalogCaches {
     source: string,
     keep: boolean,
     discardEdits: boolean,
-  ) => Promise<boolean>;
+  ) => Promise<UnsubscribeOutcome>;
   toggle: (scope: Scope, source: string, enabled: boolean) => Promise<void>;
   checkForUpdates: () => Promise<void>;
 }
@@ -103,6 +115,8 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   read: READ_PENDING,
   busy: false,
   error: null,
+
+  clearError: () => set({ error: null }),
 
   load: async () => {
     // A failed read — refusal or rejection, via `settled` — still answers:
@@ -186,7 +200,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
     }
     if (response.status === "error") {
       set({ error: response.error });
-      return false;
+      return { error: response.error };
     }
     set({ error: null });
     toast.success(
@@ -200,7 +214,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
     dropCatalogCaches(set);
     await get().load();
     await rescanEverything();
-    return true;
+    return { done: true };
   },
 
   ...sourceActions(set, get),

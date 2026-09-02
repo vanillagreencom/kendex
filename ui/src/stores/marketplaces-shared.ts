@@ -193,7 +193,18 @@ export async function openLead(scope: Scope, source: string, lead: string) {
  * reason to believe that. Rows kept from a read that later failed are what
  * this machine last knew and go on being acted on — the engine refuses
  * whatever they were wrong about — so it is the emptiness that holds the
- * page neutral, not the failure. */
+ * page neutral, not the failure.
+ *
+ * A key that never arrives is a different thing from one still on its way.
+ * `repoKey` is the GitHub `owner/repo` and is null on every other host, so
+ * a bare GitLab or self-hosted page waits on an answer no read will ever
+ * bring: "Checking subscriptions…", disabled, for as long as the page is
+ * open. Once the read has settled, that page is told what this build can
+ * actually tell it — nothing here declares the repository — and Subscribe
+ * is offered. Being wrong there costs a refusal the engine spells out;
+ * being permanently pending costs the page its only control. Carrying
+ * `repo_identity` onto the summary and the directory row is what makes the
+ * answer exact, and is filed separately. */
 type RepoActionKind = "checking" | "subscribe" | "turn-on" | "refresh";
 
 export function repoAction(
@@ -201,9 +212,15 @@ export function repoAction(
   read: ReadState,
   repoKey: string | null,
 ): { kind: RepoActionKind; holder: MarketplaceRow | null } {
-  if (repoKey === null || (read.status !== "landed" && rows.length === 0)) {
+  // Genuinely pending: a key a read still out may yet bring, or rows no
+  // read has produced.
+  if (repoKey === null && read.status === "pending") {
     return { kind: "checking", holder: null };
   }
+  if (read.status !== "landed" && rows.length === 0) {
+    return { kind: "checking", holder: null };
+  }
+  if (repoKey === null) return { kind: "subscribe", holder: null };
   const holder = declaredHolder(rows, repoKey);
   if (!holder) return { kind: "subscribe", holder: null };
   return { kind: holder.enabled ? "refresh" : "turn-on", holder };

@@ -98,6 +98,26 @@ describe("a marketplace's Projects section", () => {
     expect(host.textContent).not.toContain("/w/beta");
   });
 
+  // The same wrong-target unsubscribe by the other route: two places each
+  // declaring "./catalog" are naming two different folders, because a
+  // relative path resolves against the scope reading it.
+  it("leaves out a place whose relative path only looks like this one's", () => {
+    const local = { repo: null, repoKey: null, repoIdentity: null };
+    useMarketplacesStore.setState({
+      rows: [
+        row({ ...local, path: "./catalog" }),
+        row({
+          ...local,
+          path: "./catalog",
+          scope: { scope: "project", root: "/w/beta" },
+        }),
+      ],
+    });
+    const host = draw("global:./catalog");
+    expect(placesListed(host)).toEqual(["Personal"]);
+    expect(host.textContent).not.toContain("/w/beta");
+  });
+
   // The switch used to sit alone on the Subscribed list with nothing but
   // "Turn off" behind it: no place named, and no answer to what turning it
   // off does to what is already installed.

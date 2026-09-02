@@ -143,10 +143,19 @@ describe("a bare repository page's action", () => {
     const disabled = { ...row("acme/kit", "acme/kit"), enabled: false };
     // The page was opened as "Acme/Kit": before the summary or the directory
     // row supplies the canonical key, no spelling is compared.
-    expect(repoAction([disabled], READ_LANDED, null).kind).toBe("checking");
+    expect(repoAction([disabled], READ_PENDING, null).kind).toBe("checking");
     expect(repoAction([disabled], READ_LANDED, "acme/kit").kind).toBe(
       "turn-on",
     );
+  });
+
+  // A key that never arrives is not a key still on its way. `repoKey` is
+  // the GitHub owner/repo and is null on every other host, so waiting on it
+  // leaves a bare GitLab page disabled for as long as it is open. Once the
+  // read has settled the page is told what this build can tell it.
+  it("settles rather than waiting for a key no read will bring", () => {
+    const disabled = { ...row("acme/kit", "acme/kit"), enabled: false };
+    expect(repoAction([disabled], READ_LANDED, null).kind).toBe("subscribe");
   });
 
   // Before the first read answers there are no rows to look in, so every

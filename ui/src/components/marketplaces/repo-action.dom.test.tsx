@@ -4,11 +4,12 @@
 // is worth waiting for: one still out answers on its own, one that failed
 // never will, and a control that says "Checking subscriptions…" over a read
 // that is over and failed is a dead button with a false reason on it.
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { DirectoryView } from "@/bindings";
+import type { DirectoryView, MarketplaceRow } from "@/bindings";
 import { RepoAction } from "@/components/marketplaces/repo-action";
 import { TRY_AGAIN_LABEL } from "@/lib/copy";
-import { READ_PENDING, readFailed } from "@/lib/read-state";
+import { READ_LANDED, READ_PENDING, readFailed } from "@/lib/read-state";
 import { useCommunityStore } from "@/stores/community";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { mount, settle } from "@/test/dom";
@@ -116,5 +117,53 @@ describe("a repository page with nothing to match against", () => {
     await settle();
 
     expect(commands.marketplacesOverview).toHaveBeenCalled();
+  });
+});
+
+// The repository is declared here already, switched off, and declaredHolder
+// can pick a project subscription while the page names only the repository.
+// So the control has to name the place it is about to change — a list never
+// carries a control whose target it does not name.
+describe("turning a declared repository back on", () => {
+  const holder: MarketplaceRow = {
+    scope: { scope: "project", root: "/w/beta" },
+    name: "beta-kit",
+    repo: "acme/kit",
+    repoKey: "acme/kit",
+    repoIdentity: "github.com/acme/kit",
+    path: null,
+    rev: null,
+    commit: null,
+    enabled: false,
+    counts: null,
+    meta: null,
+    mode: null,
+  };
+
+  const toggle = vi.fn();
+
+  const turnOn = () => {
+    useCommunityStore.setState({ directory: listing });
+    useMarketplacesStore.setState({
+      rows: [holder],
+      read: READ_LANDED,
+      toggle,
+    });
+    const host = draw();
+    const button = [...host.querySelectorAll("button")].find((one) =>
+      one.textContent?.startsWith("Turn on"),
+    );
+    if (!button) throw new Error("no turn-on button rendered");
+    return button;
+  };
+
+  it("names the place it would turn on", () => {
+    expect(turnOn().textContent).toBe("Turn on in beta");
+  });
+
+  it("turns on the holder it named, not the page's own scope", async () => {
+    toggle.mockReset();
+    await userEvent.click(turnOn());
+    expect(toggle).toHaveBeenCalledWith(holder.scope, "beta-kit", true);
   });
 });

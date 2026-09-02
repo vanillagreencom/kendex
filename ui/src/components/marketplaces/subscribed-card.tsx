@@ -22,8 +22,9 @@ export function SubscribedCard({ group }: { group: SubscribedMarketplace }) {
   const shown = names.slice(0, NAMED_PLACES);
   const rest = names.length - shown.length;
   // What the subscription declares it reads — a pinned commit, or the tag
-  // or branch it tracks. Named for what it is: `rev` is a ref as often as
-  // it is a commit id.
+  // or branch it tracks — else the commit it currently reads, which nothing
+  // declared. Named for what it is: `rev` is a ref as often as a commit id,
+  // and `commit` is never pinned.
   const revision = group.open.rev ?? group.open.commit;
   const off = group.places.filter((row) => !row.enabled).length;
 

@@ -83,6 +83,19 @@ describe("grouping subscriptions into marketplaces", () => {
     expect(groups).toHaveLength(2);
   });
 
+  // A relative path is resolved against the reading scope's own root, so
+  // "./catalog" is ~/catalog personally and <project>/catalog in a project:
+  // different folders, and the scope has to be part of the key or the
+  // Projects tab aims a switch and an Unsubscribe at the wrong one.
+  it("keeps one relative path in two places apart", () => {
+    const local = { repo: null, repoKey: null, repoIdentity: null };
+    const groups = groupByMarketplace([
+      row({ ...local, path: "./catalog" }),
+      row({ ...local, path: "./catalog", scope: project("/w/alpha") }),
+    ]);
+    expect(groups).toHaveLength(2);
+  });
+
   // A local folder has no canonical repository key; the path is what two
   // places subscribing to it have in common.
   it("folds local folders by their path", () => {

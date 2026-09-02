@@ -40,15 +40,50 @@ export interface SubscribedMarketplace {
  * become `kit` — two unrelated marketplaces in one card, with the Projects
  * section aiming its switch and its Unsubscribe at the wrong subscription.
  *
- * A local folder has no repository, so its path is the identity. The alias
- * is the last resort for a declaration carrying neither, where over-
- * splitting is the only failure left. */
-export const marketplaceIdentity = (row: MarketplaceRow): string =>
-  row.repoIdentity ?? row.path ?? row.name;
+ * A local folder has no repository, so its path is the identity — but only
+ * an absolute one names the same directory from every place. `row.path` is
+ * the declaration verbatim, and `source::path_root` resolves a relative one
+ * against each scope's own root: `env.home` personally, the project root in
+ * a project. So `./catalog` is three different folders across three places
+ * under one string, and the scope has to be part of the key. Absolute paths
+ * stay shared, because two places naming `/srv/catalog` really are looking
+ * at one catalog.
+ *
+ * The alias is the last resort for a declaration carrying neither, where
+ * over-splitting is the only failure left. Every branch is one of these
+ * three, so no route lets two distinct marketplaces share a key. */
+export const marketplaceIdentity = (row: MarketplaceRow): string => {
+  if (row.repoIdentity) return row.repoIdentity;
+  if (row.path)
+    return absolutePath(row.path)
+      ? row.path
+      : `${scopeLabel(row.scope)}:${row.path}`;
+  return row.name;
+};
 
-/** Personal leads, then projects in the order the overview listed them. */
-const personalFirst = (a: MarketplaceRow, b: MarketplaceRow): number =>
-  a.scope.scope === "global" ? -1 : b.scope.scope === "global" ? 1 : 0;
+/** A path that names one directory wherever it is read from: POSIX-rooted,
+ * a Windows drive, or a UNC share. Everything else — `./x`, `~/x`, `x/y` —
+ * is resolved against the reading scope's own root. */
+const absolutePath = (path: string): boolean =>
+  path.startsWith("/") ||
+  /^[a-zA-Z]:[\\/]/.test(path) ||
+  path.startsWith("\\\\");
+
+/** Personal leads, then projects in the order the overview listed them.
+ * Total, so a sort cannot be handed -1 for both (a,b) and (b,a): shared
+ * with the Projects section, which sorts the same rows. */
+export const personalFirst = (a: MarketplaceRow, b: MarketplaceRow): number =>
+  Number(b.scope.scope === "global") - Number(a.scope.scope === "global");
+
+/** Which place a marketplace opens as. One rule for the card that names it
+ * and the page that redirects to it: a place actually offering packages
+ * before a switched-off one, and — the sort having run first — personal
+ * before a project. A redirect that ignored `enabled` would land a reader
+ * on a page badged "Switched off here" over packages nothing installs,
+ * which is the state this rule exists to avoid. */
+export const openPlace = (
+  places: MarketplaceRow[],
+): MarketplaceRow | undefined => places.find((row) => row.enabled) ?? places[0];
 
 const offered = (row: MarketplaceRow): number | null =>
   row.counts
@@ -69,9 +104,8 @@ export function groupByMarketplace(
   return [...groups.entries()]
     .map(([key, held]) => {
       const places = [...held].sort(personalFirst);
-      // An enabled place outranks a switched-off one; among equals the
-      // sort above has already put personal first.
-      const open = places.find((row) => row.enabled) ?? places[0];
+      // A group always holds at least the row that created it.
+      const open = openPlace(places) as MarketplaceRow;
       return {
         key,
         name: open.name,

@@ -63,10 +63,16 @@ export function UnsubscribeDialog({
   const hasEdited = (preview?.edited.length ?? 0) > 0;
 
   const confirm = () => {
-    void unsubscribe(scope, source, installed > 0 && keep, false).then((ok) => {
-      if (ok) onOpenChange(false);
-      else setError(useMarketplacesStore.getState().error);
-    });
+    // The refusal comes back from the call, never out of the store's shared
+    // slot: every landing overview read clears that slot, so one arriving in
+    // the gap would leave this dialog open with an empty error area and no
+    // account of why nothing happened.
+    void unsubscribe(scope, source, installed > 0 && keep, false).then(
+      (outcome) => {
+        if ("error" in outcome) setError(outcome.error);
+        else onOpenChange(false);
+      },
+    );
   };
 
   return (

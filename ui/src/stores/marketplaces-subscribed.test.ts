@@ -158,6 +158,31 @@ describe("a Community row's Subscribed marker", () => {
   // the refusal is honoured here — an unsubscribe that reported failure
   // and then dropped the caches, reloaded and toasted success would tell
   // the person a subscription went that is still there.
+  // The dialog that shows the refusal used to read it back out of the
+  // shared slot, and `load` empties that slot on every landing read — so a
+  // read arriving in the gap left the dialog open with an empty error area
+  // and no account of why nothing happened. The words travel with the
+  // answer instead.
+  it("hands back a refusal a concurrent read would have erased", async () => {
+    useMarketplacesStore.setState({ rows: [], read: READ_LANDED });
+    vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
+      status: "error",
+      error: "an edited package is in the way",
+    });
+    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+
+    const outcome = await useMarketplacesStore
+      .getState()
+      .unsubscribe({ scope: "global" }, "kit", false, false);
+    await useMarketplacesStore.getState().load();
+
+    expect(useMarketplacesStore.getState().error).toBeNull();
+    expect(outcome).toEqual({ error: "an edited package is in the way" });
+  });
+
   it("honours a refused unsubscribe rather than claiming it landed", async () => {
     const { toast } = await import("sonner");
     useMarketplacesStore.setState({
@@ -174,10 +199,9 @@ describe("a Community row's Subscribed marker", () => {
       .getState()
       .unsubscribe({ scope: "global" }, "kit", false, false);
 
-    expect(ok).toBe(false);
-    expect(useMarketplacesStore.getState().error).toBe(
-      "an edited package is in the way",
-    );
+    // The refusal comes back from the call — the dialog reads it there, not
+    // out of the shared slot, which every landing read clears.
+    expect(ok).toEqual({ error: "an edited package is in the way" });
     expect(toast.success).not.toHaveBeenCalled();
     // Nothing committed, so the rows and the caches stand.
     expect(commands.marketplacesOverview).not.toHaveBeenCalled();
@@ -203,7 +227,7 @@ describe("a Community row's Subscribed marker", () => {
       .getState()
       .unsubscribe({ scope: "global" }, "kit", false, false);
 
-    expect(ok).toBe(true);
+    expect(ok).toEqual({ done: true });
     const live = subscribedKeys(useMarketplacesStore.getState().rows);
     // The snapshot still says subscribed; the live list outranks it.
     expect(rowSubscribed({ ...listed, subscribed: true }, live)).toBe(false);

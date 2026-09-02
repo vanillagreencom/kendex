@@ -35,10 +35,11 @@ export interface PackageEntry {
   catalog: Catalog;
   row: AvailablePackage;
   recordsUnreadable: boolean;
-  /** What the subscription declares it reads: a pinned commit, or the tag
-   * or branch it tracks. Shown as-is unless it is a commit id, which is
-   * shortened — no source the app receives dates a package, so nothing here
-   * claims a last-updated day. */
+  /** What the subscription declares it reads — a pinned commit, or the tag
+   * or branch it tracks — else the commit it currently reads, which the
+   * cache holds and which moves as a tracked ref moves. Shown as-is unless
+   * it is a commit id, which is shortened; no source the app receives dates
+   * a package, so nothing here claims a last-updated day. */
   revision?: string | null;
 }
 

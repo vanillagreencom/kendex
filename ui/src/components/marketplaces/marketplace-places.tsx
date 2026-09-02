@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { MarketplaceRow, Scope } from "@/bindings";
 import {
   marketplaceIdentity,
+  personalFirst,
   placeKey,
 } from "@/components/marketplaces/subscribed-grouping";
 import { UnsubscribeDialog } from "@/components/marketplaces/unsubscribe-dialog";
@@ -37,9 +38,7 @@ export function MarketplacePlaces({ identity }: { identity: string }) {
   const rows = useMarketplacesStore((s) => s.rows);
   const places = rows
     .filter((row) => marketplaceIdentity(row) === identity)
-    .sort((a, b) =>
-      a.scope.scope === "global" ? -1 : b.scope.scope === "global" ? 1 : 0,
-    );
+    .sort(personalFirst);
 
   if (places.length === 0) return null;
 

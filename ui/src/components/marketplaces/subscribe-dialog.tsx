@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Scope } from "@/bindings";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,6 +45,17 @@ export function SubscribeDialog({
   const [reference, setReference] = useState(initialReference);
   const [name, setName] = useState("");
   const [where, setWhere] = useState("global");
+
+  // The page mounts this dialog permanently, and `error` is a slot every
+  // marketplaces action writes — a failed overview read, an unsubscribe
+  // refusal, a refused subscribe the person then cancelled. Opening would
+  // otherwise show whichever of those was last, beside an empty reference
+  // field, about a repository nobody typed. The dialog owns what it shows,
+  // the way UnsubscribeDialog already resets its own.
+  const clearError = useMarketplacesStore((s) => s.clearError);
+  useEffect(() => {
+    if (open) clearError();
+  }, [open, clearError]);
 
   const scopes = everyPlace(projects);
 

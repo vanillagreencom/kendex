@@ -12,8 +12,8 @@ import { repoAction, useMarketplacesStore } from "@/stores/marketplaces";
 /** The canonical key for a bare repository, from core rather than from the
  * spelling the page was opened with: the summary's once the fetch lands,
  * the directory listing's until then. Every surface deciding what a bare
- * repository offers reads it here — spelled twice, one of the two decides
- * on a spelling and offers a Subscribe the engine refuses. */
+ * repository offers reads it here — spelled twice, one of the two settles
+ * on a spelling of its own and offers a Subscribe the engine refuses. */
 export function useRepoKey(
   repo: string,
   summary: CatalogSummary | null,
