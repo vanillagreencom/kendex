@@ -43,7 +43,7 @@ Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outsid
 
 When an execution policy rejects top-level `git rebase` porcelain, never retry the porcelain and never substitute a raw `--force` push — add `--replay` to the guarded restack (`create --help`); the controls stay `restack continue|skip|abort <ID>`.
 
-A branch is rebased only through `worktree push` or `create --restack`, never a bare `git rebase`.
+A branch is rebased only through `worktree push`, `create --reuse`, or `create --restack`; add `--replay` to either create form when policy forbids rebase porcelain, and never run bare `git rebase`.
 
 ## Recovering a broken `.agents` entry
 

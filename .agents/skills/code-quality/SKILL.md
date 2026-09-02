@@ -27,7 +27,7 @@ A loud failure beats a silent wrong answer. Handle every error, check invariants
 
 - No workarounds or quick hacks. If the correct fix is larger than expected, say so.
 - **Never fail open.** A dependency failure (command, file, network, parse) must not leave the caller in a passing or default state: no validator degrading to "no findings", no probe failure read as "not applicable", no unchecked `$(mktemp)`.
-- Gate, guard, and scanner code fails closed and carries no enumerated exemption list.
+- Gate, guard, and scanner exclusions are legal only when declared, justified, and validated.
 - A branch that "shouldn't happen" is never an empty or silently-ignored `else`: assert it, return an explicit internal error, or mark it unreachable — with a message naming the violated invariant. Use plain conditionals only when both branches are expected paths.
 - An error path must name the actual cause, not a neighbouring dependency.
 - Handle edge cases: empty input, boundary values, junk prefixes/suffixes, interrupted-then-retried flows.
