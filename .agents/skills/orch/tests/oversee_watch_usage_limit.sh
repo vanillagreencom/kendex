@@ -1,23 +1,25 @@
 #!/usr/bin/env bash
 # Regression tests for what oversee-watch reads off a spent-account banner:
 # whether a limit banner on a lane's screen is the account speaking now, and
-# what the reset clause on that line resolves to. The rest of the pane side —
-# window absence, shell exits, prompts, idle returns — is oversee_watch_lanes.sh;
-# the GitHub side is oversee_watch.sh. All build their sandbox from
-# lib/oversee-watch-harness.sh.
+# what the reset clause on that line resolves to. The rest of the pane side is
+# oversee_watch_lanes.sh and the GitHub side oversee_watch.sh; all build their
+# sandbox from lib/oversee-watch-harness.sh.
 set -euo pipefail
 
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
 
 
-# Every fixture banner below states a clock, and the event now carries the UTC
-# instant that clock resolves to. Cases that assert the whole event line pin
-# both ends of that resolution: RESET_NOW as the moment the pane is read
-# (`now.epoch`, the harness's clock stub) and TZ=UTC as the zone a banner
-# naming none is read in, so the assertion holds on a runner in any zone.
+# Every fixture banner below states a clock, and the event carries the UTC
+# instant it resolves to. Cases asserting the whole event line pin both ends of
+# that resolution — RESET_NOW as the moment the pane is read (`now.epoch`, the
+# harness's clock stub) and TZ=UTC as the zone a banner naming none is read in
+# — so they hold on a runner in any zone. Their banner is the measured
+# `9:50am (America/Los_Angeles)` shape: no mechanism here rests on the one
+# grammar arm nothing is measured to draw, and `resets 21:00` appears only
+# where that arm is the subject.
 RESET_NOW=1788364800                            # 2026-09-02T16:00:00Z
-RESET_2100=' resets=2026-09-02T21:00:00Z'       # what `resets 21:00` resolves to
+RESET_0950=' resets=2026-09-02T16:50:00Z'       # what the banner below resolves to
 pin_now() { printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"; }
 
 echo "=== oversee-watch usage limits ==="
@@ -27,14 +29,14 @@ new_case usage_limit
 pin_now
 {
   printf '⏺ Working through the queue.\n'
-  printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
+  printf "You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)\n"
   printf 'Run /usage-credits to raise it\n'
   printf '\xe2\x9d\xaf\xc2\xa0\n'
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3f"
 out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "usage-limit exits 0" "$err"
-assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_2100" \
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_0950" \
   "a limit banner under a live harness is the event on ONE pass" "$err"
 assert_contains "$out" "usage limit" "the pane tail follows the usage-limit event" "$err"
 
@@ -50,12 +52,12 @@ assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" "the codex limit banne
 new_case usage_limit_before_question
 pin_now
 {
-  printf "You've hit your session limit \xc2\xb7 resets 21:00\n"
+  printf "You've hit your session limit \xc2\xb7 resets 9:50am (America/Los_Angeles)\n"
   printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n'
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3g"
 out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_2100" \
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_0950" \
   "a limit banner above a stale prompt is usage-limit, not question" "$err"
 assert_not_contains "$out" "EVENT lane-asking" "lane-asking never preempts a spent account" "$err"
 
@@ -76,7 +78,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
 new_case usage_limit_stale_banner
 {
   printf '⏺ Working through the queue.\n'
-  printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
+  printf "You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)\n"
   printf '❯ pick the round back up\n'
   printf '⏺ Teammate @dev-ken832-r3 finished\n'
   printf '\xe2\x9d\xaf\xc2\xa0\n'
@@ -97,14 +99,14 @@ new_case usage_limit_above_empty_composer
 pin_now
 {
   printf '⏺ Working through the queue.\n'
-  printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
+  printf "You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)\n"
   printf '\xe2\x9d\xaf\xc2\xa0\n'
 } > "$STUB_DIR/pane-gh-2.txt"
 assert_eq "$(grep -c "$(printf '\xc2\xa0')" "$STUB_DIR/pane-gh-2.txt")" "1" \
   "the composer fixture carries U+00A0, not an ASCII space"
 err="$TMP_ROOT/e3f6"
 out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_2100" \
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_0950" \
   "the empty composer is not a turn, so a banner above it is still reported" "$err"
 
 # ...and neither is a composer holding an unsent draft
@@ -112,14 +114,14 @@ new_case usage_limit_above_composer_draft
 pin_now
 {
   printf '⏺ Working through the queue.\n'
-  printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
+  printf "You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)\n"
   printf '\xe2\x9d\xaf\xc2\xa0take the next round\n'
 } > "$STUB_DIR/pane-gh-2.txt"
 assert_eq "$(grep -c "$(printf '\xc2\xa0')" "$STUB_DIR/pane-gh-2.txt")" "1" \
   "the draft-composer fixture carries U+00A0, not an ASCII space"
 err="$TMP_ROOT/e3f7"
 out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_2100" \
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_0950" \
   "an unsent draft in the composer is not a turn either" "$err"
 
 # Codex draws the composer with the SAME `› ` and text a submitted turn uses,
@@ -218,13 +220,13 @@ pin_now
 {
   printf '❯ pick the round back up\n'
   printf '⏺ Working through the queue.\n'
-  printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
+  printf "You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)\n"
   printf '\xe2\x9d\xaf\xc2\xa0\n'
   printf '  bypass permissions on\n'
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3f5"
 out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_2100" \
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_0950" \
   "a banner below the last user turn is the event" "$err"
 
 # An input line the composer rule does not recognize must not become the
@@ -236,12 +238,12 @@ pin_now
 {
   printf '❯ pick the round back up\n'
   printf '⏺ Working through the queue.\n'
-  printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
+  printf "You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)\n"
   printf '❯ \n'
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3f6"
 out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_2100" \
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_0950" \
   "an unrecognized last input line never swallows the screen" "$err"
 
 # A realistic transcript, with the E2-lead lines a real screen carries
@@ -257,7 +259,7 @@ pin_now
 {
   printf '❯ pick the round back up\n'
   printf '⏺ Ran 3 shell commands\n'
-  printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
+  printf "You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)\n"
   printf '⏺ Teammate @dev-ken832-r3 finished\n'
   printf '⎿  Wrote 6 lines to tmp/roundD.json\n'
   printf '─────────────────────────────\n'
@@ -270,11 +272,11 @@ pin_now
 # control that the case passes for the right reason rather than by locale.
 err="$TMP_ROOT/e3fc"
 out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_2100" \
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_0950" \
   "transcript lines between the banner and the composer are not markers" "$err"
 err="$TMP_ROOT/e3fc2"
 out="$(run_watch TZ=UTC LC_ALL=C LANG=C -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_2100" \
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_0950" \
   "...and under a byte-oriented locale, where a marker class would degrade" "$err"
 
 # A dialog screen draws no composer at all: Claude replaces it with the
@@ -284,7 +286,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_2100" \
 # to exclude — a stale banner would mask a live question.
 new_case usage_limit_stale_banner_over_question
 {
-  printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
+  printf "You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)\n"
   printf '❯ pick the round back up\n'
   printf '⏺ Teammate @dev-ken832-r3 finished\n'
   printf 'Do you want to proceed?\n'
@@ -304,13 +306,13 @@ pin_now
 {
   printf '❯ pick the round back up\n'
   printf '⏺ Teammate @dev-ken832-r3 finished\n'
-  printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
+  printf "You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)\n"
   printf 'Do you want to proceed?\n'
   printf '   ❯ 1. Yes\n     2. No\n'
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3fb"
 out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_2100" \
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_0950" \
   "a banner below the turn on a dialog screen is still the event" "$err"
 
 # The must-fail control: a lane with no banner at all
@@ -361,12 +363,11 @@ assert_eq "$(ls -1 "$STATE_DIR/claims" | wc -l | tr -d '[:space:]')" "0" \
 # --- 2. the reset time the banner states ------------------------------------
 # The wall's day is OBSERVED, never inferred: a clause naming a clock and no
 # day is pinned to its first occurrence after the pass this watch first saw
-# the banner on, a stamp kept per lane in the watch state. So a case that
-# needs a reset behind it runs two passes, and every case pins `now.epoch` and
-# the runner's zone per the note beside RESET_NOW above.
+# the banner on, a stamp kept per lane in the watch state. So a case needing a
+# reset behind it runs two passes.
 #
-# The case the issue was filed on. First pass observes the wall standing;
-# after it lifts the same screen is the pane remembering a window that has
+# The case the issue was filed on. The first pass sees the wall standing;
+# after it lifts the same screen is a pane remembering a window that has
 # reopened, so the lane wants a nudge rather than another wait.
 new_case usage_limit_reset_passed
 printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"   # 2026-09-02T16:00:00Z, 50m early
@@ -406,10 +407,10 @@ assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-03T16:50
 # appeared.
 new_case usage_limit_reset_stamp_cleared
 printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"   # 2026-09-02T16:00:00Z
-printf "You've hit your usage limit \xc2\xb7 resets 21:00\n" > "$STUB_DIR/pane-gh-2.txt"
+printf "You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)\n" > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3ai"
 out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_2100" \
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_0950" \
   "the first sighting stamps the wall" "$err"
 printf '1788386400' > "$STUB_DIR/now.epoch"   # 2026-09-02T22:00:00Z, the wall lifted
 printf '⏺ All green, nothing blocking.\n\xe2\x9d\xaf\xc2\xa0\n' > "$STUB_DIR/pane-gh-2.txt"
@@ -419,12 +420,27 @@ out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none" \
   "a lane whose banner is gone is no longer walled" "$err"
 printf '1788390000' > "$STUB_DIR/now.epoch"   # 2026-09-02T23:00:00Z, walled again
-printf "You've hit your usage limit \xc2\xb7 resets 21:00\n" > "$STUB_DIR/pane-gh-2.txt"
+printf "You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)\n" > "$STUB_DIR/pane-gh-2.txt"
 rm -f "$STUB_DIR/pane-gh-2.calls" "$STUB_DIR/cmd-gh-2.calls"
 err="$TMP_ROOT/e3ak"
 out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-03T21:00:00Z" \
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-03T16:50:00Z" \
   "the same wall raised again is a new sighting, not a spent one" "$err"
+# ...and the row's lifetime is the LANE's, not just the banner's: the window
+# itself going is the path the workflow prescribes for a walled lane, and a row
+# left behind by it would answer for whatever takes the name next.
+printf 'gh-1\n' > "$STUB_DIR/windows.txt"
+rm -f "$STUB_DIR/pane-gh-2.calls" "$STUB_DIR/cmd-gh-2.calls"
+err="$TMP_ROOT/e3ax"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT window-gone gh-2" "the window goes" "$err"
+printf 'gh-1\ngh-2\n' > "$STUB_DIR/windows.txt"
+printf '1788462000' > "$STUB_DIR/now.epoch"   # 2026-09-03T19:00:00Z, walled again
+rm -f "$STUB_DIR/pane-gh-2.calls" "$STUB_DIR/cmd-gh-2.calls"
+err="$TMP_ROOT/e3ay"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-04T16:50:00Z" \
+  "a window name that comes back walled inherits no sighting" "$err"
 
 # A turn in flight is not the account speaking. One predicate serves both
 # usage-limit events, so limit-shaped text a lane prints mid-turn — this
@@ -442,6 +458,124 @@ assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none
   "a lane with a turn in flight is left alone" "$err"
 assert_not_contains "$out" "EVENT usage-limit" \
   "limit-shaped text printed while working is not the account speaking" "$err"
+
+# A turn in flight leaves NO sighting, not merely no event: one predicate
+# serves both consumers, so text a lane printed mid-turn — this suite's own
+# source among it — cannot become an observation a later pass reads.
+new_case usage_limit_working_lane
+printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"   # 2026-09-02T16:00:00Z
+{
+  printf '⏺ Reading the suite.\n'
+  printf "  printf \"You've hit your usage limit \xc2\xb7 resets 17:00\"\n"
+  printf 'esc to interrupt\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3n"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none" \
+  "a lane with a turn in flight is left alone" "$err"
+assert_not_contains "$out" "EVENT usage-limit" \
+  "limit-shaped text printed while working is not the account speaking" "$err"
+printf '1788372000' > "$STUB_DIR/now.epoch"   # 2026-09-02T18:00:00Z, past 17:00
+{
+  printf "You've hit your usage limit \xc2\xb7 resets 17:00\n"
+  printf '\xe2\x9d\xaf\xc2\xa0\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+rm -f "$STUB_DIR/pane-gh-2.calls" "$STUB_DIR/cmd-gh-2.calls"
+err="$TMP_ROOT/e3am"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-03T17:00:00Z" \
+  "the working pass left no sighting, so this one is the first" "$err"
+assert_not_contains "$out" "usage-limit-passed" \
+  "a wall stamped from a lane's own output would have read spent here" "$err"
+
+# A stamp answers for one PANE: the workflow's remedy for a walled lane is to
+# relaunch under the same window name, and a row keyed on the name alone would
+# hand the replacement a dead lane's sighting.
+new_case usage_limit_reset_relaunch
+printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"   # 2026-09-02T16:00:00Z
+printf '7000 %%old\n' > "$STUB_DIR/pane-key-gh-2.txt"
+printf "You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)\n" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3an"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_0950" \
+  "the walled lane is stamped against the pane that earned it" "$err"
+printf '1788390000' > "$STUB_DIR/now.epoch"   # 2026-09-02T23:00:00Z, relaunched
+printf '7000 %%new\n' > "$STUB_DIR/pane-key-gh-2.txt"
+rm -f "$STUB_DIR/pane-gh-2.calls" "$STUB_DIR/cmd-gh-2.calls"
+err="$TMP_ROOT/e3ao"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-03T16:50:00Z" \
+  "a new pane under the same window name earns its own sighting" "$err"
+
+# Every lane is stamped on the pass that sees it, not only the lane the event
+# leaves on: a walled lane behind a noisier sibling would else park forever.
+new_case usage_limit_reset_second_lane
+printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"   # 2026-09-02T16:00:00Z
+printf "You've hit your usage limit \xc2\xb7 resets 17:00\n" > "$STUB_DIR/pane-gh-1.txt"
+printf "You've hit your usage limit \xc2\xb7 resets 18:00\n" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3ap"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-1 resets=2026-09-02T17:00:00Z" \
+  "the event leaves on the first walled lane" "$err"
+printf '1788375600' > "$STUB_DIR/now.epoch"   # 2026-09-02T19:00:00Z, both walls past
+printf '⏺ All green, nothing blocking.\n\xe2\x9d\xaf\xc2\xa0\n' > "$STUB_DIR/pane-gh-1.txt"
+rm -f "$STUB_DIR/pane-gh-1.calls" "$STUB_DIR/cmd-gh-1.calls" \
+      "$STUB_DIR/pane-gh-2.calls" "$STUB_DIR/cmd-gh-2.calls"
+err="$TMP_ROOT/e3aq"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit-passed gh-2 resets=2026-09-02T18:00:00Z" \
+  "the lane the first pass never emitted on was stamped on it all the same" "$err"
+
+# The two comparisons that name the event, each pinned to its side. A reset
+# landing on the pass reading it has arrived, so the emit comparison says
+# spent.
+new_case usage_limit_reset_emit_tie
+printf '1788361200' > "$STUB_DIR/now.epoch"   # 2026-09-02T15:00:00Z
+printf "You've hit your usage limit \xc2\xb7 resets 16:00\n" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3ar"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-02T16:00:00Z" \
+  "an hour before its reset the wall stands" "$err"
+printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"   # 2026-09-02T16:00:00Z exactly
+rm -f "$STUB_DIR/pane-gh-2.calls" "$STUB_DIR/cmd-gh-2.calls"
+err="$TMP_ROOT/e3as"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit-passed gh-2 resets=2026-09-02T16:00:00Z" \
+  "a reset landing on the pass that reads it has arrived" "$err"
+
+# ...and the walk comparison takes the other side: the stamping pass's OWN
+# candidate is not the wall it just saw standing, or a first sighting on the
+# reset's own second would report the wall spent.
+new_case usage_limit_reset_walk_tie
+printf '1788382800' > "$STUB_DIR/now.epoch"   # 2026-09-02T21:00:00Z exactly
+printf "You've hit your session limit \xc2\xb7 resets 21:00\n" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3at"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-03T21:00:00Z" \
+  "a wall first seen on its own reset second is standing, not spent" "$err"
+
+# The 24-hour arm, where `resets 21:00` earns its place: nothing is measured
+# to draw it, so this is the case that would go with the arm.
+new_case usage_limit_reset_24_hour
+printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"   # 2026-09-02T16:00:00Z
+printf "You've hit your session limit \xc2\xb7 resets 21:00\n" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3au"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-02T21:00:00Z" \
+  "a clock with no meridiem is a 24-hour one" "$err"
+
+# The exclusion's must-fail control. The weekday tail ends in an all-optional
+# clock, so a weekday with none must reject rather than guess midnight on the
+# longest wall there is.
+new_case usage_limit_reset_weekday_no_clock
+printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
+printf "You've hit your weekly limit \xc2\xb7 resets Thursday\n" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3av"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
+  "a weekday with no clock leaves the event without a time" "$err"
+assert_not_contains "$out" "resets=" "no midnight is guessed for a weekday alone" "$err"
+assert_not_contains "$out" "usage-limit-passed" "and it never reads as spent" "$err"
 
 # The candidate days are enumerated off local NOON, so a DST boundary between
 # the observation and the reset cannot skip a day. Observed at Mar 13 23:30
@@ -518,8 +652,22 @@ out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit-passed gh-2 resets=2026-08-30T16:00:00Z" \
   "a dated reset already behind us is passed without an observation" "$err"
 
+# A banner omits its year only when that year is the current one where it was
+# drawn, which is not the year of the sighting once a New Year has been
+# crossed: seen on Dec 28, `Jan 2, 4pm` is five days out, not 360 behind.
+new_case usage_limit_reset_dated_year_boundary
+printf '1798473600' > "$STUB_DIR/now.epoch"   # 2026-12-28T16:00:00Z
+printf "You've hit your weekly limit \xc2\xb7 resets Jan 2, 4pm\n" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3aw"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2027-01-02T16:00:00Z" \
+  "a dated banner across a New Year names the year that puts it ahead" "$err"
+
 # The weekly copy this repository records as the CLI's own, at
-# pi-extensions/pi-claude-bridge/tests/unit-usage-limit.mjs. It names a weekday
+# pi-extensions/pi-claude-bridge/tests/unit-usage-limit.mjs — a recorded string
+# reaching a pane through a result payload's errors array, not a banner
+# measured in the shipped binary, whose reset formatter draws no weekday at
+# all. It names a weekday
 # and a clock but no date, so the walk runs to the next matching weekday. Seen
 # on a Friday, `Thursday 4am` is six days out — far enough that a walk ignoring
 # the weekday would answer tomorrow instead.

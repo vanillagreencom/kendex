@@ -111,11 +111,13 @@ check_pr_watch() {
     [[ "$rc" -le "$rc_max" ]] || rc_max="$rc"
     [[ -z "$out" ]] || out_all+="$(pw_prefix "$repo" "$out")"$'\n'
     [[ -z "$err" ]] || err_all+="$(pw_prefix "$repo" "$err")"$'\n'
-    # Rows this pass does not own: triage verdict keys and the per-lane rows
-    # share the file, and a rewrite that dropped them would make every
-    # acknowledged item and every standing prompt news again, and would
-    # unstamp the pass each walled lane's limit banner was first seen on.
-    carried="$(awk -F'\t' '($1 == "triage" && NF == 2) || ($1 == "lane-asking" && NF == 3) || ($1 == "usage-limit" && NF == 3) { print }' <<<"${PW_SEEN[$i]}")"
+    # Rows this pass does not own. Stated as what it DOES own — its own
+    # attention keys, `<pr number>\t<kind>` — so a row kind added later
+    # survives by default instead of vanishing on the pass after it is written,
+    # with a feature quietly ceasing to work as the only symptom. Triage keys
+    # are `triage\t<id>`, the same width, and are told apart by the numeric
+    # first column.
+    carried="$(awk -F'\t' 'NF && !(NF == 2 && $1 ~ /^[0-9]+$/) { print }' <<<"${PW_SEEN[$i]}")"
     pass_keys[$i]="$carried"
     [[ "$rc" -ne 0 ]] || continue
     # Non-zero with no per-PR lines is pr-watch's GLOBAL failure shape
