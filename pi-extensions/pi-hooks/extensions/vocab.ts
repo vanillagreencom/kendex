@@ -69,3 +69,41 @@ export function claudeToolInput(claudeName: string, input: unknown): Record<stri
 	const { path, ...rest } = source;
 	return { file_path: path, ...rest };
 }
+
+/**
+ * Pi's reasons for a session start said the way Claude Code's `SessionStart`
+ * payload says them, for the matcher a hook was written against and the
+ * `source` its body reads (`hooks/session-drift-check.sh` reads exactly that
+ * key). Claude Code sends `startup|resume|clear|compact`.
+ *
+ * The split is the one this carrier already takes for its own drift report: a
+ * session that starts fresh against one that carries a transcript forward.
+ * `startup` is both tools' word for the process opening one. `new` and `fork`
+ * are a session beginning inside a running process, which is Claude Code's
+ * `clear`. `resume` is both tools' word, and `reload` is the same session's
+ * extensions re-bound in place — a continuation, so it is said as `resume`
+ * and a hook that skips a resumed session skips it too.
+ *
+ * Nothing maps onto `compact`: `pi_listener` gives `PostCompact` no listener,
+ * so a hook declared for it never reaches Pi at all.
+ */
+const CLAUDE_SESSION_SOURCES = new Map<string, string>([
+	["startup", "startup"],
+	["new", "clear"],
+	["fork", "clear"],
+	["resume", "resume"],
+	["reload", "resume"],
+]);
+
+/** The session's start reason as a `SessionStart` hook spells it. A reason Pi
+ * adds and this table has not learned keeps its own word: a matcher naming it
+ * still matches, and one naming nothing matches nothing. */
+export function claudeSessionSource(reason: string): string {
+	return CLAUDE_SESSION_SOURCES.get(reason.trim().toLowerCase()) ?? reason.trim();
+}
+
+/** The reasons Pi's `session_start` event carries, as its `SessionStartEvent`
+ * type lists them. Written out rather than read off the table above, which is
+ * the thing tests/registry.test.ts checks: a list derived from that map cannot
+ * see a row go missing from it. */
+export const PI_SESSION_REASONS = ["startup", "reload", "new", "resume", "fork"];

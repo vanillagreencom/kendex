@@ -3,10 +3,18 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { GUARD_SETTING_NAMES } from "../extensions/hooks.ts";
-import { renderedName, TOOL_CALL_LISTENER } from "../extensions/registry.ts";
-import { claudeToolName, PI_BUILTIN_TOOLS } from "../extensions/vocab.ts";
 import {
+	renderedName,
+	SESSION_START_LISTENER,
+	TOOL_CALL_LISTENER,
+	TOOL_RESULT_LISTENER,
+	TURN_END_LISTENER,
+} from "../extensions/registry.ts";
+import { claudeSessionSource, claudeToolName, PI_BUILTIN_TOOLS, PI_SESSION_REASONS } from "../extensions/vocab.ts";
+import {
+	type Carrier,
 	initRustRepo,
+	installCarrier,
 	installToolCallHandler,
 	readLog,
 	projectCommand,
@@ -15,6 +23,7 @@ import {
 	renderStub,
 	renderUserStub,
 	runGit,
+	toolResultEvent,
 	trusted,
 	useIsolatedGitEnv,
 } from "./harness.ts";
@@ -33,6 +42,17 @@ function initCleanRustRepo(prefix: string): string {
  * exists nowhere but the registry and can only run from there. */
 function customCommand(log: string, stderr: string, exitCode: number): string {
 	return `cat >> ${JSON.stringify(log)}; echo ${JSON.stringify(stderr)} >&2; exit ${exitCode}`;
+}
+
+/** The session-start dispatch is fire-and-forget, like the drift report beside
+ * it: wait for `sent` to reach `n`, or ~2s. */
+async function waitForSent(sent: unknown[], n: number): Promise<void> {
+	for (let i = 0; i < 100 && sent.length < n; i++) await new Promise((r) => setTimeout(r, 20));
+}
+
+/** Enough time for a hook that was going to speak to have spoken. */
+async function grace(): Promise<void> {
+	await new Promise((r) => setTimeout(r, 300));
 }
 
 describe("pi-hooks registry dispatch", () => {
@@ -193,19 +213,42 @@ describe("pi-hooks registry dispatch", () => {
 		}
 	});
 
-	// The issue's second Done-when: the carrier reads the names kendex renders,
-	// so a move on either side reds here rather than turning a hook silently
-	// off. Four pins, one case: the listener, the command, the tool vocabulary
-	// and the per-guard settings.
+	// The second Done-when of KEN-941 and of KEN-1189: the carrier reads the
+	// names kendex renders, so a move on either side reds here rather than
+	// turning a hook silently off. Five pins, one case: the listener keys, the
+	// session vocabulary, the command, the tool vocabulary and the per-guard
+	// settings.
 	test("the names the carrier reads are the ones kendex renders", () => {
 		const crate = join(import.meta.dir, "..", "..", "..", "crates", "core", "src");
 
 		const caps = readFileSync(join(crate, "harness", "caps.rs"), "utf8");
 		const listeners = caps.match(/pub fn pi_listener\(event: &str\) -> Option<&'static str> \{([\s\S]*?)\n\}/);
 		expect(listeners, "pi_listener not found in crates/core/src/harness/caps.rs").not.toBeNull();
-		const arm = listeners![1]!.match(/"PreToolUse" => Some\("([^"]+)"\)/);
-		expect(arm, `no PreToolUse arm in pi_listener: ${listeners![1]}`).not.toBeNull();
-		expect(TOOL_CALL_LISTENER).toBe(arm![1]!);
+		// Every key `pi_listener` can return, against the constant the carrier
+		// dispatches it under. A key on one side and not the other is a hook
+		// kendex registers and labels enforced with nothing to run it — the
+		// defect KEN-941 closed on `tool_call` and KEN-1189 on the other three.
+		const listenerArms = new Map([...listeners![1]!.matchAll(/"(\w+)"(?:\s*\|\s*"(\w+)")* => Some\("([^"]+)"\)/g)]
+			.map(([, first, , listener]) => [first!, listener!]));
+		expect([...new Set(listenerArms.values())].sort(), `arms read: ${listeners![1]}`).toEqual(
+			[SESSION_START_LISTENER, TOOL_CALL_LISTENER, TOOL_RESULT_LISTENER, TURN_END_LISTENER].sort(),
+		);
+		expect(listenerArms.get("PreToolUse")).toBe(TOOL_CALL_LISTENER);
+		expect(listenerArms.get("PostToolUse")).toBe(TOOL_RESULT_LISTENER);
+		expect(listenerArms.get("Stop")).toBe(TURN_END_LISTENER);
+		expect(listenerArms.get("SessionStart")).toBe(SESSION_START_LISTENER);
+
+		// And the session vocabulary: every reason Pi's `session_start` carries
+		// has a `SessionStart` source, or a hook matchered on one Claude Code
+		// word never fires for the Pi reason that means it.
+		for (const reason of PI_SESSION_REASONS) {
+			expect(["startup", "resume", "clear"], reason).toContain(claudeSessionSource(reason));
+		}
+		expect(claudeSessionSource("startup")).toBe("startup");
+		expect(claudeSessionSource("resume")).toBe("resume");
+		expect(claudeSessionSource("reload")).toBe("resume");
+		expect(claudeSessionSource("new")).toBe("clear");
+		expect(claudeSessionSource("fork")).toBe("clear");
 
 		const targets = readFileSync(join(crate, "engine", "targets.rs"), "utf8");
 		const piHook = targets.match(/fn pi_hook\(env: &Env, scope: &Scope, name: &str\) -> HookTarget \{([\s\S]*?)\n\}/);
@@ -249,5 +292,136 @@ describe("pi-hooks registry dispatch", () => {
 		expect(bundle, "[bundles.commit-guards] hooks not found in kendex.toml").not.toBeNull();
 		const carried = [...bundle![1]!.matchAll(/"([^"]+)"/g)].map(([, name]) => name!);
 		for (const name of GUARD_SETTING_NAMES) expect(carried, name).toContain(name);
+	});
+});
+
+/**
+ * KEN-1189: the same defect KEN-941 closed on `tool_call`, on the three
+ * listeners `pi_listener` also maps hook events onto. kendex rendered the
+ * registration and labelled it enforced; the carrier read one key. Every case
+ * here opens with the control — the same fixture with nothing registered —
+ * because a hook that runs proves nothing unless the silence before it is real.
+ *
+ * Pi refuses nothing on any of these three, so what a hook says is delivered
+ * rather than obeyed, each through the one channel its listener has.
+ */
+describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", () => {
+	/** The hook's stdout, or its stderr on a refusal, in the tool result the
+	 * model reads — Claude Code's own `PostToolUse` exit-2 consequence. */
+	test("a registered PostToolUse hook runs and its word lands on the tool result", async () => {
+		const project = initCleanRustRepo("pi-hooks-post-tool-");
+		const log = join(project, "post.log");
+		try {
+			const onToolResult = installCarrier().handler(TOOL_RESULT_LISTENER);
+			const call = () => onToolResult(toolResultEvent("bash", { command: "git push" }, "Everything up-to-date"), trusted(project));
+
+			// The control: a registry with nothing under this listener.
+			expect(await call()).toBeUndefined();
+			expect(readLog(log)).toBe("");
+
+			registerRendered(join(project, ".pi"), TOOL_RESULT_LISTENER, "Bash", customCommand(log, "audit: that push is logged", 2));
+			const patched = await call() as { content?: { type: string; text: string }[] };
+			expect(patched.content?.map((block) => block.text)).toEqual(["Everything up-to-date", "audit: that push is logged"]);
+			expect(JSON.parse(readLog(log))).toEqual({
+				hook_event_name: "PostToolUse",
+				tool_name: "Bash",
+				tool_input: { command: "git push" },
+				tool_response: "Everything up-to-date",
+			});
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	/** `Stop` and `TaskCompleted` take no matcher on Claude Code, so a matcher
+	 * on this listener covers the turn rather than deciding a hook does not
+	 * run — the registration below carries one no turn could ever equal. */
+	test("a registered Stop hook runs whatever its matcher says, and steers what it said", async () => {
+		const project = initCleanRustRepo("pi-hooks-turn-end-");
+		const log = join(project, "stop.log");
+		try {
+			const carrier = installCarrier();
+			const onTurnEnd = carrier.handler(TURN_END_LISTENER);
+
+			await onTurnEnd({}, trusted(project));
+			expect(carrier.sent).toHaveLength(0);
+			expect(readLog(log)).toBe("");
+
+			registerRendered(join(project, ".pi"), TURN_END_LISTENER, "Bash", customCommand(log, "audit: this branch is unpushed", 2));
+			await onTurnEnd({}, trusted(project));
+			expect(carrier.sent).toHaveLength(1);
+			expect(carrier.sent[0]!.message.content).toBe("audit: this branch is unpushed");
+			// Since pi#8022 only `triggerTurn: true` reaches a headless run
+			// that is ending, which is the whole delivery available here.
+			expect(carrier.sent[0]!.options).toEqual({ triggerTurn: true });
+			expect(JSON.parse(readLog(log))).toEqual({ hook_event_name: "Stop", stop_hook_active: false });
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	/** A `SessionStart` hook's stdout is the context it contributes, which is
+	 * the one stream Claude Code routes into a model's context. The session is
+	 * never held for it: the run is started and the words arrive when they do. */
+	test("a registered SessionStart hook runs, and its matcher reads Pi's reason in Claude Code's words", async () => {
+		const project = initCleanRustRepo("pi-hooks-session-");
+		const log = join(project, "session.log");
+		try {
+			const carrier = installCarrier();
+			const onSessionStart = carrier.handler(SESSION_START_LISTENER);
+
+			onSessionStart({ type: "session_start", reason: "startup" }, trusted(project));
+			await grace();
+			expect(carrier.sent).toHaveLength(0);
+			expect(readLog(log)).toBe("");
+
+			// Matchered `startup`, which is what Pi's own `startup` is said as.
+			registerRendered(
+				join(project, ".pi"),
+				SESSION_START_LISTENER,
+				"startup",
+				`cat >> ${JSON.stringify(log)}; echo "kendex: 2 items are outdated"; exit 0`,
+			);
+			onSessionStart({ type: "session_start", reason: "startup" }, trusted(project));
+			await waitForSent(carrier.sent, 1);
+			expect(carrier.sent).toHaveLength(1);
+			expect(carrier.sent[0]!.message.content).toBe("kendex: 2 items are outdated");
+			expect(carrier.sent[0]!.options).toEqual({ triggerTurn: false });
+			expect(JSON.parse(readLog(log))).toEqual({ hook_event_name: "SessionStart", source: "startup" });
+
+			// And the matcher decides: Pi's `resume` is Claude Code's `resume`,
+			// which this registration does not name, so nothing runs for it.
+			rmSync(log, { force: true });
+			onSessionStart({ type: "session_start", reason: "resume" }, trusted(project));
+			await grace();
+			expect(carrier.sent).toHaveLength(1);
+			expect(readLog(log)).toBe("");
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	/** The rule the `tool_call` gate states, on a listener with no call to
+	 * refuse: kendex labels these hooks enforced, so a registry that exists and
+	 * did not answer is said rather than read as no hooks installed. */
+	test("a registry that exists and cannot be read is reported, not passed over", async () => {
+		const project = initCleanRustRepo("pi-hooks-turn-end-unreadable-");
+		try {
+			const carrier = installCarrier();
+			const onTurnEnd = carrier.handler(TURN_END_LISTENER);
+			registerRendered(join(project, ".pi"), TURN_END_LISTENER, undefined, "exit 0");
+
+			// The control: the same fixture, readable.
+			await onTurnEnd({}, trusted(project));
+			expect(carrier.sent).toHaveLength(0);
+
+			writeFileSync(join(project, ".pi", "kendex", "hooks.json"), '{"hooks": {"turn_end": [');
+			await onTurnEnd({}, trusted(project));
+			expect(carrier.sent).toHaveLength(1);
+			expect(carrier.sent[0]!.message.content).toContain("could not be read");
+			expect(carrier.sent[0]!.message.content).toContain(TURN_END_LISTENER);
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
 	});
 });

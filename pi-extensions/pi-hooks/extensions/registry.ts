@@ -4,14 +4,24 @@ import { basename, resolve } from "node:path";
 import { piUserDir } from "./config.js";
 
 /**
- * The registry key a `PreToolUse` hook is rendered under. Pi has no per-hook
- * runner, so kendex restates each hook event as the listener Pi fires
+ * The registry keys kendex renders hooks under. Pi has no per-hook runner, so
+ * kendex restates each hook event as the listener Pi fires
  * (`crates/core/src/harness/caps.rs::pi_listener`) and keys the rendered
- * registry by that name. tests/registry.test.ts holds this to that map: a
+ * registry by that name. tests/registry.test.ts holds these to that map: a
  * rename on either side is a registry written under one key and read under
  * another, which is every hook silently off.
+ *
+ * Every key `pi_listener` can return is dispatched. A key the carrier does not
+ * read is a hook kendex registers and labels enforced and nothing runs, which
+ * is the defect KEN-941 closed on `tool_call` and KEN-1189 on the other three.
  */
 export const TOOL_CALL_LISTENER = "tool_call";
+/** `PostToolUse`. */
+export const TOOL_RESULT_LISTENER = "tool_result";
+/** `Stop` and `TaskCompleted`, which Pi fires as one event. */
+export const TURN_END_LISTENER = "turn_end";
+/** `SessionStart`. */
+export const SESSION_START_LISTENER = "session_start";
 
 /** One hook the rendered registry asks the carrier to run. */
 export interface RegisteredHook {
@@ -63,11 +73,17 @@ export interface RegistryRead {
 }
 
 /**
- * Whether a registration's matcher covers the tool being called. Absent, empty
- * and `*` cover every tool, as they do for the Claude Code registry this shape
- * comes from; anything else is a whole-string regex, compared against the tool
- * said in Claude's own words so the pattern is read exactly as its author
- * wrote it (`vocab.ts`).
+ * Whether a registration's matcher covers this event. `subject` is the word
+ * the matcher is written against: the tool being called on `tool_call` and
+ * `tool_result`, the session's source on `session_start`, and `undefined` on
+ * `turn_end`, whose Claude Code events (`Stop`, `TaskCompleted`) take no
+ * matcher at all — there, every registration covers, because the alternative
+ * is a matcher nobody wrote deciding a hook does not run.
+ *
+ * Absent, empty and `*` cover everything, as they do for the Claude Code
+ * registry this shape comes from; anything else is a whole-string regex,
+ * compared against the subject said in Claude's own words so the pattern is
+ * read exactly as its author wrote it (`vocab.ts`).
  *
  * A pattern that will not compile judges the call rather than skipping it. It
  * is a matcher kendex registered and labels enforced, and the alternative is a
@@ -76,12 +92,13 @@ export interface RegistryRead {
  * sees. The flags are Claude Code's — none — so a matcher that compiles and
  * matches there compiles and matches here.
  */
-function matches(matcher: unknown, toolName: string): boolean {
+function matches(matcher: unknown, subject: string | undefined): boolean {
+	if (subject === undefined) return true;
 	if (typeof matcher !== "string") return true;
 	const pattern = matcher.trim();
 	if (pattern === "" || pattern === "*") return true;
 	try {
-		return new RegExp(`^(?:${pattern})$`).test(toolName);
+		return new RegExp(`^(?:${pattern})$`).test(subject);
 	} catch {
 		return true;
 	}
@@ -138,7 +155,7 @@ function scriptGone(script: string): boolean {
 }
 
 /** The registrations one scope root holds for a listener, in file order. */
-function readRegistry(root: string, listener: string, toolName: string, anchor: string | undefined): RegistryRead {
+function readRegistry(root: string, listener: string, subject: string | undefined, anchor: string | undefined): RegistryRead {
 	const path = resolve(root, "hooks.json");
 	const hooks: RegisteredHook[] = [];
 	let position = 0;
@@ -154,7 +171,7 @@ function readRegistry(root: string, listener: string, toolName: string, anchor: 
 		for (const group of groups) {
 			const entry = group as { matcher?: unknown; hooks?: unknown };
 			if (!Array.isArray(entry.hooks)) throw new Error(`hooks.${listener} holds a group whose hooks is not an array`);
-			const covers = matches(entry.matcher, toolName);
+			const covers = matches(entry.matcher, subject);
 			for (const registration of entry.hooks) {
 				position += 1;
 				const hook = registration as { type?: unknown; command?: unknown; timeout?: unknown };
@@ -186,7 +203,10 @@ function readRegistry(root: string, listener: string, toolName: string, anchor: 
 }
 
 /**
- * Every hook the rendered registries ask for on this listener and this tool:
+ * Every hook the rendered registries ask for on this listener, whose matchers
+ * cover `subject` — the tool on `tool_call` and `tool_result`, the session
+ * source on `session_start`, and `undefined` on `turn_end`, where every
+ * registration covers:
  * the project's `<project>/.pi/kendex/hooks.json` first, then the global
  * `<root-anchored PI_CODING_AGENT_DIR or ~/.pi/agent>/kendex/hooks.json`.
  * `project` is the caller's already-resolved project root, or `undefined`
@@ -209,16 +229,16 @@ function readRegistry(root: string, listener: string, toolName: string, anchor: 
  * answers rather than being shadowed by it. Two command-bodied hooks are two
  * hooks and both run, nothing but the command identifying them.
  */
-export function registeredHooks(listener: string, toolName: string, project: string | undefined, trusted: boolean): RegistryRead {
+export function registeredHooks(listener: string, subject: string | undefined, project: string | undefined, trusted: boolean): RegistryRead {
 	const hooks: RegisteredHook[] = [];
 	const byName = new Map<string, number>();
 	let unreadable: string | undefined;
 
 	const answering: RegistryRead[] = [];
 	if (project !== undefined && trusted) {
-		answering.push(readRegistry(resolve(project, ".pi", "kendex"), listener, toolName, project));
+		answering.push(readRegistry(resolve(project, ".pi", "kendex"), listener, subject, project));
 	}
-	answering.push(readRegistry(resolve(piUserDir(), "kendex"), listener, toolName, undefined));
+	answering.push(readRegistry(resolve(piUserDir(), "kendex"), listener, subject, undefined));
 
 	for (const read of answering) {
 		unreadable ??= read.unreadable;
