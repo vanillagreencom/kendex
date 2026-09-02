@@ -1,3 +1,4 @@
+import { listed } from "@/lib/copy";
 // Marketplaces copy: the Subscribed tab's read states and Home's tile
 // detail — kept apart from the rest so the wording is reviewed in one
 // place. A read that failed is said and retried where it failed; rows
@@ -116,11 +117,8 @@ export const ABOUT_FINDINGS_TITLE = "Things the catalog gets wrong";
 // and has no history to date. The tab has read it and has nothing to show.
 export const ABOUT_NOTHING_SAID = "This marketplace says nothing about itself.";
 
-/** What a catalog holds, as one line: the per-kind counts joined the way a
- *  person writes a list, with no serial comma. Null when nothing was
- *  counted, so the row is left out rather than reading "nothing". */
-export const catalogContents = (counts: string[]): string | null => {
-  if (counts.length === 0) return null;
-  if (counts.length < 3) return counts.join(" and ");
-  return `${counts.slice(0, -1).join(", ")} and ${counts[counts.length - 1]}`;
-};
+/** What a catalog holds, as one line. The joining is the app's one list
+ *  rule; all this adds is that a catalog with nothing counted has no line
+ *  at all, so the row is left out rather than reading "nothing". */
+export const catalogContents = (counts: string[]): string | null =>
+  counts.length === 0 ? null : listed(counts);

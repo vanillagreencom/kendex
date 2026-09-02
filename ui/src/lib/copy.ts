@@ -236,3 +236,17 @@ export const appUpdateCommandDownloadNote = (path: string): string =>
 // it. Said wherever a change is one field and the retry is to press again.
 export const SETTINGS_MOVED_MESSAGE =
   "Your settings changed in another window. Try again.";
+
+/** Names in a line, the way a person writes them: no serial comma, and the
+ *  `and` only in front of the last one. Three names joined with two `and`s
+ *  read as a chant rather than a list.
+ *
+ *  One copy of the rule, because every surface that lists things has to
+ *  read as the same writer: places a package is customized in, the kinds a
+ *  catalog holds. A list with nothing in it is the caller's to handle —
+ *  what an empty list should say differs by surface, and this one has no
+ *  opinion about it. */
+export const listed = (names: string[]): string =>
+  names.length < 3
+    ? names.join(" and ")
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;

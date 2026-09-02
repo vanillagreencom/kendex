@@ -1,11 +1,9 @@
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ItemKind, Tag } from "@/bindings";
+import type { PackageEntry } from "@/components/marketplaces/package-row";
 import { Filter } from "@/components/marketplaces/packages-filter";
-import {
-  type PackageEntry,
-  PackagesTable,
-} from "@/components/marketplaces/packages-table";
+import { PackagesTable } from "@/components/marketplaces/packages-table";
 import {
   TroubleLines,
   troubledScopes,

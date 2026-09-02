@@ -1,5 +1,6 @@
 import { ArrowDown, ArrowUp } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { ProvenanceRow } from "@/bindings";
 import {
   type PackageEntry,
   PackageRow,
@@ -13,6 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SUBSCRIBE_TO_INSTALL_MEANS } from "@/lib/copy-marketplaces";
+import { installedPlaces, placesKey } from "@/lib/installed-places";
 import {
   BY_NAME,
   orderPackages,
@@ -27,7 +29,9 @@ import {
 } from "@/stores/marketplaces";
 import { useProvenanceStore } from "@/stores/provenance";
 
-export type { PackageEntry } from "@/components/marketplaces/package-row";
+/** A stable empty list, so a table that never reads the provenance join
+ *  does not take a fresh array identity on every store read. */
+const EMPTY: ProvenanceRow[] = [];
 
 /** A column header that re-sorts the table. Clicking the column already
  *  sorted turns it around; clicking another takes it over, ascending. The
@@ -44,7 +48,9 @@ function SortHead({
   sort: PackageSort;
   onSort: (sort: PackageSort) => void;
   className?: string;
-  children: ReactNode;
+  /** A column word, not a node: it is interpolated into the button's
+   *  accessible name, where an element would read as "[object Object]". */
+  children: string;
 }) {
   const active = sort.key === column;
   const next: PackageSort = active
@@ -76,6 +82,7 @@ export function PackagesTable({
   entries,
   showMarketplace,
   showPlaces = false,
+  repo = null,
 }: {
   entries: PackageEntry[];
   /** The cross-marketplace tab names each row's source; a single
@@ -85,6 +92,10 @@ export function PackagesTable({
    * The answer comes from the Library's provenance join, which only a
    * marketplace's own page asks for. */
   showPlaces?: boolean;
+  /** The repository this catalog's subscription declares. Half of the
+   * subscription's identity, so the places join can tell it from a
+   * same-named subscription somewhere else. */
+  repo?: string | null;
 }) {
   // A bare repository's table is one catalog's; the cross-marketplace tab
   // only ever carries subscriptions. So what the repository offers is
@@ -95,26 +106,39 @@ export function PackagesTable({
   // sentence once: the tooltip it replaces was the same constant rendered
   // per row.
   const browsing = entries.find((entry) => entry.catalog.by === "repo");
-  const repo = browsing?.catalog.by === "repo" ? browsing.catalog.repo : "";
+  const browsedRepo =
+    browsing?.catalog.by === "repo" ? browsing.catalog.repo : "";
   const rows = useMarketplacesStore((s) => s.rows);
   const read = useMarketplacesStore((s) => s.read);
   const summary = useMarketplacesStore(
-    (s) => s.summaries[catalogKey({ by: "repo", repo })] ?? null,
+    (s) => s.summaries[catalogKey({ by: "repo", repo: browsedRepo })] ?? null,
   );
-  const repoKey = useRepoKey(repo, summary);
+  const repoKey = useRepoKey(browsedRepo, summary);
   const { kind } = repoAction(rows, read, repoKey);
   // Only an undeclared repository can be subscribed from a row. A declared
   // one — switched off, or unreadable — is the header's Turn on or
   // Refresh, and a second control here would race it.
-  const offerSubscribe = repo !== "" && kind === "subscribe";
+  const offerSubscribe = browsedRepo !== "" && kind === "subscribe";
 
   const [sort, setSort] = useState<PackageSort>(BY_NAME);
+  // Only the page that shows the column reads the join, so the
+  // cross-marketplace tab neither loads it nor re-renders on it.
+  const provenance = useProvenanceStore((s) => (showPlaces ? s.rows : EMPTY));
   const loadProvenance = useProvenanceStore((s) => s.load);
   useEffect(() => {
     if (showPlaces) void loadProvenance();
   }, [showPlaces, loadProvenance]);
 
   const ordered = useMemo(() => orderPackages(entries, sort), [entries, sort]);
+  // One pass over the join for the whole table: per row it was a full scan
+  // of every installation on the machine, once per render.
+  const places = useMemo(
+    () =>
+      showPlaces && entries.length > 0
+        ? installedPlaces(provenance, entries[0].catalog, repo)
+        : new Map<string, string>(),
+    [showPlaces, provenance, entries, repo],
+  );
 
   return (
     <>
@@ -163,6 +187,7 @@ export function PackagesTable({
               entry={entry}
               showMarketplace={showMarketplace}
               showPlaces={showPlaces}
+              places={places.get(placesKey(entry.row.kind, entry.row.name)) ?? ""}
               offerSubscribe={offerSubscribe}
             />
           ))}

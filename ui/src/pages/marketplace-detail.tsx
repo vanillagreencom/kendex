@@ -212,6 +212,7 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
                       }))}
                       showMarketplace={false}
                       showPlaces
+                      repo={row?.repo ?? summary?.provenance ?? null}
                     />
                   )}
                 </TabsContent>
@@ -224,6 +225,7 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
                   <AboutSection
                     catalog={catalog}
                     meta={row?.meta ?? summary?.meta ?? null}
+                    counts={row?.counts ?? summary?.counts ?? null}
                   />
                 </TabsContent>
               </div>

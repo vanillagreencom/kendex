@@ -1,5 +1,5 @@
 import { type ComponentProps, type MouseEvent, useEffect } from "react";
-import type { AvailablePackage, Catalog, ProvenanceRow } from "@/bindings";
+import type { AvailablePackage, Catalog } from "@/bindings";
 import { ScoreTooltip } from "@/components/score-tooltip";
 import { StatusDot } from "@/components/status-dot";
 import { TagBadges } from "@/components/tag-badge";
@@ -19,11 +19,9 @@ import { offersInstall } from "@/lib/install-state";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName, shortRevision } from "@/lib/labels";
 import { relativeTime } from "@/lib/relative-time";
-import { placeName } from "@/lib/update-groups";
 import { catalogLabel, useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import { safetyKey, usePreinstallSafety } from "@/stores/preinstall-safety";
-import { useProvenanceStore } from "@/stores/provenance";
 
 /** One offered package with the catalog it comes from, and whether the
  * scope that catalog is subscribed in has a readable lock right now.
@@ -45,31 +43,6 @@ export interface PackageEntry {
   revision?: string | null;
 }
 
-/** The places holding this package, from this catalog and no other. A
- *  package installed under the same name from somewhere else is a
- *  collision, not an installation from here, and the Status column already
- *  says so — naming its places here would credit them to the wrong
- *  marketplace. A repository nobody subscribes to owns no installation at
- *  all, so it never names a place. */
-function installedIn(
-  rows: ProvenanceRow[],
-  catalog: Catalog,
-  kind: string,
-  name: string,
-): string {
-  if (catalog.by !== "subscription") return "";
-  const here = rows.filter(
-    (row) =>
-      row.kind === kind &&
-      row.name === name &&
-      row.origin.origin === "marketplace" &&
-      row.origin.source === catalog.source,
-  );
-  if (here.length === 0) return "";
-  const scopes = here.map((row) => row.scope);
-  return scopes.map((scope) => placeName(scope, scopes)).join(", ");
-}
-
 /** One row of [PackagesTable]: the package, what it is, when it last
  * changed, how it scored, where it is installed from this marketplace, and
  * the one thing this table can do with it. Whether a bare repository's row
@@ -79,6 +52,7 @@ export function PackageRow({
   entry,
   showMarketplace,
   showPlaces,
+  places,
   offerSubscribe,
 }: {
   entry: PackageEntry;
@@ -86,6 +60,11 @@ export function PackageRow({
   /** A marketplace's own page says where each of its packages landed; the
    *  cross-marketplace list names the marketplace in that room instead. */
   showPlaces: boolean;
+  /** Where this package is installed from this marketplace, already
+   *  worded. The table builds the whole index once — see
+   *  `lib/installed-places.ts` — so a row neither scans the provenance
+   *  join nor subscribes to it. */
+  places: string;
   /** Whether a bare repository's row may subscribe and install — decided
    * once for the table, never per row. */
   offerSubscribe: boolean;
@@ -101,7 +80,6 @@ export function PackageRow({
   const safety = usePreinstallSafety(
     (s) => s.scores[safetyKey(catalog, row.kind, row.name)],
   );
-  const provenance = useProvenanceStore((s) => s.rows);
   const Icon = kindIcon(row.kind);
 
   useEffect(() => {
@@ -114,9 +92,6 @@ export function PackageRow({
   };
 
   const updated = row.updatedAt ? Date.parse(row.updatedAt) : Number.NaN;
-  const places = showPlaces
-    ? installedIn(provenance, catalog, row.kind, row.name)
-    : "";
 
   return (
     <TableRow className="cursor-pointer" onClick={open}>

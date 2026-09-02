@@ -1,5 +1,5 @@
 import { MoreHorizontal, RefreshCw, Star } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useState } from "react";
 import type { Catalog, CatalogSummary, MarketplaceRow } from "@/bindings";
 import { ExternalLink } from "@/components/external-link";
 import { RepoAction } from "@/components/marketplaces/repo-action";
@@ -65,17 +65,47 @@ export function DetailHeader({
       : (listing?.name ?? meta?.name ?? catalog.repo.split("/").at(-1));
   const description = meta?.description ?? listing?.description ?? null;
   const commit = row?.commit ?? summary?.commit ?? null;
-  // The repository the catalog comes from, and the page for it on GitHub.
-  // A path source has a folder here and no page to open, so it stays the
-  // plain text it has always been.
+  // What the catalog came from, as text. A path source has a folder here.
   const provenance =
     row?.repo ?? row?.path ?? summary?.provenance ?? listing?.repo ?? null;
-  const repoKey = row?.repoKey ?? summary?.repoKey ?? listing?.repo ?? null;
+  // The canonical `owner/repo` a GitHub reference folds to, which is the
+  // only thing a github.com URL may be built from. Every branch is a folded
+  // key — never the raw `listing.repo`, which is whatever the community
+  // index happened to hold: a full URL, a `.git` suffix, another host. The
+  // fold answers null for those, and null is the answer that leaves the
+  // provenance as plain text instead of a link that opens nothing.
+  const repoKey = row?.repoKey ?? summary?.repoKey ?? listing?.repoKey ?? null;
   const metaLine = [
     commit ? `@ ${shortRevision(commit)}` : null,
     meta?.license,
     meta?.author ? `by ${meta.author}` : null,
-  ].filter(Boolean);
+  ].filter((part): part is string => !!part);
+  // One line, one separator. Each part is a node with its own name, and the
+  // interleaving is spelled once, so nothing re-derives whether anything
+  // precedes it and every gap is the same gap.
+  const metaParts: { key: string; node: ReactNode }[] = [
+    provenance
+      ? {
+          key: "provenance",
+          node: repoKey ? (
+            <ExternalLink url={`https://github.com/${repoKey}`}>
+              {provenance}
+            </ExternalLink>
+          ) : (
+            <span>{provenance}</span>
+          ),
+        }
+      : null,
+    meta?.homepage
+      ? {
+          key: "homepage",
+          node: (
+            <ExternalLink url={meta.homepage}>{meta.homepage}</ExternalLink>
+          ),
+        }
+      : null,
+    ...metaLine.map((part) => ({ key: part, node: <span>{part}</span> })),
+  ].filter((part) => part !== null);
   const tags = [...new Set([...(meta?.tags ?? []), ...(listing?.tags ?? [])])];
 
   let action: ReactNode;
@@ -150,31 +180,14 @@ export function DetailHeader({
         subtitle={
           <>
             {description ? <p>{description}</p> : null}
-            {provenance || meta?.homepage || metaLine.length > 0 ? (
+            {metaParts.length > 0 ? (
               <p className="mt-1 flex flex-wrap items-center gap-x-1.5 font-mono text-xs">
-                {provenance ? (
-                  repoKey ? (
-                    <ExternalLink url={`https://github.com/${repoKey}`}>
-                      {provenance}
-                    </ExternalLink>
-                  ) : (
-                    <span>{provenance}</span>
-                  )
-                ) : null}
-                {meta?.homepage ? (
-                  <>
-                    {provenance ? <span aria-hidden>·</span> : null}
-                    <ExternalLink url={meta.homepage}>
-                      {meta.homepage}
-                    </ExternalLink>
-                  </>
-                ) : null}
-                {metaLine.length > 0 ? (
-                  <span>
-                    {provenance || meta?.homepage ? "· " : null}
-                    {metaLine.join(" · ")}
-                  </span>
-                ) : null}
+                {metaParts.map((part, index) => (
+                  <Fragment key={part.key}>
+                    {index > 0 ? <span aria-hidden>·</span> : null}
+                    {part.node}
+                  </Fragment>
+                ))}
               </p>
             ) : null}
             {tags.length > 0 ? (

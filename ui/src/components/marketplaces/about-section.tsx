@@ -1,10 +1,5 @@
 import { type ReactNode, useCallback } from "react";
-import type {
-  AboutFound,
-  Catalog,
-  ItemKind,
-  MarketplaceMeta,
-} from "@/bindings";
+import type { Catalog, ItemKind, MarketplaceMeta } from "@/bindings";
 import { ExternalLink } from "@/components/external-link";
 import { useCachedRead } from "@/components/marketplaces/use-catalog";
 import {
@@ -25,18 +20,19 @@ import {
   useMarketplacesStore,
 } from "@/stores/marketplaces";
 
-/** The per-kind totals behind the Contains line. The report counts each
- * root separately because a catalog may keep one kind in several folders;
- * where the folders are is the catalog author's business, so the tab adds
- * them up and names the kind once. */
-function perKind(found: AboutFound[]): string[] {
-  const totals = new Map<ItemKind, number>();
-  for (const row of found) {
-    totals.set(row.kind, (totals.get(row.kind) ?? 0) + row.count);
-  }
-  return [...totals].map(
-    ([kind, count]) => `${count} ${kindLabel(kind, count).toLowerCase()}`,
-  );
+/** The Contains line's parts, from the per-kind map the engine already
+ * ships beside the catalog. Not summed here from the About report's
+ * per-root rows: that report counts each declared root separately, while
+ * the engine's map dedupes across them, so a catalog declaring one name
+ * under two roots would have this line disagree with the Packages tab the
+ * reader is looking at. */
+function perKind(counts: { [key in string]: number }): string[] {
+  return Object.entries(counts)
+    .filter(([, count]) => count > 0)
+    .map(
+      ([kind, count]) =>
+        `${count} ${kindLabel(kind as ItemKind, count).toLowerCase()}`,
+    );
 }
 
 /** When the catalog last changed, in the app's own coarse wording, with the
@@ -56,9 +52,14 @@ function updatedLine(updatedAt: string | null): ReactNode {
 export function AboutSection({
   catalog,
   meta,
+  counts,
 }: {
   catalog: Catalog;
   meta: MarketplaceMeta | null;
+  /** Packages offered by kind, as the engine counted them. Absent for a
+   * catalog nothing has read yet, which leaves the Contains row out rather
+   * than reporting a total nothing measured. */
+  counts: { [key in string]: number } | null;
 }) {
   const about = useMarketplacesStore((s) => s.about[catalogKey(catalog)]);
   const readError = useMarketplacesStore(
@@ -84,7 +85,7 @@ export function AboutSection({
     );
   }
 
-  const contains = catalogContents(perKind(about.found));
+  const contains = catalogContents(perKind(counts ?? {}));
   const rows: { label: string; value: ReactNode }[] = [
     { label: ABOUT_AUTHOR_LABEL, value: meta?.author ?? null },
     { label: ABOUT_LICENSE_LABEL, value: meta?.license ?? null },

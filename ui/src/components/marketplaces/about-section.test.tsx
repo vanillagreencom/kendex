@@ -33,6 +33,7 @@ const catalog = subscription({ scope: "global" }, "kendex");
 const render = (
   view: Partial<AboutView> = {},
   meta: MarketplaceMeta | null = null,
+  counts: { [key in string]: number } | null = null,
 ) => {
   const about: AboutView = {
     mode: "explicit",
@@ -42,7 +43,9 @@ const render = (
     ...view,
   };
   stub.about = { [catalogKey(catalog)]: about };
-  return renderToStaticMarkup(<AboutSection catalog={catalog} meta={meta} />);
+  return renderToStaticMarkup(
+    <AboutSection catalog={catalog} meta={meta} counts={counts} />,
+  );
 };
 
 const finding: CatalogFinding = {
@@ -75,15 +78,18 @@ describe("the About tab as a profile", () => {
     expect(html).toContain("2026-08-30T12:00:00+00:00");
   });
 
-  it("adds the per-kind counts across roots into one line", () => {
-    const html = render({
-      found: [
-        found("skills", "skill", 40),
-        found("packages", "skill", 2),
-        found("agents", "agent", 1),
-      ],
-    });
+  // The engine's own per-kind map, not a total summed here from the About
+  // report's per-root rows — that report counts a name once per declared
+  // root, and this line has to agree with the Packages tab beside it.
+  it("names what it holds from the counts the engine shipped", () => {
+    const html = render({}, null, { skill: 42, agent: 1 });
     expect(html).toContain("42 skills and 1 agent");
+  });
+
+  it("leaves the row out when nothing has counted the catalog yet", () => {
+    const html = render({ found: [found("skills", "skill", 40)] }, null, null);
+    expect(html).not.toContain("Contains");
+    expect(html).not.toContain("40 skills");
   });
 
   // The tags, the reading mode and the per-root table were an engineer's

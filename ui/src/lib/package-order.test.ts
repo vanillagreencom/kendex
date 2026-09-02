@@ -88,3 +88,25 @@ describe("ordering by kind", () => {
     expect(names(rows, "kind", true)).toEqual(["beta", "alpha", "zeta"]);
   });
 });
+
+// A commit date is a catalog's bytes. git prints a timezone `Date.parse`
+// rejects without complaint, and a NaN comparator does not merely misplace
+// the row that carries it — it makes the whole table's order
+// implementation-defined.
+describe("ordering when a catalog wrote a date nothing can read", () => {
+  const unreadable = entry("broken", "2009-02-18T02:31:30+99:00");
+  const rows = [
+    entry("old", "2024-01-01T00:00:00+00:00"),
+    unreadable,
+    entry("new", "2026-05-05T00:00:00+00:00"),
+  ];
+
+  it("is a date nothing can read, so the premise holds", () => {
+    expect(Number.isNaN(Date.parse("2009-02-18T02:31:30+99:00"))).toBe(true);
+  });
+
+  it("buries it with the undated rows instead of scrambling the table", () => {
+    expect(names(rows, "updated", true)).toEqual(["old", "new", "broken"]);
+    expect(names(rows, "updated", false)).toEqual(["new", "old", "broken"]);
+  });
+});

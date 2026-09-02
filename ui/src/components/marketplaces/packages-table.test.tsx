@@ -11,6 +11,7 @@ import type {
   MarketplaceRow,
   PackageSafety,
 } from "@/bindings";
+import type { PackageEntry } from "@/components/marketplaces/package-row";
 import {
   PACKAGE_STATE_UNKNOWN,
   SUBSCRIBE_TO_INSTALL_LABEL,
@@ -28,7 +29,7 @@ import { useNavStore } from "@/stores/nav";
 import { safetyKey } from "@/stores/preinstall-safety";
 import { useProvenanceStore } from "@/stores/provenance";
 import { mount as mountTree } from "@/test/dom";
-import { type PackageEntry, PackagesTable } from "./packages-table";
+import { PackagesTable } from "./packages-table";
 
 // Static rendering reads a zustand store's initial snapshot, so the score
 // store's hook is wrapped to let each test seed the row's score.
@@ -406,6 +407,9 @@ describe("a marketplace's own packages table", () => {
     expect(html).toContain("—");
   });
 
+  // A subscription is a (scope, source, repository), not a name: the same
+  // alias can be declared in the personal manifest and in a project's,
+  // pointing at different repositories.
   it("names the places holding it, and only from this marketplace", () => {
     stub.scores = {};
     useProvenanceStore.setState({
@@ -418,11 +422,26 @@ describe("a marketplace's own packages table", () => {
           harness: "claude",
           origin: { origin: "marketplace", source: "kendex", repo: "a/b" },
         },
-        // The same name installed from somewhere else is a collision, not
-        // an installation from here: naming its place would credit this
-        // marketplace with an install it never made.
+        // The same package, the same place, a second harness. One place.
+        {
+          scope: { scope: "project", root: "/home/me/hyprtrade" },
+          kind: "skill",
+          name: "gh",
+          harness: "codex",
+          origin: { origin: "marketplace", source: "kendex", repo: "a/b" },
+        },
+        // The alias this page carries, pointing somewhere else: another
+        // subscription's installation, not this marketplace's.
         {
           scope: { scope: "global" },
+          kind: "skill",
+          name: "gh",
+          harness: "claude",
+          origin: { origin: "marketplace", source: "kendex", repo: "z/other" },
+        },
+        // A different source entirely — a collision, which Status says.
+        {
+          scope: { scope: "project", root: "/home/me/vg" },
           kind: "skill",
           name: "gh",
           harness: "claude",
@@ -437,11 +456,40 @@ describe("a marketplace's own packages table", () => {
         entries={[dated("gh", null)]}
         showMarketplace={false}
         showPlaces
+        repo="a/b"
       />,
     );
     const text = host.textContent ?? "";
     expect(text).toContain("hyprtrade");
     expect(text).not.toContain("User level");
+    expect(text).not.toContain("vg");
+    expect(text.match(/hyprtrade/g)).toHaveLength(1);
+  });
+
+  // Without the repository the page has read nothing that identifies the
+  // subscription, and the alias alone is not it.
+  it("names no place until it knows which repository this catalog is", () => {
+    stub.scores = {};
+    useProvenanceStore.setState({
+      loaded: true,
+      rows: [
+        {
+          scope: { scope: "project", root: "/home/me/hyprtrade" },
+          kind: "skill",
+          name: "gh",
+          harness: "claude",
+          origin: { origin: "marketplace", source: "kendex", repo: "a/b" },
+        },
+      ],
+    });
+    const host = mountTree(
+      <PackagesTable
+        entries={[dated("gh", null)]}
+        showMarketplace={false}
+        showPlaces
+      />,
+    );
+    expect(host.textContent ?? "").not.toContain("hyprtrade");
   });
 
   it("leaves the columns off the cross-marketplace list", () => {

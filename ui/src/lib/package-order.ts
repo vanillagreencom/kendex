@@ -19,18 +19,28 @@ export const BY_NAME: PackageSort = { key: "name", ascending: true };
 const byName = (a: PackageEntry, b: PackageEntry): number =>
   packageDisplayName(a.row).localeCompare(packageDisplayName(b.row));
 
-/** A package with no date sorts last whichever way the column points: it
- *  is not older than everything, it is unknown, and burying it under the
- *  dated rows says that in both directions. */
+/** When a row's date is a moment, or NaN when it has none or the catalog
+ *  wrote one nothing can read. A commit date is a catalog's bytes, and a
+ *  repository can carry a commit whose timezone git prints and `Date.parse`
+ *  rejects, so the two cases are one case here — as they are on the two
+ *  surfaces that draw the date. */
+const moment = (entry: PackageEntry): number =>
+  entry.row.updatedAt ? Date.parse(entry.row.updatedAt) : Number.NaN;
+
+/** A package with no readable date sorts last whichever way the column
+ *  points: it is not older than everything, it is unknown, and burying it
+ *  under the dated rows says that in both directions. Never subtracted
+ *  while unknown — a NaN comparator makes the whole table's order
+ *  implementation-defined, not just the row that carries it. */
 const byUpdated = (a: PackageEntry, b: PackageEntry, ascending: boolean) => {
-  const left = a.row.updatedAt;
-  const right = b.row.updatedAt;
-  if (!left && !right) return 0;
-  if (!left) return 1;
-  if (!right) return -1;
-  // ISO-8601 with the same offset shape sorts as text; comparing the
-  // parsed instants keeps two catalogs written in different zones honest.
-  const order = Date.parse(left) - Date.parse(right);
+  const left = moment(a);
+  const right = moment(b);
+  if (Number.isNaN(left) && Number.isNaN(right)) return 0;
+  if (Number.isNaN(left)) return 1;
+  if (Number.isNaN(right)) return -1;
+  // Comparing the parsed instants rather than the strings keeps two
+  // catalogs written in different time zones honest.
+  const order = left - right;
   return ascending ? order : -order;
 };
 
