@@ -27,9 +27,9 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 assert_tmpdir TMP_ROOT
 
 # GIT_DIR outranks -C, so where it is inherited the `git init` below re-inits
-# the ambient repository and leaves no fixture repo at all; reaching the
-# developer's real cache needs GIT_WORK_TREE or core.worktree inherited as
-# well. All four go together, which is the house rule in .claude/CLAUDE.md.
+# the ambient repository and leaves no fixture repo at all — which is what the
+# assert_stop below checks. All four go together, which is the house rule in
+# .claude/CLAUDE.md.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/.cache/linear"
@@ -49,8 +49,10 @@ cat >"$TMP_ROOT/.cache/linear/meta.json" <<'JSON'
 {"synced_at":"2026-09-02T00:00:00+00:00"}
 JSON
 
-# The canceled twin is listed FIRST, which is the order the old first-match
-# selection got wrong. "Solo Canceled" has no live counterpart at all.
+# The canceled twin is listed FIRST, so a selection that merely narrows to one
+# object without preferring the live one still fails section A, and the
+# control's emit-every-match stream leads with the canceled id.
+# "Solo Canceled" has no live counterpart at all.
 cat >"$TMP_ROOT/.cache/linear/projects.json" <<'JSON'
 [
   {"id":"dead-uuid","name":"Review Gate & CI","state":"canceled"},
@@ -63,20 +65,31 @@ JSON
 run_get() { cd "$TMP_ROOT" && bash "$LINEAR" cache projects get "$@"; }
 
 # --- A: a duplicated name returns exactly one project, the live one ----------
-safe="$(run_get "Review Gate & CI" 2>/dev/null)"
+# The status is captured, not discarded: a caller's `| jq -r '.id'` cannot see
+# it, so every assertion below would hold on a command that printed the live
+# project and then exited 1.
+safe_rc=0
+safe="$(run_get "Review Gate & CI" 2>/dev/null)" || safe_rc=$?
+assert_eq "A: a resolved name exits 0 (--format=safe)" "$safe_rc" 0
 assert_eq "A: a name matching a live and a canceled project returns ONE object (--format=safe)" \
   "$(jq -s 'length' <<<"$safe")" "1"
 assert_eq "A: that one object is the live project, so \`| jq -r .id\` reads one id" \
   "$(jq -s -r '[.[].id] | join(",")' <<<"$safe")" "live-uuid"
 
-raw="$(run_get "Review Gate & CI" --format=raw 2>/dev/null)"
+raw_rc=0
+raw="$(run_get "Review Gate & CI" --format=raw 2>/dev/null)" || raw_rc=$?
+assert_eq "A: a resolved name exits 0 (--format=raw)" "$raw_rc" 0
 assert_eq "A: --format=raw returns ONE object too" \
   "$(jq -s 'length' <<<"$raw")" "1"
 assert_eq "A: the raw object carries the live project" \
   "$(jq -s -r '[.[].project.id] | join(",")' <<<"$raw")" "live-uuid"
 
-# An unambiguous name is unaffected.
-solo="$(run_get "Trading Panels" 2>/dev/null)"
+# An unambiguous name is unaffected. Guarded like the reads above: an
+# unguarded command substitution aborts the whole suite under errexit, so a
+# regression here would report as a missing verdict rather than a failure.
+solo_rc=0
+solo="$(run_get "Trading Panels" 2>/dev/null)" || solo_rc=$?
+assert_eq "A: an unduplicated name exits 0" "$solo_rc" 0
 assert_eq "A: an unduplicated name still resolves to its project" \
   "$(jq -s -r '[.[].id] | join(",")' <<<"$solo")" "plain-uuid"
 
