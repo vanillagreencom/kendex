@@ -212,6 +212,10 @@ fn writable(mode: &fs::Permissions) -> fs::Permissions {
     }
     #[cfg(not(unix))]
     {
+        // The lint's whole warning is the Unix widening the arm above
+        // already avoids. Off Unix a `Permissions` carries the read-only
+        // flag and nothing else, so clearing it relaxes nothing further.
+        #[allow(clippy::permissions_set_readonly_false)]
         relaxed.set_readonly(false);
     }
     relaxed

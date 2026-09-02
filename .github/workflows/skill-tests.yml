@@ -535,6 +535,22 @@ jobs:
           RUSTFLAGS: -C debuginfo=0
           CARGO_INCREMENTAL: '0'
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # Same reasoning as clippy above, for the two lanes tools/guard was the
+      # only runner of: a commit made with --no-verify, or on a clone whose
+      # hook chain tools/setup never armed, could land a format regression or
+      # a rustdoc link broken by a rename with every required check green.
+      # --document-private-items is what makes the deny in Cargo.toml's
+      # [workspace.lints.rustdoc] reach a citation of a private item, which is
+      # most of this workspace.
+      - name: cargo fmt
+        if: always()
+        run: cargo fmt --check
+      - name: cargo doc
+        if: always()
+        env:
+          RUSTFLAGS: -C debuginfo=0
+          CARGO_INCREMENTAL: '0'
+        run: cargo doc --no-deps --document-private-items --workspace --locked
 
   # The app ships on macOS. tools/guard checks the core and CLI Apple targets
   # at commit time; this runner executes the tests on the platform.
