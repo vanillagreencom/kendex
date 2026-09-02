@@ -6,9 +6,11 @@ import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { AUDIT_ATTENTION_TITLE } from "@/lib/copy";
 import {
+  KEEP_FILES_CONSEQUENCE,
   KEEP_FILES_LABEL,
   MANAGE_CONFIRM_BODY,
   MOVE_FILES_YOURSELF,
+  manageConfirmTitle,
   PROCEED_LABEL,
   REPLACE_FILES_CONFIRM_LABEL,
   REPLACE_FILES_LABEL,
@@ -107,6 +109,12 @@ const press = async (el: Element | undefined) => {
     (el as HTMLButtonElement).click();
   });
 };
+
+// The word the row's control uses for this action. The heading it opens
+// has to carry it too, or the dialog renames the button that was pressed —
+// read from the label rather than written out, so rewording the pair keeps
+// the rule and rewording one half breaks it.
+const [OPENER_VERB] = KEEP_FILES_LABEL.split(" ");
 
 const cards = (host: HTMLElement) => [
   ...host.querySelectorAll("[data-slot='card']"),
@@ -336,16 +344,37 @@ describe("a declared item whose place already holds files", () => {
     ]);
   });
 
-  // The move puts the originals in the trash, where they can be got back,
-  // so its confirm is not styled as a deletion. The replacement is checked
-  // in the same test: over the confirm alone a styling wired to nothing
-  // would pass.
+  // The move puts the files where kendex manages them from and deletes
+  // nothing, so its confirm is not styled as a deletion. The folder several
+  // tools share is the row staged for it: it is the only one the styling
+  // ever turned on, so a plain row here would pass whatever the styling
+  // reads. The replacement is checked in the same test, since over the
+  // confirm alone a styling wired to nothing would pass.
   it("styles the move's confirm apart from the replacement's", async () => {
-    stage([oneBlocked(ACME, "deploy")]);
+    stage([
+      view({
+        drift: [
+          inTheWay("browser", "claude", { cause: "shared-link" }),
+          inTheWay("deploy", "claude"),
+        ],
+        exits: [
+          exit("skill:browser:claude", {
+            replace: false,
+            tools: ["claude", "codex"],
+          }),
+          // Managing off the second row, so one button of each label is on
+          // the page and every press names the row it was meant for.
+          exit("skill:deploy:claude", { keep: false, enter: false }),
+        ],
+      }),
+    ]);
     const host = mount(<ProblemsPage />);
     await settle();
 
     await press(button(host, KEEP_FILES_LABEL));
+    // The shared words, so the branch the styling is read on is the one
+    // this pressed.
+    expect(dialog().textContent).toContain("read this skill from");
     expect(button(dialog(), PROCEED_LABEL)?.className).not.toContain(
       "bg-destructive",
     );
@@ -357,9 +386,26 @@ describe("a declared item whose place already holds files", () => {
     );
   });
 
+  // The heading is half of what the dialog says, and the old one asked
+  // whether to keep files — a choice about preservation, which is not what
+  // the button under it runs.
+  it("heads the confirm with the action rather than with keeping files", async () => {
+    stage([oneBlocked(ACME, "deploy")]);
+    const host = mount(<ProblemsPage />);
+    await settle();
+
+    await press(button(host, KEEP_FILES_LABEL));
+    const said = dialog().textContent ?? "";
+    expect(said).toContain(manageConfirmTitle("deploy"));
+    expect(said).toContain(OPENER_VERB);
+    expect(said).not.toContain("Keep deploy's files?");
+  });
+
   // The shared words answer for the shared installations alone: a group can
   // mix causes, and a summary over all of them is not a folder any tool
-  // reads from.
+  // reads from. The row's own line is read here beside the body, because
+  // they answer for one click: a row promising one thing over a dialog
+  // saying another leaves the reader unsure what they agreed to.
   it("keeps the shared folder out of a plain keep's words", async () => {
     stage([
       view({
@@ -370,9 +416,17 @@ describe("a declared item whose place already holds files", () => {
     const host = mount(<ProblemsPage />);
     await settle();
 
+    // The row's own column, not the whole page: the replacement's line
+    // next to it also speaks of a move.
+    const offer = button(host, KEEP_FILES_LABEL)?.parentElement?.textContent;
+    expect(offer).toContain(KEEP_FILES_CONSEQUENCE);
+    expect(offer).toContain("move");
+
     await press(button(host, KEEP_FILES_LABEL));
-    expect(dialog().textContent).toContain(MANAGE_CONFIRM_BODY);
-    expect(dialog().textContent).not.toContain("read this skill from");
+    const said = dialog().textContent ?? "";
+    expect(said).toContain(MANAGE_CONFIRM_BODY);
+    expect(said).toContain("move");
+    expect(said).not.toContain("read this skill from");
   });
 });
 

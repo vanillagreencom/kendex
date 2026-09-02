@@ -23,10 +23,11 @@ import type { Exits } from "@/lib/exits";
 
 /**
  * Items kendex.toml asks for whose files were already on disk. Both ways
- * out live on the row a person is reading: keeping the files hands them to
- * kendex as they are, replacing them installs what was asked for and sends
- * the old copies to the trash. Neither is safe to guess, and the plan
- * cannot move until one is picked.
+ * out live on the row a person is reading: managing the files moves them to
+ * where kendex manages them from and leaves the tools reading them,
+ * replacing them installs what was asked for and sends the old copies to
+ * the trash. Neither is safe to guess, and the plan cannot move until one
+ * is picked.
  *
  * Not every row has both. A folder where one file goes cannot be kept as
  * it stands, and a link somebody else set up is not this position's bytes
