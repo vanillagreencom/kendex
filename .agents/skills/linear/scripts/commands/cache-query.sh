@@ -15,7 +15,7 @@ Usage: cache-query.sh <resource> <action> [options]
 
 Issues:
   issues list [--project X | --all-projects | --no-project] [--state Y] [--label Z]
-              [--cycle N|UUID|current|previous|next]
+              [--cycle N|UUID|current|previous|next] [--team X]
               [--updated-since Nd] [--search REGEX] [--max] [--include-archived]
               [--format=safe|compact|ids|table]
               --all-projects enumerates every project in ONE command (each row
@@ -42,6 +42,8 @@ Comments:
 
 Labels:
   labels list [--team X]
+              Unknown flags are rejected here too, in the space form the live
+              twin accepts: `--team=X` is not a spelling either one takes.
 
 Attachments:
   attachments list [<issue-ID>]          List cached attachments (all or per-issue)
@@ -51,7 +53,8 @@ Attachments:
 Other:
   initiatives list [--status X]
   initiatives get <ID-or-name>
-  cycles list [--type current|past|upcoming] [--team X] [--limit N]
+  cycles list [--type current|past|upcoming] [--team X|--team=X] [--limit N]
+              Unknown flags are rejected rather than ignored.
   status                Show cache status/freshness
 
 All output uses the same formatters as live API commands.
@@ -75,11 +78,31 @@ source "$SCRIPT_DIR/../lib/cache-dates.sh"
 source "$SCRIPT_DIR/../lib/attachments.sh"
 
 # =============================================================================
+# SHARED FILTERS
+# =============================================================================
+
+# Narrow a cached array to one team, on the `.team.name` every synced record
+# carries. Reads the array on stdin, writes it back; an empty team passes it
+# through untouched. Issues, labels and cycles all filter by team.
+cache_filter_team() {
+    [[ -n "$1" ]] || { cat; return 0; }
+    jq --arg t "$1" '[.[] | select(.team.name == $t)]'
+}
+
+# Refuse a flag the caller's arg loop did not name. Swallowing one returned the
+# whole cache at exit 0 from a request that named a scope, and the caller reads
+# that exit code as the answer. Every live twin refuses the same input.
+cache_unknown_flag() {
+    jq -cn --arg c "$1" --arg n "$2" --arg f "$3" \
+        '{error: ("Unknown flag for cache " + $c + ": " + $f + ". A filter the cache cannot honor must fail, not silently return every " + $n + ". Run \u0027cache " + $c + " --help\u0027.")}' >&2
+}
+
+# =============================================================================
 # ISSUES
 # =============================================================================
 
 cache_list_issues() {
-    local project="" state="" label="" updated_since="" search="" cycle=""
+    local project="" state="" label="" updated_since="" search="" cycle="" team=""
     local include_archived="false" paginate_all="false" limit="75"
     local all_projects="false" no_project="false"
     FORMAT="${DEFAULT_FORMAT}"
@@ -155,7 +178,10 @@ cache_list_issues() {
             FORMAT="${1#--format=}"
             shift
             ;;
-        --team | --assignee | --created-since) shift 2 ;; # consume but ignore for cache
+        --team)
+            team="$2"
+            shift 2
+            ;;
         # Boolean on the live path (issues.sh), so it takes no value here
         # either. Consuming one would swallow the following filter flag and
         # return every issue as if that filter had been applied.
@@ -172,10 +198,7 @@ cache_list_issues() {
         # behavior) turned an unimplemented filter such as --no-project into a
         # full unfiltered listing that looked like assigned issues leaking past
         # the filter, inflating every audit worklist that trusted it.
-        -*)
-            echo "{\"error\": \"Unknown flag for cache issues list: $1. A filter the cache cannot honor must fail, not silently return every issue. Run 'cache issues list --help'.\"}" >&2
-            return 1
-            ;;
+        -*) cache_unknown_flag "issues list" "issue" "$1"; return 1 ;;
         *) shift ;;
         esac
     done
@@ -292,6 +315,11 @@ cache_list_issues() {
     # Get issues from cache
     local issues
     issues=$(cache_jq_file "$CACHE_DIR/issues.json" "[]" "$jq_filter") || return 1
+
+    # sync sends no team filter, so this cache always holds every team the API
+    # key reaches. --team used to be consumed and discarded, returning that
+    # whole workspace at exit 0 from a request that named one team.
+    issues=$(echo "$issues" | cache_filter_team "$team")
 
     # Apply client-side search (regex on title+description)
     if [[ -n "$search" ]]; then
@@ -842,6 +870,10 @@ cache_list_labels() {
             FORMAT="${1#--format=}"
             shift
             ;;
+        # `*) shift ;;` alone swallowed every flag form the arms above do not
+        # name — `--team=X` among them, which the live twin rejects — so a
+        # scoped request returned every team with nothing naming the scope.
+        -*) cache_unknown_flag "labels list" "label" "$1"; return 1 ;;
         *) shift ;;
         esac
     done
@@ -849,9 +881,7 @@ cache_list_labels() {
     local labels
     labels=$(cache_jq_file "$CACHE_DIR/labels.json" "[]" '.') || return 1
 
-    if [[ -n "$team" ]]; then
-        labels=$(echo "$labels" | jq --arg t "$team" '[.[] | select(.team.name == $t)]')
-    fi
+    labels=$(echo "$labels" | cache_filter_team "$team")
 
     # Wrap for formatter
     local result
@@ -985,6 +1015,10 @@ cache_list_cycles() {
             FORMAT="${1#--format=}"
             shift
             ;;
+        # `*) shift ;;` alone swallowed every flag the arms above do not name,
+        # so `cycles list --bogus x` returned every cycle at exit 0 with
+        # nothing in the output naming what it had dropped.
+        -*) cache_unknown_flag "cycles list" "cycle" "$1"; return 1 ;;
         *) shift ;;
         esac
     done
@@ -995,9 +1029,7 @@ cache_list_cycles() {
     # Team first. sync scopes cycles to a team only when one is configured, so
     # with none configured the cache holds every team's, and the type selection
     # below works off whatever set it is handed.
-    if [[ -n "$team" ]]; then
-        cycles=$(echo "$cycles" | jq --arg t "$team" '[.[] | select(.team.name == $t)]')
-    fi
+    cycles=$(echo "$cycles" | cache_filter_team "$team")
 
     # Apply type filter (date-based: "current" = most recent started + incomplete)
     local working
