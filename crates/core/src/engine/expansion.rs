@@ -360,10 +360,9 @@ mod tests {
     /// to the enum stops this test compiling until it is classified here.
     /// What this does not hold: the loop walks `ItemKind::ALL`, so a kind
     /// missing from that list is one it never visits, its arm here
-    /// satisfied and unexercised. `model.rs` fails the build for a kind
-    /// dropped from `ALL` or reordered within it, and for a variant never
-    /// added to it neither side catches anything — measured, and the note
-    /// on `ALL` says why closing it is not cheap.
+    /// satisfied and unexercised. `ALL`'s declared `[ItemKind; 7]` reds a
+    /// kind removed outright and `replace_unmanaged.rs` pins Agent, Skill
+    /// and Hook in that relative order; nothing else about `ALL` is held.
     #[test]
     fn only_the_kinds_a_plan_derives_have_a_per_package_update() {
         for kind in ItemKind::ALL {
