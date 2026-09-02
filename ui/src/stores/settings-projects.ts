@@ -119,10 +119,8 @@ export function projectActions(
 // tree holding it re-renders without ever settling.
 const NO_PROJECTS: string[] = [];
 
-/** The registered projects — empty until the settings read has landed.
- *  Every reader of the list takes this selector rather than spelling one,
- *  so the empty answer is one value with one identity. Nothing enforces
- *  that but the readers themselves: settings-projects.dom.test.tsx mounts
- *  the surfaces whose read runs on every render. */
+/** The registered projects — empty until the settings read has landed. The
+ *  empty answer is one shared array, so a component reading the list
+ *  through this holds one identity across renders. */
 export const projectsOf = (state: ProjectFields): string[] =>
   state.settings?.projects ?? NO_PROJECTS;

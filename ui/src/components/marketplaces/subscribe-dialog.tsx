@@ -23,8 +23,8 @@ import { scopeLabel } from "@/lib/derive";
 import { scopeName } from "@/lib/labels";
 import { everyPlace } from "@/lib/scope";
 import { useMarketplacesStore } from "@/stores/marketplaces";
-import { projectsOf } from "@/stores/settings-projects";
 import { useSettingsStore } from "@/stores/settings";
+import { projectsOf } from "@/stores/settings-projects";
 
 /** Subscribing points kendex at a marketplace: a repo shorthand, a git or
  * GitHub tree URL, a skills.sh package URL, or a local folder. Defaults to

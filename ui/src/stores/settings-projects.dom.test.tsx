@@ -2,8 +2,8 @@
 // A selector that mints a fresh array per snapshot is a store React reads
 // as changed on every render: the tree holding it re-renders until React
 // throws, and with no error boundary anywhere in `ui/src` the window goes
-// blank. Nothing but a mount can see that, so every surface that reads the
-// projects list is mounted here with the settings read unlanded, which is
+// blank. Nothing but a mount can see that. The subscribe dialog and the
+// Customize page are mounted here with the settings read unlanded, which is
 // the state the app first draws each of them in.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";

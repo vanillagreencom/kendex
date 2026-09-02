@@ -15,7 +15,6 @@ import { useAuditOnMount, useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
-import { projectsOf } from "@/stores/settings-projects";
 
 const GLOBAL: Scope = { scope: "global" };
 
@@ -39,7 +38,7 @@ export function ProjectList() {
       views.find((v) => sameScope(v.scope, scope)),
       auditFailure,
     );
-  const { registerProject, unregisterProject, discoverProjects } =
+  const { settings, registerProject, unregisterProject, discoverProjects } =
     useSettingsStore();
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -47,7 +46,7 @@ export function ProjectList() {
 
   const globalItems =
     result?.items.filter((i) => i.scope.scope === "global") ?? [];
-  const projects = useSettingsStore(projectsOf);
+  const projects = settings?.projects ?? [];
 
   return (
     <div className={PAGE_BODY}>
