@@ -2,37 +2,52 @@
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AuditView } from "@/bindings";
+import type {
+  AuditView,
+  AuditView_Serialize,
+  ItemKind,
+  Manifest_Serialize,
+  ObservedItem,
+  PackageMeta_Serialize,
+  ScanResult,
+  Scope,
+  UpdateRow,
+  VersionRow,
+} from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import {
   OPEN_IN_EDITOR_LABEL,
   OPEN_IN_FILE_BROWSER_LABEL,
   OPEN_IN_LABEL,
+  UPDATE_LABEL,
 } from "@/lib/copy";
+import { OVERVIEW_TAB } from "@/lib/copy-customize";
+import { PROJECTS_TAB, updateInLabel } from "@/lib/copy-projects";
 import { SAFETY_TAB, SAFETY_VENDOR } from "@/lib/copy-safety";
+import {
+  EDITED_CANT_UPDATE_NOTE,
+  NO_UPDATE_STANDING_NOTE,
+  UPDATE_NEEDS_CHECK_HERE,
+  UPDATE_NEEDS_CHECK_NOTE,
+  UPDATES_CHECKING,
+} from "@/lib/copy-updates";
 import { editorOpenPath } from "@/lib/editor-path";
 import { SEVERITY_LABELS } from "@/lib/labels";
-import { READ_LANDED } from "@/lib/read-state";
+import {
+  READ_LANDED,
+  READ_PENDING,
+  type ReadState,
+  readFailed,
+} from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
 import { useNavStore } from "@/stores/nav";
+import type { PackageView } from "@/stores/nav-types";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
-import {
-  CUSTOMIZED,
-  HYPR,
-  header,
-  installedAt,
-  openPage,
-  PLAIN,
-  type Project,
-  resetPage,
-  updateRow,
-  VG,
-} from "@/test/package-page";
 import { PackagePage } from "./package";
 
 // The page is mounted against the real stores; only the backend is
@@ -52,17 +67,175 @@ vi.mock("@/bindings", async (importOriginal) => ({
     openInEditor: vi.fn(),
     libraryProvenance: vi.fn(),
     packageDiff: vi.fn(),
+    // What an update started from the Projects tab runs, and the two reads
+    // the store lands behind it.
+    packageUpdate: vi.fn(),
+    updatesOverview: vi.fn(),
+    scanMachine: vi.fn(),
     // The page's safety tab asks for a fresh audit as it mounts.
     auditAll: vi.fn(),
   },
 }));
+
+type Project = Extract<Scope, { scope: "project" }>;
+const VG: Project = { scope: "project", root: "/work/vg" };
+const HYPR: Project = { scope: "project", root: "/work/hyprtrade" };
+
+const installedAt = (
+  scope: Project,
+  kind: ItemKind = "skill",
+): ObservedItem => ({
+  kind,
+  name: "gh",
+  scope,
+  harness: "claude",
+  path: `${scope.root}/.claude/skills/gh`,
+  fileState: { state: "file" },
+  enabled: true,
+  origin: null,
+  description: "about gh",
+  tags: [],
+  modifiedAt: null,
+  vendor: null,
+});
+
+const PLAIN: Manifest_Serialize = { schema: 1, install: {} };
+const CUSTOMIZED: Manifest_Serialize = {
+  schema: 1,
+  install: {},
+  "skill-instructions": { gh: "mine" },
+};
+
+const nothing = { status: "error" as const, error: "not in this test" };
+
+/** Mount the page about `gh` at `here`, with the package installed in
+ *  every place of `installed` and each place's manifest as given. */
+const openPage = async (
+  here: Project,
+  installed: Project[],
+  manifests: Record<string, Manifest_Serialize>,
+  /** What the page opens showing. An Updates-row Preview hands it a
+   *  comparison, so the page starts on a diff rather than on its files. */
+  packageView: PackageView | null = null,
+  /** The package's kind. Only the kinds a manifest overlays get a
+   *  Customize tab; every kind gets the rest of the strip. */
+  kind: ItemKind = "skill",
+) => {
+  vi.mocked(commands.getManifest).mockImplementation((scope) =>
+    Promise.resolve({
+      status: "ok",
+      data: { manifest: manifests[scopeKey(scope)] ?? null, base: null },
+    }),
+  );
+  useScanStore.setState({
+    result: {
+      harnesses: [],
+      items: installed.map((scope) => installedAt(scope, kind)),
+      missingProjects: [],
+      warnings: [],
+    },
+  });
+  useNavStore.setState({
+    page: "package",
+    packageRef: { kind, name: "gh", scope: here },
+    packageView,
+  });
+  const host = mount(<PackagePage />);
+  // The page points the editor at its own place on mount, and that read
+  // has to land before the editor can be pointed anywhere else.
+  await settle();
+  return host;
+};
 
 // What the Customize tab does when its project chip is clicked: the
 // editor's open draft becomes another place's.
 const editElsewhere = (scope: Project) =>
   act(() => useEditorStore.getState().setScope(scope));
 
-beforeEach(resetPage);
+const header = (host: HTMLElement) => host.querySelector("header")?.textContent;
+
+/** What the Updates read says about gh in one place: nothing hand-edited
+ *  and nothing forked. Without a row a place's hand-edit state is unread,
+ *  and the mark counts only places somebody has looked at. */
+const updateRow = (scope: Project): UpdateRow => ({
+  scope,
+  kind: "skill",
+  name: "gh",
+  source: "cat",
+  repo: "o/r",
+  repoIdentity: "o/r",
+  current: null,
+  latest: null,
+  updateAvailable: false,
+  pinned: false,
+  holdOwner: null,
+  ignored: false,
+  blockedByLocalEdit: false,
+  editedHarnesses: [],
+  forkableHarness: null,
+  canDiscard: false,
+  canTakeLatest: false,
+  derived: false,
+  requiredBy: [],
+  forked: false,
+  mixed: false,
+  removedUpstream: false,
+  noPerPackageUpdate: null,
+});
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  // clearAllMocks leaves implementations standing, and a test that
+  // answers the audit would otherwise answer it for every test after
+  // it in this file. The default is an audit that ran and found nothing
+  // to say about this package: a check that never answers is a state the
+  // safety tab reports, so a test must ask for it rather than inherit it.
+  vi.mocked(commands.auditAll).mockReset();
+  vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+  vi.mocked(commands.packageMeta).mockResolvedValue(nothing);
+  vi.mocked(commands.packageFiles).mockResolvedValue(nothing);
+  vi.mocked(commands.packageVersions).mockResolvedValue(nothing);
+  vi.mocked(commands.packageReadme).mockResolvedValue(nothing);
+  vi.mocked(commands.editorInventory).mockResolvedValue(nothing);
+  // Every place read and holding no settings value off a default, so the
+  // manifest is what decides the header's mark.
+  vi.mocked(commands.getScopeSettings).mockResolvedValue({
+    status: "ok",
+    data: { applies: true, skills: [], base: null },
+  });
+  vi.mocked(commands.libraryProvenance).mockResolvedValue(nothing);
+  vi.mocked(commands.packageDiff).mockResolvedValue(nothing);
+  vi.mocked(commands.revealPath).mockResolvedValue({
+    status: "ok",
+    data: null,
+  });
+  vi.mocked(commands.openInEditor).mockResolvedValue({
+    status: "ok",
+    data: null,
+  });
+  useEditorStore.setState({
+    scope: { scope: "global" },
+    draft: null,
+    base: null,
+    saved: {},
+    settings: null,
+    settingsEdits: [],
+    savedSettings: {},
+    dirty: false,
+    manifestDirty: false,
+  });
+  useUpdatesStore.setState({
+    rows: [],
+    read: READ_LANDED,
+    checking: false,
+    pendingFollows: [],
+  });
+  useAuditStore.setState({
+    views: [],
+    auditedAt: null,
+    read: READ_LANDED,
+  });
+});
 
 /** One place's audit view with gh scored 58, one finding to show under it. */
 const scoredView: AuditView = {
@@ -105,6 +278,136 @@ const scoreTab = (host: HTMLElement) => {
   if (!found) throw new Error("no Safety score tab");
   return found as HTMLElement;
 };
+
+// The Update on this page and the note where it would have been are one
+// string. The kind's own refusal outranks everything, because no check can
+// ever lift it; then how the read went, which the row cannot say; and only
+// a settled read may call this place one the check never covered.
+describe("what the package page says instead of Update", () => {
+  /** A refusal core sent on the row. Pass-through is the whole property,
+   *  so this is a string core would never send: core's own wording here
+   *  would read as a cross-boundary pin and be none, since the equality
+   *  asserted is fixture against rendered note. */
+  const NO_PER_PACKAGE = "REFUSED-BY-CORE: this kind moves another way";
+
+  /** A timeline with a newer version to move to, which is what puts the
+   *  note where the button would have been. */
+  const VERSIONS: VersionRow[] = [
+    {
+      id: "b".repeat(40),
+      label: "v2",
+      date: "2026-08-28T12:00:00Z",
+      summary: "newer",
+      installed: false,
+      newerThanInstalled: true,
+    },
+    {
+      id: "a".repeat(40),
+      label: "v1",
+      date: "2026-08-01T12:00:00Z",
+      summary: "what is installed",
+      installed: true,
+      newerThanInstalled: false,
+    },
+  ];
+
+  /** The page over an update standing: how its read went, the rows it
+   *  holds, and whether a check is out behind them. */
+  const openWith = async (
+    standing: Partial<{
+      read: ReadState;
+      rows: UpdateRow[];
+      checking: boolean;
+    }>,
+    kind: ItemKind = "skill",
+  ) => {
+    vi.mocked(commands.packageVersions).mockResolvedValue({
+      status: "ok",
+      data: VERSIONS,
+    });
+    vi.mocked(commands.packageMeta).mockResolvedValue({
+      status: "ok",
+      data: {
+        source: "cat",
+        repo: "o/r",
+        repoUrl: null,
+        rev: null,
+        current: null,
+        installedAt: null,
+        harnesses: ["claude"],
+        enabled: true,
+        fork: null,
+        catalog: null,
+      },
+    });
+    useUpdatesStore.setState(standing);
+    return openPage(VG, [VG], { [scopeKey(VG)]: PLAIN }, null, kind);
+  };
+
+  it("says a check is running before the first read answers", async () => {
+    const host = await openWith({ read: READ_PENDING });
+    expect(host.textContent).toContain(UPDATES_CHECKING);
+  });
+
+  // The page's own timeline read landed, so the versions on screen are
+  // facts and only the standing behind Update is unconfirmed. That is the
+  // whole reason this wording is not the Updates table's, and asserting
+  // the shorter of the two by containment would not see the difference.
+  it("asks for a check that succeeds when the last read failed", async () => {
+    const host = await openWith({ read: readFailed("no network") });
+    expect(host.textContent).toContain(UPDATE_NEEDS_CHECK_HERE);
+    expect(host.textContent).not.toContain(UPDATE_NEEDS_CHECK_NOTE);
+  });
+
+  // The kind's refusal is core's own, derived from the kind alone, so no
+  // check that ever succeeds will produce an Update here. Told to check
+  // again, a person offline would retry something they cannot win.
+  it("names the kind's own refusal over a read that failed", async () => {
+    const host = await openWith(
+      {
+        read: readFailed("no network"),
+        rows: [
+          {
+            ...updateRow(VG),
+            kind: "pi-extension",
+            noPerPackageUpdate: NO_PER_PACKAGE,
+          },
+        ],
+      },
+      "pi-extension",
+    );
+    expect(host.textContent).toContain(NO_PER_PACKAGE);
+    expect(host.textContent).not.toContain(UPDATE_NEEDS_CHECK_HERE);
+  });
+
+  it("says the check never covered this place once a read has settled", async () => {
+    const host = await openWith({ read: READ_LANDED });
+    expect(host.textContent).toContain(NO_UPDATE_STANDING_NOTE);
+  });
+
+  // A landed read is not a settled one: a Check or a focus reload is a
+  // read about to speak for this place, and calling its silence a fact
+  // states a ruling still being made.
+  it("says a check is running where one is out and no row covers the place", async () => {
+    const host = await openWith({ read: READ_LANDED, checking: true });
+    expect(host.textContent).toContain(UPDATES_CHECKING);
+    expect(host.textContent).not.toContain(NO_UPDATE_STANDING_NOTE);
+  });
+
+  // With a row for this place, the row is the whole reading — the same one
+  // Update all and the row's own button take. A check merely running does
+  // not withhold it: the row is still the last answer about this place.
+  it("reads the row itself where a read covered the place", async () => {
+    const host = await openWith({
+      read: READ_LANDED,
+      checking: true,
+      rows: [{ ...updateRow(VG), blockedByLocalEdit: true }],
+    });
+    expect(host.textContent).toContain(EDITED_CANT_UPDATE_NOTE);
+    expect(host.textContent).not.toContain(NO_UPDATE_STANDING_NOTE);
+    expect(host.textContent).not.toContain(UPDATES_CHECKING);
+  });
+});
 
 // The score the audit gave this package's bytes, and what produced it.
 // Nothing else in the app renders a scope's `safety` rows, so a page that
@@ -416,5 +719,156 @@ describe("the package page's delete action", () => {
     expect(said).toContain("Delete gh?");
     expect(said).toContain("/work/vg");
     expect(said).toContain("/work/hyprtrade");
+  });
+});
+
+// The issue's whole subject: the Projects tab's Update commits through the
+// updates store, which refreshes the scan and the audit and knows nothing
+// about this page's own three reads. Its card was made to follow the landed
+// commit in #1799; the Overview and the header went on describing the copy
+// the update replaced.
+describe("the package page after an update started from its Projects tab", () => {
+  const OLD = "a".repeat(40);
+  const NEW = "b".repeat(40);
+
+  const version = (
+    id: string,
+    label: string,
+    installed: boolean,
+  ): VersionRow => ({
+    id,
+    label,
+    date: "2026-08-28T12:00:00Z",
+    summary: "release notes",
+    installed,
+    newerThanInstalled: !installed,
+  });
+
+  /** This place's row: the commit installed there, and whether the check
+   *  found something newer waiting for it. */
+  const rowAt = (commit: string, waiting: boolean): UpdateRow => ({
+    ...updateRow(VG),
+    current: { commit, label: null, date: null },
+    latest: waiting ? { commit: NEW, label: null, date: null } : null,
+    updateAvailable: waiting,
+  });
+
+  /** The place's own record, which the page reads for held or following. */
+  const RECORD: PackageMeta_Serialize = {
+    source: "cat",
+    repo: "o/r",
+    repoUrl: null,
+    rev: null,
+    current: null,
+    installedAt: null,
+    harnesses: ["claude"],
+    enabled: true,
+    fork: null,
+    catalog: null,
+  };
+
+  /** The scope view an apply answers with: it wrote, and there is nothing
+   *  else to say about the place. */
+  const APPLIED: AuditView_Serialize = {
+    scope: VG,
+    drift: [],
+    plan: [],
+    notes: [],
+    warnings: [],
+    safety: [],
+    adoptable: ADOPTABLE,
+    exits: [],
+  };
+
+  const openTab = async (host: HTMLElement, name: string) => {
+    const found = [...host.querySelectorAll('[data-slot="tabs-trigger"]')].find(
+      (trigger) => trigger.textContent === name,
+    );
+    if (!found) throw new Error(`no ${name} tab`);
+    await act(async () => {
+      (found as HTMLElement).click();
+    });
+    await settle();
+  };
+
+  it("re-reads its files, its version and its update offer", async () => {
+    // What the engine answers before and after the apply lands: core stamps
+    // the whole installation when the source hash moves, so the record, the
+    // timeline and the files move together.
+    let landed = false;
+    vi.mocked(commands.packageMeta).mockResolvedValue({
+      status: "ok",
+      data: RECORD,
+    });
+    vi.mocked(commands.packageVersions).mockImplementation(() =>
+      Promise.resolve({
+        status: "ok",
+        data: landed
+          ? [version(NEW, "v2", true)]
+          : [version(NEW, "v2", false), version(OLD, "v1", true)],
+      }),
+    );
+    vi.mocked(commands.packageFiles).mockImplementation(() =>
+      Promise.resolve({
+        status: "ok",
+        data: [
+          {
+            path: landed ? "AFTER.md" : "BEFORE.md",
+            size: 10,
+            isReadme: false,
+          },
+        ],
+      }),
+    );
+    vi.mocked(commands.packageUpdate).mockImplementation(() => {
+      landed = true;
+      return Promise.resolve({
+        status: "ok",
+        data: { view: APPLIED, heldBack: [], removed: [], moved: [] },
+      });
+    });
+    // The standing read the store lands behind its own apply.
+    vi.mocked(commands.updatesOverview).mockImplementation(() =>
+      Promise.resolve({
+        status: "ok",
+        data: {
+          rows: [rowAt(landed ? NEW : OLD, !landed)],
+          warnings: [],
+          unreadable: [],
+          lastFetched: null,
+        },
+      }),
+    );
+    // The rescan behind the apply finds the same machine: the package is
+    // installed where it was, so the page stays on screen.
+    vi.mocked(commands.scanMachine).mockImplementation(() =>
+      Promise.resolve({
+        status: "ok",
+        data: useScanStore.getState().result as ScanResult,
+      }),
+    );
+    useUpdatesStore.setState({ rows: [rowAt(OLD, true)], read: READ_LANDED });
+
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+    expect(host.textContent).toContain("BEFORE.md");
+    expect(host.textContent).toContain("v1");
+    expect(header(host)).toContain(UPDATE_LABEL);
+
+    await openTab(host, PROJECTS_TAB);
+    const update = [...host.querySelectorAll("button")].find(
+      (one) => one.getAttribute("aria-label") === updateInLabel("vg"),
+    );
+    if (!update) throw new Error("no Update on the vg card");
+    await act(async () => {
+      update.click();
+    });
+    await settle();
+    await openTab(host, OVERVIEW_TAB);
+
+    expect(host.textContent).toContain("AFTER.md");
+    expect(host.textContent).not.toContain("BEFORE.md");
+    expect(host.textContent).toContain("v2");
+    expect(host.textContent).not.toContain("v1");
+    expect(header(host)).not.toContain(UPDATE_LABEL);
   });
 });
