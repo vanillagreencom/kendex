@@ -221,12 +221,16 @@ for root in "${ROOTS[@]}"; do
     "$five"
 
   # `worktree remove` runs `git worktree remove --force` and then `rm -rf`, so
-  # it issues no dirty-tree refusal of its own: step 6's own re-read is the
-  # only thing between a build artifact and its deletion. Step 4 judged the
-  # tree two steps earlier, so its check does not stand in for this one.
-  rule_fenced "$label: the removal step re-reads the tree before removing it" \
+  # it refuses nothing itself: the disposal predicate step 6 re-runs is the
+  # only thing between a build artifact, or a worktree that has moved to
+  # another branch, and its deletion. One rule per readable fact, because the
+  # predicate holds only when every part does and a rule proves one line.
+  rule_fenced "$label: the disposal predicate reads the tree's cleanliness" \
     "$doc" "## 5. Execute The Merge" \
     'status' '--porcelain' '[WT_PATH]'
+  rule_fenced "$label: the disposal predicate reads the checked-out branch" \
+    "$doc" "## 5. Execute The Merge" \
+    'branch' '--show-current' '[WT_PATH]'
   # Both merge attempts name the head the gate approved. Without the flag the
   # call arms whatever head GitHub reports at that moment, which is the head a
   # push landed after the approval.

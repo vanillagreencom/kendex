@@ -330,7 +330,28 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --jq .headRefName
    ```
 
-   **Worktree disposal is by rule.** When the PR's worktree exists, its tree is clean (`git -C [WT_PATH] status --porcelain` empty), and its checked-out branch is `[PR_BRANCH]`, step 6 removes it — no question. A foreign-lease refusal from `worktree remove`, or a dirty tree found by step 6's re-read, keeps the worktree and its checked-out branch; a worktree on a branch other than the merged one is kept as-is (the merged branch then falls to the standalone delete below). Report any kept worktree with its cause in the § 6 `Worktree` row.
+   **Worktree disposal is by rule, and the rule is one predicate.** It holds
+   when the PR's worktree exists, its tree is clean, and its checked-out branch
+   is still `[PR_BRANCH]`. The two readable facts:
+
+   ```bash
+   git -C [WT_PATH] status --porcelain
+   ```
+   ```bash
+   git -C [WT_PATH] branch --show-current
+   ```
+
+   Empty output from the first, `[PR_BRANCH]` from the second. Otherwise the
+   cause is `dirty tree` or `branch moved`, and a command that exits non-zero
+   fails its own fact as `tree unreadable` or `branch unreadable`: the
+   predicate answers only where it can prove a fact, never from absent output.
+
+   Step 6 runs this predicate WHOLE immediately before the removal and removes
+   only when every part holds. Anything else keeps the worktree and its
+   checked-out branch with the cause the predicate named (a worktree kept on
+   another branch leaves the merged branch to the standalone delete below), and
+   that cause goes in the § 6 `Worktree` row. A fact added to the predicate
+   later is covered without step 6 changing.
 
    **The merged predicate is `worktree cleanup`'s**: ancestry into the repository's default branch, or, when ancestry fails, a pull request merged into that same default branch whose head commit is the local branch's tip. A squash merge leaves no ancestry, so the second proof is the one that applies to every PR landing through the queue, and it is the commit that proves it — a branch carrying commits past its merged PR is unmerged work. `worktree remove` applies the predicate itself when deleting the branch: a nonzero exit after the tree is gone means the branch survived, and the diagnostic names the answer the lookup gave; carry that as `kept` in the § 6 `Branch` row.
 
@@ -382,29 +403,23 @@ Use the output as `MAIN_REPO_ROOT`.
    workflow defines no generic command and does not infer one. On failure,
    report the command and its diagnostic in § 6 and keep the worktree.
 
-   On success, remove the issue worktree when § 5 step 4 ruled it removable.
-   Re-read the tree first: step 4 judged it two steps ago, and step 5's replies
-   and this step's build can each leave a file behind. `worktree remove` runs
-   `git worktree remove --force` and then `rm -rf`, so it issues no
-   dirty-tree refusal of its own and uncommitted or untracked content goes with
-   the directory:
+   On success, re-run step 4's disposal predicate whole. Step 4 read it two
+   steps ago, and step 5's replies and this step's build can each dirty the
+   tree or move the branch. `worktree remove` runs `git worktree remove
+   --force` and then `rm -rf`, so it refuses nothing itself: uncommitted
+   content, untracked content and a worktree that has moved to another branch
+   all go with the directory, and the predicate is the only thing between them
+   and that.
 
-   ```bash
-   git -C [WT_PATH] status --porcelain
-   ```
-
-   Any output keeps the worktree with cause `dirty tree`, and so does a
-   non-zero exit, with cause `tree unreadable`: the re-read is the only thing
-   standing between a build artifact and a forced removal, so it refuses
-   whenever it cannot prove the tree clean. Empty output and exit `0` removes
-   it, run from `[MAIN_REPO_ROOT]` so the lane is not deleting its own cwd:
+   Every part holding removes it, run from `[MAIN_REPO_ROOT]` so the lane is
+   not deleting its own cwd:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree remove [ISSUE]
    ```
 
-   A foreign-lease refusal keeps the worktree; carry the helper's diagnostic
-   into the § 6 `Worktree` row.
+   A foreign-lease refusal from the helper keeps the worktree too; carry its
+   diagnostic into the § 6 `Worktree` row.
 
 ## 6. Present Results
 
@@ -422,7 +437,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
 </output_format>
 
-The `Container` row appears only when § 5 step 2 found a container parent. The `Base sync` row is never omitted. When § 5 step 3 hit a blocking outcome it carries the warning instead of a sha: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`. The `Worktree` row reports `removed`, or `kept — [dirty tree | tree unreadable | branch not merged | foreign lease | project verification failed]` when § 5 step 4 found it ineligible or step 6 could not remove it (no worktree existed → omit the row). Add a `Review gate` row only when the merge did not proceed on a plain `approved`/`reviewed` verdict — `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
+The `Container` row appears only when § 5 step 2 found a container parent. The `Base sync` row is never omitted. When § 5 step 3 hit a blocking outcome it carries the warning instead of a sha: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`. The `Worktree` row reports `removed`, or `kept — [cause]` — the cause step 4's disposal predicate named, or `foreign lease` from the helper, or `project verification failed` — when step 6 did not remove it (no worktree existed → omit the row). Add a `Review gate` row only when the merge did not proceed on a plain `approved`/`reviewed` verdict — `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
 
 For `merge-pr all`, add the cross-PR analysis and a merge table:
 
