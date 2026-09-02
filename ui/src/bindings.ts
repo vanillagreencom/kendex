@@ -241,6 +241,11 @@ export const commands = {
 	marketplaceSummary: (catalog: Catalog) => typedError<CatalogSummary, string>(__TAURI_INVOKE("marketplace_summary", { catalog })),
 	/**  One curated set with per-member installed state. */
 	marketplaceBundle: (catalog: Catalog, name: string) => typedError<BundleDetail, string>(__TAURI_INVOKE("marketplace_bundle", { catalog, name })),
+	/**
+	 *  Every curated set a catalog declares, with per-member installed state —
+	 *  what the marketplace page's Bundles tab lists.
+	 */
+	marketplaceBundles: (catalog: Catalog) => typedError<BundleDetail[], string>(__TAURI_INVOKE("marketplace_bundles", { catalog })),
 	marketplacePackagePreview: (catalog: Catalog, kind: ItemKind, name: string) => typedError<PackageView, string>(__TAURI_INVOKE("marketplace_package_preview", { catalog, kind, name })),
 	/**
 	 *  One offered file's content before install — the same read an installed

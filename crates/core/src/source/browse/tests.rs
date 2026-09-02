@@ -259,6 +259,63 @@ fn bundle_detail_derives_partly_installed_and_full() {
     );
 }
 
+/// The Bundles tab lists what the catalog declares, not what its offered
+/// packages name. A set whose members the catalog no longer carries names
+/// nothing in the package list, so a derivation over package rows loses it
+/// entirely — the tab then says the marketplace offers no sets while its
+/// `kendex.toml` declares several.
+#[test]
+fn every_declared_set_is_listed_even_when_no_member_is_offered() {
+    let tmp = tempfile::tempdir().unwrap();
+    let catalog = tmp.path().join("catalog");
+    skill(&catalog, "skills", "gh", "body");
+    fs::write(
+        catalog.join("kendex.toml"),
+        "[bundles.starter]\ndescription = \"one real\"\nskills = [\"gh\"]\n\n[bundles.orphaned]\ndescription = \"all gone\"\nskills = [\"gone\"]\n",
+    )
+    .unwrap();
+    let (env, scope) = project(tmp.path(), &sources_decl(&catalog));
+
+    let offered = packages(&env, &cat(&scope)).unwrap();
+    let named: Vec<&str> = offered
+        .iter()
+        .flat_map(|package| package.bundles.iter().map(String::as_str))
+        .collect();
+    assert_eq!(
+        named,
+        vec!["starter"],
+        "package rows name only reachable sets"
+    );
+
+    let listed = bundles(&env, &cat(&scope)).unwrap();
+    let names: Vec<&str> = listed.iter().map(|set| set.name.as_str()).collect();
+    assert_eq!(names, vec!["orphaned", "starter"]);
+    let orphaned = &listed[0];
+    assert_eq!(orphaned.description.as_deref(), Some("all gone"));
+    assert_eq!(orphaned.total_members, 1);
+    assert_eq!(orphaned.installed_members, 0);
+    assert_eq!(orphaned.members[0].state, InstallState::NotOffered);
+}
+
+/// Listing every set joins each against this scope the same way opening one
+/// does — same members, same states, same counts.
+#[test]
+fn listing_sets_agrees_with_opening_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let catalog = tmp.path().join("catalog");
+    six_member_catalog(&catalog);
+    let manifest = format!(
+        "{}[bundles.starter]\nsource = \"cat\"\n",
+        sources_decl(&catalog)
+    );
+    let (env, scope) = project(tmp.path(), &manifest);
+    save_lock(&env, &scope, &SIX[..2]);
+
+    let listed = bundles(&env, &cat(&scope)).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0], bundle(&env, &cat(&scope), "starter").unwrap());
+}
+
 /// A bundle member the catalog lists but does not carry — renamed or removed
 /// upstream — is one row saying so, never a dead page. Member lists are
 /// catalog-authored text; one bad entry cannot break the whole read.

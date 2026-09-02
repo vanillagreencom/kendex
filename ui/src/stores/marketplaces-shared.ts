@@ -97,6 +97,7 @@ export function dropCatalogCaches(set: (partial: object) => void) {
   set({
     packages: {},
     bundles: {},
+    catalogBundles: {},
     about: {},
     summaries: {},
     readErrors: {},

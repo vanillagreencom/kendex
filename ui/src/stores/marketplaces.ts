@@ -48,6 +48,10 @@ interface MarketplacesState extends InstallActions {
   summaries: Record<string, CatalogSummary>;
   /** Each opened curated set, by [catalogKey]::bundle. */
   bundles: Record<string, BundleDetail>;
+  /** Each opened catalog's declared curated sets, by [catalogKey] — what the
+   * Bundles tab lists, straight from the catalog rather than derived from
+   * the packages it offers. */
+  catalogBundles: Record<string, BundleDetail[]>;
   /** Why a read produced nothing, by the same keys — the page the person is
    * looking at says it instead of loading forever. */
   readErrors: Record<string, string>;
@@ -64,6 +68,7 @@ interface MarketplacesState extends InstallActions {
   loadSummary: (catalog: Catalog) => Promise<void>;
   loadAbout: (catalog: Catalog) => Promise<void>;
   loadBundle: (catalog: Catalog, name: string) => Promise<void>;
+  loadCatalogBundles: (catalog: Catalog) => Promise<void>;
   subscribe: (
     scope: Scope,
     reference: string,
@@ -91,6 +96,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   about: {},
   summaries: {},
   bundles: {},
+  catalogBundles: {},
   readErrors: {},
   read: READ_PENDING,
   busy: false,

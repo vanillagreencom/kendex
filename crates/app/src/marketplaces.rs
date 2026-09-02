@@ -130,6 +130,15 @@ pub fn marketplace_summary(catalog: Catalog) -> Result<CatalogSummary, String> {
     browse::summary(&env, &catalog).map_err(|e| e.to_string())
 }
 
+/// Every curated set a catalog declares, with per-member installed state —
+/// what the marketplace page's Bundles tab lists.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn marketplace_bundles(catalog: Catalog) -> Result<Vec<BundleDetail>, String> {
+    let env = env()?;
+    browse::bundles(&env, &catalog).map_err(|e| e.to_string())
+}
+
 /// One curated set with per-member installed state.
 #[tauri::command(async)]
 #[specta::specta]

@@ -36,6 +36,7 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
   const packages = useMarketplacesStore((s) => s.packages);
   const load = useMarketplacesStore((s) => s.load);
   const loadPackages = useMarketplacesStore((s) => s.loadPackages);
+  const loadCatalogBundles = useMarketplacesStore((s) => s.loadCatalogBundles);
 
   const row =
     catalog.by === "subscription"
@@ -50,6 +51,12 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
   const packagesError = useMarketplacesStore(
     (s) => s.readErrors[readErrorKey(catalogKey(catalog), "packages")],
   );
+  const bundles = useMarketplacesStore(
+    (s) => s.catalogBundles[catalogKey(catalog)],
+  );
+  const bundlesError = useMarketplacesStore(
+    (s) => s.readErrors[readErrorKey(catalogKey(catalog), "bundles")],
+  );
 
   useEffect(() => {
     void load();
@@ -59,6 +66,11 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
     [loadPackages, catalog],
   );
   useCachedRead(cached !== undefined, !!packagesError, ready, readPackages);
+  const readBundles = useCallback(
+    () => loadCatalogBundles(catalog),
+    [loadCatalogBundles, catalog],
+  );
+  useCachedRead(bundles !== undefined, !!bundlesError, ready, readBundles);
 
   return (
     <div className="flex h-full flex-col">
@@ -111,7 +123,11 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
                   </p>
                 ) : null}
                 <TabsContent value="bundles">
-                  <BundleCards catalog={catalog} offered={offered} />
+                  <BundleCards
+                    catalog={catalog}
+                    bundles={bundles}
+                    error={bundlesError}
+                  />
                 </TabsContent>
                 <TabsContent value="packages">
                   {packagesError ? (

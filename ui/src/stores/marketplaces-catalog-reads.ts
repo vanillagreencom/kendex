@@ -24,6 +24,7 @@ interface ReadCaches {
   summaries: Record<string, CatalogSummary>;
   about: Record<string, AboutView>;
   bundles: Record<string, BundleDetail>;
+  catalogBundles: Record<string, BundleDetail[]>;
   readErrors: Record<string, string>;
 }
 
@@ -47,6 +48,16 @@ export function catalogReads(set: SetReads) {
       const key = catalogKey(catalog);
       return settle(set, "about", key, readErrorKey(key, "about"), () =>
         commands.marketplaceAbout(catalog),
+      );
+    },
+    loadCatalogBundles: (catalog: Catalog) => {
+      const key = catalogKey(catalog);
+      return settle(
+        set,
+        "catalogBundles",
+        key,
+        readErrorKey(key, "bundles"),
+        () => commands.marketplaceBundles(catalog),
       );
     },
     loadBundle: (catalog: Catalog, name: string) => {
