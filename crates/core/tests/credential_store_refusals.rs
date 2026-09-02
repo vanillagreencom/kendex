@@ -29,8 +29,8 @@ fn locked() -> keyring::Error {
 }
 
 /// A keychain that refuses. `at_build` refuses before an entry exists,
-/// which is the only way to reach `entry()`; otherwise the entry is built
-/// and every call on it refuses.
+/// which is the only way to reach `entry()`'s refusal; otherwise the entry
+/// is built and every call on it refuses.
 struct Refusing {
     at_build: bool,
 }
