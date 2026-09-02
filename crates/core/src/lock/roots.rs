@@ -275,9 +275,13 @@ fn resolve_provenance(root: &Path, reading: &Path, provenance: &mut String) {
 /// say: a remainder can itself walk back out. Provenance is the looser
 /// half, and [`resolve_provenance`] says where it stops.
 ///
-/// A record that names no root leaves nothing to resolve against: there is
-/// no prefix to take off any position. The global lock is that record — it
-/// has no root, each harness owning a directory of its own.
+/// A record naming no root is refused rather than resolved: there is no
+/// prefix to take off any position, so nothing here could rebase it and a
+/// record read against the wrong tree is what this module exists to stop.
+/// The global lock names no root either, having none — each harness owns a
+/// directory of its own — but it never arrives: it is `lock.json`, and
+/// [`project_root_at`] answers for nothing but a file named [`LOCK_FILE`],
+/// so [`read_against`] returns before this.
 fn resolve(path: &Path, reading: &Path, lock: &mut Lock) -> Result<()> {
     let Some(recorded) = lock.root.clone() else {
         return Err(CoreError::LockWithoutProject {

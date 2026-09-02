@@ -189,14 +189,139 @@ fn source_catalog_routes_install_state_to_a_sibling() {
     );
 }
 
-/// A fold with `held` derived the way [`super::file::save`] derives it: the
-/// manifest this very document reads back as, spelled by the serializer
-/// that spelled the target.
+/// A fold with `held` derived the way `save` derives it: the manifest this
+/// very document reads back as, spelled by the serializer that spelled the
+/// target.
 #[allow(clippy::unwrap_used)]
 fn fold(current: &str, desired: &str) -> String {
     let held: Manifest = toml::from_str(current).unwrap();
     let held = toml::to_string_pretty(&held).unwrap();
     super::fold::folded(current, &held, desired).unwrap()
+}
+
+/// [`fold`] against the target `save` would build: the document read back
+/// through the model, `change` applied, spelled by the real serializer. What
+/// that serializer leaves out at a default is the whole subject of several
+/// cases below, so none of them writes the target by hand.
+#[allow(clippy::unwrap_used)]
+fn folding(current: &str, change: impl FnOnce(&mut Manifest)) -> String {
+    let mut manifest: Manifest = toml::from_str(current).unwrap();
+    change(&mut manifest);
+    fold(current, &toml::to_string_pretty(&manifest).unwrap())
+}
+
+/// A gained table lands after the tables already in the file, not where the
+/// serializer's field order would put it. `[sources.*]` sorts before every
+/// `[skills.*]` in the target, and this file has three of those, so a gained
+/// source carrying the target's own position would be spliced between two
+/// skills the write never named.
+#[test]
+fn a_gained_table_lands_after_the_tables_already_there() {
+    let current = "schema = 6\n\n[skills.aa]\nsource = \"cat\"\n\n[skills.bb]\nsource = \"cat\"\n\n[skills.cc]\nsource = \"cat\"\n\n[sources.cat]\npath = \"x\"\n";
+    assert_eq!(
+        folding(current, |manifest| {
+            manifest.sources.insert(
+                "other".to_owned(),
+                SourceDecl {
+                    repo: None,
+                    path: Some("y".to_owned()),
+                    rev: None,
+                    enabled: true,
+                },
+            );
+        }),
+        format!("{current}\n[sources.other]\npath = \"y\"\n")
+    );
+}
+
+/// A write that names another key entirely leaves a hand-written list alone,
+/// including a value the serializer omits because it is the default. The
+/// omission is not a change: `held` never names `enabled` either, so nothing
+/// reads it as one, and the list is not touched at all.
+#[test]
+fn an_unrelated_write_leaves_a_hand_written_default_alone() {
+    let current = "schema = 6\ncustom-hooks = [{ event = \"Stop\", command = \"./done.sh\", enabled = true }]\n\n[install]\nmethod = \"symlink\"\n";
+    assert_eq!(
+        folding(current, |manifest| {
+            manifest.install.method = Method::Copy;
+        }),
+        current.replace("\"symlink\"", "\"copy\"")
+    );
+}
+
+/// The spacing an inline table keeps before its closing brace belongs to the
+/// brace, not to whichever key sits last. A gained key takes that place, so
+/// the run moves with the brace instead of being stranded before the comma.
+#[test]
+fn a_gained_key_leaves_the_closing_brace_where_it_was() {
+    let current = "schema = 6\nsources.cat = { path = \"x\" }\n";
+    assert_eq!(
+        folding(current, |manifest| {
+            if let Some(source) = manifest.sources.get_mut("cat") {
+                source.rev = Some("main".to_owned());
+            }
+        }),
+        "schema = 6\nsources.cat = { path = \"x\", rev = \"main\" }\n"
+    );
+}
+
+/// A list that loses an entry still folds entry by entry, so the surviving
+/// hook keeps the comment written above it and the `note` the model does not
+/// carry — and stands once, not twice. The list loses its FIRST entry, which
+/// is the shape that pairs wrongly under any positional scheme: the survivor
+/// would be folded into the deleted hook's slot and inherit its comment.
+#[test]
+fn a_surviving_entry_keeps_what_was_written_about_it() {
+    let current = "schema = 6\n\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\n\n# the one that stays\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nnote = \"keep me\"\n";
+    assert_eq!(
+        folding(current, |manifest| {
+            manifest.custom_hooks.remove(0);
+        }),
+        "schema = 6\n\n# the one that stays\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nnote = \"keep me\"\n"
+    );
+}
+
+/// A re-sorted list comes back in its new order, each entry still under the
+/// comment written about it. The desktop editor hands the hook list back in
+/// whatever order it holds (`editor::custom_hook_deliveries` assigns it
+/// wholesale), so a swap is a real write. Survivors keep their own places, so
+/// the places have to be redealt in the order the entries now stand in or the
+/// file renders in the order they used to.
+#[test]
+fn a_re_sorted_list_renders_in_its_new_order() {
+    let current = "schema = 6\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\n\n# and this one at the end\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n";
+    assert_eq!(
+        folding(current, |manifest| {
+            manifest.custom_hooks.swap(0, 1);
+        }),
+        "schema = 6\n\n# and this one at the end\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\n"
+    );
+}
+
+/// An inline list gains its entry inline. The two spellings say the same
+/// thing, so the one on disk is the one that is edited and no `[[custom-hooks]]`
+/// header is emitted over a key the person wrote as a value.
+#[test]
+fn an_inline_list_gains_its_entry_inline() {
+    let current = "schema = 6\ncustom-hooks = [{ event = \"Stop\", command = \"./done.sh\" }]\n";
+    let written = folding(current, |manifest| {
+        manifest.custom_hooks.push(CustomHook {
+            name: None,
+            event: "PreToolUse".to_owned(),
+            matcher: None,
+            command: "./guard.sh".to_owned(),
+            description: None,
+            timeout: None,
+            harnesses: None,
+            enabled: true,
+            agents: super::default_hook_agents(),
+        });
+    });
+    assert!(!written.contains("[[custom-hooks"), "{written}");
+    assert_eq!(
+        written,
+        "schema = 6\ncustom-hooks = [{ event = \"Stop\", command = \"./done.sh\" }, { event = \"PreToolUse\", command = \"./guard.sh\" }]\n"
+    );
 }
 
 /// The layout round trip, over one document holding every shape a write can

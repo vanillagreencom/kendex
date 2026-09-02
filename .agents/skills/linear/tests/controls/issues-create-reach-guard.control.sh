@@ -22,15 +22,20 @@ control_replace scripts/lib/issue-validation.sh 1 \
 	'	if [ "$review_born" = "1" ] && [ "$priority" = "2" ] &&' \
 	'	if [ "$review_born" != "1" ] && [ "$priority" = "2" ] &&'
 
-# 3. Placeholder and null-token normalization, and the trailing-emphasis trim
-#    that feeds it — without either, the `[REACH]` this repo's own templates
-#    ship passes as a value and copying a template verbatim files an issue
-#    naming nothing.
+# 3. Placeholder and null-token normalization. The one mutation kills both
+#    alternatives, so it declares both expectations: without them the `[REACH]`
+#    this repo's own templates ship, and a bare TBD, pass as values, and
+#    copying a template verbatim files an issue naming nothing.
 control_expect "a whole-line bold [REACH] placeholder body is refused"
+control_expect "a TBD reach is refused"
 control_replace scripts/lib/issue-validation.sh 1 \
 	'	if [[ "$value" =~ $REACH_ABSENT_PLACEHOLDER ]] || [[ "$lower" =~ $REACH_ABSENT_TOKENS ]]; then' \
 	'	if false; then'
 
+# 4. The trailing-emphasis trim that feeds the placeholder check — without it a
+#    whole-line bold placeholder arrives as `[REACH]**` and passes as a value.
+#    The token list does not go through the trim, so this one expects only the
+#    placeholder case.
 control_expect "a whole-line bold [REACH] placeholder body is refused"
 control_replace scripts/lib/issue-validation.sh 1 \
 	'	value="${value%"${value##*[!*[:space:]]}"}"' \

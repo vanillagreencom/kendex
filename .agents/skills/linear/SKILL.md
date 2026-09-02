@@ -78,7 +78,7 @@ In a linked worktree whose `.cache` should be a `WORKTREE_SYMLINKS`-managed syml
 | `LINEAR_FORMAT` | Default output format | `safe` |
 | `LINEAR_TEAM_PREFIX` | Issue identifier prefix | `PROJ` |
 | `LINEAR_AGENT_LABELS` | Declared `agent:*` taxonomy; non-empty makes `issues create` refuse unrouted creates | — (unset = off) |
-| `LINEAR_REQUIRE_REACH` | Non-empty makes `issues create` refuse a body naming nothing that reaches the defect | — (unset = off) |
+| `LINEAR_REQUIRE_REACH` | Non-empty makes `issues create` refuse a body with no `Reached by:` line | — (unset = off) |
 
 `LINEAR_API_KEY` belongs in `.env.local`; non-secret defaults in committed `kendex.settings.toml` `[env]`. A key from project files beats one inherited from the environment, and `auth-check` warns (fingerprints only) when it shadows a differing inherited key.
 

@@ -170,9 +170,10 @@ blocking_level_violation_message() {
 # held on this tracker; a `Tracked: #<n>` filed with `gh issue create` never
 # reaches here and is unguarded. Under LINEAR_REQUIRE_REACH
 # (kendex.settings.toml [env]) a create refuses, before any API call, a
-# description that names nothing the defect reaches through. Empty or unset
-# keeps the guard off. The bar itself is project-management SKILL.md,
-# § Disposition.
+# description with no `Reached by:` line — an unsubstituted placeholder and a
+# null token counting as absent. Whether the line names a real producer is the
+# author's judgement, not this guard's. Empty or unset keeps the guard off.
+# The bar itself is project-management SKILL.md, § Disposition.
 
 # The rule the refusal quotes, so message and rule cannot drift apart.
 REACH_RULE='An issue names what reaches it: the user action, run, check, or shipped producer that arrives at the defect (an owner-directed item names the ask). An unsubstituted placeholder or a null token is no value at all.'
