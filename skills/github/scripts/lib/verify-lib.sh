@@ -191,8 +191,14 @@ run_stack() {
         else
             end_time=$(date +%s)
             duration=$((end_time - start_time))
+            # `grep -m 5` caps the summary where `| head -5` used to: head closed
+            # the pipe on its fifth line, SIGPIPEd grep, and pipefail made 141
+            # the status of this unguarded assignment, so under a live errexit
+            # the branch died before recording anything (KEN-1143). Only the
+            # `|| true` at verify_prs' call site hid that. grep now reads a
+            # here-string and tr reads to EOF: no stage closes on a writer.
             local error_summary
-            error_summary=$(echo "$output" | grep -E "^error|^Error|FAILED" | head -5 | tr '\n' ' ')
+            error_summary=$(grep -m 5 -E "^error|^Error|FAILED" <<<"$output" | tr '\n' ' ' || true)
             RESULTS_JSON=$(echo "$RESULTS_JSON" | jq \
                 --arg name "$name" --argjson dur "$duration" --arg err "$error_summary" \
                 '.builds[$name] = {success: false, duration_seconds: $dur, error: $err}')
@@ -216,8 +222,9 @@ run_stack() {
         else
             end_time=$(date +%s)
             duration=$((end_time - start_time))
+            # Same SIGPIPE shape as the build branch above, same fix.
             local error_summary
-            error_summary=$(echo "$output" | grep -E "^failures:|FAILED|^error|^FAIL" | head -5 | tr '\n' ' ')
+            error_summary=$(grep -m 5 -E "^failures:|FAILED|^error|^FAIL" <<<"$output" | tr '\n' ' ' || true)
             RESULTS_JSON=$(echo "$RESULTS_JSON" | jq \
                 --arg name "$name" --argjson dur "$duration" --arg err "$error_summary" \
                 '.tests[$name] = {success: false, duration_seconds: $dur, error: $err}')
@@ -402,14 +409,18 @@ verify_prs() {
     output_results
 }
 
-# Entry point
-case "${1:-}" in
-    verify_prs)
-        shift
-        verify_prs "$@"
-        ;;
-    *)
-        echo "Usage: verify-lib.sh verify_prs [PR_NUM...]" >&2
-        exit 1
-        ;;
-esac
+# Entry point. Guarded the way commands/ci-logs.sh guards its own, so a suite can
+# source this file for one function instead of driving verify_prs end to end;
+# pr-cross-check.sh only ever execs it, so dispatch is unchanged.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    case "${1:-}" in
+        verify_prs)
+            shift
+            verify_prs "$@"
+            ;;
+        *)
+            echo "Usage: verify-lib.sh verify_prs [PR_NUM...]" >&2
+            exit 1
+            ;;
+    esac
+fi

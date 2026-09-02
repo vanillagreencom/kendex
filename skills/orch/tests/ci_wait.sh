@@ -261,6 +261,29 @@ JSON
       exit 0
     fi
     ;;
+  run)
+    _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+    # KEN-1143: the staged failed-job log is replayed a line at a time so this
+    # stub is a writer that BLOCKS on a full pipe, the way gh streams a log —
+    # a reader closing early then kills it with SIGPIPE at the 64KB pipe
+    # capacity. `cat` would not: reading a file it pushes several hundred KB
+    # before it ever blocks, which would make the size the case needs a
+    # property of coreutils rather than of the pipe.
+    if [[ "${2:-}" == "view" ]]; then
+      if [[ -n "${STUB_RUN_LOG_FILE:-}" ]]; then
+        while IFS= read -r _line; do printf '%s\n' "$_line"; done < "$STUB_RUN_LOG_FILE"
+        exit 0
+      fi
+      echo "no log staged" >&2
+      exit 1
+    fi
+    if [[ "${2:-}" == "rerun" ]]; then
+      if [[ -n "${STUB_RERUN_CALLS_FILE:-}" ]]; then
+        printf '%s\n' "$*" >> "$STUB_RERUN_CALLS_FILE"
+      fi
+      exit 0
+    fi
+    ;;
 esac
 printf 'unexpected gh call: %s\n' "$*" >&2
 exit 1
@@ -789,6 +812,60 @@ assert_eq "$rc" "1" "case31: failed rerun attempt exits 1" "$stderr"
 assert_eq "$(json_field "$output" '.status')" "complete" "case31: failed attempt is terminal" "$stderr"
 assert_eq "$(json_field "$output" '.verdict')" "fail" "case31: failed attempt fails closed" "$stderr"
 assert_eq "$(json_field "$output" '[.failed_checks[] | select(.name == "CI Required")][0].state')" "FAILURE" "case31: aggregate failure is reported" "$stderr"
+
+echo "=== ci-wait transient retry on a large log (KEN-1143) ==="
+
+# Case 36: the retry path is reached with a failed-job log far past the 64KB
+# pipe buffer, its transient marker on the first line. `gh ... | head -200`
+# killed gh with SIGPIPE once head had its 200 lines, and pipefail promoted the
+# 141 to the pipeline status, so `|| return 1` reported "not transient" without
+# reading a single pattern — the retry was dead for every log big enough to
+# need it. Reverting is_transient_failure to the piped form reddens this case.
+# Two sizes carry the case, and both are asserted rather than assumed. The
+# 200-line WINDOW must clear two 64KB pipe buffers, so that `echo "$logs" |
+# grep -qi` blocks after the first-line match and dies; the log BEYOND that
+# window must clear one more, so that `gh | head -200` blocks once head has
+# stopped reading. 400 lines of ~1KB gives 200KB in the window and 200KB past
+# it. gh streams the marker in the first line, where a real runner-acquisition
+# failure reports it.
+transient_log="$TMP_ROOT/case36-log"
+{
+  printf 'The job was not acquired: rate limit exceeded, retrying in 30s\n'
+  padding="$(printf 'x%.0s' {1..950})"
+  for _i in $(seq 1 400); do
+    printf '2026-09-02T10:00:00Z  compiling crate %s\n' "$padding"
+  done
+} > "$transient_log"
+transient_window_bytes=$(head -n 200 "$transient_log" | wc -c)
+transient_tail_bytes=$(($(wc -c <"$transient_log") - transient_window_bytes))
+assert_le 131072 "$transient_window_bytes" "case36: scanned window clears two pipe buffers"
+assert_le 65536 "$transient_tail_bytes" "case36: log past the window clears one pipe buffer"
+
+stderr="$TMP_ROOT/case36.err"
+rerun_calls="$TMP_ROOT/case36-rerun"
+: > "$rerun_calls"
+set +e
+output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/rerun-attempt-checks.json" STUB_PR_CHECKS_EXIT=1 STUB_HEAD_SHA=e99849b1c72b1c082cf8325f316799e753f99561 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-rerun-attempt-failure.json" STUB_RUN_LOG_FILE="$transient_log" STUB_RERUN_CALLS_FILE="$rerun_calls" 2>"$stderr")
+rc=$?
+set -e
+assert_contains "$(cat "$stderr")" "Detected transient failure: rate limit" "case36: pattern loop reads the large log" "$stderr"
+assert_contains "$(cat "$stderr")" "Retrying transient failure (attempt 1/1)" "case36: transient failure is retried" "$stderr"
+assert_contains "$(cat "$rerun_calls")" "run rerun 29662812172" "case36: the failing run is rerun" "$stderr"
+assert_eq "$rc" "1" "case36: the retried failure still settles terminal" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "fail" "case36: retry does not turn a real failure into a pass" "$stderr"
+
+# Case 36b: a genuine `gh` failure is still "not transient" — the `|| return 1`
+# branch keeps its one real meaning, and nothing is rerun.
+stderr="$TMP_ROOT/case36b.err"
+rerun_calls="$TMP_ROOT/case36b-rerun"
+: > "$rerun_calls"
+set +e
+output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/rerun-attempt-checks.json" STUB_PR_CHECKS_EXIT=1 STUB_HEAD_SHA=e99849b1c72b1c082cf8325f316799e753f99561 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-rerun-attempt-failure.json" STUB_RERUN_CALLS_FILE="$rerun_calls" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "case36b: unreadable log exits 1" "$stderr"
+assert_eq "$(json_field "$output" '.verdict')" "fail" "case36b: unreadable log fails closed" "$stderr"
+assert_eq "$(cat "$rerun_calls")" "" "case36b: a gh failure triggers no rerun" "$stderr"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

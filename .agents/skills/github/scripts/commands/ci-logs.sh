@@ -37,14 +37,19 @@ classify_error_type() {
     local job_name="$1"
     local logs="$2"
 
-    # Check logs for specific patterns
-    if echo "$logs" | grep -qi 'cargo fmt\|Diff in'; then
+    # Check logs for specific patterns. Each grep reads a here-string, never a
+    # pipe: `grep -q` exits on its first match, and against `echo "$logs" |` that
+    # SIGPIPEs the writer once the log passes the 64KB pipe buffer. In condition
+    # position `errexit` does not fire, so the 141 read as a plain no-match and a
+    # matching log fell through to the job-name heuristics (KEN-1143). `--lines
+    # 100` keeps the default under the buffer; `--lines 200` reopened it.
+    if grep -qi 'cargo fmt\|Diff in' <<<"$logs"; then
         echo "fmt"
-    elif echo "$logs" | grep -qi 'clippy'; then
+    elif grep -qi 'clippy' <<<"$logs"; then
         echo "clippy"
-    elif echo "$logs" | grep -qi 'cargo test\|test result:\|FAILED'; then
+    elif grep -qi 'cargo test\|test result:\|FAILED' <<<"$logs"; then
         echo "test"
-    elif echo "$logs" | grep -qi 'error\[E\|cannot find\|unresolved\|build failed'; then
+    elif grep -qi 'error\[E\|cannot find\|unresolved\|build failed' <<<"$logs"; then
         echo "build"
     else
         # Fallback to job name heuristics
@@ -189,8 +194,13 @@ main() {
     fi
 
     if [ "$log_status" -ne 0 ]; then
+        # Flattened and clipped in-shell: `| head -c 300` closes after 300 bytes
+        # and SIGPIPEs `tr` on any gh error text past the pipe buffer, and this
+        # assignment has no guard, so `errexit` killed the branch that exists to
+        # report the fetch failure — exit 141, no JSON, no message (KEN-1143).
         local log_detail
-        log_detail=$(printf '%s' "$logs" | tr '\n' ' ' | head -c 300)
+        log_detail="${logs//$'\n'/ }"
+        log_detail="${log_detail:0:300}"
         if [ "$format" = "safe" ]; then
             jq -n --arg run_id "$run_id" --arg detail "$log_detail" \
                 '{error: "log_fetch_failed", run_id: $run_id, details: $detail}'

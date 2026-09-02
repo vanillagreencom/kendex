@@ -335,13 +335,20 @@ seen_in_progress=false
 stale_count=0
 max_stale=6  # ~90s of only completed/skipped before assuming genuinely done
 
+# The log is captured whole and windowed in-shell (KEN-1143). `gh | head -200`
+# closed the pipe once head had its lines, and pipefail promoted gh's SIGPIPE to
+# the pipeline status, so every failed-job log past the 64KB buffer took
+# `|| return 1` without reading one pattern — dead for exactly the large logs a
+# retry is for. That branch now means only that gh failed, and head and grep
+# read here-strings, which have no producer to signal.
 is_transient_failure() {
   local run_id="$1"
-  local logs
-  logs=$(gh run view "$run_id" --repo "$REPO" --log-failed 2>/dev/null | head -200) || return 1
+  local full_log logs
+  full_log=$(gh run view "$run_id" --repo "$REPO" --log-failed 2>/dev/null) || return 1
+  logs=$(head -n 200 <<<"$full_log")
 
   for pattern in "${TRANSIENT_PATTERNS[@]}"; do
-    if echo "$logs" | grep -qi "$pattern"; then
+    if grep -qi -e "$pattern" <<<"$logs"; then
       echo "Detected transient failure: $pattern" >&2
       return 0
     fi

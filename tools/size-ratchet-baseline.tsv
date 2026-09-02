@@ -60,7 +60,7 @@ skills/github/scripts/commands/pr-merge.sh	714
 skills/github/scripts/git-diff-summary	599
 skills/github/scripts/lib/gh-auth.sh	475
 skills/github/scripts/lib/github-api.sh	612
-skills/github/scripts/lib/verify-lib.sh	415
+skills/github/scripts/lib/verify-lib.sh	426
 skills/growth-guards/scripts/install-git-hooks	535
 skills/growth-guards/scripts/lib/settings.sh	467
 skills/growth-guards/tests/index-reads.test.sh	866
@@ -92,7 +92,7 @@ skills/linear/scripts/lib/cache.sh	590
 skills/linear/scripts/lib/common.sh	819
 skills/linear/scripts/lib/formatters.sh	631
 skills/orch/scripts/approval-wait	947
-skills/orch/scripts/ci-wait	669
+skills/orch/scripts/ci-wait	676
 skills/orch/scripts/dev-artifact-check	662
 skills/orch/scripts/lanes	622
 skills/orch/scripts/open-terminal	696
@@ -101,6 +101,7 @@ skills/orch/scripts/queue-wait	1067
 skills/orch/scripts/review-artifact-check	413
 skills/orch/scripts/workflow-state	750
 skills/orch/tests/approval_wait.sh	1356
+skills/orch/tests/ci_wait.sh	872
 skills/orch/tests/lanes.sh	888
 skills/orch/tests/queue_wait.sh	896
 skills/preflight/scripts/preflight	1065
