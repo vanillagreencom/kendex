@@ -67,9 +67,9 @@ const VITEST = fileURLToPath(
 const SPAWN_TIMEOUT_MS = 45_000;
 const CASE_TIMEOUT_MS = 60_000;
 
-// Far past the late-rejection fixture's own delay, so the guarded half of
-// that differential turns on the window rather than on scheduling luck.
-const WIDE_WINDOW_MS = 2500;
+// Twice the late-rejection fixture's delay, which is all this side needs:
+// both are timers in one process, fired in expiry order whatever the load.
+const WIDE_WINDOW_MS = 1500;
 
 type Run = { status: number | null; output: string };
 
