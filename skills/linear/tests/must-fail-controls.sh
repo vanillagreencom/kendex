@@ -5,7 +5,8 @@
 # A control breaks the one behaviour its suite claims to cover, in a copy of
 # the skill, and the suite must go red naming the assertion that covers it. A
 # suite with no control is a failure here: an untested control is an untested
-# suite.
+# suite. So is a control no suite owns: nothing runs it, so the mutation it
+# describes is never applied and the behaviour it claims to prove is unproven.
 #
 #   skills/linear/tests/must-fail-controls.sh                     # all
 #   skills/linear/tests/must-fail-controls.sh estimate-clear      # one, by stem
@@ -155,12 +156,24 @@ run_one() {
 
 main() {
 	local -a wanted=("$@") stems=()
-	local suite_path suite stem want failures=0 total=0
+	local suite_path control_path suite stem want failures=0 total=0 orphans=0
 
 	for suite_path in "$TESTS_DIR"/*.test.sh; do
 		stems+=("$(basename "$suite_path" .test.sh)")
 	done
 	[[ ${#stems[@]} -gt 0 ]] || die "no suites in $TESTS_DIR"
+
+	# The roster is read whole whatever the selection: a targeted run must
+	# not be green while a control sits in the directory unrun.
+	for control_path in "$CONTROLS_DIR"/*.control.sh; do
+		[[ -f "$control_path" ]] || die "no controls in $CONTROLS_DIR"
+		stem="$(basename "$control_path" .control.sh)"
+		if [[ " ${stems[*]} " != *" $stem "* ]]; then
+			printf 'ORPHAN   %-52s no %s.test.sh owns it\n' \
+				"controls/$stem.control.sh" "$stem"
+			orphans=$((orphans + 1))
+		fi
+	done
 
 	# A run that selected nothing is not a clean run: a mistyped stem would
 	# otherwise report "0 controls, 0 failing" and exit 0.
@@ -181,8 +194,9 @@ main() {
 
 	[[ "$total" -gt 0 ]] || die "selection matched no suites"
 
-	printf '\n%d controls, %d failing\n' "$total" "$failures"
-	[[ "$failures" -eq 0 ]]
+	printf '\n%d controls, %d failing, %d orphaned\n' \
+		"$total" "$failures" "$orphans"
+	[[ "$failures" -eq 0 && "$orphans" -eq 0 ]]
 }
 
 main "$@"
