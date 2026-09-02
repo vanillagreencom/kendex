@@ -279,13 +279,16 @@ pub struct AboutFound {
 }
 
 /// The About tab's report: how the catalog's items were decided, what was
-/// found where, and everything wrong with it.
+/// found where, everything wrong with it, and when it last changed.
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AboutView {
     pub mode: CatalogMode,
     pub found: Vec<AboutFound>,
     pub findings: Vec<CatalogFinding>,
+    /// ISO-8601 committer date of the commit the catalog is read at, where
+    /// kendex holds the history to read it from.
+    pub updated_at: Option<String>,
 }
 
 #[tauri::command(async)]
@@ -293,8 +296,11 @@ pub struct AboutView {
 pub fn marketplace_about(catalog: Catalog) -> Result<AboutView, String> {
     let env = env()?;
     let about = browse::about(&env, &catalog).map_err(|e| e.to_string())?;
+    let updated_at = about.updated_at;
+    let about = about.report;
     Ok(AboutView {
         mode: about.mode,
+        updated_at,
         found: about
             .found
             .into_iter()

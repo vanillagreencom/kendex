@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Finding } from "@/bindings";
 import {
-  CATALOG_LAYOUT_CLEAN,
   installedScoreWords,
   SAFETY_CAVEAT,
   SAFETY_CHECK_FAILED,
@@ -29,7 +28,6 @@ describe("what a score is allowed to claim", () => {
   // reaching for them — not even in a negated form.
   const besideAScore = [
     SAFETY_CAVEAT,
-    CATALOG_LAYOUT_CLEAN,
     safetyDotWords(100, 0, []),
     safetyDotWords(100, 3, []),
     safetyHeadline([], 0),
@@ -76,12 +74,6 @@ describe("what a score is allowed to claim", () => {
       "Not checked yet. An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.",
     );
     expect(SAFETY_DOT_UNCHECKED).not.toMatch(/\d+\/100/);
-  });
-
-  it("keeps the About tab's clean line about layout, not about content", () => {
-    expect(CATALOG_LAYOUT_CLEAN).toBe(
-      "Nothing wrong with how this catalog is put together.",
-    );
   });
 });
 

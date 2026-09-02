@@ -1,7 +1,15 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type { AboutView, CatalogFinding } from "@/bindings";
-import { CATALOG_LAYOUT_CLEAN } from "@/lib/copy-safety";
+import type {
+  AboutFound,
+  AboutView,
+  CatalogFinding,
+  MarketplaceMeta,
+} from "@/bindings";
+import {
+  ABOUT_FINDINGS_TITLE,
+  ABOUT_NOTHING_SAID,
+} from "@/lib/copy-marketplaces";
 import { catalogKey, subscription } from "@/stores/marketplaces-shared";
 import { AboutSection } from "./about-section";
 
@@ -22,22 +30,89 @@ vi.mock("@/stores/marketplaces", async (importOriginal) => {
 
 const catalog = subscription({ scope: "global" }, "kendex");
 
-const render = (findings: CatalogFinding[]) => {
-  const about: AboutView = { mode: "explicit", found: [], findings };
+const render = (
+  view: Partial<AboutView> = {},
+  meta: MarketplaceMeta | null = null,
+) => {
+  const about: AboutView = {
+    mode: "explicit",
+    found: [],
+    findings: [],
+    updatedAt: null,
+    ...view,
+  };
   stub.about = { [catalogKey(catalog)]: about };
-  return renderToStaticMarkup(<AboutSection catalog={catalog} meta={null} />);
+  return renderToStaticMarkup(<AboutSection catalog={catalog} meta={meta} />);
 };
 
-describe("the About tab with nothing to report", () => {
-  it("clears the catalog's layout, never the packages in it", () => {
-    expect(render([])).toContain(CATALOG_LAYOUT_CLEAN);
+const finding: CatalogFinding = {
+  location: "kendex.toml",
+  problem: "no skills root",
+  fix: "add one",
+};
+
+const found = (root: string, kind: AboutFound["kind"], count: number) => ({
+  root,
+  kind,
+  count,
+});
+
+describe("the About tab as a profile", () => {
+  it("shows what the catalog says about itself and when it last changed", () => {
+    const html = render(
+      { updatedAt: "2026-08-30T12:00:00+00:00" },
+      {
+        description: "Skills for shipping",
+        author: "Vanilla Green",
+        license: "MIT",
+        homepage: "https://kendex.ai",
+      },
+    );
+    expect(html).toContain("Skills for shipping");
+    expect(html).toContain("Vanilla Green");
+    expect(html).toContain("MIT");
+    expect(html).toContain("https://kendex.ai");
+    expect(html).toContain("2026-08-30T12:00:00+00:00");
   });
 
-  it("shows the findings instead when the catalog has any", () => {
-    const html = render([
-      { location: "kendex.toml", problem: "no skills root", fix: "add one" },
-    ]);
+  it("adds the per-kind counts across roots into one line", () => {
+    const html = render({
+      found: [
+        found("skills", "skill", 40),
+        found("packages", "skill", 2),
+        found("agents", "agent", 1),
+      ],
+    });
+    expect(html).toContain("42 skills and 1 agent");
+  });
+
+  // The tags, the reading mode and the per-root table were an engineer's
+  // account of kendex's own work. The header says the tags once.
+  it("says nothing about how kendex read the catalog", () => {
+    const html = render(
+      { mode: "explicit", found: [found("skills", "skill", 3)] },
+      { tags: ["review"] },
+    );
+    expect(html).not.toContain("kendex.toml");
+    expect(html).not.toContain("review");
+    expect(html).not.toContain(">skills<");
+  });
+
+  it("has nothing to show for a catalog that declares nothing", () => {
+    expect(render()).toContain(ABOUT_NOTHING_SAID);
+  });
+});
+
+describe("the About tab's findings section", () => {
+  it("lists what the catalog gets wrong", () => {
+    const html = render({ findings: [finding] });
+    expect(html).toContain(ABOUT_FINDINGS_TITLE);
     expect(html).toContain("no skills root");
-    expect(html).not.toContain(CATALOG_LAYOUT_CLEAN);
+  });
+
+  it("is absent, and says nothing in its place, with no findings", () => {
+    const html = render({ found: [found("skills", "skill", 3)] });
+    expect(html).not.toContain(ABOUT_FINDINGS_TITLE);
+    expect(html).not.toContain("Nothing wrong");
   });
 });

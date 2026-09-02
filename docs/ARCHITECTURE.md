@@ -645,9 +645,12 @@ lives in one capability table read by core and UI.
   (`<key>/<commit>.safety/…`, never inside the receipt-signed checkout),
   keyed by content hash plus rule-set, discovery-table and record-format
   versions, each verified before reuse. Advisory like every reading of the
-  score — a preview, never a gate. `library.rs` is the same join for the
-  Library table: subscription, local content (with what a fork replaced),
-  or observed-and-unmanaged.
+  score — a preview, never a gate. `browse/updated.rs` dates the catalog
+  and every package it offers from the mirror's history, one
+  `remote::history::last_changed` walk per read; only a fetched repository
+  has one, and a history that will not read costs the dates and nothing
+  else. `library.rs` is the same join for the Library table: subscription,
+  local content (with what a fork replaced), or observed-and-unmanaged.
 - **A subscription's closure is derived by re-expansion; unsubscribing
   removes or keeps exactly it.** `engine/detach.rs` expands the installed
   set with the source present and again with its declarations gone, then

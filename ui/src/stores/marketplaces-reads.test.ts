@@ -29,6 +29,7 @@ const offered = (name: string) => [
     dependencies: { required: [], optional: [] },
     state: "available" as const,
     collision: null,
+    updatedAt: null,
   },
 ];
 

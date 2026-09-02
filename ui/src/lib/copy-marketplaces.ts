@@ -98,3 +98,29 @@ export const FEATURED_MARKER = "Featured";
 // control's two choices.
 export const DIRECTORY_KENDEX_LABEL = "Kendex";
 export const DIRECTORY_SKILLSSH_LABEL = "Skills.sh";
+
+// The About tab's profile of one marketplace. Every line is the catalog's
+// own claim about itself or a fact about its repository — never a word
+// about how kendex read it, which is the catalog author's problem and not
+// something a person choosing a marketplace has any use for.
+export const ABOUT_AUTHOR_LABEL = "Author";
+export const ABOUT_LICENSE_LABEL = "License";
+export const ABOUT_HOMEPAGE_LABEL = "Homepage";
+export const ABOUT_UPDATED_LABEL = "Last updated";
+export const ABOUT_CONTAINS_LABEL = "Contains";
+// The heading over what the catalog's own configuration gets wrong. Absent
+// with nothing to list: a section that appears only to say it is empty is
+// a line about kendex's reading, not about the marketplace.
+export const ABOUT_FINDINGS_TITLE = "Things the catalog gets wrong";
+// A catalog that declares no `[marketplace]`, offers nothing kendex counts,
+// and has no history to date. The tab has read it and has nothing to show.
+export const ABOUT_NOTHING_SAID = "This marketplace says nothing about itself.";
+
+/** What a catalog holds, as one line: the per-kind counts joined the way a
+ *  person writes a list, with no serial comma. Null when nothing was
+ *  counted, so the row is left out rather than reading "nothing". */
+export const catalogContents = (counts: string[]): string | null => {
+  if (counts.length === 0) return null;
+  if (counts.length < 3) return counts.join(" and ");
+  return `${counts.slice(0, -1).join(", ")} and ${counts[counts.length - 1]}`;
+};

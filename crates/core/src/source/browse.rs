@@ -27,6 +27,7 @@ mod opened;
 mod preview;
 mod safety;
 mod summary;
+mod updated;
 pub use catalog::Catalog;
 use catalog::browsable;
 pub use deps::{PackageDependencies, PackageDependency};
@@ -34,7 +35,7 @@ pub use opened::records_unreadable;
 pub(crate) use opened::{Browsed, open, open_repo};
 pub use preview::{PackagePreview, package_file, package_preview};
 pub use safety::{PackageSafety, package_safety};
-pub use summary::{CatalogSummary, SubscriptionRef, about, summary};
+pub use summary::{CatalogAbout, CatalogSummary, SubscriptionRef, about, summary};
 
 /// Whether one offered package exists in this scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -93,6 +94,10 @@ pub struct AvailablePackage {
     /// one. Invariant 4's refusal stays in the engine — this only shows the
     /// collision before the click.
     pub collision: Option<String>,
+    /// ISO-8601 committer date of the newest commit that touched this
+    /// package. `None` where the catalog keeps no history kendex can read,
+    /// or where the package's own commit lies past the history bound.
+    pub updated_at: Option<String>,
 }
 
 /// One member of a curated set, with where it stands here.
@@ -159,6 +164,13 @@ pub fn packages(env: &Env, catalog: &Catalog) -> Result<Vec<AvailablePackage>> {
             .map(|(_, names)| names.as_slice())
             .unwrap_or_default(),
     );
+    // One history walk for the whole list: a call per package would be one
+    // process per row on every open of the tab.
+    let dated: Vec<(ItemKind, String)> = listed
+        .iter()
+        .flat_map(|(kind, names)| names.iter().map(move |name| (*kind, name.clone())))
+        .collect();
+    let mut dates = updated::package_dates(env, &browsed, &dated);
     let mut out = Vec::new();
     for (kind, names) in listed {
         for name in names {
@@ -174,6 +186,7 @@ pub fn packages(env: &Env, catalog: &Catalog) -> Result<Vec<AvailablePackage>> {
                 description: header.description.as_deref().map(names::shown),
                 summary: header.summary_or_description().map(names::shown),
                 tags: header.tags,
+                updated_at: dates.remove(&(kind, name.clone())),
                 bundles,
                 dependencies: deps::dependencies(
                     &browsed,

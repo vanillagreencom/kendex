@@ -211,6 +211,7 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
                         recordsUnreadable: row?.recordsUnreadable ?? false,
                       }))}
                       showMarketplace={false}
+                      showPlaces
                     />
                   )}
                 </TabsContent>

@@ -93,11 +93,6 @@ export const safetyDotWords = (
 // one look alike from here, so this claims no check is under way — only that
 // none has answered, which is the one thing true of both.
 export const SAFETY_DOT_UNCHECKED = `Not checked yet. ${SAFETY_CAVEAT}`;
-// The About tab's findings are about the catalog's own layout and
-// configuration. Nothing here has read a single package.
-export const CATALOG_LAYOUT_CLEAN =
-  "Nothing wrong with how this catalog is put together.";
-
 /** The dot's tone from what was found: severity is never color-only — the
  * words beside it carry the number and the caveat. */
 export function severityTone(

@@ -1,6 +1,7 @@
-//! What a mirror's history says about one directory: the commits that
-//! changed it (with the tags that name them) and the newest such commit
-//! at-or-before a given one. Everything here reads the bare mirror through
+//! What a mirror's history says about its directories: the commits that
+//! changed one (with the tags that name them), the newest such commit
+//! at-or-before a given one, and when each of many last changed.
+//! Everything here reads the bare mirror through
 //! [`Hardened`], with full commit ids only, a `--` separator, and literal
 //! pathspecs — a catalog chooses its own directory names, and a name
 //! shaped like git syntax must stay a name.
@@ -9,7 +10,8 @@
 //! corrupt mirror answering "no commits" would read as "nothing changed",
 //! which is exactly the fail-open a drift report cannot be built on.
 
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 use crate::error::{CoreError, Result};
 use crate::process::Hardened;
@@ -156,4 +158,72 @@ pub fn last_content_commit(mirror: &Path, from: &str, rel: &Path) -> Result<Opti
     ))?;
     let commit = text.trim().to_owned();
     Ok((commit.len() == 40).then_some(commit))
+}
+
+/// The committer date of one commit, ISO-8601. A mirror that has no such
+/// commit answers `None`; a mirror that cannot be read is an error, on the
+/// same footing as every other read here.
+pub fn commit_date(mirror: &Path, commit: &str) -> Result<Option<String>> {
+    require_commit(commit)?;
+    let text = stdout_capped(Hardened::git_bare(
+        mirror,
+        &["log", "--max-count", "1", "--format=%cI", commit],
+    ))?;
+    let date = text.trim().to_owned();
+    Ok((!date.is_empty()).then_some(date))
+}
+
+/// When each of `paths` last changed at-or-before `tip`, walking
+/// first-parent history once rather than once per path. Every path is a
+/// literal pathspec, so a directory answers for anything under it and a
+/// name shaped like git syntax stays a name.
+///
+/// A path missing from the answer is a path this walk did not reach: the
+/// row bound and the byte bound both cut the history short, and an older
+/// package falls off the end. Absent is the honest reading, never a date
+/// borrowed from a commit that did not touch it.
+pub fn last_changed(
+    mirror: &Path,
+    tip: &str,
+    paths: &[PathBuf],
+) -> Result<BTreeMap<PathBuf, String>> {
+    require_commit(tip)?;
+    if paths.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let max = MAX_ROWS.to_string();
+    let specs: Vec<String> = paths.iter().map(|rel| literal(rel)).collect();
+    let mut args = vec![
+        "log",
+        "--first-parent",
+        "--max-count",
+        &max,
+        "--name-only",
+        "--format=%x1e%cI",
+        tip,
+        "--",
+    ];
+    args.extend(specs.iter().map(String::as_str));
+    let text = stdout_capped(Hardened::git_bare(mirror, &args))?;
+    // Newest first, so the first date a path is seen under is its answer.
+    let wanted: BTreeSet<&Path> = paths.iter().map(PathBuf::as_path).collect();
+    let mut out = BTreeMap::new();
+    for record in text.split('\u{1e}') {
+        let mut lines = record.lines();
+        let Some(date) = lines.next().map(str::trim).filter(|d| !d.is_empty()) else {
+            continue;
+        };
+        for changed in lines.filter(|line| !line.is_empty()) {
+            // git names the file that changed; the path asked about may be
+            // the directory holding it, so every ancestor is a candidate.
+            let changed = Path::new(changed);
+            for candidate in changed.ancestors() {
+                if wanted.contains(candidate) {
+                    out.entry(candidate.to_path_buf())
+                        .or_insert_with(|| date.to_owned());
+                }
+            }
+        }
+    }
+    Ok(out)
 }

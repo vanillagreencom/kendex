@@ -1,6 +1,7 @@
 import { MoreHorizontal, RefreshCw, Star } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import type { Catalog, CatalogSummary, MarketplaceRow } from "@/bindings";
+import { ExternalLink } from "@/components/external-link";
 import { RepoAction } from "@/components/marketplaces/repo-action";
 import { UnsubscribeDialog } from "@/components/marketplaces/unsubscribe-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -64,8 +65,13 @@ export function DetailHeader({
       : (listing?.name ?? meta?.name ?? catalog.repo.split("/").at(-1));
   const description = meta?.description ?? listing?.description ?? null;
   const commit = row?.commit ?? summary?.commit ?? null;
+  // The repository the catalog comes from, and the page for it on GitHub.
+  // A path source has a folder here and no page to open, so it stays the
+  // plain text it has always been.
+  const provenance =
+    row?.repo ?? row?.path ?? summary?.provenance ?? listing?.repo ?? null;
+  const repoKey = row?.repoKey ?? summary?.repoKey ?? listing?.repo ?? null;
   const metaLine = [
-    row?.repo ?? row?.path ?? summary?.provenance ?? listing?.repo,
     commit ? `@ ${shortRevision(commit)}` : null,
     meta?.license,
     meta?.author ? `by ${meta.author}` : null,
@@ -144,8 +150,32 @@ export function DetailHeader({
         subtitle={
           <>
             {description ? <p>{description}</p> : null}
-            {metaLine.length > 0 ? (
-              <p className="mt-1 font-mono text-xs">{metaLine.join(" · ")}</p>
+            {provenance || meta?.homepage || metaLine.length > 0 ? (
+              <p className="mt-1 flex flex-wrap items-center gap-x-1.5 font-mono text-xs">
+                {provenance ? (
+                  repoKey ? (
+                    <ExternalLink url={`https://github.com/${repoKey}`}>
+                      {provenance}
+                    </ExternalLink>
+                  ) : (
+                    <span>{provenance}</span>
+                  )
+                ) : null}
+                {meta?.homepage ? (
+                  <>
+                    {provenance ? <span aria-hidden>·</span> : null}
+                    <ExternalLink url={meta.homepage}>
+                      {meta.homepage}
+                    </ExternalLink>
+                  </>
+                ) : null}
+                {metaLine.length > 0 ? (
+                  <span>
+                    {provenance || meta?.homepage ? "· " : null}
+                    {metaLine.join(" · ")}
+                  </span>
+                ) : null}
+              </p>
             ) : null}
             {tags.length > 0 ? (
               <span className="mt-2 flex flex-wrap gap-1.5">

@@ -26,8 +26,9 @@ import { useMarketplacesStore } from "@/stores/marketplaces";
 import { subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
 import { safetyKey } from "@/stores/preinstall-safety";
+import { useProvenanceStore } from "@/stores/provenance";
 import { mount as mountTree } from "@/test/dom";
-import { PackagesTable } from "./packages-table";
+import { type PackageEntry, PackagesTable } from "./packages-table";
 
 // Static rendering reads a zustand store's initial snapshot, so the score
 // store's hook is wrapped to let each test seed the row's score.
@@ -63,6 +64,7 @@ const row: AvailablePackage = {
   dependencies: { required: [], optional: [] },
   state: "available",
   collision: null,
+  updatedAt: null,
 };
 
 const FINDING: Finding = {
@@ -366,5 +368,123 @@ describe("the row action on a repository nobody subscribes to", () => {
     const { host } = draw([declared]);
     expect(action(host)).toBeUndefined();
     expect(host.textContent).toContain("Available");
+  });
+});
+
+// The marketplace's own page carries three columns the cross-marketplace
+// list does not: when each package last changed, where it is installed
+// from this marketplace, and a header that re-sorts the list.
+describe("a marketplace's own packages table", () => {
+  const dated = (name: string, updatedAt: string | null): PackageEntry => ({
+    catalog,
+    row: { ...row, name, updatedAt },
+    recordsUnreadable: false,
+  });
+
+  it("opens sorted by name whatever order the catalog listed in", () => {
+    stub.scores = {};
+    const html = renderToStaticMarkup(
+      <PackagesTable
+        entries={[dated("review", null), dated("apply", null)]}
+        showMarketplace={false}
+        showPlaces
+      />,
+    );
+    expect(html.indexOf(">apply<")).toBeLessThan(html.indexOf(">review<"));
+  });
+
+  it("dates each row, and says nothing where there is no date to say", () => {
+    stub.scores = {};
+    const html = renderToStaticMarkup(
+      <PackagesTable
+        entries={[dated("gh", "2026-08-30T12:00:00+00:00"), dated("zz", null)]}
+        showMarketplace={false}
+        showPlaces
+      />,
+    );
+    expect(html).toContain('title="2026-08-30T12:00:00+00:00"');
+    expect(html).toContain("—");
+  });
+
+  it("names the places holding it, and only from this marketplace", () => {
+    stub.scores = {};
+    useProvenanceStore.setState({
+      loaded: true,
+      rows: [
+        {
+          scope: { scope: "project", root: "/home/me/hyprtrade" },
+          kind: "skill",
+          name: "gh",
+          harness: "claude",
+          origin: { origin: "marketplace", source: "kendex", repo: "a/b" },
+        },
+        // The same name installed from somewhere else is a collision, not
+        // an installation from here: naming its place would credit this
+        // marketplace with an install it never made.
+        {
+          scope: { scope: "global" },
+          kind: "skill",
+          name: "gh",
+          harness: "claude",
+          origin: { origin: "marketplace", source: "other", repo: "c/d" },
+        },
+      ],
+    });
+    // Store state set by a test reaches the component only through a
+    // mounted tree: a static render serves the store's initial snapshot.
+    const host = mountTree(
+      <PackagesTable
+        entries={[dated("gh", null)]}
+        showMarketplace={false}
+        showPlaces
+      />,
+    );
+    const text = host.textContent ?? "";
+    expect(text).toContain("hyprtrade");
+    expect(text).not.toContain("User level");
+  });
+
+  it("leaves the columns off the cross-marketplace list", () => {
+    stub.scores = {};
+    const html = renderToStaticMarkup(
+      <PackagesTable entries={[dated("gh", null)]} showMarketplace />,
+    );
+    expect(html).not.toContain("Installed in");
+    expect(html).toContain("Marketplace");
+  });
+});
+
+describe("re-sorting a marketplace's packages", () => {
+  it("turns the list around when the sorted column is pressed again", async () => {
+    stub.scores = {};
+    useProvenanceStore.setState({ loaded: true, rows: [] });
+    const host = mountTree(
+      <PackagesTable
+        entries={[
+          { catalog, row: { ...row, name: "apply" }, recordsUnreadable: false },
+          {
+            catalog,
+            row: { ...row, name: "review" },
+            recordsUnreadable: false,
+          },
+        ]}
+        showMarketplace={false}
+        showPlaces
+      />,
+    );
+    const names = () =>
+      [...host.querySelectorAll("tbody .truncate.font-medium")].map(
+        (cell) => cell.textContent,
+      );
+    expect(names()).toEqual(["apply", "review"]);
+
+    const byName = host.querySelector<HTMLButtonElement>(
+      'button[aria-label^="Sorted by Name"]',
+    );
+    if (!byName) throw new Error("no name sort control rendered");
+    await act(async () => {
+      await userEvent.click(byName);
+    });
+    expect(names()).toEqual(["review", "apply"]);
   });
 });

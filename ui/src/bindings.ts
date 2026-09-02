@@ -470,12 +470,17 @@ export type AboutFound = {
 
 /**
  *  The About tab's report: how the catalog's items were decided, what was
- *  found where, and everything wrong with it.
+ *  found where, everything wrong with it, and when it last changed.
  */
 export type AboutView = {
 	mode: CatalogMode,
 	found: AboutFound[],
 	findings: CatalogFinding[],
+	/**
+	 *  ISO-8601 committer date of the commit the catalog is read at, where
+	 *  kendex holds the history to read it from.
+	 */
+	updatedAt: string | null,
 };
 
 /**
@@ -704,6 +709,12 @@ export type AvailablePackage = {
 	 *  collision before the click.
 	 */
 	collision: string | null,
+	/**
+	 *  ISO-8601 committer date of the newest commit that touched this
+	 *  package. `None` where the catalog keeps no history kendex can read,
+	 *  or where the package's own commit lies past the history bound.
+	 */
+	updatedAt: string | null,
 };
 
 /**

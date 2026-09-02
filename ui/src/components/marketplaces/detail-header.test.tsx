@@ -84,3 +84,33 @@ describe("DetailHeader for a subscription a failed read left behind", () => {
     expect(html).not.toContain(MARKETPLACES_UNCONFIRMED_TITLE);
   });
 });
+
+// The repository and the homepage used to be plain text in a mono line and
+// a link buried in the About tab. Both belong in the header, and both open
+// the person's own browser rather than a page inside the app.
+describe("the header's links out", () => {
+  it("makes the repository a link to its page", () => {
+    const html = render();
+    expect(html).toMatch(/<button[^>]*>Acme\/Kit<\/button>/);
+    expect(html).toContain("text-info");
+  });
+
+  it("carries the catalog's homepage beside it", () => {
+    row.meta = { homepage: "https://kendex.ai" };
+    const html = render();
+    expect(html).toContain("https://kendex.ai");
+    row.meta = null;
+  });
+
+  it("leaves a folder as plain text, since there is no page to open", () => {
+    row.repo = null;
+    row.repoKey = null;
+    row.path = "/home/me/catalog";
+    const html = render();
+    expect(html).toContain("/home/me/catalog");
+    expect(html).not.toMatch(/<button[^>]*>\/home\/me\/catalog<\/button>/);
+    row.repo = "Acme/Kit";
+    row.repoKey = "acme/kit";
+    row.path = null;
+  });
+});

@@ -115,11 +115,24 @@ fn open_held(env: &Env, held: &SubscriptionRef) -> Result<super::Browsed> {
     )
 }
 
+/// What the About tab reads: the catalog's own report, plus when its
+/// content last moved. The date is git's, so a catalog kendex keeps no
+/// history for has none — see [`super::updated`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct CatalogAbout {
+    pub report: AboutReport,
+    /// ISO-8601 committer date of the commit the catalog is read at.
+    pub updated_at: Option<String>,
+}
+
 /// The About report for any catalog: how its items were decided, what was
-/// found where, and everything wrong with it.
-pub fn about(env: &Env, catalog: &Catalog) -> Result<AboutReport> {
+/// found where, everything wrong with it, and when it last changed.
+pub fn about(env: &Env, catalog: &Catalog) -> Result<CatalogAbout> {
     let browsed = super::open(env, catalog)?;
-    Ok(crate::source::about(&browsed.sealed, &browsed.config))
+    Ok(CatalogAbout {
+        report: crate::source::about(&browsed.sealed, &browsed.config),
+        updated_at: super::updated::catalog_date(env, &browsed),
+    })
 }
 
 /// The first subscription, personal scope first, that points at this

@@ -16,6 +16,7 @@ mod root_skill;
 mod safety_budget;
 mod safety_cache;
 mod summary;
+mod updated;
 
 fn skill(catalog: &Path, dir: &str, name: &str, body: &str) {
     let home = catalog.join(dir).join(name);

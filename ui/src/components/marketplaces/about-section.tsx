@@ -1,28 +1,58 @@
-import { useCallback } from "react";
-import type { Catalog, MarketplaceMeta } from "@/bindings";
+import { type ReactNode, useCallback } from "react";
+import type {
+  AboutFound,
+  Catalog,
+  ItemKind,
+  MarketplaceMeta,
+} from "@/bindings";
+import { ExternalLink } from "@/components/external-link";
 import { useCachedRead } from "@/components/marketplaces/use-catalog";
-import { Badge } from "@/components/ui/badge";
-import { CATALOG_LAYOUT_CLEAN } from "@/lib/copy-safety";
+import {
+  ABOUT_AUTHOR_LABEL,
+  ABOUT_CONTAINS_LABEL,
+  ABOUT_FINDINGS_TITLE,
+  ABOUT_HOMEPAGE_LABEL,
+  ABOUT_LICENSE_LABEL,
+  ABOUT_NOTHING_SAID,
+  ABOUT_UPDATED_LABEL,
+  catalogContents,
+} from "@/lib/copy-marketplaces";
 import { kindLabel } from "@/lib/labels";
+import { relativeTime } from "@/lib/relative-time";
 import {
   catalogKey,
   readErrorKey,
   useMarketplacesStore,
 } from "@/stores/marketplaces";
 
-const MODE_COPY: Record<string, string> = {
-  "plugin-registry":
-    "A plugin registry: the catalog's own manifest decides what it offers.",
-  explicit: "This marketplace declares its layout in its own kendex.toml.",
-  discovered:
-    "No declared layout — kendex found its skills in the conventional folders.",
-  unusable:
-    "The catalog's own configuration can't be read, so nothing is offered.",
-};
+/** The per-kind totals behind the Contains line. The report counts each
+ * root separately because a catalog may keep one kind in several folders;
+ * where the folders are is the catalog author's business, so the tab adds
+ * them up and names the kind once. */
+function perKind(found: AboutFound[]): string[] {
+  const totals = new Map<ItemKind, number>();
+  for (const row of found) {
+    totals.set(row.kind, (totals.get(row.kind) ?? 0) + row.count);
+  }
+  return [...totals].map(
+    ([kind, count]) => `${count} ${kindLabel(kind, count).toLowerCase()}`,
+  );
+}
 
-/** What the catalog says about itself: how its items were decided, what was
- * found where, and every finding it carries — the same report `kendex
- * index` prints. */
+/** When the catalog last changed, in the app's own coarse wording, with the
+ * committer date itself on hover. A date that will not parse is left out
+ * rather than shown as an interval from nowhere. */
+function updatedLine(updatedAt: string | null): ReactNode {
+  if (!updatedAt) return null;
+  const at = Date.parse(updatedAt);
+  if (Number.isNaN(at)) return null;
+  return <span title={updatedAt}>{relativeTime(at, Date.now())}</span>;
+}
+
+/** The marketplace's profile: what the catalog says about itself, when its
+ * content last moved, what it holds, and anything wrong with its own
+ * configuration. Nothing here describes how kendex read it — the header
+ * carries the name, the links and the tags, and this tab carries the rest. */
 export function AboutSection({
   catalog,
   meta,
@@ -54,59 +84,47 @@ export function AboutSection({
     );
   }
 
+  const contains = catalogContents(perKind(about.found));
+  const rows: { label: string; value: ReactNode }[] = [
+    { label: ABOUT_AUTHOR_LABEL, value: meta?.author ?? null },
+    { label: ABOUT_LICENSE_LABEL, value: meta?.license ?? null },
+    {
+      label: ABOUT_HOMEPAGE_LABEL,
+      value: meta?.homepage ? (
+        <ExternalLink url={meta.homepage}>{meta.homepage}</ExternalLink>
+      ) : null,
+    },
+    { label: ABOUT_UPDATED_LABEL, value: updatedLine(about.updatedAt) },
+    { label: ABOUT_CONTAINS_LABEL, value: contains },
+  ].filter((row) => row.value !== null && row.value !== "");
+
+  const empty =
+    !meta?.description && rows.length === 0 && about.findings.length === 0;
+
   return (
     <div className="max-w-3xl space-y-6">
-      {meta?.homepage || meta?.tags?.length ? (
-        <div className="flex flex-wrap items-center gap-2">
-          {meta?.homepage ? (
-            <a
-              className="text-sm text-info underline-offset-2 hover:underline"
-              href={meta.homepage}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {meta.homepage}
-            </a>
-          ) : null}
-          {(meta?.tags ?? []).map((tag) => (
-            <Badge key={tag} variant="secondary">
-              {tag}
-            </Badge>
-          ))}
-        </div>
+      {empty ? (
+        <p className="text-sm text-muted-foreground">{ABOUT_NOTHING_SAID}</p>
       ) : null}
 
-      <section>
-        <h3 className="mb-1 text-sm font-semibold">How it's read</h3>
-        <p className="text-sm text-muted-foreground">
-          {MODE_COPY[about.mode] ?? about.mode}
-        </p>
-      </section>
+      {meta?.description ? (
+        <p className="text-sm leading-relaxed">{meta.description}</p>
+      ) : null}
 
-      {about.found.length > 0 ? (
-        <section>
-          <h3 className="mb-2 text-sm font-semibold">What was found</h3>
-          <div className="divide-y rounded-lg border text-sm">
-            {about.found.map((row) => (
-              <div
-                key={`${row.root}:${row.kind}`}
-                className="flex items-center justify-between px-3 py-2"
-              >
-                <span className="font-mono text-xs">{row.root}</span>
-                <span className="text-muted-foreground">
-                  {row.count} {kindLabel(row.kind, row.count).toLowerCase()}
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
+      {rows.length > 0 ? (
+        <dl className="grid grid-cols-[8rem_1fr] gap-x-4 gap-y-2 text-sm">
+          {rows.map((row) => (
+            <div key={row.label} className="contents">
+              <dt className="text-muted-foreground">{row.label}</dt>
+              <dd className="min-w-0 break-words">{row.value}</dd>
+            </div>
+          ))}
+        </dl>
       ) : null}
 
       {about.findings.length > 0 ? (
         <section>
-          <h3 className="mb-2 text-sm font-semibold">
-            Things the catalog gets wrong
-          </h3>
+          <h3 className="mb-2 text-sm font-semibold">{ABOUT_FINDINGS_TITLE}</h3>
           <div className="space-y-3">
             {about.findings.map((finding) => (
               <div
@@ -124,9 +142,7 @@ export function AboutSection({
             ))}
           </div>
         </section>
-      ) : (
-        <p className="text-sm text-muted-foreground">{CATALOG_LAYOUT_CLEAN}</p>
-      )}
+      ) : null}
     </div>
   );
 }
