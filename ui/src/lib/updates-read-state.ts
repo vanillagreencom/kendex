@@ -65,24 +65,26 @@ export const rowUnsettled = (
   row: { scope: Scope },
 ): boolean => unsettled(state) || settlingIn(state, row);
 
-/** Why the package page has no Update for the place it names, or null when
- *  nothing withholds one.
+/** Why the update read withholds an Update for the place the package page
+ *  names, as a fact about the package — or null where it has no such fact.
  *
- *  The kind's refusal outranks the read, the way [`updateWithheld`] ranks
- *  it for the Updates table: core derives it from the kind alone, so it is
- *  why this place can never be updated one package at a time, where every
- *  other reason is why not right now. Told to check again instead, a
- *  person offline would retry something no successful check can win.
+ *  The kind's refusal outranks everything here, the way [`updateWithheld`]
+ *  ranks it for the Updates table: core derives it from the kind alone, so it
+ *  is why this place can never be updated one package at a time, where every
+ *  other reason is why not right now. Told to check again instead, a person
+ *  offline would retry something no successful check can win.
  *
- *  Then how the read went, which the row cannot say: a first read still on
- *  its way has not spoken for this place, and one that failed left the
- *  rows here last-known. A read merely running does not withhold a row
- *  that exists — the row is the last answer and still the truth about it.
+ *  A read that has not landed says nothing here. A first read still on its
+ *  way has not spoken for this place, and one that failed left the rows here
+ *  last-known — neither is a fact about the package, and what the read itself
+ *  is doing is [`updatesReadNote`]'s to say. A read merely running does not
+ *  withhold a row that exists: the row is the last answer and still the truth
+ *  about it.
  *
- *  Only a settled read may say the check never covered this place, which
- *  is [`unsettled`] and not the read status alone: a landed read with a
- *  focus reload or a Check in flight is a read about to speak, and calling
- *  its silence a fact is the blur `read-state.ts` forbids. */
+ *  Only a settled read may say the check never covered this place, which is
+ *  [`unsettled`] and not the read status alone: a landed read with a focus
+ *  reload or a Check in flight is a read about to speak, and calling its
+ *  silence a fact is the blur `read-state.ts` forbids. */
 export const packageUpdateNote = (
   state: PageState & { rows: UpdateRow[] },
   place: { kind: ItemKind; name: string; scope: Scope } | null,
@@ -95,10 +97,22 @@ export const packageUpdateNote = (
       sameScope(one.scope, place.scope),
   );
   if (row?.noPerPackageUpdate != null) return row.noPerPackageUpdate;
+  if (state.read.status !== "landed") return null;
+  if (row) return updateWithheld(row);
+  return unsettled(state) ? null : NO_UPDATE_STANDING_NOTE;
+};
+
+/** How the update read itself is standing, when that is all there is to say.
+ *
+ *  Kept apart from [`packageUpdateNote`] because it answers a different
+ *  question: this is the standing behind every package on the machine, not a
+ *  fact about the one on screen. `versions.ts` [`updateOffer`] ranks it last
+ *  for that reason — a check that has not finished must not stand in for a
+ *  read of this package that actually failed. */
+export const updatesReadNote = (state: PageState): string | null => {
   if (state.read.status === "pending") return UPDATES_CHECKING;
   if (state.read.status === "failed") return UPDATE_NEEDS_CHECK_HERE;
-  if (row) return updateWithheld(row);
-  return unsettled(state) ? UPDATES_CHECKING : NO_UPDATE_STANDING_NOTE;
+  return unsettled(state) ? UPDATES_CHECKING : null;
 };
 
 /** Every installed package that requires the one this place names, when

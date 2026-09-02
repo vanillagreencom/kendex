@@ -37,6 +37,7 @@ export function PackageActions({
   previewAvailable,
   withheldNote,
   onRetryRead,
+  retryRunning,
   busy,
   onUpdate,
   onPreview,
@@ -55,22 +56,19 @@ export function PackageActions({
    *  check in flight or a refusal to write does not stop anyone looking at
    *  what changed. */
   previewAvailable: boolean;
-  /** Why there is no Update here: the first reason either read behind the
-   *  page carries. The update read's own ranks first — a kind core never
-   *  brings current one package at a time, a read still pending or failed,
-   *  a place the read never covered, an edit of the reader's own
-   *  (`updates-read-state.ts` [`packageUpdateNote`]) — and where that says
-   *  nothing about this place, this page's own record and timeline reads
-   *  failing (`package-read-state.ts` [`packageReadNote`]). Rendered whenever
+  /** Why there is no Update here, already ranked: `versions.ts`
+   *  [`updateOffer`] picks it and owns the order. Rendered whenever
    *  `updateAvailable` is false and this is set. The page has other reasons
    *  to offer nothing, an unmappable installed commit among them, and those
    *  it does not word. */
   withheldNote?: string | null;
-  /** Read this package again, set only where the note above is this page's
-   *  own read failing. Absent for every reason the update read carries:
-   *  those are answered by a check or by the package's own state, so a
-   *  button there would ask for a read that changes nothing. */
+  /** Read this package again, set only where the note above is one reading
+   *  again can lift. */
   onRetryRead?: () => void;
+  /** Whether that read is out right now. The note stays put while it runs —
+   *  it is still the last answer — so the button is what says the page is
+   *  doing something about it. */
+  retryRunning?: boolean;
   busy: boolean;
   onUpdate: () => void;
   onPreview: () => void;
@@ -127,7 +125,12 @@ export function PackageActions({
           {/* A read that failed shows its error with a way to run it
               again; a reason no read can lift shows the reason alone. */}
           {onRetryRead ? (
-            <Button size="sm" variant="outline" onClick={onRetryRead}>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={retryRunning}
+              onClick={onRetryRead}
+            >
               {TRY_AGAIN_LABEL}
             </Button>
           ) : null}

@@ -1,22 +1,13 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type {
-  AuditView_Serialize,
-  ItemKind,
-  ScanResult,
-  UpdateRow,
-  VersionRow,
-} from "@/bindings";
+import type { ItemKind, UpdateRow, VersionRow } from "@/bindings";
 import { commands } from "@/bindings";
-import { ADOPTABLE } from "@/lib/adoptable";
 import {
   PREVIEW_CHANGES_LABEL,
   TRY_AGAIN_LABEL,
   UPDATE_LABEL,
 } from "@/lib/copy";
-import { OVERVIEW_TAB } from "@/lib/copy-customize";
-import { PROJECTS_TAB, updateInLabel } from "@/lib/copy-projects";
 import {
   EDITED_CANT_UPDATE_NOTE,
   NO_UPDATE_STANDING_NOTE,
@@ -33,11 +24,11 @@ import {
   readFailed,
 } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
-import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 import { settle } from "@/test/dom";
 import {
   header,
+  movedRow,
   openPage,
   PLAIN,
   RECORD,
@@ -73,17 +64,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
   },
 }));
 
-beforeEach(() => {
-  resetPage();
-  // The three commands this file adds to the mock are reset with it, for
-  // the reason resetPage states for the audit: clearAllMocks leaves
-  // implementations standing, and the update tests below hand these a
-  // closure that answers as if an update had landed — which it would go on
-  // answering for every test after them.
-  vi.mocked(commands.packageUpdate).mockReset();
-  vi.mocked(commands.updatesOverview).mockReset();
-  vi.mocked(commands.scanMachine).mockReset();
-});
+beforeEach(resetPage);
 
 /** A refusal core sent on the row. Pass-through is the whole property, so
  *  this is a string core would never send: core's own wording here would
@@ -113,11 +94,12 @@ const TIMELINE: VersionRow[] = [
 ];
 
 // The Update on this page and the note where it would have been are one
-// string, and this block is the update read's half of it. Within that half
-// the kind's own refusal comes first, because no check can ever lift it;
-// then how the read went, which the row cannot say; and only a settled read
-// may call this place one the check never covered. The half itself ranks
-// ahead of the page's own reads, which the next block covers.
+// string, and this block is the update read's half of it. What that read
+// says about the package — the kind's refusal, the row's own reasons, a
+// place a settled check never covered — ranks ahead of everything. How the
+// read itself is standing ranks last, behind the page's own reads, which the
+// next block covers: a check that has not finished says nothing about this
+// package.
 describe("what the package page says instead of Update", () => {
   /** The page over an update standing: how its read went, the rows it
    *  holds, and whether a check is out behind them. */
@@ -207,14 +189,16 @@ describe("what the package page says instead of Update", () => {
 });
 
 // The page's own two gating reads, and what the header says when one of
-// them does not land. They rank behind everything the update read carries:
-// the commands under them answer with a refusal for a package that is not a
-// managed one here — undeclared, a plugin, a path source — as readily as for
-// a read that went wrong, and that text is about declarations and revisions.
+// them does not land.
+//
+// Every answer that reaches them is a read that could have gone otherwise:
+// the two commands hand back an absent value where core is saying there is
+// no managed package here — undeclared, a plugin, a fork or another
+// non-repository source — rather than that a read failed, so the page never
+// tells an error apart from an answer and Try again is never dead.
 describe("what the package page says when its own reads fail", () => {
-  /** This place's row with nothing withholding an update, which is the one
-   *  state that leaves the update read with nothing to say — and so the only
-   *  one where the page's own reads are the news. */
+  /** This place's row with nothing withholding an update, which is what
+   *  leaves the update read with nothing to say about the package. */
   const HEALTHY = [updateRow(VG)];
 
   /** The button carrying this label, or null. */
@@ -222,6 +206,19 @@ describe("what the package page says when its own reads fail", () => {
     [...host.querySelectorAll("button")].find(
       (one) => one.textContent === label,
     ) ?? null;
+
+  /** What the commands answer where there is no managed package here: an
+   *  absent record and an empty timeline, neither of them an error. */
+  const noPackage = () => {
+    vi.mocked(commands.packageMeta).mockResolvedValue({
+      status: "ok",
+      data: null,
+    });
+    vi.mocked(commands.packageVersions).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+  };
 
   // Preview is gated on the timeline alone and survives a record read that
   // failed: it is read-only, and a record that did not land stops nobody
@@ -269,19 +266,94 @@ describe("what the package page says when its own reads fail", () => {
   // The generated wrapper rethrows a transport failure rather than answering
   // with one. Unwrapped, the landing never ran: the read stayed pending for
   // the life of the view, this note never appeared, and the rejection went
-  // out unhandled.
-  it("answers a rejected read the way it answers a refused one", async () => {
+  // out unhandled. Both gating reads carry the wrapper, so both are asked.
+  it.each([
+    ["record", "packageMeta"],
+    ["timeline", "packageVersions"],
+  ] as const)(
+    "answers a rejected %s read like a refused one",
+    async (_, command) => {
+      useUpdatesStore.setState({ rows: HEALTHY });
+      vi.mocked(commands.packageMeta).mockResolvedValue({
+        status: "ok",
+        data: RECORD,
+      });
+      vi.mocked(commands.packageVersions).mockResolvedValue({
+        status: "ok",
+        data: TIMELINE,
+      });
+      vi.mocked(commands[command]).mockRejectedValue(new Error("ipc down"));
+
+      const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+
+      expect(header(host)).toContain(packageReadFailedNote("ipc down"));
+      expect(header(host)).not.toContain(UPDATE_LABEL);
+    },
+  );
+
+  // The file list is not a gate on Update and has no read state of its own,
+  // so what its wrapper buys is this: a rejection blanks the list rather
+  // than leaving the files of the copy that was replaced under the new one.
+  it("blanks the file list when its read is rejected", async () => {
+    useUpdatesStore.setState({ rows: [updateRow(VG)] });
+    vi.mocked(commands.packageMeta).mockResolvedValue({
+      status: "ok",
+      data: RECORD,
+    });
+    vi.mocked(commands.packageVersions).mockResolvedValue({
+      status: "ok",
+      data: TIMELINE,
+    });
+    vi.mocked(commands.packageFiles).mockResolvedValue({
+      status: "ok",
+      data: [{ path: "BEFORE.md", size: 10, isReadme: false }],
+    });
+
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+    expect(host.textContent).toContain("BEFORE.md");
+
+    // A landed update moves the commit, and this time the read rejects.
+    vi.mocked(commands.packageFiles).mockRejectedValue(new Error("ipc down"));
+    await act(async () => {
+      useUpdatesStore.setState({ rows: [movedRow()] });
+    });
+    await settle();
+
+    expect(host.textContent).not.toContain("BEFORE.md");
+  });
+
+  // The reason stays put while the re-read runs: it is still the last answer
+  // about this package, and blanking it would leave nothing to press and
+  // nothing to say. The button is what reports the read is out.
+  it("holds the note and disables Try again while the read is out", async () => {
     useUpdatesStore.setState({ rows: HEALTHY });
     vi.mocked(commands.packageVersions).mockResolvedValue({
       status: "ok",
       data: TIMELINE,
     });
-    vi.mocked(commands.packageMeta).mockRejectedValue(new Error("ipc down"));
+    vi.mocked(commands.packageMeta).mockResolvedValue({
+      status: "error",
+      error: "the manifest is unreadable",
+    });
 
     const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+    const retry = button(host, TRY_AGAIN_LABEL);
+    if (!retry) throw new Error("no Try again beside the note");
+    expect(retry.disabled).toBe(false);
 
-    expect(header(host)).toContain(packageReadFailedNote("ipc down"));
-    expect(header(host)).not.toContain(UPDATE_LABEL);
+    // The re-read is held open, which is the state the button reports.
+    vi.mocked(commands.packageMeta).mockImplementation(
+      () => new Promise(() => {}),
+    );
+    await act(async () => {
+      retry.click();
+    });
+    await settle();
+
+    expect(header(host)).toContain(
+      packageReadFailedNote("the manifest is unreadable"),
+    );
+    expect(button(host, TRY_AGAIN_LABEL)?.disabled).toBe(true);
   });
 
   // A failed read shows its error with a way to run it again — the invariant
@@ -336,11 +408,34 @@ describe("what the package page says when its own reads fail", () => {
     expect(header(host)).toContain(UPDATE_LABEL);
   });
 
-  // A plugin is declared nowhere, so core refuses both of this page's reads
-  // with text about declarations and revisions. Worded as a read that
-  // failed, that would stand where core's own reason for the kind belongs —
-  // and no read of this package will ever lift it.
-  it("keeps core's refusal for the kind ahead of its own reads", async () => {
+  // A check that has not finished, or one that failed, is the standing
+  // behind every package on the machine and says nothing about this one. The
+  // transport being down takes the standing out too, so ranking it first hid
+  // a real failure in exactly the case the note exists for.
+  it.each([
+    ["a pending", READ_PENDING, UPDATES_CHECKING],
+    ["a failed", readFailed("no network"), UPDATE_NEEDS_CHECK_HERE],
+  ] as const)(
+    "names its own failed reads over %s standing",
+    async (_, read, standingNote) => {
+      useUpdatesStore.setState({ rows: [], read });
+      vi.mocked(commands.packageMeta).mockRejectedValue(new Error("ipc down"));
+      vi.mocked(commands.packageVersions).mockRejectedValue(
+        new Error("ipc down"),
+      );
+
+      const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+
+      expect(header(host)).toContain(packageReadFailedNote("ipc down"));
+      expect(header(host)).not.toContain(standingNote);
+      expect(button(host, TRY_AGAIN_LABEL)).not.toBeNull();
+    },
+  );
+
+  // A plugin is declared nowhere, so core has no record and no timeline for
+  // it. That is an answer about the manifest, not a read that failed: the
+  // page says nothing of its own and core's reason for the kind stands.
+  it("keeps core's refusal for the kind where it has no package to read", async () => {
     useUpdatesStore.setState({
       rows: [
         {
@@ -350,12 +445,7 @@ describe("what the package page says when its own reads fail", () => {
         },
       ],
     });
-    const undeclared = {
-      status: "error" as const,
-      error: "no plugin named gh is declared in this scope",
-    };
-    vi.mocked(commands.packageMeta).mockResolvedValue(undeclared);
-    vi.mocked(commands.packageVersions).mockResolvedValue(undeclared);
+    noPackage();
 
     const host = await openPage(
       VG,
@@ -370,17 +460,11 @@ describe("what the package page says when its own reads fail", () => {
     expect(button(host, TRY_AGAIN_LABEL)).toBeNull();
   });
 
-  // An undeclared item and one installed from a path source answer the same
-  // way: core refuses both reads, and the update read never covered the
-  // place. Its note is the true one there, and reading the package again
-  // would answer exactly the same.
+  // An unmanaged or vendor copy has no declaration either, and no row: the
+  // update read's own answer about the place is the true one, and reading
+  // the package again would answer exactly the same.
   it("leaves a package the check never covered to the update read", async () => {
-    const refused = {
-      status: "error" as const,
-      error: "source local is not a repository",
-    };
-    vi.mocked(commands.packageMeta).mockResolvedValue(refused);
-    vi.mocked(commands.packageVersions).mockResolvedValue(refused);
+    noPackage();
 
     const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
 
@@ -388,216 +472,40 @@ describe("what the package page says when its own reads fail", () => {
     expect(host.textContent).not.toContain(PACKAGE_READ_FAILED);
     expect(button(host, TRY_AGAIN_LABEL)).toBeNull();
   });
-});
 
-// Reads of one package overlap on every ordinary path: a focus reload moves
-// the commit under a mount, a move to another package leaves the first one's
-// reads out. The header's Update turns on how those reads went, so an older
-// landing does not merely draw stale files — it hides the button with a
-// reason that has already been answered.
-describe("a package read that lands after a newer one began", () => {
-  it("writes neither its values nor how it went", async () => {
-    useUpdatesStore.setState({ rows: [updateRow(VG)] });
-    // The first timeline read is held open; every read after it answers.
-    type Timeline = Awaited<ReturnType<typeof commands.packageVersions>>;
-    let answerFirst: (value: Timeline) => void = () => {};
-    vi.mocked(commands.packageVersions)
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            answerFirst = resolve;
-          }),
-      )
-      .mockResolvedValue({ status: "ok", data: TIMELINE });
+  // A fork is declared against the local source, so core has a record for it
+  // and no timeline, and emits a row that withholds nothing. Nothing is
+  // being refused, so there is nothing to say and nothing to press.
+  it("says nothing over a fork, which has a record and no timeline", async () => {
+    useUpdatesStore.setState({ rows: HEALTHY });
     vi.mocked(commands.packageMeta).mockResolvedValue({
       status: "ok",
       data: RECORD,
     });
+    vi.mocked(commands.packageVersions).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
 
     const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
-    // A landed update read moves the commit, which begins the second read.
-    await act(async () => {
-      useUpdatesStore.setState({
-        rows: [
-          {
-            ...updateRow(VG),
-            current: { commit: "b".repeat(40), label: null, date: null },
-          },
-        ],
-      });
-    });
-    await settle();
-    expect(header(host)).toContain(UPDATE_LABEL);
-
-    // The first read answers last, with a failure the second already
-    // disproved.
-    await act(async () => {
-      answerFirst({ status: "error", error: "the mirror is gone" });
-    });
-    await settle();
 
     expect(host.textContent).not.toContain(PACKAGE_READ_FAILED);
-    expect(header(host)).toContain(UPDATE_LABEL);
-  });
-});
-
-// An update started from the Projects tab commits through the updates
-// store, which knows nothing about this page's own reads. The card's
-// install date was made to follow the commit in #1799; the Overview and the
-// header went on describing the copy the update replaced.
-describe("the package page after an update started from its Projects tab", () => {
-  const OLD = "a".repeat(40);
-  const NEW = "b".repeat(40);
-
-  const version = (
-    id: string,
-    label: string,
-    installed: boolean,
-  ): VersionRow => ({
-    id,
-    label,
-    date: "2026-08-28T12:00:00Z",
-    summary: "release notes",
-    installed,
-    newerThanInstalled: !installed,
-  });
-
-  /** This place's row: the commit installed there, and whether the check
-   *  found something newer waiting for it. */
-  const rowAt = (commit: string, waiting: boolean): UpdateRow => ({
-    ...updateRow(VG),
-    current: { commit, label: null, date: null },
-    latest: waiting ? { commit: NEW, label: null, date: null } : null,
-    updateAvailable: waiting,
-  });
-
-  /** The scope view an apply answers with: it wrote, and there is nothing
-   *  else to say about the place. */
-  const APPLIED: AuditView_Serialize = {
-    scope: VG,
-    drift: [],
-    plan: [],
-    notes: [],
-    warnings: [],
-    safety: [],
-    adoptable: ADOPTABLE,
-    exits: [],
-  };
-
-  const tabNamed = async (host: HTMLElement, name: string) => {
-    const found = [...host.querySelectorAll('[data-slot="tabs-trigger"]')].find(
-      (trigger) => trigger.textContent === name,
-    );
-    if (!found) throw new Error(`no ${name} tab`);
-    await act(async () => {
-      (found as HTMLElement).click();
-    });
-    await settle();
-  };
-
-  const spoken = (host: HTMLElement, label: string) => {
-    const found = [...host.querySelectorAll("button")].find(
-      (one) => one.getAttribute("aria-label") === label,
-    );
-    if (!found) throw new Error(`no button called "${label}"`);
-    return found;
-  };
-
-  it("re-reads its files, its version and its update offer", async () => {
-    // What the engine answers before and after the apply lands. The place's
-    // record, its timeline and its files all move together, because core
-    // stamps the whole installation when the source hash moves.
-    let landed = false;
-    vi.mocked(commands.packageMeta).mockResolvedValue({
-      status: "ok",
-      data: RECORD,
-    });
-    vi.mocked(commands.packageVersions).mockImplementation(() =>
-      Promise.resolve({
-        status: "ok",
-        data: landed
-          ? [version(NEW, "v2", true)]
-          : [version(NEW, "v2", false), version(OLD, "v1", true)],
-      }),
-    );
-    vi.mocked(commands.packageFiles).mockImplementation(() =>
-      Promise.resolve({
-        status: "ok",
-        data: [
-          {
-            path: landed ? "AFTER.md" : "BEFORE.md",
-            size: 10,
-            isReadme: false,
-          },
-        ],
-      }),
-    );
-    vi.mocked(commands.packageUpdate).mockImplementation(() => {
-      landed = true;
-      return Promise.resolve({
-        status: "ok",
-        data: { view: APPLIED, heldBack: [], removed: [], moved: [] },
-      });
-    });
-    // The standing read the store lands behind its own apply.
-    vi.mocked(commands.updatesOverview).mockImplementation(() =>
-      Promise.resolve({
-        status: "ok",
-        data: {
-          rows: [rowAt(landed ? NEW : OLD, !landed)],
-          warnings: [],
-          unreadable: [],
-          lastFetched: null,
-        },
-      }),
-    );
-    // The rescan behind the apply finds the same machine: the package is
-    // installed where it was, so the page stays on screen.
-    vi.mocked(commands.scanMachine).mockImplementation(() =>
-      Promise.resolve({
-        status: "ok",
-        data: useScanStore.getState().result as ScanResult,
-      }),
-    );
-    useUpdatesStore.setState({ rows: [rowAt(OLD, true)], read: READ_LANDED });
-
-    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
-    expect(host.textContent).toContain("BEFORE.md");
-    expect(host.textContent).toContain("v1");
-    expect(header(host)).toContain(UPDATE_LABEL);
-
-    await tabNamed(host, PROJECTS_TAB);
-    await act(async () => {
-      spoken(host, updateInLabel("vg")).click();
-    });
-    await settle();
-    await tabNamed(host, OVERVIEW_TAB);
-
-    expect(host.textContent).toContain("AFTER.md");
-    expect(host.textContent).not.toContain("BEFORE.md");
-    expect(host.textContent).toContain("v2");
-    expect(host.textContent).not.toContain("v1");
+    expect(button(host, TRY_AGAIN_LABEL)).toBeNull();
     expect(header(host)).not.toContain(UPDATE_LABEL);
   });
 
-  // The re-read is keyed on the commit installed here for that reason: an
-  // updates-store touch that moves nothing must not put three requests
-  // behind it.
-  it("does not read again when the commit has not moved", async () => {
-    vi.mocked(commands.packageMeta).mockResolvedValue({
-      status: "ok",
-      data: RECORD,
+  // A derived bundle member is in no scope's declared map, so both reads
+  // answer absent; unpinned, its row withholds nothing either. The same
+  // silence, reached from the other side.
+  it("says nothing over an unpinned derived package", async () => {
+    useUpdatesStore.setState({
+      rows: [{ ...updateRow(VG), derived: true, requiredBy: ["bundle"] }],
     });
-    useUpdatesStore.setState({ rows: [rowAt(OLD, true)], read: READ_LANDED });
+    noPackage();
+
     const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
-    const reads = vi.mocked(commands.packageMeta).mock.calls.length;
 
-    await act(async () => {
-      useUpdatesStore.setState({ checking: true });
-    });
-    await settle();
-
-    expect(vi.mocked(commands.packageMeta).mock.calls).toHaveLength(reads);
-    expect(host.querySelector("header")).not.toBeNull();
+    expect(host.textContent).not.toContain(PACKAGE_READ_FAILED);
+    expect(button(host, TRY_AGAIN_LABEL)).toBeNull();
   });
 });

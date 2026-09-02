@@ -127,6 +127,13 @@ export const updateRow = (scope: Project): UpdateRow => ({
   noPerPackageUpdate: null,
 });
 
+/** This place after an update landed: the same row on a new commit, which is
+ *  what the page's own reads are keyed on. */
+export const movedRow = (): UpdateRow => ({
+  ...updateRow(VG),
+  current: { commit: "c".repeat(40), label: null, date: null },
+});
+
 /** The place's own record, as the page reads it: a following package with
  *  nothing held and nothing forked. */
 export const RECORD: PackageMeta_Serialize = {

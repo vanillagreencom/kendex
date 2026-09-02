@@ -16,6 +16,11 @@ export interface PackageReads {
   record: ReadState;
   /** The timeline Update moves along. */
   timeline: ReadState;
+  /** Whether the newest of these reads is still out. The last answer stays
+   *  on screen while it runs — a failure that has not been disproved is
+   *  still the truth about this package — so this is what says the reason
+   *  under it is being asked again rather than standing unattended. */
+  reading: boolean;
 }
 
 const failedNote = ({ status, error }: ReadState): string | null =>
@@ -25,13 +30,7 @@ const failedNote = ({ status, error }: ReadState): string | null =>
  *  null when they are not. Silent while they are pending: the page is still
  *  filling in, and a header note on every open is noise rather than news.
  *
- *  This is not the page's first reason and must never be ranked as one. The
- *  commands behind these reads answer with a refusal for a package that is
- *  not a managed one here as readily as for a read that went wrong — an
- *  undeclared item, a plugin, a path source — and that text is about
- *  declarations and revisions, not about a failure. [`updateOffer`] puts
- *  this behind everything the update read says for that reason: what is left
- *  is a declared package from a repository source whose kind plans one at a
- *  time, which is a read that genuinely did not land. */
+ *  Never the page's first reason. `versions.ts` [`updateOffer`] owns where
+ *  this ranks and why. */
 export const packageReadNote = (reads: PackageReads): string | null =>
   failedNote(reads.record) ?? failedNote(reads.timeline);

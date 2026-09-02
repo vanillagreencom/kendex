@@ -70,6 +70,10 @@ export function usePackageData(ref: PackageRef | null): {
   // came back with is the only thing that tells them apart.
   const [record, setRecord] = useState<ReadState>(READ_PENDING);
   const [timeline, setTimeline] = useState<ReadState>(READ_PENDING);
+  // Whether the newest load is still out. Counted here rather than read off
+  // the order below: one ticket covers three answers, and `outstanding` flips
+  // on the first of them to land, so it is not this order's question to ask.
+  const [reading, setReading] = useState(true);
   // One ticket per load, asked as each of its three answers arrives. Reads
   // of this package overlap on every ordinary path — a focus reload moving
   // the commit under a mount, a move to another package, the read-back
@@ -86,6 +90,17 @@ export function usePackageData(ref: PackageRef | null): {
   const load = useCallback(() => {
     if (!ref) return;
     const ticket = order.current.begin();
+    let left = 3;
+    setReading(true);
+    // Whether this answer is the newest load's to write, and the last of its
+    // three when it is. A superseded load never reaches its own count, so
+    // the load on screen is the only one that can say it has finished.
+    const lands = () => {
+      if (!order.current.lands(ticket)) return false;
+      left -= 1;
+      if (left === 0) setReading(false);
+      return true;
+    };
     // `settled` on all three: the generated wrapper rethrows a transport
     // failure rather than answering with one, and left raw the landing never
     // ran at all — the read stayed pending for the life of the view, the
@@ -93,20 +108,20 @@ export function usePackageData(ref: PackageRef | null): {
     // out unhandled.
     void settled(commands.packageMeta(ref.scope, ref.kind, ref.name)).then(
       (response) => {
-        if (!order.current.lands(ticket)) return;
+        if (!lands()) return;
         setMeta(response.status === "ok" ? response.data : null);
         setRecord(readOf(response));
       },
     );
     void settled(commands.packageFiles(ref.scope, ref.kind, ref.name)).then(
       (response) => {
-        if (!order.current.lands(ticket)) return;
+        if (!lands()) return;
         setFiles(response.status === "ok" ? response.data : []);
       },
     );
     void settled(commands.packageVersions(ref.scope, ref.kind, ref.name)).then(
       (response) => {
-        if (!order.current.lands(ticket)) return;
+        if (!lands()) return;
         setVersions(response.status === "ok" ? response.data : []);
         setTimeline(readOf(response));
       },
@@ -115,7 +130,7 @@ export function usePackageData(ref: PackageRef | null): {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the commit a landed update moves, not a value `load` closes over
   useEffect(load, [load, commit]);
-  return { meta, files, versions, reads: { record, timeline }, load };
+  return { meta, files, versions, reads: { record, timeline, reading }, load };
 }
 
 /** The diff behind a diff view, fetched when the view asks for one. The

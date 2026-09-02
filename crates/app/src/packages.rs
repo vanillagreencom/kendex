@@ -5,6 +5,7 @@
 use kendex_core::apply;
 use kendex_core::engine;
 use kendex_core::env::Env;
+use kendex_core::error::CoreError;
 use kendex_core::manifest;
 use kendex_core::model::{HarnessId, ItemKind, Scope};
 use kendex_core::package::{self, detail, diff};
@@ -17,6 +18,24 @@ pub mod update;
 
 use crate::scopes::env;
 
+/// Whether core is saying there is no managed package here for the page to
+/// describe, rather than that a read went wrong: nothing is declared under
+/// this name — a derived bundle member or dependency, an unmanaged or vendor
+/// copy — or the declaration binds to a source with no repository, which is
+/// every fork, path and local install.
+///
+/// Both are answers about the manifest, and asking again over the same
+/// manifest answers the same. The page draws what it has and says nothing;
+/// only a read that could have gone otherwise is worth a note and a retry
+/// there, so the two shells below hand those back as an absent value rather
+/// than as an error the page would have to tell apart from a real one.
+fn no_managed_package(error: &CoreError) -> bool {
+    matches!(
+        error,
+        CoreError::NotDeclared { .. } | CoreError::ItemRevUnsupported { .. }
+    )
+}
+
 #[tauri::command(async)]
 #[specta::specta]
 pub fn package_versions(
@@ -25,7 +44,12 @@ pub fn package_versions(
     name: String,
 ) -> Result<Vec<package::VersionRow>, String> {
     let env = env()?;
-    package::versions(&env, &scope, kind, &name).map_err(|e| e.to_string())
+    match package::versions(&env, &scope, kind, &name) {
+        Ok(rows) => Ok(rows),
+        // No timeline to draw, which an empty log already says.
+        Err(error) if no_managed_package(&error) => Ok(Vec::new()),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 #[tauri::command(async)]
@@ -187,13 +211,53 @@ pub fn package_readme(
     detail::package_readme(&env, &scope, kind, &name).map_err(|e| e.to_string())
 }
 
+/// `None` where this place has no managed package to describe — see
+/// [`no_managed_package`]. The CLI's own `show` keeps core's refusal: it was
+/// asked about one package and has nothing else to draw.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn package_meta(
     scope: Scope,
     kind: ItemKind,
     name: String,
-) -> Result<detail::PackageMeta, String> {
+) -> Result<Option<detail::PackageMeta>, String> {
     let env = env()?;
-    detail::package_meta(&env, &scope, kind, &name).map_err(|e| e.to_string())
+    match detail::package_meta(&env, &scope, kind, &name) {
+        Ok(meta) => Ok(Some(meta)),
+        Err(error) if no_managed_package(&error) => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kendex_core::model::ItemKind;
+
+    // The two the page draws nothing for and reports nothing about. Both are
+    // answers about the manifest: a derived member or an unmanaged copy is in
+    // no declared map, and a fork, path or local install has no repository to
+    // take revisions from.
+    #[test]
+    fn no_managed_package_covers_the_manifest_answers() {
+        assert!(no_managed_package(&CoreError::NotDeclared {
+            kind: ItemKind::Skill,
+            name: "gh".to_owned(),
+        }));
+        assert!(no_managed_package(&CoreError::ItemRevUnsupported {
+            source_name: "local".to_owned(),
+        }));
+    }
+
+    // Everything else is a read that went wrong, and the page says so with a
+    // way to run it again. A lock this build refuses is the case that must
+    // not be swallowed: it is the same shape as the two above and a real
+    // failure.
+    #[test]
+    fn a_read_that_failed_is_not_one_of_them() {
+        assert!(!no_managed_package(&CoreError::LockCorrupt {
+            path: "lock".into(),
+            message: "unparsable".to_owned(),
+        }));
+    }
 }

@@ -45,8 +45,7 @@ export const canUpdatePackage = (page: {
   metaLoaded: boolean;
   withheld: string | null;
 }): boolean =>
-  page.latest != null &&
-  !page.latest.installed &&
+  hasNewer(page.latest) &&
   page.installed != null &&
   page.metaLoaded &&
   page.withheld === null;
@@ -64,40 +63,51 @@ export interface UpdateOffer {
 /** The header's whole answer about Update, ranked once so the button and the
  *  note beside it can never disagree.
  *
- *  The update read answers first, on the terms it always had: core's refusal
- *  for the kind, a hold, an edit of the reader's own, a place no check
- *  covered (`updates-read-state.ts` [`packageUpdateNote`]). The page's own
- *  reads speak only into its silence (`package-read-state.ts`
- *  [`packageReadNote`]), which is a row that exists with nothing withholding
- *  it — a declared package from a repository source whose kind plans one at
- *  a time. That is the one state none of the permanent refusals core answers
- *  a page read with can reach, so a note from there is a read that went
- *  wrong rather than one of those worded as a failure.
+ *  Three reasons, ranked by what each is a fact about, because no order over
+ *  the words themselves can be right.
  *
- *  `timelineUnread` is why the rank alone is not enough: with no timeline
- *  there is no newer version, and a reason held behind newness would go
- *  unsaid exactly where the page knows least. Only a timeline that landed
- *  may say there is nothing to move to.
+ *  A fact about the package comes first (`updates-read-state.ts`
+ *  [`packageUpdateNote`]): core's refusal for the kind, a hold, an edit of
+ *  the reader's own, a place a settled check never covered. Those are
+ *  answers — true whatever any read does next.
  *
- *  Retry answers the page's own reads and nothing else: every reason the
- *  update read carries is answered by a check or by the package's own state,
- *  and a button there would ask for a read that changes nothing. */
+ *  Then this page's own reads (`package-read-state.ts` [`packageReadNote`]).
+ *  Every answer that reaches them is a read that could have gone
+ *  otherwise: the two commands hand back an absent value where core is
+ *  saying there is no managed package here rather than that a read failed
+ *  (`crates/app/src/packages.rs` `no_managed_package`), so the UI never
+ *  classifies an error and [`retry`] is live wherever this note is shown.
+ *
+ *  The update read's own standing comes last (`updates-read-state.ts`
+ *  [`updatesReadNote`]): a check still running or one that failed says
+ *  nothing about this package, and letting it speak first was how a real
+ *  failure of this page's reads went unsaid in exactly the correlated case —
+ *  the transport being down takes the standing out too.
+ *
+ *  `installed` and `latest` gate all of it: only a timeline showing the
+ *  installed version already at its newest is nothing to explain. No
+ *  timeline at all is not that — a kind core refuses, a fork, a read that
+ *  did not land — and a page silent there is an action bar with nothing on
+ *  it and nothing beside it. */
 export const updateOffer = (page: {
   latest: VersionRow | undefined;
   installed: VersionRow | undefined;
   metaLoaded: boolean;
-  /** Why the update read withholds one, or null when it does not. */
+  /** What the update read says about this package, or null. */
   withheld: string | null;
-  /** Why the page's own reads withhold one, or null when they do not. */
+  /** Why this page's own reads say there is no Update, or null. */
   readNote: string | null;
-  /** Whether the page's own timeline read did not land. */
-  timelineUnread: boolean;
+  /** How the update read itself is standing, or null. */
+  standing: string | null;
 }): UpdateOffer => {
-  const reason = page.withheld ?? page.readNote;
-  const said = hasNewer(page.latest) || page.timelineUnread ? reason : null;
+  const reason = page.withheld ?? page.readNote ?? page.standing;
+  // The button and the note come from the one string: whatever withholds an
+  // Update hides it, an unconfirmed standing included — acting on rows no
+  // read confirmed is the fail-open this closes.
+  const current = page.installed != null && !hasNewer(page.latest);
   return {
     can: canUpdatePackage({ ...page, withheld: reason }),
-    note: said,
-    retry: said !== null && page.withheld === null,
+    note: current ? null : reason,
+    retry: !current && page.withheld === null && page.readNote !== null,
   };
 };

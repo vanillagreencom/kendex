@@ -19,7 +19,11 @@ import { packageDisplayName } from "@/lib/labels";
 import { usePackageMark } from "@/lib/package-mark";
 import { vendorAt } from "@/lib/package-places";
 import { packageReadNote } from "@/lib/package-read-state";
-import { packageRequiredBy, packageUpdateNote } from "@/lib/updates-read-state";
+import {
+  packageRequiredBy,
+  packageUpdateNote,
+  updatesReadNote,
+} from "@/lib/updates-read-state";
 import {
   hasNewer,
   installedRow,
@@ -91,6 +95,9 @@ export function PackagePage() {
   // string, so this selector answers the same value on every render that
   // changes nothing.
   const withheld = useUpdatesStore((s) => packageUpdateNote(s, ref));
+  // How the update read itself is standing, which is about the machine
+  // rather than about this package. A string, for the same reason.
+  const standing = useUpdatesStore(updatesReadNote);
   // Why this package is installed when nobody asked for it: the package
   // that requires it, named. A string, so this selector answers the same
   // value on every render that changes nothing.
@@ -129,7 +136,7 @@ export function PackagePage() {
     metaLoaded: meta != null,
     withheld,
     readNote: packageReadNote(reads),
-    timelineUnread: reads.timeline.status === "failed",
+    standing,
   });
 
   // Every scope this package sits in, one at a time — each apply takes
@@ -202,6 +209,7 @@ export function PackagePage() {
             previewAvailable={hasNewer(latest) && installed != null}
             withheldNote={offer.note}
             onRetryRead={offer.retry ? reload : undefined}
+            retryRunning={reads.reading}
             busy={mutating}
             onUpdate={() => latest && updateToLatest(latest)}
             onPreview={() => latest && compare(latest)}
