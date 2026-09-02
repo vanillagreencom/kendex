@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { runCargo } from "../extensions/cargo.ts";
-import { readConfig, recordProjectTrust, rootAnchored } from "../extensions/config.ts";
+import { PROJECT_LOCK_FILE, PROJECT_MARKER_DIRS, projectRoot, readConfig, recordProjectTrust, rootAnchored } from "../extensions/config.ts";
 import piHooks from "../extensions/hooks.ts";
 import {
 	CONFIG_ID,
@@ -128,6 +128,17 @@ process.stdout.write(JSON.stringify(result ?? null));
 	});
 }
 
+/** `projectRoot` under a given HOME, in a child because homedir() reads the
+ * process's own environment. */
+function projectRootUnder(home: string, cwd: string): string | null {
+	const child = spawnSync(process.execPath, ["-e", `
+import { projectRoot } from ${JSON.stringify(join(import.meta.dir, "..", "extensions", "config.ts"))};
+process.stdout.write(JSON.stringify(projectRoot(process.argv[1]) ?? null));
+`, cwd], { encoding: "utf8", env: { ...process.env, HOME: home } });
+	if (child.status !== 0) throw new Error(child.stderr);
+	return JSON.parse(child.stdout) as string | null;
+}
+
 describe("pi-hooks root selection", () => {
 	test("a subdirectory session runs the project's guard, and an untrusted one runs nothing of the project's", async () => {
 		const project = initRustRepo("pi-hooks-subdir-");
@@ -155,22 +166,86 @@ describe("pi-hooks root selection", () => {
 		}
 	});
 
-	test("home is not the project, so a session outside one resolves to itself", () => {
-		const home = mkdtempSync(join(tmpdir(), "pi-hooks-home-"));
-		const session = join(home, "notes");
+	// The renderer walks for these and this reads from where it wrote. The
+	// current-project rule is `project_root_from`, which consults the marker
+	// directories and the lock file, not `is_project`'s MARKER_FILES.
+	test("the project markers are the renderer's, case for case", () => {
+		const crates = join(import.meta.dir, "..", "..", "..", "crates", "core", "src");
+		const discover = readFileSync(join(crates, "discover.rs"), "utf8");
+		const dirs = discover.match(/const MARKER_DIRS: \[&str; \d+\] = \[([\s\S]*?)\n\];/);
+		expect(dirs, "MARKER_DIRS not found in crates/core/src/discover.rs").not.toBeNull();
+		expect([...dirs![1]!.matchAll(/"([^"]+)"/g)].map(([, marker]) => marker)).toEqual([...PROJECT_MARKER_DIRS]);
+
+		const lock = readFileSync(join(crates, "lock.rs"), "utf8").match(/const LOCK_FILE: &str = "([^"]+)";/);
+		expect(lock, "LOCK_FILE not found in crates/core/src/lock.rs").not.toBeNull();
+		expect(lock![1]).toBe(PROJECT_LOCK_FILE);
+
+		// The walk tests each marker in the shape the renderer tests it in.
+		expect(discover).toContain("MARKER_DIRS.iter().any(|m| dir.join(m).is_dir())");
+		expect(discover).toContain("dir.join(crate::lock::LOCK_FILE).is_file()");
+	});
+
+	test("a vendored checkout inside a project does not stop the walk", async () => {
+		const project = initRustRepo("pi-hooks-vendor-");
+		const nested = join(project, "vendor", "nested");
+		const log = join(project, "payload.log");
 		try {
-			// The marker home carries for nearly everyone. Were home a project,
-			// every session outside one would resolve here and read ~/.pi.
-			mkdirSync(join(home, ".pi"), { recursive: true });
-			mkdirSync(session, { recursive: true });
-			const child = spawnSync(process.execPath, ["-e", `
-import { projectRoot } from ${JSON.stringify(join(import.meta.dir, "..", "extensions", "config.ts"))};
-process.stdout.write(JSON.stringify([projectRoot(${JSON.stringify(session)}), projectRoot(${JSON.stringify(home)})]));
-`], { encoding: "utf8", env: { ...process.env, HOME: home } });
-			expect(child.status, child.stderr).toBe(0);
-			expect(JSON.parse(child.stdout)).toEqual([realpathSync(session), realpathSync(home)]);
+			// Were `.git/` a marker the walk would stop here, find no script, and
+			// allow the command with an empty spawn log: every guard off, silently.
+			mkdirSync(join(nested, ".git"), { recursive: true });
+			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "pre-commit-check: refused", log });
+			const handler = installToolCallHandler();
+			const result = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(nested)) as { block?: boolean; reason?: string };
+			expect(result).toEqual({ block: true, reason: "pre-commit-check: refused" });
+			expect(readLog(log)).toContain("git commit -m x");
 		} finally {
-			rmSync(home, { recursive: true, force: true });
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	test("a `.pi` file is not a project, and a marked one below it still is", () => {
+		const outer = mkdtempSync(join(tmpdir(), "pi-hooks-shape-"));
+		try {
+			const inner = join(outer, "inner");
+			mkdirSync(join(inner, "deep"), { recursive: true });
+			writeFileSync(join(inner, ".pi"), "not a directory\n");
+			expect(projectRoot(join(inner, "deep"))).toBeUndefined();
+			mkdirSync(join(inner, ".claude"), { recursive: true });
+			expect(projectRoot(join(inner, "deep"))).toBe(realpathSync(inner));
+		} finally {
+			rmSync(outer, { recursive: true, force: true });
+		}
+	});
+
+	// Pi's global root lives under home, so a marker there must not make home the
+	// project: that would spawn ~/.pi/kendex/hooks/<name>.sh, which kendex never
+	// renders, and merge ~/.pi/settings.json over the kendex global scope. The
+	// lock file is the one exception, and the renderer's exception too.
+	test("home is not the project, spelled either way, and a session in it has none", () => {
+		const real = mkdtempSync(join(tmpdir(), "pi-hooks-home-"));
+		const link = join(mkdtempSync(join(tmpdir(), "pi-hooks-link-")), "home");
+		try {
+			symlinkSync(real, link, "dir");
+			mkdirSync(join(real, ".pi"), { recursive: true });
+			mkdirSync(join(real, "notes"), { recursive: true });
+
+			// Both spellings of one directory answer the same: `resolve` does not
+			// dereference symlinks, so a spelling comparison would miss on any
+			// machine whose home path carries one.
+			for (const home of [real, link]) {
+				expect(projectRootUnder(home, join(home, "notes"))).toBeNull();
+				expect(projectRootUnder(home, home)).toBeNull();
+			}
+
+			// The lock file wins wherever it stands, home included — the renderer's
+			// own rule, applied before it writes.
+			writeFileSync(join(real, PROJECT_LOCK_FILE), "{}\n");
+			for (const home of [real, link]) {
+				expect(projectRootUnder(home, join(home, "notes"))).toBe(realpathSync(real));
+			}
+		} finally {
+			rmSync(real, { recursive: true, force: true });
+			rmSync(dirname(link), { recursive: true, force: true });
 		}
 	});
 
@@ -227,9 +302,9 @@ process.stdout.write(JSON.stringify([projectRoot(${JSON.stringify(session)}), pr
 		}
 	});
 
-	// readConfig, not the guard: the same trust answer gates whether the
-	// project's own settings.json is merged, and every default is on, so a
-	// project read that should not have happened turns a guard off.
+	// readConfig, not the guard: the same answer gates merging the project's own
+	// settings.json, and every default is on, so a read that should not have
+	// happened turns a guard off.
 	test("the project's settings are read only where Pi trusts the project", () => {
 		const project = initRustRepo("pi-hooks-config-");
 		const nested = join(project, "crates");

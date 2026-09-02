@@ -12,8 +12,9 @@ const INSTALL_SYMBOL = Symbol.for("kendex.pi-hooks.installed");
 /**
  * Where kendex renders a Pi hook: `<project>/.pi/kendex/hooks/<name>.sh`, then
  * the global `<root-anchored PI_CODING_AGENT_DIR or ~/.pi/agent>/kendex/hooks/<name>.sh`.
- * The project is `projectRoot`, so a session started in a subdirectory finds
- * the same guards as one started at the repository root.
+ * The project is `projectRoot`, the renderer's own walk, so a session started
+ * in a subdirectory finds the guards rendered at the root above it, and a
+ * session in no project contributes no project scope at all.
  *
  * The project script is EXECUTED, so it is behind Pi's project trust: a clone
  * the person has not trusted must not get its own code run on the first bash
@@ -28,7 +29,8 @@ const INSTALL_SYMBOL = Symbol.for("kendex.pi-hooks.installed");
  */
 function renderedHook(name: string, ctx: ExtensionContext): string | undefined {
 	const roots: string[] = [];
-	if (projectTrusted(ctx)) roots.push(resolve(projectRoot(ctx.cwd), ".pi", "kendex"));
+	const project = projectTrusted(ctx) ? projectRoot(ctx.cwd) : undefined;
+	if (project !== undefined) roots.push(resolve(project, ".pi", "kendex"));
 	roots.push(resolve(piUserDir(), "kendex"));
 	return roots.map((root) => resolve(root, "hooks", `${name}.sh`)).find(existsSync);
 }

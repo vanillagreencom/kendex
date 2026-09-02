@@ -22,7 +22,7 @@ pi-extensions/pi-background-tasks/extensions/background-tasks.ts	965
 pi-extensions/pi-background-tasks/extensions/wake-events.ts	600
 pi-extensions/pi-background-tasks/package.json	421
 pi-extensions/pi-claude-bridge/src/assistant-stream.ts	729
-pi-extensions/pi-claude-bridge/src/config.ts	487
+pi-extensions/pi-claude-bridge/src/config.ts	486
 pi-extensions/pi-claude-bridge/src/connectors.ts	750
 pi-extensions/pi-claude-bridge/src/index.ts	1477
 pi-extensions/pi-claude-bridge/src/query-state.ts	771
@@ -33,7 +33,7 @@ pi-extensions/pi-codex-minimal-tools/src/provider-shim.ts	1933
 pi-extensions/pi-codex-minimal-tools/src/providers/openai-responses-shared.ts	831
 pi-extensions/pi-extension-manager/extensions/manager/manager-ui.ts	470
 pi-extensions/pi-extension-manager/extensions/manager/quick-settings-ui.ts	443
-pi-extensions/pi-output-policy/extensions/output-policy.ts	789
+pi-extensions/pi-output-policy/extensions/output-policy.ts	788
 pi-extensions/pi-output-policy/tests/output-policy.test.ts	881
 pi-extensions/pi-prompt-stash/extensions/prompt-stash.ts	479
 pi-extensions/pi-qol/extensions/qol.ts	983
@@ -43,7 +43,7 @@ pi-extensions/pi-qol/extensions/qol/session-search/component.ts	959
 pi-extensions/pi-qol/package.json	1007
 pi-extensions/pi-questions/extensions/questions.ts	1040
 pi-extensions/pi-session-bridge/extensions/event-sanitizer.ts	441
-pi-extensions/pi-session-bridge/extensions/session-bridge.ts	1055
+pi-extensions/pi-session-bridge/extensions/session-bridge.ts	1054
 pi-extensions/pi-session-manager/extensions/overlay.ts	970
 pi-extensions/pi-skills-manager/extensions/skills-manager/dialog.ts	463
 pi-extensions/pi-task-panel/extensions/task-panel.ts	1238

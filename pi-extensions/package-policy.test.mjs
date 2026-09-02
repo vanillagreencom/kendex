@@ -131,30 +131,39 @@ test("Pi extension TypeScript stays compatible with Node strip-only parsing", ()
 	assert.deepEqual(violations, []);
 });
 
-// The variable relocates the scope holding the person's own files, and every
-// package treats that scope as trusted without asking. A reader that takes the
-// raw value roots it at whichever directory the session sits in, so a checkout
-// supplies that package's settings — the read-side twin of spawning its script.
-// `crates/core/src/harness/pi.rs` is the rule; the pi-hooks suite proves the
-// carrier's copy of it against that source and exercises it end to end, and
-// this holds every other copy against being reverted to a bare read.
-//
-// The `scripts/append-system.mjs` install helpers are excluded and stay on the
-// raw value: they write APPEND_SYSTEM.md only into a directory that already
-// exists, at install time, and are held byte-identical by the case above.
-test("every Pi extension reads PI_CODING_AGENT_DIR through the root-anchored rule", () => {
-	const readers = [];
+// The variable relocates the scope holding the person's own files, which every
+// package trusts without asking, so a reader that takes the raw value lets a
+// checkout supply that package's settings. `crates/core/src/harness/pi.rs` is
+// the rule and the pi-hooks suite proves the carrier's copy against it; this
+// holds every other copy. Judged per read, not per file: one anchored reader
+// must not vouch for an unanchored one beside it, which is how a bare
+// `piAgentDir` survived. Comments are stripped, so leaving the name in one
+// satisfies nothing. The `scripts/append-system.mjs` install helpers are
+// excluded — they write only into a directory that already exists, at install
+// time, and the case above holds them byte-identical.
+test("every Pi extension read of PI_CODING_AGENT_DIR is root-anchored", () => {
+	const VARIABLE = "process.env.PI_CODING_AGENT_DIR";
+	const violations = [];
+	let reads = 0;
 	for (const { dir } of packages()) {
 		for (const file of tsFiles(join(root, dir), /\.(?:ts|mts|mjs|cjs|js)$/)) {
 			const relative = file.slice(root.length);
 			if (/(?:^|\/)(?:tests|test|__tests__)\//.test(relative) || relative.endsWith("scripts/append-system.mjs")) continue;
-			const source = readFileSync(file, "utf8");
-			if (!source.includes("process.env.PI_CODING_AGENT_DIR")) continue;
-			readers.push([relative, /rootAnchored\(/.test(source)]);
+			const source = readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[^\n]*?\/\/[^\n]*$/gm, "");
+			const occurrences = source.split(VARIABLE).length - 1;
+			if (occurrences === 0) continue;
+			reads += occurrences;
+			// Each read binds a name, and that name is what rootAnchored judges.
+			const bound = [...source.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=[^;]*?process\.env\.PI_CODING_AGENT_DIR[^;]*?;/g)].map(([, name]) => name);
+			if (bound.length !== occurrences) {
+				violations.push(`${relative}: ${occurrences} read(s) of the variable, ${bound.length} bound to a name`);
+			} else {
+				violations.push(...bound.filter((name) => !source.includes(`rootAnchored(${name},`)).map((name) => `${relative}: ${name} is not judged by rootAnchored`));
+			}
 		}
 	}
-	assert.ok(readers.length >= 20, `expected the sweep to reach every reader, found ${readers.length}`);
-	assert.deepEqual(readers.filter(([, anchored]) => !anchored).map(([relative]) => relative), []);
+	assert.ok(reads >= 20, `expected the sweep to reach every reader, found ${reads}`);
+	assert.deepEqual(violations, []);
 });
 
 test("every Pi extension carries a consumer-facing CHANGELOG.md", () => {

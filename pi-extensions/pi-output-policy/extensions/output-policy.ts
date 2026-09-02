@@ -151,11 +151,10 @@ function expandHome(input: string): string {
 	return input;
 }
 
-/** Root-anchored the way `crates/core/src/harness/pi.rs::pi_root_is_absolute_for`
- * means it: a drive or UNC share on Windows, a leading `/` on POSIX. Not
- * `isAbsolute`, which calls a driveless `\root` absolute where the renderer does
- * not, putting the two on different roots. Hoisted, not a const: a circular
- * import can reach this before a module-scope binding is initialized. */
+/** Root-anchored as `crates/core/src/harness/pi.rs::pi_root_is_absolute_for`
+ * means it, which `isAbsolute` is not: it calls a driveless `\root` absolute
+ * where the renderer does not, putting the two on different roots. Hoisted, so
+ * a circular import cannot reach it inside a temporal dead zone. */
 function rootAnchored(path: string, windows: boolean): boolean { return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith("/"); }
 
 function piUserDir(): string {

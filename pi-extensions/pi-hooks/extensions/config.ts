@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -63,36 +63,82 @@ export function piUserDir(): string {
 	return resolve(rootAnchored(override, process.platform === "win32") ? override : expandHome("~/.pi/agent"));
 }
 
-/** The directories that mark a project root, in the shape the sibling Pi
- * packages already walk for. */
-const PROJECT_MARKERS = [".pi", ".git", ".kendex-lock.json"] as const;
-
 /**
- * The project this session is in: the nearest ancestor of `cwd` carrying a
- * marker, `cwd` itself when none does.
+ * The renderer's own set, copied from `crates/core/src/discover.rs` MARKER_DIRS
+ * and `crates/core/src/lock.rs` LOCK_FILE, and held there by tests/hooks.test.ts.
+ * It has to be that set: the renderer decides where the guards are written and
+ * this decides where they are read, so a directory only one of them calls a
+ * project is a guard rendered at one root and looked for at another — a command
+ * allowed with nothing spawned and nothing said. `.git/` is not a marker, or a
+ * vendored checkout would stop the walk short of the root holding the guards.
  *
- * Home is not a project however it is marked — it carries `.pi/` for nearly
- * everyone, and Pi's own global root lives inside it. Walking rather than
- * taking `cwd` is what makes a session started in a subdirectory read the same
- * settings and run the same guards as one started at the repository root, which
- * is also how Pi answers trust: a saved decision applies to the folder or any
- * parent, saved in `~/.pi/agent/trust.json` (Pi's own security documentation).
+ * `is_project`'s MARKER_FILES list is deliberately not here. The current-project
+ * rule is `project_root_from` (its only caller is `current_project` in
+ * `crates/cli/src/commands/mod.rs`), and it reads the marker directories and the
+ * lock file alone; `is_project` answers which repositories a scan should offer.
  */
-export function projectRoot(cwd: string): string {
-	const start = resolve(cwd);
-	const home = resolve(homedir());
-	let current = start;
-	while (current !== home) {
-		if (PROJECT_MARKERS.some((marker) => existsSync(join(current, marker)))) return current;
-		const parent = dirname(current);
-		if (parent === current) break;
-		current = parent;
+export const PROJECT_MARKER_DIRS = [".claude", ".codex", ".opencode", ".cursor", ".pi", ".agents", ".gemini"] as const;
+export const PROJECT_LOCK_FILE = ".kendex-lock.json";
+
+/** A path with symlinks resolved, or its plain resolution when the filesystem
+ * cannot answer. The home test below is a comparison, so both ends have to be
+ * spelled the same way; `resolve` normalizes `.` and `..` and stops there. */
+function realpathOrResolve(path: string): string {
+	try {
+		return realpathSync(path);
+	} catch {
+		return resolve(path);
 	}
-	return start;
 }
 
-function projectSettingsPath(cwd: string): string {
-	return join(projectRoot(cwd), ".pi", "settings.json");
+/**
+ * The project this session is in, or `undefined` where it is in none —
+ * `crates/core/src/discover.rs::project_root_from`, which is what kendex asks
+ * before it renders anything: a `.kendex-lock.json` wins wherever it stands,
+ * home included, otherwise the nearest ancestor carrying a marker directory,
+ * and home itself is not a project however else it is marked. Home carries
+ * `.pi/` for nearly everyone, and Pi's own global root lives inside it.
+ *
+ * Walking rather than taking `cwd` is what makes a session started in a
+ * subdirectory read the same settings and run the same guards as one at the
+ * repository root — which is how Pi answers trust too: a saved decision applies
+ * to the folder or any parent, held in `~/.pi/agent/trust.json`.
+ */
+export function projectRoot(cwd: string): string | undefined {
+	const home = realpathOrResolve(homedir());
+	let current: string | undefined = realpathOrResolve(cwd);
+	while (current !== undefined) {
+		if (isFile(join(current, PROJECT_LOCK_FILE))) return current;
+		if (current !== home && PROJECT_MARKER_DIRS.some((marker) => isDir(join(current as string, marker)))) {
+			return current;
+		}
+		const parent = dirname(current);
+		current = parent === current ? undefined : parent;
+	}
+	return undefined;
+}
+
+/** A marker counts only in the shape the renderer tests for: `is_dir` for the
+ * directories, `is_file` for the lock. A `.pi` FILE is not a project. */
+function isDir(path: string): boolean {
+	try {
+		return statSync(path).isDirectory();
+	} catch {
+		return false;
+	}
+}
+
+function isFile(path: string): boolean {
+	try {
+		return statSync(path).isFile();
+	} catch {
+		return false;
+	}
+}
+
+function projectSettingsPath(cwd: string): string | undefined {
+	const root = projectRoot(cwd);
+	return root === undefined ? undefined : join(root, ".pi", "settings.json");
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -126,13 +172,16 @@ export function projectTrusted(ctx: { isProjectTrusted?: () => boolean }): boole
 
 export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () => boolean }): void {
 	if (!ctx.cwd) return;
+	const settings = projectSettingsPath(ctx.cwd);
+	if (settings === undefined) return;
 	const trusted = projectTrusted(ctx);
 	const registry = projectTrustRegistry();
 	if (!registry.projectSettings) registry.projectSettings = new Map();
-	registry.projectSettings.set(projectSettingsPath(ctx.cwd), trusted);
+	registry.projectSettings.set(settings, trusted);
 }
 
-function projectSettingsTrusted(settingsPath: string): boolean {
+function projectSettingsTrusted(settingsPath: string | undefined): boolean {
+	if (settingsPath === undefined) return false;
 	return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
 }
 
@@ -154,7 +203,7 @@ export function readConfig(cwd: string): kendexConfig {
 	const project = projectSettingsPath(cwd);
 	const paths = [
 		join(piUserDir(), "settings.json"),
-		...(projectSettingsTrusted(project) ? [project] : []),
+		...(project !== undefined && projectSettingsTrusted(project) ? [project] : []),
 	];
 	for (const path of paths) {
 		const parsed = loadJson(path) as

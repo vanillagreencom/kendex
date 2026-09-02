@@ -1,6 +1,7 @@
-//! How a path becomes text, and what a canonical root is.
+//! How a path becomes text, what a canonical root is, and how a typed `~`
+//! is expanded.
 //!
-//! Both questions have a per-platform answer from the standard library, and
+//! The first two have a per-platform answer from the standard library, and
 //! neither of those answers is the one kendex means, so both live here
 //! rather than at the sites that ask. Both rules are written as functions
 //! over a string with the platform's part passed in, so a Windows-shaped
@@ -31,6 +32,9 @@
 //! `std`'s Windows file layer puts the prefix back on any path it opens
 //! that runs past the legacy limit, so kendex's own reads and writes are
 //! unaffected by which spelling it holds.
+//!
+//! **A leading `~` a shell would have expanded is expanded here**, because
+//! the GUI has no shell in front of it. [`expand_tilde`] is that rule.
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
@@ -182,20 +186,16 @@ mod tests {
     #[test]
     fn tilde_expands_against_home_without_rewriting_other_paths() {
         let home = Path::new("/home/pat");
-        assert_eq!(expand_tilde(home, "~"), PathBuf::from("/home/pat"));
-        assert_eq!(
-            expand_tilde(home, "~/dev/hyprtrade"),
-            PathBuf::from("/home/pat/dev/hyprtrade")
-        );
-        assert_eq!(expand_tilde(home, "~alex/dev"), PathBuf::from("~alex/dev"));
-        assert_eq!(
-            expand_tilde(home, "dev/hyprtrade"),
-            PathBuf::from("dev/hyprtrade")
-        );
-        assert_eq!(
-            expand_tilde(home, "/opt/dev/hyprtrade"),
-            PathBuf::from("/opt/dev/hyprtrade")
-        );
+        for (input, want) in [
+            ("~", "/home/pat"),
+            ("~/dev/hyprtrade", "/home/pat/dev/hyprtrade"),
+            // `~user` names another account, so it is left alone.
+            ("~alex/dev", "~alex/dev"),
+            ("dev/hyprtrade", "dev/hyprtrade"),
+            ("/opt/dev/hyprtrade", "/opt/dev/hyprtrade"),
+        ] {
+            assert_eq!(expand_tilde(home, input), PathBuf::from(want), "{input}");
+        }
     }
 
     /// The spelling rule, driven with a Windows-shaped path on whatever

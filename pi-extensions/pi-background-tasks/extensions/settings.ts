@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, resolve  } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 
 import { CONFIG_ID } from "./constants.js";
 import type { kendexConfig } from "./types.js";
@@ -55,11 +55,10 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 	return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
 }
 
-/** Root-anchored the way `crates/core/src/harness/pi.rs::pi_root_is_absolute_for`
- * means it: a drive or UNC share on Windows, a leading `/` on POSIX. Not
- * `isAbsolute`, which calls a driveless `\root` absolute where the renderer does
- * not, putting the two on different roots. Hoisted, not a const: a circular
- * import can reach this before a module-scope binding is initialized. */
+/** Root-anchored as `crates/core/src/harness/pi.rs::pi_root_is_absolute_for`
+ * means it, which `isAbsolute` is not: it calls a driveless `\root` absolute
+ * where the renderer does not, putting the two on different roots. Hoisted, so
+ * a circular import cannot reach it inside a temporal dead zone. */
 function rootAnchored(path: string, windows: boolean): boolean { return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith("/"); }
 
 function piSettingsPaths(cwd = process.cwd()): string[] {
@@ -127,7 +126,7 @@ export function logFilePath(id: string, now: number = Date.now()): string {
 
 function piAgentDir(): string {
 	const configured = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
-	return isAbsolute(configured) ? resolve(configured) : join(homedir(), ".pi", "agent");
+	return rootAnchored(configured, process.platform === "win32") ? resolve(configured) : join(homedir(), ".pi", "agent");
 }
 
 export function taskEnv(): NodeJS.ProcessEnv {

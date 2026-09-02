@@ -189,33 +189,26 @@ mod tests {
 
     #[test]
     fn agent_dir_var_relocates_the_root() {
-        let env = Env::fake("/h", FakeOs::Linux);
-        assert_eq!(Pi.default_global_root(&env), PathBuf::from("/h/.pi/agent"));
-
-        assert_eq!(
-            Pi.default_global_root(&env.clone().with_var("PI_CODING_AGENT_DIR", "/pi-root")),
-            PathBuf::from("/pi-root")
-        );
-        for empty in ["", "   "] {
+        let base = Env::fake("/h", FakeOs::Linux);
+        for (value, root) in [
+            (None, "/h/.pi/agent"),
+            (Some("/pi-root"), "/pi-root"),
+            (Some(""), "/h/.pi/agent"),
+            (Some("   "), "/h/.pi/agent"),
+            (Some("~"), "/h"),
+            (Some("~/elsewhere"), "/h/elsewhere"),
+            (Some("relative/root"), "/h/.pi/agent"),
+        ] {
+            let env = match value {
+                Some(value) => base.clone().with_var("PI_CODING_AGENT_DIR", value),
+                None => base.clone(),
+            };
             assert_eq!(
-                Pi.default_global_root(&env.clone().with_var("PI_CODING_AGENT_DIR", empty)),
-                PathBuf::from("/h/.pi/agent")
+                Pi.default_global_root(&env),
+                PathBuf::from(root),
+                "{value:?}"
             );
         }
-        assert_eq!(
-            Pi.default_global_root(&env.clone().with_var("PI_CODING_AGENT_DIR", "~")),
-            PathBuf::from("/h")
-        );
-        assert_eq!(
-            Pi.default_global_root(&env.with_var("PI_CODING_AGENT_DIR", "~/elsewhere")),
-            PathBuf::from("/h/elsewhere")
-        );
-        assert_eq!(
-            Pi.default_global_root(
-                &Env::fake("/h", FakeOs::Linux).with_var("PI_CODING_AGENT_DIR", "relative/root")
-            ),
-            PathBuf::from("/h/.pi/agent")
-        );
     }
 
     #[test]

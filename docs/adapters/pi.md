@@ -14,11 +14,12 @@ allowlist is refused.
 kendex trims `PI_CODING_AGENT_DIR`, expands `~` against the configured home,
 and uses an override only when it is anchored to a named root: a drive or a
 UNC share on Windows, a leading `/` on POSIX. Empty, whitespace-only, relative
-and driveless-rooted values use `~/.pi/agent`. The standalone Pi packages read
-the variable the same way in their own `piUserDir()`, so no value of it can
-move a package's user scope into whichever directory the session sits in.
-`pi_root_is_absolute_for` in `crates/core/src/harness/pi.rs` is the rule, and
-the pi-hooks suite holds the carrier's copy against it case for case.
+and driveless-rooted values use `~/.pi/agent`. `pi_root_is_absolute_for` in
+`crates/core/src/harness/pi.rs` is the rule; every standalone Pi package reads
+the variable through its own copy, and the pi-hooks suite holds that copy
+against the Rust source case for case. So no value makes a package's user
+scope follow the session's directory implicitly — naming that directory
+outright still points it there, which is the person's own choice.
 
 Project markers: a `.pi/` or `.agents/` directory. Owner:
 `crates/core/src/harness/pi.rs`.
@@ -46,17 +47,21 @@ payload Claude Code sends a `PreToolUse` hook, and stops at the first
 nonzero status. Exit 2 is the refusal, and its stderr is what the agent
 reads. Every other nonzero status blocks as well, under a reason the carrier
 writes itself: a script exiting 1, a spawn that failed, and a run past the
-60s budget are all a guard that reached no verdict, and a guard that did not
-run does not stand aside. Only exit 0 reaches the next script, and stderr
-written beside it is an advisory for the person rather than the agent. So
-the three run the same bytes under Claude, Codex and Pi. It resolves the
-project the way the rest of the adapter does, from the nearest ancestor
-carrying a marker, and a project script runs only where Pi reports the
-workspace trusted, since spawning it executes what the project ships. Pi saves
-a trust decision for the folder or any parent, so that answer covers the tree
-and a session started in a subdirectory gets the same guards as one started at
-the root. Untrusted, the project contributes nothing and the global root still
-answers, because it holds the person's own files.
+hook budget (`hookTimeoutMs`, default 60s) are all a guard that reached no
+verdict, and a guard that did not run does not stand aside. Only exit 0
+reaches the next script, and stderr written beside it is an advisory for the
+person rather than the agent. So the three run the same bytes under Claude,
+Codex and Pi. It resolves the project with `discover.rs::project_root_from`,
+not this adapter's two-marker row above: the lock file wherever it stands, home
+included, else the nearest ancestor carrying one of the seven `MARKER_DIRS`,
+and home itself is never a project otherwise. That is what kendex asks before
+it renders, so the carrier reads from where the renderer wrote, and `.git/` is
+in neither list so a vendored checkout does not stop the walk. A project script
+runs only where Pi reports the workspace trusted, since spawning it executes
+what the project ships; Pi saves that decision for the folder or any parent, so
+a session in a subdirectory gets the same guards as one at the root. Untrusted
+or outside any project, the project scope contributes nothing and the global
+root still answers, because it holds the person's own files.
 A script the carrier finds at neither scope is a hook this project has not
 installed, and nothing runs.
 

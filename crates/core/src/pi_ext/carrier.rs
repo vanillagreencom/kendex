@@ -102,9 +102,7 @@ pub fn enforcement(env: &Env, scope: &Scope) -> Enforcement {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::env::FakeOs;
-    use std::fs;
+    use super::names_carrier;
 
     #[test]
     fn every_spelling_pi_loads_counts_and_lookalikes_do_not() {
@@ -129,26 +127,5 @@ mod tests {
         ] {
             assert!(!names_carrier(entry), "{entry}");
         }
-    }
-
-    #[test]
-    fn a_relative_override_does_not_move_global_carrier_presence() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().join(".pi/agent");
-        fs::create_dir_all(&root).unwrap();
-        fs::write(
-            root.join("settings.json"),
-            r#"{"packages":["@vanillagreen/pi-hooks"]}"#,
-        )
-        .unwrap();
-        let env =
-            Env::fake(tmp.path(), FakeOs::Linux).with_var("PI_CODING_AGENT_DIR", "relative/root");
-        assert_eq!(
-            presence(&env, &Scope::Global),
-            CarrierPresence {
-                project: false,
-                global: true,
-            }
-        );
     }
 }
