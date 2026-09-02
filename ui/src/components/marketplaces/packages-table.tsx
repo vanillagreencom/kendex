@@ -121,10 +121,16 @@ export function PackagesTable({
   // Only the page that shows the column reads the join, so the
   // cross-marketplace tab neither loads it nor re-renders on it.
   const provenance = useProvenanceStore((s) => (showPlaces ? s.rows : EMPTY));
-  const loadProvenance = useProvenanceStore((s) => s.load);
+  // `reload`, not `load`: this has to re-read, and it has to re-read when
+  // `entries` changes. An install replaces them, and nothing else refreshes
+  // this join — so without that dependency Status flips to Installed while
+  // the column beside it still shows where the package was before. Entries
+  // are memoized at the call site, so this is one read per install rather
+  // than one per render, and a table with no rows has nothing to explain.
+  const reloadProvenance = useProvenanceStore((s) => s.reload);
   useEffect(() => {
-    if (showPlaces) void loadProvenance();
-  }, [showPlaces, loadProvenance]);
+    if (showPlaces && entries.length > 0) void reloadProvenance();
+  }, [showPlaces, reloadProvenance, entries]);
 
   const ordered = useMemo(() => orderPackages(entries, sort), [entries, sort]);
   // One pass over the join for the whole table: per row it was a full scan

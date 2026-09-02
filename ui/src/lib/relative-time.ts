@@ -42,5 +42,13 @@ export function relativeTime(fromMs: number, toMs: number): string {
 
 /** The exact moment behind a `relativeTime` reading, for the `title` of the
  *  element showing it. ISO-8601 in UTC: the value behind these is a
- *  filesystem timestamp, which carries no zone of its own to preserve. */
-export const exactTime = (atMs: number): string => new Date(atMs).toISOString();
+ *  filesystem timestamp, which carries no zone of its own to preserve.
+ *
+ *  A moment nothing can read answers `undefined`, so the element renders
+ *  with no title rather than the caller having to remember: `toISOString`
+ *  THROWS on NaN, and these timestamps come from a lock and a catalog,
+ *  which is to say from strings nobody validated. The guard lives here
+ *  because every caller would otherwise carry a copy of it, and the one
+ *  that forgot crashed a page. */
+export const exactTime = (atMs: number): string | undefined =>
+  Number.isNaN(atMs) ? undefined : new Date(atMs).toISOString();

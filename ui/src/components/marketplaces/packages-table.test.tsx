@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
-import { act } from "react";
+import { act, useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type {
@@ -501,5 +501,41 @@ describe("re-sorting a marketplace's packages", () => {
       await userEvent.click(byName);
     });
     expect(names()).toEqual(["review", "apply"]);
+  });
+});
+
+// Nothing else refreshes the provenance join after an install: the scan and
+// the audit are re-read, this is not. So the read has to follow the rows it
+// explains, or Status flips to Installed while the column beside it still
+// names where the package was before.
+describe("the places join after an install changes the rows", () => {
+  it("reads it again when the entries change", async () => {
+    stub.scores = {};
+    const reload = vi.fn(async () => true);
+    useProvenanceStore.setState({ loaded: true, rows: [], reload });
+    // One tree, re-rendered — mounting a second one would run the effect
+    // whatever it depends on, and prove nothing about the dependency.
+    let swap: (entries: PackageEntry[]) => void = () => {};
+    function Harness() {
+      const [entries, setEntries] = useState<PackageEntry[]>([
+        { catalog, row, recordsUnreadable: false },
+      ]);
+      swap = setEntries;
+      return (
+        <PackagesTable
+          entries={entries}
+          showMarketplace={false}
+          subscription={{ catalog, repo: "a/b" }}
+        />
+      );
+    }
+    mountTree(<Harness />);
+    expect(reload).toHaveBeenCalledTimes(1);
+
+    // What an install leaves behind: the same table, fresh rows.
+    await act(async () => {
+      swap([{ catalog, row: { ...row }, recordsUnreadable: false }]);
+    });
+    expect(reload).toHaveBeenCalledTimes(2);
   });
 });
