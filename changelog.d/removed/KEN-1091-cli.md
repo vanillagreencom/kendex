@@ -1,0 +1,1 @@
+- **Breaking:** `dev-return-write --kind analysis` (use `fix` or `implement`), `workflow-state init --team` (drop it), and bare-numeric `workflow-state` keys (pass the `issue-N` key init got).

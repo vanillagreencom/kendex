@@ -1274,9 +1274,8 @@ echo "=== a failed emit_result never reports a successful gate ==="
 
 # The waiter must never exit 0 having written no result. emit_result builds the
 # --json object with `jq -n`, so this stub fails EXACTLY that call and passes
-# every parsing invocation through to the real jq — the emission fails while
-# the poll that reached the approved verdict succeeds, which is the shape a
-# closed downstream pipe or a jq/write failure produces in the field.
+# every parse through to the real jq: the emission fails while the poll that
+# reached the approved verdict succeeds — a closed pipe or a write failure.
 REAL_JQ="$(command -v jq)"
 cat > "$TMP_ROOT/bin/jq" <<EOF
 #!/usr/bin/env bash
@@ -1289,7 +1288,7 @@ EOF
 chmod +x "$TMP_ROOT/bin/jq"
 
 # run_approved_gate has two call sites, each of which must propagate a failed
-# emission. First: the reviewDecision site — GitHub reports the PR APPROVED.
+# emission. First: the reviewDecision site, GitHub reporting the PR APPROVED.
 stderr="$TMP_ROOT/emitfail.err"
 set +e
 output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
@@ -1311,9 +1310,10 @@ else
   FAIL=$((FAIL + 1))
   printf '  FAIL  %s\n        stdout: %s\n' "a failed emit_result at the reviewDecision gate site writes no result to stdout" "$output"
 fi
+assert_contains "$(cat "$stderr")" "could not emit the gate result" "the reviewDecision gate site names the emission failure on stderr"
 
-# Second: the latestReviews site — no reviewDecision, but a reviewer's latest
-# review is APPROVED. Each site reads the gate's status, disabling errexit.
+# Second: the latestReviews site — no reviewDecision, a reviewer's latest
+# review APPROVED. Each site reads the gate's status, disabling errexit.
 stderr="$TMP_ROOT/emitfail-gate.err"
 set +e
 output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
