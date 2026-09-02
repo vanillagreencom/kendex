@@ -13,6 +13,7 @@
 
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { defaultReadProcessIdentity, identityMatches } from "../extensions/snapshot.js";
 
 const children: number[] = [];
@@ -27,7 +28,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 describe("defaultReadProcessIdentity live (bash exec drift)", () => {
-	test("bash -c 'exec sleep N': pid + startToken stable, comm drifts bash->sleep, identityMatches stays true", async () => {
+	test("bash -c 'exec sleep N': pid + startToken stable across the exec, identityMatches stays true whether or not comm rotated", async () => {
 		// `exec sleep N` replaces the bash process image in place
 		// (execve(2) with no fork), so the kernel reports the same pid
 		// + same start time but a new /proc/<pid>/comm. This is the
@@ -42,9 +43,21 @@ describe("defaultReadProcessIdentity live (bash exec drift)", () => {
 
 		const spawnIdentity = defaultReadProcessIdentity(pid);
 		if (spawnIdentity === null) {
-			// /proc + ps both unavailable in this environment; there is
-			// nothing to observe, so the case ends here rather than
-			// asserting something it did not measure.
+			// A null is "the probe failed", not "this host cannot probe":
+			// defaultReadProcessIdentity also returns null on a malformed
+			// /proc/<pid>/stat, an absent starttime field, or a non-zero `ps`
+			// exit — regressions in the reader this case exists to gate. On
+			// Linux with the process still in /proc, the probe path is there,
+			// so a null is that defect and must fail rather than pass quietly.
+			if (process.platform === "linux" && existsSync(`/proc/${pid}`)) {
+				throw new Error(
+					`defaultReadProcessIdentity returned null for live pid ${pid} with /proc/${pid} present — the probe is broken, not the host`,
+				);
+			}
+			// No /proc and no working `ps`: nothing to observe. Say so, so a
+			// suite that has stopped exercising the reproducer is visible in
+			// the log instead of reading like a run that proved the fix.
+			console.log(`skip: no process-identity probe on ${process.platform} — the exec-drift reproducer did not run`);
 			return;
 		}
 
