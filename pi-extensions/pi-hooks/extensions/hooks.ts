@@ -1,11 +1,12 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isAbsolute, resolve } from "node:path";
 
-import { getBool, getNumber, type HookKey, readConfig, recordProjectTrust } from "./config.js";
+import { getBool, getNumber, type HookKey, projectRoot, projectTrusted, readConfig, recordProjectTrust } from "./config.js";
 import { deliverDrift, runDriftCheck } from "./drift-check.js";
 import { workspaceClippyOutcome } from "./lint-hooks.js";
 import { runCommandAsync } from "./process.js";
 import { type RegisteredHook, registeredHooks, TOOL_CALL_LISTENER } from "./registry.js";
+import { claudeToolInput, claudeToolName } from "./vocab.js";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-hooks.installed");
 
@@ -16,25 +17,31 @@ const INSTALL_SYMBOL = Symbol.for("kendex.pi-hooks.installed");
  * own with no script of ours behind it — has no toggle and rides the master
  * switch. An unrecognised name therefore runs, which is the direction a guard
  * has to fail in.
+ *
+ * A `Map`, not an object: a hook's name is its own file name, and an object
+ * would answer `toString`, `constructor` and six other inherited words with a
+ * function — truthy, so the lookup succeeds, `getBool` returns undefined for a
+ * setting `DEFAULTS` does not hold, and a hook named any of them is skipped in
+ * silence. tests/registry.test.ts renders one and holds it to refusing.
  */
-const GUARD_SETTINGS: Record<string, HookKey> = {
-	"block-bare-cd": "blockBareCd",
-	"block-repo-copy": "blockRepoCopy",
-	"pre-commit-check": "preCommitCheck",
-};
+const GUARD_SETTINGS = new Map<string, HookKey>([
+	["block-bare-cd", "blockBareCd"],
+	["block-repo-copy", "blockRepoCopy"],
+	["pre-commit-check", "preCommitCheck"],
+]);
+
+/** The guard names that surface has, for the coupling test and nothing else. */
+export const GUARD_SETTING_NAMES = [...GUARD_SETTINGS.keys()];
+
+/**
+ * Projects already told about a project registry their trust answer withheld.
+ * Once per session per project: the person decides trust once, and repeating
+ * it on every tool call would be noise about a state they chose.
+ */
+const WITHHELD_TOLD = new Set<string>();
 
 /** A `tool_call` verdict: `undefined` allows, `block` refuses with a reason. */
 type Verdict = { block: true; reason: string } | undefined;
-
-/**
- * The tool named the way a Claude Code hook payload names it, which is the way
- * a hook author writes a matcher: Pi's `bash` is that payload's `Bash`. Only
- * the case differs for the tools both name, and nothing but a hook reading
- * `.tool_name` sees it — the matcher itself is read case insensitively.
- */
-function payloadToolName(toolName: string): string {
-	return toolName.charAt(0).toUpperCase() + toolName.slice(1);
-}
 
 /**
  * Run one registered kendex hook and map its exit status.
@@ -65,12 +72,17 @@ function payloadToolName(toolName: string): string {
  *
  * The budget is the registration's own `timeout`, capped by `ceilingMs` —
  * `hookTimeoutMs` from settings, the same route the clippy and drift budgets
- * take. The bash hooks declare `timeout: 60` in their own frontmatter and
- * DEFAULTS matches it, so a rendered guard runs to the budget it asks for and
- * nothing runs past the person's own ceiling.
+ * take. Of the three rendered guards only `pre-commit-check` declares a
+ * `timeout` in its frontmatter, 60 seconds, which is what DEFAULTS holds; the
+ * other two ask for nothing and take the ceiling. So a rendered guard runs to
+ * the budget it asks for and nothing runs past the person's own.
+ *
+ * The refusals name `hook.label`, never the command: a command-bodied hook is
+ * text the person wrote in kendex.toml, it can hold a credential inline, and a
+ * reason is read by the model.
  */
 export async function runRegisteredHook(hook: RegisteredHook, payload: string, ctx: ExtensionContext, ceilingMs: number): Promise<Verdict> {
-	const name = hook.name || hook.command;
+	const name = hook.label;
 	const budgetMs = Math.min(hook.budgetMs ?? ceilingMs, ceilingMs);
 	const args = hook.script === undefined ? ["-c", hook.command] : [hook.script];
 	const result = await runCommandAsync("bash", args, ctx.cwd, budgetMs, payload);
@@ -141,24 +153,46 @@ export default function piHooks(pi: ExtensionAPI): void {
 	});
 
 	pi.on("tool_call", async (event, ctx: ExtensionContext) => {
-		recordProjectTrust(ctx);
-		const cfg = readConfig(ctx.cwd);
+		// Resolved once and threaded through. The walk is an ancestor stat per
+		// level, and trust, settings and the registries all want the same
+		// answer for one event.
+		const project = ctx.cwd ? projectRoot(ctx.cwd) : undefined;
+		recordProjectTrust(ctx, project);
+		const cfg = readConfig(ctx.cwd, project);
 		if (!getBool(cfg, "enabled")) return undefined;
 
 		// The registry kendex rendered is the list: every hook it names for
 		// this listener and this tool runs, in the order it names them, and
 		// the first refusal is the answer. Nothing here knows a hook's name in
-		// advance, which is what lets a custom hook run at all.
-		const registered = registeredHooks(TOOL_CALL_LISTENER, event.toolName, ctx);
-		if (registered.length === 0) return undefined;
+		// advance, which is what lets a custom hook run at all. The tool is
+		// named and its input keyed the way a hook was authored to read them.
+		const toolName = claudeToolName(event.toolName);
+		const registry = registeredHooks(TOOL_CALL_LISTENER, toolName, project, projectTrusted(ctx));
+
+		// A registry kendex wrote and this could not read is not the person
+		// standing their guards down, and these hooks are labelled enforced.
+		if (registry.unreadable !== undefined) {
+			return {
+				block: true,
+				reason: `pi-hooks: the rendered hook registry could not be read, so this command was not judged; a guard that did not run does not stand aside. ${registry.unreadable}`,
+			};
+		}
+		if (registry.withheld > 0 && project !== undefined && ctx.hasUI && !WITHHELD_TOLD.has(project)) {
+			WITHHELD_TOLD.add(project);
+			ctx.ui.notify(
+				`pi-hooks: ${registry.withheld} kendex hook(s) are installed in ${project} and are not running, because Pi does not report this workspace trusted. Trust it to arm them.`,
+				"warning",
+			);
+		}
+		if (registry.hooks.length === 0) return undefined;
 
 		const payload = JSON.stringify({
-			tool_name: payloadToolName(event.toolName),
-			tool_input: event.input ?? {},
+			tool_name: toolName,
+			tool_input: claudeToolInput(toolName, event.input),
 		});
 		const ceilingMs = getNumber(cfg, "hookTimeoutMs");
-		for (const hook of registered) {
-			const setting = GUARD_SETTINGS[hook.name];
+		for (const hook of registry.hooks) {
+			const setting = GUARD_SETTINGS.get(hook.name);
 			if (setting !== undefined && !getBool(cfg, setting)) continue;
 			const verdict = await runRegisteredHook(hook, payload, ctx, ceilingMs);
 			if (verdict) return verdict;

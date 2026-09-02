@@ -299,15 +299,23 @@ fn the_older_layout_beside_the_root_is_left_exactly_where_it_is() {
 }
 
 /// Is `bun` on PATH? The carrier is TypeScript, so the case below runs the
-/// real extension the way its own suite does. CI installs bun on the Linux
-/// cargo lane (`.github/workflows/skill-tests.yml`), which is where this is
-/// proven; a machine without it says so rather than failing.
+/// real extension the way its own suite does.
 fn bun_on_path() -> Option<std::path::PathBuf> {
     std::env::var_os("PATH").and_then(|path| {
         std::env::split_paths(&path)
             .map(|dir| dir.join("bun"))
             .find(|candidate| candidate.is_file())
     })
+}
+
+/// The lane that has to prove the case below rather than skip it: CI on
+/// Linux, where `.github/workflows/skill-tests.yml`'s `cargo-tests` job
+/// installs bun. Without this, deleting that one step turns KEN-941's only
+/// end-to-end proof into a permanent silent pass — cargo swallows the
+/// `eprintln!` of a passing test. macOS and Windows install no bun and skip.
+fn bun_is_required() -> bool {
+    cfg!(target_os = "linux")
+        && (std::env::var_os("GITHUB_ACTIONS").is_some() || std::env::var_os("CI").is_some())
 }
 
 /// End to end, KEN-475: a hook declared in `kendex.toml` fires under Pi.
@@ -321,6 +329,10 @@ fn bun_on_path() -> Option<std::path::PathBuf> {
 #[allow(clippy::unwrap_used)]
 fn a_declared_custom_hook_fires_through_the_carrier() {
     let Some(bun) = bun_on_path() else {
+        assert!(
+            !bun_is_required(),
+            "bun is not on PATH: restore the oven-sh/setup-bun step in the cargo-tests job of .github/workflows/skill-tests.yml, or this case proves nothing"
+        );
         eprintln!("skipped: bun is not on PATH, so the carrier cannot be run");
         return;
     };

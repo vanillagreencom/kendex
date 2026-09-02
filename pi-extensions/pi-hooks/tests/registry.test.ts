@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { GUARD_SETTING_NAMES } from "../extensions/hooks.ts";
 import { renderedName, TOOL_CALL_LISTENER } from "../extensions/registry.ts";
+import { claudeToolName, PI_BUILTIN_TOOLS } from "../extensions/vocab.ts";
 import {
 	CONFIG_ID,
 	initRustRepo,
@@ -10,6 +13,7 @@ import {
 	readLog,
 	registerRendered,
 	renderStub,
+	renderUserStub,
 	runGit,
 	trusted,
 	useIsolatedGitEnv,
@@ -95,7 +99,9 @@ describe("pi-hooks registry dispatch", () => {
 
 			writeFileSync(every, "");
 			await handler({ toolName: "read", input: { path: "/etc/hosts" } }, trusted(project));
-			expect(JSON.parse(readLog(reads))).toEqual({ tool_name: "Read", tool_input: { path: "/etc/hosts" } });
+			// Pi keys it `path`; the hook was authored against Claude Code's
+			// `file_path`, and that is what reaches it.
+			expect(JSON.parse(readLog(reads))).toEqual({ tool_name: "Read", tool_input: { file_path: "/etc/hosts" } });
 			expect(readLog(every)).not.toBe("");
 		} finally {
 			rmSync(project, { recursive: true, force: true });
@@ -155,4 +161,274 @@ describe("pi-hooks registry dispatch", () => {
 		// And a command of the person's that names one is not one of ours.
 		expect(renderedName('rg -n kendex/hooks/guard.sh .')).toBe("");
 	});
+});
+
+describe("pi-hooks registry dispatch: the path a rendered hook is spawned at", () => {
+	// The command kendex registers for a project hook spells its path
+	// `$(git rev-parse --show-toplevel)/.pi/…`. Running that command verbatim
+	// would ask git which project this is, and git answers the nested checkout
+	// — where kendex rendered nothing. The guard the project installed has to
+	// run anyway, so the path comes from the registry's own root.
+	test("a session inside a nested git checkout still runs the project's guard", async () => {
+		const project = initCleanRustRepo("pi-hooks-nested-");
+		const nested = join(project, "vendor", "dep");
+		const log = join(project, "nested.log");
+		try {
+			mkdirSync(nested, { recursive: true });
+			runGit(["init", "-q"], nested);
+			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "pre-commit-check: refused", log });
+			const handler = installToolCallHandler();
+			const refused = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(nested)) as { block?: boolean; reason?: string };
+			expect(refused).toEqual({ block: true, reason: "pre-commit-check: refused" });
+			expect(readLog(log)).toContain("git commit -m x");
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	// And a kendex project that is not a git repository at all: git has no
+	// answer to give, so a command run verbatim would refuse every call.
+	test("a project with no git runs its guard", async () => {
+		const project = mkdtempSync(join(tmpdir(), "pi-hooks-nogit-"));
+		const log = join(project, "nogit.log");
+		try {
+			mkdirSync(join(project, ".claude"), { recursive: true });
+			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "pre-commit-check: refused", log });
+			const handler = installToolCallHandler();
+			const refused = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { block?: boolean; reason?: string };
+			expect(refused).toEqual({ block: true, reason: "pre-commit-check: refused" });
+			expect(readLog(log)).toContain("git commit -m x");
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("pi-hooks registry dispatch: one installation runs once", () => {
+	test("the project's copy of a rendered guard answers, and the global copy does not", async () => {
+		const project = initCleanRustRepo("pi-hooks-shadow-");
+		const agentDir = mkdtempSync(join(tmpdir(), "pi-hooks-shadow-global-"));
+		const projectLog = join(project, "project.log");
+		const globalLog = join(agentDir, "global.log");
+		const savedAgentDir = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		try {
+			// The project's copy allows and the global one refuses, so the
+			// verdict says which ran: were both dispatched, the global copy
+			// would refuse a call the project's had already let through.
+			renderStub(project, "pre-commit-check", { exitCode: 0, log: projectLog });
+			renderUserStub(agentDir, "pre-commit-check", { exitCode: 2, stderr: "global copy refused", log: globalLog });
+			const handler = installToolCallHandler();
+			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project))).toBeUndefined();
+			expect(readLog(projectLog)).toContain("git commit -m x");
+			expect(readLog(globalLog)).toBe("");
+		} finally {
+			if (savedAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = savedAgentDir;
+			rmSync(project, { recursive: true, force: true });
+			rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
+	// Two commands of the person's own are two hooks: nothing but the command
+	// identifies them, so neither shadows the other.
+	test("two command-bodied hooks under one matcher both run", async () => {
+		const project = initCleanRustRepo("pi-hooks-two-custom-");
+		const first = join(project, "first.log");
+		const second = join(project, "second.log");
+		try {
+			const root = join(project, ".pi");
+			registerRendered(root, "tool_call", "Bash", customCommand(first, "first", 0));
+			registerRendered(root, "tool_call", "Bash", customCommand(second, "second", 0));
+			const handler = installToolCallHandler();
+			expect(await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project))).toBeUndefined();
+			expect(readLog(first)).not.toBe("");
+			expect(readLog(second)).not.toBe("");
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("pi-hooks registry dispatch: a registry that did not answer", () => {
+	// The rule this module already states for a hook: a guard that did not run
+	// does not stand aside. A registry is a file only kendex writes, so it not
+	// parsing is not the person standing their guards down — and this repo
+	// commits its own .pi/kendex/hooks.json, where a rebase leaves markers.
+	test("a registry that exists and cannot be read refuses the call", async () => {
+		const project = initCleanRustRepo("pi-hooks-unreadable-");
+		const registry = join(project, ".pi", "kendex", "hooks.json");
+		try {
+			renderStub(project, "pre-commit-check", { exitCode: 0, log: join(project, "unused.log") });
+			const handler = installToolCallHandler();
+			// The control: the same fixture, readable.
+			expect(await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project))).toBeUndefined();
+
+			for (const broken of ["<<<<<<< HEAD\n{}\n=======\n{}\n>>>>>>> main\n", '{"hooks": {"tool_call": [']) {
+				writeFileSync(registry, broken);
+				const refused = await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project)) as { block?: boolean; reason?: string };
+				expect(refused.block, broken).toBe(true);
+				expect(refused.reason).toContain("could not be read");
+				expect(refused.reason).toContain(registry);
+			}
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	// An absent registry is the one reading that allows: kendex has installed
+	// no hook here, and the package installs from npm on its own.
+	test("no registry at all allows the call", async () => {
+		const project = initCleanRustRepo("pi-hooks-absent-");
+		try {
+			const handler = installToolCallHandler();
+			expect(await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project))).toBeUndefined();
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	// An untrusted project's registry must not be able to stop the session:
+	// refusing on its parse failure would hand a clone nobody trusted a switch
+	// for every tool call.
+	test("an untrusted project's unreadable registry neither runs nor refuses", async () => {
+		const project = initCleanRustRepo("pi-hooks-untrusted-broken-");
+		try {
+			mkdirSync(join(project, ".pi", "kendex"), { recursive: true });
+			writeFileSync(join(project, ".pi", "kendex", "hooks.json"), "not json");
+			const handler = installToolCallHandler();
+			expect(await handler({ toolName: "bash", input: { command: "ls" } }, { cwd: project, isProjectTrusted: () => false })).toBeUndefined();
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("pi-hooks registry dispatch: names, matchers and budgets at their edges", () => {
+	// A hook's name is its own file name, so the settings lookup must not
+	// answer with what every object inherits. It did: `toString` resolved to a
+	// function, the setting read as off, and the guard was skipped in silence.
+	test("a guard named after an inherited property still runs", async () => {
+		const project = initCleanRustRepo("pi-hooks-proto-");
+		const log = join(project, "proto.log");
+		try {
+			for (const name of ["toString", "constructor", "hasOwnProperty"]) {
+				writeFileSync(log, "");
+				renderStub(project, name, { exitCode: 2, stderr: `${name}: refused`, log });
+				const handler = installToolCallHandler();
+				const refused = await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project)) as { block?: boolean; reason?: string };
+				expect(refused, name).toEqual({ block: true, reason: `${name}: refused` });
+				rmSync(join(project, ".pi", "kendex"), { recursive: true, force: true });
+			}
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	// Every guard the settings surface names one by one has to be a hook this
+	// catalog ships, or a toggle names nothing and a hook has no toggle.
+	test("every per-guard setting names a hook the commit-guards bundle carries", () => {
+		const manifest = readFileSync(join(import.meta.dir, "..", "..", "..", "kendex.toml"), "utf8");
+		const bundle = manifest.match(/\[bundles\.commit-guards\][\s\S]*?\nhooks = \[([\s\S]*?)\n\]/);
+		expect(bundle, "[bundles.commit-guards] hooks not found in kendex.toml").not.toBeNull();
+		const carried = [...bundle![1]!.matchAll(/"([^"]+)"/g)].map(([, name]) => name!);
+		expect(carried.length).toBeGreaterThan(3);
+		for (const name of GUARD_SETTING_NAMES) expect(carried, name).toContain(name);
+	});
+
+	test("an empty or star matcher runs for any tool, and one that will not compile judges the call", async () => {
+		const project = initCleanRustRepo("pi-hooks-matchers-");
+		try {
+			const root = join(project, ".pi");
+			for (const [matcher, log] of [["", "empty"], ["*", "star"], ["Bash[", "broken"]] as const) {
+				const path = join(project, `${log}.log`);
+				rmSync(join(root, "kendex"), { recursive: true, force: true });
+				registerRendered(root, "tool_call", matcher, customCommand(path, `${log} ran`, 0));
+				const handler = installToolCallHandler();
+				await handler({ toolName: "read", input: { path: "/etc/hosts" } }, trusted(project));
+				expect(readLog(path), matcher).not.toBe("");
+			}
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	test("a non-command registration never spawns, and a zero timeout takes the ceiling", async () => {
+		const project = initCleanRustRepo("pi-hooks-edges-");
+		const log = join(project, "edges.log");
+		try {
+			const root = join(project, ".pi");
+			const registry = join(root, "kendex", "hooks.json");
+			mkdirSync(join(root, "kendex"), { recursive: true });
+			writeFileSync(registry, JSON.stringify({
+				hooks: { tool_call: [{ matcher: "Bash", hooks: [{ type: "http", command: customCommand(log, "must not run", 2) }] }] },
+			}));
+			const handler = installToolCallHandler();
+			expect(await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project))).toBeUndefined();
+			expect(readLog(log)).toBe("");
+
+			// timeout: 0 asks for nothing, so the ceiling is the budget and the
+			// hook runs rather than being cut off at zero.
+			rmSync(join(root, "kendex"), { recursive: true, force: true });
+			registerRendered(root, "tool_call", "Bash", customCommand(log, "ran to the ceiling", 2), 0);
+			const refused = await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project)) as { reason?: string };
+			expect(refused.reason).toBe("ran to the ceiling");
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	// A refusal reaches the model, and a command-bodied hook's text is the
+	// person's — it can hold a credential written inline in kendex.toml.
+	test("a refusal names where a command-bodied hook is registered, never its text", async () => {
+		const project = initCleanRustRepo("pi-hooks-label-");
+		const secret = "kendex-941-inline-token";
+		try {
+			registerRendered(join(project, ".pi"), "tool_call", "Bash", `echo ${secret} > /dev/null; exit 3`);
+			const handler = installToolCallHandler();
+			const refused = await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project)) as { reason?: string };
+			expect(refused.reason).toContain("custom hook 1 in ");
+			expect(refused.reason).not.toContain(secret);
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	// Pi names its tools its own way and a matcher is authored in Claude's.
+	// A case fold is not that map: `find` is `Glob`, `ls` is `LS`.
+	test("Pi's tool names are said the way a matcher writes them", () => {
+		const vocab = readFileSync(join(import.meta.dir, "..", "..", "..", "crates", "core", "src", "render", "vocab", "mod.rs"), "utf8");
+		const body = vocab.match(/pub fn claude_tool_name\(tool: &str\) -> String \{([\s\S]*?)\n\}/);
+		expect(body, "claude_tool_name not found in crates/core/src/render/vocab/mod.rs").not.toBeNull();
+		const arms = new Map<string, string>();
+		for (const [, names, claude] of body![1]!.matchAll(/((?:"[a-z]+"\s*\|\s*)*"[a-z]+")\s*=> "([A-Za-z]+)"\.into\(\)/g)) {
+			for (const [, name] of names!.matchAll(/"([a-z]+)"/g)) arms.set(name!, claude!);
+		}
+		expect(arms.get("find"), `arms read: ${[...arms].join(",")}`).toBe("Glob");
+		for (const tool of PI_BUILTIN_TOOLS) {
+			// An unmapped built-in keeps its own id, the Rust fallthrough.
+			expect(claudeToolName(tool), tool).toBe(arms.get(tool) ?? tool);
+		}
+	});
+});
+
+// Trust withholds a project's hooks; saying nothing leaves that reading as
+// "kendex installed none here", which is the one thing it is not.
+test("an untrusted project's withheld hooks are named once, not on every call", async () => {
+	const project = initCleanRustRepo("pi-hooks-withheld-");
+	const notices: string[] = [];
+	try {
+		renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "must not run", log: join(project, "withheld.log") });
+		const handler = installToolCallHandler();
+		const ctx = { cwd: project, isProjectTrusted: () => false, hasUI: true, ui: { notify: (message: string) => notices.push(message) } };
+		expect(await handler({ toolName: "bash", input: { command: "ls" } }, ctx)).toBeUndefined();
+		expect(notices).toHaveLength(1);
+		expect(notices[0]).toContain("not running");
+		expect(notices[0]).toContain(project);
+
+		await handler({ toolName: "bash", input: { command: "ls" } }, ctx);
+		expect(notices).toHaveLength(1);
+	} finally {
+		rmSync(project, { recursive: true, force: true });
+	}
 });

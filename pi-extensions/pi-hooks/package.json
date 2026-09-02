@@ -1,7 +1,7 @@
 {
   "name": "@vanillagreen/pi-hooks",
   "version": "0.9.0",
-  "description": "The carrier that runs kendex's hooks under Pi: it dispatches the rendered kendex/hooks.json registry, so every hook kendex installs for Pi fires — the bash guards it renders and a custom hook of your own alike — and adds end-of-turn lint and a session-start kendex drift report. Per-hook toggles via pi-extension-manager.",
+  "description": "The carrier that runs kendex's PreToolUse hooks under Pi: on a tool call it dispatches the rendered kendex/hooks.json registry, so the bash guards kendex renders and a custom hook of your own both fire, and it adds end-of-turn lint and a session-start kendex drift report. Per-hook toggles via pi-extension-manager.",
   "license": "MIT",
   "keywords": [
     "pi-package",

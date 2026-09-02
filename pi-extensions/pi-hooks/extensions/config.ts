@@ -136,9 +136,8 @@ function isFile(path: string): boolean {
 	}
 }
 
-function projectSettingsPath(cwd: string): string | undefined {
-	const root = projectRoot(cwd);
-	return root === undefined ? undefined : join(root, ".pi", "settings.json");
+function projectSettingsPath(project: string | undefined): string | undefined {
+	return project === undefined ? undefined : join(project, ".pi", "settings.json");
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -170,9 +169,14 @@ export function projectTrusted(ctx: { isProjectTrusted?: () => boolean }): boole
 	}
 }
 
-export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () => boolean }): void {
+/**
+ * `project` is the caller's already-resolved project root, since the walk that
+ * finds it costs an ancestor `stat` per level and a `tool_call` needs the same
+ * answer three times over. Omitted, it is resolved from `ctx.cwd`.
+ */
+export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () => boolean }, project?: string | undefined): void {
 	if (!ctx.cwd) return;
-	const settings = projectSettingsPath(ctx.cwd);
+	const settings = projectSettingsPath(project === undefined ? projectRoot(ctx.cwd) : project);
 	if (settings === undefined) return;
 	const trusted = projectTrusted(ctx);
 	const registry = projectTrustRegistry();
@@ -195,11 +199,12 @@ function loadJson(path: string): unknown {
 
 /**
  * Merge config from user-level `.pi/settings.json` and the project-level
- * settings file resolved from `cwd`. Project keys win.
+ * settings file. Project keys win. `projectDir` is the caller's already
+ * resolved project root, for the same reason `recordProjectTrust` takes one.
  */
-export function readConfig(cwd: string): kendexConfig {
+export function readConfig(cwd: string, projectDir?: string | undefined): kendexConfig {
 	const merged: kendexConfig = {};
-	const project = projectSettingsPath(cwd);
+	const project = projectSettingsPath(projectDir === undefined ? projectRoot(cwd) : projectDir);
 	const paths = [
 		join(piUserDir(), "settings.json"),
 		...(project !== undefined && projectSettingsTrusted(project) ? [project] : []),

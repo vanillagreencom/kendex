@@ -52,7 +52,7 @@ Notes:
 - ‡Gemini records MCP server state in one machine-wide file, so a project can declare a server but not switch it off there.
 - ‡Gemini extensions install globally and switch on through an undocumented file, so they stay read-only.
 - §kendex manages Pi hooks at both scopes like any other surface; the `pi-hooks` extension is what makes Pi run them, and without it registered they are only instructions Pi can ignore.
-- `●` marks what kendex manages, not what the tool executes: OpenCode and Cursor have no hook runtime, so a hook installed there is instructions rather than a gate.
+- `●` marks what kendex manages, not what the tool executes: OpenCode has no hook runtime, and kendex writes Cursor a rule rather than a registration, so a hook installed on either is instructions rather than a gate.
 
 ## Install
 

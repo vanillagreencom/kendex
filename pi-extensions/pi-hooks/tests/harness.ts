@@ -40,7 +40,16 @@ export function writePiConfig(project: string): void {
 /* Git reads no config of the developer's here: a global core.hooksPath would
  * disarm every fixture, and a global init.templateDir can leave git init
  * without the hooks directory the fixtures write into. Each suite calls this
- * once, because bun's beforeAll is per file. */
+ * once, because bun's beforeAll is per file.
+ *
+ * GIT_DIR, GIT_COMMON_DIR, GIT_WORK_TREE and GIT_INDEX_FILE are cleared
+ * together, the rule AGENTS.md states: a suite run from a git hook context
+ * inherits them, and every `git init`, `git add` and `git commit` a fixture
+ * makes would then land in the real repository's index rather than the
+ * temporary one it just created. Clearing three of the four leaves the same
+ * hole. */
+const CLEARED = ["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"] as const;
+
 export function useIsolatedGitEnv(): void {
 	const isolatedEnv: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 	const savedEnv: Record<string, string | undefined> = {};
@@ -48,6 +57,10 @@ export function useIsolatedGitEnv(): void {
 		for (const [name, value] of Object.entries(isolatedEnv)) {
 			savedEnv[name] = process.env[name];
 			process.env[name] = value;
+		}
+		for (const name of CLEARED) {
+			savedEnv[name] = process.env[name];
+			delete process.env[name];
 		}
 	});
 	afterAll(() => {

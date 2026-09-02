@@ -474,9 +474,10 @@ lives in one capability table read by core and UI.
   kendex renders beside them (`kendex/hooks/<name>.sh` plus
   `kendex/hooks.json`, keyed by Pi's listener names — tool call, tool
   result, turn end, session start). That registry is the carrier's list:
-  it dispatches what the file names for the tool being called, so a
-  `[[custom-hooks]]` command — which has no file and exists nowhere else —
-  fires as a catalog guard does. Pi reserves `hooks/` beside every root
+  it dispatches what the `tool_call` key names for the tool being called, so
+  a `[[custom-hooks]]` command — which has no file and exists nowhere else —
+  fires as a catalog guard does. The other three listener keys are rendered
+  and not dispatched, so only a `PreToolUse` hook runs. Pi reserves `hooks/` beside every root
   it loads, so storage sits under `kendex/` and nothing reads or writes a
   registry beside the root — [docs/adapters/pi.md](adapters/pi.md) carries
   the rules in full. The capability row says what the mechanism supports;

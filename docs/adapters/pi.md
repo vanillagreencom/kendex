@@ -44,8 +44,10 @@ them, and hook content rides in the registry kendex renders beside it —
 listener names (`pi_listener`: tool call, tool result, turn end, session
 start). An event outside that map installs nothing on Pi, said as a note.
 
-The registry is the carrier's list. On a `tool_call` it reads the
-`tool_call` key of each scope's `kendex/hooks.json` and runs every
+The registry is the carrier's list, and `tool_call` is the only key it
+reads: a hook kendex maps onto `tool_result`, `turn_end` or `session_start`
+is registered and labelled enforced and does not fire. On a `tool_call` it
+reads the `tool_call` key of each scope's `kendex/hooks.json` and runs every
 registration whose `matcher` covers the tool, in the order the file names
 them, with the payload Claude Code sends a `PreToolUse` hook — so a catalog
 guard and a `[[custom-hooks]]` command of the person's own both fire, and
@@ -53,15 +55,22 @@ the carrier knows no hook's name in advance. A custom hook has no file at
 all (`HookBody::Command` is registered verbatim), so the registry is the
 only place it exists; a carrier spelling out script names reported it
 enforced and ran nothing (KEN-941). Absent, empty and `*` matchers cover
-every tool; anything else is a whole-string regex read case insensitively,
-since kendex writes the matcher in the hook author's words (`Bash`) and Pi
-names the tool in its own (`bash`).
+every tool.
+
+The tool is named, and its input keyed, the way the hook was authored to
+read them — `render::vocab::claude_tool_name`, so Pi's `find` is `Glob` and
+the `path` of a `read` reaches the hook as `file_path`. A matcher is a
+whole-string regex over that name, with Claude Code's own flags; one that
+will not compile judges the call rather than being skipped.
 
 Exit 2 is the refusal, and its stderr is what the agent reads. Every other
 nonzero status blocks as well, under a reason the carrier writes itself: a
-hook exiting 1, a spawn that failed, and a run past its budget are all a
-guard that reached no verdict, and a guard that did not run does not stand
-aside. That budget is the registration's own `timeout`, capped by the
+hook exiting 1, a spawn that failed, a run past its budget, and a registry
+that exists and could not be read are all a guard that reached no verdict,
+and a guard that did not run does not stand aside. Only an absent registry
+allows, because that is kendex having installed nothing here. A refusal
+names a command-bodied hook by where it is registered rather than by its
+text, which is the person's and can hold a secret inline. That budget is the registration's own `timeout`, capped by the
 `hookTimeoutMs` setting (default 60s). Only exit 0 reaches the next
 registration, and stderr written beside it is an advisory for the person
 rather than the agent.
@@ -87,7 +96,11 @@ only where Pi reports the workspace trusted, since running what it names
 executes what the project ships; Pi saves that decision for the folder or any
 parent, so a session in a subdirectory gets the same hooks as one at the root.
 Untrusted or outside any project, the project scope contributes nothing and the
-global root still answers, because it holds the person's own files.
+global root still answers, because it holds the person's own files; an
+untrusted project whose registry does name hooks is said once per session
+through the UI, since silence there reads as no hooks installed. That
+registry's own failure to parse is never carried, or a clone nobody trusted
+could stop every tool call in the session.
 A registry naming nothing for a call is a hook this project has not
 installed, and nothing runs.
 
