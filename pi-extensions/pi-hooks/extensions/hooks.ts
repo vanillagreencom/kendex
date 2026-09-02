@@ -1,78 +1,79 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
-import { getBool, getNumber, piUserDir, projectRoot, projectTrusted, readConfig, recordProjectTrust } from "./config.js";
+import { getBool, getNumber, type HookKey, readConfig, recordProjectTrust } from "./config.js";
 import { deliverDrift, runDriftCheck } from "./drift-check.js";
 import { workspaceClippyOutcome } from "./lint-hooks.js";
 import { runCommandAsync } from "./process.js";
+import { type RegisteredHook, registeredHooks, TOOL_CALL_LISTENER } from "./registry.js";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-hooks.installed");
 
 /**
- * Where kendex renders a Pi hook: `<project>/.pi/kendex/hooks/<name>.sh`, then
- * the global `<root-anchored PI_CODING_AGENT_DIR or ~/.pi/agent>/kendex/hooks/<name>.sh`.
- * The project is `projectRoot`, the renderer's own walk, so a session started
- * in a subdirectory finds the guards rendered at the root above it, and a
- * session in no project contributes no project scope at all.
- *
- * The project script is EXECUTED, so it is behind Pi's project trust: a clone
- * the person has not trusted must not get its own code run on the first bash
- * call of the session. Pi's answer covers the folder and its ancestors alike —
- * a saved decision applies to the folder or any parent — so it is the answer
- * for this tree, not for one directory in it. Untrusted, the project root is
- * skipped and the global root still answers: the person's own scripts are not
- * the project's.
- *
- * A name neither root holds is a hook kendex has not installed here, and the
- * caller allows the command. runRenderedHook says why that is the right answer.
+ * The rendered guards the settings surface names one by one. A registration
+ * running one of them is armed by its own setting; everything else the
+ * registry names — a custom hook above all, which is a command of the person's
+ * own with no script of ours behind it — has no toggle and rides the master
+ * switch. An unrecognised name therefore runs, which is the direction a guard
+ * has to fail in.
  */
-function renderedHook(name: string, ctx: ExtensionContext): string | undefined {
-	const roots: string[] = [];
-	const project = projectTrusted(ctx) ? projectRoot(ctx.cwd) : undefined;
-	if (project !== undefined) roots.push(resolve(project, ".pi", "kendex"));
-	roots.push(resolve(piUserDir(), "kendex"));
-	return roots.map((root) => resolve(root, "hooks", `${name}.sh`)).find(existsSync);
-}
+const GUARD_SETTINGS: Record<string, HookKey> = {
+	"block-bare-cd": "blockBareCd",
+	"block-repo-copy": "blockRepoCopy",
+	"pre-commit-check": "preCommitCheck",
+};
 
 /** A `tool_call` verdict: `undefined` allows, `block` refuses with a reason. */
 type Verdict = { block: true; reason: string } | undefined;
 
 /**
- * Run one rendered kendex hook on a bash command and map its exit status.
- *
- * The scripts under `.pi/kendex/hooks/` are the hooks — the same bytes Claude
- * Code and Codex run — and this spawns them with the payload Claude Code sends
- * a PreToolUse hook. Exit 2 is the refusal, and its stderr is the reason. That
- * removes the second implementation these guards used to carry in TypeScript.
- * Two scanners, each documented as a copy of the other, are two policies the
- * moment one of them changes.
- *
- * A hook writes an advisory to stderr and still exits 0 (`pre-commit-check`
- * does this for a commit aimed at another repository); that reaches the person
- * through the UI, never the agent. Any other non-zero status means the guard
- * did not reach a verdict, and a guard that did not run does not stand aside:
- * the command is refused, as the scripts themselves do when they cannot read
- * their input. A run past the budget is refused ahead of all of that, because
- * a killed process still carries an exit code and a hook that traps the signal
- * can exit 0 on its way out — which is a run that judged nothing wearing the
- * status of one that allowed.
- *
- * No script at either scope allows the command, and that is deliberate: it
- * means kendex has not installed this hook here. The package is installable
- * from npm on its own, and refusing every bash call in a project that never
- * asked for the guard would make it unusable.
- *
- * `budgetMs` is `hookTimeoutMs` from settings, the same route the clippy and
- * drift budgets take; the bash hooks declare `timeout: 60` in their own
- * frontmatter and DEFAULTS matches it.
+ * The tool named the way a Claude Code hook payload names it, which is the way
+ * a hook author writes a matcher: Pi's `bash` is that payload's `Bash`. Only
+ * the case differs for the tools both name, and nothing but a hook reading
+ * `.tool_name` sees it — the matcher itself is read case insensitively.
  */
-export async function runRenderedHook(name: string, command: string, ctx: ExtensionContext, budgetMs: number): Promise<Verdict> {
-	const script = renderedHook(name, ctx);
-	if (!script) return undefined;
+function payloadToolName(toolName: string): string {
+	return toolName.charAt(0).toUpperCase() + toolName.slice(1);
+}
 
-	const payload = JSON.stringify({ tool_name: "Bash", tool_input: { command } });
-	const result = await runCommandAsync("bash", [script], ctx.cwd, budgetMs, payload);
+/**
+ * Run one registered kendex hook and map its exit status.
+ *
+ * The hook is the one kendex rendered into `kendex/hooks.json`, handed the
+ * payload Claude Code sends a PreToolUse hook. A hook of kendex's own is the
+ * script under `kendex/hooks/` — the same bytes Claude Code and Codex run,
+ * which is why these guards carry no second implementation in TypeScript — and
+ * `RegisteredHook.script` says why it is spawned by path rather than through
+ * the command that names it. Anything else is the person's own command, which
+ * exists nowhere but the registry, and is run through a shell as written.
+ *
+ * Exit 2 is the refusal, and its stderr is the reason. A hook writes an
+ * advisory to stderr and still exits 0 (`pre-commit-check` does this for a
+ * commit aimed at another repository); that reaches the person through the UI,
+ * never the agent. Any other non-zero status means the guard did not reach a
+ * verdict, and a guard that did not run does not stand aside: the command is
+ * refused, as the scripts themselves do when they cannot read their input. A
+ * run past the budget is refused ahead of all of that, because a killed process
+ * still carries an exit code and a hook that traps the signal can exit 0 on its
+ * way out — which is a run that judged nothing wearing the status of one that
+ * allowed.
+ *
+ * A registry naming no hook for this call allows it, and that is deliberate: it
+ * means kendex has not installed one here. The package is installable from npm
+ * on its own, and refusing every bash call in a project that never asked for a
+ * guard would make it unusable.
+ *
+ * The budget is the registration's own `timeout`, capped by `ceilingMs` —
+ * `hookTimeoutMs` from settings, the same route the clippy and drift budgets
+ * take. The bash hooks declare `timeout: 60` in their own frontmatter and
+ * DEFAULTS matches it, so a rendered guard runs to the budget it asks for and
+ * nothing runs past the person's own ceiling.
+ */
+export async function runRegisteredHook(hook: RegisteredHook, payload: string, ctx: ExtensionContext, ceilingMs: number): Promise<Verdict> {
+	const name = hook.name || hook.command;
+	const budgetMs = Math.min(hook.budgetMs ?? ceilingMs, ceilingMs);
+	const args = hook.script === undefined ? ["-c", hook.command] : [hook.script];
+	const result = await runCommandAsync("bash", args, ctx.cwd, budgetMs, payload);
 	const stderr = result.stderr.trim();
 
 	// The budget is read BEFORE any exit code, because a killed process still
@@ -143,22 +144,23 @@ export default function piHooks(pi: ExtensionAPI): void {
 		recordProjectTrust(ctx);
 		const cfg = readConfig(ctx.cwd);
 		if (!getBool(cfg, "enabled")) return undefined;
-		if (event.toolName !== "bash") return undefined;
 
-		const command = typeof (event.input as { command?: unknown })?.command === "string"
-			? (event.input as { command: string }).command
-			: "";
-		if (!command) return undefined;
+		// The registry kendex rendered is the list: every hook it names for
+		// this listener and this tool runs, in the order it names them, and
+		// the first refusal is the answer. Nothing here knows a hook's name in
+		// advance, which is what lets a custom hook run at all.
+		const registered = registeredHooks(TOOL_CALL_LISTENER, event.toolName, ctx);
+		if (registered.length === 0) return undefined;
 
-		// Each guard is the rendered script kendex delivered, run in order and
-		// keyed by the setting that arms it.
-		for (const [setting, name] of [
-			["blockBareCd", "block-bare-cd"],
-			["blockRepoCopy", "block-repo-copy"],
-			["preCommitCheck", "pre-commit-check"],
-		] as const) {
-			if (!getBool(cfg, setting)) continue;
-			const verdict = await runRenderedHook(name, command, ctx, getNumber(cfg, "hookTimeoutMs"));
+		const payload = JSON.stringify({
+			tool_name: payloadToolName(event.toolName),
+			tool_input: event.input ?? {},
+		});
+		const ceilingMs = getNumber(cfg, "hookTimeoutMs");
+		for (const hook of registered) {
+			const setting = GUARD_SETTINGS[hook.name];
+			if (setting !== undefined && !getBool(cfg, setting)) continue;
+			const verdict = await runRegisteredHook(hook, payload, ctx, ceilingMs);
 			if (verdict) return verdict;
 		}
 

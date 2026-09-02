@@ -297,3 +297,81 @@ fn the_older_layout_beside_the_root_is_left_exactly_where_it_is() {
     assert_eq!(fs::read_to_string(&beside_script).unwrap(), left_script);
     assert_eq!(fs::read_to_string(&beside_registry).unwrap(), left_registry);
 }
+
+/// Is `bun` on PATH? The carrier is TypeScript, so the case below runs the
+/// real extension the way its own suite does. CI installs bun on the Linux
+/// cargo lane (`.github/workflows/skill-tests.yml`), which is where this is
+/// proven; a machine without it says so rather than failing.
+fn bun_on_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("PATH").and_then(|path| {
+        std::env::split_paths(&path)
+            .map(|dir| dir.join("bun"))
+            .find(|candidate| candidate.is_file())
+    })
+}
+
+/// End to end, KEN-475: a hook declared in `kendex.toml` fires under Pi.
+///
+/// A `[[custom-hooks]]` entry is the case that proves it, because a custom
+/// hook has no file of its own — kendex registers the person's command
+/// verbatim, so it exists nowhere but the rendered registry. The engine
+/// renders it here and the `pi-hooks` carrier's own `tool_call` handler runs
+/// it, which is the whole chain the `enforced` label claims (KEN-941).
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_declared_custom_hook_fires_through_the_carrier() {
+    let Some(bun) = bun_on_path() else {
+        eprintln!("skipped: bun is not on PATH, so the carrier cannot be run");
+        return;
+    };
+    let w = world();
+    register_carrier(&w.project.join(".pi"));
+    fs::write(
+        w.project.join("kendex.toml"),
+        "schema = 6\n\n[install]\nharnesses = [\"pi\"]\n\n[[custom-hooks]]\nname = \"e2e-guard\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"echo ken-941-fired >&2; exit 2\"\nagents = \"all\"\n",
+    )
+    .unwrap();
+
+    let report = audit(&w.env, &scope(&w)).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
+    let registry = fs::read_to_string(w.project.join(".pi/kendex/hooks.json")).unwrap();
+    assert!(
+        registry.contains("ken-941-fired"),
+        "the person's command rides in the registry: {registry}"
+    );
+
+    // The real carrier, driven the way Pi drives it: one bash tool call.
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let carrier = repo.join("pi-extensions/pi-hooks/extensions/hooks.ts");
+    let driver = w.home.join("drive.ts");
+    fs::write(
+        &driver,
+        format!(
+            "import piHooks from {carrier};\nlet handler;\npiHooks({{ on(event, callback) {{ if (event === \"tool_call\") handler = callback; }} }});\nconst verdict = await handler(\n\t{{ toolName: \"bash\", input: {{ command: \"git push\" }} }},\n\t{{ cwd: {project}, isProjectTrusted: () => true }},\n);\nprocess.stdout.write(JSON.stringify(verdict ?? null));\n",
+            carrier = serde_json::to_string(&carrier.to_string_lossy()).unwrap(),
+            project = serde_json::to_string(&w.project.to_string_lossy()).unwrap(),
+        ),
+    )
+    .unwrap();
+
+    let run = std::process::Command::new(&bun)
+        .arg("run")
+        .arg(&driver)
+        .current_dir(&w.project)
+        // The fixture's global root, so the run reads no Pi install of the
+        // developer's; the project root is the walk's own answer from the
+        // working directory, which is the project below.
+        .env("PI_CODING_AGENT_DIR", w.home.join(".pi/agent"))
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "carrier run failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let verdict = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        verdict.contains("\"block\":true") && verdict.contains("ken-941-fired"),
+        "the declared hook did not fire: {verdict}"
+    );
+}

@@ -82,20 +82,55 @@ export function installToolCallHandler(): ToolCallHandler {
 }
 
 /** The kendex render of a hook, at the project path docs/adapters/pi.md gives
- * it. The extension spawns what is here and nothing else. */
+ * it. The extension spawns what the registry beside it names and nothing else. */
 export function renderedHookPath(project: string, name: string): string {
 	return join(project, ".pi", "kendex", "hooks", `${name}.sh`);
 }
 
-/** Put a stub hook where kendex renders one. It appends the payload it read to
- * `log`, writes `stderr`, and exits `exitCode` — so the log proves the spawn
- * happened and carries what the extension sent. */
+/**
+ * Register one hook in the rendered registry under a scope root, the way
+ * `crates/core/src/engine/targets.rs::pi_hook` and the `UpsertHook` edit write
+ * it: keyed by Pi's listener name, matcher and all, with the command spelling
+ * that scope takes. Appended, so a fixture's registration order is the order
+ * the carrier runs them in.
+ */
+export function registerRendered(root: string, listener: string, matcher: string | undefined, command: string, timeout?: number): void {
+	const path = join(root, "kendex", "hooks.json");
+	mkdirSync(join(path, ".."), { recursive: true });
+	let registry: { hooks: Record<string, { matcher?: string; hooks: Record<string, unknown>[] }[]> };
+	try {
+		registry = JSON.parse(readFileSync(path, "utf8"));
+	} catch {
+		registry = { hooks: {} };
+	}
+	const groups = (registry.hooks[listener] ??= []);
+	let group = groups.find((candidate) => candidate.matcher === matcher);
+	if (group === undefined) {
+		group = { ...(matcher === undefined ? {} : { matcher }), hooks: [] };
+		groups.push(group);
+	}
+	group.hooks.push({ type: "command", command, ...(timeout === undefined ? {} : { timeout }) });
+	writeFileSync(path, `${JSON.stringify(registry, null, 2)}\n`);
+}
+
+/** Put a stub hook where kendex renders one, registered as kendex registers it.
+ * It appends the payload it read to `log`, writes `stderr`, and exits
+ * `exitCode` — so the log proves the spawn happened and carries what the
+ * extension sent. */
 export function renderStub(project: string, name: string, opts: { exitCode: number; stderr?: string; log: string }): void {
 	writeStub(renderedHookPath(project, name), opts);
+	registerProjectHook(project, name);
+}
+
+/** The registration kendex writes for a project-scope hook, command and all. */
+export function registerProjectHook(project: string, name: string): void {
+	registerRendered(join(project, ".pi"), "tool_call", "Bash", `bash "$(git rev-parse --show-toplevel)/.pi/kendex/hooks/${name}.sh"`);
 }
 
 export function renderUserStub(userRoot: string, name: string, opts: { exitCode: number; stderr?: string; log: string }): void {
-	writeStub(join(userRoot, "kendex", "hooks", `${name}.sh`), opts);
+	const script = join(userRoot, "kendex", "hooks", `${name}.sh`);
+	writeStub(script, opts);
+	registerRendered(userRoot, "tool_call", "Bash", `bash "${script}"`);
 }
 
 function writeStub(path: string, opts: { exitCode: number; stderr?: string; log: string }): void {

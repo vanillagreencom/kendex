@@ -1,7 +1,7 @@
 {
   "name": "@vanillagreen/pi-hooks",
-  "version": "0.8.0",
-  "description": "The carrier that runs kendex's safety hooks under Pi: it spawns the rendered bash guards (bare-cd, repo-copy-into-scratch, pre-commit gate) and adds end-of-turn lint and a session-start kendex drift report. Per-hook toggles via pi-extension-manager.",
+  "version": "0.9.0",
+  "description": "The carrier that runs kendex's hooks under Pi: it dispatches the rendered kendex/hooks.json registry, so every hook kendex installs for Pi fires — the bash guards it renders and a custom hook of your own alike — and adds end-of-turn lint and a session-start kendex drift report. Per-hook toggles via pi-extension-manager.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -88,8 +88,8 @@
         },
         {
           "key": "hookTimeoutMs",
-          "label": "Rendered guard timeout (ms)",
-          "description": "How long a rendered kendex guard may run on one bash tool call. A run past this budget judged nothing, so the command is refused whatever status the killed process carries.",
+          "label": "Hook timeout ceiling (ms)",
+          "description": "The ceiling on how long one registered kendex hook may run on a tool call. A registration asking for less runs to what it asks for; one asking for more is cut to this. A run past its budget judged nothing, so the command is refused whatever status the killed process carries.",
           "type": "number",
           "default": 60000,
           "category": "Bash",

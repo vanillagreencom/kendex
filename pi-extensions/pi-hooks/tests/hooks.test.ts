@@ -12,6 +12,7 @@ import {
 	initRustRepo,
 	installToolCallHandler,
 	readLog,
+	registerProjectHook,
 	renderedHookPath,
 	renderStub,
 	renderUserStub,
@@ -101,12 +102,14 @@ function cargoLog(log: string): string {
 	return readFileSync(log, { encoding: "utf8", flag: "a+" });
 }
 
-/** Put the repository's real hook where kendex renders it. */
+/** Put the repository's real hook where kendex renders it, registered as
+ * kendex registers it. */
 function renderRealHook(project: string, name: string): void {
 	mkdirSync(join(project, ".pi", "kendex", "hooks"), { recursive: true });
 	const source = join(import.meta.dir, "..", "..", "..", "hooks", `${name}.sh`);
 	writeFileSync(renderedHookPath(project, name), readFileSync(source, "utf8"));
 	chmodSync(renderedHookPath(project, name), 0o755);
+	registerProjectHook(project, name);
 }
 
 function runHandlerChild(home: string, workspace: string, agentDir: string, trusted: boolean): ReturnType<typeof spawnSync> {
@@ -342,6 +345,7 @@ describe("pi-hooks root selection", () => {
 				"exit 0",
 			].join("\n") + "\n");
 			chmodSync(script, 0o755);
+			registerProjectHook(project, "pre-commit-check");
 			const handler = installToolCallHandler();
 			const result = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { block?: boolean; reason?: string };
 			expect(result.block).toBe(true);
