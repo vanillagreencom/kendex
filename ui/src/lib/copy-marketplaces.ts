@@ -50,11 +50,9 @@ export const unreadableSourcesLine = (place: string): string =>
   `kendex couldn't read some of ${place}'s marketplaces, so their packages aren't listed.`;
 
 /** One place a write cannot land in, said by [RecordsUnreadableWriteNote]
- * where a subscription's place is being chosen — before any read of that
- * place exists. [unreadableRecordsLine] is the line for where one already
- * landed and came back unable to say. Subscribing plans against the chosen
- * place's lock, so a record this build can't read refuses the subscription
- * outright. */
+ * where a subscription's place is being chosen. Subscribing plans against
+ * the chosen place's lock, so a record this build can't read refuses the
+ * subscription outright. */
 export const unreadableRecordsWriteLine = (place: string): string =>
   `kendex can't read ${place}'s records, so nothing can be added there yet.`;
 

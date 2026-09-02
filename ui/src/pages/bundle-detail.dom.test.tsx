@@ -10,7 +10,7 @@ import type { AppSettings, BundleDetail, Scope } from "@/bindings";
 import { commands } from "@/bindings";
 import { unreadableRecordsLine } from "@/lib/copy-marketplaces";
 import { useMarketplacesStore } from "@/stores/marketplaces";
-import { subscription } from "@/stores/marketplaces-shared";
+import { droppedSetCaches, subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
 import { useSettingsStore } from "@/stores/settings";
 import { mount, settle } from "@/test/dom";
@@ -82,7 +82,18 @@ beforeEach(() => {
     status: "ok",
     data: [{ harness: "claude", detected: true, sharesTheUniversalTree: true }],
   });
-  useMarketplacesStore.setState({ bundles: {}, readErrors: {}, busy: false });
+  useMarketplacesStore.setState({
+    bundles: {},
+    readErrors: {},
+    busy: false,
+    // What the real action does to these caches, which is what asks this
+    // page again. A stub that skipped the drop would leave the count below
+    // passing because nothing re-read at all.
+    install: async () => {
+      useMarketplacesStore.setState(droppedSetCaches());
+      return true;
+    },
+  });
   useSettingsStore.setState({
     settings: { projects: [ACME.root] } as AppSettings,
   });
@@ -148,6 +159,22 @@ describe("the curated set page", () => {
     expect(host.textContent).toContain("Install 0 selected");
     expect(host.textContent).toContain(unreadableRecordsLine("acme"));
     expect(host.textContent).not.toContain(unreadableRecordsLine("Personal"));
+  });
+
+  // The install empties every set cache, and the read watches presence, so
+  // the drop is the whole trigger. A hand-rolled reload beside it asked the
+  // engine the same question twice for one install.
+  it("asks once more after an install, never twice", async () => {
+    const host = mount(<BundleDetailPage />);
+    await settle();
+    expect(commands.marketplaceBundle).toHaveBeenCalledTimes(1);
+
+    const button = installAll(host);
+    if (!button) throw new Error("no Install all rendered");
+    await userEvent.click(button);
+    await settle();
+
+    expect(commands.marketplaceBundle).toHaveBeenCalledTimes(2);
   });
 
   // Two ways the same read gets asked twice for one answer: the picker

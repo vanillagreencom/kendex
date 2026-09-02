@@ -10,7 +10,12 @@ import { Button } from "@/components/ui/button";
 /** Where a set's ticked members install, on what, and the button that
  * installs them. The set page owns every answer here — which place, which
  * tools, which members — and what one answer does to the others; this draws
- * the row. */
+ * the row.
+ *
+ * `choice` is not only this row's: the page's own Install all, in the
+ * header, installs the whole set with whatever this picker last answered.
+ * So the tool picker at the bottom of the page decides how the button at
+ * the top installs, and moving either one has to account for the other. */
 export function BundleInstallBar({
   browsing,
   target,

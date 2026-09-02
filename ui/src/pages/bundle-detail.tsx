@@ -90,9 +90,9 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
     });
   };
 
-  // The member list re-reads after any install, so a row flips to
-  // Installed the moment it is.
-  const reload = () => loadBundle(catalog, bundle, redirected);
+  // Nothing re-reads the member list by hand: a successful install drops
+  // every set cache, which empties this slot, and the read above watches
+  // presence — so a row flips to Installed the moment it is, asked once.
   const installItems = (items: { kind: ItemKind; name: string }[]) => {
     if (!subscribed) return;
     void install({
@@ -103,10 +103,7 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
       destination: redirected,
       delivery: choice,
     }).then((ok) => {
-      if (ok) {
-        setSelected(new Set());
-        void reload();
-      }
+      if (ok) setSelected(new Set());
     });
   };
   const installSelected = () => {

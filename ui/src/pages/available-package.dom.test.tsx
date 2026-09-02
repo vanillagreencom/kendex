@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-// The page mounts and settles with the settings read unlanded, which is the
-// state the app first draws it in. Its tree reads the store through the
+// The page's wiring: which place it reads for, which place its refusal
+// names, and what it sends an install. Its tree reads the store through the
 // destination picker, and a store read that answers with a fresh value each
-// time re-renders the tree until React throws.
+// time re-renders the tree until React throws — so the first case mounts
+// with the settings read unlanded, the state the app first draws it in.
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -114,6 +115,10 @@ function installButton(host: HTMLElement): HTMLButtonElement | undefined {
 
 describe("the available package page", () => {
   it("settles on mount before the settings read has landed", async () => {
+    // The state the app first draws this page in: no place registry yet, so
+    // the picker has only the personal scope to offer. Every other case
+    // here needs a project to pick, which is why the fixture lands one.
+    useSettingsStore.setState({ settings: null });
     const host = mount(<AvailablePackagePage />);
     await settle();
 
@@ -177,13 +182,21 @@ describe("the available package page", () => {
   });
 
   // Picking the place already being browsed is not a redirect, and the
-  // picker hands back a freshly built Scope, so identity would call it one
-  // and send the install a destination it does not have.
+  // picker hands back a freshly built Scope, so identity would call it one:
+  // the read would ask the engine to redirect into the place it is already
+  // browsing, and the install would carry a destination it does not have.
   it("sends no destination once the picker comes back to the browsed place", async () => {
     const host = mount(<AvailablePackagePage />);
     await settle();
     await chooseDestination(host, "acme");
     await chooseDestination(host, "Personal");
+
+    expect(commands.marketplacePackagePreview).toHaveBeenLastCalledWith(
+      catalog,
+      "skill",
+      "gh",
+      null,
+    );
 
     const install = installButton(host);
     if (!install) throw new Error("no Install button rendered");

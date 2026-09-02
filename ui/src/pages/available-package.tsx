@@ -56,16 +56,24 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
     optional: [],
   });
 
+  const scope = catalog.by === "subscription" ? catalog.scope : null;
+  // One redirect judgment, feeding the address, the read and the install
+  // alike. Not object identity: the picker builds a fresh Scope from
+  // everyPlace, so coming back to the place already being browsed would
+  // read as a redirect into it and re-address the page for nothing.
+  const redirected =
+    destination && scope && !sameScope(destination, scope) ? destination : null;
+
   // Null until the catalog is ready: a repository's first fetch holds the
-  // store's lock, and a read racing it would be refused. The destination is
+  // store's lock, and a read racing it would be refused. The redirect is
   // part of the address: a dependency's state — already installed there,
   // or kept removed there — is a fact about the scope the install lands
   // in, so choosing another place is a different read.
   const address = ready
-    ? `${catalogKey(catalog)}::${kind}::${name}::${destination ? scopeLabel(destination) : ""}`
+    ? `${catalogKey(catalog)}::${kind}::${name}::${redirected ? scopeLabel(redirected) : ""}`
     : null;
   const read = useOrderedRead<PackageView>(address, () =>
-    commands.marketplacePackagePreview(catalog, kind, name, destination),
+    commands.marketplacePackagePreview(catalog, kind, name, redirected),
   );
   const view = read.status === "ok" ? read.data : null;
   const error = read.status === "error" ? read.error : null;
@@ -81,7 +89,8 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
     setChosen(address === null ? null : { at: address, file });
 
   const Icon = kindIcon(kind);
-  const scope = catalog.by === "subscription" ? catalog.scope : null;
+  // The place named on screen, as against `redirected`, which is whether a
+  // place was chosen at all.
   const target = destination ?? scope;
   // Matched by scope and name both — two scopes can subscribe the same
   // alias to different repositories.
@@ -114,9 +123,7 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
       scope,
       source,
       items: [{ kind, name }],
-      // Same place, one answer: the picker builds a fresh Scope, so
-      // identity would call the browsed place a redirect.
-      destination: sameScope(target, scope) ? null : target,
+      destination: redirected,
       delivery: choice,
     }).then((ok) => {
       // Installed, the same page carries on in its installed mode — the
