@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 # Pins the refusal on a line-class blob git reads as binary. A raw NUL typed
-# into a source file instead of its escape makes git call the file binary:
-# no diff, no `git grep` hit, no blame — and `wc -l` still returns a number,
-# so the gate used to report a clean measurement over content nobody could
-# read. The gate now refuses that blob by name and byte offset.
+# into a source file instead of its escape makes git call the file binary: no
+# textual diff, a plain `git grep` reduced to `Binary file <path> matches` and
+# a `git grep -I` that drops the path — and `wc -l` still returns a number, so
+# the gate used to report a clean measurement over content nobody could read.
+# The gate now refuses that blob by name and byte offset.
 #
-# Pinned here: the refusal fires in both scopes (index and worktree), the
-# offset is counted in BYTES and located inside the sniff window, the same
-# bytes in a BYTE class pass because nothing counts their lines, an excluded
-# path stays excluded, and the diagnostic never carries the byte itself.
-# The must-fail control at the end reverts the refusal and shows the NUL
-# fixture going green, so the green cases above are evidence.
+# Pinned here: the refusal fires in both scopes (index and worktree) and in
+# --seed and --update, where a miss would write a meaningless count into the
+# baseline; every offender is named, not just the first; the offset is counted
+# in BYTES and located inside the sniff window; the same bytes in a BYTE class
+# pass because nothing counts their lines; an excluded path stays excluded; a
+# scan that comes back empty is a refusal, not a pass; and the diagnostic never
+# carries the byte itself. The must-fail control at the end reverts the refusal
+# and shows the NUL fixture going green, so the green cases above are evidence.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -185,6 +188,75 @@ for probe in "7999 2 inside" "8000 0 outside"; do
     bad "the window boundary matches git's rule at offset $pad" "rc=$RC want=$want_rc out=$OUT"
   fi
 done
+
+echo "=== a locating scan that comes back empty refuses, it does not pass ==="
+# The prefilter is byte-exact, so a stop it reports and a scan that then finds
+# nothing are a contradiction. Treating that as clean would be the fail-open
+# the sniff exists to close: an `od` that exits 0 saying nothing must not buy
+# a passing verdict over a NUL-carrying blob. An `od` that exits NONZERO is
+# already caught by pipefail; this is the quiet-success half.
+OD_SHIM="$TMP/od-shim"
+mkdir -p "$OD_SHIM"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$OD_SHIM/od"
+chmod +x "$OD_SHIM/od"
+new_repo scanempty
+plant_nul src/installed.ts 'const a = "x'
+git -C "$R" add -A
+run_in "PATH=$OD_SHIM:$PATH" SIZE_RATCHET_THRESHOLD=400 -- --staged
+if [ "$RC" -eq 2 ] && has "src/installed.ts" && has "located none"; then
+  ok "an od that succeeds and prints nothing is a refusal (exit 2), naming the path"
+else
+  bad "an empty locating scan refuses rather than reporting clean" "rc=$RC out=$OUT"
+fi
+case "$OUT" in *"size-ratchet: OK"*) bad "no OK verdict may accompany the empty scan" "$OUT" ;; *) ok "no OK verdict accompanies the empty scan" ;; esac
+
+echo "=== every offender is named, not just the first ==="
+# The refusal is an aggregation: one row per offender, read back by the
+# reporting loop. That is the shape a repo meets when it adopts the gate —
+# several binary assets in a line class red together, as this repo's own
+# tauri icons did — so a regression to first-offender-only must red here.
+new_repo many
+plant_nul src/a.ts 'const a = "x'
+plant_nul src/b.ts 'const b = "xy'
+plant_nul src/c.ts 'const c = "xyz'
+git -C "$R" add -A
+run_in SIZE_RATCHET_THRESHOLD=400 -- --staged
+named="$(grep -c 'a NUL byte at offset' "$OUTFILE")" || named=0
+if [ "$RC" -eq 2 ] && [ "$named" -eq 3 ] \
+  && has 'src/a.ts: a NUL byte at offset 12' \
+  && has 'src/b.ts: a NUL byte at offset 13' \
+  && has 'src/c.ts: a NUL byte at offset 14'; then
+  ok "all three offenders are named, each at its own offset"
+else
+  bad "the diagnostic names every offender" "rc=$RC named=$named out=$OUT"
+fi
+
+echo "=== --seed refuses and writes no baseline ==="
+# A miss in a writing mode does not merely print a clean verdict: it records a
+# meaningless line count for a binary blob and locks it in.
+new_repo seedmode
+plant_nul src/installed.ts 'const a = "x'
+git -C "$R" add -A
+run_in SIZE_RATCHET_THRESHOLD=400 -- --seed
+if [ "$RC" -eq 2 ] && has 'src/installed.ts: a NUL byte at offset 12' && [ ! -e "$R/tools/size-ratchet-baseline.tsv" ]; then
+  ok "--seed refuses (exit 2) and writes no baseline at all"
+else
+  bad "--seed refuses before it seeds a row" "rc=$RC baseline=$(cat "$R/tools/size-ratchet-baseline.tsv" 2>/dev/null || echo absent) out=$OUT"
+fi
+
+echo "=== --update refuses and leaves the baseline row verbatim ==="
+new_repo updatemode
+plant_nul src/installed.ts 'const a = "x'
+mkdir -p "$R/tools"
+printf 'src/installed.ts\t9999\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+run_in SIZE_RATCHET_THRESHOLD=400 -- --update
+row="$(cat "$R/tools/size-ratchet-baseline.tsv")"
+if [ "$RC" -eq 2 ] && has 'src/installed.ts: a NUL byte at offset 12' && [ "$row" = "$(printf 'src/installed.ts\t9999')" ]; then
+  ok "--update refuses (exit 2) and the baseline row survives verbatim"
+else
+  bad "--update refuses before it tightens a row" "rc=$RC row=$row out=$OUT"
+fi
 
 echo "=== must-fail control: with the refusal reverted, the NUL fixture goes green ==="
 # The control keeps every call site and the whole detection text and removes
