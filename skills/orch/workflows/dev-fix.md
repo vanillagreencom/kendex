@@ -93,7 +93,7 @@ Cancel ends the workflow; a selection goes to § 2.
 
    Exit 3 is the branch-size refusal. Stop before delegation, discard this item set, and report the current and baseline counts with `Cut required`. Every other nonzero exit is an environment or authorization failure and also stops the workflow.
 
-   **The cut is a round of its own**, and the only one that runs while the branch is over the cap. Mint a fresh round id for it, delegate cutting back to the Done-when as its items, and stamp the record with `--cut`, which skips the size check and nothing else:
+   **The cut is a round of its own**, and the only one that runs while the branch is over the cap. Mint a fresh round id for it, delegate cutting back to the Done-when as its items, and stamp the record with `--cut`, which skips the over-limit refusal and nothing else — the branch is still measured, so an unreadable or non-positive `pr.baseline_lines` still exits 2 here:
 
    ```bash
    .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --cut
