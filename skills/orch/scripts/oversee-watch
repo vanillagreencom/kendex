@@ -50,9 +50,8 @@ Options:
   --interval SECS     seconds between passes (default 240)
   --max-loops N       passes before a heartbeat (default 25)
   --since ISO8601     UTC created/merged-at floor, with a Z suffix. Pass the
-                      fleet's fixed start time on every run, never "now". The
-                      merged check reads it always; LINEAR_TEAM below decides
-                      whether it also arms the team triage check
+                      fleet's fixed start time on every run, never "now";
+                      LINEAR_TEAM below arms the triage check
   --item ISSUE_ID     live item; repeatable. No values skips merged with a note
   --repo OWNER/REPO   repository; repeatable and case-normalized. The reducer
                       covers all; merged and heartbeat read the first
@@ -72,9 +71,10 @@ actions:write. When pr-watch.sh is absent, the step is skipped with one stderr n
 
 Environment:
   LINEAR_TEAM                 team the triage check reads under --since, from
-                              kendex.settings.toml [env] unless the process
-                              environment carries the name. Empty or absent
-                              watches without triage and says so once
+                              kendex.settings.toml [env] unless the environment
+                              sets it. Empty or absent skips triage, said once;
+                              with a team a missing tracker CLI or
+                              workflow-state exits 2 rather than dropping it
   ORCH_STATE_DIR              workflow-state directory; relative paths join
                               the project root; absolute paths stay unchanged
   OVERSEE_WATCH_PR_WATCH      path to pr-watch.sh
@@ -273,7 +273,7 @@ if [[ -n "$SINCE" ]]; then
       || die "workflow-state CLI not found at $WORKFLOW_STATE; triage needs it (set OVERSEE_WATCH_WORKFLOW_STATE)"
     TRIAGE_ENABLED=1
   else
-    echo "oversee-watch: LINEAR_TEAM is unset; skipping the team triage check (pr-watch/merged/window/lane-asking checks still run)" >&2
+    echo "oversee-watch: LINEAR_TEAM is unset or empty; skipping the team triage check (pr-watch/merged/window/lane-asking checks still run)" >&2
   fi
 fi
 

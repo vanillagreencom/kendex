@@ -149,7 +149,8 @@ out="$(run_watch LINEAR_TEAM -- --max-loops 1 --item issue-5 --since 2026-08-15T
 assert_eq "$rc" "0" "an unset LINEAR_TEAM keeps the watch running" "$err"
 assert_eq "$(head -1 <<<"$out")" "EVENT merged 5 issue-5" \
   "--since still serves the merged check with no team" "$err"
-assert_contains "$(cat "$err")" "LINEAR_TEAM is unset" "the unset team is named" "$err"
+assert_contains "$(cat "$err")" "LINEAR_TEAM is unset or empty" \
+  "the note names an empty team as well as an absent one" "$err"
 
 # The case above exits on the merged event before check_triage runs, so triage
 # being off is proved here instead: a live tracker stub with a new item, and
