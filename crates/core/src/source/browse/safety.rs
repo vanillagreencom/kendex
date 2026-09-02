@@ -75,7 +75,7 @@ pub fn package_safety(
     // what installs. Nobody has scored that combination yet, so the page
     // says what it did not read.
     let mut notes = Vec::new();
-    if injected_here(&browsed.manifest, kind, name) {
+    if injected_here(&browsed.records().manifest, kind, name) {
         notes.push(format!(
             "this project adds its own instructions to {name}; they are not in this preview and are scored when it installs"
         ));

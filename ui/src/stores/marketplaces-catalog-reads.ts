@@ -1,7 +1,7 @@
 // The marketplaces store's cached reads: each answer lands under its own
 // key, and each failure under its own error key, so a later success
 // elsewhere never erases why a different read produced nothing.
-import { type Catalog, commands } from "@/bindings";
+import { type Catalog, commands, type Scope } from "@/bindings";
 import { settled } from "@/lib/settled";
 import {
   bundleKey,
@@ -44,10 +44,10 @@ export function catalogReads(set: SetReads) {
         () => commands.marketplaceBundles(catalog),
       );
     },
-    loadBundle: (catalog: Catalog, name: string) => {
-      const key = bundleKey(catalog, name);
+    loadBundle: (catalog: Catalog, name: string, destination: Scope | null) => {
+      const key = bundleKey(catalog, name, destination);
       return settle(set, "bundles", key, key, () =>
-        commands.marketplaceBundle(catalog, name),
+        commands.marketplaceBundle(catalog, name, destination),
       );
     },
   };

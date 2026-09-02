@@ -32,9 +32,11 @@ pub struct PackagePreview {
     pub bundles: Vec<String>,
     /// What installing it takes along, and what it offers to take.
     pub dependencies: super::PackageDependencies,
-    /// Where this package stands in the browsed scope, by the same join the
-    /// Packages row shows. The page installs, so it needs the answer the
-    /// row has: [`InstallState::Unknown`] where the scope's lock could not
+    /// Where this package stands in the scope the install would land in —
+    /// the destination when the page redirects into one, the browsed scope
+    /// otherwise — by the same join the Packages row shows. The page
+    /// installs, so it needs the answer for the scope the engine will
+    /// mutate: [`InstallState::Unknown`] where that scope's lock could not
     /// be read, and the page offers the reason rather than a button the
     /// engine would refuse for that same record.
     pub state: InstallState,
@@ -42,9 +44,11 @@ pub struct PackagePreview {
 }
 
 /// `destination` redirects an install into a project. The package's bytes
-/// still come from the subscription; only the dependency state join moves,
-/// because what is already installed and what was kept removed are facts
-/// about the scope the install would land in.
+/// still come from the subscription; every state join moves onto the
+/// destination — its own state and its dependencies' alike — because what
+/// is already installed, what was kept removed, and whether the record can
+/// be read at all are facts about the scope the install would land in, and
+/// that is the scope [`crate::engine::ops::add_seeded`] mutates.
 pub fn package_preview(
     env: &Env,
     catalog: &Catalog,
@@ -91,6 +95,7 @@ pub fn package_preview(
             bundles.push(offered.name);
         }
     }
+    let landing = redirected.as_ref().unwrap_or(browsed.records());
     // The path this function already resolved, rather than a second walk
     // for the same item.
     let text = super::item_text(&browsed, kind, Some(path.as_path()));
@@ -108,16 +113,12 @@ pub fn package_preview(
         dependencies: super::deps::dependencies(
             &browsed,
             &crate::engine::deps::OfferedSkills::default(),
-            &super::deps::Where {
-                manifest: redirected.as_ref().map_or(&browsed.manifest, |r| &r.0),
-                lock: redirected.as_ref().map_or(browsed.lock(), |r| r.1.as_ref()),
-                subscription: browsed.subscription(),
-            },
+            landing,
             kind,
             name,
             text.as_deref(),
         ),
-        state: browsed.state(kind, name),
+        state: browsed.state(landing, kind, name),
         collision: browsed.collision(kind, name),
     })
 }

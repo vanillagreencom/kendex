@@ -121,6 +121,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         marketplaces::marketplace_bundle,
         marketplaces::marketplace_bundles,
         marketplaces::marketplace_package_preview,
+        marketplaces::scope_records_unreadable,
         marketplaces::marketplace_package_file,
         marketplaces::install::marketplace_install,
         marketplaces::install::install_targets,

@@ -49,6 +49,13 @@ export const unreadableRecordsLine = (place: string): string =>
 export const unreadableSourcesLine = (place: string): string =>
   `kendex couldn't read some of ${place}'s marketplaces, so their packages aren't listed.`;
 
+/** One place a write cannot land in. Subscribing plans against the chosen
+ * place's lock, so a record this build can't read refuses the subscription
+ * outright — a different consequence from [unreadableRecordsLine]'s rows
+ * that can't say what's installed, and said where the place was chosen. */
+export const unreadableRecordsWriteLine = (place: string): string =>
+  `kendex can't read ${place}'s records, so nothing can be added there yet.`;
+
 export const SEE_PROBLEMS_LABEL = "See Problems";
 
 // What subscribing does, said wherever Subscribe is offered so nobody has

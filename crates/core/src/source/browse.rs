@@ -59,19 +59,20 @@ pub enum InstallState {
     /// what it found, so nothing installs — but the catalog does carry the
     /// name, and saying it is not offered would be the opposite of true.
     OfferedMoreThanOnce,
-    /// This scope's lock could not be read, so whether the package is
-    /// installed here is unknown. The catalog is still listed — what a
-    /// source offers is a fact about the source — but every standing the
-    /// lock alone could have given becomes this one, decided in
-    /// `Browsed::state` and `Browsed::member_state` and nowhere else. Every
-    /// surface offering an install for one package reads the state: the
-    /// Packages row, a set's member row, and the available-package page
-    /// (through [`PackagePreview::state`]) all say why instead, so none
-    /// offers an install the engine would refuse for the same unreadable
-    /// record. The state answers for the BROWSED scope: an install a page
-    /// redirects into a different scope is not yet judged against that
-    /// destination's record. The set page's Install all is about the set,
-    /// not a package, and reads [`BundleDetail::records_unreadable`].
+    /// The scope this state answers for has a lock that could not be read,
+    /// so whether the package is installed there is unknown. The catalog is
+    /// still listed — what a source offers is a fact about the source — but
+    /// every standing the lock alone could have given becomes this one,
+    /// decided in `Browsed::state` and `Browsed::member_state` and nowhere
+    /// else. Every surface offering an install for one package reads the
+    /// state: the Packages row, a set's member row, and the
+    /// available-package page (through [`PackagePreview::state`]) all say
+    /// why instead, so none offers an install the engine would refuse for
+    /// the same unreadable record. The scope is the one the install would
+    /// land in — the browsed catalog's own, or the destination a page
+    /// redirects into, which is the scope the engine mutates. The set
+    /// page's Install all is about the set, not a package, and reads
+    /// [`BundleDetail::records_unreadable`].
     Unknown,
 }
 
@@ -124,13 +125,14 @@ pub struct BundleDetail {
     pub installed_members: u32,
     pub total_members: u32,
     pub collision: Option<String>,
-    /// This scope's lock could not be read. The set page's Install all asks
-    /// about the set rather than about a member, so it needs the scope's own
-    /// answer: no member row can carry it, because a member the catalog no
-    /// longer offers reads [`InstallState::NotOffered`] with or without a
-    /// lock, and a set whose members were all dropped — or one declared with
-    /// none — would leave the page deriving "readable" from rows that never
-    /// consulted the record.
+    /// The lock of the scope this read answers for — the destination where
+    /// the install is redirected, the browsed scope otherwise — could not be
+    /// read. The set page's Install all asks about the set rather than about
+    /// a member, so it needs that scope's own answer: no member row can
+    /// carry it, because a member the catalog no longer offers reads
+    /// [`InstallState::NotOffered`] with or without a lock, and a set whose
+    /// members were all dropped — or one declared with none — would leave the
+    /// page deriving "readable" from rows that never consulted the record.
     pub records_unreadable: bool,
 }
 
@@ -171,7 +173,7 @@ pub fn packages(env: &Env, catalog: &Catalog) -> Result<Vec<AvailablePackage>> {
         // deceptive characters escaped rather than acted on.
         let bundles: Vec<String> = carried_bundles.iter().map(|b| names::shown(b)).collect();
         out.push(AvailablePackage {
-            state: browsed.state(kind, &name),
+            state: browsed.state(browsed.records(), kind, &name),
             collision: browsed.collision(kind, &name),
             description: header.description.as_deref().map(names::shown),
             summary: header.summary_or_description().map(names::shown),
@@ -181,11 +183,7 @@ pub fn packages(env: &Env, catalog: &Catalog) -> Result<Vec<AvailablePackage>> {
             dependencies: deps::dependencies(
                 &browsed,
                 &offered,
-                &deps::Where {
-                    manifest: &browsed.manifest,
-                    lock: browsed.lock(),
-                    subscription: browsed.subscription(),
-                },
+                browsed.records(),
                 kind,
                 &name,
                 text.as_deref(),
@@ -209,30 +207,47 @@ pub fn bundles(env: &Env, catalog: &Catalog) -> Result<Vec<BundleDetail>> {
     let browsed = open(env, catalog)?;
     let mut out: Vec<BundleDetail> = super::bundles::offered(&browsed.sealed, &browsed.config)?
         .iter()
-        .map(|found| detail(&browsed, found))
+        .map(|found| detail(&browsed, browsed.records(), found))
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
 }
 
-/// One curated set with per-member installed state.
-pub fn bundle(env: &Env, catalog: &Catalog, bundle_name: &str) -> Result<BundleDetail> {
+/// One curated set with per-member installed state. `destination` redirects
+/// the install into a project, exactly as it does for a package's preview:
+/// the members come from the catalog, and every answer about records — each
+/// member's state and the set's own [`BundleDetail::records_unreadable`] —
+/// is about the scope the install would land in.
+pub fn bundle(
+    env: &Env,
+    catalog: &Catalog,
+    bundle_name: &str,
+    destination: Option<&crate::model::Scope>,
+) -> Result<BundleDetail> {
     let browsed = open(env, catalog)?;
+    let redirected = destination
+        .map(|scope| opened::records_of(env, scope))
+        .transpose()?;
     let Some(found) = super::bundles::find(&browsed.sealed, &browsed.config, bundle_name)? else {
         return Err(CoreError::NoSuchBundle {
             name: bundle_name.to_owned(),
             source_name: catalog.label().to_owned(),
         });
     };
-    Ok(detail(&browsed, &found))
+    let landing = redirected.as_ref().unwrap_or(browsed.records());
+    Ok(detail(&browsed, landing, &found))
 }
 
-/// A declared set joined against this scope: every member's state, and the
+/// A declared set joined against `landing`: every member's state, and the
 /// installed/total pair derived from them.
-fn detail(browsed: &Browsed, found: &super::bundles::CatalogBundle) -> BundleDetail {
+fn detail(
+    browsed: &Browsed,
+    landing: &opened::Records,
+    found: &super::bundles::CatalogBundle,
+) -> BundleDetail {
     let mut members = Vec::new();
     for member in &found.members {
-        let state = browsed.member_state(member.kind, &member.name);
+        let state = browsed.member_state(landing, member.kind, &member.name);
         members.push(BundleMemberRow {
             kind: member.kind,
             // Catalog-authored, so shown with any control or deceptive
@@ -254,7 +269,7 @@ fn detail(browsed: &Browsed, found: &super::bundles::CatalogBundle) -> BundleDet
         total_members: members.len().min(u32::MAX as usize) as u32,
         members,
         collision: browsed.bundle_collision(&found.name),
-        records_unreadable: browsed.lock_unreadable(),
+        records_unreadable: landing.lock_unreadable(),
     }
 }
 

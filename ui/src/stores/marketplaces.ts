@@ -70,7 +70,11 @@ interface MarketplacesState extends InstallActions, CatalogCaches {
   loadPackages: (catalog: Catalog) => Promise<void>;
   loadSummary: (catalog: Catalog) => Promise<void>;
   loadAbout: (catalog: Catalog) => Promise<void>;
-  loadBundle: (catalog: Catalog, name: string) => Promise<void>;
+  loadBundle: (
+    catalog: Catalog,
+    name: string,
+    destination: Scope | null,
+  ) => Promise<void>;
   loadCatalogBundles: (catalog: Catalog) => Promise<void>;
   /** What subscribing answered, handed straight to the caller: the alias
    * the subscription was declared under, or the engine's refusal. The

@@ -20,6 +20,7 @@ vi.mock("@/bindings", () => ({
     getManifest: vi.fn(),
     getScopeSettings: vi.fn(),
     editorInventory: vi.fn(),
+    scopeRecordsUnreadable: vi.fn(),
   },
 }));
 vi.mock("sonner", () => ({
@@ -41,6 +42,12 @@ beforeEach(() => {
   vi.mocked(commands.editorInventory).mockResolvedValue({
     status: "ok",
     data: { skills: [], hooks: [] },
+  } as never);
+  // The dialog asks whether the chosen place's records can be read before
+  // it offers to write there.
+  vi.mocked(commands.scopeRecordsUnreadable).mockResolvedValue({
+    status: "ok",
+    data: false,
   } as never);
   useSettingsStore.setState({ settings: null });
   useMarketplacesStore.setState({ busy: false, error: null });

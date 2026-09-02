@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import type { Scope } from "@/bindings";
+import { commands, type Scope } from "@/bindings";
+import { SeeProblemsLink } from "@/components/marketplaces/packages-trouble";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,10 +19,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { SUBSCRIBE_MEANS } from "@/lib/copy-marketplaces";
+import {
+  SUBSCRIBE_MEANS,
+  unreadableRecordsWriteLine,
+} from "@/lib/copy-marketplaces";
 import { scopeLabel } from "@/lib/derive";
 import { scopeName } from "@/lib/labels";
 import { everyPlace } from "@/lib/scope";
+import { useOrderedRead } from "@/lib/use-ordered-read";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useSettingsStore } from "@/stores/settings";
 import { projectsOf } from "@/stores/settings-projects";
@@ -68,12 +73,24 @@ export function SubscribeDialog({
   }, [open, clearError]);
 
   const scopes = everyPlace(projects);
+  const target: Scope = scopes.find((s) => scopeLabel(s) === where) ?? {
+    scope: "global",
+  };
+
+  // Subscribing plans against the chosen place's lock, so a record this
+  // build can't read refuses the write outright. Asked of the place that
+  // was chosen and re-asked when the choice moves: the answer belongs to
+  // the place, not to this dialog, and the reason has to travel with the
+  // choice that caused it rather than arriving as the engine's raw refusal
+  // after the press.
+  const records = useOrderedRead<boolean>(
+    open ? scopeLabel(target) : null,
+    () => commands.scopeRecordsUnreadable(target),
+  );
+  const recordsUnknown = records.status === "ok" && records.data;
 
   const submit = () => {
-    if (!reference.trim()) return;
-    const target =
-      scopes.find((s) => scopeLabel(s) === where) ??
-      ({ scope: "global" } as Scope);
+    if (!reference.trim() || recordsUnknown) return;
     void subscribe(target, reference.trim(), name.trim() || null).then(
       (outcome) => {
         // A refusal keeps the dialog open with the input intact — the
@@ -157,6 +174,12 @@ export function SubscribeDialog({
               </Select>
             </div>
           </div>
+          {recordsUnknown ? (
+            <p className="text-xs text-warning">
+              {unreadableRecordsWriteLine(scopeName(target))}{" "}
+              <SeeProblemsLink />
+            </p>
+          ) : null}
           {error ? (
             <p className="text-sm text-critical" role="alert">
               {error}
@@ -170,7 +193,10 @@ export function SubscribeDialog({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={busy || !reference.trim()}>
+            <Button
+              type="submit"
+              disabled={busy || !reference.trim() || recordsUnknown}
+            >
               {busy ? "Subscribing…" : "Subscribe"}
             </Button>
           </DialogFooter>

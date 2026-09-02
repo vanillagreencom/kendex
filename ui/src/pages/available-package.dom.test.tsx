@@ -74,6 +74,13 @@ beforeEach(() => {
   });
 });
 
+/** The header's Install, whatever it currently reads. */
+function installButton(host: HTMLElement): HTMLButtonElement | undefined {
+  return [...host.querySelectorAll("button")].find(
+    (button) => button.textContent === "Install",
+  );
+}
+
 describe("the available package page", () => {
   it("settles on mount before the settings read has landed", async () => {
     const host = mount(<AvailablePackagePage />);
@@ -89,5 +96,29 @@ describe("the available package page", () => {
     // this proves was really read.
     expect(host.textContent).toContain("Install to");
     expect(host.textContent).toContain("works a pull request");
+  });
+
+  // The engine answers Unknown for the place the install would land in, so
+  // the page has that place's answer and no reason to keep a button the
+  // engine would refuse on the same record.
+  it("withholds Install and says why when the landing place's records went unread", async () => {
+    const host = mount(<AvailablePackagePage />);
+    await settle();
+    // The control: a readable record leaves the button alone, so what
+    // follows is the state doing the withholding and not the page.
+    expect(installButton(host)?.disabled).toBe(false);
+
+    vi.mocked(commands.marketplacePackagePreview).mockResolvedValue({
+      status: "ok",
+      data: { ...view, preview: { ...view.preview, state: "unknown" } },
+    });
+    useNavStore.setState({
+      availableRef: { kind: "skill", name: "gh2", catalog },
+    });
+    await settle();
+
+    expect(installButton(host)?.disabled).toBe(true);
+    expect(host.textContent).toContain("can't read Personal's records");
+    expect(host.textContent).toContain("See Problems");
   });
 });

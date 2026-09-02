@@ -99,10 +99,11 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   const repo = row?.repo ?? row?.path ?? summary?.provenance ?? null;
   const shownError = reachError ?? error;
   // Every Packages row opens this page, "Not known" ones included. The
-  // engine answered unknown because it could not read this scope's lock,
-  // and an install would meet the same record, so the page says why in
-  // place of the button rather than letting a raw engine error stand in
-  // for the reason.
+  // engine answered unknown because it could not read the lock of the place
+  // this install would land in — the destination when one is picked, which
+  // is the scope the engine mutates — and the install would meet that same
+  // record, so the page says why in place of the button rather than letting
+  // a raw engine error stand in for the reason.
   const recordsUnknown = view !== null && recordsUnreadable(view.preview.state);
 
   const doInstall = () => {
@@ -195,8 +196,8 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
                   {shownError}
                 </p>
               ) : null}
-              {recordsUnknown && scope ? (
-                <RecordsUnreadableNote scope={scope} />
+              {recordsUnknown && target ? (
+                <RecordsUnreadableNote scope={target} />
               ) : null}
               {/* The reading comes before the package's own words about
                   itself: the header already says what this is, and this is

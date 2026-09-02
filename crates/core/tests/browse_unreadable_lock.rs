@@ -8,6 +8,13 @@
 //! come through with their installed state answered as unknown — never
 //! guessed as available, which would offer an install the engine refuses
 //! for the same unreadable record.
+//!
+//! Which scope's record is the question the tests at the bottom hold to.
+//! A page browsing a personal subscription can redirect the install into a
+//! project, and the engine mutates the project it is handed — so the state
+//! the page gates on has to be the destination's, in both directions: an
+//! unreadable destination refuses, and an unreadable scope being browsed
+//! does not refuse an install landing somewhere readable.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]
@@ -94,7 +101,7 @@ fn offered(f: &Fixture) -> Vec<(String, InstallState)> {
 
 #[allow(clippy::unwrap_used)]
 fn detail(f: &Fixture) -> browse::BundleDetail {
-    browse::bundle(&f.env, &catalog(&f.scope), "starter").unwrap()
+    browse::bundle(&f.env, &catalog(&f.scope), "starter", None).unwrap()
 }
 
 #[allow(clippy::unwrap_used)]
@@ -209,5 +216,173 @@ fn the_set_carries_the_scopes_answer_even_where_no_member_shows_it() {
             .iter()
             .all(|member| member.state == InstallState::NotOffered),
         "no member row carries the fact, which is why the set must"
+    );
+}
+
+/// Browsing one place and installing into another: a personal subscription
+/// to a local catalog, plus a project to redirect the install into. Each
+/// place has its own lock, and either one can be the damaged one.
+struct Redirect {
+    _tmp: tempfile::TempDir,
+    env: Env,
+    browsing: Scope,
+    destination: Scope,
+    browsed_lock: std::path::PathBuf,
+    destination_lock: std::path::PathBuf,
+}
+
+#[allow(clippy::unwrap_used)]
+fn redirect() -> Redirect {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("dev/app");
+    let source = home.join("catalog");
+    put(
+        &source.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: work a pull request\n---\n\nBody.\n",
+    );
+    put(
+        &source.join("kendex.toml"),
+        "[bundles.starter]\ndescription = \"the starter set\"\nskills = [\"gh\"]\n",
+    );
+    let env = Env::fake(&home, FakeOs::Linux);
+    let declaration = format!(
+        "schema = {}\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+        kendex_core::manifest::MANIFEST_SCHEMA,
+        source.display()
+    );
+    put(
+        &kendex_core::manifest::manifest_path(&env, &Scope::Global),
+        &declaration,
+    );
+    // The destination declares the same subscription, which is what
+    // installing into a project from a personal one leaves behind.
+    put(&project.join("kendex.toml"), &declaration);
+    let browsed_lock = kendex_core::lock::lock_path(&env, &Scope::Global);
+    Redirect {
+        env,
+        browsing: Scope::Global,
+        destination: Scope::Project {
+            root: project.clone(),
+        },
+        browsed_lock,
+        destination_lock: project.join(".kendex-lock.json"),
+        _tmp: tmp,
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+fn redirected_state(r: &Redirect) -> InstallState {
+    browse::package_preview(
+        &r.env,
+        &catalog(&r.browsing),
+        ItemKind::Skill,
+        "gh",
+        Some(&r.destination),
+    )
+    .unwrap()
+    .state
+}
+
+#[allow(clippy::unwrap_used)]
+fn redirected_detail(r: &Redirect) -> browse::BundleDetail {
+    browse::bundle(
+        &r.env,
+        &catalog(&r.browsing),
+        "starter",
+        Some(&r.destination),
+    )
+    .unwrap()
+}
+
+/// The available-package page's Install gates on the state this read
+/// returns, and the install lands in the destination the page picked — so a
+/// damaged record there withholds the button, whatever the scope being
+/// browsed says.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_package_page_withholds_its_install_for_an_unreadable_destination() {
+    let r = redirect();
+    assert_eq!(
+        redirected_state(&r),
+        InstallState::Available,
+        "the control: two readable records offer the install"
+    );
+
+    fs::write(&r.destination_lock, "{not json").unwrap();
+    assert_eq!(
+        redirected_state(&r),
+        InstallState::Unknown,
+        "the install lands here, and the engine would refuse on this record"
+    );
+}
+
+/// The inverse, and the worse of the two: a scope being browsed whose lock
+/// cannot be read must not withhold an install landing somewhere that reads
+/// perfectly well. Nothing about that record is in the install's way, and
+/// refusing on it is a valid action denied with no reason to show.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unreadable_browsed_scope_does_not_withhold_an_install_landing_elsewhere() {
+    let r = redirect();
+    fs::write(&r.browsed_lock, "{not json").unwrap();
+
+    assert_eq!(redirected_state(&r), InstallState::Available);
+    assert_eq!(
+        browse::package_preview(&r.env, &catalog(&r.browsing), ItemKind::Skill, "gh", None)
+            .unwrap()
+            .state,
+        InstallState::Unknown,
+        "the control: with no redirect the same damaged record still answers"
+    );
+}
+
+/// The set page's Install all reads `records_unreadable` and its member
+/// boxes read each member's state; both are about the place the install
+/// lands in, so a damaged record there withholds both.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_set_page_withholds_its_installs_for_an_unreadable_destination() {
+    let r = redirect();
+    let detail = redirected_detail(&r);
+    assert!(
+        !detail.records_unreadable,
+        "the control: two readable records offer Install all"
+    );
+    assert_eq!(
+        detail.members.first().map(|member| member.state),
+        Some(InstallState::Available)
+    );
+
+    fs::write(&r.destination_lock, "{not json").unwrap();
+    let detail = redirected_detail(&r);
+    assert!(detail.records_unreadable);
+    assert_eq!(
+        detail.members.first().map(|member| member.state),
+        Some(InstallState::Unknown),
+        "no member box may be ticked for a place whose record went unread"
+    );
+}
+
+/// The set page's inverse: a damaged record in the scope being browsed
+/// leaves Install all and every member box alone when the install lands in
+/// a project that reads.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unreadable_browsed_scope_leaves_the_sets_installs_alone() {
+    let r = redirect();
+    fs::write(&r.browsed_lock, "{not json").unwrap();
+
+    let detail = redirected_detail(&r);
+    assert!(!detail.records_unreadable);
+    assert_eq!(
+        detail.members.first().map(|member| member.state),
+        Some(InstallState::Available)
+    );
+
+    let browsed = browse::bundle(&r.env, &catalog(&r.browsing), "starter", None).unwrap();
+    assert!(
+        browsed.records_unreadable,
+        "the control: with no redirect the same damaged record still answers"
     );
 }

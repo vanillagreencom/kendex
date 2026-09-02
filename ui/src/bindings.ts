@@ -239,14 +239,28 @@ export const commands = {
 	 *  carry on as when this machine already holds one.
 	 */
 	marketplaceSummary: (catalog: Catalog) => typedError<CatalogSummary, string>(__TAURI_INVOKE("marketplace_summary", { catalog })),
-	/**  One curated set with per-member installed state. */
-	marketplaceBundle: (catalog: Catalog, name: string) => typedError<BundleDetail, string>(__TAURI_INVOKE("marketplace_bundle", { catalog, name })),
+	/**
+	 *  One curated set with per-member installed state. `destination`
+	 *  redirects the install into a project, and every answer about records —
+	 *  each member's state and the set's own `records_unreadable` — is then
+	 *  about that project, which is the scope the engine mutates.
+	 */
+	marketplaceBundle: (catalog: Catalog, name: string, destination: { scope: "global" } | { scope: "project"; root: string } | null) => typedError<BundleDetail, string>(__TAURI_INVOKE("marketplace_bundle", { catalog, name, destination })),
 	/**
 	 *  Every curated set a catalog declares, with per-member installed state —
 	 *  what the marketplace page's Bundles tab lists.
 	 */
 	marketplaceBundles: (catalog: Catalog) => typedError<BundleDetail[], string>(__TAURI_INVOKE("marketplace_bundles", { catalog })),
 	marketplacePackagePreview: (catalog: Catalog, kind: ItemKind, name: string, destination: { scope: "global" } | { scope: "project"; root: string } | null) => typedError<PackageView, string>(__TAURI_INVOKE("marketplace_package_preview", { catalog, kind, name, destination })),
+	/**
+	 *  Whether one place's lock is beyond this build, asked for a scope no
+	 *  catalog was opened for. Subscribing plans against the chosen place's
+	 *  lock (`source_ops::persist_and_plan`), so a place whose record cannot
+	 *  be read refuses the write — and the Subscribe dialog says so beside the
+	 *  place it was chosen at rather than letting the engine's raw refusal
+	 *  stand in for the reason.
+	 */
+	scopeRecordsUnreadable: (scope: Scope) => typedError<boolean, string>(__TAURI_INVOKE("scope_records_unreadable", { scope })),
 	/**
 	 *  One offered file's content before install — the same read an installed
 	 *  package's file gets, confined to the package inside the catalog.
@@ -764,13 +778,14 @@ export type BundleDetail = {
 	totalMembers: number,
 	collision: string | null,
 	/**
-	 *  This scope's lock could not be read. The set page's Install all asks
-	 *  about the set rather than about a member, so it needs the scope's own
-	 *  answer: no member row can carry it, because a member the catalog no
-	 *  longer offers reads [`InstallState::NotOffered`] with or without a
-	 *  lock, and a set whose members were all dropped — or one declared with
-	 *  none — would leave the page deriving "readable" from rows that never
-	 *  consulted the record.
+	 *  The lock of the scope this read answers for — the destination where
+	 *  the install is redirected, the browsed scope otherwise — could not be
+	 *  read. The set page's Install all asks about the set rather than about
+	 *  a member, so it needs that scope's own answer: no member row can
+	 *  carry it, because a member the catalog no longer offers reads
+	 *  [`InstallState::NotOffered`] with or without a lock, and a set whose
+	 *  members were all dropped — or one declared with none — would leave the
+	 *  page deriving "readable" from rows that never consulted the record.
 	 */
 	recordsUnreadable: boolean,
 };
@@ -1671,19 +1686,20 @@ export type InstallState =
  */
 "offered-more-than-once" | 
 /**
- *  This scope's lock could not be read, so whether the package is
- *  installed here is unknown. The catalog is still listed — what a
- *  source offers is a fact about the source — but every standing the
- *  lock alone could have given becomes this one, decided in
- *  `Browsed::state` and `Browsed::member_state` and nowhere else. Every
- *  surface offering an install for one package reads the state: the
- *  Packages row, a set's member row, and the available-package page
- *  (through [`PackagePreview::state`]) all say why instead, so none
- *  offers an install the engine would refuse for the same unreadable
- *  record. The state answers for the BROWSED scope: an install a page
- *  redirects into a different scope is not yet judged against that
- *  destination's record. The set page's Install all is about the set,
- *  not a package, and reads [`BundleDetail::records_unreadable`].
+ *  The scope this state answers for has a lock that could not be read,
+ *  so whether the package is installed there is unknown. The catalog is
+ *  still listed — what a source offers is a fact about the source — but
+ *  every standing the lock alone could have given becomes this one,
+ *  decided in `Browsed::state` and `Browsed::member_state` and nowhere
+ *  else. Every surface offering an install for one package reads the
+ *  state: the Packages row, a set's member row, and the
+ *  available-package page (through [`PackagePreview::state`]) all say
+ *  why instead, so none offers an install the engine would refuse for
+ *  the same unreadable record. The scope is the one the install would
+ *  land in — the browsed catalog's own, or the destination a page
+ *  redirects into, which is the scope the engine mutates. The set
+ *  page's Install all is about the set, not a package, and reads
+ *  [`BundleDetail::records_unreadable`].
  */
 "unknown";
 
@@ -2341,9 +2357,11 @@ export type PackagePreview = {
 	/**  What installing it takes along, and what it offers to take. */
 	dependencies: PackageDependencies,
 	/**
-	 *  Where this package stands in the browsed scope, by the same join the
-	 *  Packages row shows. The page installs, so it needs the answer the
-	 *  row has: [`InstallState::Unknown`] where the scope's lock could not
+	 *  Where this package stands in the scope the install would land in —
+	 *  the destination when the page redirects into one, the browsed scope
+	 *  otherwise — by the same join the Packages row shows. The page
+	 *  installs, so it needs the answer for the scope the engine will
+	 *  mutate: [`InstallState::Unknown`] where that scope's lock could not
 	 *  be read, and the page offers the reason rather than a button the
 	 *  engine would refuse for that same record.
 	 */

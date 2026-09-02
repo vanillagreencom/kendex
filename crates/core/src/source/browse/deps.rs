@@ -15,13 +15,11 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::engine::deps::OfferedSkills;
-use crate::lock::Lock;
-use crate::manifest::Manifest;
 use crate::model::ItemKind;
 use crate::names;
 
 use super::InstallState;
-use super::opened::Browsed;
+use super::opened::{Browsed, Records};
 
 /// One declared dependency, with where it stands in this scope.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -55,47 +53,16 @@ impl PackageDependencies {
     }
 }
 
-/// Which scope's records a dependency's state is read from: what is
-/// already installed there, and what was kept removed. The browsed scope
-/// answers unless the install is being redirected, in which case the
-/// destination does — that is where the install lands, so its removals and
-/// its installations are the ones the row is about.
-pub(super) struct Where<'a> {
-    pub(super) manifest: &'a Manifest,
-    /// `None` where the landing scope's lock could not be read: what is
-    /// installed there is then unknown, and a dependency says so rather
-    /// than claiming it is missing.
-    pub(super) lock: Option<&'a Lock>,
-    /// The subscription the catalog is browsed as. A redirected install
-    /// installs from the same subscription name in the destination.
-    pub(super) subscription: Option<&'a str>,
-}
-
-impl Where<'_> {
-    fn state(&self, kind: ItemKind, name: &str) -> InstallState {
-        let Some(lock) = self.lock else {
-            return InstallState::Unknown;
-        };
-        let locked = lock.entries.values().any(|entry| {
-            entry.kind == kind
-                && entry.name == name
-                && self.subscription == Some(entry.source.as_str())
-        });
-        match locked {
-            true => InstallState::Installed,
-            false => InstallState::Available,
-        }
-    }
-}
-
 /// What this package declares it needs, against this catalog and the scope
-/// the install would land in. `offered` is the catalog's bare-name index,
-/// shared across every package in one read; `text` is the package's own
-/// SKILL.md, already read by the caller that also wants its header.
+/// the install would land in — `landing`, which is the destination where a
+/// page redirects the install and the browsed scope otherwise. `offered` is
+/// the catalog's bare-name index, shared across every package in one read;
+/// `text` is the package's own SKILL.md, already read by the caller that
+/// also wants its header.
 pub(super) fn dependencies(
     browsed: &Browsed,
     offered: &OfferedSkills,
-    landing: &Where<'_>,
+    landing: &Records,
     kind: ItemKind,
     name: &str,
     text: Option<&str>,
@@ -128,7 +95,7 @@ pub(super) fn dependencies(
 fn row(
     browsed: &Browsed,
     offered: &OfferedSkills,
-    landing: &Where<'_>,
+    landing: &Records,
     package: &str,
     declared: &str,
 ) -> Option<PackageDependency> {
@@ -145,7 +112,7 @@ fn row(
             // ladder a bundle member's row climbs, and the same predicate
             // `engine::deps::wanted_by` refuses on.
             Ok(name) if landing.manifest.is_held_back(kind, name) => InstallState::RemovedByYou,
-            Ok(name) => landing.state(kind, name),
+            Ok(name) => browsed.state(landing, kind, name),
             // The two ways a name resolves to nothing are not one state:
             // the catalog carrying it twice under different plugins is
             // what `engine::deps::resolve` warns about by name at install

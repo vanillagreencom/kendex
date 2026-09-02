@@ -156,6 +156,19 @@ pub fn rows(env: &Env, scopes: &[Scope]) -> Result<Vec<MarketplaceRow>, String> 
     Ok(rows)
 }
 
+/// Whether one place's lock is beyond this build, asked for a scope no
+/// catalog was opened for. Subscribing plans against the chosen place's
+/// lock (`source_ops::persist_and_plan`), so a place whose record cannot
+/// be read refuses the write — and the Subscribe dialog says so beside the
+/// place it was chosen at rather than letting the engine's raw refusal
+/// stand in for the reason.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn scope_records_unreadable(scope: Scope) -> Result<bool, String> {
+    let env = env()?;
+    Ok(browse::records_unreadable(&env, &scope))
+}
+
 /// Every package one catalog offers, across kinds, with installed state
 /// joined in.
 #[tauri::command(async)]
@@ -184,12 +197,19 @@ pub fn marketplace_bundles(catalog: Catalog) -> Result<Vec<BundleDetail>, String
     browse::bundles(&env, &catalog).map_err(|e| e.to_string())
 }
 
-/// One curated set with per-member installed state.
+/// One curated set with per-member installed state. `destination`
+/// redirects the install into a project, and every answer about records —
+/// each member's state and the set's own `records_unreadable` — is then
+/// about that project, which is the scope the engine mutates.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn marketplace_bundle(catalog: Catalog, name: String) -> Result<BundleDetail, String> {
+pub fn marketplace_bundle(
+    catalog: Catalog,
+    name: String,
+    destination: Option<Scope>,
+) -> Result<BundleDetail, String> {
     let env = env()?;
-    browse::bundle(&env, &catalog, &name).map_err(|e| e.to_string())
+    browse::bundle(&env, &catalog, &name, destination.as_ref()).map_err(|e| e.to_string())
 }
 
 /// The available-package page's one payload: the preview beside the safety

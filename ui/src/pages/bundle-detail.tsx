@@ -56,17 +56,21 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
   const [destination, setDestination] = useState<Scope | null>(null);
   const [choice, setChoice] = useState<Choice>(NO_CHOICE);
 
-  useEffect(() => {
-    if (ready) void loadBundle(catalog, bundle);
-  }, [catalog, ready, bundle, loadBundle]);
-
-  const key = bundleKey(catalog, bundle);
-  const detail = bundles[key];
-  const readError = reachError ?? readErrors[key];
   const subscribed = catalog.by === "subscription" ? catalog : null;
   const scope = subscribed?.scope ?? null;
   const target = destination ?? scope;
   const redirected = target && scope && target !== scope ? target : null;
+
+  // The destination is part of the read, not a filter over it: every
+  // member's state and the set's own record standing are facts about the
+  // scope the install lands in, so choosing another place asks again.
+  useEffect(() => {
+    if (ready) void loadBundle(catalog, bundle, redirected);
+  }, [catalog, ready, bundle, redirected, loadBundle]);
+
+  const key = bundleKey(catalog, bundle, redirected);
+  const detail = bundles[key];
+  const readError = reachError ?? readErrors[key];
 
   const toggleMember = (kind: string, name: string) => {
     setSelected((prev) => {
@@ -80,7 +84,7 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
 
   // The member list re-reads after any install, so a row flips to
   // Installed the moment it is.
-  const reload = () => loadBundle(catalog, bundle);
+  const reload = () => loadBundle(catalog, bundle, redirected);
   const installItems = (items: { kind: ItemKind; name: string }[]) => {
     if (!subscribed) return;
     void install({
@@ -104,11 +108,13 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
     );
     if (items.length > 0) installItems(items);
   };
-  // This scope's lock could not be read, so no member's standing is known
-  // and every per-member box is already off. "Install all" asks about the
-  // set rather than a member, so it reads the scope's own answer off the
-  // payload: a member the catalog dropped says "no longer offered" with or
-  // without a lock, so no scan of the rows could tell.
+  // The lock of the place this install would land in could not be read, so
+  // no member's standing is known and every per-member box is already off.
+  // "Install all" asks about the set rather than a member, so it reads that
+  // place's own answer off the payload: a member the catalog dropped says
+  // "no longer offered" with or without a lock, so no scan of the rows
+  // could tell. Landing place, not browsed one — the engine mutates where
+  // the install goes.
   const recordsUnknown = detail?.recordsUnreadable ?? false;
   // Which tools the picker may offer follows what is actually ticked; with
   // nothing ticked the set is every kind, which is what the whole bundle
@@ -173,9 +179,9 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
               </p>
             ) : (
               <>
-                {recordsUnknown && scope ? (
+                {recordsUnknown && target ? (
                   <div className="mb-3">
-                    <RecordsUnreadableNote scope={scope} />
+                    <RecordsUnreadableNote scope={target} />
                   </div>
                 ) : null}
                 <div className="divide-y rounded-lg border">
@@ -201,8 +207,12 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
                       onChange={(next) => {
                         // Which tools can take this is a fact about the
                         // destination, so a choice made against another one
-                        // is not an answer here.
+                        // is not an answer here. Nor is a ticked member:
+                        // the box was ticked against the state the place
+                        // before it answered, and the new place may already
+                        // hold that member or refuse to say.
                         setChoice(NO_CHOICE);
+                        setSelected(new Set());
                         setDestination(next);
                       }}
                     />

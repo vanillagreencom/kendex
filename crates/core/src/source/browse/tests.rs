@@ -238,7 +238,7 @@ fn bundle_detail_derives_partly_installed_and_full() {
     let (env, scope) = project(tmp.path(), &manifest);
     save_lock(&env, &scope, &SIX[..2]);
 
-    let partly = bundle(&env, &cat(&scope), "starter").unwrap();
+    let partly = bundle(&env, &cat(&scope), "starter", None).unwrap();
     assert_eq!(partly.total_members, 6);
     assert_eq!(partly.installed_members, 2);
     assert_eq!(partly.description.as_deref(), Some("six things"));
@@ -254,7 +254,7 @@ fn bundle_detail_derives_partly_installed_and_full() {
     assert_eq!(state_of(&partly, "guard"), InstallState::Available);
 
     save_lock(&env, &scope, &SIX);
-    let full = bundle(&env, &cat(&scope), "starter").unwrap();
+    let full = bundle(&env, &cat(&scope), "starter", None).unwrap();
     assert_eq!(full.installed_members, 6);
     assert!(
         full.members
@@ -340,7 +340,10 @@ fn listing_sets_agrees_with_opening_one() {
 
     let listed = bundles(&env, &cat(&scope)).unwrap();
     assert_eq!(listed.len(), 1);
-    assert_eq!(listed[0], bundle(&env, &cat(&scope), "starter").unwrap());
+    assert_eq!(
+        listed[0],
+        bundle(&env, &cat(&scope), "starter", None).unwrap()
+    );
 }
 
 /// A bundle member the catalog lists but does not carry — renamed or removed
@@ -363,7 +366,7 @@ fn a_bundle_member_the_catalog_no_longer_carries_is_a_row_not_an_error() {
     );
     let (env, scope) = project(tmp.path(), &manifest);
 
-    let detail = bundle(&env, &cat(&scope), "starter").unwrap();
+    let detail = bundle(&env, &cat(&scope), "starter", None).unwrap();
     assert_eq!(detail.total_members, 2);
     let state_of = |name: &str| {
         detail
@@ -397,7 +400,7 @@ fn a_member_the_user_removed_shows_removed_by_you() {
     );
     let (env, scope) = project(tmp.path(), &manifest);
 
-    let detail = bundle(&env, &cat(&scope), "starter").unwrap();
+    let detail = bundle(&env, &cat(&scope), "starter", None).unwrap();
     let state_of = |name: &str| {
         detail
             .members
@@ -458,7 +461,7 @@ fn a_name_taken_by_another_source_is_shown_before_the_click() {
             .all(|row| row.name == "gh" || row.collision.is_none())
     );
 
-    let detail = bundle(&env, &cat(&scope), "starter").unwrap();
+    let detail = bundle(&env, &cat(&scope), "starter", None).unwrap();
     assert_eq!(detail.collision.as_deref(), Some("two"));
 }
 

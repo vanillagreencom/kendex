@@ -88,9 +88,26 @@ export const rowSubscribed = (
   live ? row.repoKey !== null && live.has(row.repoKey) : row.subscribed;
 
 /** One curated set's cache and error key, in its own namespace so a set
- * named like a read ("packages") can never land on that read's key. */
-export const bundleKey = (catalog: Catalog, name: string): string =>
-  `${readErrorKey(catalogKey(catalog), "bundle")}::${name}`;
+ * named like a read ("packages") can never land on that read's key.
+ *
+ * The destination is part of the key because it is part of the answer: a
+ * set read for an install redirected into a project carries that project's
+ * member states and its record standing, so the same set read for another
+ * place is a different read and never the cached one. */
+export const bundleKey = (
+  catalog: Catalog,
+  name: string,
+  destination: Scope | null,
+): string =>
+  `${readErrorKey(catalogKey(catalog), "bundle")}::${JSON.stringify([
+    name,
+    destination === null
+      ? null
+      : [
+          destination.scope,
+          destination.scope === "global" ? null : destination.root,
+        ],
+  ])}`;
 
 export const subscription = (scope: Scope, source: string): Catalog => ({
   by: "subscription",
