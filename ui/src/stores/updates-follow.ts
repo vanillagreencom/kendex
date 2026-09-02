@@ -163,19 +163,16 @@ export function followSwitch({
           ),
         });
         // Read again whichever way the write answered. An error is not proof
-        // that nothing changed: `package_set_rev` runs the leaving packages'
-        // uninstallers before the plan (`repo_effects::execute`), and an
-        // error over those comes back with what they did standing. The
-        // manifest itself does not survive a failed apply — the save is op 0
-        // of the same journaled plan and `run_journaled` rolls it back — so
-        // where the switch sits is the engine's answer to give, not the
-        // click's: putting it back from the click's own row would show that
-        // as settled and re-open every action against it.
+        // that nothing changed — `lib/rescan.ts`'s header says what does and
+        // does not survive a failed apply — so where the switch sits is the
+        // engine's answer to give, not the click's: putting it back from the
+        // click's own row would show that as settled and re-open every
+        // action against it.
         await get().reload();
         // Then the scan and the audit, which the standing does not cover:
         // the flip runs an apply, and an apply moves the installed bytes
         // the scan lists and the audit scores. Asked whatever the write
-        // answered and whichever way the switch went, on `rescan.ts`'s rule.
+        // answered and whichever way the switch went, on that same rule.
         await rescanEverything();
       }
     });

@@ -290,22 +290,22 @@ describe("the Follow source switch", () => {
     await settle();
   });
 
-  // A refused write is not a write that changed nothing. `package_set_rev`
-  // runs the leaving packages' uninstallers before the plan, and an error
-  // over those comes back with what they did standing; the manifest save is
-  // op 0 of the same journaled plan and rolls back with it. Either way the
-  // click has no account of where the switch belongs — restoring it from
-  // the row the click read would show that as settled and re-open every
-  // action against it — so the standing is read again, and the engine's own
-  // answer decides where the switch sits.
+  // A refused write is not a write that changed nothing — `lib/rescan.ts`'s
+  // header says what does and does not survive a failed apply. So the click
+  // has no account of where the switch belongs: restoring it from the row
+  // the click read would show that as settled and re-open every action
+  // against it. The standing is read again, and the engine's own answer
+  // decides where the switch sits.
   it("reads the standing back when the write is refused", async () => {
     vi.mocked(commands.packageSetRev).mockResolvedValue({
       status: "error",
       error: "manifest busy",
     });
-    // What the engine turns out to hold: the revision the failed apply
-    // had already persisted.
-    const persisted = [
+    // What the engine turns out to hold once it is asked — held, against a
+    // click that asked to follow. Which way it went is the read's to say,
+    // not the click's; the fixture makes the two disagree so the assertion
+    // below can tell them apart.
+    const heldByEngine = [
       { ...rows[0], pinned: true, holdOwner: { kind: "package" as const } },
       rows[1],
       rows[2],
@@ -313,7 +313,7 @@ describe("the Follow source switch", () => {
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
       data: {
-        rows: persisted,
+        rows: heldByEngine,
         warnings: [],
         unreadable: [],
         lastFetched: null,
@@ -328,9 +328,8 @@ describe("the Follow source switch", () => {
     await settle();
 
     expect(commands.updatesOverview).toHaveBeenCalled();
-    // And so are the scan and the audit: the error came back over an apply
-    // that had already persisted the revision, so it is no account of what
-    // is on disk.
+    // And so are the scan and the audit: the error is no account of what is
+    // on disk, on `rescan.ts`'s rule.
     expect(commands.scanMachine).toHaveBeenCalled();
     expect(commands.auditAll).toHaveBeenCalled();
     // The flip is retired before that read, so the rows come back as the

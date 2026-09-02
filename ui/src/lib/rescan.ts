@@ -23,16 +23,30 @@
 // same apply an update does, so the bytes both reads answer for move under
 // it — and calls this once its own standing has landed.
 //
-// A write that calls this calls it whatever the write answered, and no
-// caller gates on the answer. A refusal is no account of what is on disk:
-// `repo_effects::execute` runs the leaving packages' uninstallers before
-// the plan, and an `Undo` error comes back with what they did to the
-// repository standing. Neither is an answer that landed — `moved` covers
-// the two states `moving` counts, `removed` the other destructive one, and
-// a dropped rendering can answer with all three fields empty, so no
-// predicate over the response is complete. A write that turns out to have
-// moved nothing pays what every other one pays — the page held for a
-// machine-wide scan and a forced audit — rather than a page left dated.
+// The writes on the Updates page and the package page call this whatever
+// their write answered: `updates.ts`'s [`updateOne`] and [`updateRows`],
+// `updates-edits.ts`'s `run`, `updates-follow.ts`'s [`followSwitch`], and
+// `package-version-actions.ts`'s `afterChange`. The reasoning lives here
+// rather than at each of them.
+//
+// A refusal is no account of what is on disk. `repo_effects::execute` runs
+// the leaving packages' uninstallers before the plan, and an `Undo` error
+// comes back with what they did to the repository standing; a command that
+// applies a bare plan instead can still fail in its enrichment read, after
+// the write committed. What does NOT survive is the manifest: its save is
+// part of the same journaled plan, so `run_journaled` rolls it back with
+// everything else the plan touched.
+//
+// Neither is an answer that landed a complete account — `moved` covers the
+// two states `moving` counts, `removed` the other destructive one, and a
+// dropped rendering can answer with all three fields empty, so no predicate
+// over the response decides this. A write that turns out to have moved
+// nothing costs one machine-wide scan and one forced audit, which is
+// cheaper than the dated page the alternative leaves.
+//
+// This speaks only for those five. The marketplace, source-toggle and
+// settings callers still return on the error before reaching here; whether
+// that is right is their own question, not one this paragraph answers.
 //
 // Adding a project, dropping one, or moving a harness's folder changes
 // which scopes the audit reads, and a scope with no view of its own counts

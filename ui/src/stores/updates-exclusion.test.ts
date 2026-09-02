@@ -78,7 +78,10 @@ const WRITES = [
   [commands.packageSetRev, () => store().setAutoUpdate(row(), false)],
   [commands.packageFork, () => keepAsOwn(EDITED)],
   [commands.applyDiscardEdits, () => takeNewVersion(row())],
-  [commands.packageForkBeside, () => installAsNew(EDITED, "claude", "mine")],
+  [
+    commands.packageForkBeside,
+    () => installAsNew(EDITED, "claude", "mine", () => {}),
+  ],
   [commands.packageUpdate, () => store().updateOne(row())],
   [commands.packageUpdateMany, () => store().updateRows([row()])],
   [commands.packageUpdate, fromPackagePage],

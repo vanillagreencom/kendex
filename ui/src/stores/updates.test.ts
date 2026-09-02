@@ -426,6 +426,12 @@ describe("updates store", () => {
     expect(useProblemsStore.getState().dialog.open).toBe(true);
     expect(useProblemsStore.getState().dialog.message).toBe("ipc down");
     expect(toast.success).not.toHaveBeenCalled();
+    // The rejection arm reads the machine too, and it is the arm that
+    // accounts for least: the call never answered, so nothing says whether
+    // the apply ran. Left unstubbed, the scan and the audit land as failed
+    // reads, which is all this pins — that they were asked.
+    expect(commands.scanMachine).toHaveBeenCalled();
+    expect(commands.auditAll).toHaveBeenCalled();
   });
 
   it("surfaces a follow switch whose transport failed", async () => {
@@ -539,12 +545,10 @@ describe("updates store", () => {
     });
   };
 
-  // An apply that answers with an error has already run the leaving
-  // packages' uninstallers — `repo_effects::execute` runs them before the
-  // plan, and an `Undo` error comes back with what they did standing — so
-  // the machine reads are owed whichever way it answered. Gated on the
-  // answer, Home's inventory and the audit scores went on reporting copies
-  // already taken off disk until something else forced a read.
+  // The machine reads are owed whichever way the apply answered, on
+  // `lib/rescan.ts`'s rule. Gated on the answer, Home's inventory and the
+  // audit scores went on reporting copies already taken off disk until
+  // something else forced a read.
   it("reads the machine back when an update answers with an error", async () => {
     useProblemsStore.setState({
       dialog: { open: false, title: "", steps: [], actions: [] },

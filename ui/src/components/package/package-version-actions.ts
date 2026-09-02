@@ -75,12 +75,10 @@ export function packageVersionActions(
       setBusy(false);
       if (response.status === "error") {
         showError(response.error);
-        // An error is not proof that nothing changed: the write runs the
-        // leaving packages' uninstallers before the plan, and an error over
-        // those comes back with what they did standing. The manifest save is
-        // op 0 of the same journaled plan and rolls back with it, so the
-        // version this page shows as settled is the engine's answer to give.
-        // The page reads back either way.
+        // An error is not proof that nothing changed — `lib/rescan.ts`'s
+        // header says what does and does not survive a failed apply — so
+        // the version this page shows as settled is the engine's answer to
+        // give. The page reads back either way.
         afterChange();
         return;
       }

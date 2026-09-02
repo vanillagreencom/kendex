@@ -1,6 +1,6 @@
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { UpdateRow } from "@/bindings";
+import type { HarnessId, UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
@@ -59,6 +59,20 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
     ...overrides,
   };
 }
+
+/** `installAsNew` hands its refusal to a callback at the engine's answer,
+ *  ahead of the reads behind it. A case about that answer reads the way it
+ *  always did through this: it waits for the reads too, then reports what
+ *  the callback was given. */
+const refusalFrom = async (
+  ...args: [UpdateRow, HarnessId, string]
+): Promise<string | null | undefined> => {
+  let refusal: string | null | undefined;
+  await installAsNew(...args, (failure) => {
+    refusal = failure;
+  });
+  return refusal;
+};
 
 describe("updates store: edited places", () => {
   beforeEach(() => {
@@ -279,7 +293,7 @@ describe("updates store: installing beside an edited place", () => {
     });
 
     expect(
-      await installAsNew(row({ ...edited, pinned: true }), "claude", "gh-mine"),
+      await refusalFrom(row({ ...edited, pinned: true }), "claude", "gh-mine"),
     ).toBeNull();
     expect(commands.packageForkBeside).toHaveBeenLastCalledWith(
       { scope: "global" },
@@ -290,7 +304,7 @@ describe("updates store: installing beside an edited place", () => {
       "b".repeat(40),
     );
 
-    expect(await installAsNew(row(edited), "claude", "gh-mine")).toBeNull();
+    expect(await refusalFrom(row(edited), "claude", "gh-mine")).toBeNull();
     expect(commands.packageForkBeside).toHaveBeenLastCalledWith(
       { scope: "global" },
       "skill",
@@ -314,16 +328,62 @@ describe("updates store: installing beside an edited place", () => {
       error: { phase: "refused", message: "'docs' already installed" },
     });
 
-    expect(await installAsNew(row(edited), "claude", "docs")).toBe(
+    expect(await refusalFrom(row(edited), "claude", "docs")).toBe(
       "'docs' already installed",
     );
     expect(useProblemsStore.getState().dialog.open).toBe(false);
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.info).not.toHaveBeenCalled();
-    // Refused for this name, but the write ran the leaving packages'
-    // uninstallers before its plan — the machine is read whatever it
-    // answered, on `rescan.ts`'s rule.
+    // Read anyway, on `rescan.ts`'s rule. Not because this phase disarmed
+    // anything: `package_fork_beside` answers Refused for a failed `env()`,
+    // a plan it could not build, or an `apply::execute` that rolled back —
+    // none of which is proof the rollback itself landed. Its sibling phase,
+    // Recorded, is the one that runs uninstallers, and no predicate here
+    // tells the two apart before the read.
     expect(commands.auditAll).toHaveBeenCalled();
+  });
+
+  // The refusal is the dialog's inline "pick another name", so it lands at
+  // the engine's answer and not behind the reads: a forced audit skips its
+  // freshness window on purpose, and the person would sit over a disabled
+  // dialog for that whole span before being told to retype. The scan is
+  // left hanging here so nothing but the answer can have resolved.
+  it("hands back the refusal before the reads behind it finish", async () => {
+    vi.mocked(commands.packageForkBeside).mockResolvedValue({
+      status: "error",
+      error: { phase: "refused", message: "'docs' already installed" },
+    });
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    });
+    // Held open until this case says so, then released so the chain — and
+    // the store's busy with it — finishes before the next case.
+    let releaseScan: (answer: never) => void = () => {};
+    vi.mocked(commands.scanMachine).mockReturnValue(
+      new Promise((resolve) => {
+        releaseScan = resolve as (answer: never) => void;
+      }),
+    );
+    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+
+    let refusal: string | null | undefined;
+    const reads = installAsNew(row(edited), "claude", "docs", (failure) => {
+      refusal = failure;
+    });
+
+    await vi.waitFor(() => expect(refusal).toBeDefined());
+    expect(refusal).toBe("'docs' already installed");
+    // The reads are still out — this is the wait the person no longer sits
+    // through, and `busy` is what proves they are inside the window.
+    expect(useUpdatesStore.getState().busy).toBe(true);
+
+    releaseScan({
+      status: "ok",
+      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
+    } as never);
+    await reads;
+    expect(useUpdatesStore.getState().busy).toBe(false);
   });
 
   // An error in neither phase — Tauri rejecting an unknown command or bad
@@ -335,7 +395,7 @@ describe("updates store: installing beside an edited place", () => {
       error: "invalid args `newName`" as never,
     });
 
-    expect(await installAsNew(row(edited), "claude", "gh-mine")).toBe(
+    expect(await refusalFrom(row(edited), "claude", "gh-mine")).toBe(
       "invalid args `newName`",
     );
     expect(toast.success).not.toHaveBeenCalled();
@@ -353,7 +413,7 @@ describe("updates store: installing beside an edited place", () => {
       error: { phase: "recorded", message: "render refused: disk full" },
     });
 
-    expect(await installAsNew(row(edited), "claude", "gh-mine")).toBeNull();
+    expect(await refusalFrom(row(edited), "claude", "gh-mine")).toBeNull();
     expect(toast.info).toHaveBeenCalledWith(
       "Your edited copy is now gh-mine, but gh didn't install: render refused: disk full.",
     );
@@ -370,7 +430,7 @@ describe("updates store: installing beside an edited place", () => {
       status: "error",
       error: { phase: "refused", message: "nope" },
     });
-    await installAsNew(
+    await refusalFrom(
       row({ ...edited, pinned: true, canTakeLatest: false }),
       "claude",
       "gh-mine",
@@ -387,7 +447,7 @@ describe("updates store: installing beside an edited place", () => {
 
   it("refuses rows a failed check left behind, before any call", async () => {
     useUpdatesStore.setState({ read: READ_PENDING });
-    expect(await installAsNew(row(edited), "claude", "gh-mine")).toBe(
+    expect(await refusalFrom(row(edited), "claude", "gh-mine")).toBe(
       UPDATE_NEEDS_CHECK_NOTE,
     );
     expect(commands.packageForkBeside).not.toHaveBeenCalled();
@@ -422,7 +482,7 @@ describe("updates store: installing beside an edited place", () => {
     expect(useProblemsStore.getState().dialog.message).toBe(
       UPDATE_NEEDS_CHECK_NOTE,
     );
-    expect(await installAsNew(edited, "claude", "gh-mine")).toBe(
+    expect(await refusalFrom(edited, "claude", "gh-mine")).toBe(
       UPDATE_NEEDS_CHECK_NOTE,
     );
     expect(commands.packageForkBeside).not.toHaveBeenCalled();

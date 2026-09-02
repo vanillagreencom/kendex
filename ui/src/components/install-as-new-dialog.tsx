@@ -45,7 +45,12 @@ export function InstallAsNewDialog({
 
   const submit = () => {
     if (trimmed === "") return;
-    void installAsNew(row, harness, trimmed).then((failure) => {
+    // The callback lands at the engine's answer, not at the reads behind
+    // it: the refusal is what the person retypes over, so it must not wait
+    // out a machine-wide scan. The promise covers those reads, and nothing
+    // here needs them — `busy` is what keeps the buttons down until they
+    // land.
+    void installAsNew(row, harness, trimmed, (failure) => {
       if (failure === null) onOpenChange(false);
       else setError(failure);
     });

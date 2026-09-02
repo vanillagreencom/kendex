@@ -137,12 +137,10 @@ describe("packageVersionActions", () => {
     expect(toast.info).toHaveBeenCalledWith(HELD_IN_CLAUDE);
   });
 
-  // A refused write is not a write that changed nothing. `package_set_rev`
-  // runs the leaving packages' uninstallers before the plan, and an error
-  // over those comes back with what they did standing; the manifest save is
-  // op 0 of the same journaled plan and rolls back with it. A page that
+  // A refused write is not a write that changed nothing — `lib/rescan.ts`'s
+  // header says what does and does not survive a failed apply. A page that
   // returned on the error would go on showing the version it read before
-  // the click as the settled one, whichever of the two happened.
+  // the click as the settled one.
   it("reads the package back when the write is refused", async () => {
     const reload = vi.fn();
     vi.mocked(commands.packageSetRev).mockResolvedValue({

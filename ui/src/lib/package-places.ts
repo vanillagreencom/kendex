@@ -89,11 +89,12 @@ export const placeKey = (kind: ItemKind, name: string, scope: Scope): string =>
 /** These counts with one more write recorded against every place in `rows`.
  *
  *  Handed every place a run ATTEMPTED, not only those whose command answered
- *  ok. An error is not proof that nothing changed: `insert_manifest_save`
- *  leads a plan with the manifest write, so an apply that fails after it
- *  leaves the new hold on disk with nothing else moved, and a refusal ran a
- *  plan led the same way. A refresh that was not needed costs one re-read of
- *  a page already on screen; one that was needed and skipped is the stale
+ *  ok. An error is not proof that nothing changed: the apply behind these
+ *  writes runs the leaving packages' uninstallers before the plan, and an
+ *  error over those comes back with what they did to the repository
+ *  standing — `lib/rescan.ts`'s header is the account. A refresh that was
+ *  not needed costs one re-read of a page already on screen; one that was
+ *  needed and skipped is the stale
  *  Overview this whole record exists to remove — so this deliberately
  *  over-covers, and is not to be tightened back to what a plan moved. */
 export const countingWrites = (

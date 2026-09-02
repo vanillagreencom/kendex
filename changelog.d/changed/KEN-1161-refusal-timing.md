@@ -1,0 +1,1 @@
+- Install beside shows its "that name is taken" refusal as soon as the engine answers, rather than after the scan and audit behind the write.
