@@ -16,12 +16,12 @@ source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 assert_tmpdir TMP_ROOT
 
-# GIT_DIR outranks -C, so a suite that inherits it — every run from inside a
-# git hook does — re-initializes the ambient repository instead of the fixture,
-# and every later `git rev-parse --show-toplevel` (the CLI's own, for CACHE_DIR)
-# answers with the real checkout. The fixture issue would then be written into
-# the developer's real .cache/linear. Unsetting here covers the whole process,
-# git and CLI alike.
+# GIT_DIR outranks -C, so where it is inherited `git -C "$TMP_ROOT" init` below
+# re-inits the ambient repository and leaves no fixture repo at all. Git sets it
+# for a hook run in a linked worktree; a hook in the main checkout gets
+# GIT_INDEX_FILE instead. Reaching the developer's real cache needs GIT_WORK_TREE
+# or core.worktree inherited as well, so all four go, which is the house rule in
+# .claude/CLAUDE.md. Unsetting at suite scope covers git and the CLI alike.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/.cache/linear"
@@ -30,13 +30,14 @@ cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 # throwaway root so cache writes from `issues create` stay out of the real
 # project's `.cache/linear` (kendex#43).
 git -C "$TMP_ROOT" init -q -b main
-# Proof the isolation held. Without it the line above re-inits the ambient
-# repository and leaves no fixture repo behind, and the run goes on to write
-# into the real cache — so this one stops the suite rather than recording a
-# failure and continuing.
-assert "the fixture repository is the one git init created" \
-  test -d "$TMP_ROOT/.git"
-[[ -d "$TMP_ROOT/.git" ]] || exit 1
+# Proof the isolation held. Without the unset the line above re-inits the
+# ambient repository and leaves no fixture repo behind, and a run that goes on
+# from there is writing somewhere nobody sandboxed, so this stops the suite
+# rather than recording a failure and continuing.
+if [[ ! -d "$TMP_ROOT/.git" ]]; then
+  assert_stop "the fixture repository is the one git init created" \
+    "no repository at $TMP_ROOT/.git: a git environment variable redirected git init"
+fi
 
 cat >"$TMP_ROOT/bin/curl" <<'SH'
 #!/usr/bin/env bash
@@ -176,38 +177,83 @@ assert_contains "a failed lookup is reported as an API failure" \
 assert_not_contains "a failed lookup is not reported as a missing project" \
   "$api_failure_err" "Project not found"
 
-# --- no command ships its own copy of the resolver ---------------------------
+# --- every command resolves through the shared resolver ----------------------
 #
 # initiatives.sh and milestones.sh each carried a private resolve_project_id
 # that shadowed the shared one after sourcing it, so the fix above would have
 # reached neither.
 #
-# bash spells one definition three ways, and a guard carrying only the first
-# does not stop the regression it exists to stop: `name() {`, `function name {`
-# (parens optional), and either with the opening brace on the next line. The
-# pattern below takes the definition line whole, so a call — `resolve_project_id
-# "$p"` or `$(resolve_project_id ...)` — never matches.
+# Bash spells one definition several ways, so a source-text match only ever
+# covers the spellings its author thought of. The question goes to bash
+# instead: source each command script, then read back where the function it
+# ended up with was defined. A redefinition in any spelling moves that answer.
+#
+# The probe passes an action no dispatcher knows, so each script falls to its
+# unknown-action branch and exits before any API call, and the EXIT trap reads
+# the answer out of the shell the definitions landed in. A definition placed
+# after the dispatcher is unreachable for the real CLI too.
 
-definition='^[[:space:]]*(function[[:space:]]+resolve_project_id([[:space:]]*\(\))?|resolve_project_id[[:space:]]*\(\))[[:space:]]*\{?[[:space:]]*$'
-shadowed="$(grep -rlE "$definition" "$SKILL_DIR/scripts" | grep -vF '/lib/common.sh' || true)"
-assert_eq "resolve_project_id is defined once, in lib/common.sh" "$shadowed" ""
+resolver_source() {
+  (
+    cd "$TMP_ROOT" && LINEAR_API_KEY_OVERRIDE=test-token bash -c '
+      trap "shopt -s extdebug; declare -F resolve_project_id" EXIT
+      source "$1" __kendex_probe__ >/dev/null 2>&1
+    ' probe "$1" 2>/dev/null
+  )
+}
 
-# The pattern is only worth as much as its coverage, so each spelling is
-# checked against it here rather than assumed.
-for spelling in \
-  'resolve_project_id() {' \
-  '  resolve_project_id ()' \
-  'function resolve_project_id {' \
-  'function resolve_project_id' \
-  'function resolve_project_id() {'; do
-  assert "the definition pattern matches: $spelling" \
-    grep -qE "$definition" <<<"$spelling"
+commands_dir="$TMP_ROOT/.agents/skills/linear/scripts/commands"
+for known in initiatives.sh milestones.sh issues.sh projects.sh; do
+  assert "the probe roster holds $known" test -f "$commands_dir/$known"
 done
 
-for call in \
-  '    project_id=$(resolve_project_id "$project")' \
-  '    if ! project_id=$(resolve_project_id "$project"); then' \
-  '# resolve_project_id names the failure itself'; do
-  assert_not "the definition pattern ignores: $call" \
-    grep -qE "$definition" <<<"$call"
+for script in "$commands_dir"/*.sh; do
+  assert_matches "$(basename "$script") resolves through lib/common.sh" \
+    "$(resolver_source "$script")" \
+    '^resolve_project_id [0-9]+ .*/lib/common\.sh$'
+done
+
+# --- a lone live match returns rather than aborting --------------------------
+#
+# The resolver reads the selection back as two lines, and with nothing rejected
+# the second read hits EOF. Under the file's own errexit that status ended the
+# function before it printed the id. Every call site here spells the call
+# `var=$(resolve_project_id ...)`, which hides it, so the two shapes that do
+# not are exercised directly: a bare call, and a command substitution under
+# `shopt -s inherit_errexit`, which sync.sh sets.
+
+cat >"$TMP_ROOT/direct.sh" <<'SH'
+#!/bin/bash
+set -euo pipefail
+if [ "${1:-}" = inherit ]; then
+  shopt -s inherit_errexit
+fi
+source "$2/.agents/skills/linear/scripts/lib/common.sh"
+graphql_query() {
+  printf '%s' '{"projects":{"nodes":[{"id":"live-uuid","state":"backlog"}]}}'
+}
+if [ "${1:-}" = inherit ]; then
+  resolved="$(resolve_project_id Dup)"
+  printf '%s\n' "$resolved"
+else
+  resolve_project_id Dup
+fi
+echo reached-the-end
+SH
+
+run_direct() {
+  (
+    cd "$TMP_ROOT" && LINEAR_API_KEY_OVERRIDE=test-token \
+      bash "$TMP_ROOT/direct.sh" "$1" "$TMP_ROOT"
+  ) >"$TMP_ROOT/direct-$1.out" 2>&1
+}
+
+for shape in bare inherit; do
+  rc=0
+  run_status rc run_direct "$shape"
+  assert_eq "a lone live match resolves without aborting ($shape)" "$rc" 0
+  direct_out="$(cat "$TMP_ROOT/direct-$shape.out")"
+  assert_contains "the resolved id is printed ($shape)" "$direct_out" "live-uuid"
+  assert_contains "the caller runs on past the resolve ($shape)" \
+    "$direct_out" "reached-the-end"
 done
