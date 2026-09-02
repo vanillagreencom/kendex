@@ -99,18 +99,15 @@ function matches(matcher: unknown, toolName: string): boolean {
 
 /**
  * The guard name a registered command runs, or `""` where the command is not
- * one kendex wrote for a hook of its own.
- *
- * `engine::targets::pi_hook` registers a rendered script as the whole command
- * `bash "<path>/kendex/hooks/<name>.sh"` at both scopes, so the whole command
- * is what is read: a custom hook that merely mentions such a path — grepping
- * for one, say — is the person's own command and must run as written rather
- * than spawn the script it names. tests/registry.test.ts fills the renderer's
- * own templates and holds this to them; a render this stops recognising falls
- * to the shell lane, which is where a command of the person's already goes.
+ * one `engine::targets::pi_hook` wrote for this root. Held to those two
+ * spellings by tests/registry.test.ts.
  */
-export function renderedName(command: string): string {
-	return command.trim().match(/^bash "(?:[^"]*\/)?kendex\/hooks\/([^/"]+)\.sh"$/)?.[1] ?? "";
+export function renderedName(root: string, command: string): string {
+	const name = command.slice(command.lastIndexOf("/") + 1, -4);
+	if (name === "") return "";
+	const rendered = command === `bash "$(git rev-parse --show-toplevel)/.pi/kendex/hooks/${name}.sh"`
+		|| command === `bash "${resolve(root, "hooks", `${name}.sh`).replaceAll("\\", "/")}"`;
+	return rendered ? name : "";
 }
 
 /** A `readFileSync` failure that means the file is simply not there. */
@@ -136,9 +133,41 @@ function scriptGone(script: string): boolean {
 /** The registrations one scope root holds for a listener, in file order. */
 function readRegistry(root: string, listener: string, toolName: string): RegistryRead {
 	const path = resolve(root, "hooks.json");
-	let parsed: unknown;
+	const hooks: RegisteredHook[] = [];
+	let position = 0;
+	let installed = 0;
 	try {
-		parsed = JSON.parse(readFileSync(path, "utf8"));
+		const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("not a JSON object");
+		const registry = (parsed as { hooks?: unknown }).hooks;
+		if (registry === undefined) return { hooks, withheld: 0 };
+		if (typeof registry !== "object" || registry === null || Array.isArray(registry)) throw new Error("hooks is not an object");
+		const groups = (registry as Record<string, unknown>)[listener];
+		if (groups === undefined) return { hooks, withheld: 0 };
+		if (!Array.isArray(groups)) throw new Error(`hooks.${listener} is not an array`);
+		for (const group of groups) {
+			const entry = group as { matcher?: unknown; hooks?: unknown };
+			if (!Array.isArray(entry.hooks)) throw new Error(`hooks.${listener} holds a group whose hooks is not an array`);
+			const covers = matches(entry.matcher, toolName);
+			for (const registration of entry.hooks) {
+				position += 1;
+				const hook = registration as { type?: unknown; command?: unknown; timeout?: unknown };
+				if (hook.type !== "command" || typeof hook.command !== "string" || hook.command === "") continue;
+				installed += 1;
+				if (!covers) continue;
+				const timeout = typeof hook.timeout === "number" && Number.isFinite(hook.timeout) && hook.timeout > 0
+					? hook.timeout * 1000
+					: undefined;
+				const name = renderedName(root, hook.command);
+				hooks.push({
+					command: hook.command,
+					name,
+					label: name === "" ? `custom hook ${position} in ${path}` : name,
+					script: name === "" ? undefined : resolve(root, "hooks", `${name}.sh`),
+					budgetMs: timeout,
+				});
+			}
+		}
 	} catch (error) {
 		// No registry is kendex having installed no hook here, and that is the
 		// only reading that allows the call. Anything else — a permission the
@@ -147,35 +176,6 @@ function readRegistry(root: string, listener: string, toolName: string): Registr
 		// and a guard that did not run does not stand aside.
 		if (absent(error)) return { hooks: [], withheld: 0 };
 		return { hooks: [], withheld: 0, unreadable: `${path}: ${(error as Error).message}` };
-	}
-	const groups = (parsed as { hooks?: Record<string, unknown> } | null)?.hooks?.[listener];
-	if (!Array.isArray(groups)) return { hooks: [], withheld: 0 };
-
-	const hooks: RegisteredHook[] = [];
-	let position = 0;
-	let installed = 0;
-	for (const group of groups) {
-		const entry = group as { matcher?: unknown; hooks?: unknown };
-		if (!Array.isArray(entry.hooks)) continue;
-		const covers = matches(entry.matcher, toolName);
-		for (const registration of entry.hooks) {
-			position += 1;
-			const hook = registration as { type?: unknown; command?: unknown; timeout?: unknown };
-			if (hook.type !== "command" || typeof hook.command !== "string" || hook.command === "") continue;
-			installed += 1;
-			if (!covers) continue;
-			const timeout = typeof hook.timeout === "number" && Number.isFinite(hook.timeout) && hook.timeout > 0
-				? hook.timeout * 1000
-				: undefined;
-			const name = renderedName(hook.command);
-			hooks.push({
-				command: hook.command,
-				name,
-				label: name === "" ? `custom hook ${position} in ${path}` : name,
-				script: name === "" ? undefined : resolve(root, "hooks", `${name}.sh`),
-				budgetMs: timeout,
-			});
-		}
 	}
 	return { hooks, withheld: installed };
 }

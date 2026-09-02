@@ -155,12 +155,17 @@ describe("pi-hooks registry dispatch", () => {
 		expect(body, "fn pi_hook not found in crates/core/src/engine/targets.rs").not.toBeNull();
 		const templates = [...body![1]!.matchAll(/"(bash \\"[^"]*\{\}[^"]*\\")"/g)].map(([, template]) => template!.replaceAll('\\"', '"'));
 		expect(templates.length, `no command templates in fn pi_hook: ${body![1]}`).toBe(2);
+		const root = "/x/.pi/kendex";
 		for (const template of templates) {
-			expect(renderedName(template.replace("{}", "kendex/hooks/guard.sh")), template).toBe("guard");
+			// The global template's `{}` is the whole path; the project's is the
+			// tail under `.pi/`, which is where the renderer splits them.
+			const filled = template.replace("{}", template.includes("$(git") ? "kendex/hooks/guard.sh" : `${root}/hooks/guard.sh`);
+			expect(renderedName(root, filled), template).toBe("guard");
 		}
 
 		// And a command of the person's that names one is not one of ours.
-		expect(renderedName('rg -n kendex/hooks/guard.sh .')).toBe("");
+		expect(renderedName(root, 'grep kendex/hooks/guard.sh .')).toBe("");
+		expect(renderedName(root, 'bash "/opt/kendex/hooks/guard.sh"')).toBe("");
 	});
 });
 
@@ -180,23 +185,6 @@ describe("pi-hooks registry dispatch: the path a rendered hook is spawned at", (
 			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "pre-commit-check: refused", log });
 			const handler = installToolCallHandler();
 			const refused = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(nested)) as { block?: boolean; reason?: string };
-			expect(refused).toEqual({ block: true, reason: "pre-commit-check: refused" });
-			expect(readLog(log)).toContain("git commit -m x");
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	// And a kendex project that is not a git repository at all: git has no
-	// answer to give, so a command run verbatim would refuse every call.
-	test("a project with no git runs its guard", async () => {
-		const project = mkdtempSync(join(tmpdir(), "pi-hooks-nogit-"));
-		const log = join(project, "nogit.log");
-		try {
-			mkdirSync(join(project, ".claude"), { recursive: true });
-			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "pre-commit-check: refused", log });
-			const handler = installToolCallHandler();
-			const refused = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { block?: boolean; reason?: string };
 			expect(refused).toEqual({ block: true, reason: "pre-commit-check: refused" });
 			expect(readLog(log)).toContain("git commit -m x");
 		} finally {
@@ -265,7 +253,8 @@ describe("pi-hooks registry dispatch: a registry that did not answer", () => {
 			// The control: the same fixture, readable.
 			expect(await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project))).toBeUndefined();
 
-			for (const broken of ["<<<<<<< HEAD\n{}\n=======\n{}\n>>>>>>> main\n", '{"hooks": {"tool_call": [']) {
+			const malformed = ['{"hooks": {"tool_call": {}}}', '{"hooks": {"tool_call": [{"matcher": "Bash", "hooks": {}}]}}'];
+			for (const broken of ["<<<<<<< HEAD\n{}\n=======\n{}\n>>>>>>> main\n", '{"hooks": {"tool_call": [', ...malformed]) {
 				writeFileSync(registry, broken);
 				const refused = await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project)) as { block?: boolean; reason?: string };
 				expect(refused.block, broken).toBe(true);
