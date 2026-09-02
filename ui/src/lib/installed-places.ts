@@ -5,15 +5,13 @@ import { placeName } from "@/lib/update-groups";
 
 /** One offered package's identity in the places index.
  *
- *  The separator is spelled as an escape, never typed as a raw byte: git
- *  reads a NUL in a tracked file as the mark of a binary one, and this
- *  repository's .gitattributes sets `* -text`, so nothing overrides that.
- *  A source file carrying one does not render in a pull request diff at
- *  all — it cannot be reviewed, by a person or a bot, now or on any later
- *  change to it. Kept as U+0000 rather than swapped for a printable
- *  character because a package name may hold anything a path may. */
+ *  Joined with `::`, the way `stores/preinstall-safety.ts::safetyKey`
+ *  already keys the same pair for the same rows — `packages-table.tsx`
+ *  calls both on one row, and one keying convention beats two. A name
+ *  cannot carry `::`: every offered name passes `names::item_problem`
+ *  before the catalog offers it. */
 export const placesKey = (kind: string, name: string): string =>
-  `${kind}\u0000${name}`;
+  `${kind}::${name}`;
 
 /** Where each of a marketplace's packages is installed from, worded, keyed
  *  by kind and name.
