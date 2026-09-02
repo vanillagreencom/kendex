@@ -25,10 +25,10 @@ function lines(value: unknown): string[] {
 }
 
 /** The account an answer carries, wherever the command puts it: as the
- *  answer itself, on the answer, or on the standing the answer nests. Read
- *  here rather than at each call site, so a command added later is
- *  announced by the write it goes through instead of by somebody
- *  remembering.
+ *  answer itself, on the answer, or on the standing the answer nests. The
+ *  three shapes are read here rather than at each call site, so a caller
+ *  hands [`saying`] whatever its command answered and needs to know
+ *  nothing about where the account sits in it.
  *
  *  First NON-EMPTY, not first non-nullish. `??` prefers an outer empty
  *  list over a populated nested one, which would silence exactly the
@@ -51,10 +51,9 @@ function accountIn(data: unknown): string[] {
  *  back. Takes the whole result, so a refusal says nothing and a landed
  *  write is read wherever it keeps its account.
  *
- *  This is the announcement riding on the write. The alternative — a call
- *  beside each command — is a rule every new mutation has to remember, and
- *  the module this serves records that rule being forgotten for a whole
- *  round with one of five paths wired. */
+ *  Applied at the call site, around the command's own answer: a write that
+ *  can take a declaring package away wraps its call in this, and
+ *  `grep -rn "saying(" ui/src` is the set that does. */
 export function saying<T>(answer: T): T {
   const it = answer as { status?: unknown; data?: unknown };
   if (typeof it === "object" && it !== null && it.status === "ok") {

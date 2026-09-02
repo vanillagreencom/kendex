@@ -8,9 +8,11 @@ import type { ReadState } from "@/lib/read-state";
 import { sameScope } from "@/lib/scope";
 import { updateWithheld } from "@/lib/update-groups";
 
-/** What every predicate here reads: how the last read of the standing went,
- *  and whether one that will replace it is on its way — an explicit check,
- *  or an ordinary reload from a mount or a return to the window. */
+/** How the last read of the standing went, and whether one that will
+ *  replace it is on its way — an explicit check, or an ordinary reload
+ *  from a mount or a return to the window. Every predicate here that ranks
+ *  the rows reads this shape; [`workOut`] declares its own, because what it
+ *  asks about is the page-wide write hold rather than the read. */
 interface PageState {
   read: ReadState;
   checking: boolean;
@@ -25,8 +27,8 @@ interface PageState {
  *  values would be committed against. A settling follow flip is not here:
  *  it replaces every row too, but which rows it leaves unconfirmed is its
  *  own scope's, so ask `rowUnsettled` about a given row. The page-wide
- *  hold a flip's write takes is the store's `busy`, which nothing here
- *  reads. */
+ *  hold a flip's write takes is the store's `busy`, which this predicate
+ *  does not read — [`workOut`] below is the one that does. */
 const unsettled = (state: PageState): boolean =>
   state.read.status !== "landed" || state.checking || state.reading;
 
@@ -37,14 +39,16 @@ export const workOut = (state: { busy: boolean; checking: boolean }): boolean =>
   state.busy || state.checking;
 
 /** Whether a Follow source flip is settling in this row's own place. The
- *  apply behind it moves what is installed in that scope and nowhere
- *  else, so a second write there would contend for that scope's writer
- *  lock.
+ *  apply behind it moves what is installed in that scope and nowhere else,
+ *  so those are the rows it leaves unconfirmed while it runs. Barring a
+ *  second write is not this predicate's job — the page-wide write hold
+ *  refuses one before any row is asked about — but which rows a settling
+ *  flip holds on screen is still scoped, and that is what its readers ask
+ *  it for: `grep -rn rowUnsettled ui/src` is the list of them.
  *
- *  Asked on its own by a surface that wants this and not the rest of
- *  [`unsettled`]: the page's Update carries no argument read off the row,
- *  so a read in flight cannot stale it — a flip in the same place is what
- *  still speaks against it. */
+ *  Scoped and not page-wide, because the page's Update carries no argument
+ *  read off the row: a read in flight cannot stale it, and a flip in the
+ *  same place is what still speaks against it. */
 const settlingIn = (
   state: { pendingFollows: { scope: Scope }[] },
   row: { scope: Scope },
