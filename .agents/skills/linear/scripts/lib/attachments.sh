@@ -40,15 +40,6 @@ ATTACH_DIR="$ATTACH_CACHE_PROJECT_ROOT/.cache/linear/attachments"
 ATTACH_FILES_DIR="$ATTACH_DIR/files"
 ATTACH_MANIFEST="$ATTACH_DIR/manifest.json"
 
-# Where the project files carrying LINEAR_API_KEY are read from. That is the
-# repository this invocation runs in, never the cache root: LINEAR_CACHE_ROOT
-# redirects where attachments are stored, and letting it also decide which
-# .env.local is read would turn a caller who redirected the cache into a caller
-# with no API key, whose bundle then silently downloads nothing. common.sh
-# resolves that repository once and aborts if it cannot, so this takes its
-# answer rather than asking git a second time.
-ATTACH_PROJECT_ENV_ROOT="${PROJECT_ROOT:-}"
-
 # Viewable file types (agents can read these directly)
 ATTACH_VIEWABLE_EXTENSIONS="png|jpg|jpeg|gif|webp|svg|pdf|md|txt|rs|ts|js|py|sh|json|toml|yaml|yml|csv|log|html|css|ron"
 
@@ -128,15 +119,6 @@ attach_download_url() {
     existing=$(jq -r --arg url "$url" '.[$url].local_path // empty' "$ATTACH_MANIFEST" 2>/dev/null)
     if [[ -n "$existing" && -f "$existing" ]]; then
         return 2
-    fi
-
-    # Source API key from project config/secrets.
-    if [[ -z "${LINEAR_API_KEY:-}" ]]; then
-        local lib_dir
-        lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        # shellcheck source=kendex-env.sh
-        source "$lib_dir/kendex-env.sh"
-        kendex_load_project_env "$ATTACH_PROJECT_ENV_ROOT"
     fi
 
     if ! resolve_linear_api_key; then
