@@ -484,17 +484,17 @@ git -C "$rebase_wt" add crates/upstream/lib.rs
 git -C "$rebase_wt" commit -q -m upstream-advance
 git -C "$rebase_wt" checkout -q feature
 git -C "$rebase_wt" rebase -q main >/dev/null
-# The receipt names the commit this rebase orphaned, so both halves apply and
-# the answer must report the one that changes what to do next.
 "$WRITE" --worktree "$rebase_wt" --kind fix --issue issue-944 --round-id 1-1 --branch feature \
-  --commit "$(jq -r '.base_sha' "$rebase_wt/tmp/dev-round-issue-944-1-1.json")" \
-  --validate pass --item 1 Applied done >/dev/null
+  --commit "$(git -C "$rebase_wt" rev-parse HEAD)" --validate pass --item 1 Applied done >/dev/null
 set +e
 rebase_out="$("$CHECK" --worktree "$rebase_wt" --issue issue-944 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/rebase.err")"
 set -e
-assert_eq "$(jq -c '[.reason, .files, .warning]' <<<"$rebase_out")" '["valid",[],"additions_gate_skipped"]' \
-  "a rebased round is not accused, and the answer names the gate that did not run over the orphaned commit"
-assert_eq "$(grep -cF 'the protected-additions gate did not run' "$TMP_ROOT/rebase.err")" "1" "and says so on stderr too"
+# Refused, and naming nothing: an accept would lose the gate rather than defer
+# it, and a file list would accuse the round of what it cannot be shown to own.
+assert_eq "$(jq -c '[.ok, .verdict, .reason, .files]' <<<"$rebase_out")" '[false,"retry","additions_unattributable",[]]' \
+  "an orphaned base refuses the round and names no file"
+assert_eq "$(grep -cF 'no comparison can attribute an addition to this round' "$TMP_ROOT/rebase.err")" "1" \
+  "and says on stderr why it could not compare"
 
 # Must-fail control: without the stop, the round is billed the file main merged,
 # which also proves the fixture still orphans that base. Pristine copy first.

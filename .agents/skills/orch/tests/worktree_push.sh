@@ -357,6 +357,14 @@ assert_eq "$(check_rc env STUB_GET=fail "$check_stub")" "1" \
 assert_contains "$(cat "$check_err")" "could not read the active dev round" \
   "and hands back through the arm that names the failed round read"
 
+# Check mode forwards nothing to the push, so an argument it cannot honour
+# would vanish and the answer would be about a state the caller never asked
+# for. A mistyped --state-dir is the case: refuse instead of permitting.
+assert_eq "$(check_rc "$REPO_ROOT/skills/orch/scripts/worktree-push" --sate-dir=/nowhere)" "1" \
+  "an argument check mode cannot honour refuses rather than permits"
+assert_contains "$(cat "$check_err")" "'--sate-dir=/nowhere' would be ignored rather than honoured" \
+  "and the refusal names the argument it could not honour"
+
 echo
 echo "=== a failed push still applies its map (rebase precedes the push) ==="
 
