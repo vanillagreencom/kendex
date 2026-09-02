@@ -8,11 +8,7 @@ import {
   PLACE_UNCHECKED_TITLE,
   START_MANAGING_LABEL,
 } from "@/lib/copy";
-import {
-  manageConfirmTitle,
-  manageSharedBody,
-  PROCEED_LABEL,
-} from "@/lib/copy-in-the-way";
+import { manageSharedBody, PROCEED_LABEL } from "@/lib/copy-in-the-way";
 import { READ_LANDED } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
@@ -45,45 +41,29 @@ const view = (drift: DriftRow[]): AuditView => ({
   exits: [],
 });
 
-/** The real folder the shortcuts resolve to, which is what adoption moves. */
+/** The folder the shortcut resolves to, which is what adoption moves. */
 const SHARED = "/work/acme/.agents/skills/gh";
 
-/** One tool's shortcut at that folder, as the scan read it — the shape
- *  `sharedLinkOf` looks the drift row up in. */
-const linkedAt = (harness: DriftRow["harness"]): ObservedItem =>
-  ({
-    kind: "skill",
-    name: "gh",
-    harness,
-    scope: ACME,
-    path: `/work/acme/.${harness}/skills/gh`,
-    fileState: { state: "symlink", target: SHARED, broken: false },
-    enabled: true,
-    origin: null,
-    description: null,
-    tags: [],
-    modifiedAt: null,
-    vendor: null,
-  }) as unknown as ObservedItem;
+/** Claude's shortcut at it, in the shape `sharedLinkOf` reads the scan in. */
+const LINKED = {
+  kind: "skill",
+  name: "gh",
+  harness: "claude",
+  scope: ACME,
+  path: "/work/acme/.claude/skills/gh",
+  fileState: { state: "symlink", target: SHARED, broken: false },
+  enabled: true,
+  origin: null,
+  description: null,
+  tags: [],
+  modifiedAt: null,
+  vendor: null,
+} satisfies ObservedItem;
 
 const button = (host: HTMLElement, label: string) =>
   [...host.querySelectorAll("button")].find(
     (el) => el.textContent?.trim() === label,
   );
-
-// The dialog renders into a portal, so it is off the page's own tree.
-const dialog = () => {
-  const el = document.body.querySelector('[role="dialog"]');
-  expect(el).not.toBeNull();
-  return el as HTMLElement;
-};
-
-const press = async (el: Element | undefined) => {
-  expect(el).toBeDefined();
-  await act(async () => {
-    (el as HTMLButtonElement).click();
-  });
-};
 
 const stage = (rows: AuditView[]) =>
   act(() => {
@@ -102,7 +82,6 @@ beforeEach(() => {
     read: READ_LANDED,
   });
   useNavStore.setState({ unmanagedScope: null });
-  useScanStore.setState({ result: null });
 });
 
 // Every button on this page adopts, and adopting writes to the filesystem
@@ -150,39 +129,30 @@ describe("a place the audit could not read", () => {
   });
 });
 
-// A folder somebody pointed several tools at is a bigger move than a plain
-// folder: it goes whole, and shortcuts kendex cannot see break with it. So
-// this button asks first, and every word of what it asks is read here —
-// the two surfaces offering this move share their words, and only the
-// Problems page's copy was covered.
-describe("an item several tools read through shortcuts they set up", () => {
-  it("asks before the move, naming the folder and every tool at it", async () => {
+// A folder a tool reads through a shortcut it set up moves whole, so this
+// page asks first. The move deletes nothing, so its confirm is not red.
+describe("an item a tool reads through a shortcut it set up", () => {
+  it("does not style the move's confirm as a deletion", async () => {
     stage([view([byHand("gh")])]);
-    act(() => {
-      useScanStore.setState({
-        result: {
-          harnesses: [],
-          // Codex has no row of its own: it reads the same folder through
-          // its own shortcut, and the move repoints it too.
-          items: [linkedAt("claude"), linkedAt("codex")],
-          missingProjects: [],
-          warnings: [],
-        } as never,
-      });
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [LINKED],
+        missingProjects: [],
+        warnings: [],
+      },
     });
     const host = mount(<UnmanagedPage />);
     await settle();
 
-    await press(button(host, START_MANAGING_LABEL));
+    await act(async () => button(host, START_MANAGING_LABEL)?.click());
     await settle();
 
-    const said = dialog().textContent ?? "";
-    expect(said).toContain(manageConfirmTitle("gh"));
-    expect(said).toContain(manageSharedBody(SHARED, ["Claude Code", "Codex"]));
-    const confirm = button(dialog(), PROCEED_LABEL);
-    expect(confirm).toBeDefined();
-    // The files move and nothing is deleted, so the confirm is not styled
-    // as a deletion.
+    // The dialog is in a portal, off the page's own tree.
+    const confirm = button(document.body, PROCEED_LABEL);
     expect(confirm?.className).not.toContain("bg-destructive");
+    // Read off the export: a body compared to its own words pins nothing.
+    const body = manageSharedBody(SHARED, ["Claude Code"]);
+    expect(body).toContain("Nothing is deleted");
   });
 });

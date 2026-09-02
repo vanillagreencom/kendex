@@ -119,7 +119,7 @@ fn a_choice_that_is_no_longer_on_offer_changes_nothing() {
     );
 }
 
-/// The page offers "keep these files" by asking core which kinds adoption
+/// The page offers "Manage these files" by asking core which kinds adoption
 /// can take — never by keeping its own copy of the list. A command offered
 /// that button reached a verb that refuses, on a screen whose whole job is
 /// helping the reader pick between two ways out.

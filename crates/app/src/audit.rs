@@ -51,7 +51,7 @@ pub struct AuditView {
     /// carries two scores that are never combined: safety and quality.
     /// Advisory both — nothing acts on either.
     pub safety: Vec<ItemSafety>,
-    /// The kinds "keep these files" can be offered for. Adoption needs
+    /// The kinds "Manage these files" can be offered for. Adoption needs
     /// somewhere in the local source to put the content, and only these
     /// kinds have one — read from core so the page never offers an action
     /// that would error, and never keeps its own copy of the list.
