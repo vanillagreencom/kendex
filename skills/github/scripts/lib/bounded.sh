@@ -67,16 +67,24 @@ kendex_github_run_bounded() {
   local seconds="$1"
   shift
 
+  # The bound is polled on a 0.1s tick below, so it is read to one decimal
+  # place and no finer: a figure the poll could not honour is junk, not a
+  # tighter bound. A leading zero is decimal, never octal.
+  local whole frac
   case "$seconds" in
-    ''|*[!0-9]*) return 125 ;;
+    *.*) whole="${seconds%.*}" frac="${seconds#*.}" ;;
+    *) whole="$seconds" frac=0 ;;
   esac
-  seconds=$((10#$seconds))
-  if [ "$seconds" -eq 0 ]; then
+  case "$whole" in '' | *[!0-9]*) return 125 ;; esac
+  case "$frac" in [0-9]) ;; *) return 125 ;; esac
+
+  local restore_monitor=0 pid="" ticks=0 max_ticks status=0 target=""
+  max_ticks=$(((10#$whole) * 10 + frac))
+  if [ "$max_ticks" -eq 0 ]; then
     "$@"
     return
   fi
 
-  local restore_monitor=0 pid="" ticks=0 max_ticks status=0 target=""
   local old_hup old_int old_term
   old_hup="$(trap -p HUP)"
   old_int="$(trap -p INT)"
@@ -96,7 +104,6 @@ kendex_github_run_bounded() {
   if ! kill -0 -- "$target" 2>/dev/null; then
     target="$pid"
   fi
-  max_ticks=$((seconds * 10))
 
   while kill -0 "$pid" 2>/dev/null; do
     if [ "$ticks" -ge "$max_ticks" ]; then

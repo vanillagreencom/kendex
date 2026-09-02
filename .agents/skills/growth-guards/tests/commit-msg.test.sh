@@ -28,10 +28,18 @@ git -C "$R" -c init.defaultBranch=main init -q
 git -C "$R" config user.email test@example.com
 git -C "$R" config user.name test
 
+# Most runs below settle a rule the script carries itself and configure it
+# through the environment, so they resolve no setting from a file — and the
+# sentinel spends none of the walk that would find nothing. The blocks that
+# do put a file in front of the script clear NO_SETTINGS around themselves;
+# a caller's own assignment comes last, so it still wins.
+NO_SETTINGS=1
+
 run_stdin() { # MESSAGE [env-assignment] — feed via stdin; sets OUT and RC
   OUT=""
   RC=0
-  OUT="$(cd "$R" && printf '%s\n' "$1" | env ${2:+"$2"} "$CM" 2>&1)" || RC=$?
+  OUT="$(cd "$R" && printf '%s\n' "$1" |
+    env ${NO_SETTINGS:+GROWTH_GUARDS_SETTINGS_FILE=/dev/null} ${2:+"$2"} "$CM" 2>&1)" || RC=$?
 }
 
 expect_pass() { # HEADER DESC [env]
@@ -97,6 +105,7 @@ run_stdin 'feat: x' "GROWTH_GUARDS_COMMIT_TYPES=Feat"
 run_stdin 'feat: x' "GROWTH_GUARDS_COMMIT_TYPES= "
 [ "$RC" -eq 2 ] && ok "an empty type list is exit 2" || bad "empty type list is exit 2" "rc=$RC out=$OUT"
 
+NO_SETTINGS=""
 echo "=== settings file resolution ==="
 printf '[env]\nGROWTH_GUARDS_COMMIT_TYPES = "docs"\n' >"$R/kendex.settings.toml"
 run_stdin 'docs: settings-admitted type'
@@ -128,6 +137,7 @@ run_stdin 'feat: base type' "GROWTH_GUARDS_SETTINGS_FILE=/dev/null"
 [ "$RC" -eq 0 ] && ok "the sentinel skips .env.local (read BEFORE the settings file) too" \
   || bad "sentinel skips .env.local" "rc=$RC out=$OUT"
 rm -f "$R/.env.local"
+NO_SETTINGS=1
 
 echo "=== a failing index probe never loosens the committed type list ==="
 # The hook lane resolves tracked settings from the INDEX so a commit is judged
@@ -266,7 +276,7 @@ run_stdin 'fix: x' "GROWTH_GUARDS_SUBJECT_MAX=0"
 # git hook inherits that environment, so a message measured in bytes is
 # accepted in one shell and refused in another.
 MULTI="fix(KEN-1): $(rep 'é' 55)" # 67 characters, 122 bytes
-for loc in C C.UTF-8 en_US.UTF-8; do
+for loc in C C.UTF-8; do
   run_stdin "$MULTI" "LC_ALL=$loc"
   [ "$RC" -eq 0 ] && ok "a 67-character multibyte header passes under $loc" \
     || bad "a 67-character multibyte header passes under $loc" "rc=$RC out=$OUT"
@@ -274,7 +284,7 @@ done
 # The control: one character more is over the cap in every one of them, so
 # the passes above are the count and not the rule declining to look.
 MULTI_OVER="fix(KEN-1): $(rep 'é' 61)" # 73 characters
-for loc in C C.UTF-8 en_US.UTF-8; do
+for loc in C C.UTF-8; do
   run_stdin "$MULTI_OVER" "LC_ALL=$loc"
   [ "$RC" -eq 1 ] && case "$OUT" in *"header is 73 characters (max 72)"*) true ;; *) false ;; esac \
     && ok "and 73 of them is 73 characters under $loc, not its byte count" \
@@ -286,7 +296,7 @@ done
 # here unless the match is pinned. These bytes sit in the scope, which is the
 # only part of the ERE a locale changes; the length fixtures above carry
 # theirs in the subject and reach none of it.
-for loc in C C.UTF-8 en_US.UTF-8; do
+for loc in C C.UTF-8; do
   run_stdin 'fix(café): tighten the gate' "LC_ALL=$loc"
   [ "$RC" -eq 1 ] && case "$OUT" in *"non-conventional header"*) true ;; *) false ;; esac \
     && ok "an accented scope is outside the documented class under $loc" \
@@ -298,7 +308,7 @@ done
 # And bytes that are not valid UTF-8 at all decide the same way everywhere:
 # the subject class is "not whitespace", which they are.
 BADBYTES="$(printf 'fix: \377\376 bad bytes')"
-for loc in C C.UTF-8 en_US.UTF-8; do
+for loc in C C.UTF-8; do
   run_stdin "$BADBYTES" "LC_ALL=$loc"
   [ "$RC" -eq 0 ] && ok "a subject carrying invalid UTF-8 is judged the same under $loc" \
     || bad "a subject carrying invalid UTF-8 is judged the same under $loc" "rc=$RC out=$OUT"

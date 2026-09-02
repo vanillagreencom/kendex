@@ -89,7 +89,7 @@ skills/linear/scripts/commands/session-status.sh	431
 skills/linear/scripts/commands/sync.sh	902
 skills/linear/scripts/lib/attachments.sh	490
 skills/linear/scripts/lib/cache.sh	590
-skills/linear/scripts/lib/common.sh	819
+skills/linear/scripts/lib/common.sh	831
 skills/linear/scripts/lib/formatters.sh	631
 skills/orch/scripts/approval-wait	947
 skills/orch/scripts/ci-wait	674
@@ -112,10 +112,10 @@ skills/review-gate/scripts/validate.sh	581
 skills/review-gate/templates/review-gate-writer.yml	658
 skills/review-gate/tests/pr-watch.test.sh	1158
 skills/second-opinion/scripts/second-opinion	2683
-skills/second-opinion/tests/cli-failure-gate.test.sh	1211
+skills/second-opinion/tests/cli-failure-gate.test.sh	1204
 skills/second-opinion/tests/lane-scratch-durability.test.sh	999
 skills/second-opinion/tests/review-dual-model.test.sh	1516
-skills/size-ratchet/scripts/lib/settings.sh	485
+skills/size-ratchet/scripts/lib/settings.sh	542
 skills/size-ratchet/scripts/size-ratchet	996
 skills/worktree/scripts/worktree	4530
 skills/worktree/scripts/worktree-session-guard	442

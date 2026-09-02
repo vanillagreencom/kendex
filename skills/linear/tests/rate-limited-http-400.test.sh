@@ -48,8 +48,11 @@ GENERIC_BODY='{"errors":[{"message":"Argument Validation Error","extensions":{"c
 # assertion made inside would be recorded where the suite cannot see it.
 run_linear() { # root, args...
   local root="$1"; shift
+  # No backoff: every response here comes from the curl stub two lines up, so
+  # the retry wait would be spent on nothing.
   (cd "$root" && env PATH="$root/bin:$PATH" \
     LINEAR_API_KEY_OVERRIDE="lin_api_test" LINEAR_TEAM="Claude" \
+    LINEAR_RETRY_BASE_DELAY=0 \
     "$root/.agents/skills/linear/scripts/linear.sh" "$@" 2>&1)
 }
 
@@ -63,7 +66,8 @@ assert_contains "rate-limited 400 reports the rate limit" "$out" "Rate limited. 
 assert_not_contains "rate-limited 400 is not a generic HTTP error" "$out" "HTTP error: 400"
 echo "=== failed team lookup propagates the API failure ==="
 unit_rc=0
-unit="$(cd "$TMP_BASE/rl" && env PATH="$TMP_BASE/rl/bin:$PATH" bash -c '
+unit="$(cd "$TMP_BASE/rl" && env PATH="$TMP_BASE/rl/bin:$PATH" \
+  LINEAR_RETRY_BASE_DELAY=0 bash -c '
   set -u
   LINEAR_API="https://api.linear.app/graphql"
   LINEAR_API_KEY="lin_api_test"
@@ -82,3 +86,35 @@ out="$(run_linear "$TMP_BASE/gen" statuses list)" || gen_rc=$?
 
 assert_ne "a generic non-200 fails the call" "$gen_rc" 0
 assert_contains "generic 400 includes the body message" "$out" "HTTP error: 400: Argument Validation Error"
+
+echo "=== the retry backoff is overridable ==="
+# What the retry actually waited is read off a sleep stub, not off the clock:
+# a wall-time assertion would pass on a slow host that never honoured the
+# override. Every arm below runs against the same stubbed curl, so the only
+# variable is the delay the library asks for.
+cat >"$TMP_BASE/rl/bin/sleep" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >>"$TMP_BASE/rl/slept"
+SH
+chmod +x "$TMP_BASE/rl/bin/sleep"
+
+: >"$TMP_BASE/rl/slept"
+run_linear "$TMP_BASE/rl" statuses list >/dev/null 2>&1 || true
+assert_eq "an overridden base delay is what the retry sleeps" \
+  "$(tr '\n' ' ' <"$TMP_BASE/rl/slept")" "0 0 "
+
+: >"$TMP_BASE/rl/slept"
+(cd "$TMP_BASE/rl" && env PATH="$TMP_BASE/rl/bin:$PATH" \
+  LINEAR_API_KEY_OVERRIDE="lin_api_test" LINEAR_TEAM="Claude" \
+  "$TMP_BASE/rl/.agents/skills/linear/scripts/linear.sh" statuses list) >/dev/null 2>&1 || true
+assert_eq "the default backoff still doubles from one second" \
+  "$(tr '\n' ' ' <"$TMP_BASE/rl/slept")" "1 2 "
+
+junk_rc=0
+junk="$(cd "$TMP_BASE/rl" && env PATH="$TMP_BASE/rl/bin:$PATH" \
+  LINEAR_API_KEY_OVERRIDE="lin_api_test" LINEAR_TEAM="Claude" \
+  LINEAR_RETRY_BASE_DELAY="soon" \
+  "$TMP_BASE/rl/.agents/skills/linear/scripts/linear.sh" statuses list 2>&1)" || junk_rc=$?
+assert_ne "a non-numeric base delay fails the call" "$junk_rc" 0
+assert_contains "a non-numeric base delay names the setting" \
+  "$junk" "LINEAR_RETRY_BASE_DELAY must be a whole number of seconds"

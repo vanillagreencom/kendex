@@ -18,6 +18,10 @@ SKILL_DIR="$(cd "$TESTS_DIR/.." && pwd)"
 CONTROLS_DIR="$TESTS_DIR/controls"
 SUITE_TIMEOUT="${CONTROL_TIMEOUT:-60}"
 
+# Controls run concurrently: each one mutates its own copy of the skill and
+# runs the suite out of that copy, so no two of them share anything writable.
+CONTROL_JOBS="${CONTROL_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
+
 WORK="$(mktemp -d)"
 trap 'rm -rf -- "${WORK:?}"' EXIT
 
@@ -31,6 +35,10 @@ die() {
 	printf 'must-fail-controls: %s\n' "$*" >&2
 	exit 2
 }
+
+# A junk width would otherwise launch every control at once, or none.
+[[ "$CONTROL_JOBS" =~ ^[1-9][0-9]*$ ]] ||
+	die "CONTROL_JOBS must be a positive integer, got: $CONTROL_JOBS"
 
 control_die() {
 	printf 'control %s: %s\n' "$CONTROL_NAME" "$*" >&2
@@ -83,6 +91,20 @@ control_write() {
 }
 
 # --- runner -----------------------------------------------------------------
+
+PIDS=()
+FAILURES=0
+
+# Wait out the launched batch, scoring one failure per control that reported
+# one. `wait -n` would keep the pipe full, but these suites must start under
+# the Bash 3.2 in /bin on macOS, which does not have it.
+reap() {
+	local pid
+	for pid in ${PIDS[@]+"${PIDS[@]}"}; do
+		wait "$pid" || FAILURES=$((FAILURES + 1))
+	done
+	PIDS=()
+}
 
 run_one() {
 	local suite="$1" stem="$2"
@@ -155,8 +177,8 @@ run_one() {
 }
 
 main() {
-	local -a wanted=("$@") stems=()
-	local suite_path control_path suite stem want failures=0 total=0 orphans=0
+	local -a wanted=("$@") stems=() ran=()
+	local suite_path control_path suite stem want total=0 orphans=0
 
 	for suite_path in "$TESTS_DIR"/*.test.sh; do
 		stems+=("$(basename "$suite_path" .test.sh)")
@@ -189,14 +211,24 @@ main() {
 			continue
 		fi
 		total=$((total + 1))
-		run_one "$suite" "$stem" || failures=$((failures + 1))
+		ran+=("$stem")
+		run_one "$suite" "$stem" >"$WORK/$stem.log" 2>&1 &
+		PIDS+=("$!")
+		[[ ${#PIDS[@]} -lt "$CONTROL_JOBS" ]] || reap
 	done
+	reap
 
 	[[ "$total" -gt 0 ]] || die "selection matched no suites"
 
+	# Roster order, not finish order: the report reads the same whatever the
+	# machine's width.
+	for stem in "${ran[@]}"; do
+		cat "$WORK/$stem.log"
+	done
+
 	printf '\n%d controls, %d failing, %d orphaned\n' \
-		"$total" "$failures" "$orphans"
-	[[ "$failures" -eq 0 && "$orphans" -eq 0 ]]
+		"$total" "$FAILURES" "$orphans"
+	[[ "$FAILURES" -eq 0 && "$orphans" -eq 0 ]]
 }
 
 main "$@"

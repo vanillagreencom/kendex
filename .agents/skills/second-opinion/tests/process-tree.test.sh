@@ -114,7 +114,7 @@ cat >/dev/null
 sleep 120 &
 printf '%s\n' "$!" > "$CLI_KID_FILE"
 printf 'started\n' > "$CLI_READY_FILE"
-sleep 1
+sleep 0.2
 printf 'leader done\n'
 SH
 chmod +x "$TMP_ROOT/bin/orphan-codex"
@@ -150,15 +150,15 @@ else
 start=$(date +%s)
 rc=0
 captured=$(CLI_READY_FILE="$TMP_ROOT/tree.ready" CLI_KID_FILE="$TMP_ROOT/tree.kid" \
-  SECOND_OPINION_CODEX_CMD=treeish-codex SECOND_OPINION_TIMEOUT=2 \
+  SECOND_OPINION_CODEX_CMD=treeish-codex SECOND_OPINION_TIMEOUT=1 \
   "$SECOND_OPINION" quick question --cwd "$TMP_ROOT/work" \
   2> "$TMP_ROOT/tree.stderr") || rc=$?
 elapsed=$(( $(date +%s) - start ))
 kid="$(read_pid "$TMP_ROOT/tree.kid" "the timed-out CLI")"
 STRAYS+=("$kid")
 [[ $elapsed -lt 60 ]] \
-  || fail "the caller waited ${elapsed}s for a 2s timeout — a survivor held the pipe open"
-ok "the capturing caller returns promptly (${elapsed}s) after a 2s timeout"
+  || fail "the caller waited ${elapsed}s for a 1s timeout — a survivor held the pipe open"
+ok "the capturing caller returns promptly (${elapsed}s) after a 1s timeout"
 await_gone "$kid" || fail "the CLI's child $kid survived the timeout"
 ok "the timeout took the CLI's child with it"
 [[ $rc -ne 0 ]] || fail "a timed-out CLI must not read as success"
@@ -215,7 +215,10 @@ capture_group_run() { # RUNTIME LABEL -> "rc", 124 when the capture outran the b
     bash -c 'out=$("$1" group-run "$2" orphan-codex < /dev/null); printf %s "$out" > "$3"' \
     _ "$runtime" "$TMP_ROOT/$label.stderr" "$TMP_ROOT/$label.out" &
   job=$!
-  end=$(($(date +%s) + 8))
+  # 3s: the shipped runtime releases the capture as soon as the orphan CLI's
+  # leader exits (0.2s in), and the leader-probe control never releases it at
+  # all, so anything above the leader's own life only lengthens the control.
+  end=$(($(date +%s) + 3))
   while kill -0 "$job" 2>/dev/null; do
     if [[ $(date +%s) -ge $end ]]; then
       kill -KILL "$job" 2>/dev/null || true
@@ -278,7 +281,7 @@ CLI_READY_FILE="$TMP_ROOT/dl.ready" CLI_KID_FILE="$TMP_ROOT/dl.kid" \
   SECOND_OPINION_LAUNCH_MODEL=claude \
   SECOND_OPINION_CODEX_CMD=treeish-codex \
   "$RUNTIME" launch "$SECOND_OPINION" "$TMP_ROOT/dl-answer" "$TMP_ROOT/dl-runtime" \
-  6 false 10 quick question --target=codex --cwd "$TMP_ROOT/work" --timeout 600 \
+  4 false 10 quick question --target=codex --cwd "$TMP_ROOT/work" --timeout 600 \
   > "$TMP_ROOT/dl-launch.stdout" 2> "$TMP_ROOT/dl-launch.stderr"
 dl_wait="$(sed -n 's/^wait: //p' "$TMP_ROOT/dl-launch.stdout")"
 dl_pid="$(read_pid "$TMP_ROOT/dl-runtime/pid" "the detached launcher")"

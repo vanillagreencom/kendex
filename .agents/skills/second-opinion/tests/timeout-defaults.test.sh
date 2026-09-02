@@ -14,6 +14,8 @@ export SECOND_OPINION_CURRENT_MODEL=none
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+# shellcheck source=lib/path-farm.bash
+. "$SCRIPT_DIR/lib/path-farm.bash"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -137,15 +139,7 @@ assert_contains "$zero_stderr" "must be a positive integer" "--timeout 0 is refu
 # warning, not a refusal. Hide both binaries behind a symlink farm of the rest
 # of PATH.
 NOTIMEOUT="$TMP_ROOT/notimeout"
-mkdir -p "$NOTIMEOUT"
-IFS=: read -ra _path_dirs <<< "$PATH"
-for _d in "${_path_dirs[@]}"; do
-  for _f in "$_d"/*; do
-    _b="${_f##*/}"
-    [[ "$_b" == timeout || "$_b" == gtimeout ]] && continue
-    [[ -e "$NOTIMEOUT/$_b" ]] || ln -s "$_f" "$NOTIMEOUT/$_b" 2>/dev/null || true
-  done
-done
+path_farm_without "$NOTIMEOUT" timeout gtimeout
 
 notimeout_stderr="$TMP_ROOT/notimeout.stderr"
 PATH="$TMP_ROOT/bin:$NOTIMEOUT" \

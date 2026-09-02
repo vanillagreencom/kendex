@@ -109,5 +109,37 @@ check_signal HUP 129
 check_signal INT 130
 check_signal TERM 143
 
+# The bound is enforced on a 0.1s tick, so a caller may ask for tenths. Junk
+# is refused with 125 rather than run unbounded: a bound that silently stops
+# bounding is how a hung `gh` becomes a hung lane.
+check_bound() { # LABEL BOUND EXPECTED-RC [COMMAND...]
+  local label="$1" bound="$2" expected="$3" rc=0
+  shift 3
+  [ "$#" -gt 0 ] || set -- sleep 30
+  BOUNDED="$BOUNDED" BOUND="$bound" bash -c '
+    source "$BOUNDED"
+    kendex_github_run_bounded "$BOUND" "$@"
+  ' bash "$@" >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -eq "$expected" ]]; then
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "$label"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s: expected %s, got %s\n' "$label" "$expected" "$rc"
+  fi
+}
+
+echo "=== bounded runner bound parsing ==="
+check_bound "a tenth-of-a-second bound times out" 0.2 124
+check_bound "a whole-second bound times out" 1 124
+# Under octal arithmetic 08 is not a number at all, so a command that finishes
+# well inside the bound separates the two readings without waiting out either.
+check_bound "a leading-zero bound is decimal, not octal" 08 0 true
+check_bound "a two-place bound is refused" 0.25 125
+check_bound "a bare decimal point is refused" . 125
+check_bound "a trailing decimal point is refused" 5. 125
+check_bound "a non-numeric bound is refused" soon 125
+# Sub-second bounds must not have become "no bound at all": a zero bound is
+# the documented way to ask for that, and nothing else may reach it.
+check_bound "a zero bound runs the command unbounded" 0.0 0 true
+
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

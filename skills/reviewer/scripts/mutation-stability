@@ -29,6 +29,10 @@ usage: mutation-stability --worktree PATH --sha SHA --test CMD --build CMD
                    given it in TEST, e.g. --test 'cargo test -- --test-threads $THREADS'
   --timeout S      deadline for each build or test command (default 300)
   --keep           print the temp dirs instead of deleting them
+
+  MUTATION_STABILITY_SETTLE  seconds each write to a copy waits so a shared
+                   mtime-keyed build cache cannot answer it with the previous
+                   run's binary (default 1; 0 when BUILD shares no cache)
 USAGE
 }
 
@@ -69,6 +73,14 @@ positive_integer() {
 positive_integer --stability "$N"
 positive_integer --threads "$THREADS"
 positive_integer --timeout "$TIMEOUT"
+
+SETTLE="${MUTATION_STABILITY_SETTLE:-1}"
+case "$SETTLE" in
+  *[!0-9]* | '')
+    echo "MUTATION_STABILITY_SETTLE wants a whole number of seconds" >&2
+    exit 2
+    ;;
+esac
 
 ROOT=$(mktemp -d "${TMPDIR:-/tmp}/mutation-stability.XXXXXX") || exit 2
 ACTIVE_PID="" ACTIVE_GROUP=""
@@ -146,7 +158,11 @@ trap 'exit 143' TERM
 # a source tree waits that boundary out first, so what it wrote always outranks
 # the build before it. Without that, the cache the caller shares — usually
 # CARGO_TARGET_DIR — answers the next run with the last run's test binary.
-outrank_last_build() { sleep 1; }
+#
+# A caller whose --build shares no cache has nothing to outrank, and
+# tests/mutation-stability.test.sh is one: it drives every case with a stub
+# build. MUTATION_STABILITY_SETTLE=0 is how such a caller says so.
+outrank_last_build() { [ "$SETTLE" -eq 0 ] || sleep "$SETTLE"; }
 
 extract() { # extract SHA into $1, stamped past the build before it
   mkdir -p "$1" || return 1

@@ -63,15 +63,17 @@ make_repo() { # ROOT NAME — main checkout with a bare origin
   git -C "$root/$name" push -q -u origin main
 }
 
-assert_no_pm_calls() { # NAME — watch 2s and fail the moment any manager runs
-  local name="$1" deadline=$((SECONDS + 2))
-  while [ "$SECONDS" -lt "$deadline" ]; do
-    if [ -s "$PM_CALL_LOG" ]; then
-      bad "$name" "$(cat "$PM_CALL_LOG")"
-      return 1
-    fi
-    sleep 0.2
-  done
+# The log is cumulative and every caller checks it after the worktree command
+# has already returned, so one read covers everything that ran: a manager the
+# command forked and did not wait for is a defect this suite is not the place
+# to catch — `create` has no such path, and if it grew one the install would
+# be unsequenced against the caller regardless.
+assert_no_pm_calls() { # NAME — fail if any package manager has been invoked
+  local name="$1"
+  if [ -s "$PM_CALL_LOG" ]; then
+    bad "$name" "$(cat "$PM_CALL_LOG")"
+    return 1
+  fi
   ok "$name"
 }
 

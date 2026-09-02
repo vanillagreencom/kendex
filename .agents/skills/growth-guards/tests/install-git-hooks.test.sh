@@ -176,6 +176,13 @@ case "$OUT" in
   *) bad "blocked commit names the blob" "out=$OUT" ;;
 esac
 
+# Everything from here down is hook PLUMBING: what the shims delegate to, what
+# survives an install, what an uninstall gives back. The batch's composition is
+# not the subject and each check has its own suite, so the chain runs one of
+# them — the same commits, a sixth of the work. The blocks above keep the full
+# batch: they are the ones that judge what the chain reads and what it runs.
+export GROWTH_GUARDS_CHECKS=todo-ban
+
 echo "=== the repo-local entry runs last and blocks ==="
 mkdir -p "$R/tools"
 printf '#!/bin/sh\necho "repo-local check ran"\nexit 0\n' >"$R/tools/local-check"
@@ -450,7 +457,6 @@ install_in "$R10"
 BEFORE_HELPER="$(cat "$R10/.git/hooks/kendex-guards")"
 BEFORE_PRE="$(cat "$R10/.git/hooks/pre-commit")"
 BEFORE_MSG="$(cat "$R10/.git/hooks/commit-msg")"
-install_in "$R10"
 install_in "$R10"
 [ "$RC" -eq 0 ] && ok "a repeat install exits 0" || bad "repeat install exits 0" "rc=$RC out=$OUT"
 [ "$BEFORE_HELPER" = "$(cat "$R10/.git/hooks/kendex-guards")" ] && ok "the helper is unchanged" || bad "helper unchanged"

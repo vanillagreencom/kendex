@@ -27,6 +27,8 @@ export SECOND_OPINION_CURRENT_MODEL=none
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 SECOND_OPINION="$REPO_ROOT/skills/second-opinion/scripts/second-opinion"
+# shellcheck source=lib/path-farm.bash
+. "$SCRIPT_DIR/lib/path-farm.bash"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -1003,16 +1005,7 @@ echo "=== scenario 10n: without jq the sibling sweep is skipped, and says so ===
 # it from siblings that are still there. Built by mirroring the real PATH minus
 # jq, so the fixture cannot rot as the script's command set changes.
 s10n_bin="$TMP_ROOT/nojq"
-mkdir -p "$s10n_bin"
-while IFS= read -r s10n_dir; do
-  [[ -d "$s10n_dir" ]] || continue
-  for s10n_f in "$s10n_dir"/*; do
-    [[ -f "$s10n_f" && -x "$s10n_f" ]] || continue
-    s10n_b="${s10n_f##*/}"
-    [[ "$s10n_b" == jq ]] && continue
-    [[ -e "$s10n_bin/$s10n_b" ]] || ln -sf "$s10n_f" "$s10n_bin/$s10n_b" 2>/dev/null || true
-  done
-done < <(printf '%s\n' "$PATH" | tr ':' '\n')
+path_farm_without "$s10n_bin" jq
 if PATH="$s10n_bin" command -v jq >/dev/null 2>&1 || ! PATH="$s10n_bin" command -v git >/dev/null 2>&1; then
   skip "no-jq sweep: could not build a PATH with git but without jq"
 else

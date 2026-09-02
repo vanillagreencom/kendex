@@ -11,6 +11,12 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/install-hooks.bash
 . "$TEST_DIR/lib/install-hooks.bash"
 
+# The subject is which scripts the shim reaches and which lanes run beside
+# them, never the composition of the batch itself — size-ratchet and preflight
+# are chain lanes, not members of it. So the batch runs one check, and each
+# check keeps its own suite.
+export GROWTH_GUARDS_CHECKS=todo-ban
+
 echo "=== a copy-method install is rediscovered ==="
 R19="$(new_repo copymethod)"
 install_in "$R19"

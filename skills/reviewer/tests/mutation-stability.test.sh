@@ -28,6 +28,12 @@ stopped() {
   ! kill -0 "$pid" 2>/dev/null
 }
 
+# Every case up to the shared-cache block below builds with `true` or a `test`
+# — nothing that keeps a cache, so nothing the copy's mtime has to outrank.
+# The two blocks that DO put a whole-second cache behind the build clear this
+# again and spend the real wait.
+export MUTATION_STABILITY_SETTLE=0
+
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/ms-test.XXXXXX") || exit 2
 trap 'rm -rf "$TMP"' EXIT
 REPO="$TMP/repo"
@@ -97,6 +103,42 @@ lacks "killed" "a non-compiling mutant is never killed"
 # One invalid input proves the shared positive-integer validator.
 run_ms "$SHA" --test 'true' --build 'true' --mutate 'true' --timeout 0
 is_rc 2 "the numeric validator rejects zero"
+
+# The settle has its own validator: it admits the 0 the shared one refuses,
+# and refuses everything that is not a count of seconds.
+rc=0
+out=$(MUTATION_STABILITY_SETTLE=soon "$MS" --worktree "$REPO" --sha "$SHA" \
+  --test 'true' --build 'true' --mutate 'true' --stability 1 2>&1) || rc=$?
+is_rc 2 "a settle that is not a number of seconds exits 2"
+has "MUTATION_STABILITY_SETTLE wants a whole number of seconds" "the rejected settle is named"
+
+# And 0 really skips the wait rather than merely shortening it. What the run
+# asked for is read off a sleep stub: the settle is the only whole-second
+# sleeper in the script, and the sub-second waits are its own polls, which the
+# stub still performs so the run behaves normally.
+mkdir -p "$TMP/sleepbin"
+cat >"$TMP/sleepbin/sleep" <<SH
+#!/bin/sh
+printf '%s\n' "\$1" >>"$TMP/slept"
+case "\$1" in *.*) exec $(command -v sleep) "\$@" ;; esac
+SH
+chmod +x "$TMP/sleepbin/sleep"
+settle_arm() { # DESC EXPECTATION(present|absent) env-argument...
+  desc="$1"; want="$2"; shift 2
+  : >"$TMP/slept"
+  rc=0
+  out=$(env "$@" PATH="$TMP/sleepbin:$PATH" "$MS" \
+    --worktree "$REPO" --sha "$SHA" --test 'bash check.sh' --build 'true' \
+    --mutate 'sed -i.bak "s/+/-/" lib.sh && rm -f lib.sh.bak' \
+    --stability 1 --threads 2 2>&1) || rc=$?
+  is_rc 0 "control: $desc still reaches its verdict"
+  if grep -qxE '[0-9]+' "$TMP/slept"; then found=present; else found=absent; fi
+  if [ "$found" = "$want" ]; then ok "$desc"; else
+    bad "$desc" "whole-second wait $found; slept: $(tr '\n' ' ' <"$TMP/slept")"
+  fi
+}
+settle_arm "the default settle waits a whole second" present -u MUTATION_STABILITY_SETTLE
+settle_arm "a zero settle asks for no wait at all" absent MUTATION_STABILITY_SETTLE=0
 
 # KEN-999: one timeout control also checks adoption under a non-reaping PID 1.
 export HANG_PID_FILE="$TMP/timeout-child.pid"
@@ -178,7 +220,9 @@ run_ms "$SHA2" --test 'bash check.sh' --build 'true' \
 is_rc 1 "stability failure exits 1 even with the mutant killed"
 has "stability: 1/3 at 2 threads" "partial stability is reported as Y/N"
 
-# Shared whole-second caches must rebuild for mutant and clean copies.
+# Shared whole-second caches must rebuild for mutant and clean copies. This is
+# the wait's whole reason, so from here the default settle is what runs.
+unset MUTATION_STABILITY_SETTLE
 export CACHE="$TMP/build-cache"
 mkdir -p "$CACHE"
 cat > "$REPO/check.sh" <<'T'

@@ -11,6 +11,18 @@ LINEAR_API="https://api.linear.app/graphql"
 LINEAR_LIMIT_SHORT_DESC=255    # Initiatives, projects, milestones, labels
 LINEAR_LIMIT_ISSUE_DESC=100000 # Issues have no practical limit
 
+# Seconds before the first retry of a rate-limited or failed GraphQL call;
+# each further attempt doubles it. Overridable so a suite driving the retry
+# path against a stubbed curl does not spend the real backoff — the wait is
+# for Linear's benefit, and there is no Linear on the other end of a stub.
+LINEAR_RETRY_BASE_DELAY="${LINEAR_RETRY_BASE_DELAY:-1}"
+case "$LINEAR_RETRY_BASE_DELAY" in
+*[!0-9]* | "")
+    echo '{"error": "LINEAR_RETRY_BASE_DELAY must be a whole number of seconds"}' >&2
+    exit 1
+    ;;
+esac
+
 # Internal lib directory (underscore prefix avoids overwriting caller's SCRIPT_DIR)
 _LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -232,7 +244,7 @@ graphql_query() {
         variables='{}'
     fi
     local max_retries=3
-    local retry_delay=1
+    local retry_delay="$LINEAR_RETRY_BASE_DELAY"
     local attempt=1
 
     # Single choke point for writes: no mutation leaves this process without a
