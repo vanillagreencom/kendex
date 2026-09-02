@@ -25,7 +25,7 @@ Vulnerability classes (injection, broken auth/authz, data exposure, XSS/CSRF, pr
 - **Secret exposure**: credentials or userinfo-bearing URLs reaching logs, diagnostics, or error output; automation that can sweep uncontrolled local edits (and their secrets) into commits.
 - **Untrusted input in control position**: attacker-controlled filenames/branches/settings echoed into shells, workflow commands, or evaluated config; code or config loaded from a reviewed-but-untrusted tree.
 
-A race, a concurrent writer, a symlink or `..` shape, or a malformed input is a finding only when you name the shipped producer or user action that reaches it. Without that name, do not write the finding.
+A same-machine race, or a second writer with the user's privileges, is never a finding. A symlink, `..`, or malformed input is one only when you name the shipped producer emitting it. Security, data-loss and fail-open defects are exempt.
 
 ## Output
 

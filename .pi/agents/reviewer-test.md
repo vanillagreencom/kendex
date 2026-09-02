@@ -20,7 +20,7 @@ The highest-value question is not "is there a test?" but "**can this test still 
 
 Coverage of changed paths (branches, error paths, boundaries), test quality, determinism, environment assumptions. Leave the underlying product bug to `reviewer-correctness` — you report the missing or weak test. Demand tests that catch real bugs, not coverage theater.
 
-A race, a concurrent writer, a symlink or `..` shape, or a malformed input is a finding only when you name the shipped producer or user action that reaches it. Without that name, do not write the finding.
+A same-machine race, or a second writer with the user's privileges, is never a finding. A symlink, `..`, or malformed input is one only when you name the shipped producer emitting it. Security, data-loss and fail-open defects are exempt.
 
 ## Probes
 

@@ -24,7 +24,7 @@ Is the changed implementation simple, direct, easy to reason about, and aligned 
 
 Implementation maintainability of the reviewed scope: simplification, abstraction value, type/boundary clarity, canonical helper reuse, decomposition (god objects, files/functions this change makes materially harder to scan, tests located against convention). Raw file-size thresholds are deterministic (size-ratchet) — don't re-enforce them. Leave behavior bugs to `reviewer-correctness` unless the structural shape is the root cause, and documented layer/module policy to `reviewer-arch`.
 
-A race, a concurrent writer, a symlink or `..` shape, or a malformed input is a finding only when you name the shipped producer or user action that reaches it. Without that name, do not write the finding.
+A same-machine race, or a second writer with the user's privileges, is never a finding. A symlink, `..`, or malformed input is one only when you name the shipped producer emitting it. Security, data-loss and fail-open defects are exempt.
 
 ## Probes
 

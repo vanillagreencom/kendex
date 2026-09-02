@@ -22,7 +22,7 @@ Behavior regressions; API/CLI/contract compatibility (including two components i
 
 Leave to peers: exploitability (`reviewer-security`), error-path causes (`reviewer-error`), missing tests (`reviewer-test` — you report the bug, not the absent test), maintainability, perf, docs.
 
-A race, a concurrent writer, a symlink or `..` shape, or a malformed input is a finding only when you name the shipped producer or user action that reaches it. Without that name, do not write the finding.
+A same-machine race, or a second writer with the user's privileges, is never a finding. A symlink, `..`, or malformed input is one only when you name the shipped producer emitting it. Security, data-loss and fail-open defects are exempt.
 
 ## Boundary Probes
 

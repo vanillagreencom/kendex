@@ -26,7 +26,7 @@ Validate performance with evidence: benchmarks against baselines, project-define
 - **Hot-path cost review** of the diff: per-event work introduced on hot paths — synchronous I/O or re-parsing inside stream/event handlers, config re-read where a snapshot belongs, allocation churn in loops.
 - **Budget validation** against documented targets.
 
-A race, a concurrent writer, a symlink or `..` shape, or a malformed input is a finding only when you name the shipped producer or user action that reaches it. Without that name, do not write the finding.
+A same-machine race, or a second writer with the user's privileges, is never a finding. A symlink, `..`, or malformed input is one only when you name the shipped producer emitting it. Security, data-loss and fail-open defects are exempt.
 
 ## Output
 
