@@ -50,9 +50,7 @@ gg_shell_quote() { # VALUE -> the value, safe inside single quotes
 # package's own list and is not per-anything.
 #
 # Named as the variable the head interpolates, so the check blanks it and
-# compares what is left. Naming the assignment instead would mean finding it
-# in the text, and a path may hold a newline: the value it bakes can span
-# physical lines, and there is no line to find.
+# compares what is left, rather than finding the assignment in the text.
 GG_PER_CHECKOUT_VAR='SCRIPT_DIR'
 
 # A token no baked value carries, standing where the per-checkout value

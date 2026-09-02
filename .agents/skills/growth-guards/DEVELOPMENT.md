@@ -202,9 +202,9 @@ generates. The marker inside it is only a comment, and `--check` writes
 nothing, so it does not get to assume the installer has just refreshed the
 copy in front of it. Its generated HEAD is held to the head this checkout
 would bake with the per-checkout value blanked (`helper_head_shape`): fixed
-bytes either side of one value, so everything but that value is exact and the
-value may hold any byte a path may hold, a newline included. `helper_body`
-writes both halves, so a writer and a verifier cannot drift apart.
+bytes either side of one value, so everything but that value is exact.
+`helper_body` writes both halves, so a writer and a verifier cannot drift
+apart.
 
 Only `SCRIPT_DIR` is excusable, and only twice over: the value has to be one
 `gg_shell_quote` would have written, proved by unescaping and re-escaping it,

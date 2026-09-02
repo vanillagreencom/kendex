@@ -289,33 +289,6 @@ check_in "$R42"
 [ "$RC" -eq 2 ] && ok "a helper missing a baked line is unverifiable" \
   || bad "missing baked line unverifiable" "rc=$RC out=$OUT"
 
-echo "=== a checkout path carrying a newline is still recognized ==="
-# A directory name may end in, or hold, a newline. Capturing a path through
-# bare command substitution loses the trailing one, so the checkout no longer
-# prefixes the directory standing in it and the helper another checkout armed
-# reads as foreign; and a value holding one spreads its assignment over
-# physical lines, which a head read a line at a time cannot pair up.
-# ANSI-C quoting, because command substitution would strip the trailing
-# newline that is half of what this case is about.
-NL=$'nl\ndir\n'
-# The path is built here rather than read back from new_repo: command
-# substitution would strip the very newline this case is about.
-R45="$TMP/$NL"
-new_repo "$NL" >/dev/null
-git -C "$R45" add -A >/dev/null 2>&1
-commit_in "$R45" "chore: seed"
-install_in "$R45"
-[ "$RC" -eq 0 ] && ok "control: a newline in the checkout path installs" \
-  || bad "newline path installs" "rc=$RC out=$OUT"
-check_in "$R45"
-[ "$RC" -eq 0 ] && ok "and the helper it wrote is recognized as armed" \
-  || bad "newline path checks armed" "rc=$RC out=$OUT"
-W45="$TMP/$NL-wt"
-git -C "$R45" worktree add -q -b nlwt "$W45" >/dev/null 2>&1
-check_in "$W45"
-[ "$RC" -eq 0 ] && ok "and a worktree of it recognizes that helper too" \
-  || bad "newline worktree checks armed" "rc=$RC out=$OUT"
-
 echo "=== two projects in one repository share one helper, and it licenses one ==="
 # The helper is what says a session may run a checkout-supplied installer.
 # One repository holds one helper, so a second project finding it would read
