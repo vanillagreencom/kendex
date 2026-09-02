@@ -16,6 +16,7 @@ import {
   OPEN_IN_FILE_BROWSER_LABEL,
   OPEN_IN_LABEL,
   PREVIEW_CHANGES_LABEL,
+  TRY_AGAIN_LABEL,
   UPDATE_LABEL,
 } from "@/lib/copy";
 import { DELETE_LABEL } from "@/lib/copy-projects";
@@ -35,6 +36,7 @@ export function PackageActions({
   updateAvailable,
   previewAvailable,
   withheldNote,
+  onRetryRead,
   busy,
   onUpdate,
   onPreview,
@@ -53,14 +55,22 @@ export function PackageActions({
    *  check in flight or a refusal to write does not stop anyone looking at
    *  what changed. */
   previewAvailable: boolean;
-  /** Why there is no Update here, when the reason is one the update read
-   *  carries: a kind core never brings current one package at a time, a
-   *  read still pending or failed, a place the read never covered, an
-   *  edit of the reader's own. Rendered whenever `updateAvailable` is
-   *  false and this is set. The page has other reasons to offer nothing,
-   *  an unmappable installed commit among them, and those it does not
-   *  word. */
+  /** Why there is no Update here: the first reason either read behind the
+   *  page carries. The update read's own ranks first — a kind core never
+   *  brings current one package at a time, a read still pending or failed,
+   *  a place the read never covered, an edit of the reader's own
+   *  (`updates-read-state.ts` [`packageUpdateNote`]) — and where that says
+   *  nothing about this place, this page's own record and timeline reads
+   *  failing (`use-package-data.ts` [`packageReadNote`]). Rendered whenever
+   *  `updateAvailable` is false and this is set. The page has other reasons
+   *  to offer nothing, an unmappable installed commit among them, and those
+   *  it does not word. */
   withheldNote?: string | null;
+  /** Read this package again, set only where the note above is this page's
+   *  own read failing. Absent for every reason the update read carries:
+   *  those are answered by a check or by the package's own state, so a
+   *  button there would ask for a read that changes nothing. */
+  onRetryRead?: () => void;
   busy: boolean;
   onUpdate: () => void;
   onPreview: () => void;
@@ -112,7 +122,16 @@ export function PackageActions({
         </Button>
       ) : null}
       {!updateAvailable && withheldNote ? (
-        <p className="text-sm text-muted-foreground">{withheldNote}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm text-muted-foreground">{withheldNote}</p>
+          {/* A read that failed shows its error with a way to run it
+              again; a reason no read can lift shows the reason alone. */}
+          {onRetryRead ? (
+            <Button size="sm" variant="outline" onClick={onRetryRead}>
+              {TRY_AGAIN_LABEL}
+            </Button>
+          ) : null}
+        </div>
       ) : null}
       <DropdownMenu>
         <DropdownMenuTrigger

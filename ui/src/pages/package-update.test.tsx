@@ -10,7 +10,11 @@ import type {
 } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
-import { UPDATE_LABEL } from "@/lib/copy";
+import {
+  PREVIEW_CHANGES_LABEL,
+  TRY_AGAIN_LABEL,
+  UPDATE_LABEL,
+} from "@/lib/copy";
 import { OVERVIEW_TAB } from "@/lib/copy-customize";
 import { PROJECTS_TAB, updateInLabel } from "@/lib/copy-projects";
 import {
@@ -71,6 +75,12 @@ vi.mock("@/bindings", async (importOriginal) => ({
 
 beforeEach(resetPage);
 
+/** A refusal core sent on the row. Pass-through is the whole property, so
+ *  this is a string core would never send: core's own wording here would
+ *  read as a cross-boundary pin and be none, since the equality asserted is
+ *  fixture against rendered note. */
+const NO_PER_PACKAGE = "REFUSED-BY-CORE: this kind moves another way";
+
 /** A timeline with a newer version to move to, which is what puts a note
  *  where the button would have been. */
 const TIMELINE: VersionRow[] = [
@@ -93,16 +103,12 @@ const TIMELINE: VersionRow[] = [
 ];
 
 // The Update on this page and the note where it would have been are one
-// string. The kind's own refusal outranks everything, because no check can
-// ever lift it; then how the read went, which the row cannot say; and only
-// a settled read may call this place one the check never covered.
+// string, and this block is the update read's half of it. Within that half
+// the kind's own refusal comes first, because no check can ever lift it;
+// then how the read went, which the row cannot say; and only a settled read
+// may call this place one the check never covered. The half itself ranks
+// ahead of the page's own reads, which the next block covers.
 describe("what the package page says instead of Update", () => {
-  /** A refusal core sent on the row. Pass-through is the whole property,
-   *  so this is a string core would never send: core's own wording here
-   *  would read as a cross-boundary pin and be none, since the equality
-   *  asserted is fixture against rendered note. */
-  const NO_PER_PACKAGE = "REFUSED-BY-CORE: this kind moves another way";
-
   /** The page over an update standing: how its read went, the rows it
    *  holds, and whether a check is out behind them. */
   const openWith = async (
@@ -190,15 +196,28 @@ describe("what the package page says instead of Update", () => {
   });
 });
 
-// The page's own three reads are not the update check, and a failure in
-// either of the two Update rests on leaves the header with no button and
-// no Preview. Silence there is a page that refuses without saying why, and
-// the update read's own notes would name the wrong cause for it.
+// The page's own two gating reads, and what the header says when one of
+// them does not land. They rank behind everything the update read carries:
+// the commands under them answer with a refusal for a package that is not a
+// managed one here — undeclared, a plugin, a path source — as readily as for
+// a read that went wrong, and that text is about declarations and revisions.
 describe("what the package page says when its own reads fail", () => {
-  // A timeline with something newer on it, so the update read has its own
-  // say to be outranked: the record is what did not read, and the note
-  // that names a check nobody needs points at the wrong thing.
-  it("names the record read over the update check's own note", async () => {
+  /** This place's row with nothing withholding an update, which is the one
+   *  state that leaves the update read with nothing to say — and so the only
+   *  one where the page's own reads are the news. */
+  const HEALTHY = [updateRow(VG)];
+
+  /** The button carrying this label, or null. */
+  const button = (host: HTMLElement, label: string) =>
+    [...host.querySelectorAll("button")].find(
+      (one) => one.textContent === label,
+    ) ?? null;
+
+  // Preview is gated on the timeline alone and survives a record read that
+  // failed: it is read-only, and a record that did not land stops nobody
+  // looking at what changed.
+  it("names the record read, keeping the comparison it can still offer", async () => {
+    useUpdatesStore.setState({ rows: HEALTHY });
     vi.mocked(commands.packageVersions).mockResolvedValue({
       status: "ok",
       data: TIMELINE,
@@ -213,14 +232,15 @@ describe("what the package page says when its own reads fail", () => {
     expect(host.textContent).toContain(
       packageReadFailedNote("the manifest is unreadable"),
     );
-    expect(host.textContent).not.toContain(NO_UPDATE_STANDING_NOTE);
     expect(header(host)).not.toContain(UPDATE_LABEL);
+    expect(header(host)).toContain(PREVIEW_CHANGES_LABEL);
   });
 
-  // A timeline that did not read has no newer version on it, so every note
-  // keyed on one is silent — which is how this page came to show an empty
-  // action bar and nothing else.
-  it("names the timeline read, which no note keyed on newness reaches", async () => {
+  // A timeline that did not read has no newer version on it, so a note held
+  // behind newness is silent — which is how this page came to show an empty
+  // action bar with nothing beside it.
+  it("names the timeline read, where an empty version list is no answer", async () => {
+    useUpdatesStore.setState({ rows: HEALTHY });
     vi.mocked(commands.packageMeta).mockResolvedValue({
       status: "ok",
       data: RECORD,
@@ -238,11 +258,61 @@ describe("what the package page says when its own reads fail", () => {
     expect(header(host)).not.toContain(UPDATE_LABEL);
   });
 
+  // The generated wrapper rethrows a transport failure rather than answering
+  // with one. Unwrapped, the landing never ran: the read stayed pending for
+  // the life of the view, this note never appeared, and the rejection went
+  // out unhandled.
+  it("answers a rejected read the way it answers a refused one", async () => {
+    useUpdatesStore.setState({ rows: HEALTHY });
+    vi.mocked(commands.packageVersions).mockResolvedValue({
+      status: "ok",
+      data: TIMELINE,
+    });
+    vi.mocked(commands.packageMeta).mockRejectedValue(new Error("ipc down"));
+
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+
+    expect(host.textContent).toContain(packageReadFailedNote("ipc down"));
+    expect(header(host)).not.toContain(UPDATE_LABEL);
+  });
+
+  // A failed read shows its error with a way to run it again — the invariant
+  // docs/ARCHITECTURE.md states, and the affordance the safety tab one tab
+  // over already carries.
+  it("reads the package again when the note's Try again is pressed", async () => {
+    useUpdatesStore.setState({ rows: HEALTHY });
+    vi.mocked(commands.packageVersions).mockResolvedValue({
+      status: "ok",
+      data: TIMELINE,
+    });
+    vi.mocked(commands.packageMeta).mockResolvedValue({
+      status: "error",
+      error: "the manifest is unreadable",
+    });
+
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+    const retry = button(host, TRY_AGAIN_LABEL);
+    if (!retry) throw new Error("no Try again beside the note");
+
+    // The second read answers, which is what the button is for.
+    vi.mocked(commands.packageMeta).mockResolvedValue({
+      status: "ok",
+      data: RECORD,
+    });
+    await act(async () => {
+      retry.click();
+    });
+    await settle();
+
+    expect(host.textContent).not.toContain(PACKAGE_READ_FAILED);
+    expect(header(host)).toContain(UPDATE_LABEL);
+  });
+
   // Both reads landed, so nothing the page itself read withholds anything
-  // and the update read has the say it always had. Without this the two
-  // above would pass over a page that said the same thing whatever
-  // happened.
+  // and the button stands. Without this the cases above would pass over a
+  // page that said the same thing whatever happened.
   it("says nothing of its own when both reads land", async () => {
+    useUpdatesStore.setState({ rows: HEALTHY });
     vi.mocked(commands.packageMeta).mockResolvedValue({
       status: "ok",
       data: RECORD,
@@ -255,7 +325,111 @@ describe("what the package page says when its own reads fail", () => {
     const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
 
     expect(host.textContent).not.toContain(PACKAGE_READ_FAILED);
+    expect(header(host)).toContain(UPDATE_LABEL);
+  });
+
+  // A plugin is declared nowhere, so core refuses both of this page's reads
+  // with text about declarations and revisions. Worded as a read that
+  // failed, that would stand where core's own reason for the kind belongs —
+  // and no read of this package will ever lift it.
+  it("keeps core's refusal for the kind ahead of its own reads", async () => {
+    useUpdatesStore.setState({
+      rows: [
+        {
+          ...updateRow(VG),
+          kind: "plugin",
+          noPerPackageUpdate: NO_PER_PACKAGE,
+        },
+      ],
+    });
+    const undeclared = {
+      status: "error" as const,
+      error: "no plugin named gh is declared in this scope",
+    };
+    vi.mocked(commands.packageMeta).mockResolvedValue(undeclared);
+    vi.mocked(commands.packageVersions).mockResolvedValue(undeclared);
+
+    const host = await openPage(
+      VG,
+      [VG],
+      { [scopeKey(VG)]: PLAIN },
+      null,
+      "plugin",
+    );
+
+    expect(host.textContent).toContain(NO_PER_PACKAGE);
+    expect(host.textContent).not.toContain(PACKAGE_READ_FAILED);
+    expect(button(host, TRY_AGAIN_LABEL)).toBeNull();
+  });
+
+  // An undeclared item and one installed from a path source answer the same
+  // way: core refuses both reads, and the update read never covered the
+  // place. Its note is the true one there, and reading the package again
+  // would answer exactly the same.
+  it("leaves a package the check never covered to the update read", async () => {
+    const refused = {
+      status: "error" as const,
+      error: "source local is not a repository",
+    };
+    vi.mocked(commands.packageMeta).mockResolvedValue(refused);
+    vi.mocked(commands.packageVersions).mockResolvedValue(refused);
+
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+
     expect(host.textContent).toContain(NO_UPDATE_STANDING_NOTE);
+    expect(host.textContent).not.toContain(PACKAGE_READ_FAILED);
+    expect(button(host, TRY_AGAIN_LABEL)).toBeNull();
+  });
+});
+
+// Reads of one package overlap on every ordinary path: a focus reload moves
+// the commit under a mount, a move to another package leaves the first one's
+// reads out. The header's Update turns on how those reads went, so an older
+// landing does not merely draw stale files — it hides the button with a
+// reason that has already been answered.
+describe("a package read that lands after a newer one began", () => {
+  it("writes neither its values nor how it went", async () => {
+    useUpdatesStore.setState({ rows: [updateRow(VG)] });
+    // The first timeline read is held open; every read after it answers.
+    type Timeline = Awaited<ReturnType<typeof commands.packageVersions>>;
+    let answerFirst: (value: Timeline) => void = () => {};
+    vi.mocked(commands.packageVersions)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            answerFirst = resolve;
+          }),
+      )
+      .mockResolvedValue({ status: "ok", data: TIMELINE });
+    vi.mocked(commands.packageMeta).mockResolvedValue({
+      status: "ok",
+      data: RECORD,
+    });
+
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+    // A landed update read moves the commit, which begins the second read.
+    await act(async () => {
+      useUpdatesStore.setState({
+        rows: [
+          {
+            ...updateRow(VG),
+            current: { commit: "b".repeat(40), label: null, date: null },
+          },
+        ],
+      });
+    });
+    await settle();
+    expect(header(host)).toContain(UPDATE_LABEL);
+
+    // The first read answers last, with a failure the second already
+    // disproved.
+    await act(async () => {
+      answerFirst({ status: "error", error: "the mirror is gone" });
+    });
+    await settle();
+
+    expect(host.textContent).not.toContain(PACKAGE_READ_FAILED);
+    expect(header(host)).toContain(UPDATE_LABEL);
   });
 });
 

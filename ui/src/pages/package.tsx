@@ -21,9 +21,10 @@ import { usePackageMark } from "@/lib/package-mark";
 import { vendorAt } from "@/lib/package-places";
 import { packageRequiredBy, packageUpdateNote } from "@/lib/updates-read-state";
 import {
-  canUpdatePackage,
+  hasNewer,
   installedRow,
   latestRow,
+  updateOffer,
   versionRowLabel,
 } from "@/lib/versions";
 import { useAuditStore } from "@/stores/audit";
@@ -80,7 +81,7 @@ export function PackagePage() {
     ...(ref ? [ref.scope] : []),
     ...(group ? groupScopes(group) : []),
   ]);
-  const { meta, files, versions, read, load: reload } = usePackageData(ref);
+  const { meta, files, versions, reads, load: reload } = usePackageData(ref);
   const diff = usePackageDiff(
     ref,
     view,
@@ -119,27 +120,17 @@ export function PackagePage() {
   const displayName = packageDisplayName(ref);
   const installed = installedRow(versions);
   const latest = latestRow(versions);
-  // Why there is no Update, in the order the reasons rank. The page's own
-  // reads answer first: a record or a timeline that did not land leaves no
-  // version to move to and no held-or-following answer, so every reason
-  // below goes quiet exactly where the page knows least, and the reader is
-  // left with an empty action bar and nothing to act on.
-  const readNote = packageReadNote(read);
-  // The button and the note beside it come from the one string above, so
-  // wherever there is a newer version to move to, a reason the update read
-  // carries — its own state, or the row's — is always said where the
-  // button would have been. Update also waits for meta (held vs
-  // following), and takes its newness from this page's own version rows.
-  const canUpdate = canUpdatePackage({
+  // The button, the note where it would have been, and whether reading again
+  // can lift that note: one answer, ranked in `versions.ts`, so the three can
+  // never disagree.
+  const offer = updateOffer({
     latest,
     installed,
     metaLoaded: meta != null,
-    withheld: readNote ?? withheld,
+    withheld,
+    readNote: packageReadNote(reads),
+    timelineUnread: reads.timeline.status === "failed",
   });
-  // A newer version to move to and an installed one to move from: what
-  // the read-only diff needs, and what the note below has to explain.
-  const newer = latest != null && !latest.installed;
-  const updateWithheld = readNote ?? (newer ? withheld : null);
 
   // Every scope this package sits in, one at a time — each apply takes
   // that scope's writer lock — and stopping at the first that fails.
@@ -207,9 +198,10 @@ export function PackagePage() {
             kind={group.kind}
             name={group.name}
             primaryPath={primary.path}
-            updateAvailable={canUpdate}
-            previewAvailable={newer && installed != null}
-            withheldNote={updateWithheld}
+            updateAvailable={offer.can}
+            previewAvailable={hasNewer(latest) && installed != null}
+            withheldNote={offer.note}
+            onRetryRead={offer.retry ? reload : undefined}
             busy={mutating}
             onUpdate={() => latest && updateToLatest(latest)}
             onPreview={() => latest && compare(latest)}
