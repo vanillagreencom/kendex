@@ -51,12 +51,13 @@ pub enum AccountState {
 /// answer" and "this machine refused" settles that choice.
 #[derive(Debug)]
 pub enum AccountUnread {
-    /// The directory was never asked: the credential store refused, the
-    /// refresh lock could not be taken, the cached identity could not be
-    /// dropped.
+    /// This machine stopped the read: the credential store refused, the
+    /// refresh lock could not be taken, the request could not be sent, the
+    /// cached identity could not be dropped. Nothing came back from the
+    /// directory, so nothing is known about it.
     Local(CoreError),
-    /// The directory was asked and no identity could be settled from what
-    /// came back, with nothing cached to stand in.
+    /// A request reached the directory and no identity could be settled
+    /// from what came back, with nothing cached to stand in.
     Unreachable(CoreError),
 }
 
@@ -82,7 +83,7 @@ struct WireMe {
 /// only with nothing cached to serve. A failure on this machine is none of
 /// those: [`client::with_access`] hands back which half of the call failed,
 /// so a local one errors with its own sentence however warm the cache is
-/// and never reaches [`GenerationFile::settle`], whose whole domain is a
+/// and never reaches [`GenerationFile::settle`], whose every error is a
 /// fetch that did not land. A store that refused the removal behind the
 /// server's rejection rides in that `SignInExpired`'s `why` and still
 /// answers `Expired`. The cache key names the sign-in this read opened with
@@ -124,12 +125,12 @@ pub fn load(
             cache.forget().map_err(AccountUnread::Local)?;
             return Ok(AccountState::Expired);
         }
-        // The machine refused before the directory was asked anything.
-        // Serving the cache as `Offline` would tell the user the directory
-        // was last reached, when nothing ever asked it.
+        // This machine stopped the request this read needed. Serving the
+        // cache as `Offline` would tell the user the directory was last
+        // reached on some date, when nothing about it was ever in doubt.
         Err(CallFailed::Local(error)) => return Err(AccountUnread::Local(error)),
-        // The directory was asked and did not answer usefully, which is
-        // exactly what a cached generation stands in for.
+        // The request reached the directory and did not answer usefully,
+        // which is exactly what a cached generation stands in for.
         Err(CallFailed::Unreachable(error)) => Err(error),
     };
     let loaded = cache

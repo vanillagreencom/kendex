@@ -244,7 +244,11 @@ fn run_with_config(url: &str, config: &str) -> Result<FetchResponse> {
     } else {
         "=https"
     };
-    let file = tempfile_0600(config)?;
+    // The config file carries the request, so a machine that cannot write
+    // it never sends one. That is the same fact the runner reports when it
+    // cannot spawn curl, and it is said the same way: a caller weighing a
+    // cached answer must not read either as the directory going quiet.
+    let file = tempfile_0600(config).map_err(|error| CoreError::not_started("curl", error))?;
     let path = file.path().to_string_lossy().into_owned();
     let args = [
         "-sS",

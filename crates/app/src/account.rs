@@ -27,10 +27,10 @@ pub struct AccountStatus {
 ///
 /// The two are one question the surface has to answer: may the name from
 /// the last read stand as the last one kendex.ai confirmed? Only a read
-/// that reached the directory and came back with nothing leaves it
-/// standing; one this machine refused says nothing about the directory,
-/// and showing the name as offline would name the wrong cause and send
-/// the person to check a working network.
+/// whose request reached the directory and came back with nothing leaves
+/// it standing; one this machine stopped learned nothing about the
+/// directory, and showing the name as offline would name the wrong cause
+/// and send the person to check a working network.
 ///
 /// Each carries the whole sentence, because the surface that shows it has
 /// nothing else to say. It is named here rather than on the variants
@@ -230,6 +230,35 @@ mod tests {
             refused(CoreError::NotSignedIn),
             AccountCallRefused::Failed { .. }
         ));
+    }
+
+    /// The seam the account fix crosses: which half of the read failed is
+    /// decided in core, and this carries that across unchanged. Swapping
+    /// the arms would put "Offline — signed in when kendex.ai was last
+    /// reached" back in front of someone whose keychain is locked, and the
+    /// sentence is the producer's, so a rewrite here would lose the cause
+    /// the surface shows beside the retry.
+    #[test]
+    fn the_read_failure_reaches_the_surface_as_the_half_that_failed() {
+        let locked = "the credential store on this machine could not be used";
+        let refusal = AccountReadFailed::from(AccountUnread::Local(
+            CoreError::CredentialStoreUnavailable {
+                why: "the keyring is locked".to_owned(),
+            },
+        ));
+        let AccountReadFailed::Local { message } = refusal else {
+            panic!("a store this machine refused is local");
+        };
+        assert!(message.starts_with(locked), "{message}");
+
+        let away =
+            AccountReadFailed::from(AccountUnread::Unreachable(CoreError::RegistryUnavailable {
+                why: "no route".to_owned(),
+            }));
+        let AccountReadFailed::Unreachable { message } = away else {
+            panic!("a directory that did not answer is unreachable");
+        };
+        assert!(message.contains("no route"), "{message}");
     }
 
     /// The expired refusal is all the surface has to show, and the whole

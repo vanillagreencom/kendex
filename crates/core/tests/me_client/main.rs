@@ -90,6 +90,16 @@ fn away() -> Result<FetchResponse> {
     })
 }
 
+/// The transport refusing to send at all — a curl config file it could not
+/// write, a curl it could not spawn. `registry.rs` raises exactly this
+/// shape, and only for a request that never went out.
+fn never_sent() -> Result<FetchResponse> {
+    Err(CoreError::CommandNotStarted {
+        label: "curl".to_owned(),
+        why: "No space left on device".to_owned(),
+    })
+}
+
 struct MemoryStore {
     credential: RefCell<Option<Credential>>,
     /// Which read starts refusing, counting from one: a keychain that locks
@@ -99,6 +109,10 @@ struct MemoryStore {
     /// What `refresh_guard` answers instead of a guard, standing in for
     /// the local failures `KeyringStore::refresh_guard` raises.
     guard_refusal: Option<fn() -> CoreError>,
+    /// What `save` answers instead of storing the rotated credential,
+    /// standing in for a keychain that takes the read and refuses the
+    /// write.
+    save_refusal: Option<fn() -> CoreError>,
     reads: Cell<u32>,
 }
 
@@ -108,6 +122,7 @@ impl MemoryStore {
             credential: RefCell::new(credential),
             refuses_from: None,
             guard_refusal: None,
+            save_refusal: None,
             reads: Cell::new(0),
         }
     }
@@ -139,10 +154,20 @@ impl MemoryStore {
             ..MemoryStore::signed_in()
         }
     }
+
+    fn refusing_the_save(refusal: fn() -> CoreError) -> MemoryStore {
+        MemoryStore {
+            save_refusal: Some(refusal),
+            ..MemoryStore::signed_in()
+        }
+    }
 }
 
 impl CredentialStore for MemoryStore {
     fn save(&self, credential: &Credential) -> Result<()> {
+        if let Some(refusal) = self.save_refusal {
+            return Err(refusal());
+        }
         *self.credential.borrow_mut() = Some(credential.clone());
         Ok(())
     }
@@ -333,20 +358,48 @@ fn a_refusing_keychain_is_not_served_as_offline() {
 /// The rest of the rotation branch's local failures, which the variant
 /// list this replaced never named: the transaction lock's parent could not
 /// be created or the lock itself could not be taken (`Io` — a read-only or
-/// full home, wrong permissions, a symlink at the path), and a second
-/// kendex process held the lock past the deadline
-/// (`CredentialRefreshBusy`). Both are this machine refusing, and a warm
-/// cache must answer for neither.
+/// full home, wrong permissions, a symlink at the path), a second kendex
+/// process held the lock past the deadline (`CredentialRefreshBusy`), and
+/// the keychain that gave the credential up would not store the rotated
+/// one (`CredentialStoreUnavailable`). Each is this machine refusing, and
+/// a warm cache must answer for none of them.
 #[test]
 fn a_local_failure_in_rotation_is_never_served_as_offline() {
     const LOCK: &str = "/kendex/credentials.lock";
-    let refusals: [fn() -> CoreError; 2] = [
-        || CoreError::io(LOCK, std::io::Error::other("read-only file system")),
-        || CoreError::CredentialRefreshBusy {
-            lock: PathBuf::from(LOCK),
-        },
+    const REJECTED: &str = r#"{"error":"invalid_token"}"#;
+    const ROTATED: &str =
+        r#"{"access_token":"kxa_new","refresh_token":"kxr_new","capabilities":[]}"#;
+    // The store that refuses, paired with the answers the call needs to
+    // reach it: a 401 is what sends it into the rotation branch, and a
+    // refused save is reached only once the refresh has come back.
+    type Case = (fn() -> MemoryStore, fn() -> Vec<Result<FetchResponse>>);
+    let cases: [Case; 3] = [
+        (
+            || {
+                MemoryStore::refusing_the_guard(|| {
+                    CoreError::io(LOCK, std::io::Error::other("read-only file system"))
+                })
+            },
+            || vec![ok(401, None, REJECTED)],
+        ),
+        (
+            || {
+                MemoryStore::refusing_the_guard(|| CoreError::CredentialRefreshBusy {
+                    lock: PathBuf::from(LOCK),
+                })
+            },
+            || vec![ok(401, None, REJECTED)],
+        ),
+        (
+            || {
+                MemoryStore::refusing_the_save(|| CoreError::CredentialStoreUnavailable {
+                    why: "the rotated sign-in could not be stored".to_owned(),
+                })
+            },
+            || vec![ok(401, None, REJECTED), ok(200, None, ROTATED)],
+        ),
     ];
-    for refusal in refusals {
+    for (refusing, answers) in cases {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = rooted(&dir);
         let env = env_in(&root);
@@ -354,15 +407,62 @@ fn a_local_failure_in_rotation_is_never_served_as_offline() {
         let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
         me::load(&env, &first, &warm).expect("first load");
 
-        // The 401 is what sends the call into the rotation branch, which is
-        // where the refresh lock is taken.
-        let store = MemoryStore::refusing_the_guard(refusal);
-        let rejected = Canned::new(vec![ok(401, None, r#"{"error":"invalid_token"}"#)]);
+        let store = refusing();
+        let rejected = Canned::new(answers());
         let refused = me::load(&env, &rejected, &store).expect_err("a local refusal errors");
         assert!(
             matches!(refused, AccountUnread::Local(_)),
             "the cache stood in for a failure on this machine: {refused:?}"
         );
+    }
+}
+
+/// A request the machine could not put out is not the directory going
+/// quiet. It lands on the first authenticated request of every read, ahead
+/// of the rotation branch, and the transport names it rather than leaving
+/// the seam to guess from where in the sequence it happened.
+#[test]
+fn a_request_that_never_went_out_is_not_served_as_offline() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = rooted(&dir);
+    let env = env_in(&root);
+    let store = MemoryStore::signed_in();
+    let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+    me::load(&env, &first, &store).expect("first load");
+
+    let unsent = Canned::new(vec![never_sent()]);
+    let refused = me::load(&env, &unsent, &store).expect_err("an unsent request errors");
+    assert!(
+        matches!(
+            refused,
+            AccountUnread::Local(CoreError::CommandNotStarted { .. })
+        ),
+        "the cache stood in for a request that never went out: {refused:?}"
+    );
+}
+
+/// The cache is how the next read avoids asking, never the answer itself.
+/// A machine that cannot write it has still been told who is signed in, and
+/// reporting that as a read that did not land would serve the identity it
+/// just parsed back as `Offline` — the same lie, from the far side of the
+/// call. The cache directory's path is taken by a regular file here, which
+/// `create_dir_all` refuses whatever the process's euid.
+#[test]
+fn a_cache_that_cannot_be_written_still_answers_the_fresh_name() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = rooted(&dir);
+    let env = env_in(&root);
+    let cache_dir = env.registry_cache_dir();
+    if let Some(parent) = cache_dir.parent() {
+        std::fs::create_dir_all(parent).expect("mkdir");
+    }
+    std::fs::write(&cache_dir, "not a directory").expect("plant");
+
+    let fetch = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+    let state = me::load(&env, &fetch, &MemoryStore::signed_in()).expect("the read landed");
+    match state {
+        AccountState::SignedIn { identity } => assert_eq!(identity.name, "Ada Lovelace"),
+        other => panic!("an unwritable cache lost the answer the server gave: {other:?}"),
     }
 }
 

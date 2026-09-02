@@ -187,6 +187,10 @@ describe("a read that could not be made", () => {
   // their type promises. A reader that throws instead would otherwise leave
   // the read with nothing recorded, nothing to retry from, and a rejection
   // nobody catches: every caller of load says `void load()`.
+  //
+  // A throw is also a read that never reached kendex.ai, whatever failed
+  // behind it, so it must leave a name already in hand where it is rather
+  // than aging the account into offline.
   it("records any reader that threw rather than answered", async () => {
     setAccountReader(async () => {
       throw new Error("the harness reader threw");
@@ -197,6 +201,12 @@ describe("a read that could not be made", () => {
       "the harness reader threw",
     );
     expect(useAccountStore.getState().reading).toBe(false);
+
+    useAccountStore.setState({
+      account: { kind: "signed-in", identity: ADA },
+    });
+    await load();
+    expect(account()).toEqual({ kind: "signed-in", identity: ADA });
   });
 });
 

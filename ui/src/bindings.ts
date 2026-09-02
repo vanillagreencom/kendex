@@ -509,10 +509,10 @@ export type AccountCallRefused = { kind: "expired"; message: string } | { kind: 
  * 
  *  The two are one question the surface has to answer: may the name from
  *  the last read stand as the last one kendex.ai confirmed? Only a read
- *  that reached the directory and came back with nothing leaves it
- *  standing; one this machine refused says nothing about the directory,
- *  and showing the name as offline would name the wrong cause and send
- *  the person to check a working network.
+ *  whose request reached the directory and came back with nothing leaves
+ *  it standing; one this machine stopped learned nothing about the
+ *  directory, and showing the name as offline would name the wrong cause
+ *  and send the person to check a working network.
  * 
  *  Each carries the whole sentence, because the surface that shows it has
  *  nothing else to say. It is named here rather than on the variants

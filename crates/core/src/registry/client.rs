@@ -11,13 +11,13 @@ use crate::registry::{Fetch, FetchResponse, base_url};
 /// to do about it rather than in the error's name.
 ///
 /// A caller holding a cache reads this to decide whether a cached
-/// generation may stand in for the answer. Only `Unreachable` is the
-/// directory failing to answer; every other failure happened on this
-/// machine or is news about the sign-in itself, and serving a cache for
-/// one of those would tell the user the directory was last reached when
-/// nothing ever asked it. Each variant is chosen at the site that raises
-/// the failure, so a local failure added later cannot fall into the
-/// remote half by nobody naming it.
+/// generation may stand in for the answer. Only `Unreachable` is a request
+/// that reached the directory; every other failure is this machine's or is
+/// news about the sign-in itself, and serving a cache for one of those
+/// would tell the user the directory was last reached on some date when
+/// what stopped this read was never out on the network. Each variant is
+/// chosen at the site that raises the failure, so a local failure added
+/// later cannot fall into the remote half by nobody naming it.
 #[derive(Debug)]
 pub enum CallFailed {
     /// This machine holds no credential for the endpoint.
@@ -25,10 +25,14 @@ pub enum CallFailed {
     /// The sign-in is dead server-side. The error carries the whole
     /// sentence, remedy included.
     Expired(CoreError),
-    /// The call was never made: the credential store refused a read or a
-    /// write, or the refresh lock could not be taken.
+    /// This machine stopped the request the call needed: the credential
+    /// store refused a read or a write, the refresh lock could not be
+    /// taken, the request could not be sent. An earlier request in the
+    /// same call may well have gone out and come back; what did not is
+    /// the one this call needed, so nothing was learned about the
+    /// directory.
     Local(CoreError),
-    /// The call went out and no usable answer came back.
+    /// The request reached the directory and no usable answer came back.
     Unreachable(CoreError),
 }
 
@@ -46,6 +50,21 @@ impl From<CallFailed> for CoreError {
 /// One authenticated call's answer, or why there is none.
 pub type Called = std::result::Result<FetchResponse, CallFailed>;
 
+/// One attempt to send the request, read for whether it was ever sent.
+///
+/// The transport names that itself: a config file it could not write and a
+/// curl it could not spawn both raise `CommandNotStarted`, and nothing a
+/// sent request can fail with does. Reading that name here is reading the
+/// classification the raising site made, not making a second one — which
+/// is why this is a single name and never a list of them.
+fn sent(attempt: Result<FetchResponse>) -> Called {
+    match attempt {
+        Ok(response) => Ok(response),
+        Err(never_sent @ CoreError::CommandNotStarted { .. }) => Err(CallFailed::Local(never_sent)),
+        Err(error) => Err(CallFailed::Unreachable(error)),
+    }
+}
+
 /// Run one authenticated call, refreshing a rejected access token once.
 /// Refresh rotation is locked across processes and saved before retry.
 /// Every path that answers `Expired` removes the credential current
@@ -57,7 +76,7 @@ pub fn with_access(
     call: impl Fn(&str) -> Result<FetchResponse>,
 ) -> Called {
     let opened_under = current(store)?;
-    let first = call(&opened_under.access_token).map_err(CallFailed::Unreachable)?;
+    let first = sent(call(&opened_under.access_token))?;
     if first.status != 401 {
         return Ok(first);
     }
@@ -86,7 +105,7 @@ fn rotate_after_rejection(
         let locked = current(store)?;
         if locked.access_token != rejected.access_token {
             drop(refresh_guard);
-            let retried = call(&locked.access_token).map_err(CallFailed::Unreachable)?;
+            let retried = sent(call(&locked.access_token))?;
             if retried.status != 401 {
                 return Ok(retried);
             }
@@ -135,7 +154,7 @@ fn rotate_locked(
     store.save(&rotated).map_err(CallFailed::Local)?;
     drop(refresh_guard);
 
-    let second = call(&rotated.access_token).map_err(CallFailed::Unreachable)?;
+    let second = sent(call(&rotated.access_token))?;
     if second.status == 401 {
         return Err(rejected_access(store));
     }

@@ -114,6 +114,14 @@ impl<'e> GenerationFile<'e> {
     /// refused status, unparseable body — serves the cached value as
     /// stale, erring only with nothing to serve. `refused` words the
     /// error for a status that is neither 200 nor 304.
+    ///
+    /// A generation that could not be written — a full or read-only home,
+    /// a cache path taken by something else — does not fail the read. The
+    /// answer is what the server sent and this parsed; the file is how the
+    /// next read avoids asking again. Failing here would report a machine's
+    /// own refusal as the fetch not landing, which is the one thing every
+    /// error out of this call means. The cost is a read that re-fetches
+    /// next time, which is what an unwritten cache is for.
     pub fn settle<T>(
         &self,
         cached: Option<(Generation, T)>,
@@ -129,13 +137,13 @@ impl<'e> GenerationFile<'e> {
         match response.status {
             200 => match parse(&response.body) {
                 Ok(value) => {
-                    self.write(&Generation {
+                    let _ = self.write(&Generation {
                         endpoint: base_url(),
                         credential: self.credential.clone(),
                         etag: response.etag,
                         fetched_at: now,
                         body: String::from_utf8_lossy(&response.body).into_owned(),
-                    })?;
+                    });
                     Ok(Loaded {
                         value,
                         fetched_at: now,
@@ -148,11 +156,11 @@ impl<'e> GenerationFile<'e> {
                 let (generation, value) = cached.ok_or_else(|| CoreError::RegistryMalformed {
                     why: "the server said 'unchanged' but nothing is cached".into(),
                 })?;
-                self.write(&Generation {
+                let _ = self.write(&Generation {
                     fetched_at: now,
                     credential: self.credential.clone(),
                     ..generation
-                })?;
+                });
                 Ok(Loaded {
                     value,
                     fetched_at: now,
