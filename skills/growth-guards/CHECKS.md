@@ -340,10 +340,9 @@ uppercase issue keys (`fix(ABC-123): ...`) and issue numbers
 longer header is a body sentence on the line every log shows.
 
 **The changelog a commit owes.** When `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS`
-(empty by default) names a glob that a path the commit changes matches, the
-commit must also add or modify a path under `GROWTH_GUARDS_CHANGELOG_PATHS`
-— the fragment scope changelog-entries judges, resolved by the same library
-— or carry
+(empty by default) names a glob a path the commit changes matches, the commit
+must also add or modify a path under `GROWTH_GUARDS_CHANGELOG_PATHS` — the
+fragment scope changelog-entries judges, resolved by the same library — or carry
 `[no-changelog]` in the header. Deleting a fragment is not writing one, so
 evidence is a path that comes out of the commit carrying content it did not
 carry at that path before: a blob where there was none, a blob that changed,
@@ -363,35 +362,37 @@ and nothing else, because its blob did not move. A letter that says only
 "modified" cannot tell a rewrite from a permission bit, and a changelog
 requirement satisfied by one is a requirement satisfied by nothing.
 
-Both lists are read against the parent the commit will HAVE, which is HEAD for
-an ordinary commit and HEAD's own parent for an amend. `--cached` alone shows
-what was staged ON TOP of the commit an amend replaces, so a fragment already
-inside that commit read as no fragment at all and the lane refused a commit
-that satisfied it — with the escape being the flag that skips the whole hook
-chain. git tells a `commit-msg` hook nothing about an amend, so the lane reads
-it off the argv of the `git commit` process it is a descendant of, in
-`/proc/<pid>/cmdline`: only when `GIT_INDEX_FILE` says this run is a hook git
-started, and only from the nearest `git` ancestor, which is the command doing
-the committing. That argv is read the way git's own parser reads it — the
-scan stops at the bare `--`, steps over the argument a value-taking option
-consumes, and takes the kernel's NUL delimiters so an argument carrying
-whitespace or a newline stays one argument — so a message or a pathspec
-spelling `--amend` is a message or a pathspec, never the flag.
+Both lists are read against the parent the commit will HAVE, HEAD ordinarily
+and HEAD's own parent for an amend. `--cached` alone shows only what was staged
+ON TOP of the commit an amend replaces, so a fragment already inside that
+commit read as no fragment at all and the lane refused a commit that satisfied
+it. git tells a `commit-msg` hook nothing about an amend, so the lane reads it
+off the argv of the `git commit` it descends from, in `/proc/<pid>/cmdline`,
+only when `GIT_INDEX_FILE` says this run is a hook git started and only from
+the nearest `git` ancestor, the command doing the committing.
 
-Anything unreadable is not an amend: the process already gone, no `git` in
-eight generations, or no `/proc` at all — which is every macOS host, where
-argv is not on the filesystem. There the widening never fires and an amend is
-judged against the HEAD it replaces, exactly as before this rule read the
-parent. So the lane widens only where it can prove the parent moved, and a
-`ps` reading is deliberately not the fallback: `ps` joins argv with spaces, so
-a message merely CONTAINING `--amend` would excuse a commit.
+Some of those bytes are the committer's own, so `--amend` counts as the flag
+only where nothing ahead of it could have been reaching for a value: after the
+`commit` subcommand, every token between the two a no-value option, matched by
+prefix the way git matches an abbreviation. `--no-amend` behind the flag takes
+it back and the bare `--` stops the scan, both as git reads them. Everything
+else is not an amend — `-m --amend`, `--mess --amend`, `--message=--amend`,
+`-am`, a pathspec, an option a later git adds — a refusal the writer clears
+with `[no-changelog]` or a fragment, never a commit excused by an entry it does
+not carry. It costs `git commit -m … --amend`, the flag behind the message,
+read as an ordinary commit; put the flag ahead of `-m`.
 
-A rebase `reword` or `edit` runs `git commit --amend` as a child of the
-rebase, so it is an amend by this reading and judged against the whole
-historical commit. Rewording a commit that changes a required path and
-predates the rule needs `[no-changelog]` in the reworded header. A plain
-all-`pick` rebase and an autosquash fixup are unaffected: the sequencer
-commits those in-process, with no `git commit` ancestor to read.
+Nothing readable is nothing to widen on: a process already gone, no `git` in
+eight generations, or no `/proc` at all, which is every macOS host, where an
+amend is judged against the HEAD it replaces as before. `ps` is deliberately
+not the fallback, because it joins argv with spaces and a message merely
+CONTAINING `--amend` would excuse a commit. A rebase `reword` runs `git commit
+--amend --no-gpg-sign -e --allow-empty` as a child of the rebase and an `edit`
+stop spawns no commit at all, the committer amending at the stop; both are
+amends by this reading, so amending a commit that changes a required path and
+predates the rule needs `[no-changelog]`. A plain all-`pick` rebase and an
+autosquash fixup are unaffected: the sequencer commits those in-process, with
+no `git commit` ancestor to read.
 
 `GROWTH_GUARDS_CHANGELOG_RECORD` counts as that entry only under
 `GROWTH_GUARDS_CHANGELOG_COLLATE=1`, the same declaration the record scope

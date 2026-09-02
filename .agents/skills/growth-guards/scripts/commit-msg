@@ -68,7 +68,7 @@ kendex.settings.toml [env] > default):
                                changelog entry (default empty = rule off).
                                Both sets are read from the commit as a whole,
                                so an amend is judged against the parent it
-                               will have, not against the HEAD it replaces
+                               will have, not the HEAD it replaces
   GROWTH_GUARDS_CHANGELOG_PATHS   what counts as a written entry, with
   GROWTH_GUARDS_CHANGELOG_RECORD  — the same two scopes the changelog-entries
                                check judges (defaults "changelog.d/*/*.md"
@@ -213,13 +213,12 @@ if [ -n "$REQUIRED" ]; then
   # glob, which is a rule that stops seeing the files it is about. Read back
   # from a FILE rather than a pipe, so the loops set variables in this shell.
   #
-  # The base is the parent the commit will HAVE, which is HEAD for an ordinary
-  # commit and HEAD's own parent for an amend: an amend replaces HEAD rather
-  # than following it, so `--cached` alone shows only what was staged on top
-  # of a fragment the commit already carries, and refuses a commit that
-  # satisfies the rule. GG_COMMIT_BASE is empty in the ordinary case, where
-  # `--cached` already means HEAD, and unquoted for exactly that reason — it
-  # is one revision or no argument at all, never a path and never a glob.
+  # The base is the parent the commit will HAVE: HEAD ordinarily, HEAD's own
+  # parent for an amend, which replaces HEAD rather than following it, so
+  # `--cached` alone would show only what was staged on top of a fragment the
+  # commit already carries. GG_COMMIT_BASE is empty in the ordinary case,
+  # where `--cached` already means HEAD, and unquoted for exactly that reason:
+  # one revision or no argument at all, never a path and never a glob.
   gg_tmpdir
   gg_commit_base
   # shellcheck disable=SC2086
