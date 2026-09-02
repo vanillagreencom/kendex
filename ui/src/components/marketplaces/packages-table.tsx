@@ -102,6 +102,8 @@ export function PackagesTable({
   // sentence once: the tooltip it replaces was the same constant rendered
   // per row.
   const browsing = entries.find((entry) => entry.catalog.by === "repo");
+  // `repo` is the subscription this table is a page for; the bare
+  // repository it may be browsing instead takes the longer name.
   const browsedRepo =
     browsing?.catalog.by === "repo" ? browsing.catalog.repo : "";
   const rows = useMarketplacesStore((s) => s.rows);
@@ -190,7 +192,9 @@ export function PackagesTable({
               entry={entry}
               showMarketplace={showMarketplace}
               showPlaces={showPlaces}
-              places={places.get(placesKey(entry.row.kind, entry.row.name)) ?? ""}
+              places={
+                places.get(placesKey(entry.row.kind, entry.row.name)) ?? ""
+              }
               offerSubscribe={offerSubscribe}
             />
           ))}
