@@ -154,7 +154,7 @@ Update docs when the implementation changes a documented API or architecture.
 
 ## 5. Validate
 
-Before deterministic validation, list every callee whose call the change deletes. For each one, run `git grep -n -F -- <callee>` over tracked files, then list untracked files with `git ls-files --others --exclude-standard` and run `rg -n -F -- <callee> <path>` on each path. Apply [code-quality § Cleanup](../../code-quality/SKILL.md#cleanup); the build and tests below validate every deletion.
+Before deterministic validation, list every callee whose call the change deletes. For each one, run `git grep -n -F --untracked --exclude-standard -- <callee>`, then apply [code-quality § Cleanup](../../code-quality/SKILL.md#cleanup); the build and tests below validate every deletion.
 
 Deterministic gates first — every finding is fixed here, never carried into review. Preflight runs when installed (`test -x .agents/skills/preflight/scripts/preflight`); the size-ratchet gate runs in a repo where a baseline exists:
 
