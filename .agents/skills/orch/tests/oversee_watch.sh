@@ -6,7 +6,8 @@
 # shared lib/oversee-watch-harness.sh sandbox.
 #
 # oversee-watch is the overseer's single blocking watch: it loops until the
-# fleet needs a hand and prints ONE `EVENT <kind> ...` line. Covered here:
+# fleet needs a hand and prints one wake, with one EVENT line or one line per
+# merged or triage item. Covered here:
 #   1.  pr-watch: on the fleet's first run attention present at start is a
 #       baseline (no event, one stderr note, context on the next event); that
 #       baseline persists, so a line appearing between two runs is the next
@@ -744,6 +745,10 @@ assert_contains "$out" "not an answer" \
   "--help states that an unusable probe keeps the lane watched" "$err"
 assert_contains "$out" "last user turn on its screen" \
   "--help states where a limit banner has to sit to count" "$err"
+assert_contains "$out" "earlier repository baselines may already have advanced" \
+  "--help documents a partial multi-repo state commit" "$err"
+assert_contains "$out" "Only baselines that did not advance repeat" \
+  "--help does not promise every event repeats after a write failure" "$err"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

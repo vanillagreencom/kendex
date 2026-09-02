@@ -8,10 +8,13 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.
 echo "=== oversee-watch triage ==="
 
 new_case triage_new
+printf '1786957201\n' > "$STUB_DIR/now.epoch"
+printf '3\n' > "$STUB_DIR/tracker.want-created-since"
 cat > "$STUB_DIR/tracker.out" <<'EOF'
 [
   {"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"},
   {"id":"KEN-1202","created_at":"2026-08-15T10:30:00.000Z"},
+  {"id":"KEN-1204","created_at":"2026-08-15T11:30:00.000Z"},
   {"id":"KEN-1199","created_at":"2026-08-15T08:59:59.000Z"}
 ]
 EOF
@@ -22,7 +25,9 @@ assert_eq "$(head -1 <<<"$out")" "EVENT triage KEN-1200" \
   "an item created after --since is a triage event" "$err"
 assert_contains "$out" "EVENT triage KEN-1202" \
   "each new item gets its own triage event line" "$err"
-assert_eq "$(grep -c '^EVENT triage ' <<<"$out")" "2" \
+assert_contains "$out" "EVENT triage KEN-1204" \
+  "a team item with no lane authorship is still emitted" "$err"
+assert_eq "$(grep -c '^EVENT triage ' <<<"$out")" "3" \
   "one wake emits one line per new tracker item" "$err"
 assert_not_contains "$out" "KEN-1199" "an item before --since is not emitted" "$err"
 tracker_args="$(cat "$STUB_DIR/tracker.args")"
@@ -30,11 +35,24 @@ assert_contains "$tracker_args" "issues list --team kendex --created-since " \
   "triage reads the live tracker list for the fleet's team" "$err"
 assert_contains "$tracker_args" "d --max --format=safe" \
   "triage uses a created-since day window and fetches every result" "$err"
-assert_eq "$(cat "$STUB_DIR/workflow-state.args")" \
-  "get oversee .triaged // [] | map(.issue) | .[]" \
-  "triage deduplicates against the fleet's verdict log" "$err"
+state_file="$STATE_DIR/owner_repo__2026-08-15T09_00_00Z"
+assert_contains "$(cat "$state_file")" "$(printf 'triage\tKEN-1200')" \
+  "triage records the event in the first repository baseline" "$err"
+assert_contains "$(cat "$state_file")" "$(printf 'triage\tKEN-1204')" \
+  "the team-wide item uses that same baseline" "$err"
+assert_eq "$(find "$STATE_DIR" -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" "1" \
+  "triage creates no second state-file class" "$err"
+triage_rule="$(grep '^- `triage`' "$REPO_ROOT/skills/orch/workflows/oversee.md")"
+assert_contains "$triage_rule" "every emitted team item" \
+  "the event rule covers items with no lane authorship" "$err"
+assert_contains "$triage_rule" "kept or canceled" \
+  "every emitted item gets a terminal triage verdict" "$err"
+assert_contains "$triage_rule" "before re-running" \
+  "the verdict is recorded before the watcher can repeat" "$err"
+heartbeat_rule="$(grep '^- `heartbeat`' "$REPO_ROOT/skills/orch/workflows/oversee.md")"
+assert_contains "$heartbeat_rule" "only issues a fleet lane filed" \
+  "the heartbeat backstop stays lane-authored only" "$err"
 
-printf 'KEN-1200\nKEN-1202\n' > "$STUB_DIR/tracker-triaged.txt"
 err="$TMP_ROOT/triage-b"
 out="$(run_watch -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026-08-15T09:00:00Z" \
@@ -82,16 +100,32 @@ assert_eq "$out" "" "malformed tracker output emits no event" "$err"
 assert_contains "$(cat "$err")" "tracker output is not an array" \
   "the malformed shape is named" "$err"
 
-new_case triage_log_failure
+new_case triage_state_failure
 printf '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]\n' > "$STUB_DIR/tracker.out"
-printf '2\n' > "$STUB_DIR/workflow-state.rc"
-printf 'fleet state is corrupt\n' > "$STUB_DIR/workflow-state.err"
+mkdir -p "$STATE_DIR/owner_repo__2026-08-15T09_00_00Z"
 err="$TMP_ROOT/triage-g"
-out="$(run_watch -- --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "2" "an unreadable fleet triage log exits 2" "$err"
-assert_eq "$out" "" "an unreadable fleet triage log emits no event" "$err"
-assert_contains "$(cat "$err")" "fleet state is corrupt" \
-  "the fleet triage log keeps its real failure" "$err"
+out="$(run_watch OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/absent-pr-watch" -- --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "2" "an unwritable triage baseline exits 2" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT triage KEN-1200" \
+  "the triage event is delivered before the baseline write" "$err"
+assert_contains "$(cat "$err")" "could not write the pr-watch state file" \
+  "the triage failure names the shared baseline" "$err"
+
+new_case since_requires_utc_z
+err="$TMP_ROOT/triage-h"
+out="$(run_watch -- --since 2026-08-15 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "2" "a date-only --since is rejected" "$err"
+assert_eq "$out" "" "a date-only --since emits no event" "$err"
+assert_contains "$(cat "$err")" "UTC timestamp ending in Z" \
+  "the date-only refusal names the documented form" "$err"
+
+new_case since_rejects_offset
+err="$TMP_ROOT/triage-i"
+out="$(run_watch -- --since 2026-08-15T09:00:00+00:00 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "2" "an offset --since is rejected" "$err"
+assert_eq "$out" "" "an offset --since emits no event" "$err"
+assert_contains "$(cat "$err")" "UTC timestamp ending in Z" \
+  "the offset refusal names the documented form" "$err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

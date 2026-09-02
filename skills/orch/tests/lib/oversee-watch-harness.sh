@@ -157,7 +157,7 @@ case "${1:-}" in
       lane=""
       for x in "$@"; do [[ "$prev" == "-t" ]] && lane="$x"; prev="$x"; done
       key="$STUB_DIR/pane-key-$lane.txt"
-      [[ -f "$key" ]] && cat "$key"
+      if [[ -f "$key" ]]; then cat "$key"; else printf '7000 %%%s\n' "$lane"; fi
       exit 0
     done
     lane=""
@@ -245,6 +245,13 @@ cat > "$TMP_ROOT/bin/linear-stub.sh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
 printf '%s\n' "$*" > "$STUB_DIR/tracker.args"
+if [[ -f "$STUB_DIR/tracker.want-created-since" ]]; then
+  want="$(cat "$STUB_DIR/tracker.want-created-since")"
+  [[ " $* " == *" --created-since ${want}d "* ]] || {
+    printf 'expected --created-since %sd, got: %s\n' "$want" "$*" >&2
+    exit 9
+  }
+fi
 [[ -f "$STUB_DIR/tracker.err" ]] && cat "$STUB_DIR/tracker.err" >&2
 rc=0; [[ -f "$STUB_DIR/tracker.rc" ]] && rc="$(cat "$STUB_DIR/tracker.rc")"
 [[ "$rc" -eq 0 ]] || exit "$rc"
@@ -255,21 +262,20 @@ else
 fi
 EOF
 
-# Fleet workflow-state reader. tracker-triaged.txt is the list returned by the
-# jq query; workflow-state.rc/err drive the failure path.
-cat > "$TMP_ROOT/bin/workflow-state-stub.sh" <<'EOF'
+# Current-time stub for lookback rounding. Timestamp parsing still reaches the
+# host date; now.epoch overrides only `date -u +%s`.
+cat > "$TMP_ROOT/bin/date" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
-printf '%s\n' "$*" > "$STUB_DIR/workflow-state.args"
-[[ -f "$STUB_DIR/workflow-state.err" ]] && cat "$STUB_DIR/workflow-state.err" >&2
-rc=0; [[ -f "$STUB_DIR/workflow-state.rc" ]] && rc="$(cat "$STUB_DIR/workflow-state.rc")"
-[[ "$rc" -eq 0 ]] || exit "$rc"
-[[ -f "$STUB_DIR/tracker-triaged.txt" ]] && cat "$STUB_DIR/tracker-triaged.txt"
-exit 0
+if [[ "$*" == "-u +%s" && -f "$STUB_DIR/now.epoch" ]]; then
+  cat "$STUB_DIR/now.epoch"
+  exit 0
+fi
+exec /usr/bin/date "$@"
 EOF
+
 chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/tmux" "$TMP_ROOT/bin/pgrep" \
-  "$TMP_ROOT/bin/pr-watch-stub.sh" "$TMP_ROOT/bin/linear-stub.sh" \
-  "$TMP_ROOT/bin/workflow-state-stub.sh"
+  "$TMP_ROOT/bin/pr-watch-stub.sh" "$TMP_ROOT/bin/linear-stub.sh" "$TMP_ROOT/bin/date"
 
 STUB_DIR=""
 STATE_DIR=""
@@ -317,7 +323,6 @@ run_watch() {
            LINEAR_TEAM="kendex" \
            OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \
            OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/linear-stub.sh" \
-           OVERSEE_WATCH_WORKFLOW_STATE="$TMP_ROOT/bin/workflow-state-stub.sh" \
            OVERSEE_WATCH_STATE_DIR="$STATE_DIR" \
            ${env_args[@]+"${env_args[@]}"} \
            .agents/skills/orch/scripts/oversee-watch --interval 0 --max-loops 2 \

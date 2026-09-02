@@ -26,6 +26,46 @@ out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
   "a changed prompt emits a new lane-asking event" "$err"
 
+# Prompt A clears when a later observation sees no prompt, then A is new again.
+new_case lane_asking_disappears
+printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
+run_watch -- --max-loops 1 gh-1 gh-2 >/dev/null 2>"$TMP_ROOT/asking-reset-a"
+printf '⏺ working on it\n' > "$STUB_DIR/pane-gh-2.txt"
+run_watch -- --max-loops 1 gh-1 gh-2 >/dev/null 2>"$TMP_ROOT/asking-reset-b"
+printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/asking-reset-c"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
+  "prompt A emits again after a no-prompt observation" "$err"
+
+# An earlier merged event must not strand the old prompt baseline when the
+# pane has already moved through a no-prompt screen.
+new_case lane_asking_disappears_before_merge
+printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
+run_watch -- --max-loops 1 gh-1 gh-2 >/dev/null 2>"$TMP_ROOT/asking-merge-a"
+printf '⏺ working on it\n' > "$STUB_DIR/pane-gh-2.txt"
+printf '[{"number":5,"headRefName":"issue-5","mergedAt":"2026-08-15T10:00:00Z"}]\n' > "$STUB_DIR/merged.json"
+out="$(run_watch -- --max-loops 1 --item issue-5 gh-1 gh-2 2>"$TMP_ROOT/asking-merge-b")"
+assert_eq "$(head -1 <<<"$out")" "EVENT merged 5 issue-5" \
+  "the earlier merge event preempts the ordinary lane event pass"
+printf '[]\n' > "$STUB_DIR/merged.json"
+printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/asking-merge-c"
+out="$(run_watch -- --max-loops 1 --item issue-5 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
+  "prompt A emits after disappearing behind an earlier event" "$err"
+
+# The same text in a replacement pane is a new prompt occurrence.
+new_case lane_asking_relaunch
+printf '7000 %%2\n' > "$STUB_DIR/pane-key-gh-2.txt"
+printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
+run_watch -- --max-loops 1 gh-1 gh-2 >/dev/null 2>"$TMP_ROOT/asking-relaunch-a"
+printf '7000 %%9\n' > "$STUB_DIR/pane-key-gh-2.txt"
+err="$TMP_ROOT/asking-relaunch-b"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
+  "the same prompt emits in a replacement pane" "$err"
+
 # Control: a pane without a prompt emits no lane-asking event.
 new_case lane_asking_no_prompt
 err="$TMP_ROOT/asking-d"
