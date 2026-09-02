@@ -62,8 +62,8 @@ import { useScanStore } from "@/stores/scan";
 
 export async function rescanEverything(opts?: {
   /** Say so when the scan fails, however many times running. Somebody who
-   *  pressed a button is waiting on an answer and hears about it whatever
-   *  the last background scan already said; a rescan behind a write is not
+   *  pressed a button is waiting on an answer, so a scan this starts speaks
+   *  and one it joins re-opens the notice. A rescan behind a write is not
    *  waited on, and the scan store's own once-only notice covers it. */
   announce?: boolean;
 }): Promise<void> {

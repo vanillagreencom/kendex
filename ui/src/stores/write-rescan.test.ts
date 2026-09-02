@@ -1,21 +1,15 @@
 // One rule, one wrapper: a command that reaches `repo_effects` reads the
-// machine again whatever it answered. `lib/rescan.ts` holds the rule and the
-// reason — the leaving packages' uninstallers run before the plan, so a
-// refusal comes back with what they did to the disk standing, and Home's
-// inventory and the audit scores would go on counting copies already gone.
+// machine again whatever it answered. `lib/rescan.ts` holds the rule and
+// the reason a refusal is no account of the disk.
 //
 // The refusal arm is what the first cases are about, and the wrapper cannot
 // tell it from the landing one. The landing arm is not where this file's
 // coverage was thin, but it was not whole either: the editor refreshed the
 // audit and the scan without the join, and an item action refreshed the scan
-// alone. `rescanEverything` sends three reads — `scanMachine`,
-// `auditAll` and `libraryProvenance`, the last through the provenance store
-// — so asking whether the first two were called is asking whether the rule
-// held. The join answers false rather than throwing and is asserted through
-// neither.
+// alone. `rescanEverything` sends three reads, and `readAgain` below says
+// which two of them every case asks about.
 //
-// Nothing waits on those reads: the wrapper settles the caller's promise on
-// its own answer, so `rescansSettled` is what a test waits on instead.
+// Nothing waits on those reads, so `rescansSettled` is what a test waits on.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditView, Disclosure, Scope } from "@/bindings";
 import { commands } from "@/bindings";

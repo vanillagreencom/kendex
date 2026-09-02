@@ -12,7 +12,7 @@ interface ScanState {
   lastScanAt: number | null;
   /** A background scan (startup, focus) has already toasted its failure —
    * suppresses repeat toasts on every silent retry until one succeeds. A
-   * user clicking "Scan again" always hears about it regardless. */
+   * press of "Scan again" re-opens it, so its window is said once. */
   backgroundFailureAnnounced: boolean;
   refresh: (opts?: { announce?: boolean }) => Promise<void>;
 }
