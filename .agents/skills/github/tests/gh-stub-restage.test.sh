@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Proof that gh-stub.sh refuses a colliding restage.
+# Proof that gh-stub.sh keeps one stem to one verb.
 #
 # A verb's key is a file stem, so `api-a/b` and `api-a%b` name one file. The
-# second staging used to overwrite the first without a word, which hands the
-# first verb's answer to a call nobody staged. That is the fail-open a fake
-# exists to prevent, so the second staging is refused instead.
+# second staging would overwrite the first without a word, and a call spelled
+# either way would take whichever answer landed there. Both hand a staged
+# answer to a call nobody staged, which is the fail-open a fake exists to
+# prevent, so the second staging is refused and the other spelling's call
+# finds nothing.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,6 +58,14 @@ else
 fi
 eq "$(gh api 'a/b')" "slashed" "the first verb keeps its answer"
 
+# The resolution half: the claimed stem is not this call's, so it is unstaged
+# rather than served the claimant's answer.
+if out="$(gh api 'a%b' 2>&1)"; then
+  bad "the other spelling was answered" "with the api-a/b answer: $out"
+else
+  ok "must-fail: the other spelling finds the stem unstaged"
+fi
+
 echo "=== the same verb still restages ==="
 
 # The control: the refusal is about a SECOND verb, not about staging twice.
@@ -73,6 +83,13 @@ echo "=== reset releases the key ==="
 gh_stub_reset
 gh_stub_answer 'api-a%b' 'percent'
 eq "$(gh api 'a%b')" "percent" "the other verb stages after a reset"
+# And the refusal runs the other way round: the claim is whichever verb got
+# there first, not one spelling the stub prefers.
+if out="$(gh api 'a/b' 2>&1)"; then
+  bad "the slashed spelling was answered" "with the api-a%b answer: $out"
+else
+  ok "must-fail: the claim refuses in both directions"
+fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

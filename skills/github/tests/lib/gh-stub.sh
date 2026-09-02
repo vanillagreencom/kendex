@@ -36,10 +36,11 @@
 #
 # THE KEY a verb names is one file stem: the verb's words as written, with
 # `/` spelled `%` because a stem is a file name. Two verbs can therefore
-# reach one stem — `api-a/b` and `api-a%b` do — and the second staging would
-# overwrite the first, handing a staged answer to a call nobody staged. So a
-# stem records the verb that claimed it, and a staging under a second verb is
-# REFUSED rather than served.
+# reach one stem — `api-a/b` and `api-a%b` do — so a stem records the verb
+# that claimed it. A staging under a second verb is REFUSED, and a call whose
+# own verb is not the claimant's finds the stem UNSTAGED. Either half missing
+# hands a staged answer to a call nobody staged, which is the fail-open a
+# fake exists to prevent.
 #
 # A VERB IS NOT ALWAYS ENOUGH. Two `api graphql` calls carrying different
 # queries are one verb, and answering both the same way would let a suite
@@ -75,7 +76,7 @@ gh_stub_install() {
   STUB_DIR="$(cd "$STUB_DIR" && pwd)" || return 1
   export STUB_DIR
 
-  cat >"$bin/gh" <<'STUB'
+  cat >"$bin/gh" <<'STUB' || return 1
 #!/usr/bin/env bash
 # Written by github/tests/lib/gh-stub.sh. Answers from $STUB_DIR.
 set -uo pipefail
@@ -105,14 +106,23 @@ slug() { printf '%s' "$1" | tr '/' '%'; }
 
 argv="$*"
 
-# resolve BASE — the staged stem for BASE, or empty when nothing is staged
-# under it. A selector wins over the plain key, in staging order: the index
-# holds one `id<TAB>text` line per selector, and the first whose text occurs
-# in this call's argv names the answer. The call ordinal is counted per
-# resolved stem, so a sequence answers each call once; `.0` is the answer
-# for every call and is what gh_stub_answer stages.
+# ours STEM VERB — false when STEM was claimed by a different staged verb.
+# `/` cannot appear in a file name, so `api a/b` and `api 'a%b'` reach one
+# stem. The staging helpers record which verb claimed it, and a call spelled
+# the other way is UNSTAGED here, never served the claimant's answer.
+ours() {
+  [ ! -f "$STUB_DIR/$1.verb" ] || [ "$(cat "$STUB_DIR/$1.verb")" = "$2" ]
+}
+
+# resolve BASE VERB — the staged stem for BASE, or empty when BASE holds
+# nothing VERB staged. A selector wins over the plain key, in staging order:
+# the index holds one `id<TAB>text` line per selector, and the first whose
+# text occurs in this call's argv names the answer. The call ordinal is
+# counted per resolved stem, so a sequence answers each call once; `.0` is
+# the answer for every call and is what gh_stub_answer stages.
 resolve() {
   local key="$1" sel_id sel_text n
+  ours "$key" "$2" || return 0
   if [ -f "$STUB_DIR/$key.selectors" ]; then
     while IFS="$(printf '\t')" read -r sel_id sel_text; do
       [ -n "$sel_id" ] || continue
@@ -136,20 +146,24 @@ resolve() {
   fi
 }
 
-# known KEY — true when a suite staged anything at all under KEY. A key that
-# is known but has no answer left is a REFUSAL, never a fall-through: a
+# known KEY VERB — true when VERB staged anything at all under KEY. A key
+# that is known but has no answer left is a REFUSAL, never a fall-through: a
 # sequence that ran out means the code polled once more than the suite said
-# it would, and answering that from a broad one-word key would hide it.
+# it would, and answering that from a broad one-word key would hide it. A key
+# another verb claimed is not known to this call, so the one-word fallback
+# still answers a path the suite never named.
 known() {
-  [ -f "$STUB_DIR/$1.selectors" ] && return 0
-  set -- "$STUB_DIR/$1".*.out
+  local stem="$1"
+  ours "$stem" "$2" || return 1
+  [ -f "$STUB_DIR/$stem.selectors" ] && return 0
+  set -- "$STUB_DIR/$stem".*.out
   [ -f "$1" ]
 }
 
 key="$(slug "$verb")"
-pick="$(resolve "$key")"
-if [ -z "$pick" ] && [ "$fallback" != "$verb" ] && ! known "$key"; then
-  pick="$(resolve "$(slug "$fallback")")"
+pick="$(resolve "$key" "$verb")"
+if [ -z "$pick" ] && [ "$fallback" != "$verb" ] && ! known "$key" "$verb"; then
+  pick="$(resolve "$(slug "$fallback")" "$fallback")"
 fi
 
 if [ -z "$pick" ]; then
@@ -190,7 +204,7 @@ _gh_stub_key() {
       "$(cat "$owner")" "$base" "$verb" >&2
     return 1
   fi
-  printf '%s' "$verb" >"$owner"
+  printf '%s' "$verb" >"$owner" || return 1
   [ -n "$sel" ] || {
     printf '%s' "$base"
     return 0
