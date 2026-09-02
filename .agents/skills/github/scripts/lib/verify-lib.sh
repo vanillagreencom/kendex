@@ -422,10 +422,11 @@ verify_prs() {
 # pr-cross-check.sh only ever execs it, so dispatch is unchanged.
 #
 # The sourcing contract: this file sets `errexit`, `nounset` and `pipefail` on
-# the sourcing shell, resolves PROJECT_ROOT through git at source time, and
-# owns the unnamespaced globals PROJECT_ROOT, RESULTS_JSON, VERIFY_DIR,
-# TEMP_BRANCH, START_TIME, STEP, TOTAL_STEPS and RED/GREEN/YELLOW/BLUE/NC. A
-# sourcer inherits all of it and must be written for it.
+# the sourcing shell, and at source time resolves PROJECT_ROOT through git and
+# assigns RESULTS_JSON, VERIFY_DIR, TEMP_BRANCH, START_TIME, STEP, TOTAL_STEPS
+# and RED/GREEN/YELLOW/BLUE/NC. Beyond those, the functions keep no `local`
+# discipline, so a sourcer must not rely on ANY unprefixed name surviving a
+# call to one — including ordinary lowercase names a driver reaches for.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     case "${1:-}" in
         verify_prs)
