@@ -359,7 +359,7 @@ describe("the findings behind a row's score", () => {
       {
         kind: "skill",
         name: "gh",
-        harness: "claude",
+        harnesses: ["claude"],
         scope: { scope: "global" },
         location: "",
         findings: [

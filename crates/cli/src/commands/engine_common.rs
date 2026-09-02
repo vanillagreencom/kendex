@@ -117,7 +117,7 @@ pub fn print_safety(report: &EngineReport) {
         print_advisory(
             row.kind,
             &row.name,
-            ScoredAt::Harness(row.harness),
+            ScoredAt::Harnesses(&row.harnesses),
             &row.advisory,
         );
     }
@@ -129,8 +129,8 @@ pub fn print_safety(report: &EngineReport) {
 /// hand-building a subject string, so every score line is worded the same
 /// way.
 pub enum ScoredAt<'a> {
-    /// The tool whose copy of the item was scored.
-    Harness(HarnessId),
+    /// The harnesses whose copies share this reading.
+    Harnesses(&'a [HarnessId]),
     /// The item's own path within the catalog. Empty for a repository
     /// that is one skill: its path is the catalog, so there is no segment
     /// to name and the score line leaves it out.
@@ -157,7 +157,14 @@ pub fn print_advisory(
     advisory: &kendex_core::quality::AuditResult,
 ) {
     let at = match at {
-        ScoredAt::Harness(harness) => format!(" for {}", harness.display_name()),
+        ScoredAt::Harnesses(harnesses) => format!(
+            " for {}",
+            harnesses
+                .iter()
+                .map(|harness| harness.display_name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         ScoredAt::CatalogPath("") => String::new(),
         ScoredAt::CatalogPath(path) => format!(" at {}", path),
     };

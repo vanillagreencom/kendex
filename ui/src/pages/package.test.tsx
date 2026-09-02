@@ -239,7 +239,7 @@ const scoredView: AuditView = {
     {
       kind: "skill",
       name: "gh",
-      harness: "claude",
+      harnesses: ["claude"],
       scope: VG,
       location: "",
       findings: [
@@ -485,7 +485,7 @@ describe("the package page's safety tab", () => {
             {
               kind: "skill",
               name: "gh",
-              harness: "claude",
+              harnesses: ["claude"],
               scope: HYPR,
               location: "",
               findings: [],

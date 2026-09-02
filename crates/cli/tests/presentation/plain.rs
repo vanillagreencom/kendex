@@ -35,13 +35,9 @@ fn the_blocked_refresh_prints_the_lines_scripts_parse() {
     assert_eq!(
         shape,
         vec![
-            "safety: skill growth-guards for Claude Code scores 75/100",
+            "safety: skill growth-guards for Claude Code, Codex scores 75/100",
             "  [finding]",
-            "safety: skill growth-guards for Codex scores 75/100",
-            "  [finding]",
-            "safety: skill tidy for Claude Code scores 75/100",
-            "  [finding]",
-            "safety: skill tidy for Codex scores 75/100",
+            "safety: skill tidy for Claude Code, Codex scores 75/100",
             "  [finding]",
             "conflict: skill growth-guards for Claude Code, Codex: <project>/.claude/skills/growth-guards already holds files kendex did not write",
             "  also at <project>/.agents/skills/growth-guards",
@@ -92,6 +88,8 @@ fn nothing_is_said_twice() {
         &["refresh", "-y", "--scope", "project"],
     ));
     for once in [
+        "safety: skill growth-guards",
+        "safety: skill tidy",
         "conflict:",
         "to keep those files:",
         "to install what kendex.toml asks for instead:",

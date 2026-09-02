@@ -30,7 +30,7 @@ function row(
   return {
     kind: "skill",
     name: "github",
-    harness,
+    harnesses: [harness],
     scope: GLOBAL,
     location: "github",
     findings,

@@ -45,16 +45,12 @@ fn shape(setup: &[&str], args: &[&str]) -> Vec<String> {
 }
 
 /// The block every verb that plans prints before its own lines: one
-/// score per installation, one conflict however many tools it blocks.
+/// score per item and reading, one conflict however many tools it blocks.
 fn planned_block() -> Vec<&'static str> {
     vec![
-        "safety: skill growth-guards for Claude Code scores 75/100",
+        "safety: skill growth-guards for Claude Code, Codex scores 75/100",
         "  [finding]",
-        "safety: skill growth-guards for Codex scores 75/100",
-        "  [finding]",
-        "safety: skill tidy for Claude Code scores 75/100",
-        "  [finding]",
-        "safety: skill tidy for Codex scores 75/100",
+        "safety: skill tidy for Claude Code, Codex scores 75/100",
         "  [finding]",
         "conflict: skill growth-guards for Claude Code, Codex: <project>/.claude/skills/growth-guards already holds files kendex did not write",
         "  also at <project>/.agents/skills/growth-guards",

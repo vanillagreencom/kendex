@@ -31,7 +31,7 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
         .map(|(item, result)| ItemSafety {
             kind: item.kind,
             name: item.name.clone(),
-            harness: item.harness,
+            harnesses: vec![item.harness],
             scope: item.scope.clone(),
             location: crate::paths::slashed(&item.path),
             advisory: result,

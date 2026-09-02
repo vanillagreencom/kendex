@@ -534,7 +534,7 @@ export type Appearance = "system" | "light" | "dark";
  * 
  *  A flattened field lands in its embedder's own key space and nothing
  *  catches a clash at compile time, so a new field here must avoid the
- *  keys those embedders already occupy: `kind`, `name`, `harness`,
+ *  keys those embedders already occupy: `kind`, `name`, `harnesses`,
  *  `scope`, `location`, `notes`, `contentHash`, `fromCache`, `format` and
  *  `discovery`.
  */
@@ -1697,7 +1697,7 @@ export type ItemDecl_Serialize = {
 export type ItemKind = "agent" | "skill" | "hook" | "command" | "mcp-server" | "plugin" | "pi-extension";
 
 /**
- *  One installation's advisory payload and where it applies. Safety and
+ *  One rendered reading's advisory payload and where it applies. Safety and
  *  quality sit side by side inside it and are never combined: one answers
  *  whether the content is dangerous, the other whether it is any good, and
  *  averaging them would let a well-written attack outscore a clumsy honest
@@ -1712,11 +1712,12 @@ export type ItemKind = "agent" | "skill" | "hook" | "command" | "mcp-server" | "
 export type ItemSafety = {
 	kind: ItemKind,
 	name: string,
-	harness: HarnessId,
+	/**  Every harness whose rendering produced this exact content. */
+	harnesses: HarnessId[],
 	scope: Scope,
 	/**
-	 *  The artifact's path, or the config file holding the entry — what
-	 *  every finding's location is relative to.
+	 *  The first artifact path carrying this reading, or the config file
+	 *  holding the entry. Every finding's location is relative to it.
 	 */
 	location: string,
 } & AuditResult;

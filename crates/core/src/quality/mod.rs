@@ -343,7 +343,7 @@ pub struct SkippedRule {
 ///
 /// A flattened field lands in its embedder's own key space and nothing
 /// catches a clash at compile time, so a new field here must avoid the
-/// keys those embedders already occupy: `kind`, `name`, `harness`,
+/// keys those embedders already occupy: `kind`, `name`, `harnesses`,
 /// `scope`, `location`, `notes`, `contentHash`, `fromCache`, `format` and
 /// `discovery`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]

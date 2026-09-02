@@ -60,7 +60,7 @@ function SafetyTab({
 const gh: ItemSafety = {
   kind: "skill",
   name: "gh",
-  harness: "claude",
+  harnesses: ["claude"],
   scope: GLOBAL,
   location: "",
   findings: [
