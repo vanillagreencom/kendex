@@ -119,7 +119,6 @@ Events, checked in this order every pass:
                              line per PR; the item's head branch is its id,
                              lowercased, in the first --repo — a fork's PR on
                              the same branch name is not the item's)
-  EVENT merge-verdict <item> <watch-id>  wake its lane to consume the lifecycle
   EVENT window-gone <lane>   a listed tmux window no longer exists
   EVENT lane-exited <lane>   the window is alive but the pane's current
                              command is a bare shell (bash/zsh/fish/sh/dash,
@@ -274,8 +273,6 @@ kendex_load_project_env "$PROJECT_ROOT"
 source "$SCRIPT_DIR/lib/gh-auth.sh"
 # shellcheck source=lib/lane-claims.sh
 source "$SCRIPT_DIR/lib/lane-claims.sh"
-# shellcheck source=lib/merge-queue-events.sh
-source "$SCRIPT_DIR/lib/merge-queue-events.sh"
 # shellcheck source=lib/pr-watch-pass.sh
 source "$SCRIPT_DIR/lib/pr-watch-pass.sh"
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
@@ -670,7 +667,6 @@ loop=0
 while :; do
   loop=$((loop + 1))
   check_pr_watch
-  check_merge_lifecycle
   check_merged
   check_lanes
   [[ "$loop" -lt "$MAX_LOOPS" ]] || heartbeat

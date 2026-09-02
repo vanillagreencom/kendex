@@ -95,9 +95,8 @@ skills/orch/scripts/approval-wait	948
 skills/orch/scripts/ci-wait	669
 skills/orch/scripts/dev-artifact-check	662
 skills/orch/scripts/lanes	622
-skills/orch/scripts/merge-queue-watch	556
 skills/orch/scripts/open-terminal	703
-skills/orch/scripts/oversee-watch	678
+skills/orch/scripts/oversee-watch	674
 skills/orch/scripts/queue-wait	1067
 skills/orch/scripts/review-artifact-check	413
 skills/orch/scripts/workflow-state	672

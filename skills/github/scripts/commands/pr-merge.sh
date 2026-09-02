@@ -67,8 +67,8 @@ Merge-mode exit codes:
   blocked or CLOSED. Argument or dispatch failures before JSON remain nonzero.
 
 Exit 75 is volatile:
-  A queue ejection can disarm merge state. Launch the prepared .agents/skills/orch/scripts/merge-queue-watch before returning; it binds repository, PR, expected head, and watch generation.
-  Its one-shot worker writes a durable verdict and claims one recovery action. Route verdicts through README.md "Exit 75 recovery"; the review-gate reducer still reports fleet attention.
+  A queue ejection can disarm merge state. Start .agents/skills/orch/scripts/queue-wait <N> --json before returning; it produces the verdict for the head just armed.
+  Route verdicts through README.md "Exit 75 recovery"; the review-gate reducer still reports fleet attention.
   Re-arm only through github.sh pr-merge <N> --auto after that route.
   await-mergeable is not the lifecycle watcher; it stops when GitHub computes state.
 
@@ -425,7 +425,7 @@ volatile_note() {
     echo "  NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently; follow orch merge-pr.md § 5 for PR #$pr_num" >&2
     local reducer="GH_REPO=$repo .agents/skills/review-gate/scripts/pr-watch.sh (disarmed lines)"
     [ -n "$repo" ] || reducer=".agents/skills/review-gate/scripts/pr-watch.sh with GH_REPO set to the repository (not resolvable locally here)"
-    echo "  Launch the prepared .agents/skills/orch/scripts/merge-queue-watch once; route its claimed action by orch merge-pr.md § 5 step 1, and never re-arm an unrecognized verdict. The fleet reducer is $reducer; repair what the cause names before re-arming with .agents/skills/github/scripts/github.sh pr-merge $pr_num --auto" >&2
+    echo "  Start .agents/skills/orch/scripts/queue-wait $pr_num --json once; route its verdict by orch merge-pr.md § 5 step 1, and never re-arm an unrecognized verdict. The fleet reducer is $reducer; repair what the cause names before re-arming with .agents/skills/github/scripts/github.sh pr-merge $pr_num --auto" >&2
 }
 
 post_merge_snapshot() {

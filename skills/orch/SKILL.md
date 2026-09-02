@@ -81,8 +81,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `dev-artifact-check` | Validate a dev round's completion artifact by round id. `--help` + [references/artifact-checks.md](references/artifact-checks.md) |
 | `approval-wait` | Poll the reviewer gate; `--resolve-mode` prints the effective gate mode. `--help` + [references/gates.md](references/gates.md) |
 | `ci-wait` | Block until CI completes on a PR. `--help` + [references/gates.md](references/gates.md) |
-| `queue-wait` | Foreground merge-queue / auto-merge waiter and verdict producer. `--help` + [references/gates.md](references/gates.md) |
-| `merge-queue-watch` | Durable prepared-head lifecycle: detached launch, liveness, verdict claim, merge-pr completion, and lane acknowledgment. `--help` |
+| `queue-wait` | Merge-queue / auto-merge waiter and verdict producer, run in the foreground or detached to a verdict file. `--help` + [references/gates.md](references/gates.md) |
 | `orch-env` | Effective value of a kendex `[env]` setting (process env > `.env.local` > `.kendex/settings.toml` > `kendex.settings.toml` > default) |
 | `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) |
 | `open-terminal` | Terminal handoff; model, effort, and permission flags via `--launch-flags`. `--help` |
@@ -98,9 +97,7 @@ The three waiters exit `3` on hard auth failure — [references/gates.md](refere
 
 **Review-gate modes.** Read the effective gate mode (`approval`, `review`, or `off`) only through `approval-wait --resolve-mode`. [references/gates.md](references/gates.md).
 
-**Detached merge boundary.** At every lane boundary, run `merge-queue-watch consume --root [MAIN_REPO_ROOT] --issue [STATE_KEY]` before unrelated work; it atomically claims one normalized action, which `merge-pr.md` § 5 routes and `merge-queue-watch --help` defines. The overseer wakes and confirms; it never consumes, recovers, or completes a lane's lifecycle.
-
-Standalone merge-pr initializes the lifecycle in `merge-pr.md` § 4 before preparation.
+**Detached merge boundary.** A queued merge detaches one `queue-wait` per arm, writing its `--json` result to a verdict file. At every lane boundary, read that file before unrelated work and route on its verdict — `merge-pr.md` § 5 step 1 holds the table, `queue-wait --help` § Verdicts the semantics. An absent or unparsable file means the wait has not finished: run `queue-wait` again. The overseer wakes the lane; it never routes the verdict itself.
 
 ## Schemas
 
@@ -125,7 +122,7 @@ System dependencies: `jq`; `bash` 3.2; `flock` (util-linux).
 
 ## Runtime Notes
 
-> If you are running in **Codex**: `approval required by policy, but AskForApproval is set to Never` flags the command's SHAPE — never retry it, never wait for approval; rewrite it per [references/codex-runtime.md](references/codex-runtime.md). Polling loops → the orch waiters `.agents/skills/orch/scripts/ci-wait`, `approval-wait`, `queue-wait` — never `github.sh` subcommands. Merge-pr detaches only through `merge-queue-watch`; the waiters stay foreground producers. Spawn generated agents through `scripts/spawn-adapter` with `fork_context: false`, then `send_input` a `DELEGATION:`-prefixed `<delegation_format>`.
+> If you are running in **Codex**: `approval required by policy, but AskForApproval is set to Never` flags the command's SHAPE — never retry it, never wait for approval; rewrite it per [references/codex-runtime.md](references/codex-runtime.md). Polling loops → the orch waiters `.agents/skills/orch/scripts/ci-wait`, `approval-wait`, `queue-wait` — never `github.sh` subcommands. Redirection and `&` are rejected shapes, so merge-pr's detached wait has no Codex form: run `queue-wait` in the foreground, once, and stay on it until it returns. Spawn generated agents through `scripts/spawn-adapter` with `fork_context: false`, then `send_input` a `DELEGATION:`-prefixed `<delegation_format>`.
 
 > If you are running in **OpenCode**: store the `task_id` returned by `functions.task` in workflow state (`child_sessions[agent].agent_id`, `review_agent_ids[reviewer-name]`) and re-delegate with `functions.task(task_id=<stored_id>)`. Spawn fresh only when no ID is stored, one resume attempt failed, or the task is confirmed dead.
 

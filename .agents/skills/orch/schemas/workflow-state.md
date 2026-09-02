@@ -80,13 +80,6 @@ Persistent state file for orch workflows. Survives context compaction.
   },
   "pr_approval": {
     "forced": false
-  },
-  "merge_queue_watch": {
-    "state_path": "/repository/.git/kendex/orch/merge-queue/PROJ-123.json",
-    "watch_id": "1769600000-1234-5678",
-    "repository": "owner/repo",
-    "pr_number": 42,
-    "head_sha": "abcdef0123456789abcdef0123456789abcdef01"
   }
 }
 ```
@@ -128,7 +121,6 @@ Persistent state file for orch workflows. Survives context compaction.
 | `pr_comment_review` | object | PR comment review tracking: `iterations`, `fixes[]`, `issues_created[]`, `skipped[]`, `replied[]` (thread IDs answered), `patched_causes[]` — one `{cause, commit}` per patched cause, the single record [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence) reads: this workflow writes it where the reply resolves the thread, and [dev-fix.md](../workflows/dev-fix.md) § 2 writes it for the `pr-review`, `qa-review`, and `review` loops, whose items land in `fixed_items`; `frozen_causes[]` — one `{cause, issue}` per cause frozen by [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), written before the `Tracked:` reply; a later finding on a listed cause is declined, never re-triaged |
 | `pr_approval` | object | Reviewer-gate override tracking: `forced` (the user chose Force merge past a missing verdict), `reviewer_down` (`PR_REVIEW_ON_TIMEOUT=proceed` auto-proceeded past the deadline with every reviewer silent) |
 | `pr_review` | object | Reviewer-gate mode tracking: `mode` ("approval"/"review"/"off" as printed by `approval-wait --resolve-mode`) |
-| `merge_queue_watch` | object | Pointer to the lifecycle file owned by `merge-queue-watch`. `state_path`, `watch_id`, `repository`, `pr_number`, and `head_sha` bind workflow state to the prepared repository, PR, head, and generation. Its terminal statuses, its cleanup dispositions, and the fields `consume` revalidates before claiming are `merge-queue-watch --help` |
 
 ## CLI
 

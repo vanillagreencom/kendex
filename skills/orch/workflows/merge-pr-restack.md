@@ -1,7 +1,7 @@
 # Merge-pr restack cycle
 
-Use this cycle only for the durable merge lifecycle's `restack` or
-`resume_restack` action. A base conflict is not a CI failure.
+Use this cycle only for a `conflicting` queue-wait verdict. A base conflict is
+not a CI failure.
 
 1. Unarm the PR before any push. If live `autoMergeRequest` is set, disable
    auto-merge first. If `isInMergeQueue` remains true, read the PR node id with
@@ -28,6 +28,6 @@ Use this cycle only for the durable merge lifecycle's `restack` or
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/worktree-push --worktree [WT_PATH] --issue [ISSUE]
    ```
 
-4. The head changed. Re-confirm the persisted gate mode, then return to
-   `merge-pr.md` § 5 step 1 to prepare the new exact head before re-arming and
-   launching its next detached lifecycle generation.
+4. The head changed. Re-confirm the gate mode, then return to
+   `merge-pr.md` § 5 step 1 to read the new exact head before re-arming it and
+   starting a new wait.
