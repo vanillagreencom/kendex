@@ -93,10 +93,10 @@ kendex_source_env_file() {
 #
 # The assignment is a `printf -v` into a name the CALLER chose, so it is
 # lost to the helper's own local whenever the two spellings meet: never
-# pass `_kendex_trimmed`, `_kendex_decode_raw` or `_kendex_decode_regex` as
-# an out-var. Nothing enforces that — kendex_decode_value is itself such a
-# caller, which is why its scratch names are spelled apart from
-# kendex_trim's rather than sharing a `_kendex_raw`.
+# pass a helper its own scratch name — `_kendex_trimmed` to kendex_trim,
+# `_kendex_decode_raw` or `_kendex_decode_regex` to kendex_decode_value.
+# Nothing enforces that; the two sets are spelled apart precisely so
+# kendex_decode_value can hand its own scratch to kendex_trim.
 kendex_trim() { # OUT_VAR RAW — RAW without leading or trailing whitespace, assigned to OUT_VAR
   local _kendex_trimmed="$2"
   _kendex_trimmed="${_kendex_trimmed#"${_kendex_trimmed%%[!$' \t\r\n']*}"}"
