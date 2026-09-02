@@ -39,10 +39,13 @@ function useReinstallNote(
   const rows = useProvenanceStore((s) => s.rows);
   const reload = useProvenanceStore((s) => s.reload);
   const [landed, setLanded] = useState(false);
+  // Cleared on the way out as well as the way in: the dialog is mounted
+  // whether or not it is open, so a flag left standing from the last open
+  // is a note built from that open's rows on the next one's first render.
   useEffect(() => {
+    setLanded(false);
     if (!open) return;
     let cancelled = false;
-    setLanded(false);
     void reload().then((read) => {
       if (!cancelled) setLanded(read);
     });
