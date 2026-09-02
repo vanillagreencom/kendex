@@ -308,17 +308,7 @@ fn an_unreadable_set_keeps_its_installed_members_and_names_the_key() {
         "kendex.toml",
         "[bundles.starter]\nskills = [\"dev\"]\nversion = \"1.0\"\n",
     );
-    let report = kendex_core::engine::plan_apply(
-        &f.env,
-        &f.scope,
-        &kendex_core::engine::PlanOptions {
-            remove_orphans: true,
-            removal_filter: None,
-            ..kendex_core::engine::PlanOptions::default()
-        },
-    )
-    .unwrap();
-    apply::execute(&f.env, &report.plan).unwrap();
+    let report = sweep(&f);
 
     assert!(member.exists(), "an unreadable set trashed its member");
     assert!(required.exists(), "it trashed what that member requires");
@@ -333,4 +323,32 @@ fn an_unreadable_set_keeps_its_installed_members_and_names_the_key() {
     ] {
         assert!(!said.contains(wrong), "{wrong}: {said}");
     }
+
+    // The other way a catalog says nothing: a control file the sealed reader
+    // refuses to look through. That error is dropped one layer up, so without
+    // the record every derived install from this source is swept.
+    fs::remove_file(catalog.join("kendex.toml")).unwrap();
+    std::os::unix::fs::symlink(f.home.join("away.toml"), catalog.join("kendex.toml")).unwrap();
+    sweep(&f);
+    assert!(
+        member.exists(),
+        "a catalog that would not open lost its member"
+    );
+}
+
+/// One `kendex apply` sweep of this scope, orphans and all.
+#[allow(clippy::unwrap_used)]
+fn sweep(f: &Fixture) -> kendex_core::engine::EngineReport {
+    let report = kendex_core::engine::plan_apply(
+        &f.env,
+        &f.scope,
+        &kendex_core::engine::PlanOptions {
+            remove_orphans: true,
+            removal_filter: None,
+            ..kendex_core::engine::PlanOptions::default()
+        },
+    )
+    .unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
+    report
 }

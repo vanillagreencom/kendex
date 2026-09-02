@@ -477,46 +477,29 @@ fn a_registry_catalogs_bundles_table_cannot_brick_it() {
     assert_eq!(report.failing(false), 0, "{:?}", report.catalog);
 }
 
-/// A plugin is a set already, and `add --bundle` installs it as one. A plugin
-/// that ships nothing is refused instead: recording it would install no files
-/// and report success.
+/// A plugin is a set already, and `add --bundle` installs it as one: the one
+/// path where a set's member names carry the plugin they came from. A plugin
+/// that ships nothing is refused by the same guard the install-seam suite
+/// pins on a set with no member lists.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_plugin_set_installs_its_members_and_an_empty_one_is_refused() {
+fn a_plugin_set_installs_its_namespaced_members() {
     let f = fixture("\"claude\"", "");
-    let add = |name: &str| {
-        ops::add(
-            &f.env,
-            &f.scope,
-            &ops::AddRequest {
-                source: Some("market".to_owned()),
-                bundles: vec![name.to_owned()],
-                no_auto_skills: true,
-                ..ops::AddRequest::default()
-            },
-        )
-    };
-    let report = add("data-science").expect("a plugin installs as the set it is");
+    let report = ops::add(
+        &f.env,
+        &f.scope,
+        &ops::AddRequest {
+            source: Some("market".to_owned()),
+            bundles: vec!["data-science".to_owned()],
+            no_auto_skills: true,
+            ..ops::AddRequest::default()
+        },
+    )
+    .expect("a plugin installs as the set it is");
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(
         f.project.join(".claude/skills/data-science__eda").exists(),
         "{:?}",
         report.notes
     );
-
-    write(&f.market, "plugins/hollow/.claude-plugin/plugin.json", "{}");
-    write(
-        &f.market,
-        ".claude-plugin/marketplace.json",
-        &REGISTRY.replace(
-            r#""plugins": ["#,
-            r#""plugins": [{"name": "hollow", "source": "./plugins/hollow"},"#,
-        ),
-    );
-    let error = add("hollow").unwrap_err();
-    assert!(
-        matches!(error, kendex_core::error::CoreError::BundleInstallsNothing { ref name, .. } if name == "hollow"),
-        "{error}"
-    );
-    assert!(error.to_string().contains("carries no members"), "{error}");
 }

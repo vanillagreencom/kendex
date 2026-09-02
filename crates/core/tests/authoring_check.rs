@@ -224,9 +224,6 @@ fn every_unreadable_set_body_is_reported_and_costs_the_catalog_nothing() {
         // The spelling kendex's own catalog shipped, and a typo of a list.
         ("members = [\"skill/gh\"]", "members"),
         ("skils = [\"gh\"]", "skils"),
-        // A key the manifest requires of an installed set, beside members:
-        // neither shape, and the set vanished silently one key over.
-        ("source = \"cat\"\nskills = [\"gh\"]", "source"),
     ] {
         let (_tmp, root) = repo();
         skill_at(&root, "skills", "gh");

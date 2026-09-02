@@ -312,11 +312,19 @@ impl Catalogs<'_> {
         let SourceState::Ready(ready) = resolution else {
             return None;
         };
-        let sealed = SealedSource::open(&ready.root).ok()?;
-        let config = source_config(&sealed, crate::source::repo_leaf(&ready.provenance)).ok()?;
         // Everything derived — a set's members, a skill's dependencies —
         // reaches its catalog through here, so this is where the removal pass
-        // learns that a catalog answered with less than it offers.
+        // learns that a catalog answered with less than it offers. A read that
+        // failed — a symlinked control file, bytes that are not text, a file
+        // past the cap — answered with nothing, and dropping that error would
+        // make the silence look like a catalog that offers nothing.
+        let leaf = crate::source::repo_leaf(&ready.provenance);
+        let opened = SealedSource::open(&ready.root)
+            .and_then(|sealed| Ok((source_config(&sealed, leaf)?, sealed)));
+        let Ok((config, sealed)) = opened else {
+            state.unreadable_catalogs.insert(source.to_owned());
+            return None;
+        };
         if config.hides_content() {
             state.unreadable_catalogs.insert(source.to_owned());
         }
