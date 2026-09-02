@@ -21,7 +21,7 @@ import {
   type ApplyOutcome,
   applyRow,
   applyRows,
-  type Dispositions,
+  type RunRecord,
 } from "./updates-apply";
 
 /** Await a write and say whatever account its answer carries. */
@@ -40,7 +40,7 @@ export const writeRow = (
 export const writeRows = (
   rows: UpdateRow[],
   report: Report,
-  into: Dispositions,
+  into: RunRecord,
 ): Promise<void> => announcing(applyRows(rows, report, into));
 
 /** Mute or unmute a package's update notices. Answers with the overview it

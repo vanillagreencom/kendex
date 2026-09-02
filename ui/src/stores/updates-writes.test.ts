@@ -7,7 +7,7 @@ import { updateRow } from "@/components/updates-test-rows";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { READ_LANDED } from "@/lib/read-state";
 import { useUpdatesStore } from "./updates";
-import { noDispositions } from "./updates-apply";
+import { noRun } from "./updates-apply";
 import {
   writeDiscardEdits,
   writeFork,
@@ -182,7 +182,7 @@ describe("what a write says about the repository it changed", () => {
       data: { view: { ...VIEW, undone: [RAN] }, packages: [] },
     });
 
-    await writeRows([row()], () => {}, noDispositions());
+    await writeRows([row()], () => {}, noRun());
 
     expect(toast.message).toHaveBeenCalledWith(RAN);
   });

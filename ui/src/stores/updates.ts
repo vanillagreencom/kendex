@@ -10,15 +10,14 @@ import {
 import { READ_PENDING, type ReadState } from "@/lib/read-state";
 import { rescanEverything } from "@/lib/rescan";
 import { caught, settled } from "@/lib/settled";
-import { skippedPlaces, updatablePlaces } from "@/lib/update-groups";
+import {
+  packageCount,
+  skippedPlaces,
+  updatablePlaces,
+} from "@/lib/update-groups";
 import { rowUnsettled } from "@/lib/updates-read-state";
 import { useProblemsStore } from "./problems";
-import {
-  bulkLine,
-  noDispositions,
-  packagesIn,
-  sayApply,
-} from "./updates-apply";
+import { bulkLine, noRun, sayApply } from "./updates-apply";
 import { followSwitch, type PendingFollow } from "./updates-follow";
 import { standingReads } from "./updates-standing";
 import { writeIgnored, writeRow, writeRows } from "./updates-writes";
@@ -162,7 +161,8 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
           // Either command can come back held: the plan refuses to write
           // over a copy somebody changed, and saying "Updated" over that
           // is the whole point of asking the command what it did.
-          sayApply(updatedToastLabel(row.name), answer.data.update);
+          // One package's apply, so a removal it reports is that package's.
+          sayApply(updatedToastLabel(row.name), answer.data.update, 1);
           applied = true;
         }
         // Whatever it answered, the standing is read again: the work can
@@ -187,7 +187,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
           toast.info(nothingToUpdateToastLabel(skipped));
           return;
         }
-        const what = noDispositions();
+        const what = noRun();
         // Whether anything in this run failed. Every failure reaches the
         // person through `report` — a place that refused, a package its
         // place left out of the answer — so wrapping it is what tells a
@@ -209,7 +209,13 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         // row, it is not one more updated. Said whether or not a place
         // failed — the error is its own toast, and what the rest of the
         // run did to the person's packages is not the error's to swallow.
-        sayApply(bulkLine(packagesIn(what.moved), failed), what);
+        // Counted off the rows that asked, through the one identity rule:
+        // two projects' `gh` from unrelated catalogs are two packages.
+        sayApply(
+          bulkLine(packageCount(what.wrote), failed),
+          what,
+          packageCount(what.lost),
+        );
         await rescanEverything();
       });
     },

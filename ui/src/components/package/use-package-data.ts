@@ -173,7 +173,8 @@ export function packageVersionActions(
         afterChange();
         return;
       }
-      sayApply(done, response.data);
+      // One package's apply, so a removal it reports is that package's.
+      sayApply(done, response.data, 1);
       afterChange();
     });
   };

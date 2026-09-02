@@ -45,14 +45,30 @@ export type Dispositions = Pick<
   "removed" | "heldBack" | "moved"
 >;
 
+/** What a run over several places gathered: the three lists, and the rows
+ *  that asked for what landed in them. A rendering carries a kind and a
+ *  name but no repository, and two projects installing a `gh` skill from
+ *  unrelated catalogs are two packages — so how many packages a run wrote
+ *  or lost is counted off these rows with `update-groups.ts`
+ *  [`packageCount`], which is the one identity rule, never off the
+ *  renderings. */
+export interface RunRecord extends Dispositions {
+  /** The rows whose package the plan wrote somewhere. */
+  wrote: UpdateRow[];
+  /** The rows whose copy went to the trash with nothing written back. */
+  lost: UpdateRow[];
+}
+
 /** A fresh record for a run to gather its places' answers into. The caller
  *  holds it from before the first apply until after the last, so a place
  *  that rejects at the transport layer cannot take what earlier places
  *  already committed with it. */
-export const noDispositions = (): Dispositions => ({
+export const noRun = (): RunRecord => ({
   removed: [],
   heldBack: [],
   moved: [],
+  wrote: [],
+  lost: [],
 });
 
 /** The tools named by a set of drift rows, each once, in the order they
@@ -60,12 +76,6 @@ export const noDispositions = (): Dispositions => ({
 const toolsOf = (rows: DriftRow_Serialize[]): string[] => [
   ...new Set(rows.map((row) => harnessName(row.harness))),
 ];
-
-/** How many distinct packages a list of renderings names: one package
- *  written — or taken to the trash — in three tools is one package, not
- *  three. */
-export const packagesIn = (rows: DriftRow_Serialize[]): number =>
-  new Set(rows.map((row) => `${row.kind}:${row.name}`)).size;
 
 /** What a run over several places claims, or null where it claims nothing.
  *
@@ -93,13 +103,20 @@ export const bulkLine = (moved: number, failed: boolean): string | null => {
  *  on screen. A run that committed always passes a line, even one that
  *  wrote nothing — an apply answers with three empty lists for a package
  *  something else brought current, and silence over that reads as a click
- *  that missed. */
-export const sayApply = (done: string | null, what: Dispositions): void => {
+ *  that missed.
+ *
+ *  `lost` is how many packages `what.removed` is about, which the lists
+ *  cannot answer: a rendering carries no repository, so the surface that
+ *  knows the packages counts them. One for a single-package apply; a run's
+ *  own count of [`RunRecord.lost`] for a bulk one. */
+export const sayApply = (
+  done: string | null,
+  what: Dispositions,
+  lost: number,
+): void => {
   const removed = toolsOf(what.removed);
   if (removed.length > 0) {
-    toast.error(
-      removedNotReplacedToastLabel(packagesIn(what.removed), removed),
-    );
+    toast.error(removedNotReplacedToastLabel(lost, removed));
     return;
   }
   const held = toolsOf(what.heldBack);
@@ -178,11 +195,13 @@ const targetOf = (row: UpdateRow): UpdateTarget => ({
  *
  *  The answers are gathered, never re-read here: what a run did is the
  *  same three lists one apply answers with, so [`sayApply`] says it for
- *  both surfaces. */
+ *  both surfaces. The row that asked is kept beside them, because it
+ *  carries the repository the renderings do not and a count of packages
+ *  needs it. */
 export const applyRows = async (
   rows: UpdateRow[],
   report: Report,
-  into: Dispositions,
+  into: RunRecord,
 ): Promise<void> => {
   for (const place of byPlace(rows)) {
     const response = await commands.packageUpdateMany(
@@ -212,6 +231,8 @@ export const applyRows = async (
       into.removed.push(...one.removed);
       into.heldBack.push(...one.heldBack);
       into.moved.push(...one.moved);
+      if (one.moved.length > 0) into.wrote.push(row);
+      if (one.removed.length > 0) into.lost.push(row);
     }
   }
 };
