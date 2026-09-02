@@ -312,9 +312,10 @@ fn a_renamed_agent_declares_its_destination_and_the_name_less_kinds_are_copied_v
 /// that is the path here: `-bad/tuned` landing at `tuned` changes no leaf,
 /// because a file inside an item only ever declares its leaf.
 ///
-/// The Codex agent is the case that made it matter. For a frontmatter file
-/// the needless rewrite is only wasted work; for that one it refuses an
-/// import that asked for no rename at all.
+/// The agent that would be rewritten is the case that made it matter: its
+/// frontmatter names it something else again, so a rewrite nobody asked
+/// for is visible in the bytes rather than being wasted work. Asking the
+/// legality question here would land `name: tuned` in the copy.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_illegal_namespace_over_the_same_leaf_is_no_rename() {
@@ -322,8 +323,8 @@ fn an_illegal_namespace_over_the_same_leaf_is_no_rename() {
     let Scope::Project { root } = &scope else {
         unreachable!()
     };
-    let toml = "name = \"tuned\"\ndescription = \"about tuned\"\n";
-    file_item(&root.join(".codex/agents/-bad"), "tuned.toml", toml);
+    let misdeclared = "---\nname: misdeclared\ndescription: about tuned\n---\nAgent body.\n";
+    file_item(&root.join(".claude/agents/-bad"), "tuned.md", misdeclared);
     let declared = "---\nname: kept\ndescription: about kept\n---\nAgent body.\n";
     file_item(&root.join(".claude/agents/-bad"), "kept.md", declared);
     let scopes = [scope.clone()];
@@ -344,7 +345,7 @@ fn an_illegal_namespace_over_the_same_leaf_is_no_rename() {
 
     assert_eq!(
         fs::read_to_string(target.join("agents/tuned.md")).unwrap(),
-        toml,
+        misdeclared,
     );
     assert_eq!(
         fs::read_to_string(target.join("agents/good/kept.md")).unwrap(),
@@ -415,41 +416,4 @@ fn a_renamed_cursor_agent_declares_its_destination() {
         written.contains("description: about ruler") && written.contains("Rule body."),
         "only the name line changes: {written}"
     );
-}
-
-/// An agent is not always frontmatter: Codex reads its agents as TOML and
-/// an unmanaged scan offers those like any other, so a rename arrives here
-/// with bytes that carry a `name` key and no frontmatter at all. It
-/// refuses, and names the file it read, so the person can see the format
-/// the answer is about — rather than being sent off to add a frontmatter
-/// block that the harness would then refuse to load.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_renamed_agent_in_another_format_is_refused_by_that_format() {
-    let (tmp, env, scope) = seeded();
-    let Scope::Project { root } = &scope else {
-        unreachable!()
-    };
-    file_item(
-        &root.join(".codex/agents"),
-        "codexer.toml",
-        "name = \"codexer\"\ndescription = \"about codexer\"\n",
-    );
-    let scopes = [scope.clone()];
-    let target = target(&env, &tmp, "mine-codex");
-    let candidates = inventory(&env, &scopes).unwrap();
-    let mut renamed = selection(find(&candidates, "codexer"), false);
-    renamed.destination = "settled".to_owned();
-
-    let message = apply(&env, &scopes, &target, &[renamed])
-        .unwrap_err()
-        .to_string();
-    assert!(message.contains("'codexer.toml'"), "{message}");
-    assert!(
-        message.contains("still call itself 'codexer'"),
-        "and what the copy would have answered to: {message}"
-    );
-    // Never the instruction to add one: a Codex agent with a frontmatter
-    // block on top is an agent Codex will not load.
-    assert!(!message.contains("give it a frontmatter"), "{message}");
 }

@@ -159,10 +159,17 @@ fn declared_leaf(name: &str) -> &str {
 
 /// What to call the file a refusal is about. Shown, never decided on: an
 /// unmanaged scan offers agent files as their harness keeps them, and the
-/// spellings do not end — `.md`, Cursor's `.mdc`, Codex's `.toml`,
-/// Copilot's compound `.agent.md`, any of them parked as `.disabled` — so
-/// the name only tells the person which file to open. Whether a name can
-/// be written in is asked of the bytes.
+/// spellings do not end — `.md`, Cursor's `.mdc`, Copilot's compound
+/// `.agent.md`, any of them parked as `.disabled` — so the name only tells
+/// the person which file to open. Whether a name can be written in is
+/// asked of the bytes.
+///
+/// What reaches it is narrower than it was. An agent whose bytes are not
+/// markdown with a frontmatter block is no longer offered at all
+/// (`origins::agent_shape_problem`), so Codex's TOML is refused before
+/// selection rather than here; what is left for this to name is a
+/// frontmatter file whose `name` cannot be written — given twice, or
+/// running past its own line.
 fn origin_file(read_from: Option<&Path>) -> String {
     read_from.and_then(Path::file_name).map_or_else(
         || "its own file".to_owned(),

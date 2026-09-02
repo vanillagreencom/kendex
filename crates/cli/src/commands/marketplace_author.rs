@@ -161,9 +161,21 @@ fn selection(
         .collect();
     let origin = match (&args.origin, readable.len()) {
         (_, 0) => {
-            return Err(format!(
-                "'{name}' has no readable bytes right now — refresh its marketplace first"
-            )
+            // Where each origin was, one per line, because the location is
+            // what says why it cannot be taken — a marketplace nobody
+            // fetched, an agent in a format a catalog cannot store. A
+            // single "no readable bytes, refresh the marketplace" named
+            // the wrong cause for every candidate that has no marketplace.
+            let listed: Vec<String> = candidate
+                .origins
+                .iter()
+                .map(|origin| escaped(&origin.locations.join(" = ")))
+                .collect();
+            return Err(Lines(format!(
+                "'{}' has no bytes kendex can import:\n{}",
+                escaped(name),
+                listed.join("\n")
+            ))
             .into());
         }
         (None, 1) => readable[0],

@@ -37,7 +37,12 @@ export function groupLabel(group: CandidateGroup): string {
 
 /** One candidate: the checkbox, the origin picker when bytes differ, the
  * rename input when a harness would refuse the name, and the licence
- * evidence for marketplace-origin content. */
+ * evidence for marketplace-origin content.
+ *
+ * A candidate with nothing selectable lists where its bytes were: the
+ * location is what says why they cannot be taken — a marketplace nobody
+ * fetched, an agent in a format a catalog cannot store — and the row's own
+ * "not readable now" says only that they cannot. */
 export function MineImportRow({
   candidate,
   choice,
@@ -73,6 +78,15 @@ export function MineImportRow({
           {chosen ? ` · ${groupLabel(chosen.group)}` : " · not readable now"}
         </span>
       </div>
+      {readable.length === 0 ? (
+        <ul className="pl-6 text-xs text-warning">
+          {candidate.origins.map((origin) => (
+            <li key={`${origin.group.group}:${origin.locations.join(" = ")}`}>
+              {origin.locations.join(" = ")}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {choice.checked && readable.length > 1 ? (
         <div className="pl-6">
           <Select

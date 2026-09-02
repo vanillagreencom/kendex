@@ -14,6 +14,9 @@ use crate::source_read::SealedSource;
 
 use super::{Bytes, CandidateGroup, ImportSelection, ResolvedSelection, license_recognized};
 
+mod notices;
+use notices::notice_files;
+
 /// The observed on-disk path of every installation — provenance rows carry
 /// no path, so the scan is asked once and joined here. Managed installs
 /// are included: their observed bytes are what an "edited copy" is.
@@ -46,6 +49,63 @@ pub(super) fn unmanaged_paths(
 /// says a path: [`crate::paths::slashed`], because callers match on it
 /// (`.agents/skills/…`) and a `\` there matches nothing.
 type OriginRead = (CandidateGroup, Option<Bytes>, String, Option<PathBuf>);
+
+/// Why these bytes cannot be the agent a catalog stores, when they cannot.
+///
+/// A catalog keeps an agent at `agents/<name>.md` ([`crate::source::local_slot`])
+/// and every install reads that file as markdown with a frontmatter block
+/// ([`crate::render::agent::parse_source_agent`]). A harness that keeps its
+/// agents in some other format offers files that would land in that slot
+/// unchanged — Codex writes TOML — and nothing downstream catches it: the
+/// catalog check's structural pass never validates an agent, so the author
+/// is told the package is fine and every consumer's install refuses it.
+/// The offer is where it stops.
+///
+/// Asked of the bytes, never of the extension. Cursor writes `.mdc` and a
+/// switched-off agent is parked at `.md.disabled`; both are frontmatter,
+/// and the spellings do not end.
+///
+/// Not [`crate::render::skill::bytes_named`], which answers the narrower
+/// question of whether a *rename* can be written in: it also refuses a
+/// name given twice or one running past its line, and an import keeping
+/// the candidate's name copies those bytes verbatim today.
+fn agent_shape_problem(kind: ItemKind, bytes: &Bytes) -> Option<&'static str> {
+    if kind != ItemKind::Agent {
+        return None;
+    }
+    // A tree is unconstructible for an agent: `read_bytes` makes a skill a
+    // tree and every other kind a file.
+    let Bytes::File(bytes) = bytes else {
+        return None;
+    };
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Some("the file is not text");
+    };
+    match crate::frontmatter::split(text) {
+        Ok(_) => None,
+        // The two send a reader to different edits, which is why `split`
+        // tells them apart.
+        Err(problem) if problem.contains("unterminated") => {
+            Some("its frontmatter block is never closed")
+        }
+        Err(_) => Some("it has no frontmatter"),
+    }
+}
+
+/// One origin as the wizard may offer it. Bytes a catalog cannot store are
+/// listed without their hash — the shape [`marketplace_origins`] already
+/// uses for a marketplace nobody fetched — so the row shows and nothing
+/// can select it, and the location carries the reason rather than leaving
+/// the person to guess why their agent is not offerable.
+fn offered(kind: ItemKind, bytes: Bytes, location: String) -> (Option<Bytes>, String) {
+    match agent_shape_problem(kind, &bytes) {
+        Some(problem) => (
+            None,
+            format!("{location} — {problem}, and a catalog stores an agent as markdown"),
+        ),
+        None => (Some(bytes), location),
+    }
+}
 
 pub(super) fn origins_of(
     env: &Env,
@@ -92,10 +152,11 @@ pub(super) fn origins_of(
             else {
                 return Vec::new();
             };
+            let (bytes, location) = offered(row.kind, bytes, crate::paths::slashed(path));
             vec![(
                 CandidateGroup::Unmanaged,
-                Some(bytes),
-                crate::paths::slashed(path),
+                bytes,
+                location,
                 Some(path.clone()),
             )]
         }
@@ -149,6 +210,7 @@ pub(super) fn marketplace_origins(
         return unreachable(license);
     };
     let source_hash = bytes.hash();
+    let (bytes, location) = offered(row.kind, bytes, format!("{repo}:{}", rel(&sealed, &path)));
     let mut origins = vec![(
         CandidateGroup::Marketplace {
             source: source.to_owned(),
@@ -156,8 +218,8 @@ pub(super) fn marketplace_origins(
             license: license.clone(),
             license_recognized: license.as_deref().is_some_and(license_recognized),
         },
-        Some(bytes),
-        format!("{repo}:{}", rel(&sealed, &path)),
+        bytes,
+        location,
         Some(path.clone()),
     )];
     // The installed copy, when it diverged: read at its observed path.
@@ -168,6 +230,11 @@ pub(super) fn marketplace_origins(
             .and_then(|sealed| read_bytes(&sealed, row.kind, installed))
         && edited.hash() != source_hash
     {
+        // An agent installs as the file its harness reads, so the edited
+        // copy of a marketplace agent under Codex is the TOML rendering —
+        // the same bytes a catalog cannot store, arriving by the other
+        // door.
+        let (edited, location) = offered(row.kind, edited, crate::paths::slashed(installed));
         origins.push((
             CandidateGroup::Edited {
                 source: source.to_owned(),
@@ -175,8 +242,8 @@ pub(super) fn marketplace_origins(
                 license_recognized: license.as_deref().is_some_and(license_recognized),
                 license,
             },
-            Some(edited),
-            crate::paths::slashed(installed),
+            edited,
+            location,
             Some(installed.clone()),
         ));
     }
@@ -193,7 +260,11 @@ pub(super) fn catalog_bytes(
     let path = crate::source::find_item(&sealed, &config, row.kind, &row.name)?;
     let bytes = read_bytes(&sealed, row.kind, &path)?;
     let location = crate::paths::slashed(&root.join(rel_path(&sealed, &path)));
-    Some((Some(bytes), location, path))
+    // A catalog's own agent slot is `<name>.md`, so this is bytes somebody
+    // already wrote there in another format — copying them on would carry
+    // the breakage into a second package.
+    let (bytes, location) = offered(row.kind, bytes, location);
+    Some((bytes, location, path))
 }
 
 pub(super) fn read_bytes(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Option<Bytes> {
@@ -244,12 +315,28 @@ pub(super) fn resolve_selection(
     selection: &ImportSelection,
 ) -> Result<ResolvedSelection> {
     let observed = unmanaged_paths(env, scopes);
+    // Where the bytes were, for a selection nothing matches. Every origin
+    // this name has is unselectable, and their locations say why — a
+    // marketplace nobody fetched, an agent in a format a catalog cannot
+    // store — so the refusal repeats that rather than blaming a change
+    // nobody made.
+    let mut unusable: Vec<String> = Vec::new();
+    let mut selectable = false;
     for row in crate::library::provenance(env, scopes)? {
         if row.kind != selection.kind || row.name != selection.name {
             continue;
         }
-        for (group, bytes, _, read_from) in origins_of(env, &row, &observed) {
-            let Some(bytes) = bytes else { continue };
+        for (group, bytes, location, read_from) in origins_of(env, &row, &observed) {
+            let Some(bytes) = bytes else {
+                // One place per line of the refusal: the same file is
+                // claimed twice where a marketplace install is also
+                // scanned unmanaged.
+                if !unusable.contains(&location) {
+                    unusable.push(location);
+                }
+                continue;
+            };
+            selectable = true;
             if bytes.hash() != selection.hash {
                 continue;
             }
@@ -265,6 +352,18 @@ pub(super) fn resolve_selection(
             });
         }
     }
+    if !selectable && !unusable.is_empty() {
+        return Err(CoreError::Authoring {
+            message: format!(
+                "{} '{}' has no bytes kendex can import: {}",
+                selection.kind.name(),
+                crate::names::shown(&selection.name),
+                // A location is a path off disk like the name is, and the
+                // refusal quotes both.
+                crate::names::shown(&unusable.join("; "))
+            ),
+        });
+    }
     Err(CoreError::Authoring {
         message: format!(
             "the bytes of {} '{}' changed since the preview — re-open the import to re-preview",
@@ -272,72 +371,4 @@ pub(super) fn resolve_selection(
             selection.name
         ),
     })
-}
-
-/// Root-level licence and attribution files of one catalog — the evidence
-/// that must travel with copied bytes.
-///
-/// Every read the source refuses is the refusal: the open, the listing,
-/// each entry's own nature, and each file's bytes. Other listings in this
-/// crate answer an unreadable directory by drawing no rows, which costs a
-/// surface some rows; here it would copy somebody's bytes with their
-/// licence left behind and say nothing. A source that is not resolvable at
-/// all is the one answer that is not a refusal: it has no root to carry
-/// evidence from, and the import's own provenance rules judge that.
-pub(super) fn notice_files(
-    env: &Env,
-    scope: &Scope,
-    source: &str,
-) -> Result<Vec<(String, Vec<u8>)>> {
-    let manifest = scope_manifest(env, scope);
-    let Ok(crate::source::SourceState::Ready(resolved)) =
-        crate::source::resolve(env, scope, source, &manifest)
-    else {
-        return Ok(Vec::new());
-    };
-    // Carried, not swallowed, though no deterministic case drives it:
-    // `resolve` hands back `Ready` only after finding the root a
-    // directory, so what is left here is the root going away or losing its
-    // permissions between that answer and this open. A refusal is the
-    // right default for a read whose absence would publish a package
-    // without its licence, whether or not a fixture can stage it.
-    let sealed = SealedSource::open(&resolved.root)?;
-    let mut notices = Vec::new();
-    for entry in sealed.entries(&resolved.root)? {
-        // The stem is read off the lossy spelling, so bytes no UTF-8
-        // decodes cannot hide a licence behind an ASCII name: on Linux a
-        // filename is bytes, and `LICENSE.<invalid>` has the stem this
-        // collects.
-        let Some(raw) = entry.file_name() else {
-            continue;
-        };
-        let shown = raw.to_string_lossy();
-        let stem = shown
-            .split('.')
-            .next()
-            .unwrap_or(&shown)
-            .to_ascii_uppercase();
-        if !matches!(stem.as_str(), "LICENSE" | "LICENCE" | "NOTICE" | "COPYING") {
-            continue;
-        }
-        // A name the copy could not reproduce is the refusal, not a skip:
-        // the notice is written under this name at the destination, and
-        // there is no name to write it under.
-        let Some(name) = raw.to_str() else {
-            return Err(CoreError::SourceEscape {
-                path: entry.clone(),
-                reason: "a licence file's name is not valid UTF-8, so the copy cannot carry it"
-                    .to_owned(),
-            });
-        };
-        // Asked through the sealed reader, which refuses a link rather
-        // than following it: read as a boolean, a symlinked LICENSE is
-        // skipped as though it were no file at all, and the copy goes out
-        // without the notice it was standing for.
-        if sealed.entry(&entry)?.is_some_and(|meta| meta.is_file()) {
-            notices.push((name.to_owned(), sealed.read(&entry)?));
-        }
-    }
-    notices.sort();
-    Ok(notices)
 }

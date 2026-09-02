@@ -472,6 +472,7 @@ fn a_stale_hash_refuses_instead_of_copying_moved_bytes() {
     apply(&env, &scopes, &target, &[chosen]).unwrap();
 }
 
+mod format;
 mod rename;
 mod review;
 
