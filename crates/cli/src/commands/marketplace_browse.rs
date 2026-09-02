@@ -86,5 +86,6 @@ fn install_state(state: &kendex_core::source::browse::InstallState) -> &'static 
         InstallState::NotOffered => "no longer offered",
         InstallState::RemovedByYou => "removed by you",
         InstallState::OfferedMoreThanOnce => "offered more than once",
+        InstallState::Unknown => "unknown",
     }
 }

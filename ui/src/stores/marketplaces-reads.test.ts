@@ -96,6 +96,7 @@ const declared = (name: string) => [
     installedMembers: 0,
     totalMembers: 0,
     collision: null,
+    recordsUnreadable: false,
   },
 ];
 

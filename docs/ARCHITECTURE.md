@@ -502,7 +502,8 @@ lives in one capability table read by core and UI.
   tag-decorated, never tag-replaced. `UpdatesReport::last_fetched` dates
   the standing — the newest successful fetch among the sources the scope
   installs from, the newest across scopes in the overview — so "Everything
-  is up to date" is dated too. Rows are per package per scope, folded by
+  is up to date" is dated too, and is never said over a scope the overview
+  reports in `unreadable` rather than failing the whole read for. Rows are per package per scope, folded by
   package and expanded by place; `PlanOptions::update_only` names what a row's
   Update or a place's Update all moves; apply and refresh a whole place. Flipping
   Follow source is one row's state change, its write settling behind it
@@ -603,9 +604,11 @@ lives in one capability table read by core and UI.
   marketplace opens before anyone subscribes. Each row's state is joined
   from the scope's manifest and lock on every call — installed is a lock
   entry from this subscription, "partly installed (2 of 6)" is counted
-  from a bundle's members; with no subscription the join answers Available
-  and judges name clashes against the personal scope. A name another source holds is surfaced on
-  the row (`collision`); the refusal stays in the engine (invariant 4). A
+  from a bundle's members; a lock this build refuses lists the catalog all
+  the same, every row it alone would settle Unknown and every install surface reading that scope's own record gated on it — a set's
+  Install all on the set's own flag, since a dropped member reads NotOffered either way; an install redirected into another scope is
+  not yet gated on the destination's record. With no subscription the join answers Available and judges name clashes against the
+  personal scope. A name another source holds is surfaced on the row (`collision`); the refusal stays in the engine (invariant 4). A
   bare repository is fetched by `remote::sync` into the store under the
   canonical `owner/repo` every GitHub spelling folds to — the key Subscribe
   is prefilled with; only GitHub opens blind (`NotBrowsable` otherwise); a

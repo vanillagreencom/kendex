@@ -64,7 +64,7 @@ describe("the account read on window focus", () => {
     vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [], lastFetched: null },
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
     });
     vi.mocked(commands.appUpdateCheck).mockResolvedValue({
       status: "error",

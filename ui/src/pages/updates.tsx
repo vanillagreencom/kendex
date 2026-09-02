@@ -13,6 +13,7 @@ import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
 import { updatesBeforeList } from "@/components/updates-before-list";
 import { UpdatesTable } from "@/components/updates-table";
+import { UnreadablePlacesNote } from "@/components/updates-unreadable-note";
 import {
   CHECK_FOR_UPDATES_LABEL,
   hiddenUpdatesLabel,
@@ -51,6 +52,7 @@ export function UpdatesPage() {
   const { rows, warnings, busy, checking, check, updateRows } =
     useUpdatesStore();
   const read = useUpdatesStore((s) => s.read);
+  const unreadable = useUpdatesStore((s) => s.unreadable);
   // Update all holds on exactly what it would act on, so the button and
   // updateRows answer to one predicate: any visible row about to be
   // replaced, by an overview-producing read or by a flip settling in its
@@ -77,7 +79,10 @@ export function UpdatesPage() {
   const hidden = hiddenUpdates(rows);
   const HiddenChevron = showHidden ? ChevronDown : ChevronRight;
   const empty =
-    visible.length === 0 && hidden.length === 0 && warnings.length === 0;
+    visible.length === 0 &&
+    hidden.length === 0 &&
+    warnings.length === 0 &&
+    unreadable.length === 0;
 
   // On the page's own clock, not the render's. Only a read of the standing
   // re-renders this — mount, a check, a mutation — so a window left open
@@ -155,8 +160,12 @@ export function UpdatesPage() {
               {read.error}
             </StatusNote>
           ) : null}
+          <UnreadablePlacesNote places={unreadable} />
           {visible.length === 0 ? (
-            read.error === null ? (
+            // Only a read that covered every project may call the machine
+            // up to date: a project with no standing is not a project with
+            // nothing to update.
+            read.error === null && unreadable.length === 0 ? (
               <EmptyState icon={CheckCircle2} title={UPDATES_EMPTY}>
                 {UPDATES_EMPTY_BODY}
               </EmptyState>

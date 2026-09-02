@@ -2,6 +2,8 @@ import type { BundleMemberRow } from "@/bindings";
 import { StatusDot } from "@/components/status-dot";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { PACKAGE_STATE_UNKNOWN } from "@/lib/copy-marketplaces";
+import { offersInstall } from "@/lib/install-state";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
 import { cn } from "@/lib/utils";
@@ -27,7 +29,7 @@ export function BundleMemberLine({
   onRestore: () => void;
 }) {
   const Icon = kindIcon(member.kind);
-  const installable = selectable && member.state === "available";
+  const installable = selectable && offersInstall(member.state);
   const id = `member-${memberKey(member.kind, member.name)}`;
   return (
     <label
@@ -72,6 +74,8 @@ export function BundleMemberLine({
               Restore
             </Button>
           </span>
+        ) : member.state === "unknown" ? (
+          <span className="text-muted-foreground">{PACKAGE_STATE_UNKNOWN}</span>
         ) : (
           <StatusDot tone="good" className="inline-block" title="Available" />
         )}

@@ -83,7 +83,7 @@ describe("updates store: edited places", () => {
     vi.mocked(commands.packageFork).mockRejectedValue(new Error("ipc down"));
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [], lastFetched: null },
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
     });
 
     await keepAsOwn(
@@ -109,7 +109,7 @@ describe("updates store: edited places", () => {
     );
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [], lastFetched: null },
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
     });
 
     await takeNewVersion(
@@ -162,7 +162,7 @@ describe("updates store: edited places", () => {
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [], lastFetched: null },
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
     });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",
@@ -252,7 +252,7 @@ describe("updates store: installing beside an edited place", () => {
     vi.clearAllMocks();
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [], lastFetched: null },
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
     });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",
@@ -450,7 +450,7 @@ describe("updates store: installing beside an edited place", () => {
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [], lastFetched: null },
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
     });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",

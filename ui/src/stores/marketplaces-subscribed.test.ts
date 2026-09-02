@@ -50,6 +50,7 @@ const row = (repo: string, repoKey: string | null): MarketplaceRow => ({
   counts: null,
   meta: null,
   mode: null,
+  recordsUnreadable: false,
 });
 
 describe("a Community row's Subscribed marker", () => {

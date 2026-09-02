@@ -15,6 +15,8 @@ import { SidebarAccount } from "@/components/sidebar-account";
 import { SidebarNotice } from "@/components/sidebar-notice";
 import { Button } from "@/components/ui/button";
 import { UPDATES_ATTENTION_TITLE } from "@/lib/copy";
+import { unreadablePlacesLabel } from "@/lib/copy-updates";
+import { scopeNames } from "@/lib/labels";
 import { SIDEBAR_ROW } from "@/lib/layout";
 import { rescanEverything } from "@/lib/rescan";
 import { isSearchShortcutKey } from "@/lib/search-shortcut";
@@ -46,6 +48,11 @@ export function Sidebar() {
   // the badge wears the warning tone for it. With no rows at all, "?" is
   // the honest number: absence would read as "nothing to update".
   const updatesUnchecked = useUpdatesStore((s) => s.read.error !== null);
+  // A project whose records this build refuses leaves every other project's
+  // standing intact, so the badge says which project rather than reporting
+  // the whole machine unchecked.
+  const unreadable = useUpdatesStore((s) => s.unreadable);
+  const updatesIncomplete = updatesUnchecked || unreadable.length > 0;
 
   // The shortcut lives in the always-mounted chrome so "/" works on every
   // page, not only the one holding the search box.
@@ -112,12 +119,20 @@ export function Sidebar() {
               )}
             />
             <span className="flex-1 text-left">{label}</span>
-            {target === "updates" && (updateCount > 0 || updatesUnchecked) ? (
+            {target === "updates" && (updateCount > 0 || updatesIncomplete) ? (
               <span
-                title={updatesUnchecked ? UPDATES_ATTENTION_TITLE : undefined}
+                title={
+                  updatesUnchecked
+                    ? UPDATES_ATTENTION_TITLE
+                    : unreadable.length > 0
+                      ? unreadablePlacesLabel(
+                          scopeNames(unreadable.map((place) => place.scope)),
+                        )
+                      : undefined
+                }
                 className={cn(
                   "rounded px-1.5 py-0.5 text-[11px] font-medium tabular-nums",
-                  updatesUnchecked
+                  updatesIncomplete
                     ? "bg-warning/15 text-warning"
                     : "bg-foreground/[0.09]",
                 )}

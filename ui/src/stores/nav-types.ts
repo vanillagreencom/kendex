@@ -15,8 +15,9 @@ export type Page =
   | "unmanaged"
   | "settings"
   | "updates"
-  // Reached only from the status footer's problems segment — not in the
-  // sidebar, since it isn't a place you'd navigate to when nothing is wrong.
+  // Reached from the status footer's problems segment and from every note
+  // naming a place with no readable record — never from the sidebar, since
+  // it isn't a place you'd navigate to when nothing is wrong.
   | "problems"
   // Reached only by opening a package from a list — which package is open
   // lives in `packageRef`, so the page is never a sidebar destination.

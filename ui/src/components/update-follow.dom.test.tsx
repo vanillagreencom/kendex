@@ -189,7 +189,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(commands.updatesOverview).mockResolvedValue({
     status: "ok",
-    data: { rows, warnings: [], lastFetched: null },
+    data: { rows, warnings: [], unreadable: [], lastFetched: null },
   });
   // The page asks for an audit on mount; nothing here reads it.
   vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
@@ -284,7 +284,12 @@ describe("the Follow source switch", () => {
     ];
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: persisted, warnings: [], lastFetched: null },
+      data: {
+        rows: persisted,
+        warnings: [],
+        unreadable: [],
+        lastFetched: null,
+      },
     });
     mount(<Live />);
     await openPlaces();

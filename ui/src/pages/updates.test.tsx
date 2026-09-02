@@ -38,6 +38,7 @@ const stub = vi.hoisted(() => ({
   },
   lastFetched: null as number | null,
   busy: false,
+  unreadable: [] as unknown[],
 }));
 
 vi.mock("@/stores/updates", async (importOriginal) => {
@@ -52,6 +53,7 @@ vi.mock("@/stores/updates", async (importOriginal) => {
       read: stub.read,
       pendingFollows: [],
       lastFetched: stub.lastFetched,
+      unreadable: stub.unreadable,
       reload: async () => {},
     };
     return selector ? selector(state) : state;
@@ -64,6 +66,7 @@ beforeEach(() => {
   stub.read = { status: "landed", error: null };
   stub.lastFetched = null;
   stub.busy = false;
+  stub.unreadable = [];
 });
 
 /** Unix seconds `ago` seconds before now — the shape the overview reports,

@@ -5,6 +5,10 @@ import {
   type PackageEntry,
   PackagesTable,
 } from "@/components/marketplaces/packages-table";
+import {
+  TroubleLines,
+  troubledScopes,
+} from "@/components/marketplaces/packages-trouble";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -19,7 +23,6 @@ import { PAGE_BODY, PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import {
   marketKey,
-  readErrorKey,
   subscription,
   useMarketplacesStore,
 } from "@/stores/marketplaces";
@@ -84,21 +87,23 @@ export function PackagesTab() {
           !(pkg.summary ?? "").toLowerCase().includes(needle)
         )
           continue;
-        out.push({ catalog: subscription(row.scope, row.name), row: pkg });
+        out.push({
+          catalog: subscription(row.scope, row.name),
+          row: pkg,
+          recordsUnreadable: row.recordsUnreadable,
+        });
       }
     }
     return out;
   }, [rows, packages, search, kind, tag, marketplace, where]);
 
-  // Subscriptions whose catalog refused to load: named above the table so
-  // an empty offer is never mistaken for an empty marketplace.
-  const unreadable = rows
-    .filter(
-      (row) =>
-        row.enabled &&
-        readErrors[readErrorKey(marketKey(row.scope, row.name), "packages")],
-    )
-    .map((row) => row.name);
+  // Named above the table so an empty offer is never mistaken for an empty
+  // marketplace, and so a row saying nothing about its installed state says
+  // why. One line per place — see [troubledScopes].
+  const troubled = useMemo(
+    () => troubledScopes(rows, readErrors),
+    [rows, readErrors],
+  );
   const marketplaceNames = [...new Set(rows.map((row) => row.name))];
   const whereOptions = [
     ...new Map(rows.map((row) => [scopeLabel(row.scope), row.scope])).values(),
@@ -186,12 +191,7 @@ export function PackagesTab() {
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className={cn(PAGE_BODY, "pt-0")}>
           <div className={WIDE_CONTENT_WIDTH}>
-            {unreadable.length > 0 ? (
-              <p className="mb-3 text-xs text-warning">
-                {unreadable.join(", ")} couldn&apos;t be read — those packages
-                aren&apos;t listed. Check the Subscribed tab.
-              </p>
-            ) : null}
+            <TroubleLines places={troubled} />
             {entries.length === 0 ? (
               <p className="py-16 text-center text-sm text-muted-foreground">
                 {rows.length === 0

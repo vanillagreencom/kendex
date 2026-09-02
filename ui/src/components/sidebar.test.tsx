@@ -14,6 +14,7 @@ const esc = (copy: string) => copy.replace(/'/g, "&#x27;");
 const stub = vi.hoisted(() => ({
   updates: {
     rows: [] as unknown[],
+    unreadable: [] as unknown[],
     read: { status: "landed", error: null } as {
       status: "pending" | "landed" | "failed";
       error: string | null;
@@ -33,6 +34,7 @@ vi.mock("@/stores/updates", async (importOriginal) => {
 beforeEach(() => {
   stub.updates = {
     rows: [],
+    unreadable: [],
     read: { status: "landed", error: null },
   };
 });
@@ -50,6 +52,7 @@ describe("the Updates badge after a failed check", () => {
   it("marks the row rather than staying silent", () => {
     stub.updates = {
       rows: [],
+      unreadable: [],
       read: { status: "failed", error: "no network" },
     };
     const html = renderToStaticMarkup(<Sidebar />);
@@ -63,6 +66,7 @@ describe("the Updates badge after a failed check", () => {
   it("keeps a last-known count, in the warning tone", () => {
     stub.updates = {
       rows: [updateRow("gh", null)],
+      unreadable: [],
       read: { status: "failed", error: "no network" },
     };
     const html = renderToStaticMarkup(<Sidebar />);

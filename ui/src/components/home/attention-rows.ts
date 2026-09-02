@@ -1,4 +1,4 @@
-import type { ScanResult, UpdateRow } from "@/bindings";
+import type { ScanResult, UnreadableScope, UpdateRow } from "@/bindings";
 import type { AttentionRow } from "@/components/home/attention-section";
 import {
   AUDIT_ATTENTION_DETAIL,
@@ -9,6 +9,12 @@ import {
   UPDATES_ATTENTION_DETAIL,
   UPDATES_ATTENTION_TITLE,
 } from "@/lib/copy";
+import { SEE_PROBLEMS_LABEL } from "@/lib/copy-marketplaces";
+import {
+  UPDATES_UNREADABLE_TITLE,
+  unreadablePlacesLabel,
+} from "@/lib/copy-updates";
+import { scopeNames } from "@/lib/labels";
 
 /** Everything Home's attention list is derived from, with the way into
  *  each row's destination handed in — the derivation emits the rows in a
@@ -24,7 +30,12 @@ export interface AttentionSource {
    *  audit that could not finish, so what needs attention may be missing
    *  from this very list. */
   auditError: string | null;
+  /** Places with no update standing at all — the personal scope included,
+   *  since it has a lock of its own. Their rows are missing from every
+   *  count above, and the reason is on Problems, not here. */
+  unreadable: UnreadableScope[];
   onProjects: () => void;
+  onProblems: () => void;
   onUpdates: () => void;
   onLibrary: () => void;
   onPackage: (row: UpdateRow) => void;
@@ -32,7 +43,8 @@ export interface AttentionSource {
 }
 
 export function attentionRows(source: AttentionSource): AttentionRow[] {
-  const { editedPackages, result, updatesError, auditError } = source;
+  const { editedPackages, result, updatesError, auditError, unreadable } =
+    source;
   const missing = result?.missingProjects ?? [];
 
   const rows: AttentionRow[] = [];
@@ -83,6 +95,17 @@ export function attentionRows(source: AttentionSource): AttentionRow[] {
       title: UPDATES_ATTENTION_TITLE,
       detail: UPDATES_ATTENTION_DETAIL,
       action: { label: "Updates", onClick: source.onUpdates },
+    });
+  }
+  if (unreadable.length > 0) {
+    rows.push({
+      key: "updates-unreadable",
+      tone: "warning",
+      title: UPDATES_UNREADABLE_TITLE,
+      detail: unreadablePlacesLabel(
+        scopeNames(unreadable.map((place) => place.scope)),
+      ),
+      action: { label: SEE_PROBLEMS_LABEL, onClick: source.onProblems },
     });
   }
   if (result && result.warnings.length > 0) {

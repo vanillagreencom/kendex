@@ -23,6 +23,7 @@ const set = (name: string, members: number, installed = 0): BundleDetail => ({
   installedMembers: installed,
   totalMembers: members,
   collision: null,
+  recordsUnreadable: false,
 });
 
 const text = (node: { textContent: string | null }): string =>

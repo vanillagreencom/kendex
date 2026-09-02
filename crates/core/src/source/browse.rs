@@ -30,6 +30,7 @@ mod summary;
 pub use catalog::Catalog;
 use catalog::browsable;
 pub use deps::{PackageDependencies, PackageDependency};
+pub use opened::records_unreadable;
 pub(crate) use opened::{Browsed, open, open_repo};
 pub use preview::{PackagePreview, package_file, package_preview};
 pub use safety::{PackageSafety, package_safety};
@@ -56,6 +57,20 @@ pub enum InstallState {
     /// what it found, so nothing installs — but the catalog does carry the
     /// name, and saying it is not offered would be the opposite of true.
     OfferedMoreThanOnce,
+    /// This scope's lock could not be read, so whether the package is
+    /// installed here is unknown. The catalog is still listed — what a
+    /// source offers is a fact about the source — but every standing the
+    /// lock alone could have given becomes this one, decided in
+    /// `Browsed::state` and `Browsed::member_state` and nowhere else. Every
+    /// surface offering an install for one package reads the state: the
+    /// Packages row, a set's member row, and the available-package page
+    /// (through [`PackagePreview::state`]) all say why instead, so none
+    /// offers an install the engine would refuse for the same unreadable
+    /// record. The state answers for the BROWSED scope: an install a page
+    /// redirects into a different scope is not yet judged against that
+    /// destination's record. The set page's Install all is about the set,
+    /// not a package, and reads [`BundleDetail::records_unreadable`].
+    Unknown,
 }
 
 /// One package a subscription offers, as the Packages table lists it.
@@ -103,6 +118,14 @@ pub struct BundleDetail {
     pub installed_members: u32,
     pub total_members: u32,
     pub collision: Option<String>,
+    /// This scope's lock could not be read. The set page's Install all asks
+    /// about the set rather than about a member, so it needs the scope's own
+    /// answer: no member row can carry it, because a member the catalog no
+    /// longer offers reads [`InstallState::NotOffered`] with or without a
+    /// lock, and a set whose members were all dropped — or one declared with
+    /// none — would leave the page deriving "readable" from rows that never
+    /// consulted the record.
+    pub records_unreadable: bool,
 }
 
 /// Every package one catalog offers, across kinds.
@@ -157,7 +180,7 @@ pub fn packages(env: &Env, catalog: &Catalog) -> Result<Vec<AvailablePackage>> {
                     &offered,
                     &deps::Where {
                         manifest: &browsed.manifest,
-                        lock: &browsed.lock,
+                        lock: browsed.lock(),
                         subscription: browsed.subscription(),
                     },
                     kind,
@@ -207,21 +230,7 @@ pub fn bundle(env: &Env, catalog: &Catalog, bundle_name: &str) -> Result<BundleD
 fn detail(browsed: &Browsed, found: &super::bundles::CatalogBundle) -> BundleDetail {
     let mut members = Vec::new();
     for member in &found.members {
-        // A member the catalog names but no longer carries is a row, not a
-        // hard error: one bad entry must not sink the whole page.
-        let state = if browsed.locked_here(member.kind, &member.name) {
-            InstallState::Installed
-        } else if browsed.manifest.is_suppressed(member.kind, &member.name) {
-            // Removed by the user, and recorded so the bundle cannot derive
-            // it back — their choice, shown as such with a way to reverse it.
-            InstallState::RemovedByYou
-        } else if super::find_item(&browsed.sealed, &browsed.config, member.kind, &member.name)
-            .is_none()
-        {
-            InstallState::NotOffered
-        } else {
-            InstallState::Available
-        };
+        let state = browsed.member_state(member.kind, &member.name);
         members.push(BundleMemberRow {
             kind: member.kind,
             // Catalog-authored, so shown with any control or deceptive
@@ -243,6 +252,7 @@ fn detail(browsed: &Browsed, found: &super::bundles::CatalogBundle) -> BundleDet
         total_members: members.len().min(u32::MAX as usize) as u32,
         members,
         collision: browsed.bundle_collision(&found.name),
+        records_unreadable: browsed.lock_unreadable(),
     }
 }
 

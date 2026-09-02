@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ObservedItem, ScanResult } from "@/bindings";
+import type { ObservedItem, ScanResult, UnreadableScope } from "@/bindings";
 import {
   AUDIT_ATTENTION_TITLE,
   SCAN_AGAIN_LABEL,
@@ -10,6 +10,7 @@ import {
   UPDATES_ATTENTION_TITLE,
 } from "@/lib/copy";
 import { MARKETPLACES_UNCHECKED_DETAIL } from "@/lib/copy-marketplaces";
+import { UPDATES_UNREADABLE_TITLE } from "@/lib/copy-updates";
 import {
   READ_LANDED,
   READ_PENDING,
@@ -33,7 +34,10 @@ const { stub, wrap } = vi.hoisted(() => {
       error: null as string | null,
       scanning: false,
     },
-    updates: { read: { status: "landed", error: null } as ReadState },
+    updates: {
+      read: { status: "landed", error: null } as ReadState,
+      unreadable: [] as UnreadableScope[],
+    },
     market: { read: { status: "landed", error: null } as ReadState },
     audit: {
       auditedAt: null as number | null,
@@ -107,7 +111,7 @@ const installed = (overrides: Partial<ObservedItem>): ObservedItem => ({
 
 beforeEach(() => {
   stub.scan = { result: null, error: null, scanning: false };
-  stub.updates = { read: READ_LANDED };
+  stub.updates = { read: READ_LANDED, unreadable: [] };
   stub.market = { read: READ_LANDED };
   stub.audit = { auditedAt: null, read: READ_LANDED, error: null };
 });
@@ -175,7 +179,7 @@ describe("Home when the update check fails", () => {
   it("says updates couldn't be checked in the attention list", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
     stub.audit = { auditedAt: Date.now(), read: READ_LANDED, error: null };
-    stub.updates = { read: readFailed("no network") };
+    stub.updates = { read: readFailed("no network"), unreadable: [] };
     expect(renderToStaticMarkup(<OverviewPage />)).toContain(
       esc(UPDATES_ATTENTION_TITLE),
     );
@@ -190,6 +194,29 @@ describe("Home when the update check fails", () => {
   });
 });
 
+// A place whose lock this build refuses contributes no rows at all, so the
+// counts on this page answer for less than the machine. The page has to feed
+// the store's list to the derivation for the row to exist: a `unreadable: []`
+// in the page's source would drop the place with nothing else reddening.
+describe("Home when a place cannot be read at all", () => {
+  it("names the place with no update standing in the attention list", () => {
+    stub.scan = { result: scanned, error: null, scanning: false };
+    stub.audit = { auditedAt: Date.now(), read: READ_LANDED, error: null };
+    stub.updates = {
+      read: READ_LANDED,
+      unreadable: [
+        {
+          scope: { scope: "project", root: "/home/dev/hyprtrade" },
+          message: "written by a newer kendex",
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(<OverviewPage />);
+    expect(html).toContain(esc(UPDATES_UNREADABLE_TITLE));
+    expect(html).toContain("hyprtrade");
+  });
+});
+
 // auditedAt stays null forever after a failed startup audit; gating the
 // skeleton on it alone held the section in "still looking" for the session
 // and swallowed every other attention row.
@@ -199,7 +226,7 @@ describe("Home when the audit fails", () => {
   // the update check, so waiting on it hid rows that were ready.
   it("shows the section as soon as the scan answers, audit or no audit", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
-    stub.updates = { read: readFailed("no network") };
+    stub.updates = { read: readFailed("no network"), unreadable: [] };
     const html = renderToStaticMarkup(<OverviewPage />);
     expect(html).not.toContain('data-slot="skeleton"');
     expect(html).toContain(esc(UPDATES_ATTENTION_TITLE));
@@ -233,7 +260,7 @@ describe("Home when the audit fails", () => {
       read: readFailed("audit crashed"),
       error: "audit crashed",
     };
-    stub.updates = { read: readFailed("no network") };
+    stub.updates = { read: readFailed("no network"), unreadable: [] };
     expect(renderToStaticMarkup(<OverviewPage />)).toContain(
       esc(UPDATES_ATTENTION_TITLE),
     );

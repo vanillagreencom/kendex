@@ -37,6 +37,7 @@ const row = (repo: string, repoKey: string | null): MarketplaceRow => ({
   counts: null,
   meta: null,
   mode: null,
+  recordsUnreadable: false,
 });
 
 // The client-side "these rows are not current" refusal is gone: the action

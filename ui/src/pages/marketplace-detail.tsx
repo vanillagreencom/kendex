@@ -145,7 +145,14 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
                     </p>
                   ) : (
                     <PackagesTable
-                      entries={offered.map((pkg) => ({ catalog, row: pkg }))}
+                      entries={offered.map((pkg) => ({
+                        catalog,
+                        row: pkg,
+                        // The subscription row this page was opened from
+                        // carries the scope's current record standing; a
+                        // bare repository has no scope of its own to ask.
+                        recordsUnreadable: row?.recordsUnreadable ?? false,
+                      }))}
                       showMarketplace={false}
                     />
                   )}

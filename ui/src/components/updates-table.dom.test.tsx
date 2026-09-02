@@ -73,7 +73,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(commands.updatesOverview).mockResolvedValue({
     status: "ok",
-    data: { rows: [], warnings: [], lastFetched: null },
+    data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
   });
   vi.mocked(commands.scanMachine).mockResolvedValue({
     status: "ok",
@@ -211,6 +211,7 @@ describe("the table's own menu", () => {
       data: {
         rows: [row("one", null), row("two", null, { ignored: true })],
         warnings: [],
+        unreadable: [],
         lastFetched: null,
       },
     });
@@ -248,7 +249,12 @@ describe("the row's Ignore item", () => {
   it("is held while a check is out", async () => {
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [row("one", null)], warnings: [], lastFetched: null },
+      data: {
+        rows: [row("one", null)],
+        warnings: [],
+        unreadable: [],
+        lastFetched: null,
+      },
     });
     mount(<UpdatesPage />);
     await settle();
@@ -281,7 +287,12 @@ describe("the row's Ignore item", () => {
   it("holds the confirm it opens for either half of the pair", async () => {
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [row("one", null)], warnings: [], lastFetched: null },
+      data: {
+        rows: [row("one", null)],
+        warnings: [],
+        unreadable: [],
+        lastFetched: null,
+      },
     });
     mount(<UpdatesPage />);
     await settle();
@@ -318,6 +329,7 @@ describe("a page with only muted updates", () => {
       data: {
         rows: [row("two", null, { ignored: true })],
         warnings: [],
+        unreadable: [],
         lastFetched: null,
       },
     });
@@ -464,6 +476,7 @@ describe("a row of a kind core refuses", () => {
           row("gh", null),
         ],
         warnings: [],
+        unreadable: [],
         lastFetched: null,
       },
     });

@@ -2,6 +2,7 @@
 //! reading is, and which packages are muted — thin shells over core, like
 //! every other command here.
 
+use kendex_core::env::Env;
 use kendex_core::model::{ItemKind, Scope};
 use kendex_core::package::updates;
 use kendex_core::{manifest, remote};
@@ -16,13 +17,38 @@ use crate::scopes::{all as all_scopes, env};
 #[specta::specta]
 pub fn updates_overview() -> Result<updates::UpdatesReport, String> {
     let env = env()?;
+    Ok(overview(&env, &all_scopes(&env)?))
+}
+
+/// The standing across the scopes given, with a scope kendex cannot read
+/// carried in `unreadable` rather than failing the whole query.
+///
+/// A lock or manifest this build refuses belongs to one place. Bubbling
+/// it up left the page with no rows at all and the sidebar with a bare "?"
+/// while every other place's standing was known, so the scope is carried
+/// as data instead, the way [`crate::audit::AuditView`] carries its own.
+/// Only as far as the message, though: an `AuditView` also carries a typed
+/// [`crate::audit::ScopeErrorKind`], and a surface wanting to word a
+/// corrupt lock differently from a too-new one reads that on the Problems
+/// page rather than parsing the prose here.
+pub fn overview(env: &Env, scopes: &[Scope]) -> updates::UpdatesReport {
     let mut reports = Vec::new();
-    for scope in all_scopes(&env)? {
-        let mut report = updates::updates(&env, &scope).map_err(|e| e.to_string())?;
+    let mut unreadable = Vec::new();
+    for scope in scopes {
+        let mut report = match updates::updates(env, scope) {
+            Ok(report) => report,
+            Err(error) => {
+                unreadable.push(updates::UnreadableScope {
+                    scope: scope.clone(),
+                    message: error.to_string(),
+                });
+                continue;
+            }
+        };
         // The deep work just ran; the session-start check reads this. A
         // failure is a warning on the page, never silence — the CLI paths
         // say the same thing.
-        if let Err(error) = kendex_core::drift::snapshot::record_with(&env, &scope, &report) {
+        if let Err(error) = kendex_core::drift::snapshot::record_with(env, scope, &report) {
             report.warnings.push(kendex_core::engine::ItemWarning {
                 kind: kendex_core::model::ItemKind::Skill,
                 name: scope.label(),
@@ -33,7 +59,9 @@ pub fn updates_overview() -> Result<updates::UpdatesReport, String> {
         }
         reports.push(report);
     }
-    Ok(merge(reports))
+    let mut merged = merge(reports);
+    merged.unreadable = unreadable;
+    merged
 }
 
 /// Fold every scope's standing into the one view the page draws.
@@ -48,6 +76,7 @@ fn merge(reports: impl IntoIterator<Item = updates::UpdatesReport>) -> updates::
     let mut merged = updates::UpdatesReport {
         rows: Vec::new(),
         warnings: Vec::new(),
+        unreadable: Vec::new(),
         last_fetched: None,
     };
     for report in reports {
@@ -96,6 +125,7 @@ mod tests {
         updates::UpdatesReport {
             rows: Vec::new(),
             warnings: Vec::new(),
+            unreadable: Vec::new(),
             last_fetched,
         }
     }

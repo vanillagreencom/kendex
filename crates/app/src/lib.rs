@@ -19,7 +19,7 @@ pub mod repo_effects;
 mod scopes;
 pub mod sources;
 pub mod unsubscribe;
-mod update_check;
+pub mod update_check;
 mod whole_file;
 mod window;
 

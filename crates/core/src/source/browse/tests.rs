@@ -102,8 +102,13 @@ fn packages_listed_for_a_plain_discovered_marketplace() {
     assert!(rows.iter().any(|row| row.name == "extra"));
 }
 
+/// The manifest decides which source resolves at all, so an unreadable one
+/// has no read to degrade to. The lock only answers what is installed here,
+/// and an unreadable one leaves the listing standing with every row's state
+/// unknown — one project's damaged record must not hide what every catalog
+/// it subscribes to offers.
 #[test]
-fn malformed_scope_records_fail_the_browse_read() {
+fn a_malformed_manifest_fails_the_browse_read_and_a_malformed_lock_does_not() {
     let tmp = tempfile::tempdir().unwrap();
     let catalog = tmp.path().join("catalog");
     skill(&catalog, "skills", "gh", "body");
@@ -124,10 +129,9 @@ fn malformed_scope_records_fail_the_browse_read() {
         format!(r#"{{"version":{}"#, crate::lock::LOCK_VERSION),
     )
     .unwrap();
-    assert!(matches!(
-        packages(&env, &cat(&scope)),
-        Err(crate::error::CoreError::LockCorrupt { .. })
-    ));
+    let rows = packages(&env, &cat(&scope)).unwrap();
+    let gh = rows.iter().find(|row| row.name == "gh").expect("gh listed");
+    assert_eq!(gh.state, InstallState::Unknown);
 }
 
 /// The Packages row shows the summary when the header writes one and the

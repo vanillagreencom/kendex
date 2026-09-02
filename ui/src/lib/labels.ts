@@ -91,6 +91,27 @@ export function scopePath(scope: Scope): string | null {
   return scope.scope === "global" ? null : scope.root;
 }
 
+/** Names for a set of places, each one telling its holder apart from the
+ * others in the set. `scopeName` is a folder's basename, so ~/dev/kendex
+ * and ~/work/kendex read identically — two lines of a note naming the same
+ * thing, with nothing to say which had the problem. Where a name is shared,
+ * the entries holding it carry their full path instead. Returned in the
+ * order given, one per scope. */
+export function scopeNames(scopes: Scope[]): string[] {
+  const holders = new Map<string, Set<string>>();
+  for (const scope of scopes) {
+    const name = scopeName(scope);
+    const holder = holders.get(name) ?? new Set<string>();
+    holder.add(scopePath(scope) ?? "");
+    holders.set(name, holder);
+  }
+  return scopes.map((scope) => {
+    const name = scopeName(scope);
+    const path = scopePath(scope);
+    return path !== null && (holders.get(name)?.size ?? 1) > 1 ? path : name;
+  });
+}
+
 // A hook's raw identifier is "<event>:<matcher>:<name>" or "<event>:<name>" — a person reads the trailing name; the full id stays in a mono line.
 export function hookDisplayName(id: string): string {
   const parts = id.split(":");

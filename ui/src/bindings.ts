@@ -710,6 +710,16 @@ export type BundleDetail = {
 	installedMembers: number,
 	totalMembers: number,
 	collision: string | null,
+	/**
+	 *  This scope's lock could not be read. The set page's Install all asks
+	 *  about the set rather than about a member, so it needs the scope's own
+	 *  answer: no member row can carry it, because a member the catalog no
+	 *  longer offers reads [`InstallState::NotOffered`] with or without a
+	 *  lock, and a set whose members were all dropped — or one declared with
+	 *  none — would leave the page deriving "readable" from rows that never
+	 *  consulted the record.
+	 */
+	recordsUnreadable: boolean,
 };
 
 /**  One member of a curated set, with where it stands here. */
@@ -1588,7 +1598,23 @@ export type InstallState =
  *  what it found, so nothing installs — but the catalog does carry the
  *  name, and saying it is not offered would be the opposite of true.
  */
-"offered-more-than-once";
+"offered-more-than-once" | 
+/**
+ *  This scope's lock could not be read, so whether the package is
+ *  installed here is unknown. The catalog is still listed — what a
+ *  source offers is a fact about the source — but every standing the
+ *  lock alone could have given becomes this one, decided in
+ *  `Browsed::state` and `Browsed::member_state` and nowhere else. Every
+ *  surface offering an install for one package reads the state: the
+ *  Packages row, a set's member row, and the available-package page
+ *  (through [`PackagePreview::state`]) all say why instead, so none
+ *  offers an install the engine would refuse for the same unreadable
+ *  record. The state answers for the BROWSED scope: an install a page
+ *  redirects into a different scope is not yet judged against that
+ *  destination's record. The set page's Install all is about the set,
+ *  not a package, and reads [`BundleDetail::records_unreadable`].
+ */
+"unknown";
 
 /**
  *  One row of the install picker: a tool the scope can install to, whether
@@ -1972,6 +1998,14 @@ export type MarketplaceRow = {
 	meta: MarketplaceMeta | null,
 	/**  How the catalog's items were decided, where readable. */
 	mode: CatalogMode | null,
+	/**
+	 *  This row's scope has no readable lock, so every installed state it
+	 *  alone would settle reads Unknown. Carried on the row rather than
+	 *  joined from the updates read: the Packages tab says so above its
+	 *  table, and a fact that arrives with the rows it describes is
+	 *  refreshed by the same read instead of by another surface's clock.
+	 */
+	recordsUnreadable: boolean,
 };
 
 export type Method = "symlink" | "copy";
@@ -2213,6 +2247,14 @@ export type PackagePreview = {
 	bundles: string[],
 	/**  What installing it takes along, and what it offers to take. */
 	dependencies: PackageDependencies,
+	/**
+	 *  Where this package stands in the browsed scope, by the same join the
+	 *  Packages row shows. The page installs, so it needs the answer the
+	 *  row has: [`InstallState::Unknown`] where the scope's lock could not
+	 *  be read, and the page offers the reason rather than a button the
+	 *  engine would refuse for that same record.
+	 */
+	state: InstallState,
 	collision: string | null,
 };
 
@@ -2900,6 +2942,17 @@ export type TemplateFinding = {
 };
 
 /**
+ *  A scope whose standing could not be read at all, and why. The reason
+ *  travels with it so the Updates note naming the place says the cause
+ *  without a second read. Only the message travels — no typed kind — and
+ *  the Problems page is where a cause is told apart from its neighbour.
+ */
+export type UnreadableScope = {
+	scope: Scope,
+	message: string,
+};
+
+/**
  *  What unsubscribing from a marketplace would do: the packages that can be
  *  removed or kept as-is, the ones the user edited (which must be forked or
  *  discarded first), and the curated sets that leave with the source.
@@ -3074,6 +3127,15 @@ export type UpdatesReport_Deserialize = {
 	rows: UpdateRow[],
 	warnings: ItemWarning_Deserialize[],
 	/**
+	 *  Scopes whose standing could not be read at all — a lock or manifest
+	 *  this build refuses. Carried as data, like [`crate::engine::ItemWarning`]
+	 *  above and for the same reason: one place's unreadable record must
+	 *  not blank every other place's standing. Always empty from
+	 *  [`updates`], which answers for one scope and fails outright; the
+	 *  multi-scope caller folding those answers together fills it.
+	 */
+	unreadable: UnreadableScope[],
+	/**
 	 *  When the mirrors behind this standing were last brought current —
 	 *  Unix seconds, `None` when nothing has ever fetched. A clean report
 	 *  is only as true as the fetch under it, so the age of that fetch
@@ -3093,6 +3155,15 @@ export type UpdatesReport_Deserialize = {
 export type UpdatesReport_Serialize = {
 	rows: UpdateRow[],
 	warnings: ItemWarning_Serialize[],
+	/**
+	 *  Scopes whose standing could not be read at all — a lock or manifest
+	 *  this build refuses. Carried as data, like [`crate::engine::ItemWarning`]
+	 *  above and for the same reason: one place's unreadable record must
+	 *  not blank every other place's standing. Always empty from
+	 *  [`updates`], which answers for one scope and fails outright; the
+	 *  multi-scope caller folding those answers together fills it.
+	 */
+	unreadable: UnreadableScope[],
 	/**
 	 *  When the mirrors behind this standing were last brought current —
 	 *  Unix seconds, `None` when nothing has ever fetched. A clean report

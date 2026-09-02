@@ -25,6 +25,7 @@ const kept: MarketplaceRow = {
   counts: null,
   meta: null,
   mode: null,
+  recordsUnreadable: false,
 };
 
 // A failed overview read keeps the rows it had — the page does not blank —

@@ -52,6 +52,7 @@ const kept: MarketplaceRow = {
   counts: null,
   meta: null,
   mode: null,
+  recordsUnreadable: false,
 };
 
 beforeEach(() => {

@@ -4,6 +4,7 @@ import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { AvailablePackage, Finding, PackageSafety } from "@/bindings";
+import { PACKAGE_STATE_UNKNOWN } from "@/lib/copy-marketplaces";
 import {
   SAFETY_CAVEAT,
   SAFETY_DOT_UNCHECKED,
@@ -76,7 +77,10 @@ const scored = (score: number, findings: Finding[] = []): PackageSafety => ({
 const render = (safety: PackageSafety | null) => {
   stub.scores = safety ? { [safetyKey(catalog, "skill", "gh")]: safety } : {};
   return renderToStaticMarkup(
-    <PackagesTable entries={[{ catalog, row }]} showMarketplace={false} />,
+    <PackagesTable
+      entries={[{ catalog, row, recordsUnreadable: false }]}
+      showMarketplace={false}
+    />,
   );
 };
 
@@ -98,6 +102,7 @@ describe("the line under the package name", () => {
         entries={[
           {
             catalog,
+            recordsUnreadable: false,
             row: {
               ...row,
               description: "Load to work a pull request.",
@@ -168,7 +173,10 @@ const mount = (safety: PackageSafety | null) => {
   const goToAvailablePackage = vi.fn();
   useNavStore.setState({ goToAvailablePackage });
   const host = mountTree(
-    <PackagesTable entries={[{ catalog, row }]} showMarketplace={false} />,
+    <PackagesTable
+      entries={[{ catalog, row, recordsUnreadable: false }]}
+      showMarketplace={false}
+    />,
   );
   const dot = host.querySelector<HTMLButtonElement>(
     '[data-slot="tooltip-trigger"]',
@@ -236,5 +244,25 @@ describe("reading the safety dot", () => {
       kind: "skill",
       name: "gh",
     });
+  });
+});
+
+// The row's own state is cached per package and only refreshed when the
+// catalog is read again; the scope's record standing rides on the overview
+// row, which every load refreshes. A scope readable when these rows were
+// cached, damaged while the app stayed open, is exactly that disagreement —
+// and a live Install here reaches the engine and fails on the same record.
+describe("a cached row under a scope whose record has since broken", () => {
+  it("says not known and offers no install, whatever the cached row claims", () => {
+    stub.scores = {};
+    const html = renderToStaticMarkup(
+      <PackagesTable
+        entries={[{ catalog, row, recordsUnreadable: true }]}
+        showMarketplace={false}
+      />,
+    );
+    expect(row.state).toBe("available");
+    expect(html).toContain(PACKAGE_STATE_UNKNOWN);
+    expect(html).not.toContain(">Install<");
   });
 });

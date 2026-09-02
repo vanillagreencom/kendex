@@ -118,7 +118,7 @@ describe("what a bulk run says it did", () => {
     vi.mocked(commands.packageUpdateMany).mockResolvedValue(answer as never);
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [], lastFetched: null },
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
     });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",

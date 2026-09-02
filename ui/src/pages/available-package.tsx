@@ -9,6 +9,7 @@ import {
   HarnessSelect,
   isInstallable,
 } from "@/components/marketplaces/harness-select";
+import { RecordsUnreadableNote } from "@/components/marketplaces/packages-trouble";
 import { RepoAction } from "@/components/marketplaces/repo-action";
 import { useCatalog } from "@/components/marketplaces/use-catalog";
 import { PageHeader } from "@/components/page-header";
@@ -16,6 +17,7 @@ import { SafetyPanel } from "@/components/safety-panel";
 import { TagBadges } from "@/components/tag-badge";
 import { Button } from "@/components/ui/button";
 import { scopeLabel } from "@/lib/derive";
+import { recordsUnreadable } from "@/lib/install-state";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
@@ -96,6 +98,12 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
       : undefined;
   const repo = row?.repo ?? row?.path ?? summary?.provenance ?? null;
   const shownError = reachError ?? error;
+  // Every Packages row opens this page, "Not known" ones included. The
+  // engine answered unknown because it could not read this scope's lock,
+  // and an install would meet the same record, so the page says why in
+  // place of the button rather than letting a raw engine error stand in
+  // for the reason.
+  const recordsUnknown = view !== null && recordsUnreadable(view.preview.state);
 
   const doInstall = () => {
     if (catalog.by !== "subscription" || !target) return;
@@ -162,7 +170,9 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
                 onChange={setChoice}
               />
               <Button
-                disabled={busy || !view || !isInstallable(choice)}
+                disabled={
+                  busy || !view || !isInstallable(choice) || recordsUnknown
+                }
                 onClick={doInstall}
               >
                 {busy ? "Installing…" : "Install"}
@@ -184,6 +194,9 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
                 <p className="text-sm text-critical" role="alert">
                   {shownError}
                 </p>
+              ) : null}
+              {recordsUnknown && scope ? (
+                <RecordsUnreadableNote scope={scope} />
               ) : null}
               {/* The reading comes before the package's own words about
                   itself: the header already says what this is, and this is

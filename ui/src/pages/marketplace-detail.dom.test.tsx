@@ -31,6 +31,7 @@ const starter: BundleDetail = {
   installedMembers: 0,
   totalMembers: 1,
   collision: null,
+  recordsUnreadable: false,
 };
 
 beforeEach(() => {

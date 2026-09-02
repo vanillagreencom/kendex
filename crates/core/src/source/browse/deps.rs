@@ -62,7 +62,10 @@ impl PackageDependencies {
 /// its installations are the ones the row is about.
 pub(super) struct Where<'a> {
     pub(super) manifest: &'a Manifest,
-    pub(super) lock: &'a Lock,
+    /// `None` where the landing scope's lock could not be read: what is
+    /// installed there is then unknown, and a dependency says so rather
+    /// than claiming it is missing.
+    pub(super) lock: Option<&'a Lock>,
     /// The subscription the catalog is browsed as. A redirected install
     /// installs from the same subscription name in the destination.
     pub(super) subscription: Option<&'a str>,
@@ -70,7 +73,10 @@ pub(super) struct Where<'a> {
 
 impl Where<'_> {
     fn state(&self, kind: ItemKind, name: &str) -> InstallState {
-        let locked = self.lock.entries.values().any(|entry| {
+        let Some(lock) = self.lock else {
+            return InstallState::Unknown;
+        };
+        let locked = lock.entries.values().any(|entry| {
             entry.kind == kind
                 && entry.name == name
                 && self.subscription == Some(entry.source.as_str())
