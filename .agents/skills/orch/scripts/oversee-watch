@@ -2,8 +2,8 @@
 # oversee-watch blocks until the fleet needs the overseer, reports one wake,
 # and exits. The workflow handles every EVENT line and re-runs it.
 #
-# Pass order: one lane snapshot, pr-watch, merge lifecycle, merged items, team
-# triage, lane classification, heartbeat. Every event carries the
+# Pass order: one lane snapshot, pr-watch, merged items, team triage, lane
+# classification, heartbeat. Every event carries the
 # latest pr-watch context. Live tracker and pane reads remain authoritative;
 # persisted state holds only edge keys. Usage, event details, configuration,
 # and failure contracts live in usage().
@@ -16,7 +16,7 @@ export SCRIPT_DIR
 usage() {
   cat <<'USAGE'
 Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
-                     [--item ISSUE_ID]... [--repo OWNER/REPO]...
+                     [--no-triage] [--item ISSUE_ID]... [--repo OWNER/REPO]...
                      [LANE_WINDOW...]
 
 Blocks until the fleet needs the overseer, then prints one event or one line per
@@ -24,7 +24,6 @@ merged and triage item. Re-run after handling it with the live fleet in scope.
 
 Events, checked in this order every pass:
   EVENT pr-watch rc=N        new review-gate attention; reducer output follows
-  EVENT merge-verdict <item> <watch-id>  wake its lane to consume the lifecycle
   EVENT merged <PR> <branch> an --item PR merged at or after --since
   EVENT triage <item>        an item created at or after --since that is absent
                              from the first repository's persisted baseline
@@ -52,6 +51,11 @@ Options:
   --max-loops N       passes before a heartbeat (default 25)
   --since ISO8601     UTC created/merged-at floor, with a Z suffix. Pass the
                       fleet's fixed start time on every run, never "now"
+  --no-triage         run without the team triage check. Without it, --since
+                      REQUIRES the tracker CLI, workflow-state and LINEAR_TEAM,
+                      and a missing one exits 2 rather than dropping triage —
+                      a fleet with no tracker team passes this flag to keep
+                      --since for the merged check
   --item ISSUE_ID     live item; repeatable. No values skips merged with a note
   --repo OWNER/REPO   repository; repeatable and case-normalized. The reducer
                       covers all; merged and heartbeat read the first
@@ -76,7 +80,8 @@ Environment:
   OVERSEE_WATCH_TRACKER       path to the Linear CLI
   OVERSEE_WATCH_WORKFLOW_STATE path to workflow-state
   PR_WATCH_WRITER_WORKFLOW    workflow dispatched by pr-watch --heal
-  OVERSEE_WATCH_STATE_DIR     pr-watch and lane-asking baselines plus claims/
+  OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
+                              triage and lane-asking rows — plus claims/
 USAGE
 }
 die() { echo "oversee-watch: $*" >&2; exit 2; }
@@ -95,6 +100,7 @@ parse_argv() {
   INTERVAL=240
   MAX_LOOPS=25
   SINCE=""
+  NO_TRIAGE=0
   REPOS=()
   ITEMS=()
   LANES=()
@@ -107,6 +113,7 @@ parse_argv() {
       --max-loops=*) MAX_LOOPS="${1#--max-loops=}"; need_val --max-loops "$MAX_LOOPS"; shift ;;
       --since) need_val "$@"; SINCE="$2"; shift 2 ;;
       --since=*) SINCE="${1#--since=}"; need_val --since "$SINCE"; shift ;;
+      --no-triage) NO_TRIAGE=1; shift ;;
       --item) need_val "$@"; ITEMS+=("$2"); shift 2 ;;
       --item=*) need_val --item "${1#--item=}"; ITEMS+=("${1#--item=}"); shift ;;
       --repo) need_val "$@"; REPOS+=("$2"); shift 2 ;;
@@ -152,8 +159,10 @@ esac
 WORKFLOW_STATE_ARGS=(--state-dir "$WORKFLOW_STATE_DIR")
 PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 
-# Lane-asking shares the review reducer's state directory and keeps only pane
-# fingerprints. The live pane capture remains authoritative.
+# One state-file class, and only one: the per-repo reducer baseline. Triage
+# keys and lane-asking fingerprints are rows in the first repository's file,
+# never a file of their own. This makes the directory exist before any of them
+# is read. The live pane capture remains authoritative.
 watch_state_init() {
   mkdir -p "$PW_STATE_DIR" \
     || die "could not create the oversee-watch state directory $PW_STATE_DIR (set OVERSEE_WATCH_STATE_DIR)"
@@ -161,14 +170,33 @@ watch_state_init() {
     || die "the oversee-watch state directory $PW_STATE_DIR is not writable (set OVERSEE_WATCH_STATE_DIR)"
 }
 
-watch_state_write() {
-  local file="$1" content="$2" kind="$3" tmp="$1.$$.tmp"
-  [[ ! -e "$file" || -f "$file" ]] \
-    || die "could not write the $kind state file $file (not a regular file; set OVERSEE_WATCH_STATE_DIR)"
-  printf '%s' "$content" > "$tmp" \
-    || { rm -f "$tmp"; die "could not write the $kind state file $file (set OVERSEE_WATCH_STATE_DIR)"; }
-  mv -f "$tmp" "$file" \
-    || { rm -f "$tmp"; die "could not replace the $kind state file $file (set OVERSEE_WATCH_STATE_DIR)"; }
+# Lane-asking rows in the first repository's baseline, beside the reducer's
+# `<pr>\t<kind>` and triage's `triage\t<id>`:
+#   lane-asking<TAB><lane><TAB><fingerprint>
+# Each helper takes the whole baseline blob and returns the answer or the
+# rewritten blob, so a pass mutates a local and commits once.
+lane_asking_fingerprint() {
+  awk -F'\t' -v lane="$2" '$1 == "lane-asking" && NF == 3 && $2 == lane { print $3 }' <<<"$1"
+}
+
+lane_asking_clear() {
+  awk -F'\t' -v lane="$2" 'NF && !($1 == "lane-asking" && NF == 3 && $2 == lane)' <<<"$1"
+}
+
+lane_asking_set() {
+  local rest
+  rest="$(lane_asking_clear "$1" "$2")"
+  [[ -z "$rest" ]] || printf '%s\n' "$rest"
+  printf 'lane-asking\t%s\t%s\n' "$2" "$3"
+}
+
+# The same two-phase flush triage uses, on the same file: nothing is written
+# when the pass changed nothing, and the event has already printed.
+lane_asking_commit() {
+  [[ "$1" != "${PW_SEEN[0]}" ]] || return 0
+  pw_stage_state "$(pw_state_file "${REPOS[0]}")" "$1"
+  pw_commit_state "$(pw_state_file "${REPOS[0]}")"
+  PW_SEEN[0]="$1"
 }
 
 # Every pane predicate lives here, one line each, matched with `grep -E`
@@ -232,18 +260,21 @@ if [[ -n "$SINCE" ]]; then
 fi
 
 TRIAGE_ENABLED=0
-LANE_ASKING_STATE='{}'
-LANE_ASKING_STATE_FILE="$PW_STATE_DIR/lane-asking__$(pw_slug "${SINCE:-none}").json"
-if [[ -n "$SINCE" ]]; then
-  if [[ ! -x "$TRACKER" ]]; then
-    echo "oversee-watch: tracker CLI not found at $TRACKER; skipping triage" >&2
-  elif [[ ! -x "$WORKFLOW_STATE" ]]; then
-    echo "oversee-watch: workflow-state CLI not found at $WORKFLOW_STATE; skipping triage" >&2
-  elif [[ -z "${LINEAR_TEAM:-}" ]]; then
-    echo "oversee-watch: LINEAR_TEAM is unset; skipping triage" >&2
-  else
-    TRIAGE_ENABLED=1
-  fi
+# Triage fails CLOSED: oversee.md § 4 owes a verdict to every emitted team
+# item, so a broken install that silently dropped triage would drop every new
+# item with it. Each missing dependency is a usage error naming its remedy;
+# --no-triage is the one deliberate opt-out, for a fleet with no tracker team
+# that still wants --since for the merged check.
+if [[ -n "$SINCE" && "$NO_TRIAGE" -eq 0 ]]; then
+  [[ -x "$TRACKER" ]] \
+    || die "tracker CLI not found at $TRACKER; triage needs it (set OVERSEE_WATCH_TRACKER, or pass --no-triage to watch without triage)"
+  [[ -x "$WORKFLOW_STATE" ]] \
+    || die "workflow-state CLI not found at $WORKFLOW_STATE; triage needs it (set OVERSEE_WATCH_WORKFLOW_STATE, or pass --no-triage to watch without triage)"
+  [[ -n "${LINEAR_TEAM:-}" ]] \
+    || die "LINEAR_TEAM is unset; triage needs it (set LINEAR_TEAM, or pass --no-triage to watch without triage)"
+  TRIAGE_ENABLED=1
+elif [[ -n "$SINCE" ]]; then
+  echo "oversee-watch: --no-triage given; skipping the team triage check (pr-watch/merged/window/lane-asking checks still run)" >&2
 fi
 
 # The item's head branch is its id lowercased (worktree create's branch name);
@@ -324,12 +355,6 @@ if [[ ${#REPOS[@]} -gt 1 ]]; then
 fi
 
 watch_state_init
-if [[ ${#LANES[@]} -gt 0 && -f "$LANE_ASKING_STATE_FILE" ]]; then
-  LANE_ASKING_STATE="$(cat "$LANE_ASKING_STATE_FILE" 2>/dev/null)" \
-    || die "cannot read the lane-asking state file: $LANE_ASKING_STATE_FILE (set OVERSEE_WATCH_STATE_DIR)"
-  jq -e 'type == "object" and all(.[]; type == "string")' <<<"$LANE_ASKING_STATE" >/dev/null \
-    || die "the lane-asking state file is invalid: $LANE_ASKING_STATE_FILE (set OVERSEE_WATCH_STATE_DIR)"
-fi
 pw_init_state
 
 check_merged() {
@@ -508,7 +533,7 @@ lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$1"; }
 observe_lanes() {
   LANE_OBS=""
   [[ ${#LANES[@]} -gt 0 ]] || return 0
-  local existing lane pane below key prefix prior next obs pid cmd capture errf i=0 state="$LANE_ASKING_STATE"
+  local existing lane pane below key prefix prior obs pid cmd capture errf i=0 state="${PW_SEEN[0]}"
   existing="$(tmux list-windows -F '#W' 2>&1)" || die "tmux list-windows failed: $existing"
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
@@ -516,9 +541,7 @@ observe_lanes() {
     rm -f "$capture" "$capture.$$.tmp"
     if ! grep -qxF -- "$lane" <<<"$existing"; then
       LANE_OBS+="$i"$'\t'"gone"$'\t\t\t\n'
-      next="$(jq -c --arg lane "$lane" 'del(.[$lane])' <<<"$state")" \
-        || die "could not clear lane '$lane' from $LANE_ASKING_STATE_FILE"
-      state="$next"
+      state="$(lane_asking_clear "$state" "$lane")"
       continue
     fi
     errf="$WORK_DIR/lane-probe.$i.err"
@@ -540,26 +563,20 @@ observe_lanes() {
     LANE_OBS+="$i"$'\t'"ready"$'\t'"$pid"$'\t'"$cmd"$'\t'"$key"$'\n'
     pane="$(cat -- "$capture")"
     below="$(pane_below_last_turn "$pane")"
-    prior="$(jq -r --arg lane "$lane" '.[$lane] // ""' <<<"$state")" \
-      || die "could not read lane '$lane' from $LANE_ASKING_STATE_FILE"
+    prior="$(lane_asking_fingerprint "$state" "$lane")"
     prefix="${key}|$(pane_turn_identity "$pane")|"
     if ! grep -Eq -- "$LANE_ASKING_RE" <<<"$below" \
        || [[ -n "$prior" && "$prior" != "$prefix"* ]]; then
-      next="$(jq -c --arg lane "$lane" 'del(.[$lane])' <<<"$state")" \
-        || die "could not clear lane '$lane' from $LANE_ASKING_STATE_FILE"
-      state="$next"
+      state="$(lane_asking_clear "$state" "$lane")"
     fi
   done
-  if [[ "$state" != "$LANE_ASKING_STATE" ]]; then
-    watch_state_write "$LANE_ASKING_STATE_FILE" "$state" "lane-asking"
-    LANE_ASKING_STATE="$state"
-  fi
+  lane_asking_commit "$state"
 }
 
 check_lanes() {
   [[ ${#LANES[@]} -gt 0 ]] || return 0
   local lane pane below cmd pid state probe i states="" shell_now="" idle_now="" asking_now="" claims="" claimed pane_key
-  local asking_state="$LANE_ASKING_STATE" next_state fingerprint prior turn_identity
+  local asking_state="${PW_SEEN[0]}" next_state fingerprint prior turn_identity
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
@@ -607,12 +624,8 @@ check_lanes() {
         echo "EVENT lane-exited $lane"
         pane="$(cat -- "$(lane_pane_file "$i")")"
         [[ -z "$pane" ]] || pane_tail "$pane"
-        next_state="$(jq -c --arg lane "$lane" 'del(.[$lane])' <<<"$asking_state")" \
-          || die "could not clear lane '$lane' from $LANE_ASKING_STATE_FILE"
-        if [[ "$next_state" != "$LANE_ASKING_STATE" ]]; then
-          watch_state_write "$LANE_ASKING_STATE_FILE" "$next_state" "lane-asking"
-          LANE_ASKING_STATE="$next_state"
-        fi
+        next_state="$(lane_asking_clear "$asking_state" "$lane")"
+        lane_asking_commit "$next_state"
         pr_watch_context
         exit 0
       fi
@@ -665,28 +678,19 @@ check_lanes() {
       pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
       turn_identity="$(pane_turn_identity "$pane")"
       fingerprint="${pane_key}|${turn_identity}|$(printf '%s' "$below" | cksum)"
-      prior="$(jq -r --arg lane "$lane" '.[$lane] // ""' <<<"$asking_state")" \
-        || die "could not read lane '$lane' from $LANE_ASKING_STATE_FILE"
-      next_state="$(jq -c --arg lane "$lane" --arg fingerprint "$fingerprint" '.[$lane] = $fingerprint' <<<"$asking_state")" \
-        || die "could not update lane '$lane' in $LANE_ASKING_STATE_FILE"
-      asking_state="$next_state"
+      prior="$(lane_asking_fingerprint "$asking_state" "$lane")"
+      asking_state="$(lane_asking_set "$asking_state" "$lane" "$fingerprint")"
       if [[ "$fingerprint" == "$prior" ]]; then continue; fi
       echo "EVENT lane-asking $lane"
       pane_tail "$pane"
-      watch_state_write "$LANE_ASKING_STATE_FILE" "$asking_state" "lane-asking"
-      LANE_ASKING_STATE="$asking_state"
+      lane_asking_commit "$asking_state"
       pr_watch_context
       exit 0
     else
-      next_state="$(jq -c --arg lane "$lane" 'del(.[$lane])' <<<"$asking_state")" \
-        || die "could not clear lane '$lane' from $LANE_ASKING_STATE_FILE"
-      asking_state="$next_state"
+      asking_state="$(lane_asking_clear "$asking_state" "$lane")"
     fi
   done
-  if [[ "$asking_state" != "$LANE_ASKING_STATE" ]]; then
-    watch_state_write "$LANE_ASKING_STATE_FILE" "$asking_state" "lane-asking"
-    LANE_ASKING_STATE="$asking_state"
-  fi
+  lane_asking_commit "$asking_state"
   # The round is over and nobody is driving: the harness is up, at its input
   # prompt, with nothing in flight. Two consecutive passes, because the screen
   # between a finished tool call and the next one reads the same.

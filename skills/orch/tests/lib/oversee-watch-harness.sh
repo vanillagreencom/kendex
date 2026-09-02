@@ -73,8 +73,11 @@ assert_not_contains() {
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/cases"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
-git -C "$TMP_ROOT/repo" init -q
-CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
+# `-C` does not neutralize the caller's git environment, so a suite run from
+# inside a git hook would init into the real repository and resolve a root
+# outside the sandbox. Both calls clear the four variables together.
+env -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$TMP_ROOT/repo" init -q
+CASE_REPO_ROOT="$(env -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
   || { echo "oversee-watch harness: case repository root not found" >&2; exit 1; }
 
 # gh stub, driven by files in $STUB_DIR:
@@ -356,6 +359,7 @@ run_watch() {
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR \
+           -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
            STUB_DIR="$STUB_DIR" TMUX="fake" OVERSEE_TEST_REAL_DATE="$OVERSEE_TEST_REAL_DATE" \
            LINEAR_TEAM="kendex" \
            OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \

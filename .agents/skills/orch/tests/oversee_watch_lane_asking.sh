@@ -120,25 +120,38 @@ assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none
   "a pane with no prompt reaches the heartbeat" "$err"
 assert_not_contains "$out" "EVENT lane-asking" "no prompt emits no lane-asking event" "$err"
 
-new_case lane_asking_corrupt_state
-mkdir -p "$STATE_DIR"
-printf '{bad json\n' > "$STATE_DIR/lane-asking__none.json"
-err="$TMP_ROOT/asking-e"
+# The fingerprint is a row in the one per-repo baseline, never a file of its
+# own, and it coexists with the reducer's keys in that file.
+new_case lane_asking_shares_repo_baseline
+printf '12\tabcdef01\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out"
+printf '1\n' > "$STUB_DIR/prwatch.rc"
+run_watch -- --max-loops 1 gh-1 gh-2 >/dev/null 2>"$TMP_ROOT/asking-share-a"
+printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/asking-share-b"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "2" "a corrupt lane-asking baseline exits 2" "$err"
-assert_eq "$out" "" "a corrupt lane-asking baseline emits no event" "$err"
-assert_contains "$(cat "$err")" "lane-asking state file is invalid" \
-  "the corrupt lane-asking baseline is named" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
+  "the prompt emits once the reducer edge is baselined" "$err"
+state_file="$STATE_DIR/owner_repo__none"
+assert_contains "$(cat "$state_file")" "$(printf 'lane-asking\tgh-2\t')" \
+  "the fingerprint is a row in the repo baseline" "$err"
+assert_contains "$(cat "$state_file")" "$(printf '12\tthreads-open')" \
+  "the reducer key survives beside it" "$err"
+assert_eq "$(find "$STATE_DIR" -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" "1" \
+  "lane-asking creates no second state-file class" "$err"
+err="$TMP_ROOT/asking-share-c"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none" \
+  "a reducer pass carries the fingerprint rather than replacing it" "$err"
 
 new_case lane_asking_state_unwritable
-mkdir -p "$STATE_DIR/lane-asking__none.json"
+mkdir -p "$STATE_DIR/owner_repo__none"
 printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/asking-f"
-out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+out="$(run_watch OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/absent-pr-watch" -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "2" "a lane-asking baseline write failure exits 2" "$err"
 assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
   "the event is delivered before its baseline write" "$err"
-assert_contains "$(cat "$err")" "could not write the lane-asking state file" \
+assert_contains "$(cat "$err")" "could not write the pr-watch state file" \
   "the baseline write failure names its target" "$err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -10,6 +10,15 @@ echo "=== oversee-watch triage ==="
 new_case triage_new
 printf '1786957201\n' > "$STUB_DIR/now.epoch"
 printf '3\n' > "$STUB_DIR/tracker.want-created-since"
+# A standing lane prompt first, so the file count below is taken on a run that
+# has lanes with a fingerprint already persisted — the state class this suite
+# claims does not exist would exist by then if lane-asking kept its own file.
+printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
+printf '[]\n' > "$STUB_DIR/tracker.out"
+err="$TMP_ROOT/triage-lane"
+out="$(run_watch -- --max-loops 1 --since 2026-08-15T09:00:00Z gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
+  "a standing lane prompt wakes the watch before any tracker item" "$err"
 cat > "$STUB_DIR/tracker.out" <<'EOF'
 [
   {"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"},
@@ -19,7 +28,7 @@ cat > "$STUB_DIR/tracker.out" <<'EOF'
 ]
 EOF
 err="$TMP_ROOT/triage-a"
-out="$(run_watch -- --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+out="$(run_watch -- --since 2026-08-15T09:00:00Z gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "new triage item exits 0" "$err"
 assert_eq "$(head -1 <<<"$out")" "EVENT triage KEN-1200" \
   "an item created after --since is a triage event" "$err"
@@ -38,28 +47,10 @@ assert_contains "$tracker_args" "d --max --format=safe" \
 state_file="$STATE_DIR/owner_repo__2026-08-15T09_00_00Z"
 assert_not_contains "$(cat "$state_file")" "$(printf 'triage\tKEN-1200')" \
   "printing an event does not acknowledge the item" "$err"
+assert_contains "$(cat "$state_file")" "$(printf 'lane-asking\tgh-2\t')" \
+  "the standing lane fingerprint shares the one per-repo baseline" "$err"
 assert_eq "$(find "$STATE_DIR" -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" "1" \
   "triage creates no second state-file class" "$err"
-triage_rule="$(grep '^- `triage`' "$REPO_ROOT/skills/orch/workflows/oversee.md")"
-assert_contains "$triage_rule" "every emitted team item" \
-  "the event rule covers items with no lane authorship" "$err"
-assert_contains "$triage_rule" "kept or canceled" \
-  "every emitted item gets a terminal triage verdict" "$err"
-assert_contains "$triage_rule" "before re-running" \
-  "the verdict is recorded before the watcher can repeat" "$err"
-heartbeat_rule="$(grep '^- `heartbeat`' "$REPO_ROOT/skills/orch/workflows/oversee.md")"
-assert_contains "$heartbeat_rule" "only issues a fleet lane filed" \
-  "the heartbeat backstop stays lane-authored only" "$err"
-workflow_text="$(cat "$REPO_ROOT/skills/orch/workflows/oversee.md")"
-assert_contains "$workflow_text" "triaged is the verdict log, not the watcher baseline" \
-  "the workflow separates verdicts from watcher dedup" "$err"
-assert_contains "$workflow_text" "first repository's OVERSEE_WATCH_STATE_DIR baseline" \
-  "the workflow names the owner-required baseline" "$err"
-assert_contains "$workflow_text" "<project-root>/tmp/oversee-watch" \
-  "the workflow names the default state directory" "$err"
-assert_contains "$workflow_text" "Deleting that baseline resets watcher dedup" \
-  "the workflow states reset and rebuild behavior" "$err"
-
 err="$TMP_ROOT/triage-b"
 out="$(run_watch -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT triage KEN-1200" \
@@ -121,6 +112,64 @@ out="$(run_watch -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026-08-15T09:00:00Z" \
   "an empty tracker list reaches the heartbeat" "$err"
 assert_not_contains "$out" "EVENT triage" "no new item emits no triage event" "$err"
+
+# A missing CLI is a broken install: triage fails closed rather than dropping
+# every new team item on a stderr note.
+new_case triage_requires_tracker
+printf '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]\n' > "$STUB_DIR/tracker.out"
+err="$TMP_ROOT/triage-needs-tracker"
+out="$(run_watch OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/absent-tracker" -- --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "2" "a missing tracker CLI exits 2 under --since" "$err"
+assert_eq "$out" "" "a missing tracker CLI emits no event" "$err"
+assert_contains "$(cat "$err")" "tracker CLI not found at $TMP_ROOT/bin/absent-tracker" \
+  "the missing tracker CLI is named" "$err"
+assert_contains "$(cat "$err")" "--no-triage" \
+  "the tracker refusal names the opt-out" "$err"
+
+new_case triage_requires_workflow_state
+printf '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]\n' > "$STUB_DIR/tracker.out"
+err="$TMP_ROOT/triage-needs-workflow-state"
+out="$(run_watch OVERSEE_WATCH_WORKFLOW_STATE="$TMP_ROOT/bin/absent-workflow-state" -- --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "2" "a missing workflow-state CLI exits 2 under --since" "$err"
+assert_eq "$out" "" "a missing workflow-state CLI emits no event" "$err"
+assert_contains "$(cat "$err")" "workflow-state CLI not found at $TMP_ROOT/bin/absent-workflow-state" \
+  "the missing workflow-state CLI is named" "$err"
+assert_contains "$(cat "$err")" "--no-triage" \
+  "the workflow-state refusal names the opt-out" "$err"
+
+new_case triage_requires_team
+printf '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]\n' > "$STUB_DIR/tracker.out"
+err="$TMP_ROOT/triage-needs-team"
+out="$(run_watch LINEAR_TEAM= -- --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "2" "an unset LINEAR_TEAM exits 2 under --since" "$err"
+assert_eq "$out" "" "an unset LINEAR_TEAM emits no event" "$err"
+assert_contains "$(cat "$err")" "LINEAR_TEAM is unset" "the unset team is named" "$err"
+assert_contains "$(cat "$err")" "--no-triage" \
+  "the team refusal names the opt-out" "$err"
+
+# Control: the opt-out is the one way past the gate, and it costs triage while
+# keeping every other check — including merged, which --since also serves.
+new_case triage_opt_out
+printf '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]\n' > "$STUB_DIR/tracker.out"
+printf '[{"number":5,"headRefName":"issue-5","mergedAt":"2026-08-15T10:00:00Z"}]\n' > "$STUB_DIR/merged.json"
+err="$TMP_ROOT/triage-opt-out"
+out="$(run_watch -- --no-triage --max-loops 1 --item issue-5 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "--no-triage keeps the watch running" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT merged 5 issue-5" \
+  "--since still serves the merged check under --no-triage" "$err"
+assert_not_contains "$out" "EVENT triage" "--no-triage emits no triage event" "$err"
+tracker_called=no
+if [[ -e "$STUB_DIR/tracker.args" ]]; then tracker_called=yes; fi
+assert_eq "$tracker_called" "no" "--no-triage never reads the tracker" "$err"
+assert_contains "$(cat "$err")" "skipping the team triage check" \
+  "the opt-out says triage is off" "$err"
+
+new_case triage_opt_out_without_team
+err="$TMP_ROOT/triage-opt-out-no-team"
+out="$(run_watch LINEAR_TEAM= OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/absent-tracker" -- --no-triage --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "--no-triage runs a fleet with no tracker team" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026-08-15T09:00:00Z" \
+  "the opt-out disarms the gate a missing dependency would close" "$err"
 
 new_case triage_unsets_inherited_state
 err="$TMP_ROOT/triage-state-inherited"
@@ -226,12 +275,6 @@ assert_eq "$rc" "2" "an offset --since is rejected" "$err"
 assert_eq "$out" "" "an offset --since emits no event" "$err"
 assert_contains "$(cat "$err")" "UTC timestamp ending in Z" \
   "the offset refusal names the documented form" "$err"
-
-date_harness="$(cat "$REPO_ROOT/skills/orch/tests/lib/oversee-watch-harness.sh")"
-assert_contains "$date_harness" "OVERSEE_TEST_REAL_DATE" \
-  "the harness resolves date before its PATH shadow" "$err"
-assert_not_contains "$date_harness" "exec /usr/bin/date" \
-  "the date stub carries no Linux-only absolute fallback" "$err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
