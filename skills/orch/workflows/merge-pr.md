@@ -8,6 +8,8 @@ Verify the merge conditions and merge PR(s).
 | `merge-pr [N]` | Merge a specific PR |
 | `merge-pr all` | Merge all ready PRs in sequence |
 
+**Caller context** (via `⤵`): `merge_mode` defaults to `normal`; only `submit-pr.md` § 6.2 sets `admin`, and only on an explicit answer.
+
 ## 1. Identify Candidates
 
 ```bash
@@ -16,23 +18,79 @@ Verify the merge conditions and merge PR(s).
 
 With no argument, present the list and ask which to merge. With `all`, process every ready PR sequentially.
 
+Resolve the decision mode once for every post-PR choice in this workflow. Named stops use [SKILL.md § The Cycle](../SKILL.md#the-cycle).
+
+```bash
+.agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE auto-recommended
+```
+
+Bind the repository root as `[MAIN_REPO_ROOT]` and create the directory every
+stop below renders into, before any stop route can fire. Every stop this
+workflow records is written under that root, so none of them depends on
+`[WORKTREE_PATH]`, which § 4 binds and most of the stop routes run before:
+
+```bash
+.agents/skills/orch/scripts/git-context common-root .
+```
+```bash
+mkdir -p [MAIN_REPO_ROOT]/tmp
+```
+
+**Stop routes.** Every `records [STOP_NAME]` branch below records against the
+`[STATE_KEY]` § 3 resolved for the PR it is stopping, renders into the one path
+this workflow uses, and posts that file on that PR:
+
+```bash
+.agents/skills/orch/scripts/workflow-state post-pr-stop record [STATE_KEY] [STOP_NAME] [GATE] "[REMAINING]" [MAIN_REPO_ROOT]/tmp/post-pr-stop-[STATE_KEY].md
+```
+```bash
+env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [MAIN_REPO_ROOT]/tmp/post-pr-stop-[STATE_KEY].md
+```
+
 ## 2. Cross-Check (batch merges only)
 
 **Skip if** fewer than two PRs are in scope.
+
+This section is the one run-level step, so its stop needs a PR to record
+against: run § 3's per-PR state resolution for the FIRST PR in the reported
+order, and record and post both stops below against that PR.
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-cross-check [PR_NUMBERS] --quick --json
 ```
 
-High-severity findings (conflicts) abort early with the issues shown. Otherwise verify:
+High-severity findings (conflicts) show the issues, then `auto-recommended` records `batch-cross-check-failed`; `ask` stops with them shown. Otherwise verify:
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-cross-check [PR_NUMBERS] --verify --json
 ```
 
-`can_batch_merge: true` → § 3 in the reported `merge_order`. `false` → show the merge, build, and test failures with their suggested remediation and ask: `Abort` | `Force anyway`.
+`can_batch_merge: true` → § 3 in the reported `merge_order`. `false` → show the merge, build, and test failures with their suggested remediation; `auto-recommended` records `batch-cross-check-failed`, and `ask` presents `Abort` | `Force anyway`, with `Abort` recommended.
 
 ## 3. Check Merge Readiness
+
+**Per-PR state resolution.** This block runs once per PR in scope, never once
+per run: on the `merge-pr all` route, resolving once would bind the first PR's
+key to every later PR and collide their stops in one state file. Use the
+extracted issue as `[STATE_KEY]` when present, otherwise use `pr-[PR_NUMBER]`;
+run `init` only when `exists` is false. § 4 reuses the `[ISSUE]` and
+`[PR_BRANCH]` this reads.
+
+```bash
+.agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text
+```
+```bash
+env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --jq .headRefName
+```
+```bash
+.agents/skills/orch/scripts/workflow-state exists --json [STATE_KEY]
+```
+```bash
+.agents/skills/orch/scripts/workflow-state init [STATE_KEY] --branch [PR_BRANCH]
+```
+```bash
+.agents/skills/orch/scripts/workflow-state update [STATE_KEY] '.post_pr_stop = null'
+```
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-merge [PR_NUMBER] --check
@@ -44,23 +102,23 @@ High-severity findings (conflicts) abort early with the issues shown. Otherwise 
 
 | Prefix | Wait |
 |--------|------|
-| `unknown:` (GitHub still computing mergeable status) | `github.sh await-mergeable [PR_NUMBER]`, then re-check. Exit 124 on timeout → surface to the user |
-| `ci_pending:` | `.agents/skills/orch/scripts/ci-wait [PR_NUMBER] 15 600`, then re-check. On a non-zero exit or timeout, surface the result, re-check once for fresh state, and continue without another automatic wait |
+| `unknown:` (GitHub still computing mergeable status) | `github.sh await-mergeable [PR_NUMBER]`, then re-check. Exit 124 on timeout → `auto-recommended` records `merge-readiness-unresolved`; `ask` surfaces the timeout |
+| `ci_pending:` | `.agents/skills/orch/scripts/ci-wait [PR_NUMBER] 15 600`, then re-check. On a non-zero exit or timeout, re-check once for fresh state; if still pending, `auto-recommended` records `merge-ci-pending`, while `ask` surfaces the result. Never another automatic wait |
 | `ci_fetch_failed:`, `ci_unconfigured:` | Re-check, at most three checks total, then continue with the latest `CHECK` |
 
 ### 3.2 Act On The Result
 
-`CHECK.state` decides first: `MERGED` → set `[ALREADY_MERGED]=true`, run § 4 EXCEPT § 4.1, then enter § 5 step 1, which skips the arm and the wait and goes straight to post-merge work; `CLOSED` → report that it was closed unmerged and stop.
+`CHECK.state` decides first: `MERGED` → set `[ALREADY_MERGED]=true`, run § 4 EXCEPT § 4.1, then enter § 5 step 1, which skips the arm and the wait and goes straight to post-merge work; `CLOSED` → records `pr-closed-unmerged`.
 
-`can_merge: true` → § 4, showing any warnings. `false` → show the issues with their suggested fixes and ask: `Skip` | `Fix and retry` | `Force merge`.
+`can_merge: true` → § 4, showing any warnings. `false` → show the issues with their suggested fixes. `auto-recommended` logs `Fix and retry` and takes that route once; the same blocker after the retry records `merge-check-blocked`. `ask` presents `Skip` | `Fix and retry` | `Force merge`, with `Fix and retry` recommended.
 
 Two warnings are merge gates, not advice:
 
-- **`unresolved_threads`** — zero unresolved review threads is required at merge time. Route to `review-pr-comments` to reply and resolve first; merge past them only on explicit user override.
+- **`unresolved_threads`** — zero unresolved review threads is required at merge time. Route to `review-pr-comments` to reply and resolve first. `auto-recommended` keeps triaging within `REVIEW_MAX_EXTERNAL_ROUNDS`, then records `review-threads-open`; merge past them only on explicit user override.
 - **`not_approved`** — resolve the project's gate mode first with `.agents/skills/orch/scripts/approval-wait --resolve-mode` ([references/gates.md](../references/gates.md)) and route on the printed `GATE_MODE`:
   - `off` — informational only; do not gate on it.
   - `review` — `not_approved` is expected. Poll `approval-wait [PR_NUMBER] 30 --json --mode review` and treat `reviewed` as the met gate.
-  - `approval` — a GitHub-native approval verdict is required. Without it, do not auto-merge: poll `approval-wait [PR_NUMBER] 30 --json` or ask the user.
+  - `approval` — a GitHub-native approval verdict is required. Without it, do not auto-merge: poll `approval-wait [PR_NUMBER] 30 --json`; after its budget, `auto-recommended` records `review-gate-unmet`, while `ask` presents the wait or stop choice.
 
   With `PR_REVIEW_ON_TIMEOUT=proceed`, a deadline reached with zero unresolved threads and no reviewer evidence returns `proceeded` (exit 0) instead of `timeout` in both modes — treat it as a met gate and record it in the § 6 report. An open thread or a `changes_requested` still blocks. The proceed is a LOCAL verdict — orch posts no status.
 
@@ -71,24 +129,21 @@ Bot-specific signals — emoji reactions, sticky-comment prose, checklist text �
 ## 4. Prepare
 
 ```bash
-.agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text
 .agents/skills/worktree/scripts/worktree exists "$ISSUE"
 .agents/skills/worktree/scripts/worktree path "$ISSUE"
 .agents/skills/github/scripts/github.sh bot-token
 ```
 
-Use the extracted issue as `[ISSUE]`, and worktree commands only with one.
-When no issue worktree exists, set `[WORKTREE_PATH]` to `[MAIN_REPO_ROOT]`;
-there is then no issue worktree to dispose of in § 5. Read the PR branch:
+Reuse the `[ISSUE]` and `[PR_BRANCH]` § 3 resolved for this PR, and worktree
+commands only with an `[ISSUE]`. When no issue worktree exists, set
+`[WORKTREE_PATH]` to `[MAIN_REPO_ROOT]`, the root § 1 bound; there is then no
+issue worktree to dispose of in § 5.
 
-```bash
-.agents/skills/orch/scripts/git-context common-root .
-```
-```bash
-env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --jq .headRefName
-```
-
-`bot-token` reporting `.configured: false` → ask `Merge as current user` | `Abort`.
+`merge_mode: admin` merges as the current user by design, so skip `bot-token`
+for it. Otherwise `bot-token` reporting `.configured: false` is an identity
+decision, not a budget choice: the merge would land under the human's name.
+`auto-recommended` records `bot-auth-missing` rather than taking that decision;
+`ask` presents `Merge as current user` | `Abort`, with `Abort` recommended.
 
 ### 4.1 Detach Orphaned Children
 
@@ -158,6 +213,8 @@ Use the output as `MAIN_REPO_ROOT`.
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner
    ```
+   Resolve the gate mode below, except `merge_mode: admin` sets it to `off`:
+
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait --resolve-mode
    ```
@@ -170,12 +227,19 @@ Use the output as `MAIN_REPO_ROOT`.
    head:
 
    ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] [--force] --expected-head [PREPARED_HEAD]
+   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] [--force|--admin] --expected-head [PREPARED_HEAD]
    ```
+
+   `merge_mode: admin` uses `--admin`; no other path adds it.
 
    Exit `0` merged the prepared head — continue to step 2.
 
-   Exit `1` BLOCKED → run `env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]` and route on its `cause:` line: `ci_pending` — or `none` when the merge output names a base branch requiring merges through a queue — → re-run the prepared head with `--auto`. Any other cause surfaces the detail and returns to § 3.2.
+   Exit `1` from `--admin` records the named stop `merge-blocked` and hands
+   back. It never falls through to the classification below and never arms
+   `--auto`: the answer that authorized this merge named one head and one
+   reason, and neither survives a re-route.
+
+   Exit `1` BLOCKED on any other path → run `env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]` and route on its `cause:` line: `ci_pending` — or `none` when the merge output names a base branch requiring merges through a queue — → re-run the prepared head with `--auto`. Any other cause surfaces the detail and returns to § 3.2.
 
    The `--auto` re-run arms only that same head:
 

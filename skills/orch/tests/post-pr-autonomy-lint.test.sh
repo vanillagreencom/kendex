@@ -25,7 +25,8 @@ rule_fenced "ci-fix spends the ci-fix budget" "$CI" "## 5. Verify" 'head-budget 
 rule_fenced "ci-fix records its cycle cap" "$CI" "## 5. Verify" 'post-pr-stop record' 'ci-fix-cap'
 rule "an admin answer is the only route to admin merge" "$SUBMIT" "### 6.2 Consumer Admin-Merge Question" 'An admin answer invokes' '`merge_mode: admin`' '§ 1-7'
 rule "automatic decisions continue through the gates" "$SUBMIT" "### 6.2 Consumer Admin-Merge Question" 'a question orch poses and never answers' '`auto-recommended`' '`Continue through the gates`'
-rule "admin failure uses an accepted terminal cause" "$MERGE" "" 'Exit `1` from `--admin`' '`merge_blocked`'
+rule "admin failure ends in a named stop" "$MERGE" "" 'Exit `1` from `--admin`' 'records the named stop `merge-blocked`'
+rule_fenced "merge renders its stops into a bound path" "$MERGE" "## 1. Identify Candidates" 'post-pr-stop record' '[MAIN_REPO_ROOT]/tmp/post-pr-stop-[STATE_KEY].md'
 retired_opened='not merely open''ed'
 retired_wait='Stop and wait for the us''er'
 forbid "the retired brief-level stop prompt stays gone" \
