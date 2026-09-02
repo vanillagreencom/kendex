@@ -14,10 +14,10 @@ import { auditRunner, type ItemActions, itemActions } from "./audit-items";
 interface AuditState extends ItemActions {
   views: AuditView[];
   auditing: boolean;
-  /** How the last audit went — its failure among the rest. The one signal
-   *  for it: Home's couldn't-check row, the Unmanaged and project lists and
-   *  the blocked-places read are all dated by this. An item action's own
-   *  refusal is not an audit's, and goes to the problems dialog instead. */
+  /** How the last audit went — its failure among the rest, and the only
+   *  signal anywhere for a failed audit: every reader that has to say "this
+   *  could not be checked" reads it and nothing else does. An item action's
+   *  own refusal is not an audit's, and goes to the problems dialog. */
   read: ReadState;
   busy: boolean;
   /** The startup audit has already toasted its failure — suppresses repeat

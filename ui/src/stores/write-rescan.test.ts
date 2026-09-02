@@ -140,8 +140,11 @@ beforeEach(() => {
   useMarketplacesStore.setState({ busy: false, error: null });
 });
 
-/** What every case below asks: the machine was read again, both halves of
- *  it, behind a command that answered with a refusal. */
+/** What every case below asks: the machine was read again behind a command
+ *  that answered with a refusal. Two of the three reads, not all of them —
+ *  the provenance join answers false rather than throwing and no store
+ *  mocked here would tell a join that ran from one that could not, so it is
+ *  asserted through neither. */
 const readAgain = () => {
   expect(commands.scanMachine).toHaveBeenCalled();
   expect(commands.auditAll).toHaveBeenCalled();
@@ -351,6 +354,52 @@ describe("a write that reaches repo_effects and throws", () => {
     await rescansSettled();
 
     readAgain();
+  });
+});
+
+// The read behind a write is the only one that can answer for it: a scan
+// already out began reading before the write landed. Dropping the write's
+// own scan because one was in flight left Home's inventory — which renders
+// from that result — counting copies the write had just taken off disk,
+// with the footer saying "scanned just now" over it.
+describe("a write under a scan that was already out", () => {
+  it("still gets a scan of its own, behind the one running", async () => {
+    const focus = park<Awaited<ReturnType<typeof commands.scanMachine>>>();
+    vi.mocked(commands.scanMachine)
+      .mockReturnValueOnce(
+        focus.parked as ReturnType<typeof commands.scanMachine>,
+      )
+      .mockResolvedValue({
+        status: "ok",
+        data: {
+          items: [],
+          harnesses: [],
+          warnings: [],
+          missingProjects: [],
+        } as never,
+      });
+    vi.mocked(commands.removeItem).mockResolvedValue({
+      status: "ok",
+      data: view(scope),
+    });
+
+    // What App.tsx fires when the window comes back, unawaited.
+    void useScanStore.getState().refresh();
+    await useAuditStore.getState().removeItem(scope, "hook", "lint");
+
+    focus.land({
+      status: "ok",
+      data: {
+        items: [],
+        harnesses: [],
+        warnings: [],
+        missingProjects: [],
+      } as never,
+    });
+    await rescansSettled();
+
+    // The focus scan, and the write's own behind it.
+    expect(commands.scanMachine).toHaveBeenCalledTimes(2);
   });
 });
 

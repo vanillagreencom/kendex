@@ -14,7 +14,6 @@ import { scopeKey } from "@/lib/scope";
 import { placeName } from "@/lib/update-groups";
 import { useAuditStore } from "@/stores/audit";
 import { originsFor, useProvenanceStore } from "@/stores/provenance";
-import { useScanStore } from "@/stores/scan";
 
 /** Every marketplace a deleted package can be had from again.
  *
@@ -75,22 +74,22 @@ function useReinstallNote(
  *  a reader, so it is one action here, and the dialog names every place it
  *  reaches before it runs. Per-place removal is on the Projects tab.
  *
- *  The page leaves only once the scan agrees the package is gone; a failed
- *  deletion shows its error instead. */
+ *  Whether the page then leaves is the page's own judgment, not this
+ *  dialog's: `package.tsx` navigates once the scan behind the removals
+ *  lands and no longer knows the package. This dialog closes and says what
+ *  a failed removal said, and nothing more. */
 export function DeleteDialog({
   open,
   onOpenChange,
   kind,
   name,
   scopes,
-  onGone,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   kind: ItemKind;
   name: string;
   scopes: Scope[];
-  onGone: () => void;
 }) {
   const { busy, removeItem } = useAuditStore();
   const note = useReinstallNote(kind, name, scopes, open);
@@ -112,12 +111,6 @@ export function DeleteDialog({
             if (!(await removeItem(scope, kind, name))) return;
           }
           onOpenChange(false);
-          const stillHere = useScanStore
-            .getState()
-            .result?.items.some(
-              (item) => item.kind === kind && item.name === name,
-            );
-          if (!stillHere) onGone();
         })();
       }}
     >

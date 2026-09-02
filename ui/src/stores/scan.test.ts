@@ -21,6 +21,17 @@ const emptyResult: ScanResult = {
   warnings: [],
 };
 
+/** A scan this test answers by hand, to hold one open. */
+const park = () => {
+  let land: (value: ScanAnswer) => void = () => {};
+  const promise = new Promise<ScanAnswer>((resolve) => {
+    land = resolve;
+  });
+  return { promise, land };
+};
+
+type ScanAnswer = Awaited<ReturnType<typeof commands.scanMachine>>;
+
 describe("scan store", () => {
   beforeEach(() => {
     useScanStore.setState({
@@ -85,10 +96,77 @@ describe("scan store", () => {
     expect(state.error).toBe("boom");
   });
 
-  it("ignores refresh while a scan is already running", async () => {
-    useScanStore.setState({ scanning: true });
-    await useScanStore.getState().refresh();
-    expect(commands.scanMachine).not.toHaveBeenCalled();
+  // What this reverses: a request arriving mid-scan used to be dropped
+  // outright — a silent no-op, nothing retrying — so the read behind a
+  // write went missing whenever any background scan was out, and the write
+  // is exactly what the scan already running cannot answer for. Home
+  // renders its inventory from this result.
+  it("takes a re-read behind a scan already running rather than dropping it", async () => {
+    const parked = park();
+    vi.mocked(commands.scanMachine)
+      .mockReturnValueOnce(parked.promise)
+      .mockResolvedValue({ status: "ok", data: emptyResult });
+
+    const running = useScanStore.getState().refresh();
+    const behind = useScanStore.getState().refresh();
+
+    expect(commands.scanMachine).toHaveBeenCalledTimes(1);
+
+    parked.land({ status: "ok", data: emptyResult });
+    await running;
+    await behind;
+
+    expect(commands.scanMachine).toHaveBeenCalledTimes(2);
+  });
+
+  it("queues exactly one re-read however many arrive under the scan", async () => {
+    const parked = park();
+    vi.mocked(commands.scanMachine)
+      .mockReturnValueOnce(parked.promise)
+      .mockResolvedValue({ status: "ok", data: emptyResult });
+
+    const running = useScanStore.getState().refresh();
+    const behind = [
+      useScanStore.getState().refresh(),
+      useScanStore.getState().refresh(),
+      useScanStore.getState().refresh(),
+    ];
+
+    parked.land({ status: "ok", data: emptyResult });
+    await running;
+    await Promise.all(behind);
+
+    // Three arrivals, one re-read: they join it rather than stacking
+    // identical whole-machine reads.
+    expect(commands.scanMachine).toHaveBeenCalledTimes(2);
+  });
+
+  // A scan that could not answer is the state most in need of the one
+  // behind it, and the slot has to be free again afterwards or the next
+  // overlapping request would join a spent promise.
+  it("re-reads behind a scan that failed, and again after that", async () => {
+    const parked = park();
+    vi.mocked(commands.scanMachine)
+      .mockReturnValueOnce(parked.promise)
+      .mockResolvedValue({ status: "ok", data: emptyResult });
+
+    const running = useScanStore.getState().refresh();
+    const behind = useScanStore.getState().refresh();
+    parked.land({ status: "error", error: "ipc closed" });
+    await running;
+    await behind;
+
+    expect(commands.scanMachine).toHaveBeenCalledTimes(2);
+
+    const second = park();
+    vi.mocked(commands.scanMachine).mockReturnValueOnce(second.promise);
+    const again = useScanStore.getState().refresh();
+    const alsoBehind = useScanStore.getState().refresh();
+    second.land({ status: "ok", data: emptyResult });
+    await again;
+    await alsoBehind;
+
+    expect(commands.scanMachine).toHaveBeenCalledTimes(4);
   });
 
   it("toasts a background failure once, then stays quiet on repeat silent retries", async () => {

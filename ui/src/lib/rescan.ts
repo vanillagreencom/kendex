@@ -38,24 +38,26 @@
 // its whole body inside it — the marketplace subscribe, install, repository
 // effect, source toggle and unsubscribe, the drift-report install, the
 // editor save, and the audit's item actions — and the read is asked for in a
-// `finally`, so a sixth of them cannot skip it and neither can a throw. The
-// Updates page spells the call out instead, running it whatever the apply
-// answered as the last step inside its own `holdingBusy`: `updates.ts`'s
+// `finally`, so a ninth cannot skip it and neither can a throw. The Updates
+// page spells the call out instead, running it whatever the apply answered
+// as the last step inside its own `holdingBusy`: `updates.ts`'s
 // [`updateOne`] and [`updateRows`], `updates-edits.ts`'s `run` and
 // `updates-follow.ts`'s [`followSwitch`]. The package page's
-// `package-version-actions.ts` `afterChange` is the same call unawaited,
-// after its own reload and outside any hold. Between them,
-// `grep -rnE "writingRepo\(|rescanEverything\(" ui/src` is the whole set.
+// `package-version-actions.ts` `afterChange` makes the same call inside its
+// own busy block but does not await it, so nothing holds over the read.
+// Between them, `grep -rnE "writingRepo\(|rescanEverything\(" ui/src` is
+// the whole set.
 //
-// The rest of the direct callers are not writes at all, and each is right to
-// ask on its own terms: the Scan again buttons, because nothing else knows
-// what a person changed outside the app; `settings.ts`'s [`setHarnessRoot`]
-// and `settings-projects.ts`'s project register and unregister, because
-// moving a tool's folder or changing which projects are tracked changes
-// which files the scan finds and which scopes the audit reads — not because
-// a write might have half-landed. Those three save the settings file and
-// never reach `repo_effects`, so a save that failed left nothing on disk for
-// a stale page to report, and gating them on the answer is correct.
+// The rest of the direct callers are not the writes this rule is about —
+// none of them reaches `repo_effects` — and each is right to ask on its own
+// terms: the Scan again buttons, because nothing else knows what a person
+// changed outside the app; `settings.ts`'s [`setHarnessRoot`] and
+// `settings-projects.ts`'s project register and unregister, because moving a
+// tool's folder or changing which projects are tracked changes which files
+// the scan finds and which scopes the audit reads — not because a write
+// might have half-landed. Those three write the settings file and nothing
+// else, so one that failed left nothing on disk for a stale page to report,
+// and gating them on the answer is correct.
 //
 // A scope with no view of its own counts zero unmanaged items, which is how
 // a project card ends up hiding the only way to the ones it holds — the
@@ -94,16 +96,19 @@ export async function rescanEverything(opts?: {
 // another identical read. A run of writes then pays for as many reads as
 // finish alongside it, never one per write.
 //
-// The guarantee is not weakened by that. A read already running may have
-// passed the files this write just changed, so it is never handed back as
-// this write's answer — the follow-up it joins starts only once that one
-// has finished, which is after this write landed. Every write is still
-// covered by a read that began after it.
+// The guarantee survives that. A read already running may have passed the
+// files this write just changed, so it is never handed back as this write's
+// answer — the follow-up it joins starts only once that one has finished,
+// which is after this write landed.
 //
-// The audit store keeps a queue of the same shape for the same reason, and
-// the scan store drops an overlapping request outright. Neither can stand in
-// for this: both are asked by background readers and buttons too, and this
-// is about the writes.
+// It survives one level down too, for two of the three legs: the scan store
+// and the audit store each hold a queue of this same shape, so a leg that
+// finds its own read already out waits and takes a fresh one behind it
+// rather than being served the older answer. The provenance join is the
+// exception — `reload` has no such queue, and an older join can still land
+// over a newer one — tracked as KEN-1183. Neither store's queue can stand in
+// for this one: both are asked by background readers and buttons too, and
+// this is about the writes.
 let running: Promise<void> | null = null;
 let queued: Promise<void> | null = null;
 
@@ -117,10 +122,19 @@ const start = (): Promise<void> => {
 
 const readBehindWrites = (): Promise<void> => {
   if (!running) return start();
-  queued ??= running.then(() => {
-    queued = null;
-    return start();
-  });
+  queued ??= running
+    // However the one in front ended. The three reads each report their own
+    // failures, so there is nothing here to pass on, and no shipped path
+    // rejects at all — both stores go through `settled` and the join
+    // catches. Clearing the slot only on fulfilment would nonetheless
+    // strand the mechanism this whole change rests on: one rejection and
+    // every later write arriving under a running read joins a dead promise
+    // and schedules no read of its own, silently, for the session.
+    .catch(() => {})
+    .then(() => {
+      queued = null;
+      return start();
+    });
   return queued;
 };
 

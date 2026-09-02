@@ -243,7 +243,6 @@ export function PackagePage() {
         kind={group.kind}
         name={group.name}
         scopes={groupScopes(group)}
-        onGone={back}
       />
     </div>
   );

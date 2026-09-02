@@ -638,6 +638,19 @@ describe("the package page's file actions", () => {
     ).toBe(false);
   });
 
+  // Delete takes every copy at once, and the dialog closes on its own the
+  // moment the removals answer. Leaving the page is this effect's alone to
+  // decide — the dialog used to keep a copy of the judgment, read off a
+  // scan taken before the removals, and it is gone.
+  it("leave with the page once the scan knows the package nowhere", async () => {
+    const back = vi.fn();
+    useNavStore.setState({ back });
+
+    await openPage(VG, [], {});
+
+    expect(back).toHaveBeenCalled();
+  });
+
   it("open the copy in the place the page names", async () => {
     // hyprtrade's copy is listed first, so a page that took the first
     // installation would open the wrong project's files.

@@ -47,7 +47,6 @@ const openDialog = async (scopes: Scope[]) => {
       kind="skill"
       name="gh"
       scopes={scopes}
-      onGone={() => {}}
     />,
   );
   await settle();
