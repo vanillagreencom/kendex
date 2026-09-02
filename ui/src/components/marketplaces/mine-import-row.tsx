@@ -96,6 +96,9 @@ export function MineImportRow({
             : " · nothing kendex can import"}
         </span>
       </div>
+      {/* Refusals only when nothing on the row is selectable: beside a
+          selectable origin the reason explains a copy the person cannot act
+          on, and the picker below already offers only what can be chosen. */}
       {readable.length === 0 ? (
         <ul className="pl-6 text-xs text-warning">
           {refusals(candidate.origins).map((refusal) => (

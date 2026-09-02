@@ -129,7 +129,7 @@ pub enum MarketplaceCommand {
         /// basis for copying
         #[arg(long)]
         license_basis: Option<String>,
-        /// Machine-readable candidate list (schema 1)
+        /// Machine-readable candidate list (schema 2)
         #[arg(long)]
         json: bool,
     },
