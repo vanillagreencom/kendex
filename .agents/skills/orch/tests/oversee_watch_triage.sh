@@ -65,17 +65,41 @@ out="$(run_watch -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=
 assert_eq "$(head -1 <<<"$out")" "EVENT triage KEN-1200" \
   "an unacknowledged item repeats on the next run" "$err"
 
-printf 'KEN-1200\nKEN-1202\nKEN-1204\n' > "$STUB_DIR/tracker-triaged.txt"
+cat > "$STUB_DIR/oversee-state.json" <<'EOF'
+{"triaged":[
+  {"issue":"KEN-1200","verdict":"kept"},
+  {"issue":"KEN-1202","verdict":"canceled"},
+  {"issue":"KEN-1204","verdict":"pending"}
+]}
+EOF
 err="$TMP_ROOT/triage-b2"
 out="$(run_watch -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026-08-15T09:00:00Z" \
-  "recorded verdicts close the repeated events" "$err"
-assert_contains "$(cat "$state_file")" "$(printf 'triage\tKEN-1204')" \
-  "the verdict rebuilds the watcher baseline" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT triage KEN-1204" \
+  "a pending verdict does not acknowledge the item" "$err"
+assert_contains "$(cat "$state_file")" "$(printf 'triage\tKEN-1200')" \
+  "a kept verdict rebuilds the watcher baseline" "$err"
+assert_contains "$(cat "$state_file")" "$(printf 'triage\tKEN-1202')" \
+  "a canceled verdict rebuilds the watcher baseline" "$err"
+assert_not_contains "$(cat "$state_file")" "$(printf 'triage\tKEN-1204')" \
+  "a pending verdict stays out of watcher dedup" "$err"
 assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "kept" \
   "the verdict read accepts kept outcomes" "$err"
 assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "canceled" \
   "the verdict read accepts canceled outcomes" "$err"
+assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "--state-dir $TMP_ROOT/repo/tmp get oversee" \
+  "the verdict read anchors default state to the project tmp directory" "$err"
+
+cat > "$STUB_DIR/oversee-state.json" <<'EOF'
+{"triaged":[
+  {"issue":"KEN-1200","verdict":"kept"},
+  {"issue":"KEN-1202","verdict":"canceled"},
+  {"issue":"KEN-1204","verdict":"kept"}
+]}
+EOF
+err="$TMP_ROOT/triage-b3"
+out="$(run_watch -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026-08-15T09:00:00Z" \
+  "terminal verdicts close every repeated event" "$err"
 
 cat > "$STUB_DIR/tracker.out" <<'EOF'
 [
@@ -120,7 +144,7 @@ assert_contains "$(cat "$err")" "tracker output is not an array" \
 
 new_case triage_state_failure
 printf '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]\n' > "$STUB_DIR/tracker.out"
-printf 'KEN-1200\n' > "$STUB_DIR/tracker-triaged.txt"
+printf '{"triaged":[{"issue":"KEN-1200","verdict":"kept"}]}\n' > "$STUB_DIR/oversee-state.json"
 mkdir -p "$STATE_DIR/owner_repo__2026-08-15T09_00_00Z"
 err="$TMP_ROOT/triage-g"
 out="$(run_watch OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/absent-pr-watch" -- --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
@@ -129,6 +153,25 @@ assert_eq "$out" "" "a verdict baseline write failure emits no event" "$err"
 assert_contains "$(cat "$err")" "could not write the pr-watch state file" \
   "the triage failure names the shared baseline" "$err"
 
+new_case triage_verdict_read_failure
+printf '2\n' > "$STUB_DIR/workflow-state.rc"
+printf 'oversee state unreadable\n' > "$STUB_DIR/workflow-state.err"
+err="$TMP_ROOT/triage-verdict-read"
+out="$(run_watch -- --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "2" "an unreadable verdict log exits 2" "$err"
+assert_eq "$out" "" "an unreadable verdict log emits no event" "$err"
+assert_contains "$(cat "$err")" "oversee state unreadable" \
+  "the verdict read keeps its original cause" "$err"
+
+new_case triage_invalid_verdict_id
+printf '{"triaged":[{"issue":"bad id","verdict":"kept"}]}\n' > "$STUB_DIR/oversee-state.json"
+err="$TMP_ROOT/triage-invalid-id"
+out="$(run_watch -- --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "2" "an invalid verdict issue id exits 2" "$err"
+assert_eq "$out" "" "an invalid verdict issue id emits no event" "$err"
+assert_contains "$(cat "$err")" "invalid issue id: 'bad id'" \
+  "the invalid verdict id is named" "$err"
+
 # Triage keys and reducer keys coexist in the one first-repository baseline.
 # A triage rewrite that starts from empty loses the standing reducer edge and
 # the next run incorrectly emits pr-watch.
@@ -136,7 +179,7 @@ new_case triage_preserves_pr_keys
 printf '12\tabcdef01\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out"
 printf '1\n' > "$STUB_DIR/prwatch.rc"
 printf '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]\n' > "$STUB_DIR/tracker.out"
-printf 'KEN-1200\n' > "$STUB_DIR/tracker-triaged.txt"
+printf '{"triaged":[{"issue":"KEN-1200","verdict":"kept"}]}\n' > "$STUB_DIR/oversee-state.json"
 err="$TMP_ROOT/triage-coexist-a"
 out="$(run_watch -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
 state_file="$STATE_DIR/owner_repo__2026-08-15T09_00_00Z"

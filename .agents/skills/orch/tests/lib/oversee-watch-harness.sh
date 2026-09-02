@@ -286,7 +286,8 @@ fi
 exec "$real" "$@"
 EOF
 
-# Fleet verdict-log reader. tracker-triaged.txt holds kept/canceled ids.
+# Fleet verdict-log reader. It executes the watcher's jq filter against the
+# case's oversee-state.json while preserving explicit failure fixtures.
 cat > "$TMP_ROOT/bin/workflow-state-stub.sh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -294,8 +295,10 @@ printf '%s\n' "$*" > "$STUB_DIR/workflow-state.args"
 [[ -f "$STUB_DIR/workflow-state.err" ]] && cat "$STUB_DIR/workflow-state.err" >&2
 rc=0; [[ -f "$STUB_DIR/workflow-state.rc" ]] && rc="$(cat "$STUB_DIR/workflow-state.rc")"
 [[ "$rc" -eq 0 ]] || exit "$rc"
-[[ -f "$STUB_DIR/tracker-triaged.txt" ]] && cat "$STUB_DIR/tracker-triaged.txt"
-exit 0
+expr=""
+for arg in "$@"; do expr="$arg"; done
+[[ -n "$expr" ]] || { echo "workflow-state stub: missing jq expression" >&2; exit 2; }
+jq -r "$expr" "$STUB_DIR/oversee-state.json"
 EOF
 
 chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/tmux" "$TMP_ROOT/bin/pgrep" \
@@ -322,6 +325,7 @@ new_case() {
   # kids-<pid>.txt.
   printf '9001\n' > "$STUB_DIR/panepid-gh-1.txt"
   printf '9002\n' > "$STUB_DIR/panepid-gh-2.txt"
+  printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
 }
 
 # run_watch [ENV=VAL ...] -- ARGS...   (fast cadence; TMUX set unless NO_TMUX=1)

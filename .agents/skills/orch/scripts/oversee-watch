@@ -2,8 +2,8 @@
 # oversee-watch blocks until the fleet needs the overseer, reports one wake,
 # and exits. The workflow handles every EVENT line and re-runs it.
 #
-# Pass order: prompt-baseline invalidation, pr-watch, merge lifecycle, merged
-# items, team triage, tmux lane state, heartbeat. Every event carries the
+# Pass order: one lane snapshot, pr-watch, merge lifecycle, merged items, team
+# triage, lane classification, heartbeat. Every event carries the
 # latest pr-watch context. Live tracker and pane reads remain authoritative;
 # persisted state holds only edge keys. Usage, event details, configuration,
 # and failure contracts live in usage().
@@ -142,6 +142,10 @@ source "$SCRIPT_DIR/lib/pr-watch-pass.sh"
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
 TRACKER="${OVERSEE_WATCH_TRACKER:-$SKILLS_DIR/linear/scripts/linear.sh}"
 WORKFLOW_STATE="${OVERSEE_WATCH_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
+WORKFLOW_STATE_ARGS=()
+if [[ -z "${ORCH_STATE_DIR:-}" ]]; then
+  WORKFLOW_STATE_ARGS=(--state-dir "$PROJECT_ROOT/tmp")
+fi
 PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 
 # Lane-asking shares the review reducer's state directory and keeps only pane
@@ -353,7 +357,7 @@ check_merged() {
 check_triage() {
   [[ "$TRIAGE_ENABLED" -eq 1 ]] || return 0
   local errf="$WORK_DIR/triage.err" now age days out ids verdicts pr_keys triage_keys="" seen id new_ids="" next rc=0
-  verdicts="$("$WORKFLOW_STATE" get oversee '.triaged // [] | map(select(.verdict == "kept" or .verdict == "canceled") | .issue) | .[]' 2>"$errf")" || rc=$?
+  verdicts="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.triaged // [] | map(select(.verdict == "kept" or .verdict == "canceled") | .issue) | .[]' 2>"$errf")" || rc=$?
   [[ "$rc" -eq 0 ]] \
     || die "could not read the fleet triage verdict log (rc=$rc): $(cat "$errf")"
   verdicts="$(awk 'NF && !seen[$0]++' <<<"$verdicts")"
@@ -486,45 +490,45 @@ LANE_SHELL_SEEN=""
 # Watch-list positions that sat at an idle harness prompt on the previous pass.
 LANE_IDLE_SEEN=""
 
-# The pass's snapshot of one lane: whether its harness has exited, and the
-# file holding its pane capture. Every check reads the same observation, keyed
-# on the lane's position in the watch list — a tmux window name can carry any
-# character, and two names that differ only outside a filename-safe set would
-# otherwise share one snapshot and classify each other's screens.
+# LANE_OBS columns are watch-list position, ready/gone, pane pid, current
+# command, and server-plus-pane occurrence key. Capture bytes live in the file
+# for that position. Position, not a filename slug, keeps arbitrary tmux window
+# names from sharing one snapshot and classifying each other's screens.
 LANE_OBS=""
 lane_field() { awk -F'\t' -v i="$2" -v field="$3" '$1 == i { print $field }' <<<"$1"; }
 lane_state() { lane_field "$1" "$2" 2; }
 lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$1"; }
-
-lane_asking_pane_key() {
-  local key
-  key="$(tmux display-message -p -t "$1" '#{pid} #{pane_id}' 2>/dev/null)" || return 1
-  [[ "$key" =~ ^[0-9]+[[:blank:]]+%[^[:space:]]+$ ]] || return 1
-  printf '%s' "$key"
-}
 
 # Build one immutable lane snapshot for the pass. The final capture path is
 # the success marker; a failed redirect leaves only a removed scratch file.
 observe_lanes() {
   LANE_OBS=""
   [[ ${#LANES[@]} -gt 0 ]] || return 0
-  local existing lane pane below key prefix prior next obs pid cmd capture i=0 state="$LANE_ASKING_STATE"
+  local existing lane pane below key prefix prior next obs pid cmd capture errf i=0 state="$LANE_ASKING_STATE"
   existing="$(tmux list-windows -F '#W' 2>&1)" || die "tmux list-windows failed: $existing"
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
     capture="$(lane_pane_file "$i")"
     rm -f "$capture" "$capture.$$.tmp"
-    if ! grep -qxF -- "$lane" <<<"$existing" \
-       || ! obs="$(tmux display-message -p -t "$lane" '#{pane_pid} #{pane_current_command}' 2>/dev/null)" \
-       || [[ ! "$obs" =~ ^[0-9]+[[:blank:]]+[^[:space:]] ]] \
-       || ! key="$(lane_asking_pane_key "$lane")" \
-       || ! tmux capture-pane -t "$lane" -p >"$capture.$$.tmp" 2>/dev/null; then
-      rm -f "$capture.$$.tmp"
+    if ! grep -qxF -- "$lane" <<<"$existing"; then
       LANE_OBS+="$i"$'\t'"gone"$'\t\t\t\n'
       next="$(jq -c --arg lane "$lane" 'del(.[$lane])' <<<"$state")" \
         || die "could not clear lane '$lane' from $LANE_ASKING_STATE_FILE"
       state="$next"
       continue
+    fi
+    errf="$WORK_DIR/lane-probe.$i.err"
+    obs="$(tmux display-message -p -t "$lane" '#{pane_pid} #{pane_current_command}' 2>"$errf")" \
+      || die "pane command probe failed for '$lane': $(cat "$errf")"
+    [[ "$obs" =~ ^[0-9]+[[:blank:]]+[^[:space:]] ]] \
+      || die "pane command probe returned a malformed result for '$lane': ${obs:-<empty>}"
+    key="$(tmux display-message -p -t "$lane" '#{pid} #{pane_id}' 2>"$errf")" \
+      || die "pane identity probe failed for '$lane': $(cat "$errf")"
+    [[ "$key" =~ ^[0-9]+[[:blank:]]+%[^[:space:]]+$ ]] \
+      || die "pane identity probe returned a malformed result for '$lane': ${key:-<empty>}"
+    if ! tmux capture-pane -t "$lane" -p >"$capture.$$.tmp" 2>"$errf"; then
+      rm -f "$capture.$$.tmp"
+      die "pane capture failed for '$lane': $(cat "$errf")"
     fi
     mv "$capture.$$.tmp" "$capture" || die "could not publish the pane capture behind '$lane'"
     pid="${obs%%[[:blank:]]*}"

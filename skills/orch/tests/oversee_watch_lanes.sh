@@ -4,34 +4,9 @@
 # the heartbeat and the process-wide failures — is oversee_watch.sh; both
 # build their sandbox from lib/oversee-watch-harness.sh.
 #
-# Covered here:
-#   3.  a listed lane window that no longer exists
-#   3b. a live window whose pane holds a bare shell with no child process on
-#       two consecutive passes — the harness exited (pane tail follows); one
-#       pass alone, and a shell followed by a live command, are not events; a
-#       login shell (-bash) counts; a shell WITH a child is a live lane (the
-#       wrapper typed at a prompt) and costs one ps per pass; a live pane
-#       command is not an event and never reaches ps; an unreadable pane
-#       command is window-gone
-#   3c. usage-limit: a limit banner under a still-running harness fires on
-#       one pass, for either harness's wording, under a wrapped shell, ahead
-#       of a question on the same screen, and names the config dir a live
-#       lane claim maps the window to; a pruned claim names none; a healthy
-#       pane never fires; a banner under an exited harness is lane-exited
-#       instead; and a banner above a later user turn is scrollback, while
-#       one below that turn still fires. Codex's benign reset OFFER is not a
-#       spent account
-#   4.  a lane pane showing a lane-asking prompt (pane tail follows), under a
-#       wrapped shell too, and on either harness's dialog screen; a selection
-#       list above the last user turn is one the lane already answered and
-#       never fires, while one below that turn still does
-#   4b. idle-after-return: a harness at its composer with nothing in flight
-#       on two consecutive passes (either harness's prompt, and under a
-#       wrapped shell); one pass alone, a working indicator alongside the
-#       prompt, and an idle pass followed by a working one are not events; a
-#       working indicator above the last user turn is scrollback and still
-#       fires, while one below that turn does not, and a user turn's marker
-#       above that boundary is not the composer the lane sits at
+# Covered here: window absence versus probe failure; shell-exit debounce;
+# usage limits and claims; live versus answered prompts for both harnesses;
+# idle-return debounce; scrollback boundaries; and one-capture classification.
 set -euo pipefail
 
 # shellcheck source=lib/oversee-watch-harness.sh
@@ -181,22 +156,29 @@ new_case lane_obs_missing_command
 printf '9002\n' > "$STUB_DIR/obs-gh-2.txt"
 err="$TMP_ROOT/e3b8"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT window-gone gh-2" \
-  "a liveness reply with a pid and no command is window-gone" "$err"
+assert_eq "$rc" "2" "a liveness reply with no command exits 2" "$err"
+assert_eq "$out" "" "a malformed liveness reply emits no window-gone event" "$err"
+assert_contains "$(cat "$err")" "malformed result for 'gh-2': 9002" \
+  "the malformed liveness result is preserved" "$err"
 
 new_case lane_obs_non_numeric_pid
 printf 'fish fish\n' > "$STUB_DIR/obs-gh-2.txt"
 err="$TMP_ROOT/e3b9"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT window-gone gh-2" \
-  "a liveness reply whose first field is not a pid is window-gone" "$err"
+assert_eq "$rc" "2" "a liveness reply with a non-pid exits 2" "$err"
+assert_eq "$out" "" "a non-pid liveness reply emits no window-gone event" "$err"
+assert_contains "$(cat "$err")" "malformed result for 'gh-2': fish fish" \
+  "the non-pid liveness result is preserved" "$err"
 
 # an unreadable pane command is window-gone, never a silent skip
 new_case lane_cmd_unreadable
 rm -f "$STUB_DIR/cmd-gh-2.txt"
 err="$TMP_ROOT/e3d"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT window-gone gh-2" "an unreadable pane command is window-gone" "$err"
+assert_eq "$rc" "2" "an unreadable pane command exits 2" "$err"
+assert_eq "$out" "" "an unreadable pane command emits no window-gone event" "$err"
+assert_contains "$(cat "$err")" "pane command probe failed for 'gh-2': can't find window: gh-2" \
+  "the pane command failure preserves tmux stderr" "$err"
 
 # --- 3c. usage-limit: the harness is alive, the account is spent ------------
 new_case usage_limit

@@ -81,14 +81,18 @@ out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
   "an identical prompt emits after a submitted answer" "$err"
 
-# A failed fresh capture is window-gone even while tmux still lists the window
-# and reports a command. A failed redirect must not leave a reusable marker.
+# A failed fresh capture is a probe error once tmux confirmed the window.
+# The failed redirect must not leave a reusable marker or lose stderr.
 new_case lane_asking_capture_failure
 : > "$STUB_DIR/capture-fail-gh-2"
 err="$TMP_ROOT/asking-capture-fail"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT window-gone gh-2" \
-  "capture failure stays window-gone with a live window and command" "$err"
+assert_eq "$rc" "2" "capture failure exits 2 after the window probe" "$err"
+assert_eq "$out" "" "capture failure emits no window-gone event" "$err"
+assert_contains "$(cat "$err")" "pane capture failed for 'gh-2'" \
+  "capture failure names the probe" "$err"
+assert_contains "$(cat "$err")" "capture failed: gh-2" \
+  "capture failure preserves tmux stderr" "$err"
 
 # Control: a pane without a prompt emits no lane-asking event.
 new_case lane_asking_no_prompt
