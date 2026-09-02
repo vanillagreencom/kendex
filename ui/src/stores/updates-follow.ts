@@ -12,13 +12,21 @@
 // raises the store's page-wide `busy` for as long as it and its reload
 // run, because that flag is what a check refuses on, and a write it did
 // not cover is a check running beside a commit its report predates.
-import type { ItemKind, Scope, UpdateRow } from "@/bindings";
-import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
+import {
+  commands,
+  type ItemKind,
+  type Scope,
+  type UpdateRow,
+} from "@/bindings";
+import {
+  UPDATE_NEEDS_CHECK_NOTE,
+  UPDATES_ONE_AT_A_TIME_NOTE,
+} from "@/lib/copy-updates";
 import type { ReadState } from "@/lib/read-state";
 import { sameScope } from "@/lib/scope";
 import { settled } from "@/lib/settled";
+import { saying } from "@/lib/undone";
 import { rowUnsettled } from "@/lib/updates-read-state";
-import { writeRev } from "./updates-writes";
 
 /** A follow switch moved but not yet answered for: the place it was moved
  *  in, and the position it was moved to. */
@@ -70,6 +78,7 @@ interface FollowStore {
   rows: UpdateRow[];
   pendingFollows: PendingFollow[];
   read: ReadState;
+  busy: boolean;
   checking: boolean;
   reading: boolean;
   reload: () => Promise<void>;
@@ -98,6 +107,13 @@ export function followSwitch({
     // never fall through to null, which means "follow" (the opposite).
     const hold = row.current?.commit ?? null;
     if (!auto && hold === null) return;
+    // One write at a time, page-wide: the flip commits like any other, and
+    // asked before the switch moves on screen, so a refusal never leaves a
+    // position the engine was never told about.
+    if (get().busy) {
+      report(UPDATES_ONE_AT_A_TIME_NOTE);
+      return;
+    }
     // Same refusal as updateOne: the hold would pin a commit captured from
     // rows nothing has confirmed, or from a scope another flip is already
     // applying.
@@ -122,8 +138,17 @@ export function followSwitch({
     // long — a commit is a commit, whichever scope it lands in.
     await holding(async () => {
       try {
-        const response = await settled(
-          writeRev(row.scope, row.kind, row.name, auto ? null : hold),
+        // The write says whatever account its answer carries — moving a
+        // hold can take a declaring package away with it.
+        const response = saying(
+          await settled(
+            commands.packageSetRev(
+              row.scope,
+              row.kind,
+              row.name,
+              auto ? null : hold,
+            ),
+          ),
         );
         // Say why now rather than in the seconds a read takes.
         if (response.status === "error") report(response.error);

@@ -14,8 +14,11 @@ import {
   updatedToastLabel,
   VERSION_ERROR_TITLE,
 } from "@/lib/copy";
+import { UPDATES_ONE_AT_A_TIME_NOTE } from "@/lib/copy-updates";
 import { sameScope } from "@/lib/scope";
 import { settled } from "@/lib/settled";
+import { saying } from "@/lib/undone";
+import { workOut } from "@/lib/updates-read-state";
 import { versionRowLabel } from "@/lib/versions";
 import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
@@ -24,7 +27,6 @@ import { useProblemsStore } from "@/stores/problems";
 import { useScanStore } from "@/stores/scan";
 import { holdingBusy, useUpdatesStore } from "@/stores/updates";
 import { sayApply } from "@/stores/updates-apply";
-import { writeRev, writeUpdate } from "@/stores/updates-writes";
 
 export type PackageView =
   | { mode: "files"; file: string | null }
@@ -146,23 +148,27 @@ export function packageVersionActions(
   // is broader than an edit anyway — files kendex never put there, a
   // provenance clash — so the held answer arrives here whatever the page
   // believes about edits.
-  // Under the updates store's `busy` as well as the page's own spinner:
-  // these commit like any update does, and the Updates page's check refuses
-  // on that flag alone. Without it a check runs beside this write and lands
-  // a report built before it.
-  const run = (
-    call: Promise<
+  // Under the updates store's `busy` as well as the page's own spinner —
+  // these commit like any update does, and one write at a time is what the
+  // Updates page's check and its own writes both rest on.
+  const run = async (
+    call: () => Promise<
       | { status: "ok"; data: PackageUpdate_Serialize }
       | { status: "error"; error: string }
     >,
     done: string,
   ) => {
+    // Asked before the command is sent: navigating here mid-write is the
+    // overlap that flag rules out.
+    if (workOut(useUpdatesStore.getState()))
+      return showError(UPDATES_ONE_AT_A_TIME_NOTE);
     setBusy(true);
     return holdingBusy(async () => {
       // A transport failure rejects rather than refusing. Unwrapped it
       // would skip the report, leave `setBusy` up for the life of the view
-      // and skip the read-back this promises either way.
-      const response = await settled(call);
+      // and skip the read-back this promises either way. `saying` because
+      // a hold move can take a declaring package away with it.
+      const response = saying(await settled(call()));
       setBusy(false);
       if (response.status === "error") {
         showError(response.error);
@@ -181,7 +187,7 @@ export function packageVersionActions(
 
   const switchTo = (row: VersionRow) =>
     run(
-      writeRev(ref.scope, ref.kind, ref.name, row.id),
+      () => commands.packageSetRev(ref.scope, ref.kind, ref.name, row.id),
       updatedToastLabel(`${displayName} to ${versionRowLabel(row)}`),
     );
 
@@ -192,12 +198,15 @@ export function packageVersionActions(
     held
       ? switchTo(latest)
       : run(
-          writeUpdate(ref.scope, ref.kind, ref.name),
+          () => commands.packageUpdate(ref.scope, ref.kind, ref.name),
           updatedToastLabel(displayName),
         );
 
   const follow = () =>
-    run(writeRev(ref.scope, ref.kind, ref.name, null), FOLLOW_SOURCE_TOAST);
+    run(
+      () => commands.packageSetRev(ref.scope, ref.kind, ref.name, null),
+      FOLLOW_SOURCE_TOAST,
+    );
 
   return { switchTo, updateToLatest, follow };
 }

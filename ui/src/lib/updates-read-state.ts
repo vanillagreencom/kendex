@@ -30,6 +30,12 @@ interface PageState {
 const unsettled = (state: PageState): boolean =>
   state.read.status !== "landed" || state.checking || state.reading;
 
+/** Whether work the writes exclude is already out: a check building its
+ *  report, or a write about to commit under it. One write at a time is what
+ *  lets the store's `busy` be a flag rather than a count of who is in. */
+export const workOut = (state: { busy: boolean; checking: boolean }): boolean =>
+  state.busy || state.checking;
+
 /** Whether a Follow source flip is settling in this row's own place. The
  *  apply behind it moves what is installed in that scope and nowhere
  *  else, so a second write there would contend for that scope's writer

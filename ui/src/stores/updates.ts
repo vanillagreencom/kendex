@@ -10,6 +10,7 @@ import {
 import { READ_PENDING, type ReadState } from "@/lib/read-state";
 import { rescanEverything } from "@/lib/rescan";
 import { caught, settled } from "@/lib/settled";
+import { saying } from "@/lib/undone";
 import {
   packageCount,
   skippedPlaces,
@@ -17,10 +18,15 @@ import {
 } from "@/lib/update-groups";
 import { rowUnsettled } from "@/lib/updates-read-state";
 import { useProblemsStore } from "./problems";
-import { bulkLine, noRun, sayApply } from "./updates-apply";
+import {
+  applyRow,
+  applyRows,
+  bulkLine,
+  noRun,
+  sayApply,
+} from "./updates-apply";
 import { followSwitch, type PendingFollow } from "./updates-follow";
 import { standingReads } from "./updates-standing";
-import { writeIgnored, writeRow, writeRows } from "./updates-writes";
 
 interface UpdatesState {
   rows: UpdateRow[];
@@ -42,11 +48,9 @@ interface UpdatesState {
    *  `busy` exclude each other: a fetch builds its report once, so a commit
    *  landing while it is out would be missing from it. */
   checking: boolean;
-  /** True while a read of the standing is on its way. Read off the same
-   *  ticket that orders the landings, so the page-wide rule and the
-   *  ordering rule cannot disagree: a mount or a return to the window
-   *  reloads over rows that landed perfectly well, and every value a
-   *  commit-applying action captured is about to be replaced. */
+  /** True while a read of the standing is on its way: a mount or a return
+   *  to the window reloads over rows that landed perfectly well, and every
+   *  value a commit-applying action captured is about to be replaced. */
   reading: boolean;
   /** Follow switches already moved on screen whose write has not answered.
    *  A flip's scope is what decides which rows the landing behind it may
@@ -70,27 +74,17 @@ interface UpdatesState {
   setIgnored: (row: UpdateRow, ignored: boolean) => Promise<void>;
 }
 
-/** How many writes are out. Counted rather than set: several paths raise
- *  `busy` now, and a `finally` writing false would drop the flag out from
- *  under a write still running — which is the moment `check` must still
- *  refuse. */
-let writesOut = 0;
-
-/** Hold the store's `busy` for as long as `work` runs.
- *
- *  Every write the exclusion covers goes through this, wherever it lives:
- *  `check` refuses on `busy` alone, so a write the flag does not cover is a
- *  check running beside it, and a report built before that commit landing
- *  after it. Paths outside this module reach it by import; `followSwitch`
- *  takes it as `holding`, since this module imports that one. */
+/** Hold the store's `busy` for as long as `work` runs — every write the
+ *  exclusion covers, wherever it lives. Paths outside this module reach it
+ *  by import; `followSwitch` takes it as `holding`, since this module
+ *  imports that one. A flag rather than a count: every caller refuses while
+ *  it is already up, so this `finally` drops it under nobody. */
 export const holdingBusy = async <T>(work: () => Promise<T>): Promise<T> => {
-  writesOut += 1;
   useUpdatesStore.setState({ busy: true });
   try {
     return await work();
   } finally {
-    writesOut -= 1;
-    if (writesOut === 0) useUpdatesStore.setState({ busy: false });
+    useUpdatesStore.setState({ busy: false });
   }
 };
 
@@ -125,20 +119,16 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     reload,
 
     check: async () => {
-      // A check already running answers this click too; a second fetch would
-      // cost the network twice for one answer. A write already running is
-      // the other half: the fetch builds its report once, so a commit that
-      // lands while it is out would not be in it, and landing it would put
-      // the rows back as they were before that commit. Every write that
-      // goes through [holdingBusy] raises `busy`, so this reads one flag
-      // rather than asking each path.
+      // A check already running answers this click too. A write is the
+      // other half: the fetch builds its report once, so a commit landing
+      // while it is out would not be in it, and landing that report would
+      // put the rows back as they were before the commit.
       if (get().checking || get().busy) return;
       set({ checking: true });
       try {
         const response = await settled(commands.updatesRefresh());
         // The fetch reads the standing after fetching every mirror, so it
-        // ranks by when it lands — and no write that raises `busy` can have
-        // committed behind it, because one out is what refuses this check.
+        // ranks by when it lands — and one write out is what refused it.
         landOwn(response);
         if (response.status === "error")
           showError(UPDATE_ERROR_TITLE, response.error);
@@ -148,9 +138,12 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     },
 
     updateOne: async (row) => {
+      // One write at a time, page-wide: the second committing after the
+      // first released `busy` is a check opening over a commit it cannot see.
+      if (get().busy) return oneAtATime();
       if (rowUnsettled(get(), row)) return needsCheck();
       await holdingBusy(async () => {
-        const answer = await caught(writeRow(row, reportUpdate));
+        const answer = await caught(applyRow(row, reportUpdate));
         let applied = false;
         if (answer.status === "error") {
           // A transport failure rejects rather than refusing, and only
@@ -174,6 +167,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
 
     updateRows: async (wanted) => {
       const state = get();
+      if (state.busy) return oneAtATime();
       if (wanted.some((row) => rowUnsettled(state, row))) return needsCheck();
       await holdingBusy(async () => {
         // Edited packages are held by the engine and cannot be updated
@@ -198,7 +192,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
           failed = true;
           reportUpdate(error);
         };
-        const answer = await caught(writeRows(rows, report, what));
+        const answer = await caught(applyRows(rows, report, what));
         // A rejection escapes the sequence without touching the record —
         // only this catch saw it, and the places that did commit before it
         // are still in there to be said.
@@ -228,13 +222,19 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     }),
 
     setIgnored: async (row, ignored) => {
-      // The mute captures nothing off the row, so `rowUnsettled` is not what
-      // bars it. What bars it is the check: a report built before this
-      // commit must not land after it, and refusing here is what keeps the
-      // fetch from being out at all.
+      // The mute captures nothing off the row, so `rowUnsettled` is not
+      // what bars it. What bars it is the work already out: a report built
+      // before this commit must not land after it.
       if (get().checking || get().busy) return oneAtATime();
       await holdingBusy(async () => {
-        const response = await settled(writeIgnored(row, ignored));
+        // `saying` because a mute that took a declaring package away ran
+        // its uninstaller in somebody's repository.
+        const { scope, kind, name, repo } = row;
+        const response = saying(
+          await settled(
+            commands.updateSetIgnored(scope, kind, name, repo, ignored),
+          ),
+        );
         if (response.status === "error")
           showError(UPDATE_ERROR_TITLE, response.error);
         // The command answers with the overview it rebuilt, and this reads

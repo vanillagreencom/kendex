@@ -330,7 +330,7 @@ describe("the Follow source switch", () => {
     expect(commands.auditAll).not.toHaveBeenCalled();
   });
 
-  it("refuses a second place in the settling scope, and takes another", async () => {
+  it("refuses a second flip, in the settling scope or any other", async () => {
     const write = pending<typeof ok>(ok);
     vi.mocked(commands.packageSetRev).mockReturnValue(write.promise as never);
     mount(<Live />);
@@ -339,9 +339,10 @@ describe("the Follow source switch", () => {
       followSwitch("gh", USER_LEVEL_PLACE).click();
     });
 
-    // The apply behind the first flip can move what is installed in its
-    // scope, so a second hold captured there would pin a commit about to
-    // go stale. Another scope's is untouched by it.
+    // One write at a time, page-wide, whichever scope the second would
+    // reach: `busy` is a flag, and a second flip released it the moment it
+    // finished — with the first still committing, and a check free to build
+    // a report the commit is not in.
     await act(async () => {
       void useUpdatesStore.getState().setAutoUpdate(rows[0], true);
       void useUpdatesStore.getState().setAutoUpdate(rows[2], false);
@@ -349,7 +350,7 @@ describe("the Follow source switch", () => {
 
     expect(
       useUpdatesStore.getState().pendingFollows.map((one) => one.name),
-    ).toEqual(["gh", "orch"]);
+    ).toEqual(["gh"]);
 
     write.answer(ok);
     await settle();

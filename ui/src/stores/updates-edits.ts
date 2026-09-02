@@ -1,5 +1,5 @@
 import { toast } from "sonner";
-import type { HarnessId, UpdateRow } from "@/bindings";
+import { commands, type HarnessId, type UpdateRow } from "@/bindings";
 import { FORK_ERROR_TITLE, forkedToastLabel } from "@/lib/copy";
 import {
   installedAsNewToastLabel,
@@ -10,14 +10,10 @@ import {
 import { packageDisplayName } from "@/lib/labels";
 import { rescanEverything } from "@/lib/rescan";
 import { caught } from "@/lib/settled";
-import { rowUnsettled } from "@/lib/updates-read-state";
+import { saying } from "@/lib/undone";
+import { rowUnsettled, workOut } from "@/lib/updates-read-state";
 import { useProblemsStore } from "./problems";
 import { holdingBusy, useUpdatesStore } from "./updates";
-import {
-  writeDiscardEdits,
-  writeFork,
-  writeForkBeside,
-} from "./updates-writes";
 
 /** The ways out of an edited place, run under the updates store's busy
  *  flag so every control on the page waits on the same one — a fork, a
@@ -55,12 +51,9 @@ const report = (outcome: Outcome<unknown>) => {
 const stale = (row: UpdateRow): boolean =>
   rowUnsettled(useUpdatesStore.getState(), row);
 
-/** Whether a check or another write is already out — the pair the store
- *  refuses a commit on when nothing is wrong with the row itself. */
-const running = (): boolean => {
-  const { busy, checking } = useUpdatesStore.getState();
-  return busy || checking;
-};
+/** Whether a check or another write is already out — what bars a commit
+ *  when nothing is wrong with the row itself. */
+const running = (): boolean => workOut(useUpdatesStore.getState());
 
 /** Keep an edited place's files as a local fork of its own. Only some
  *  tools' renderings read back as source; the row names the edited one a
@@ -80,7 +73,9 @@ export const keepAsOwn = async (row: UpdateRow): Promise<void> => {
   }
   report(
     await run(async () => {
-      const response = await writeFork(row.scope, row.kind, row.name, harness);
+      const response = saying(
+        await commands.packageFork(row.scope, row.kind, row.name, harness),
+      );
       if (response.status === "error") return { error: response.error };
       toast.success(forkedToastLabel(packageDisplayName(row)));
       return { ok: null };
@@ -91,20 +86,26 @@ export const keepAsOwn = async (row: UpdateRow): Promise<void> => {
 /** Drop an edited place's edits and take the newest version — moving the
  *  hold along when the place is held, in the same apply. */
 export const takeNewVersion = async (row: UpdateRow): Promise<void> => {
+  if (running()) {
+    report({ error: UPDATES_ONE_AT_A_TIME_NOTE });
+    return;
+  }
   if (stale(row)) {
     report({ error: UPDATE_NEEDS_CHECK_NOTE });
     return;
   }
   report(
     await run(async () => {
-      const response = await writeDiscardEdits(
-        row.scope,
-        row.kind,
-        row.name,
-        // A held place moves to the newest only when that is its own hold
-        // to move and the newest is known; otherwise the discard restores
-        // what is resolved now.
-        row.pinned && row.canTakeLatest ? (row.latest?.commit ?? null) : null,
+      const response = saying(
+        await commands.applyDiscardEdits(
+          row.scope,
+          row.kind,
+          row.name,
+          // A held place moves to the newest only when that is its own hold
+          // to move and the newest is known; otherwise the discard restores
+          // what is resolved now.
+          row.pinned && row.canTakeLatest ? (row.latest?.commit ?? null) : null,
+        ),
       );
       return response.status === "error"
         ? { error: response.error }
@@ -128,18 +129,21 @@ export const installAsNew = async (
   harness: HarnessId,
   own: string,
 ): Promise<string | null> => {
+  if (running()) return UPDATES_ONE_AT_A_TIME_NOTE;
   if (stale(row)) return UPDATE_NEEDS_CHECK_NOTE;
   const name = packageDisplayName(row);
   const outcome = await run<string | null>(async () => {
-    const response = await writeForkBeside(
-      row.scope,
-      row.kind,
-      row.name,
-      harness,
-      own,
-      // The same rule as discarding: a held place moves to the newest when
-      // that hold is its own to move.
-      row.pinned && row.canTakeLatest ? (row.latest?.commit ?? null) : null,
+    const response = saying(
+      await commands.packageForkBeside(
+        row.scope,
+        row.kind,
+        row.name,
+        harness,
+        own,
+        // The same rule as discarding: a held place moves to the newest when
+        // that hold is its own to move.
+        row.pinned && row.canTakeLatest ? (row.latest?.commit ?? null) : null,
+      ),
     );
     if (response.status === "ok") return { ok: null };
     const failure: unknown = response.error;
