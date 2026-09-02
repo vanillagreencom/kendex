@@ -2,14 +2,21 @@
 // out of labels.ts so that file's routine product vocabulary doesn't have to
 // carry this denser, failure-specific prose too.
 //
-// Nothing in this file names a file or a scope. Both are the engine's to
-// know: `manifest::file::manifest_path` and `lock::lock_path` route a
-// place's files by what that place is, and every kind below arrives from
-// Personal as readily as from a project. The card already carries both —
-// the engine's message names the exact path, and PlaceCard's name line
-// under the heading names the place — so copy spelling out either can only
-// contradict what the reader sees beside it. A lead names its file by
-// role; a step points at the file named above.
+// Nothing here names a file whose name varies by place, and nothing here
+// names the place. Both are the engine's to know: `manifest_path` and
+// `lock_path` (crates/core/src/manifest/file.rs, crates/core/src/lock.rs)
+// route a scope's manifest and lock by what that scope is, and every kind
+// carrying a scope arrives from Personal as readily as from a project. The
+// card already carries both — the engine's message names the exact path,
+// and PlaceCard's name line under the heading names the place — so copy
+// spelling out either can only contradict what the reader sees beside it.
+// A lead names its file by role; a step points at the file named above.
+//
+// A name every place spells the same, like a harness's own hooks.json, is
+// not one of those files and is free to appear. And scan-failure is the
+// one kind with no scope to get wrong — it is about the machine rather
+// than a place in it — so the scope half doesn't reach it; the guard in
+// error-copy.test.ts exempts it by name.
 import type { ProblemKind } from "@/stores/problems";
 
 // Nothing converts a file from another version of kendex, so "old" and

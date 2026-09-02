@@ -17,6 +17,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 const ACME: Scope = { scope: "project", root: "/work/acme" };
+const PERSONAL: Scope = { scope: "global" };
 const MESSAGE =
   "/work/acme/.kendex-lock.json: this lock file could not be read";
 
@@ -30,6 +31,21 @@ const unreadableLock: Problem = {
 /** The paragraph holding the engine's verbatim message. */
 const errorBlock = (host: HTMLElement) =>
   [...host.querySelectorAll("p")].find((p) => p.textContent === MESSAGE);
+
+// The card's own control, by the words it wears.
+const STOP_TRACKING = "Stop tracking this project…";
+
+const stopTracking = (host: HTMLElement) =>
+  [...host.querySelectorAll("button")].find(
+    (el) => el.textContent?.trim() === STOP_TRACKING,
+  );
+
+const failure = (scope: Problem["scope"]): Problem => ({
+  key: "k",
+  scope,
+  kind: "other",
+  message: "something went wrong",
+});
 
 describe("a file kendex could not read", () => {
   it("says which project and which file before the verbatim error", () => {
@@ -84,5 +100,27 @@ describe("a scan that could not finish", () => {
       "This machine",
       "the machine could not be read",
     ]);
+  });
+});
+
+// A failure with no known cause has one step, Rescan to retry. The other
+// way out is this control rather than a line of copy, because Personal has
+// no project to stop tracking and per-kind steps cannot say so.
+describe("a failure with no known cause", () => {
+  it("offers to stop tracking the project it is about", () => {
+    const host = mount(<ProblemCard problem={failure(ACME)} />);
+
+    expect(stopTracking(host)).toBeDefined();
+  });
+
+  // The control moves the reader's own registration, and neither of these
+  // has one to move.
+  it("offers it nowhere there is no project to stop tracking", () => {
+    expect(
+      stopTracking(mount(<ProblemCard problem={failure(PERSONAL)} />)),
+    ).toBeUndefined();
+    expect(
+      stopTracking(mount(<ProblemCard problem={failure(null)} />)),
+    ).toBeUndefined();
   });
 });
