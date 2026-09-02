@@ -8,16 +8,13 @@ use crate::manifest::FrontmatterOverrides;
 use crate::model::{HarnessId, ItemKind, Scope};
 
 use crate::render::agent::{
-    EffectiveAgent, SourceAgent, hooks_for_agent, merge_overrides, merged_instructions,
-    parse_source_agent,
+    EffectiveAgent, GENERATED_BANNER, SourceAgent, hooks_for_agent, merge_overrides,
+    merged_instructions, parse_source_agent,
 };
-
-mod prose;
 
 use super::ForkOf;
 use super::stated::{carried_edits, dropped, stated, uncleared};
 use crate::engine::agent_carry::{AgentCarry, agent_carry};
-use prose::prose;
 
 /// The local source bytes and catalog values a captured agent needs.
 pub(super) struct CapturedAgent {
@@ -55,6 +52,10 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
     };
 
     let edited_text = std::fs::read_to_string(edited).map_err(|e| CoreError::io(edited, e))?;
+    let read = wrapper(scope, &publisher, harness, &around);
+    let bytes = source_form(&published, &edited_text, name, read.as_ref())?;
+    let captured = parse_source_agent(&String::from_utf8_lossy(&bytes))
+        .map_err(|problem| unreadable(name, &decl.source, problem))?;
     let refused = |problem: String| CoreError::ForkWidensAccess {
         name: crate::names::shown(name),
         problem,
@@ -65,15 +66,6 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
             harness.display_name()
         ))
     })?;
-    let read = wrapper(scope, &publisher, harness, &around).map_err(|problem| {
-        CoreError::ForkWidensAccess {
-            name: crate::names::shown(name),
-            problem: format!("its {} wrapper: {problem}", harness.display_name()),
-        }
-    })?;
-    let bytes = source_form(&published, &edited_text, name, read.as_ref())?;
-    let captured = parse_source_agent(&String::from_utf8_lossy(&bytes))
-        .map_err(|problem| unreadable(name, &decl.source, problem))?;
     let named = SourceAgent {
         name: installed_as.to_owned(),
         ..captured.clone()
@@ -178,7 +170,7 @@ fn source_form(
     published: &[u8],
     edited: &str,
     name: &str,
-    wrapper: Option<&Wrapper>,
+    wrapper: Option<&(String, String)>,
 ) -> Result<Vec<u8>> {
     let refused = |problem: String| CoreError::ForkNameUnusable {
         name: crate::names::shown(name),
@@ -194,6 +186,24 @@ fn source_form(
     Ok(format!("---\n{frontmatter}---\n\n{prose}").into_bytes())
 }
 
+/// The edited body with the generated wrapper removed. A wrapper only
+/// comes off when it still stands whole at that edge. Everything else is
+/// the person's text and stays byte-for-byte as the rendered harness said
+/// it, including that harness's vocabulary.
+fn prose(body: &str, wrapper: Option<&(String, String)>) -> String {
+    let mut kept = body;
+    if let Some((before, after)) = wrapper {
+        kept = kept.strip_prefix(before.as_str()).unwrap_or(kept);
+        kept = kept.strip_suffix(after.as_str()).unwrap_or(kept);
+    }
+    let mut out = String::new();
+    for line in kept.lines().filter(|line| line.trim() != GENERATED_BANNER) {
+        out.push_str(line);
+        out.push('\n');
+    }
+    format!("{}\n", out.trim_start_matches('\n').trim_end())
+}
+
 struct Around<'a> {
     skills: Vec<String>,
     overrides: FrontmatterOverrides,
@@ -202,86 +212,9 @@ struct Around<'a> {
     hooks: Vec<&'a crate::manifest::CustomHook>,
 }
 
-#[derive(Debug)]
-pub(super) struct Wrapper {
-    pub(super) before: Vec<String>,
-    pub(super) after: Vec<String>,
-    pub(super) published: String,
-}
-
-#[derive(Clone, Copy)]
-enum Wrote {
-    Launch,
-    Skills,
-    Hook(usize),
-    Additional,
-}
-
+/// What this rendering puts before and after an agent's own body. Asking
+/// the renderer with a stand-in keeps section spelling in the renderer.
 fn wrapper(
-    scope: &Scope,
-    publisher: &SourceAgent,
-    harness: HarnessId,
-    around: &Around,
-) -> std::result::Result<Option<Wrapper>, String> {
-    let (Some((bare_before, bare_after)), Some((before, after)), Some(bare_body)) = (
-        ends(scope, publisher, harness, &bare(around)),
-        ends(scope, publisher, harness, around),
-        document(scope, publisher, harness, &bare(around)),
-    ) else {
-        return Ok(None);
-    };
-    let mut parts = Vec::new();
-    for input in [Wrote::Launch, Wrote::Skills]
-        .into_iter()
-        .chain((0..around.hooks.len()).map(Wrote::Hook))
-        .chain([Wrote::Additional])
-    {
-        let Some(part) = ends(scope, publisher, harness, &only(around, input)) else {
-            return Ok(None);
-        };
-        parts.push(part);
-    }
-    decompose(bare_before, bare_after, before, after, bare_body, parts)
-}
-
-fn decompose(
-    bare_before: String,
-    bare_after: String,
-    before: String,
-    after: String,
-    bare_body: String,
-    parts: Vec<(String, String)>,
-) -> std::result::Result<Option<Wrapper>, String> {
-    let published = bare_body
-        .strip_prefix(&bare_before)
-        .and_then(|body| body.strip_suffix(&bare_after))
-        .ok_or_else(|| "the published prose does not stand whole inside it".to_owned())?;
-    let mut read = Wrapper {
-        before: vec![bare_before.clone()],
-        after: Vec::new(),
-        published: published.to_owned(),
-    };
-    for (one_before, one_after) in parts {
-        match (
-            one_before.strip_prefix(&bare_before),
-            one_after.strip_prefix(&bare_after),
-        ) {
-            (Some(""), Some("")) => {}
-            (Some(section), Some("")) => read.before.push(section.to_owned()),
-            (Some(""), Some(section)) => read.after.push(section.to_owned()),
-            (Some(_), Some(_)) => {
-                return Err("one generated section stands on both sides".to_owned());
-            }
-            _ => return Err("one generated section rewrites the document".to_owned()),
-        }
-    }
-    if read.before.concat() != before || format!("{bare_after}{}", read.after.concat()) != after {
-        return Err("the generated sections do not reconstruct the document".to_owned());
-    }
-    Ok(Some(read))
-}
-
-fn ends(
     scope: &Scope,
     publisher: &SourceAgent,
     harness: HarnessId,
@@ -292,42 +225,10 @@ fn ends(
         body: STAND_IN.to_owned(),
         ..publisher.clone()
     };
-    let body = document(scope, &source, harness, around)?;
+    let text = render(scope, &source, harness, around)?;
+    let (_, body) = crate::frontmatter::split(&text).ok()?;
     let (before, after) = body.split_once(STAND_IN)?;
     Some((before.to_owned(), after.to_owned()))
-}
-
-fn document(
-    scope: &Scope,
-    source: &SourceAgent,
-    harness: HarnessId,
-    around: &Around,
-) -> Option<String> {
-    let text = render(scope, source, harness, around)?;
-    crate::frontmatter::split(&text)
-        .ok()
-        .map(|(_, body)| body.to_owned())
-}
-
-fn bare<'a>(around: &Around<'a>) -> Around<'a> {
-    Around {
-        skills: Vec::new(),
-        overrides: around.overrides.clone(),
-        launch: None,
-        additional: None,
-        hooks: Vec::new(),
-    }
-}
-
-fn only<'a>(around: &Around<'a>, wrote: Wrote) -> Around<'a> {
-    let mut one = bare(around);
-    match wrote {
-        Wrote::Launch => one.launch = around.launch.clone(),
-        Wrote::Skills => one.skills = around.skills.clone(),
-        Wrote::Hook(at) => one.hooks = around.hooks.get(at).copied().into_iter().collect(),
-        Wrote::Additional => one.additional = around.additional.clone(),
-    }
-    one
 }
 
 fn render(

@@ -8,7 +8,7 @@ pub mod validate;
 pub mod vocab;
 
 /// The code spans of each line in a rendered document.
-pub(crate) use blocks::{code_spans_by_line, inside_a_block};
+pub(crate) use blocks::code_spans_by_line;
 
 /// One thing the user should hear about a rendering, with the fix when
 /// there is one — every render lint travels through this shape.

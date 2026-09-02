@@ -1,1 +1,0 @@
-- Forking an edited agent now preserves authored text that matches a generated trailing section while removing the generated copy.
