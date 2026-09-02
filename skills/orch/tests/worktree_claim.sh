@@ -55,6 +55,8 @@ run_claim --issue VST-1
 assert_eq "$RUN_RC" "1" "missing worktree is rejected"
 run_claim --worktree "$wt_a" --issue VST-1 --bogus
 assert_eq "$RUN_RC" "1" "unknown option is rejected"
+run_claim --worktree "$wt_a" --issue VST-1 --state-dir "$TMP_ROOT/state"
+assert_eq "$RUN_RC" "1" "--state-dir is rejected rather than accepted and discarded"
 
 echo '=== claim and refresh ==='
 run_claim --worktree "$wt_a" --issue VST-1
@@ -80,7 +82,7 @@ assert_eq "$RUN_RC" "75" "a native lock outside the guard is refused"
 
 echo '=== released lease ==='
 "$GUARD" release "$wt_a" --owner VST-1 >/dev/null
-run_claim --worktree "$wt_a" --issue VST-1 --state-dir "$TMP_ROOT/state"
+run_claim --worktree "$wt_a" --issue VST-1
 assert_eq "$RUN_RC" "0" "a released worktree can be claimed again"
 
 echo

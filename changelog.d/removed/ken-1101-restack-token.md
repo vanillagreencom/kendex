@@ -1,0 +1,1 @@
+- **Breaking:** `worktree create --restack` now requires the tool-created pending marker on every reused worktree; re-create one whose restack state predates the marker.

@@ -127,4 +127,5 @@ skills/second-opinion/tests/review-dual-model.test.sh	1516
 skills/size-ratchet/scripts/lib/settings.sh	456
 skills/size-ratchet/scripts/size-ratchet	2063
 skills/worktree/scripts/worktree	4530
+skills/worktree/scripts/worktree-session-guard	426
 ui/src/stores/settings.ts	311

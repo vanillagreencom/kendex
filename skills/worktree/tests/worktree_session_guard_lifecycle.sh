@@ -15,10 +15,10 @@
 #     its OWN lease, `create --reuse` refuses a foreign one and refreshes its
 #     own.
 #
-# The `worktree` script's own per-issue claim lock still requires flock(1)
-# (`create` refuses to run without it), so this integration suite can only run
-# where flock exists. The guard itself no longer needs flock — its mkdir-mutex
-# fallback is covered directly in worktree_session_guard.sh.
+# The `worktree` script's own per-issue claim lock requires flock(1) (`create`
+# refuses to run without it), so this integration suite can only run where
+# flock exists. The guard itself does not: its mutation mutex falls back to a
+# mkdir mutex on hosts with no flock, which this suite therefore cannot reach.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -437,6 +437,71 @@ sweep_out="$("$GUARD_SCRIPT" sweep --repo "$REUSE_ROOT/main" --ttl-minutes 0)"
 assert_contains "$sweep_out" "released $REUSE_WT" "sweep releases the stale lease"
 assert_eq "$(guard_status_code "$REUSE_WT" "$REUSE_ROOT/main")" "3" \
   "sweep leaves the worktree unlocked"
+
+echo "=== claim serializes on the guard mutex ==="
+
+# Two owners racing `claim` both reading "no lease", both writing, and both
+# exiting 0 is the incident this guard exists to stop, so claim's whole
+# read-decide-write runs under the common-dir mutex. Holding that lock the way
+# a mid-claim guard process holds it proves a second owner cannot get behind it.
+MUTEX_ROOT="$TMP_ROOT/mutex"
+make_repo "$MUTEX_ROOT"
+add_merged_tree "$MUTEX_ROOT" "issue-m"
+MUTEX_WT="$MUTEX_ROOT/trees/issue-m"
+exec 8>"$MUTEX_ROOT/main/.git/kendex-worktree-session-guard.lock"
+flock -x 8
+set +e
+timeout 3 "$GUARD_SCRIPT" claim "$MUTEX_WT" --owner OWNER-B >/dev/null 2>&1
+mutex_code=$?
+set -e
+assert_eq "$mutex_code" "124" "claim blocks while another mutation holds the guard mutex"
+assert_eq "$(guard_status_code "$MUTEX_WT" "$MUTEX_ROOT/main")" "3" \
+  "the blocked claim wrote no lease"
+exec 8>&-
+"$GUARD_SCRIPT" claim "$MUTEX_WT" --owner OWNER-A >/dev/null
+set +e
+"$GUARD_SCRIPT" claim "$MUTEX_WT" --owner OWNER-B >/dev/null 2>&1
+second_code=$?
+set -e
+assert_eq "$second_code" "75" "with the mutex free only the first owner holds the lease"
+
+echo "=== release refuses a flag it does not implement ==="
+
+# --dry-run promises to preserve. release never implemented it, so accepting
+# and ignoring the flag deleted the very lease the caller asked to keep.
+set +e
+dry_err=$("$GUARD_SCRIPT" release "$MUTEX_WT" --owner OWNER-A --dry-run 2>&1 >/dev/null)
+dry_code=$?
+set -e
+assert_eq "$dry_code" "1" "release --dry-run is a usage failure"
+assert_contains "$dry_err" "--dry-run does not apply to release" \
+  "the refusal names the flag and the command"
+assert_eq "$(guard_status_code "$MUTEX_WT" "$MUTEX_ROOT/main" --owner OWNER-A)" "0" \
+  "the lease --dry-run promised to preserve is still held"
+
+echo "=== registrations resolve without a cwd or a directory ==="
+
+REG_ROOT="$TMP_ROOT/registration"
+make_repo "$REG_ROOT"
+add_merged_tree "$REG_ROOT" "issue-rel"
+REL_WT="$REG_ROOT/trees/issue-rel"
+"$GUARD_SCRIPT" claim "$REL_WT" --owner REL-OWNER >/dev/null
+# git accepts a relative gitdir registration, and it is relative to the
+# registration directory — never to whatever cwd the guard runs from.
+printf '../../../../trees/issue-rel/.git\n' >"$REG_ROOT/main/.git/worktrees/issue-rel/gitdir"
+assert_eq "$(guard_status_code "$REL_WT" "$REG_ROOT/main" --owner REL-OWNER)" "0" \
+  "a relative gitdir registration resolves to its worktree"
+assert_contains "$("$GUARD_SCRIPT" list --repo "$REG_ROOT/main")" "\"path\":\"$REL_WT\"" \
+  "list resolves a relative gitdir registration"
+
+# A worktree whose directory tree was destroyed is precisely what sweep exists
+# to clean up, so its lease must stay visible to list and collectable by sweep.
+rm -rf -- "${REG_ROOT:?}/trees"
+gone_list="$("$GUARD_SCRIPT" list --repo "$REG_ROOT/main")"
+assert_contains "$gone_list" "\"path\":\"$REL_WT\"" "list still reports a destroyed worktree"
+assert_contains "$gone_list" '"directory_present":false' "list marks the directory gone"
+assert_contains "$("$GUARD_SCRIPT" sweep --repo "$REG_ROOT/main" --ttl-minutes 0)" \
+  "released $REL_WT" "sweep releases a destroyed worktree's lease"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
