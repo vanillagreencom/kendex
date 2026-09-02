@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ItemKind, Scope } from "@/bindings";
 import {
   BundleMemberLine,
@@ -12,7 +12,7 @@ import {
 } from "@/components/marketplaces/harness-select";
 import { RecordsUnreadableNote } from "@/components/marketplaces/packages-trouble";
 import { RepoAction } from "@/components/marketplaces/repo-action";
-import { useCatalog } from "@/components/marketplaces/use-catalog";
+import { useCatalog, useRefresh } from "@/components/marketplaces/use-catalog";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
@@ -55,9 +55,14 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
     method: null,
   });
 
-  useEffect(() => {
-    if (ready) void loadBundle(catalog, bundle);
-  }, [catalog, ready, bundle, loadBundle]);
+  // The cached detail is what renders while this read is out, and it may
+  // predate the record breaking, so every install action is held until the
+  // answer it lands is the one on screen.
+  const readBundle = useCallback(
+    () => loadBundle(catalog, bundle),
+    [loadBundle, catalog, bundle],
+  );
+  const refreshing = useRefresh(ready, readBundle);
 
   const key = bundleKey(catalog, bundle);
   const detail = bundles[key];
@@ -109,6 +114,15 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
   // payload: a member the catalog dropped says "no longer offered" with or
   // without a lock, so no scan of the rows could tell.
   const recordsUnknown = detail?.recordsUnreadable ?? false;
+  // One name for "nothing here may be installed right now", so a new action
+  // on this page cannot be added past one half of it. A selection ticked
+  // against the cached detail is dropped when the landing one says the
+  // record cannot be read: it was made against a standing that no longer
+  // holds, and Install selected reads it.
+  const held = recordsUnknown || refreshing;
+  useEffect(() => {
+    if (recordsUnknown) setSelected(new Set());
+  }, [recordsUnknown]);
   // Which tools the picker may offer follows what is actually ticked; with
   // nothing ticked the set is every kind, which is what the whole bundle
   // would carry.
@@ -142,7 +156,7 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
         action={
           subscribed ? (
             <Button
-              disabled={busy || !detail || recordsUnknown}
+              disabled={busy || !detail || held}
               onClick={() => installItems([])}
             >
               Install all
@@ -214,7 +228,10 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
                     <Button
                       variant="outline"
                       disabled={
-                        busy || selected.size === 0 || !isInstallable(choice)
+                        busy ||
+                        held ||
+                        selected.size === 0 ||
+                        !isInstallable(choice)
                       }
                       onClick={installSelected}
                     >

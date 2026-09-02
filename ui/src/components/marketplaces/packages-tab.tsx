@@ -87,7 +87,11 @@ export function PackagesTab() {
           !(pkg.summary ?? "").toLowerCase().includes(needle)
         )
           continue;
-        out.push({ catalog: subscription(row.scope, row.name), row: pkg });
+        out.push({
+          catalog: subscription(row.scope, row.name),
+          row: pkg,
+          recordsUnreadable: row.recordsUnreadable,
+        });
       }
     }
     return out;

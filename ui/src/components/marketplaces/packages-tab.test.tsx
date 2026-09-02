@@ -119,7 +119,10 @@ describe("naming what could not be read", () => {
 
   // The catalog read succeeded — the packages are listed — but the lock
   // that would say what is installed could not be read, and the Problems
-  // page is where that is explained.
+  // page is where that is explained. The cached row still says "available":
+  // packages are read once and kept, so a scope readable when they landed
+  // and broken since is exactly this disagreement, and the scope's answer
+  // is the fresher one.
   it("names the project whose records left its rows unknown, and links to Problems", () => {
     const row = {
       ...projectRow("/home/dev/hyprtrade", "kendex"),
@@ -127,14 +130,17 @@ describe("naming what could not be read", () => {
     };
     useMarketplacesStore.setState({
       rows: [row],
-      packages: {
-        [marketKey(row.scope, row.name)]: [{ ...offered[0], state: "unknown" }],
-      },
+      packages: { [marketKey(row.scope, row.name)]: [offered[0]] },
       readErrors: {},
     });
     const host = mount(<PackagesTab />);
     expect(host.textContent).toContain(unreadableRecordsLine("hyprtrade"));
     expect(host.textContent).toContain(SEE_PROBLEMS_LABEL);
+    // The same fact travels down to each row, so the table under the line
+    // cannot offer an install the line says nothing is known about.
+    expect(
+      [...host.querySelectorAll("button")].map((b) => b.textContent),
+    ).not.toContain("Install");
   });
 
   // A project registered after the app's startup update read: that read has

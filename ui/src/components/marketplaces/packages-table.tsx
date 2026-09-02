@@ -30,10 +30,19 @@ import {
 import { useNavStore } from "@/stores/nav";
 import { safetyKey, usePreinstallSafety } from "@/stores/preinstall-safety";
 
-/** One offered package with the catalog it comes from. */
+/** One offered package with the catalog it comes from, and whether the
+ * scope that catalog is subscribed in has a readable lock right now.
+ *
+ * `row.state` is cached per package and refreshed only when the catalog is
+ * read again; `recordsUnreadable` comes from the overview row that produced
+ * this entry, which every load refreshes. So the two can disagree — a scope
+ * readable when its packages were cached, damaged while the app stayed
+ * open — and the fresh one wins. Required rather than optional so a caller
+ * cannot build an entry that leaves the scope's answer out. */
 export interface PackageEntry {
   catalog: Catalog;
   row: AvailablePackage;
+  recordsUnreadable: boolean;
 }
 
 /** The one table of offered packages — the Packages tab across every
@@ -81,7 +90,7 @@ function PackageRow({
   entry: PackageEntry;
   showMarketplace: boolean;
 }) {
-  const { catalog, row } = entry;
+  const { catalog, row, recordsUnreadable } = entry;
   const goToAvailablePackage = useNavStore((s) => s.goToAvailablePackage);
   const install = useMarketplacesStore((s) => s.install);
   const busy = useMarketplacesStore((s) => s.busy);
@@ -149,10 +158,13 @@ function PackageRow({
           <span className="text-xs text-muted-foreground">
             No longer offered
           </span>
-        ) : row.state === "unknown" ? (
+        ) : recordsUnreadable || row.state === "unknown" ? (
           // This place's lock could not be read, so nothing here knows
           // whether the package is installed — and an install would meet
-          // the same unreadable record, so no button offers one.
+          // the same unreadable record, so no button offers one. The
+          // scope's own answer is read first: a cached row from before the
+          // record broke still says "available", and it must not outvote
+          // the fresher fact beside it.
           <span className="text-xs text-muted-foreground">
             {PACKAGE_STATE_UNKNOWN}
           </span>
