@@ -50,28 +50,6 @@ pub struct SafetyTarget {
     pub location: String,
 }
 
-/// Combine identical CLI safety blocks without changing engine rows.
-pub fn safety_rows(rows: &[ItemSafety]) -> Vec<ItemSafety> {
-    let mut grouped = Vec::<ItemSafety>::new();
-    for row in rows {
-        let root = &row.targets[0].location;
-        let key = row.advisory.safety_grouping_key(root);
-        if let Some(existing) = grouped.iter_mut().find(|existing| {
-            existing.kind == row.kind
-                && existing.name == row.name
-                && existing
-                    .advisory
-                    .safety_grouping_key(&existing.targets[0].location)
-                    == key
-        }) {
-            existing.targets.extend(row.targets.iter().cloned());
-        } else {
-            grouped.push(row.clone());
-        }
-    }
-    grouped
-}
-
 /// Audit each byte-distinct rendering once.
 pub(super) fn run(scope: &Scope, state: &DesiredState) -> Vec<ItemSafety> {
     run_with(scope, state, crate::quality::audit)

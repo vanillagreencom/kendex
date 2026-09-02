@@ -1,8 +1,9 @@
+pub use super::advisory::{ScoredAt, print_advisory, print_safety};
 pub use super::blocked::{print_conflicts, print_drift};
 
 use kendex_core::engine::{DriftRow, DriftState, EngineReport};
 use kendex_core::env::Env;
-use kendex_core::model::{HarnessId, ItemKind};
+use kendex_core::model::HarnessId;
 
 use std::io::IsTerminal;
 
@@ -107,103 +108,6 @@ pub fn print_unmanaged(drift: &[DriftRow]) {
 
 /// Enough to recognise what is there without burying the plan above it.
 const UNMANAGED_SHOWN: usize = 10;
-
-/// What the safety rules found in the content this plan would write —
-/// advisory, printed beside the plan.
-pub fn print_safety(report: &EngineReport) {
-    let mut rows = kendex_core::engine::safety_rows(&report.safety);
-    rows.sort_by_key(|row| row.advisory.safety.score);
-    for row in &rows {
-        print_advisory(
-            row.kind,
-            &row.name,
-            ScoredAt::Targets(&row.targets),
-            &row.advisory,
-        );
-    }
-}
-
-/// Where a scored package sits, as its score line says so: an
-/// installation belongs to a tool, a catalog item to a path inside its
-/// catalog. Naming the two shapes is what keeps the caller from
-/// hand-building a subject string, so every score line is worded the same
-/// way.
-pub enum ScoredAt<'a> {
-    /// The harness renderings whose audit results share this block.
-    Targets(&'a [kendex_core::engine::SafetyTarget]),
-    /// The item's own path within the catalog. Empty for a repository
-    /// that is one skill: its path is the catalog, so there is no segment
-    /// to name and the score line leaves it out.
-    CatalogPath(&'a str),
-}
-
-/// One package's advisory result, in the one shape every verb that scores
-/// content prints it: the score, then each finding on a line of its own —
-/// severity in words, what the rule matched, and where it fired as
-/// subtext. No fix line and no prompt: the score is advisory, and a
-/// finding says what was matched, not what to do about it.
-///
-/// The score line prints for a clean package too. The contract is a score
-/// beside every package; a clean one going silent would make "scored 100"
-/// and "never scored" read alike.
-///
-/// Severity leads the finding as a word, never as a colour: the line has
-/// to carry it for a reader who has no colour, and this printer emits
-/// none.
-pub fn print_advisory(
-    kind: ItemKind,
-    name: &str,
-    at: ScoredAt<'_>,
-    advisory: &kendex_core::quality::AuditResult,
-) {
-    let at = match at {
-        ScoredAt::Targets(targets) => format!(
-            " for {}",
-            targets
-                .iter()
-                .map(|target| target.harness.display_name())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        ScoredAt::CatalogPath("") => String::new(),
-        ScoredAt::CatalogPath(path) => format!(" at {}", path),
-    };
-    say(&format!(
-        "safety: {} {}{at} scores {}/100",
-        kind.name(),
-        name,
-        advisory.safety.score
-    ));
-    for finding in &advisory.findings {
-        // A finding whose rule reads a config entry rather than a file has
-        // no place to name; the claim still prints, without empty parens.
-        // `PATH:LINE` is composed here and nowhere earlier: this is the end
-        // of the line, where nothing has to read it back.
-        let at = match (finding.location.is_empty(), finding.line) {
-            (true, _) => String::new(),
-            (false, None) => format!(" ({})", finding.location),
-            (false, Some(line)) => format!(" ({}:{line})", finding.location),
-        };
-        say(&format!(
-            "  [{}] {}{at}",
-            finding.severity.name(),
-            finding.message
-        ));
-    }
-    print_skipped(advisory);
-}
-
-/// The rules that apply to this kind and had no bytes to read here.
-fn print_skipped(advisory: &kendex_core::quality::AuditResult) {
-    let Some(first) = advisory.skipped.first() else {
-        return;
-    };
-    say(&format!(
-        "  not fully checked: {} rule(s) had nothing to read — {}",
-        advisory.skipped.len(),
-        first.reason
-    ));
-}
 
 /// Prompted apply: `--yes` skips the prompt; a non-tty without `--yes`
 /// refuses rather than guessing.

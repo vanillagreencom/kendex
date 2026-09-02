@@ -18,8 +18,8 @@ use crate::model::{HarnessId, ItemKind, ObservedItem};
 use crate::source_read::{TREE_BOUND, TreeBound};
 
 use super::{
-    AuditInput, AuditResult, Content, Deduction, Finding, McpEntry, PluginSources, SafetyScore,
-    TreeFile, UNREAD_MCP_ENTRY, UNREADABLE_PLUGIN,
+    AuditInput, AuditResult, Content, McpEntry, PluginSources, TreeFile, UNREAD_MCP_ENTRY,
+    UNREADABLE_PLUGIN,
 };
 
 struct HashWriter(Sha256);
@@ -48,64 +48,6 @@ impl AuditInput {
         hash.0.update([0]);
         crate::hash::hex(&hash.0.finalize())
     }
-}
-
-impl AuditResult {
-    /// The normalized fields printed in a CLI safety block.
-    pub fn safety_grouping_key(&self, root: &str) -> AuditResult {
-        let mut key = self.grouping_key(root);
-        key.quality = None;
-        key
-    }
-
-    /// A complete result key with harness-root paths reduced to the place
-    /// inside each rendering. Equal keys can share one reported block.
-    pub(crate) fn grouping_key(&self, root: &str) -> AuditResult {
-        let mut key = self.clone();
-        let AuditResult {
-            findings,
-            skipped: _,
-            safety,
-            quality: _,
-            ruleset: _,
-        } = &mut key;
-        for finding in findings {
-            let Finding {
-                rule: _,
-                severity: _,
-                location,
-                line: _,
-                message: _,
-                remediation: _,
-            } = finding;
-            *location = relative_to_root(location, root).to_owned();
-        }
-        let SafetyScore {
-            score: _,
-            deductions,
-        } = safety;
-        for deduction in deductions {
-            let Deduction {
-                rule: _,
-                location,
-                severity: _,
-                points: _,
-                repeat: _,
-            } = deduction;
-            *location = relative_to_root(location, root).to_owned();
-        }
-        key
-    }
-}
-
-fn relative_to_root<'a>(location: &'a str, root: &str) -> &'a str {
-    if location == root {
-        return "";
-    }
-    location
-        .strip_prefix(root)
-        .and_then(|rest| rest.strip_prefix(['/', ' ']))
-        .unwrap_or(location)
 }
 
 /// One tree's in-memory files as audit input, in the order the observed

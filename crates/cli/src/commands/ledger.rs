@@ -21,8 +21,10 @@ use super::offers::{Blocked, scope_flag};
 use super::scope_label;
 use crate::ui;
 
-/// Items the safety block above carries a finding against. Counted from
-/// the result rows that block printed, deduplicated by item identity.
+/// Items the safety block above carries a finding against, counted by
+/// item identity. The printer folds readings that would print alike into
+/// one block and can print two blocks for one item, so a count over items
+/// is the only one that matches what "flagged N items" claims.
 fn flagged(scored: &[ItemSafety]) -> usize {
     scored
         .iter()
@@ -57,11 +59,10 @@ pub struct Wrote<'a> {
 /// did and stops.
 ///
 /// Both parts are read off blocks the caller has already printed and
-/// point the reader back at them, which is why the caller hands over the
-/// very rows it printed rather than a report to re-read: a flagged count
-/// over a block nobody printed sends the reader to lines that are not
-/// there. A verb that printed neither passes both empty and closes on its
-/// head alone.
+/// point the reader back at them, so a caller passes only what it printed:
+/// a flagged count over a block nobody printed sends the reader to lines
+/// that are not there. A verb that printed neither passes both empty and
+/// closes on its head alone.
 pub fn say_ledger(scope: &Scope, wrote: Wrote<'_>, blocked: &[Blocked], scored: &[ItemSafety]) {
     let (line, steps) = ledger(scope, wrote, blocked, scored);
     ui::ledger(&line, &steps);
