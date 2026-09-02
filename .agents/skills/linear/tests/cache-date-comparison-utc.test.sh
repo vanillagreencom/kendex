@@ -116,6 +116,10 @@ ids() { jq -r '[.[].id] | sort | join(",")' <<<"$1"; }
 # than merely started: a Linear cycle that ends with unfinished issues keeps
 # progress < 1, so two incomplete started cycles at once is the ordinary shape,
 # and taking the wrong end of them puts every site on the same wrong cycle.
+#
+# Newest-first, the order sync leaves in cycles.json. Reordered to read
+# oldest-first, the sorts in cache-dates.sh pick what their own absence would
+# pick, and stop being provable.
 cycles "$(jq -cn --argjson a "$(cycle_record old KEN -3456000 -2246400 1)" \
   --argjson b "$(cycle_record lingering KEN -1728000 -518400 0.9)" \
   --argjson c "$(cycle_record running KEN -7200 1123200 0.5)" \
@@ -154,6 +158,10 @@ assert_eq "session-status research reads the same day-count cutoff" \
 #
 # Two cycles on each side of now, so the ORDER each helper promises is
 # observable: `before` newest-first, `after` earliest-first.
+#
+# Newest-first, the order sync leaves in cycles.json. Reordered to read
+# oldest-first, the sorts in cache-dates.sh pick what their own absence would
+# pick, and stop being provable.
 cycles "$(jq -cn --argjson a "$(cycle_record ancient KEN -10368000 -9158400 1)" \
   --argjson b "$(cycle_record old KEN -3456000 -2246400 1)" \
   --argjson c "$(cycle_record soon KEN 21600 1231200 0)" \
