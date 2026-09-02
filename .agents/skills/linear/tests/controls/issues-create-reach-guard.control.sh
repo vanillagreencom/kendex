@@ -1,10 +1,16 @@
 # One mutation per branch the guard makes, each with the assertion that must
 # fire for it. Assertions never abort the suite, so the branches break together
-# and each still proves its own load-bearing: a dead branch would leave its
-# expectation absent from the output. No two mutations cancel — the symptom
-# branch is inverted rather than deleted, so both of its directions redden, and
-# the two halves of the absent-value normalization are chained rather than
-# collapsed into one `if false`, so each half answers for its own assertions.
+# and a branch that is dead leaves its expectation absent from the output. No
+# two mutations cancel — the symptom branch is inverted rather than deleted, so
+# both of its directions redden, and the two halves of the absent-value
+# normalization are chained rather than collapsed into one `if false`, so each
+# half answers for its own assertions.
+#
+# One mutation cannot answer for itself here, and says so where it stands: this
+# runner applies every mutation to ONE copy and runs the suite once, so a
+# mutation whose only effect is already produced by another cannot be told
+# apart. Where a mutation is in that position the comment says so rather than
+# the header claiming otherwise.
 #
 # 1. The presence check — without it an issue naming nothing it reaches gets
 #    filed, which is the disposition the reply grammar already makes cheap.
@@ -45,8 +51,14 @@ control_replace scripts/lib/issue-validation.sh 1 \
 
 # 5. The trailing-emphasis trim that feeds the placeholder check — without it a
 #    whole-line bold placeholder arrives as `[REACH]**` and passes as a value.
-#    The token list does not go through the trim, so this one expects only the
-#    placeholder case.
+#
+#    NOT DISCRIMINATED HERE, and it cannot be: its only effect is that the
+#    placeholder check stops matching, which mutation 3 has already produced by
+#    killing that check outright, so the expectation below is 3's. Deleting
+#    this mutation leaves the run green and deleting 3 instead leaves this one
+#    reddening on its own — the trim IS covered, by a mutation this runner
+#    cannot separate from another. It stays because it records what the trim
+#    holds up; it is not evidence on top of 3.
 control_expect "a whole-line bold [REACH] placeholder body is refused"
 control_replace scripts/lib/issue-validation.sh 1 \
 	'	value="${value%"${value##*[!*[:space:]]}"}"' \

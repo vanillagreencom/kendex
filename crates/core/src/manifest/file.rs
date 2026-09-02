@@ -140,9 +140,15 @@ pub(super) fn is_true(value: &bool) -> bool {
 
 /// Persist a manifest, in place. The file is written by hand, so the
 /// serialization below is not what lands: it is folded into the document
-/// already there ([`super::fold::folded`]), which touches only the keys that
-/// changed and the keys the manifest gained or dropped. A write that changes
-/// nothing writes nothing, the way a structured config edit does.
+/// already there ([`super::fold::folded`]), which edits the keys that changed
+/// and the keys the manifest gained or dropped. A write that changes nothing
+/// writes nothing, the way a structured config edit does.
+///
+/// One shape reaches further than the keys it names, and the fold's own module
+/// doc states it: a write that removes one entry of a list and changes another
+/// places the changed entry by position, where it comes back under the comment
+/// written about the entry that held that position and without the keys the
+/// model does not carry.
 pub fn save(path: &Path, manifest: &Manifest) -> Result<()> {
     // Stamped at the write, the way the lock stamps its version: the
     // schema is a fact about the build doing the writing, and two places

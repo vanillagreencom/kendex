@@ -113,8 +113,8 @@ Create Options:
 
   Reach guard: with LINEAR_REQUIRE_REACH set in kendex.settings.toml [env],
   create refuses a description with no `Reached by:` line, and a `--review-born
-  --priority 2` one with no `Symptom:` line. What those lines say is yours to
-  judge; the rule: project-management SKILL.md, § Disposition, Name what reaches it.
+  --priority 2` one with no `Symptom:`; a placeholder or null token (TBD, n/a,
+  none, -) counts as no line. Rule: project-management SKILL.md, § Disposition.
 
 Update Options:
   --state <name>        New state

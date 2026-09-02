@@ -21,14 +21,25 @@
 //! `custom-hooks = [{ … }]` and a `[[custom-hooks]]` array say the same thing,
 //! so entries fold against each other across the two spellings and neither is
 //! rewritten into the other. Which entry continues which is decided against
-//! `held` — an entry whose model view the target still holds keeps its slot,
-//! so the comment above it and the keys inside it the model does not carry
-//! travel with it through a removal or a re-sort. What identity cannot place
-//! pairs in order, which is what keeps an edit an edit rather than a drop and
-//! an append, and it has a price: an entry paired that way stands under
-//! whatever was written about the entry that held its slot.
+//! `held` — an entry whose model view the target still holds keeps its slot, so
+//! the comment written about it and the keys inside it the model does not carry
+//! travel with it through a removal or a re-sort. Where an entry has to be
+//! placed by position instead, [`writing`] owns what that means for the bytes
+//! and `fold_entries` owns what it means for the keys.
+//!
+//! The price, in full, and it is one shape: a write that both removes an entry
+//! and changes another. The changed entry can only be placed by position, and
+//! with the slots moved under it that position is another declaration's. It
+//! comes back under the comment written about that declaration, and the keys
+//! the model does not carry — a note somebody left inside either one — are
+//! gone from the file rather than moved between declarations, because a
+//! dropped key is visible where a migrated one reads as if a person put it
+//! there. A write that only removes, only adds, only re-sorts, or only changes
+//! an entry pays none of it.
 
-use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, TableLike, Value};
+use toml_edit::{DocumentMut, Item, TableLike, Value};
+
+mod writing;
 
 /// The text a write should leave behind: the document that is already
 /// there, with the keys this write names edited into it.
@@ -77,7 +88,7 @@ fn fold_table(
         match destination.get_mut(key) {
             Some(item) => fold_item(item, held.and_then(|held| held.get(key)), wanted),
             None => {
-                destination.insert(key, fresh(wanted));
+                destination.insert(key, writing::fresh(wanted));
             }
         }
     }
@@ -89,16 +100,14 @@ fn fold_table(
 /// before the value and any comment after it belong to the key, not to the
 /// value that was there.
 fn fold_item(destination: &mut Item, held: Option<&Item>, target: &Item) {
-    // The outer test is what makes the brace run readable: it is taken off
-    // the whole item before the walk and put back after, and inside the
-    // let-chain the destination is already borrowed mutably.
-    if target.as_table_like().is_some() && destination.as_table_like().is_some() {
-        let brace = brace_run(destination);
-        if let Some(wanted) = target.as_table_like()
-            && let Some(item) = destination.as_table_like_mut()
-        {
-            fold_table(item, held.and_then(Item::as_table_like), wanted);
-        }
+    // Read before the walk, because it is taken off the whole item and the
+    // mutable borrow below reaches inside one. Put back after `fold_table`,
+    // which is where that borrow's last use ends it.
+    let brace = brace_run(destination);
+    if let Some(wanted) = target.as_table_like()
+        && let Some(item) = destination.as_table_like_mut()
+    {
+        fold_table(item, held.and_then(Item::as_table_like), wanted);
         reseat_brace(destination, brace);
         return;
     }
@@ -114,43 +123,85 @@ fn fold_item(destination: &mut Item, held: Option<&Item>, target: &Item) {
         *item = replacement;
         return;
     }
-    *destination = fresh(target);
+    *destination = writing::fresh(target);
 }
 
 /// One list, folded entry by entry in the spelling the destination is written
 /// in. `false` where either side is not a list, so the caller falls through to
 /// its leaf handling.
 ///
-/// Each surviving entry is the destination's own, folded against the target
-/// entry it continues, so the writing around it and the keys inside it the
-/// manifest does not carry stay where they were put. An entry the list did not
-/// have arrives unpositioned, which is what places a gained `[[table]]` beside
-/// its siblings rather than at the end of the file.
+/// An entry `held` identified is the destination's own, folded against the
+/// target entry it continues, so the writing around it and the keys inside it
+/// the manifest does not carry stay where they were put.
+///
+/// An entry nothing identified took its slot by position, and what that slot
+/// still says about it depends on whether the list kept its length. It did:
+/// nothing has shifted, so the slot is the one this entry would have had, an
+/// edit is an edit, and the writing around it and the keys inside it are still
+/// about it. It did not: an entry is gone and every slot after it has moved
+/// under something else, so this entry is standing where another declaration
+/// stood. It keeps what was written AROUND that slot, which is the price
+/// pairing in order has always had and which the module doc names. It keeps
+/// none of the keys INSIDE it: `held` cannot answer for a declaration it is not
+/// the model view of, and a key migrating into a declaration a person never put
+/// it in reads exactly as if they had. [`stripped`] takes those before the
+/// fold, because dropping a key is visible and moving one is not.
 fn fold_entries(destination: &mut Item, held: Option<&Item>, target: &Item) -> bool {
     let (Some(standing), Some(wanted)) = (entries(destination), entries(target)) else {
         return false;
     };
     let held = held.and_then(entries).unwrap_or_default();
-    let rebuilt: Vec<Item> = wanted
+    let settled = standing.len() == wanted.len();
+    let rebuilt: Vec<(Option<usize>, Item)> = wanted
         .iter()
         .zip(paired(standing.len(), &held, &wanted))
-        .map(|(wanted, at)| match at.and_then(|at| standing.get(at)) {
-            Some(entry) => {
-                let mut entry = entry.clone();
-                fold_item(&mut entry, at.and_then(|at| held.get(at)), wanted);
-                entry
+        .map(|(wanted, slot)| match slot {
+            Some(Slot { at, identified }) => {
+                let mut entry = standing[at].clone();
+                let mine = identified || settled;
+                if !mine {
+                    stripped(&mut entry, wanted);
+                }
+                fold_item(&mut entry, mine.then(|| held.get(at)).flatten(), wanted);
+                (Some(at), entry)
             }
-            None => fresh(wanted),
+            None => (None, writing::fresh(wanted)),
         })
         .collect();
-    match destination {
-        Item::ArrayOfTables(tables) => *tables = as_tables(&rebuilt),
-        Item::Value(Value::Array(array)) => *array = as_array(array, &rebuilt),
-        // `entries` answered for this item one statement ago, and it admits
-        // exactly the two spellings above.
-        other => unreachable!("a list is a table array or an array, not {other:?}"),
-    }
+    writing::rebuild(destination, &rebuilt);
     true
+}
+
+/// Everything the target does not name, taken off an entry that is about to
+/// stand for a different declaration. `held` is what says a key is not
+/// kendex's to remove, and it speaks for the slot rather than for whatever is
+/// landing in it, so it cannot answer here at all.
+fn stripped(entry: &mut Item, target: &Item) {
+    let (Some(item), Some(wanted)) = (entry.as_table_like_mut(), target.as_table_like()) else {
+        return;
+    };
+    let gone: Vec<String> = item
+        .iter()
+        .map(|(key, _)| key.to_owned())
+        .filter(|key| wanted.get(key).is_none())
+        .collect();
+    for key in gone {
+        item.remove(&key);
+    }
+    for (key, wanted) in wanted.iter() {
+        if let Some(item) = item.get_mut(key) {
+            stripped(item, wanted);
+        }
+    }
+}
+
+/// One destination slot, and how the target entry came by it.
+#[derive(Clone, Copy)]
+struct Slot {
+    at: usize,
+    /// Whether `held` recognized this as the same entry still standing, rather
+    /// than the slot simply being the one left over.
+    identified: bool,
 }
 
 /// Which destination entry each target entry continues.
@@ -167,13 +218,16 @@ fn fold_entries(destination: &mut Item, held: Option<&Item>, target: &Item) -> b
 /// identity can hand an entry the model's view of a different one — the
 /// reading stops at the destination's own length, so nothing identifies an
 /// entry that is not there and every slot past it pairs by position.
-fn paired(standing: usize, held: &[Item], target: &[Item]) -> Vec<Option<usize>> {
+fn paired(standing: usize, held: &[Item], target: &[Item]) -> Vec<Option<Slot>> {
     let mut taken = vec![false; standing];
-    let mut pairing: Vec<Option<usize>> = vec![None; target.len()];
+    let mut pairing: Vec<Option<Slot>> = vec![None; target.len()];
     for (index, wanted) in target.iter().enumerate() {
         for (at, entry) in held.iter().enumerate().take(standing) {
             if !taken[at] && same_entry(entry, wanted) {
-                pairing[index] = Some(at);
+                pairing[index] = Some(Slot {
+                    at,
+                    identified: true,
+                });
                 taken[at] = true;
                 break;
             }
@@ -181,7 +235,10 @@ fn paired(standing: usize, held: &[Item], target: &[Item]) -> Vec<Option<usize>>
     }
     let mut free = (0..standing).filter(|at| !taken[*at]);
     for slot in pairing.iter_mut().filter(|slot| slot.is_none()) {
-        *slot = free.next();
+        *slot = free.next().map(|at| Slot {
+            at,
+            identified: false,
+        });
     }
     pairing
 }
@@ -220,57 +277,6 @@ fn entries(item: &Item) -> Option<Vec<Item>> {
         }
         _ => None,
     }
-}
-
-/// The folded entries as an array of tables, in the places the surviving
-/// entries already held. A table renders where its position says, so entries
-/// that changed places have to change positions with them or the file would
-/// come back in the old order; the places are the survivors' own, so nothing
-/// moves past a table that is not part of this list, and an entry the list
-/// gained has no position and renders beside the one before it.
-fn as_tables(rebuilt: &[Item]) -> ArrayOfTables {
-    let mut tables: Vec<Table> = rebuilt
-        .iter()
-        .map(|entry| match entry {
-            Item::Table(table) => table.clone(),
-            Item::Value(Value::InlineTable(table)) => table.clone().into_table(),
-            // Every entry came out of `entries`, which yields a table for one
-            // spelling and a value for the other; a scalar list is not a
-            // shape `[[key]]` can hold.
-            other => unreachable!("a table array holds tables, not {other:?}"),
-        })
-        .collect();
-    let mut places: Vec<isize> = tables.iter().filter_map(Table::position).collect();
-    places.sort_unstable();
-    let mut places = places.into_iter();
-    for table in &mut tables {
-        if table.position().is_some() {
-            table.set_position(places.next());
-        }
-    }
-    let mut built = ArrayOfTables::new();
-    for table in tables {
-        built.push(table);
-    }
-    built
-}
-
-/// The folded entries as an inline array, each keeping the bytes written
-/// around it and the array keeping its own. A list nothing changed comes back
-/// byte for byte; an entry that went takes the run before it with it.
-fn as_array(destination: &Array, rebuilt: &[Item]) -> Array {
-    let mut built = Array::new();
-    built.set_trailing_comma(destination.trailing_comma());
-    built.set_trailing(destination.trailing().clone());
-    *built.decor_mut() = destination.decor().clone();
-    for entry in rebuilt {
-        built.push_formatted(match entry {
-            Item::Value(value) => value.clone(),
-            Item::Table(table) => Value::InlineTable(table.clone().into_inline_table()),
-            other => unreachable!("an array holds values, not {other:?}"),
-        });
-    }
-    built
 }
 
 /// Whether this leaf already says what kendex holds. Only a difference here
@@ -331,28 +337,5 @@ fn reseat_brace(destination: &mut Item, brace: Option<(String, String)>) {
     }
 }
 
-/// A subtree lifted out of the serialized document and ready to land in
-/// somebody else's. The serializer's own table positions come with it and
-/// would place the table by where its field sat there; cleared, a table
-/// renders after the one it was inserted behind, which is where its
-/// neighbours are.
-fn fresh(item: &Item) -> Item {
-    let mut item = item.clone();
-    unposition(&mut item);
-    item
-}
-
-fn unposition(item: &mut Item) {
-    match item {
-        Item::Table(table) => unposition_table(table),
-        Item::ArrayOfTables(tables) => tables.iter_mut().for_each(unposition_table),
-        Item::Value(_) | Item::None => {}
-    }
-}
-
-fn unposition_table(table: &mut Table) {
-    table.set_position(None);
-    for (_, item) in table.iter_mut() {
-        unposition(item);
-    }
-}
+#[cfg(test)]
+mod tests;

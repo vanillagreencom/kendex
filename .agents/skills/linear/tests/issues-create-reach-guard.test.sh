@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Regression test for the create-time reach guard. Filing is the cheap
-# disposition — `Declined:` needs a disproof a gate checks, `Tracked: <ID>`
-# needs only an issue to exist — so creation is the one chokepoint that can
-# hold the filing bar. With LINEAR_REQUIRE_REACH set in kendex.settings.toml
-# [env], `issues create` refuses, before any API call, a description with no
-# `Reached by:` line and a review-born `--priority 2` body with no `Symptom:`.
+# disposition — `Declined:` needs a disproof a gate checks, `Tracked: <ID>` needs
+# only an issue to exist — so creation is the one chokepoint that can hold the
+# filing bar. With LINEAR_REQUIRE_REACH set in kendex.settings.toml [env],
+# `issues create` refuses, before any API call, a description with no `Reached
+# by:` line and a review-born `--priority 2` body with no `Symptom:`.
 
 set -euo pipefail
 
@@ -65,11 +65,12 @@ guard 'LINEAR_REQUIRE_REACH = "1"\n'
 run_linear issues create --title "Filed from a thread"
 assert_refused_before_api "a create with no description"
 assert_contains "the refusal names the missing line" "$ERR" "Reached by"
+# The one sentence that routes the author somewhere instead of naming a gap.
+assert_contains "the refusal says an unnamed item is a decline" "$ERR" "decline"
 
-# A value that says "nothing here" is no value, and each half is refused by its
-# own alternative: `[REACH]` is the placeholder this repo's templates ship,
-# whole-line bold leaving its closing `**` on the value; TBD is the other half,
-# and the symptom read below goes through the same normalization.
+# A value that says "nothing here" is no value, and each half has its own
+# alternative: `[REACH]` is the placeholder this repo's templates ship (bold
+# leaves its `**` on it); TBD is the other, and so is the symptom read below.
 run_linear issues create --title "Template copied" \
   --description "$(printf '**Reached by: [REACH]**\n')"
 assert_refused_before_api "a whole-line bold [REACH] placeholder body"
@@ -82,7 +83,6 @@ run_linear issues create --title "Refresh skips a worktree" \
   --description "$(printf '%s\n\nThe render is left stale.\n' "$REACH_LINE")"
 assert_created "a create whose body names the run that reaches it"
 
-# By --description-file and as a list item: two forms this repo's guidance produces.
 printf -- '- Reached by: `tools/guard` on a fresh clone\n' >"$TMP_ROOT/body.md"
 run_linear issues create --title "Guard body" --description-file "$TMP_ROOT/body.md"
 assert_created "a create whose reach is a list item arriving by --description-file"
