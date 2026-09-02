@@ -64,9 +64,29 @@ pub fn run(
             LockFile::Current(lock) => lock,
             LockFile::Absent => Lock::default(),
         };
+        // One read of the manifest per scope, so the gate below and the
+        // declarations printed at the end are one answer about one file.
+        // Read twice, the two can disagree: a read that fails and then
+        // succeeds on the retry left the gate saying the scope asked for
+        // nothing while the line under it named what the scope asked for,
+        // and the run closed green having checked none of it.
+        let manifest = match load_manifest(&manifest_path(env, &scope)) {
+            Ok(ManifestFile::Current(manifest)) => Some(manifest),
+            Ok(ManifestFile::Absent) => None,
+            // A file this build could not open is not a file declaring
+            // nothing, and the gate never answers for one. It leaves by
+            // the door a manifest break already leaves by, on that door's
+            // terms: a line where there is nothing installed to misreport,
+            // and the run's own error where there is.
+            Err(error) if lock.entries.is_empty() => {
+                fail_refusal(&format!("! {} not checked: ", scope_label(&scope)), &error);
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
         // The one state this run refuses, read off the manifest itself so
         // no source, catalog or expansion can change the answer.
-        if absent && manifest_declares_items(env, &scope) {
+        if absent && manifest.as_deref().is_some_and(declares_items) {
             fail(&format!(
                 "! {}: no install record at {} — this scope was not checked",
                 scope_label(&scope),
@@ -98,9 +118,10 @@ pub fn run(
             }
             (Err(error), false) => return Err(error.into()),
         };
-        // Read after the door above, so a manifest this build refuses still
-        // leaves by that door rather than by this function's error.
-        let declared = declared_packages(env, &scope)?;
+        let declared = manifest
+            .as_deref()
+            .map(|manifest| declared_packages(env, &scope, manifest))
+            .unwrap_or_default();
         unmanaged.extend(
             report
                 .drift
@@ -141,25 +162,33 @@ pub fn run(
         "declared and none in the install record — kendex apply writes it",
     );
     ui::ledger(
-        &match checked {
-            // A scope whose declarations were named above is not a machine
-            // with nothing installed on it, and saying so would close the
-            // run on the one reading the reader came for.
-            0 => match !unrecorded.is_empty() || !outside.is_empty() {
-                true => "nothing checked".to_owned(),
-                false => "nothing installed".to_owned(),
-            },
-            _ => format!(
-                "{checked} checked, {} OK, {failed} failed",
-                checked - failed
-            ),
-        },
+        &head(
+            checked,
+            failed,
+            !unrecorded.is_empty() || !outside.is_empty(),
+        ),
         &[],
     );
     Ok(match failed > 0 || recordless {
         true => ExitCode::FAILURE,
         false => ExitCode::SUCCESS,
     })
+}
+
+/// The line that closes the run: the count, or why there was none.
+///
+/// A scope whose declarations were named above is not a machine with
+/// nothing installed on it, and saying so would close the run on the one
+/// reading the reader came for.
+fn head(checked: usize, failed: usize, named: bool) -> String {
+    match (checked, named) {
+        (0, true) => "nothing checked".to_owned(),
+        (0, false) => "nothing installed".to_owned(),
+        _ => format!(
+            "{checked} checked, {} OK, {failed} failed",
+            checked - failed
+        ),
+    }
 }
 
 /// What a scope asks to have installed, by kind and name.
@@ -175,36 +204,21 @@ pub fn run(
 /// agent installs and stays tracked — so the flag is not this function's
 /// to read, and the engine's own predicate for keeping a record does not
 /// read it either.
-fn declared_packages(
-    env: &Env,
-    scope: &Scope,
-) -> Result<Vec<(ItemKind, String)>, Box<dyn std::error::Error>> {
-    let ManifestFile::Current(manifest) = load_manifest(&manifest_path(env, scope))? else {
-        return Ok(Vec::new());
-    };
-    Ok(planned_declarations(env, scope, &manifest)
+fn declared_packages(env: &Env, scope: &Scope, manifest: &Manifest) -> Vec<(ItemKind, String)> {
+    planned_declarations(env, scope, manifest)
         .into_iter()
         .map(|declared| (declared.kind, declared.name))
-        .collect())
+        .collect()
 }
 
 /// Whether the scope's manifest asks for anything at all — every
 /// declaration table, read as it sits.
 ///
-/// The refusal above binds to this rather than to the expanded plan. An
+/// The refusal binds to this rather than to the expanded plan. An
 /// expansion asks a catalog what a bundle holds and what a skill requires,
 /// and every way that read can come back short is a way the refusal would
-/// stop firing on a scope that is still missing its record. A manifest
-/// this build cannot read answers no here and leaves by the audit door
-/// instead, which names the break; this gate never speaks for a file it
-/// could not open.
-fn manifest_declares_items(env: &Env, scope: &Scope) -> bool {
-    matches!(
-        load_manifest(&manifest_path(env, scope)),
-        Ok(ManifestFile::Current(manifest)) if declares_items(&manifest)
-    )
-}
-
+/// stop firing on a scope that is still missing its record.
+///
 /// `Manifest::declared` covers six kinds; bundles and plugins each declare
 /// through a table of their own and are asked for here.
 fn declares_items(manifest: &Manifest) -> bool {
