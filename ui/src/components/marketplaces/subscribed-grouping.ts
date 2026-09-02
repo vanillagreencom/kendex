@@ -20,8 +20,8 @@ export interface SubscribedMarketplace {
    * one, personal before a project, so the page opens on the declaration
    * that is actually offering packages. */
   open: MarketplaceRow;
-  /** Packages offered, from the first place whose catalog has been read —
-   * null while none of them has been fetched. */
+  /** What [open] offers — null until that place's catalog has been read,
+   * whatever a sibling place has fetched. */
   packages: number | null;
 }
 
@@ -123,7 +123,19 @@ export function groupByMarketplace(
         where: open.repo ?? open.path ?? "",
         places,
         open,
-        packages: places.map(offered).find((count) => count !== null) ?? null,
+        // From `open`, like every other field on the card. Taking the
+        // first place that had fetched anything meant a card could name
+        // one subscription, show its revision and open its page while
+        // reporting another's count — and scopes can pin the same
+        // repository to different revisions, so the number was sometimes
+        // genuinely someone else's.
+        //
+        // The cost is deliberate: a card whose open place has not fetched
+        // now reads "Not fetched yet" even where a sibling place has. That
+        // is the honest answer, because the card describes the destination
+        // it takes you to rather than the best number available anywhere
+        // in the group.
+        packages: offered(open),
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));

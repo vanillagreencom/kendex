@@ -59,3 +59,20 @@ describe("what makes two declarations one marketplace", () => {
     expect(groups).toHaveLength(2);
   });
 });
+
+// Every field on the card describes one subscription — the one it opens.
+// Reporting whichever place had fetched first meant a card could name the
+// project's subscription, show its revision and open its page while
+// printing the personal one's count, which scopes pinned to different
+// revisions can make a different number.
+describe("the count a card carries", () => {
+  it("reports no count where the opened place is unfetched and a sibling is not", () => {
+    const [group] = groupByMarketplace([
+      row({ enabled: false, counts: { skill: 9 } }),
+      row({ scope: project("/w/alpha"), name: "alpha-kit", counts: null }),
+    ]);
+
+    expect(group.open.name).toBe("alpha-kit");
+    expect(group.packages).toBeNull();
+  });
+});
