@@ -101,10 +101,20 @@ fi
 # run, so their help is the one that could reach for a repository.
 NOREPO="$TMP_ROOT/norepo"
 mkdir -p "$NOREPO"
-for cmd in list path exists; do
-  out=$(cd "$NOREPO" && "$WORKTREE_SCRIPT" "$cmd" --help)
-  assert_eq "$?" 0 "worktree $cmd --help exits 0 outside a git repository"
-done
+export GIT_CEILING_DIRECTORIES="$TMP_ROOT"
+if norepo_root=$(git -C "$NOREPO" rev-parse --show-toplevel 2>/dev/null); then
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  %s\n        got:      %s\n' \
+    "the no-repository fixture is outside a git repository" "$norepo_root"
+else
+  PASS=$((PASS + 1))
+  printf '  ok    %s\n' "the no-repository fixture is outside a git repository"
+  for cmd in list path exists; do
+    status=0
+    out=$(cd "$NOREPO" && "$WORKTREE_SCRIPT" "$cmd" --help) || status=$?
+    assert_eq "$status" 0 "worktree $cmd --help exits 0 outside a git repository"
+  done
+fi
 
 # The top-level help states the loader's real precedence, lowest to highest.
 out=$(cd "$NOREPO" && "$WORKTREE_SCRIPT" --help)
