@@ -330,3 +330,37 @@ fn a_target_inside_an_origin_tree_is_refused() {
     .to_string();
     assert!(refused.contains("own origin"), "{refused}");
 }
+
+/// A package the marketplace no longer offers says that, not "not
+/// fetched". Five failures reach the unreachable-origin row, and only the
+/// first is a fetch: this one runs after the source resolved and its root
+/// opened, so the marketplace is there and `kendex refresh` moves nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_package_its_marketplace_dropped_is_not_called_unfetched() {
+    let (tmp, env, scope) = seeded();
+    // A lock entry pointing at the subscribed catalog for a name the
+    // catalog does not carry — what a package withdrawn upstream leaves
+    // behind on a machine that still has it installed.
+    let path = crate::lock::lock_path(&env, &scope);
+    let mut held = crate::lock::load(&path).unwrap();
+    held.entries.insert(
+        crate::lock::entry_key(ItemKind::Skill, "withdrawn", HarnessId::Claude),
+        entry(ItemKind::Skill, "withdrawn", "cat", "cat"),
+    );
+    crate::lock::save(&path, &held).unwrap();
+
+    let candidates = inventory(&env, &[scope]).unwrap();
+    let withdrawn = find(&candidates, "withdrawn");
+    let problem = withdrawn.origins[0].problem.as_deref().unwrap_or_default();
+    assert_eq!(
+        problem, "this marketplace no longer offers it",
+        "{:?}",
+        withdrawn.origins
+    );
+    assert!(
+        withdrawn.origins[0].hash.is_empty(),
+        "{:?}",
+        withdrawn.origins
+    );
+}

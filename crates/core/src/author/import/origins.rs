@@ -51,10 +51,13 @@ pub(super) struct OriginRead {
     /// nobody fetched, or an origin [`offered`] refuses. `problem` says
     /// which.
     pub bytes: Option<Bytes>,
-    /// Where the bytes were, and nothing else — said the way kendex says a
-    /// path ([`crate::paths::slashed`]), because callers match on it
-    /// (`.agents/skills/…`) and a `\` there matches nothing. A repo spec
-    /// for a marketplace that has no local root yet.
+    /// Where the bytes were, in one of three shapes: a local path, said
+    /// the way kendex says a path ([`crate::paths::slashed`]) so that a
+    /// caller matching on it (`.agents/skills/…`) is not defeated by a
+    /// `\`; `<repo>:<path>` for a marketplace's own bytes, the same
+    /// spelling repo-qualified; or the repo alone where nothing was
+    /// fetched and there was no place to read. Only the first is a path a
+    /// caller can match whole.
     pub location: String,
     /// Why these bytes are not on offer, when they are not. Its own field
     /// rather than prose folded into `location`, which every reader takes
@@ -151,7 +154,12 @@ fn marketplace_origins(
     observed: &BTreeMap<(Scope, ItemKind, String), PathBuf>,
 ) -> Vec<OriginRead> {
     let manifest = scope_manifest(env, &row.scope);
-    let unreachable = |license: Option<String>| {
+    // Every way the marketplace's own bytes go missing, each said as
+    // itself. Only the first is "not fetched": the last two run after the
+    // source resolved and its root opened, so the marketplace is there and
+    // it is the package that is gone, and sending that reader to `kendex
+    // refresh` sends them somewhere that cannot help.
+    let unreachable = |license: Option<String>, problem: &str| {
         vec![OriginRead {
             group: CandidateGroup::Marketplace {
                 source: source.to_owned(),
@@ -161,7 +169,7 @@ fn marketplace_origins(
             },
             bytes: None,
             location: repo.to_owned(),
-            problem: Some("not fetched".to_owned()),
+            problem: Some(problem.to_owned()),
             read_from: None,
         }]
     };
@@ -169,23 +177,23 @@ fn marketplace_origins(
         Ok(crate::source::SourceState::Ready(resolved)) => resolved,
         // Unreachable provenance is listed, not guessed: the row shows
         // with no bytes and selecting it refuses.
-        _ => return unreachable(None),
+        _ => return unreachable(None, "not fetched"),
     };
     let Ok(sealed) = SealedSource::open(&resolved.root) else {
-        return unreachable(None);
+        return unreachable(None, "its local copy would not open");
     };
     let Ok(config) = crate::source::source_config_for(&sealed, &resolved.provenance) else {
-        return unreachable(None);
+        return unreachable(None, "its catalog config would not read");
     };
     let license = config
         .marketplace
         .as_ref()
         .and_then(|meta| meta.license.clone());
     let Some(path) = crate::source::find_item(&sealed, &config, row.kind, &row.name) else {
-        return unreachable(license);
+        return unreachable(license, "this marketplace no longer offers it");
     };
     let Some(bytes) = read_bytes(&sealed, row.kind, &path) else {
-        return unreachable(license);
+        return unreachable(license, "its bytes would not read");
     };
     let source_hash = bytes.hash();
     let mut origins = vec![OriginRead {

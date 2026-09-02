@@ -22,17 +22,15 @@ export interface RowChoice {
   licenseBasis: string;
 }
 
-/** Where each unselectable origin was and why, said once: the same file is
- * claimed twice where a marketplace install is also reached by the
- * unmanaged scan, and core merges only what it can key on. */
+/** Where each unselectable origin was and why. One line per origin and no
+ * dedup here: core's inventory folds a place refused for the same reason
+ * into one row, so the file claimed both as a marketplace's edited copy
+ * and by the unmanaged scan arrives already merged. */
 function refusals(origins: CandidateOrigin[]): string[] {
-  const said: string[] = [];
-  for (const origin of origins) {
+  return origins.map((origin) => {
     const place = origin.locations.join(" = ");
-    const line = origin.problem ? `${place} — ${origin.problem}` : place;
-    if (!said.includes(line)) said.push(line);
-  }
-  return said;
+    return origin.problem ? `${place} — ${origin.problem}` : place;
+  });
 }
 
 export function groupLabel(group: CandidateGroup): string {

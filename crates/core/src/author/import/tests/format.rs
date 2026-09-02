@@ -242,8 +242,18 @@ fn an_agent_whose_frontmatter_never_closes_says_so_rather_than_missing() {
         "the other edit entirely: {problem}"
     );
 
-    let refused = apply(&env, &scopes, &target, &[selection("unclosed", "unclosed")]);
-    assert!(refused.is_err(), "an unselectable origin cannot be applied");
+    let message = apply(&env, &scopes, &target, &[selection("unclosed", "unclosed")])
+        .unwrap_err()
+        .to_string();
+    assert!(
+        message.contains("has no bytes kendex can import"),
+        "{message}"
+    );
+    assert!(message.contains("unclosed.md"), "{message}");
+    assert!(
+        message.contains("its frontmatter block is never closed"),
+        "{message}"
+    );
     assert!(!target.join("agents").exists());
 }
 
@@ -281,8 +291,15 @@ fn an_agent_whose_bytes_are_not_text_is_not_offered() {
         binary.origins[0].problem
     );
 
-    let refused = apply(&env, &scopes, &target, &[selection("binary", "binary")]);
-    assert!(refused.is_err(), "an unselectable origin cannot be applied");
+    let message = apply(&env, &scopes, &target, &[selection("binary", "binary")])
+        .unwrap_err()
+        .to_string();
+    assert!(
+        message.contains("has no bytes kendex can import"),
+        "{message}"
+    );
+    assert!(message.contains("binary.md"), "{message}");
+    assert!(message.contains("the file is not text"), "{message}");
     assert!(!target.join("agents").exists());
 }
 
@@ -349,5 +366,68 @@ fn a_local_catalog_already_holding_toml_is_not_offered_on() {
     assert!(
         !target.join("agents").exists(),
         "a refused apply writes nothing at all"
+    );
+}
+
+/// Two places under one reason, which is the shape both display paths
+/// format differently: a marketplace whose catalog slot already holds TOML
+/// beside the install of it. Core's refusal takes one line, because a
+/// `CoreError` that does not own its breaks has them escaped where the CLI
+/// prints it, and it says each place once — the install is claimed twice,
+/// as the marketplace's edited copy and by the unmanaged scan.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_name_with_two_unusable_places_says_each_once_on_one_line() {
+    let (tmp, env, scope) = seeded();
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    // The two differ, so the install is the marketplace's *edited* copy as
+    // well as an unmanaged claim — which is what makes one place arrive
+    // twice.
+    file_item(
+        &tmp.path().join("catalog/agents"),
+        "agentic.md",
+        "name = \"agentic\"\ndescription = \"as published\"\n",
+    );
+    file_item(
+        &root.join(".codex/agents"),
+        "agentic.toml",
+        "name = \"agentic\"\ndescription = \"as edited\"\n",
+    );
+    let path = lock::lock_path(&env, &scope);
+    let mut held = lock::load(&path).unwrap();
+    held.entries.insert(
+        lock::entry_key(ItemKind::Agent, "agentic", HarnessId::Claude),
+        entry(ItemKind::Agent, "agentic", "cat", "cat"),
+    );
+    lock::save(&path, &held).unwrap();
+
+    let scopes = [scope.clone()];
+    let candidates = inventory(&env, &scopes).unwrap();
+    let agentic = find(&candidates, "agentic");
+    assert!(
+        agentic.origins.iter().all(|origin| origin.hash.is_empty()),
+        "nothing selectable: {:?}",
+        agentic.origins
+    );
+    assert_eq!(
+        agentic.origins.len(),
+        2,
+        "the catalog's slot and the install, the install's two claimants merged: {:?}",
+        agentic.origins
+    );
+
+    let target = target(&env, &tmp, "mine-two-places");
+    let message = apply(&env, &scopes, &target, &[selection("agentic", "agentic")])
+        .unwrap_err()
+        .to_string();
+    assert_eq!(message.lines().count(), 1, "{message}");
+    assert!(message.contains("; "), "the places are joined: {message}");
+    assert!(message.contains("cat:agents/agentic.md"), "{message}");
+    assert_eq!(
+        message.matches("agentic.toml").count(),
+        1,
+        "the install is claimed twice and said once: {message}"
     );
 }

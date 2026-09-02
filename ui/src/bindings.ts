@@ -790,8 +790,12 @@ licenseRecognized: boolean } |
 export type CandidateOrigin = {
 	group: CandidateGroup,
 	/**
-	 *  Every place these exact bytes were seen — places and nothing else,
-	 *  so a caller may match a path against one.
+	 *  Every place these exact bytes were seen, each in one of three
+	 *  shapes: a local path, `/`-spelled whatever the platform does; a
+	 *  marketplace's own bytes as `<repo>:<path>`, the same spelling
+	 *  repo-qualified; or the repo alone where nothing was fetched and
+	 *  there was no place to read. Only the first is a path a caller can
+	 *  match whole.
 	 */
 	locations: string[],
 	/**

@@ -230,7 +230,7 @@ fn selection(
 fn list_candidates(candidates: &[author::ImportCandidate], json: bool) -> CliResult {
     if json {
         answer(&serde_json::to_string_pretty(&serde_json::json!({
-            "schema": 1,
+            "schema": author::import::IMPORT_SCHEMA,
             "candidates": candidates,
         }))?);
         return Ok(());

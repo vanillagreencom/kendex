@@ -103,7 +103,7 @@ fn import_with_no_selections_lists_candidates_and_exits_clean() {
     let said = String::from_utf8_lossy(&output.stderr).into_owned();
     assert!(output.status.success(), "{said}");
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["schema"], 1);
+    assert_eq!(json["schema"], 2);
     assert!(json["candidates"].as_array().unwrap().is_empty());
 }
 
@@ -153,4 +153,118 @@ fn import_of_an_agent_in_another_format_refuses_and_says_why() {
         !target.join("agents").exists(),
         "a refused import writes nothing"
     );
+}
+
+/// The listing says an unusable origin cannot be taken and why, without
+/// calling it unreadable: a Codex agent reads fine and is merely a format
+/// a catalog cannot store. Both spellings of the listing, since the
+/// envelope is what a program reads.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn listing_marks_an_agent_in_another_format_unusable_and_says_why() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let home = home.as_path();
+    let target = home.join("mine");
+    std::fs::create_dir_all(&target).unwrap();
+    let agents = home.join(".codex/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(
+        agents.join("codexer.toml"),
+        "name = \"codexer\"\ndescription = \"about codexer\"\n",
+    )
+    .unwrap();
+
+    let listed = kendex(home, &["marketplace", "import", target.to_str().unwrap()]);
+    let rows = String::from_utf8_lossy(&listed.stdout).into_owned();
+    assert!(listed.status.success(), "{rows}");
+    let row = rows
+        .lines()
+        .find(|line| line.contains("codexer"))
+        .unwrap_or_else(|| panic!("no codexer row: {rows}"));
+    assert!(
+        row.contains("unusable"),
+        "where a hash would be, and not a word blaming the read: {row}"
+    );
+    assert!(!row.contains("unreadable"), "{row}");
+    assert!(row.contains("codexer.toml"), "{row}");
+    assert!(
+        row.contains("it has no frontmatter")
+            && row.contains("a catalog stores an agent as markdown"),
+        "the reason follows the place: {row}"
+    );
+
+    let json = kendex(
+        home,
+        &["marketplace", "import", target.to_str().unwrap(), "--json"],
+    );
+    let payload: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(payload["schema"], 2);
+    let origin = payload["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|candidate| candidate["name"] == "codexer")
+        .unwrap_or_else(|| panic!("no codexer candidate: {payload}"))["origins"][0]
+        .clone();
+    assert_eq!(origin["hash"], "");
+    assert!(
+        origin["problem"]
+            .as_str()
+            .unwrap()
+            .contains("it has no frontmatter"),
+        "{origin}"
+    );
+    assert!(
+        origin["locations"][0]
+            .as_str()
+            .unwrap()
+            .ends_with("codexer.toml"),
+        "the place is a path and nothing else: {origin}"
+    );
+}
+
+/// A place is an untrusted filename, and the refusal is a message that
+/// owns its breaks — `ui/refusal.rs` splits on `\n` and escapes each piece
+/// after — so a raw newline reaching it would open a line of its own in
+/// the run's account of why it stopped. `import::no_importable_bytes`
+/// spells every value through `names::shown` for exactly that, and this
+/// pins the property rather than the wording: the fixture's name carries a
+/// real newline and a right-to-left override, and neither reaches stderr.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refusal_cannot_be_given_extra_lines_by_the_name_it_quotes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let home = home.as_path();
+    let target = home.join("mine");
+    std::fs::create_dir_all(&target).unwrap();
+    let agents = home.join(".codex/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    let hostile = "co\ndex\u{202e}er";
+    std::fs::write(
+        agents.join(format!("{hostile}.toml")),
+        "name = \"hostile\"\ndescription = \"about it\"\n",
+    )
+    .unwrap();
+
+    let output = kendex(
+        home,
+        &[
+            "marketplace",
+            "import",
+            target.to_str().unwrap(),
+            "--agent",
+            hostile,
+        ],
+    );
+    let said = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(!output.status.success(), "{said}");
+    assert!(said.contains("has no bytes kendex can import"), "{said:?}");
+    assert!(said.contains("it has no frontmatter"), "{said:?}");
+    // The sentence and its one place. A raw newline in either the name or
+    // the path would make a third.
+    assert_eq!(said.trim_end().lines().count(), 2, "{said:?}");
+    assert!(!said.contains("co\ndex"), "{said:?}");
+    assert!(!said.contains('\u{202e}'), "{said:?}");
 }
