@@ -10,7 +10,7 @@ const catalog: Catalog = {
   source: "kit",
 };
 
-const set = (name: string, members: number): BundleDetail => ({
+const set = (name: string, members: number, installed = 0): BundleDetail => ({
   name,
   description: `${name} description`,
   version: null,
@@ -18,9 +18,9 @@ const set = (name: string, members: number): BundleDetail => ({
   members: Array.from({ length: members }, (_, i) => ({
     kind: "skill" as const,
     name: `${name}-${i}`,
-    state: "available" as const,
+    state: i < installed ? ("installed" as const) : ("available" as const),
   })),
-  installedMembers: 0,
+  installedMembers: installed,
   totalMembers: members,
   collision: null,
 });
@@ -57,6 +57,23 @@ describe("the Bundles tab", () => {
       <BundleCards catalog={catalog} bundles={[]} error={undefined} />,
     );
     expect(text(host)).toContain("doesn't offer curated sets");
+  });
+
+  // The badge is the only thing on a card that says how much of a set is
+  // already here, and it has three answers, not one.
+  it("badges a set by how much of it is installed", () => {
+    const host = mount(
+      <BundleCards
+        catalog={catalog}
+        bundles={[set("whole", 3, 3), set("some", 3, 1), set("none", 3, 0)]}
+        error={undefined}
+      />,
+    );
+    const badges = [...host.querySelectorAll("button")].map(
+      (button) =>
+        button.parentElement?.querySelector("span")?.textContent ?? "",
+    );
+    expect(badges).toEqual(["Installed", "Partly installed (1 of 3)", ""]);
   });
 
   it("cards every declared set with its description and member counts", () => {

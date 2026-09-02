@@ -297,6 +297,29 @@ fn every_declared_set_is_listed_even_when_no_member_is_offered() {
     assert_eq!(orphaned.members[0].state, InstallState::NotOffered);
 }
 
+/// A plugin registry's sets come off a JSON list in file order, so the read
+/// is where one order is decided. Without the sort the cards appear in
+/// whatever order the catalog author happened to write.
+#[test]
+fn plugin_registry_sets_are_listed_alphabetically_not_in_file_order() {
+    let tmp = tempfile::tempdir().unwrap();
+    let catalog = tmp.path().join("catalog");
+    fs::create_dir_all(catalog.join(".claude-plugin")).unwrap();
+    fs::write(
+        catalog.join(".claude-plugin/marketplace.json"),
+        r#"{"name":"reg","owner":{"name":"o"},"plugins":[{"name":"zebra","source":"./plugins/zebra"},{"name":"alpha","source":"./plugins/alpha"},{"name":"middle","source":"./plugins/middle"}]}"#,
+    )
+    .unwrap();
+    for plugin in ["zebra", "alpha", "middle"] {
+        skill(&catalog, &format!("plugins/{plugin}/skills"), "eda", "body");
+    }
+    let (env, scope) = project(tmp.path(), &sources_decl(&catalog));
+
+    let listed = bundles(&env, &cat(&scope)).unwrap();
+    let names: Vec<&str> = listed.iter().map(|set| set.name.as_str()).collect();
+    assert_eq!(names, vec!["alpha", "middle", "zebra"]);
+}
+
 /// Listing every set joins each against this scope the same way opening one
 /// does — same members, same states, same counts.
 #[test]

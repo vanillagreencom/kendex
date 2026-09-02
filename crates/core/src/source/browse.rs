@@ -134,12 +134,19 @@ pub fn packages(env: &Env, catalog: &Catalog) -> Result<Vec<AvailablePackage>> {
 /// Every curated set this catalog declares, each with per-member installed
 /// state. What the marketplace page's Bundles tab lists: the catalog's own
 /// declaration, so a set none of whose members are offered still appears.
+///
+/// Sorted by name here rather than by each caller. A plain catalog holds its
+/// sets in a `BTreeMap` and is alphabetical already, but a plugin registry's
+/// are a list in `marketplace.json` file order, and one order for every
+/// consumer is the point of sorting in the read.
 pub fn bundles(env: &Env, catalog: &Catalog) -> Result<Vec<BundleDetail>> {
     let browsed = open(env, catalog)?;
-    Ok(super::bundles::offered(&browsed.sealed, &browsed.config)?
+    let mut out: Vec<BundleDetail> = super::bundles::offered(&browsed.sealed, &browsed.config)?
         .iter()
         .map(|found| detail(&browsed, found))
-        .collect())
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
 }
 
 /// One curated set with per-member installed state.

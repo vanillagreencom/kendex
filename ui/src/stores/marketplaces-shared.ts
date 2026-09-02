@@ -83,6 +83,17 @@ export function without<T>(
   return rest;
 }
 
+/** Every cache carrying a curated set's member states: the opened set and
+ * the list of sets a catalog declares, both holding the same per-member
+ * `InstallState` and the counts derived from it. An install moves those
+ * states, so the two are emptied together — one of them left behind is a
+ * card confidently showing the count from before the install, with no
+ * empty slot to make the page ask again. */
+export const setCaches = (): { bundles: object; catalogBundles: object } => ({
+  bundles: {},
+  catalogBundles: {},
+});
+
 /** A mutation that can change what any catalog offers empties every derived
  * cache — the pages re-read, and pre-install scores are re-asked, so nothing
  * keeps describing the commit before the change. Summaries go with them: a
@@ -96,8 +107,7 @@ export function dropCatalogCaches(set: (partial: object) => void) {
   resetPreinstallSafety();
   set({
     packages: {},
-    bundles: {},
-    catalogBundles: {},
+    ...setCaches(),
     about: {},
     summaries: {},
     readErrors: {},

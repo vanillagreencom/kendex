@@ -103,6 +103,26 @@ describe("what an install leaves waiting", () => {
   });
 });
 
+// Both set caches carry the same per-member InstallState and the counts
+// derived from it, so an install moves what both of them say. A list left
+// behind is worse than an empty one: nothing re-reads a slot that is
+// present, so the tab shows pre-install counts for the rest of the session.
+describe("what an install invalidates", () => {
+  it("empties both curated-set caches so the counts are read again", async () => {
+    vi.mocked(commands.marketplaceInstall).mockResolvedValue(installed([]));
+    useMarketplacesStore.setState({
+      bundles: { "any::starter": { name: "starter" } as never },
+      catalogBundles: { any: [{ name: "starter" } as never] },
+    });
+
+    await install();
+
+    const state = useMarketplacesStore.getState();
+    expect(state.bundles).toEqual({});
+    expect(state.catalogBundles).toEqual({});
+  });
+});
+
 describe("answering", () => {
   beforeEach(() => {
     // The dialog is module state: a case that asserts none opened has to

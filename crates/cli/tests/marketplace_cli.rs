@@ -123,6 +123,14 @@ fn marketplace_browse_lists_a_subscriptions_packages() {
     let project = home.join("dev/app");
     let catalog_arg = home.join("catalog").display().to_string();
 
+    // A set the catalog declares, so the row's `bundles` carries a name
+    // rather than an empty list nothing can tell from a dropped field.
+    fs::write(
+        home.join("catalog/kendex.toml"),
+        "[bundles.starter]\nskills = [\"gh\"]\n",
+    )
+    .unwrap();
+
     let subscribed = kendex(
         home,
         &project,
@@ -158,6 +166,16 @@ fn marketplace_browse_lists_a_subscriptions_packages() {
         .collect();
     assert!(names.contains(&"gh"), "{listed:#}");
     assert!(names.contains(&"helper"), "{listed:#}");
+    // `bundles` is part of this schema-1 envelope: a scripted consumer reads
+    // which curated sets carry a package from here and nowhere else in the
+    // CLI. The app dropped its own use of the field, so this is what pins it.
+    let gh = listed["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["package"]["name"] == "gh")
+        .expect("gh listed");
+    assert_eq!(gh["package"]["bundles"], serde_json::json!(["starter"]));
 
     // The text listing shows each package's summary beside its name, the
     // same line the app's Packages row shows.
