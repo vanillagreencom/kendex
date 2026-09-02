@@ -51,9 +51,11 @@ function accountIn(data: unknown): string[] {
  *  back. Takes the whole result, so a refusal says nothing and a landed
  *  write is read wherever it keeps its account.
  *
- *  Applied at the call site, around the command's own answer: a write that
- *  can take a declaring package away wraps its call in this, and
- *  `grep -rn "saying(" ui/src` is the set that does. */
+ *  Applied at the call site, around the command's own answer. It is one of
+ *  two spellings: a write that can take a declaring package away either
+ *  wraps its answer in this, or hands [`sayUndone`] the account it already
+ *  holds off a shape it has read itself. Both together are the set —
+ *  `grep -rnE "saying\(|sayUndone\(" ui/src` finds them. */
 export function saying<T>(answer: T): T {
   const it = answer as { status?: unknown; data?: unknown };
   if (typeof it === "object" && it !== null && it.status === "ok") {
