@@ -82,11 +82,13 @@ describe("a Community row's Subscribed marker", () => {
       subscribedKeys(useMarketplacesStore.getState().rows).has("acme/kit"),
     ).toBe(false);
 
-    const ok = await useMarketplacesStore
+    // Subscribe answers with the alias it declared, so a caller that goes
+    // on to install from it has the name; a refusal answers null.
+    const alias = await useMarketplacesStore
       .getState()
       .subscribe({ scope: "global" }, "https://github.com/Acme/Kit.git", null);
 
-    expect(ok).toBe(true);
+    expect(alias).toBe("kit");
     const held = subscribedKeys(useMarketplacesStore.getState().rows);
     expect(listed.repoKey !== null && held.has(listed.repoKey)).toBe(true);
   });

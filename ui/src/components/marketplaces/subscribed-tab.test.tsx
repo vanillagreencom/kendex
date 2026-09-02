@@ -6,6 +6,7 @@ import {
   MARKETPLACES_CHECK_FAILED_TITLE,
   MARKETPLACES_EMPTY_TITLE,
   MARKETPLACES_UNCONFIRMED_TITLE,
+  placeCountLabel,
 } from "@/lib/copy-marketplaces";
 import { SubscribedTab } from "./subscribed-tab";
 
@@ -108,5 +109,22 @@ describe("SubscribedTab with rows a failed read left behind", () => {
     stub.rows = [kept];
     const html = renderToStaticMarkup(<SubscribedTab onSubscribe={() => {}} />);
     expect(html).not.toContain(MARKETPLACES_UNCONFIRMED_TITLE);
+  });
+});
+
+// The list used to repeat a catalog once per place, with nothing saying
+// the rows were the same catalog. One card answers for the marketplace and
+// says how many places hold it.
+describe("SubscribedTab with one marketplace held in several places", () => {
+  it("draws one card naming every place", () => {
+    stub.rows = [
+      kept,
+      { ...kept, scope: { scope: "project", root: "/w/alpha" } },
+      { ...kept, scope: { scope: "project", root: "/w/beta" } },
+    ];
+    const html = renderToStaticMarkup(<SubscribedTab onSubscribe={() => {}} />);
+    expect(html.match(/kit/g)).toHaveLength(1);
+    expect(html).toContain(placeCountLabel(3));
+    expect(html).toContain("Personal, alpha, beta");
   });
 });

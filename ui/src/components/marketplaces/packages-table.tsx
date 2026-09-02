@@ -12,8 +12,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { clickAsksToOpen } from "@/lib/click-asks-to-open";
-import { PACKAGE_STATE_UNKNOWN } from "@/lib/copy-marketplaces";
+import {
+  PACKAGE_STATE_UNKNOWN,
+  SUBSCRIBE_TO_INSTALL_LABEL,
+  SUBSCRIBE_TO_INSTALL_MEANS,
+} from "@/lib/copy-marketplaces";
 import {
   SAFETY_DOT_UNCHECKED,
   safetyDotWords,
@@ -43,6 +52,11 @@ export interface PackageEntry {
   catalog: Catalog;
   row: AvailablePackage;
   recordsUnreadable: boolean;
+  /** The commit the catalog is read at, where the subscription knows one —
+   * how current the offer is, said as the revision it actually is. No
+   * source the app receives dates a package, so nothing here claims a
+   * last-updated day. */
+  revision?: string | null;
 }
 
 /** The one table of offered packages — the Packages tab across every
@@ -93,6 +107,9 @@ function PackageRow({
   const { catalog, row, recordsUnreadable } = entry;
   const goToAvailablePackage = useNavStore((s) => s.goToAvailablePackage);
   const install = useMarketplacesStore((s) => s.install);
+  const subscribeAndInstall = useMarketplacesStore(
+    (s) => s.subscribeAndInstall,
+  );
   const busy = useMarketplacesStore((s) => s.busy);
   const want = usePreinstallSafety((s) => s.want);
   const safety = usePreinstallSafety(
@@ -134,7 +151,12 @@ function PackageRow({
       </TableCell>
       {showMarketplace ? (
         <TableCell className="text-muted-foreground">
-          {catalogLabel(catalog)}
+          <div className="truncate">{catalogLabel(catalog)}</div>
+          {entry.revision ? (
+            <div className="truncate font-mono text-xs">
+              @ {entry.revision.slice(0, 7)}
+            </div>
+          ) : null}
         </TableCell>
       ) : null}
       <TableCell>
@@ -169,9 +191,35 @@ function PackageRow({
             {PACKAGE_STATE_UNKNOWN}
           </span>
         ) : catalog.by === "repo" ? (
-          // Installing needs a subscription; the page's Subscribe button
-          // is the one action, so the row only says the package is here.
-          <span className="text-xs text-muted-foreground">Available</span>
+          // Installing needs a subscription, so this click makes one —
+          // personally — and then installs. The row said "Available" and
+          // sent the reader hunting for the header's Subscribe button
+          // without ever saying the two were related; the label and its
+          // tooltip say the whole sequence instead. It sits below the
+          // unreadable-record branch: a place whose lock cannot be read
+          // refuses the install either way, and offering one there would
+          // be the guess that branch exists to stop.
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => {
+                    void subscribeAndInstall(catalog.repo, [
+                      { kind: row.kind, name: row.name },
+                    ]);
+                  }}
+                >
+                  {SUBSCRIBE_TO_INSTALL_LABEL}
+                </Button>
+              }
+            />
+            <TooltipContent side="left" className="max-w-72">
+              {SUBSCRIBE_TO_INSTALL_MEANS}
+            </TooltipContent>
+          </Tooltip>
         ) : offersInstall(row.state) ? (
           // Scores arrive one at a time, and a read that fails leaves a
           // row without one until it mounts again, so a row is offered

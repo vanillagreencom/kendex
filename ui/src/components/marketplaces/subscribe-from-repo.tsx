@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { SubscribeDialog } from "@/components/marketplaces/subscribe-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { SUBSCRIBE_MEANS } from "@/lib/copy-marketplaces";
 
 /** The one action a repository page has before anyone subscribes: open
  * the Subscribe dialog with this repository filled in. The dialog is
@@ -19,9 +25,19 @@ export function SubscribeFromRepo({
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button size="sm" onClick={() => setOpen(true)}>
-        {label}
-      </Button>
+      {/* What subscribing does, on the button that does it — the page
+          offers it as its one action, so the explanation has to be here
+          and not only inside the dialog it opens. */}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button size="sm" onClick={() => setOpen(true)}>
+              {label}
+            </Button>
+          }
+        />
+        <TooltipContent className="max-w-72">{SUBSCRIBE_MEANS}</TooltipContent>
+      </Tooltip>
       {open ? (
         <SubscribeDialog
           key={repo}

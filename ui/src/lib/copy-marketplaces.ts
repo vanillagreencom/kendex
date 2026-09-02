@@ -49,3 +49,48 @@ export const unreadableSourcesLine = (place: string): string =>
   `kendex couldn't read some of ${place}'s marketplaces, so their packages aren't listed.`;
 
 export const SEE_PROBLEMS_LABEL = "See Problems";
+
+// What subscribing does, said wherever Subscribe is offered so nobody has
+// to press it to find out. Subscribing writes a source declaration into
+// one place's manifest and fetches it; the packages it offers become
+// installable there, and the ones actually installed are what the Updates
+// page then checks.
+export const SUBSCRIBE_MEANS =
+  "Subscribing adds this marketplace to one place on this machine. Its packages become installable there, and updates to the ones you install show up on the Updates page.";
+// Installing from a marketplace nobody subscribes to yet. The subscription
+// is the thing that makes an install possible, so the click that installs
+// makes it — said before the click, not discovered after it.
+export const SUBSCRIBE_TO_INSTALL_MEANS =
+  "Installing from here subscribes you to this marketplace first — that is what makes its packages installable.";
+export const SUBSCRIBE_TO_INSTALL_LABEL = "Subscribe and install";
+
+// The marketplace page's Projects section: every place that declares this
+// marketplace, and the switch that decides whether it offers packages
+// there. The help says what switching it off costs, because the engine
+// deactivates that place's installs rather than leaving them running.
+export const MARKETPLACE_PLACES_TITLE = "Projects";
+export const MARKETPLACE_PLACES_HELP =
+  "Where this marketplace is subscribed. Personal covers what you install for yourself; every project keeps its own list.";
+export const SOURCE_ENABLED_LABEL = "Offer packages here";
+export const SOURCE_ENABLED_HELP =
+  "Switch it off and this place stops offering the marketplace's packages. Anything already installed from it is switched off in place — nothing is deleted, and switching this back on restores it.";
+
+/** How many places a marketplace is subscribed in, for its card. */
+export const placeCountLabel = (count: number): string =>
+  count === 1 ? "In 1 place" : `In ${count} places`;
+
+/** A listed marketplace's counts, as metadata rather than prose. */
+export const directoryCountsLabel = (
+  packages: number,
+  bundles: number,
+): string =>
+  bundles > 0
+    ? `${packages} package${packages === 1 ? "" : "s"} · ${bundles} bundle${bundles === 1 ? "" : "s"}`
+    : `${packages} package${packages === 1 ? "" : "s"}`;
+
+export const SUBSCRIBED_MARKER = "Subscribed";
+export const FEATURED_MARKER = "Featured";
+// The two directories the Community tab searches, named as the segmented
+// control's two choices.
+export const DIRECTORY_KENDEX_LABEL = "Kendex";
+export const DIRECTORY_SKILLSSH_LABEL = "Skills.sh";

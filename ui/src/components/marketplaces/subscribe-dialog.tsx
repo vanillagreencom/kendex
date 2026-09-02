@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SUBSCRIBE_MEANS } from "@/lib/copy-marketplaces";
 import { scopeLabel } from "@/lib/derive";
 import { scopeName } from "@/lib/labels";
 import { everyPlace } from "@/lib/scope";
@@ -52,14 +53,16 @@ export function SubscribeDialog({
     const target =
       scopes.find((s) => scopeLabel(s) === where) ??
       ({ scope: "global" } as Scope);
-    void subscribe(target, reference.trim(), name.trim() || null).then((ok) => {
-      // A refusal keeps the dialog open with the input intact — the
-      // error shows right here, never on another page.
-      if (!ok) return;
-      setReference("");
-      setName("");
-      onOpenChange(false);
-    });
+    void subscribe(target, reference.trim(), name.trim() || null).then(
+      (alias) => {
+        // A refusal keeps the dialog open with the input intact — the
+        // error shows right here, never on another page.
+        if (alias === null) return;
+        setReference("");
+        setName("");
+        onOpenChange(false);
+      },
+    );
   };
 
   return (
@@ -68,8 +71,8 @@ export function SubscribeDialog({
         <DialogHeader>
           <DialogTitle>Subscribe to a marketplace</DialogTitle>
           <DialogDescription>
-            Any repository that holds skills works — paste a GitHub repo, a git
-            URL, a skills.sh link, or pick a local folder.
+            {SUBSCRIBE_MEANS} Any repository that holds skills works — paste a
+            GitHub repo, a git URL, a skills.sh link, or pick a local folder.
           </DialogDescription>
         </DialogHeader>
         <form

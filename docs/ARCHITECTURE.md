@@ -251,6 +251,12 @@ lives in one capability table read by core and UI.
   marketplace's detail, a curated set, an available package — carry a
   breadcrumb. The Library's From column and the package page's From line
   read one provenance join.
+- **A marketplace is one thing however many places subscribe to it.**
+  Subscribed lists one card per marketplace, keyed by canonical repository
+  (else local path), never per declaration; which places hold it and the
+  per-place switch belong to that marketplace's own Projects section, where
+  the place is named beside the switch. A list never carries a control whose
+  target it does not name.
 - Harnesses and Projects are two sidebar destinations. Where a harness
   keeps its files is edited on that harness's own row.
 - Content a tool ships with itself (Codex's and Claude Code's bundled

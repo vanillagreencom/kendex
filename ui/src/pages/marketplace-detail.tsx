@@ -3,6 +3,7 @@ import type { Catalog } from "@/bindings";
 import { AboutSection } from "@/components/marketplaces/about-section";
 import { BundleCards } from "@/components/marketplaces/bundle-cards";
 import { DetailHeader } from "@/components/marketplaces/detail-header";
+import { MarketplacePlaces } from "@/components/marketplaces/marketplace-places";
 import { PackagesTable } from "@/components/marketplaces/packages-table";
 import {
   useCachedRead,
@@ -47,6 +48,9 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
             marketKey(r.scope, r.name) === catalogKey(catalog),
         )
       : undefined;
+  // What every place declaring this same marketplace is keyed by — the
+  // Projects section lists them all, not just the one this page opened as.
+  const identity = row ? (row.repoKey ?? row.path ?? row.name) : null;
   const cached = packages[catalogKey(catalog)];
   const offered = cached ?? [];
   const packagesError = useMarketplacesStore(
@@ -111,6 +115,9 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
               <TabsList>
                 <TabsTrigger value="bundles">Bundles</TabsTrigger>
                 <TabsTrigger value="packages">Packages</TabsTrigger>
+                {identity ? (
+                  <TabsTrigger value="places">Projects</TabsTrigger>
+                ) : null}
                 <TabsTrigger value="about">About</TabsTrigger>
               </TabsList>
             </div>
@@ -157,6 +164,11 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
                     />
                   )}
                 </TabsContent>
+                {identity ? (
+                  <TabsContent value="places">
+                    <MarketplacePlaces identity={identity} />
+                  </TabsContent>
+                ) : null}
                 <TabsContent value="about">
                   <AboutSection
                     catalog={catalog}

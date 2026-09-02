@@ -91,10 +91,17 @@ export function PackagesTab() {
           catalog: subscription(row.scope, row.name),
           row: pkg,
           recordsUnreadable: row.recordsUnreadable,
+          revision: row.rev ?? row.commit,
         });
       }
     }
-    return out;
+    // Ordered by name. Popularity is what this list wants to lead with, and
+    // nothing the app receives carries one: neither a subscription's
+    // catalog nor the kendex.ai directory index publishes installs, stars
+    // or a per-package timestamp, so any "most installed" order here would
+    // be invented. Name is the order that is true today; the moment the
+    // registry publishes a count, it belongs in front of this comparison.
+    return out.sort((a, b) => a.row.name.localeCompare(b.row.name));
   }, [rows, packages, search, kind, tag, marketplace, where]);
 
   // Named above the table so an empty offer is never mistaken for an empty

@@ -2,6 +2,7 @@ import { Globe, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/empty-state";
 import { SubscribeDialog } from "@/components/marketplaces/subscribe-dialog";
+import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -11,6 +12,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DIRECTORY_KENDEX_LABEL,
+  DIRECTORY_SKILLSSH_LABEL,
+} from "@/lib/copy-marketplaces";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useCommunityStore } from "@/stores/community";
@@ -20,7 +25,7 @@ import {
   useMarketplacesStore,
 } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
-import { agoLabel, DirectoryRowLine, dayOf } from "./directory-row";
+import { agoLabel, DirectoryCard, dayOf } from "./directory-card";
 import { SkillsShSearch } from "./skillssh-search";
 
 const ANY_TAG = "any";
@@ -62,37 +67,45 @@ export function CommunityTab() {
   );
   const rows = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return (directory?.rows ?? []).filter(
-      (row) =>
-        (tag === ANY_TAG || row.tags.includes(tag)) &&
-        (!needle ||
-          row.name.toLowerCase().includes(needle) ||
-          row.repo.toLowerCase().includes(needle) ||
-          (row.description ?? "").toLowerCase().includes(needle)),
+    return (
+      (directory?.rows ?? [])
+        .filter(
+          (row) =>
+            (tag === ANY_TAG || row.tags.includes(tag)) &&
+            (!needle ||
+              row.name.toLowerCase().includes(needle) ||
+              row.repo.toLowerCase().includes(needle) ||
+              (row.description ?? "").toLowerCase().includes(needle)),
+        )
+        // Featured first, then by name. A popularity order is what this grid
+        // wants — the index the app fetches carries no installs, stars or
+        // per-marketplace timestamp, so there is nothing here to sort by that
+        // would not be made up.
+        .sort(
+          (a, b) =>
+            Number(b.featured) - Number(a.featured) ||
+            a.name.localeCompare(b.name),
+        )
     );
   }, [directory, query, tag]);
 
   return (
     <div className={cn(PAGE_BODY, "pt-0")}>
       <div className={cn(WIDE_CONTENT_WIDTH, "space-y-4")}>
-        <div className="flex items-center gap-1">
-          <Button
-            size="sm"
-            variant={section === "directory" ? "secondary" : "ghost"}
-            onClick={() => setSection("directory")}
-          >
-            Directory
-          </Button>
-          {skillsshAvailable ? (
-            <Button
-              size="sm"
-              variant={section === "skillssh" ? "secondary" : "ghost"}
-              onClick={() => setSection("skillssh")}
-            >
-              Skills.sh
-            </Button>
-          ) : null}
-        </div>
+        {/* Two directories, one chosen — a segmented control, not two
+            words that happen to sit beside each other. It is drawn only
+            when there is a second thing to choose. */}
+        {skillsshAvailable ? (
+          <Segmented
+            label="Where to search"
+            value={section}
+            onChange={setSection}
+            options={[
+              { value: "directory", label: DIRECTORY_KENDEX_LABEL },
+              { value: "skillssh", label: DIRECTORY_SKILLSSH_LABEL },
+            ]}
+          />
+        ) : null}
 
         {section === "skillssh" ? (
           <SkillsShSearch
@@ -167,9 +180,9 @@ export function CommunityTab() {
                   : "No listed marketplace matches this search."}
               </p>
             ) : (
-              <div className="divide-y rounded-lg border">
+              <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
                 {rows.map((row) => (
-                  <DirectoryRowLine
+                  <DirectoryCard
                     key={row.repo}
                     row={row}
                     subscribed={rowSubscribed(row, held)}

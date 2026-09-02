@@ -84,6 +84,53 @@ const listed = async (needle: string): Promise<string[]> => {
   );
 };
 
+// Popularity would lead this list if anything the app receives carried
+// one; nothing does, so name is the order, and it holds across
+// marketplaces rather than restarting inside each one.
+describe("ordering the packages list", () => {
+  it("sorts by name, not by the order the catalog offered them", async () => {
+    useMarketplacesStore.setState({
+      packages: {
+        [marketKey(kit.scope, kit.name)]: [
+          skill("worktree", "", "Isolated working copies."),
+          skill("preflight", "", "Diff-scoped checks."),
+        ],
+      },
+    });
+    const rows = await listed("");
+    expect(rows[0]).toContain("preflight");
+    expect(rows[1]).toContain("worktree");
+  });
+
+  it("interleaves two marketplaces rather than listing one after the other", async () => {
+    const tools: MarketplaceRow = {
+      ...kit,
+      name: "tools",
+      repo: "Acme/Tools",
+      repoKey: "acme/tools",
+    };
+    useMarketplacesStore.setState({
+      rows: [kit, tools],
+      packages: {
+        [marketKey(kit.scope, kit.name)]: [
+          skill("alpha", "", "From kit."),
+          skill("gamma", "", "From kit."),
+        ],
+        [marketKey(tools.scope, tools.name)]: [
+          skill("beta", "", "From tools."),
+        ],
+      },
+    });
+    const rows = await listed("");
+    // The name cell carries the summary under the name, so the assertion
+    // is on what each row leads with.
+    expect(rows).toHaveLength(3);
+    expect(rows[0].startsWith("alpha")).toBe(true);
+    expect(rows[1].startsWith("beta")).toBe(true);
+    expect(rows[2].startsWith("gamma")).toBe(true);
+  });
+});
+
 describe("searching the packages list", () => {
   it("lists every package until something is typed", async () => {
     const rows = await listed("");
