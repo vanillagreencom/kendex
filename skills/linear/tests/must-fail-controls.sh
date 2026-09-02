@@ -31,7 +31,10 @@ trap 'rm -rf -- "${WORK:?}"' EXIT
 # so Ctrl-C never reaches them on its own; TERM does. The `timeout` child each
 # control spawned is a grandchild this does not reach; it retires itself
 # within SUITE_TIMEOUT.
-trap 'kill -TERM ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; exit 130' INT TERM
+# One trap each, so the code a wrapper reads says which signal arrived: an
+# interrupt and a kill are the same cleanup but not the same event.
+trap 'kill -TERM ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; exit 130' INT
+trap 'kill -TERM ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; exit 143' TERM
 
 # --- control vocabulary -----------------------------------------------------
 # A control script runs with CONTROL_ROOT pointing at its own copy of the

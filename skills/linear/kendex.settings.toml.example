@@ -28,3 +28,8 @@ LINEAR_REQUIRE_REACH = ""
 
 # Default output format for read commands: safe, table, ids, raw.
 LINEAR_FORMAT = "safe"
+
+# Seconds before the first retry of a rate-limited or failed GraphQL call,
+# doubling on each further attempt. A whole number of seconds; 0 retries
+# without waiting at all.
+LINEAR_RETRY_BASE_DELAY = "1"
