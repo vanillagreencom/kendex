@@ -312,6 +312,10 @@ load_bot_token() {
             echo "Warning: GH_BOT_TOKEN is a 1Password reference but 'op' CLI not found" >&2
             echo "  Install: https://developer.1password.com/docs/cli/get-started/" >&2
             return 0
+        elif [ "${KENDEX_GITHUB_TOKEN_ERROR_TYPE:-}" = "token_resolution_bad_timeout" ]; then
+            # op was never asked, so neither install advice nor a sign-in
+            # prompt applies; the resolver already named the setting.
+            return 0
         else
             echo "Warning: Failed to resolve 1Password reference. Run: op signin" >&2
             return 0

@@ -58,8 +58,8 @@ skills/decider/scripts/decisions	484
 skills/deep-research/scripts/deep-research	529
 skills/github/scripts/commands/pr-merge.sh	714
 skills/github/scripts/git-diff-summary	599
-skills/github/scripts/lib/gh-auth.sh	494
-skills/github/scripts/lib/github-api.sh	612
+skills/github/scripts/lib/gh-auth.sh	502
+skills/github/scripts/lib/github-api.sh	616
 skills/github/scripts/lib/verify-lib.sh	441
 skills/growth-guards/scripts/install-git-hooks	535
 skills/growth-guards/scripts/lib/settings.sh	467

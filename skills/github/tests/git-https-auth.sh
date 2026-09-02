@@ -134,6 +134,20 @@ assert_not_contains "$disabled" "!gh auth git-credential" "fallback can be disab
 unauthenticated="$(STUB_GH_AUTH_OK=0 run_helper -C "$ssh_repo" config --get-all credential.helper || true)"
 assert_not_contains "$unauthenticated" "!gh auth git-credential" "invalid gh auth leaves SSH path unchanged"
 
+# A bound the runner cannot read is not an answer about auth: gh is never
+# asked, and this wrapper falls through to plain git with the rewrite it
+# exists for skipped. Driven with no env token, which is the ordinary
+# `gh auth login` shape and the one kendex_github_sanitize_gh_env returns from
+# before its own arm can speak — so if the probe does not say it here, the
+# rewrite goes missing on every stream with nothing said anywhere.
+bad_bound_err="$TMP_ROOT/bad-bound.err"
+bad_bound="$(GH_TOKEN= GITHUB_TOKEN= KENDEX_GITHUB_AUTH_TIMEOUT=2.55 \
+  run_helper -C "$ssh_repo" config --get-all credential.helper 2>"$bad_bound_err" || true)"
+assert_not_contains "$bad_bound" "!gh auth git-credential" \
+  "an unreadable auth bound leaves the SSH path unchanged"
+assert_contains "$(cat "$bad_bound_err")" "2.55" \
+  "and the skipped rewrite names the bound rather than passing in silence"
+
 explicit="$(
   source "$REPO_ROOT/skills/github/scripts/lib/gh-auth.sh"
   if kendex_github_git_should_use_https_fallback ls-remote git@github.com:owner/repo.git; then
