@@ -5,6 +5,7 @@ import { commands } from "@/bindings";
 import { useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
 import { useSettingsStore } from "./settings";
+import { projectsOf } from "./settings-projects";
 
 vi.mock("@/bindings", () => ({
   commands: {
@@ -336,5 +337,15 @@ describe("settings store", () => {
     expect(dialog.open).toBe(true);
     expect(dialog.title).toBe("Couldn't search that folder");
     expect(dialog.message).toBe("/nope is not a directory");
+  });
+});
+
+// A React store selector is read on every render, and a value it mints
+// fresh each time is a store that never stops changing — the tree holding
+// it re-renders until React gives up. Every reader of the projects list
+// takes this selector, so the empty answer is proved once here.
+describe("the projects selector", () => {
+  it("answers with one and the same empty list until the read lands", () => {
+    expect(projectsOf({ settings: null })).toBe(projectsOf({ settings: null }));
   });
 });

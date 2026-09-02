@@ -33,6 +33,7 @@ import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { openInventory, useEditorStore } from "@/stores/editor";
 import { useSettingsStore } from "@/stores/settings";
+import { projectsOf } from "@/stores/settings-projects";
 import { useUpdatesStore } from "@/stores/updates";
 
 /** What you have changed that isn't about one package — instructions every
@@ -53,7 +54,7 @@ export function CustomizePage() {
     save,
   } = useEditorStore();
   const inventory = useEditorStore(openInventory);
-  const projects = useSettingsStore((s) => s.settings?.projects ?? []);
+  const projects = useSettingsStore(projectsOf);
   const customized = useCustomizedHere(draft, scope);
   const updates = useUpdatesStore((s) => s.read.status);
 
