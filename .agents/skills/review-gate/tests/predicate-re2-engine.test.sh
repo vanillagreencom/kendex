@@ -92,6 +92,14 @@ fi
 # ----------------------------------------------------------------- engines ---
 # Port 0: the kernel picks a free one, so concurrent lanes on one machine do
 # not collide. The port is read back from the server's own banner.
+#
+# The log is created HERE, in the parent. bash performs a background
+# command's redirections in the child, after the fork, so without this line
+# the parent can reach the read below before the child has made the file:
+# `sed` fails, `pipefail` carries that into the assignment, and `set -e`
+# ends the run before the retry loop ever reaches a second pass. The loop
+# covers an empty banner, never an absent file.
+: >"$work/httpd.log"
 python3 -u -m http.server 0 --bind 127.0.0.1 --directory "$srv" >"$work/httpd.log" 2>&1 &
 server_pid=$!
 port=""
