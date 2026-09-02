@@ -7,8 +7,11 @@
 # those strings lexically, so a comparison timestamp must carry the same shape.
 # `date -Iseconds` does not — it emits the host's local time with an offset
 # suffix, which only agrees on a UTC host. Off UTC it moves the cut by the whole
-# offset: at -07:00 every `--cycle current|previous|next` failed to resolve, and
-# at +09:00 `current` answered with a cycle that had not started (KEN-1175).
+# offset, so within that window either side of a cycle boundary the answer is
+# wrong: east of UTC `current` names a cycle that has not started, and west of
+# it `current` names the previous cycle, or nothing at all when no earlier cycle
+# is incomplete. Real cycles start at 07:00Z, so the window is seven hours per
+# boundary; the reported case hit it squarely (KEN-1175).
 
 # Now, in the shape the cache stores.
 cache_now_utc() {
@@ -27,9 +30,10 @@ cache_utc_days_ago() {
 # finished. Reads the cycle array on stdin, prints that cycle or `null`.
 #
 # One definition because three commands select it — `cache issues list --cycle`,
-# `cache cycles list --type`, and `session-status` — and while it existed as
-# three copied expressions a correction landed in one of them and left the other
-# two wrong.
+# `cache cycles list --type`, and `session-status`. As three copied expressions
+# their no-working-cycle fallbacks had already drifted apart: `cache issues
+# list` refused, `cache cycles list` returned the whole date-sorted set, and
+# `session-status` took the ends of that list, which inverted previous and next.
 cache_working_cycle() {
     jq --arg today "$(cache_now_utc)" \
         '[.[] | select(.startsAt <= $today and .progress < 1)] | sort_by(.startsAt) | last // null'

@@ -237,21 +237,20 @@ cache_list_issues() {
                 local all_cycles working
                 all_cycles=$(cache_jq_file "$cycles_file" "[]" '.') || return 1
                 working=$(cache_working_cycle <<<"$all_cycles")
-                # previous and next are relative to the working cycle, so with
-                # none running neither resolves and the refusal below fires.
+                # The helpers answer with no cycle running too — they cut at
+                # today — so these arms hand `working` straight over rather than
+                # guarding on it. Guarding here gave one concept two answers:
+                # `cycles list --type past` named a cycle while `--cycle
+                # previous` refused, off the same cache.
                 case "$cycle" in
                 current)
                     cycle_id=$(echo "$working" | jq -r '.id // empty')
                     ;;
                 previous)
-                    if [[ "$working" != "null" ]]; then
-                        cycle_id=$(cache_cycles_before "$working" <<<"$all_cycles" | jq -r 'first | .id // empty')
-                    fi
+                    cycle_id=$(cache_cycles_before "$working" <<<"$all_cycles" | jq -r 'first | .id // empty')
                     ;;
                 next)
-                    if [[ "$working" != "null" ]]; then
-                        cycle_id=$(cache_cycles_after "$working" <<<"$all_cycles" | jq -r 'first | .id // empty')
-                    fi
+                    cycle_id=$(cache_cycles_after "$working" <<<"$all_cycles" | jq -r 'first | .id // empty')
                     ;;
                 esac
             fi

@@ -5,10 +5,11 @@
 # suffix — and every filter over the cache compares those strings lexically. The
 # comparison timestamp was built with `date -Iseconds`, which emits the host's
 # local time with an offset suffix, so the two were only comparable on a UTC
-# host. Off UTC the cut moved by the whole offset: at -07:00 no `--cycle`
-# keyword resolved at all, at +09:00 `current` answered with a cycle that had
-# not started. Nothing caught it, because every fixture cycle in this suite's
-# neighbours sits months out and CI runs UTC.
+# host. Off UTC the cut moved by the whole offset, so within that window either
+# side of a cycle boundary `current` named a cycle that had not started (east of
+# UTC) or the previous one, or nothing at all where no earlier cycle was
+# incomplete (west of it). Nothing caught it, because every fixture cycle in this
+# suite's neighbours sits months out and CI runs UTC.
 #
 # So TZ is PINNED here, not read from the host, and the fixture's cycles sit
 # hours from now — inside the offset. The assertions state the UTC answer, which
@@ -17,7 +18,9 @@
 # The same helpers carry the second defect: with no cycle running, prev/next and
 # past/upcoming fell back to a POSITION in the date-sorted list rather than to a
 # date, which inverted both answers — a cycle that has not started was reported
-# as the previous one, to the read cycle planning consumes.
+# as the previous one, to the read cycle planning consumes. So each fixture below
+# carries TWO cycles on the side under test, or a helper returning them in the
+# wrong order reads as green off a one-element list.
 #
 # Fully offline — pure cache reads, no curl needed.
 
@@ -70,22 +73,34 @@ cycle_record() { # name team starts-offset ends-offset progress
       endsAt: $e, progress: $p, team: {name: $t}}'
 }
 
-issue_record() { # identifier cycle-name updated-offset
-  jq -cn --arg id "$1" --arg c "$2" --arg u "$(at "$3")" \
+# `research` is the fourth argument: session-status reads completed research
+# issues through the same day-count cutoff the `--updated-since` filter uses.
+issue_record() { # identifier cycle-name updated-offset [research]
+  jq -cn --arg id "$1" --arg c "$2" --arg u "$(at "$3")" --arg r "${4:-}" \
     '{id: ("issue-" + $id), identifier: $id, title: $id, description: "",
-      state: {name: "Todo", type: "unstarted"}, assignee: null, project: null,
+      state: (if $r == "" then {name: "Todo", type: "unstarted"}
+              else {name: "Done", type: "completed"} end),
+      assignee: null, project: null,
       projectMilestone: null, parent: null, team: {name: "KEN"},
       cycle: (if $c == "" then null else {id: ("uuid-" + $c), number: 1, name: $c} end),
-      labels: {nodes: []}, priority: 0, estimate: null, sortOrder: 0, url: "",
+      labels: {nodes: (if $r == "" then [] else [{name: "research"}] end)},
+      priority: 0, estimate: null, sortOrder: 0, url: "",
       createdAt: $u, updatedAt: $u, archivedAt: null, trashed: false,
       children: {nodes: []}, relations: {nodes: []}, inverseRelations: {nodes: []}}'
 }
 
 printf '%s\n' '[]' >"$CACHE/projects.json"
+# STALE and OUTSIDE straddle the one-day cutoff; the two research issues straddle
+# session-status's seven-day one. Both pairs pin an edge on each side, so a
+# window that widened is as visible as one that narrowed.
 jq -cn '[$ARGS.positional[] | fromjson]' --args \
+  "$(issue_record IN-OLD old -7200)" \
   "$(issue_record IN-RUNNING running -7200)" \
   "$(issue_record IN-SOON soon 21600)" \
-  "$(issue_record STALE "" -54000)" >"$CACHE/issues.json"
+  "$(issue_record STALE "" -54000)" \
+  "$(issue_record OUTSIDE "" -108000)" \
+  "$(issue_record RESEARCH-FRESH "" -172800 research)" \
+  "$(issue_record RESEARCH-OLD "" -864000 research)" >"$CACHE/issues.json"
 # session-status syncs a stale cache before reading it, which would reach the
 # network; a fresh stamp keeps this suite offline.
 printf '{"synced_at":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$CACHE/meta.json"
@@ -96,44 +111,68 @@ ids() { jq -r '[.[].id] | sort | join(",")' <<<"$1"; }
 
 # --- A cycle is running: every site must agree on WHICH one ------------------
 #
-# `running` started two hours ago and is incomplete; `soon` starts in six. Under
-# the local-time form at +14 both read as already started, and `soon`, being the
-# later start, wins every "most recently started" selection.
-cycles "$(jq -cn --argjson a "$(cycle_record running KEN -7200 1123200 0.5)" \
-  --argjson b "$(cycle_record soon KEN 21600 1231200 0)" '[$a, $b]')"
+# `running` started two hours ago and is incomplete; `soon` starts in six, and
+# `old` finished long ago. Under the local-time form at +14 all three read as
+# already started, and `soon`, being the later start, wins every "most recently
+# started" selection.
+cycles "$(jq -cn --argjson a "$(cycle_record old KEN -3456000 -2246400 1)" \
+  --argjson b "$(cycle_record running KEN -7200 1123200 0.5)" \
+  --argjson c "$(cycle_record soon KEN 21600 1231200 0)" '[$a, $b, $c]')"
 
 assert_eq "cache issues list --cycle current resolves the running cycle, not the one starting later today" \
   "$(ids "$(run cache issues list --cycle current --all-projects 2>/dev/null)")" "IN-RUNNING"
 
+assert_eq "cache issues list --cycle previous is the cycle before the running one" \
+  "$(ids "$(run cache issues list --cycle previous --all-projects 2>/dev/null)")" "IN-OLD"
+
+assert_eq "cache issues list --cycle next is the cycle after the running one" \
+  "$(ids "$(run cache issues list --cycle next --all-projects 2>/dev/null)")" "IN-SOON"
+
 assert_eq "cache cycles list --type current is the running cycle, not the one starting later today" \
   "$(names "$(run cache cycles list --type current 2>/dev/null)")" "running"
 
+status="$(run session-status 2>/dev/null)"
 assert_eq "session-status reports the running cycle as the working one" \
-  "$(run session-status 2>/dev/null | jq -r '.cycle.name // "none"')" "running"
+  "$(jq -r '.cycle.name // "none"' <<<"$status")" "running"
 
 # The `Nd` cutoff is the same encoding with a smaller blast radius: it lands the
 # offset away from where it should. STALE was updated fifteen hours ago, inside
-# a one-day window and outside the ten-hour window the local-time form leaves.
-assert_eq "cache issues list --updated-since keeps an issue inside the UTC window" \
+# a one-day window and outside the ten-hour window the local-time form leaves;
+# OUTSIDE, at thirty hours, is outside both and must stay out.
+assert_eq "cache issues list --updated-since keeps the UTC window and no more" \
   "$(ids "$(run cache issues list --updated-since 1d --all-projects 2>/dev/null)")" \
-  "IN-RUNNING,IN-SOON,STALE"
+  "IN-OLD,IN-RUNNING,IN-SOON,STALE"
+
+# session-status reports research as a count, so the two-issue straddle is what
+# makes it discriminating: one inside the seven days, one at ten days out.
+assert_eq "session-status research reads the same day-count cutoff" \
+  "$(jq -r '.research.count' <<<"$status")" "1"
 
 # --- No cycle is running: the fallback must anchor on a date, not a position -
 #
-# `old` ran forty days ago and is complete, `soon` has not started. Falling back
-# to the ends of the date-sorted list answers both questions with the other
-# one's cycle.
-cycles "$(jq -cn --argjson a "$(cycle_record old KEN -3456000 -2246400 1)" \
-  --argjson b "$(cycle_record soon KEN 21600 1231200 0)" '[$a, $b]')"
+# Two cycles on each side of now, so the ORDER each helper promises is
+# observable: `before` newest-first, `after` earliest-first. Every caller reads
+# the head of that list, and falling back to the ends of the whole date-sorted
+# set answers each question with the other one's cycle.
+cycles "$(jq -cn --argjson a "$(cycle_record ancient KEN -10368000 -9158400 1)" \
+  --argjson b "$(cycle_record old KEN -3456000 -2246400 1)" \
+  --argjson c "$(cycle_record soon KEN 21600 1231200 0)" \
+  --argjson d "$(cycle_record soonB KEN 108000 1317600 0)" '[$a, $b, $c, $d]')"
 
-assert_eq "with no cycle running, --type upcoming is the next cycle to start" \
+assert_eq "with no cycle running, --type upcoming is the NEXT cycle to start, not the farthest out" \
   "$(names "$(run cache cycles list --type upcoming 2>/dev/null)")" "soon"
 
-assert_eq "with no cycle running, --type past excludes a cycle that has not started" \
-  "$(names "$(run cache cycles list --type past 2>/dev/null)")" "old"
+assert_eq "with no cycle running, --type past is every started cycle newest-first, and no future one" \
+  "$(names "$(run cache cycles list --type past 2>/dev/null)")" "old,ancient"
+
+assert_eq "with no cycle running, --cycle previous answers with the most recent cycle that started" \
+  "$(ids "$(run cache issues list --cycle previous --all-projects 2>/dev/null)")" "IN-OLD"
+
+assert_eq "with no cycle running, --cycle next answers with the earliest cycle still to start" \
+  "$(ids "$(run cache issues list --cycle next --all-projects 2>/dev/null)")" "IN-SOON"
 
 status="$(run session-status 2>/dev/null)"
-assert_eq "with no cycle running, session-status prev_cycle is the cycle that already ran" \
+assert_eq "with no cycle running, session-status prev_cycle is the most recent cycle that ran" \
   "$(jq -r '.prev_cycle.name // "none"' <<<"$status")" "old"
-assert_eq "with no cycle running, session-status next_cycle is the cycle that has not started" \
+assert_eq "with no cycle running, session-status next_cycle is the earliest cycle still to start" \
   "$(jq -r '.next_cycle.name // "none"' <<<"$status")" "soon"
