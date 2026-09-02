@@ -655,13 +655,16 @@ lives in one capability table read by core and UI.
   versions, each verified before reuse. Advisory like every reading of the
   score — a preview, never a gate. `browse/updated.rs` resolves each offered
   item's path once and asks `remote::history::last_changed` for all of them
-  in one walk, bounded by its own commit count: each package's date is the
-  newest commit that touched it, and the catalog's own date is the newest
-  that touched anything it offers — never the repository tip, which moves
-  for a codebase commit in a repo that is a catalog too. An item that IS the
-  catalog root takes the tip, since an empty pathspec matches everything.
-  Only a fetched repository has a history; one that will not read costs the
-  dates and nothing else. `library.rs` is the same join for the Library
+  in one walk, bounded by its own commit count; the catalog's own date is a
+  separate one-record query, so the About tab neither repeats the walk nor
+  meets its byte cap. Each package's date is the newest commit that touched
+  it, and the catalog's is the newest that touched a package with a path of
+  its own — not the repository tip, which moves for a codebase commit in a
+  repo that is a catalog too. An item that IS the catalog root has no
+  narrower path (an empty pathspec matches everything), so that item takes
+  the tip, and so does the catalog where such an item is the whole offer —
+  then the repository really is the catalog. Only a fetched repository has a
+  history; one that will not read costs the dates and nothing else. `library.rs` is the same join for the Library
   table: subscription, local content (with what a fork replaced), or
   observed-and-unmanaged.
 - **A subscription's closure is derived by re-expansion; unsubscribing

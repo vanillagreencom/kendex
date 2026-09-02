@@ -260,3 +260,102 @@ fn a_root_skill_takes_the_repository_tip_and_its_neighbour_keeps_its_own() {
         dated("helper")
     );
 }
+
+/// A repository can carry a root `SKILL.md` beside `skills/` — `discover`
+/// adds one whenever the file is there, with no guard requiring the rest of
+/// the discovery to be empty — and then be a codebase as well.
+///
+/// The catalog's date is the newest change to a package with a path of its
+/// own. The root item has no such path: the only date anyone could ask for
+/// on its behalf is the repository's tip, and letting that speak for the
+/// catalog is what would move the About tab's Last updated for a commit
+/// under `crates/`. So neither the tip NOR the commit that added the root
+/// skill moves this catalog's date — only `skills/helper` does.
+#[test]
+fn a_mixed_catalog_is_not_dated_by_a_commit_that_touched_no_package() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let upstream = home.join("base/owner/mixed");
+    fs::create_dir_all(&upstream).unwrap();
+    git(&upstream, &["init", "--quiet", "-b", "main"]);
+    write_skill(&upstream, "helper");
+    commit_at(&upstream, "helper", "2024-01-01T00:00:00+00:00");
+    fs::write(
+        upstream.join("SKILL.md"),
+        "---\nname: root\ndescription: lives at the root\n---\nbody\n",
+    )
+    .unwrap();
+    commit_at(&upstream, "root skill", "2025-05-05T00:00:00+00:00");
+    // Neither package's path; the newest commit in the repository.
+    fs::create_dir_all(upstream.join("crates/app")).unwrap();
+    fs::write(upstream.join("crates/app/main.rs"), "fn main() {}\n").unwrap();
+    commit_at(&upstream, "codebase only", "2026-07-07T07:07:07+00:00");
+    let base = format!("file://{}", home.join("base").display());
+    let env = Env::fake(&home, FakeOs::Linux).with_var("KENDEX_GIT_BASE", &base);
+    let catalog = Catalog::Repo {
+        repo: "owner/mixed".to_owned(),
+    };
+
+    let read = about(&env, &catalog).unwrap();
+    assert!(
+        read.updated_at
+            .as_deref()
+            .is_some_and(|date| date.starts_with("2024-01-01")),
+        "the catalog is dated by its newest pathed package, not the tip \
+         and not the root item that has no path: {:?}",
+        read.updated_at
+    );
+
+    // The root item itself still takes the tip: its own tree IS the
+    // repository, so the codebase commit really did change it. What the
+    // fix stops is that date speaking for the whole catalog.
+    let rows = packages(&env, &catalog).unwrap();
+    let dated = |name: &str| {
+        rows.iter()
+            .find(|row| row.name == name)
+            .unwrap_or_else(|| panic!("{name} is not offered"))
+            .updated_at
+            .clone()
+            .unwrap_or_else(|| panic!("{name} has no date"))
+    };
+    assert!(dated("root").starts_with("2026-07-07"), "{}", dated("root"));
+    assert!(
+        dated("helper").starts_with("2024-01-01"),
+        "{}",
+        dated("helper")
+    );
+}
+
+/// The other side of that branch: a catalog that really is just the one
+/// root skill. The repository IS the catalog, so its tip is the answer and
+/// there is no narrower path to prefer.
+#[test]
+fn a_catalog_that_is_only_a_root_skill_takes_the_repository_tip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let upstream = home.join("base/owner/onlyroot");
+    fs::create_dir_all(&upstream).unwrap();
+    git(&upstream, &["init", "--quiet", "-b", "main"]);
+    fs::write(
+        upstream.join("SKILL.md"),
+        "---\nname: root\ndescription: lives at the root\n---\nbody\n",
+    )
+    .unwrap();
+    commit_at(&upstream, "root skill", "2024-01-01T00:00:00+00:00");
+    fs::write(upstream.join("notes.md"), "kept\n").unwrap();
+    commit_at(&upstream, "anything at all", "2026-07-07T07:07:07+00:00");
+    let base = format!("file://{}", home.join("base").display());
+    let env = Env::fake(&home, FakeOs::Linux).with_var("KENDEX_GIT_BASE", &base);
+    let catalog = Catalog::Repo {
+        repo: "owner/onlyroot".to_owned(),
+    };
+
+    let read = about(&env, &catalog).unwrap();
+    assert!(
+        read.updated_at
+            .as_deref()
+            .is_some_and(|date| date.starts_with("2026-07-07")),
+        "every commit in a one-skill repository changed the skill: {:?}",
+        read.updated_at
+    );
+}

@@ -118,6 +118,14 @@ fn split(browsed: &Browsed, items: &[Offered]) -> Split {
 /// history. A package the walk did not reach — history longer than the
 /// bound, or a package whose files live outside the catalog's roots — has
 /// no entry rather than a borrowed date.
+///
+/// An item that IS the catalog root takes the repository's tip, in a mixed
+/// catalog as much as in a one-skill one, because its own tree is the
+/// repository: `package_preview` lists a root skill's files from the root
+/// down, so a commit anywhere but the excluded build and vendor folders
+/// really did change it. That is this item's honest date and no borrowing
+/// — [`catalog_date`] is where the tip must not speak for packages that
+/// have paths of their own.
 pub(crate) fn package_dates(
     env: &Env,
     browsed: &Browsed,
@@ -159,13 +167,23 @@ pub(crate) fn package_dates(
 /// directly is the difference between 134 kB and 21 bytes on a real
 /// mirror. It also keeps the About tab clear of the byte cap that bounds
 /// the walk.
+///
+/// An item that IS the catalog root makes the repository's tip a candidate,
+/// never an override. The tip wins only where that item is the whole offer:
+/// then the repository is the catalog, and every commit in it changed the
+/// catalog. A repository carrying a root `SKILL.md` beside `skills/` offers
+/// both — `discover` adds the root skill whenever the file is there, with
+/// no guard requiring the rest of the discovery to be empty — and there the
+/// packages have paths of their own, so a commit that touched none of them
+/// did not change what the marketplace offers, whatever else it touched.
 pub(crate) fn catalog_date(env: &Env, browsed: &Browsed, items: &[Offered]) -> Option<String> {
     let (mirror, commit) = mirror_at(env, browsed)?;
     let (asked, roots) = split(browsed, items);
-    // A catalog that is itself one skill is the repository, so every commit
-    // in it changed the catalog.
-    if !roots.is_empty() {
-        return history::commit_date(&mirror, &commit).ok().flatten();
+    if asked.is_empty() {
+        return match roots.is_empty() {
+            true => None,
+            false => history::commit_date(&mirror, &commit).ok().flatten(),
+        };
     }
     let paths: Vec<PathBuf> = asked.into_iter().map(|(_, path)| path).collect();
     history::newest_touching(&mirror, &commit, &paths)
