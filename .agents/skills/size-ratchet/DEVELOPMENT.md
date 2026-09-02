@@ -71,7 +71,7 @@ size bound — so it grants no content exemption: a size-excluded text file is
 sniffed like every other tracked path, and only a path that is both
 size-excluded and diff-exempt is skipped outright. The attribute is resolved
 for the whole tracked set in ONE
-`git ls-files -z | git check-attr -z --stdin diff` before the walk; a fork per
+`git ls-files -z | git check-attr -z --stdin diff`, `--cached` under `--staged`; a fork per
 path is the cost shape that measured 5x when the sniff itself was tried
 per-file. Under `--staged`, and for any path absent from the worktree, the
 blob is materialized once and the count and the sniff read that one copy.

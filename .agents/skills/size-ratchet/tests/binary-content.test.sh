@@ -186,12 +186,25 @@ echo "=== and git's own diff attribute is what exempts it ==="
 # -diff) is out of every textual diff, so its bytes were never reviewable
 # text. Same fixture, same exclusion list, one .gitattributes line added.
 printf 'assets/* binary\n' >"$R/.gitattributes"
+run_in SIZE_RATCHET_THRESHOLD=400 -- --staged
+if [ "$RC" -eq 2 ] && has 'assets/icon.png: a NUL byte at offset 12'; then
+  ok "an unstaged .gitattributes exempts nothing under --staged (exit 2)"
+else
+  bad "the staged scope reads the attribute from the index" "rc=$RC out=$OUT"
+fi
 git -C "$R" add -A
 run_in SIZE_RATCHET_THRESHOLD=400 -- --staged
 if [ "$RC" -eq 0 ] && ! has 'NUL byte at offset'; then
   ok "a path .gitattributes declares binary is exempt from the sniff (exit 0)"
 else
   bad "git's own attribute exempts the path" "rc=$RC out=$OUT"
+fi
+awk 'BEGIN { for (i = 0; i < 900; i++) print "x" }' >>"$R/assets/icon.png" # still measured
+run_in SIZE_RATCHET_THRESHOLD=400 SIZE_RATCHET_EXCLUDES=tools/no-list
+if [ "$RC" -eq 1 ] && has 'new offender: assets/icon.png'; then
+  ok "a diff-exempt path is still measured — 900 lines over the threshold reds it"
+else
+  bad "the attribute exempts the sniff, not the measurement" "rc=$RC out=$OUT"
 fi
 
 echo "=== must-fail control: with the size list back in charge, the same fixture goes green ==="

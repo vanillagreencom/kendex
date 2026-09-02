@@ -68,7 +68,8 @@ that. Markdown is measured in bytes and code in lines. Flags and exit codes:
   out of every textual diff, the remedy for a tracked `.png`, `.ico` or
   `.ttf`. The [exclusion list](#exclusion-list) answers a different question,
   which paths carry no size bound, and grants no content exemption. `--seed`
-  and `--update` refuse the same way. Mechanism: `DEVELOPMENT.md`.
+  and `--update` refuse the same way. Under `--staged` that record is the index's,
+  and no global `core.attributesFile` is read. Mechanism: `DEVELOPMENT.md`.
 - Exit codes: `0` clean, `1` violations, `2` usage/config/collection error.
 
 ## Trusted HEAD baseline
