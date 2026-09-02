@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UPDATES_ATTENTION_TITLE } from "@/lib/copy";
+import { unreadableProjectsLabel } from "@/lib/copy-updates";
 import { SIDEBAR_ROW } from "@/lib/layout";
 import { Sidebar } from "./sidebar";
 import { updateRow } from "./updates-test-rows";
@@ -14,6 +15,7 @@ const esc = (copy: string) => copy.replace(/'/g, "&#x27;");
 const stub = vi.hoisted(() => ({
   updates: {
     rows: [] as unknown[],
+    unreadable: [] as unknown[],
     read: { status: "landed", error: null } as {
       status: "pending" | "landed" | "failed";
       error: string | null;
@@ -33,6 +35,7 @@ vi.mock("@/stores/updates", async (importOriginal) => {
 beforeEach(() => {
   stub.updates = {
     rows: [],
+    unreadable: [],
     read: { status: "landed", error: null },
   };
 });
@@ -50,6 +53,7 @@ describe("the Updates badge after a failed check", () => {
   it("marks the row rather than staying silent", () => {
     stub.updates = {
       rows: [],
+      unreadable: [],
       read: { status: "failed", error: "no network" },
     };
     const html = renderToStaticMarkup(<Sidebar />);
@@ -63,6 +67,7 @@ describe("the Updates badge after a failed check", () => {
   it("keeps a last-known count, in the warning tone", () => {
     stub.updates = {
       rows: [updateRow("gh", null)],
+      unreadable: [],
       read: { status: "failed", error: "no network" },
     };
     const html = renderToStaticMarkup(<Sidebar />);
@@ -89,5 +94,40 @@ describe("a sidebar column too short for its nav", () => {
   // keep their height and the nav scrolls past them instead.
   it("keeps every row at its own height", () => {
     expect(SIDEBAR_ROW).toContain("shrink-0");
+  });
+});
+
+// One project whose lock or manifest this build refuses is not a machine
+// that could not be checked: every other project's standing landed. The
+// badge says which project rather than wearing a bare question mark.
+describe("the Updates badge with a project kendex cannot read", () => {
+  const hyprtrade = {
+    scope: { scope: "project", root: "/home/dev/hyprtrade" },
+    message: "it is a version 5 record",
+  };
+
+  it("names the project instead of the generic failure", () => {
+    stub.updates = {
+      rows: [],
+      unreadable: [hyprtrade],
+      read: { status: "landed", error: null },
+    };
+    const html = renderToStaticMarkup(<Sidebar />);
+    expect(html).toContain(">?<");
+    expect(html).toContain("text-warning");
+    expect(html).toContain(esc(unreadableProjectsLabel(["hyprtrade"])));
+    expect(html).not.toContain(esc(UPDATES_ATTENTION_TITLE));
+  });
+
+  it("keeps the count the readable projects answered", () => {
+    stub.updates = {
+      rows: [updateRow("gh", null)],
+      unreadable: [hyprtrade],
+      read: { status: "landed", error: null },
+    };
+    const html = renderToStaticMarkup(<Sidebar />);
+    expect(html).toContain(">1<");
+    expect(html).toContain("text-warning");
+    expect(html).toContain(esc(unreadableProjectsLabel(["hyprtrade"])));
   });
 });

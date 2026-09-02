@@ -137,3 +137,11 @@ export const UPDATE_NEEDS_CHECK_HERE = NEEDS_A_CHECK;
 // already running.
 export const UPDATES_ONE_AT_A_TIME_NOTE =
   "A check or an update is already running — try again when it finishes";
+
+// A project whose lock or manifest this build refuses has no standing at
+// all, while every other project's rows are as good as ever. The page names
+// the project rather than reporting the whole machine unchecked, and sends
+// the reader to Problems, which carries the reason and the way out.
+export const UPDATES_UNREADABLE_TITLE = "Some projects couldn't be read";
+export const unreadableProjectsLabel = (names: string[]): string =>
+  `No update standing for ${names.join(", ")}.`;

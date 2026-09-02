@@ -19,7 +19,11 @@ use super::{Catalog, InstallState};
 /// installed-state join needs.
 pub(crate) struct Browsed {
     pub(crate) manifest: Manifest,
-    pub(crate) lock: Lock,
+    /// `None` where this scope's lock could not be read — a damaged record
+    /// or one an older kendex wrote. What a source offers is a fact about
+    /// the source, so listing goes ahead without it; every answer the lock
+    /// alone can give is [`InstallState::Unknown`] instead of a guess.
+    lock: Option<Lock>,
     pub(crate) source: ResolvedSource,
     pub(crate) sealed: SealedSource,
     pub(crate) config: SourceConfig,
@@ -27,10 +31,16 @@ pub(crate) struct Browsed {
     subscription: Option<String>,
 }
 
-fn records(env: &Env, scope: &Scope) -> Result<(Manifest, Lock)> {
+/// The scope records the installed-state join reads. The manifest decides
+/// which source resolves at all, so it stays a hard error; the lock only
+/// answers what is already installed, and an unreadable one is carried as
+/// its absence so one project's broken record never hides what every
+/// subscribed catalog offers. The Problems page is where that record is
+/// explained and fixed.
+fn records(env: &Env, scope: &Scope) -> Result<(Manifest, Option<Lock>)> {
     let manifest = crate::manifest::load_current(&crate::manifest::manifest_path(env, scope))?
         .unwrap_or_default();
-    let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
+    let lock = crate::lock::load(&crate::lock::lock_path(env, scope)).ok();
     Ok((manifest, lock))
 }
 
@@ -76,7 +86,7 @@ pub(crate) fn open_repo(
 
 fn browsed(
     manifest: Manifest,
-    lock: Lock,
+    lock: Option<Lock>,
     source: ResolvedSource,
     subscription: Option<String>,
 ) -> Result<Browsed> {
@@ -100,16 +110,25 @@ impl Browsed {
         self.subscription.as_deref() == Some(source)
     }
 
+    /// Whether this scope's lock could be read at all.
+    pub(super) fn lock_unreadable(&self) -> bool {
+        self.lock.is_none()
+    }
+
     pub(super) fn locked_here(&self, kind: ItemKind, name: &str) -> bool {
-        self.lock
-            .entries
-            .values()
-            .any(|entry| entry.kind == kind && entry.name == name && self.owned_here(&entry.source))
+        self.lock.as_ref().is_some_and(|lock| {
+            lock.entries.values().any(|entry| {
+                entry.kind == kind && entry.name == name && self.owned_here(&entry.source)
+            })
+        })
     }
 
     /// The lock+manifest join behind every state column: an installation
     /// recorded from here, or the package on offer.
     pub(super) fn state(&self, kind: ItemKind, name: &str) -> InstallState {
+        if self.lock_unreadable() {
+            return InstallState::Unknown;
+        }
         match self.locked_here(kind, name) {
             true => InstallState::Installed,
             false => InstallState::Available,
@@ -118,6 +137,11 @@ impl Browsed {
 
     /// The source a name is already taken by, when it is not this one. A
     /// fork counts too — `local` is a source like any other here.
+    ///
+    /// A collision only the lock records goes unseen where the lock could
+    /// not be read; nothing acts on that, because every row in such a scope
+    /// is [`InstallState::Unknown`] and offers no install for the engine to
+    /// refuse.
     pub(super) fn collision(&self, kind: ItemKind, name: &str) -> Option<String> {
         if let Some(decl) = self.manifest.declared(kind).get(name)
             && !self.owned_here(&decl.source)
@@ -125,8 +149,8 @@ impl Browsed {
             return Some(decl.source.clone());
         }
         self.lock
-            .entries
-            .values()
+            .iter()
+            .flat_map(|lock| lock.entries.values())
             .find(|entry| {
                 entry.kind == kind && entry.name == name && !self.owned_here(&entry.source)
             })

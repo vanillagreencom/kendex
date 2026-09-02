@@ -1568,7 +1568,15 @@ export type InstallState =
  *  derives it back. The row says it was their choice and offers Restore —
  *  installing it again clears the record (invariant 2 stays intact).
  */
-"removed-by-you";
+"removed-by-you" | 
+/**
+ *  This scope's lock could not be read, so whether the package is
+ *  installed here is unknown. The catalog is still listed — what a
+ *  source offers is a fact about the source — but no row claims a
+ *  standing the record cannot confirm, and none offers an install the
+ *  engine would refuse for the same unreadable record.
+ */
+"unknown";
 
 /**
  *  One row of the install picker: a tool the scope can install to, whether
@@ -2850,6 +2858,15 @@ export type TemplateFinding = {
 };
 
 /**
+ *  A scope whose standing could not be read at all, and why. The reason
+ *  travels with it so a surface naming the project never has to invent one.
+ */
+export type UnreadableScope = {
+	scope: Scope,
+	message: string,
+};
+
+/**
  *  What unsubscribing from a marketplace would do: the packages that can be
  *  removed or kept as-is, the ones the user edited (which must be forked or
  *  discarded first), and the curated sets that leave with the source.
@@ -3019,6 +3036,15 @@ export type UpdatesReport_Deserialize = {
 	rows: UpdateRow[],
 	warnings: ItemWarning_Deserialize[],
 	/**
+	 *  Scopes whose standing could not be read at all — a lock or manifest
+	 *  this build refuses. Carried as data, like [`crate::engine::ItemWarning`]
+	 *  above and for the same reason: one project's unreadable record must
+	 *  not blank every other project's standing. Always empty from
+	 *  [`updates`], which answers for one scope and fails outright; the
+	 *  multi-scope caller folding those answers together fills it.
+	 */
+	unreadable: UnreadableScope[],
+	/**
 	 *  When the mirrors behind this standing were last brought current —
 	 *  Unix seconds, `None` when nothing has ever fetched. A clean report
 	 *  is only as true as the fetch under it, so the age of that fetch
@@ -3038,6 +3064,15 @@ export type UpdatesReport_Deserialize = {
 export type UpdatesReport_Serialize = {
 	rows: UpdateRow[],
 	warnings: ItemWarning_Serialize[],
+	/**
+	 *  Scopes whose standing could not be read at all — a lock or manifest
+	 *  this build refuses. Carried as data, like [`crate::engine::ItemWarning`]
+	 *  above and for the same reason: one project's unreadable record must
+	 *  not blank every other project's standing. Always empty from
+	 *  [`updates`], which answers for one scope and fails outright; the
+	 *  multi-scope caller folding those answers together fills it.
+	 */
+	unreadable: UnreadableScope[],
 	/**
 	 *  When the mirrors behind this standing were last brought current —
 	 *  Unix seconds, `None` when nothing has ever fetched. A clean report

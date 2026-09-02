@@ -49,6 +49,12 @@ pub enum InstallState {
     /// derives it back. The row says it was their choice and offers Restore —
     /// installing it again clears the record (invariant 2 stays intact).
     RemovedByYou,
+    /// This scope's lock could not be read, so whether the package is
+    /// installed here is unknown. The catalog is still listed — what a
+    /// source offers is a fact about the source — but no row claims a
+    /// standing the record cannot confirm, and none offers an install the
+    /// engine would refuse for the same unreadable record.
+    Unknown,
 }
 
 /// One package a subscription offers, as the Packages table lists it.
@@ -178,6 +184,8 @@ fn detail(browsed: &Browsed, found: &super::bundles::CatalogBundle) -> BundleDet
             .is_none()
         {
             InstallState::NotOffered
+        } else if browsed.lock_unreadable() {
+            InstallState::Unknown
         } else {
             InstallState::Available
         };

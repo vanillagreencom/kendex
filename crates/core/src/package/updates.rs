@@ -113,6 +113,15 @@ fn no_per_package_update(kind: ItemKind) -> Option<String> {
         .then(|| crate::engine::NO_PER_PACKAGE_UPDATE.to_owned())
 }
 
+/// A scope whose standing could not be read at all, and why. The reason
+/// travels with it so a surface naming the project never has to invent one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct UnreadableScope {
+    pub scope: Scope,
+    pub message: String,
+}
+
 /// Update standing for one scope, and every package the standing could not
 /// be computed for. The warnings are the report's honesty: a package whose
 /// mirror cannot be read is listed here, never silently shown as current.
@@ -121,6 +130,13 @@ fn no_per_package_update(kind: ItemKind) -> Option<String> {
 pub struct UpdatesReport {
     pub rows: Vec<UpdateRow>,
     pub warnings: Vec<ItemWarning>,
+    /// Scopes whose standing could not be read at all — a lock or manifest
+    /// this build refuses. Carried as data, like [`crate::engine::ItemWarning`]
+    /// above and for the same reason: one project's unreadable record must
+    /// not blank every other project's standing. Always empty from
+    /// [`updates`], which answers for one scope and fails outright; the
+    /// multi-scope caller folding those answers together fills it.
+    pub unreadable: Vec<UnreadableScope>,
     /// When the mirrors behind this standing were last brought current —
     /// Unix seconds, `None` when nothing has ever fetched. A clean report
     /// is only as true as the fetch under it, so the age of that fetch
@@ -165,6 +181,7 @@ pub fn updates(env: &Env, scope: &Scope) -> Result<UpdatesReport> {
         return Ok(UpdatesReport {
             rows: Vec::new(),
             warnings: Vec::new(),
+            unreadable: Vec::new(),
             last_fetched: None,
         });
     };
@@ -184,6 +201,7 @@ pub fn updates(env: &Env, scope: &Scope) -> Result<UpdatesReport> {
     let mut report = UpdatesReport {
         rows: Vec::new(),
         warnings: Vec::new(),
+        unreadable: Vec::new(),
         // A stamp that does not fit the narrower type — past 2106, or a
         // clock artifact from the far future — reads as never checked
         // rather than wrapping into a plausible-looking wrong instant.

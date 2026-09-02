@@ -85,7 +85,12 @@ describe("updates store", () => {
   it("lands the age a read reports", async () => {
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [row({})], warnings: [], lastFetched: CHECKED_AT },
+      data: {
+        rows: [row({})],
+        warnings: [],
+        unreadable: [],
+        lastFetched: CHECKED_AT,
+      },
     });
     await useUpdatesStore.getState().reload();
     expect(useUpdatesStore.getState().lastFetched).toBe(CHECKED_AT);
@@ -96,7 +101,12 @@ describe("updates store", () => {
   it("lands the age a check reports", async () => {
     vi.mocked(commands.updatesRefresh).mockResolvedValue({
       status: "ok",
-      data: { rows: [row({})], warnings: [], lastFetched: CHECKED_AT },
+      data: {
+        rows: [row({})],
+        warnings: [],
+        unreadable: [],
+        lastFetched: CHECKED_AT,
+      },
     });
     await useUpdatesStore.getState().check();
     expect(useUpdatesStore.getState().lastFetched).toBe(CHECKED_AT);
@@ -156,7 +166,7 @@ describe("updates store", () => {
 
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [], lastFetched: null },
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
     });
     await useUpdatesStore.getState().reload();
     expect(useUpdatesStore.getState().read.error).toBeNull();
@@ -222,13 +232,18 @@ describe("updates store", () => {
     const fresh = [row({ name: "fresh" })];
     vi.mocked(commands.updatesRefresh).mockResolvedValue({
       status: "ok",
-      data: { rows: fresh, warnings: [], lastFetched: null },
+      data: { rows: fresh, warnings: [], unreadable: [], lastFetched: null },
     });
     await useUpdatesStore.getState().check();
 
     resolveLoad({
       status: "ok",
-      data: { rows: [row({ name: "stale" })], warnings: [], lastFetched: null },
+      data: {
+        rows: [row({ name: "stale" })],
+        warnings: [],
+        unreadable: [],
+        lastFetched: null,
+      },
     });
     await loading;
 
@@ -250,7 +265,12 @@ describe("updates store", () => {
 
     vi.mocked(commands.updatesRefresh).mockResolvedValue({
       status: "ok",
-      data: { rows: [row({})], warnings: [], lastFetched: null },
+      data: {
+        rows: [row({})],
+        warnings: [],
+        unreadable: [],
+        lastFetched: null,
+      },
     });
     await useUpdatesStore.getState().check();
 
@@ -281,7 +301,12 @@ describe("updates store", () => {
       // assertion rather than hanging on a parked promise.
       .mockResolvedValue({
         status: "ok",
-        data: { rows: [row({})], warnings: [], lastFetched: null },
+        data: {
+          rows: [row({})],
+          warnings: [],
+          unreadable: [],
+          lastFetched: null,
+        },
       });
     useUpdatesStore.setState({ rows: [row({})], read: READ_LANDED });
     const reloading = useUpdatesStore.getState().reload();
@@ -304,7 +329,12 @@ describe("updates store", () => {
     // And the bar lifts with the landing, rather than outliving it.
     landRead({
       status: "ok",
-      data: { rows: [row({})], warnings: [], lastFetched: null },
+      data: {
+        rows: [row({})],
+        warnings: [],
+        unreadable: [],
+        lastFetched: null,
+      },
     });
     await reloading;
     expect(useUpdatesStore.getState().reading).toBe(false);
@@ -328,14 +358,19 @@ describe("updates store", () => {
     const fresh = [row({ name: "fresh" })];
     vi.mocked(commands.updatesRefresh).mockResolvedValue({
       status: "ok",
-      data: { rows: fresh, warnings: [], lastFetched: null },
+      data: { rows: fresh, warnings: [], unreadable: [], lastFetched: null },
     });
     await useUpdatesStore.getState().check();
     expect(useUpdatesStore.getState().rows).toEqual(fresh);
 
     landRead({
       status: "ok",
-      data: { rows: [row({ name: "stale" })], warnings: [], lastFetched: null },
+      data: {
+        rows: [row({ name: "stale" })],
+        warnings: [],
+        unreadable: [],
+        lastFetched: null,
+      },
     });
     await reloading;
 
@@ -357,7 +392,7 @@ describe("updates store", () => {
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: kept, warnings: [], lastFetched: null },
+      data: { rows: kept, warnings: [], unreadable: [], lastFetched: null },
     });
 
     await useUpdatesStore.getState().setIgnored(row({}), true);
@@ -380,7 +415,7 @@ describe("updates store", () => {
     vi.mocked(commands.packageUpdate).mockRejectedValue(new Error("ipc down"));
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [], lastFetched: null },
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
     });
 
     await useUpdatesStore.getState().updateOne(row({}));
@@ -397,7 +432,7 @@ describe("updates store", () => {
     vi.mocked(commands.packageSetRev).mockRejectedValue(new Error("ipc down"));
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [], lastFetched: null },
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
     });
 
     await useUpdatesStore.getState().setAutoUpdate(row({}), false);
@@ -433,7 +468,7 @@ describe("updates store", () => {
 
     resolveCheck({
       status: "ok",
-      data: { rows: [], warnings: [], lastFetched: null },
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
     });
     await checking;
     expect(commands.packageSetRev).not.toHaveBeenCalled();
@@ -500,7 +535,7 @@ describe("updates store", () => {
     const muted = [row({ ignored: true })];
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: muted, warnings: [], lastFetched: null },
+      data: { rows: muted, warnings: [], unreadable: [], lastFetched: null },
     });
 
     await useUpdatesStore.getState().setIgnored(row({}), true);
@@ -537,13 +572,13 @@ describe("updates store", () => {
     const muted = [row({ ignored: true })];
     vi.mocked(commands.updateSetIgnored).mockResolvedValue({
       status: "ok",
-      data: { rows: muted, warnings: [], lastFetched: null },
+      data: { rows: muted, warnings: [], unreadable: [], lastFetched: null },
     });
     // The mute reads the standing back rather than trusting its own
     // report, so this is what lands.
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: muted, warnings: [], lastFetched: null },
+      data: { rows: muted, warnings: [], unreadable: [], lastFetched: null },
     });
     useUpdatesStore.setState({ rows: [row({})], read: READ_LANDED });
 
@@ -581,7 +616,7 @@ describe("updates store", () => {
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [], lastFetched: null },
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
     });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",
@@ -621,7 +656,7 @@ describe("updates store", () => {
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [], lastFetched: null },
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
     });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",

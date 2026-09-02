@@ -2,7 +2,16 @@
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AvailablePackage, MarketplaceRow } from "@/bindings";
-import { marketKey, useMarketplacesStore } from "@/stores/marketplaces";
+import {
+  SEE_PROBLEMS_LABEL,
+  unreadableRecordsLine,
+  unreadableSourcesLine,
+} from "@/lib/copy-marketplaces";
+import {
+  marketKey,
+  readErrorKey,
+  useMarketplacesStore,
+} from "@/stores/marketplaces";
 import { usePreinstallSafety } from "@/stores/preinstall-safety";
 import { mount } from "@/test/dom";
 import { PackagesTab } from "./packages-tab";
@@ -89,5 +98,75 @@ describe("searching the packages list", () => {
   it("does not match a word found only in the description", async () => {
     const rows = await listed("debug");
     expect(rows).toHaveLength(0);
+  });
+});
+
+// The alias is not what a reader goes and fixes. One alias subscribed in
+// three projects printed three identical lines naming no project at all,
+// and pointed at a tab that showed nothing wrong.
+describe("naming what could not be read", () => {
+  const projectRow = (root: string, name: string): MarketplaceRow => ({
+    ...kit,
+    scope: { scope: "project", root },
+    name,
+  });
+
+  const lines = (): string[] => {
+    const host = mount(<PackagesTab />);
+    return [...host.querySelectorAll("p.text-warning")].map(
+      (line) => line.textContent ?? "",
+    );
+  };
+
+  it("names each project once, however many of its marketplaces failed", () => {
+    const one = projectRow("/home/dev/hyprtrade", "kendex");
+    const two = projectRow("/home/dev/hyprtrade", "kendex-2");
+    useMarketplacesStore.setState({
+      rows: [one, two],
+      packages: {},
+      readErrors: {
+        [readErrorKey(marketKey(one.scope, one.name), "packages")]: "no",
+        [readErrorKey(marketKey(two.scope, two.name), "packages")]: "no",
+      },
+    });
+    expect(lines()).toEqual([unreadableSourcesLine("hyprtrade")]);
+  });
+
+  it("names one project per scope when the same alias is subscribed twice", () => {
+    const here = projectRow("/home/dev/hyprtrade", "kendex");
+    const there = projectRow("/home/dev/kendex-web", "kendex");
+    useMarketplacesStore.setState({
+      rows: [here, there],
+      packages: {},
+      readErrors: {
+        [readErrorKey(marketKey(here.scope, here.name), "packages")]: "no",
+        [readErrorKey(marketKey(there.scope, there.name), "packages")]: "no",
+      },
+    });
+    expect(lines()).toEqual([
+      unreadableSourcesLine("hyprtrade"),
+      unreadableSourcesLine("kendex-web"),
+    ]);
+  });
+
+  // The catalog read succeeded — the packages are listed — but the rows
+  // carry no installed state, and the Problems page is where the record
+  // that would answer is explained.
+  it("names the project whose records left its rows unknown, and links to Problems", () => {
+    const row = projectRow("/home/dev/hyprtrade", "kendex");
+    useMarketplacesStore.setState({
+      rows: [row],
+      packages: {
+        [marketKey(row.scope, row.name)]: [{ ...offered[0], state: "unknown" }],
+      },
+      readErrors: {},
+    });
+    const host = mount(<PackagesTab />);
+    expect(host.textContent).toContain(unreadableRecordsLine("hyprtrade"));
+    expect(host.textContent).toContain(SEE_PROBLEMS_LABEL);
+  });
+
+  it("says nothing when every read landed", () => {
+    expect(lines()).toEqual([]);
   });
 });

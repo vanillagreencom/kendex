@@ -53,6 +53,7 @@ export function OverviewPage() {
   // never has to stand in for "couldn't check".
   const editedPackages = updateRows.filter((row) => row.blockedByLocalEdit);
   const updatesError = useUpdatesStore((s) => s.read.error);
+  const unreadable = useUpdatesStore((s) => s.unreadable);
   const goTo = useNavStore((s) => s.goTo);
   const goToLibrary = useNavStore((s) => s.goToLibrary);
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
@@ -116,8 +117,10 @@ export function OverviewPage() {
     editedPackages,
     result,
     updatesError,
+    unreadable,
     auditError,
     onProjects: () => goTo("projects"),
+    onProblems: () => goTo("problems"),
     onUpdates: () => setPage("updates"),
     onLibrary: () => goToLibrary(),
     onPackage: (row) =>

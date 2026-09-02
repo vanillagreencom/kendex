@@ -85,5 +85,6 @@ fn install_state(state: &kendex_core::source::browse::InstallState) -> &'static 
         InstallState::Available => "available",
         InstallState::NotOffered => "no longer offered",
         InstallState::RemovedByYou => "removed by you",
+        InstallState::Unknown => "unknown (this project's lock can't be read)",
     }
 }

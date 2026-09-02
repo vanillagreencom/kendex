@@ -4,6 +4,7 @@
 import {
   commands,
   type ItemWarning,
+  type UnreadableScope,
   type UpdateRow,
   type UpdatesReport_Serialize,
 } from "@/bindings";
@@ -11,12 +12,32 @@ import { type ReadState, readOf, readOrder } from "@/lib/read-state";
 import { settled } from "@/lib/settled";
 import { type PendingFollow, withPending } from "./updates-follow";
 
-/** The slice a landing writes, and the two it reads. */
-interface Standing {
+/** What a read of the standing owns: the slice a landing writes, and the
+ *  two flags saying how the last one went. The store spreads these into
+ *  its own state rather than declaring them a second time. */
+export interface Standing {
   rows: UpdateRow[];
+  /** Packages whose standing could not be computed — shown, never treated
+   *  as current. */
   warnings: ItemWarning[];
+  /** Projects whose standing could not be read at all. One project's
+   *  unreadable lock or manifest leaves every other project's rows intact,
+   *  so the page names the project and sends the reader to Problems rather
+   *  than going blank over the whole machine. */
+  unreadable: UnreadableScope[];
+  /** Unix seconds of the last successful mirror fetch behind these rows,
+   *  null when nothing has ever fetched. The page dates its answer from
+   *  this — the check runs offline on load, so "everything is up to date"
+   *  needs the age of the fetch it rests on beside it. */
   lastFetched: number | null;
+  /** How the last read of the standing went. A failure keeps the rows it
+   *  had and says why: the package page gates the Update button on this,
+   *  and acting on rows we could not refresh is exactly the fail-open it
+   *  closes. */
   read: ReadState;
+  /** True while a read of the standing is on its way: a mount or a return
+   *  to the window reloads over rows that landed perfectly well, and every
+   *  value a commit-applying action captured is about to be replaced. */
   reading: boolean;
 }
 
@@ -51,6 +72,7 @@ export function standingReads(
       set({
         rows: withPending(response.data.rows, get().pendingFollows),
         warnings: response.data.warnings,
+        unreadable: response.data.unreadable,
         lastFetched: response.data.lastFetched,
         read: readOf(response),
       });

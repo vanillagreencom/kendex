@@ -13,6 +13,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { clickAsksToOpen } from "@/lib/click-asks-to-open";
+import { PACKAGE_STATE_UNKNOWN } from "@/lib/copy-marketplaces";
 import {
   SAFETY_DOT_UNCHECKED,
   safetyDotWords,
@@ -146,6 +147,13 @@ function PackageRow({
         ) : row.state === "not-offered" ? (
           <span className="text-xs text-muted-foreground">
             No longer offered
+          </span>
+        ) : row.state === "unknown" ? (
+          // This place's lock could not be read, so nothing here knows
+          // whether the package is installed — and an install would meet
+          // the same unreadable record, so no button offers one.
+          <span className="text-xs text-muted-foreground">
+            {PACKAGE_STATE_UNKNOWN}
           </span>
         ) : catalog.by === "repo" ? (
           // Installing needs a subscription; the page's Subscribe button

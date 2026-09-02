@@ -8,11 +8,14 @@ import {
   UPDATES_ATTENTION_TITLE,
   UPDATES_EMPTY,
 } from "@/lib/copy";
+import { SEE_PROBLEMS_LABEL } from "@/lib/copy-marketplaces";
 import {
   NEVER_CHECKED,
   UPDATE_NEEDS_CHECK_NOTE,
   UPDATES_CHECKING,
   UPDATES_UNCONFIRMED_TITLE,
+  UPDATES_UNREADABLE_TITLE,
+  unreadableProjectsLabel,
 } from "@/lib/copy-updates";
 import { UpdatesPage } from "./updates";
 
@@ -38,6 +41,7 @@ const stub = vi.hoisted(() => ({
   },
   lastFetched: null as number | null,
   busy: false,
+  unreadable: [] as unknown[],
 }));
 
 vi.mock("@/stores/updates", async (importOriginal) => {
@@ -52,6 +56,7 @@ vi.mock("@/stores/updates", async (importOriginal) => {
       read: stub.read,
       pendingFollows: [],
       lastFetched: stub.lastFetched,
+      unreadable: stub.unreadable,
       reload: async () => {},
     };
     return selector ? selector(state) : state;
@@ -64,6 +69,7 @@ beforeEach(() => {
   stub.read = { status: "landed", error: null };
   stub.lastFetched = null;
   stub.busy = false;
+  stub.unreadable = [];
 });
 
 /** Unix seconds `ago` seconds before now — the shape the overview reports,
@@ -195,5 +201,37 @@ describe("how fresh the page says its answer is", () => {
     expect(html).toContain(UPDATES_EMPTY);
     expect(html).toContain(NEVER_CHECKED);
     expect(html).not.toMatch(/Last checked/);
+  });
+});
+
+// One project this build cannot read has no standing at all, and every
+// other project's rows are as good as ever. Reporting the machine
+// unchecked hid working rows; reporting it up to date would have claimed
+// an up-to-dateness for a project nothing could check.
+describe("the Updates page with a project kendex cannot read", () => {
+  const hyprtrade = {
+    scope: { scope: "project", root: "/home/dev/hyprtrade" },
+    message: "it is a version 5 record",
+  };
+
+  it("names the project and sends the reader to Problems", () => {
+    stub.unreadable = [hyprtrade];
+    const html = renderToStaticMarkup(<UpdatesPage />);
+    expect(html).toContain(esc(UPDATES_UNREADABLE_TITLE));
+    expect(html).toContain(esc(unreadableProjectsLabel(["hyprtrade"])));
+    expect(html).toContain(SEE_PROBLEMS_LABEL);
+  });
+
+  it("does not call the machine up to date over it", () => {
+    stub.unreadable = [hyprtrade];
+    expect(renderToStaticMarkup(<UpdatesPage />)).not.toContain(UPDATES_EMPTY);
+  });
+
+  it("keeps the rows the readable projects answered", () => {
+    stub.rows = [updateRow("gh", null)];
+    stub.unreadable = [hyprtrade];
+    const html = renderToStaticMarkup(<UpdatesPage />);
+    expect(html).toContain("gh");
+    expect(html).toContain(esc(unreadableProjectsLabel(["hyprtrade"])));
   });
 });

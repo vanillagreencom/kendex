@@ -1,13 +1,13 @@
 import { toast } from "sonner";
 import { create } from "zustand";
-import { commands, type ItemWarning, type UpdateRow } from "@/bindings";
+import { commands, type UpdateRow } from "@/bindings";
 import { UPDATE_ERROR_TITLE, updatedToastLabel } from "@/lib/copy";
 import {
   nothingToUpdateToastLabel,
   UPDATE_NEEDS_CHECK_NOTE,
   UPDATES_ONE_AT_A_TIME_NOTE,
 } from "@/lib/copy-updates";
-import { READ_PENDING, type ReadState } from "@/lib/read-state";
+import { READ_PENDING } from "@/lib/read-state";
 import { rescanEverything } from "@/lib/rescan";
 import { caught, settled } from "@/lib/settled";
 import { saying } from "@/lib/undone";
@@ -26,18 +26,9 @@ import {
   sayApply,
 } from "./updates-apply";
 import { followSwitch, type PendingFollow } from "./updates-follow";
-import { standingReads } from "./updates-standing";
+import { type Standing, standingReads } from "./updates-standing";
 
-interface UpdatesState {
-  rows: UpdateRow[];
-  /** Packages whose standing could not be computed — shown, never treated
-   *  as current. */
-  warnings: ItemWarning[];
-  /** Unix seconds of the last successful mirror fetch behind these rows,
-   *  null when nothing has ever fetched. The page dates its answer from
-   *  this — the check runs offline on load, so "everything is up to date"
-   *  needs the age of the fetch it rests on beside it. */
-  lastFetched: number | null;
+interface UpdatesState extends Standing {
   /** True while a write that went through [holdingBusy] is running. That
    *  wrapper is the definition rather than a summary of one:
    *  `grep -rn holdingBusy ui/src` is the list, and a mutation reaching the
@@ -48,19 +39,10 @@ interface UpdatesState {
    *  `busy` exclude each other: a fetch builds its report once, so a commit
    *  landing while it is out would be missing from it. */
   checking: boolean;
-  /** True while a read of the standing is on its way: a mount or a return
-   *  to the window reloads over rows that landed perfectly well, and every
-   *  value a commit-applying action captured is about to be replaced. */
-  reading: boolean;
   /** Follow switches already moved on screen whose write has not answered.
    *  A flip's scope is what decides which rows the landing behind it may
    *  not be acted on from. */
   pendingFollows: PendingFollow[];
-  /** How the last read of the standing went. A failure keeps the rows it
-   *  had and says why: the package page gates the Update button on this,
-   *  and acting on rows we could not refresh is exactly the fail-open it
-   *  closes. */
-  read: ReadState;
   /** Read the standing again and land whatever it answers. Every operation
    *  that commits a change calls it once its own work is done, so the rows
    *  on screen are what actually committed. */
@@ -109,6 +91,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
   return {
     rows: [],
     warnings: [],
+    unreadable: [],
     lastFetched: null,
     busy: false,
     checking: false,

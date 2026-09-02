@@ -100,7 +100,7 @@ describe("the check and the writes exclude each other", () => {
     vi.mocked(commands.auditAll).mockResolvedValue(ANSWERED);
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [row()], warnings: [], lastFetched: null },
+      data: { rows: [row()], warnings: [], unreadable: [], lastFetched: null },
     });
   });
 
