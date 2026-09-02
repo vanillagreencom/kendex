@@ -1,22 +1,29 @@
-//! How far a run of backticks reaches, so a switch quoted by a code span
-//! is told from one standing in the open.
+//! Where a document's code is: how far a run of backticks reaches, and
+//! which lines a code block covers.
+//!
+//! Two callers ask, and they ask for different reasons. The safety audit
+//! tells a switch quoted by a code span from one standing in the open. The
+//! prose rewrite leaves every byte of a code sample as the author wrote
+//! it, so it needs the blocks as well as the spans.
 //!
 //! Both answers are markdown's own, read off `pulldown-cmark`'s events.
 //! A span's reach is settled by every construct in the language at once —
 //! a table cell, a link reference definition, an HTML block, a list
 //! item's content column, a tab's expanded width, an autolink holding a
 //! backtick — and a walk written here is correct for the shapes it models
-//! and silently wrong for the rest. The failure direction is fail-open in
-//! a safety score: an unmodelled boundary lets two backticks pair across
-//! it, and a switch standing between them is scored as a mention rather
-//! than as a use.
+//! and silently wrong for the rest. Each caller fails a different way for
+//! it: the audit fail-open in a safety score, where an unmodelled boundary
+//! lets two backticks pair across it and a switch between them is scored
+//! as a mention rather than as a use; the rewrite by editing bytes inside
+//! a sample an agent was meant to copy verbatim. So one reading answers
+//! both rather than each keeping its own.
 //!
 //! Which dialect is read is its own decision, and a security one:
 //! [`EXTENSIONS`] says why, and why the list is short.
 
 use std::ops::Range;
 
-use pulldown_cmark::{Event, Options, Parser};
+use pulldown_cmark::{Event, Options, Parser, Tag};
 
 /// The markdown this reading is of: CommonMark, plus tables. A table's
 /// header and delimiter rows open a block together, and each cell is a
@@ -41,10 +48,22 @@ use pulldown_cmark::{Event, Options, Parser};
 /// and math each fail the first test and change no boundary anyway.
 const EXTENSIONS: Options = Options::ENABLE_TABLES;
 
-/// The code spans of each line of `text`, as byte ranges local to its own
-/// line. A run of backticks may close on a later line, so the lines are
-/// read together rather than one at a time: a line a span crosses whole is
-/// quoted for its whole length.
+/// A document's code, line by line. Both vectors carry one entry per line
+/// `str::lines` yields, in its order, so a caller zips either against the
+/// lines it already has.
+pub struct Code {
+    /// The code spans of each line, as byte ranges local to its own line.
+    pub spans: Vec<Vec<(usize, usize)>>,
+    /// Whether a code block — fenced or indented — covers the line. The
+    /// fence lines themselves count: a block's range opens on its marker
+    /// and closes past its closing run.
+    pub block: Vec<bool>,
+}
+
+/// Where `text` keeps its code. A run of backticks may close on a later
+/// line and a block runs over many, so the lines are read together rather
+/// than one at a time: a line a span crosses whole is quoted for its whole
+/// length.
 ///
 /// A span is where markdown puts one and nowhere else. A backtick inside a
 /// code block, an HTML block, an autolink or a link destination is a byte
@@ -52,19 +71,29 @@ const EXTENSIONS: Options = Options::ENABLE_TABLES;
 /// match before its block ends quotes nothing — which is what stops one
 /// stray backtick from reaching forward for a partner and quoting
 /// everything in between.
-pub fn code_spans_by_line(text: &str) -> Vec<Vec<(usize, usize)>> {
+pub fn code_by_line(text: &str) -> Code {
     let lines = line_spans(text);
-    let mut spans: Vec<Vec<(usize, usize)>> = vec![Vec::new(); lines.len()];
+    let mut code = Code {
+        spans: vec![Vec::new(); lines.len()],
+        block: vec![false; lines.len()],
+    };
     for (event, span) in Parser::new_ext(text, EXTENSIONS).into_offset_iter() {
-        if !matches!(event, Event::Code(_)) {
-            continue;
-        }
-        for at in reached(&lines, &span) {
-            let (start, end) = lines[at];
-            spans[at].push((span.start.max(start) - start, span.end.min(end) - start));
+        match event {
+            Event::Code(_) => {
+                for at in reached(&lines, &span) {
+                    let (start, end) = lines[at];
+                    code.spans[at].push((span.start.max(start) - start, span.end.min(end) - start));
+                }
+            }
+            Event::Start(Tag::CodeBlock(_)) => {
+                for at in reached(&lines, &span) {
+                    code.block[at] = true;
+                }
+            }
+            _ => {}
         }
     }
-    spans
+    code
 }
 
 /// Which lines a byte range reaches, as an index range into `lines`.
@@ -120,7 +149,7 @@ fn line_spans(text: &str) -> Vec<(usize, usize)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{code_spans_by_line, line_spans};
+    use super::{code_by_line, line_spans};
 
     /// The two readings are handed to callers that zip them against
     /// `str::lines`, so a range list one line short or one line long
@@ -144,7 +173,9 @@ mod tests {
             for (line, (start, end)) in lines.iter().zip(&spans) {
                 assert_eq!(&text[*start..*end], *line, "{text:?}");
             }
-            assert_eq!(code_spans_by_line(text).len(), lines.len(), "{text:?}");
+            let code = code_by_line(text);
+            assert_eq!(code.spans.len(), lines.len(), "{text:?}");
+            assert_eq!(code.block.len(), lines.len(), "{text:?}");
         }
     }
 
@@ -186,11 +217,11 @@ mod tests {
     #[test]
     fn a_span_crossing_a_newline_is_cut_at_each_line_it_holds() {
         assert_eq!(
-            code_spans_by_line("say `git commit\n--no-verify` now\n"),
+            code_by_line("say `git commit\n--no-verify` now\n").spans,
             vec![vec![(4, 15)], vec![(0, 12)]]
         );
         assert_eq!(
-            code_spans_by_line("say `git commit\r\n--no-verify` now\r\n"),
+            code_by_line("say `git commit\r\n--no-verify` now\r\n").spans,
             vec![vec![(4, 15)], vec![(0, 12)]]
         );
     }

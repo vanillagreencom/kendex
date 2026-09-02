@@ -1,14 +1,13 @@
 pub mod agent;
 mod blocks;
 pub mod command;
-mod fences;
 pub mod permission;
 pub mod skill;
 pub mod validate;
 pub mod vocab;
 
-/// The code spans of each line in a rendered document.
-pub(crate) use blocks::code_spans_by_line;
+/// Where a rendered document keeps its code, line by line.
+pub(crate) use blocks::code_by_line;
 
 /// One thing the user should hear about a rendering, with the fix when
 /// there is one — every render lint travels through this shape.

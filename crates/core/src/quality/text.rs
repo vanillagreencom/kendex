@@ -350,7 +350,7 @@ pub fn lines(text: &str, markdown: bool) -> Vec<Line> {
     // copy just as well: flattening rewrites whitespace and case one byte
     // for one, and touches neither a backtick nor the backslash escaping it.
     let spans = match markdown {
-        true => crate::render::code_spans_by_line(text),
+        true => crate::render::code_by_line(text).spans,
         false => vec![Vec::new(); raw.len()],
     };
     raw.iter()

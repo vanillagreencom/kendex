@@ -170,6 +170,48 @@ fn an_indented_fence_is_still_a_fence() {
     }
 }
 
+/// A run of backticks may close on a later line, and a reader asked one
+/// line at a time sees the opener meet nothing and calls the line prose.
+/// The rewrite then edits bytes the author quoted for an agent to copy.
+#[test]
+fn a_span_that_closes_on_a_later_line_quotes_both_lines() {
+    let body = "Paste `use the Read tool\n--dry-run` into the prompt.\n";
+    for harness in [HarnessId::Codex, HarnessId::Opencode, HarnessId::Cursor] {
+        let (text, warnings) = rewrite_prose(body, harness);
+        assert_eq!(text, body, "{harness:?} rewrote inside a code span");
+        assert!(warnings.is_empty(), "{harness:?} warned: {warnings:?}");
+    }
+}
+
+/// Four spaces open a code block with no fence to mark it, so a reader
+/// watching for fences finds none and rewrites the sample.
+#[test]
+fn an_indented_code_block_is_a_code_block() {
+    let body = "Then run:\n\n    use the Read tool --dry-run\n";
+    for harness in [HarnessId::Codex, HarnessId::Opencode, HarnessId::Cursor] {
+        let (text, warnings) = rewrite_prose(body, harness);
+        assert_eq!(text, body, "{harness:?} rewrote an indented block");
+        assert!(warnings.is_empty(), "{harness:?} warned: {warnings:?}");
+    }
+}
+
+/// A table cell is a leaf block of its own, so backticks in two cells are
+/// two literal characters rather than a span across the boundary. A reader
+/// that pairs them quotes the middle cell and leaves a reference standing
+/// in Claude's words with no warning that it did.
+#[test]
+fn backticks_in_two_table_cells_do_not_quote_the_cell_between_them() {
+    let body = "| how | when |\n|---|---|\n| `git log | use the Read tool` |\n";
+    assert_eq!(
+        rewrite(body, HarnessId::Codex),
+        "| how | when |\n|---|---|\n| `git log | open the file` |\n"
+    );
+    assert_eq!(
+        rewrite(body, HarnessId::Opencode),
+        "| how | when |\n|---|---|\n| `git log | use the read tool` |\n"
+    );
+}
+
 #[test]
 fn prose_about_tools_is_never_mistaken_for_a_reference() {
     for body in [

@@ -3,7 +3,7 @@
 //! left as authored rather than mangled.
 
 use super::super::RenderWarning;
-use super::super::fences::{code_spans, fence_marker};
+use super::super::code_by_line;
 use super::{CLAUDE_TOOLS, SKILL_POINTER, Word, word};
 use crate::model::HarnessId;
 
@@ -31,22 +31,24 @@ pub fn rewrite_prose(body: &str, harness: HarnessId) -> (String, Vec<RenderWarni
     let mut out = String::with_capacity(body.len());
     let mut reworded: Vec<String> = Vec::new();
     let mut kept: Vec<String> = Vec::new();
-    let mut fence: Option<(char, usize)> = None;
-    for line in body.split_inclusive('\n') {
-        match (fence_marker(line), fence) {
-            (Some((marker, run, bare)), Some((open, len)))
-                if marker == open && run >= len && bare =>
-            {
-                fence = None;
-            }
-            (Some((marker, run, _)), None) => fence = Some((marker, run)),
-            _ if fence.is_none() && !line.contains(SKILL_POINTER) => {
-                out.push_str(&rewrite_line(line, harness, &mut reworded, &mut kept));
-                continue;
-            }
-            _ => {}
+    // One reading of the whole body, not one per line: a code span may
+    // close on a later line, and a line scanner that cannot see that
+    // rewrites bytes the author fenced off to be copied verbatim.
+    let code = code_by_line(body);
+    for (at, line) in body.split_inclusive('\n').enumerate() {
+        let quoted = code.block.get(at).copied().unwrap_or(false);
+        if quoted || line.contains(SKILL_POINTER) {
+            out.push_str(line);
+            continue;
         }
-        out.push_str(line);
+        let spans = code.spans.get(at).map_or(&[][..], Vec::as_slice);
+        out.push_str(&rewrite_line(
+            line,
+            spans,
+            harness,
+            &mut reworded,
+            &mut kept,
+        ));
     }
 
     let mut warnings = Vec::new();
@@ -92,13 +94,16 @@ fn with_article(name: &str) -> String {
     }
 }
 
+/// One line, with the code spans [`code_by_line`] found on it — read off
+/// the whole document, so a span that opens here and closes further down
+/// covers this line for its whole length.
 fn rewrite_line(
     line: &str,
+    spans: &[(usize, usize)],
     harness: HarnessId,
     reworded: &mut Vec<String>,
     kept: &mut Vec<String>,
 ) -> String {
-    let spans = code_spans(line);
     let links = link_ranges(line);
     let mut out = String::with_capacity(line.len());
     let mut copied = 0;
