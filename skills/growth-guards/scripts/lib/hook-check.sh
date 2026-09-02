@@ -28,7 +28,7 @@ set -euo pipefail
 # with this repository's.
 gg_checkout_place() { # COMMONVAR RELVAR DIR -> 0 when both answers are had
   local __c="$1" __r="$2" dir="$3" real="" common="" top=""
-  real="$(cd -- "$dir" 2>/dev/null && pwd -P)" || return 1
+  gg_path real gg_physical "$dir" || return 1
   common="$(
     unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
     cd -- "$real" 2>/dev/null && git rev-parse --git-common-dir 2>/dev/null && printf x
@@ -36,14 +36,20 @@ gg_checkout_place() { # COMMONVAR RELVAR DIR -> 0 when both answers are had
   common="${common%x}"
   common="${common%"$GG_NL"}"
   [ -n "$common" ] || return 1
-  common="$(cd -- "$real" 2>/dev/null && cd -- "$common" 2>/dev/null && pwd -P)" || return 1
+  # git answers relative to the directory it was asked in, which lib/hooks-path.sh
+  # absolutizes the same way before resolving.
+  case "$common" in
+    /*) ;;
+    *) common="$real/$common" ;;
+  esac
+  gg_path common gg_physical "$common" || return 1
   top="$(
     unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
     cd -- "$real" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null && printf x
   )" || return 1
   top="${top%x}"
   top="${top%"$GG_NL"}"
-  top="$(cd -- "$top" 2>/dev/null && pwd -P)" || return 1
+  gg_path top gg_physical "$top" || return 1
   case "$real" in
     "$top") eval "$__r=''" ;;
     "$top"/*) eval "$__r=\${real#\"\$top/\"}" ;;
