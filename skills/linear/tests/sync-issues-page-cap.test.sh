@@ -10,6 +10,7 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SYNC="$SKILL_DIR/scripts/commands/sync.sh"
 assert_tmpdir TMP_ROOT
 
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 git -C "$TMP_ROOT" init -q -b main
 cd "$TMP_ROOT"
 # shellcheck disable=SC1090
