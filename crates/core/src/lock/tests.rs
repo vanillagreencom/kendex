@@ -257,7 +257,11 @@ fn a_project_lock_another_project_wrote_resolves_onto_the_project_reading_it() {
             .as_ref()
             .unwrap()
             .paths,
-        vec![root.join(".agents/skills/gh")],
+        vec![
+            crate::paths::canonical(&root)
+                .unwrap()
+                .join(".agents/skills/gh")
+        ],
         "the remainder lands under the root reading, not the one that wrote it"
     );
     assert_eq!(
@@ -294,7 +298,11 @@ fn a_project_lock_a_root_that_is_gone_wrote_still_resolves() {
             .as_ref()
             .unwrap()
             .paths,
-        vec![root.join(".agents/skills/gh")],
+        vec![
+            crate::paths::canonical(&root)
+                .unwrap()
+                .join(".agents/skills/gh")
+        ],
         "the remainder lands under the root reading"
     );
     assert_eq!(
@@ -440,7 +448,11 @@ fn a_record_rooted_through_a_link_resolves_onto_the_spelling_reading_it() {
             .as_ref()
             .unwrap()
             .paths,
-        vec![real.join(".agents/skills/gh")],
+        vec![
+            crate::paths::canonical(&real)
+                .unwrap()
+                .join(".agents/skills/gh")
+        ],
         "the position comes off `via` and lands under the spelling reading it"
     );
     assert_eq!(lock.root, Some(crate::paths::canonical(&real).unwrap()));
