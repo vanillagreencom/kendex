@@ -18,12 +18,10 @@ describe("saying what a removal ran", () => {
   });
 
   // The account interleaves kendex's own notes with each departing
-  // package's output, in name order. Cutting it by position spends the
-  // budget on whoever talks first — which is the party kendex does not
-  // control — and the line it ate was the second package's stand-down
-  // notice, the only place kendex says an effect was left standing and
-  // names the manual remedy. The bound belongs where the source of each
-  // line is still known, and that is Rust.
+  // package's output, in name order. A cut by position would spend itself
+  // on whoever talks first — the party kendex does not control — and the
+  // line it ate was the second package's stand-down notice, the only place
+  // kendex says an effect was left standing and names the manual remedy.
   it("says a later package's stand-down after a chatty one", () => {
     const account = [
       "aaa-loud: running scripts/out",

@@ -1,6 +1,6 @@
 //! One executor for a report, held by a fixture rather than by a comment.
 //!
-//! `repo_effects::write` is where a report's plan gets written, because
+//! `repo_effects::execute` is where a report's plan gets written, because
 //! that is where a leaving package's uninstaller runs while its scripts
 //! are still on disk. A command that reaches past it into
 //! `apply::execute(env, &report.plan)` compiles, previews the same, and
@@ -396,7 +396,7 @@ fn no_command_executes_a_report_s_plan_itself() {
         found.is_empty(),
         "the one-executor rule is not held. Each line is either a call that \
          writes a report's plan without running the leaving packages' \
-         uninstallers — call repo_effects::write instead — or a file the \
+         uninstallers — call repo_effects::execute instead — or a file the \
          scan could not read, which is not the same as a file with nothing \
          in it:\n{}",
         found.join("\n")

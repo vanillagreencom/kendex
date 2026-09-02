@@ -418,6 +418,9 @@ describe("the package page's safety tab", () => {
     const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
 
     expect(scoreTab(host).textContent).toBe(`${SAFETY_TAB}58`);
+    // The score is a tab of its own, so Overview opens at the file the page
+    // is about rather than at a block in the way of it.
+    expect(host.textContent).not.toContain("58/100");
 
     await act(async () => {
       scoreTab(host).click();

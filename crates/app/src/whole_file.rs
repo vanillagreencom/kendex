@@ -7,6 +7,8 @@
 //! it too instead of inventing a message the UI would have to recognise
 //! by its words.
 
+use std::path::PathBuf;
+
 use kendex_core::error::CoreError;
 use serde::Serialize;
 use specta::Type;
@@ -47,10 +49,22 @@ pub fn refusal(error: CoreError) -> WriteRefused {
     }
 }
 
+/// Whether an apply refused because one of these files moved under it. The
+/// write is bound to the file the copy on screen came from, so a rollback
+/// with that precondition underneath is the same answer the base check
+/// gives a moment earlier — and it reaches the person the same way, as a
+/// reload to take, rather than as an apply error they can do nothing with.
+pub fn stale_at(error: &CoreError, targets: &[PathBuf]) -> bool {
+    match error {
+        CoreError::PlanStale { path: moved } => targets.contains(moved),
+        CoreError::RolledBack { cause, .. } => stale_at(cause, targets),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn a_stale_base_is_the_reload_choice_and_any_other_failure_is_not() {
@@ -65,6 +79,43 @@ mod tests {
                 message: "it names no schema".to_owned(),
             }),
             WriteRefused::Failed { .. }
+        ));
+    }
+
+    /// The write is bound to the file the copy on screen came from, so a
+    /// rollback with that precondition underneath is the same refusal the
+    /// check gives — and the page already knows what to do with it. Told
+    /// as an apply failure it reaches the person as a message with no
+    /// choice in it.
+    #[test]
+    fn a_rollback_on_this_file_is_the_refusal_the_page_can_offer() {
+        let path = PathBuf::from("/w/app/kendex.toml");
+        let moved = CoreError::PlanStale { path: path.clone() };
+        assert!(stale_at(&moved, std::slice::from_ref(&path)));
+        assert!(stale_at(
+            &CoreError::RolledBack {
+                reason: "'Save kendex.toml' failed".into(),
+                cause: Box::new(moved),
+            },
+            &[path]
+        ));
+    }
+
+    /// A refusal can name only a path this write bound — and nothing else.
+    #[test]
+    fn a_refusal_matches_only_a_file_this_write_bound() {
+        let targets = [PathBuf::from("/w/app/kendex.toml")];
+        assert!(stale_at(
+            &CoreError::PlanStale {
+                path: targets[0].clone()
+            },
+            &targets
+        ));
+        assert!(!stale_at(
+            &CoreError::PlanStale {
+                path: "/w/app/.claude/settings.json".into()
+            },
+            &targets
         ));
     }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SubmissionRow } from "@/bindings";
-import { submissionFor } from "./mine-submission";
+import { submissionFor, submissionLine, submitLabel } from "./mine-submission";
 
 const listed: SubmissionRow = {
   repo: "ada/team-skills",
@@ -62,5 +62,31 @@ describe("submissionFor", () => {
     expect(submissionFor(null, null, "ada/team-skills")).toEqual({
       kind: "unknown",
     });
+  });
+});
+
+// A read that never landed is not a server that answered with nothing.
+// Both surfaces the row draws have to keep them apart: a first submit
+// offered over work already in review is the defect, and a blank line
+// under it is the same claim made silently.
+describe("what an unanswered submission draws", () => {
+  it("names the unknown state rather than leaving the row blank", () => {
+    expect(submissionLine({ kind: "unknown" })).toBe(
+      "Submission status unknown",
+    );
+    expect(submissionLine(null)).toBeNull();
+    expect(submissionLine({ kind: "not-submitted" })).toBeNull();
+  });
+
+  it("offers a bare Submit where nothing is known, never a first submit", () => {
+    expect(submitLabel({ kind: "unknown" })).toBe("Submit…");
+    expect(submitLabel(null)).toBe("Submit…");
+  });
+
+  // The control the two above are read against: a landed read saying this
+  // marketplace is not listed is what earns the first-submit offer.
+  it("offers the first submit only where a read said it is not listed", () => {
+    expect(submitLabel({ kind: "not-submitted" })).toBe("Submit to community…");
+    expect(submitLabel({ kind: "submitted", row: listed })).toBe("Re-submit…");
   });
 });

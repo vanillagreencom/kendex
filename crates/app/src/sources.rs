@@ -30,11 +30,11 @@ pub struct SourcesAfter {
 
 /// Write a source action's report and answer with what stands after it.
 ///
-/// Through the one executor, like every report. Removing or disabling a
-/// source takes its packages with it — a rendering the engine refuses
-/// drops that package's lock entry whatever the planning options say. No
-/// command here has to know which it is, and that is the point of there
-/// being one door.
+/// Through the one executor, like every report. Disabling a source takes
+/// its packages with it, and a rendering the engine refuses drops that
+/// package's lock entry whatever the planning options say — so this route
+/// runs uninstallers without having asked for a removal, and does not
+/// have to know that to report one.
 fn run_and_list(
     env: &Env,
     report: kendex_core::engine::EngineReport,

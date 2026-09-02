@@ -11,9 +11,9 @@ import { cn } from "@/lib/utils";
 // The vendors' own marks, taken from their own sites and brand kits —
 // provenance and the exact edits are in assets/tools/SOURCES.md. The
 // single-colour marks carry `fill="currentColor"` in the file, so the
-// tool's hue still comes from the same `--tool-*` token as the badges and
-// they survive dark mode; Gemini keeps its own gradient, because the
-// gradient is the mark.
+// harness's hue still comes from the same `--harness-*` token as the
+// badges and they survive dark mode; Gemini keeps its own gradient,
+// because the gradient is the mark.
 const MARKS: Record<HarnessId, React.FC<React.SVGProps<SVGSVGElement>>> = {
   claude: ClaudeMark,
   codex: CodexMark,

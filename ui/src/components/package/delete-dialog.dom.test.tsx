@@ -136,7 +136,7 @@ describe("the Delete dialog", () => {
 
     const said = await openDialog([VG]);
     expect(said).not.toContain(REINSTALL_OWN);
-    expect(said).not.toContain("install it again from");
+    expect(said).not.toContain(reinstallFrom(["acme"]));
   });
 });
 
@@ -167,7 +167,36 @@ describe("the read behind the note", () => {
     );
 
     const said = await openDialog([VG]);
-    expect(said).not.toContain("install it again from");
+    expect(said).not.toContain(reinstallFrom(["acme"]));
     expect(deleteButton()?.disabled).toBe(false);
+  });
+
+  // A read that failed leaves the rows a previous one put in the store,
+  // and those may answer for a different installation. Naming a
+  // marketplace off them at the confirm step of a deletion sends the
+  // reader somewhere the package may no longer be installable from.
+  it("names nothing off rows this open's read did not land", async () => {
+    useProvenanceStore.setState({
+      rows: rowsFor([[VG, MARKET("acme")]]),
+      loaded: true,
+    });
+    vi.mocked(commands.libraryProvenance).mockResolvedValue({
+      status: "error",
+      error: "the join did not read",
+    });
+
+    const said = await openDialog([VG]);
+    expect(said).not.toContain(reinstallFrom(["acme"]));
+    expect(said).not.toContain(REINSTALL_OWN);
+  });
+
+  it("names nothing off rows a rejected read left standing", async () => {
+    useProvenanceStore.setState({ rows: rowsFor([[VG, OWN]]), loaded: true });
+    vi.mocked(commands.libraryProvenance).mockRejectedValue(
+      new Error("the channel is gone"),
+    );
+
+    const said = await openDialog([VG]);
+    expect(said).not.toContain(REINSTALL_OWN);
   });
 });

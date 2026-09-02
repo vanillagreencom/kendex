@@ -28,9 +28,6 @@ import { type AccountState, useAccountStore } from "@/stores/account";
 import { mount } from "@/test/dom";
 import { AccountSection } from "./account-section";
 
-/** The name core mints for a sign-in; two answers about one
- *  credential carry the same one. */
-
 vi.mock("@/bindings", () => ({ commands: {} }));
 
 // The provider's account id is an opaque number, not a handle. Every

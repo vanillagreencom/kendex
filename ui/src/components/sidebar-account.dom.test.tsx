@@ -18,9 +18,6 @@ import { useNavStore } from "@/stores/nav";
 import { mount } from "@/test/dom";
 import { SidebarAccount } from "./sidebar-account";
 
-/** The name core mints for a sign-in; two answers about one
- *  credential carry the same one. */
-
 vi.mock("@/bindings", () => ({ commands: {} }));
 
 // The provider's account id is an opaque number, not a handle. Every

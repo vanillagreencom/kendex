@@ -160,10 +160,11 @@ it("leaves the account alone when a tick fails for any other reason", async () =
   expect(useAccountStore.getState().submissions).toEqual([ROW]);
 });
 
-// Which of the three states a marketplace is in is `submissionFor`'s
-// ruling, proven in `mine-submission.test.ts`. What the tab owes is that a
-// row the server named survives a tick that failed — the defect this tab
-// had, where the failure blanked the label back to an offer to submit.
+// Which of the three states a marketplace is in, and what each draws as a
+// line and an offer, is `mine-submission.ts`'s ruling and is proven there.
+// What the tab owes is that a row the server named survives a tick that
+// failed — the defect this tab had, where the failure blanked the label
+// back to an offer to submit.
 describe("what a marketplace's submission reads as", () => {
   // Stale and labelled beats empty: the rows are what the server last
   // said, so a row it named stays submitted under a tick that failed.

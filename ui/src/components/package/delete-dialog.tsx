@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { ItemKind, Scope } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
@@ -24,9 +24,12 @@ import { useScanStore } from "@/stores/scan";
  *  alone, so a Library visit before an install would answer for a package
  *  that did not exist yet.
  *
- *  A read that has not landed leaves the note off. It is where to get the
- *  package again, not what the deletion does, and Delete is not held for
- *  it: the engine answers for the removal either way. */
+ *  Until this open's own read lands there is no note. The rows standing
+ *  from an earlier one may answer for a different installation, and a
+ *  marketplace named wrongly at the confirm step of a deletion is worse
+ *  than none. Delete is not held for it either way: the note is where to
+ *  get the package again, not what the deletion does, and the engine
+ *  answers for the removal. */
 function useReinstallNote(
   kind: ItemKind,
   name: string,
@@ -35,9 +38,19 @@ function useReinstallNote(
 ): string | null {
   const rows = useProvenanceStore((s) => s.rows);
   const reload = useProvenanceStore((s) => s.reload);
+  const [landed, setLanded] = useState(false);
   useEffect(() => {
-    if (open) void reload();
+    if (!open) return;
+    let cancelled = false;
+    setLanded(false);
+    void reload().then((read) => {
+      if (!cancelled) setLanded(read);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [open, reload]);
+  if (!landed) return null;
   const origins = originsFor(rows, kind, name, scopes);
   // Every marketplace among them, sorted so the note reads the same on
   // every open: this deletion reaches each place, and each place records

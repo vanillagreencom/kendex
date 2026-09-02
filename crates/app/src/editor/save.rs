@@ -29,7 +29,8 @@ use specta::Type;
 
 use super::env;
 use crate::audit::{AuditView, view};
-use crate::whole_file::{WriteRefused, refusal};
+use crate::repo_effects::ExecuteError;
+use crate::whole_file::{WriteRefused, refusal, stale_at};
 
 /// A place's manifest and what the file it came from was at that moment.
 /// One value, because a copy without its base cannot be written back
@@ -157,6 +158,10 @@ fn write_customize(
     // permission or an encoding, and offering it would hide what did.
     let (current, now) = manifest::read_for_mutation(&path).map_err(|e| e.to_string())?;
     let mut options = PlanOptions::default();
+    // Every file this write binds a precondition to. A rollback on one of
+    // them is the same answer the base checks give, and reaches the page
+    // the same way.
+    let mut targets = Vec::new();
     // The manifest half. Without one, the scope is reconciled to the file
     // as it sits and no manifest write is added.
     let edited = match draft {
@@ -178,6 +183,7 @@ fn write_customize(
             // saving is when a derived one stops being derived.
             kendex_core::hook::name_custom_hooks(&mut manifest);
             check(&manifest)?;
+            targets.push(path.clone());
             // The plan binds its own manifest write to the file this copy
             // came from, so a writer landing after the check above is
             // refused by the apply rather than overwritten.
@@ -193,6 +199,7 @@ fn write_customize(
         if let Some(root) = settings_root(&scope) {
             let file = kendex_core::settings_seed::settings_file_path(&root);
             settings.base.verify(&file).map_err(refusal)?;
+            targets.push(file);
         }
         options.settings_draft = Some(settings);
     }
@@ -230,18 +237,38 @@ fn write_customize(
             })?;
     }
     // The bound preconditions refuse a file that moved between the checks
-    // above and the write itself.
+    // above and the write itself, and that refusal is the same answer the
+    // checks give — so it reaches the editor as the same choice.
     //
     // Through the one executor: a manifest saved with a package deleted out
     // of it takes that package away, and its declared uninstaller has to run
     // while its scripts are still on disk. Nothing here reasons about
     // whether this route can remove: it can, through a refused rendering,
     // whatever the planning options say about orphans.
-    let undone = crate::repo_effects::write(env, &report)?;
+    let undone = crate::repo_effects::execute(env, &report)
+        .map_err(|refused| refused_write(refused, &targets))?;
     Ok(AuditView {
         undone,
         ..view(env, &scope)
     })
+}
+
+/// How a write the executor refused reaches the page.
+///
+/// A precondition that moved is the reload choice the editor already
+/// draws; anything else is a failure to say out loud. The account the
+/// write already ran rides on the message either way, through
+/// `ExecuteError`'s own `Display`.
+///
+/// Named rather than inlined so the mapping can be driven with a real
+/// stale error rather than inferred from the branch.
+pub(super) fn refused_write(refused: ExecuteError, targets: &[std::path::PathBuf]) -> WriteRefused {
+    match refused {
+        ExecuteError::Apply { error, .. } if stale_at(&error, targets) => WriteRefused::Stale,
+        other => WriteRefused::Failed {
+            message: other.to_string(),
+        },
+    }
 }
 
 /// The project root a settings file would sit in. Global has none: skills

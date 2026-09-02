@@ -100,6 +100,40 @@ pub fn repo_effects_apply(scope: Scope, declared: DeclaredEffects) -> Result<Sai
     apply(&env, &scope, &declared)
 }
 
+/// Why a report did not get written.
+///
+/// Two, because the caller has to be able to tell them apart. The editor
+/// reads a precondition refusal as the reload choice it already draws, and
+/// that reading needs core's own error rather than a sentence about it.
+pub enum ExecuteError {
+    /// A leaving package's uninstaller failed, or could not be run. The
+    /// plan stopped before writing anything: the package's files are still
+    /// in place, and the message carries what was said before the failure.
+    Undo(String),
+    /// The undo did what it had to and the plan itself refused. The lines
+    /// already said ride along — a repository disarmed before a write that
+    /// then failed is a fact the person is still owed. Boxed: a refusal is
+    /// the rare path, and the common `Ok` should not carry its size.
+    Apply {
+        said: Vec<String>,
+        error: Box<kendex_core::error::CoreError>,
+    },
+}
+
+impl std::fmt::Display for ExecuteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExecuteError::Undo(message) => write!(f, "{message}"),
+            ExecuteError::Apply { said, error } => {
+                for line in said {
+                    writeln!(f, "{line}")?;
+                }
+                write!(f, "{error}")
+            }
+        }
+    }
+}
+
 /// Execute a report's plan — the one way a desktop command holding an
 /// `EngineReport` writes it, and the mirror of the terminal's
 /// `apply_report`.
@@ -119,10 +153,14 @@ pub fn repo_effects_apply(scope: Scope, declared: DeclaredEffects) -> Result<Sai
 /// ran carries those lines on the failure too: the repository is disarmed
 /// by then, and a bare refusal would say nothing happened.
 ///
+/// Once `execute` has returned, everything a command reads back is
+/// enrichment — `after_writing` is how that read's failure carries the
+/// account rather than replacing it.
+///
 /// A package whose uninstaller fails stops the plan with the files still
 /// in place, so the person can run it by hand and remove again. The other
 /// order leaves the repository in the state this exists to prevent.
-pub fn write(env: &Env, report: &EngineReport) -> Result<Vec<String>, String> {
+pub fn execute(env: &Env, report: &EngineReport) -> Result<Vec<String>, ExecuteError> {
     let mut said = Vec::new();
     if let Err(error) = kendex_core::repo_effects::undo(
         &report.plan.scope,
@@ -142,20 +180,25 @@ pub fn write(env: &Env, report: &EngineReport) -> Result<Vec<String>, String> {
         },
     ) {
         said.push(error.to_string());
-        return Err(said.join("\n"));
+        return Err(ExecuteError::Undo(said.join("\n")));
     }
     match kendex_core::apply::execute(env, &report.plan) {
         Ok(_) => Ok(said),
-        Err(error) => {
-            said.push(error.to_string());
-            Err(said.join("\n"))
-        }
+        Err(error) => Err(ExecuteError::Apply {
+            said,
+            error: Box::new(error),
+        }),
     }
+}
+
+/// The same write for a caller with no use for the two kinds apart.
+pub fn write(env: &Env, report: &EngineReport) -> Result<Vec<String>, String> {
+    execute(env, report).map_err(|error| error.to_string())
 }
 
 /// Fold the account into whatever an enrichment read failed with.
 ///
-/// Once `write` has returned, the uninstallers have run and the plan is
+/// Once `execute` has returned, the uninstallers have run and the plan is
 /// committed. Everything a command does after that — reading back the
 /// sources, the sets, the packages — is enrichment, and a `?` on one of
 /// those discards the account with the answer it was riding on. The person

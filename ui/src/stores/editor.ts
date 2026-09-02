@@ -159,7 +159,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     // Saving a manifest that takes a package away owes the same account a
     // removal does. Wired here rather than by the write the update commands
     // share: the editor answers a refusal shape of its own and never goes
-    // through it — which is also why the stale branch above says it too.
+    // through it.
     saying(response);
     await load();
     // Forced: a save rewrote the manifest this scope renders from, so an
