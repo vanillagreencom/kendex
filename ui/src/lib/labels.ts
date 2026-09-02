@@ -168,6 +168,16 @@ export function breadcrumbLabel(nav: {
 }
 
 /** How a package's name reads to a person — hooks carry display names. */
+/** A subscription's declared revision, on screen. A full commit id is
+ * shortened the way every git surface shortens one; anything else is a tag
+ * or a branch, which `source_ref::check_rev` allows to contain slashes and
+ * dots, and cutting it to seven characters would spell a different ref —
+ * `release/2026` as "release", `v2.1.0-beta` as "v2.1.0", a tag that may
+ * itself exist. A name is shown whole or not at all. */
+export function shortRevision(revision: string): string {
+  return /^[0-9a-f]{40}$/.test(revision) ? revision.slice(0, 7) : revision;
+}
+
 export function packageDisplayName(ref: {
   kind: ItemKind;
   name: string;

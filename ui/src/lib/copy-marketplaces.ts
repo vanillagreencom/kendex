@@ -59,9 +59,11 @@ export const SUBSCRIBE_MEANS =
   "Subscribing adds this marketplace to one place on this machine. Its packages become installable there, and updates to the ones you install show up on the Updates page.";
 // Installing from a marketplace nobody subscribes to yet. The subscription
 // is the thing that makes an install possible, so the click that installs
-// makes it — said before the click, not discovered after it.
+// makes it — said before the click, not discovered after it. The place it
+// subscribes into is named: the button is a control in a list, and a
+// control in a list names its target.
 export const SUBSCRIBE_TO_INSTALL_MEANS =
-  "Installing from here subscribes you to this marketplace first — that is what makes its packages installable.";
+  "Installing from here subscribes you personally to this marketplace first — that is what makes its packages installable.";
 export const SUBSCRIBE_TO_INSTALL_LABEL = "Subscribe and install";
 
 // The marketplace page's Projects section: every place that declares this

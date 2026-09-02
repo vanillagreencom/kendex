@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { morePlacesLabel } from "@/lib/copy";
 import { placeCountLabel } from "@/lib/copy-marketplaces";
+import { shortRevision } from "@/lib/labels";
 import { subscription } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 
@@ -20,7 +21,10 @@ export function SubscribedCard({ group }: { group: SubscribedMarketplace }) {
   const names = placeNames(group);
   const shown = names.slice(0, NAMED_PLACES);
   const rest = names.length - shown.length;
-  const commit = group.open.rev ?? group.open.commit;
+  // What the subscription declares it reads — a pinned commit, or the tag
+  // or branch it tracks. Named for what it is: `rev` is a ref as often as
+  // it is a commit id.
+  const revision = group.open.rev ?? group.open.commit;
   const off = group.places.filter((row) => !row.enabled).length;
 
   return (
@@ -35,9 +39,9 @@ export function SubscribedCard({ group }: { group: SubscribedMarketplace }) {
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex items-baseline gap-2">
             <span className="truncate font-medium">{group.name}</span>
-            {commit ? (
+            {revision ? (
               <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                @ {commit.slice(0, 7)}
+                @ {shortRevision(revision)}
               </span>
             ) : null}
             {off > 0 ? (

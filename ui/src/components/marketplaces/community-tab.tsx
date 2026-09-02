@@ -93,9 +93,12 @@ export function CommunityTab() {
     <div className={cn(PAGE_BODY, "pt-0")}>
       <div className={cn(WIDE_CONTENT_WIDTH, "space-y-4")}>
         {/* Two directories, one chosen — a segmented control, not two
-            words that happen to sit beside each other. It is drawn only
-            when there is a second thing to choose. */}
-        {skillsshAvailable ? (
+            words that happen to sit beside each other. It is drawn when
+            there is a second thing to choose, and whenever Skills.sh is
+            what is on screen: the availability check is a round trip to
+            kendex.ai that starts out true, so a click inside that window
+            would otherwise unmount the only way back to the directory. */}
+        {skillsshAvailable || section === "skillssh" ? (
           <Segmented
             label="Where to search"
             value={section}

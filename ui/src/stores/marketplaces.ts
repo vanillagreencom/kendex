@@ -39,6 +39,9 @@ export {
   subscription,
 } from "./marketplaces-shared";
 
+/** Subscribing either declared a source under an alias or was refused. */
+export type SubscribeOutcome = { name: string } | { error: string };
+
 // The cached reads come from [CatalogCaches], declared once beside the drop
 // that empties them so a field cannot be renamed here alone.
 interface MarketplacesState extends InstallActions, CatalogCaches {
@@ -57,14 +60,17 @@ interface MarketplacesState extends InstallActions, CatalogCaches {
   loadAbout: (catalog: Catalog) => Promise<void>;
   loadBundle: (catalog: Catalog, name: string) => Promise<void>;
   loadCatalogBundles: (catalog: Catalog) => Promise<void>;
-  /** The alias the subscription was declared under, or null when the
-   * engine refused it — the caller that goes on to install from it needs
-   * the name, and the dialog only needs to know whether it landed. */
+  /** What subscribing answered, handed straight to the caller: the alias
+   * the subscription was declared under, or the engine's refusal. The
+   * refusal is also left in `error` for the dialog that shows it beside
+   * its input, but no caller may read it back from there — `load` clears
+   * that slot on every landing overview read, so a concurrent one lands in
+   * the gap and the caller finds nothing. */
   subscribe: (
     scope: Scope,
     reference: string,
     name: string | null,
-  ) => Promise<string | null>;
+  ) => Promise<SubscribeOutcome>;
   /** Install from a marketplace nobody subscribes to yet: the subscription
    * is what makes the packages installable, so the one click makes it
    * first, personally, and then installs. Announced before the click by
@@ -123,8 +129,10 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
     }
     if (response.status === "error") {
       // The dialog shows the refusal beside the input; no toast on top.
+      // The same words go back to the caller, which is the only way a
+      // caller may have them.
       set({ error: response.error });
-      return null;
+      return { error: response.error };
     }
     set({ error: null });
     toast.success(`Subscribed to '${response.data.name}'`);
@@ -138,24 +146,29 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
     if (response.data.lead) {
       await openLead(scope, response.data.name, response.data.lead);
     }
-    return response.data.name;
+    return { name: response.data.name };
   },
 
   subscribeAndInstall: async (repo, items) => {
     // Personal, deliberately: the row that offered this install was not
     // showing a place to install into, so the one place every install can
-    // fall back to is the person's own. A project subscription is still
-    // the dialog's job, where the place is asked for.
+    // fall back to is the person's own. The line above the table says so
+    // before the click. A project subscription is still the dialog's job,
+    // where the place is asked for.
     const scope: Scope = { scope: "global" };
-    const source = await get().subscribe(scope, repo, null);
-    if (source === null) {
-      // `subscribe` keeps its refusal in `error` for the dialog that shows
-      // it beside an input; there is no input here, so it is said.
-      const { error } = get();
-      if (error) toast.error(error);
+    const outcome = await get().subscribe(scope, repo, null);
+    if ("error" in outcome) {
+      // Said from the outcome, never read back out of the shared slot: a
+      // concurrent overview read clears that slot, and a click that
+      // installed nothing would then report nothing either.
+      toast.error(outcome.error);
+      // There is no input here to show the refusal beside, so the slot it
+      // was left in is emptied — otherwise the next Subscribe dialog opens
+      // already complaining about a repository nobody typed.
+      set({ error: null });
       return false;
     }
-    return get().install({ scope, source, items });
+    return get().install({ scope, source: outcome.name, items });
   },
 
   unsubscribe: async (scope, source, keep, discardEdits) => {

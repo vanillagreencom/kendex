@@ -104,4 +104,44 @@ describe("installing from a marketplace nobody subscribes to", () => {
     expect(commands.marketplaceInstall).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith("already subscribed as 'kit'");
   });
+
+  // The refusal is left in the shared slot for the dialog that shows it
+  // beside an input. A row click has no such input, so the slot is emptied
+  // once the words have been said — otherwise the next Subscribe dialog
+  // opens already complaining about a repository nobody typed.
+  it("leaves no refusal behind for the next Subscribe dialog", async () => {
+    vi.mocked(commands.marketplaceSubscribe).mockResolvedValue({
+      status: "error",
+      error: "already subscribed as 'kit'",
+    });
+
+    await useMarketplacesStore.getState().subscribeAndInstall("Acme/Kit", item);
+
+    expect(useMarketplacesStore.getState().error).toBeNull();
+  });
+
+  // `load` writes `error: null` on every landing overview read, and reads
+  // overlap this click. Reporting by reading the slot back therefore says
+  // nothing at all whenever one lands in the gap: no toast, no install,
+  // the row unchanged. The words have to come from what subscribe
+  // answered.
+  it("reports the refusal even when a concurrent read clears the slot", async () => {
+    // The real refusal path, plus the overview read that lands between the
+    // slot being written and the caller reading it.
+    useMarketplacesStore.setState({
+      subscribe: async () => {
+        useMarketplacesStore.setState({ error: "already subscribed as 'kit'" });
+        await useMarketplacesStore.getState().load();
+        return { error: "already subscribed as 'kit'" };
+      },
+    });
+
+    const ok = await useMarketplacesStore
+      .getState()
+      .subscribeAndInstall("Acme/Kit", item);
+
+    expect(ok).toBe(false);
+    expect(toast.error).toHaveBeenCalledWith("already subscribed as 'kit'");
+    expect(commands.marketplaceInstall).not.toHaveBeenCalled();
+  });
 });

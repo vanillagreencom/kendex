@@ -1980,6 +1980,15 @@ export type MarketplaceRow = {
 	 *  directory row is matched against, however the subscription spells it.
 	 */
 	repoKey: string | null,
+	/**
+	 *  One string per repository on any host, from
+	 *  [`kendex_core::source_ref::repo_identity`] — the same value
+	 *  subscription dedup and update grouping compare. `repo_key` answers
+	 *  only for GitHub, so it cannot tell two marketplaces apart anywhere
+	 *  else; this is what a surface folding declarations into one
+	 *  marketplace has to key on.
+	 */
+	repoIdentity: string | null,
 	path: string | null,
 	rev: string | null,
 	/**  The commit the subscription reads right now, when the cache holds one. */

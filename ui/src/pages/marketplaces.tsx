@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { Plus, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { CommunityTab } from "@/components/marketplaces/community-tab";
 import { MineTab } from "@/components/marketplaces/mine-tab";
@@ -8,6 +8,7 @@ import { SubscribedTab } from "@/components/marketplaces/subscribed-tab";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { CHECK_FOR_UPDATES_LABEL } from "@/lib/copy";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useMarketplacesStore } from "@/stores/marketplaces";
@@ -17,6 +18,8 @@ export function MarketplacesPage() {
   const tab = useNavStore((s) => s.marketplacesTab);
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
   const load = useMarketplacesStore((s) => s.load);
+  const checkForUpdates = useMarketplacesStore((s) => s.checkForUpdates);
+  const busy = useMarketplacesStore((s) => s.busy);
   const [subscribeOpen, setSubscribeOpen] = useState(false);
 
   useEffect(() => {
@@ -39,6 +42,18 @@ export function MarketplacesPage() {
               onClick={() => goToMarketplaces("mine")}
             >
               Create…
+            </Button>
+            {/* Refreshes every subscription, not one — so it belongs to
+                the list rather than to a card or to whichever marketplace
+                page happens to be open. */}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => void checkForUpdates()}
+            >
+              <RefreshCw className={cn("size-4", busy && "animate-spin")} />
+              {CHECK_FOR_UPDATES_LABEL}
             </Button>
           </>
         }

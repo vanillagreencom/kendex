@@ -43,6 +43,8 @@ const row = (repo: string, repoKey: string | null): MarketplaceRow => ({
   name: "kit",
   repo,
   repoKey,
+  // What core's source_ref::repo_identity answers for a GitHub reference.
+  repoIdentity: repoKey ? `github.com/${repoKey}` : repo,
   path: null,
   rev: null,
   commit: null,
@@ -83,12 +85,12 @@ describe("a Community row's Subscribed marker", () => {
     ).toBe(false);
 
     // Subscribe answers with the alias it declared, so a caller that goes
-    // on to install from it has the name; a refusal answers null.
-    const alias = await useMarketplacesStore
+    // on to install from it has the name; a refusal answers the words.
+    const outcome = await useMarketplacesStore
       .getState()
       .subscribe({ scope: "global" }, "https://github.com/Acme/Kit.git", null);
 
-    expect(alias).toBe("kit");
+    expect(outcome).toEqual({ name: "kit" });
     const held = subscribedKeys(useMarketplacesStore.getState().rows);
     expect(listed.repoKey !== null && held.has(listed.repoKey)).toBe(true);
   });

@@ -1,6 +1,10 @@
 import { MoreHorizontal } from "lucide-react";
 import { useState } from "react";
 import type { MarketplaceRow, Scope } from "@/bindings";
+import {
+  marketplaceIdentity,
+  placeKey,
+} from "@/components/marketplaces/subscribed-grouping";
 import { UnsubscribeDialog } from "@/components/marketplaces/unsubscribe-dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,7 +32,7 @@ import { useMarketplacesStore } from "@/stores/marketplaces";
 export function MarketplacePlaces({ identity }: { identity: string }) {
   const rows = useMarketplacesStore((s) => s.rows);
   const places = rows
-    .filter((row) => (row.repoKey ?? row.path ?? row.name) === identity)
+    .filter((row) => marketplaceIdentity(row) === identity)
     .sort((a, b) =>
       a.scope.scope === "global" ? -1 : b.scope.scope === "global" ? 1 : 0,
     );
@@ -43,7 +47,7 @@ export function MarketplacePlaces({ identity }: { identity: string }) {
       </p>
       <div className="mt-4 divide-y rounded-lg border">
         {places.map((row) => (
-          <PlaceRow key={`${scopeLabel(row.scope)}:${row.name}`} row={row} />
+          <PlaceRow key={placeKey(row)} row={row} />
         ))}
       </div>
       <p className="mt-2 max-w-prose text-xs text-muted-foreground">

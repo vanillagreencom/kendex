@@ -18,6 +18,7 @@ import {
   FEATURED_MARKER,
   MARKETPLACES_UNCONFIRMED_TITLE,
 } from "@/lib/copy-marketplaces";
+import { shortRevision } from "@/lib/labels";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useCommunityStore } from "@/stores/community";
@@ -65,7 +66,7 @@ export function DetailHeader({
   const commit = row?.commit ?? summary?.commit ?? null;
   const metaLine = [
     row?.repo ?? row?.path ?? summary?.provenance ?? listing?.repo,
-    commit ? `@ ${commit.slice(0, 7)}` : null,
+    commit ? `@ ${shortRevision(commit)}` : null,
     meta?.license,
     meta?.author ? `by ${meta.author}` : null,
   ].filter(Boolean);

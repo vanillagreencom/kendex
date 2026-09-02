@@ -252,8 +252,16 @@ lives in one capability table read by core and UI.
   breadcrumb. The Library's From column and the package page's From line
   read one provenance join.
 - **A marketplace is one thing however many places subscribe to it.**
-  Subscribed lists one card per marketplace, keyed by canonical repository
-  (else local path), never per declaration; which places hold it and the
+  Subscribed lists one card per marketplace, keyed by `MarketplaceRow`'s
+  `repoIdentity` — core's `source_ref::repo_identity`, one string per
+  repository on any host, the same value subscription dedup and update
+  grouping compare — else the local path a folder source carries, and only
+  where a declaration has neither by its alias, which over-splits and can
+  never merge two repositories. Never `repoKey`: that is the GitHub
+  `owner/repo` and is null on every other host, so it silently keys those on
+  the alias. `ui/src/components/marketplaces/subscribed-grouping.ts` spells
+  it once as `marketplaceIdentity`; the card grid, the Projects section and
+  the detail page all call it. Which places hold a marketplace and the
   per-place switch belong to that marketplace's own Projects section, where
   the place is named beside the switch. A list never carries a control whose
   target it does not name.

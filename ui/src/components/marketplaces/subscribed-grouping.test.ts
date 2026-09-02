@@ -9,6 +9,7 @@ const row = (over: Partial<MarketplaceRow> = {}): MarketplaceRow => ({
   name: "kit",
   repo: "Acme/Kit",
   repoKey: "acme/kit",
+  repoIdentity: "github.com/acme/kit",
   path: null,
   rev: null,
   commit: null,
@@ -18,6 +19,18 @@ const row = (over: Partial<MarketplaceRow> = {}): MarketplaceRow => ({
   mode: null,
   ...over,
 });
+
+// A non-GitHub remote. `repoKey` is source_ref::owner_repo, which answers
+// only for github.com, so keying on it left every other host falling
+// through to the per-place alias — and auto_alias uniquifies a name inside
+// one scope's manifest only.
+const elsewhere = (over: Partial<MarketplaceRow> = {}): MarketplaceRow =>
+  row({
+    repo: "https://gitlab.com/acme/kit",
+    repoKey: null,
+    repoIdentity: "https://gitlab.com/acme/kit",
+    ...over,
+  });
 
 describe("grouping subscriptions into marketplaces", () => {
   // The alias is a per-place spelling, so it cannot be the identity: three
@@ -33,10 +46,39 @@ describe("grouping subscriptions into marketplaces", () => {
     expect(groups[0].places).toHaveLength(3);
   });
 
+  // The bug this helper exists to stop: two unrelated marketplaces landing
+  // in one card, whose Projects section then aims its switch and its
+  // Unsubscribe at the other one's subscription.
+  it("keeps two non-GitHub repositories sharing an alias apart", () => {
+    const groups = groupByMarketplace([
+      elsewhere(),
+      elsewhere({
+        scope: project("/w/alpha"),
+        repo: "https://git.internal/tools/kit",
+        repoIdentity: "https://git.internal/tools/kit",
+      }),
+    ]);
+    expect(groups).toHaveLength(2);
+  });
+
+  it("folds one non-GitHub repository held under two aliases", () => {
+    const groups = groupByMarketplace([
+      elsewhere(),
+      elsewhere({ scope: project("/w/alpha"), name: "acme-kit" }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].places).toHaveLength(2);
+  });
+
   it("keeps two different repositories apart", () => {
     const groups = groupByMarketplace([
       row(),
-      row({ name: "tools", repo: "Acme/Tools", repoKey: "acme/tools" }),
+      row({
+        name: "tools",
+        repo: "Acme/Tools",
+        repoKey: "acme/tools",
+        repoIdentity: "github.com/acme/tools",
+      }),
     ]);
     expect(groups).toHaveLength(2);
   });
@@ -44,7 +86,12 @@ describe("grouping subscriptions into marketplaces", () => {
   // A local folder has no canonical repository key; the path is what two
   // places subscribing to it have in common.
   it("folds local folders by their path", () => {
-    const local = { repo: null, repoKey: null, path: "/srv/catalog" };
+    const local = {
+      repo: null,
+      repoKey: null,
+      repoIdentity: null,
+      path: "/srv/catalog",
+    };
     const groups = groupByMarketplace([
       row(local),
       row({ ...local, scope: project("/w/alpha"), name: "catalog" }),

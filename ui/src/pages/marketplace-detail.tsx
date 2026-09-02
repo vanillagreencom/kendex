@@ -1,10 +1,11 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Catalog } from "@/bindings";
 import { AboutSection } from "@/components/marketplaces/about-section";
 import { BundleCards } from "@/components/marketplaces/bundle-cards";
 import { DetailHeader } from "@/components/marketplaces/detail-header";
 import { MarketplacePlaces } from "@/components/marketplaces/marketplace-places";
 import { PackagesTable } from "@/components/marketplaces/packages-table";
+import { marketplaceIdentity } from "@/components/marketplaces/subscribed-grouping";
 import {
   useCachedRead,
   useCatalog,
@@ -18,6 +19,7 @@ import {
   catalogKey,
   marketKey,
   readErrorKey,
+  subscription,
   useMarketplacesStore,
 } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
@@ -37,6 +39,9 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
   const rows = useMarketplacesStore((s) => s.rows);
   const packages = useMarketplacesStore((s) => s.packages);
   const load = useMarketplacesStore((s) => s.load);
+  const read = useMarketplacesStore((s) => s.read);
+  const goToMarketplace = useNavStore((s) => s.goToMarketplace);
+  const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
   const loadPackages = useMarketplacesStore((s) => s.loadPackages);
   const loadCatalogBundles = useMarketplacesStore((s) => s.loadCatalogBundles);
 
@@ -50,7 +55,7 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
       : undefined;
   // What every place declaring this same marketplace is keyed by — the
   // Projects section lists them all, not just the one this page opened as.
-  const identity = row ? (row.repoKey ?? row.path ?? row.name) : null;
+  const identity = row ? marketplaceIdentity(row) : null;
   const cached = packages[catalogKey(catalog)];
   const offered = cached ?? [];
   const packagesError = useMarketplacesStore(
@@ -76,6 +81,36 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
     [loadCatalogBundles, catalog],
   );
   useCachedRead(bundles !== undefined, !!bundlesError, ready, readBundles);
+
+  // Unsubscribing from the Projects section can remove the very place this
+  // page opened as. The row goes, and with it the tab the person was
+  // reading — so the page follows the marketplace to another place still
+  // holding it, or leaves for the list when none does. The identity has to
+  // outlive the row to do that, and only a read that landed may be taken
+  // as proof the place is gone: rows are empty before the first read and
+  // after a failed one, and neither is an unsubscribe.
+  const lastIdentity = useRef<string | null>(null);
+  useEffect(() => {
+    if (identity) lastIdentity.current = identity;
+  }, [identity]);
+  useEffect(() => {
+    if (catalog.by !== "subscription" || row || read.status !== "landed")
+      return;
+    const held = lastIdentity.current;
+    if (!held) return;
+    const elsewhere = rows.find((r) => marketplaceIdentity(r) === held);
+    if (elsewhere) {
+      goToMarketplace(subscription(elsewhere.scope, elsewhere.name));
+    } else {
+      goToMarketplaces("subscribed");
+    }
+  }, [catalog, row, read.status, rows, goToMarketplace, goToMarketplaces]);
+
+  // The tab is controlled so a section that stops existing cannot leave the
+  // page with nothing selected: Projects is gone the moment the opened
+  // place is, and an uncontrolled Tabs would keep pointing at it.
+  const [tab, setTab] = useState("bundles");
+  const shownTab = tab === "places" && !identity ? "bundles" : tab;
 
   return (
     <div className="flex h-full flex-col">
@@ -107,7 +142,8 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
         </p>
       ) : (
         <Tabs
-          defaultValue="bundles"
+          value={shownTab}
+          onValueChange={(value) => setTab(value as string)}
           className="flex min-h-0 flex-1 flex-col gap-0"
         >
           <div className={cn("pb-6", PAGE_GUTTER)}>

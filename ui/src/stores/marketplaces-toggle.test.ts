@@ -30,6 +30,8 @@ const row = (repo: string, repoKey: string | null): MarketplaceRow => ({
   name: "kit",
   repo,
   repoKey,
+  // What core's source_ref::repo_identity answers for a GitHub reference.
+  repoIdentity: repoKey ? `github.com/${repoKey}` : repo,
   path: null,
   rev: null,
   commit: null,

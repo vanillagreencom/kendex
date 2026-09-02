@@ -61,6 +61,13 @@ pub struct MarketplaceRow {
     /// The canonical `owner/repo` a GitHub declaration folds to — what a
     /// directory row is matched against, however the subscription spells it.
     pub repo_key: Option<String>,
+    /// One string per repository on any host, from
+    /// [`kendex_core::source_ref::repo_identity`] — the same value
+    /// subscription dedup and update grouping compare. `repo_key` answers
+    /// only for GitHub, so it cannot tell two marketplaces apart anywhere
+    /// else; this is what a surface folding declarations into one
+    /// marketplace has to key on.
+    pub repo_identity: Option<String>,
     pub path: Option<String>,
     pub rev: Option<String>,
     /// The commit the subscription reads right now, when the cache holds one.
@@ -107,6 +114,10 @@ pub fn rows(env: &Env, scopes: &[Scope]) -> Result<Vec<MarketplaceRow>, String> 
                     .repo
                     .as_deref()
                     .and_then(kendex_core::source_ref::owner_repo),
+                repo_identity: row
+                    .repo
+                    .as_deref()
+                    .map(kendex_core::source_ref::repo_identity),
                 repo: row.repo,
                 path: row.path,
                 rev: row.rev,

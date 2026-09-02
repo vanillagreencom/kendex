@@ -54,10 +54,10 @@ export function SubscribeDialog({
       scopes.find((s) => scopeLabel(s) === where) ??
       ({ scope: "global" } as Scope);
     void subscribe(target, reference.trim(), name.trim() || null).then(
-      (alias) => {
+      (outcome) => {
         // A refusal keeps the dialog open with the input intact — the
         // error shows right here, never on another page.
-        if (alias === null) return;
+        if ("error" in outcome) return;
         setReference("");
         setName("");
         onOpenChange(false);

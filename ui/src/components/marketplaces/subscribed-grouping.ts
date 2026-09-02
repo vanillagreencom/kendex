@@ -8,9 +8,7 @@ import { scopeLabel } from "@/lib/derive";
 import { scopeName } from "@/lib/labels";
 
 export interface SubscribedMarketplace {
-  /** Identity across places: the canonical repository where core resolved
-   * one, else the local path, else the alias. Two places subscribing the
-   * same repository under different aliases are still one marketplace. */
+  /** What [marketplaceIdentity] returned for every place in this group. */
   key: string;
   /** What to call it — the alias the place a card opens uses. */
   name: string;
@@ -27,8 +25,26 @@ export interface SubscribedMarketplace {
   packages: number | null;
 }
 
-const identity = (row: MarketplaceRow): string =>
-  row.repoKey ?? row.path ?? row.name;
+/** What makes two declarations the same marketplace, spelled once for
+ * every surface that folds them: the card grid, the Projects section, and
+ * the page that asks the section which marketplace it is looking at.
+ *
+ * `repoIdentity` is core's `source_ref::repo_identity` — one string per
+ * repository on any host, the same value subscription dedup and update
+ * grouping compare. It is not `repoKey`, which is the GitHub `owner/repo`
+ * and is null everywhere else: keying on that left every GitLab or
+ * self-hosted remote falling through to the alias, and an alias is
+ * per-declaration. `auto_alias` takes the reference's last path segment and
+ * uniquifies it only inside one scope's manifest, so a personal
+ * `gitlab.com/acme/kit` and a project's `git.internal/tools/kit` both
+ * become `kit` — two unrelated marketplaces in one card, with the Projects
+ * section aiming its switch and its Unsubscribe at the wrong subscription.
+ *
+ * A local folder has no repository, so its path is the identity. The alias
+ * is the last resort for a declaration carrying neither, where over-
+ * splitting is the only failure left. */
+export const marketplaceIdentity = (row: MarketplaceRow): string =>
+  row.repoIdentity ?? row.path ?? row.name;
 
 /** Personal leads, then projects in the order the overview listed them. */
 const personalFirst = (a: MarketplaceRow, b: MarketplaceRow): number =>
@@ -45,7 +61,7 @@ export function groupByMarketplace(
 ): SubscribedMarketplace[] {
   const groups = new Map<string, MarketplaceRow[]>();
   for (const row of rows) {
-    const key = identity(row);
+    const key = marketplaceIdentity(row);
     const held = groups.get(key);
     if (held) held.push(row);
     else groups.set(key, [row]);
