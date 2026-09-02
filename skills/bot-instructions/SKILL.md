@@ -86,7 +86,7 @@ Policy set:
 - Every file under `.github/instructions/`, `.macroscope/correctness/`, `.macroscope/check-run-agents/`, and `.macroscope/approvability.md`.
 - Any repo-wide reviewer file kept by hand.
 
-A doctrine edit ships a version bump. The marker records the spec copy's version; a repo whose marker names an older version has not re-rendered.
+Version and marker semantics: [schemas/renders.md](schemas/renders.md) § Common rules.
 
 ## Doctrine
 
