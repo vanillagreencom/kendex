@@ -27,7 +27,7 @@ source "$_LIB_DIR/bash-version.sh"
 linear_require_supported_bash || exit $?
 # shellcheck source=help.sh
 source "$_LIB_DIR/help.sh"
-linear_prepare_invocation "$@"
+linear_prepare_invocation "${BASH_SOURCE[1]:-}" "$@"
 
 # First 12 hex chars of sha256 — enough to tell two keys apart in a diagnostic
 # without exposing key material. macOS ships shasum, not sha256sum.

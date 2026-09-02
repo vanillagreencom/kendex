@@ -247,7 +247,7 @@ esac
 
 # shellcheck source=../lib/help.sh
 source "$SCRIPT_DIR/../lib/help.sh"
-if linear_help_requested "$@"; then
+if linear_help_requested "${BASH_SOURCE[0]}" "$@"; then
     show_help
     exit 0
 fi
