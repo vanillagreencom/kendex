@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button";
 import { adoptAll, type SharedLink, sharedLinkOf } from "@/lib/adopt-all";
 import { START_MANAGING_LABEL, startManagingAllLabel } from "@/lib/copy";
 import {
-  KEEP_FILES_CONFIRM_LABEL,
-  keepFilesConfirmTitle,
-  keepSharedBody,
+  manageConfirmTitle,
+  manageSharedBody,
+  PROCEED_LABEL,
 } from "@/lib/copy-in-the-way";
 import type { MergedDriftRow } from "@/lib/drift-merge";
 import { summarizePaths } from "@/lib/drift-merge";
@@ -126,14 +126,13 @@ export function UnmanagedItems({
         onOpenChange={(open) => {
           if (!open) setConfirmingShared(null);
         }}
-        title={keepFilesConfirmTitle(confirmingShared?.group.name ?? "")}
+        title={manageConfirmTitle(confirmingShared?.group.name ?? "")}
         description={
           confirmingShared
-            ? keepSharedBody(confirmingShared.target, confirmingShared.tools)
+            ? manageSharedBody(confirmingShared.target, confirmingShared.tools)
             : undefined
         }
-        confirmLabel={KEEP_FILES_CONFIRM_LABEL}
-        destructive
+        confirmLabel={PROCEED_LABEL}
         busy={busy}
         onConfirm={() => {
           if (confirmingShared) {

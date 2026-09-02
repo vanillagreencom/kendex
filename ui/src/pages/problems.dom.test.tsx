@@ -6,10 +6,10 @@ import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { AUDIT_ATTENTION_TITLE } from "@/lib/copy";
 import {
-  KEEP_FILES_CONFIRM_BODY,
-  KEEP_FILES_CONFIRM_LABEL,
   KEEP_FILES_LABEL,
+  MANAGE_CONFIRM_BODY,
   MOVE_FILES_YOURSELF,
+  PROCEED_LABEL,
   REPLACE_FILES_CONFIRM_LABEL,
   REPLACE_FILES_LABEL,
 } from "@/lib/copy-in-the-way";
@@ -329,11 +329,32 @@ describe("a declared item whose place already holds files", () => {
     await press(button(host, KEEP_FILES_LABEL));
     expect(dialog().textContent).toContain("Claude Code and Codex");
 
-    await press(button(dialog(), KEEP_FILES_CONFIRM_LABEL));
+    await press(button(dialog(), PROCEED_LABEL));
     expect(commands.adoptItem).toHaveBeenCalledWith(ACME, "skill", "browser", [
       "claude",
       "codex",
     ]);
+  });
+
+  // The move puts the originals in the trash, where they can be got back,
+  // so its confirm is not styled as a deletion. The replacement is checked
+  // in the same test: over the confirm alone a styling wired to nothing
+  // would pass.
+  it("styles the move's confirm apart from the replacement's", async () => {
+    stage([oneBlocked(ACME, "deploy")]);
+    const host = mount(<ProblemsPage />);
+    await settle();
+
+    await press(button(host, KEEP_FILES_LABEL));
+    expect(button(dialog(), PROCEED_LABEL)?.className).not.toContain(
+      "bg-destructive",
+    );
+    await press(button(dialog(), "Cancel"));
+
+    await press(button(host, REPLACE_FILES_LABEL));
+    expect(button(dialog(), REPLACE_FILES_CONFIRM_LABEL)?.className).toContain(
+      "bg-destructive",
+    );
   });
 
   // The shared words answer for the shared installations alone: a group can
@@ -350,7 +371,7 @@ describe("a declared item whose place already holds files", () => {
     await settle();
 
     await press(button(host, KEEP_FILES_LABEL));
-    expect(dialog().textContent).toContain(KEEP_FILES_CONFIRM_BODY);
+    expect(dialog().textContent).toContain(MANAGE_CONFIRM_BODY);
     expect(dialog().textContent).not.toContain("read this skill from");
   });
 });
