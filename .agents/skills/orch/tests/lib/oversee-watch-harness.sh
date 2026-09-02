@@ -161,14 +161,20 @@ case "${1:-}" in
     [[ -f "$STUB_DIR/panes.txt" ]] && cat "$STUB_DIR/panes.txt"
     exit 0 ;;
   capture-pane)
-    lane=""
-    while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && lane="$2"; shift; done
+    lane=""; join=0
+    while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && lane="$2"; [[ "$1" == *J* && "$1" == -* ]] && join=1; shift; done
     n=0; [[ -f "$STUB_DIR/pane-$lane.calls" ]] && n="$(cat "$STUB_DIR/pane-$lane.calls")"
     n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/pane-$lane.calls"
     [[ -f "$STUB_DIR/capture-fail-$lane" ]] && { echo "capture failed: $lane" >&2; exit 1; }
     src="$STUB_DIR/pane-$lane.$n.txt"; [[ -f "$src" ]] || src="$STUB_DIR/pane-$lane.txt"
     [[ -f "$src" ]] || { echo "can't find window: $lane" >&2; exit 1; }
-    cat "$src"; exit 0 ;;
+    # width-<lane>.txt makes the pane narrow: the fixture holds the LOGICAL
+    # lines, and without -J they come back wrapped at that width, the way tmux
+    # returns a screen it drew. No width file is an unwrapped pane, so every
+    # other case is unaffected.
+    w=0; [[ -f "$STUB_DIR/width-$lane.txt" ]] && w="$(cat "$STUB_DIR/width-$lane.txt")"
+    if [[ "$w" -gt 0 && "$join" -eq 0 ]]; then fold -w "$w" -- "$src"; else cat "$src"; fi
+    exit 0 ;;
   display-message)
     # `-p -t <lane> '#{pid} #{pane_id}'` asks for the pane's liveness key.
     for a in "$@"; do

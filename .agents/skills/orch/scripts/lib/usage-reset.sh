@@ -40,6 +40,10 @@
 #            `hour12` set, on both its branches, and omits the clock entirely
 #            otherwise, while the `timeFormat` setting reaches the
 #            message-timestamp and UI-clock formatters and never `Td()`.
+# A clock inside a fall-back hour names two instants in its zone. A dayless
+# tail resolves them by the same rule as any other candidate, the first after
+# the sighting; a dated tail, having no sighting to order them against, takes
+# the later.
 # Deliberately outside: a duration (Claude's `resets in 5m` for a fast-mode
 # cooldown), a weekday with no clock, and a bare number carrying neither
 # minutes nor a meridiem. Each leaves the event without a time rather than
@@ -135,6 +139,22 @@ usage_reset_key() {
   fi
 }
 
+# The UTC instants a wall clock names on one day in ZONE, ascending. Normally
+# one. In a fall-back hour a local clock names TWO, and `date` resolves the
+# string to a single fold — the earlier, on GNU — so the second is reachable
+# only by asking whether an hour later reads back as the same wall clock. In a
+# spring-forward gap the clock names none and `date` shifts it forward; that
+# answer is kept, since a banner cannot name a time its own harness could not
+# have drawn.
+local_instants() {
+  local zone="$1" day="$2" stamp="$3" first second
+  first="$(to_epoch "$day $stamp" '%Y-%m-%d %H:%M' "$zone")" || return 0
+  printf '%s\n' "$first"
+  second=$((first + 3600))
+  [[ "$(from_epoch "$second" '%Y-%m-%d %H:%M' "$zone")" == "$day $stamp" ]] || return 0
+  printf '%s\n' "$second"
+}
+
 # KEY resolved to an epoch, empty when `date` rejects the clock it carries.
 #
 # A dated clause names its own day and resolves outright; SINCE supplies only
@@ -151,25 +171,33 @@ usage_reset_key() {
 # next calendar day altogether or repeat the current one.
 usage_reset_epoch() {
   local key="$1" since="$2" kind mon day year stamp zone dow anchor cand d last
-  local best best_abs abs
+  local best best_abs abs years
   IFS='|' read -r kind mon day year stamp zone <<<"$key"
+  # A dated clause carries no sighting to order a fall-back hour's two
+  # instants against, so it takes the LATER: reporting a wall spent an hour
+  # early nudges a lane whose account is still walled, while reporting it an
+  # hour late only parks one that is already parked.
   if [[ "$kind" == dated ]]; then
+    # The year the banner printed, or the three around the sighting when it
+    # printed none: a banner omits its year only when that year is the current
+    # one WHERE IT WAS DRAWN, which is not the year of the sighting once a New
+    # Year has been crossed, and `resets Jan 2` seen on Dec 28 is next year's.
+    # Candidates a year apart make the one nearest the sighting the only
+    # reading, unambiguous in a way a bare clock's never was; with the year
+    # printed there is one candidate and the choice is a no-op. Written once so
+    # the fold rule below cannot hold on one path and not the other.
     if [[ -n "$year" ]]; then
-      to_epoch "$(printf '%s-%02d-%02d %s' "$year" "$mon" "$day" "$stamp")" \
-        '%Y-%m-%d %H:%M' "$zone" || return 0
-      return 0
+      years="$year"
+    else
+      year="$(from_epoch "$since" '%Y' "$zone")" || return 0
+      years="$((year - 1)) $year $((year + 1))"
     fi
-    # The banner omits its year only when that year is the current one WHERE IT
-    # WAS DRAWN, which is not the year of the sighting once either side of a
-    # New Year has been crossed: `resets Jan 2` seen on Dec 28 is next year's.
-    # The three candidates sit a year apart, so the one nearest the sighting is
-    # the only reading, unambiguous in a way a bare clock's never was.
-    year="$(from_epoch "$since" '%Y' "$zone")" || return 0
     best=""
     best_abs=0
-    for d in -1 0 1; do
-      cand="$(to_epoch "$(printf '%s-%02d-%02d %s' "$((year + d))" "$mon" "$day" "$stamp")" \
-        '%Y-%m-%d %H:%M' "$zone")" || continue
+    for d in $years; do
+      cand="$(local_instants "$zone" \
+        "$(printf '%s-%02d-%02d' "$d" "$mon" "$day")" "$stamp" | tail -1)"
+      [[ -n "$cand" ]] || continue
       abs=$((cand - since))
       [[ "$abs" -ge 0 ]] || abs=$(( -abs ))
       if [[ -z "$best" || "$abs" -lt "$best_abs" ]]; then best="$cand"; best_abs="$abs"; fi
@@ -191,10 +219,15 @@ usage_reset_epoch() {
     if [[ -n "$dow" && "$(from_epoch "$((anchor + d * 86400))" '%u' "$zone")" != "$dow" ]]; then
       continue
     fi
-    cand="$(to_epoch "$(from_epoch "$((anchor + d * 86400))" '%Y-%m-%d' "$zone") $stamp" \
-      '%Y-%m-%d %H:%M' "$zone")" || continue
-    [[ "$cand" -gt "$since" ]] || continue
-    printf '%s\n' "$cand"
-    return 0
+    # The policy is the first occurrence strictly after the sighting, and in a
+    # fall-back hour that has to be decided over BOTH instants the clock names:
+    # taking whichever fold `date` returned would skip a whole day when the
+    # sighting falls between them, and always taking the later one would park a
+    # first-fold sighting an hour past its wall.
+    while IFS= read -r cand; do
+      [[ "$cand" -gt "$since" ]] || continue
+      printf '%s\n' "$cand"
+      return 0
+    done < <(local_instants "$zone" "$(from_epoch "$((anchor + d * 86400))" '%Y-%m-%d' "$zone")" "$stamp")
   done
 }

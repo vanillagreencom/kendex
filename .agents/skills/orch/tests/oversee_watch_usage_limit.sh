@@ -5,6 +5,7 @@
 # oversee_watch_lanes.sh and the GitHub side oversee_watch.sh; all build their
 # sandbox from lib/oversee-watch-harness.sh.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
@@ -361,10 +362,9 @@ assert_eq "$(ls -1 "$STATE_DIR/claims" | wc -l | tr -d '[:space:]')" "0" \
   "a dead claim is pruned on read, not left to accumulate" "$err"
 
 # --- 2. the reset time the banner states ------------------------------------
-# The wall's day is OBSERVED, never inferred: a clause naming a clock and no
-# day is pinned to its first occurrence after the pass this watch first saw
-# the banner on, a stamp kept per lane in the watch state. So a case needing a
-# reset behind it runs two passes.
+# The wall's day is OBSERVED, never inferred: a dayless clause is pinned to
+# its first occurrence after the pass this watch first saw the banner on, a
+# stamp kept per lane. So a case needing a reset behind it runs two passes.
 #
 # The case the issue was filed on. The first pass sees the wall standing;
 # after it lifts the same screen is a pane remembering a window that has
@@ -577,10 +577,43 @@ assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
 assert_not_contains "$out" "resets=" "no midnight is guessed for a weekday alone" "$err"
 assert_not_contains "$out" "usage-limit-passed" "and it never reads as spent" "$err"
 
-# The candidate days are enumerated off local NOON, so a DST boundary between
-# the observation and the reset cannot skip a day. Observed at Mar 13 23:30
-# PST, the night the US springs forward, `resets 3am` is Mar 14 03:00 PDT.
-# Walking by 86400 from the stamp lands on Mar 15 and never offers Mar 14.
+# A narrow pane wraps the banner onto a physical line that is not a banner
+# line. The capture asks tmux to join what it wrapped, which is what keeps the
+# feature from disappearing as a function of window width.
+new_case usage_limit_reset_wrapped_banner
+printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"   # 2026-09-02T16:00:00Z
+printf '40' > "$STUB_DIR/width-gh-2.txt"
+printf "You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)\n" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3ba"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2$RESET_0950" \
+  "a banner the pane wrapped is still read whole" "$err"
+
+# A fall-back hour names two instants and the walk takes the first after the
+# sighting over BOTH. Seen at 01:15 in the SECOND fold, the clock's first
+# instant is already behind, and reaching only that one parks the lane until
+# tomorrow rather than fifteen minutes out.
+new_case usage_limit_reset_fall_back
+printf '1793524500' > "$STUB_DIR/now.epoch"   # 2026-11-01T09:15:00Z, 01:15 PST
+printf "You've hit your usage limit \xc2\xb7 resets 1:30am (America/Los_Angeles)\n" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3bb"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-11-01T09:30:00Z" \
+  "the repeated hour's second instant is reachable" "$err"
+
+# ...and a dated clause in the same hour has no sighting to order the two
+# against, so it takes the later: an hour parked beats an hour nudged early.
+new_case usage_limit_reset_fall_back_dated
+printf '1793521500' > "$STUB_DIR/now.epoch"   # 2026-11-01T08:25:00Z, 01:25 PDT
+printf "You've hit your weekly limit \xc2\xb7 resets Nov 1, 1:30am (America/Los_Angeles)\n" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3bc"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-11-01T09:30:00Z" \
+  "a dated clause in the repeated hour takes the later instant" "$err"
+
+# Candidate days are enumerated off local NOON, so a DST boundary between the
+# observation and the reset cannot skip one. Observed at Mar 13 23:30 PST,
+# `resets 3am` is Mar 14 03:00 PDT; walking by 86400 lands on Mar 15.
 new_case usage_limit_reset_dst
 printf '1805009400' > "$STUB_DIR/now.epoch"   # 2027-03-14T07:30:00Z
 printf "You've hit your usage limit \xc2\xb7 resets 3am (America/Los_Angeles)\n" > "$STUB_DIR/pane-gh-2.txt"

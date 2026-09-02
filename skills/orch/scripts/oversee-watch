@@ -608,7 +608,10 @@ observe_lanes() {
       || die "pane identity probe failed for '$lane': $(cat "$errf")"
     [[ "$key" =~ ^[0-9]+[[:blank:]]+%[^[:space:]]+$ ]] \
       || die "pane identity probe returned a malformed result for '$lane': ${key:-<empty>}"
-    if ! tmux capture-pane -t "$lane" -p >"$capture.$$.tmp" 2>"$errf"; then
+    # -J joins what tmux wrapped, as open-terminal already reads a pane:
+    # without it a narrow window puts `resets ...` on a line of its own, which
+    # is not a banner line, and the reset disappears with the pane's width.
+    if ! tmux capture-pane -t "$lane" -pJ >"$capture.$$.tmp" 2>"$errf"; then
       rm -f "$capture.$$.tmp"
       die "pane capture failed for '$lane': $(cat "$errf")"
     fi
