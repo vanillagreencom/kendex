@@ -23,13 +23,15 @@ repo-effects:
   companions:
     - "size-ratchet"
     - "preflight"
+  notes:
+    - "A missing companion is announced and skipped; every installed companion or guard failure blocks the commit."
+    - "Both hooks block on nonzero results; Git's no-verify flag bypasses both for one commit."
+    - "Git does not clone hooks; arm every clone once."
 ---
 
 # Growth Guards
 
 > **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
-Seven checks beside `size-ratchet`, sharing its idiom and exit contract.
 
 ```bash
 .agents/skills/growth-guards/scripts/growth-guards              # batch: every enabled repo check
@@ -38,8 +40,6 @@ Seven checks beside `size-ratchet`, sharing its idiom and exit contract.
 .agents/skills/growth-guards/scripts/install-git-hooks          # arm the git pre-commit/commit-msg shims
 .agents/skills/growth-guards/scripts/install-git-hooks --check  # read-only: are the shims still armed?
 ```
-
-Each check is also invocable as `scripts/CHECK`.
 
 ## The checks
 

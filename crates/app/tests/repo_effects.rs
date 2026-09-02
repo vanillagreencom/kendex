@@ -110,6 +110,14 @@ fn a_companion_already_here_reads_as_installed() {
     };
     assert!(companion(offer, "size-ratchet").installed);
     assert!(!companion(offer, "preflight").installed);
+    assert!(
+        offer
+            .notes
+            .iter()
+            .any(|note| note.contains("missing companion"))
+    );
+    assert!(offer.notes.iter().any(|note| note.contains("no-verify")));
+    assert!(offer.notes.iter().any(|note| note.contains("every clone")));
 }
 
 /// A set that carries a declaring package brings the same offer, on both
