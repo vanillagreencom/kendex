@@ -18,6 +18,10 @@ mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/.cache/linear"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 git -C "$TMP_ROOT" init -q -b main
 
+# This root's own cache is the subject, so it replaces the assert lib's default
+# sandbox — still scratch, so the exit verdict's containment check holds.
+export LINEAR_CACHE_ROOT="$TMP_ROOT"
+
 main='{"id":"issue-1","identifier":"KEN-1","title":"dependent","description":"","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"project-1","name":"Project"},"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Kendex"},"labels":{"nodes":[]},"priority":0,"estimate":null,"sortOrder":0,"url":"","createdAt":"","updatedAt":"","archivedAt":null,"trashed":false,"children":{"nodes":[]},"relations":{"nodes":[]},"inverseRelations":{"nodes":[{"id":"rel-open","type":"blocks","issue":{"id":"issue-2","identifier":"KEN-2","title":"open","state":{"name":"Working","type":"started"}}},{"id":"rel-done","type":"blocks","issue":{"id":"issue-3","identifier":"KEN-3","title":"done","state":{"name":"Shipped","type":"completed"}}},{"id":"rel-canceled","type":"blocks","issue":{"id":"issue-4","identifier":"KEN-4","title":"canceled","state":{"name":"Abandoned","type":"canceled"}}}]}}'
 child="$(jq -cn --argjson base "$main" '$base | .id = "issue-6" | .identifier = "KEN-6" | .title = "child" | .parent = {identifier: "KEN-1"}')"
 terminal_only="$(jq -cn --argjson base "$main" '$base | .id = "issue-5" | .identifier = "KEN-5" | .title = "ready" | .state = {name: "Backlog", type: "backlog"} | .inverseRelations.nodes |= map(select(.issue.state.type != "started"))')"

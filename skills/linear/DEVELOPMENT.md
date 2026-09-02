@@ -66,7 +66,9 @@ for t in skills/linear/tests/*.test.sh; do bash "$t" || echo "FAIL $t"; done
 skills/linear/tests/must-fail-controls.sh
 ```
 
-Each test stands up its own fixture root and a `curl` shim on `PATH`, so none reaches the network. `LINEAR_API_KEY_OVERRIDE` is the inline auth channel they use. Isolating the cache is the test author's own obligation and nothing refuses on its behalf: `CACHE_DIR` resolves from `git rev-parse --show-toplevel` of the invoking cwd — `common.sh` recomputes `PROJECT_ROOT` on every source and `cache.sh` derives `CACHE_DIR` from it, so exporting either does nothing. `git init` a throwaway root and `cd` into it before invoking a script; a test that forgets writes its fixture ids into the real `.cache/linear`.
+Each test stands up its own fixture root and a `curl` shim on `PATH`, so none reaches the network. `LINEAR_API_KEY_OVERRIDE` is the inline auth channel they use.
+
+The cache is isolated for you. Sourcing `tests/lib/assert.sh` exports `LINEAR_CACHE_ROOT` at a scratch root that goes with the suite's other scratch directories at exit, and the scripts check that variable before anything derived from where the process is standing — so a suite that asks for nothing writes nowhere near the real `.cache/linear`. A suite that stands up its own project root points `LINEAR_CACHE_ROOT` at that root instead; one whose subject *is* the root resolution runs its invocations under `env -u LINEAR_CACHE_ROOT`. The verdict refuses a suite that ends with the variable unset or aimed outside the scratch it registered. Before kendex#799 none of this existed: `common.sh` recomputed `PROJECT_ROOT` on every source, so the redirect `cache.sh` documented was dead, entering a throwaway repo was the only isolation that worked, and suites that forgot left fixture ids in the developer's own cache.
 
 ### Assertions
 

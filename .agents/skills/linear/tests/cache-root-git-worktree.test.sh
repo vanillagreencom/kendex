@@ -60,10 +60,14 @@ cat >"$REAL_ROOT/.cache/linear/attachments/manifest.json" <<JSON
 }
 JSON
 
+# Every invocation below drops LINEAR_CACHE_ROOT: the subject is the root the
+# scripts derive when no redirect is given, so the assert lib's default sandbox
+# would answer the question the suite is asking. The cwd is a project this
+# suite built under its own scratch, so nothing reaches the real cache.
 assert_cache_and_attachment_roots() {
   local linear="$1" label="$2" out=""
   local rc=0
-  out="$(cd "$LINK_ROOT" && bash "$linear" cache issues get CC-779 --with-bundle --format=safe 2>/dev/null)" || rc=$?
+  out="$(cd "$LINK_ROOT" && env -u LINEAR_CACHE_ROOT bash "$linear" cache issues get CC-779 --with-bundle --format=safe 2>/dev/null)" || rc=$?
   assert_eq "$label exits zero" "$rc" 0
   assert "$label reads cache and attachments from the physical git root" \
     jq -e --arg attach "$REAL_ROOT/.cache/linear/attachments/files/cc-779.txt" \
@@ -74,7 +78,7 @@ assert_cache_and_attachment_roots "$LINK_ROOT/.agents/skills/linear/scripts/line
 assert_cache_and_attachment_roots "$SKILL_DIR/scripts/linear.sh" "canonical source-path invocation"
 
 assert "the cache library retains its own source directory for write-through refreshes" \
-  bash -u -c 'cd "$2"; source "$1"; : "$_CACHE_LIB_DIR"; declare -F cache_refresh_issues >/dev/null' \
+  env -u LINEAR_CACHE_ROOT bash -u -c 'cd "$2"; source "$1"; : "$_CACHE_LIB_DIR"; declare -F cache_refresh_issues >/dev/null' \
   _ "$SKILL_DIR/scripts/lib/cache.sh" "$LINK_ROOT"
 
 EMPTY_REAL="$TMP_ROOT/empty-real/project"
@@ -85,7 +89,7 @@ ln -s "$SKILL_DIR" "$EMPTY_REAL/.agents/skills/linear"
 ln -s "$EMPTY_REAL" "$EMPTY_LINK"
 assert_missing_cache_diagnostic() {
   local linear="$1" label="$2" err="" rc=0
-  err="$(cd "$EMPTY_LINK" && bash "$linear" cache issues list 2>&1 >/dev/null)" || rc=$?
+  err="$(cd "$EMPTY_LINK" && env -u LINEAR_CACHE_ROOT bash "$linear" cache issues list 2>&1 >/dev/null)" || rc=$?
 
   assert_ne "$label: a missing cache fails" "$rc" 0
   assert "$label: the missing-cache diagnostic names the physical cache path" \

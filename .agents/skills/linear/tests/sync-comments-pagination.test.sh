@@ -58,11 +58,12 @@ assert_eq "the scope is derived from the caller's issue file exactly once" "$rea
 
 # sync.sh sources the skill's libs and self-executes only when run as a
 # command; sourced with no arguments it just defines its functions. The libs
-# resolve the cache from the enclosing git worktree and assign CACHE_DIR
-# unconditionally, so the sandbox is a throwaway repo entered before the
-# source, not an environment variable set after it.
+# fix CACHE_DIR at source time, so the redirect has to be in place before the
+# source, not after it — and this root replaces the assert lib's default
+# sandbox because the assertions below name paths under it.
 git -C "$TMP_ROOT" init -q -b main
 mkdir -p "$TMP_ROOT/.cache/linear/comments"
+export LINEAR_CACHE_ROOT="$TMP_ROOT"
 cd "$TMP_ROOT"
 # shellcheck disable=SC1090
 source "$SYNC"

@@ -78,9 +78,12 @@ make_repo() {
 run_sync() {
   local dir="$1"; shift
   # env -u: the convention must come from the repo's own project files, never
-  # from whatever the invoking shell happens to export.
+  # from whatever the invoking shell happens to export. LINEAR_CACHE_ROOT goes
+  # for the same reason — the guard's subject is the cache root git resolves to
+  # in a clobbered worktree, and a redirect would answer the question for it.
+  # Nothing escapes: $dir is a repo this suite built under its own scratch.
   (cd "$dir" && PATH="$TMP_BASE/bin:$PATH" LINEAR_API_KEY=test-token \
-    env -u WORKTREE_SYMLINKS bash "$LINEAR" sync --no-attachments "$@")
+    env -u WORKTREE_SYMLINKS -u LINEAR_CACHE_ROOT bash "$LINEAR" sync --no-attachments "$@")
 }
 
 # --- refusal: clobbered worktree cache with the convention configured ----------

@@ -22,6 +22,10 @@ assert_tmpdir TMP_ROOT
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 git -C "$TMP_ROOT" init -q -b main
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
+
+# This root's own cache is the subject, so it replaces the assert lib's default
+# sandbox — still scratch, so the exit verdict's containment check holds.
+export LINEAR_CACHE_ROOT="$TMP_ROOT"
 LINEAR_SH="$TMP_ROOT/.agents/skills/linear/scripts/linear.sh"
 
 # The dispatcher must reject unsupported actions before any API call.

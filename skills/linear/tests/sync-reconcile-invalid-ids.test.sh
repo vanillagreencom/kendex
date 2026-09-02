@@ -21,6 +21,10 @@ mkdir -p "$ROOT/.agents/skills" "$ROOT/bin" "$ROOT/.cache/linear/comments"
 cp -R "$SKILL_DIR" "$ROOT/.agents/skills/linear"
 git -C "$ROOT" init -q -b main
 
+# This root's own cache is the subject, so it replaces the assert lib's default
+# sandbox — still scratch, so the exit verdict's containment check holds.
+export LINEAR_CACHE_ROOT="$ROOT"
+
 VALID_UUID="11111111-1111-1111-1111-111111111111"
 
 printf '%s' "[

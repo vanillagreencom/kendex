@@ -210,7 +210,7 @@ write_comments() {
 
     comm -23 <(jq -r '.[]' "$scope" | LC_ALL=C sort -u) \
              <(LC_ALL=C sort -u "$written") | while IFS= read -r issue_id; do
-        rm -f "$CACHE_DIR/comments/$issue_id.json" "$CACHE_DIR/comments/$issue_id.json.lock"
+        rm -f "$CACHE_DIR/comments/$issue_id.json"
     done
 
     rm -f "$written" "$scope"
@@ -737,7 +737,7 @@ main() {
                     "$CACHE_DIR/.delta_issues_raw.json" | while IFS=$'\t' read -r uuid identifier; do
                     cache_remove_issue "$uuid"
                     # Clean comment file even if issue wasn't in cache (already removed)
-                    [[ -n "$identifier" ]] && rm -f "$CACHE_DIR/comments/$identifier.json" "$CACHE_DIR/comments/$identifier.json.lock"
+                    [[ -n "$identifier" ]] && rm -f "$CACHE_DIR/comments/$identifier.json"
                 done
                 summary_parts+=("$archived_delta_count archived removed")
             fi

@@ -70,15 +70,18 @@ SH
   chmod +x "$root/bin/curl"
 }
 
+# Each case has its own project root, so the cache redirect is per invocation
+# rather than one export for the suite. Every root is under TMP_BASE, so the
+# exit verdict's containment check holds.
 run_sync() {
   local root="$1"
-  (cd "$root" && PATH="$root/bin:$PATH" LINEAR_API_KEY=test-token \
+  (cd "$root" && PATH="$root/bin:$PATH" LINEAR_CACHE_ROOT="$root" LINEAR_API_KEY=test-token \
     bash "$root/.agents/skills/linear/scripts/linear.sh" sync --no-attachments)
 }
 
 run_sync_if_stale() {
   local root="$1"
-  (cd "$root" && PATH="$root/bin:$PATH" LINEAR_API_KEY=test-token \
+  (cd "$root" && PATH="$root/bin:$PATH" LINEAR_CACHE_ROOT="$root" LINEAR_API_KEY=test-token \
     bash "$root/.agents/skills/linear/scripts/linear.sh" sync --if-stale 15 --no-attachments)
 }
 

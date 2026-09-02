@@ -25,6 +25,6 @@ A Bash CLI over Linear's GraphQL API with a local JSON cache. Reads are served f
 ./scripts/linear.sh sync --reconcile
 ```
 
-Cache reads need no API key. The cache lives at `.cache/linear` under the physical git worktree root, so symlinked checkout spellings share one copy.
+Cache reads need no API key. The cache lives at `.cache/linear` under the physical git worktree root, so symlinked checkout spellings share one copy. `LINEAR_CACHE_ROOT` overrides that root for one invocation, and is refused if it names no directory.
 
 Run `./scripts/linear.sh --help` for the resource list and `./scripts/linear.sh <resource> --help` for a resource's options.

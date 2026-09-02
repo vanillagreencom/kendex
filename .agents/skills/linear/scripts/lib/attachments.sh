@@ -20,10 +20,20 @@ linear_attach_canonical_existing_dir() {
     (cd "$path" && pwd -P)
 }
 
+# Same precedence as cache.sh's resolver, for when this library is sourced
+# without it; alongside cache.sh the first branch already carries the answer.
 linear_attach_project_root() {
     if [[ -n "${CACHE_PROJECT_ROOT:-}" ]]; then
         linear_attach_canonical_existing_dir "$CACHE_PROJECT_ROOT"
         return
+    fi
+    if [[ -n "${LINEAR_CACHE_ROOT:-}" ]]; then
+        if ! linear_attach_canonical_existing_dir "$LINEAR_CACHE_ROOT"; then
+            jq -cn --arg root "$LINEAR_CACHE_ROOT" \
+                '{error: ("LINEAR_CACHE_ROOT is not an existing directory: " + $root)}' >&2
+            return 1
+        fi
+        return 0
     fi
     if [[ -n "${PROJECT_ROOT:-}" ]]; then
         linear_attach_canonical_existing_dir "$PROJECT_ROOT"

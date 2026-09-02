@@ -77,6 +77,48 @@ assert_at_exit() {
 	ASSERT_CLEANUP_CMDS+=("$1")
 }
 
+# --- cache isolation --------------------------------------------------------
+#
+# The scripts under test resolve their cache and attachment store from the
+# repository the process is standing in, which for a suite is the developer's
+# own kendex checkout. A suite that creates a comment or completes an issue
+# therefore wrote its fixture identifiers into the real .cache/linear, where
+# `cache issues list` and any audit can see them (kendex#799).
+#
+# The redirect is installed here, once, for every suite that sources this file:
+# no suite has to remember it, and a new one is isolated before its first line
+# runs. LINEAR_CACHE_ROOT outranks the git root in the scripts under test, and
+# the scratch root goes with the suite's other scratch directories at exit — on
+# success, on a failed assertion, and on an abort alike, taking any lock file
+# written under it.
+#
+# A suite that needs the cache somewhere else — one standing up its own project
+# root, or one testing root resolution itself — points LINEAR_CACHE_ROOT at that
+# root instead, which must still be scratch it registered. The verdict refuses
+# anything else: a suite that unsets the variable, or aims it at a directory it
+# does not own, is a suite writing to the real cache again.
+assert_tmpdir ASSERT_CACHE_ROOT
+mkdir -p "$ASSERT_CACHE_ROOT/.cache/linear/comments"
+export LINEAR_CACHE_ROOT="$ASSERT_CACHE_ROOT"
+
+# The diagnostic for a cache root that left the sandbox, or the empty string
+# when it did not. Read by the exit verdict before cleanup removes the
+# directories it is checked against.
+__assert_cache_root_escape() {
+	local dir
+	if [[ -z "${LINEAR_CACHE_ROOT:-}" ]]; then
+		printf 'LINEAR_CACHE_ROOT was unset by the suite'
+		return 0
+	fi
+	for dir in ${ASSERT_TMPDIRS[@]+"${ASSERT_TMPDIRS[@]}"}; do
+		if [[ "$LINEAR_CACHE_ROOT" == "$dir" || "$LINEAR_CACHE_ROOT" == "$dir"/* ]]; then
+			return 0
+		fi
+	done
+	printf 'LINEAR_CACHE_ROOT points outside every scratch directory this suite registered: %s' \
+		"$LINEAR_CACHE_ROOT"
+}
+
 # assert DESC CMD [ARG...] — CMD must exit zero. The command's own output is
 # captured, not printed: redirecting an assertion at the call site would
 # silence the failure report too.
@@ -248,7 +290,7 @@ run_output() {
 }
 
 __assert_on_exit() {
-	local rc=$? cmd dir ledger_ran=0 ledger_failed=0 lost=0 outstanding=""
+	local rc=$? cmd dir ledger_ran=0 ledger_failed=0 lost=0 outstanding="" cache_escape=""
 
 	# A background job still running has not finished writing to the ledger, so
 	# the totals below would be computed over a record that is still being
@@ -273,6 +315,7 @@ __assert_on_exit() {
 		ledger_failed="$(grep -c '^failed' "$ASSERT_LEDGER" || true)"
 	fi
 	lost=$((ledger_ran - ASSERT_COUNT))
+	cache_escape="$(__assert_cache_root_escape)"
 
 	for cmd in ${ASSERT_CLEANUP_CMDS[@]+"${ASSERT_CLEANUP_CMDS[@]}"}; do
 		eval "$cmd" || true
@@ -282,6 +325,13 @@ __assert_on_exit() {
 	done
 	rm -f -- "${ASSERT_LEDGER:?}"
 
+	if [[ -n "$cache_escape" ]]; then
+		printf 'FAIL: %s\n' "$cache_escape" >&2
+		printf '      the scripts under test would have resolved their cache from the enclosing\n' >&2
+		printf '      repository and written fixture ids into the real .cache/linear — point it\n' >&2
+		printf '      at a directory from assert_tmpdir instead\n' >&2
+		exit 1
+	fi
 	if ((lost > 0)); then
 		printf 'FAIL: %d assertion(s) ran in a subshell, where the suite cannot see them\n' "$lost" >&2
 		printf '      a command substitution, pipeline element, backgrounded or parenthesised\n' >&2

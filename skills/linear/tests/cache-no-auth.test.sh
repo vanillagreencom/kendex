@@ -13,6 +13,10 @@ assert_tmpdir tmp
 
 mkdir -p "$tmp/.agents/skills" "$tmp/.cache/linear" "$tmp/bin"
 git -C "$tmp" init -q -b main
+
+# This root's own cache is the subject, so it replaces the assert lib's default
+# sandbox — still scratch, so the exit verdict's containment check holds.
+export LINEAR_CACHE_ROOT="$tmp"
 cp -R "$SKILL_DIR" "$tmp/.agents/skills/linear"
 
 export OP_SENTINEL="$tmp/op-invocations.txt"

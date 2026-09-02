@@ -30,6 +30,10 @@ cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 # Cache lives under the project root — make the tmp root a git repo
 git -C "$TMP_ROOT" init -q
 
+# This root's own cache is the subject, so it replaces the assert lib's default
+# sandbox — still scratch, so the exit verdict's containment check holds.
+export LINEAR_CACHE_ROOT="$TMP_ROOT"
+
 # Writes require a configured Linear team, as in any real project
 printf '[env]\nLINEAR_TEAM = "Fixture"\n' >"$TMP_ROOT/kendex.settings.toml"
 

@@ -13,7 +13,29 @@ linear_cache_canonical_existing_dir() {
     (cd "$path" && pwd -P)
 }
 
+# LINEAR_CACHE_ROOT is the caller's redirect — the cache, and the attachment
+# store beside it, live under the directory it names. It is read before
+# anything derived from where the process is standing, so a caller that sets it
+# cannot be overruled by the repository it happens to be in. PROJECT_ROOT used
+# to be documented as that channel and could not work, because common.sh
+# recomputes it from `git rev-parse` on every source, so a test suite could not
+# isolate its cache and wrote fixture ids into the real one (kendex#799).
+# It is a distinct name rather than a revived PROJECT_ROOT because several orch
+# scripts export PROJECT_ROOT as "the repository the orchestrator is driving",
+# and reading that as a cache location would move a real cache underneath them.
+#
+# A value naming no directory is refused, not ignored: falling back to the git
+# root is exactly the failure the redirect exists to prevent.
 linear_cache_project_root() {
+    if [[ -n "${LINEAR_CACHE_ROOT:-}" ]]; then
+        if ! linear_cache_canonical_existing_dir "$LINEAR_CACHE_ROOT"; then
+            jq -cn --arg root "$LINEAR_CACHE_ROOT" \
+                '{error: ("LINEAR_CACHE_ROOT is not an existing directory: " + $root)}' >&2
+            return 1
+        fi
+        return 0
+    fi
+
     if [[ -n "${PROJECT_ROOT:-}" ]]; then
         linear_cache_canonical_existing_dir "$PROJECT_ROOT"
         return
@@ -26,6 +48,15 @@ linear_cache_project_root() {
 
 CACHE_PROJECT_ROOT="$(linear_cache_project_root)"
 CACHE_DIR="$CACHE_PROJECT_ROOT/.cache/linear"
+
+# One lock guards every comment-file mutation, rather than one per issue. A
+# lock file cannot be removed once used — unlinking it while another process
+# holds it open lets a third lock a fresh inode, so two writers each hold "the"
+# lock — so a per-issue lock left a permanent .lock beside every issue whose
+# comments were ever written, hundreds of them (kendex#799). One lock file
+# cannot accumulate, and comment writes are far too rare for serializing them
+# across issues to cost anything.
+CACHE_COMMENTS_LOCK="$CACHE_DIR/.comments.lock"
 
 # =============================================================================
 # WORKTREE CLOBBER GUARD (kendex#1032)
@@ -440,7 +471,7 @@ cache_remove_issue() {
 
     # Clean up comment file
     if [[ -n "$identifier" ]]; then
-        rm -f "$CACHE_DIR/comments/$identifier.json" "$CACHE_DIR/comments/$identifier.json.lock"
+        rm -f "$CACHE_DIR/comments/$identifier.json"
     fi
 }
 
@@ -457,7 +488,7 @@ cache_append_comment() {
             echo "$comment_json" | jq '[ . ]' > "$comment_file.tmp"
         fi
         mv "$comment_file.tmp" "$comment_file"
-    ) 202>"$comment_file.lock"
+    ) 202>"$CACHE_COMMENTS_LOCK"
 }
 
 cache_update_comment() {
@@ -474,7 +505,7 @@ cache_update_comment() {
             '[.[] | if .id == $upd.id then (. + $upd) else . end]' \
             "$comment_file" > "$comment_file.tmp"
         mv "$comment_file.tmp" "$comment_file"
-    ) 202>"$comment_file.lock"
+    ) 202>"$CACHE_COMMENTS_LOCK"
 }
 
 cache_delete_comment() {
@@ -487,7 +518,7 @@ cache_delete_comment() {
                 flock 202
                 jq --arg id "$comment_id" '[.[] | select(.id != $id)]' "$f" > "$f.tmp"
                 mv "$f.tmp" "$f"
-            ) 202>"$f.lock"
+            ) 202>"$CACHE_COMMENTS_LOCK"
             return 0
         fi
     done
