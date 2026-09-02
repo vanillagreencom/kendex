@@ -73,10 +73,8 @@ actions:write. When pr-watch.sh is absent, the step is skipped with one stderr n
 Environment:
   LINEAR_TEAM                 team the triage check reads under --since, from
                               kendex.settings.toml [env] unless the process
-                              environment carries the name. No team anywhere
-                              watches without triage and says so once. An
-                              EXPORTED EMPTY value is refused: it shadows a
-                              configured team and looks like having none
+                              environment carries the name. Empty or absent
+                              watches without triage and says so once
   ORCH_STATE_DIR              workflow-state directory; relative paths join
                               the project root; absolute paths stay unchanged
   OVERSEE_WATCH_PR_WATCH      path to pr-watch.sh
@@ -142,11 +140,6 @@ SKILLS_DIR="$PROJECT_ROOT/.agents/skills"
 export SKILLS_DIR
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
-# Read BEFORE the load: kendex_load_project_env gives the parent environment
-# precedence over kendex.settings.toml [env] and then drops its own snapshot,
-# so afterwards an exported-empty LINEAR_TEAM and a project that declares none
-# are the same empty string. The triage gate needs them apart.
-LINEAR_TEAM_FROM_PARENT_ENV="${LINEAR_TEAM+set}"
 kendex_load_project_env "$PROJECT_ROOT"
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh"
@@ -266,15 +259,12 @@ if [[ -n "$SINCE" ]]; then
 fi
 
 TRIAGE_ENABLED=0
-# LINEAR_TEAM decides whether this fleet has a team to triage at all: no team
-# anywhere is a repo that tracks work elsewhere, so triage is skipped, named
-# once, and the watch runs on --since for the merged check. An empty value the
-# parent environment supplied is the case this check CANNOT judge — it shadows
-# whatever team the project configures, and reading it as "no team" would turn
-# a configured fleet's triage off in silence — so it refuses instead. With a
-# team, triage fails CLOSED: oversee.md § 4 owes a verdict to every emitted
-# team item, so a broken install that silently dropped triage would drop every
-# new item with it, and each missing dependency names its own remedy.
+# LINEAR_TEAM decides whether this fleet has a team to triage at all: empty,
+# however it was spelled, is a repo that tracks work elsewhere, so triage is
+# skipped, named once, and the watch runs on --since for the merged check.
+# With a team, triage fails CLOSED: oversee.md § 4 owes a verdict to every
+# emitted team item, so a broken install that silently dropped triage would
+# drop every new item with it, and each missing dependency names its remedy.
 if [[ -n "$SINCE" ]]; then
   if [[ -n "${LINEAR_TEAM:-}" ]]; then
     [[ -x "$TRACKER" ]] \
@@ -282,8 +272,6 @@ if [[ -n "$SINCE" ]]; then
     [[ -x "$WORKFLOW_STATE" ]] \
       || die "workflow-state CLI not found at $WORKFLOW_STATE; triage needs it (set OVERSEE_WATCH_WORKFLOW_STATE)"
     TRIAGE_ENABLED=1
-  elif [[ -n "$LINEAR_TEAM_FROM_PARENT_ENV" ]]; then
-    die "LINEAR_TEAM is exported as an empty value, which shadows any team this project configures; triage cannot tell that from a project with no team. Export the team name."
   else
     echo "oversee-watch: LINEAR_TEAM is unset; skipping the team triage check (pr-watch/merged/window/lane-asking checks still run)" >&2
   fi

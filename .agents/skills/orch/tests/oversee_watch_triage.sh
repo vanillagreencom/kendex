@@ -175,20 +175,6 @@ assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=2026
 assert_eq "$(grep -c 'skipping the team triage check' "$err")" "1" \
   "the skip note is printed once, not once per pass" "$err"
 
-# An empty LINEAR_TEAM the parent environment exported shadows whatever team
-# kendex.settings.toml declares, and the gate cannot tell it from a project
-# with no team, so it refuses rather than silently watching without triage.
-new_case triage_refuses_a_shadowing_empty_team
-printf '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]\n' > "$STUB_DIR/tracker.out"
-err="$TMP_ROOT/triage-empty-export"
-out="$(run_watch LINEAR_TEAM= -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "2" "an exported-empty LINEAR_TEAM exits 2 under --since" "$err"
-assert_eq "$out" "" "an exported-empty LINEAR_TEAM emits no event" "$err"
-assert_contains "$(cat "$err")" "exported as an empty value" \
-  "the refusal names the empty export as the cause" "$err"
-assert_not_contains "$(cat "$err")" "skipping the team triage check" \
-  "the shadowed team is never read as a fleet with no team" "$err"
-
 new_case triage_unsets_inherited_state
 err="$TMP_ROOT/triage-state-inherited"
 out="$(ORCH_STATE_DIR=leaked run_watch -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
