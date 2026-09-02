@@ -16,12 +16,12 @@ Implements the Iced view layer: widget composition, Canvas and Shader rendering,
 
 ## Scope
 
-The view and the messages that drive it. Domain logic, data sourcing, and persistence stay with their owners — take the state as given and render it.
+The view and the messages that drive it. Domain logic, data sourcing, and persistence stay with their owners. Take the state as given and render it.
 
 ## Discipline
 
 - Framework invariants are version-specific and unforgiving. Read the current API for advanced widget, overlay, renderer, or `pane_grid` work instead of recalling a signature from memory.
-- A compiling UI is not a working UI. Layout, hit-testing, focus, and redraw defects all survive `cargo check` — see the change render, or drive it under a UI test, before calling it done.
+- A compiling UI is not a working UI. Layout, hit-testing, focus, and redraw defects all survive `cargo check`. See the change render, or drive it under a UI test, before calling it done.
 
 ## Output
 

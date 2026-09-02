@@ -34,7 +34,7 @@ A loud failure beats a silent wrong answer. Handle every error, check invariants
 - No workarounds or quick hacks. If the correct fix is larger than expected, say so.
 - **Never fail open.** A dependency failure (command, file, network, parse) must not leave the caller in a passing or default state: no validator degrading to "no findings", no probe failure read as "not applicable", no unchecked `$(mktemp)`.
 - A gate, guard or scanner change adds no enumerated exemption list; a refusal is one rule at the point the code cannot judge.
-- A branch that "shouldn't happen" is never an empty or silently-ignored `else`: assert it, return an explicit internal error, or mark it unreachable — with a message naming the violated invariant. Use plain conditionals only when both branches are expected paths.
+- A branch that "shouldn't happen" is never an empty or silently-ignored `else`: assert it, return an explicit internal error, or mark it unreachable, with a message naming the violated invariant. Use plain conditionals only when both branches are expected paths.
 - An error path must name the actual cause, not a neighbouring dependency.
 - Handle edge cases: empty input, boundary values, junk prefixes/suffixes, interrupted-then-retried flows.
 
@@ -72,7 +72,7 @@ Don't:
 - Temporal markers ("added", "new", "existing code", "Phase 1") or revision narration.
 - References to AI conversations, review rounds, or issue archaeology.
 - Claims broader than what the adjacent code or assertion actually enforces.
-- A numeral counting things outside the sentence. State the property and the command that enumerates it. A numeral bound to something adjacent — a list in the same paragraph, a constant a check compares against, one a ratchet owns — stays.
+- A numeral counting things outside the sentence. State the property and the command that enumerates it. A numeral bound to something adjacent stays: a list in the same paragraph, a constant a check compares against, one a ratchet owns.
 
 Markdown placement rules:
 
@@ -88,7 +88,7 @@ Write the shortest unambiguous rule and delete sentences nothing acts on. Use pl
 
 Build only what was asked. No speculative abstractions, no error handling for impossible scenarios, no generalization before a third caller exists. Delete wrappers that only forward. A new dependency needs a one-line justification in its commit message.
 
-One judge per question: never re-implement a decision (classify, validate, parse, detect state) another component or language already owns — delegate. A second spelling is a defect even when both copies agree. Package behavior lives in the package's shipped scripts; a host binary only locates, execs, and surfaces results.
+One judge per question: never re-implement a decision (classify, validate, parse, detect state) another component or language already owns. Delegate. A second spelling is a defect even when both copies agree. Package behavior lives in the package's shipped scripts; a host binary only locates, execs, and surfaces results.
 
 ## Cleanup
 

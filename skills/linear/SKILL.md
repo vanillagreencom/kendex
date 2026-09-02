@@ -66,27 +66,27 @@ In a linked worktree whose `.cache` should be a `WORKTREE_SYMLINKS`-managed syml
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `LINEAR_API_KEY` | Required for live commands and sync; not for cache reads | — |
-| `LINEAR_API_KEY_OVERRIDE` | Inline/test key that beats project files | — |
-| `LINEAR_TEAM` | Team every write targets | — (unset refuses writes) |
+| `LINEAR_API_KEY` | Required for live commands and sync; not for cache reads | none |
+| `LINEAR_API_KEY_OVERRIDE` | Inline/test key that beats project files | none |
+| `LINEAR_TEAM` | Team every write targets | none (unset refuses writes) |
 | `LINEAR_FORMAT` | Default output format | `safe` |
 | `LINEAR_TEAM_PREFIX` | Issue identifier prefix | `PROJ` |
-| `LINEAR_AGENT_LABELS` | Declared `agent:*` taxonomy; non-empty makes `issues create` refuse unrouted creates | — (unset = off) |
-| `LINEAR_REQUIRE_REACH` | Non-empty makes `issues create` refuse a body with no `Reached by:` line | — (unset = off) |
+| `LINEAR_AGENT_LABELS` | Declared `agent:*` taxonomy; non-empty makes `issues create` refuse unrouted creates | none (unset = off) |
+| `LINEAR_REQUIRE_REACH` | Non-empty makes `issues create` refuse a body with no `Reached by:` line | none (unset = off) |
 
 `LINEAR_API_KEY` belongs in `.env.local`; non-secret defaults in committed `kendex.settings.toml` `[env]`. A key from project files beats one inherited from the environment, and `auth-check` warns (fingerprints only) when it shadows a differing inherited key.
 
 ## Issue Creation Routing
 
-Never create a tracked issue directly from an orchestration or review session — route it through the TPM pipeline (project-management skill), which owns labels, project, priority, estimate, and relations.
+Never create a tracked issue directly from an orchestration or review session. Route it through the TPM pipeline (project-management skill), which owns labels, project, priority, estimate, and relations.
 
-Where `LINEAR_AGENT_LABELS` declares a taxonomy, `issues create` refuses — before any API call — a create carrying no agent label from that set, including a typoed `agent:*` name. `--no-agent-label` permits a deliberate bare create.
+Where `LINEAR_AGENT_LABELS` declares a taxonomy, `issues create` refuses, before any API call, a create carrying no agent label from that set, including a typoed `agent:*` name. `--no-agent-label` permits a deliberate bare create.
 
-Where `LINEAR_REQUIRE_REACH` is set, `issues create` refuses — before any API call — a description with no `Reached by:` line and, with `--review-born`, a `--priority 2` description with no `Symptom:` line. An unsubstituted placeholder (`[REACH]`) or a null token (`TBD`, `n/a`, `none`, `-`) counts as no line, so a refusal naming a missing line is what an author who typed one of those reads. What the lines say is the author's to judge; the guard checks that they are there. Each refusal states the rule it enforces; the rule itself is the project-management skill's SKILL.md § Disposition, **Name what reaches it**, which is also where a create decides whether it is review-born.
+Where `LINEAR_REQUIRE_REACH` is set, `issues create` refuses, before any API call, a description with no `Reached by:` line and, with `--review-born`, a `--priority 2` description with no `Symptom:` line. An unsubstituted placeholder (`[REACH]`) or a null token (`TBD`, `n/a`, `none`, `-`) counts as no line, so a refusal naming a missing line is what an author who typed one of those reads. What the lines say is the author's to judge; the guard checks that they are there. Each refusal states the rule it enforces; the rule itself is the project-management skill's SKILL.md § Disposition, **Name what reaches it**, which is also where a create decides whether it is review-born.
 
 ## Attachments
 
-`issues create`, `issues update`, and `comments create` take a repeatable `--attach <path>`. Images embed as markdown in the description/body — on `issues update` without `--description`, the embed appends to the existing description rather than replacing it. Other files become Linear attachments on issues, or markdown links on comments (comments have no attachment surface). An unreadable path refuses before any API call; an attachment failure after a successful issue write reports `partial: true` and exits non-zero.
+`issues create`, `issues update`, and `comments create` take a repeatable `--attach <path>`. Images embed as markdown in the description/body. On `issues update` without `--description`, the embed appends to the existing description rather than replacing it. Other files become Linear attachments on issues, or markdown links on comments (comments have no attachment surface). An unreadable path refuses before any API call; an attachment failure after a successful issue write reports `partial: true` and exits non-zero.
 
 ## Output Formats
 
@@ -96,7 +96,7 @@ Where `LINEAR_REQUIRE_REACH` is set, `issues create` refuses — before any API 
 | `compact` | `safe` minus descriptions and other large text |
 | `ids` | Newline-separated identifiers |
 | `table` | Human-readable table |
-| `raw` | Original GraphQL nesting — do not assume top-level jq paths |
+| `raw` | Original GraphQL nesting. Do not assume top-level jq paths |
 
 `safe` renames fields: `identifier`→`id`, `id`→`uuid`, `state.name`→`state`, `state.type`→`state_type`, `sortOrder`→`sort_order`.
 
@@ -109,7 +109,7 @@ Where `LINEAR_REQUIRE_REACH` is set, `issues create` refuses — before any API 
 
 Blocking relations must connect peers of one bundle: same direct parent, or both top-level. The two issues need not share a project. An issue cannot block its own ancestor or descendant; use `--related` for traceability. The check reads each issue's own direct parent in one query.
 
-A blocking relation pointing at a Done or Canceled issue is **satisfied history, not stale metadata** — Linear itself already treats the dependent issue as unblocked. The relation stays for provenance; never remove or "fix" it, and audits must never classify it as stale. The only legitimate audit output for a completed-blocker relation is a scheduling signal ("gates cleared, ready to schedule").
+A blocking relation pointing at a Done or Canceled issue is **satisfied history, not stale metadata**. Linear itself already treats the dependent issue as unblocked. The relation stays for provenance; never remove or "fix" it, and audits must never classify it as stale. The only legitimate audit output for a completed-blocker relation is a scheduling signal ("gates cleared, ready to schedule").
 
 Normalized issue lists, gets, bulk gets, bundles, recursive children, relation reads, and session status keep each blocking relation in `blocked_by` and list only nonterminal blockers in `blocked_by_open`.
 
@@ -127,7 +127,7 @@ Normalized issue lists, gets, bulk gets, bundles, recursive children, relation r
 
 Available states: Backlog, Todo, In Progress, In Review, Done, Canceled (not "Cancelled"). Verify with `statuses list`.
 
-Where a **name** selects one project — `issues create` / `update` / `bulk-update --project`, `projects get`, `projects list-dependencies`, `milestones --project`, `initiatives add-project` / `remove-project` — a canceled project sharing that name loses to the live one, and a name with no live match is refused, naming each match and its state; pass a UUID to reach a canceled project. Name **filters** never resolve: `issues list --project`, `cache issues list --project` and `documents list --project` match on the name alone, so their results can mix a live project with its canceled twin.
+A **name** selects one project on `issues create` / `update` / `bulk-update --project`, `projects get`, `projects list-dependencies`, `milestones --project`, and `initiatives add-project` / `remove-project`. There a canceled project sharing that name loses to the live one, and a name with no live match is refused, naming each match and its state; pass a UUID to reach a canceled project. Name **filters** never resolve: `issues list --project`, `cache issues list --project` and `documents list --project` match on the name alone, so their results can mix a live project with its canceled twin.
 
 `--labels` REPLACES the whole issue-label set. Fetch current labels, compute the final set, validate it against `cache labels list --format=safe` (which reports `is_group` so parent/group labels can be rejected), then pass the complete set. A name that does not resolve fails the update; `--clear-labels` is the only way to empty the set.
 
@@ -137,6 +137,6 @@ Where a **name** selects one project — `issues create` / `update` / `bulk-upda
 
 ## validate-completion
 
-The pre-merge check on state plus summary comment, live only — `issues validate-completion`, with no `cache` spelling. The expected-state matrix — session root vs bundle children vs `--container` parents, and the fail-closed flag pairing — is in `issues --help` § Validate-Completion.
+The pre-merge check on state plus summary comment, live only: `issues validate-completion`, with no `cache` spelling. The expected-state matrix is in `issues --help` § Validate-Completion: session root vs bundle children vs `--container` parents, and the fail-closed flag pairing.
 
 A "labelIds not exclusive child labels" error means two labels from one exclusive group. Requires Bash 4.0+ (macOS system Bash 3.2 is unsupported), `curl`, and `jq`.

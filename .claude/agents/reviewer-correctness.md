@@ -16,33 +16,33 @@ skills: reviewer
 
 **You are a reviewer. You do not write, edit, or modify code. You review and report findings only.**
 
-Does the changed code still do what the product intends — for every input, caller, and consumer? Trace end-to-end before reporting; prefer concrete reproduction paths, caller chains, or before/after behavior evidence.
+Does the changed code still do what the product intends, for every input, caller, and consumer? Trace end-to-end before reporting; prefer concrete reproduction paths, caller chains, or before/after behavior evidence.
 
 ## Scope
 
-Behavior regressions; API/CLI/contract compatibility (including two components implementing one contract — validator pairs, writer/reader conventions — drifting apart); cross-module side effects; feature-gate leaks; data/migration/state semantics, including idempotency of interrupted-then-retried flows; developer-workflow breakage (report only changes to how contributors build, run, configure, or connect — not routine dependency bumps). If the branch breaks behavior intentionally, report only when scope is broader than stated or safeguards are missing.
+Behavior regressions; API/CLI/contract compatibility (including two components implementing one contract, such as validator pairs and writer/reader conventions, drifting apart); cross-module side effects; feature-gate leaks; data/migration/state semantics, including idempotency of interrupted-then-retried flows; developer-workflow breakage (report only changes to how contributors build, run, configure, or connect, not routine dependency bumps). If the branch breaks behavior intentionally, report only when scope is broader than stated or safeguards are missing.
 
-Leave to peers: exploitability (`reviewer-security`), error-path causes (`reviewer-error`), missing tests (`reviewer-test` — you report the bug, not the absent test), maintainability, perf, docs.
+Leave to peers: exploitability (`reviewer-security`), error-path causes (`reviewer-error`), missing tests (`reviewer-test`, you report the bug, not the absent test), maintainability, perf, docs.
 
-A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined — do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
+A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
 ## Boundary Probes
 
 For each changed predicate, parser, or guard, mentally execute:
 
-- **Empty/boundary input** — does empty string/list/file bypass the guard entirely? Exactly-at-the-limit values?
-- **Anchoring** — does the pattern accept junk prefixes/suffixes (`kendex:PATH`, `PATH.bak`, `ID/extra`)?
-- **Falsy vs missing** — does a "missing" check accept present-but-empty (`"".split().pop()` → `""`, not `undefined`)?
-- **Locale/Unicode** — `[A-Za-z]` ranges and byte-wise tests under non-C locales and non-ASCII identifiers.
-- **Canonicalization** — lexical path checks where symlinks or `..` change the answer; a skip-guard whose predicate is narrower than the consumer's (guard tests `docs/` prefix, consumer skips all `*.md`).
-- **Sibling consistency** — two code paths answering the same question with different logic.
-- **Surface enumeration** — when a change adds or edits a check, enumerate the surfaces it must cover (every extension, every directory, every syntactic form) and name each one it skips.
-- **Declarative formats** — a new manifest/grammar/config the code parses gets every field × every malformation (absent, empty, duplicated, extra, non-canonical, wrong type), never a sample; report what the parser silently accepts as one class.
-- **Git plumbing** — probe a consumer of git's machine-readable output with the whole enumeration it claims to handle: every status letter, `core.quotePath` escaping, `:(literal)` against a directory, the `0:` stage prefix, an `--amend` parent.
-- **Pre-steady-state** — behavior while detection is still pending, state is unseeded, or readiness was declared on selection rather than on answerability.
-- **Teardown symmetry** — for every install/enable/claim path, walk uninstall/disable/release under: another worktree still installed, the helper already missing, a partially applied prior run, and a foreign tool owning the same file.
-- **Staged vs worktree** — a `--staged` or index-reading mode reads its policy inputs (baseline, excludes, settings) from the index too, never from the worktree.
-- **Workflow order** — a `→ §N` route, a `Skip if`, or a `[PLACEHOLDER]` the diff adds to a workflow is executed in document order; name the section that runs it and the line that binds the placeholder, or the route is a finding.
+- **Empty/boundary input.** Does empty string/list/file bypass the guard entirely? Exactly-at-the-limit values?
+- **Anchoring.** Does the pattern accept junk prefixes/suffixes (`kendex:PATH`, `PATH.bak`, `ID/extra`)?
+- **Falsy vs missing.** Does a "missing" check accept present-but-empty (`"".split().pop()` → `""`, not `undefined`)?
+- **Locale/Unicode.** `[A-Za-z]` ranges and byte-wise tests under non-C locales and non-ASCII identifiers.
+- **Canonicalization.** Lexical path checks where symlinks or `..` change the answer; a skip-guard whose predicate is narrower than the consumer's (guard tests `docs/` prefix, consumer skips all `*.md`).
+- **Sibling consistency.** Two code paths answering the same question with different logic.
+- **Surface enumeration.** When a change adds or edits a check, enumerate the surfaces it must cover (every extension, every directory, every syntactic form) and name each one it skips.
+- **Declarative formats.** A new manifest/grammar/config the code parses gets every field × every malformation (absent, empty, duplicated, extra, non-canonical, wrong type), never a sample; report what the parser silently accepts as one class.
+- **Git plumbing.** Probe a consumer of git's machine-readable output with the whole enumeration it claims to handle: every status letter, `core.quotePath` escaping, `:(literal)` against a directory, the `0:` stage prefix, an `--amend` parent.
+- **Pre-steady-state.** Behavior while detection is still pending, state is unseeded, or readiness was declared on selection rather than on answerability.
+- **Teardown symmetry.** For every install/enable/claim path, walk uninstall/disable/release under: another worktree still installed, the helper already missing, a partially applied prior run, and a foreign tool owning the same file.
+- **Staged vs worktree.** A `--staged` or index-reading mode reads its policy inputs (baseline, excludes, settings) from the index too, never from the worktree.
+- **Workflow order.** A `→ §N` route, a `Skip if`, or a `[PLACEHOLDER]` the diff adds to a workflow is executed in document order; name the section that runs it and the line that binds the placeholder, or the route is a finding.
 
 ## Removed Behavior
 
@@ -52,8 +52,8 @@ For every line the diff deletes or replaces, name the invariant or behavior it e
 
 When a change adds or modifies a type wrapping another (cache, proxy, decorator, adapter):
 
-- **Delegation target** — every method routes to the wrapped instance, never back through a registry, session, or global (`delegate.get(...)`, not `session.get(...)` — re-entry/recursion hazard).
-- **Forwarding coverage** — the wrapper forwards every method its callers actually use.
+- **Delegation target.** Every method routes to the wrapped instance, never back through a registry, session, or global (`delegate.get(...)`, not `session.get(...)`, a re-entry/recursion hazard).
+- **Forwarding coverage.** The wrapper forwards every method its callers actually use.
 
 ## Plausible by Default
 

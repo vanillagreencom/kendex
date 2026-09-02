@@ -12,7 +12,7 @@ metadata:
   version: "1.0.0"
 tags: [automation]
 repo-effects:
-  summary: "Arms git pre-commit and commit-msg hooks, so every commit in this repository runs the guard chain — for everyone who commits here, not only for kendex."
+  summary: "Arms git pre-commit and commit-msg hooks, so every commit in this repository runs the guard chain, for everyone who commits here, not only for kendex."
   writes:
     - ".git/hooks/kendex-guards"
     - ".git/hooks/pre-commit"
@@ -86,13 +86,13 @@ Arming and disarming apply to the whole repository. Disarm before removing the s
 Settings follow [README.md § Configuration](README.md#configuration).
 `GROWTH_GUARDS_SETTINGS_FILE=/dev/null` skips file sources; `GROWTH_GUARDS_CHANGELOG_COLLATE=1` is environment-only and bypasses only the record comparison.
 
-**Excludes format** — `pattern<TAB>reason` per line (shell glob against the
+**Excludes format.** `pattern<TAB>reason` per line (shell glob against the
 full repo-relative path; `*` crosses `/`); a pattern without a reason is a
 config error. A pattern opening with `!` carves its matches back into the
-scanned set, and wins over every exclusion row whatever the order — that is
+scanned set, and wins over every exclusion row whatever the order. That is
 how hand-written source inside an otherwise excluded render tree
 (`.agents/**` plus `!.agents/skills/my-skill/**`) stays governed. To exclude a
 path that literally begins with `!`, escape it: `\!foo`.
-**Baseline format** — `path<TAB>count`, `LC_ALL=C` sorted,
+**Baseline format.** `path<TAB>count`, `LC_ALL=C` sorted,
 unique paths, positive counts.
 Seeding a first baseline and CI wiring: [README.md](README.md). Hook install and removal details: [DEVELOPMENT.md](DEVELOPMENT.md).

@@ -29,10 +29,10 @@ the gate; and merge-group statuses never read the mode, posting green as
 
 | Verdict | Status | Meaning |
 |---|---|---|
-| `approved` | `success` | Evidence exists for this head; no standing objection; no unresolved threads. Under `REVIEW_GATE_MODE = "off"` the predicate evaluates NO term — success there means only "gate disabled", stated in the status description. |
+| `approved` | `success` | Evidence exists for this head; no standing objection; no unresolved threads. Under `REVIEW_GATE_MODE = "off"` the predicate evaluates NO term. Success there means only "gate disabled", stated in the status description. |
 | `awaiting` | `pending` | No review evidence for this head yet. |
 | `threads-open` | `pending` | Evidence exists, but review threads are unresolved. |
-| `changes-requested` | `failure` | A reviewer objects. Red means objection — never a build failure. |
+| `changes-requested` | `failure` | A reviewer objects. Red means objection, never a build failure. |
 | `untracked-claim` | `failure` | A disposition reply that claims tracking and names no issue fails the gate. |
 | `unreasoned-decline` | `failure` | A decline whose reason strips to nothing against the label vocabulary fails the gate. |
 | (exit 2, no verdict) | *unchanged* | A read failed or config is invalid. Take NO action; retry next pass. |
@@ -61,8 +61,8 @@ git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml' \
 
 `validate.sh` prints one verdict line per check and every `FAIL` line names
 its own fix. Exit 0 = clean, 1 = findings, 2 = the check could not run at all
-(bad arguments, not a git repository, a missing file it derives checks from —
-fix that first; a 2 is never a pass). Run it after every step below.
+(bad arguments, not a git repository, a missing file it derives checks from).
+Fix that first; a 2 is never a pass. Run it after every step below.
 
 ## 2. Adopt, when nothing is wired
 
@@ -88,8 +88,8 @@ $EDITOR kendex.settings.toml
 .agents/skills/review-gate/scripts/validate.sh
 ```
 
-Then add the validate step to the repo's CI as its own job — no `needs`, no
-path filter, no gate condition:
+Then add the validate step to the repo's CI as its own job, with no `needs`,
+no path filter, no gate condition:
 
 ```yaml
   review-gate-validate:
@@ -103,8 +103,8 @@ path filter, no gate condition:
       - run: .agents/skills/review-gate/scripts/validate.sh
 ```
 
-Finish with the repo-side wiring — ruleset, merge queue, bypass actor — and
-delete the local machinery the writer supersedes, in the same PR:
+Finish with the repo-side wiring of ruleset, merge queue, and bypass actor,
+and delete the local machinery the writer supersedes, in the same PR:
 [references/adoption.md](references/adoption.md).
 
 ## 3. Decide and repair
@@ -121,7 +121,7 @@ line.
 
 **A PR that repairs the gate itself.** The writer always runs the merged engine. Merge the repair PR with the ruleset's bypass actor and say so in the commit message.
 
-**A settings-change PR** is judged by the OLD config — a PR adding a trusted login cannot have its own gate honor it. Merge via normal review or the bypass actor.
+**A settings-change PR** is judged by the OLD config. A PR adding a trusted login cannot have its own gate honor it. Merge via normal review or the bypass actor.
 
 # The engine
 

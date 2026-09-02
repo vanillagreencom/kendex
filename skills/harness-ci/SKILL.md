@@ -19,13 +19,12 @@ tags: [automation]
 output?** The classifier reads a diff's changed-file set and prints
 `harness_only=true` when every path sits under `.agents/`, `.claude/`,
 `.codex/`, `.opencode/`, `.cursor/`, `.pi/`, or is the root
-`opencode.json` — `opencode.jsonc` where a project carries that spelling.
+`opencode.json`, or `opencode.jsonc` where a project carries that spelling.
 Anything else prints `false`, and so does every diff the classifier cannot
 read. A path the selected head tree's manifests (`kendex.toml`, and
 `kendex-local.toml` where a source catalog keeps its installs) declare in
-place —
-`.agents/skills/<name>` under `[skills.<name>] source = "in-place"` — and
-any `.agents/hooks/` script are project source, never render output.
+place, `.agents/skills/<name>` under `[skills.<name>] source = "in-place"`,
+and any `.agents/hooks/` script are project source, never render output.
 
 ```bash
 .agents/skills/harness-ci/scripts/harness-only \
@@ -51,10 +50,10 @@ rendered script. Adoption edits the consumer's workflow by hand, once.
 the workflow from starting, the required context is never created, and a
 merge queue waits forever on a check nothing will report.
 
-**Keep the required-context job unconditional.** Gate the expensive lanes —
-job-level `if:` off a `changes` job's output, or step-level `if:` inside an
-aggregate — and let the aggregate that carries the required name run on every
-event.
+**Keep the required-context job unconditional.** Gate the expensive lanes with
+a job-level `if:` off a `changes` job's output, or a step-level `if:` inside
+an aggregate, and let the aggregate that carries the required name run on
+every event.
 
 **A job-level `if:` needs a status function.** Without one it keeps the
 implicit `success()` and skips the lane whenever the classifying job failed,
@@ -65,7 +64,7 @@ ran and cleared the diff.
 **A lane reading a path family beside the verdict needs more than the status
 function.** A dead classifying job publishes no outputs, so the family term
 reads empty and skips the lane on its own. Lift it behind
-`needs.changes.result != 'success'` — the two-gate shape in
+`needs.changes.result != 'success'`, the two-gate shape in
 [references/wiring.md](references/wiring.md).
 
 ## Reading a verdict
@@ -76,9 +75,9 @@ read directly. The changed paths and the reason behind a `false` go to
 `$GITHUB_OUTPUT`) appends the same line for a step output.
 
 Exit `0` accompanies every verdict, `true` or `false`. Exit `2` is a wiring
-error — an unknown flag, a missing `--event`, a flag where a value belongs, an
-`--output` the process cannot append to — and prints nothing on stdout,
-turning the step red instead of passing a guess off as a classification.
+error: an unknown flag, a missing `--event`, a flag where a value belongs, an
+`--output` the process cannot append to. It prints nothing on stdout, turning
+the step red instead of passing a guess off as a classification.
 
 ## Fail-closed
 

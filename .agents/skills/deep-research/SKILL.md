@@ -51,7 +51,7 @@ skills/deep-research/scripts/deep-research doctor
 
 | Mode | Exa type | Results | Text cap | Timeout | Synthesis |
 |---|---|---:|---:|---:|---|
-| `lite` | `deep-lite` | 15 | 10k chars/result | 5 min | Not requested — evidence brief only |
+| `lite` | `deep-lite` | 15 | 10k chars/result | 5 min | Not requested, evidence brief only |
 | `standard` | `deep-reasoning` | 50 | 10k chars/result | 10 min | Requested via `outputSchema` |
 | `full` | `deep-reasoning` | 100 | 10k chars/result | 30 min | Requested, per query |
 
@@ -71,7 +71,7 @@ Prints `{ok, errors, warnings, mode, synthesis, queryCount}`; exits 0 when there
 
 Read for these yourself:
 
-- Claims the cited sources contradict — spot-check material numbers against the sidecar source text.
+- Claims the cited sources contradict. Spot-check material numbers against the sidecar source text.
 - Off-topic sources that share an acronym or name with the subject.
 - Recommendations with no claim-level support in Evidence and Sources.
 - Results generalized past what the source established.

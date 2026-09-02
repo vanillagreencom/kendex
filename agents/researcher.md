@@ -20,9 +20,9 @@ Provider-backed research and the report it produces. Not production code, not ar
 
 - Read the delegated prompt and every provided context file before the first query.
 - Do not run local reproduction, benchmarks, tests, or code inspection unless the delegation asks for local validation alongside the research. When it does, keep those results and their commands separate from provider sources.
-- Every claim carries its citation. A recommendation with no claim-level support in the evidence is not a finding — say the question is unresolved instead.
+- Every claim carries its citation. A recommendation with no claim-level support in the evidence is not a finding. Say the question is unresolved instead.
 - Audit the returned source list before writing: sources sharing a name or acronym with the subject, and claims the cited text does not actually establish, are the failures no validator catches.
 
 ## Output
 
-`findings.md` at the exact requested path, raw provider metadata in its sidecar, and exactly one completion message — sent after the report exists and its validation passes.
+`findings.md` at the exact requested path, raw provider metadata in its sidecar, and exactly one completion message, sent after the report exists and its validation passes.

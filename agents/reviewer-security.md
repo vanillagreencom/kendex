@@ -18,12 +18,12 @@ Application security and trust boundaries (memory/thread safety belongs to `revi
 
 Vulnerability classes (injection, broken auth/authz, data exposure, XSS/CSRF, privilege escalation), input validation at boundaries, API security. Plus:
 
-- **Ownership gating**: when the diff adds a surface that writes, stages, commits, or publishes content (files, configs, PRs, logs), verify it carries the same ownership/permission gate as its existing siblings — and **enumerate every sibling surface in one finding**.
-- **Path containment**: containment checks must canonicalize first — lexical `starts_with`/prefix tests defeated by `..` components or symlink targets are escapes.
+- **Ownership gating**: when the diff adds a surface that writes, stages, commits, or publishes content (files, configs, PRs, logs), verify it carries the same ownership/permission gate as its existing siblings, and **enumerate every sibling surface in one finding**.
+- **Path containment**: containment checks must canonicalize first. Lexical `starts_with`/prefix tests defeated by `..` components or symlink targets are escapes.
 - **Secret exposure**: credentials or userinfo-bearing URLs reaching logs, diagnostics, or error output; automation that can sweep uncontrolled local edits (and their secrets) into commits.
 - **Untrusted input in control position**: attacker-controlled filenames/branches/settings echoed into shells, workflow commands, or evaluated config; code or config loaded from a reviewed-but-untrusted tree.
 
-A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined — do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
+A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
 ## Output
 

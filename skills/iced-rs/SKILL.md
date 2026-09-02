@@ -18,7 +18,7 @@ tags: [ui]
 ## Workflow
 
 1. Classify the surface against `references/guide-surface-selection.md`. Do not skip.
-2. Read the canonical example in `examples/` — never generate 0.14 code from memory.
+2. Read the canonical example in `examples/`, never generate 0.14 code from memory.
 3. Read the guide for that surface; for animated layered UI, `references/guide-animated-layout.md` comes first.
 4. Stuck: the guide's "Common failure modes" / "Gotchas", then `references/guide-animation-debugging.md` for animation and render bugs. The three most common: missing `capture_event`, missing `invalidate_layout`, 0.13 event signatures.
 
@@ -26,7 +26,7 @@ Surface choice: built-in widgets + `.style(closure)` for standard UI; `Canvas` f
 
 ## Bundled resources
 
-### `references/` — API refs and guides
+### `references/`: API refs and guides
 
 Full list in `references/INDEX.md`; load on demand.
 
@@ -41,7 +41,7 @@ Full list in `references/INDEX.md`; load on demand.
 
 API refs: `advanced-*.md`, `widget-*.md`, `canvas*.md`, `shader.md`, `element.md`, `length.md`, `padding.md`, `alignment.md`, `task.md`, `subscription.md`, `application.md`, `window.md`, `keyboard.md`, `mouse.md`, `theme*.md`, `catalog.md`, `pane-grid.md`, `animation*.md`, `api-module-tree.md`.
 
-### `examples/` — every upstream Iced 0.14 example
+### `examples/`: every upstream Iced 0.14 example
 
 | Need | Read first |
 |---|---|
@@ -60,7 +60,7 @@ API refs: `advanced-*.md`, `widget-*.md`, `canvas*.md`, `shader.md`, `element.md
 | WebSocket subscription | `examples/websocket/` |
 | Text editing | `examples/editor/` |
 
-### `iced_wgpu/` — iced's own wgpu renderer source
+### `iced_wgpu/`: iced's own wgpu renderer source
 
 | File | Use |
 |---|---|
@@ -74,7 +74,7 @@ API refs: `advanced-*.md`, `widget-*.md`, `canvas*.md`, `shader.md`, `element.md
 
 ### External fallbacks
 
-Local references are pinned to 0.14.0 — prefer them. For newer API surface: `ctx7 docs /websites/rs_iced_iced "<query>"`, `https://docs.rs/iced/0.14.0/iced/`, or upstream master at `https://github.com/iced-rs/iced` (may have unreleased APIs).
+Local references are pinned to 0.14.0. Prefer them. For newer API surface: `ctx7 docs /websites/rs_iced_iced "<query>"`, `https://docs.rs/iced/0.14.0/iced/`, or upstream master at `https://github.com/iced-rs/iced` (may have unreleased APIs).
 
 ## Breaking changes from Iced 0.13
 
@@ -111,11 +111,11 @@ No side effects, no memoization dependent on call frequency. All mutable state l
 
 ### Redraw vs rebuild
 
-`request_redraw()` repaints but does **not** call `view()`. Animation state must live in `widget::Tree` state — widget struct fields are frozen between `view()` calls. See `references/animation.md` § "Redraw vs rebuild."
+`request_redraw()` repaints but does **not** call `view()`. Animation state must live in `widget::Tree` state. Widget struct fields are frozen between `view()` calls. See `references/animation.md` § "Redraw vs rebuild."
 
 ### Animation invalidation
 
-Paint-only changes (color, opacity, rotation within fixed bounds) need `shell.request_redraw()`. Layout-affecting changes (size, position, expand/collapse, clipping bounds) need `shell.request_redraw()` **and** `shell.invalidate_layout()`. A widget that "only updates on the second click" has stale layout — add `invalidate_layout()`.
+Paint-only changes (color, opacity, rotation within fixed bounds) need `shell.request_redraw()`. Layout-affecting changes (size, position, expand/collapse, clipping bounds) need `shell.request_redraw()` **and** `shell.invalidate_layout()`. A widget that "only updates on the second click" has stale layout. Add `invalidate_layout()`.
 
 ### Draw order is z-order
 
@@ -170,7 +170,7 @@ mouse_area(button(content)).on_press(Message::Activate)
 mouse_area(button(content).on_press(Message::Activate)).on_press(Message::Activate)
 ```
 
-`button.on_press` fires on mouse-up; `mouse_area.on_press` fires on mouse-down — use it for drag initiation.
+`button.on_press` fires on mouse-up; `mouse_area.on_press` fires on mouse-down. Use it for drag initiation.
 
 ### pane_grid
 
@@ -182,11 +182,11 @@ mouse_area(button(content).on_press(Message::Activate)).on_press(Message::Activa
 
 ### Subscriptions
 
-Each data source needs stable identity — `Subscription::run_with(id, stream)` or `.with(id)`, batched with `Subscription::batch`. See `references/subscription.md`.
+Each data source needs stable identity: `Subscription::run_with(id, stream)` or `.with(id)`, batched with `Subscription::batch`. See `references/subscription.md`.
 
 Pre-aggregate high-frequency data in the subscription worker: emit one batch per non-empty ~16ms window, over bounded channels with producer-side `try_send()`.
 
-### Theming — no custom Theme type for tokens
+### Theming: no custom Theme type for tokens
 
 Build the palette with `Theme::custom_with_fn("My Dark", palette, |p| theme::palette::Extended::generate(p))`, keep app tokens in a `LazyLock<AppTokens>` sidecar, and route every visual value through it from style closures that ignore the passed `&Theme`. Introduce a custom `Theme` type only when runtime theme switching demands it.
 
@@ -200,7 +200,7 @@ Before writing cached or mirrored UI state, enumerate every mutation path that c
 
 `Message` enum and `State` struct live in the root module; extracted modules receive `&State` or `&mut State`. Extract when a feature is gated and self-contained, forms a cohesive responsibility group, or exceeds ~30 lines over a well-defined `State` subset.
 
-Multi-window: `window::open(settings) -> Task<window::Id>`, `window::close(id)` — `references/window.md`. Testing: `iced_test` provides `Simulator` (headless widget), `Emulator` (full runtime), and snapshot support.
+Multi-window: `window::open(settings) -> Task<window::Id>`, `window::close(id)`. See `references/window.md`. Testing: `iced_test` provides `Simulator` (headless widget), `Emulator` (full runtime), and snapshot support.
 
 ## Dev tools
 

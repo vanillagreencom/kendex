@@ -54,7 +54,7 @@ what remains is still over.
 **The ratchet serves cohesion, never defeats it.** The goal is files an
 agent can load and reason about whole: one concept per file, whole
 concept in the file. A *concept seam* is a boundary where the extracted
-file stands alone — its reader never needs the source file open beside
+file stands alone: its reader never needs the source file open beside
 it. For a file offered as one, count the names it imports straight from
 its parent (`use super::{...}`): a real seam sits near zero, and
 `use super::*` is an automatic failure. Moving half a function, a helper
@@ -81,10 +81,11 @@ the author writing down that the seam is not real.
 commit body) is correct in exactly two cases, both for hand-written files:
 1. The added lines are the fix for the reported symptom and the file has
    no concept seam.
-2. **Merging fragments**: files that are one concept read together —
-   ping-pong calls, a helper file with one importer, "part 2" files —
-   are combined back into one, and the merged file's row rises to its
-   real size. Shrink or delete the emptied rows in the same diff.
+2. **Merging fragments**: files that are one concept read together are
+   combined back into one, and the merged file's row rises to its real
+   size. Read together means ping-pong calls, a helper file with one
+   importer, "part 2" files. Shrink or delete the emptied rows in the
+   same diff.
 
 Which case applies is yours to judge and the gate's to ignore. The enforced
 rule is [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).

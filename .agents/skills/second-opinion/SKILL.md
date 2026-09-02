@@ -24,7 +24,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 # Second Opinion
 
-Cross-model second opinion via external AI CLI. Every mode walks the `SECOND_OPINION_MODELS` roster in priority order and takes the first target that is available and runs a different model — Codex from a Claude Code session, Claude from a Codex session; when nothing eligible remains the run refuses and says why. The full contract — options, target selection and identity rules, environment keys and defaults, review scope and stamping, output clearing and ownership, option syntax, and exit codes — is `second-opinion --help`.
+Cross-model second opinion via external AI CLI. Every mode walks the `SECOND_OPINION_MODELS` roster in priority order and takes the first target that is available and runs a different model: Codex from a Claude Code session, Claude from a Codex session; when nothing eligible remains the run refuses and says why. The full contract is `second-opinion --help`: options, target selection and identity rules, environment keys and defaults, review scope and stamping, output clearing and ownership, option syntax, and exit codes.
 
 ```bash
 .agents/skills/second-opinion/scripts/second-opinion <mode> [options]
@@ -42,10 +42,10 @@ Cross-model second opinion via external AI CLI. Every mode walks the `SECOND_OPI
 
 ## Execution Rules
 
-- Execute all workflow sections in order. The workflow decides what to skip via "**Skip if**" conditions — never skip based on your own scope assessment.
+- Execute all workflow sections in order. The workflow decides what to skip via "**Skip if**" conditions. Never skip based on your own scope assessment.
 - `<output_format>` tags are literal templates: fill `[PLACEHOLDERS]`, omit empty lines, add nothing else, do not paraphrase.
-- **Pass `--target`** when the user explicitly requests a specific model/CLI (e.g., "use Claude", "ask Codex"). Otherwise omit it — the script selects from the roster and the current session's model. A forced target that runs this session's model is refused; report the refusal, do not work around it.
-- **Do not pass `--timeout`** unless the user explicitly asks for a different value for this specific call — the script reads the default from project config.
+- **Pass `--target`** when the user explicitly requests a specific model/CLI (e.g., "use Claude", "ask Codex"). Otherwise omit it. The script selects from the roster and the current session's model. A forced target that runs this session's model is refused; report the refusal, do not work around it.
+- **Do not pass `--timeout`** unless the user explicitly asks for a different value for this specific call. The script reads the default from project config.
 - **Always pass `--cwd`** with the absolute project root path. Never use `--cwd .`.
 - Pass `--foreground` when the call can outlast the harness foreground cap. This detaches the run and prints its artifact, deadline, and wait command.
 - Execute the exact printed wait command and follow its exit handling in `second-opinion --help` until terminal.
@@ -53,7 +53,7 @@ Cross-model second opinion via external AI CLI. Every mode walks the `SECOND_OPI
 
 ## Session identity
 
-Cross-model is enforced in every mode: a run with no eligible target exits 1 naming every candidate and its reason, writing nothing and invoking nothing. In a multi-model front end (Pi, OpenCode, Cursor) or an undetected harness, export `SECOND_OPINION_CURRENT_MODEL` in that session's own environment (`none` when there is no session model) — never in a project settings file. Identity resolution, normalization, and the refusal rules: `second-opinion --help`.
+Cross-model is enforced in every mode: a run with no eligible target exits 1 naming every candidate and its reason, writing nothing and invoking nothing. In a multi-model front end (Pi, OpenCode, Cursor) or an undetected harness, export `SECOND_OPINION_CURRENT_MODEL` in that session's own environment (`none` when there is no session model), never in a project settings file. Identity resolution, normalization, and the refusal rules: `second-opinion --help`.
 
 ## Multi-lane review
 
@@ -65,8 +65,8 @@ Set non-sensitive defaults in `kendex.settings.toml` under `[env]`; `.env.local`
 
 ## Error Handling
 
-On script failure, stderr carries a JSON error object (`{"error": "description", "target": "codex"}`) or a plain `Error:` line for pre-flight configuration errors; exit codes, preserved-response paths, and the output-clearing/ownership rules are in `second-opinion --help`. Report the stated reason — an ineligible-target refusal is fixed by installing the CLI or adjusting `SECOND_OPINION_<NAME>_CMD`, `SECOND_OPINION_MODELS`, or `SECOND_OPINION_CURRENT_MODEL`, never by forcing the same model. For a timeout, suggest a larger `--timeout` or a narrower `--range`.
+On script failure, stderr carries a JSON error object (`{"error": "description", "target": "codex"}`) or a plain `Error:` line for pre-flight configuration errors; exit codes, preserved-response paths, and the output-clearing/ownership rules are in `second-opinion --help`. Report the stated reason. An ineligible-target refusal is fixed by installing the CLI or adjusting `SECOND_OPINION_<NAME>_CMD`, `SECOND_OPINION_MODELS`, or `SECOND_OPINION_CURRENT_MODEL`, never by forcing the same model. For a timeout, suggest a larger `--timeout` or a narrower `--range`.
 
-Callers budget review passes **per pushed head** (`qa_metadata.reviewed_head`) — a new head is a new round. Downstream freshness checks (`orch review-artifact-check --file <path> [delegated_at]`) validate filesystem mtime and independently reject self-reported no-review artifacts (reason `no_review`) and qa-shaped artifacts missing their finding arrays (reason `incomplete`), regardless of verdict.
+Callers budget review passes **per pushed head** (`qa_metadata.reviewed_head`). A new head is a new round. Downstream freshness checks (`orch review-artifact-check --file <path> [delegated_at]`) validate filesystem mtime and independently reject self-reported no-review artifacts (reason `no_review`) and qa-shaped artifacts missing their finding arrays (reason `incomplete`), regardless of verdict.
 
-If the script fails during the orch `review-pr` or `submit-pr` (local pre-PR review) workflows, **continue** — external review is advisory.
+If the script fails during the orch `review-pr` or `submit-pr` (local pre-PR review) workflows, **continue**. External review is advisory.

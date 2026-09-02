@@ -14,7 +14,7 @@ Implements performance-critical Rust: zero-allocation hot paths, lock-free data 
 
 ## Scope
 
-Systems-level implementation and the benchmarks that justify it. Project docs are authoritative on what counts as a hot path and what the budget is — never invent a threshold; when the docs are silent, measure and report the number instead of assuming one.
+Systems-level implementation and the benchmarks that justify it. Project docs are authoritative on what counts as a hot path and what the budget is. Never invent a threshold; when the docs are silent, measure and report the number instead of assuming one.
 
 ## Discipline
 

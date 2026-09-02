@@ -50,8 +50,8 @@ pub fn price_lte(a: f64, b: f64) -> bool { a < b || prices_equal(a, b) }
 |---|---|
 | Order submission (OrderRequest → broker API) | Round to tick, then validate alignment |
 | Display formatting | Round to the symbol's `display_decimals` |
-| Market data ingestion (ticks, bars, quotes) | **Never** — preserve full feed precision |
-| P&L calculation | **Never** — use raw values |
+| Market data ingestion (ticks, bars, quotes) | **Never**. Preserve full feed precision |
+| P&L calculation | **Never**. Use raw values |
 
 ```rust
 pub fn round_to_tick(price: f64, tick_size: f64) -> f64 {
@@ -63,7 +63,7 @@ pub fn validate_tick_alignment(price: f64, tick_size: f64) -> bool {
 }
 ```
 
-Order submission order: round to tick, validate alignment (on failure return an error — never re-round), then format for the broker API if it takes a string.
+Order submission order: round to tick, validate alignment (on failure return an error, never re-round), then format for the broker API if it takes a string.
 
 Format with the symbol's precision, never hardcoded decimals (EURUSD 5, AAPL 2, BTC 8):
 

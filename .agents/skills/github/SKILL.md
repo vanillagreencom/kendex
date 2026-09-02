@@ -38,7 +38,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 | `pr-list-failing [--all] [--format=safe\|table]` | List PRs with CI failures |
 | `pr-create [--title T] [--body B \| --body-file PATH] [--draft] [--dry-run] [--force]` | Create PR as bot. Safety checks: not main, has commits, pushed; `--force` skips them. |
 | `pr-edit-body <N> --body-file PATH` | Update an existing PR body through the sanitized router. |
-| `pr-merge <N> [--check\|--force\|--admin\|--auto]` | Merge PR. `--check` reports readiness as JSON on stdout plus a one-word verdict and `head-run: <ids>` (the run scope of the CI classification) on stderr; `--auto` queues a currently-blocked PR. Three exit codes, the review-thread gate, and `--force`/`--admin` — see *PR Merge Outcomes*. |
+| `pr-merge <N> [--check\|--force\|--admin\|--auto]` | Merge PR. `--check` reports readiness as JSON on stdout plus a one-word verdict and `head-run: <ids>` (the run scope of the CI classification) on stderr; `--auto` queues a currently-blocked PR. Three exit codes, the review-thread gate, and `--force`/`--admin`. See *PR Merge Outcomes*. |
 | `ci-classify-refusal <N>` | Name the cause of a pr-merge refusal on one `cause:` line (`fetch_error`, `merge_conflict`, `changes_requested`, `threads`, `ci_failed`, `ci_pending`, `computing`, `merged`, `closed`, `none`; an issue prefix outside that vocabulary becomes the cause word itself, and `none` means the checks pass now); `ci_failed` adds `fail:` lines run-correlated to the authoritative run and `superseded:` lines naming runs whose checks were not counted. `--help` |
 | `pr-cross-check [N...] [--quick\|--verify]` | Cross-PR analysis. `--verify`: full build+test (auto-detects build system). |
 | `pr-issue <N> [--format=safe\|text]` | Extract issue ID from PR branch (configurable via `GH_ISSUE_PATTERN`) |
@@ -101,7 +101,7 @@ so a thread id absent from its output is genuinely absent. Repeat
 **Never gate termination on `gh pr view --json mergeable`.** That field stays
 `UNKNOWN` permanently after a merge. Use `await-mergeable` (resolution rules
 and exit codes: `await-mergeable --help`). To watch MANY PRs, do not
-hand-roll a poll loop keyed on state transitions — use the review-gate
+hand-roll a poll loop keyed on state transitions. Use the review-gate
 skill's reducer when installed
 (`.agents/skills/review-gate/scripts/pr-watch.sh`).
 
