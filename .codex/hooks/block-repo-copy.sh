@@ -54,13 +54,14 @@ fi
 #             so three unrelated commands on three lines are three commands.
 #   GAP       the whitespace standing between two words of ONE command:
 #             horizontal whitespace and nothing else, since the only
-#             whitespace character in ENDERS is the newline. END_EDGE holds
-#             ENDERS whole, because there a command's end is the destination
-#             word's end rather than something to reach past — which is also
-#             the one place a newline is still whitespace. A separator ENDERS
-#             does not hold ends a word for the shell all the same, so an
-#             exact temp root followed by a pipe or a closing parenthesis is
-#             not seen; that cost is a row.
+#             whitespace character in ENDERS is the newline.
+#
+# END_EDGE answers a different question and is NOT derived from ENDERS: where
+# the destination WORD ends, not where a command does. Every character that is
+# not part of a path answers it — the pipe ENDERS leaves out on purpose, a
+# subshell's closing parenthesis, the newline that is still whitespace here —
+# so it is stated as the negation of PATH_CHAR, what a path may hold. That way
+# a separator nobody has named yet ends the word without being added to a list.
 #
 # Both edges of the marker component are tested and both carry a case: the
 # `/?` and quote-or-GAP after it are what keep it last, so `target/debug/kendex`
@@ -106,7 +107,14 @@ QUOTE="[${QUOTES}]"
 VERB="(cp|rsync|tar|git${GAP}+clone)"
 LEFT_EDGE="[/${QUOTES}${BLANK}]"
 RIGHT_EDGE="[${QUOTES}${BLANK}]"
-END_EDGE="[${QUOTES}${SPACE_ANY}${ENDERS}]"
+# Every character ADDED here is one that stops ending the word, so this guard
+# fails closed by holding only what a row can bind: the alnum run that makes
+# `/tmpfoo` a different directory, and the slash a path continues with. Only
+# the FIRST character after the temp root is ever consulted, so a member is
+# provable one row at a time — punctuation was cut rather than carried
+# untested, and the `/tmp-old` it costs is a row in the stated limits.
+PATH_CHAR='[:alnum:]/'
+END_EDGE="[^${PATH_CHAR}]"
 MARKER='(\.git|target)'
 DEST='(/tmp|/var/tmp|\$\{TMPDIR\}|\$TMPDIR)'
 BLOCK_RE="(^|[^[:alnum:]_.-])${VERB}(${GAP}|${JOIN})(${RUN}(${LEFT_EDGE}|${JOIN}))?${MARKER}/?${RIGHT_EDGE}(${RUN}(${GAP}|${JOIN}))?${QUOTE}?${DEST}(/|${END_EDGE}|\$)"
