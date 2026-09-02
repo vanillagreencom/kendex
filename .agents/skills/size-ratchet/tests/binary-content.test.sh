@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pins the refusal on a line-class blob git reads as binary. A raw NUL typed
+# Pins the refusal on a tracked blob git reads as binary. A raw NUL typed
 # into a source file instead of its escape makes git call the file binary: no
 # textual diff, a plain `git grep` reduced to `Binary file <path> matches` and
 # a `git grep -I` that drops the path — and `wc -l` still returns a number, so
@@ -9,8 +9,9 @@
 # Pinned here: the refusal fires in both scopes (index and worktree) and in
 # --seed and --update, where a miss would write a meaningless count into the
 # baseline; every offender is named, not just the first; the offset is counted
-# in BYTES and located inside the sniff window; the same bytes in a BYTE class
-# pass because nothing counts their lines; an excluded path stays excluded; a
+# in BYTES and located inside the sniff window; a byte class is refused too,
+# because the property is the content and not the unit; an excluded path stays
+# excluded; a
 # scan that comes back empty is a refusal, not a pass; and the diagnostic never
 # carries the byte itself. The must-fail control at the end reverts the refusal
 # and shows the NUL fixture going green, so the green cases above are evidence.
@@ -100,7 +101,7 @@ if [ "$RC" -eq 2 ] && has 'src/installed.ts: a NUL byte at offset 12'; then
 else
   bad "a staged .ts with a NUL is refused naming the offset" "rc=$RC out=$OUT"
 fi
-if has 'measured in lines' && has 'Write the escape'; then
+if has 'tracked as reviewable text' && has 'Write the escape'; then
   ok "the refusal states why it refuses and tells the author to write the escape"
 else
   bad "the refusal carries its cause and remedy" "out=$OUT"
@@ -117,22 +118,55 @@ else
   bad "the refusal never reprints the byte" "total=$total stripped=$stripped"
 fi
 
-echo "=== the same bytes in a BYTE class pass — nothing counts their lines ==="
+echo "=== a BYTE class is refused too — the content decides, not the unit ==="
+# The whole markdown surface a repo reviews sits in byte classes, so a rule
+# keyed on the measurement unit would leave every SKILL.md, AGENTS.md and
+# workflow doc free to carry the byte and still read `OK`.
 new_repo byteclass
-plant_nul src/asset.png 'const a = "x'
+plant_nul skills/demo/SKILL.md 'const a = "x'
 git -C "$R" add -A
-run_in SIZE_RATCHET_THRESHOLD=400 SIZE_RATCHET_CLASSES='*.png=64k' -- --staged
-if [ "$RC" -eq 0 ]; then
-  ok "a .png in a byte class carrying the identical bytes passes (exit 0)"
+run_in SIZE_RATCHET_THRESHOLD=400 SIZE_RATCHET_CLASSES='*/SKILL.md=24k' -- --staged
+if [ "$RC" -eq 2 ] && has 'skills/demo/SKILL.md: a NUL byte at offset 12'; then
+  ok "a SKILL.md in a byte class is refused (exit 2), naming the path and offset"
 else
-  bad "a byte class is never asked about content" "rc=$RC out=$OUT"
+  bad "a byte class is asked about its content too" "rc=$RC out=$OUT"
+fi
+
+echo "=== must-fail control: keyed on the unit again, the same fixture goes green ==="
+# The control restores the one thing that changed — the sniff answering only
+# where the resolved unit is lines — and leaves every call site and the whole
+# diagnostic standing, so a green run here is what the case above rules out.
+UNIT="$TMP/unit-scripts"
+mkdir -p "$UNIT"
+cp -R "$SKILL_DIR/scripts/." "$UNIT/"
+UNIT_ANCHOR='note_if_binary() {'
+if awk -v anchor="$UNIT_ANCHOR" '
+    { print }
+    index($0, anchor) == 1 { print "  if [ \"${PU:-l}\" = \"b\" ]; then return 0; fi # must-fail control: coverage back to line classes"; n++ }
+    END { exit (n == 1 ? 0 : 3) }
+  ' "$UNIT/size-ratchet" >"$UNIT/size-ratchet.mut"; then
+  mv "$UNIT/size-ratchet.mut" "$UNIT/size-ratchet"
+  chmod +x "$UNIT/size-ratchet"
+  new_repo unitctrl
+  plant_nul skills/demo/SKILL.md 'const a = "x'
+  git -C "$R" add -A
+  GATE="$UNIT/size-ratchet"
+  run_in SIZE_RATCHET_THRESHOLD=400 SIZE_RATCHET_CLASSES='*/SKILL.md=24k' -- --staged
+  GATE="$SR"
+  if [ "$RC" -eq 0 ] && ! has 'NUL byte at offset'; then
+    ok "narrowing the sniff back to line classes lets the SKILL.md pass"
+  else
+    bad "the control narrows the coverage it should" "rc=$RC out=$OUT"
+  fi
+else
+  bad "the unit control's substitution matched exactly one site" "no single '$UNIT_ANCHOR' line at the start of a line in $UNIT/size-ratchet"
 fi
 
 echo "=== an excluded path stays excluded ==="
 new_repo excluded
 plant_nul assets/icon.png 'const a = "x'
 mkdir -p "$R/tools"
-printf 'assets/*\tbinary media — no lines to count\n' >"$R/tools/size-ratchet-excludes"
+printf 'assets/*\tbinary media — not reviewable text\n' >"$R/tools/size-ratchet-excludes"
 git -C "$R" add -A
 run_in SIZE_RATCHET_THRESHOLD=400 -- --staged
 if [ "$RC" -eq 0 ]; then

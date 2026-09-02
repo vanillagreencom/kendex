@@ -50,19 +50,22 @@ fault there. A tracked path containing a tab or newline is refused loudly
 (exit 2; exclude it to skip the gate) — it cannot be represented in the
 line-oriented records.
 
-Every blob the gate measures in LINES is sniffed for a NUL in its leading
-8000 bytes, git's own text/binary rule, which growth-guards states as
-`gg_blob_is_binary` and preflight as `content_is_binary`. That is every path
-in a line class, and every path in no class at all, which falls to
-`SIZE_RATCHET_THRESHOLD` and is counted in lines. A byte class is never
-asked: it measures the whole blob, and a real asset belongs there or in the
-exclusion list.
+Every blob the gate measures is sniffed for a NUL in its leading 8000 bytes,
+git's own text/binary rule, which growth-guards states as `gg_blob_is_binary`
+and preflight as `content_is_binary`. The unit does not narrow the coverage:
+a line class, a byte class, and no class at all are all sniffed, because the
+property held is that the blob stays reviewable text, and its content decides
+that where the unit says nothing. `is_excluded` runs before the sniff, so the
+exclusion list is the escape hatch for a real binary asset and an excluded
+path pays nothing for the coverage. Under `--staged` and for any path absent
+from the worktree the blob is materialized once, and the count and the sniff
+read that one copy.
 
 A hit is a collection error (exit 2) naming the path and the byte's offset,
 never the byte itself. Git records such a blob as binary, so it carries no
 textual diff; a plain `git grep` for a line inside it answers `Binary file
 <path> matches`, and a `git grep -I` drops the path outright. No line in it
-reaches diff or grep review, while `wc -l` still returns a number. One raw
+reaches diff or grep review, while `wc` still returns a number. One raw
 control byte typed in place of its escape puts a source file in that state:
 the byte is invisible or near-invisible in the usual renderings, and the
 walk-based lanes that do see it name the path as not measured, count it in

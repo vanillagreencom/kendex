@@ -232,9 +232,9 @@ case "$OUT" in *"simulated object read failure"*) ok "git's own stderr is surfac
 case "$OUT" in *"size-ratchet: OK"*) bad "no OK verdict may accompany a collection failure" "$OUT" ;; *) ok "no OK verdict accompanies the collection failure" ;; esac
 
 echo "=== fail-closed: an unreadable index blob in a BYTE class terminates too ==="
-# A byte class never materializes the blob: it streams `git show | wc -c`, so
-# the read's failure reaches the gate through pipefail rather than through the
-# line class's own status check above. Both branches must refuse.
+# A byte class resolves a different threshold and `wc` flag than the line case
+# above, and its rows travel a batch of their own, so the refusal is pinned on
+# both units rather than inferred from one.
 run_bin() { # [SHIMDIR] — run in $R under the byte class; no SHIMDIR is the real git
   OUT=""
   RC=0

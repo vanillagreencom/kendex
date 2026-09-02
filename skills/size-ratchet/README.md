@@ -58,18 +58,18 @@ that. Markdown is measured in bytes and code in lines. Flags and exit codes:
   rows whose unit no longer matches their class, and removes rows for files
   now at/under their own threshold or no longer counted. It never adds a row
   or raises a number whose unit stayed the same, then re-checks.
-- **Refused as unmeasurable** (exit 2): a blob measured in lines carrying a
-  NUL inside its leading 8000 bytes — git's own text/binary rule. That covers
-  every path in a line class and every path in no class at all, which falls to
-  `SIZE_RATCHET_THRESHOLD` and is counted in lines. Git records such a blob as
-  binary, so it has no textual diff and no line count that means anything. The
-  diagnostic names the path and the byte's offset, never the byte; the fix is
-  the escape the language spells it with. A real binary asset belongs in a byte
-  class or the [exclusion list](#exclusion-list), neither of which counts
-  lines — that is the remedy for an unclassified `.png`, `.ico` or `.ttf`,
-  which matches no shipped class and is therefore counted in lines. `--seed`
-  and `--update` refuse the same way, so an adopting repo meets this at its
-  first seed rather than at its first check. Mechanism: `DEVELOPMENT.md`.
+- **Refused as unmeasurable** (exit 2): any counted blob carrying a NUL inside
+  its leading 8000 bytes — git's own text/binary rule. The unit does not
+  narrow it: a line class, a byte class, and no class at all are all covered,
+  because what is held is that the blob stays reviewable text and its content
+  decides that, not the number it is counted in. Git records such a blob as
+  binary, so it has no textual diff and no line of it reaches a `git grep`
+  review. The diagnostic names the path and the byte's offset, never the byte;
+  the fix is the escape the language spells it with. A real binary asset
+  belongs in the [exclusion list](#exclusion-list), which is checked before the
+  content is — that is the remedy for a tracked `.png`, `.ico` or `.ttf`.
+  `--seed` and `--update` refuse the same way, so an adopting repo meets this
+  at its first seed rather than at its first check. Mechanism: `DEVELOPMENT.md`.
 - Exit codes: `0` clean, `1` violations, `2` usage/config/collection error.
 
 ## Trusted HEAD baseline

@@ -32,4 +32,4 @@ ui/src/components/ui/*	shadcn-generated UI primitives — vendored generated cod
 docs/img/*	README screenshots and the tour gif — binary media
 kendex-local.toml	this repo's own install state — the CLI writes one table per declared item, so it grows with the install and has no seam a person can split
 crates/app/gen/schemas/*.json	tauri-build output — capability schemas regenerated on every build of crates/app, never hand-edited
-crates/app/icons/*	tauri bundle icons (png/ico/icns) — binary media, no lines to count
+crates/app/icons/*	tauri bundle icons (png/ico/icns) — binary media, not reviewable text
