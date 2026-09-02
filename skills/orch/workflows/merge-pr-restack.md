@@ -16,13 +16,13 @@ not a CI failure.
    [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree path [ISSUE]
    ```
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-round-live --worktree [WT_PATH] --issue [ISSUE]
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/worktree-push --check-live-round --worktree [WT_PATH] --issue [ISSUE]
    ```
 
-   Exit 0 is the only answer that permits the restack; any other exit hands
-   back, and the command says which it was (`dev-round-live --help`).
-   `worktree create [ISSUE] --reuse` rebases outside this check too, and
-   carries no live-round refusal of its own.
+   It pushes nothing. Exit 0 is the only answer that permits the restack; any
+   other exit hands back, and the command says which it was (`worktree-push
+   --help`). `worktree create [ISSUE] --reuse` rebases outside this check too,
+   and carries no live-round refusal of its own.
 
    Then start the guarded restack:
 

@@ -48,7 +48,7 @@ What the writer itself refuses is a short list, not a scanner: an empty or white
 
 The `Adds:` delegation line and `--adds` carry the same blank-separated path list. A blank or tab separates, so a path containing whitespace is read as two paths and cannot be authorized as one. The writer rejects absolute paths, leading or trailing empty components, double slashes, `.` and `..` components, and duplicates. The reader refuses a recorded path beginning with `-` or carrying a space, tab, newline, carriage return, form feed or vertical tab. Omit the line and flag when no additions are allowed.
 
-**Immutable per round**: `dev-round-write --help` carries the contract. Mint a new round and never fall back to an unbound item list. While the ACTIVE round's record — the one whose token equals workflow state `dev_round_id` — has no matching `dev-return` receipt, `dev-round-live` answers that a round is in flight, and every path that rebases refuses on it: a rebase moves the branch off the commit that round is working from. Two things end that: the receipt landing, or a fresh `dev_round_id` whose token names no stamped record.
+**Immutable per round**: `dev-round-write --help` carries the contract. Mint a new round and never fall back to an unbound item list. While the ACTIVE round's record — the one whose token equals workflow state `dev_round_id` — has no matching `dev-return` receipt, `worktree-push` refuses to push and `worktree-push --check-live-round` refuses the restack: a rebase moves the branch off the commit that round is working from. Two things end that: the receipt landing, or a fresh `dev_round_id` whose token names no stamped record.
 
 ## Declared cuts
 

@@ -651,10 +651,10 @@ assert_file_contains "$ci_fix" "$ROUND_STAMP" "ci-fix § 3.2 mints a fresh dev_r
 assert_file_not_contains "$ci_fix" "$LEGACY_CHECK" "ci-fix § 3.2 no longer uses the legacy positional dev-artifact-check call"
 
 # kendex#944: the restack cycle asks the owner of the live-round predicate.
-# The pin is the call site; the arms are dev_round_live.sh's to prove.
+# The pin is the call site; the arms are worktree_push.sh's to prove.
 restack="$REPO_ROOT/skills/orch/workflows/merge-pr-restack.md"
-assert_file_contains "$restack" "dev-round-live --worktree [WT_PATH] --issue [ISSUE]" \
-  "merge-pr-restack § 2 asks dev-round-live before the restack"
+assert_file_contains "$restack" "worktree-push --check-live-round --worktree [WT_PATH] --issue [ISSUE]" \
+  "merge-pr-restack § 2 asks worktree-push before the restack"
 
 # The removed legacy positional call must not survive in any orch workflow.
 for wf in dev-start dev-fix review-pr-comments ci-fix; do

@@ -23,8 +23,16 @@
 # A fix round in flight is refused rather than reconciled: its record pins the
 # commit the delegated agent is working from, and the rebase this command runs
 # would move every commit out from under it, leaving the round's receipt to
-# name a `.commit` no longer on the branch. `dev-round-live` owns that question
-# and its arms; this script only routes the answer.
+# name a `.commit` no longer on the branch. The round in flight is the ACTIVE
+# one — the record whose token equals workflow state `dev_round_id`. Two things
+# end that: the round's dev-return receipt landing, or a fresh `dev_round_id`
+# whose token names no stamped record. An earlier round's leftover record does
+# not block, and neither does a worktree with no state file.
+#
+# `--check-live-round` runs that question alone and exits on its answer,
+# pushing nothing. It exists for the one other path that rebases — merge-pr's
+# restack cycle, which never reaches this script's push — so that path asks the
+# owner of the predicate instead of restating its arms in prose (kendex#944).
 #
 # The rebase happens BEFORE the network push, so a rejected push can still
 # have rewritten the branch: the map is applied to workflow state whatever the
@@ -37,9 +45,11 @@
 #
 # Usage:
 #   worktree-push --worktree PATH --issue ID [--state-dir DIR] [push flags...]
+#   worktree-push --check-live-round --worktree PATH --issue ID [--state-dir DIR]
 #
 # Every argument outside this wrapper's own namespace (--worktree, --issue,
-# --state-dir, --help) is forwarded verbatim to `worktree push`, which rejects
+# --state-dir, --check-live-round, --help) is forwarded verbatim to
+# `worktree push`, which rejects
 # a flag it does not know. The push flag vocabulary lives there alone; see
 # `worktree push --help`, which is where a mistyped flag is caught. The state
 # resolution above the push is what stands between a wrong argument and a wrong
@@ -72,13 +82,16 @@
 #                   map was printed, and no recorded SHA went stale. Correct
 #                   the arguments or the state named on stderr and re-run —
 #                   that IS the repair here; there is nothing to hand-apply.
+#   --check-live-round only:
+#                   0 no round in flight, the branch may be rebased; 3 a fix
+#                   round is live; 1 the question could not be answered (an
+#                   unreadable state, a usage error), which is not permission.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKTREE_BIN="${ORCH_WORKTREE_BIN:-$SCRIPT_DIR/../../worktree/scripts/worktree}"
 WORKFLOW_STATE="$SCRIPT_DIR/workflow-state"
-DEV_ROUND_LIVE="$SCRIPT_DIR/dev-round-live"
 
 SHA_GRAMMAR='^[0-9a-f]{40}$'
 ISSUE_GRAMMAR='^[A-Za-z0-9][A-Za-z0-9._-]*$'
@@ -94,9 +107,21 @@ fail() {
 	exit 1
 }
 
+# The one refusal with two exit codes: 3 answers --check-live-round's question,
+# and 1 is this script's ordinary "refused before the push".
+refuse_live_round() {
+	printf 'worktree-push: fix round %s is live in %s (its round record has no dev-return receipt); a rebase would move the branch off the commit that round is working from — land that round'"'"'s dev-return receipt, or stamp a fresh dev_round_id, then retry\n' \
+		"$1" "$worktree_abs" >&2
+	if [[ "$check_live_round" == true ]]; then
+		exit 3
+	fi
+	exit 1
+}
+
 worktree=''
 issue=''
 state_dir=''
+check_live_round=false
 push_args=()
 
 while [[ $# -gt 0 ]]; do
@@ -128,6 +153,10 @@ while [[ $# -gt 0 ]]; do
 		state_dir="${1#--state-dir=}"
 		shift
 		;;
+	--check-live-round)
+		check_live_round=true
+		shift
+		;;
 	-h | --help)
 		usage
 		exit 0
@@ -146,7 +175,6 @@ done
 [[ -n "$issue" ]] || fail "--issue is required"
 [[ "$issue" =~ $ISSUE_GRAMMAR && "$issue" != *..* ]] || fail "invalid issue id: $issue"
 [[ -x "$WORKTREE_BIN" ]] || fail "worktree script is not executable at $WORKTREE_BIN"
-[[ -x "$DEV_ROUND_LIVE" ]] || fail "dev-round-live is not executable at $DEV_ROUND_LIVE"
 command -v jq >/dev/null 2>&1 || fail "jq is required to reconcile rebased SHAs"
 
 worktree_abs="$(cd -P -- "$worktree" 2>/dev/null && pwd -P)" \
@@ -228,14 +256,23 @@ if [[ "$state_present" == "true" ]]; then
 	fi
 fi
 # Refuse before the push, where nothing is rebased and nothing needs repair.
-# Exit 0 is the only answer that permits the rebase: 3 is a live round, and
-# anything else is a question left unanswered, which is not permission.
-live_rc=0
-"$DEV_ROUND_LIVE" --worktree "$worktree_abs" --issue "$issue" ${state_flags[@]+"${state_flags[@]}"} \
-	|| live_rc=$?
-if [[ "$live_rc" -ne 0 ]]; then
-	fail "refusing to push: dev-round-live exited $live_rc for $issue in $worktree_abs (its message above says why)"
+# The two state reads above answer the first two arms already: an `exists` that
+# fails, and an answer that is neither yes nor no, both leave the question
+# unanswered, and an unanswered question is not permission to rebase. What is
+# left is the active round itself. With no state file there is no active round
+# to read, and a record from an earlier round does not block.
+if [[ "$state_present" == "true" ]]; then
+	active_round="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.dev_round_id // ""')" \
+		|| fail "could not read the active dev round for $issue"
+	if [[ -n "$active_round" ]] \
+		&& [[ -e "$worktree_abs/tmp/dev-round-$issue-$active_round.json" ]] \
+		&& [[ ! -e "$worktree_abs/tmp/dev-return-$issue-$active_round.json" ]]; then
+		refuse_live_round "$active_round"
+	fi
 fi
+# The question is answered and the answer is no. In check mode that is the
+# whole run: nothing is pushed, nothing is rebased.
+[[ "$check_live_round" != true ]] || exit 0
 
 push_out="$(mktemp)" || fail "could not create a temporary file for the push output"
 trap 'rm -f "$push_out"' EXIT
