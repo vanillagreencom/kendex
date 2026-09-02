@@ -20,7 +20,7 @@ The reviewer-gate settings — `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_O
 |------------|------|
 | Reviewer verdict on one PR | `approval-wait` — statuses `approved`/`reviewed`/`changes_requested`/`comments`/`timeout`/`proceeded`/`error` |
 | CI on one PR | `ci-wait` — verdicts `pass`/`fail`/`pending`/`none` |
-| Merge-queue / auto-merge outcome | `queue-wait` — the growing verdict set documented in its § Verdicts table, produced the same way whether it runs in the foreground or detached to a verdict file |
+| Merge-queue / auto-merge outcome | `queue-wait` — the growing verdict set documented in its § Verdicts table |
 | Many PRs, long horizon | `pr-watch.sh` — § Multi-PR watching |
 
 Per-verdict routing lives in the workflows (`submit-pr.md` § 4, `merge-pr.md` § 5); each verdict's semantics live in that script's `--help`.
@@ -33,8 +33,8 @@ All three waiters share `scripts/lib/gh-auth.sh`, wrapping the GitHub skill's he
 
 ## Multi-PR watching
 
-The waiters above are single-PR waits, detached or not. For many PRs across a
-long horizon, the review-gate skill (optional
+The waiters above are single-PR blocking waits. For many PRs across a long
+horizon, the review-gate skill (optional
 dependency) ships `scripts/pr-watch.sh`, a needs-attention reducer — contract
 in `pr-watch.sh --help`, wrap-in-anything loop in review-gate's adoption guide.
 Orch consumes it through `oversee-watch` when the script is installed, passing

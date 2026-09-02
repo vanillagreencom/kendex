@@ -77,9 +77,7 @@ Bot-specific signals — emoji reactions, sticky-comment prose, checklist text �
 .agents/skills/github/scripts/github.sh bot-token
 ```
 
-Use the extracted issue as `[ISSUE]`. Set `[STATE_KEY]` to `[ISSUE]` when nonempty;
-otherwise use `pr-[PR_NUMBER]`. This repository-local key cannot collide with
-normalized GitHub key `issue-N`. Use worktree commands only with an `[ISSUE]`.
+Use the extracted issue as `[ISSUE]`, and worktree commands only with one.
 When no issue worktree exists, set `[WORKTREE_PATH]` to `[MAIN_REPO_ROOT]`;
 there is then no issue worktree to dispose of in § 5. Read the PR branch:
 
@@ -142,10 +140,8 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Resolve the repository, gate mode, and exact head before any merge attempt.
    `[RECOVERY_COUNT]` is `0` initially and one more per recovery cycle taken in
-   this run. Nothing persists it, so the cap below is per invocation: a lane
-   resumed after a compaction, or relaunched by oversee's `window-gone` rule,
-   starts a fresh budget. Read a run that keeps returning to ci-fix as the
-   signal the cap is there for, whatever the count says.
+   this run. A merge-pr run reaches its verdict without handing back, so the
+   count and the cap below live in one invocation and nothing persists them.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner
@@ -157,12 +153,9 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
    ```
 
-   That head is `[PREPARED_HEAD]`, and `[VERDICT_FILE]` is
-   `[MAIN_REPO_ROOT]/tmp/queue-verdict-[STATE_KEY]-[PREPARED_HEAD].json` — the
-   head is in the name because a verdict belongs to the arm that produced it,
-   and a re-armed or restacked head must not read the previous arm's result.
-   `[ALREADY_MERGED]=true` skips the mutation and the wait and continues to
-   step 2. Otherwise attempt only the prepared head:
+   That head is `[PREPARED_HEAD]`. `[ALREADY_MERGED]=true` skips the mutation
+   and the wait and continues to step 2. Otherwise attempt only the prepared
+   head:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] [--force] --expected-head [PREPARED_HEAD]
@@ -181,77 +174,28 @@ Use the output as `MAIN_REPO_ROOT`.
    Exit `0` merged the prepared head immediately — continue to step 2. Any exit
    but `0` or `75` is an exact-head arm failure: surface it and return to § 3.2.
 
-   Exit `75` means queued or armed. Detach the wait so the lane is released
-   while the queue runs. `tmp/` is gitignored and a fresh clone carries none,
-   so create it first — the launch redirections fail silently in a forked child
-   otherwise:
-
-   ```bash
-   mkdir -p [MAIN_REPO_ROOT]/tmp
-   ```
-   ```bash
-   command -v setsid
-   ```
-
-   `setsid` is util-linux and absent on stock macOS, so its presence decides
-   which arm launches. Present:
-
-   ```bash
-   setsid sh -c '[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] --json > "[VERDICT_FILE].part" 2>> "[VERDICT_FILE].log"; mv -f -- "[VERDICT_FILE].part" "[VERDICT_FILE]"' </dev/null &
-   ```
-
-   Absent:
-
-   ```bash
-   nohup sh -c '[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] --json > "[VERDICT_FILE].part" 2>> "[VERDICT_FILE].log"; mv -f -- "[VERDICT_FILE].part" "[VERDICT_FILE]"' </dev/null >> [VERDICT_FILE].log 2>&1 &
-   ```
-
-   The wait writes its whole result in one terminal block, so a `.part` file is
-   an unfinished wait and `[VERDICT_FILE]` appearing is the publish. The
-   separator before `mv` is `;`, not `&&`: every non-merged verdict exits `1`
-   and still has a result to publish. Confirm the start before returning the
-   § 6 ARMED result — the child opens its redirection immediately, so by the
-   next command one of the two paths exists:
-
-   ```bash
-   ls -l [VERDICT_FILE].part [VERDICT_FILE]
-   ```
-
-   Neither present means nothing started: report that and take the foreground
-   wait below instead of claiming a released lane.
-
-   **Reading the verdict.** At the next lane boundary, stat both paths and take
-   the one state they name:
-
-   | State | Meaning |
-   |-------|---------|
-   | `[VERDICT_FILE]` present and parses as JSON | The wait finished. Delete the file, then route on its `verdict` and `cause` — consuming it first is what keeps a later boundary from re-routing a spent verdict |
-   | `[VERDICT_FILE]` present, does not parse | Hand back with the file's contents and `[VERDICT_FILE].log`; never retry it |
-   | absent, `[VERDICT_FILE].part` present | The wait is still running. Return and re-read at the next boundary — never start a second wait on the same PR |
-   | both absent | Nothing is running. Start the wait again |
-
-   A second concurrent `queue-wait` on one PR is the thing to avoid: the
-   late-findings guard disarms and dequeues, so two of them race one dequeue
-   and the loser reports `late_findings_dequeue_failed` for no reason, and the
-   check probe delegates to `ci-wait`, which may re-run a workflow. A wait is
-   not read-only, so it is started only in the two states above that say
-   nothing is running.
-
-   Restart it detached the same way, or in the foreground when the lane can
-   block on it:
+   Exit `75` means queued or armed. Wait it out here, blocking, and route the
+   verdict it prints. The lane does not hand back and come look later: a lane
+   sitting at its prompt has no next boundary, so a verdict published behind it
+   waits for a human.
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] --json
    ```
 
-   A foreground run that emits no result object is a hand-back naming its exit,
-   not a retry: `queue-wait --help` § Exit codes gives exit `2` to a usage error
-   and exit `4` to a repository deleted mid-wait, and neither prints anything
-   the table below can route. Under Codex, where redirection and `&` are
-   rejected shapes ([references/codex-runtime.md](../references/codex-runtime.md)),
-   nothing is detached and the foreground run is the read: run it once as a
-   blocking command and stay on it until it returns. Never poll merge state by
-   hand.
+   Run it once and stay on it until it returns; never re-run it because the
+   harness yielded early, and never poll merge state by hand. Under Codex this
+   is the only shape the classifier accepts anyway
+   ([references/codex-runtime.md](../references/codex-runtime.md)).
+
+   A run that emits no result object is a hand-back naming its exit, not a
+   retry: `queue-wait --help` § Exit codes gives exit `2` to a usage error and
+   exit `4` to a repository deleted mid-wait, and neither prints anything the
+   table below can route.
+
+   The detached form — `nohup queue-wait <pr> --json > <artifact> 2>&1 &`, read
+   later — belongs to the overseer surface, which has a loop to read it in. No
+   lane uses it.
 
    | `verdict` | Route |
    |-----------|-------|
@@ -260,8 +204,8 @@ Use the output as `MAIN_REPO_ROOT`.
    | `ejected` | Recovery cycle below, using the resolved gate mode and `[RECOVERY_COUNT]` |
    | `disarmed` | Recovery cycle below |
    | `dequeued` | Late-findings triage below; on `cause: late_findings_dequeue_failed` confirm the dequeue or the disarm first |
-   | `queued` | Still armed at the deadline. `cause: still_progressing` starts a new detached wait and returns; `cause: stalled` takes the Recovery cycle below |
-   | `not_queued` | Nothing was ever armed: re-arm the exact head once, then start a new wait |
+   | `queued` | Still armed at the deadline. `cause: still_progressing` means the merge is live and within its own budget: run the wait again. `cause: stalled` takes the Recovery cycle below |
+   | `not_queued` | Nothing was ever armed: re-arm the exact head once, then wait again |
    | `closed` | Hand back with the verdict; no replay |
    | `unknown` | Unrecognized, or `status: error`: hand back with the `error` and `cause` fields, and never re-arm |
 
@@ -280,7 +224,7 @@ Use the output as `MAIN_REPO_ROOT`.
       .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]
       ```
 
-   3. Return to step 1's exact-head arm and wait sequence.
+   3. Return to step 1's exact-head arm and wait.
 
    **Restack cycle** — the base, not CI, is the blocker. Follow `workflows/merge-pr-restack.md`,
    then return to step 1's exact-head sequence. Never route a conflict into ci-fix.
@@ -289,7 +233,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    1. On `cause: late_findings_dequeue_failed`, first apply the disarm-then-dequeue order and PR-node-id lookup from `merge-pr-restack.md`; the PR must be out of the queue before triage pushes.
    2. `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 5 step 1` with managed context — every new thread replied to and resolved.
-   3. Triage may have pushed a new head. Return to step 1's exact-head arm and wait sequence.
+   3. Triage may have pushed a new head. Return to step 1's exact-head arm and wait.
 
 2. **Sync the tracker and close a finished container** — **Linear only**. Skip the WHOLE step for GitHub work items: resolve the tracker first; an `issue-N` key in any casing is a GitHub item.
 
@@ -297,8 +241,7 @@ Use the output as `MAIN_REPO_ROOT`.
    [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh sync --reconcile
    ```
 
-   The lane owns tracker completion after a detached merge; the overseer does
-   not substitute for it. When `[ISSUE]` was extracted, read it from the synced
+   The lane owns tracker completion; the overseer does not substitute for it. When `[ISSUE]` was extracted, read it from the synced
    cache. A completed state needs no write. A live state completes now:
 
    ```bash
@@ -425,23 +368,6 @@ Use the output as `MAIN_REPO_ROOT`.
 
 ## 6. Present Results
 
-An armed or queued PR returns this result the moment the wait is detached. It
-is not a merge claim:
-
-<output_format>
-
-### ⏳ ARMED — PR #[N]: [TITLE]
-
-| Field | Value |
-|-------|-------|
-| Head | `[PREPARED_HEAD]` |
-| Queue wait | detached; verdict at `[VERDICT_FILE]`, diagnostics at `[VERDICT_FILE].log` |
-| Lane | released; this session reads the verdict at its next boundary |
-
-</output_format>
-
-A completed merge uses the result below.
-
 <output_format>
 
 ### ✅ MERGED — PR #[N]: [TITLE]
@@ -479,5 +405,4 @@ Legend: ✅ merged  ⏭️ skipped (user)  ❌ skipped (error)
 ## 7. Return
 
 The merge is complete once § 5 steps 1-6 have run. A run that handed back at a
-non-merged verdict, or that reported an ARMED result, is not complete: it
-resumes at step 1's verdict read.
+non-merged verdict reports that verdict and ends; it does not resume.

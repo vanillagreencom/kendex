@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Every verdict `queue-wait --json` can produce has a route in `merge-pr.md`
 # § 5 step 1, and every row of that table names a verdict queue-wait can
-# produce. The lane reads the detached wait's verdict file and routes on it
-# with nothing in between, so a producer verdict with no row is a lane that
-# stops at a value it cannot act on, and a row naming no producer is a route
-# nothing reaches.
+# produce. The lane blocks on the wait and routes what it prints with nothing
+# in between, so a producer verdict with no row is a lane that stops at a value
+# it cannot act on, and a row naming no producer is a route nothing reaches.
 #
 # The producer set is read from queue-wait's CODE — the literal every
 # `emit_result` and `note_candidate` call site names — not from its `--help`.
@@ -21,9 +20,9 @@
 # one leaves both directions green.
 #
 # Every check runs once per tree: the sources under skills/ and the committed
-# render under .agents/skills/, which is the copy a lane reads. That includes
-# the detach-line check, which is registered per tree rather than against this
-# suite's own — `tools/guard` enforces render presence, not byte equality.
+# render under .agents/skills/, which is the copy a lane reads — the file-scoped
+# checks included, registered per tree rather than against this suite's own
+# location: `tools/guard` enforces render presence, not byte equality.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
@@ -104,29 +103,31 @@ table_is_read() { # doc — an empty harvest passes both set comparisons
   [ -n "$(route_labels "$1")" ]
 }
 
-# Every backgrounded command in the workflow is a detach arm — which launcher
-# runs is the document's choice, `setsid` where it exists and `nohup` where it
-# does not, so the launcher's name is not the contract. What is: each arm runs
-# the waiter with --json, writes to the part file, and publishes by moving that
-# onto the verdict file. An arm that redirects straight at the verdict file
-# hands the reader a present-but-empty file for the whole wait, which the four
-# states in § 5 step 1 read as a finished wait.
+# The lane waits in the FOREGROUND. A handoff lane sitting at its prompt has no
+# next boundary, so a verdict published behind it waits for a human — which is
+# what a detached lane wait cost five lanes in one night. Two halves, and both
+# are needed: an existence check alone passes while a backgrounded arm is added
+# beside the blocking call, and the no-background half alone passes when the
+# wait is deleted outright.
 #
-# Both halves are needed. Per-arm conformance alone passes when every arm is
-# deleted; an existence check alone passes while a second arm drifts.
-detach_arms() { # doc
-  fenced "$1" | cut -f3- | grep -E '&[[:space:]]*$' || true
+# The blocking call is pinned to its whole line: a trailing redirection is what
+# turns it back into a detached wait whose result nothing in the lane reads.
+# The detached form belongs to the overseer surface and merge-pr.md names it in
+# one prose clause, which is not a fenced command and so is not a lane
+# instruction.
+fenced_cmds() { # doc
+  fenced "$1" | cut -f3-
 }
-detach_arms_publish() { # doc
-  local arms bad
-  arms="$(detach_arms "$1")"
-  if [ -z "$arms" ]; then
-    printf '        no backgrounded command in the workflow: the detach is gone\n'
+lane_wait_is_foreground() { # doc
+  local cmds background
+  cmds="$(fenced_cmds "$1")"
+  if ! grep -qE '/queue-wait \[PR_NUMBER\] --json[[:space:]]*$' <<<"$cmds"; then
+    printf '        no fenced command blocks on queue-wait [PR_NUMBER] --json\n'
     return 1
   fi
-  bad="$(grep -vE '/queue-wait .*--json .*> *"\[VERDICT_FILE\]\.part".*mv .*"\[VERDICT_FILE\].part" "\[VERDICT_FILE\]"' <<<"$arms" || true)"
-  [ -z "$bad" ] && return 0
-  printf '        detach arm that does not publish through the part file: %s\n' "$bad"
+  background="$(grep -E '&[[:space:]]*$' <<<"$cmds" || true)"
+  [ -z "$background" ] && return 0
+  printf '        the lane is told to background a command: %s\n' "$background"
   return 1
 }
 
@@ -170,8 +171,8 @@ for root in "${ROOTS[@]}"; do
     enum_matches_code "$qw"
   check "$label: every verdict's route is one row, not several" \
     one_row_per_verdict "$doc"
-  check "$label: every detach arm publishes through the part file" \
-    detach_arms_publish "$doc"
+  check "$label: the lane's queue wait is a blocking foreground call" \
+    lane_wait_is_foreground "$doc"
   # `worktree remove` runs `git worktree remove --force` and then `rm -rf`, so
   # it issues no dirty-tree refusal of its own: step 6's own re-read is the
   # only thing between a build artifact and its deletion. Step 4 judged the
@@ -238,15 +239,25 @@ check "control: a verdict routed by two rows reds the one-row direction" \
 check "control: that same duplicate leaves the coverage direction green" \
   every_verdict_routed "$CTL_QW" "$DUPED"
 
-NO_PUBLISH="$MD_TMP/merge-pr-no-publish.md"
-sed 's|; mv -f -- "\[VERDICT_FILE\].part" "\[VERDICT_FILE\]"||' "$CTL_DOC" > "$NO_PUBLISH"
-check "control: a detach arm redirecting straight at the verdict file reds" \
-  reds detach_arms_publish "$NO_PUBLISH"
+BACKGROUNDED="$MD_TMP/merge-pr-backgrounded.md"
+awk '{ print }
+  /^   \[MAIN_REPO_ROOT\]\/\.agents\/skills\/orch\/scripts\/queue-wait \[PR_NUMBER\] --json$/ {
+    print "   nohup [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] --json > [ARTIFACT] &" }' \
+  "$CTL_DOC" > "$BACKGROUNDED"
+check "control: a backgrounded arm beside the blocking call reds" \
+  reds lane_wait_is_foreground "$BACKGROUNDED"
 
-NO_DETACH="$MD_TMP/merge-pr-no-detach.md"
-grep -v -e '^   setsid sh -c ' -e '^   nohup sh -c ' "$CTL_DOC" > "$NO_DETACH"
-check "control: deleting every detach arm reds the same check" \
-  reds detach_arms_publish "$NO_DETACH"
+REDIRECTED="$MD_TMP/merge-pr-redirected.md"
+sed 's|^\(   \[MAIN_REPO_ROOT\]/\.agents/skills/orch/scripts/queue-wait \[PR_NUMBER\] --json\)$|\1 > [ARTIFACT]|' \
+  "$CTL_DOC" > "$REDIRECTED"
+check "control: redirecting the blocking call away from stdout reds" \
+  reds lane_wait_is_foreground "$REDIRECTED"
+
+NO_WAIT="$MD_TMP/merge-pr-no-wait.md"
+grep -v '^   \[MAIN_REPO_ROOT\]/\.agents/skills/orch/scripts/queue-wait \[PR_NUMBER\] --json$' \
+  "$CTL_DOC" > "$NO_WAIT"
+check "control: deleting the blocking call reds the same check" \
+  reds lane_wait_is_foreground "$NO_WAIT"
 
 # The producer control, and the reason the harvest reads the code: an emit site
 # renamed with --help left alone. Harvesting the help text leaves every check

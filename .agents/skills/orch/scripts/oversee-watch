@@ -20,14 +20,12 @@
 #                 key. Every repo is reduced on every pass, and the latest
 #                 output of each — each line prefixed with its repo — is
 #                 appended to every event.
-#   2. queue-verdict a detached queue-wait published a verdict file for an
-#                 --item, named by merge-pr.md § 5 step 1, and unconsumed
-#   3. merged     an --item's PR (head branch = the item id, lowercased, in
+#   2. merged     an --item's PR (head branch = the item id, lowercased, in
 #                 the first --repo — never a fork's same-named branch; one --head
 #                 query per item — no listing window to miss) merged at or
 #                 after --since
-#   4. window-gone a listed tmux lane window no longer exists
-#   5. lane-exited a listed lane's window is alive but its pane holds a bare
+#   3. window-gone a listed tmux lane window no longer exists
+#   4. lane-exited a listed lane's window is alive but its pane holds a bare
 #                 shell that `pgrep -P` reports NO child under, on two
 #                 consecutive passes — the harness under it exited (session
 #                 limit, crash, quit) and the slot is free. A lane resumed by
@@ -36,16 +34,15 @@
 #                 child is what tells them apart. A probe that cannot run at
 #                 all is not an answer: that lane stays watched, noted once on
 #                 stderr
-#   6. usage-limit a listed lane whose harness has not exited shows the
+#   5. usage-limit a listed lane whose harness has not exited shows the
 #                 account's limit banner on its screen — one pass, and the
 #                 claimed config dir when a live lane claim names the window
-#   7. question   a question/selection prompt
-#   8. idle-after-return a listed lane whose harness has not exited sits at its
+#   6. question   a question/selection prompt
+#   7. idle-after-return a listed lane whose harness has not exited sits at its
 #                 composer with no work in flight on two consecutive passes
-#   9. heartbeat  after --max-loops passes with no event
-# Every pane check — usage-limit, question, idle-after-return, and any added
-# later — reads only the lines below the last user turn: above it is scrollback
-# the lane has already worked past.
+#   8. heartbeat  after --max-loops passes with no event
+# Every pane check reads only the lines below the last user turn, 5-7 and any
+# added later: above it is scrollback the lane has already worked past.
 #
 # Output on the first event: `EVENT <kind> ...` on stdout — one line, except
 # `merged`, which prints one `EVENT merged` line per merged item so the
@@ -118,9 +115,6 @@ Events, checked in this order every pass:
                              rc is the highest status the reducer returned
                              across the repos (2 read failure, 1 attention,
                              0 clear)
-  EVENT queue-verdict <item> <path>
-                             a detached queue-wait published a verdict for an
-                             --item; its lane reads that file and routes it
   EVENT merged <PR> <branch> an --item's PR merged at or after --since (one
                              line per PR; the item's head branch is its id,
                              lowercased, in the first --repo — a fork's PR on
@@ -420,26 +414,6 @@ fi
 
 pw_init_state
 
-# A lane that detached a queue-wait is idle until its verdict lands, and only a
-# merged PR reaches check_merged: a conflicting or stalled-in-queue verdict
-# reaches no other surface here, and on a repo without review-gate none runs at
-# all. This is a stat of the files merge-pr.md § 5 step 1 names and nothing
-# more — the head is in each name, so an item's waits are a glob — and a
-# verdict stays an event until the lane consumes it, which is the first act of
-# the route it takes.
-check_queue_verdict() {
-  local item f
-  for item in ${ITEMS[@]+"${ITEMS[@]}"}; do
-    for f in "$PROJECT_ROOT"/tmp/queue-verdict-"$item"-*.json; do
-      [[ -f "$f" ]] || continue
-      jq -e 'type=="object" and (.verdict|type)=="string"' "$f" >/dev/null 2>&1 || continue
-      echo "EVENT queue-verdict $item $f"
-      pr_watch_context
-      exit 0
-    done
-  done
-}
-
 check_merged() {
   [[ -n "$ITEM_BRANCHES" ]] || return 0
   local errf="$WORK_DIR/merged.err" branch list hit hits=""
@@ -693,7 +667,6 @@ loop=0
 while :; do
   loop=$((loop + 1))
   check_pr_watch
-  check_queue_verdict
   check_merged
   check_lanes
   [[ "$loop" -lt "$MAX_LOOPS" ]] || heartbeat
