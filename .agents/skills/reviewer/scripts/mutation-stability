@@ -71,21 +71,61 @@ positive_integer --threads "$THREADS"
 positive_integer --timeout "$TIMEOUT"
 
 ROOT=$(mktemp -d "${TMPDIR:-/tmp}/mutation-stability.XXXXXX") || exit 2
-ACTIVE_PID="" ACTIVE_GROUP="" WATCHDOG_PID="" WATCHDOG_GROUP=""
+ACTIVE_PID="" ACTIVE_GROUP=""
+
+group_leaves() {
+  group="$1" leader="$2"
+  ps -eo pid=,ppid=,pgid= 2>/dev/null | awk -v group="$group" -v leader="$leader" '
+    $3 == group && $1 != leader {
+      members[$1] = 1
+      has_child[$2] = 1
+    }
+    END {
+      for (pid in members) if (!has_child[pid]) print pid
+    }
+  '
+}
+
+signal_leaves() {
+  signal="$1" group="$2" leader="$3" leaves="" leaf=""
+  leaves=$(group_leaves "$group" "$leader") || return 1
+  [ -n "$leaves" ] || return 2
+  while IFS= read -r leaf; do
+    [ -z "$leaf" ] || kill -s "$signal" "$leaf" 2>/dev/null || :
+  done <<EOF
+$leaves
+EOF
+}
 
 terminate_group() {
-  group="$1"
+  signal="$1" group="$2" leader="$3" grace=0
   [ -n "$group" ] || return 0
-  kill -TERM "-$group" 2>/dev/null || :
+
+  while [ "$grace" -lt 40 ]; do
+    leaf_status=0
+    signal_leaves KILL "$group" "$leader" || leaf_status=$?
+    [ "$leaf_status" -eq 0 ] || break
+    sleep 0.05
+    grace=$((grace + 1))
+  done
+  if [ "$leaf_status" -eq 1 ]; then
+    kill -s "$signal" "-$group" 2>/dev/null || :
+  else
+    [ -z "$leader" ] || kill -s "$signal" "$leader" 2>/dev/null || :
+  fi
+
+  grace=0
+  while [ -n "$leader" ] && kill -0 "$leader" 2>/dev/null && [ "$grace" -lt 20 ]; do
+    sleep 0.05
+    grace=$((grace + 1))
+  done
   kill -KILL "-$group" 2>/dev/null || :
+  [ -z "$leader" ] || wait "$leader" 2>/dev/null || :
 }
 
 cleanup_active() {
-  terminate_group "$WATCHDOG_GROUP"
-  [ -z "$WATCHDOG_PID" ] || wait "$WATCHDOG_PID" 2>/dev/null || :
-  terminate_group "$ACTIVE_GROUP"
-  [ -z "$ACTIVE_PID" ] || wait "$ACTIVE_PID" 2>/dev/null || :
-  ACTIVE_PID="" ACTIVE_GROUP="" WATCHDOG_PID="" WATCHDOG_GROUP=""
+  terminate_group TERM "$ACTIVE_GROUP" "$ACTIVE_PID"
+  ACTIVE_PID="" ACTIVE_GROUP=""
 }
 
 cleanup() {
@@ -116,8 +156,6 @@ extract() { # extract SHA into $1, stamped past the build before it
 
 run_command() { # run $2 in $1, capture output in $3, label it $4
   dir="$1" command="$2" log="$3" label="$4"
-  timed_out="$log.timed-out"
-  rm -f "$timed_out"
 
   set -m
   (
@@ -130,26 +168,23 @@ run_command() { # run $2 in $1, capture output in $3, label it $4
   ACTIVE_GROUP=$ACTIVE_PID
   set +m
 
-  set -m
-  (
-    sleep "$TIMEOUT"
-    : > "$timed_out"
-    kill -TERM "-$ACTIVE_GROUP" 2>/dev/null || exit 0
-    sleep 1
+  status=0 ticks=0 max_ticks=$((10#$TIMEOUT * 10)) timed_out=0
+  while kill -0 "$ACTIVE_PID" 2>/dev/null; do
+    if [ "$ticks" -ge "$max_ticks" ]; then
+      timed_out=1
+      terminate_group TERM "$ACTIVE_GROUP" "$ACTIVE_PID"
+      break
+    fi
+    sleep 0.1
+    ticks=$((ticks + 1))
+  done
+  if [ "$timed_out" -eq 0 ]; then
+    wait "$ACTIVE_PID" || status=$?
     kill -KILL "-$ACTIVE_GROUP" 2>/dev/null || :
-  ) &
-  WATCHDOG_PID=$!
-  WATCHDOG_GROUP=$WATCHDOG_PID
-  set +m
+  fi
+  ACTIVE_PID="" ACTIVE_GROUP=""
 
-  status=0
-  wait "$ACTIVE_PID" || status=$?
-  terminate_group "$WATCHDOG_GROUP"
-  wait "$WATCHDOG_PID" 2>/dev/null || :
-  terminate_group "$ACTIVE_GROUP"
-  ACTIVE_PID="" ACTIVE_GROUP="" WATCHDOG_PID="" WATCHDOG_GROUP=""
-
-  if [ -f "$timed_out" ]; then
+  if [ "$timed_out" -eq 1 ]; then
     echo "$label timed out after ${TIMEOUT}s" >&2
     [ "$KEEP" = 1 ] && echo "kept: $ROOT" >&2
     exit 2

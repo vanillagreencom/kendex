@@ -34,6 +34,42 @@ git -C "$REPO" add -A
 git -C "$REPO" -c user.email=t@t -c user.name=t commit -qm x
 SHA=$(git -C "$REPO" rev-parse HEAD)
 
+if command -v unshare >/dev/null 2>&1 \
+  && command -v python3 >/dev/null 2>&1 \
+  && unshare --user --map-root-user --pid --fork --mount-proc true 2>/dev/null; then
+  rc=0
+  out=$(unshare --user --map-root-user --pid --fork --mount-proc \
+    python3 -c '
+import glob, os, subprocess, sys, time
+env = os.environ.copy()
+env["HANG_PID_FILE"] = sys.argv[4]
+run = subprocess.run([
+    sys.argv[1], "--worktree", sys.argv[2], "--sha", sys.argv[3],
+    "--test", "true", "--build", "bash hang.sh & wait",
+    "--mutate", "true", "--stability", "1", "--timeout", "1",
+], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+time.sleep(0.1)
+zombies = []
+for path in glob.glob("/proc/[0-9]*/stat"):
+    try:
+        fields = open(path).read().split()
+        if fields[2] == "Z" and fields[3] == "1":
+            zombies.append((fields[0], fields[1], fields[4]))
+    except (IndexError, OSError):
+        pass
+if run.returncode != 2:
+    print("timeout exit: expected 2, got %s" % run.returncode)
+if zombies:
+    print("non-reaping PID 1 adopted zombies: %r" % (zombies,))
+sys.exit(0 if run.returncode == 2 and not zombies else 1)
+' "$MS" "$REPO" "$SHA" "$TMP/nonreaping-timeout-child.pid" 2>&1) || rc=$?
+  if [ "$rc" = 0 ]; then
+    ok "a non-reaping PID 1 adopts no timed-out descendants"
+  else
+    bad "a non-reaping PID 1 adopts no timed-out descendants" "$out"
+  fi
+fi
+
 rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA" --test 'bash check.sh' \
       --build 'true' --mutate 'sed -i.bak "s/+/-/" lib.sh && rm -f lib.sh.bak' \
       --stability 2 --threads 2) || rc=$?
