@@ -471,6 +471,86 @@ set -e
 # "not comparison_failed" would also pass for a mutant that never ran.
 assert_eq "$(jq -r '.reason' <<<"$routing_mutant_out")" "unapproved_additions" \
   "routing control detects a comparison-failure misroute"
+# --- kendex#944: a rebase must not bill the base branch's files to the round ---
+# The record's base_sha is HEAD at delegation and a restack orphans it. The
+# orphaned sha still resolves, so the snapshot probe succeeds across main's
+# whole advance and reads every file that advance added as this round's. The
+# branch's merge base with its base branch scopes it back: the gate refuses
+# only a path both probes call an addition.
+rebase_wt="$TMP_ROOT/rebase"
+mkdir -p "$rebase_wt"
+git -C "$rebase_wt" init -q -b main
+git -C "$rebase_wt" config user.email test@example.com
+git -C "$rebase_wt" config user.name Test
+git -C "$rebase_wt" config commit.gpgsign false
+git -C "$rebase_wt" commit -q --allow-empty -m base
+init_growth_state "$STATE" "$rebase_wt" issue-944 seed 1000000
+git -C "$rebase_wt" checkout -q -b feature
+# The branch's own commit is what the rebase rewrites, so the record must pin it
+# for base_sha to be orphaned — a base_sha still on main survives any restack.
+printf 'branch work\n' > "$rebase_wt/branch.md"
+git -C "$rebase_wt" add branch.md
+git -C "$rebase_wt" commit -q -m branch-work
+"$ROUND_WRITE" --worktree "$rebase_wt" --issue issue-944 --round-id 1-1 --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
+printf 'round work\n' > "$rebase_wt/notes.md"
+git -C "$rebase_wt" add notes.md
+git -C "$rebase_wt" commit -q -m round-work
+# main advances with a protected file of its own; the branch restacks onto it,
+# which is what `worktree create --restack` does outside worktree-push's gate.
+git -C "$rebase_wt" checkout -q main
+mkdir -p "$rebase_wt/crates/upstream"
+printf 'upstream\n' > "$rebase_wt/crates/upstream/lib.rs"
+git -C "$rebase_wt" add crates/upstream/lib.rs
+git -C "$rebase_wt" commit -q -m upstream-advance
+git -C "$rebase_wt" checkout -q feature
+git -C "$rebase_wt" rebase -q main >/dev/null
+rebase_head="$(git -C "$rebase_wt" rev-parse HEAD)"
+rebase_base="$(jq -r '.base_sha' "$rebase_wt/tmp/dev-round-issue-944-1-1.json")"
+assert_eq "$(git -C "$rebase_wt" merge-base --is-ancestor "$rebase_base" HEAD >/dev/null 2>&1 && echo reachable || echo orphaned)" \
+  "orphaned" "control: the rebase orphaned the round record's base"
+assert_eq "$(git -C "$rebase_wt" diff --diff-filter=A --name-only "$rebase_base" HEAD | grep -cF 'crates/upstream/lib.rs')" "1" \
+  "control: the orphaned base still resolves and reads main's file as an addition"
+"$WRITE" --worktree "$rebase_wt" --kind fix --issue issue-944 --round-id 1-1 --branch feature \
+  --commit "$rebase_head" --validate pass --item 1 Applied done >/dev/null
+rebase_out="$("$CHECK" --worktree "$rebase_wt" --issue issue-944 --round-id 1-1 --expect-items-from-round 2>/dev/null)"
+assert_eq "$(jq -r '.reason' <<<"$rebase_out")" "valid" \
+  "a rebased round adding no files of its own is not accused of main's additions"
+assert_eq "$(jq -c '.files' <<<"$rebase_out")" "[]" "the accepted rebased round names no files"
+
+# Must-fail control: with the merge-base scoping gone, the same round is refused
+# and the refusal names the file main merged.
+scope_mutant_root="$TMP_ROOT/merge-base-mutant"
+mkdir -p "$scope_mutant_root"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$scope_mutant_root/"
+scope_mutant="$scope_mutant_root/scripts/dev-artifact-check"
+assert_eq "$(grep -cF 'merge_base="$(branch_merge_base "$repo")"' "$scope_mutant")" "1" \
+  "control finds exactly one merge-base scoping to remove"
+sed -i.bak 's/merge_base="\$(branch_merge_base "\$repo")"/merge_base=""/' "$scope_mutant"
+chmod +x "$scope_mutant"
+set +e
+scope_mutant_out="$("$scope_mutant" --worktree "$rebase_wt" --issue issue-944 --round-id 1-1 --expect-items-from-round 2>/dev/null)"
+set -e
+assert_eq "$(jq -c '.files' <<<"$scope_mutant_out")" '["crates/upstream/lib.rs"]' \
+  "control: unscoped, the same round is billed main's addition"
+
+# The scoping narrows the base, never the gate: an unlisted protected file the
+# rebased round does add is still refused, and it is the only name in the list.
+"$ROUND_WRITE" --worktree "$rebase_wt" --issue issue-944 --round-id 2-2 --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
+mkdir -p "$rebase_wt/tools"
+printf 'round machinery\n' > "$rebase_wt/tools/round-tool"
+git -C "$rebase_wt" add tools/round-tool
+git -C "$rebase_wt" commit -q -m round-addition
+rebase_head2="$(git -C "$rebase_wt" rev-parse HEAD)"
+"$WRITE" --worktree "$rebase_wt" --kind fix --issue issue-944 --round-id 2-2 --branch feature \
+  --commit "$rebase_head2" --validate pass --item 1 Applied done >/dev/null
+set +e
+rebase_bites="$("$CHECK" --worktree "$rebase_wt" --issue issue-944 --round-id 2-2 --expect-items-from-round 2>/dev/null)"
+set -e
+assert_eq "$(jq -r '.reason' <<<"$rebase_bites")" "unapproved_additions" \
+  "an unlisted addition on a rebased branch is still refused"
+assert_eq "$(jq -c '.files' <<<"$rebase_bites")" '["tools/round-tool"]' \
+  "the refusal names the round's own addition alone"
+
 # --- kendex#994: the recorded commit must name a real object in the worktree's repo ---
 gitwt="$TMP_ROOT/gitwt"
 mkdir -p "$gitwt/tmp"
@@ -594,6 +674,14 @@ assert_file_contains "$ci_fix" "$ROUND_STAMP" "ci-fix § 3.2 mints a fresh dev_r
 # token alone is the fail-closed guarantee: a prior round's leftover receipt
 # carries the previous token and can never be mistaken for this round's.
 assert_file_not_contains "$ci_fix" "$LEGACY_CHECK" "ci-fix § 3.2 no longer uses the legacy positional dev-artifact-check call"
+
+# kendex#944: the restack cycle rebases outside worktree-push's live-round
+# refusal, so it makes that check itself before the branch moves.
+restack="$REPO_ROOT/skills/orch/workflows/merge-pr-restack.md"
+assert_file_contains "$restack" "workflow-state get [ISSUE] '.dev_round_id // empty'" \
+  "merge-pr-restack § 2 reads the active round before the restack"
+assert_file_contains "$restack" "tmp/dev-round-[ISSUE]-[TOKEN].json" \
+  "merge-pr-restack § 2 names the record that makes a round live"
 
 # The removed legacy positional call must not survive in any orch workflow.
 for wf in dev-start dev-fix review-pr-comments ci-fix; do
