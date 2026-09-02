@@ -116,6 +116,16 @@ cp "$TMP_ROOT/record-honest.json" "$record"
 assert_eq "$(reason --worktree "$wt" --issue issue-826 --round-id 1-1 --expect-items-from-round)" \
   "unapproved_additions" "restoring the honest base_sha restores the refusal"
 
+# 40 hex naming no object answers no to every git question, "is it an ancestor
+# of HEAD" included — which is the orphaned-base stop, where the gate does not
+# run. A base this repository cannot answer for is a failed comparison.
+jq --arg base "0123456789abcdef0123456789abcdef01234567" '.base_sha = $base' \
+  "$TMP_ROOT/record-honest.json" > "$TMP_ROOT/ghost.json"
+cp "$TMP_ROOT/ghost.json" "$record"
+assert_eq "$(reason --worktree "$wt" --issue issue-826 --round-id 1-1 --expect-items-from-round)" \
+  "comparison_failed" "a base_sha naming no object refuses rather than skipping the gate"
+cp "$TMP_ROOT/record-honest.json" "$record"
+
 # A trailing newline is the other half of the same bug, in the opposite
 # direction: Oniguruma's `$` matches before a string-final newline, so the
 # unanchored form accepted a path the writer cannot produce. `$'...'` holds

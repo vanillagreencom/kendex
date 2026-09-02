@@ -255,16 +255,18 @@ assert_eq "$(cat "$live_state/tmp/workflow-state-KEN-LIVE.json" | jq -r ".rebase
 
 # Must-fail control: with the refusal removed, the live round is pushed over.
 # The copy carries the whole scripts directory so the mutant resolves its
-# siblings (workflow-state) exactly as the real script does.
+# siblings (workflow-state, dev-round-live) exactly as the real script does,
+# and the refusal itself now lives in dev-round-live, which owns the predicate.
 mutant_root="$TMP_ROOT/live-refusal-mutant"
 mkdir -p "$mutant_root"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$mutant_root/"
 live_mutant="$mutant_root/scripts/worktree-push"
-assert_eq "$(grep -c 'fail "fix round .active_round is live' "$live_mutant")" "1" \
+live_predicate="$mutant_root/scripts/dev-round-live"
+assert_eq "$(grep -c '^fail 3 "fix round' "$live_predicate")" "1" \
   "control finds exactly one live-round refusal to remove"
-sed -i.bak 's/fail "fix round .active_round is live/: "fix round is live/' "$live_mutant"
-chmod +x "$live_mutant"
-assert_eq "$(grep -c 'fail "fix round .active_round is live' "$live_mutant")" "0" \
+sed -i.bak 's/^fail 3 "fix round/exit 0 # fix round/' "$live_predicate"
+chmod +x "$live_mutant" "$live_predicate"
+assert_eq "$(grep -c '^fail 3 "fix round' "$live_predicate")" "0" \
   "control removes the refusal only from its private copy"
 rm -f "$live_wt/tmp/dev-return-KEN-LIVE-1-1.json"
 : > "$live_args"

@@ -37,9 +37,9 @@
 # orchestrator, not a failure). Exact-commit binding (.commit == the observed
 # HEAD) and tracker corroboration stay in the orch workflow.
 #
-# The same rebase orphans the round record's base_sha, and there the answer is a
-# fallback reference rather than a warning: the additions probe then excludes a
-# path the branch's merge base already carries (kendex#944).
+# The same rebase orphans the round record's base_sha, and there the answer is
+# to stop: the protected-additions gate does not run, says so on stderr, and
+# names no file (kendex#944).
 
 set -euo pipefail
 
@@ -52,9 +52,6 @@ ID_GRAMMAR='^[A-Za-z0-9._-]+$'
 # --expect-items is a comma-separated list of item numbers.
 EXPECT_GRAMMAR='^[0-9]+(,[0-9]+)*$'
 scratch_files=()
-# branch_merge_base's answer: the fallback reference, or the cause when none.
-MERGE_BASE=""
-MERGE_BASE_UNRESOLVED=""
 
 cleanup_scratch() {
   if (( ${#scratch_files[@]} > 0 )); then
@@ -118,9 +115,7 @@ that runs while the branch is over its size tripwire. Its receipt is accepted
 only when the branch came back to twice workflow state pr.baseline_lines: over
 that cap is reason=cut_not_shrunk, and a cap that cannot be measured at all is
 reason=cut_unmeasurable. Every other gate applies unchanged.
-Protected-addition scope, and which reference the additions probe measures from
-when a rebase has orphaned base_sha:
-skills/orch/schemas/dev-round.md § Protected additions.
+Protected-addition scope: skills/orch/schemas/dev-round.md § Protected additions.
 
 Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
               reason: "valid"|"missing"|"invalid"|"commit_unresolvable"|
@@ -155,10 +150,7 @@ reason meanings when ok=false:
   unapproved_additions
               a fix round added a protected file since the round record's
               base_sha without naming that exact file in adds. The files field
-              names every refused path. Renames and moves do not count, and
-              neither does what the orphaned-base fallback excludes (the schema
-              section above owns that rule). Stderr says which reference the
-              refusal was measured against.
+              names every refused path. Renames and moves do not count.
   comparison_failed
               Git could not compare the round record's base_sha to HEAD. No file
               classification is inferred from a failed comparison.
@@ -353,36 +345,6 @@ is_protected_addition() {
   return 1
 }
 
-# The fallback reference for an orphaned base_sha: the branch's merge base with
-# its base branch. It answers in MERGE_BASE, with MERGE_BASE_UNRESOLVED naming
-# why none was found, rather than on stdout — a command substitution would run
-# it in a subshell and the cause would die with that subshell, leaving the
-# caller to report an arm it cannot see. Every failure here leaves the probe
-# measuring from base_sha alone, which refuses more, never less.
-branch_merge_base() {
-  local repo="$1" base_branch base_ref status=0
-  MERGE_BASE=""
-  MERGE_BASE_UNRESOLVED=""
-  base_branch="$("$SCRIPT_DIR/resolve-base-branch" "$repo" 2>/dev/null)" || status=$?
-  if (( status != 0 )); then
-    MERGE_BASE_UNRESOLVED="resolve-base-branch exited $status"
-    return 0
-  fi
-  if [[ -z "$base_branch" ]]; then
-    MERGE_BASE_UNRESOLVED="resolve-base-branch named no base branch"
-    return 0
-  fi
-  for base_ref in "refs/remotes/origin/$base_branch" "refs/heads/$base_branch"; do
-    git -C "$repo" rev-parse --verify --quiet "$base_ref" >/dev/null 2>&1 || continue
-    # A base ref that already contains HEAD leaves the branch nothing of its
-    # own, so its tree answers for every path and would excuse them all.
-    git -C "$repo" merge-base --is-ancestor HEAD "$base_ref" >/dev/null 2>&1 && continue
-    MERGE_BASE="$(git -C "$repo" merge-base "$base_ref" HEAD 2>/dev/null)" || MERGE_BASE=""
-    [[ -n "$MERGE_BASE" ]] && break
-  done
-  [[ -n "$MERGE_BASE" ]] || MERGE_BASE_UNRESOLVED="no usable merge base with $base_branch"
-}
-
 # base_sha reaches `git diff` as a revision argument, so the schema arm above
 # constrains it to 40 hex before it gets here: a value git parses as an OPTION
 # never reaches revision parsing, and git would exit 0 over an empty probe with
@@ -394,22 +356,26 @@ branch_merge_base() {
 # base_sha is HEAD at delegation, and a rebase orphans it exactly as it orphans
 # the artifact's .commit (kendex#944). The orphaned sha still resolves, so the
 # comparison succeeds across the base branch's whole advance and names files
-# another author merged as this round's additions. Only then does a second
-# reference apply: on a live base_sha the recorded tree IS the round's starting
-# point, and consulting anything else could only subtract refusals it owes.
-#
-# The fallback asks one question per candidate path — does the branch's merge
-# base with its base branch already carry it — because a path the base branch
-# carries was added by nobody here. It is a tree lookup, not a second diff:
-# rename detection over the branch's whole range would pair an earlier
-# branch-side deletion with this round's addition and drop the path before it
-# was ever classified. The lookup admits no such pairing, and a lookup that
-# errors for any other reason leaves the path refused.
+# another author merged as this round's additions. No comparison recovers the
+# round's real starting tree once it is off the branch, so the gate does not
+# run: it says that on stderr and names no file. Three approximations of "did
+# this round add this path" were tried and each excused something real.
 collect_unapproved_additions() {
   local repo="$1" round_record="$2" result="$3" base_sha path probe
-  local merge_base=""
   local additions=()
   base_sha="$(jq -r '.base_sha' "$round_record")"
+  # 40 hex naming no object here is not an orphaned base, it is a base this
+  # repository cannot answer for: refuse the comparison rather than take the
+  # stop below, which would clear the round on a record nobody can check.
+  if [[ "$(git -C "$repo" cat-file -t "$base_sha" 2>/dev/null)" != "commit" ]]; then
+    return 2
+  fi
+  if ! git -C "$repo" merge-base --is-ancestor "$base_sha" HEAD >/dev/null 2>&1; then
+    printf '%s: round base %s is not an ancestor of HEAD in %s (orphaned by a rebase?); the protected-additions gate did not run, because no comparison can attribute an addition to this round once its base is off the branch\n' \
+      "$PROG" "$base_sha" "$repo" >&2
+    printf '[]\n' > "$result" || return 3
+    return 0
+  fi
   probe="$(mktemp "$repo/tmp/.dev-artifact-additions.XXXXXX")" \
     || return 3
   scratch_files+=("$probe")
@@ -417,24 +383,9 @@ collect_unapproved_additions() {
     rm -f -- "$probe"
     return 2
   fi
-  if ! git -C "$repo" merge-base --is-ancestor "$base_sha" HEAD >/dev/null 2>&1; then
-    branch_merge_base "$repo"
-    merge_base="$MERGE_BASE"
-    if [[ -n "$merge_base" ]]; then
-      printf '%s: round base %s resolves but is not an ancestor of HEAD in %s (orphaned by a rebase?); paths the branch merge base %s already carries are excluded\n' \
-        "$PROG" "$base_sha" "$repo" "$merge_base" >&2
-    else
-      printf '%s: round base %s resolves but is not an ancestor of HEAD in %s (orphaned by a rebase?), and no base-branch merge base resolved (%s); additions measure from that base alone, which refuses more, never less\n' \
-        "$PROG" "$base_sha" "$repo" "$MERGE_BASE_UNRESOLVED" >&2
-    fi
-  fi
   while IFS= read -r -d '' path; do
     if is_protected_addition "$path" \
       && ! jq -e --arg path "$path" '.adds | index($path) != null' "$round_record" >/dev/null; then
-      if [[ -n "$merge_base" ]] \
-        && git -C "$repo" cat-file -e "$merge_base:$path" >/dev/null 2>&1; then
-        continue
-      fi
       additions+=("$path")
     fi
   done < "$probe"

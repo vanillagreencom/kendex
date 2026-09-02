@@ -48,7 +48,7 @@ What the writer itself refuses is a short list, not a scanner: an empty or white
 
 The `Adds:` delegation line and `--adds` carry the same blank-separated path list. A blank or tab separates, so a path containing whitespace is read as two paths and cannot be authorized as one. The writer rejects absolute paths, leading or trailing empty components, double slashes, `.` and `..` components, and duplicates. The reader refuses a recorded path beginning with `-` or carrying a space, tab, newline, carriage return, form feed or vertical tab. Omit the line and flag when no additions are allowed.
 
-**Immutable per round**: `dev-round-write --help` carries the contract. Mint a new round and never fall back to an unbound item list. While the ACTIVE round's record — the one whose token equals workflow state `dev_round_id` — has no matching `dev-return` receipt, `worktree-push` refuses to push: a rebase would move the branch off the base that record pins. Two things end that: the receipt landing, or a fresh `dev_round_id` whose token names no stamped record.
+**Immutable per round**: `dev-round-write --help` carries the contract. Mint a new round and never fall back to an unbound item list. While the ACTIVE round's record — the one whose token equals workflow state `dev_round_id` — has no matching `dev-return` receipt, `dev-round-live` answers that a round is in flight, and every path that rebases refuses on it: a rebase moves the branch off the commit that round is working from. Two things end that: the receipt landing, or a fresh `dev_round_id` whose token names no stamped record.
 
 ## Declared cuts
 
@@ -70,7 +70,7 @@ The record is input, never receipt: it proves what was delegated, not that anyth
 
 The gate checks additions only. Git rename detection keeps moves and renames outside it.
 
-`base_sha` is the reference: a file already in that tree is not this round's, which is what keeps a later round from re-refusing an addition an earlier one authorized. A rebase orphans it, and the orphaned tree alone reads every file the base branch advanced by as an addition this round made. So when `base_sha` is no longer an ancestor of `HEAD`, and only then, a second reference excludes what it can: a path the branch's merge base with its base branch already carries was added by nobody here. That fallback is conditional on the merge base resolving. When none does, the probe measures from the orphaned `base_sha` alone and can name a path the base branch merged; the reader's answer there is a fresh round, never an `Adds:` line for a path nobody on the branch added. `dev-artifact-check` says on stderr which of the two ran.
+`base_sha` is the reference, and the only one: a file already in that tree is not this round's, which is what keeps a later round from re-refusing an addition an earlier one authorized. A rebase orphans it, and the orphaned tree reads every file the base branch advanced by as an addition this round made. Once `base_sha` is no longer an ancestor of `HEAD` the gate does not run at all: `dev-artifact-check` says so on stderr, names no file, and the round is neither refused nor cleared on this ground. The repair for a round that needed the gate is a fresh round, stamped on the rebased branch, never an `Adds:` line for a path nobody on the branch added.
 
 Protected additions are:
 

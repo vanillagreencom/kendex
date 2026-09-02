@@ -9,34 +9,20 @@ not a CI failure.
    re-read both fields. Either still set means hand back without pushing. This
    order prevents an armed PR from re-entering the queue while it is dequeued.
 
-2. Resolve the managed worktree, then check for a live fix round before
-   rebasing anything:
+2. Resolve the managed worktree, then ask whether a fix round is in flight
+   before rebasing anything:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree path [ISSUE]
    ```
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/workflow-state exists --json [ISSUE]
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-round-live --worktree [WT_PATH] --issue [ISSUE]
    ```
 
-   `exists` answers `{path, exists}`. On `"exists": false` there is no active
-   round to read, so proceed. On `"exists": true`, read the token:
-
-   ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/workflow-state get [ISSUE] '.dev_round_id // empty'
-   ```
-
-   Proceed on an empty token, on a token whose record
-   `[WT_PATH]/tmp/dev-round-[ISSUE]-[TOKEN].json` does not exist, or on one with
-   `[WT_PATH]/tmp/dev-return-[ISSUE]-[TOKEN].json` beside it; hand back without
-   restacking on a record with no receipt beside it, and on a `get` that exits
-   nonzero, which is a state that could not be read rather than a state with no
-   round. This is the refusal `worktree-push` makes, in the same two arms, for
-   a path that never reaches it: the round record pins the commit the delegated
-   agent is working from, and the restack moves the branch out from under it.
-   Land that round's receipt, or stamp a fresh `dev_round_id`, then restack.
-   `worktree create [ISSUE] --reuse` rebases outside this check too, and carries
-   no live-round refusal of its own.
+   Exit 0 is the only answer that permits the restack; any other exit hands
+   back, and the command says which it was (`dev-round-live --help`).
+   `worktree create [ISSUE] --reuse` rebases outside this check too, and
+   carries no live-round refusal of its own.
 
    Then start the guarded restack:
 

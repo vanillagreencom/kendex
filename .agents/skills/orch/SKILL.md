@@ -86,6 +86,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `review-artifact-check` | Validate a reviewer's JSON artifact, the sole reviewer completion condition. `--help` + [references/artifact-checks.md](references/artifact-checks.md) |
 | `dev-return-write` | Write a dev agent's round-scoped completion artifact; never hand-author the JSON. `--help`; schema `schemas/dev-return.md` |
 | `worktree-push` | Push an issue worktree via `worktree push` and reconcile rebased SHAs in workflow state (`.rebase_map`, `fixed_items`, `pr_comment_review.fixes`) in the same call. `--help` |
+| `dev-round-live` | Answer whether a fix round is in flight in a worktree, for every path that is about to rebase it. Exit 0 permits the rebase; anything else hands back. `--help` |
 | `dev-round-write` | Persist a fix round's delegated item set at stamp time; `--cut` records the round that cuts an oversized branch. `--help`; schema `schemas/dev-round.md` |
 | `dev-artifact-check` | Validate a dev round's completion artifact by round id. `--help` + [references/artifact-checks.md](references/artifact-checks.md) |
 | `approval-wait` | Poll the reviewer gate; `--resolve-mode` prints the effective gate mode. `--help` + [references/gates.md](references/gates.md) |

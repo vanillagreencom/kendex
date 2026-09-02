@@ -20,16 +20,11 @@
 #     cite the upstream equivalent, never print it as a live SHA;
 #   - prints one `sha-reconcile:` summary line naming what changed.
 #
-# A fix round in flight is refused rather than reconciled. Its record
-# (`tmp/dev-round-<issue>-<round>.json`, written at delegation time) pins the
+# A fix round in flight is refused rather than reconciled: its record pins the
 # commit the delegated agent is working from, and the rebase this command runs
 # would move every commit out from under it, leaving the round's receipt to
-# name a `.commit` no longer on the branch. The round in flight
-# is the ACTIVE one — the record whose token equals workflow state
-# `dev_round_id`. Two things end that: the round's dev-return receipt landing,
-# or a fresh `dev_round_id` whose token names no stamped record. An earlier
-# round's leftover record does not block, and neither does a worktree with no
-# state file.
+# name a `.commit` no longer on the branch. `dev-round-live` owns that question
+# and its arms; this script only routes the answer.
 #
 # The rebase happens BEFORE the network push, so a rejected push can still
 # have rewritten the branch: the map is applied to workflow state whatever the
@@ -83,6 +78,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKTREE_BIN="${ORCH_WORKTREE_BIN:-$SCRIPT_DIR/../../worktree/scripts/worktree}"
 WORKFLOW_STATE="$SCRIPT_DIR/workflow-state"
+DEV_ROUND_LIVE="$SCRIPT_DIR/dev-round-live"
 
 SHA_GRAMMAR='^[0-9a-f]{40}$'
 ISSUE_GRAMMAR='^[A-Za-z0-9][A-Za-z0-9._-]*$'
@@ -150,6 +146,7 @@ done
 [[ -n "$issue" ]] || fail "--issue is required"
 [[ "$issue" =~ $ISSUE_GRAMMAR && "$issue" != *..* ]] || fail "invalid issue id: $issue"
 [[ -x "$WORKTREE_BIN" ]] || fail "worktree script is not executable at $WORKTREE_BIN"
+[[ -x "$DEV_ROUND_LIVE" ]] || fail "dev-round-live is not executable at $DEV_ROUND_LIVE"
 command -v jq >/dev/null 2>&1 || fail "jq is required to reconcile rebased SHAs"
 
 worktree_abs="$(cd -P -- "$worktree" 2>/dev/null && pwd -P)" \
@@ -230,20 +227,14 @@ if [[ "$state_present" == "true" ]]; then
 			|| fail "workflow state for $issue records worktree '$state_wt_abs', not '$worktree_abs'; refusing to rewrite another worktree's record"
 	fi
 fi
-# A live fix round pins the commit the delegated agent is working from, and
-# the rebase below would move the branch out from under it. Refuse before the
-# push: nothing is rebased, so nothing needs repair. The ACTIVE round is live
-# from the moment dev-round-write stamps its record until the dev-return
-# receipt for that same round lands; with no state file there is no active
-# round to read, and a record from an earlier round does not block.
-if [[ "$state_present" == "true" ]]; then
-	active_round="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.dev_round_id // ""')" \
-		|| fail "could not read the active dev round for $issue"
-	if [[ -n "$active_round" ]] \
-		&& [[ -e "$worktree_abs/tmp/dev-round-$issue-$active_round.json" ]] \
-		&& [[ ! -e "$worktree_abs/tmp/dev-return-$issue-$active_round.json" ]]; then
-		fail "fix round $active_round is live in $worktree_abs (its round record has no dev-return receipt); a rebase would invalidate the base it pins — land that round's dev-return receipt, or stamp a fresh dev_round_id, then push"
-	fi
+# Refuse before the push, where nothing is rebased and nothing needs repair.
+# Exit 0 is the only answer that permits the rebase: 3 is a live round, and
+# anything else is a question left unanswered, which is not permission.
+live_rc=0
+"$DEV_ROUND_LIVE" --worktree "$worktree_abs" --issue "$issue" ${state_flags[@]+"${state_flags[@]}"} \
+	|| live_rc=$?
+if [[ "$live_rc" -ne 0 ]]; then
+	fail "refusing to push: dev-round-live exited $live_rc for $issue in $worktree_abs (its message above says why)"
 fi
 
 push_out="$(mktemp)" || fail "could not create a temporary file for the push output"

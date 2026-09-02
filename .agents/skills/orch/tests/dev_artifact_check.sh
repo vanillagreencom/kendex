@@ -352,6 +352,180 @@ assert_eq "$?" "2" "round mode rejects --expect-items authorization bypass"
 assert_eq "$?" "2" "--file mode rejects --expect-items-from-round"
 set -e
 
+# --- KEN-826: a fix round cannot add unlisted machinery ---
+adds_wt="$TMP_ROOT/adds"
+mkdir -p "$adds_wt"
+git -C "$adds_wt" init -q -b main
+git -C "$adds_wt" config user.email test@example.com
+git -C "$adds_wt" config user.name Test
+git -C "$adds_wt" config commit.gpgsign false
+git -C "$adds_wt" commit -q --allow-empty -m base
+init_growth_state "$STATE" "$adds_wt" issue-826 seed 1000000
+
+"$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 1-1 --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
+mkdir -p "$adds_wt/.agents/skills/orch/scripts" "$adds_wt/crates/new-parser" "$adds_wt/helpers" \
+  "$adds_wt/pkg/test_helpers" "$adds_wt/skills/orch/scripts" "$adds_wt/src" \
+  "$adds_wt/test/support" "$adds_wt/tools" "$adds_wt/ui/src/test"
+printf 'installed\n' > "$adds_wt/.agents/skills/orch/scripts/installed-check"
+printf 'crate\n' > "$adds_wt/crates/new-parser/lib.rs"
+printf 'root helper\n' > "$adds_wt/helpers/root-helper.ts"
+printf 'nested helper\n' > "$adds_wt/pkg/test_helpers/nested.ts"
+printf 'script\n' > "$adds_wt/skills/orch/scripts/new-check"
+printf 'basename helper\n' > "$adds_wt/src/test_utils.rs"
+printf 'root test support\n' > "$adds_wt/test/support/root-support.sh"
+printf 'tool\n' > "$adds_wt/tools/new-tool"
+newline_path=$'tools/new\nline'
+printf 'odd path\n' > "$adds_wt/$newline_path"
+printf 'helper\n' > "$adds_wt/ui/src/test/round-helper.ts"
+git -C "$adds_wt" add .agents/skills/orch/scripts/installed-check crates/new-parser/lib.rs \
+  helpers/root-helper.ts pkg/test_helpers/nested.ts skills/orch/scripts/new-check \
+  src/test_utils.rs test/support/root-support.sh tools/new-tool "$newline_path" ui/src/test/round-helper.ts
+git -C "$adds_wt" commit -q -m additions
+adds_head="$(git -C "$adds_wt" rev-parse HEAD)"
+"$WRITE" --worktree "$adds_wt" --kind fix --issue issue-826 --round-id 1-1 --branch b --commit "$adds_head" \
+  --validate pass --item 1 Applied done >/dev/null
+set +e
+adds_out="$("$CHECK" --worktree "$adds_wt" --issue issue-826 --round-id 1-1 --expect-items-from-round 2>/dev/null)"
+adds_rc=$?
+set -e
+assert_eq "$adds_rc" "1" "an unlisted sensitive addition refuses acceptance"
+assert_eq "$(jq -r '.ok' <<<"$adds_out")" "false" "the refusal reports ok false"
+assert_eq "$(jq -r '.verdict' <<<"$adds_out")" "retry" "the refusal routes to retry"
+assert_eq "$(jq -r '.path' <<<"$adds_out")" "$adds_wt/tmp/dev-return-issue-826-1-1.json" "the refusal binds the artifact path"
+assert_eq "$(jq -r '.reason' <<<"$adds_out")" "unapproved_additions" "the refusal has a distinct reason"
+assert_eq "$(jq -c '.files' <<<"$adds_out")" \
+  '[".agents/skills/orch/scripts/installed-check","crates/new-parser/lib.rs","helpers/root-helper.ts","pkg/test_helpers/nested.ts","skills/orch/scripts/new-check","src/test_utils.rs","test/support/root-support.sh","tools/new\nline","tools/new-tool","ui/src/test/round-helper.ts"]' \
+  "the refusal names every unlisted addition"
+
+"$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 2-2 --item 1 "fix finding" "tools/guard on a staged render" \
+  --adds "crates/allowed/lib.rs skills/orch/scripts/allowed-check tools/allowed;still-data ui/src/test/allowed-helper.ts" >/dev/null
+mkdir -p "$adds_wt/crates/allowed"
+printf 'crate\n' > "$adds_wt/crates/allowed/lib.rs"
+printf 'script\n' > "$adds_wt/skills/orch/scripts/allowed-check"
+printf 'tool\n' > "$adds_wt/tools/allowed;still-data"
+printf 'helper\n' > "$adds_wt/ui/src/test/allowed-helper.ts"
+git -C "$adds_wt" add crates/allowed/lib.rs skills/orch/scripts/allowed-check \
+  "tools/allowed;still-data" ui/src/test/allowed-helper.ts
+git -C "$adds_wt" commit -q -m allowed-additions
+allowed_head="$(git -C "$adds_wt" rev-parse HEAD)"
+"$WRITE" --worktree "$adds_wt" --kind fix --issue issue-826 --round-id 2-2 --branch b --commit "$allowed_head" \
+  --validate pass --item 1 Applied done >/dev/null
+assert_eq "$(reason --worktree "$adds_wt" --issue issue-826 --round-id 2-2 --expect-items-from-round)" "valid" \
+  "each addition named by the round is accepted"
+
+printf 'move me\n' > "$adds_wt/ordinary.txt"
+git -C "$adds_wt" add ordinary.txt
+git -C "$adds_wt" commit -q -m pre-move
+"$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 3-3 --item 1 "move existing file" "tools/guard on a staged render" >/dev/null
+git -C "$adds_wt" mv ordinary.txt tools/moved.txt
+git -C "$adds_wt" commit -q -m move
+move_head="$(git -C "$adds_wt" rev-parse HEAD)"
+"$WRITE" --worktree "$adds_wt" --kind fix --issue issue-826 --round-id 3-3 --branch b --commit "$move_head" \
+  --validate pass --item 1 Applied done >/dev/null
+assert_eq "$(reason --worktree "$adds_wt" --issue issue-826 --round-id 3-3 --expect-items-from-round)" "valid" \
+  "a moved file is not treated as an addition"
+# A probe git cannot run is its own refusal, never a file list; the shim fails
+# every `git diff`, on the live-base round above so the probe is reached.
+git_shim_dir="$TMP_ROOT/git-shim"
+mkdir -p "$git_shim_dir"
+cat > "$git_shim_dir/git" <<'EOF'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  [[ "$arg" == "diff" ]] && exit 42
+done
+exec "$REAL_GIT" "$@"
+EOF
+chmod +x "$git_shim_dir/git"
+real_git="$(command -v git)"
+set +e
+comparison_out="$(REAL_GIT="$real_git" PATH="$git_shim_dir:$PATH" "$CHECK" \
+  --worktree "$adds_wt" --issue issue-826 --round-id 3-3 --expect-items-from-round 2>/dev/null)"
+comparison_rc=$?
+set -e
+assert_eq "$comparison_rc" "1" "a failed snapshot probe refuses acceptance"
+assert_eq "$(jq -r '.reason' <<<"$comparison_out")" "comparison_failed" \
+  "a failed snapshot probe keeps the distinct reason"
+routing_mutant="$TMP_ROOT/routing-mutant"
+cp "$CHECK" "$routing_mutant"
+sed -i.bak 's/emit false "$file" "comparison_failed"/emit false "$file" "unapproved_additions"/' "$routing_mutant"
+chmod +x "$routing_mutant"
+set +e
+routing_mutant_out="$(REAL_GIT="$real_git" PATH="$git_shim_dir:$PATH" "$routing_mutant" \
+  --worktree "$adds_wt" --issue issue-826 --round-id 3-3 --expect-items-from-round 2>/dev/null)"
+set -e
+if [[ "$(jq -r '.reason' <<<"$routing_mutant_out")" == "comparison_failed" ]]; then
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "routing control detects a comparison-failure misroute"
+else
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "routing control detects a comparison-failure misroute"
+fi
+
+# --- kendex#944: a rebase stops the gate rather than misattributing to it ---
+# base_sha still resolves after a restack, so comparing against it reads every
+# file the base branch advanced by as this round's addition.
+rebase_wt="$TMP_ROOT/rebase"
+mkdir -p "$rebase_wt"
+git -C "$rebase_wt" init -q -b main
+git -C "$rebase_wt" config user.email test@example.com
+git -C "$rebase_wt" config user.name Test
+git -C "$rebase_wt" config commit.gpgsign false
+git -C "$rebase_wt" commit -q --allow-empty -m base
+init_growth_state "$STATE" "$rebase_wt" issue-944 seed 1000000
+git -C "$rebase_wt" checkout -q -b feature
+# The rebase rewrites the branch's own commits, so the record must pin one.
+printf 'branch work\n' > "$rebase_wt/branch.md"
+git -C "$rebase_wt" add branch.md
+git -C "$rebase_wt" commit -q -m branch-work
+"$ROUND_WRITE" --worktree "$rebase_wt" --issue issue-944 --round-id 1-1 --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
+# main advances with a protected file of its own, then the branch restacks.
+git -C "$rebase_wt" checkout -q main
+mkdir -p "$rebase_wt/crates/upstream"
+printf 'upstream\n' > "$rebase_wt/crates/upstream/lib.rs"
+git -C "$rebase_wt" add crates/upstream/lib.rs
+git -C "$rebase_wt" commit -q -m upstream-advance
+git -C "$rebase_wt" checkout -q feature
+git -C "$rebase_wt" rebase -q main >/dev/null
+rebase_head="$(git -C "$rebase_wt" rev-parse HEAD)"
+"$WRITE" --worktree "$rebase_wt" --kind fix --issue issue-944 --round-id 1-1 --branch feature \
+  --commit "$rebase_head" --validate pass --item 1 Applied done >/dev/null
+set +e
+rebase_out="$("$CHECK" --worktree "$rebase_wt" --issue issue-944 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/rebase.err")"
+set -e
+assert_eq "$(jq -c '[.reason, .files]' <<<"$rebase_out")" '["valid",[]]' \
+  "a rebased round is not accused of the additions its base cannot attribute"
+assert_eq "$(grep -cF 'the protected-additions gate did not run' "$TMP_ROOT/rebase.err")" "1" \
+  "the check says plainly that the gate did not run"
+
+# Must-fail control: without the stop, the round is billed the file main merged,
+# which is also what proves the fixture still orphans the base and still reads
+# that file as an addition against it.
+stop_mutant="$TMP_ROOT/orphan-stop-mutant"
+cp "$CHECK" "$stop_mutant"
+assert_eq "$(grep -cF 'if ! git -C "$repo" merge-base --is-ancestor "$base_sha" HEAD >/dev/null 2>&1; then' "$stop_mutant")" "1" \
+  "control finds exactly one orphaned-base stop to remove"
+sed -i.bak 's/if ! git -C "\$repo" merge-base --is-ancestor "\$base_sha" HEAD >\/dev\/null 2>&1; then/if false; then/' "$stop_mutant"
+chmod +x "$stop_mutant"
+set +e
+stop_mutant_out="$("$stop_mutant" --worktree "$rebase_wt" --issue issue-944 --round-id 1-1 --expect-items-from-round 2>/dev/null)"
+set -e
+assert_eq "$(jq -c '.files' <<<"$stop_mutant_out")" '["crates/upstream/lib.rs"]' \
+  "control: without the stop, the round is billed main's addition"
+
+# The stop is for the orphaned base alone: a round delegated after the restack
+# has a live base, and an unlisted protected file it adds is refused.
+"$ROUND_WRITE" --worktree "$rebase_wt" --issue issue-944 --round-id 2-2 --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
+mkdir -p "$rebase_wt/tools"
+printf 'round machinery\n' > "$rebase_wt/tools/round-tool"
+git -C "$rebase_wt" add tools/round-tool
+git -C "$rebase_wt" commit -q -m round-addition
+rebase_head2="$(git -C "$rebase_wt" rev-parse HEAD)"
+"$WRITE" --worktree "$rebase_wt" --kind fix --issue issue-944 --round-id 2-2 --branch feature \
+  --commit "$rebase_head2" --validate pass --item 1 Applied done >/dev/null
+set +e
+rebase_bites="$("$CHECK" --worktree "$rebase_wt" --issue issue-944 --round-id 2-2 --expect-items-from-round 2>/dev/null)"
+set -e
+assert_eq "$(jq -c '[.reason, .files]' <<<"$rebase_bites")" '["unapproved_additions",["tools/round-tool"]]' \
+  "a round whose base survived the restack is still gated, and named its addition alone"
+
 # --- kendex#994: the recorded commit must name a real object in the worktree's repo ---
 gitwt="$TMP_ROOT/gitwt"
 mkdir -p "$gitwt/tmp"
@@ -476,15 +650,11 @@ assert_file_contains "$ci_fix" "$ROUND_STAMP" "ci-fix § 3.2 mints a fresh dev_r
 # carries the previous token and can never be mistaken for this round's.
 assert_file_not_contains "$ci_fix" "$LEGACY_CHECK" "ci-fix § 3.2 no longer uses the legacy positional dev-artifact-check call"
 
-# kendex#944: the restack cycle rebases outside worktree-push's live-round
-# refusal, so it makes that check itself before the branch moves.
+# kendex#944: the restack cycle asks the owner of the live-round predicate.
+# The pin is the call site; the arms are dev_round_live.sh's to prove.
 restack="$REPO_ROOT/skills/orch/workflows/merge-pr-restack.md"
-assert_file_contains "$restack" "workflow-state exists --json [ISSUE]" \
-  "merge-pr-restack § 2 separates an absent state from one it could not read"
-assert_file_contains "$restack" "workflow-state get [ISSUE] '.dev_round_id // empty'" \
-  "merge-pr-restack § 2 reads the active round before the restack"
-assert_file_contains "$restack" "tmp/dev-round-[ISSUE]-[TOKEN].json" \
-  "merge-pr-restack § 2 names the record that makes a round live"
+assert_file_contains "$restack" "dev-round-live --worktree [WT_PATH] --issue [ISSUE]" \
+  "merge-pr-restack § 2 asks dev-round-live before the restack"
 
 # The removed legacy positional call must not survive in any orch workflow.
 for wf in dev-start dev-fix review-pr-comments ci-fix; do
