@@ -73,11 +73,11 @@ state is volatile — an ejection or a failed protection check disarms it
 silently — so the caller arms one exact head and then waits on that head. The
 helpers live in sibling skills (install orch and review-gate beside this one):
 
-- `.agents/skills/orch/scripts/queue-wait <N> <poll> <budget> --json` blocks on
-  the queue up to that budget and prints one verdict object. Pass the poll and
-  budget: the default budget outlives any foreground call an agent harness will
-  hold, so a call that leaves it out is killed before the verdict. Size them as
-  orch `merge-pr.md` § 5 step 1 does.
+- `.agents/skills/orch/scripts/queue-wait <N> --json` blocks on the queue and
+  prints one verdict object. Give it a poll interval and budget, sized as orch
+  `merge-pr.md` § 5 step 1 does: the default budget outlives any foreground
+  call an agent harness will hold, so a call that leaves it out is killed
+  before the verdict.
 - `GH_REPO=<owner/repo> .agents/skills/review-gate/scripts/pr-watch.sh` is one
   pass that prints `disarmed … (re-arm)` lines.
 

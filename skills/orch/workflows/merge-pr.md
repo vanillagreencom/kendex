@@ -208,14 +208,14 @@ Use the output as `MAIN_REPO_ROOT`.
      dequeue and the loser reports `late_findings_dequeue_failed` for no reason
      but the overlap.
 
-   Successive waits are the designed shape for a long queue, and each one
-   starts with the queue priors of `queue-wait --help` § Verdicts reset: it
-   reads `conflicting` off the live PR every poll, but `ejected` and `disarmed`
-   are transitions within one invocation, and a wait that never saw the PR
-   queued reports `not_queued` however many waits came before it. So a later
-   wait's verdict is read against the ones before it — which is what splits the
-   `not_queued` row below — and the seam between two waits is where a
-   transition goes missing.
+   Successive waits are the designed shape for a long queue, and this step is
+   reached only after an exit-`75` arm, which is GitHub reporting the PR queued
+   or auto-merge enabled. That holds for every wait in the sequence and no wait
+   can lose it, which is what the `not_queued` row below rests on: each wait
+   starts with the queue priors of `queue-wait --help` § Verdicts reset, so a
+   wait that never itself saw the PR queued says `not_queued` whatever came
+   before it — and after an exit-`75` arm that reads as an arm cleared in the
+   seam, never as one that was never made.
 
    Under Codex the blocking call is the only shape the classifier accepts
    ([references/codex-runtime.md](../references/codex-runtime.md)).
@@ -227,18 +227,17 @@ Use the output as `MAIN_REPO_ROOT`.
    | `ejected` | Recovery cycle below, using the resolved gate mode and `[RECOVERY_COUNT]` |
    | `disarmed` | Recovery cycle below |
    | `dequeued` | Late-findings triage below; on `cause: late_findings_dequeue_failed` confirm the dequeue or the disarm first |
-   | `queued` | Still armed at the deadline. `cause: still_progressing` means the merge is live: run the wait again, up to the successive-wait cap below. `cause: stalled` takes the Recovery cycle below |
-   | `not_queued` | Split on whether a prior wait on this arm returned `queued`. None did → nothing was ever armed: re-arm the exact head once, then wait again. One did → that `queued` is direct evidence the PR was armed, so this is a lost transition, an ejection or a silent disarm in the seam, not a merge that never fired: take the Recovery cycle below where `ejected` and `disarmed` already go, and never re-arm — the head's merge-group run has just failed, and re-arming it into a shared queue can eject the PRs batched with it |
+   | `queued` | Still armed at the deadline. `cause: still_progressing` means the merge is live: run the wait again, and keep repeating until a verdict terminates it. `cause: stalled` takes the Recovery cycle below |
+   | `not_queued` | The arm this step made is gone — an ejection or a silent disarm — not a merge that never fired. Take the Recovery cycle below, where `ejected` and `disarmed` already go. Never re-arm here: the head's merge-group run has just failed, and re-arming it into a shared queue can eject the PRs batched with it |
    | `closed` | Hand back with the verdict; no replay |
    | `unknown` | Unrecognized, or `status: error`: hand back with the `error` and `cause` fields, and never re-arm |
 
-   **Successive-wait cap.** Repeat the wait only while the combined budget
-   spent stays inside the merge-group sizing `queue-wait --help` § Usage names
-   for its own default — three waits at the budget above. Past that, stop
-   waiting and report the elapsed total with the last result object's
-   `merge_queue_state` and `progressing`: a runner that died leaving a
-   check-run in progress keeps `progressing` true until GitHub's own workflow
-   timeout fails the run, and the lane is blocked and silent for all of it.
+   A `still_progressing` repeat is left unbounded on purpose. It terminates:
+   the signal stays true only while a check-run is not completed, and GitHub's
+   own workflow timeout finally fails a run whose runner died. Returning early
+   would leave the PR armed with the merge free to fire behind a departed lane,
+   and steps 5 and 6 would never run on it — which is the whole reason the lane
+   waits here rather than handing back.
 
    **Recovery cycle** — route the failure back into ci-fix, never fix CI by hand:
 
