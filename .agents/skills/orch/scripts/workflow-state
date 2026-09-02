@@ -646,9 +646,9 @@ parse_global_opts "$@"
 shift "$GLOBAL_OPTS"
 STATE_DIR="${STATE_DIR_FLAG:-${ORCH_STATE_DIR:-tmp}}"
 # Not configurable at all, and so resolved here rather than above the loader,
-# which would let a settings [env] key rename the state file: worktree-push
-# derives its state key by stripping this exact literal, so a renamed file is
-# gate state the rest of the flow cannot find.
+# which would let a settings [env] key rename the state file: the file name is
+# the identity every caller and doc reference resolves, so renaming it would
+# hide the state from readers that compose the path themselves.
 STATE_PREFIX="workflow-state"
 
 # Main dispatch. The help case above answered an absent or empty subcommand,

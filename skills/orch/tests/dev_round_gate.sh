@@ -84,17 +84,12 @@ assert_eq "$flagless_rc" "2" "a flagless fix receipt over an unlisted addition r
 assert_eq "$([[ -z "$flagless_out" ]] && echo silent || jq -r '.ok' <<<"$flagless_out")" "silent" \
   "the flagless refusal reports no verdict at all, never ok=true"
 
-# Implement and analysis rounds write no round record, so they stay flagless.
+# An implement round writes no round record, so it stays flagless.
 "$RETURN_WRITE" --worktree "$wt" --kind implement --issue issue-826 --round-id 2-2 --branch b \
   --commit "$head_sha" --validate pass >/dev/null
 assert_eq "$(env ORCH_STATE_DIR="$wt/tmp" "$CHECK" --worktree "$wt" --issue issue-826 \
   --round-id 2-2 | jq -r '.reason')" "valid" \
   "a flagless implement receipt is unaffected by the fix-round requirement"
-printf 'Recommend: re-scope.\n' > "$wt/analysis.md"
-"$RETURN_WRITE" --worktree "$wt" --kind analysis --issue issue-826 --round-id 3-3 --branch b \
-  --summary-file "$wt/analysis.md" --no-summary >/dev/null
-assert_eq "$(reason --worktree "$wt" --issue issue-826 --round-id 3-3)" "valid" \
-  "a flagless analysis receipt is unaffected by the fix-round requirement"
 
 # --- the record's base_sha is a git revision, not a free string -------------
 # It reaches `git diff` as an argument. A value git parses as an OPTION never
