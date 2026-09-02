@@ -217,14 +217,17 @@ describe("pi-hooks registry dispatch", () => {
 		expect(templates.length, `no command templates in fn pi_hook: ${piHook![1]}`).toBe(2);
 		const root = "/x/.pi/kendex";
 		for (const template of templates) {
-			// The global template's `{}` is the whole path, the project's the tail.
-			const filled = template.replace("{}", template.includes("$(git") ? "kendex/hooks/guard.sh" : `${root}/hooks/guard.sh`);
-			expect(renderedName(root, filled), template).toBe("guard");
+			// The project template's `{}` is the tail under `.pi/`, the global's
+			// the whole path — and each is kendex's only under its own scope.
+			const project = template.includes("$(git");
+			const filled = template.replace("{}", project ? "kendex/hooks/guard.sh" : `${root}/hooks/guard.sh`);
+			expect(renderedName(root, filled, project ? "project" : "global"), template).toBe("guard");
+			expect(renderedName(root, filled, project ? "global" : "project"), template).toBe("");
 		}
 		// A command of the person's that names such a path is not one of ours,
 		// and one spelling of this root is every spelling of it.
-		expect(renderedName(root, 'bash "/opt/kendex/hooks/guard.sh"')).toBe("");
-		expect(renderedName("/srv/pi-agent/kendex", 'bash "/srv/old/../pi-agent/kendex/hooks/guard.sh"')).toBe("guard");
+		expect(renderedName(root, 'bash "/opt/kendex/hooks/guard.sh"', "global")).toBe("");
+		expect(renderedName("/srv/pi-agent/kendex", 'bash "/srv/old/../pi-agent/kendex/hooks/guard.sh"', "global")).toBe("guard");
 
 		const vocab = readFileSync(join(crate, "render", "vocab", "mod.rs"), "utf8");
 		const table = vocab.match(/pub fn claude_tool_name\(tool: &str\) -> String \{([\s\S]*?)\n\}/);

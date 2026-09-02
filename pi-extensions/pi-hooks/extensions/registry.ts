@@ -91,15 +91,11 @@ function matches(matcher: unknown, toolName: string): boolean {
 	}
 }
 
-/**
- * The guard name a registered command runs, or `""` where the command is not
- * one `engine::targets::pi_hook` wrote for this root. Held to those two
- * spellings by tests/registry.test.ts.
- */
-export function renderedName(root: string, command: string): string {
+/** The guard name a registered command runs, or `""` where `engine::targets::pi_hook` did not write that command for this scope. */
+export function renderedName(root: string, command: string, scope: "project" | "global"): string {
 	const name = command.slice(command.lastIndexOf("/") + 1, -4);
 	if (name === "") return "";
-	if (command === `bash "$(git rev-parse --show-toplevel)/.pi/kendex/hooks/${name}.sh"`) return name;
+	if (scope === "project") return command === `bash "$(git rev-parse --show-toplevel)/.pi/kendex/hooks/${name}.sh"` ? name : "";
 	const quoted = command.startsWith('bash "') && command.endsWith('"') ? command.slice(6, -1) : "";
 	return quoted !== "" && resolve(quoted) === resolve(root, "hooks", `${name}.sh`) ? name : "";
 }
@@ -125,7 +121,7 @@ function scriptGone(script: string): boolean {
 }
 
 /** The registrations one scope root holds for a listener, in file order. */
-function readRegistry(root: string, listener: string, toolName: string): RegistryRead {
+function readRegistry(root: string, listener: string, toolName: string, scope: "project" | "global"): RegistryRead {
 	const path = resolve(root, "hooks.json");
 	const hooks: RegisteredHook[] = [];
 	let position = 0;
@@ -150,7 +146,7 @@ function readRegistry(root: string, listener: string, toolName: string): Registr
 				const timeout = typeof hook.timeout === "number" && Number.isFinite(hook.timeout) && hook.timeout > 0
 					? hook.timeout * 1000
 					: undefined;
-				const name = renderedName(root, hook.command);
+				const name = renderedName(root, hook.command, scope);
 				hooks.push({
 					command: hook.command,
 					name,
@@ -203,9 +199,9 @@ export function registeredHooks(listener: string, toolName: string, project: str
 
 	const answering: RegistryRead[] = [];
 	if (project !== undefined && trusted) {
-		answering.push(readRegistry(resolve(project, ".pi", "kendex"), listener, toolName));
+		answering.push(readRegistry(resolve(project, ".pi", "kendex"), listener, toolName, "project"));
 	}
-	answering.push(readRegistry(resolve(piUserDir(), "kendex"), listener, toolName));
+	answering.push(readRegistry(resolve(piUserDir(), "kendex"), listener, toolName, "global"));
 
 	for (const read of answering) {
 		unreadable ??= read.unreadable;
