@@ -130,15 +130,15 @@ A non-zero exit or empty output **aborts the merge**. Otherwise reparent each sa
 
 Some harnesses reset cwd per shell call — prefer `-C` and absolute paths over `cd &&` chains.
 
-**Every command in this section that reaches GitHub clears `GH_REPO` and
-`GITHUB_REPOSITORY` first.** `gh` honours those over both cwd and `-C`, so an
-inherited value points a read at another repository and a mutation at that
-repository's same-numbered PR — a `branch -D` authorized by the wrong PR, or
-the queue wait's late-findings guard disarming and dequeuing someone else's.
-Reaching GitHub is a property of the script, not of the command's spelling: a
-waiter, the `github.sh` router, `container-close` and `worktree` all call `gh`
-inside, so all of them clear the pair, and a script that starts calling `gh`
-later is covered the day it does.
+**Clear `GH_REPO` and `GITHUB_REPOSITORY` on every command in this section
+that reaches GitHub, fenced or inline.** `gh` honours them over both cwd and
+`-C`, so an inherited value points a read at another repository and a mutation
+at that repository's same-numbered PR — a `branch -D` authorized by the wrong
+PR, or the queue wait's late-findings guard disarming and dequeuing someone
+else's. Reaching GitHub is a property of the script rather than of the
+command's spelling: a waiter, the `github.sh` router, `container-close` and
+`worktree` all call `gh` inside. Before adding a command here, read the script
+it names.
 
 ```bash
 .agents/skills/orch/scripts/git-context common-root .
@@ -175,7 +175,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Exit `0` merged the prepared head — continue to step 2.
 
-   Exit `1` BLOCKED → run `[MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]` and route on its `cause:` line: `ci_pending` — or `none` when the merge output names a base branch requiring merges through a queue — → re-run the prepared head with `--auto`. Any other cause surfaces the detail and returns to § 3.2.
+   Exit `1` BLOCKED → run `env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]` and route on its `cause:` line: `ci_pending` — or `none` when the merge output names a base branch requiring merges through a queue — → re-run the prepared head with `--auto`. Any other cause surfaces the detail and returns to § 3.2.
 
    The `--auto` re-run arms only that same head:
 
@@ -240,7 +240,7 @@ Use the output as `MAIN_REPO_ROOT`.
    | `queued` | Still armed at the deadline. `cause: still_progressing` means the merge is live: run the wait again, and keep repeating until a verdict terminates it. `cause: stalled` takes the Recovery cycle below |
    | `not_queued` | The arm this step made is gone — an ejection or a silent disarm — not a merge that never fired. Take the Recovery cycle below, where `ejected` and `disarmed` already go. Never re-arm here: the head's merge-group run has just failed, and re-arming it into a shared queue can eject the PRs batched with it |
    | `closed` | Hand back with the verdict; no replay |
-   | `unknown` | Unrecognized, or `status: error`: hand back with the `error` and `cause` fields, and never re-arm |
+   | `unknown` | Unrecognized, or `status: error` — a read failed and says nothing about the arm, which after exit `75` is usually still live. Unarm before handing back, in `merge-pr-restack.md` step 1's order: disable auto-merge if `autoMergeRequest` is set, then dequeue via GraphQL if `isInMergeQueue` is still true, then re-read both. Hand back with the `error` and `cause` fields, and never re-arm |
 
    A `still_progressing` repeat is left unbounded on purpose. It terminates:
    the signal stays true only while a check-run is not completed or the queue
@@ -337,10 +337,10 @@ Use the output as `MAIN_REPO_ROOT`.
    is still `[PR_BRANCH]`. The two readable facts:
 
    ```bash
-   git -C [WT_PATH] status --porcelain
+   git -C [WORKTREE_PATH] status --porcelain
    ```
    ```bash
-   git -C [WT_PATH] branch --show-current
+   git -C [WORKTREE_PATH] branch --show-current
    ```
 
    Empty output from the first, `[PR_BRANCH]` from the second. Otherwise the

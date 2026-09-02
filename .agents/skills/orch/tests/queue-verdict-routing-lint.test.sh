@@ -19,27 +19,15 @@
 # cannot see multiplicity: split a verdict across two rows and deleting either
 # one leaves both directions green.
 #
-# The lane waits in the FOREGROUND, and the rules holding that are md.sh's own
-# `forbid_fenced`, not a predicate of this file. A handoff lane sitting at its
-# prompt has no next boundary, so a verdict published behind it waits for a
-# human. Each of the three is stated as a negative — the deviation, never the
-# list of spellings that reach it — which is what lets a line scan reach the
-# multiline shapes: a launcher continued with a backslash and a subshell
-# closing `) > F &` are both caught without the check having to find the waiter
-# on the offending line.
+# WHAT THIS FILE DOES NOT DO is pin the workflow's prose or its command lines.
+# A suite asserting that a sentence or an invocation still reads a certain way
+# is the shape KEN-1090 removed from md.sh, and it does not return here behind
+# a local helper. The routing table is data — a set of verdict names — and that
+# set is the whole of what is checked.
 #
-# What NONE of them reaches is a second, non-detaching command sharing the
-# waiter's fenced block. `forbid_fenced` reads lines, md.sh's public surface
-# exposes no block reader, and reaching into the underscore-private one is not
-# this suite's to do. Every extra line that could take the wait out of the
-# foreground is caught by the first rule; a plain extra command there is
-# untidy and not a defect, and this file claims no more than that.
-#
-# Every check runs once per tree: the sources under skills/ and the committed
-# render under .agents/skills/, which is the copy a lane reads — the
-# file-scoped rules included, registered per tree rather than against this
-# suite's own location: `tools/guard` enforces render presence, not byte
-# equality.
+# Both trees are read: the sources under skills/ and the committed render under
+# .agents/skills/, which is the copy a lane reads. `tools/guard` enforces render
+# presence, not byte equality, so the render is read rather than assumed.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
@@ -51,9 +39,9 @@ ROOTS=("$TREE_ROOT/skills" "$TREE_ROOT/.agents/skills")
 
 echo "=== orch queue-wait verdict routing lint ==="
 
-# The set comparisons below are predicates md.sh has no rule form for — they
-# compare two lists read at run time — so they report through `pass`/`fail`,
-# which is what a suite reaching its own verdict is given.
+# These are predicates md.sh has no rule form for — they compare two lists read
+# at run time — so they report through `pass`/`fail`, which is what a suite
+# reaching its own verdict is given.
 check() { # NAME CMD...
   local name="$1"; shift
   if "$@"; then pass "$name"; else fail "$name"; fi
@@ -132,129 +120,6 @@ table_is_read() { # doc — an empty harvest passes both set comparisons
 
 waiter_usable() { [ -x "$1" ]; }
 
-# § 5 alone, written out so the fenced scans below can be scoped to it: the
-# clearing rule is the merge section's, and §§ 1-4's reads are outside this
-# change. `forbid_fenced` takes files, not headings, so the section becomes a
-# file. The name carries the tree it came from, because a diagnostic naming
-# the scratch has to say which copy was read.
-section_five() { # doc label
-  local out="$MD_TMP/${2//\//-}-merge-pr-section-5.md"
-  awk '/^## 5\./ { s = 1 } /^## 6\./ { s = 0 } s' "$1" > "$out"
-  printf '%s' "$out"
-}
-
-# Anything that takes a command out of the foreground, off one line, or off
-# stdout. One property rather than a list of spellings: a launcher word, a
-# trailing `&`, a trailing backslash, a line that only opens a subshell, and a
-# waiter call redirected anywhere. The first four never mention the waiter,
-# which is the point — they reach the multiline shapes a test looking for the
-# waiter's own line cannot see.
-DETACHED_RE='(^|[[:space:]])(setsid|nohup|disown)[[:space:]]|[^&]&[[:space:]]*$|\\[[:space:]]*$|^[[:space:]]*\([[:space:]]*$|/queue-wait[^>]*>'
-
-# Every command in § 5 that reaches GitHub opens with both repository variables
-# cleared: gh honours them over cwd and over `-C`, so an inherited value points
-# a read at another repository and a mutation at that repository's
-# same-numbered PR.
-#
-# WHICH COMMANDS REACH IS DERIVED, NOT LISTED. Three enumerations in this file
-# have each been reopened by the next spelling nobody thought of, and a list of
-# GitHub-reaching command names is the same mistake one level up: it goes stale
-# the day a waiter starts calling `gh`. So the check resolves the script each
-# fenced line names and asks that FILE whether it invokes `gh`. A waiter added
-# to the tree next week is covered without this suite being edited, and the
-# control that proves it is the planted unbound call below — a command name
-# that appears nowhere in this file.
-#
-# `forbid_fenced` takes a regex and cannot resolve a path, so this one predicate
-# is local and reports through `pass`/`fail`.
-GH_CALL_RE='(^|[^[:alnum:]_.-])gh[[:space:]]+[a-z]'
-CLEARING='env -u GH_REPO -u GITHUB_REPOSITORY '
-
-# fenced_commands DOC — the executable lines of every ```bash/```sh block,
-# indent stripped. Written here rather than taken from md.sh, whose public
-# surface exposes no reader.
-fenced_commands() { # doc
-  awk '/^[[:space:]]*```/ {
-         if (o) { o = 0 } else {
-           o = 1; l = $0; sub(/^[[:space:]]*```[[:space:]]*/, "", l); sub(/[[:space:]].*$/, "", l)
-         }
-         next
-       }
-       o && (l == "bash" || l == "sh") {
-         t = $0; sub(/^[[:space:]]+/, "", t)
-         if (t == "" || substr(t, 1, 1) == "#") next
-         print t
-       }' "$1"
-}
-
-# command_word LINE — the command the line runs, with any `env` prefix and its
-# `-u NAME` options stripped off first, so a bound line and an unbound one
-# resolve to the same script.
-command_word() { # line
-  local rest="$1"
-  while :; do
-    case "$rest" in
-      "env "*) rest="${rest#env }" ;;
-      "-u "*) rest="${rest#-u }"; rest="${rest#* }" ;;
-      *) break ;;
-    esac
-  done
-  printf '%s' "${rest%% *}"
-}
-
-# reaches_github COMMAND ROOT — `gh` itself, or a script in the tree that
-# invokes it. A command that resolves to no file in the tree (git, mkdir) is
-# not a script this repository ships and cannot be read; a path-shaped one
-# that resolves to nothing is reported by the caller as a broken reference
-# rather than passed over.
-reaches_github() { # command root
-  local path="${1#\[MAIN_REPO_ROOT\]/}"
-  [ "$1" = gh ] && return 0
-  [ -r "$2/$path" ] || return 1
-  grep -qE "$GH_CALL_RE" "$2/$path"
-}
-looks_like_a_repo_path() { # command
-  case "$1" in [\[]MAIN_REPO_ROOT[\]]/*|.agents/*) return 0 ;; *) return 1 ;; esac
-}
-
-section_binds_github() { # doc root
-  local line cmd path bad="" missing=""
-  while IFS= read -r line; do
-    cmd="$(command_word "$line")"
-    path="${cmd#\[MAIN_REPO_ROOT\]/}"
-    if looks_like_a_repo_path "$cmd" && [ ! -r "$2/$path" ]; then
-      missing="$missing$line"$'\n'
-      continue
-    fi
-    reaches_github "$cmd" "$2" || continue
-    case "$line" in "$CLEARING"*) ;; *) bad="$bad$line"$'\n' ;; esac
-  done < <(fenced_commands "$1")
-  if [ -n "$missing" ]; then
-    printf '        a command names a path this tree does not carry:\n'
-    printf '%s' "$missing" | sed 's/^/          /'
-    return 1
-  fi
-  [ -z "$bad" ] && return 0
-  printf '        reaches GitHub without clearing both repo variables:\n'
-  printf '%s' "$bad" | sed 's/^/          /'
-  return 1
-}
-
-# The waiter runs exactly as written, which `rule_fenced` cannot say: it asks
-# only that one line CONTAIN its tokens, so a wrapper before the command and a
-# dropped positional both satisfy it. Three deviations, none of them a
-# launcher name: nothing between the clearing and the waiter path, both
-# positionals present, and nothing after `--json`. With the budget gone the
-# call runs to queue-wait's own default, which no agent harness holds long
-# enough to reach a verdict — the defect that cost two rounds.
-#
-# What this does NOT reach is a second, non-detaching command sharing the
-# waiter's fenced block, because `forbid_fenced` reads lines and not blocks.
-# Every shape of that kind which could detach the wait — a continued launcher,
-# a subshell, a backgrounded sibling — is caught by DETACHED_RE instead; an
-# ordinary extra command there is untidy and not a defect.
-WAITER_SHAPE_RE='GITHUB_REPOSITORY[[:space:]]+[^[:space:][].*/queue-wait|/queue-wait[[:space:]]+\[PR_NUMBER\][[:space:]]+--json|/queue-wait.*--json[[:space:]]*[^[:space:]]'
-
 checked=0
 for root in "${ROOTS[@]}"; do
   qw="$root/orch/scripts/queue-wait"
@@ -274,52 +139,6 @@ for root in "${ROOTS[@]}"; do
     enum_matches_code "$qw"
   check "$label: every verdict's route is one row, not several" \
     one_row_per_verdict "$doc"
-
-  # The lane's own wait, and the whole detach family around it.
-  # The repository binding rides the same line: `queue-wait` resolves its
-  # target with a bare `gh repo view`, and its late-findings guard disarms and
-  # dequeues, so an inherited GH_REPO would send those mutations at another
-  # repository's same-numbered PR. Every other gh call in this step clears the
-  # pair; this one is the mutating waiter.
-  rule_fenced "$label: the lane blocks on a budgeted queue-wait, repo bound" \
-    "$doc" "## 5. Execute The Merge" \
-    '/queue-wait' '[PR_NUMBER]' '--json' '-u GH_REPO' '-u GITHUB_REPOSITORY'
-  forbid_fenced "$label: no command in the workflow leaves the foreground" \
-    "$DETACHED_RE" \
-    'setsid queue-wait [PR_NUMBER] --json > [VERDICT_FILE] &' \
-    "$doc"
-  five="$(section_five "$doc" "$label")"
-  check "$label: every § 5 command reaching GitHub clears both repo variables" \
-    section_binds_github "$five" "$TREE_ROOT"
-  forbid_fenced "$label: the queue wait runs exactly as written" \
-    "$WAITER_SHAPE_RE" \
-    'env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] --json' \
-    "$five"
-
-  # `worktree remove` runs `git worktree remove --force` and then `rm -rf`, so
-  # it refuses nothing itself: the disposal predicate step 6 re-runs is the
-  # only thing between a build artifact, or a worktree that has moved to
-  # another branch, and its deletion. One rule per readable fact, because the
-  # predicate holds only when every part does and a rule proves one line.
-  rule_fenced "$label: the disposal predicate reads the tree's cleanliness" \
-    "$doc" "## 5. Execute The Merge" \
-    'status' '--porcelain' '[WT_PATH]'
-  rule_fenced "$label: the disposal predicate reads the checked-out branch" \
-    "$doc" "## 5. Execute The Merge" \
-    'branch' '--show-current' '[WT_PATH]'
-  # Both merge attempts name the head the gate approved. Without the flag the
-  # call arms whatever head GitHub reports at that moment, which is the head a
-  # push landed after the approval.
-  rule_fenced "$label: the direct merge is exact-head guarded" \
-    "$doc" "## 5. Execute The Merge" \
-    '[--force]' 'pr-merge' '--expected-head' '[PREPARED_HEAD]'
-  rule_fenced "$label: the auto-merge arm is exact-head guarded" \
-    "$doc" "## 5. Execute The Merge" \
-    '--auto' 'pr-merge' '--expected-head' '[PREPARED_HEAD]'
-  # Absolute, because the lane is standing in the tree being removed.
-  rule_fenced "$label: the worktree removal runs from the main repository" \
-    "$doc" "## 5. Execute The Merge" \
-    '[MAIN_REPO_ROOT]/' 'worktree remove' '[ISSUE]'
 done
 
 if [ "$checked" -eq 0 ]; then
@@ -328,9 +147,8 @@ if [ "$checked" -eq 0 ]; then
   exit $?
 fi
 
-# Controls for the set comparisons, planted against the first usable tree — the
-# grammar and the two directions are the same for every tree, so proving them
-# once proves them. The md.sh rules above carry their own controls.
+# Controls, planted against the first usable tree — the grammar and the two
+# directions are the same for every tree, so proving them once proves them.
 for root in "${ROOTS[@]}"; do
   [ -x "$root/orch/scripts/queue-wait" ] || continue
   CTL_QW="$root/orch/scripts/queue-wait"
@@ -375,50 +193,6 @@ check "control: a verdict routed by two rows reds the one-row direction" \
   reds one_row_per_verdict "$DUPED"
 check "control: that same duplicate leaves the coverage direction green" \
   every_verdict_routed "$CTL_QW" "$DUPED"
-
-# The binding guard's two controls. The first is the call the enumeration
-# missed; the second is what separates a derivation from a list — the planted
-# command's name appears nowhere in this file, so only reading the script it
-# names can classify it.
-CTL_FIVE="$(section_five "$CTL_DOC" ctl)"
-
-UNBOUND_RECOVERY="$MD_TMP/five-unbound-recovery.md"
-sed 's|^\(      \)env -u GH_REPO -u GITHUB_REPOSITORY \(.*/approval-wait \[PR_NUMBER\]\)|\1\2|' \
-  "$CTL_FIVE" > "$UNBOUND_RECOVERY"
-check "control: the recovery call really lost its clearing" \
-  reds cmp -s "$CTL_FIVE" "$UNBOUND_RECOVERY"
-check "control: the recovery call losing its clearing reds the binding guard" \
-  reds section_binds_github "$UNBOUND_RECOVERY" "$TREE_ROOT"
-
-# `container-close` is a repository script that calls `gh` and is named nowhere
-# in this suite. A matcher listing command names cannot classify it; reading
-# the file can.
-NEW_UNBOUND="$MD_TMP/five-new-unbound.md"
-printf '%s\n```bash\n%s\n```\n' "$(cat "$CTL_FIVE")" \
-  '   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]' \
-  > "$NEW_UNBOUND"
-check "control: a new gh-reaching call was really added" \
-  reds cmp -s "$CTL_FIVE" "$NEW_UNBOUND"
-check "control: a new unbound gh-reaching call reds the binding guard" \
-  reds section_binds_github "$NEW_UNBOUND" "$TREE_ROOT"
-
-# The same line WITH the clearing must pass, or the check would be reading the
-# addition rather than its binding.
-NEW_BOUND="$MD_TMP/five-new-bound.md"
-printf '%s\n```bash\n%s\n```\n' "$(cat "$CTL_FIVE")" \
-  '   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]' \
-  > "$NEW_BOUND"
-check "control: that same call bound leaves the guard green" \
-  section_binds_github "$NEW_BOUND" "$TREE_ROOT"
-
-# A command that reaches nothing needs no clearing, or the guard would be
-# demanding it of every line.
-NEW_INERT="$MD_TMP/five-new-inert.md"
-printf '%s\n```bash\n%s\n```\n' "$(cat "$CTL_FIVE")" \
-  '   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/sync-base [MAIN_REPO_ROOT]' \
-  > "$NEW_INERT"
-check "control: an unbound call that reaches no gh leaves the guard green" \
-  section_binds_github "$NEW_INERT" "$TREE_ROOT"
 
 # The harvest's own control: a renamed table header takes the whole range with
 # it, and both set comparisons then pass on nothing.
