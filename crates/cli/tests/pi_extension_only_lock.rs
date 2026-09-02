@@ -32,6 +32,16 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
         .expect("kendex binary runs")
 }
 
+/// Everything one run said, both streams, in the order a person reading a
+/// terminal sees them.
+fn said(output: &Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
 #[allow(clippy::unwrap_used)]
 fn write(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -93,21 +103,44 @@ fn assert_record_landed(project: &Path) {
     );
 }
 
+/// Both halves of the write, and the state a person is actually left in.
+///
+/// The first run has to plan the record. The second has to plan nothing:
+/// the restraint in `plan_lock_write` is the only thing between a scope
+/// declaring a Pi extension and an "Update the install record" on every
+/// run it ever gets, and a case that only ever drives a virgin fixture
+/// cannot tell the two apart. `verify` closes it: the record is there, so
+/// the run does not refuse, and the one declaration is named as what no
+/// run of that verb checks.
 #[test]
-fn apply_writes_the_record_for_a_pi_extension_only_scope() {
+fn apply_writes_the_record_once_for_a_pi_extension_only_scope() {
     let (_tmp, home) = fixture();
     let project = home.join("dev/app");
 
-    let output = kendex(&home, &project, &["apply", "--yes"]);
-
-    assert!(output.status.success(), "{output:?}");
-    let said = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(!said.contains("up to date"), "{said}");
+    let first = said(&kendex(&home, &project, &["apply", "--yes"]));
+    assert!(first.contains("Update the install record"), "{first}");
+    assert!(!first.contains("up to date"), "{first}");
     assert_record_landed(&project);
+
+    let second = said(&kendex(&home, &project, &["apply", "--yes"]));
+    assert!(second.contains("up to date"), "{second}");
+    assert!(!second.contains("Update the install record"), "{second}");
+    assert_record_landed(&project);
+
+    let checked = kendex(&home, &project, &["verify"]);
+    assert!(checked.status.success(), "{checked:?}");
+    assert_eq!(
+        said(&checked).lines().collect::<Vec<_>>(),
+        vec![
+            format!(
+                "{}: 1 item the install record never holds — kendex update-pi checks those",
+                kendex_core::paths::slashed(&project)
+            )
+            .as_str(),
+            "  - pi-extension pi-widgets",
+            "nothing checked",
+        ]
+    );
 }
 
 #[test]
@@ -118,13 +151,39 @@ fn refresh_writes_the_record_for_a_pi_extension_only_scope() {
     let output = kendex(&home, &project, &["refresh", "--yes"]);
 
     assert!(output.status.success(), "{output:?}");
-    let said = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(!said.contains("up to date"), "{said}");
+    let printed = said(&output);
+    assert!(!printed.contains("up to date"), "{printed}");
     assert_record_landed(&project);
+}
+
+/// A declaration switched off is still a declaration. `enabled` rides on
+/// the lock entry rather than deciding whether one exists, so the flag
+/// decides nothing here — and the engine and `verify` have to agree about
+/// that, which before the predicate was unified they did not: the record
+/// was written and the verb reported the scope had nothing installed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_disabled_pi_extension_is_still_a_declaration() {
+    let (_tmp, home) = fixture();
+    let project = home.join("dev/app");
+    let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
+    write(
+        &project.join("kendex.toml"),
+        &format!("{manifest}enabled = false\n"),
+    );
+
+    let first = said(&kendex(&home, &project, &["apply", "--yes"]));
+    assert!(first.contains("Update the install record"), "{first}");
+    assert_record_landed(&project);
+
+    let second = said(&kendex(&home, &project, &["apply", "--yes"]));
+    assert!(second.contains("up to date"), "{second}");
+
+    let checked = kendex(&home, &project, &["verify"]);
+    assert!(checked.status.success(), "{checked:?}");
+    let printed = said(&checked);
+    assert!(printed.contains("  - pi-extension pi-widgets"), "{printed}");
+    assert!(!printed.contains("nothing installed"), "{printed}");
 }
 
 /// The scope asks for a package and has no record to weigh it against, so
@@ -139,13 +198,9 @@ fn verify_refuses_a_scope_with_no_install_record() {
     let output = kendex(&home, &project, &["verify"]);
 
     assert!(!output.status.success(), "{output:?}");
-    let said = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(said.contains("no install record"), "{said}");
-    assert!(!said.contains("nothing installed"), "{said}");
+    let printed = said(&output);
+    assert!(printed.contains("no install record"), "{printed}");
+    assert!(!printed.contains("nothing installed"), "{printed}");
 }
 
 /// The global scope is the shape the bug was found on: Pi extensions
@@ -181,12 +236,8 @@ fn apply_writes_the_global_record_for_a_pi_extension_only_scope() {
     let output = kendex(&home, &home, &["apply", "-g", "--yes"]);
 
     assert!(output.status.success(), "{output:?}");
-    let said = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(!said.contains("up to date"), "{said}");
+    let printed = said(&output);
+    assert!(!printed.contains("up to date"), "{printed}");
     let text = fs::read_to_string(&lock).unwrap();
     let value: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(
