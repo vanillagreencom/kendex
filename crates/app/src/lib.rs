@@ -22,6 +22,13 @@ pub mod update_check;
 mod whole_file;
 mod window;
 
+// Declared once for the whole lib test tree. Two `#[cfg(test)]` modules used
+// to `#[path]`-include the file separately, which is one module compiled twice
+// under two names; every `use` of it now names this one.
+#[cfg(test)]
+#[path = "../../test_util.rs"]
+mod test_util;
+
 use tauri_specta::{Builder, collect_commands};
 
 /// Values the UI reads instead of keeping a second copy of.

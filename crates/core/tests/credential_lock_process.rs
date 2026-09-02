@@ -30,7 +30,7 @@ fn wait_for(path: &Path, why: &str) {
 }
 
 #[cfg(target_os = "linux")]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 fn run_holder(root: &Path) {
     let guard = KeyringStore.refresh_guard().unwrap();
     let critical = root.join("critical");
@@ -47,7 +47,7 @@ fn run_holder(root: &Path) {
 }
 
 #[cfg(target_os = "linux")]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 fn run_waiter(root: &Path) {
     let (attempted, saw_attempt) = mpsc::channel();
     let (acquired, saw_acquire) = mpsc::channel();

@@ -73,7 +73,7 @@ pub fn agent(catalog: &Path, name: &str) {
 pub fn manifest_with(f: &Fixture, sources: &[(&str, &Path)], declarations: &str) {
     let subscriptions: String = sources
         .iter()
-        .map(|(alias, path)| format!("[sources.{alias}]\n{}\n\n", source_path(&path)))
+        .map(|(alias, path)| format!("[sources.{alias}]\n{}\n\n", source_path(path)))
         .collect();
     write(
         &f.project,

@@ -168,11 +168,16 @@ fn a_run_acting_as_root_writes_no_record() {
 /// answering `false` always is the defect this change exists to close, and
 /// fails it under a root runner. Neither uid is skipped and neither passes
 /// for free.
+/// The shape both recorders share, so the table below names one type
+/// instead of spelling the signature inline.
+#[cfg(unix)]
+type Recorder = dyn Fn(&Env, &Path) -> Result<(), String>;
+
 #[test]
 #[cfg(unix)]
 fn every_public_write_follows_this_process_uid() {
     let privileged = rustix::process::geteuid().is_root();
-    let entries: [(&str, &dyn Fn(&Env, &Path) -> Result<(), String>); 2] = [
+    let entries: [(&str, &Recorder); 2] = [
         ("record_command", &record_command),
         ("record_first_run", &record_first_run),
     ];

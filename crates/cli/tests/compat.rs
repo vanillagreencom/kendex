@@ -138,6 +138,10 @@ fn bare_form_maps_to_add_flag_for_flag() {
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one table-shaped case: every ownership route judged against one sandbox, so splitting it would give each half a fixture of its own"
+)]
 fn report_dry_run_routes_by_ownership_and_rejects_scope_all() {
     let tmp = sandbox_with_catalog();
     let home = tmp.path();
@@ -432,7 +436,11 @@ fn the_app_version_is_the_one_kendex_version_prints() {
 /// The feed is unsigned text naming a host, so what it offers has to be
 /// held to the release key before it lands on the running command.
 #[test]
-#[allow(clippy::unwrap_used)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::too_many_lines,
+    reason = "one signed-feed scenario end to end; the refusal it asserts only means anything after the whole fixture is standing"
+)]
 fn update_over_a_local_feed_refuses_a_command_it_cannot_verify() {
     let tmp = sandbox_with_catalog();
     let home = tmp.path();

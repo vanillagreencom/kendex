@@ -5,11 +5,11 @@ name: Skill Tests
 # gating here is what lets consuming repos drop tracked vendoring: quality is
 # proven at the source, not re-proven per consumer.
 #
-# THE FULL BATTERY RUNS ON EVERY EVENT: every shard, the aggregator over them
-# and every cargo lane runs on pull_request as well as in the merge queue and
-# on the push to main, so a green PR has proven what the queue re-proves and
-# an ejection — dequeue, fix, requeue, pay the merge latency again — is rare
-# instead of routine. Whatever does NOT run on every event carries its own
+# THE FULL BATTERY RUNS ON EVERY EVENT: every shard, the aggregator over them,
+# the ui lane and every cargo lane run on pull_request as well as in the merge
+# queue and on the push to main, so a green PR has proven what the queue
+# re-proves and an ejection — dequeue, fix, requeue, pay the merge latency
+# again — is rare instead of routine. Whatever does NOT run on every event carries its own
 # `if:` saying why. The review gate never conditions CI (it answers
 # review-only; see the review-gate skill) — no gate job reads the predicate.
 #
@@ -377,6 +377,37 @@ jobs:
         working-directory: pi-extensions/pi-claude-bridge
         run: git diff --exit-code -- bundle/
 
+  # The `ui/` suites, which until now ran only in the tools/guard pre-commit
+  # hook — a lane `git commit --no-verify` skips. Its own job rather than a
+  # sixth shard: `npm ci` against ui/package-lock.json is the whole cost, and
+  # the shards install nothing it shares. It reaches the ruleset through the
+  # aggregator below rather than as a required context of its own, which would
+  # gate nothing until an admin ruleset edit landed.
+  ui-tests:
+    name: UI (vitest, tsc, biome)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+      # `npm ci`, never `npm install`: a suite proving the app against
+      # resolutions the tree does not commit proves them for nobody else.
+      - name: install
+        working-directory: ui
+        run: npm ci --no-audit --no-fund
+      - name: vitest
+        working-directory: ui
+        run: npm test
+      # `check` is `tsc --noEmit && biome check src`, so this step and the one
+      # above are the three checks guard runs over ui/. always(): one run names
+      # every ui failure instead of a red suite hiding a type error.
+      - name: tsc and biome
+        if: always()
+        working-directory: ui
+        run: npm run check
+
   # AGGREGATOR — this job's name is the ruleset's required context, so the
   # `(shell + node)` in it is frozen history: renaming it to match today's
   # shards leaves the ruleset waiting on a context nothing creates. It runs on
@@ -386,9 +417,13 @@ jobs:
   # because skipped/failed needs would otherwise skip this job too, and a
   # skipped required context would satisfy the ruleset without any suite having
   # run (the fail-open this line exists to close).
+  #
+  # Every `needs` entry is asserted by name below. A result read as anything
+  # but `success` — failure, cancelled, or the `skipped` a dropped `if:` would
+  # produce — fails this job and the required context with it.
   skill-suites:
     name: Skill suites (shell + node)
-    needs: [skill-suites-shard]
+    needs: [skill-suites-shard, ui-tests]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -399,6 +434,13 @@ jobs:
         run: |
           echo "shards: $SHARDS_RESULT"
           [ "$SHARDS_RESULT" = "success" ]
+      - name: the ui suite succeeded
+        if: always()
+        env:
+          UI_RESULT: ${{ needs.ui-tests.result }}
+        run: |
+          echo "ui: $UI_RESULT"
+          [ "$UI_RESULT" = "success" ]
 
   gate-selftest:
     # DELIBERATELY UNGATED: no `needs`, no approval condition, no path
@@ -471,6 +513,20 @@ jobs:
           RUSTFLAGS: -C debuginfo=0
           CARGO_INCREMENTAL: '0'
         run: cargo test --workspace --locked
+      # Rides this job rather than taking one of its own: the name above is
+      # already a required context, so clippy gates a merge here with no admin
+      # ruleset edit. `--all-targets` is the point — without it the workspace
+      # denials in Cargo.toml (`unwrap_used`, `expect_used`, `print_stdout`, …)
+      # never reach test targets, which is most of the code in this repo.
+      # clippy.toml already allows them inside `#[test]` bodies, so what stays
+      # denied is a panic path in a helper. always(): a failing test above must
+      # not swallow it.
+      - name: cargo clippy
+        if: always()
+        env:
+          RUSTFLAGS: -C debuginfo=0
+          CARGO_INCREMENTAL: '0'
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   # The app ships on macOS. tools/guard checks the core and CLI Apple targets
   # at commit time; this runner executes the tests on the platform.

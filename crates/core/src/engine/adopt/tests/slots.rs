@@ -8,9 +8,7 @@ use super::super::*;
 use crate::env::FakeOs;
 use std::fs;
 
-#[path = "../../../../../test_util.rs"]
-mod test_util;
-use test_util::rooted;
+use crate::test_util::rooted;
 
 use super::trash_is_empty;
 

@@ -5,8 +5,8 @@
 use std::fs;
 use std::path::Path;
 
-use super::test_util::rooted;
 use super::*;
+use crate::test_util::rooted;
 
 /// A skill whose frontmatter declares what it needs.
 fn needing(catalog: &Path, name: &str, required: &[&str], optional: &[&str]) {

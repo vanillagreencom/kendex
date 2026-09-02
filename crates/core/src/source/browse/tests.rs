@@ -4,11 +4,9 @@ use std::path::Path;
 use super::*;
 use crate::env::FakeOs;
 
-#[path = "../../../../test_util.rs"]
-mod test_util;
 use crate::lock::{Lock, LockEntry};
 use crate::model::{HarnessId, Scope};
-use test_util::source_path;
+use crate::test_util::source_path;
 
 mod deps;
 mod repo;
@@ -81,7 +79,7 @@ fn cat(scope: &Scope) -> Catalog {
 }
 
 fn sources_decl(catalog: &Path) -> String {
-    format!("schema = 6\n[sources.cat]\n{}\n", source_path(&catalog))
+    format!("schema = 6\n[sources.cat]\n{}\n", source_path(catalog))
 }
 
 #[test]

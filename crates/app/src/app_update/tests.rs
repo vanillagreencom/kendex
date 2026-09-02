@@ -3,10 +3,8 @@ use kendex_core::install_channel::HostProbe as _;
 
 use super::*;
 
-#[path = "../../../test_util.rs"]
-mod test_util;
 #[cfg(unix)]
-use test_util::no_record_on_this_runner;
+use crate::test_util::no_record_on_this_runner;
 
 /// The card's check and the install have to be looking at one release,
 /// or a candidate is offered an update the installer then cannot find.

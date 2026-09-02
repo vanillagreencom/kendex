@@ -227,7 +227,7 @@ fn a_network_failure_does_not_blame_the_release() {
 /// the script's own selection rather than restated here. A shape this
 /// cannot parse fails the same way a changed destination does, because a
 /// silent no-match would be the drift it exists to catch.
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 fn installer_bin_dirs(script: &str) -> Vec<String> {
     let chosen_from = script
         .lines()
@@ -291,7 +291,7 @@ fn every_directory_the_installer_can_choose_is_a_candidate() {
 /// script's own header rather than restated here. A header this cannot
 /// parse fails the same way a changed command does, because a silent
 /// no-match would be the drift it exists to catch.
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 fn published_invocation(script: &str) -> String {
     script
         .lines()

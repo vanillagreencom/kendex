@@ -705,7 +705,11 @@ fn crowded_project(home: &Path, count: usize) -> PathBuf {
 /// ended. The snapshot is derived after the write, and its failure is the
 /// one warning that can arrive that late.
 #[test]
-#[allow(clippy::unwrap_used)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::permissions_set_readonly_false,
+    reason = "the unwritable directory is a fixture inside this test's own tempdir; restoring write is what lets the tempdir drop"
+)]
 fn a_late_warning_lands_above_the_closing_ledger() {
     for ui in ["plain", "pretty"] {
         let tmp = tempfile::tempdir().unwrap();

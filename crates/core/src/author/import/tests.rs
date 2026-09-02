@@ -6,12 +6,10 @@ use std::path::Path;
 use super::*;
 use crate::env::FakeOs;
 
-#[path = "../../../../test_util.rs"]
-mod test_util;
 use crate::lock::{Lock, LockEntry};
 use crate::manifest::Method;
 use crate::model::HarnessId;
-use test_util::source_path;
+use crate::test_util::source_path;
 
 #[allow(clippy::unwrap_used)]
 fn entry(kind: ItemKind, name: &str, source: &str, repo: &str) -> LockEntry {

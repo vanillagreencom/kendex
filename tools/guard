@@ -275,7 +275,7 @@ if [ -f Cargo.toml ]; then
     done
   fi
   cargo fmt --check || say "cargo fmt --check failed"
-  cargo clippy --workspace --quiet -- -D warnings || say "clippy failed"
+  cargo clippy --workspace --all-targets --quiet -- -D warnings || say "clippy failed"
   cargo doc --no-deps --document-private-items --workspace --quiet || say "cargo doc failed"
   cargo test --workspace --quiet || say "tests failed"
 fi

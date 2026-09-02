@@ -95,7 +95,7 @@ fn nothing_installed_and_the_running_app_both_read_absent() {
         command_beside_app(
             &only_the_app,
             &probed,
-            &[image.clone()],
+            std::slice::from_ref(&image),
             Some(&recorded(&image.display().to_string()))
         ),
         CommandBeside::Absent
@@ -133,7 +133,7 @@ fn a_windows_app_on_path_is_never_taken_for_the_command() {
         command_beside_app(
             &machine,
             &probed,
-            &[exe.clone()],
+            std::slice::from_ref(&exe),
             Some(&recorded(&exe.display().to_string()))
         ),
         CommandBeside::Absent

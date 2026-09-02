@@ -3,9 +3,7 @@ use std::fs;
 use super::*;
 use crate::env::FakeOs;
 
-#[path = "../../../test_util.rs"]
-mod test_util;
-use test_util::source_path;
+use crate::test_util::source_path;
 
 fn fixture() -> (tempfile::TempDir, Env, Scope) {
     let tmp = tempfile::tempdir().unwrap();

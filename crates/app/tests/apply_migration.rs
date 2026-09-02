@@ -44,7 +44,7 @@ fn schema5_fixture() -> Fixture {
         format!(
             "{}\n{RETIRED}",
             KEPT.replace("{schema}", "5")
-                .replace("{source}", &source_path(&source))
+                .replace("{source}", &source_path(source))
         )
     })
 }
@@ -119,7 +119,7 @@ fn an_older_manifest_is_refused_and_left_byte_identical() {
 fn a_schema_less_manifest_is_refused_the_same_way() {
     let f = fixture(|source| {
         KEPT.replace("schema = {schema}\n", "")
-            .replace("{source}", &source_path(&source))
+            .replace("{source}", &source_path(source))
     });
     let original = fs::read_to_string(&f.manifest_path).unwrap();
 
@@ -139,7 +139,7 @@ fn a_retired_table_in_a_current_manifest_is_named_not_dropped() {
         format!(
             "{}\n{RETIRED}",
             KEPT.replace("{schema}", &MANIFEST_SCHEMA.to_string())
-                .replace("{source}", &source_path(&source))
+                .replace("{source}", &source_path(source))
         )
     });
     let original = fs::read_to_string(&f.manifest_path).unwrap();

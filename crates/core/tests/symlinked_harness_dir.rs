@@ -435,7 +435,7 @@ fn a_restore_reaches_through_a_link_that_never_moved() {
     // What an apply that died mid-write leaves behind, recorded at the
     // spelling its caller had.
     let dir = apply::journal::journal_dir_for(&f.env.journal_dir(), &apply::scope_key(&f.scope));
-    apply::journal::write(&dir, &[held.clone()]).unwrap();
+    apply::journal::write(&dir, std::slice::from_ref(&held)).unwrap();
     fs::write(&held, "half-written\n").unwrap();
 
     assert!(apply::recover(&f.env, &f.scope).unwrap(), "recovery ran");

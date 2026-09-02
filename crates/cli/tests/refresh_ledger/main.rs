@@ -62,7 +62,7 @@ fn manifest(project: &Path, catalog: &Path, tools: &str, method: &str, declarati
         project.join("kendex.toml"),
         format!(
             "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = {tools}\nmethod = \"{method}\"\n\n{declarations}",
-            source_path(&catalog)
+            source_path(catalog)
         ),
     )
     .unwrap();

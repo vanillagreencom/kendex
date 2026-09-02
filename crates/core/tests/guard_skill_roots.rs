@@ -126,10 +126,7 @@ fn the_packages_own_list_is_the_same_roots_in_the_same_order() {
 #[test]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 fn the_packages_own_list_covers_every_harness_skills_surface() {
-    let theirs: BTreeSet<String> = package_skill_roots()
-        .into_iter()
-        .map(String::from)
-        .collect();
+    let theirs: BTreeSet<String> = package_skill_roots().into_iter().collect();
     let declared = declared_roots();
     let unsearched: Vec<&String> = declared.difference(&theirs).collect();
     assert!(

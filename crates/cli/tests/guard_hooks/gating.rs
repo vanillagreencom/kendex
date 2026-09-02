@@ -30,7 +30,7 @@ fn a_plain_commit_walks_through_the_packages_chain() {
     let hook = std::fs::read_to_string(root.join(".git/hooks/pre-commit")).unwrap();
     assert!(hook.contains("kendex-guards-hook"), "{hook}");
 
-    std::fs::write(root.join("b.rs"), &work_marker("TO", "DO: not yet")).unwrap();
+    std::fs::write(root.join("b.rs"), work_marker("TO", "DO: not yet")).unwrap();
     git_ok(home, &root, &["add", "-A"]);
     let blocked = git(home, &root, &["commit", "-m", "feat: adds a marker"]);
     assert!(!blocked.status.success());
@@ -48,7 +48,7 @@ fn the_armed_gate_still_blocks_with_no_kendex_on_path() {
     let home = tmp.path();
     let root = armed_repo(home);
 
-    std::fs::write(root.join("b.rs"), &work_marker("FIX", "ME: later")).unwrap();
+    std::fs::write(root.join("b.rs"), work_marker("FIX", "ME: later")).unwrap();
     git_ok(home, &root, &["add", "-A"]);
     let blocked = run_with(
         home,
@@ -139,7 +139,7 @@ fn the_stand_in_gate_runs_the_same_chain_the_shim_would() {
     let home = tmp.path();
     let root = repo(home);
     install_package(home, &root, &["growth-guards"]);
-    std::fs::write(root.join("b.rs"), &work_marker("TO", "DO: not yet")).unwrap();
+    std::fs::write(root.join("b.rs"), work_marker("TO", "DO: not yet")).unwrap();
     git_ok(home, &root, &["add", "-A"]);
 
     let out = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
@@ -248,7 +248,7 @@ fn a_linked_worktree_is_served_by_the_main_checkouts_copy() {
     );
 
     // The chain runs there, resolved from the main checkout.
-    std::fs::write(linked.join("b.rs"), &work_marker("TO", "DO: not yet")).unwrap();
+    std::fs::write(linked.join("b.rs"), work_marker("TO", "DO: not yet")).unwrap();
     git_ok(home, &linked, &["add", "-A"]);
     let blocked = git(home, &linked, &["commit", "-m", "feat: adds a marker"]);
     assert!(!blocked.status.success(), "{}", said(&blocked));
@@ -392,7 +392,7 @@ fn a_broken_copy_does_not_shadow_a_working_one() {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
     }
 
-    std::fs::write(root.join("b.rs"), &work_marker("TO", "DO: not yet")).unwrap();
+    std::fs::write(root.join("b.rs"), work_marker("TO", "DO: not yet")).unwrap();
     git_ok(home, &root, &["add", "-A"]);
     let out = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
@@ -425,7 +425,7 @@ fn a_path_with_an_apostrophe_resolves_the_same_on_both_sides() {
     assert!(helper.contains("'\\''"), "the path was escaped: {helper}");
 
     // Both sides run the same copy: a real commit, and kendex's own lane.
-    std::fs::write(root.join("b.rs"), &work_marker("TO", "DO: not yet")).unwrap();
+    std::fs::write(root.join("b.rs"), work_marker("TO", "DO: not yet")).unwrap();
     git_ok(home, &root, &["add", "-A"]);
     let blocked = git(home, &root, &["commit", "-m", "feat: adds a marker"]);
     assert!(!blocked.status.success(), "{}", said(&blocked));
@@ -475,7 +475,7 @@ fn a_project_below_the_git_toplevel_is_found_where_it_renders() {
     );
 
     // The chain runs from there, resolved through the project's manifest.
-    std::fs::write(project.join("b.rs"), &work_marker("TO", "DO: not yet")).unwrap();
+    std::fs::write(project.join("b.rs"), work_marker("TO", "DO: not yet")).unwrap();
     git_ok(home, &outer, &["add", "-A"]);
     let out = run(home, &project, "kendex", &["guard", "run", "pre-commit"]);
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
@@ -545,7 +545,7 @@ fn a_tampered_helper_does_not_redirect_the_guard_verbs() {
     std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     // The verbs fall through to the search roots and run the real package.
-    std::fs::write(root.join("b.rs"), &work_marker("TO", "DO: not yet")).unwrap();
+    std::fs::write(root.join("b.rs"), work_marker("TO", "DO: not yet")).unwrap();
     git_ok(home, &root, &["add", "-A"]);
     let out = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert!(

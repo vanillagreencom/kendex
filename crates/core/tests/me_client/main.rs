@@ -167,6 +167,10 @@ fn sign_in_key(sign_in: &str) -> serde_json::Value {
 }
 
 /// Plant a generation where a finished read would have left one.
+#[allow(
+    clippy::expect_used,
+    reason = "a fixture the test cannot plant is a broken precondition, not a case"
+)]
 fn write_cache(env: &Env, body: &str, etag: Option<&str>, sign_in: Option<&str>) {
     let dir = env.registry_cache_dir();
     std::fs::create_dir_all(&dir).expect("mkdir");
@@ -188,6 +192,10 @@ fn env_in(dir: &Path) -> Env {
     Env::fake(dir, FakeOs::Linux)
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "a fixture that will not parse is a broken precondition, not a case"
+)]
 fn fixture() -> serde_json::Value {
     serde_json::from_str(FIXTURE).expect("fixture parses")
 }
@@ -205,6 +213,10 @@ fn fixture_body(path: &[&str]) -> String {
     fixture_node(path).to_string()
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "a fixture status that is not a u16 is a broken precondition, not a case"
+)]
 fn fixture_status(path: &[&str]) -> u16 {
     let status = fixture_node(path).as_u64().expect("status is a number");
     u16::try_from(status).expect("status fits")
@@ -339,7 +351,7 @@ fn a_dead_refresh_grant_reads_as_expired() {
         ok(400, None, r#"{"error":"invalid_grant"}"#),
     ]);
     let state = me::load(&env_in(dir.path()), &fetch, &store).expect("load");
-    assert!(matches!(state, AccountState::Expired { .. }));
+    assert!(matches!(state, AccountState::Expired));
     assert!(
         store.load().expect("load").is_none(),
         "a dead credential is not kept for endless retries"
@@ -362,7 +374,7 @@ fn an_expired_credential_drops_the_cached_identity() {
     ]);
     assert!(matches!(
         me::load(&env, &dead, &store).expect("load"),
-        AccountState::Expired { .. }
+        AccountState::Expired
     ));
     assert!(
         !cache.exists(),
@@ -385,7 +397,7 @@ fn a_rotation_the_server_still_rejects_reads_as_expired() {
         ok(401, None, r#"{"error":"invalid_token"}"#),
     ]);
     let state = me::load(&env, &fetch, &store).expect("load");
-    assert!(matches!(state, AccountState::Expired { .. }));
+    assert!(matches!(state, AccountState::Expired));
     assert!(
         store.load().expect("load").is_none(),
         "a rotation the server refuses is not kept for endless retries"

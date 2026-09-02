@@ -5,9 +5,7 @@ use kendex_core::manifest::{
 use kendex_core::model::HarnessId;
 use std::collections::BTreeMap;
 
-#[path = "../../../../test_util.rs"]
-mod test_util;
-use test_util::source_path;
+use crate::test_util::source_path;
 
 /// A project scope with no kendex.toml at all: the state the editor opens
 /// an empty draft for, and the one a first save creates the file from.

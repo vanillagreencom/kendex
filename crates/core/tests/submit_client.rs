@@ -259,6 +259,10 @@ impl ConcurrentStore {
         }
     }
 
+    #[allow(
+        clippy::expect_used,
+        reason = "a poisoned fixture lock is a broken precondition, not a case"
+    )]
     fn observe_next_guard(&self, observer: mpsc::Sender<()>) {
         *self.guard_observer.lock().expect("test observer lock") = Some(observer);
     }

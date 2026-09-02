@@ -21,6 +21,7 @@ struct Fixture {
     project: PathBuf,
 }
 
+#[allow(clippy::unwrap_used)]
 fn skill(catalog: &Path, name: &str, dependencies: &str) {
     let dir = catalog.join("skills").join(name);
     fs::create_dir_all(&dir).unwrap();
@@ -33,6 +34,7 @@ fn skill(catalog: &Path, name: &str, dependencies: &str) {
 
 /// A project subscribed to a catalog whose `dev` skill offers `linear` as
 /// an optional extra and requires nothing.
+#[allow(clippy::unwrap_used)]
 fn fixture() -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
@@ -83,6 +85,7 @@ fn installed(f: &Fixture, name: &str) -> bool {
     f.project.join(".claude/skills").join(name).exists()
 }
 
+#[allow(clippy::unwrap_used)]
 fn manifest(f: &Fixture) -> String {
     fs::read_to_string(f.project.join("kendex.toml")).unwrap()
 }
