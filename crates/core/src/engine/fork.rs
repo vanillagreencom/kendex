@@ -66,20 +66,7 @@ pub fn fork(
             origin: decl.source.clone(),
         });
     }
-    let edited = edited_rendering(env, scope, kind, name, harness)?;
-    let captured = capture(
-        &ForkOf {
-            env,
-            scope,
-            manifest: &manifest,
-            decl: &decl,
-            kind,
-            name,
-            installed_as: name,
-            harness,
-        },
-        &edited,
-    )?;
+    let (edited, captured) = capture_rendering(env, scope, kind, name, harness, &manifest, &decl)?;
     let mut ops = capture_ops(env, scope, kind, name, &edited, captured.files)?;
     let provenance = provenance(env, scope, kind, name, harness, &manifest, &decl)?;
     // The catalog's mapping tables shaped the rendering and the fork stops
@@ -228,6 +215,35 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
             }
         }
     })
+}
+
+/// Prove that one installed rendering can become a fork, returning the
+/// capture so the direct fork does not repeat the reads behind the proof.
+/// The Updates projection asks this same question and discards the capture.
+fn capture_rendering(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    harness: HarnessId,
+    manifest: &manifest::Manifest,
+    decl: &manifest::ItemDecl,
+) -> Result<(PathBuf, Captured)> {
+    let edited = edited_rendering(env, scope, kind, name, harness)?;
+    let captured = capture(
+        &ForkOf {
+            env,
+            scope,
+            manifest,
+            decl,
+            kind,
+            name,
+            installed_as: name,
+            harness,
+        },
+        &edited,
+    )?;
+    Ok((edited, captured))
 }
 
 /// The bytes answering to `name`, refused as a fork's own refusal: bytes

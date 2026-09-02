@@ -7,8 +7,6 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::{HarnessId, ItemKind, Scope};
 
-use super::skill_content_path;
-
 /// Whether a fork can take this kind at all, or why not. Only a skill and
 /// an agent are stored in the local source in a form the source parser
 /// reads back, so only those two have a fork path — and every question a
@@ -79,10 +77,9 @@ pub(super) fn ambiguous_skill_tree(tree: &std::path::Path) -> bool {
     tree.join("SKILL.md").exists() && tree.join("SKILL.md.disabled").exists()
 }
 
-/// Whether keeping this rendering's edit as a fork can succeed: the kind
-/// and tool allow it, and a skill's tree is unambiguous. The Updates page
-/// asks before it offers the action, so the answer is the one `fork`
-/// enforces.
+/// Whether keeping this rendering's edit as a fork can succeed. The
+/// read-only capture is the same eligibility result `fork` consumes, so
+/// the Updates page offers no action that the engine would refuse.
 pub fn forkable_rendering(
     env: &Env,
     scope: &Scope,
@@ -90,8 +87,16 @@ pub fn forkable_rendering(
     name: &str,
     harness: HarnessId,
 ) -> bool {
-    forkable_harness(kind, harness)
-        && (kind != ItemKind::Skill
-            || skill_content_path(env, scope, name, harness)
-                .is_some_and(|tree| !ambiguous_skill_tree(&tree)))
+    let Ok(manifest) = crate::engine::ops::manifest_for_mutation(env, scope) else {
+        return false;
+    };
+    let Some(decl) = manifest.declared(kind).get(name) else {
+        return false;
+    };
+    if decl.source == crate::manifest::LOCAL_SOURCE_NAME
+        || decl.source == crate::manifest::INPLACE_SOURCE_NAME
+    {
+        return false;
+    }
+    super::capture_rendering(env, scope, kind, name, harness, &manifest, decl).is_ok()
 }

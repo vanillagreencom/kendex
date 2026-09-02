@@ -57,7 +57,7 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
     };
     let render_refused = |problem: String| {
         refused(format!(
-            "its {} renderer refused it: {problem}",
+            "the access settings its {} renderer rejected: {problem}",
             harness.display_name()
         ))
     };
