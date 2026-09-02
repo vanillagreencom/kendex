@@ -13,7 +13,7 @@ use crate::names;
 use crate::package::detail::PackageFile;
 use crate::tags::Tag;
 
-use super::{Catalog, item_header};
+use super::Catalog;
 
 /// What the available-package page shows before anything installs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -77,7 +77,8 @@ pub fn package_preview(
             bundles.push(offered.name);
         }
     }
-    let header = item_header(&browsed, kind, name);
+    let text = super::item_text(&browsed, kind, name);
+    let header = super::header_of(kind, text.as_deref());
     Ok(PackagePreview {
         kind,
         name: name.to_owned(),
@@ -86,7 +87,15 @@ pub fn package_preview(
         readme: readme.map(|text| shown_text(&capped(text))),
         files,
         bundles,
-        dependencies: super::deps::dependencies(&browsed, kind, name),
+        // One package's read: the index behind it builds only if a bare
+        // name misses an exact offer, and then only once.
+        dependencies: super::deps::dependencies(
+            &browsed,
+            &crate::engine::deps::OfferedSkills::default(),
+            kind,
+            name,
+            text.as_deref(),
+        ),
         collision: browsed.collision(kind, name),
     })
 }

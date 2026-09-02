@@ -260,8 +260,10 @@ export const commands = {
 	 *  carry the picker's answer; absent, the scope's own install defaults
 	 *  decide, brought up to date against this machine by the add itself.
 	 *  `optional` carries the optional dependencies the picker ticked, by the
-	 *  name their parent declares them under; the engine records the choice and
-	 *  refuses a name nothing being installed offers one by.
+	 *  name their parent declares them under; the engine records the choice
+	 *  against every item that offers one by that name — a name no item this
+	 *  request touches, and no skill already installed from that source, offers
+	 *  is an error that writes nothing.
 	 */
 	marketplaceInstall: (scope: Scope, source: string, items: InstallItem[], bundle: string | null, destination: { scope: "global" } | { scope: "project"; root: string } | null, hold: boolean, harnesses: HarnessId[] | null, method: "symlink" | "copy" | null, optional: string[]) => typedError<Installed_Serialize, string>(__TAURI_INVOKE("marketplace_install", { scope, source, items, bundle, destination, hold, harnesses, method, optional })),
 	/**
@@ -1406,8 +1408,14 @@ export type HoldOwner =
 { kind: "package" } | 
 /**  The source is pinned as a whole; released where the source is declared. */
 { kind: "source"; name: string } | 
-/**  Propagated from the bundle or package that pulled this one in. */
-{ kind: "parent" };
+/**
+ *  Propagated from the bundle or package that pulled this one in.
+ *  `name` is that package where a requirement is what propagated it —
+ *  a bundle-propagated hold carries `None`, because it is released at
+ *  the bundle and naming a requiring skill would point the reader at a
+ *  declaration that does not hold the row.
+ */
+{ kind: "parent"; name: string | null };
 
 export type HookAgents = 
 /**  `"all"`, a role name, or a single agent name. */
@@ -2077,12 +2085,17 @@ export type PackageDependencies = {
 /**  One declared dependency, with where it stands in this scope. */
 export type PackageDependency = {
 	/**
-	 *  The bare name its parent declares, which is also the name an
-	 *  install's optional choice is spelled with — [`crate::engine::ops`]
-	 *  matches a choice against the declared list, not against what the
-	 *  name resolves to.
+	 *  The bare name its parent declares, unescaped: the spelling an
+	 *  install's optional choice is matched with, because
+	 *  [`crate::engine::ops`] matches a choice against the declared list.
+	 *  Never rendered — `shown` is the value a surface displays.
 	 */
 	name: string,
+	/**
+	 *  `name` with any control or deceptive character escaped, for
+	 *  display. Catalog-authored text is shown, never acted on.
+	 */
+	shown: string,
 	state: InstallState,
 };
 
@@ -3000,13 +3013,14 @@ export type UpdateRow = {
 	 */
 	derived: boolean,
 	/**
-	 *  The installed package that requires this one, when that is why it
-	 *  is here — the name behind `derived`, so the Library can say who
-	 *  brought it rather than that something did. `None` for a package
-	 *  declared outright and for a bundle member, whose set is named
-	 *  where sets are.
+	 *  Every installed package that requires this one, when that is why it
+	 *  is here — the names behind `derived`, so the Library can say who
+	 *  brought it rather than that something did. Empty for a package
+	 *  declared outright and for a bundle member, whose set is named where
+	 *  sets are. All of them, never one: releasing the only package named
+	 *  would leave it installed for the rest.
 	 */
-	requiredBy: string | null,
+	requiredBy: string[],
 	/**  This package is a local fork of a catalog item. */
 	forked: boolean,
 	/**  Installations of this package disagree on their source commit. */

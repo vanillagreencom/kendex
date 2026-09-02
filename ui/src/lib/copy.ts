@@ -163,14 +163,20 @@ export const MULTI_TOOL_FORK_NOTE =
   "Keeping one tool's copy would drop the other edits, so the choice here is to discard them all.";
 export const DERIVED_FORK_NOTE =
   "It came with a bundle or another package, so it can't become your own copy.";
-/** The same fact with the package that requires it named — what the
- *  Library says wherever it knows the parent. */
-export const derivedForkNote = (parent: string): string =>
-  `${parent} requires it, so it can't become your own copy.`;
-/** Why this package is installed at all: another package requires it, and
+/** Names in a sentence: "dev", "dev and orch", "dev, orch and gh". */
+export const namesInWords = (names: string[]): string =>
+  names.length < 2
+    ? (names[0] ?? "")
+    : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+/** The same fact with the packages that require it named — what the
+ *  Library says wherever it knows them. Every one of them: dropping the
+ *  one named would leave the package installed for the rest. */
+export const derivedForkNote = (parents: string[]): string =>
+  `${namesInWords(parents)} ${parents.length === 1 ? "requires" : "require"} it, so it can't become your own copy.`;
+/** Why this package is installed at all: other packages require it, and
  *  nothing asked for it by name. */
-export const requiredByNote = (parent: string): string =>
-  `Installed because ${parent} requires it.`;
+export const requiredByNote = (parents: string[]): string =>
+  `Installed because ${namesInWords(parents)} ${parents.length === 1 ? "requires" : "require"} it.`;
 export const DISCARD_EDITS_CONFIRM_TITLE = "Discard your edits?";
 export const DISCARD_EDITS_CONFIRM_BODY =
   "The catalog's version replaces your edits to this package, and your changes are gone. Keep them as your own copy instead if you're unsure.";

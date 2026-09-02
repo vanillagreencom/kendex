@@ -19,6 +19,34 @@ pub struct PlannedDeclaration {
     /// written on the item itself.
     pub decl: manifest::ItemDecl,
     pub derived: bool,
+    /// Every installed package that requires this one, in name order —
+    /// read from the same expansion `derived` is, so one row never answers
+    /// two graphs. Empty for a package the person declared and for a
+    /// bundle member.
+    pub required_by: Vec<String>,
+    /// The requiring package whose derivation supplied `decl`, and so owns
+    /// the revision this item reads. `None` where a bundle got there first:
+    /// that hold is released at the bundle, not at anything requiring it.
+    pub held_by_requirer: Option<String>,
+}
+
+/// Every installed package that requires this one, in name order, read
+/// off the same expansion `derived` is. All of them, never one: releasing
+/// the only package named would leave this one installed for the rest,
+/// and `engine::deps` expects several parents on purpose.
+fn required_by(expanded: &expansion::Expansion, kind: ItemKind, name: &str) -> Vec<String> {
+    let mut parents: Vec<String> = expanded
+        .harnesses(kind, name)
+        .into_iter()
+        .flat_map(|harness| expanded.reasons(kind, name, harness))
+        .filter_map(|reason| match reason {
+            crate::lock::Reason::RequiredBy { by } => Some(by.name),
+            _ => None,
+        })
+        .collect();
+    parents.sort();
+    parents.dedup();
+    parents
 }
 
 /// The full planned set — declared items plus derived members and
@@ -37,11 +65,22 @@ pub fn planned_declarations(
     let mut out = Vec::new();
     for kind in expansion::PLANNED_KINDS {
         for (name, planned) in expanded.of(kind) {
+            let derived = !manifest.declared(kind).contains_key(name);
             out.push(PlannedDeclaration {
                 kind,
+                // A package the person declared is here because they asked
+                // for it, whatever else requires it, so it names no parent.
+                required_by: match derived {
+                    true => required_by(&expanded, kind, name),
+                    false => Vec::new(),
+                },
+                held_by_requirer: match expanded.derived_from(kind, name) {
+                    Some(crate::lock::Reason::RequiredBy { by }) => Some(by.name.clone()),
+                    _ => None,
+                },
                 name: name.clone(),
                 decl: planned.decl.clone(),
-                derived: !manifest.declared(kind).contains_key(name),
+                derived,
             });
         }
     }
@@ -53,6 +92,8 @@ pub fn planned_declarations(
             name: name.clone(),
             decl: decl.clone(),
             derived: false,
+            required_by: Vec::new(),
+            held_by_requirer: None,
         });
     }
     out

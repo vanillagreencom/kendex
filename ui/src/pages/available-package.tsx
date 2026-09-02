@@ -100,7 +100,6 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
       items: [{ kind, name }],
       destination: target !== scope ? target : null,
       delivery: choice,
-      optional: choice.optional,
     }).then((ok) => {
       // Installed, the same page carries on in its installed mode — the
       // address gains the scope it landed in.

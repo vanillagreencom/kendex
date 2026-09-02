@@ -20,11 +20,12 @@ import { harnessName } from "@/lib/labels";
 
 export type Delivery = "symlink" | "copy";
 
-/** What the picker settled. `harnesses` and `method` start `null`, meaning
- * "leave it to the scope's own defaults" — the state before anyone touched
+/** What the picker settled — every answer it takes, in one value the
+ * install sends as a whole. `harnesses` and `method` start `null`, meaning
+ * "leave it to the scope's own defaults": the state before anyone touched
  * the picker, and the only state in which the install sends neither. The
  * optional dependencies start empty, which is a settled answer rather than
- * an absent one: an extra nobody ticked is not installed. */
+ * an absent one — an extra nobody ticked is not installed. */
 export type Choice = {
   harnesses: HarnessId[] | null;
   method: Delivery | null;

@@ -42,7 +42,7 @@ const row = (scope: Scope, over: Partial<UpdateRow> = {}): UpdateRow => ({
   canDiscard: false,
   canTakeLatest: false,
   derived: false,
-  requiredBy: null,
+  requiredBy: [],
   forked: false,
   mixed: false,
   removedUpstream: false,

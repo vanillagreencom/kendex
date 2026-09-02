@@ -25,9 +25,9 @@ export function PackageHeader({
   description: string | null;
   forked: boolean;
   mark: PlaceMark | null;
-  /** The installed package that requires this one, when that is why it is
-   *  here rather than anybody asking for it by name. */
-  requiredBy: string | null;
+  /** The installed packages that require this one, when that is why it is
+   *  here rather than anybody asking for it by name. Empty says nothing. */
+  requiredBy: string[];
   action: ReactNode;
 }) {
   const Icon = kindIcon(kind);
@@ -54,14 +54,14 @@ export function PackageHeader({
         </span>
       }
       subtitle={
-        mark || requiredBy || description ? (
+        mark || requiredBy.length > 0 || description ? (
           <>
             {/* Under the title and above the description, in words, the
                 way the Library row carries it — not a pill beside the
                 name. A badge there read as a property of the title; this
                 is a sentence about the package. */}
             {mark ? <p className="mb-1 text-customized">{mark.label}</p> : null}
-            {requiredBy ? (
+            {requiredBy.length > 0 ? (
               <p className="mb-1">{requiredByNote(requiredBy)}</p>
             ) : null}
             {description ? <InlineMarkdown source={description} /> : null}

@@ -2,6 +2,7 @@ import type { Scope, UpdateRow } from "@/bindings";
 import {
   EDITED_CANT_UPDATE_NOTE,
   HELD_BY_OWNER_NOTE,
+  heldByParentNote,
   USER_LEVEL_PLACE,
 } from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
@@ -75,7 +76,12 @@ export const updateWithheld = (row: UpdateRow): string | null => {
   // An edited place is never updated over; its row offers the install
   // beside it instead.
   if (row.blockedByLocalEdit) return EDITED_CANT_UPDATE_NOTE;
-  if (heldByOwner(row)) return HELD_BY_OWNER_NOTE;
+  // The same hold the Follow switch reports, said the same way: named
+  // where a requirement propagated it, unnamed where a bundle did.
+  if (heldByOwner(row))
+    return row.holdOwner?.kind === "parent" && row.holdOwner.name
+      ? heldByParentNote(row.holdOwner.name)
+      : HELD_BY_OWNER_NOTE;
   return null;
 };
 
@@ -95,10 +101,11 @@ const heldByOwner = (row: UpdateRow): boolean => row.pinned && row.derived;
 
 /** Why the Follow source switch is not this row's to flip, if it is not:
  *  a derived package has no declaration of its own to set a hold on, and a
- *  hold that belongs to the source or to a parent is released there. A
- *  parent is named where the row knows it — a package required by another
- *  one — and unnamed for a bundle member, whose set is named where sets
- *  are. */
+ *  hold that belongs to the source or to a parent is released there. The
+ *  parent is named only where the hold itself came from a package
+ *  requiring this one — a bundle-propagated hold is released at the
+ *  bundle, and naming a requiring skill would send the reader to a
+ *  declaration that does not hold the row. */
 export const switchLockedBy = (
   row: UpdateRow,
 ):
@@ -107,8 +114,9 @@ export const switchLockedBy = (
   | null => {
   if (row.holdOwner?.kind === "source")
     return { kind: "source", name: row.holdOwner.name };
-  if (row.derived || row.holdOwner?.kind === "parent")
-    return { kind: "parent", name: row.requiredBy };
+  if (row.holdOwner?.kind === "parent")
+    return { kind: "parent", name: row.holdOwner.name };
+  if (row.derived) return { kind: "parent", name: null };
   return null;
 };
 

@@ -53,7 +53,7 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
     canTakeLatest: true,
     holdOwner: null,
     derived: false,
-    requiredBy: null,
+    requiredBy: [],
     forked: false,
     mixed: false,
     removedUpstream: false,

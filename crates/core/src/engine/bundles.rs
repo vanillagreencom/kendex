@@ -184,7 +184,7 @@ fn installable(
     catalogs: &mut Catalogs,
     state: &mut DesiredState,
 ) -> Vec<(ItemKind, String, ItemDecl, Vec<HarnessId>)> {
-    let Some((sealed, config)) = catalogs.get(&decl.source, decl.rev.as_deref(), state) else {
+    let Some((sealed, config, _)) = catalogs.get(&decl.source, decl.rev.as_deref(), state) else {
         return Vec::new();
     };
     let Ok(offered) = crate::source::bundles::find(sealed, config, name) else {

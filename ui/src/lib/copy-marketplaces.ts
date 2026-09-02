@@ -19,3 +19,5 @@ export const REQUIRES_NOTE = "Installed with this package.";
 export const OPTIONAL_NOTE = "Installed only if you tick it.";
 export const DEPENDENCY_INSTALLED_NOTE = "already installed";
 export const DEPENDENCY_NOT_OFFERED_NOTE = "not offered here";
+export const DEPENDENCY_REMOVED_NOTE =
+  "you removed it — add it back to restore it";

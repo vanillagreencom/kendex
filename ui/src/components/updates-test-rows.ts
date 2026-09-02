@@ -24,7 +24,7 @@ export const updateRow = (
   canTakeLatest: true,
   holdOwner: null,
   derived: false,
-  requiredBy: null,
+  requiredBy: [],
   removedUpstream: false,
   noPerPackageUpdate: null,
   mixed: false,

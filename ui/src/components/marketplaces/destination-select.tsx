@@ -11,6 +11,12 @@ import { scopeName } from "@/lib/labels";
 import { everyPlace } from "@/lib/scope";
 import { useSettingsStore } from "@/stores/settings";
 
+// Settings arrive after the first render, and the no-settings answer is
+// read through a store selector: a fresh array each call is a new
+// reference every render, which is a render loop rather than an empty
+// list. One shared value instead.
+const NO_PROJECTS: string[] = [];
+
 /** Where an install lands. Browsing a personal subscription may redirect
  * into a project (the project gains the subscription in the same step);
  * a project subscription installs into its own project, so the picker
@@ -24,7 +30,7 @@ export function DestinationSelect({
   value: Scope;
   onChange: (scope: Scope) => void;
 }) {
-  const projects = useSettingsStore((s) => s.settings?.projects ?? []);
+  const projects = useSettingsStore((s) => s.settings?.projects ?? NO_PROJECTS);
   const options: Scope[] =
     browsing.scope === "global" ? everyPlace(projects) : [browsing];
 

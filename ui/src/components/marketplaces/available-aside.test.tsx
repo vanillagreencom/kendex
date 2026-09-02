@@ -57,4 +57,29 @@ describe("the available package's facts column", () => {
     expect(html).not.toContain("100/100");
     expect(html).not.toContain(SAFETY_CAVEAT);
   });
+
+  it("names what the package requires and what it offers", () => {
+    const html = render({
+      ...checked,
+      preview: {
+        ...checked.preview,
+        dependencies: {
+          required: [
+            { name: "code-quality", shown: "code-quality", state: "available" },
+          ],
+          optional: [{ name: "linear", shown: "linear", state: "available" }],
+        },
+      },
+    });
+    expect(html).toContain("Requires");
+    expect(html).toContain("code-quality");
+    expect(html).toContain("Optional");
+    expect(html).toContain("linear");
+  });
+
+  it("says nothing about dependencies for a package that declares none", () => {
+    const html = render(checked);
+    expect(html).not.toContain("Requires");
+    expect(html).not.toContain("Optional");
+  });
 });

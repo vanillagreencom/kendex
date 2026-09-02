@@ -11,6 +11,7 @@ use crate::model::{HarnessId, Scope};
 use test_util::source_path;
 
 mod deps;
+mod deps_state;
 mod repo;
 mod root_skill;
 mod safety_budget;

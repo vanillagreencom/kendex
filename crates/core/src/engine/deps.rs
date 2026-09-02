@@ -45,19 +45,27 @@ pub(crate) fn declared_dependencies(
     let Some(text) = sealed.read_if_exists(&skill_dir.join("SKILL.md"))? else {
         return Ok(Dependencies::default());
     };
-    let Ok((yaml, _)) = crate::frontmatter::split(&text) else {
-        return Ok(Dependencies::default());
+    Ok(declared_in(&text))
+}
+
+/// [`declared_dependencies`] over bytes a caller already holds — a listing
+/// reads each package's SKILL.md for its header anyway, and the sealed read
+/// checks containment per path component, so reading it a second time here
+/// costs the whole page.
+pub(crate) fn declared_in(text: &str) -> Dependencies {
+    let Ok((yaml, _)) = crate::frontmatter::split(text) else {
+        return Dependencies::default();
     };
     let Ok(parsed) = crate::frontmatter::parse_tolerant(yaml) else {
-        return Ok(Dependencies::default());
+        return Dependencies::default();
     };
     let Some(crate::frontmatter::Value::Map(map)) = parsed.map.get("dependencies") else {
-        return Ok(Dependencies::default());
+        return Dependencies::default();
     };
-    Ok(Dependencies {
+    Dependencies {
         required: map.string_list("required").unwrap_or_default(),
         optional: map.string_list("optional").unwrap_or_default(),
-    })
+    }
 }
 
 /// Everything the skills in this expansion require, walked until no
@@ -217,7 +225,8 @@ fn wanted_by(
     found: &mut Vec<ItemWarning>,
 ) -> Vec<(String, Vec<HarnessId>)> {
     let source = parent_decl.source.as_str();
-    let Some((sealed, config)) = catalogs.get(source, parent_decl.rev.as_deref(), state) else {
+    let Some((sealed, config, offered)) = catalogs.get(source, parent_decl.rev.as_deref(), state)
+    else {
         return Vec::new();
     };
     let Some(dir) = find_item(sealed, config, ItemKind::Skill, parent) else {
@@ -244,7 +253,7 @@ fn wanted_by(
         .iter()
         .chain(declared.optional.iter().filter(|o| chosen.contains(o)))
     {
-        let Some(dep) = resolve(name, parent, sealed, config, source, found) else {
+        let Some(dep) = resolve(name, parent, sealed, config, offered, source, found) else {
             continue;
         };
         if manifest.is_held_back(ItemKind::Skill, &dep) {
@@ -263,27 +272,23 @@ fn wanted_by(
     wanted
 }
 
-/// Where a bare dependency name points inside its own catalog. A name the
-/// catalog does not carry, or carries more than once under different
-/// plugins, is a finding naming what it found.
+/// Where a bare dependency name points inside its own catalog, as a
+/// finding on the parent when it points nowhere usable. The lookup itself
+/// is [`OfferedSkills::resolve`] — the one account of how a bare name is
+/// disambiguated, shared with the catalog pages so what a page promises
+/// and what an install takes cannot drift apart.
 fn resolve(
     name: &str,
     parent: &str,
     sealed: &SealedSource,
     config: &SourceConfig,
+    offered: &OfferedSkills,
     source: &str,
     found: &mut Vec<ItemWarning>,
 ) -> Option<String> {
-    if find_item(sealed, config, ItemKind::Skill, name).is_some() {
-        return Some(name.to_owned());
-    }
-    let candidates: Vec<String> = list_items(sealed, config, ItemKind::Skill)
-        .into_iter()
-        .filter(|offered| offered.rsplit('/').next() == Some(name))
-        .collect();
-    match candidates.len() {
-        1 => candidates.into_iter().next(),
-        0 => {
+    match offered.resolve(sealed, config, name) {
+        Ok(resolved) => Some(resolved),
+        Err(candidates) if candidates.is_empty() => {
             found.push(warn(
                 parent,
                 format!("{parent} requires {name}, which the catalog '{source}' does not offer"),
@@ -291,7 +296,7 @@ fn resolve(
             ));
             None
         }
-        _ => {
+        Err(candidates) => {
             found.push(warn(
                 parent,
                 format!(
@@ -303,6 +308,65 @@ fn resolve(
             None
         }
     }
+}
+
+/// The skills one catalog offers, indexed by the last segment of each name.
+///
+/// The index is built the first time a bare name misses an exact offer and
+/// kept for the rest of that catalog's read: the listing walks every plugin
+/// directory in the catalog, and walking it once per dependency name is
+/// quadratic in catalog size — KEN-1132 measured an 82.5x listing
+/// regression before this existed.
+#[derive(Default)]
+pub(crate) struct OfferedSkills {
+    by_leaf: std::cell::OnceCell<BTreeMap<String, Vec<String>>>,
+}
+
+impl OfferedSkills {
+    /// The index built up front from a listing the caller already has, so a
+    /// reader that lists the catalog anyway pays for no second walk.
+    pub(crate) fn from_listing(names: &[String]) -> Self {
+        let index = Self::default();
+        let _ = index.by_leaf.set(indexed(names));
+        index
+    }
+
+    /// Where a bare dependency name points inside this catalog: the exact
+    /// offer, else the single entry whose last path segment matches. `Err`
+    /// carries the candidates — none where the catalog does not offer the
+    /// name at all, several where it offers more than one and there is
+    /// nothing here to choose between them.
+    pub(crate) fn resolve(
+        &self,
+        sealed: &SealedSource,
+        config: &SourceConfig,
+        name: &str,
+    ) -> std::result::Result<String, Vec<String>> {
+        if find_item(sealed, config, ItemKind::Skill, name).is_some() {
+            return Ok(name.to_owned());
+        }
+        let by_leaf = self
+            .by_leaf
+            .get_or_init(|| indexed(&list_items(sealed, config, ItemKind::Skill)));
+        match by_leaf.get(name).map(Vec::as_slice) {
+            Some([only]) => Ok(only.clone()),
+            Some(several) => Err(several.to_vec()),
+            None => Err(Vec::new()),
+        }
+    }
+}
+
+/// Every offered name under the last segment it ends with.
+fn indexed(names: &[String]) -> BTreeMap<String, Vec<String>> {
+    let mut index: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for offered in names {
+        let leaf = offered.rsplit('/').next().unwrap_or(offered);
+        index
+            .entry(leaf.to_owned())
+            .or_default()
+            .push(offered.clone());
+    }
+    index
 }
 
 /// The tools a dependency installs for: the ones its parent needs it on,

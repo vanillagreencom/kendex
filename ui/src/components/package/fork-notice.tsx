@@ -59,9 +59,9 @@ export function ForkNotice({
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const several = row.editedHarnesses.length > 1;
   const whyNoFork = row.derived
-    ? // Named where the row knows which package requires this one; a
-      // bundle member has no single package to name.
-      row.requiredBy
+    ? // Named where the row knows which packages require this one; a
+      // bundle member has no requiring package to name.
+      row.requiredBy.length > 0
       ? derivedForkNote(row.requiredBy)
       : DERIVED_FORK_NOTE
     : several

@@ -6,11 +6,11 @@ import { toast } from "sonner";
 import type {
   AvailablePackage,
   Disclosure,
-  HarnessId,
   InstallItem,
   Scope,
 } from "@/bindings";
 import { commands } from "@/bindings";
+import type { Choice } from "@/components/marketplaces/harness-select";
 import {
   repoEffectsAppliedToast,
   repoEffectsDeclinedToast,
@@ -27,25 +27,21 @@ import {
 } from "./marketplaces-shared";
 import { useProblemsStore } from "./problems";
 
-/** One install: what to put where, and — when the picker was used — which
- * tools it lands on and how the files get there. Each half of `delivery` is
- * sent only when it was actually chosen; a `null` leaves the scope's own
- * install defaults to decide, which the engine brings up to date against
- * this machine as it plans. */
+/** One install: what to put where, and — when the picker was used — what
+ * the picker settled: which tools it lands on, how the files get there, and
+ * which optional dependencies it takes. `harnesses` and `method` are sent
+ * only when actually chosen; a `null` leaves the scope's own install
+ * defaults to decide, which the engine brings up to date against this
+ * machine as it plans. The picker's whole answer travels as one value —
+ * two fields carrying the same choice is how two call sites end up sending
+ * different installs. */
 interface InstallRequest {
   scope: Scope;
   source: string;
   items: InstallItem[];
   bundle?: string | null;
   destination?: Scope | null;
-  delivery?: {
-    harnesses: HarnessId[] | null;
-    method: "symlink" | "copy" | null;
-  };
-  /** The optional dependencies the picker ticked, by the name their
-   * parent declares them under. Empty is the answer, not the absence of
-   * one: an extra nobody ticked is not installed. */
-  optional?: string[];
+  delivery?: Choice;
 }
 
 /** The repository effects an install brought, waiting on their own yes:
@@ -103,7 +99,6 @@ export function installActions(set: Set, get: Get): InstallActions {
       bundle = null,
       destination,
       delivery,
-      optional = [],
     }: InstallRequest) => {
       set({ busy: true });
       let response: Awaited<ReturnType<typeof commands.marketplaceInstall>>;
@@ -117,7 +112,9 @@ export function installActions(set: Set, get: Get): InstallActions {
           false,
           delivery?.harnesses ?? null,
           delivery?.method ?? null,
-          optional,
+          // Empty is the answer, not the absence of one: an extra nobody
+          // ticked is not installed.
+          delivery?.optional ?? [],
         );
       } finally {
         set({ busy: false });

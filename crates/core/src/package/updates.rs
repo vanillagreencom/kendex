@@ -34,7 +34,11 @@ pub enum HoldOwner {
     /// The source is pinned as a whole; released where the source is declared.
     Source { name: String },
     /// Propagated from the bundle or package that pulled this one in.
-    Parent,
+    /// `name` is that package where a requirement is what propagated it —
+    /// a bundle-propagated hold carries `None`, because it is released at
+    /// the bundle and naming a requiring skill would point the reader at a
+    /// declaration that does not hold the row.
+    Parent { name: Option<String> },
 }
 
 /// One declared package's update standing.
@@ -90,12 +94,13 @@ pub struct UpdateRow {
     /// of its own: whatever pulled it in owns its revision, and a fork
     /// needs a declaration to turn local.
     pub derived: bool,
-    /// The installed package that requires this one, when that is why it
-    /// is here — the name behind `derived`, so the Library can say who
-    /// brought it rather than that something did. `None` for a package
-    /// declared outright and for a bundle member, whose set is named
-    /// where sets are.
-    pub required_by: Option<String>,
+    /// Every installed package that requires this one, when that is why it
+    /// is here — the names behind `derived`, so the Library can say who
+    /// brought it rather than that something did. Empty for a package
+    /// declared outright and for a bundle member, whose set is named where
+    /// sets are. All of them, never one: releasing the only package named
+    /// would leave it installed for the rest.
+    pub required_by: Vec<String>,
     /// This package is a local fork of a catalog item.
     pub forked: bool,
     /// Installations of this package disagree on their source commit.
@@ -304,7 +309,7 @@ fn fork_row(
         can_discard: false,
         can_take_latest: false,
         derived: false,
-        required_by: None,
+        required_by: Vec::new(),
         forked: true,
         mixed: false,
         removed_upstream: false,

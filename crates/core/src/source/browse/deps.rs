@@ -1,17 +1,20 @@
 //! What a package declares it needs, read before anything installs.
 //!
-//! The engine's own lists, resolved the way the engine resolves them —
+//! The engine's own lists, resolved through the engine's own lookup —
 //! bare names inside one catalog and one kind — so the page and the
-//! install picker name exactly what the install would take. Only skills
-//! declare dependencies; every other kind reads as none.
+//! install picker name what the install would take, down to a dependency
+//! the person has kept removed, which reads as removed here and installs
+//! nowhere. Only skills declare dependencies; every other kind reads as
+//! none.
 //!
 //! A name the catalog cannot place is still a row: the reader owns the
-//! catalog line that put it there, and a dependency dropped in silence
-//! would have the page promise less than the install takes.
+//! catalog line that put it there, and the row is how they learn the
+//! declaration is broken.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use crate::engine::deps::OfferedSkills;
 use crate::model::ItemKind;
 use crate::names;
 
@@ -22,11 +25,14 @@ use super::opened::Browsed;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageDependency {
-    /// The bare name its parent declares, which is also the name an
-    /// install's optional choice is spelled with — [`crate::engine::ops`]
-    /// matches a choice against the declared list, not against what the
-    /// name resolves to.
+    /// The bare name its parent declares, unescaped: the spelling an
+    /// install's optional choice is matched with, because
+    /// [`crate::engine::ops`] matches a choice against the declared list.
+    /// Never rendered — `shown` is the value a surface displays.
     pub name: String,
+    /// `name` with any control or deceptive character escaped, for
+    /// display. Catalog-authored text is shown, never acted on.
+    pub shown: String,
     pub state: InstallState,
 }
 
@@ -48,60 +54,69 @@ impl PackageDependencies {
 }
 
 /// What this package declares it needs, against this catalog and scope.
-pub(super) fn dependencies(browsed: &Browsed, kind: ItemKind, name: &str) -> PackageDependencies {
+/// `offered` is the catalog's bare-name index, shared across every package
+/// in one read; `text` is the package's own SKILL.md, already read by the
+/// caller that also wants its header.
+pub(super) fn dependencies(
+    browsed: &Browsed,
+    offered: &OfferedSkills,
+    kind: ItemKind,
+    name: &str,
+    text: Option<&str>,
+) -> PackageDependencies {
     if kind != ItemKind::Skill {
         return PackageDependencies::default();
     }
-    let Some(dir) = crate::source::find_item(&browsed.sealed, &browsed.config, kind, name) else {
+    let Some(text) = text else {
         return PackageDependencies::default();
     };
-    let Ok(declared) = crate::engine::deps::declared_dependencies(&browsed.sealed, &dir) else {
-        return PackageDependencies::default();
+    let declared = crate::engine::deps::declared_in(text);
+    let rows = |names: &[String]| {
+        names
+            .iter()
+            .filter_map(|dep| row(browsed, offered, name, dep))
+            .collect()
     };
     PackageDependencies {
-        required: declared
-            .required
-            .iter()
-            .map(|dep| row(browsed, dep))
-            .collect(),
-        optional: declared
-            .optional
-            .iter()
-            .map(|dep| row(browsed, dep))
-            .collect(),
+        required: rows(&declared.required),
+        optional: rows(&declared.optional),
     }
 }
 
 /// One dependency row: the declared name, and this scope's state for
-/// whatever that name resolves to. A name the catalog does not carry — or
-/// carries twice under different plugins, which the engine refuses to
-/// guess between — reads as no longer offered, the same row a bundle
-/// member with a dead name gets.
-fn row(browsed: &Browsed, declared: &str) -> PackageDependency {
+/// whatever that name resolves to.
+///
+/// `None` for a skill that lists its own name — the engine treats that line
+/// as installing nothing (`co_install` says so out loud), so a row for it
+/// would present as a dependency something no install acts on.
+fn row(
+    browsed: &Browsed,
+    offered: &OfferedSkills,
+    package: &str,
+    declared: &str,
+) -> Option<PackageDependency> {
     let kind = ItemKind::Skill;
-    PackageDependency {
-        state: match resolve(browsed, declared) {
-            Some(name) => browsed.state(kind, &name),
+    let resolved = offered
+        .resolve(&browsed.sealed, &browsed.config, declared)
+        .ok();
+    if resolved.as_deref() == Some(package) {
+        return None;
+    }
+    Some(PackageDependency {
+        state: match &resolved {
+            // A removal the person recorded keeps the dependency out of
+            // every plan (`Manifest::is_held_back`), so the row says it was
+            // their choice rather than offering to install it. The same
+            // ladder a bundle member's row climbs, and the same predicate
+            // `engine::deps::wanted_by` refuses on.
+            Some(name) if browsed.manifest.is_held_back(kind, name) => InstallState::RemovedByYou,
+            // A name the catalog does not carry, or carries more than once
+            // under different plugins: the engine refuses to guess between
+            // them, so nothing here is on offer either.
+            Some(name) => browsed.state(kind, name),
             None => InstallState::NotOffered,
         },
-        // Catalog-authored, so shown with any control or deceptive
-        // character escaped rather than acted on.
-        name: names::shown(declared),
-    }
-}
-
-/// Where a bare dependency name points inside its own catalog: the exact
-/// offer, else the single plugin-qualified one ending in that name.
-/// [`crate::engine::deps`] resolves the same two ways, and a name it would
-/// refuse to guess between resolves to nothing here too.
-fn resolve(browsed: &Browsed, declared: &str) -> Option<String> {
-    let kind = ItemKind::Skill;
-    if crate::source::find_item(&browsed.sealed, &browsed.config, kind, declared).is_some() {
-        return Some(declared.to_owned());
-    }
-    let mut candidates = crate::source::list_items(&browsed.sealed, &browsed.config, kind)
-        .into_iter()
-        .filter(|offered| offered.rsplit('/').next() == Some(declared));
-    let only = candidates.next()?;
-    candidates.next().is_none().then_some(only)
+        shown: names::shown(declared),
+        name: declared.to_owned(),
+    })
 }

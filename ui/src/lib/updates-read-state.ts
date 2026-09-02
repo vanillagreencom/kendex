@@ -101,20 +101,26 @@ export const packageUpdateNote = (
   return unsettled(state) ? UPDATES_CHECKING : NO_UPDATE_STANDING_NOTE;
 };
 
-/** The installed package that requires the one this place names, when that
- *  is why it is here — the fact behind `derived`, so the page says who
- *  brought it rather than that something did. Null while no row speaks for
+/** Every installed package that requires the one this place names, when
+ *  that is why it is here — the fact behind `derived`, so the page says who
+ *  brought it rather than that something did. Empty while no row speaks for
  *  the place: a package nothing requires, a bundle member, and a read that
  *  has not answered yet all read the same, and the header simply says
- *  nothing rather than guessing at a parent. */
+ *  nothing rather than guessing at a parent.
+ *
+ *  The row's own array is handed back, and the no-row answer is one shared
+ *  empty array rather than a fresh one: this is read through a store
+ *  selector, and a new reference on every call is a render loop. */
+const NO_PARENTS: string[] = [];
+
 export const packageRequiredBy = (
   state: { rows: UpdateRow[] },
   place: { kind: ItemKind; name: string; scope: Scope } | null,
-): string | null =>
+): string[] =>
   state.rows.find(
     (one) =>
       place != null &&
       one.kind === place.kind &&
       one.name === place.name &&
       sameScope(one.scope, place.scope),
-  )?.requiredBy ?? null;
+  )?.requiredBy ?? NO_PARENTS;

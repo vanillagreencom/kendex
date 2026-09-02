@@ -89,8 +89,10 @@ pub struct Installed {
 /// carry the picker's answer; absent, the scope's own install defaults
 /// decide, brought up to date against this machine by the add itself.
 /// `optional` carries the optional dependencies the picker ticked, by the
-/// name their parent declares them under; the engine records the choice and
-/// refuses a name nothing being installed offers one by.
+/// name their parent declares them under; the engine records the choice
+/// against every item that offers one by that name — a name no item this
+/// request touches, and no skill already installed from that source, offers
+/// is an error that writes nothing.
 #[tauri::command(async)]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]

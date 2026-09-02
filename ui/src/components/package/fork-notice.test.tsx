@@ -100,7 +100,7 @@ describe("package page edited notice", () => {
         editedHarnesses: ["claude"],
         forkableHarness: null,
         derived: true,
-        requiredBy: "dev",
+        requiredBy: ["dev"],
       }),
     ]);
     // Static markup escapes the apostrophe.
@@ -113,7 +113,7 @@ describe("package page edited notice", () => {
         editedHarnesses: ["claude"],
         forkableHarness: null,
         derived: true,
-        requiredBy: null,
+        requiredBy: [],
       }),
     ]);
     expect(html).toContain("It came with a bundle or another package");

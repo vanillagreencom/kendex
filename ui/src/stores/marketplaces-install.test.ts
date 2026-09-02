@@ -97,7 +97,7 @@ describe("the optional dependencies an install takes", () => {
       scope: { scope: "global" },
       source: "cat",
       items: [{ kind: "skill", name: "dev" }],
-      optional: ["linear"],
+      delivery: { harnesses: null, method: null, optional: ["linear"] },
     });
     expect(vi.mocked(commands.marketplaceInstall).mock.calls[0][8]).toEqual([
       "linear",

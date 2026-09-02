@@ -112,10 +112,30 @@ pub fn packages(env: &Env, catalog: &Catalog) -> Result<Vec<AvailablePackage>> {
                 .push(bundle.name.clone());
         }
     }
+    // The catalog is listed once per kind here anyway, so the bare-name
+    // index every dependency row resolves against is built from the
+    // listing this loop already holds rather than from a second walk.
+    let listed: Vec<(ItemKind, Vec<String>)> = ItemKind::ALL
+        .iter()
+        .map(|kind| {
+            (
+                *kind,
+                super::list_items(&browsed.sealed, &browsed.config, *kind),
+            )
+        })
+        .collect();
+    let offered = crate::engine::deps::OfferedSkills::from_listing(
+        listed
+            .iter()
+            .find(|(kind, _)| *kind == ItemKind::Skill)
+            .map(|(_, names)| names.as_slice())
+            .unwrap_or_default(),
+    );
     let mut out = Vec::new();
-    for kind in ItemKind::ALL {
-        for name in super::list_items(&browsed.sealed, &browsed.config, kind) {
-            let header = item_header(&browsed, kind, &name);
+    for (kind, names) in listed {
+        for name in names {
+            let text = item_text(&browsed, kind, &name);
+            let header = header_of(kind, text.as_deref());
             let carried_bundles = carried.remove(&(kind, name.clone())).unwrap_or_default();
             // Catalog-authored bundle names are shown with control and
             // deceptive characters escaped rather than acted on.
@@ -127,7 +147,7 @@ pub fn packages(env: &Env, catalog: &Catalog) -> Result<Vec<AvailablePackage>> {
                 summary: header.summary_or_description().map(names::shown),
                 tags: header.tags,
                 bundles,
-                dependencies: deps::dependencies(&browsed, kind, &name),
+                dependencies: deps::dependencies(&browsed, &offered, kind, &name, text.as_deref()),
                 kind,
                 name,
             });
@@ -210,25 +230,30 @@ fn detail(browsed: &Browsed, found: &super::bundles::CatalogBundle) -> BundleDet
     }
 }
 
-/// The description, summary and tags an item writes in its own header, read
-/// through the sealed source with the same vocabulary reading the scanner
-/// uses.
-fn item_header(browsed: &Browsed, kind: ItemKind, name: &str) -> crate::scan::metadata::Metadata {
-    let Some(path) = super::find_item(&browsed.sealed, &browsed.config, kind, name) else {
-        return Default::default();
-    };
-    let text = match kind {
+/// The bytes an item's header and its dependency declaration are both read
+/// from — read once where a caller needs both, because the sealed read
+/// checks containment per path component and a whole listing pays for the
+/// second read of every package.
+fn item_text(browsed: &Browsed, kind: ItemKind, name: &str) -> Option<String> {
+    let path = super::find_item(&browsed.sealed, &browsed.config, kind, name)?;
+    match kind {
         ItemKind::Skill => browsed.sealed.read_to_string(&path.join("SKILL.md")),
         _ => browsed.sealed.read_to_string(&path),
-    };
-    let Ok(text) = text else {
+    }
+    .ok()
+}
+
+/// The description, summary and tags an item writes in its own header,
+/// read with the same vocabulary the scanner reads.
+fn header_of(kind: ItemKind, text: Option<&str>) -> crate::scan::metadata::Metadata {
+    let Some(text) = text else {
         return Default::default();
     };
     match kind {
         ItemKind::Skill | ItemKind::Agent | ItemKind::Command => {
-            crate::scan::metadata::from_markdown(&text)
+            crate::scan::metadata::from_markdown(text)
         }
-        ItemKind::McpServer => crate::scan::metadata::from_toml(&text),
+        ItemKind::McpServer => crate::scan::metadata::from_toml(text),
         // A hook script carries no header to read.
         _ => Default::default(),
     }

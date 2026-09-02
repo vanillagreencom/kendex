@@ -80,8 +80,8 @@ fn a_package_that_declares_nothing_carries_no_dependencies() {
 }
 
 /// A dependency the catalog does not carry is still a row, saying so: the
-/// reader owns the catalog line that put it there, and a silently dropped
-/// name would have the page promise less than the install takes.
+/// reader owns the catalog line that put it there, and the row is how they
+/// learn the declaration is broken.
 #[test]
 fn a_dependency_the_catalog_lost_reads_as_not_offered() {
     let tmp = tempfile::tempdir().unwrap();

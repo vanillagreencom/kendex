@@ -36,7 +36,7 @@ const row = (
   canTakeLatest: true,
   holdOwner: null,
   derived: false,
-  requiredBy: null,
+  requiredBy: [],
   removedUpstream: false,
   noPerPackageUpdate: null,
   mixed: false,
@@ -243,19 +243,37 @@ describe("updateWithheld", () => {
 });
 
 /** The Follow switch's own lock, and the parent it names when it can: the
- *  Library says which package requires this one rather than that something
- *  does. A bundle member has no single package to name, and a row nothing
- *  holds is not locked at all. */
+ *  name comes from the hold, not from what requires the package, so a
+ *  bundle-propagated hold names nobody even where a skill requires the
+ *  same package. A row nothing holds is not locked at all. */
 describe("switchLockedBy", () => {
-  it("names the package that requires a derived row", () => {
+  it("names the package whose requirement holds the row", () => {
     expect(
-      switchLockedBy(row("gh", null, { derived: true, requiredBy: "dev" })),
+      switchLockedBy(
+        row("gh", null, {
+          derived: true,
+          requiredBy: ["dev"],
+          holdOwner: { kind: "parent", name: "dev" },
+        }),
+      ),
     ).toEqual({ kind: "parent", name: "dev" });
   });
 
-  it("names no parent for a bundle member", () => {
+  it("names nobody for a bundle-propagated hold, even with a requirer", () => {
     expect(
-      switchLockedBy(row("gh", null, { derived: true, requiredBy: null })),
+      switchLockedBy(
+        row("gh", null, {
+          derived: true,
+          requiredBy: ["dev"],
+          holdOwner: { kind: "parent", name: null },
+        }),
+      ),
+    ).toEqual({ kind: "parent", name: null });
+  });
+
+  it("names no parent for an unheld derived row", () => {
+    expect(
+      switchLockedBy(row("gh", null, { derived: true, requiredBy: [] })),
     ).toEqual({ kind: "parent", name: null });
   });
 
@@ -264,7 +282,7 @@ describe("switchLockedBy", () => {
       switchLockedBy(
         row("gh", null, {
           derived: true,
-          requiredBy: "dev",
+          requiredBy: ["dev"],
           holdOwner: { kind: "source", name: "kendex" },
         }),
       ),

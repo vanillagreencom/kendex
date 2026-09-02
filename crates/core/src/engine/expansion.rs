@@ -62,6 +62,10 @@ pub(super) struct Planned {
     /// nobody wrote read as agreement, and a warning that names one names
     /// a commit kendex made up.
     chosen_rev: Option<String>,
+    /// The derivation that created this entry, and so supplied the `decl`
+    /// every later one is weighed against — the reason that owns this
+    /// item's revision. `None` for a declaration the person wrote.
+    derived_from: Option<Reason>,
 }
 
 #[derive(Default)]
@@ -109,6 +113,14 @@ impl Expansion {
             .map(|planned| planned.decl.clone())
     }
 
+    /// The derivation that owns this item's revision, per [`Planned`].
+    pub(super) fn derived_from(&self, kind: ItemKind, name: &str) -> Option<&Reason> {
+        self.items
+            .get(&(kind, name.to_owned()))?
+            .derived_from
+            .as_ref()
+    }
+
     pub(super) fn harnesses(&self, kind: ItemKind, name: &str) -> Vec<HarnessId> {
         self.items
             .get(&(kind, name.to_owned()))
@@ -139,6 +151,7 @@ impl Expansion {
                 decl: decl.clone(),
                 harnesses,
                 chosen_rev,
+                derived_from: None,
             },
         );
     }
@@ -159,6 +172,7 @@ impl Expansion {
         // own commit, invented pin included — KEN-765 is where that edge
         // learns the difference.
         let carried_by_a_set = matches!(reason, Reason::MemberOf { .. });
+        let reason_owning = reason.clone();
         let fresh = self
             .reasons
             .entry((kind, name.to_owned(), harness))
@@ -171,6 +185,7 @@ impl Expansion {
                 decl: decl.clone(),
                 harnesses: Vec::new(),
                 chosen_rev: decl.rev.clone(),
+                derived_from: Some(reason_owning.clone()),
             });
         let wanted_at = match carried_by_a_set {
             true => &planned.chosen_rev,
@@ -228,8 +243,9 @@ impl Expansion {
 /// Every catalog read this pass, opened once. Sources that cannot be read
 /// carry nothing to derive; the declaration that names one reports that on
 /// its own, where it can say which declaration it cost.
-/// A catalog open for reading: the sealed root and its layout tables.
-type OpenCatalog = (SealedSource, SourceConfig);
+/// A catalog open for reading: the sealed root, its layout tables, and the
+/// bare-name index its dependency lookups share, built once per catalog.
+type OpenCatalog = (SealedSource, SourceConfig, super::deps::OfferedSkills);
 /// Which catalog: the source name and the revision it is read at.
 type CatalogKey = (String, Option<String>);
 
@@ -298,7 +314,7 @@ impl Catalogs<'_> {
         };
         let sealed = SealedSource::open(&ready.root).ok()?;
         let config = source_config(&sealed, crate::source::repo_leaf(&ready.provenance)).ok()?;
-        Some((sealed, config))
+        Some((sealed, config, super::deps::OfferedSkills::default()))
     }
 }
 

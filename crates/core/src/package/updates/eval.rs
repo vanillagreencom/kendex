@@ -46,7 +46,9 @@ impl Eval<'_> {
             .is_some_and(crate::remote::store::is_pin);
         let hold_owner = if decl.rev.is_some() {
             Some(match planned.derived {
-                true => HoldOwner::Parent,
+                true => HoldOwner::Parent {
+                    name: planned.held_by_requirer.clone(),
+                },
                 false => HoldOwner::Package,
             })
         } else if source_pinned {
@@ -133,7 +135,7 @@ impl Eval<'_> {
                     can_discard: false,
                     can_take_latest: false,
                     derived: planned.derived,
-                    required_by: self.required_by(planned),
+                    required_by: planned.required_by.clone(),
                     edited_harnesses,
                     forked,
                     mixed: false,
@@ -251,7 +253,7 @@ impl Eval<'_> {
             can_discard: true,
             can_take_latest: latest.is_some() && !(planned.derived && pinned),
             derived: planned.derived,
-            required_by: self.required_by(planned),
+            required_by: planned.required_by.clone(),
             edited_harnesses,
             forked,
             repo_identity: crate::source_ref::repo_identity(&package.repo),
@@ -263,26 +265,6 @@ impl Eval<'_> {
             removed_upstream: false,
             no_per_package_update: super::no_per_package_update(kind),
         });
-    }
-
-    /// Which installed package requires this one, when that is why it is
-    /// here. Read off the lock's own reasons rather than walked again: the
-    /// recorded reason is what an installation exists by, and a package the
-    /// user declared is here because they asked, whatever else requires it.
-    /// The lock is keyed, so the answer is the same on every read.
-    fn required_by(&self, planned: &crate::engine::PlannedDeclaration) -> Option<String> {
-        if !planned.derived {
-            return None;
-        }
-        self.lock
-            .entries
-            .values()
-            .filter(|entry| entry.kind == planned.kind && entry.name == planned.name)
-            .flat_map(|entry| entry.reasons.iter())
-            .find_map(|reason| match reason {
-                crate::lock::Reason::RequiredBy { by } => Some(by.name.clone()),
-                _ => None,
-            })
     }
 
     fn is_ignored(&self, kind: ItemKind, name: &str, repo: &str) -> bool {

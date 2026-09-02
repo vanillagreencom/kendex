@@ -4,6 +4,7 @@ import { Label } from "@/components/ui/label";
 import {
   DEPENDENCY_INSTALLED_NOTE,
   DEPENDENCY_NOT_OFFERED_NOTE,
+  DEPENDENCY_REMOVED_NOTE,
   OPTIONAL_HEADING,
   OPTIONAL_NOTE,
   REQUIRES_HEADING,
@@ -11,17 +12,21 @@ import {
 } from "@/lib/copy-marketplaces";
 
 /** What a dependency's state adds to its name, or nothing when it is
- *  simply on offer. A package already here is not installed twice, and one
- *  the catalog no longer carries cannot be installed at all — both are
- *  facts about the row, said beside it. */
+ *  simply on offer. A package already here is not installed twice, one the
+ *  person removed stays removed until they add it back, and one the
+ *  catalog no longer carries cannot be installed at all — each a fact
+ *  about the row, said beside it and never blamed on the catalog. */
 export function dependencyNote(state: InstallState): string | null {
   if (state === "installed") return DEPENDENCY_INSTALLED_NOTE;
+  if (state === "removed-by-you") return DEPENDENCY_REMOVED_NOTE;
   if (state === "available") return null;
   return DEPENDENCY_NOT_OFFERED_NOTE;
 }
 
 /** A dependency the install cannot take: the catalog no longer offers it,
- *  or the person removed it themselves and that removal is recorded. */
+ *  or the person removed it themselves and that removal is recorded — the
+ *  engine keeps a held-back name out of every plan, so ticking it here
+ *  would ask for something no install brings. */
 const unavailable = (state: InstallState): boolean =>
   state === "not-offered" || state === "removed-by-you";
 
@@ -43,7 +48,7 @@ export function DependencyFacts({
           <ul className="space-y-0.5">
             {dependencies.required.map((dep) => (
               <li key={dep.name}>
-                {dep.name}
+                {dep.shown}
                 <DependencyNote state={dep.state} />
               </li>
             ))}
@@ -58,7 +63,7 @@ export function DependencyFacts({
           <ul className="space-y-0.5">
             {dependencies.optional.map((dep) => (
               <li key={dep.name}>
-                {dep.name}
+                {dep.shown}
                 <DependencyNote state={dep.state} />
               </li>
             ))}
@@ -98,7 +103,7 @@ export function DependencyChoice({
           <ul className="pb-2">
             {dependencies.required.map((dep) => (
               <li key={dep.name}>
-                {dep.name}
+                {dep.shown}
                 <DependencyNote state={dep.state} />
               </li>
             ))}
@@ -123,7 +128,7 @@ export function DependencyChoice({
                   disabled={unavailable(dep.state)}
                   onCheckedChange={() => toggle(dep.name)}
                 />
-                {dep.name}
+                {dep.shown}
                 <DependencyNote state={dep.state} />
               </Label>
             ))}
