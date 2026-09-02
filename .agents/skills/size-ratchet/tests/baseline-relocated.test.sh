@@ -52,6 +52,24 @@ while IFS='|' read -r label mode declaration frozen dormant source expect_rc exp
       mkdir -p "$R/policy"
       ln -s policy/settings.toml "$R/kendex.settings.toml"
       ;;
+    # The settings file is reached through a symlinked PARENT: HEAD carries
+    # no entry at the complete path, so the lookup cannot be performed at
+    # all and must refuse rather than report the source absent.
+    parent-link)
+      SETTINGS_FILE=.kendex/settings.toml
+      mkdir -p "$R/config"
+      ln -s config "$R/.kendex"
+      ;;
+    # Its must-fail control: the same real .kendex directory, carrying no
+    # settings.toml, so the ancestor walk crosses a real tree and must still
+    # earn the absent sentinel — the root file then answers and catches the
+    # raise. A refusal that over-fires on a tree reds here; one that fires
+    # unconditionally reds on nested-default above.
+    parent-real)
+      SETTINGS_FILE=kendex.settings.toml
+      mkdir -p "$R/.kendex"
+      printf 'not settings\n' >"$R/.kendex/notes.txt"
+      ;;
     flag | envvar)
       SETTINGS_FILE=kendex.settings.toml
       SETTINGS_MODE="$source"
@@ -114,6 +132,8 @@ flag-default||0||no|flag|1|baseline row raised: big.txt — row 15 -> 20 lines|
 flag-staged|--staged|0||no|flag|1|baseline row raised: big.txt — row 15 -> 20 lines|
 envvar-default||0||no|envvar|1|baseline row raised: big.txt — row 15 -> 20 lines|
 envvar-staged|--staged|0||no|envvar|1|baseline row raised: big.txt — row 15 -> 20 lines|
+parent-link-default||0||no|parent-link|2|.kendex: HEAD carries this path component as a symlink|
+parent-real-default||0||no|parent-real|1|baseline row raised: big.txt — row 15 -> 20 lines|reference tools/active.tsv
 untracked-envlocal-default||0||no|untracked-envlocal|2|no historical form|
 untracked-envlocal-staged|--staged|0||no|untracked-envlocal|2|no historical form|
 CASES

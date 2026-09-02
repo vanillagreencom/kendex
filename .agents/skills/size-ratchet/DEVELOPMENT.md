@@ -66,7 +66,11 @@ still governs unless the rewrite lands.
 
 `resolve_head_baseline_file` sets the settings library's HEAD mode and calls
 `sr_setting`. `sr_settings_source` owns source names, precedence, historical
-materialization, and tracked-symlink traversal. The main script handles only
+materialization, and tracked-symlink traversal. `git ls-tree` answers for a
+complete path only, so before it may report a source absent from HEAD,
+`sr_settings_head_absence_real` classifies each ancestor: absent ends the
+walk, a tree continues it, and anything else — a symlink above all — is a
+lookup that could not be performed and refuses. The main script handles only
 the flag and process-key overrides, then reads the baseline at the returned
 path. `rows_raised` consumes only those rows. The behavioral rule is
 [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).

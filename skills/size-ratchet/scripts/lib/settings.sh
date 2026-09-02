@@ -119,6 +119,31 @@ sr_settings_normalize_path() { # PATH — normalized path on stdout ("" when it 
   done
   printf '%s' "$out"
 }
+# ls-tree answers for a COMPLETE path only, so a settings source reached
+# through a symlinked parent has no entry — indistinguishable from a source
+# HEAD does not carry. Every ancestor is classified before the absent
+# sentinel may be returned; the rule is DEVELOPMENT.md, Trusted reference
+# snapshot. Detection only: nothing here reads a target or follows a link.
+sr_settings_head_absence_real() { # NORMALIZED-PATH — 0 = the sentinel is earned; 1 + ::error
+  local rest="$1" prefix="" entry="" status=0 mode=""
+  while :; do
+    case "$rest" in */*) ;; *) return 0 ;; esac
+    prefix="${prefix:+$prefix/}${rest%%/*}"
+    rest="${rest#*/}"
+    status=0
+    entry="$(git ls-tree HEAD -- ":(literal)$prefix" 2>/dev/null)" || status=$?
+    if [ "$status" -ne 0 ]; then
+      echo "::error::$prefix: could not query HEAD while resolving a setting (git ls-tree exit $status)" >&2
+      return 1
+    fi
+    [ -n "$entry" ] || return 0
+    mode="${entry%% *}"
+    [ "$mode" != 040000 ] || continue
+    case "$mode" in 120000) mode="a symlink" ;; *) mode="mode $mode" ;; esac
+    echo "::error::$prefix: HEAD carries this path component as $mode, not a directory; HEAD settings cannot be resolved through it" >&2
+    return 1
+  done
+}
 sr_settings_source() { # FILE — the path to actually read; nonzero + ::error on failure
   local file="$1" copy="" status=0 entry="" norm="" head_status=0 tree_status=0 target="" base="" depth=0
   if [ "${SR_SETTINGS_FROM_HEAD:-0}" = "1" ]; then
@@ -147,7 +172,11 @@ sr_settings_source() { # FILE — the path to actually read; nonzero + ::error o
         echo "::error::$file: could not query HEAD while resolving a setting (git ls-tree exit $status)" >&2
         return 1
       fi
-      [ -n "$entry" ] || { printf '%s' "$SR_SETTINGS_HEAD_DIR/settings.absent"; return 0; }
+      if [ -z "$entry" ]; then
+        sr_settings_head_absence_real "$file" || return 1
+        printf '%s' "$SR_SETTINGS_HEAD_DIR/settings.absent"
+        return 0
+      fi
       case "${entry%% *}" in
         100*) break ;;
         120000)

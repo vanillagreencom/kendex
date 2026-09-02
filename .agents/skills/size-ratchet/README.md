@@ -65,8 +65,10 @@ that. Markdown is measured in bytes and code in lines. Flags and exit codes:
 Every mode uses one reference. `--baseline` or a process
 `SIZE_RATCHET_BASELINE` applies directly; otherwise the settings parser reads
 the implicit root and nested sources, tracked `.env.local`, or an explicit
-repo-relative source from HEAD. HEAD symlinks are followed only while their
-targets stay in the repository. An absolute, escaping, or candidate-only
+repo-relative source from HEAD. A HEAD symlink at the source path itself is
+followed only while its target stays in the repository; one at a parent
+component refuses, because HEAD cannot be read through it and a lookup that
+could not be performed is not an absent source. An absolute, escaping, or candidate-only
 explicit source contributes nothing to the historical lookup; if it assigns
 this key, the run refuses because that value has no historical form. The same
 rule applies to an untracked `.env.local`. The rows at the selected HEAD path are

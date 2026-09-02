@@ -122,7 +122,7 @@ skills/second-opinion/scripts/second-opinion	2683
 skills/second-opinion/tests/cli-failure-gate.test.sh	1211
 skills/second-opinion/tests/lane-scratch-durability.test.sh	999
 skills/second-opinion/tests/review-dual-model.test.sh	1516
-skills/size-ratchet/scripts/lib/settings.sh	456
+skills/size-ratchet/scripts/lib/settings.sh	485
 skills/size-ratchet/scripts/size-ratchet	934
 skills/worktree/scripts/worktree	4530
 skills/worktree/scripts/worktree-session-guard	442
