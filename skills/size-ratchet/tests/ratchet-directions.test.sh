@@ -375,6 +375,29 @@ run_sr
   && ok "control: the same rows with the newline give the same verdict" \
   || bad "control: the newline-terminated baseline gives the same verdict" "rc=$RC out=$OUT"
 
+echo "=== a run with no HEAD reference says so on the verdict line ==="
+# "No reference" passes, but it is not "checked and clean": the added and
+# raised checks had nothing to judge against. A bare OK reads as clean, so the
+# verdict discloses which of the two it is.
+DISCLOSURE="HEAD carries no baseline rows, so added and raised rows were not judged"
+new_repo bootstrap-disclosure
+mkfile x.test.txt 15
+git -C "$R" add -A
+git -C "$R" commit -q -m "an offender, no baseline yet"
+mkdir -p "$R/tools"
+printf 'x.test.txt\t15\n' >"$R/$BASE"
+git -C "$R" add -A
+RAISE=1 run_frozen
+[ "$RC" -eq 0 ] && case "$OUT" in *"size-ratchet: OK"*"$DISCLOSURE"*) true ;; *) false ;; esac \
+  && ok "a first baseline passes, and the OK verdict says the added row went unjudged" \
+  || bad "the OK verdict discloses that no HEAD reference judged the row" "rc=$RC out=$OUT"
+# The control: the same repo and the same command one commit later, when HEAD
+# DOES carry the row. Without it an unconditional clause would pass above.
+git -C "$R" commit -q -m "the bootstrap row, now HEAD's"
+run_frozen
+[ "$RC" -eq 0 ] && case "$OUT" in *"$DISCLOSURE"*) false ;; *"size-ratchet: OK"*) true ;; *) false ;; esac \
+  && ok "control: once HEAD carries the row, the ordinary OK verdict carries no such clause" \
+  || bad "control: a run with a HEAD reference does not disclose" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

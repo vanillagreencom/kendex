@@ -925,8 +925,8 @@ if [ "$MODE" = "check" ] && [ "$STAGED" -eq 1 ] && [ "$VIOLATIONS" -gt 0 ] \
   fi
 fi
 report "$TMP/violations.tsv" || collection_error "could not read the violations scratch file to report them"
-REFERENCE_NOTE=""
-if [ -n "$HEAD_BASELINE" ] && [ "$HEAD_BASELINE_FILE" != "$BASELINE_FILE" ]; then REFERENCE_NOTE=", reference $HEAD_BASELINE_FILE"; fi
+if [ -z "$HEAD_BASELINE" ]; then REFERENCE_NOTE=" — HEAD carries no baseline rows, so added and raised rows were not judged"
+elif [ "$HEAD_BASELINE_FILE" != "$BASELINE_FILE" ]; then REFERENCE_NOTE=", reference $HEAD_BASELINE_FILE"; else REFERENCE_NOTE=""; fi
 if [ "$VIOLATIONS" -gt 0 ]; then
   echo "size-ratchet: $VIOLATIONS violation(s) — threshold $THRESHOLD$CLASSES_NOTE, baseline $BASELINE_FILE$REFERENCE_NOTE"
   exit 1
