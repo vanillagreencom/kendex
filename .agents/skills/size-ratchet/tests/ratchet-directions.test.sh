@@ -302,13 +302,14 @@ run_sr
 
 # A carve cannot pull the baseline into its own gate: the baseline is policy
 # input, and measuring it would make every row it gains a violation. The
-# baseline written here carries 11 rows against this suite's threshold of 10,
-# so the exemption is the only thing keeping it off the offender list — a
-# shorter one would pass whether the exemption held or not. Every row names a
-# file the `!*` row carves back in and that is over the threshold, so no row
-# reads as stale.
+# `tools/*` row excludes both policy files and the `!*` row carves them back,
+# so the carve list really is consulted for them; the baseline stays out only
+# because its exemption is read ahead of both lists. Its own 11 rows put it
+# over this suite's threshold of 10, so a baseline that reached the gate would
+# fail as a new offender — a shorter one would pass whether the exemption held
+# or not. Every row names a measured file over the threshold, none stale.
 for i in 1 2 3 4 5 6 7 8 9; do mkfile ".agents/skills/in-place/part$i.txt" 11; done
-printf '!*\tcarve everything back in\n' >"$R/tools/size-ratchet-excludes"
+printf 'tools/*\tthe policy files themselves\n!*\tcarve everything back in\n' >"$R/tools/size-ratchet-excludes"
 {
   printf '.agents/skills/in-place/big.txt\t50\n'
   for i in 1 2 3 4 5 6 7 8 9; do printf '.agents/skills/in-place/part%s.txt\t11\n' "$i"; done

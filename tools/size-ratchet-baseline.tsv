@@ -115,6 +115,6 @@ skills/second-opinion/tests/cli-failure-gate.test.sh	1211
 skills/second-opinion/tests/lane-scratch-durability.test.sh	999
 skills/second-opinion/tests/review-dual-model.test.sh	1516
 skills/size-ratchet/scripts/lib/settings.sh	485
-skills/size-ratchet/scripts/size-ratchet	1000
+skills/size-ratchet/scripts/size-ratchet	996
 skills/worktree/scripts/worktree	4530
 skills/worktree/scripts/worktree-session-guard	442
