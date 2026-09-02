@@ -932,7 +932,7 @@ cache_get_initiative() {
 # =============================================================================
 
 cache_list_cycles() {
-    local cycle_type="" team="" limit=50
+    local cycle_type="" limit=50
     FORMAT="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
@@ -941,10 +941,9 @@ cache_list_cycles() {
             cycle_type="$2"
             shift 2
             ;;
-        --team)
-            team="$2"
-            shift 2
-            ;; # ignored — cache is team-scoped
+        # sync scopes cycles to a team only when one is configured; with none
+        # configured the cache holds every team's cycles.
+        --team) shift 2 ;; # consume but ignore for cache
         --limit)
             limit="$2"
             shift 2
