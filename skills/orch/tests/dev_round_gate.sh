@@ -124,7 +124,12 @@ assert_eq "$(reason --worktree "$wt" --issue issue-826 --round-id 1-1 --expect-i
 # no authorization. The reader's per-path rule is the writer's — any run of
 # non-space characters not beginning with '-' — so the pair below moves only
 # the adds entry between a value the writer can produce and one it cannot.
+# U+00A0 is the case the regex form got wrong: glibc calls it a non-space so
+# the writer stamps it, while Oniguruma calls it a space so the reader killed
+# the round at exit 2 after the agent had done the work.
+adds_nbsp="$(printf 'tools/a\u00a0b')"
 for adds_case in 'tools/a;b:writer-possible' 'crates/app/icons/128x128@2x.png:writer-possible' \
+  "$adds_nbsp:writer-possible" \
   'tools/one path.sh:writer-impossible' '-c:writer-impossible'; do
   adds_value="${adds_case%:*}"
   adds_kind="${adds_case##*:}"
@@ -142,6 +147,59 @@ for adds_case in 'tools/a;b:writer-possible' 'crates/app/icons/128x128@2x.png:wr
   fi
 done
 cp "$TMP_ROOT/record-honest.json" "$record"
+
+# A trailing newline is the other half of the same bug, in the opposite
+# direction: Oniguruma's `$` matches before a string-final newline, so the
+# unanchored form accepted a path the writer cannot produce. `$'...'` holds
+# the newline that a command substitution would strip.
+jq --arg add $'tools/a\n' '.adds = [$add]' "$TMP_ROOT/record-honest.json" > "$TMP_ROOT/adds.json"
+cp "$TMP_ROOT/adds.json" "$record"
+set +e
+"$CHECK" --worktree "$wt" --issue issue-826 --round-id 1-1 --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "a record whose adds path ends in a newline fails closed"
+set -e
+
+# The same anchoring bug on base_sha: 40 hex plus a trailing newline.
+jq --arg base $'0123456789abcdef0123456789abcdef01234567\n' '.base_sha = $base' \
+  "$TMP_ROOT/record-honest.json" > "$TMP_ROOT/base.json"
+cp "$TMP_ROOT/base.json" "$record"
+set +e
+"$CHECK" --worktree "$wt" --issue issue-826 --round-id 1-1 --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "a base_sha of 40 hex plus a trailing newline fails closed"
+set -e
+cp "$TMP_ROOT/record-honest.json" "$record"
+
+# --- an option-shaped branch path is named, not misdiagnosed ----------------
+# The refused paths reach jq as data, not as arguments: -test-helper.sh is
+# protected on the classifier's substring arm with no directory needed, and
+# through an argument list it made jq exit on an unknown option, so the round
+# came back classifier_failed with an empty files list — an environment failure
+# the orchestrator would retry rather than an addition it should cut.
+option_wt="$TMP_ROOT/option-wt"
+mkdir -p "$option_wt"
+git -C "$option_wt" init -q -b main
+git -C "$option_wt" config user.email test@example.com
+git -C "$option_wt" config user.name Test
+git -C "$option_wt" config commit.gpgsign false
+git -C "$option_wt" commit -q --allow-empty -m base
+init_growth_state "$STATE" "$option_wt" issue-826 seed 1000000
+for probe_case in '-test-helper.sh' 'x-test-helper.sh'; do
+  probe_round="p${#probe_case}-${#probe_case}"
+  "$ROUND_WRITE" --worktree "$option_wt" --issue issue-826 --round-id "$probe_round" \
+    --item 1 "option-shaped addition" >/dev/null
+  printf 'helper\n' > "$option_wt/$probe_case"
+  git -C "$option_wt" add -- "$probe_case"
+  git -C "$option_wt" commit -q -m "add $probe_case"
+  probe_head="$(git -C "$option_wt" rev-parse HEAD)"
+  "$RETURN_WRITE" --worktree "$option_wt" --kind fix --issue issue-826 --round-id "$probe_round" \
+    --branch b --commit "$probe_head" --validate pass --item 1 Applied done >/dev/null
+  probe_out="$("$CHECK" --worktree "$option_wt" --issue issue-826 --round-id "$probe_round" \
+    --expect-items-from-round 2>/dev/null || true)"
+  assert_eq "$(jq -r '.reason' <<<"$probe_out")" "unapproved_additions" \
+    "an addition named '$probe_case' is refused as unauthorized, not as a classifier failure"
+  assert_eq "$(jq -c '.files' <<<"$probe_out")" "$(jq -nc --arg f "$probe_case" '[$f]')" \
+    "the refusal names '$probe_case'"
+done
 
 # --- the record must be a regular file at its own path ----------------------
 # Only the symlink changes between the two halves: same bytes, same token, same

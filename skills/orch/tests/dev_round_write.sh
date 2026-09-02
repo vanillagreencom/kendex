@@ -376,6 +376,8 @@ set -e
 assert_eq "$mutant_rc" "0" "reach control kills a writer whose refusal list never fires"
 
 # --- usage/validation errors: all exit 2, nothing written ---
+# Each --adds case takes its own round id: sharing one would let the
+# immutable-record collision stand in for the path validation.
 assert_exit2 "no --item exits 2 (an empty delegated set is not a fix round)" \
   --worktree "$worktree" --issue i --round-id 1-1
 assert_exit2 "missing --worktree exits 2" --issue i --round-id 1-1 --item 1 t "$OK_REACH"
@@ -447,59 +449,88 @@ dash_adds="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id a16-1
   --adds '-c tools/a' 2>/dev/null || true)"
 assert_eq "$([[ -z "$dash_adds" ]] && echo none || jq -c '.adds' "$dash_adds")" "none" \
   "the refused leading-dash value records nothing, not a shorter list"
-# The grammar's reach is a claim about THIS repository's tracked files, so it
-# is measured rather than asserted in prose: every tracked path the additions
-# classifier calls protected must be expressible in an Adds: line, or a fix
-# round adding a sibling of it could never be authorized. The classifier is
-# lifted out of the real script so the fixture cannot drift from it.
+# --- the grammar reaches every protected path this repository tracks --------
+# A claim about THIS repository's tracked files, so it is measured rather than
+# asserted in prose: every tracked path the additions classifier calls
+# protected must be nameable in an Adds: line, or a fix round adding a sibling
+# of it could never be authorized. Both halves are lifted out of the real
+# scripts so the fixture cannot drift from them.
+#
+# The predicate is the SINGLE-PATH rule, not the whole-value grammar: the value
+# grammar matches a multi-word list, so it would call 'crates/one file.rs'
+# expressible when the writer records it as two paths.
+#
+# This is the one case in the suite that reads the ambient repository, so it
+# needs a git checkout; from an export it fails rather than skipping, because a
+# skipped sweep is the vacuous pass the classified-count control exists to stop.
 classifier="$TMP_ROOT/is-protected-addition.sh"
 awk '/^is_protected_addition\(\) \{$/,/^\}$/' "$CHECK" > "$classifier"
 assert_eq "$([[ -s "$classifier" ]] && echo found || echo missing)" "found" \
   "control: the additions classifier was lifted from dev-artifact-check"
 # shellcheck source=/dev/null
 source "$classifier"
-grammar_source="$(awk -F\' '/^ADDS_GRAMMAR=/ { print $2; exit }' "$WRITE_BIN")"
-assert_eq "$([[ -n "$grammar_source" ]] && echo found || echo missing)" "found" \
-  "control: ADDS_GRAMMAR was lifted from dev-round-write"
+path_grammar="$(awk -F\' '/^ADDS_PATH_GRAMMAR=/ { print $2; exit }' "$WRITE_BIN")"
+assert_eq "$([[ -n "$path_grammar" ]] && echo found || echo missing)" "found" \
+  "control: ADDS_PATH_GRAMMAR was lifted from dev-round-write"
+assert_eq "$(git -C "$REPO_ROOT" rev-parse --is-inside-work-tree 2>/dev/null || echo no)" "true" \
+  "precondition: the grammar sweep needs a git checkout at $REPO_ROOT"
 unexpressible=""
-while IFS= read -r tracked_path; do
-  is_protected_addition "$tracked_path" || continue
-  [[ "$tracked_path" =~ $grammar_source ]] && continue
-  unexpressible="$unexpressible$tracked_path "
-done < <(git -C "$REPO_ROOT" ls-files)
-assert_eq "$unexpressible" "" \
-  "every tracked protected path can be named in an Adds: line"
 protected_seen=0
 while IFS= read -r tracked_path; do
-  is_protected_addition "$tracked_path" && protected_seen=$((protected_seen + 1))
-done < <(git -C "$REPO_ROOT" ls-files)
+  is_protected_addition "$tracked_path" || continue
+  protected_seen=$((protected_seen + 1))
+  [[ "$tracked_path" =~ ^${path_grammar}$ ]] && continue
+  unexpressible="$unexpressible$tracked_path "
+done < <(git -C "$REPO_ROOT" -c core.quotePath=false ls-files)
+assert_eq "$unexpressible" "" \
+  "every tracked protected path can be named in an Adds: line"
 assert_eq "$([[ "$protected_seen" -gt 100 ]] && echo many || echo "$protected_seen")" "many" \
   "control: the sweep actually classified protected paths"
+# The predicate must be the single-path rule: the whole-value grammar admits a
+# space-carrying path as a two-path list, so it cannot see this class at all.
+assert_eq "$([[ "crates/one file.rs" =~ ^${path_grammar}$ ]] && echo admit || echo refuse)" "refuse" \
+  "control: the swept predicate refuses a space-carrying path"
+# Default ls-files quoting would hand the sweep C-quoted spellings of the
+# non-ASCII paths — `"...frapp\303\251-..."` — which carry no blank and no
+# leading dash, so the grammar would admit a form the writer never sees and the
+# miss would be silent. Measured over every tracked path, since the quoted ones
+# here are not themselves protected.
+quoted_paths=""
+while IFS= read -r tracked_path; do
+  case "$tracked_path" in
+    '"'*) quoted_paths="$quoted_paths$tracked_path " ;;
+  esac
+done < <(git -C "$REPO_ROOT" -c core.quotePath=false ls-files)
+assert_eq "$quoted_paths" "" \
+  "control: the sweep reads path names unquoted"
 
+# --- the position rule admits ordinary path characters -------------------
 # The set is constrained by POSITION, not by character class: a metacharacter
 # inside a path is only a character here — the value never reaches a shell —
 # and narrowing to a class refuses tracked paths this repository has.
 meta_out="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id a17-17 --item 1 t "$OK_REACH" \
-  --adds 'tools/check;safe tools/say"hi" tools/-c')"
-assert_eq "$(jq -c '.adds' "$meta_out")" '["tools/check;safe","tools/say\"hi\"","tools/-c"]' \
+  --adds 'tools/check;safe tools/say"hi" tools/-c' 2>/dev/null || true)"
+assert_eq "$([[ -n "$meta_out" ]] && jq -c '.adds' "$meta_out" || echo refused)" '["tools/check;safe","tools/say\"hi\"","tools/-c"]' \
   "a metacharacter, a quote and a non-initial dash are ordinary path characters"
 newline_adds="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id a15-15 --item 1 t "$OK_REACH" \
   --adds "$(printf 'tools/a.sh\ntools/b.sh')" 2>/dev/null || true)"
 assert_eq "$([[ -z "$newline_adds" ]] && echo none || jq -c '.adds' "$newline_adds")" "none" \
   "the refused newline value records nothing at all"
 split_out="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 17-17 --item 1 split "$OK_REACH" \
-  --adds "  tools/a   skills/x/scripts/b  ")"
-assert_eq "$(jq -c '.adds' "$split_out")" '["tools/a","skills/x/scripts/b"]' \
+  --adds "  tools/a   skills/x/scripts/b  " 2>/dev/null || true)"
+assert_eq "$([[ -n "$split_out" ]] && jq -c '.adds' "$split_out" || echo refused)" '["tools/a","skills/x/scripts/b"]' \
   "--adds splits on runs of whitespace and keeps the delegated order"
 
+# --- a blank separates, so a space-carrying value is two paths ------------
 # A blank IS the separator, so the writer cannot tell one path containing a
 # space from two paths. That is the documented behaviour, not a defect to
 # patch: this pins it so the docs red if the split ever changes.
 space_out="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 18-18 --item 1 space "$OK_REACH" \
-  --adds 'tools/one path.sh')"
-assert_eq "$(jq -c '.adds' "$space_out")" '["tools/one","path.sh"]' \
+  --adds 'tools/one path.sh' 2>/dev/null || true)"
+assert_eq "$([[ -n "$space_out" ]] && jq -c '.adds' "$space_out" || echo refused)" '["tools/one","path.sh"]' \
   "a space-carrying value is two paths, exactly as the docs state"
 
+# --- a linked worktree, and the classifier's public scope ----------------
 # A real linked worktree keeps its record in its own tmp/, and the public
 # checker catches suffix, substring, and dotfile helper names.
 linked_main="$TMP_ROOT/linked-main"
@@ -595,6 +626,7 @@ product_out="$("$CHECK" --worktree "$linked_wt" --issue issue-826 --round-id 32-
 assert_eq "$(jq -r '.reason' <<<"$product_out")" "valid" \
   "product and documentation helper basenames remain outside the protected scope"
 
+# --- the writer refuses to place a record over a symlink -----------------
 # The writer half only: dev_round_gate.sh owns the reader's symlink refusal,
 # and this is the writer's suite.
 "$WRITE" --worktree "$linked_wt" --issue issue-826 --round-id 31-31 --item 1 symlink "$OK_REACH" >/dev/null
@@ -608,6 +640,7 @@ assert_eq "$?" "2" "the writer refuses to place a record over a symlink"
 set -e
 rm -f "$symlink_record"
 
+# --- the live workflow blocks own the additions transport ----------------
 # Live workflow blocks own the additions-file transport. Prose and commented
 # decoys outside those blocks cannot satisfy these controls.
 for workflow in dev-fix review-pr-comments; do
@@ -644,6 +677,11 @@ scope_mutant_text="$(<"$scope_mutant")"
 assert_text_not_matches "$scope_mutant_text" '^[[:space:]]*[^<[:space:]].*schemas/dev-round\.md.*Protected additions' \
   "scope reference control rejects an HTML-comment decoy"
 
+# --- every site stating the Adds rule states the SPLIT, not a rejection ------
+# The behaviour is pinned by the writer round trip above; this pins the prose,
+# because prose is where this defect recurred: a rewrite back to "a whitespace
+# path is refused" would otherwise red nothing. Derived from the delegation
+# docs plus the two --help texts and the schema that carry the reader half.
 adds_contract_docs=(
   "$REPO_ROOT/skills/dev/workflows/dev-fix.md"
   "$REPO_ROOT/skills/orch/workflows/dev-fix.md"
@@ -655,6 +693,29 @@ for adds_doc in "${adds_contract_docs[@]}"; do
     "$(basename "$adds_doc") shows the single-path Adds line"
   assert_text_matches "$adds_text" 'Adds: tools/one-helper\.sh skills/x/scripts/check' \
     "$(basename "$adds_doc") shows the blank-separated multi-path Adds line"
+done
+
+# Every site that states the rule at all — the three delegation docs, the
+# schema, and the writer's own --help — must say the value SPLITS.
+adds_rule_sites=(
+  "${adds_contract_docs[@]}"
+  "$REPO_ROOT/skills/orch/schemas/dev-round.md"
+  "$WRITE_BIN"
+)
+for rule_site in "${adds_rule_sites[@]}"; do
+  rule_text="$(tr '\n' ' ' < "$rule_site")"
+  assert_text_matches "$rule_text" 'read as two paths and cannot be authorized as one' \
+    "$(basename "$rule_site") states that a whitespace path splits"
+  assert_text_not_matches "$rule_text" \
+    'path (containing|carrying) whitespace (is|cannot be) *(refused|expressed)' \
+    "$(basename "$rule_site") makes no whitespace-rejection claim"
+done
+
+# The reader's half lives in dev-artifact-check's --help and its schema row.
+for reader_site in "$CHECK" "$REPO_ROOT/skills/orch/schemas/dev-round.md"; do
+  reader_text="$(tr '\n' ' ' < "$reader_site")"
+  assert_text_matches "$reader_text" 'beginning with .-.' \
+    "$(basename "$reader_site") states the reader's leading-dash refusal"
 done
 
 ADDS_PATHS="tools/future-helper.sh skills/x/scripts/future-check"
@@ -698,6 +759,7 @@ if grep -Fq '< <(' "$CHECK" || grep -Fq '$!' "$CHECK"; then
 else
   PASS=$((PASS + 1)); printf '  ok    %s\n' "Git probe avoids process-substitution PID behavior"
 fi
+# --- round-mode waiting leaves no scratch behind -------------------------
 # Round-mode waiting runs validate_artifact in command substitutions. Each
 # invocation owns and removes its probe files before returning to the parent.
 wait_round="$TMP_ROOT/wait-round"

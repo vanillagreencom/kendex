@@ -106,8 +106,9 @@ WT/tmp/dev-round-ISSUE-RID.json that dev-round-write stamped at delegation
 time. Missing, symlinked, mismatched, or malformed records refuse with exit 2 —
 including a base_sha outside 40 lowercase hex, which reaches `git diff` as a
 revision argument and would otherwise let an option-shaped value empty the
-additions probe, and an adds[] path carrying whitespace or beginning with '-',
-which dev-round-write could not have written. Never recreate the record after
+additions probe, and an adds[] path beginning with '-' or carrying a space,
+tab, newline, carriage return, form feed or vertical tab — a path
+dev-round-write could not have written. Never recreate the record after
 delegation and never downgrade to --expect-items; mint a fresh round.
 Protected-addition scope: skills/orch/schemas/dev-round.md § Protected additions.
 
@@ -377,7 +378,10 @@ collect_unapproved_additions() {
     fi
   done < "$probe"
   if (( ${#additions[@]} > 0 )); then
-    if ! jq -n '$ARGS.positional' --args "${additions[@]}" > "$result"; then
+    # These are branch paths the dev agent chose, with no grammar in front of
+    # them, so they travel as NUL-delimited data rather than as arguments: a
+    # path that looks like an option would otherwise decide how it is read.
+    if ! printf '%s\0' "${additions[@]}" | jq -Rsc 'split("\u0000")[:-1]' > "$result"; then
       rm -f -- "$probe"
       return 3
     fi
@@ -592,11 +596,13 @@ elif [[ "${1:-}" == --* ]]; then
       (.schema_version? == 2)
       and ((.issue? | type) == "string") and (.issue == $issue)
       and ((.base_sha? | type) == "string")
-      and (.base_sha | test("^[0-9a-f]{40}$"))
+      and (.base_sha | test("\\A[0-9a-f]{40}\\z"))
       and ((.adds? | type) == "array")
       and all(.adds[];
             (type == "string") and (. != "") and (startswith("/") | not)
-            and (test("^[^[:space:]-][^[:space:]]*$"))
+            and (startswith("-") | not)
+            and ((explode | any(. == 9 or . == 10 or . == 11 or . == 12
+                                or . == 13 or . == 32)) | not)
             and (split("/") | all(. != "" and . != "." and . != "..")))
       and ((.adds | length) == (.adds | unique | length))
       and ((.items? | type) == "array") and ((.items | length) > 0)
@@ -607,7 +613,7 @@ elif [[ "${1:-}" == --* ]]; then
             and ((.text | gsub("[[:space:]]"; "")) != ""))
       and (([.items[].n] | length) == ([.items[].n] | unique | length))
     ' "$round_record" >/dev/null 2>&1 \
-      || die "round record $round_record fails the dev-round schema (schema_version 2, issue '$issue', 40-hex base_sha, unique repository-relative adds[] of whitespace-free paths that do not begin with '-', non-empty items[] of unique integer n + non-empty text) — see skills/orch/schemas/dev-round.md"
+      || die "round record $round_record fails the dev-round schema (schema_version 2, issue '$issue', base_sha of exactly 40 lowercase hex, unique repository-relative adds[] whose paths carry no ASCII whitespace and do not begin with '-', non-empty items[] of unique integer n + non-empty text) — see skills/orch/schemas/dev-round.md"
     expect_items="$(jq -r '[.items[].n | tostring] | join(",")' "$round_record")"
   fi
 else

@@ -79,16 +79,18 @@ source "$SCRIPT_DIR/lib/branch-growth.sh"
 # whitespace, so a value can never escape the tmp/ directory. Shared verbatim
 # with dev-return-write and dev-artifact-check.
 ID_GRAMMAR='^[A-Za-z0-9._-]+$'
-# --adds is one blank-separated list of repository-relative paths. A path is
-# any run of non-space characters that does not BEGIN with '-', and blanks
-# separate paths. That shape refuses exactly the two values the transport
-# below would otherwise mangle in silence: a newline or carriage return, which
-# `read -r -a` cannot see past, and a word starting with '-', which jq's
-# --args parses as its own option and drops. It constrains nothing else — the
-# value never reaches a shell here, so a metacharacter in a path is only a
-# character, and narrowing further refuses tracked paths this repository has
-# (crates/app/icons/128x128@2x.png is inside the protected scope).
-ADDS_GRAMMAR='^[[:blank:]]*[^[:space:]-][^[:space:]]*([[:blank:]]+[^[:space:]-][^[:space:]]*)*[[:blank:]]*$'
+# One authorized path: any run of non-space characters that does not begin
+# with '-'. The rule constrains position, not character class — a metacharacter
+# in a path is only a character here, and narrowing to a class would refuse
+# tracked paths this repository has (crates/app/icons/128x128@2x.png is inside
+# the protected scope).
+ADDS_PATH_GRAMMAR='[^[:space:]-][^[:space:]]*'
+# --adds is one blank-separated list of those paths, composed from the single
+# path rule so the two cannot drift. What it refuses is every value that would
+# otherwise be recorded as something other than what the delegation named: an
+# empty or blanks-only value, a value carrying a newline or carriage return,
+# and any path beginning with '-'.
+ADDS_GRAMMAR="^[[:blank:]]*${ADDS_PATH_GRAMMAR}([[:blank:]]+${ADDS_PATH_GRAMMAR})*[[:blank:]]*$"
 
 die() {
   printf '%s: %s\n' "$PROG" "$1" >&2
@@ -324,23 +326,22 @@ fi
 # two paths and cannot be authorized as one; the delegation's Adds: line has
 # the same limit, and both are stated that way in the docs.
 #
-# The grammar runs BEFORE the split because both of the transport's silent
-# failures happen there: `read -r -a` takes one line out of its here-string
-# whatever IFS says, so a newline would truncate the list (or empty it when it
-# leads) at exit 0, and jq's --args reads a leading-'-' word as its own option
-# and drops it. `--` below stops jq's option parsing as a second belt; the
-# grammar is the fix, since older jq honouring `--` after --args is unconfirmed.
+# The grammar runs BEFORE the split, because that is where a value the writer
+# cannot represent would otherwise become a record that says something else:
+# a truncated list, an empty one, or a path the transport below cannot carry.
+# Nothing downstream re-checks it, so every value reaching the split is one
+# ADDS_GRAMMAR admits.
 adds_json='[]'
 if [[ "$adds_given" == "true" ]]; then
   [[ "$adds" =~ $ADDS_GRAMMAR ]] \
     || die "--adds '$adds' must be blank-separated repository-relative paths, at least one, none beginning with '-' and none containing a newline or carriage return"
   read -r -a adds_paths <<< "$adds"
-  adds_json="$(jq -nc '$ARGS.positional' --args -- ${adds_paths[@]+"${adds_paths[@]}"})" \
+  adds_json="$(jq -nc '$ARGS.positional' --args ${adds_paths[@]+"${adds_paths[@]}"})" \
     || die "--adds '$adds' could not be recorded as a path list"
-  # ADDS_GRAMMAR already forbids an empty value, a blanks-only one and a
-  # tab-only one, so no value reaching here can produce an empty array: the
-  # (length > 0) arm and the guarded expansion above are backstops against a
-  # later loosening of the grammar, not paths a test can reach today.
+  # Every value ADDS_GRAMMAR rejects is refused above, an empty and a
+  # blanks-only one included, so no value reaching here can produce an empty
+  # array: the (length > 0) arm and the guarded expansion above are backstops
+  # against a later loosening of the grammar, not paths a test can reach today.
   jq -e '
     (length > 0)
     and all(.[];
