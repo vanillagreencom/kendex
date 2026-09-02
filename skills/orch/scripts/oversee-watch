@@ -64,8 +64,10 @@ Exit codes:
      event was printed. Pr-watch commits repository baselines in order, so
      earlier repository baselines may already have advanced when a later
      rename fails. Only baselines that did not advance repeat their events
-Oversee-watch always runs the pr-watch step with --heal. Gate-stale dispatches
-PR_WATCH_WRITER_WORKFLOW, so its credential requires actions:write.
+
+When pr-watch.sh is installed, oversee-watch runs it with --heal on every pass.
+Gate-stale dispatches PR_WATCH_WRITER_WORKFLOW, so its credential requires
+actions:write. When pr-watch.sh is absent, the step is skipped with one stderr note.
 
 Environment:
   ORCH_STATE_DIR              workflow-state directory; relative paths join
