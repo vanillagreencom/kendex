@@ -10,11 +10,12 @@
 # --seed and --update, where a miss would write a meaningless count into the
 # baseline; every offender is named, not just the first; the offset is counted
 # in BYTES and located inside the sniff window; a byte class is refused too,
-# because the property is the content and not the unit; an excluded path stays
-# excluded; a
-# scan that comes back empty is a refusal, not a pass; and the diagnostic never
-# carries the byte itself. The must-fail control at the end reverts the refusal
-# and shows the NUL fixture going green, so the green cases above are evidence.
+# because the property is the content and not the unit; a SIZE-excluded text
+# path is sniffed like every other path, git's own diff attribute being the
+# only exemption; a scan that comes back empty is a refusal, not a pass; and
+# the diagnostic never carries the byte itself. The must-fail control at the
+# end reverts the refusal and shows the NUL fixture going green, so the green
+# cases above are evidence.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -131,6 +132,15 @@ if [ "$RC" -eq 2 ] && has 'skills/demo/SKILL.md: a NUL byte at offset 12'; then
 else
   bad "a byte class is asked about its content too" "rc=$RC out=$OUT"
 fi
+# CI runs the gate without --staged, and a repo's whole markdown surface sits
+# in byte classes, so the arm that reads the worktree copy is the half a NUL
+# reaching main would meet. Pinned here, not inferred from the index arm.
+run_in SIZE_RATCHET_THRESHOLD=400 SIZE_RATCHET_CLASSES='*/SKILL.md=24k'
+if [ "$RC" -eq 2 ] && has 'skills/demo/SKILL.md: a NUL byte at offset 12'; then
+  ok "the worktree scan CI runs refuses the byte-class blob too (exit 2, same offset)"
+else
+  bad "the byte-class refusal fires in the scope CI runs" "rc=$RC out=$OUT"
+fi
 
 echo "=== must-fail control: keyed on the unit again, the same fixture goes green ==="
 # The control restores the one thing that changed — the sniff answering only
@@ -162,17 +172,67 @@ else
   bad "the unit control's substitution matched exactly one site" "no single '$UNIT_ANCHOR' line at the start of a line in $UNIT/size-ratchet"
 fi
 
-echo "=== an excluded path stays excluded ==="
+echo "=== a SIZE-excluded text path is sniffed like any other ==="
+# The size exclusion list answers which paths carry no SIZE bound, and its
+# entries carry size reasons — a lockfile, a generated bundle, an append-only
+# log. Reading it as a content exemption too let every one of those carry the
+# byte unseen, the shipped CHANGELOG*.md default worst of all.
 new_repo excluded
 plant_nul assets/icon.png 'const a = "x'
 mkdir -p "$R/tools"
 printf 'assets/*\tbinary media — not reviewable text\n' >"$R/tools/size-ratchet-excludes"
 git -C "$R" add -A
 run_in SIZE_RATCHET_THRESHOLD=400 -- --staged
-if [ "$RC" -eq 0 ]; then
-  ok "an excluded path is never sniffed (exit 0)"
+if [ "$RC" -eq 2 ] && has 'assets/icon.png: a NUL byte at offset 12'; then
+  ok "the size exclusion buys no content exemption — the path is refused by name and offset"
 else
-  bad "the exclusion list precedes the sniff" "rc=$RC out=$OUT"
+  bad "a size-excluded text path is sniffed like every other path" "rc=$RC out=$OUT"
+fi
+
+echo "=== and git's own diff attribute is what exempts it ==="
+# The exemption authority is the record git already keeps: a path declared
+# binary (or -diff) is one git keeps out of every textual diff, so its bytes
+# were never reviewable text. Same fixture, same exclusion list, one line of
+# .gitattributes added.
+printf 'assets/* binary\n' >"$R/.gitattributes"
+git -C "$R" add -A
+run_in SIZE_RATCHET_THRESHOLD=400 -- --staged
+if [ "$RC" -eq 0 ] && ! has 'NUL byte at offset'; then
+  ok "a path .gitattributes declares binary is exempt from the sniff (exit 0)"
+else
+  bad "git's own attribute exempts the path" "rc=$RC out=$OUT"
+fi
+
+echo "=== must-fail control: with the size list back in charge, the same fixture goes green ==="
+# The control restores the one thing that changed — the size exclusion
+# short-circuiting the walk before the sniff — and leaves the attribute
+# lookup, every call site and the whole diagnostic standing.
+EXC="$TMP/excl-scripts"
+mkdir -p "$EXC"
+cp -R "$SKILL_DIR/scripts/." "$EXC/"
+EXC_ANCHOR='  if is_excluded "$f"; then excluded=1; fi'
+if awk -v anchor="$EXC_ANCHOR" '
+    { print }
+    $0 == anchor { print "  if [ \"$excluded\" -eq 1 ]; then continue; fi # must-fail control: the size list back in charge of content"; n++ }
+    END { exit (n == 1 ? 0 : 3) }
+  ' "$EXC/size-ratchet" >"$EXC/size-ratchet.mut"; then
+  mv "$EXC/size-ratchet.mut" "$EXC/size-ratchet"
+  chmod +x "$EXC/size-ratchet"
+  new_repo exclctrl
+  plant_nul assets/icon.png 'const a = "x'
+  mkdir -p "$R/tools"
+  printf 'assets/*\tbinary media — not reviewable text\n' >"$R/tools/size-ratchet-excludes"
+  git -C "$R" add -A
+  GATE="$EXC/size-ratchet"
+  run_in SIZE_RATCHET_THRESHOLD=400 -- --staged
+  GATE="$SR"
+  if [ "$RC" -eq 0 ] && ! has 'NUL byte at offset'; then
+    ok "size exclusion short-circuiting the walk lets the NUL fixture pass — the case above reds without it"
+  else
+    bad "the control restores the short-circuit it should" "rc=$RC out=$OUT"
+  fi
+else
+  bad "the exclusion control's substitution matched exactly one site" "no single '$EXC_ANCHOR' line in $EXC/size-ratchet"
 fi
 
 echo "=== the worktree scan CI runs refuses the same blob ==="

@@ -4,3 +4,17 @@
 # in with `include_str!` and asserted to hold no carriage return, and the
 # authoring golden digest is over those same bytes.
 * -text
+
+# Binary assets, declared so git keeps them out of its textual diffs. That
+# declaration is also the size-ratchet content sniff's only exemption: a blob
+# carrying a NUL in its leading 8000 bytes is unreviewable, and a path git
+# never diffs was never reviewable text in the first place. Declared by type
+# rather than by directory — the type is the property, and a directory rule
+# would also claim the README sitting beside the assets.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.ttf binary
+*.mp4 binary

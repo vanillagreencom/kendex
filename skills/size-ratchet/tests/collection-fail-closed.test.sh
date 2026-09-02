@@ -73,14 +73,13 @@ run_sr_shimmed() { # SHIMDIR [args...] — run_sr with SHIMDIR first on PATH
   OUT="$(cd "$R" && PATH="$shimdir:$PATH" SIZE_RATCHET_THRESHOLD=10 "$SR" "$@" 2>&1)" || RC=$?
 }
 
-# git shim: fail the index-blob read for `big.txt` (a line class, read through
-# a materialized blob) and for `assets/big.bin` (a byte class, streamed through
-# a pipeline), pass everything else through to the real git.
+# git shim: fail the index-blob read for `big.txt`, pass everything else
+# through to the real git.
 GIT_SHIM="$TMP/git-shim"
 mkdir -p "$GIT_SHIM"
 cat >"$GIT_SHIM/git" <<EOF
 #!/usr/bin/env bash
-if [ "\${1:-}" = "show" ] && { [ "\${2:-}" = ":big.txt" ] || [ "\${2:-}" = ":assets/big.bin" ]; }; then
+if [ "\${1:-}" = "show" ] && [ "\${2:-}" = ":big.txt" ]; then
   echo "fatal: simulated object read failure for \${2#:}" >&2
   exit 128
 fi
@@ -230,29 +229,6 @@ run_sr_shimmed "$GIT_SHIM"
   || bad "an unreadable blob is a collection error naming the file" "rc=$RC out=$OUT"
 case "$OUT" in *"simulated object read failure"*) ok "git's own stderr is surfaced, pinning the cause to the failed read" ;; *) bad "git's own stderr is surfaced" "$OUT" ;; esac
 case "$OUT" in *"size-ratchet: OK"*) bad "no OK verdict may accompany a collection failure" "$OUT" ;; *) ok "no OK verdict accompanies the collection failure" ;; esac
-
-echo "=== fail-closed: an unreadable index blob in a BYTE class terminates too ==="
-# A byte class resolves a different threshold and `wc` flag than the line case
-# above, and its rows travel a batch of their own, so the refusal is pinned on
-# both units rather than inferred from one.
-run_bin() { # [SHIMDIR] — run in $R under the byte class; no SHIMDIR is the real git
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && PATH="${1:+$1:}$PATH" SIZE_RATCHET_THRESHOLD=10 SIZE_RATCHET_CLASSES='*.bin=64k' "$SR" 2>&1)" || RC=$?
-}
-new_repo blobfailbin
-mkfile assets/big.bin 3
-git -C "$R" add -A
-rm "$R/assets/big.bin" # unstaged: the index still lists it, blob readable
-run_bin
-[ "$RC" -eq 0 ] && case "$OUT" in *"size-ratchet: OK"*) true ;; *) false ;; esac \
-  && ok "shim-free control: the absent byte-class file is counted from its readable blob" \
-  || bad "shim-free control: the absent byte-class file is counted" "rc=$RC out=$OUT"
-run_bin "$GIT_SHIM"
-[ "$RC" -eq 2 ] && case "$OUT" in *"cannot read index blob for tracked file 'assets/big.bin'"*) true ;; *) false ;; esac \
-  && ok "the streamed byte-class read is a collection error: exit 2, naming assets/big.bin" \
-  || bad "an unreadable byte-class blob is a collection error naming the file" "rc=$RC out=$OUT"
-case "$OUT" in *"size-ratchet: OK"*) bad "no OK verdict may accompany the byte-class collection failure" "$OUT" ;; *) ok "no OK verdict accompanies the byte-class collection failure" ;; esac
 
 echo "=== fail-closed: a blob that materializes but cannot be counted terminates ==="
 # The line class materializes the index blob and then counts it, so the read

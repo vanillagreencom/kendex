@@ -543,14 +543,38 @@ flush_batch() { # UNIT — appends one "<path><TAB><count>" row per pending file
   cat "$TMP/batch.tsv" >>"$TMP/counts.raw" || collection_error "could not append the re-measured counts — the measurement is incomplete, refusing to report a verdict"
   clear_batch "$unit"
 }
+# Content exemption is GIT'S OWN record and nothing else. `git check-attr diff`
+# answers `unset` for a path given `-diff` and `binary` for one given a binary
+# diff driver: either way git keeps the path out of every textual diff, so its
+# bytes were never reviewable text and the sniff has nothing to ask. The size
+# exclusion list answers a different question, which paths carry no SIZE bound,
+# so it decides nothing here — a size-excluded text file is sniffed like every
+# other tracked path. ONE `check-attr` process for the whole set: a fork per
+# path is the cost shape that measured 5x when the sniff was tried per-file.
+# The `-z` stream is `path NUL attr NUL value NUL`, folded to one exempt path
+# per line; a newline in a path would misalign that, and the walk refuses every
+# such path before it reads this set.
+ATTR_EXEMPT=""
+if ! { git ls-files -z | git check-attr -z --stdin diff >"$TMP/attr.z"; }; then
+  config_error "could not resolve the 'diff' attribute over the tracked set (git ls-files | git check-attr failed) — refusing to guess what git keeps out of its textual diffs"
+fi
+attr_exempt="$(LC_ALL=C tr '\000' '\n' <"$TMP/attr.z" | awk '
+  NR % 3 == 1 { p = $0; next }
+  NR % 3 == 0 && ($0 == "unset" || $0 == "binary") { print p }
+')" || collection_error "could not read the resolved 'diff' attributes — refusing to guess what git keeps out of its textual diffs"
+ATTR_EXEMPT="$NL$attr_exempt$NL"
+is_diff_exempt() { # PATH — 0 when .gitattributes takes the path out of textual diffs
+  case "$ATTR_EXEMPT" in
+    *"$NL$1$NL"*) return 0 ;;
+  esac
+  return 1
+}
 # A blob git reads as binary is not reviewable content: git's rule is a NUL
 # inside the leading bytes, and it takes the blob out of every textual diff
-# while `wc` still returns a number. Every tracked blob this gate measures is
+# while `wc` still returns a number. Every tracked blob this gate walks is
 # asked the question, in whatever unit its class counts — the property being
 # held is that the blob is text a reviewer and a `git grep` can read, which
-# the CONTENT decides and the unit says nothing about. A real binary asset
-# belongs in the exclusion list, which `is_excluded` applies ahead of the
-# sniff, so an excluded path pays nothing for the coverage.
+# the CONTENT decides and the unit says nothing about.
 # What git and the sibling gates do with such a blob: DEVELOPMENT.md.
 #
 # LINEAGE. growth-guards' `gg_blob_is_binary` (GG_BINARY_SAMPLE) owns this
@@ -591,34 +615,46 @@ note_if_binary() { # PATH BLOBFILE — records a tracked blob git reads as binar
 while IFS= read -r -d '' rec; do
   mode="${rec%% *}"
   f="${rec#*"$TAB"}"
-  is_excluded "$f" && continue
-  case "$f" in
-    *"$NL"*) config_error "tracked path contains a newline, unrepresentable in line-oriented records (exclude it to skip the gate): '$f'" ;;
-    *"$TAB"*) config_error "tracked path contains a tab, unrepresentable in the baseline TSV (exclude it to skip the gate): '$f'" ;;
-  esac
   case "$mode" in
-    120000) continue ;; # tracked symlink — no meaningful size
+    120000) continue ;; # tracked symlink — no meaningful size, and no content
     160000) continue ;; # submodule gitlink — never countable; a baseline
   esac
-  path_threshold "$f"
-  if [ "$PU" = "b" ]; then wcflag="-c"; else wcflag="-l"; fi
+  # Both records this walk writes are line-oriented and tab-separated, and the
+  # sniff below reaches size-excluded paths too, so the refusal covers the
+  # whole tracked set rather than the measured part of it.
+  case "$f" in
+    *"$NL"*) config_error "tracked path contains a newline, unrepresentable in line-oriented records: '$f'" ;;
+    *"$TAB"*) config_error "tracked path contains a tab, unrepresentable in the baseline TSV: '$f'" ;;
+  esac
+  sniff=1
+  if is_diff_exempt "$f"; then sniff=0; fi
+  excluded=0
+  if is_excluded "$f"; then excluded=1; fi
+  # The two exemptions are independent, so only a path carrying both is skipped.
+  if [ "$excluded" -eq 1 ] && [ "$sniff" -eq 0 ]; then continue; fi
+  if [ "$excluded" -eq 0 ]; then
+    path_threshold "$f"
+    if [ "$PU" = "b" ]; then wcflag="-c"; else wcflag="-l"; fi
+  fi
   if [ "$STAGED" -eq 1 ] || [ ! -f "$f" ] || [ -h "$f" ]; then
     # Materialized once: the count and the content sniff read the same bytes,
     # and a second `git show` per path would double the walk under --staged.
     if ! git show ":$f" >"$TMP/blob"; then
-      collection_error "cannot read index blob for tracked file '$f' — its size is unmeasurable, refusing to skip it"
+      collection_error "cannot read index blob for tracked file '$f' — it can be neither measured nor classified, refusing to skip it"
     fi
+    if [ "$sniff" -eq 1 ]; then note_if_binary "$f" "$TMP/blob"; fi
+    if [ "$excluded" -eq 1 ]; then continue; fi
     if ! n="$(wc "$wcflag" <"$TMP/blob")"; then
       collection_error "cannot count the materialized index blob for tracked file '$f' — its size is unmeasurable, refusing to skip it"
     fi
-    note_if_binary "$f" "$TMP/blob"
     n="${n#"${n%%[![:space:]]*}"}" # strip wc's leading whitespace (BSD wc pads)
     case "$n" in
       "" | *[!0-9]*) collection_error "$(unit_noun "$PU") count for index blob of '$f' came back as '$n', not a number — its size is unmeasurable, refusing to skip it" ;;
     esac
     printf '%s\t%s\n' "$f" "$n" >>"$TMP/counts.raw" || collection_error "could not record the count for '$f' — the measurement is incomplete, refusing to report a verdict"
   else
-    note_if_binary "$f" "$f"
+    if [ "$sniff" -eq 1 ]; then note_if_binary "$f" "$f"; fi
+    if [ "$excluded" -eq 1 ]; then continue; fi
     if [ "$PU" = "b" ]; then
       WT_BATCH_B+=("$f")
       WT_BATCH_B_CHARS=$((WT_BATCH_B_CHARS + ${#f} + 1))
@@ -643,7 +679,7 @@ if [ -s "$TMP/binary.paths" ]; then
   while IFS="$TAB" read -r bin_path bin_off; do
     echo "$bin_path: a NUL byte at offset $bin_off" >&2
   done <"$TMP/binary.paths"
-  collection_error "the path(s) above are tracked as reviewable text but carry a NUL inside their leading $NUL_SNIFF_BYTES bytes, so git records them as binary: no textual diff, a plain \`git grep\` reduced to \"Binary file <path> matches\" and a \`git grep -I\` that drops the path outright. Write the escape your language spells the byte with (\\0, \\u0000, \\x00) instead of the raw character; a real binary asset belongs in the exclusion list."
+  collection_error "the path(s) above are tracked as reviewable text but carry a NUL inside their leading $NUL_SNIFF_BYTES bytes, so git records them as binary: no textual diff, a plain \`git grep\` reduced to \"Binary file <path> matches\" and a \`git grep -I\` that drops the path outright. Write the escape your language spells the byte with (\\0, \\u0000, \\x00) instead of the raw character; a real binary asset is declared \`binary\` or \`-diff\` in .gitattributes, which is what takes it out of git's textual diffs and out of this check."
 fi
 counted="$(count_nonempty_lines "$TMP/counts.raw")"
 [ "$counted" -eq "$checked" ] || collection_error "counted $counted of the $checked tracked file(s) selected for measurement — the collection is incomplete, refusing to report a verdict"
