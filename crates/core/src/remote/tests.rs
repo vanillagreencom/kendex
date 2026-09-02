@@ -6,6 +6,10 @@ use super::*;
 use crate::env::FakeOs;
 use crate::process::Hardened;
 
+#[path = "../../../test_util.rs"]
+mod test_util;
+
+mod history_bounds;
 mod sync;
 
 fn git(dir: &Path, args: &[&str]) {

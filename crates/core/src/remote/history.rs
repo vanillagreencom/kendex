@@ -30,14 +30,19 @@ pub struct CommitRow {
 }
 
 /// The timeline is bounded twice: rows, and the bytes read before parsing.
-/// A hostile repository can put megabytes in one subject line; the cap
-/// keeps that its problem.
+/// A hostile repository can put megabytes in one subject line, and
+/// `--name-only` lets it put megabytes in filenames; the cap keeps that its
+/// problem. It is applied where the read happens — [`Hardened::max_output`]
+/// stops at the bound rather than buffering the whole stream first — so
+/// output past it is a refusal, which is what "a history that cannot be
+/// read is an error" means here. The truncate below is the backstop.
 const MAX_ROWS: usize = 200;
 const MAX_OUTPUT: usize = 1_000_000;
 /// Display bound for one commit subject.
 const MAX_SUMMARY: usize = 200;
 
 fn stdout_capped(git: Hardened) -> Result<String> {
+    let git = git.max_output(MAX_OUTPUT);
     let command = git.label().to_owned();
     let output = git.run()?;
     if !output.status.success() {
@@ -167,10 +172,22 @@ pub fn commit_date(mirror: &Path, commit: &str) -> Result<Option<String>> {
     require_commit(commit)?;
     let text = stdout_capped(Hardened::git_bare(
         mirror,
-        &["log", "--max-count", "1", "--format=%cI", commit],
+        &["log", "--max-count", "1", "--format=%cI", commit, "--"],
     ))?;
     let date = text.trim().to_owned();
     Ok((!date.is_empty()).then_some(date))
+}
+
+/// What one walk of the history said about a set of paths.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Changed {
+    /// When each path the walk reached last changed, ISO-8601.
+    pub dates: BTreeMap<PathBuf, String>,
+    /// The newest date in the walk that touched any of them. Taken from
+    /// the walk's own order — git logs newest first — never by comparing
+    /// the dates as text, which two commits written in different time
+    /// zones would order wrongly.
+    pub newest: Option<String>,
 }
 
 /// When each of `paths` last changed at-or-before `tip`, walking
@@ -178,20 +195,29 @@ pub fn commit_date(mirror: &Path, commit: &str) -> Result<Option<String>> {
 /// literal pathspec, so a directory answers for anything under it and a
 /// name shaped like git syntax stays a name.
 ///
-/// A path missing from the answer is a path this walk did not reach: the
-/// row bound and the byte bound both cut the history short, and an older
-/// package falls off the end. Absent is the honest reading, never a date
-/// borrowed from a commit that did not touch it.
+/// `max_commits` is this call's own bound and the caller's to choose: it
+/// counts commits that touched one of `paths`, not commits walked, because
+/// `--max-count` applies after the pathspec filter. A path whose newest
+/// commit lies past it has no entry — absent is the honest reading, never
+/// a date borrowed from a commit that did not touch it. The byte cap on
+/// every read here can end the walk the same way.
+///
+/// Filenames come back NUL-delimited (`-z`), never git's C-quoted default:
+/// under `core.quotePath`, which is on unless the host's gitconfig turns it
+/// off, a non-ASCII path prints as octal escapes inside quotes and matches
+/// nothing this asked for. Pinned in the invocation, so the answer does not
+/// depend on whose machine it ran on.
 pub fn last_changed(
     mirror: &Path,
     tip: &str,
     paths: &[PathBuf],
-) -> Result<BTreeMap<PathBuf, String>> {
+    max_commits: usize,
+) -> Result<Changed> {
     require_commit(tip)?;
     if paths.is_empty() {
-        return Ok(BTreeMap::new());
+        return Ok(Changed::default());
     }
-    let max = MAX_ROWS.to_string();
+    let max = max_commits.to_string();
     let specs: Vec<String> = paths.iter().map(|rel| literal(rel)).collect();
     let mut args = vec![
         "log",
@@ -199,6 +225,7 @@ pub fn last_changed(
         "--max-count",
         &max,
         "--name-only",
+        "-z",
         "--format=%x1e%cI",
         tip,
         "--",
@@ -207,23 +234,38 @@ pub fn last_changed(
     let text = stdout_capped(Hardened::git_bare(mirror, &args))?;
     // Newest first, so the first date a path is seen under is its answer.
     let wanted: BTreeSet<&Path> = paths.iter().map(PathBuf::as_path).collect();
-    let mut out = BTreeMap::new();
+    let mut found = Changed::default();
     for record in text.split('\u{1e}') {
-        let mut lines = record.lines();
-        let Some(date) = lines.next().map(str::trim).filter(|d| !d.is_empty()) else {
+        // `-z` makes every field NUL-terminated: the date, then each name
+        // that changed. Nothing is line-oriented, so a newline in a
+        // filename stays part of the filename — git writes exactly one
+        // separator newline, between the format output and the first name,
+        // and that is the only one stripped.
+        let Some((date, names)) = record.split_once('\0') else {
             continue;
         };
-        for changed in lines.filter(|line| !line.is_empty()) {
+        let date = date.trim();
+        if date.is_empty() {
+            continue;
+        }
+        for changed in names
+            .strip_prefix('\n')
+            .unwrap_or(names)
+            .split('\0')
+            .filter(|name| !name.is_empty())
+        {
             // git names the file that changed; the path asked about may be
             // the directory holding it, so every ancestor is a candidate.
-            let changed = Path::new(changed);
-            for candidate in changed.ancestors() {
+            for candidate in Path::new(changed).ancestors() {
                 if wanted.contains(candidate) {
-                    out.entry(candidate.to_path_buf())
+                    found
+                        .dates
+                        .entry(candidate.to_path_buf())
                         .or_insert_with(|| date.to_owned());
+                    found.newest.get_or_insert_with(|| date.to_owned());
                 }
             }
         }
     }
-    Ok(out)
+    Ok(found)
 }

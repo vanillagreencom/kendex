@@ -91,7 +91,9 @@ pub fn package_preview(
             bundles.push(offered.name);
         }
     }
-    let text = super::item_text(&browsed, kind, name);
+    // The path this function already resolved, rather than a second walk
+    // for the same item.
+    let text = super::item_text(&browsed, kind, Some(path.as_path()));
     let header = super::header_of(kind, text.as_deref());
     Ok(PackagePreview {
         kind,

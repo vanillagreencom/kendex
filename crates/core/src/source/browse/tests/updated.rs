@@ -10,6 +10,7 @@ use super::super::{Catalog, about, packages};
 use crate::env::{Env, FakeOs};
 use crate::model::Scope;
 use crate::process::Hardened;
+use crate::remote::history;
 
 use super::repo::git;
 use super::test_util::rooted;
@@ -98,7 +99,7 @@ fn every_package_answers_with_its_own_commit_not_the_catalog_tip() {
 }
 
 #[test]
-fn the_catalogs_own_date_is_the_commit_it_is_read_at() {
+fn the_catalogs_own_date_is_the_newest_commit_that_touched_a_package() {
     let (_tmp, env, _upstream) = fixture();
     let read = about(&env, &repo()).unwrap();
     assert!(
@@ -107,6 +108,83 @@ fn the_catalogs_own_date_is_the_commit_it_is_read_at() {
             .is_some_and(|date| date.starts_with("2025-08-09")),
         "{:?}",
         read.updated_at
+    );
+}
+
+/// A repository can be a catalog and a codebase at once — kendex's own is.
+/// The About tab says when the CATALOG last changed, so a commit that
+/// touched no package must not move it.
+#[test]
+fn a_commit_touching_no_package_does_not_move_the_catalogs_date() {
+    let (_tmp, env, upstream) = fixture();
+    fs::create_dir_all(upstream.join("crates/app")).unwrap();
+    fs::write(upstream.join("crates/app/main.rs"), "fn main() {}\n").unwrap();
+    commit_at(&upstream, "codebase only", "2026-07-07T07:07:07+00:00");
+
+    let read = about(&env, &repo()).unwrap();
+    assert!(
+        read.updated_at
+            .as_deref()
+            .is_some_and(|date| date.starts_with("2025-08-09")),
+        "the catalog is dated by its newest package, not the tip: {:?}",
+        read.updated_at
+    );
+}
+
+/// git C-quotes a non-ASCII path under `core.quotePath`, which is on unless
+/// the host's gitconfig turns it off. A parsed quoted name matches nothing
+/// the walk asked for, so the package loses its date on one machine and
+/// keeps it on another.
+#[test]
+fn a_package_whose_name_is_not_ascii_is_still_dated() {
+    let (_tmp, env, upstream) = fixture();
+    write_skill(&upstream, "café");
+    commit_at(&upstream, "cafe", "2026-02-02T02:02:02+00:00");
+
+    let rows = packages(&env, &repo()).unwrap();
+    let dated = rows
+        .iter()
+        .find(|row| row.name == "café")
+        .unwrap_or_else(|| panic!("café is not offered: {:?}", rows.len()));
+    assert!(
+        dated
+            .updated_at
+            .as_deref()
+            .is_some_and(|date| date.starts_with("2026-02-02")),
+        "{:?}",
+        dated.updated_at
+    );
+}
+
+/// The walk's bound is the caller's, and what it costs is stated: a package
+/// whose newest commit lies past it has no date at all, never an older
+/// commit's.
+#[test]
+fn a_package_past_the_walks_bound_has_no_date_rather_than_an_older_one() {
+    let (_tmp, env, _upstream) = fixture();
+    // Browse once so the store holds the repository, then read the same
+    // mirror the browse path reads.
+    packages(&env, &repo()).unwrap();
+    let resolution = crate::remote::cached(&env, REPO, None).unwrap().unwrap();
+    let mirror = crate::remote::store::mirror_dir(&env, &crate::remote::cache_key(&env, REPO));
+    let paths = [PathBuf::from("skills/alpha"), PathBuf::from("skills/beta")];
+
+    let whole = history::last_changed(&mirror, &resolution.commit, &paths, 5_000).unwrap();
+    assert_eq!(whole.dates.len(), 2, "both are reachable without a bound");
+    assert!(
+        whole
+            .newest
+            .as_deref()
+            .is_some_and(|date| date.starts_with("2025-08-09")),
+        "the newest comes from the walk's order: {:?}",
+        whole.newest
+    );
+
+    let bounded = history::last_changed(&mirror, &resolution.commit, &paths, 1).unwrap();
+    assert_eq!(
+        bounded.dates.keys().collect::<Vec<_>>(),
+        vec![&PathBuf::from("skills/beta")],
+        "only the package the one commit touched"
     );
 }
 
@@ -139,4 +217,46 @@ fn a_catalog_kendex_keeps_no_history_for_has_no_dates() {
         rows.iter().map(|row| &row.updated_at).collect::<Vec<_>>()
     );
     assert_eq!(about(&env, &catalog).unwrap().updated_at, None);
+}
+
+/// A repository that is one skill AND carries a `skills/` tree: the root
+/// skill strips to the empty path, which as a pathspec matches every path
+/// in the repository. It is dated from the repository's tip instead, and
+/// never spends the shared walk's bound on commits that touched no package.
+#[test]
+fn a_root_skill_takes_the_repository_tip_and_its_neighbour_keeps_its_own() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let upstream = home.join("base/owner/rooted");
+    fs::create_dir_all(&upstream).unwrap();
+    git(&upstream, &["init", "--quiet", "-b", "main"]);
+    write_skill(&upstream, "helper");
+    commit_at(&upstream, "helper", "2024-01-01T00:00:00+00:00");
+    fs::write(
+        upstream.join("SKILL.md"),
+        "---\nname: root\ndescription: lives at the root\n---\nbody\n",
+    )
+    .unwrap();
+    commit_at(&upstream, "root skill", "2026-06-06T06:06:06+00:00");
+    let base = format!("file://{}", home.join("base").display());
+    let env = Env::fake(&home, FakeOs::Linux).with_var("KENDEX_GIT_BASE", &base);
+    let catalog = Catalog::Repo {
+        repo: "owner/rooted".to_owned(),
+    };
+
+    let rows = packages(&env, &catalog).unwrap();
+    let dated = |name: &str| {
+        rows.iter()
+            .find(|row| row.name == name)
+            .unwrap_or_else(|| panic!("{name} is not offered"))
+            .updated_at
+            .clone()
+            .unwrap_or_else(|| panic!("{name} has no date"))
+    };
+    assert!(dated("root").starts_with("2026-06-06"), "{}", dated("root"));
+    assert!(
+        dated("helper").starts_with("2024-01-01"),
+        "{}",
+        dated("helper")
+    );
 }

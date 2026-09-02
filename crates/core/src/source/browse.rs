@@ -11,6 +11,7 @@
 //! shown, never acted on.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -145,65 +146,53 @@ pub fn packages(env: &Env, catalog: &Catalog) -> Result<Vec<AvailablePackage>> {
                 .push(bundle.name.clone());
         }
     }
-    // The catalog is listed once per kind here anyway, so the bare-name
-    // index every dependency row resolves against is built from the
-    // listing this loop already holds rather than from a second walk.
-    let listed: Vec<(ItemKind, Vec<String>)> = ItemKind::ALL
+    // Each item's path is resolved once, here, and spent twice: on its
+    // header and on its date. Resolving is a filesystem walk per item, not
+    // a lookup.
+    let items = updated::offered(&browsed);
+    // The bare-name index every dependency row resolves against is built
+    // from the listing this loop already holds rather than a second walk.
+    let skills: Vec<String> = items
         .iter()
-        .map(|kind| {
-            (
-                *kind,
-                super::list_items(&browsed.sealed, &browsed.config, *kind),
-            )
-        })
+        .filter(|item| item.kind == ItemKind::Skill)
+        .map(|item| item.name.clone())
         .collect();
-    let offered = crate::engine::deps::OfferedSkills::from_listing(
-        listed
-            .iter()
-            .find(|(kind, _)| *kind == ItemKind::Skill)
-            .map(|(_, names)| names.as_slice())
-            .unwrap_or_default(),
-    );
+    let offered = crate::engine::deps::OfferedSkills::from_listing(&skills);
     // One history walk for the whole list: a call per package would be one
     // process per row on every open of the tab.
-    let dated: Vec<(ItemKind, String)> = listed
-        .iter()
-        .flat_map(|(kind, names)| names.iter().map(move |name| (*kind, name.clone())))
-        .collect();
-    let mut dates = updated::package_dates(env, &browsed, &dated);
+    let mut dates = updated::package_dates(env, &browsed, &items);
     let mut out = Vec::new();
-    for (kind, names) in listed {
-        for name in names {
-            let text = item_text(&browsed, kind, &name);
-            let header = header_of(kind, text.as_deref());
-            let carried_bundles = carried.remove(&(kind, name.clone())).unwrap_or_default();
-            // Catalog-authored bundle names are shown with control and
-            // deceptive characters escaped rather than acted on.
-            let bundles: Vec<String> = carried_bundles.iter().map(|b| names::shown(b)).collect();
-            out.push(AvailablePackage {
-                state: browsed.state(kind, &name),
-                collision: browsed.collision(kind, &name),
-                description: header.description.as_deref().map(names::shown),
-                summary: header.summary_or_description().map(names::shown),
-                tags: header.tags,
-                updated_at: dates.remove(&(kind, name.clone())),
-                bundles,
-                dependencies: deps::dependencies(
-                    &browsed,
-                    &offered,
-                    &deps::Where {
-                        manifest: &browsed.manifest,
-                        lock: browsed.lock(),
-                        subscription: browsed.subscription(),
-                    },
-                    kind,
-                    &name,
-                    text.as_deref(),
-                ),
+    for item in items {
+        let updated::Offered { kind, name, found } = item;
+        let text = item_text(&browsed, kind, found.as_deref());
+        let header = header_of(kind, text.as_deref());
+        let carried_bundles = carried.remove(&(kind, name.clone())).unwrap_or_default();
+        // Catalog-authored bundle names are shown with control and
+        // deceptive characters escaped rather than acted on.
+        let bundles: Vec<String> = carried_bundles.iter().map(|b| names::shown(b)).collect();
+        out.push(AvailablePackage {
+            state: browsed.state(kind, &name),
+            collision: browsed.collision(kind, &name),
+            description: header.description.as_deref().map(names::shown),
+            summary: header.summary_or_description().map(names::shown),
+            tags: header.tags,
+            updated_at: dates.remove(&(kind, name.clone())),
+            bundles,
+            dependencies: deps::dependencies(
+                &browsed,
+                &offered,
+                &deps::Where {
+                    manifest: &browsed.manifest,
+                    lock: browsed.lock(),
+                    subscription: browsed.subscription(),
+                },
                 kind,
-                name,
-            });
-        }
+                &name,
+                text.as_deref(),
+            ),
+            kind,
+            name,
+        });
     }
     Ok(out)
 }
@@ -272,12 +261,14 @@ fn detail(browsed: &Browsed, found: &super::bundles::CatalogBundle) -> BundleDet
 /// The bytes an item's header and its dependency declaration are both read
 /// from — read once where a caller needs both, because the sealed read
 /// checks containment per path component and a whole listing pays for the
-/// second read of every package.
-fn item_text(browsed: &Browsed, kind: ItemKind, name: &str) -> Option<String> {
-    let path = super::find_item(&browsed.sealed, &browsed.config, kind, name)?;
+/// second read of every package. `path` is the item's already-resolved
+/// location: resolving is that same walk, and this is not the only caller
+/// that needs it.
+fn item_text(browsed: &Browsed, kind: ItemKind, path: Option<&Path>) -> Option<String> {
+    let path = path?;
     match kind {
         ItemKind::Skill => browsed.sealed.read_to_string(&path.join("SKILL.md")),
-        _ => browsed.sealed.read_to_string(&path),
+        _ => browsed.sealed.read_to_string(path),
     }
     .ok()
 }

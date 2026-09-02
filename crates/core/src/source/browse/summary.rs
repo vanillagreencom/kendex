@@ -129,9 +129,10 @@ pub struct CatalogAbout {
 /// found where, everything wrong with it, and when it last changed.
 pub fn about(env: &Env, catalog: &Catalog) -> Result<CatalogAbout> {
     let browsed = super::open(env, catalog)?;
+    let offered = super::updated::offered(&browsed);
     Ok(CatalogAbout {
         report: crate::source::about(&browsed.sealed, &browsed.config),
-        updated_at: super::updated::catalog_date(env, &browsed),
+        updated_at: super::updated::catalog_date(env, &browsed, &offered),
     })
 }
 
