@@ -16,12 +16,27 @@ source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 assert_tmpdir TMP_ROOT
 
+# GIT_DIR outranks -C, so a suite that inherits it — every run from inside a
+# git hook does — re-initializes the ambient repository instead of the fixture,
+# and every later `git rev-parse --show-toplevel` (the CLI's own, for CACHE_DIR)
+# answers with the real checkout. The fixture issue would then be written into
+# the developer's real .cache/linear. Unsetting here covers the whole process,
+# git and CLI alike.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/.cache/linear"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 # Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this
 # throwaway root so cache writes from `issues create` stay out of the real
 # project's `.cache/linear` (kendex#43).
 git -C "$TMP_ROOT" init -q -b main
+# Proof the isolation held. Without it the line above re-inits the ambient
+# repository and leaves no fixture repo behind, and the run goes on to write
+# into the real cache — so this one stops the suite rather than recording a
+# failure and continuing.
+assert "the fixture repository is the one git init created" \
+  test -d "$TMP_ROOT/.git"
+[[ -d "$TMP_ROOT/.git" ]] || exit 1
 
 cat >"$TMP_ROOT/bin/curl" <<'SH'
 #!/usr/bin/env bash
@@ -127,10 +142,10 @@ assert_ne "issues create fails when every same-name project is canceled" "$rc" 0
 only_canceled_err="$(cat "$TMP_ROOT/only-canceled.err")"
 assert_contains "the refusal names the project asked for" \
   "$only_canceled_err" "Project not found: Dup"
-assert_contains "the refusal says the matches were canceled" \
-  "$only_canceled_err" "matched only canceled projects"
-assert_contains "the refusal names the canceled uuids so a deliberate read can pass one" \
-  "$only_canceled_err" "dead-uuid, dead-two-uuid"
+assert_contains "the refusal says no live project has the name" \
+  "$only_canceled_err" "no live project has this name"
+assert_contains "the refusal names each rejected uuid with the state that rejected it" \
+  "$only_canceled_err" "dead-uuid (canceled), dead-two-uuid (canceled)"
 
 assert_not "no issue is created against a canceled project" \
   grep -qF 'issueCreate' "$TMP_ROOT/only-canceled-payloads.jsonl"
@@ -166,6 +181,33 @@ assert_not_contains "a failed lookup is not reported as a missing project" \
 # initiatives.sh and milestones.sh each carried a private resolve_project_id
 # that shadowed the shared one after sourcing it, so the fix above would have
 # reached neither.
+#
+# bash spells one definition three ways, and a guard carrying only the first
+# does not stop the regression it exists to stop: `name() {`, `function name {`
+# (parens optional), and either with the opening brace on the next line. The
+# pattern below takes the definition line whole, so a call — `resolve_project_id
+# "$p"` or `$(resolve_project_id ...)` — never matches.
 
-shadowed="$(grep -rlF 'resolve_project_id() {' "$SKILL_DIR/scripts" | grep -vF '/lib/common.sh' || true)"
+definition='^[[:space:]]*(function[[:space:]]+resolve_project_id([[:space:]]*\(\))?|resolve_project_id[[:space:]]*\(\))[[:space:]]*\{?[[:space:]]*$'
+shadowed="$(grep -rlE "$definition" "$SKILL_DIR/scripts" | grep -vF '/lib/common.sh' || true)"
 assert_eq "resolve_project_id is defined once, in lib/common.sh" "$shadowed" ""
+
+# The pattern is only worth as much as its coverage, so each spelling is
+# checked against it here rather than assumed.
+for spelling in \
+  'resolve_project_id() {' \
+  '  resolve_project_id ()' \
+  'function resolve_project_id {' \
+  'function resolve_project_id' \
+  'function resolve_project_id() {'; do
+  assert "the definition pattern matches: $spelling" \
+    grep -qE "$definition" <<<"$spelling"
+done
+
+for call in \
+  '    project_id=$(resolve_project_id "$project")' \
+  '    if ! project_id=$(resolve_project_id "$project"); then' \
+  '# resolve_project_id names the failure itself'; do
+  assert_not "the definition pattern ignores: $call" \
+    grep -qE "$definition" <<<"$call"
+done

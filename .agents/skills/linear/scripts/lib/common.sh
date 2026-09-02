@@ -654,20 +654,26 @@ resolve_project_id() {
         return 1
     fi
 
-    local project_id
-    project_id=$(echo "$result" | jq -r \
-        '[(.projects.nodes // [])[] | select((.state // "" | ascii_downcase) != "canceled")][0].id // empty')
+    # One pass, so the rejected list is the selection's complement rather than
+    # a second predicate that can drift from it: line 1 is the chosen id, line 2
+    # the rejected ones with the state that rejected each. A widened predicate
+    # keeps the message true without being edited.
+    local selection project_id rejected
+    selection=$(echo "$result" | jq -r '
+        (.projects.nodes // []) as $all
+        | ($all | map(select((.state // "" | ascii_downcase) != "canceled"))) as $live
+        | ($live[0].id // ""),
+          ($all - $live | map(.id + " (" + (.state // "no state") + ")") | join(", "))')
+    { IFS= read -r project_id; IFS= read -r rejected; } <<<"$selection"
 
     if [ -n "$project_id" ]; then
         echo "$project_id"
         return 0
     fi
 
-    local canceled_ids
-    canceled_ids=$(echo "$result" | jq -r '[(.projects.nodes // [])[].id] | join(", ")')
-    if [ -n "$canceled_ids" ]; then
-        jq -nc --arg name "$project_ref" --arg ids "$canceled_ids" \
-            '{error: ("Project not found: " + $name + " (matched only canceled projects: " + $ids + "; pass a project UUID to target one)")}' >&2
+    if [ -n "$rejected" ]; then
+        jq -nc --arg name "$project_ref" --arg matches "$rejected" \
+            '{error: ("Project not found: " + $name + " (no live project has this name; matches: " + $matches + "; pass a project UUID to target one)")}' >&2
         return 1
     fi
 
