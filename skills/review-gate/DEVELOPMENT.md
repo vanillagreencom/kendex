@@ -18,7 +18,6 @@ Paths are as installed in a consuming repo, under
 | `scripts/validate.sh` | The consumer-facing tool: is this repo's install sound? Runtime, settings, carry-forward exclusions, then the workflow half below, whose verdicts it relays and counts. |
 | `scripts/validate-workflow.sh` | Is the adopted copy still the shipped template? Equality, not re-derivation: see § Equality, not re-derivation. Usable on its own when only the workflow copy changed. |
 | `scripts/pr-watch.sh` | The agent-side reducer: "does any open PR need attention right now?" Silence on stdout + exit 0 means nothing needs you, which makes it a one-line loop/cron predicate; `--heal` also dispatches the writer once on a stale gate. |
-| `scripts/merged-sweep.sh` | The post-merge half of that reducer: "did a review or a review thread land after a merge with nobody answering it?" Same line shape and exit codes as `pr-watch.sh`, so one consumer reads both; its own per-repo state file makes each finding surface once. |
 | `scripts/review-predicate-selftest.sh` | Offline proof of the decision table. An ENGINE proof: it runs here, in the catalog repo, on every change. |
 | `tests/predicate-re2-engine.test.sh` | The predicate's thread jq, run through the engine that actually ships it: the real `gh --jq` (Go's RE2), pointed at a local HTTP stub. Every other proof reads that program through the local jq, whose Oniguruma accepts lookaround RE2 will not compile. Needs `gh`, `python3` and `jq`, and refuses rather than skipping without them. |
 
@@ -103,9 +102,14 @@ per-repo values: a copy that differs is a copy someone edited.
 
 What it therefore never answers is what the TEMPLATE says. Both sides of the
 diff come from that one file, so an edit re-copied into every consumer is
-invisible here by construction. That question belongs upstream, to the
-`[template]` block of `tests/review-writer-template.test.sh` (§ The workflow
-template below).
+invisible here by construction. One instrument upstream reads the template's
+content — the relay battery in `tests/review-writer-template.test.sh`, which
+extracts the relay step and EXECUTES it against a gh stub, over both copies.
+Everything else the template says is unasserted — an expression, a trigger, a
+`permissions:` scope, a concurrency group — with one exception: this tool
+refuses to run at all when the template stops carrying the COMMENTED
+`check_run` opt-in pair, which is where it derives its one allowance from.
+Read that as the coverage, not as a gap someone forgot to fill.
 
 What equality cannot express is handled in one of two ways, and the
 difference matters to anyone reading a clean run.
@@ -151,83 +155,3 @@ a failed re-read defers too. Downward posts never defer. The single-writer
 concurrency group is a waste reducer on top of that, not the correctness
 mechanism — runs can still interleave on one head, and this rule is what
 orders them.
-
-## The workflow template
-
-`templates/review-gate-writer.yml` is copied verbatim: it carries no per-repo
-values. The two per-repo knobs it once held are gone —
-
-- the default branch is `${{ github.event.repository.default_branch }}`, and
-  each engine-running job refuses an empty resolution in a guard step ahead
-  of its checkout rather than falling back to a branch name someone has to
-  keep correct;
-- the `check_run` opt-in's reviewer check name is the repository variable
-  `REVIEW_GATE_CHECK_RUN_NAME`, read by a term the relay's `if:` already
-  carries, so opting in is uncommenting the trigger and setting a variable.
-
-`tests/review-writer-template.test.sh` answers what the template MEANS, and
-it is the only thing that can. Equality (§ Equality, not re-derivation) asks
-whether an adopted copy is still a copy; both sides of that diff come from
-this template, so editing the template and re-copying leaves it empty however
-broken the contract now is. The suite's `[template]` block therefore runs
-against the shipped template ALONE — equality already carries the template
-into every copy — and holds the classes equality cannot reach: the relay's
-and the write job's `if:` expressions byte-exact; the load-bearing triggers
-(`workflow_dispatch`, the cron floor, no status state filter); the relay's
-isolation (no checkout, no `concurrency:`, no `issues: write`); the one
-`actions: write` and that it sits on the relay; the write job's single-writer
-group and its `cancel-in-progress: false`; `persist-credentials: false`
-counted against the checkouts; every checkout `ref:` bare, with each guard
-ahead of its checkout and exiting nonzero; the relay's `DISPATCH_REF`,
-`WORKFLOW_REF` and `EVENT_NAME` bindings; its failure surface (a bounded
-dispatch attempt, no `mktemp`, both CR normalizers); the fork read-only flag
-and the VST-36 escalation arm; the `check_run` breaker's list against the job
-names; and the relay's timeout against its own retry budget.
-
-THE ENUMERATION ABOVE IS THE SET. It is closed in the sense that every
-property in it is either a check in the `[template]` block or a row in that
-block's ledger comment naming the instrument that reds instead; three sit in
-the ledger today, and the `relay:` battery — which EXECUTES the relay step
-against a gh stub, over both copies — covers the first two. Both run here,
-upstream, on every change. Read the list, not a claim about it: a property
-that is not on it is not covered by this block, whatever the closure sounds
-like it promises.
-
-It is NOT a claim about every property the workflow rests on. Two classes sit
-outside the list and always did, unasserted by the block this replaced as
-well: the jobs' `permissions:` SCOPES — that `statuses: write` is still
-write, that `contents:` and `pull-requests:` are still read — and the
-trigger set beyond
-the three above, `merge_group:` and the activity types included. Downgrading
-`statuses: write` or deleting `merge_group:` passes every instrument in the
-skill. Widening the block is how they get covered; reading the closure wider
-than its set is how they look covered when they are not.
-
-The battery covers BEHAVIOR, never a binding's presence: `_relay_once`
-supplies `DISPATCH_REF`, `WORKFLOW_REF` and `EVENT_NAME` as literals, so it
-proves the step degrades safely when one is missing and proves nothing about
-whether the file still carries it. That is why those three are `[template]`
-checks rather than ledger rows.
-
-Every presence and count read strips full-line comments first, through a
-`live` helper. That is what stops a commented-out setting from satisfying a
-presence or count check — and, in an absence check, what stops a comment that
-merely names an expression from reddening. An absence check reds on an extra
-match, which is the fail-closed direction.
-
-A pattern avoids a spelling only where an equivalent rewrite is expected. The
-checkout patterns are the case: a step written `- name:` first, with its
-`uses:` on the following line, is the same step, so they match `uses:
-actions/checkout` rather than the `- uses:` form. Where the spelling IS the
-property the pin is deliberately byte-exact instead — the relay's and the
-write job's `if:` expressions, the bare default-branch ref, the escalation
-arm — where an edit is a change, not a restatement. A column anchor appears
-where the indentation is the property, a job-level `permissions:` key being a
-different thing from a workflow-level one; those patterns carry no end
-anchor, because YAML permits a trailing `# comment` after a scalar and an
-end-anchored pattern would miss it.
-
-The limit, stated so it is not discovered: a pattern written for an unquoted
-value does not match a quoted one, so `uses: "actions/checkout@<sha>"` is
-outside what this block reaches. That was true of the block it replaced too;
-nothing here narrowed it.

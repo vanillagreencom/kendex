@@ -68,8 +68,8 @@ run. It answers repo-own questions only — the engine is installed and
 runnable here, the committed `REVIEW_GATE_*` values are legal, the
 carry-forward exclusions still match tracked paths, and the adopted workflow
 still meets this template's contract. It re-runs no engine test suite: the
-selftest and the wrapper suites are the ENGINE's proofs and run in the kendex
-repo on every change to it.
+selftest and the suites under tests/ are the ENGINE's proofs and run in the
+kendex repo on every change to it.
 
 Value rules come from the engine, not from a copy of it: the settings half
 calls `review-predicate.sh --check-config`, which resolves and validates
@@ -212,25 +212,7 @@ period, or `head-moved` when a push landed mid-reduction — re-run); exit 2
 = a PR could not be read (fail loud, never skipped).
 `--heal` bounds itself to one writer dispatch per invocation. The orch
 skill's waiters are the single-PR *foreground* waits; pr-watch is the
-multi-PR *background* reducer.
-
-pr-watch reduces OPEN PRs only, and the gate opens on the first non-author
-review with no quiet period — so a review round landing in the queue's final
-minutes merges before anyone reads it. `merged-sweep.sh` is the same reducer
-over recently-merged PRs, emitting one `post-merge-findings` line per merged
-PR that carries a review or review thread created after its `mergedAt` with
-no disposition reply:
-
-```bash
-export GH_REPO=your-org/your-repo
-.agents/skills/review-gate/scripts/merged-sweep.sh
-```
-
-Same line shape and exit codes, so one consumer reads both. It keeps its own
-per-repo state (`MERGED_SWEEP_STATE_DIR`, default `tmp/review-gate-merged-sweep`):
-a finding surfaces once and stays quiet while unchanged, which makes exit 0
-mean "nothing NEW". Pass `--no-state` to re-read everything still
-outstanding — the audit form.
+multi-PR *background* reducer, over OPEN PRs only.
 
 ## Verification
 

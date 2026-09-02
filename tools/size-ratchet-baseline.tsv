@@ -1,5 +1,5 @@
 .github/workflows/review-gate-writer.yml	662
-.github/workflows/skill-tests.yml	560
+.github/workflows/skill-tests.yml	547
 crates/core/src/engine/detach.rs	417
 crates/core/src/error.rs	473
 crates/core/src/mapping.rs	411
@@ -118,7 +118,6 @@ skills/review-gate/scripts/review-predicate.sh	1567
 skills/review-gate/scripts/validate.sh	581
 skills/review-gate/templates/review-gate-writer.yml	658
 skills/review-gate/tests/pr-watch.test.sh	1158
-skills/review-gate/tests/review-writer-template.test.sh	829
 skills/second-opinion/scripts/second-opinion	2683
 skills/second-opinion/tests/cli-failure-gate.test.sh	1211
 skills/second-opinion/tests/lane-scratch-durability.test.sh	999

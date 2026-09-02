@@ -114,7 +114,7 @@ group "runtime"
 # unstripped, which is an absolute path and still names the right file.
 SKILL_REL="${SKILL_DIR#"$REPO_ROOT"/}"
 for rel in scripts/review-predicate.sh scripts/review-writer.sh \
-  scripts/pr-watch.sh scripts/merged-sweep.sh scripts/validate.sh \
+  scripts/pr-watch.sh scripts/validate.sh \
   scripts/validate-workflow.sh scripts/lib/settings.sh; do
   path="$SKILL_DIR/$rel"
   if [ ! -f "$path" ]; then

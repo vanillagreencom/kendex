@@ -151,11 +151,8 @@ Everything else has a working default. Full table:
 monitor on gate-state transitions. Run
 `.agents/skills/review-gate/scripts/pr-watch.sh` (optionally `--heal`) on
 the harness's wake-up mechanism: silence + exit 0 means nothing needs you;
-attention lines name exactly what does. The gate opens on the first
-non-author review with no quiet period, so a round landing in the queue's
-final minutes merges unread: run `merged-sweep.sh` beside it to catch the
-findings that arrived after the merge. See adoption.md § Watching PRs as an
-agent.
+attention lines name exactly what does. See adoption.md § Watching PRs as
+an agent.
 
 **Reviewers are down / nothing is reviewing.** Run the internal review loop:
 fix findings, resolve every thread, then post the override status with a real
@@ -272,18 +269,10 @@ nothing else.
 # the threads-driven gate-stale form all fire; verdict-driven forms need
 # the predicate), --awaiting-after SECS (default: PR_REVIEW_WAIT_SECS)
 .agents/skills/review-gate/scripts/pr-watch.sh [PR# ...]
-
-# the same reducer over recently-MERGED PRs (env: GH_REPO) — one
-# post-merge-findings line per merged PR carrying a review or review thread
-# that arrived after the merge with no disposition reply. Per-repo state
-# surfaces each finding once; --no-state re-reads everything outstanding.
-# Flags: --window SECS (default 172800), --limit N (default 20), --no-state,
-# --state-file PATH
-.agents/skills/review-gate/scripts/merged-sweep.sh
 ```
 
-The offline decision-table selftest and the wrapper suites are the ENGINE's
-proofs and run in the kendex repo, not in a consumer's CI:
+The offline decision-table selftest and the suites under tests/ are the
+ENGINE's proofs and run in the kendex repo, not in a consumer's CI:
 [DEVELOPMENT.md](DEVELOPMENT.md).
 
 For re-vendor PRs, suppress duplicate findings with the remedy-locus reviewer

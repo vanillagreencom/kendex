@@ -73,7 +73,7 @@ jobs:
           diff <(printf '%s\n' "$declared") <(printf '%s\n' "$used") || { echo "shard names disagree: '<' the matrix declares and no step names; '>' a step names and the matrix does not run"; exit 1; }
           printf '%s\n' "$declared" | grep -qxF "$SHARD" || { echo "this leg's shard '$SHARD' is not in the matrix"; exit 1; }
 
-      # ---- shard: review-gate — the heavyweight wrapper battery alone ----
+      # ---- shard: review-gate — the heavyweight review-gate suites alone ----
       - name: review-gate suites
         if: matrix.shard == 'review-gate'
         run: |
@@ -432,24 +432,11 @@ jobs:
           persist-credentials: false
       - name: review-gate selftest against this repo's settings
         run: skills/review-gate/scripts/review-predicate-selftest.sh
-      # The same battery re-derived from a trust surface that is NOT this
-      # repo's. The configured layer generates its approve/near-miss cases
-      # from whatever it resolves, so this proves it reads the resolved
-      # values and not the defaults this repo happens to share with them.
+      # The TRUSTED-STATUS-CONTEXTS battery re-derived from a list this repo
+      # does not commit. That layer only — every other REVIEW_GATE_* key
+      # resolves the same in both steps.
       - name: review-gate selftest against a foreign trust surface
-        env:
-          REVIEW_GATE_TRUSTED_STATUS_CONTEXTS: "Acme Review; Beta Scan"
-          REVIEW_GATE_CHECKRUN_SKIP_PATTERNS: "quota exceeded"
-          REVIEW_GATE_COMMENT_REVIEWERS: "acme-reviewer[bot]:Analysis (clean) for commit"
-          REVIEW_GATE_SHA_PREFIX_FLOOR: "9"
-          REVIEW_GATE_OVERRIDE_CONTEXT: "acme-outage"
-          REVIEW_GATE_STATUS_PUBLISHER_REJECT: "github-actions[bot]"
-          REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS: "acme-reviewer[bot];human-lead"
-          REVIEW_GATE_REVIEW_OBJECT_MIN_STATE: "approved"
-          REVIEW_GATE_THREADS: "off"
-          REVIEW_GATE_API_ATTEMPTS: "2"
-          REVIEW_GATE_CARRY_FORWARD: "docs"
-        run: skills/review-gate/scripts/review-predicate-selftest.sh
+        run: REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="Acme Review; Beta Scan" skills/review-gate/scripts/review-predicate-selftest.sh
       # kendex adopts its own gate, so it takes the consumer's check too.
       - name: review-gate validate against this repo's installation
         run: skills/review-gate/scripts/validate.sh

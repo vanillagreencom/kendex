@@ -56,11 +56,9 @@
 #   wp1-wp3. pagination merges               -> page-two PRs enumerate; a
 #                                               page-two guard entry defers
 # The WORKFLOW YAML is asserted in its own suite,
-# review-writer-template.test.sh — the template's own contract derived from
-# the shipped template alone (expressions offline runs cannot execute, and
-# relations between values in the file), plus the relay step extracted and
-# EXECUTED against a gh stub over both copies. This file is the
-# review-writer.sh engine suite: one instrument class, one subject.
+# review-writer-template.test.sh — the relay step extracted and EXECUTED
+# against a gh stub over both copies. This file is the review-writer.sh
+# engine suite: one instrument class, one subject.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

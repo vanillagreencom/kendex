@@ -126,7 +126,7 @@ rm -rf "$_shimcheck_dir"
 [ "$_shimcheck_gap" -eq 93 ] || { echo "FATAL: shim did not refuse a fixture-less follow-up page (want exit 93, got $_shimcheck_gap)" >&2; exit 1; }
 
 # ------------------------------------------------------------------ helpers ---
-# The fixture writers, shared with the wrapper suites under tests/. They
+# The fixture writers, shared with the suites under tests/. They
 # write into $fixtures and bind to $HEAD, both set above.
 . "$here/../tests/lib/selftest-fixtures.sh"
 

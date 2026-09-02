@@ -31,14 +31,15 @@ These are known, deliberate trade-offs. Raising them again is noise:
   is this copy still `templates/review-gate-writer.yml`? — and re-derives
   nothing about what the workflow means, so a finding that it fails to
   evaluate an expression or reason about a job's permissions is answering the
-  wrong question of the wrong tool. What the TEMPLATE means is answered
-  upstream in `skills/review-gate/tests/review-writer-template.test.sh`: the
-  `[template]` block derives it from the shipped template alone, and the
-  `relay:` battery executes the relay step against a gh stub. That block is
-  closed over one named set: its preamble names the set and points at
-  `skills/review-gate/DEVELOPMENT.md` § The workflow template for the classes
-  outside it. A gap worth naming is a property inside that set which is
-  neither checked nor in the block's ledger.
+  wrong question of the wrong tool. One instrument upstream reads what the
+  TEMPLATE means — the `relay:` battery in
+  `skills/review-gate/tests/review-writer-template.test.sh`, which executes
+  the relay step against a gh stub. Nothing else about the template is
+  asserted, by design: expressions, triggers, `permissions:` scopes and
+  concurrency groups all sit outside it — the one exception being that
+  `validate-workflow.sh` refuses to run when the template loses its commented
+  `check_run` opt-in lines, which it derives its one allowance from. A finding
+  that any of the rest is unchecked is describing the design, not a defect.
 
 - **No test-coverage asks for instruction markdown or for `tools/guard`
   rules in a change that adds no guard test lane.** What a test must cover is
