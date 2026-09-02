@@ -1,4 +1,3 @@
-import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
 import { useMarketplacesStore } from "./marketplaces";
@@ -11,12 +10,7 @@ vi.mock("@/bindings", () => ({
   },
 }));
 vi.mock("sonner", () => ({
-  toast: {
-    success: vi.fn(),
-    message: vi.fn(),
-    error: vi.fn(),
-    info: vi.fn(),
-  },
+  toast: { success: vi.fn(), message: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 vi.mock("./audit", () => ({
   useAuditStore: { getState: () => ({ refresh: vi.fn() }) },
@@ -25,33 +19,12 @@ vi.mock("./scan", () => ({
   useScanStore: { getState: () => ({ refresh: vi.fn() }) },
 }));
 
-const subscribed = (name: string) => ({
-  status: "ok" as const,
-  data: {
-    name,
-    reference: "Acme/Kit",
-    rev: null,
-    lead: null,
-    notes: [],
-    undone: [],
-  },
-});
-
-const installed = {
-  status: "ok" as const,
-  data: {
-    packages: [],
-    repoEffects: { shown: [], withheld: [] },
-    undone: [],
-  },
-};
-
 const item = [{ kind: "skill" as const, name: "preflight" }];
 
-// Installing from a marketplace nobody subscribes to used to be impossible
-// from the row: it said "Available" and left the reader to find the
-// header's Subscribe button. The subscription is what makes an install
-// possible, so the one click makes it.
+// Installing from a marketplace nobody subscribes to has to subscribe
+// first — that is what makes its packages installable, and it is the whole
+// of what this action promises. The row's half, which arguments it hands
+// over, is packages-table.test.tsx.
 describe("installing from a marketplace nobody subscribes to", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -63,12 +36,27 @@ describe("installing from a marketplace nobody subscribes to", () => {
   });
 
   it("subscribes personally first, then installs under the alias it got back", async () => {
-    vi.mocked(commands.marketplaceSubscribe).mockResolvedValue(
+    vi.mocked(commands.marketplaceSubscribe).mockResolvedValue({
+      status: "ok",
       // The engine picks the alias; the install has to use that one, not
       // the repository spelling the click carried.
-      subscribed("kit"),
-    );
-    vi.mocked(commands.marketplaceInstall).mockResolvedValue(installed);
+      data: {
+        name: "kit",
+        reference: "Acme/Kit",
+        rev: null,
+        lead: null,
+        notes: [],
+        undone: [],
+      },
+    });
+    vi.mocked(commands.marketplaceInstall).mockResolvedValue({
+      status: "ok",
+      data: {
+        packages: [],
+        repoEffects: { shown: [], withheld: [] },
+        undone: [],
+      },
+    });
 
     const ok = await useMarketplacesStore
       .getState()
@@ -85,63 +73,5 @@ describe("installing from a marketplace nobody subscribes to", () => {
     expect(scope).toEqual({ scope: "global" });
     expect(source).toBe("kit");
     expect(items).toEqual(item);
-  });
-
-  // A refusal is normally shown beside the dialog's input. There is no
-  // input on a package row, so it has to be said out loud, and nothing may
-  // be installed on top of a subscription that never landed.
-  it("says why and installs nothing when the subscription is refused", async () => {
-    vi.mocked(commands.marketplaceSubscribe).mockResolvedValue({
-      status: "error",
-      error: "already subscribed as 'kit'",
-    });
-
-    const ok = await useMarketplacesStore
-      .getState()
-      .subscribeAndInstall("Acme/Kit", item);
-
-    expect(ok).toBe(false);
-    expect(commands.marketplaceInstall).not.toHaveBeenCalled();
-    expect(toast.error).toHaveBeenCalledWith("already subscribed as 'kit'");
-  });
-
-  // The refusal is left in the shared slot for the dialog that shows it
-  // beside an input. A row click has no such input, so the slot is emptied
-  // once the words have been said — otherwise the next Subscribe dialog
-  // opens already complaining about a repository nobody typed.
-  it("leaves no refusal behind for the next Subscribe dialog", async () => {
-    vi.mocked(commands.marketplaceSubscribe).mockResolvedValue({
-      status: "error",
-      error: "already subscribed as 'kit'",
-    });
-
-    await useMarketplacesStore.getState().subscribeAndInstall("Acme/Kit", item);
-
-    expect(useMarketplacesStore.getState().error).toBeNull();
-  });
-
-  // `load` writes `error: null` on every landing overview read, and reads
-  // overlap this click. Reporting by reading the slot back therefore says
-  // nothing at all whenever one lands in the gap: no toast, no install,
-  // the row unchanged. The words have to come from what subscribe
-  // answered.
-  it("reports the refusal even when a concurrent read clears the slot", async () => {
-    // The real refusal path, plus the overview read that lands between the
-    // slot being written and the caller reading it.
-    useMarketplacesStore.setState({
-      subscribe: async () => {
-        useMarketplacesStore.setState({ error: "already subscribed as 'kit'" });
-        await useMarketplacesStore.getState().load();
-        return { error: "already subscribed as 'kit'" };
-      },
-    });
-
-    const ok = await useMarketplacesStore
-      .getState()
-      .subscribeAndInstall("Acme/Kit", item);
-
-    expect(ok).toBe(false);
-    expect(toast.error).toHaveBeenCalledWith("already subscribed as 'kit'");
-    expect(commands.marketplaceInstall).not.toHaveBeenCalled();
   });
 });
