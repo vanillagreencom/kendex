@@ -2944,11 +2944,7 @@ export type UpdateRow = {
 	 *  rendering's bytes — it has to be the one that was changed.
 	 */
 	editedHarnesses: HarnessId[],
-	/**
-	 *  The edited rendering a fork can capture, when one exists — an
-	 *  agent edited only in a tool whose format cannot be read back has
-	 *  none, and the UI must not offer what the engine will refuse.
-	 */
+	/**  The edited rendering the engine allows the UI to capture, when one exists. */
 	forkableHarness: HarnessId | null,
 	/**
 	 *  Whether dropping the edits can put the currently resolved content

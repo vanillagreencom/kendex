@@ -55,9 +55,7 @@ const stale = (row: UpdateRow): boolean =>
  *  when nothing is wrong with the row itself. */
 const running = (): boolean => workOut(useUpdatesStore.getState());
 
-/** Keep an edited place's files as a local fork of its own. Only some
- *  tools' renderings read back as source; the row names the edited one a
- *  fork can take, and the button is not offered without it. */
+/** Keep an edited place using the engine-projected forkable rendering. */
 export const keepAsOwn = async (row: UpdateRow): Promise<void> => {
   const harness = row.forkableHarness;
   if (!harness) return;

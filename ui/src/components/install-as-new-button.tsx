@@ -7,11 +7,7 @@ import {
   UPDATE_NEEDS_CHECK_NOTE,
 } from "@/lib/copy-updates";
 
-/** Whether an edited place has something to install beside its edits: a
- *  newer version the source still carries, and a rendering the engine can
- *  keep. A package gone from its source, one already at the newest, a
- *  bundle member, an edit spread over several tools, or a tool whose
- *  format cannot be read back settles on the package page instead. */
+/** Whether the engine-projected row permits installing beside an edit. */
 export const installableBeside = (row: UpdateRow): boolean =>
   row.forkableHarness !== null &&
   row.updateAvailable &&

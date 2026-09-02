@@ -217,9 +217,6 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
     })
 }
 
-/// Prove that one installed rendering can become a fork, returning the
-/// capture so the direct fork does not repeat the reads behind the proof.
-/// The Updates projection asks this same question and discards the capture.
 fn capture_rendering(
     env: &Env,
     scope: &Scope,

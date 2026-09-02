@@ -73,9 +73,7 @@ pub struct UpdateRow {
     /// canonical tree count once. Keeping the edit as a fork captures one
     /// rendering's bytes — it has to be the one that was changed.
     pub edited_harnesses: Vec<HarnessId>,
-    /// The edited rendering a fork can capture, when one exists — an
-    /// agent edited only in a tool whose format cannot be read back has
-    /// none, and the UI must not offer what the engine will refuse.
+    /// The edited rendering the engine allows the UI to capture, when one exists.
     pub forkable_harness: Option<HarnessId>,
     /// Whether dropping the edits can put the currently resolved content
     /// back in place, without moving any revision — the source content
