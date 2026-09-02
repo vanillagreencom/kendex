@@ -236,9 +236,9 @@ What that buys, per surface, since the five do not get the same thing:
 The three unenforced rows are why the paths are rendered at all. Codex has no
 file-based exclusion, Copilot's is a settings page no repo file reaches, and
 Qodo's `[ignore]` governs `/improve` analysis rather than review content. Naming
-the paths makes the instruction actionable; SKILL.md § Every rendered config
-excludes the render trees carries the requirement and the plain statement that
-those three may comment anyway.
+the paths makes the instruction actionable; those three may comment on render
+paths anyway, and SKILL.md § Every rendered config excludes the render trees
+carries the requirement.
 
 **(a) `.coderabbit.yaml` carries one block.** CodeRabbit reaches the rest
 through `knowledge_base.code_guidelines.filePatterns` naming `AGENTS.md`.

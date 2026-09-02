@@ -290,8 +290,8 @@ which ones this repo does not actually have.
 
 ## If the repo's gate reads bot output
 
-- [ ] Every path in SKILL.md § A pull request changing its own review's policy
-      set is a policy path in the repo's gate: a push touching one invalidates
+- [ ] Every path in SKILL.md § The render inputs (the "Policy set:" list)
+      is a policy path in the repo's gate: a push touching one invalidates
       review evidence gathered before it. Work from that list rather than from a
       copy of it — it is longer than the obvious four, and a copy here would
       drift from it. In this repo it is what feeds

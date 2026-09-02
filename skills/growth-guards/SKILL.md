@@ -24,7 +24,7 @@ repo-effects:
     - "size-ratchet"
     - "preflight"
   notes:
-    - "A missing companion is announced and skipped; every installed companion or guard failure blocks the commit."
+    - "A missing companion is announced and skipped, as is a repo-local size-ratchet that rejects --staged and preflight on a first commit; every other companion or guard failure blocks the commit."
     - "Both hooks block on nonzero results; Git's no-verify flag bypasses both for one commit."
     - "Git does not clone hooks; arm every clone once."
 ---
