@@ -97,7 +97,7 @@ ORCH_DECISION_MODE = "ask"
 
 # "ask" presents the merge decision; "auto" merges once every gate is green.
 # MERGE_READY = false never auto-merges.
-ORCH_MERGE_AUTONOMY = "ask"
+ORCH_MERGE_AUTONOMY = "auto"
 
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"
