@@ -103,7 +103,7 @@ Env (required): GH_TOKEN (or ambient gh auth), GH_REPO
 
 Consumers: orch's workflows treat this as the single state reducer for
 multi-PR watching (orch's approval-wait remains the single-PR foreground
-wait with nudge/on-timeout policy; orch's oversee consumes it through
+wait with on-timeout policy; orch's oversee consumes it through
 oversee-watch); harness wake-up mechanisms (a monitor loop, cron, a
 scheduler) wrap it in a few lines instead of re-deriving state keys per
 session — the wrap-in-anything loop lives in references/adoption.md.

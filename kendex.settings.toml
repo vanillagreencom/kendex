@@ -77,7 +77,7 @@ REVIEW_MAX_EXTERNAL_ROUNDS = "4"
 REVIEWER_SLOT_BUDGET = "0"
 
 # "ask" presents workflow decision points; "auto-recommended" executes the
-# recommended option and logs it. Findings disposition is by rule in every
+# recommended option without asking. Findings disposition is by rule in every
 # mode; some decisions always ask; merge is governed by ORCH_MERGE_AUTONOMY.
 ORCH_DECISION_MODE = "ask"
 

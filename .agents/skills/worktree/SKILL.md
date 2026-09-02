@@ -60,7 +60,7 @@ Consumers wanting this locally get a pointer, never a copy. One line resolves th
 
 ## Session guard (ownership leases)
 
-`scripts/worktree-session-guard` stops cleanup from destroying a worktree a session is still working in; the lease is a native Git worktree lock whose reason line carries the owner and heartbeat. Claiming is the caller's job: `create` never claims, the orchestrating workflow claims once the worktree is the session's, and `remove` releases at teardown. Probe with `status` (read-only), never `claim` — `claim` takes or rewrites the lease. Commands, exit codes, `--repo` scope, and staleness caveats: `worktree-session-guard --help`; the guard's limits: [references/session-guard.md](references/session-guard.md).
+`scripts/worktree-session-guard` stops cleanup from destroying a claimed worktree; the lease is a native Git worktree lock whose reason line carries the owner and a heartbeat stamped at claim time, so its age measures how long ago the worktree was claimed rather than how recently the session worked in it. Claiming is the caller's job: `create` never claims, the orchestrating workflow claims once the worktree is the session's, and `remove` releases at teardown. Probe with `status` (read-only), never `claim` — `claim` takes or rewrites the lease. Commands, exit codes, `--repo` scope, and staleness caveats: `worktree-session-guard --help`; the guard's limits: [references/session-guard.md](references/session-guard.md).
 
 ## JS Dependencies
 
