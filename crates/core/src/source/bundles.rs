@@ -80,19 +80,18 @@ pub(super) struct UnreadableBundle {
 /// The one key beside the member lists a set's body may carry.
 const DESCRIPTION: &str = "description";
 
-/// The key the manifest requires of every `[bundles.<name>]` it declares.
-/// One file is both when a project offers what it installs, so this reader
-/// passes over it rather than reading it as a set's own breakage.
+/// The key the manifest requires of every `[bundles.<name>]` it declares,
+/// and one no set on offer can carry: members are bare names inside the
+/// catalog that offers them, so a set names no source of its own.
 const INSTALL_DECLARATION: &str = "source";
 
 /// The `[bundles]` table of a catalog's own `kendex.toml`: the sets it
 /// offers, and the ones this reader will not read.
 ///
-/// A set is only ever as real as what comes out of this, so the only body
-/// KEY passed over is the manifest's own — a key skipped is a member the set
-/// silently loses, which is how `members = [...]` shipped as four sets that
-/// installed nothing. A list holding something else still reads as the names
-/// it has.
+/// A set is only ever as real as what comes out of this, so no body KEY is
+/// skipped — a key skipped is a member the set silently loses, which is how
+/// `members = [...]` shipped as four sets that installed nothing. A member
+/// list holding something other than names still reads as the names it has.
 /// One unreadable body costs the other sets and every item nothing to
 /// install; what it costs a removal is [`SourceConfig::hides_content`].
 pub(super) fn declared(
@@ -110,6 +109,17 @@ pub(super) fn declared(
         let Some(body) = body.as_table() else {
             continue;
         };
+        // One file is both when a project offers what it installs: the
+        // manifest records an installed set under this same table name. Only
+        // a body that records an install and nothing else is the manifest
+        // reader's, since a record carries no members.
+        if body.contains_key(INSTALL_DECLARATION)
+            && !MEMBER_LISTS
+                .iter()
+                .any(|(list, _)| body.contains_key(*list))
+        {
+            continue;
+        }
         match read_set(name, body) {
             Ok(set) => {
                 bundles.insert(name.clone(), set);
@@ -129,23 +139,26 @@ fn read_set(
     name: &str,
     body: &toml::Table,
 ) -> std::result::Result<CatalogBundle, UnreadableBundle> {
+    let at = format!("`[bundles.{}]`", crate::names::shown(name));
     for key in body.keys() {
-        if key == DESCRIPTION
-            || key == INSTALL_DECLARATION
-            || MEMBER_LISTS.iter().any(|(list, _)| list == key)
-        {
+        if key == DESCRIPTION || MEMBER_LISTS.iter().any(|(list, _)| list == key) {
             continue;
         }
-        return Err(UnreadableBundle {
-            problem: format!(
-                "`[bundles.{}]` carries `{}`, which is not one of the lists a set's members are read from",
-                crate::names::shown(name),
-                crate::names::shown(key)
-            ),
-            fix: format!(
-                "remove it, or write the members under one of: {}",
-                member_list_keys()
-            ),
+        return Err(match key.as_str() {
+            INSTALL_DECLARATION => UnreadableBundle {
+                problem: format!("{at} carries both `{INSTALL_DECLARATION}` and a member list"),
+                fix: "a record of an installed set carries no members and a set on offer names no source — write one or the other".to_owned(),
+            },
+            _ => UnreadableBundle {
+                problem: format!(
+                    "{at} carries `{}`, which is not one of the lists a set's members are read from",
+                    crate::names::shown(key)
+                ),
+                fix: format!(
+                    "remove it, or write the members under one of: {}",
+                    member_list_keys()
+                ),
+            },
         });
     }
     let mut members = Vec::new();

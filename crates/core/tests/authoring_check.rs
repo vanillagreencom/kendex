@@ -270,3 +270,58 @@ fn a_bundle_written_in_the_shape_the_reader_reads_is_clean() {
     let report = check(&sealed, "repo").unwrap();
     assert_eq!(report.failing(true), 0, "{:?}", report.catalog);
 }
+
+/// A project's own kendex.toml is both manifest and catalog once `kendex
+/// init` writes the marker into it, so this reader meets the manifest's own
+/// `[bundles.<name>]` records. A record carries whatever `kendex add
+/// --bundle <set> --harness <tool>` wrote beside `source` — `harnesses`, and
+/// `method`, `rev` or `enabled` when set — and reading those as a set's own
+/// breakage would fail the project's check on its own install record and
+/// stop that source sweeping orphans, while the set it really offers is
+/// untouched.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_projects_own_install_record_is_not_its_catalogs_breakage() {
+    let (_tmp, root) = repo();
+    skill_at(&root, "skills", "gh");
+    fs::write(
+        root.join("kendex.toml"),
+        "is_source_catalog = true\n\n[bundles.offered]\nskills = [\"gh\"]\n\n\
+         [bundles.installed]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\
+         method = \"copy\"\nrev = \"9f2c\"\nenabled = false\n",
+    )
+    .unwrap();
+    let sealed = SealedSource::open(&root).unwrap();
+    let report = check(&sealed, "repo").unwrap();
+    assert_eq!(report.failing(false), 0, "{:?}", report.catalog);
+    let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
+    assert!(
+        !config.hides_content(),
+        "the project stopped sweeping its own orphans"
+    );
+    let sets: Vec<String> = kendex_core::source::bundles::offered(&sealed, &config)
+        .unwrap()
+        .iter()
+        .map(|set| set.name.clone())
+        .collect();
+    assert_eq!(sets, ["offered"], "an install record is not a set on offer");
+}
+
+/// The must-fail counterpart: the same record with a member list beside its
+/// `source` is a set on offer written wrong, not a record, and the check
+/// fails on it. Without this the control above would hold for a reader that
+/// waved through every key a manifest record can carry, wherever it sat.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_source_beside_a_member_list_is_still_that_sets_breakage() {
+    let (_tmp, root) = repo();
+    skill_at(&root, "skills", "gh");
+    fs::write(
+        root.join("kendex.toml"),
+        "is_source_catalog = true\n\n[bundles.installed]\nsource = \"cat\"\nskills = [\"gh\"]\n",
+    )
+    .unwrap();
+    let sealed = SealedSource::open(&root).unwrap();
+    let report = check(&sealed, "repo").unwrap();
+    assert!(report.failing(false) >= 1, "{:?}", report.catalog);
+}
