@@ -37,7 +37,9 @@ source "$SCRIPT_DIR/lib/assert.sh"
 RUNNER="$SCRIPT_DIR/must-fail-controls.sh"
 assert_tmpdir TMP
 
-# A one-suite skill over three values and an inert fourth file. The suite reports
+# A one-suite skill over four values and an inert fifth file. Two of its claims
+# share a prefix, so a control naming the shorter one is refused unless the
+# match is whole-line. The suite reports
 # a failed claim the way tests/lib/assert.sh does, since that prefix is what
 # the runner reads a mutation's failures out of.
 # `fixture ROOT residue` makes the suite's own run write a scratch file inside
@@ -53,12 +55,13 @@ fixture() {
     fi
     printf 'B=1\n' >"$root/scripts/b.sh"
     printf 'C=1\n' >"$root/scripts/c.sh"
+    printf 'E=1\n' >"$root/scripts/e.sh"
     printf 'INERT=1\n' >"$root/scripts/inert.sh"
     cat >"$root/tests/alpha.test.sh" <<'SUITE'
 #!/usr/bin/env bash
 set -uo pipefail
 D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-for v in a b c; do
+for v in a b c e; do
     # shellcheck disable=SC1090
     . "$D/../scripts/$v.sh"
 done
@@ -66,6 +69,7 @@ rc=0
 if [ "$A" != 1 ]; then echo "FAIL: a is one" >&2; rc=1; fi
 if [ "$B" != 1 ]; then echo "FAIL: b is one" >&2; rc=1; fi
 if [ "$C" != 1 ]; then echo "FAIL: c is one" >&2; rc=1; fi
+if [ "$E" != 1 ]; then echo "FAIL: a is one with fallback" >&2; rc=1; fi
 exit "$rc"
 SUITE
     cp "$RUNNER" "$root/tests/must-fail-controls.sh"
@@ -273,3 +277,24 @@ assert_file_contains "the trailing report names the expectation nothing claims" 
     "$TMP/trailing.log" "an expectation follows the last mutation and names none: c is one"
 assert_file_contains "the trailing control is counted, not just printed" \
     "$TMP/trailing.log" "1 controls, 1 failing, 0 orphaned"
+
+# --- a control naming a prefix of an assertion that reddened ---------------
+# The suite's fourth claim starts with the text of its first. This mutation
+# reddens only the longer one, and names the shorter; a substring match would
+# read that as proof, so the match is whole-line. The mutation names an
+# assertion its own run did not redden, which is what WRONG is.
+prefix="$TMP/prefix"
+fixture "$prefix"
+cat >"$prefix/tests/controls/alpha.control.sh" <<'CONTROL'
+control_expect "a is one"
+control_replace scripts/e.sh 1 'E=1' 'E=2'
+CONTROL
+
+rc="$(run_roster "$TMP/prefix.log" "$prefix")"
+assert_ne "a control naming a prefix of what reddened fails the run" "$rc" 0
+assert_file_contains "the prefix report names its suite" \
+    "$TMP/prefix.log" "WRONG    alpha.test.sh"
+assert_file_contains "the prefix report names the assertion the mutation did not redden" \
+    "$TMP/prefix.log" "mutation 1 did not redden: a is one"
+assert_file_contains "the prefix control is counted, not just printed" \
+    "$TMP/prefix.log" "1 controls, 1 failing, 0 orphaned"

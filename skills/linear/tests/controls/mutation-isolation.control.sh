@@ -6,7 +6,7 @@
 # 1. The check that a mutation reddened the assertion it named.
 control_expect "the misnamed report names the mutation and the assertion"
 control_replace tests/must-fail-controls.sh 1 \
-	'			if ! grep -qF -- "$want" "$WORK/$stem.fails.$k"; then' \
+	'			if ! grep -qxF -- "$want" "$WORK/$stem.fails.$k"; then' \
 	'			if false; then'
 
 # 2. The check that no two mutations name one assertion.
@@ -61,3 +61,11 @@ control_expect "the trailing report names the expectation nothing claims"
 control_replace tests/must-fail-controls.sh 1 \
 	'	if [[ -n "$trailing" ]]; then' \
 	'	if false; then'
+
+# 10. The match itself, back to the substring form. A control naming a prefix
+#     of an assertion that reddened then passes on a claim its own run never
+#     made.
+control_expect "the prefix report names the assertion the mutation did not redden"
+control_replace tests/must-fail-controls.sh 1 \
+	'			if ! grep -qxF -- "$want" "$WORK/$stem.fails.$k"; then' \
+	'			if ! grep -qF -- "$want" "$WORK/$stem.fails.$k"; then'

@@ -9,7 +9,10 @@
 # describes is never applied and the behaviour it claims to prove is unproven.
 #
 # Every mutation a control declares is staged and run on its own copy, and it
-# names the assertion it must redden. Every declared assertion belongs to
+# names the assertion it must redden, whole: the name is matched against one
+# line of the suite's output, not searched for inside it, so a control naming
+# a prefix of an assertion is naming an assertion the suite does not have.
+# Every declared assertion belongs to
 # exactly one mutation, and that mutation's own run must redden it. A mutation
 # applied alongside others reports as proof of whatever they broke; one that
 # reddened on a harness verdict rather than on the assertion it named proves
@@ -267,6 +270,13 @@ run_one() {
 	# asks it, against the snapshot taken a moment ago rather than against
 	# the source: the only thing to have touched the copy since is the pass
 	# that applies no mutation, so any difference is the control's.
+	#
+	# An unconditional edit, which is what an author writes by mistake. An
+	# edit a control makes only while a mutation is being applied leaves
+	# this pass clean and lands in the mutation passes, where the NOOP check
+	# expects a difference and nothing attributes it to a helper. Refusing
+	# that needs attribution this runner does not have, and it is not
+	# claimed anywhere.
 	if ! diff -rq "$snapshot" "$root" >/dev/null 2>&1; then
 		printf 'UNGATED  %-52s control edits its copy outside a numbered mutation\n' \
 			"$suite"
@@ -347,7 +357,7 @@ run_one() {
 		# earlier, where the expectations were read.
 		fail_set "$out" "$WORK/$stem.fails.$k"
 		while IFS= read -r want; do
-			if ! grep -qF -- "$want" "$WORK/$stem.fails.$k"; then
+			if ! grep -qxF -- "$want" "$WORK/$stem.fails.$k"; then
 				printf 'WRONG    %-52s mutation %d did not redden: %s\n' \
 					"$suite" "$k" "$want"
 				printf '%s\n' "$out" | sed 's/^/         | /'

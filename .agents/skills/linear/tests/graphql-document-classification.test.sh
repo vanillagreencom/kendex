@@ -77,7 +77,10 @@ check_document() {
 
   # A mutation the classifier calls a read is posted with no team guard at all;
   # put the mutation keyword first.
-  assert_eq "every document classifies as its operation ($origin)" "$got" "$want"
+  # The origin rides the compared values rather than the description, so the
+  # description a control names is one exact line and not a prefix of one that
+  # moves with labels.sh.
+  assert_eq "every document classifies as its operation" "$origin: $got" "$origin: $want"
 }
 
 # Extract every single-quoted document literal. Command scripts assign GraphQL
