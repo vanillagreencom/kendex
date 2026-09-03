@@ -361,19 +361,6 @@ impl Redirect {
 }
 
 #[allow(clippy::unwrap_used)]
-fn redirected_state(r: &Redirect) -> InstallState {
-    browse::package_preview(
-        &r.env,
-        &catalog(&r.browsing),
-        ItemKind::Skill,
-        "gh",
-        Some(&r.destination),
-    )
-    .unwrap()
-    .state
-}
-
-#[allow(clippy::unwrap_used)]
 fn redirected_detail(r: &Redirect) -> browse::BundleDetail {
     browse::bundle(
         &r.env,
@@ -384,13 +371,15 @@ fn redirected_detail(r: &Redirect) -> browse::BundleDetail {
     .unwrap()
 }
 
-/// The available-package page's Install gates on the state this read
-/// returns, and the install lands in the destination the page picked — so a
-/// damaged record there withholds the button, whatever the scope being
-/// browsed says.
+/// The package page's Install gates on the state this read returns, and the
+/// install lands in the destination the page picked. Both directions: a
+/// damaged record where the install lands withholds the button, and a
+/// damaged one in the scope being browsed does not withhold an install
+/// landing somewhere that reads — the second is the worse of the two, a
+/// valid action denied with no reason to show.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn the_package_page_withholds_its_install_for_an_unreadable_destination() {
+fn the_package_page_is_judged_at_the_destination() {
     let r = redirect();
     assert_eq!(
         redirected_state(&r),
@@ -404,18 +393,9 @@ fn the_package_page_withholds_its_install_for_an_unreadable_destination() {
         InstallState::Unknown,
         "the install lands here, and the engine would refuse on this record"
     );
-}
 
-/// The inverse, and the worse of the two: a scope being browsed whose lock
-/// cannot be read must not withhold an install landing somewhere that reads
-/// perfectly well. Nothing about that record is in the install's way, and
-/// refusing on it is a valid action denied with no reason to show.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn an_unreadable_browsed_scope_does_not_withhold_an_install_landing_elsewhere() {
     let r = redirect();
     fs::write(&r.browsed_lock, "{not json").unwrap();
-
     assert_eq!(redirected_state(&r), InstallState::Available);
     assert_eq!(
         browse::package_preview(&r.env, &catalog(&r.browsing), ItemKind::Skill, "gh", None)
@@ -426,92 +406,59 @@ fn an_unreadable_browsed_scope_does_not_withhold_an_install_landing_elsewhere() 
     );
 }
 
-/// The set page's Install all reads `records_unreadable` and its member
-/// boxes read each member's state; both are about the place the install
-/// lands in, so a damaged record there withholds both.
+/// The set page reaches the same gate through the other engine entry point,
+/// and reads two things there: `records_unreadable`, which Install all
+/// gates on, and each member's standing, which the boxes gate on. Both are
+/// the landing place's, in both directions and past readability — an
+/// installation recorded there is what makes a row say Installed, and a
+/// removal recorded there is what makes it say whose choice it was. Reading
+/// the browsed scope instead puts a wrong count on the page and a box the
+/// reader cannot tick for the place actually missing the member.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn the_set_page_withholds_its_installs_for_an_unreadable_destination() {
+fn the_set_page_is_judged_at_the_destination() {
+    let member = |r: &Redirect| redirected_detail(r).members.first().map(|m| m.state);
+    let count = |r: &Redirect| redirected_detail(r).installed_members;
+
     let r = redirect();
-    let detail = redirected_detail(&r);
     assert!(
-        !detail.records_unreadable,
+        !redirected_detail(&r).records_unreadable,
         "the control: two readable records offer Install all"
     );
-    assert_eq!(
-        detail.members.first().map(|member| member.state),
-        Some(InstallState::Available)
-    );
+    assert_eq!((member(&r), count(&r)), (Some(InstallState::Available), 0));
 
     fs::write(&r.destination_lock, "{not json").unwrap();
     let detail = redirected_detail(&r);
     assert!(detail.records_unreadable);
     assert_eq!(
-        detail.members.first().map(|member| member.state),
+        detail.members.first().map(|m| m.state),
         Some(InstallState::Unknown),
         "no member box may be ticked for a place whose record went unread"
     );
-}
 
-/// The set page's inverse: a damaged record in the scope being browsed
-/// leaves Install all and every member box alone when the install lands in
-/// a project that reads.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn an_unreadable_browsed_scope_leaves_the_sets_installs_alone() {
+    // Damaged in the scope being browsed and nowhere else: the install is
+    // not going there, so nothing about it is in the way.
     let r = redirect();
     fs::write(&r.browsed_lock, "{not json").unwrap();
-
-    let detail = redirected_detail(&r);
-    assert!(!detail.records_unreadable);
-    assert_eq!(
-        detail.members.first().map(|member| member.state),
-        Some(InstallState::Available)
-    );
-
-    let browsed = browse::bundle(&r.env, &catalog(&r.browsing), "starter", None).unwrap();
+    assert!(!redirected_detail(&r).records_unreadable);
+    assert_eq!((member(&r), count(&r)), (Some(InstallState::Available), 0));
     assert!(
-        browsed.records_unreadable,
+        browse::bundle(&r.env, &catalog(&r.browsing), "starter", None)
+            .unwrap()
+            .records_unreadable,
         "the control: with no redirect the same damaged record still answers"
     );
-}
 
-/// The other half of the redirect, and the one an unreadable lock cannot
-/// show: a member's standing is read out of the LANDING place's records,
-/// not just its readability. An installation recorded where the install
-/// lands is what makes the row say Installed, and a removal recorded there
-/// is what makes it say the person's own choice — neither is the browsed
-/// scope's to answer, and reading the wrong one puts a wrong count on the
-/// set page and a box the reader cannot tick for the place that is
-/// actually missing the member.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_members_standing_comes_from_the_place_the_install_lands_in() {
     let r = redirect();
-    let member = |r: &Redirect| redirected_detail(r).members.first().map(|m| m.state);
-    let installed_count = |r: &Redirect| redirected_detail(r).installed_members;
-    assert_eq!(
-        (member(&r), installed_count(&r)),
-        (Some(InstallState::Available), 0),
-        "the control: neither place records anything about gh"
-    );
-
     r.install_gh_in(&r.destination);
     assert_eq!(
-        (member(&r), installed_count(&r)),
+        (member(&r), count(&r)),
         (Some(InstallState::Installed), 1),
         "installed where the install lands, so the row says so"
     );
-
-    // The inverse: recorded in the scope being browsed and nowhere else.
-    // The set is redirected into a project that does not hold it, so the
-    // row must offer it rather than call it installed.
     let r = redirect();
     r.install_gh_in(&r.browsing);
-    assert_eq!(
-        (member(&r), installed_count(&r)),
-        (Some(InstallState::Available), 0)
-    );
+    assert_eq!((member(&r), count(&r)), (Some(InstallState::Available), 0));
 
     let r = redirect();
     r.suppress_gh_in(&r.destination);
@@ -520,7 +467,6 @@ fn a_members_standing_comes_from_the_place_the_install_lands_in() {
         Some(InstallState::RemovedByYou),
         "kept removed where the install lands, so the row says whose choice it was"
     );
-
     let r = redirect();
     r.suppress_gh_in(&r.browsing);
     assert_eq!(
@@ -528,6 +474,10 @@ fn a_members_standing_comes_from_the_place_the_install_lands_in() {
         Some(InstallState::Available),
         "a removal in the scope being browsed says nothing about the project it lands in"
     );
+}
+
+fn redirected_state(r: &Redirect) -> InstallState {
+    redirected_preview(r).state
 }
 
 #[allow(clippy::unwrap_used)]

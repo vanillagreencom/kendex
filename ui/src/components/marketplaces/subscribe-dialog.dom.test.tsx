@@ -101,34 +101,30 @@ describe("the place a subscription is chosen for", () => {
     );
   }
 
-  // The control: a readable record leaves the button live, so the test
-  // below is the record doing the withholding and not the input.
-  it("offers the subscription where its records read", async () => {
-    expect((await filled())?.disabled).toBe(false);
-    expect(document.body.textContent).not.toContain("See Problems");
-  });
-
-  it("takes no subscription and says why where they do not", async () => {
-    records(true);
-
-    expect((await filled())?.disabled).toBe(true);
-    expect(document.body.textContent).toContain(
-      unreadableRecordsWriteLine("Personal"),
+  // Everything the chosen place decides, in one pass. Withheld while its
+  // read is still out and offered once that read says the records are
+  // there; the question follows the picker to the next place, and where
+  // that place cannot answer the button goes and the write line says which
+  // place and why. The control is the first half: a readable record leaves
+  // the button live, so what follows is the record withholding and not the
+  // input.
+  it("offers the subscription only where the chosen place's records read", async () => {
+    let answer: (r: { status: "ok"; data: boolean }) => void = () => {};
+    vi.mocked(commands.scopeRecordsUnreadable).mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
     );
-    // Both halves: the line this surface draws, and the one it must not.
-    expect(document.body.textContent).not.toContain(
-      unreadableRecordsLine("Personal"),
-    );
-    expect(document.body.textContent).toContain("See Problems");
-  });
-
-  // The answer belongs to the place, so the question follows the picker.
-  it("asks again for the place the picker moves to", async () => {
     const submit = await filled();
+    expect(submit?.disabled).toBe(true);
+
+    answer({ status: "ok", data: false });
+    await settle();
     expect(commands.scopeRecordsUnreadable).toHaveBeenLastCalledWith({
       scope: "global",
     });
     expect(submit?.disabled).toBe(false);
+    expect(document.body.textContent).not.toContain("See Problems");
 
     records(true);
     const trigger = document.querySelector<HTMLElement>(
@@ -145,28 +141,15 @@ describe("the place a subscription is chosen for", () => {
     await settle();
 
     expect(commands.scopeRecordsUnreadable).toHaveBeenLastCalledWith(ACME);
+    expect(submit?.disabled).toBe(true);
     expect(document.body.textContent).toContain(
       unreadableRecordsWriteLine("acme"),
     );
-  });
-
-  // Withheld while the read is still out: pressing into the gap would be
-  // pressing before the place had answered.
-  it("offers nothing while the read is still out", async () => {
-    vi.mocked(commands.scopeRecordsUnreadable).mockReturnValue(
-      new Promise(() => {}),
+    // Both halves: the line this surface draws, and the one it must not.
+    expect(document.body.textContent).not.toContain(
+      unreadableRecordsLine("acme"),
     );
-    const host = mount(<SubscribeDialog open onOpenChange={() => {}} />);
-    const input = host.ownerDocument.querySelector<HTMLInputElement>(
-      "#subscribe-reference",
-    );
-    if (!input) throw new Error("no reference input rendered");
-    await userEvent.type(input, "Acme/Kit");
-
-    const submit = [...document.querySelectorAll("button")].find(
-      (button) => button.textContent === "Subscribe",
-    );
-    expect(submit?.disabled).toBe(true);
+    expect(document.body.textContent).toContain("See Problems");
   });
 
   // A local read that fails leaves Subscribe live on purpose: the engine

@@ -106,6 +106,14 @@ beforeEach(() => {
   });
 });
 
+/** What the preview read answers with. */
+function answer(preview: PackageView["preview"]) {
+  vi.mocked(commands.marketplacePackagePreview).mockResolvedValue({
+    status: "ok",
+    data: { ...view, preview },
+  });
+}
+
 /** The header's Install, whatever it currently reads. */
 function installButton(host: HTMLElement): HTMLButtonElement | undefined {
   return [...host.querySelectorAll("button")].find(
@@ -134,41 +142,19 @@ describe("the available package page", () => {
     expect(host.textContent).toContain("works a pull request");
   });
 
-  // The engine answers Unknown for the place the install would land in, so
-  // the page has that place's answer and no reason to keep a button the
-  // engine would refuse on the same record.
-  it("withholds Install and says why when the landing place's records went unread", async () => {
+  // Everything the destination decides on this page, in one pass. The read
+  // is asked again for the project; the record standing is that project's,
+  // so Install withholds on it and the reason names it; and coming back to
+  // the place being browsed is not a redirect, so neither the read nor the
+  // install carries one.
+  it("reads, gates and says why for the place the install would land in", async () => {
     const host = mount(<AvailablePackagePage />);
     await settle();
     // The control: a readable record leaves the button alone, so what
     // follows is the state doing the withholding and not the page.
     expect(installButton(host)?.disabled).toBe(false);
 
-    vi.mocked(commands.marketplacePackagePreview).mockResolvedValue({
-      status: "ok",
-      data: { ...view, preview: { ...view.preview, state: "unknown" } },
-    });
-    useNavStore.setState({
-      availableRef: { kind: "skill", name: "gh2", catalog },
-    });
-    await settle();
-
-    expect(installButton(host)?.disabled).toBe(true);
-    expect(host.textContent).toContain(unreadableRecordsLine("Personal"));
-    expect(host.textContent).toContain("See Problems");
-  });
-
-  // The read carries the destination, and so does the reason: the record
-  // that could not be read is the chosen project's, so naming the scope
-  // being browsed would send the reader to the wrong place's Problems.
-  it("re-reads for a chosen project and names that place in the reason", async () => {
-    const host = mount(<AvailablePackagePage />);
-    await settle();
-
-    vi.mocked(commands.marketplacePackagePreview).mockResolvedValue({
-      status: "ok",
-      data: { ...view, preview: { ...view.preview, state: "unknown" } },
-    });
+    answer({ ...view.preview, state: "unknown" });
     await chooseDestination(host, "acme");
 
     expect(commands.marketplacePackagePreview).toHaveBeenLastCalledWith(
@@ -177,20 +163,13 @@ describe("the available package page", () => {
       "gh",
       ACME,
     );
+    expect(installButton(host)?.disabled).toBe(true);
     expect(host.textContent).toContain(unreadableRecordsLine("acme"));
     expect(host.textContent).not.toContain(unreadableRecordsLine("Personal"));
-  });
+    expect(host.textContent).toContain("See Problems");
 
-  // Picking the place already being browsed is not a redirect, and the
-  // picker hands back a freshly built Scope, so identity would call it one:
-  // the read would ask the engine to redirect into the place it is already
-  // browsing, and the install would carry a destination it does not have.
-  it("sends no destination once the picker comes back to the browsed place", async () => {
-    const host = mount(<AvailablePackagePage />);
-    await settle();
-    await chooseDestination(host, "acme");
+    answer(view.preview);
     await chooseDestination(host, "Personal");
-
     expect(commands.marketplacePackagePreview).toHaveBeenLastCalledWith(
       catalog,
       "skill",
@@ -202,7 +181,6 @@ describe("the available package page", () => {
     if (!install) throw new Error("no Install button rendered");
     await userEvent.click(install);
     await settle();
-
     expect(installed).toHaveBeenCalledWith(
       expect.objectContaining({ destination: null }),
     );

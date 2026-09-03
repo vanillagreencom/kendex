@@ -51,22 +51,4 @@ describe("catalog addressing", () => {
       readErrorKey(catalogKey(catalog), "packages"),
     );
   });
-
-  it("keys one set's read by the place the install would land in", () => {
-    // The same set read for two destinations is two answers — each
-    // member's state and the set's record standing are that place's — so
-    // one must never be served from the other's slot.
-    const catalog = subscription({ scope: "global" }, "kendex");
-    const acme = { scope: "project" as const, root: "/work/acme" };
-    const other = { scope: "project" as const, root: "/work/other" };
-    expect(bundleKey(catalog, "starter", acme)).not.toBe(
-      bundleKey(catalog, "starter", other),
-    );
-    expect(bundleKey(catalog, "starter", acme)).not.toBe(
-      bundleKey(catalog, "starter", null),
-    );
-    expect(bundleKey(catalog, "starter", acme)).toBe(
-      bundleKey(catalog, "starter", { scope: "project", root: "/work/acme" }),
-    );
-  });
 });

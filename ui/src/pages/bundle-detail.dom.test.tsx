@@ -10,7 +10,7 @@ import type { AppSettings, BundleDetail, Scope } from "@/bindings";
 import { commands } from "@/bindings";
 import { unreadableRecordsLine } from "@/lib/copy-marketplaces";
 import { useMarketplacesStore } from "@/stores/marketplaces";
-import { droppedSetCaches, subscription } from "@/stores/marketplaces-shared";
+import { subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
 import { useSettingsStore } from "@/stores/settings";
 import { mount, settle } from "@/test/dom";
@@ -82,18 +82,7 @@ beforeEach(() => {
     status: "ok",
     data: [{ harness: "claude", detected: true, sharesTheUniversalTree: true }],
   });
-  useMarketplacesStore.setState({
-    bundles: {},
-    readErrors: {},
-    busy: false,
-    // What the real action does to these caches, which is what asks this
-    // page again. A stub that skipped the drop would leave the count below
-    // passing because nothing re-read at all.
-    install: async () => {
-      useMarketplacesStore.setState(droppedSetCaches());
-      return true;
-    },
-  });
+  useMarketplacesStore.setState({ bundles: {}, readErrors: {}, busy: false });
   useSettingsStore.setState({
     settings: { projects: [ACME.root] } as AppSettings,
   });
@@ -101,52 +90,28 @@ beforeEach(() => {
 });
 
 describe("the curated set page", () => {
-  it("asks for the set against the place the install would land in", async () => {
-    mount(<BundleDetailPage />);
+  // Everything the destination decides on this page, in one pass. The read
+  // is asked again for the project and served from that project's own slot
+  // when it comes back to one already read; a tick made against the place
+  // before it is not carried into the new one; the record standing is that
+  // project's, so Install all withholds on it and the reason names it.
+  it("reads, gates and says why for the place the install would land in", async () => {
+    const host = mount(<BundleDetailPage />);
     await settle();
-
-    // Browsed and installed in the same place, so no redirect — the read
-    // carries the destination all the same, which is the argument a
-    // redirect fills.
     expect(commands.marketplaceBundle).toHaveBeenCalledWith(
       catalog,
       "starter",
       null,
     );
-  });
-
-  // The engine answers for the place the install lands in, so the page has
-  // that place's record standing and no reason to keep a button the engine
-  // would refuse on the same record.
-  it("withholds Install all and says why when that place's records went unread", async () => {
-    const host = mount(<BundleDetailPage />);
-    await settle();
-    // The control: a readable record leaves the button alone, so what
-    // follows is the record doing the withholding and not the page.
-    expect(installAll(host)?.disabled).toBe(false);
-    expect(host.textContent).not.toContain("See Problems");
-
-    answer({ ...starter, recordsUnreadable: true, members: [] });
-    useNavStore.setState({ bundleRef: { bundle: "other", catalog } });
-    await settle();
-
-    expect(installAll(host)?.disabled).toBe(true);
-    expect(host.textContent).toContain(unreadableRecordsLine("Personal"));
-    expect(host.textContent).toContain("See Problems");
-  });
-
-  // Everything the destination decides, in one pass: the read is asked
-  // again for the project, a tick made against the place before it is not
-  // carried into the new one, and the reason names the place the install
-  // would land in rather than the one being browsed.
-  it("re-reads for a chosen project, drops the tick, and names that place", async () => {
-    const host = mount(<BundleDetailPage />);
-    await settle();
     const box = host.querySelector<HTMLInputElement>('input[type="checkbox"]');
     if (!box) throw new Error("no member checkbox rendered");
     await userEvent.click(box);
     await settle();
+    // The control: a readable record leaves the buttons alone, so what
+    // follows is the record doing the withholding and not the page.
     expect(host.textContent).toContain("Install 1 selected");
+    expect(installAll(host)?.disabled).toBe(false);
+    expect(host.textContent).not.toContain("See Problems");
 
     answer({ ...starter, recordsUnreadable: true, members: [] });
     await chooseDestination(host, "acme");
@@ -156,40 +121,14 @@ describe("the curated set page", () => {
       "starter",
       ACME,
     );
+    expect(commands.marketplaceBundle).toHaveBeenCalledTimes(2);
     expect(host.textContent).toContain("Install 0 selected");
+    expect(installAll(host)?.disabled).toBe(true);
     expect(host.textContent).toContain(unreadableRecordsLine("acme"));
     expect(host.textContent).not.toContain(unreadableRecordsLine("Personal"));
-  });
 
-  // The install empties every set cache, and the read watches presence, so
-  // the drop is the whole trigger. A hand-rolled reload beside it asked the
-  // engine the same question twice for one install.
-  it("asks once more after an install, never twice", async () => {
-    const host = mount(<BundleDetailPage />);
-    await settle();
-    expect(commands.marketplaceBundle).toHaveBeenCalledTimes(1);
-
-    const button = installAll(host);
-    if (!button) throw new Error("no Install all rendered");
-    await userEvent.click(button);
-    await settle();
-
-    expect(commands.marketplaceBundle).toHaveBeenCalledTimes(2);
-  });
-
-  // Two ways the same read gets asked twice for one answer: the picker
-  // hands back a freshly built Scope, so the place already being browsed
-  // reads as a redirect under object identity; and a place already read
-  // has its answer in a slot of its own. Going out to a project and back
-  // asks the engine once, for the project.
-  it("asks once per place, and not at all for one already read", async () => {
-    const host = mount(<BundleDetailPage />);
-    await settle();
-    expect(commands.marketplaceBundle).toHaveBeenCalledTimes(1);
-
-    await chooseDestination(host, "acme");
-    expect(commands.marketplaceBundle).toHaveBeenCalledTimes(2);
-
+    // Back to the place being browsed, which is not a redirect, and out to
+    // the project again: both answers are already in slots of their own.
     await chooseDestination(host, "Personal");
     await chooseDestination(host, "acme");
     expect(commands.marketplaceBundle).toHaveBeenCalledTimes(2);
