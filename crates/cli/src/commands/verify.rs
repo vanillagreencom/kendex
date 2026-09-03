@@ -1,7 +1,7 @@
 use std::process::ExitCode;
 
 use kendex_core::engine::{
-    DriftRow, DriftState, audit, planned_declarations, recorded_by_the_plan,
+    DriftRow, DriftState, ShimStanding, audit, planned_declarations, recorded_by_the_plan,
 };
 use kendex_core::env::Env;
 use kendex_core::lock::{Lock, LockFile, load_file as load_lock_file, lock_path};
@@ -16,9 +16,11 @@ use crate::ui;
 /// Drift check over lock entries; non-zero exit on any failing row — this
 /// is the signal consuming repos compose in shell pipelines.
 ///
-/// Two things are named beside the rows without changing the count, which
+/// Three things are named beside the rows without changing the count, which
 /// is a count of lock entries and nothing else: content nothing manages,
-/// and what a scope declares that its record does not hold.
+/// what a scope declares that its record does not hold, and the
+/// instruction shims the scope owes — each printed as a row of its own,
+/// and a failing one closes the run non-zero like a failing lock row.
 ///
 /// One state closes the run non-zero on its own: a scope whose manifest
 /// asks for items and whose install record is not there. That is the
@@ -47,6 +49,10 @@ pub fn run(
     // code alone — the run already said which scope it was, where it found
     // it.
     let mut recordless = false;
+    // Instruction shims not in sync, gathered for the exit code alone: the
+    // count above is of lock entries, and each shim already printed its
+    // own row where it was found.
+    let mut shims_failed = 0usize;
 
     for scope in resolve_scopes(env, filter)? {
         let path = lock_path(env, &scope);
@@ -135,9 +141,6 @@ pub fn run(
         if !gap.is_empty() {
             gaps.push((scope.clone(), gap));
         }
-        if lock.entries.is_empty() {
-            continue;
-        }
         for entry in lock.entries.values() {
             if !names.is_empty() && !names.contains(&entry.name) {
                 continue;
@@ -145,12 +148,18 @@ pub fn run(
             checked += 1;
             failed += usize::from(say_row(entry, &report));
         }
+        for shim in &report.instruction_shims {
+            if !names.is_empty() && !names.contains(&shim.name) {
+                continue;
+            }
+            shims_failed += usize::from(say_shim(shim));
+        }
     }
 
     print_unmanaged(&unmanaged);
     print_gaps(&gaps);
     ui::ledger(&head(checked, failed, !gaps.is_empty()), &[]);
-    Ok(match failed > 0 || recordless {
+    Ok(match failed > 0 || shims_failed > 0 || recordless {
         true => ExitCode::FAILURE,
         false => ExitCode::SUCCESS,
     })
@@ -260,6 +269,24 @@ fn print_gaps(scopes: &[(Scope, Vec<(ItemKind, String)>)]) {
                     false => "no record ever holds one; kendex update-pi checks it",
                 }
             ));
+        }
+    }
+}
+
+/// One instruction shim's row, and whether it failed the run. A shim is
+/// content, not a lock entry: the row reads its state off the engine's
+/// standing for it, which compared the bytes (invariant 12).
+fn say_shim(shim: &ShimStanding) -> bool {
+    let harness = shim.harness.name();
+    let name = &shim.name;
+    match shim.problem() {
+        Some(problem) => {
+            fail(&format!("✗ shim {name} [{harness}]: {problem}"));
+            true
+        }
+        None => {
+            say(&format!("✓ shim {name} [{harness}]"));
+            false
         }
     }
 }

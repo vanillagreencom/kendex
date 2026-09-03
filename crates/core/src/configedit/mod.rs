@@ -72,6 +72,13 @@ pub enum ConfigEdit {
         name: String,
         enabled: Option<bool>,
     },
+    /// gemini settings.json: ensure `context.fileName` names `name`,
+    /// keeping whatever it named — Gemini's own default file where the key
+    /// was absent, the one string it held, every entry of the list it
+    /// held. Dropping any of those would change which files Gemini reads.
+    GeminiAddContextFile {
+        name: String,
+    },
     /// opencode.json: ensure `instructions[]` carries `reference`; for
     /// PreToolUse:Bash hooks also `permission.bash = {"*": "ask"}`.
     OpencodeAddInstruction {
@@ -190,6 +197,7 @@ impl ConfigEdit {
             ConfigEdit::SetGeminiMcpEnabled { name, enabled } => {
                 set_gemini_mcp_enabled(object, name, *enabled)
             }
+            ConfigEdit::GeminiAddContextFile { name } => gemini_add_context_file(object, name),
             ConfigEdit::OpencodeAddInstruction {
                 reference,
                 bash_permission,
@@ -285,6 +293,42 @@ fn set_gemini_mcp_enabled(
         None => {
             root.shift_remove(name);
         }
+    }
+    Ok(())
+}
+
+/// The file Gemini reads when `context.fileName` is not set. Written in
+/// beside the name a shim adds, since an absent key means this file and a
+/// key naming only the new one would stop Gemini reading it.
+const GEMINI_DEFAULT_CONTEXT_FILE: &str = "GEMINI.md";
+
+/// `context.fileName` gains `name` in whichever shape it already has: a
+/// string becomes a two-element list with the string first, a list is
+/// appended to, an absent key is the default file then `name`. Anything
+/// else there is not a place a name can be added to, and is refused rather
+/// than replaced (invariant 2).
+fn gemini_add_context_file(root: &mut Map<String, Value>, name: &str) -> Result<(), String> {
+    let context = ensure_object(root, "context")?;
+    match context.get_mut("fileName") {
+        None => {
+            let mut names = vec![GEMINI_DEFAULT_CONTEXT_FILE.to_owned()];
+            if name != GEMINI_DEFAULT_CONTEXT_FILE {
+                names.push(name.to_owned());
+            }
+            context.insert("fileName".into(), json!(names));
+        }
+        Some(Value::String(current)) => {
+            if current != name {
+                let kept = current.clone();
+                context.insert("fileName".into(), json!([kept, name]));
+            }
+        }
+        Some(Value::Array(list)) => {
+            if !list.iter().any(|entry| entry.as_str() == Some(name)) {
+                list.push(Value::String(name.to_owned()));
+            }
+        }
+        Some(_) => return Err("context.fileName is neither a string nor a list".to_owned()),
     }
     Ok(())
 }

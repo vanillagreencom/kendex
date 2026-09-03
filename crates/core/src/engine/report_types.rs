@@ -183,6 +183,10 @@ pub struct EngineReport {
     /// declared uninstaller has to run before the plan does — while the
     /// script it names is still there to run.
     pub repo_effects_leaving: Vec<crate::repo_effects::DeclaredEffects>,
+    /// Every instruction shim the scope owes and where it stands, in sync
+    /// ones included. Drift rows carry only what is not in sync; `verify`
+    /// reports each shim as a row of its own beside the lock rows.
+    pub instruction_shims: Vec<super::ShimStanding>,
 }
 
 /// One name a removal was asked for, with the kind it must be when the

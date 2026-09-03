@@ -178,3 +178,80 @@ fn hook_upsert_refreshes_in_place_and_removal_keeps_key_order() {
     let keys: Vec<&String> = value.as_object().unwrap().keys().collect();
     assert_eq!(keys, ["hooks", "model", "alwaysThinkingEnabled"]);
 }
+
+/// Gemini's context list gains `AGENTS.md` in whatever shape it already
+/// has, and never loses what it named: an absent key means Gemini's own
+/// default, which stays in front.
+#[test]
+fn gemini_context_file_is_added_beside_what_is_already_named() {
+    let edit = ConfigEdit::GeminiAddContextFile {
+        name: "AGENTS.md".into(),
+    };
+    let named = |text: &str| -> Value {
+        let value: Value = serde_json::from_str(&edit.apply(text).unwrap()).unwrap();
+        value["context"]["fileName"].clone()
+    };
+    assert_eq!(named("{}"), json!(["GEMINI.md", "AGENTS.md"]));
+    assert_eq!(named(""), json!(["GEMINI.md", "AGENTS.md"]));
+    assert_eq!(
+        named(r#"{"context": {"fileName": "TEAM.md"}}"#),
+        json!(["TEAM.md", "AGENTS.md"])
+    );
+    assert_eq!(
+        named(r#"{"context": {"fileName": ["GEMINI.md", "TEAM.md"]}}"#),
+        json!(["GEMINI.md", "TEAM.md", "AGENTS.md"])
+    );
+    // Already named, as a string or in a list: nothing moves, and the
+    // idempotency is what the drift check reads as "in sync".
+    let listed = r#"{
+  "context": {
+    "fileName": [
+      "AGENTS.md"
+    ]
+  }
+}
+"#;
+    assert_eq!(edit.apply(listed).unwrap(), listed);
+    let string = r#"{
+  "context": {
+    "fileName": "AGENTS.md"
+  }
+}
+"#;
+    assert_eq!(edit.apply(string).unwrap(), string);
+}
+
+/// Every key around the edited one survives, in order, and a key that is
+/// neither a string nor a list is refused rather than replaced.
+#[test]
+fn gemini_context_file_keeps_unrelated_keys_and_refuses_another_shape() {
+    let edit = ConfigEdit::GeminiAddContextFile {
+        name: "AGENTS.md".into(),
+    };
+    let start = r#"{
+  "theme": "Dark",
+  "context": {
+    "loadMemoryFromIncludeDirectories": true
+  },
+  "mcpServers": {
+    "gh": {
+      "command": "gh-mcp"
+    }
+  }
+}
+"#;
+    let once = edit.apply(start).unwrap();
+    assert!(once.starts_with("{\n  \"theme\": \"Dark\",\n  \"context\": {\n    \"loadMemoryFromIncludeDirectories\": true,\n    \"fileName\": [\n"), "{once}");
+    assert!(
+        once.ends_with(
+            "  \"mcpServers\": {\n    \"gh\": {\n      \"command\": \"gh-mcp\"\n    }\n  }\n}\n"
+        ),
+        "{once}"
+    );
+    assert_eq!(edit.apply(&once).unwrap(), once);
+
+    let refused = edit.apply(r#"{"context": {"fileName": 3}}"#).unwrap_err();
+    assert!(refused.contains("context.fileName"), "{refused}");
+    let unparseable = edit.apply("{ not json").unwrap_err();
+    assert!(!unparseable.is_empty());
+}

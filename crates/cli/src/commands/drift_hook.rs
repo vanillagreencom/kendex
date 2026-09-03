@@ -40,6 +40,7 @@ pub fn install(env: &Env, scope: &Scope, yes: bool) -> CliResult {
             sweepable: Vec::new(),
             kept: Vec::new(),
             safety: Vec::new(),
+            instruction_shims: Vec::new(),
         };
         confirm_and_execute(env, &report, yes)?;
     }

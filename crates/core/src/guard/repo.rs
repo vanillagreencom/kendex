@@ -42,7 +42,7 @@ pub struct Repo {
 /// Only these: the guard verbs relay the package's own words untouched, and
 /// a person running them in their own locale should get their own locale
 /// back. What must not vary is a phrase kendex itself matches on.
-fn english(hardened: Hardened) -> Hardened {
+pub(crate) fn english(hardened: Hardened) -> Hardened {
     hardened.env("LC_ALL", "C")
 }
 
@@ -82,7 +82,7 @@ fn one_path(dir: &Path, flag: &str) -> Result<Option<PathBuf>> {
 /// `from_utf8_lossy` turns any byte that is not UTF-8 into U+FFFD, which is
 /// not a filename, so every verb would then name a path nobody has for a
 /// repository that is perfectly fine.
-fn path_from(bytes: Vec<u8>, what: &str) -> Result<PathBuf> {
+pub(crate) fn path_from(bytes: Vec<u8>, what: &str) -> Result<PathBuf> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStringExt;
