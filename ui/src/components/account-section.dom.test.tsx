@@ -185,7 +185,7 @@ describe("before any read has landed", () => {
   });
 });
 
-// docs/ARCHITECTURE.md: a failed read shows its error with a retry. This is
+// ui/AGENTS.md: a failed read shows its error with a retry. This is
 // the only retry in the app, and the only place the cause is written out.
 describe("the retry a failed read gets", () => {
   it("shows the cause the read gave", () => {

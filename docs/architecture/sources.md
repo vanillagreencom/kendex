@@ -1,0 +1,32 @@
+# Sources and catalogs
+
+Covers: crates/core/src/source/, crates/core/src/source.rs, crates/core/src/source_read.rs, crates/core/src/source_ref.rs, crates/core/src/remote/, crates/core/src/package/, crates/core/src/drift/, crates/core/src/check_catalog.rs, crates/core/src/library.rs
+
+A source is a repository or folder of packages; the store materializes each resolved commit once and every read of catalog content goes through one sealed reader. Installed state is derived from manifest and lock on every read and never stored beside the catalog.
+
+## Boundaries
+
+- Every catalog read goes through `source_read::SealedSource`: resolved against the canonical root, symlinks refused, depth, count and byte budgets carried. A raw filesystem read over the catalog-reading modules is banned by a `tools/guard` lane. Enforced by `crates/core/tests/sealed_source.rs`.
+- The store is immutable: each commit is materialized once into a directory named by its object id, published by rename, read unchanged thereafter; fetching touches only the bare mirror beside it; nothing prunes the store. Reuse is verified against a publish receipt outside the checkout. Enforced by `crates/core/tests/source_store.rs`.
+- The machine seam reads through the same core installing does: `crates/core/src/check_catalog.rs` owns the structural, settings and safety passes behind `kendex check --catalog`, and `crates/core/src/source/index.rs` emits the summary the community directory reads; field order in both JSON shapes is the schema. Enforced by `crates/core/tests/authoring_check.rs::check_and_index_agree_on_the_offered_set` and `crates/core/tests/marketplace_index.rs::the_summary_keeps_its_published_field_order`.
+- Browsing is a read-side join: every `crates/core/src/source/browse.rs` read takes a catalog, a subscription or a bare repository, so a listed marketplace opens before anyone subscribes, and each row's state is joined from the destination scope's manifest and lock on every call. A lock this build refuses still lists the catalog with every install surface gated. Enforced by `crates/core/tests/browse_unreadable_lock.rs`.
+
+## Invariants
+
+1. A full commit id is a pin, once cached needing no network; a tag or branch is a tracking selector re-resolved on refresh and previewed like any upstream change; an item's own `rev` outranks its source's and is always a full commit id. Holds flow through derivation, and two parents demanding different revisions of one dependency conflict and write nothing. Enforced by `crates/core/tests/source_store.rs` and `crates/core/tests/package_pins/`.
+2. Materialization runs under a per-repository cache lock; a busy cache costs only its own source. Enforced by `crates/core/tests/source_store.rs::a_busy_cache_costs_only_its_own_source`.
+3. Discovery reads a closed, versioned search table (`DISCOVERY_VERSION` in `crates/core/src/source/discover.rs`) that yields skills only; hooks, MCP servers, commands and agents install only from a declared kendex layout or a plugin registry. Precedence fails closed: a plugin registry wins outright, else a parsed control file declares the layout, else the search runs, and an unreadable control file makes the source unusable with a finding. Enforced by `crates/core/tests/discovery.rs`.
+4. Two directories folding to one name are both skipped with a finding naming both, identical bytes excepted; a frontmatter `name` disagreeing with its directory is a finding, the directory being the identity. Enforced by `crates/core/tests/discovery.rs::two_directories_folding_to_one_name_with_different_bytes_both_skip`.
+5. A plugin-registry-shaped catalog is recognized only by `.claude-plugin/marketplace.json`; an item resolves only under a plugin the registry validated, and an entry naming another repository is skipped with a finding. Enforced by `crates/core/tests/plugin_registry.rs`.
+6. A subscription reference is parsed, never guessed, by the two validators in `crates/core/src/source_ref.rs`: the typed one for what a person types, the untrusted GitHub-only one for directory rows and deep links. One repository subscribes once per scope by canonical identity (`repo_identity` folds `.git`, trailing slash, host case and every GitHub spelling), the refusal naming the existing subscription. Enforced by `crates/core/tests/marketplace_subscribe.rs` and the tests in `crates/core/src/source_ref/`.
+7. Installing into a project from a personal subscription copies the declaration into the project in that plan; the personal manifest is read-only and the cache shared. Enforced by `crates/core/tests/install_into_project.rs`.
+8. Pre-install safety (`crates/core/src/source/browse/safety.rs`) caches findings and scores only, keyed by content hash plus rule-set, discovery-table and record-format versions, never inside the receipt-signed checkout. Enforced by the tests in `crates/core/src/source/browse/safety/`.
+9. `kendex check` reads manifest, lock, the per-scope drift snapshot (`crates/core/src/drift/snapshot.rs`) and per-mirror fetch stamps, materializing no source tree; exit 0 is clean, 1 drift or unevaluated, 2 could-not-check, and unknown outranks drift. A mirror that moved since its last evaluation is unevaluated, held packages are silent in the agent report, and every read API says when it cannot answer. Enforced by `crates/core/tests/drift_check.rs`.
+10. A bundle body carrying a key the reader will not read drops that set alone and reports it; the other sets and every item still install, and nothing derived from that catalog is swept until the body reads. Enforced by `crates/core/tests/authoring_check.rs::a_body_key_the_reader_does_not_know_is_that_sets_breakage`.
+
+## Decisions
+
+- Any repository holding skills is a marketplace; there is no registration step, and a repository-root `SKILL.md` is a one-skill repository named by its validated frontmatter.
+- Every offered item is dated by the newest commit that touched what it contains, never by the bare tip, so the About tab can never read older than a package beside it (`crates/core/src/source/browse/updated.rs`).
+- Updates rows are per package per scope; an edited place is never updated over, and the fork-or-discard choice lives on the package page.
+- The detached `kendex source refresh --stale` a read spawns has a six-hour TTL, a per-mirror lock, no stdio, and is never waited on.

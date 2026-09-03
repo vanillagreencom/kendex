@@ -129,7 +129,7 @@ case "$OUT" in
   *) bad "no stand-down statement" "$OUT" ;;
 esac
 # Recovery output is data, never a command line to paste
-# (docs/ARCHITECTURE.md). Every earlier shape of this remedy was a command
+# (docs/architecture/overview.md § Decisions). Every earlier shape of this remedy was a command
 # this file composed, and every one of them was wrong about somebody's
 # configuration.
 case "$OUT" in
@@ -188,7 +188,7 @@ check_in "$R80"
   || bad "unset re-arms" "rc=$RC out=$OUT"
 
 echo "=== the stand-down is a statement, git's report, and one sentence ==="
-# docs/ARCHITECTURE.md: recovery output presents its parameters as data,
+# docs/architecture/overview.md § Decisions: recovery output presents its parameters as data,
 # never a command line to paste. Three earlier shapes of this remedy each
 # composed a command and each was wrong about a configuration nobody here
 # can see. What is printed now is git's own report, unedited, and a sentence
