@@ -148,26 +148,56 @@ describe("overlapping reads of the join", () => {
     expect(store().rows).toEqual(AFTER);
   });
 
-  // A read that failed keeps the rows it had and says why. The failure,
-  // not a read still on its way, is what holds the gate shut.
-  it("keeps the rows a failed read could not replace, and says why", async () => {
+  // A read hands `inFlight` back before the re-read behind it starts, so
+  // there is a moment with nothing running and one still scheduled. A
+  // request arriving there joins what is scheduled: its own read would put
+  // two out at once, and nothing ranks them.
+  it("joins the re-read already scheduled rather than starting a second", async () => {
+    const running = park();
     vi.mocked(commands.libraryProvenance)
-      .mockResolvedValueOnce({ status: "ok", data: AFTER })
-      .mockResolvedValueOnce({
-        status: "error",
-        error: "the join did not read",
-      });
+      .mockReturnValueOnce(running.promise)
+      .mockResolvedValue({ status: "ok", data: AFTER });
 
-    await store().reload();
-    await store().reload();
+    const out = store().reload();
+    // Registered before the request that queues the re-read, so it runs in
+    // the gap rather than behind the re-read's own start.
+    const inTheGap = out.then(() => store().reload());
+    const behind = store().reload();
 
+    running.land({ status: "ok", data: BEFORE });
+    await Promise.all([out, behind, inTheGap]);
+
+    expect(commands.libraryProvenance).toHaveBeenCalledTimes(2);
     expect(store().rows).toEqual(AFTER);
-    expect(store().reading).toBe(false);
-    expect(store().read).toEqual({
-      status: "failed",
-      error: "the join did not read",
-    });
-    expect(joinCurrent(store())).toBe(false);
+  });
+
+  // What a surface reads is what the store PUBLISHES, not what it holds
+  // once everything has settled. Between the running read landing and the
+  // re-read starting, the rows are a landed answer a scheduled read is
+  // about to replace, so `joinCurrent` must not go true there — which only
+  // a subscription across the sequence can see.
+  it("never publishes the join as current before the last read lands", async () => {
+    const running = park();
+    const behind = park();
+    vi.mocked(commands.libraryProvenance)
+      .mockReturnValueOnce(running.promise)
+      .mockReturnValueOnce(behind.promise);
+
+    const published: boolean[] = [];
+    const stop = useProvenanceStore.subscribe((state) =>
+      published.push(joinCurrent(state)),
+    );
+
+    const out = store().reload();
+    const queued = store().reload();
+    running.land({ status: "ok", data: BEFORE });
+    await out;
+    behind.land({ status: "ok", data: AFTER });
+    await queued;
+    stop();
+
+    expect(published.slice(0, -1)).not.toContain(true);
+    expect(published.at(-1)).toBe(true);
   });
 
   // A rejection is the same failed read as a returned refusal, and must

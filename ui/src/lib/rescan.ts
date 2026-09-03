@@ -83,11 +83,15 @@ export async function rescanEverything(opts?: {
 // request arriving under a running read joins that follow-up, which starts
 // only once the running one has finished — so every write is answered by a
 // read that began after it, and a page of writes does not pay a whole-machine
-// read each. Each of the three legs keeps a queue of this shape for itself,
-// so a write is never answered by a read that began before it. A read that
-// fails answers for nothing at all: it leaves the rows it had standing, and
-// the join and the audit say so in the read state their surfaces gate on,
-// while the scan says it in a toast and an `error` nothing gates on.
+// read each. Each of the three legs keeps a queue of this shape for itself.
+// The join guards which arrivals may start one, so a write is never answered
+// by a read of the join that began before it; the scan and audit stores hold
+// the pair without that guard, and nothing here establishes the property for
+// them. A read that fails answers for nothing: it leaves the rows it had
+// standing, and the join and the audit say so in the read state their
+// surfaces gate on, while the scan's `error` is drawn rather than gated —
+// the status footer, Problems and Home each render it, and no control is
+// held back on it.
 let running: Promise<void> | null = null;
 let queued: Promise<void> | null = null;
 

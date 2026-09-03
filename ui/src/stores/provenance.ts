@@ -50,9 +50,10 @@ export const joinCurrent = (state: ProvenanceState): boolean =>
 export const useProvenanceStore = create<ProvenanceState>((set, get) => {
   // The read out and the one re-read waiting behind it — the same pair the
   // scan store keeps, for the same reason. Requests overlap on every
-  // ordinary path, but the reads they ask for do not: one runs and one
-  // waits, so the last to land is always the last to have begun, and there
-  // is no ranking to keep.
+  // ordinary path; the reads they ask for do not, because `reload` starts
+  // one only with both handles clear. That guard is the whole of why the
+  // last read to land is the last to have begun, and so the whole of why
+  // there is no ranking to keep: loosen it and the ordering goes with it.
   let inFlight: Promise<void> | null = null;
   let queued: Promise<void> | null = null;
 
@@ -95,8 +96,15 @@ export const useProvenanceStore = create<ProvenanceState>((set, get) => {
     // one waits, a second arrival joining that one rather than stacking
     // identical whole-machine reads.
     reload: () => {
+      // Both handles, not just the running one. A read hands `inFlight`
+      // back before the re-read behind it starts — the continuation that
+      // starts it is registered on that same promise — so a request
+      // arriving in that gap would see nothing running and start a second
+      // read alongside the one already scheduled. `start` is reachable
+      // only with both clear, which is what makes one-at-a-time true.
+      if (queued) return queued;
       if (!inFlight) return start();
-      queued ??= inFlight.then(() => {
+      queued = inFlight.then(() => {
         queued = null;
         return start();
       });
