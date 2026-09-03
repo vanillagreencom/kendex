@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands, type ProvenanceRow } from "@/bindings";
 import { READ_PENDING } from "@/lib/read-state";
+import { NO_REASON_GIVEN } from "@/lib/settled";
 import {
   joinCurrent,
   originFor,
@@ -200,19 +201,36 @@ describe("overlapping reads of the join", () => {
     expect(published.at(-1)).toBe(true);
   });
 
-  // A rejection is the same failed read as a returned refusal, and must
-  // not leave the gate open or the join reading forever.
-  it("lands a rejected call as a failed read", async () => {
-    vi.mocked(commands.libraryProvenance).mockRejectedValueOnce(
-      new Error("the channel is gone"),
-    );
+  // The two failures a shipped path still produces. A refusal after a read
+  // that landed takes the join back off current: the rows it leaves are the
+  // older read's, and the gate closes on `read` alone. A refusal naming no
+  // reason is still a failure with something to say, which is what `settled`
+  // is here for now that the wrapper answers rather than throws.
+  it("lands an engine refusal as a failed read, empty reason and all", async () => {
+    vi.mocked(commands.libraryProvenance)
+      .mockResolvedValueOnce({ status: "ok", data: AFTER })
+      .mockResolvedValueOnce({
+        status: "error",
+        error: "the join did not read",
+      });
 
     await store().reload();
+    await store().reload();
 
+    expect(store().rows).toEqual(AFTER);
     expect(store().read).toEqual({
       status: "failed",
-      error: "the channel is gone",
+      error: "the join did not read",
     });
+    expect(joinCurrent(store())).toBe(false);
     expect(store().reading).toBe(false);
+
+    vi.mocked(commands.libraryProvenance).mockResolvedValueOnce({
+      status: "error",
+      error: "",
+    });
+    await store().reload();
+
+    expect(store().read).toEqual({ status: "failed", error: NO_REASON_GIVEN });
   });
 });

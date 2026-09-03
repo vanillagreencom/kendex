@@ -58,10 +58,11 @@ export const useProvenanceStore = create<ProvenanceState>((set, get) => {
   let queued: Promise<void> | null = null;
 
   const land = async (): Promise<void> => {
-    // `settled` lands a rejected call as the same failed read as a returned
-    // refusal: the wrapper rethrows a transport failure, and a read that
-    // never answered is a failed read, not a rejection for every caller to
-    // catch. A failure keeps the rows it had, per [ReadState].
+    // The wrapper folds a rejected command into an error status, so
+    // `settled` is the last guard rather than the first: it names a refusal
+    // that carries no reason, and a read that never answered at all is
+    // still a failed read rather than a rejection for every caller of this
+    // store to catch. A failure keeps the rows it had, per [ReadState].
     const response = await settled(commands.libraryProvenance());
     set(
       response.status === "ok"
