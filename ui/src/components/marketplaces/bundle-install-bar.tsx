@@ -14,8 +14,14 @@ import { Button } from "@/components/ui/button";
  *
  * `choice` is not only this row's: the page's own Install all, in the
  * header, installs the whole set with whatever this picker last answered.
- * So the tool picker at the bottom of the page decides how the button at
- * the top installs, and moving either one has to account for the other. */
+ * So the tool picker here decides how the button at the top installs, and
+ * moving either one has to account for the other.
+ *
+ * The row is drawn above the set's own read and stays on screen while that
+ * read is loading or failed, because the place it picks is what a failed
+ * read is escaped by. Nothing here acts on a set the page does not hold:
+ * `picked` is 0 in every state that reaches one, since choosing a place
+ * clears the ticks and a landed install clears them again. */
 export function BundleInstallBar({
   browsing,
   target,
@@ -40,7 +46,7 @@ export function BundleInstallBar({
   onInstall: () => void;
 }) {
   return (
-    <div className="mt-4 flex items-center justify-end gap-2">
+    <div className="mb-3 flex items-center justify-end gap-2">
       <DestinationSelect
         browsing={browsing}
         value={target}

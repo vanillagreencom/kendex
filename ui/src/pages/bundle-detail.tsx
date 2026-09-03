@@ -170,6 +170,29 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className={cn(PAGE_BODY, "pt-0")}>
           <div className={CONTENT_WIDTH}>
+            {subscribed && scope && target ? (
+              <BundleInstallBar
+                browsing={scope}
+                target={target}
+                kinds={selectedKinds}
+                choice={choice}
+                picked={selected.size}
+                busy={busy}
+                onPlace={(next) => {
+                  // Which tools can take this is a fact about the
+                  // destination, so a choice made against another one is not
+                  // an answer here. Nor is a ticked member: the box was
+                  // ticked against the state the place before it answered,
+                  // and the new place may already hold that member or refuse
+                  // to say.
+                  setChoice(NO_CHOICE);
+                  setSelected(new Set());
+                  setDestination(next);
+                }}
+                onChoice={setChoice}
+                onInstall={installSelected}
+              />
+            ) : null}
             {!detail && readError ? (
               <p
                 className="py-16 text-center text-sm text-critical"
@@ -203,29 +226,6 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
                     />
                   ))}
                 </div>
-                {subscribed && scope && target ? (
-                  <BundleInstallBar
-                    browsing={scope}
-                    target={target}
-                    kinds={selectedKinds}
-                    choice={choice}
-                    picked={selected.size}
-                    busy={busy}
-                    onPlace={(next) => {
-                      // Which tools can take this is a fact about the
-                      // destination, so a choice made against another one is
-                      // not an answer here. Nor is a ticked member: the box
-                      // was ticked against the state the place before it
-                      // answered, and the new place may already hold that
-                      // member or refuse to say.
-                      setChoice(NO_CHOICE);
-                      setSelected(new Set());
-                      setDestination(next);
-                    }}
-                    onChoice={setChoice}
-                    onInstall={installSelected}
-                  />
-                ) : null}
               </>
             )}
           </div>

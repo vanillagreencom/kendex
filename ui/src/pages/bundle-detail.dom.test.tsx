@@ -133,4 +133,24 @@ describe("the curated set page", () => {
     await chooseDestination(host, "acme");
     expect(commands.marketplaceBundle).toHaveBeenCalledTimes(2);
   });
+
+  // A destination whose read fails is the one state the picker has to
+  // outlive: it is the only way to another place, and a page that hid it
+  // would strand the reader on the error with nothing to press.
+  it("can be switched away from a destination whose read failed", async () => {
+    const host = mount(<BundleDetailPage />);
+    await settle();
+
+    vi.mocked(commands.marketplaceBundle).mockResolvedValue({
+      status: "error",
+      error: "no manifest there",
+    });
+    await chooseDestination(host, "acme");
+    expect(host.textContent).toContain("no manifest there");
+    expect(host.textContent).toContain("Install to");
+
+    await chooseDestination(host, "Personal");
+    expect(host.textContent).not.toContain("no manifest there");
+    expect(host.textContent).toContain("the six things to begin with");
+  });
 });
