@@ -188,6 +188,32 @@ else
   bad "first match wins (earlier strict entry)" "rc=$RC out=$OUT"
 fi
 
+echo "=== a specific entry must precede the glob that also matches it ==="
+# The shipped list's overview entry stands before docs/architecture/*.md
+# for this reason; shipped-defaults.test.sh runs the shipped order, and this
+# is the control that the ORDER is what decides.
+new_repo overview
+mkbytes() { mkdir -p "$R/$(dirname "$1")"; head -c "$2" /dev/zero | tr '\0' 'x' >"$R/$1"; }
+mkbytes docs/architecture/overview.md 13000
+mkbytes pkg/AGENTS.md 7000
+git -C "$R" add -A
+run_raw 'SIZE_RATCHET_CLASSES=docs/architecture/overview.md=12k;docs/architecture/*.md=24k;AGENTS.md=24k;*/AGENTS.md=6k'
+if [ "$RC" -eq 1 ] && case "$OUT" in *"overview.md — 13000 bytes > threshold 12288 (class docs/architecture/overview.md)"*"pkg/AGENTS.md — 7000 bytes > threshold 6144 (class */AGENTS.md)"*) true ;; *) false ;; esac; then
+  ok "the overview entry beats the topic glob, and a nested AGENTS.md is judged at 6k"
+else
+  bad "overview beats the topic glob; nested AGENTS.md at 6k" "rc=$RC out=$OUT"
+fi
+run_raw 'SIZE_RATCHET_CLASSES=docs/architecture/*.md=24k;docs/architecture/overview.md=12k;AGENTS.md=24k;*/AGENTS.md=6k'
+if [ "$RC" -eq 1 ] && case "$OUT" in *"overview.md — 13000 bytes"*) false ;; *"pkg/AGENTS.md — 7000 bytes"*) true ;; *) false ;; esac; then
+  ok "control: with the glob first the overview passes at 24k, so the order is what decides"
+else
+  bad "control: glob first lets the overview through" "rc=$RC out=$OUT"
+fi
+run_raw 'SIZE_RATCHET_CLASSES=AGENTS.md=24k;*/AGENTS.md=6k'
+[ "$RC" -eq 1 ] && case "$OUT" in *"overview.md — 13000 bytes"*) false ;; *) true ;; esac \
+  && ok "control: with no architecture entries the overview is under the base threshold in lines" \
+  || bad "control: no architecture entries" "rc=$RC out=$OUT"
+
 echo "=== an empty mapping is exactly single-threshold behavior ==="
 new_repo legacy
 mkfile pkg/tests/a.txt 500

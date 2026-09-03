@@ -1,0 +1,1 @@
+- size-ratchet ships byte classes for `docs/architecture/overview.md` (12k), `docs/architecture/*.md` (24k) and nested `*/AGENTS.md` (6k); existing files freeze in the baseline.

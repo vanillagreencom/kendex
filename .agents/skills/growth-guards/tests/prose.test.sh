@@ -105,10 +105,20 @@ put SKILL.md '### Heading with 4 words'
 run_prose
 [ "$RC" -eq 0 ] && ok "an ATX heading is not an issue reference" || bad "ATX heading passes" "rc=$RC out=$OUT"
 
+echo "=== a decision ID is a citation, not history ==="
+put SKILL.md 'Decided in D042; the reason is in `D042 § Context`, and D1234 is the same kind.'
+run_prose
+[ "$RC" -eq 0 ] && ok "D042, a code-span D042 § Context and a four-digit ID all pass" \
+  || bad "decision IDs pass" "rc=$RC out=$OUT"
+put SKILL.md 'Decided in #042.'
+run_prose
+[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: SKILL.md:1:"*) true ;; *) false ;; esac \
+  && ok "control: the same digits after '#' are still an issue reference" || bad "control: #042 fails" "rc=$RC out=$OUT"
+
 echo "=== scope: each default name is scanned, and nothing else is ==="
 new_repo scope
 put SKILL.md 'clean'
-for f in SKILL.md AGENTS.md CLAUDE.md skills/dev/SKILL.md skills/dev/AGENTS.md skills/dev/CLAUDE.md workflows/ship.md skills/dev/workflows/ship.md agents/rust.md .claude/agents/rust.md; do
+for f in SKILL.md AGENTS.md CLAUDE.md skills/dev/SKILL.md skills/dev/AGENTS.md skills/dev/CLAUDE.md workflows/ship.md skills/dev/workflows/ship.md agents/rust.md .claude/agents/rust.md docs/architecture/overview.md docs/architecture/topic.md; do
   put "$f" 'Seeded 2026-08-12.'
   run_prose
   [ "$RC" -eq 1 ] && case "$OUT" in *"history reference: $f:1:"*) true ;; *) false ;; esac \
@@ -124,8 +134,8 @@ done
 run_prose
 # The count is asserted with the status: a scan that matched NOTHING also
 # exits 0, and would satisfy a bare rc check while proving nothing.
-[ "$RC" -eq 0 ] && case "$OUT" in *"prose: OK — no history references in 10 scanned file(s)"*) true ;; *) false ;; esac \
-  && ok "README, CHECKS, docs, CHANGELOG, references and a workflows-named file keep their history, with the ten scoped files still read" \
+[ "$RC" -eq 0 ] && case "$OUT" in *"prose: OK — no history references in 12 scanned file(s)"*) true ;; *) false ;; esac \
+  && ok "README, CHECKS, docs, CHANGELOG, references and a workflows-named file keep their history, with the twelve scoped files still read" \
   || bad "out-of-scope files keep their history" "rc=$RC out=$OUT"
 
 echo "=== GROWTH_GUARDS_PROSE_PATHS REPLACES the list (and that is provable) ==="

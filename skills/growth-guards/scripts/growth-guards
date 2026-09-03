@@ -20,13 +20,15 @@ source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/settings.sh
 source "$SCRIPT_DIR/lib/settings.sh"
 
-KNOWN_CHECKS="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose comments commit-msg"
-BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose"
+KNOWN_CHECKS="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs comments commit-msg"
+BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs"
 # The checks the batch hands --staged when it is asked for commit scope.
 # todo-ban and comments default to the whole index, which is a CI subject:
-# at commit each judges what the commit adds. byte-ceiling is already staged
-# by default, and the rest read the index by design.
-STAGED_SCOPED_CHECKS="todo-ban comments"
+# at commit each judges what the commit adds. md-format and md-refs judge
+# the markdown files a commit touches, in full, until GROWTH_GUARDS_MD_SCOPE
+# widens them. byte-ceiling is already staged by default, and the rest read
+# the index by design.
+STAGED_SCOPED_CHECKS="todo-ban md-format md-refs comments"
 
 usage() {
   cat <<EOF
