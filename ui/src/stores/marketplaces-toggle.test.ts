@@ -9,6 +9,7 @@ import { catalogKey, declaredHolder, repoAction } from "./marketplaces-shared";
 
 vi.mock("@/bindings", () => ({
   commands: {
+    libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     marketplaceSubscribe: vi.fn(),
     marketplaceUnsubscribe: vi.fn(),
     marketplacesOverview: vi.fn(),

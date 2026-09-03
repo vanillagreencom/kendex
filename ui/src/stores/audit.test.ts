@@ -14,6 +14,7 @@ vi.mock("@/bindings", () => ({
     adoptItem: vi.fn(),
     toggleItem: vi.fn(),
     removeItem: vi.fn(),
+    libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
   },
 }));
 

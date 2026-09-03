@@ -35,6 +35,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
   // kind list through them, and a copy kept here could go stale unseen.
   ...(await importOriginal<typeof import("@/bindings")>()),
   commands: {
+    libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     updatesOverview: vi.fn(),
     packageForkBeside: vi.fn(),
     scanMachine: vi.fn(),

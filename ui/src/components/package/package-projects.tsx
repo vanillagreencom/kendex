@@ -50,7 +50,7 @@ export function PackageProjects({
   busy: boolean;
   onDelete: () => void;
 }) {
-  const { places, loading } = usePackagePlaces(kind, name, scopes);
+  const { places, loading, removalHeld } = usePackagePlaces(kind, name, scopes);
   const updateOne = useUpdatesStore((s) => s.updateOne);
   const updateRows = useUpdatesStore((s) => s.updateRows);
   const removeItem = useAuditStore((s) => s.removeItem);
@@ -82,7 +82,7 @@ export function PackageProjects({
                 variant="link"
                 size="sm"
                 className="px-0"
-                disabled={busy}
+                disabled={busy || removalHeld}
                 onClick={onDelete}
               >
                 {REMOVE_ALL_LABEL}
@@ -103,6 +103,7 @@ export function PackageProjects({
               key={scopeKey(place.scope)}
               place={place}
               busy={busy}
+              removalHeld={removalHeld}
               onUpdate={() => place.row && void updateOne(place.row)}
               onRemove={() => void removeItem(place.scope, kind, name)}
             />

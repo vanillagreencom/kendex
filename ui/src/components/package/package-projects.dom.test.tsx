@@ -219,6 +219,25 @@ const openTab = async (scopes: Scope[]) => {
 const buttons = (host: HTMLElement) =>
   Array.from(host.querySelectorAll("button"));
 
+/** Every control that removes something: each card's own Remove and the
+ *  header's Remove all, which answer to one judge. */
+const removals = (host: HTMLElement) =>
+  buttons(host).filter(
+    (one) =>
+      one.textContent === REMOVE_LABEL || one.textContent === REMOVE_ALL_LABEL,
+  );
+
+/** A read of the join this test answers by hand, to hold one open. */
+const park = () => {
+  let land: (value: JoinAnswer) => void = () => {};
+  const promise = new Promise<JoinAnswer>((resolve) => {
+    land = resolve;
+  });
+  return { promise, land };
+};
+
+type JoinAnswer = Awaited<ReturnType<typeof commands.libraryProvenance>>;
+
 const click = async (host: HTMLElement, label: string, nth = 0) => {
   const found = buttons(host).filter((one) => one.textContent === label)[nth];
   if (!found) throw new Error(`no "${label}" button at index ${nth}`);
@@ -409,10 +428,10 @@ describe("removing a package from one place", () => {
 
   // The store keeps its older rows when the ownership read fails, and
   // those say nothing about who owns these copies now. Remove is the
-  // destructive control, so one drawn from them is the fail-open case: the
-  // tab holds it closed. A rejection and an error answer are one thing
-  // here — neither joined — so one case covers both.
-  it("offers nothing to remove when the ownership read did not answer", async () => {
+  // destructive control, so one pressed off them is the fail-open case:
+  // the tab holds it shut. A rejection and an error answer are one thing
+  // here — neither read the join — so one case covers both.
+  it("holds every removal shut when the ownership read did not answer", async () => {
     useProvenanceStore.setState({
       rows: ownedBy([VG, OURS], [HYPR, OURS]),
       loaded: true,
@@ -426,10 +445,34 @@ describe("removing a package from one place", () => {
     // The cards still draw: the package is installed there either way.
     expect(host.textContent).toContain("vg");
     expect(host.textContent).toContain("hyprtrade");
-    expect(
-      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
-    ).toEqual([]);
-    expect(host.textContent).not.toContain(REMOVE_ALL_LABEL);
+    expect(removals(host).length).toBe(3);
+    expect(removals(host).every((one) => one.disabled)).toBe(true);
+  });
+
+  // The join is read behind every write and by the sidebar's Scan again,
+  // both of which reach an open tab. A control that left the row while one
+  // was out would move the buttons under a reader's cursor, and a click
+  // aimed at Remove would land on nothing. So the read decides whether
+  // Remove may be PRESSED, never whether it is there.
+  it("keeps the removal controls in place across a read it did not ask for", async () => {
+    const host = await openTab([VG, HYPR]);
+    expect(removals(host).length).toBe(3);
+    expect(removals(host).some((one) => one.disabled)).toBe(false);
+
+    const parked = park();
+    vi.mocked(commands.libraryProvenance).mockReturnValueOnce(parked.promise);
+    await act(async () => {
+      void useProvenanceStore.getState().reload();
+    });
+
+    expect(removals(host).length).toBe(3);
+    expect(removals(host).every((one) => one.disabled)).toBe(true);
+
+    parked.land({ status: "ok", data: ownedBy([VG, OURS], [HYPR, OURS]) });
+    await settle();
+
+    expect(removals(host).length).toBe(3);
+    expect(removals(host).some((one) => one.disabled)).toBe(false);
   });
 });
 

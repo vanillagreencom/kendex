@@ -22,6 +22,7 @@ import { ProblemsPage } from "./problems";
 
 vi.mock("@/bindings", () => ({
   commands: {
+    libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     auditAll: vi.fn(),
     scanMachine: vi.fn(),
     adoptItem: vi.fn(),

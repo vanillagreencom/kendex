@@ -25,6 +25,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
     applyDiscardEdits: vi.fn(),
     scanMachine: vi.fn(),
     auditAll: vi.fn(),
+    libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
   },
 }));
 

@@ -6,12 +6,7 @@ import {
   type ProvenanceRow,
   type Scope,
 } from "@/bindings";
-import {
-  READ_PENDING,
-  type ReadState,
-  readOf,
-  readOrder,
-} from "@/lib/read-state";
+import { READ_PENDING, type ReadState, readOf } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 import { settled } from "@/lib/settled";
 
@@ -23,95 +18,92 @@ interface ProvenanceState {
    * which is the right answer for a column and the wrong one for a decision.
    */
   loaded: boolean;
-  /** How the last read of the join went. A failure keeps the rows it had
-   * and says why: a delete dialog naming where to get the package again and
-   * a places tab drawing Remove both gate on this, and acting on rows
-   * nothing confirmed is exactly the fail-open that gate closes. */
+  /** How the last read went. A failure keeps the rows it had and says why:
+   * the delete dialog's note and the places tab's Remove gate on it, and
+   * acting on rows nothing confirmed is the fail-open they close. */
   read: ReadState;
-  /** True while a read of the join is on its way: a mount, a rescan behind
-   * a write and a dialog opening all ask, and the rows under a reader's
-   * buttons are about to be replaced. */
+  /** True while a read is out, and while a re-read is still to come behind
+   * it: the rows are about to be replaced either way. */
   reading: boolean;
   load: () => Promise<void>;
-  /** Read the join again. `rescanEverything` calls this, which is how a
-   * write anywhere reaches every reader of the join without any of them
-   * guessing at when something installed.
+  /** Read the join again, or join the read already out and take the one
+   * re-read behind it. `rescanEverything` calls this, which is how a write
+   * anywhere reaches every reader of the join.
    *
-   * How the read went is published as [read] and [reading] rather than
-   * returned: the answer belongs to the store and not to the call, so a
-   * caller whose own read was overtaken re-renders when the read that
-   * overtook it lands, instead of holding a boolean that was true for one
-   * instant. [joinCurrent] is that pair read as the one question a caller
-   * gating on the join asks. */
+   * How it went is published as [read] and [reading] rather than returned,
+   * so a caller re-renders when the answer lands instead of holding a
+   * boolean that was true for one instant. [joinCurrent] is the pair read
+   * as the one question a gating caller asks. */
   reload: () => Promise<void>;
 }
 
-/** Whether `rows` is the newest read's answer with nothing newer on its
- *  way. False covers both halves: a read that failed, and a read still
- *  coming that will replace these rows. Anything about to act irreversibly
- *  on the join — a delete naming the places it will remove — asks this,
- *  because rows nothing has confirmed are indistinguishable from rows a
- *  read confirmed. */
+/** Whether the rows are a landed read's answer with none on its way: true
+ *  only there, so never read, failed, and about to be replaced are all
+ *  false. Anything about to act irreversibly on the join asks this. */
 export const joinCurrent = (state: ProvenanceState): boolean =>
   state.read.status === "landed" && !state.reading;
-
-/** The join's reads in the order they were asked for, so the newest answer
- * is the one on screen. Several are routinely out at once: `rescanEverything`
- * refreshes the join behind every write while the Scan again buttons, a
- * delete dialog opening and a marketplace table mounting all ask for their
- * own, and the slower read is not the truer one. */
-const order = readOrder();
 
 /** Where every installation came from — the Library's From column and a
  * marketplace's Installed in column read this join and match rows into their
  * groups. One standing answer, refreshed by `lib/rescan.ts` rather than by
  * each reader deciding for itself when an install might have happened. */
-export const useProvenanceStore = create<ProvenanceState>((set, get) => ({
-  rows: [],
-  loaded: false,
-  read: READ_PENDING,
-  reading: false,
-  load: async () => {
-    await get().reload();
-  },
-  reload: async () => {
-    const ticket = order.begin();
+export const useProvenanceStore = create<ProvenanceState>((set, get) => {
+  // The read out and the one re-read waiting behind it — the same pair the
+  // scan store keeps, for the same reason. Requests overlap on every
+  // ordinary path, but the reads they ask for do not: one runs and one
+  // waits, so the last to land is always the last to have begun, and there
+  // is no ranking to keep.
+  let inFlight: Promise<void> | null = null;
+  let queued: Promise<void> | null = null;
+
+  const land = async (): Promise<void> => {
+    // `settled` lands a rejected call as the same failed read as a returned
+    // refusal: the wrapper rethrows a transport failure, and a read that
+    // never answered is a failed read, not a rejection for every caller to
+    // catch. A failure keeps the rows it had, per [ReadState].
+    const response = await settled(commands.libraryProvenance());
+    set(
+      response.status === "ok"
+        ? { rows: response.data, loaded: true, read: readOf(response) }
+        : { read: readOf(response) },
+    );
+  };
+
+  const start = (): Promise<void> => {
+    const running = land().finally(() => {
+      if (inFlight === running) inFlight = null;
+      // Not simply false: a re-read waiting behind this one is about to
+      // replace these rows, so nothing may call them current yet.
+      set({ reading: queued !== null });
+    });
+    inFlight = running;
     set({ reading: true });
-    try {
-      // `settled` lands a rejected call as the same failed read as a
-      // returned refusal: the generated wrapper rethrows a transport
-      // failure, and a read that never answered is a failed read, not a
-      // rejection for every caller to catch.
-      //
-      // Called through a `then` because the wrapper reaches Tauri as it is
-      // CALLED, so a page with nothing behind that call throws where a
-      // promise was expected. Nothing awaits this read — `writingRepo`
-      // starts it with `void` — so a throw escaping here is an unhandled
-      // rejection at the window rather than a read that failed.
-      const response = await settled<ProvenanceRow[]>(
-        Promise.resolve().then(() => commands.libraryProvenance()),
-      );
-      // The newest read owns the answer, whatever it says. An older one
-      // landing behind it writes nothing, rows and read state alike; a
-      // failed newest read leaves the rows it had standing and says why
-      // nothing confirmed them, which is [ReadState]'s own contract. So the
-      // rows an overtaken read answered with are dropped even where the
-      // read that overtook it failed: they are older than the state that
-      // failure is about, and preferring them would need a second rank
-      // beside the ticket.
-      if (!order.lands(ticket)) return;
-      set(
-        response.status === "ok"
-          ? { rows: response.data, loaded: true, read: readOf(response) }
-          : { read: readOf(response) },
-      );
-    } finally {
-      // Not simply false: another read begun behind this one is still out,
-      // and the rows are still about to be replaced.
-      set({ reading: order.outstanding() });
-    }
-  },
-}));
+    return running;
+  };
+
+  return {
+    rows: [],
+    loaded: false,
+    read: READ_PENDING,
+    reading: false,
+    load: async () => {
+      await get().reload();
+    },
+    // A read already out cannot answer for what has happened since it
+    // began, which is the whole of what a write behind it needs read. So an
+    // overlapping request takes a re-read behind the one running. Exactly
+    // one waits, a second arrival joining that one rather than stacking
+    // identical whole-machine reads.
+    reload: () => {
+      if (!inFlight) return start();
+      queued ??= inFlight.then(() => {
+        queued = null;
+        return start();
+      });
+      return queued;
+    },
+  };
+});
 
 /** Every origin recorded across these scopes, in row order. Each place
  * records its own source, so one package installed in several places can

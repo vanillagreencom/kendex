@@ -4,6 +4,7 @@ import { useMarketplacesStore } from "./marketplaces";
 
 vi.mock("@/bindings", () => ({
   commands: {
+    libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     marketplaceSubscribe: vi.fn(),
     marketplaceInstall: vi.fn(),
     marketplacesOverview: vi.fn(),

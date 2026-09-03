@@ -18,6 +18,7 @@ vi.mock("@/bindings", () => ({
     scanMachine: vi.fn(),
     // Registering or dropping a project re-audits: the scopes changed.
     auditAll: vi.fn(),
+    libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     windowSetZoom: vi.fn(),
     windowZoomState: vi.fn(),
     saveZoom: vi.fn(),

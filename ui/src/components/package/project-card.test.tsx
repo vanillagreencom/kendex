@@ -22,6 +22,7 @@ describe("a place whose install date cannot be read", () => {
       <ProjectCard
         place={place}
         busy={false}
+        removalHeld={false}
         onUpdate={() => {}}
         onRemove={() => {}}
       />,

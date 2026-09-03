@@ -44,6 +44,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
     applyPlan: vi.fn(),
     scanMachine: vi.fn(),
     auditAll: vi.fn(),
+    libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
   },
 }));
 

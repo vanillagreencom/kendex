@@ -15,6 +15,7 @@ import { ProjectList } from "./project-list";
 vi.mock("@/bindings", () => ({
   commands: {
     auditAll: vi.fn(),
+    libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     scanMachine: vi.fn(),
     registerProject: vi.fn(),
     unregisterProject: vi.fn(),

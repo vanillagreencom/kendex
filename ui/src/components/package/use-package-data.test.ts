@@ -26,6 +26,7 @@ describe("diffHarness", () => {
 
 vi.mock("@/bindings", () => ({
   commands: {
+    libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     packageUpdate: vi.fn(),
     packageSetRev: vi.fn(),
   },

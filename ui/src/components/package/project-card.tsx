@@ -19,11 +19,16 @@ import { useNowTick } from "@/lib/use-now-tick";
 export function ProjectCard({
   place,
   busy,
+  removalHeld,
   onUpdate,
   onRemove,
 }: {
   place: PackagePlace;
   busy: boolean;
+  /** The ownership answer under Remove is not current. The button stays
+   *  where it is and goes dead, rather than leaving the row as the read
+   *  behind a write comes and goes under a reader's cursor. */
+  removalHeld: boolean;
   onUpdate: () => void;
   onRemove: () => void;
 }) {
@@ -75,7 +80,7 @@ export function ProjectCard({
           <Button
             size="sm"
             variant="outline"
-            disabled={busy}
+            disabled={busy || removalHeld}
             aria-label={removeFromLabel(place.name)}
             onClick={onRemove}
           >
