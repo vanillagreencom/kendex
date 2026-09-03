@@ -60,7 +60,7 @@ Full list in `references/INDEX.md`; load on demand.
 
 ### `iced_wgpu/` and external fallbacks
 
-Renderer source for shader work: `iced_wgpu/src/` (`engine.rs`, `layer.rs`, `quad*.rs`, `triangle*.rs`, `primitive.rs`, `buffer.rs`, `shader/quad.wgsl`). Local references are pinned to 0.14.0; prefer them. For newer API surface: `ctx7 docs /websites/rs_iced_iced "<query>"`, `https://docs.rs/iced/0.14.0/iced/`, or upstream master at `https://github.com/iced-rs/iced` (may have unreleased APIs).
+Renderer source for shader work: `iced_wgpu/src/` (`engine.rs`, `layer.rs`, `quad.rs`, `quad/solid.rs`, `quad/gradient.rs`, `triangle.rs`, `triangle/msaa.rs`, `primitive.rs`, `buffer.rs`, `shader/quad.wgsl`). Local references are pinned to 0.14.0; prefer them. For newer API surface: `ctx7 docs /websites/rs_iced_iced "<query>"`, `https://docs.rs/iced/0.14.0/iced/`, or upstream master at `https://github.com/iced-rs/iced` (may have unreleased APIs).
 
 ## Breaking changes from Iced 0.13
 

@@ -72,7 +72,7 @@ The cache is `.cache/linear` under the physical worktree root ([README.md](READM
 
 Never create a tracked issue directly from an orchestration or review session. Route it through the TPM pipeline (project-management skill), which owns labels, project, priority, estimate, and relations.
 
-Where `LINEAR_AGENT_LABELS` or `LINEAR_REQUIRE_REACH` is set, `issues create` refuses before any API call: no agent label from the declared set (`--no-agent-label` permits a deliberate bare create), no `Reached by:` line, or, with `--review-born` and `--priority 2`, no `Symptom:` line. A placeholder or null token counts as no line. What the lines say is the author's to judge; the rule is the project-management skill's SKILL.md § Disposition, **Name what reaches it**, which is also where a create decides whether it is review-born.
+Where `LINEAR_AGENT_LABELS` declares a taxonomy, `issues create` refuses before any API call a create with no agent label from that set (`--no-agent-label` permits a deliberate bare create). Where `LINEAR_REQUIRE_REACH` is set, it refuses a description with no `Reached by:` line and, with `--review-born` and `--priority 2`, one with no `Symptom:` line; a placeholder or null token counts as no line. Each guard is its own setting. What the lines say is the author's to judge; the rule is the project-management skill's SKILL.md § Disposition, **Name what reaches it**, which is also where a create decides whether it is review-born.
 
 ## Attachments
 
