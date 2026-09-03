@@ -1,0 +1,53 @@
+---
+name: arch-docs
+description: "Load to write, rewrite, or review a repository's AGENTS.md files or its docs/architecture/ against the shipped convention."
+summary: "The convention for agent-loaded instruction files and architecture docs: what belongs in root AGENTS.md, docs/architecture/overview.md, topic files and nested AGENTS.md, what is excluded, the formatting rule, the harness shims, templates, and the blank-page rewrite workflow."
+license: MIT
+user-invocable: true
+metadata:
+  author: vanillagreen
+  source: kendex
+  repository: "https://github.com/vanillagreencom/kendex"
+  bugs: "https://github.com/vanillagreencom/kendex/issues"
+  version: "1.0.0"
+tags: [docs]
+---
+
+<!-- kendex:project-instructions:start -->
+## Project Instructions
+
+<!-- kendex:shared-instructions:start -->
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->
+<!-- kendex:project-instructions:end -->
+
+# Architecture Docs
+
+Instruction files and architecture docs hold what the code cannot show: invariants, layer boundaries, decisions with their reason, conventions that differ from tool defaults, and pointers to canonical code and to the test that proves a claim. Everything else lives in the code, the tests, and git history.
+
+## What goes where
+
+| File | Holds | Loaded |
+|---|---|---|
+| Root `AGENTS.md` | A map: what the repo is in two or three sentences, commands that are not discoverable, conventions that differ from tool defaults, one line per deeper doc saying when to read it. | Every session, every harness. |
+| `docs/architecture/overview.md` | The one idea, vocabulary, layer boundaries, invariants as one line each with a pointer to the test or check that enforces it, an index of topic files. | On demand. |
+| `docs/architecture/<topic>.md` | The same kinds of content for one subsystem, opening with a `Covers:` line naming the directories it describes. | On demand, and by the `doc-drift-check` hook when code under a covered directory changes. |
+| Nested `AGENTS.md` | Conventions and invariants local to that directory, small. | When an agent works in the directory. |
+| `docs/decisions/` | The why ledger, through the `decider` skill. Architecture docs cite a decision by ID and never restate it. | When opened. |
+
+Excluded everywhere: directory layouts and file-by-file descriptions, behaviour walkthroughs, command listings a `--help` already gives, CI topology, step-by-step flows, history (dates, issue numbers, past states), and any list a declaration file or a checker already holds. A claim that a checker enforces something names the checker. A rule a shipped kendex package states is never restated in the repo's own markdown; the repo installs the package and customises through `kendex.toml`.
+
+Codex reads only the root-to-cwd chain of `AGENTS.md` files, at launch, under a 32 KiB combined cap, so everything a Codex session must know stays in the root file; nested files hold what is local to a directory. Claude Code, Pi and Gemini reach nested files through shims kendex writes and verifies (`kendex apply`, `kendex refresh`, `kendex verify`): a sibling `CLAUDE.md` holding `@AGENTS.md`, the `pi-nested-agents-md` extension, and `context.fileName` in `.gemini/settings.json`. Shims are committed and never hand-written.
+
+## Rules
+
+- Docs change in the same commit as the code they describe. The `doc-drift-check` hook blocks a stop that changed code under a covered directory without touching its docs; confirm or update the docs, then finish.
+- One paragraph per line, one list item per line, no hard wraps inside either; blank lines separate paragraphs, list blocks, headings, and fences; tables and fenced code stay as written. The growth-guards `md-format` lane enforces it and `md-reflow` converts a file once.
+- Every relative path, `file.md § Heading` or `file.md#anchor` citation, and decision ID resolves; the `md-refs` lane checks them.
+- No history prose in agent-loaded markdown; the `prose` lane checks it.
+- Size is a size-ratchet byte class per file kind (root `AGENTS.md`, nested `AGENTS.md`, `overview.md`, topic files); a file over its class is frozen in the baseline and only shrinks. A repo overrides a class through its settings, never by inventing a number in prose.
+- A topic file exists only where a subsystem has invariants or boundaries of its own; a subsystem with none is a line in the overview.
+
+## Writing
+
+Rewrite from a blank page, never by editing the old text: [workflows/rewrite.md](workflows/rewrite.md). Start from [templates/overview.md](templates/overview.md), [templates/topic.md](templates/topic.md), [templates/root-AGENTS.md](templates/root-AGENTS.md), and [templates/nested-AGENTS.md](templates/nested-AGENTS.md).

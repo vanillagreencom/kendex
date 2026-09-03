@@ -346,6 +346,14 @@ harnesses = [
 ]
 enabled = true
 
+[skills.arch-docs]
+source = "."
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+]
+
 [hooks.block-bare-cd]
 source = "."
 harnesses = [
