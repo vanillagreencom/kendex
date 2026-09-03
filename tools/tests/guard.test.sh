@@ -40,10 +40,7 @@ git -C "$R" symbolic-ref HEAD refs/heads/main
 git -C "$R" config user.email test@example.com
 git -C "$R" config user.name test
 git -C "$R" config core.hooksPath "$TMP/nohooks"
-# The symlink invariant reads .claude/CLAUDE.md's target, so the fixture
-# carries the file that target names.
 printf '# fixture\n' >"$R/AGENTS.md"
-ln -s ../AGENTS.md "$R/.claude/CLAUDE.md"
 : >"$R/tools/size-ratchet-baseline.tsv"
 printf '%s\n' \
   'fn existing_fixture() {' \
