@@ -79,6 +79,7 @@ import {
 } from "./snapshot.js";
 import { MINI_DASHBOARD_RANK, setMiniDashboardWidget } from "./stacked-widget.js";
 import {
+	createBackgroundWidgetExpiryScheduler,
 	createBackgroundWidgetVisibility,
 	shouldRenderBackgroundWidget,
 	toggleBackgroundWidgetVisibility,
@@ -253,7 +254,9 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		task.forceKillTimer = null;
 	};
 
+	const widgetExpiry = createBackgroundWidgetExpiryScheduler(() => activeCtx ? syncWidget(activeCtx) : undefined);
 	const clearWidget = () => {
+		widgetExpiry.clear();
 		if (activeCtx) setMiniDashboardWidget(activeCtx, BG_WIDGET_KEY, MINI_DASHBOARD_RANK.BACKGROUND_TASKS, undefined);
 		requestWidgetRender = null;
 	};
@@ -293,15 +296,17 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		return lines;
 	};
 
-	const syncWidget = (ctx: ExtensionContext) => {
+	function syncWidget(ctx: ExtensionContext): void {
 		activeCtx = ctx;
-		const visibleTaskCount = widgetTasks().length;
+		widgetExpiry.clear();
+		const now = Date.now();
+		const visibleTasks = widgetTasks(now);
 		if (!shouldRenderBackgroundWidget({
 			hasUi: ctx.hasUI,
 			mode: widgetVisibility.mode,
 			showWidget: settingBoolean("showWidget", true, ctx.cwd),
 			trackedTaskCount: tasks.size,
-			visibleTaskCount,
+			visibleTaskCount: visibleTasks.length,
 		})) {
 			clearWidget();
 			return;
@@ -313,9 +318,9 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			MINI_DASHBOARD_RANK.BACKGROUND_TASKS,
 			(tui, theme) => {
 				requestWidgetRender = () => tui.requestRender();
-				// Refresh relative-time text only on task events. A timer would redraw the
-				// full screen for each label change and cause above-viewport flicker when
-				// the chat overflows. Labels can stay stale between task events.
+				// No recurring redraw for relative-time labels: full-screen redraws cause
+				// above-viewport flicker. Labels can stay stale between task events;
+				// the one-shot expiry refresh only updates task visibility.
 				return {
 					dispose() {
 						if (requestWidgetRender) requestWidgetRender = null;
@@ -328,7 +333,9 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			},
 			{ placement: settingString("widgetPlacement", "aboveEditor", ctx.cwd) === "belowEditor" ? "belowEditor" : "aboveEditor" },
 		);
-	};
+
+		widgetExpiry.schedule(visibleTasks, widgetFinishedRetentionMs(ctx.cwd), now);
+	}
 
 	const refreshUi = () => {
 		for (const task of tasks.values()) rememberSnapshot(task);
