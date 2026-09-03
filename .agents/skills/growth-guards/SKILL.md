@@ -1,7 +1,7 @@
 ---
 name: growth-guards
 description: "Load to add, tune, or debug a repo growth guard, its git hooks, or GROWTH_GUARDS_* settings."
-summary: "Seven repo growth guards beside size-ratchet (todo-ban, byte-ceiling, suppression-ban, conflict-markers, changelog-entries, prose, commit-msg) and the git hook shims that run them. changelog-entries judges fragments and the collated record; commit-msg judges header shape, subject length and the changelog a commit owes."
+summary: "Eight repo growth guards beside size-ratchet (todo-ban, byte-ceiling, suppression-ban, conflict-markers, changelog-entries, prose, comments, commit-msg) and the git hook shims that run them. changelog-entries judges fragments and the collated record; commit-msg judges header shape, subject length and the changelog a commit owes."
 license: MIT
 user-invocable: true
 metadata:
@@ -57,6 +57,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 | **conflict-markers** | An unresolved merge-conflict marker in a tracked, non-excluded file fails. |
 | **changelog-entries** | Each `GROWTH_GUARDS_CHANGELOG_PATHS` fragment is one Markdown list item in a Keep a Changelog section and at most `GROWTH_GUARDS_CHANGELOG_CAP` characters. |
 | **prose** | A history reference in Markdown named by `GROWTH_GUARDS_PROSE_PATHS` fails; `GROWTH_GUARDS_CHECKS` controls whether the lane runs. |
+| **comments** | A history reference in the comment text of a source file named by `GROWTH_GUARDS_COMMENT_PATHS` fails: an issue id (`GH_ISSUE_PATTERN`), `#NNN`, a date, or revision narration. Opt-in: name it in `GROWTH_GUARDS_CHECKS`. |
 | **commit-msg** | The header must be `type(scope)!: subject` within `GROWTH_GUARDS_SUBJECT_MAX`; a commit touching `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS` also owes a changelog entry or `[no-changelog]`. |
 
 Full check shapes and scopes: [CHECKS.md](CHECKS.md).
@@ -87,6 +88,8 @@ Arming and disarming apply to the whole repository. Disarm before removing the s
 | `GROWTH_GUARDS_CHANGELOG_RECORD` | `CHANGELOG.md` | The collated record file; empty switches that scope off. |
 | `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS` | *(empty)* | Globs whose change obliges a changelog entry, judged by `commit-msg`; empty switches the rule off. |
 | `GROWTH_GUARDS_PROSE_PATHS` | `SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md` | Space-separated globs naming the markdown the prose lane scans, matched against the full repo-relative path (`*` crosses `/`). |
+| `GROWTH_GUARDS_COMMENT_PATHS` | the extensions in [CHECKS.md § comments](CHECKS.md#comments) | Space-separated globs naming the source files the comments lane scans, matched against the full repo-relative path (`*` crosses `/`); replaces the default. |
+| `GROWTH_GUARDS_COMMENT_EXCLUDES` | `tools/comments-excludes` | comments exclusion list (generated and vendored trees). `GH_ISSUE_PATTERN` (the github skill's key) is the issue-id shape; empty keeps `[A-Z]+-[0-9]+`. |
 | `GROWTH_GUARDS_COMMIT_TYPES` | `build chore ci docs feat fix perf refactor revert style test` | Accepted commit types. |
 | `GROWTH_GUARDS_SUBJECT_MAX` | `72` | Characters allowed in a hand-written commit header. |
 | `GROWTH_GUARDS_PRE_COMMIT_LOCAL` | *(empty)* | Repo-root-relative executable the pre-commit shim runs last. |

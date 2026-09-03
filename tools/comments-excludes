@@ -1,0 +1,13 @@
+# comments exclusion list — generated and vendored trees only. Hand-written
+# source is never excluded: a comment there states the constraint that holds.
+# Format: pattern<TAB>reason. The pattern is a shell glob matched against the
+# whole repo-relative path, so every `*` in it crosses `/`. Anchor each row
+# at the root it means.
+
+ui/src/bindings.ts	generated TypeScript bindings; their comments are the Rust doc comments, governed at the source
+ui/src/components/ui/**	vendored shadcn/ui components
+skills/iced-rs/**	vendored upstream iced source and examples bundled as the skill's API reference
+.agents/**	kendex render, governed at its source
+.claude/**	kendex render, governed at its source
+.codex/**	kendex render, governed at its source
+.pi/**	kendex render, governed at its source

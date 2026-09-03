@@ -323,6 +323,35 @@ removed everything this lane considers unreadable, so nothing is left for
 git to drop. A blob the walk cannot read is a collection error, never a
 skip.
 
+## comments
+
+A code comment states the constraint that holds now. A history reference in the COMMENT TEXT of a tracked source file fails: an issue id matching `GH_ISSUE_PATTERN` (the github skill's key, read through this family's settings resolution; empty keeps `[A-Z]+-[0-9]+`), a three- or four-digit issue number after `#` with the trailing guard `prose` uses, a calendar date (`20YY-MM-DD`), or one of the words `previously`, `used to`, `no longer`, `reverted`, `an earlier`, `earlier round`, `incident`, `historically`, `originally`, `at the time`, `added`, `new`, `existing code`, `phase N`. Matching is case-insensitive and whole-word; a word inside a quoted example or a backticked span within the comment still counts, the choice `prose` makes. String literals and code are never judged, and markdown belongs to `prose`. Each hit is reported once per (line, shape) with the shape named.
+
+The default key shape is any letter run, a hyphen and a digit run, so `UTF-8` and `SHA-256` match it: a repository whose tracker has one prefix sets `GH_ISSUE_PATTERN` to that prefix. The pattern is a POSIX ERE read by awk and by `git grep`; one neither can compile is exit 2.
+
+The lane is opt-in — name `comments` in `GROWTH_GUARDS_CHECKS` — because the word list fires on ordinary present-tense text (`the new value`, `a rule added later`) at a rate the default batch cannot carry. Scopes are `todo-ban`'s: `--staged` judges only the lines the staged diff ADDS, with comment state read from the whole staged blob so a line added inside a block comment the commit did not open is still judged, renames held to exact content; the default reads every tracked file `GROWTH_GUARDS_COMMENT_PATHS` names from the index, minus `GROWTH_GUARDS_COMMENT_EXCLUDES` (`pattern<TAB>reason`, `!` carve-ins, generated and vendored trees). A symlink, a gitlink, a blob carrying a NUL, and a matched path this table gives no grammar are each named as unmeasured and counted apart from the clean total.
+
+Comment text is extracted per language family, decided by the path's extension or, for a path with none, by the interpreter its `#!` line names. The default path list is exactly the extensions below (`Makefile` and `Dockerfile` by basename, at the root and below):
+
+| Family | Extensions | Comments read | Strings tracked |
+|---|---|---|---|
+| C | `rs` `go` `c` `h` `cc` `cpp` `hpp` `java` `kt` `kts` `swift` `wgsl` `js` `mjs` `cjs` `jsx` `ts` `tsx` `scss` `less` | `//` `///` `//!` to end of line; `/* */` across lines | `"…"` and `'…'` with backslash escapes; a backtick template literal across lines (`go`, `js`, `ts` and their variants); Rust `r"…"`, `r#"…"#`, a string spanning lines, a char literal, and a lifetime quote that opens nothing |
+| CSS | `css` | `/* */` only | `"…"` `'…'` |
+| Hash | `sh` `bash` `zsh` `py` `rb` `toml` `yml` `yaml` `mk` `Makefile` `Dockerfile`; no extension with a `#!` naming an interpreter ending in `sh`, or python or ruby (`node`, `deno`, `bun` take the C family) | `#` at the start of a word (line start or after whitespace) to end of line; line 1 `#!` is not a comment | `"…"` with escapes; `'…'` without escapes in shell, TOML and YAML, with escapes in Python and Ruby; shell `$'…'` with escapes; a shell string across lines; Python and TOML triple quotes across lines; a shell heredoc body (`<<WORD`, `<<-WORD`, quoted or bare word) up to its terminator line |
+| Dash | `sql` `lua` | `--` to end of line; SQL `/* */` and Lua `--[[ ]]` across lines | `"…"` `'…'` with escapes |
+| Markup | `html` `htm` `xml` `svg` `vue` `svelte` | `<!-- -->` across lines | none |
+
+The scanner is a character walk, not a parser. What it does not model, stated so a reader can predict the verdict:
+
+- A `//` inside a JavaScript regex literal, a `#` glued to a Python or TOML value (`x = 1#c`), and a `--` inside a Lua long string `[[…]]` are read as code or as a comment by the rules above, not by the language's.
+- A JavaScript template literal is one string to its closing backtick; a nested template inside `${…}` is not tracked.
+- A Rust nested block comment (`/* /* */ */`) closes at the first `*/`; a Lua `--[==[` level is not tracked.
+- A shell line opening two heredocs honours the first; a Ruby heredoc, a YAML block scalar (`key: |`) and a Makefile recipe's shell are read as code, so a `#` inside them is a comment.
+- A Vue or Svelte file is judged for `<!-- -->` only; the `//` inside its script block is not read.
+- A C or JavaScript string ends at its line (a trailing backslash continuation is not tracked); a Rust string does not.
+
+Each stated limit has a control in `tests/comments.test.sh` proving the verdict it implies.
+
 ## commit-msg
 
 Conventional-commit gate over one message, shaped for the git `commit-msg`

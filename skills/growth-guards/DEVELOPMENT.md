@@ -8,11 +8,14 @@ docs live in README.md.
 - `scripts/growth-guards` — batch dispatcher and single-check router
 - `scripts/todo-ban`, `scripts/byte-ceiling`, `scripts/suppression-ban`,
   `scripts/conflict-markers`, `scripts/changelog-entries`, `scripts/prose`,
-  `scripts/commit-msg` — the seven checks, each a standalone executable
+  `scripts/comments`, `scripts/commit-msg` — the eight checks, each a
+  standalone executable
 - `scripts/pre-commit` — the chain the git `pre-commit` shim runs
 - `scripts/install-git-hooks` — hook installer, remover, and `--check` verdict
 - `scripts/lib/common.sh`, `scripts/lib/settings.sh` — shared helpers and
   layered settings resolution
+- `scripts/lib/staged-lines.sh` — the lines a commit ADDS to one path, read off a pinned `-U0` diff; the staged scopes of `todo-ban` and `comments` judge those lines and no other
+- `scripts/lib/comment-text.sh` — the comment grammar a path takes and the scanner that emits its comment text as `line<TAB>text` records, for `comments`; what the scanner does not model is stated in CHECKS.md § comments and pinned by `tests/comments.test.sh`
 - `scripts/lib/configured-paths.sh` — the glob-list concept for the lanes
   scoped by one: the configured list, the excludes list read from the index,
   the one matcher both answer through, the walk over the index records, and

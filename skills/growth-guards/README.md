@@ -24,7 +24,7 @@ The batch runs `GROWTH_GUARDS_CHECKS` (default
 `todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose`)
 and fails closed: exit 2 if any check could not complete, else 1 on
 violations. `commit-msg` reads a message, so it never runs in the batch. `--staged`
-puts the batch at commit scope: the checks that take it (`todo-ban`) judge
+puts the batch at commit scope: the checks that take it (`todo-ban`, `comments`) judge
 the staged diff, the rest keep their own default scope.
 Installed scripts live under
 `.agents/skills/growth-guards/scripts/`; wire CI at whichever grain fits

@@ -35,6 +35,19 @@ GROWTH_GUARDS_CHANGELOG_RECORD = "CHANGELOG.md"
 # Empty = rule off.
 GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = ""
 
+# The source files the comments lane reads, a space-separated list of shell
+# globs against the full repo-relative path (`*` crosses `/`), replacing the
+# default extension list in CHECKS.md § comments. Add the shapes an
+# extension cannot name (`hooks/* */scripts/*`): a file with no extension
+# takes the grammar its shebang names. The lane is opt-in: name `comments`
+# in GROWTH_GUARDS_CHECKS to run it, and set GH_ISSUE_PATTERN (the github
+# skill's key) to the tracker's own key shape.
+# GROWTH_GUARDS_COMMENT_PATHS = ""
+
+# The comments lane's exclusion list, pattern<TAB>reason rows naming the
+# generated and vendored trees whose comments are not this repository's.
+GROWTH_GUARDS_COMMENT_EXCLUDES = "tools/comments-excludes"
+
 # Repo-local check the pre-commit shim runs LAST: a repo-root-relative
 # executable following the family exit contract (0 clean, 1 violations,
 # else "could not complete"); any nonzero blocks the commit, and so does a
