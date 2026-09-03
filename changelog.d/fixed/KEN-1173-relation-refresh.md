@@ -1,0 +1,1 @@
+- `linear.sh issues add-relation` and `remove-relation` no longer strip the team from the cached issues they refresh, which dropped those rows out of a `cache issues list --team X` listing.

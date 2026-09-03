@@ -6,5 +6,5 @@
 control_expect "--team KEN returns exactly KEN's cycles"
 control_expect "--team=KEN, the inline spelling, filters the same"
 control_replace scripts/commands/cache-query.sh 1 \
-    '    cycles=$(echo "$cycles" | cache_filter_team "$team")' \
-    '    : # control: the flag is bound and the cache goes through unfiltered'
+    '    cycles=$(cache_jq_file "$CACHE_DIR/cycles.json" "[]" ".$(cache_team_stage "$team")") || return 1' \
+    '    cycles=$(cache_jq_file "$CACHE_DIR/cycles.json" "[]" '"'"'.'"'"') || return 1 # control: unfiltered'

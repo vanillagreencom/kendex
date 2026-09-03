@@ -42,8 +42,8 @@ Comments:
 
 Labels:
   labels list [--team X]
-              Unknown flags are rejected here too, in the space form the live
-              twin accepts: `--team=X` is not a spelling either one takes.
+              Team filtering takes the space form only; --team=X is rejected,
+              as is any other unknown flag.
 
 Attachments:
   attachments list [<issue-ID>]          List cached attachments (all or per-issue)
@@ -54,7 +54,8 @@ Other:
   initiatives list [--status X]
   initiatives get <ID-or-name>
   cycles list [--type current|past|upcoming] [--team X|--team=X] [--limit N]
-              Unknown flags are rejected rather than ignored.
+              --team=X is a cache-only spelling; the live command takes the
+              space form only. Any unknown flag is rejected rather than ignored.
   status                Show cache status/freshness
 
 All output uses the same formatters as live API commands.
@@ -81,17 +82,23 @@ source "$SCRIPT_DIR/../lib/attachments.sh"
 # SHARED FILTERS
 # =============================================================================
 
-# Narrow a cached array to one team, on the `.team.name` every synced record
-# carries. Reads the array on stdin, writes it back; an empty team passes it
-# through untouched. Issues, labels and cycles all filter by team.
-cache_filter_team() {
-    [[ -n "$1" ]] || { cat; return 0; }
-    jq --arg t "$1" '[.[] | select(.team.name == $t)]'
+# The jq stage that narrows a cached array to one team, on the `.team.name`
+# every synced record carries. Callers append it to the filter they already
+# hand to jq, so the predicate rides the pass they were making anyway instead
+# of adding a second one; an empty team emits nothing. Issues, labels and
+# cycles all filter by team, and the issues `--cycle` keyword resolves against
+# a cycles array narrowed the same way.
+cache_team_stage() {
+    [[ -n "$1" ]] || return 0
+    printf ' | [.[] | select(.team.name == %s)]' "$(jq -R '.' <<<"$1")"
 }
 
 # Refuse a flag the caller's arg loop did not name. Swallowing one returned the
 # whole cache at exit 0 from a request that named a scope, and the caller reads
-# that exit code as the answer. Every live twin refuses the same input.
+# that exit code as the answer. A live twin refuses a flag its own arg loop
+# does not name the same way. --assignee and --created-since are not that case:
+# they are real filters on the live path, and the cache refuses them because it
+# does not implement them rather than accepting and ignoring them.
 cache_unknown_flag() {
     jq -cn --arg c "$1" --arg n "$2" --arg f "$3" \
         '{error: ("Unknown flag for cache " + $c + ": " + $f + ". A filter the cache cannot honor must fail, not silently return every " + $n + ". Run \u0027cache " + $c + " --help\u0027.")}' >&2
@@ -103,6 +110,7 @@ cache_unknown_flag() {
 
 cache_list_issues() {
     local project="" state="" label="" updated_since="" search="" cycle="" team=""
+    local team_given="false"
     local include_archived="false" paginate_all="false" limit="75"
     local all_projects="false" no_project="false"
     FORMAT="${DEFAULT_FORMAT}"
@@ -179,7 +187,12 @@ cache_list_issues() {
             shift
             ;;
         --team)
+            # $2 is read below, so a flag standing last must answer with the
+            # JSON error shape every other failure in this file emits, not a
+            # bash unbound-variable abort under set -u.
+            linear_require_option_value "$@" || return 1
             team="$2"
+            team_given="true"
             shift 2
             ;;
         # Boolean on the live path (issues.sh), so it takes no value here
@@ -213,6 +226,16 @@ cache_list_issues() {
         return 1
     fi
 
+    # A given-but-empty value refuses rather than degrading to an unfiltered
+    # list. A workflow interpolating an unresolved $LINEAR_TEAM would otherwise
+    # get the whole workspace back from a request that named a scope, which is
+    # the symptom the deleted consume-and-ignore arm produced. The live twin
+    # builds {team: {name: {eq: ""}}} and matches nothing.
+    if [[ "$team_given" == "true" && -z "$team" ]]; then
+        echo '{"error": "--team requires a non-empty team name: an empty value would return every team, not the one named"}' >&2
+        return 1
+    fi
+
     # Build jq filter chain
     local jq_filter='.'
 
@@ -227,6 +250,11 @@ cache_list_issues() {
         state_jq=$(echo "$state" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')
         jq_filter="$jq_filter | [.[] | select(.state.name as \$s | $state_jq | any(. == \$s))]"
     fi
+
+    # Filter by team. sync sends no team filter, so this cache always holds
+    # every team the API key reaches; --team used to be consumed and discarded,
+    # returning that whole workspace from a request that named one team.
+    jq_filter="$jq_filter$(cache_team_stage "$team")"
 
     # Filter by project name or ID
     if [[ -n "$project" ]]; then
@@ -258,7 +286,12 @@ cache_list_issues() {
             local cycles_file="$CACHE_DIR/cycles.json"
             if [[ -f "$cycles_file" ]]; then
                 local all_cycles working
-                all_cycles=$(cache_jq_file "$cycles_file" "[]" '.') || return 1
+                # Narrowed to the same team the issues are, or the keyword
+                # resolves against another team's cycle and the listing comes
+                # back empty at exit 0. `cycles list` orders it the same way,
+                # team first and then type, so one file cannot answer "what is
+                # this team's current cycle" two ways.
+                all_cycles=$(cache_jq_file "$cycles_file" "[]" ".$(cache_team_stage "$team")") || return 1
                 working=$(cache_working_cycle <<<"$all_cycles")
                 # The helpers answer with no cycle running too — they cut at
                 # today — so these arms hand `working` straight over rather than
@@ -315,11 +348,6 @@ cache_list_issues() {
     # Get issues from cache
     local issues
     issues=$(cache_jq_file "$CACHE_DIR/issues.json" "[]" "$jq_filter") || return 1
-
-    # sync sends no team filter, so this cache always holds every team the API
-    # key reaches. --team used to be consumed and discarded, returning that
-    # whole workspace at exit 0 from a request that named one team.
-    issues=$(echo "$issues" | cache_filter_team "$team")
 
     # Apply client-side search (regex on title+description)
     if [[ -n "$search" ]]; then
@@ -879,9 +907,7 @@ cache_list_labels() {
     done
 
     local labels
-    labels=$(cache_jq_file "$CACHE_DIR/labels.json" "[]" '.') || return 1
-
-    labels=$(echo "$labels" | cache_filter_team "$team")
+    labels=$(cache_jq_file "$CACHE_DIR/labels.json" "[]" ".$(cache_team_stage "$team")") || return 1
 
     # Wrap for formatter
     local result
@@ -1023,13 +1049,11 @@ cache_list_cycles() {
         esac
     done
 
-    local cycles
-    cycles=$(cache_jq_file "$CACHE_DIR/cycles.json" "[]" '.') || return 1
-
     # Team first. sync scopes cycles to a team only when one is configured, so
     # with none configured the cache holds every team's, and the type selection
     # below works off whatever set it is handed.
-    cycles=$(echo "$cycles" | cache_filter_team "$team")
+    local cycles
+    cycles=$(cache_jq_file "$CACHE_DIR/cycles.json" "[]" ".$(cache_team_stage "$team")") || return 1
 
     # Apply type filter (date-based: "current" = most recent started + incomplete)
     local working
