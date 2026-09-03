@@ -39,11 +39,14 @@ Two more are native listeners, because Pi's events have no bash equivalent to sp
 
 ## Install
 
-```bash
-kendex add --pi-extension pi-hooks
+Declare the package in the scope's kendex manifest, then let `kendex update-pi` install it and register it in Pi's `settings.json`. For a project, in its `kendex.toml`:
+
+```toml
+[pi-extensions."@vanillagreen/pi-hooks"]
+source = "kendex"
 ```
 
-Or as part of `kendex add --all`. Refresh with `kendex refresh`.
+`kendex update-pi --check` previews; `--scope global` installs it for every project through `~/.config/kendex/kendex.toml`.
 
 Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-hooks):
 
