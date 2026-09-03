@@ -225,6 +225,13 @@ jobs:
         working-directory: pi-extensions/pi-hooks
         run: npm test
 
+      # pi-nested-agents-md imports only types from pi-coding-agent, the
+      # same case as pi-hooks above, so its suite runs with no install.
+      - name: pi-nested-agents-md suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-nested-agents-md
+        run: npm test
+
       # Pi 0.84.x is the release the extensions are audited against, so the
       # suites that assert 0.84 wire-format parity install that line rather
       # than the 0.80.5 floor above.

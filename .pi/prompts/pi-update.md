@@ -55,7 +55,7 @@ State lives in `pi-extensions/pi-update.state.json` (committed source; not a dis
 ## Audit process
 1. **Enumerate extensions.** `ls pi-extensions/` — every subdir with a `package.json` is in scope.
 2. **Triage each new entry by package** (which of our extensions the source most likely touches):
-   - `coding-agent` — tools, hooks, agent runtime, SDK fields, `settings.json`. Highest impact; touches nearly every extension (`pi-tool-renderer`, `pi-hooks`, `pi-agents-tmux`, `pi-task-panel`, `pi-questions`, `pi-qol`, `pi-output-policy`, `pi-skills-manager`, `pi-session-manager`, `pi-web-tools`, `pi-caveman`, `pi-claude-bridge`, `pi-codex-minimal-tools`, `pi-prompt-stash`, `pi-extension-manager`).
+   - `coding-agent` — tools, hooks, agent runtime, SDK fields, `settings.json`. Highest impact; touches nearly every extension (`pi-tool-renderer`, `pi-hooks`, `pi-nested-agents-md`, `pi-agents-tmux`, `pi-task-panel`, `pi-questions`, `pi-qol`, `pi-output-policy`, `pi-skills-manager`, `pi-session-manager`, `pi-web-tools`, `pi-caveman`, `pi-claude-bridge`, `pi-codex-minimal-tools`, `pi-prompt-stash`, `pi-extension-manager`).
    - `ai` — provider/model SDK (constrained sampling, capability flags, catalogs). Mostly Non-impact unless we override a provider — grep the affected provider id first (see Notes).
    - `agent` — agent loop/primitives → `pi-agents-tmux`, `pi-session-bridge`.
    - `server` — RPC/server events → `pi-session-bridge` (RPC surface), `pi-web-tools`.
