@@ -79,6 +79,7 @@ import {
 } from "./snapshot.js";
 import { MINI_DASHBOARD_RANK, setMiniDashboardWidget } from "./stacked-widget.js";
 import {
+	createBackgroundWidgetExpiryScheduler,
 	createBackgroundWidgetVisibility,
 	shouldRenderBackgroundWidget,
 	toggleBackgroundWidgetVisibility,
@@ -253,7 +254,9 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		task.forceKillTimer = null;
 	};
 
+	const widgetExpiry = createBackgroundWidgetExpiryScheduler(() => activeCtx ? syncWidget(activeCtx) : undefined);
 	const clearWidget = () => {
+		widgetExpiry.clear();
 		if (activeCtx) setMiniDashboardWidget(activeCtx, BG_WIDGET_KEY, MINI_DASHBOARD_RANK.BACKGROUND_TASKS, undefined);
 		requestWidgetRender = null;
 	};
@@ -293,15 +296,17 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		return lines;
 	};
 
-	const syncWidget = (ctx: ExtensionContext) => {
+	function syncWidget(ctx: ExtensionContext): void {
 		activeCtx = ctx;
-		const visibleTaskCount = widgetTasks().length;
+		widgetExpiry.clear();
+		const now = Date.now();
+		const visibleTasks = widgetTasks(now);
 		if (!shouldRenderBackgroundWidget({
 			hasUi: ctx.hasUI,
 			mode: widgetVisibility.mode,
 			showWidget: settingBoolean("showWidget", true, ctx.cwd),
 			trackedTaskCount: tasks.size,
-			visibleTaskCount,
+			visibleTaskCount: visibleTasks.length,
 		})) {
 			clearWidget();
 			return;
@@ -313,13 +318,6 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			MINI_DASHBOARD_RANK.BACKGROUND_TASKS,
 			(tui, theme) => {
 				requestWidgetRender = () => tui.requestRender();
-				// Previously: setInterval(() => tui.requestRender(), 1_000) to refresh
-				// formatRelativeTime() output. That forced a TUI render every second purely
-				// to advance "5s ago" → "6s ago", which re-diffs the full screen and triggers
-				// pi-tui's above-viewport flicker every time the chat overflows. Relative-time
-				// text is now refreshed only on real task events (start / output / end / mode
-				// toggle / dashboard mutation), accepting a few seconds of staleness between
-				// events as a worthwhile tradeoff against the redraw storm.
 				return {
 					dispose() {
 						if (requestWidgetRender) requestWidgetRender = null;
@@ -332,7 +330,9 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			},
 			{ placement: settingString("widgetPlacement", "aboveEditor", ctx.cwd) === "belowEditor" ? "belowEditor" : "aboveEditor" },
 		);
-	};
+
+		widgetExpiry.schedule(visibleTasks, widgetFinishedRetentionMs(ctx.cwd), now);
+	}
 
 	const refreshUi = () => {
 		for (const task of tasks.values()) rememberSnapshot(task);
