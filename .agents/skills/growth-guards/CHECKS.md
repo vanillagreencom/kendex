@@ -309,10 +309,9 @@ binary — so the walk classifies every matched record itself before the scan.
 A **symlink**, a **gitlink**, and a blob carrying a **NUL byte** in its
 leading bytes are each named as unmeasured and counted apart from the clean
 total, the way `changelog-entries` names one. The lane measures the file at
-the path it was pointed at and does not read through a link, so the standard
-dual-harness shape — a root `CLAUDE.md` tracked as a link to `AGENTS.md`,
-a rendered `.claude/CLAUDE.md` linking back to it — is a pass that names
-both links and measures the one tracked file there is. A tally line carries
+the path it was pointed at and does not read through a link, so a tracked
+link at a configured path is named and the tracked file it points at is
+measured once, where it stands. A tally line carries
 the count, and the clean `no tracked file matches` verdict is printed only
 when nothing was skipped: a path that matched and was named would otherwise
 send its reader to widen a glob that was already right.

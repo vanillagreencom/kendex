@@ -48,7 +48,7 @@ State lives in `pi-extensions/pi-update.state.json` (committed source; not a dis
 - Do not bump the CLI version or cut a release; that is `/gh-release`.
 - Do not npm-publish; that is `/npm-deploy`.
 - Stage only intended files in each commit. Mention unrelated dirty files; stop and ask if anything looks unintentional.
-- After every committed extension change, run `kendex refresh` and report which packages were updated. The Pi extension development workflow in `CLAUDE.md` is binding: commit first, then refresh.
+- After every committed extension change, run `kendex refresh` and report which packages were updated. The Pi extension development workflow in `AGENTS.md` is binding: commit first, then refresh.
 - Do not claim "fixed" or "shipped" until commit + refresh both completed and reported.
 - If you cannot live-test inside Pi, say so explicitly rather than asserting parity.
 
@@ -74,7 +74,7 @@ State lives in `pi-extensions/pi-update.state.json` (committed source; not a dis
 ## Apply fixes
 For every "ship now" item:
 1. Edit the canonical extension files only — never touch `.pi/`, `.claude/`, `.opencode/`, `.codex/`, `.agents/`, `.cursor/` mirrors. (`pi-extensions/pi-update.state.json` is source state, not an extension — updating it is expected.)
-2. If a fix touches a behavior covered by `hooks/*.sh`, mirror it in `pi-extensions/pi-hooks/extensions/hooks.ts` in the same commit (parity rule in `CLAUDE.md`).
+2. If a fix touches a behavior covered by `hooks/*.sh`, mirror it in `pi-extensions/pi-hooks/extensions/hooks.ts` in the same commit (parity rule in `AGENTS.md`).
 3. If a fix changes user-visible behavior or settings, update the matching README/SKILL.md/`kendex.toml`/`.env.local.example` payload in the same commit.
 4. Add or extend a unit test where the fix is testable in isolation (favor regression coverage on numeric helpers, parsers, off-by-one bugs).
 5. Run any package-local test suite the fix touches. Document the result (pass/fail, count). If peer-dep imports prevent local execution, link the bundled Pi modules from `/usr/lib/node_modules/pi/node_modules/@earendil-works/*` into a temporary `node_modules/@earendil-works/` (symlinks only), run the tests, then remove the temp `node_modules/` and any generated lockfile so the working tree stays clean.

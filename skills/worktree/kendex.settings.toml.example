@@ -23,8 +23,9 @@ WORKTREE_BASE_DIR = ""
 WORKTREE_SYMLINKS = ""
 
 # Space-separated link=target pairs; each target resolves from the LINK's
-# own directory (`.claude/CLAUDE.md=../AGENTS.md` reaches the worktree
-# root's AGENTS.md).
+# own directory (`ui/.env=../.env.worktree` reaches the worktree root's
+# `.env.worktree`). A tracked file, such as the `CLAUDE.md` shim kendex
+# writes beside `AGENTS.md`, arrives through git and needs no entry.
 WORKTREE_RELATIVE_SYMLINKS = ""
 
 # Space-separated files copied (not linked) into new worktrees.

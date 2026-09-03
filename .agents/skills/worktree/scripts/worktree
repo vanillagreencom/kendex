@@ -2333,8 +2333,8 @@ setup_worktree_links() {
   done
 
   # Project-configured symlinks whose targets should resolve from inside the
-  # worktree, not from the main checkout. Useful for harness pointers like
-  # .claude/CLAUDE.md -> ../AGENTS.md.
+  # worktree, not from the main checkout. A tracked file arrives through git
+  # and needs no entry here.
   split_worktree_config_words "${WORKTREE_RELATIVE_SYMLINKS:-}"
   for spec in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
     if [[ "$spec" != *=* ]]; then

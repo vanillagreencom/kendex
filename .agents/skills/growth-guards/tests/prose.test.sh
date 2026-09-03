@@ -216,11 +216,11 @@ case "$OUT" in
   *) bad "the skip is counted in the verdict" "$OUT" ;;
 esac
 
-# The standard dual-harness shape, which this lane must not refuse: a root
-# CLAUDE.md tracked as a link to AGENTS.md, and the rendered
-# .claude/CLAUDE.md linking back to the root. Both are scoped and both are
-# links; the lane names each and measures the one tracked file there is.
-echo "=== the dual-harness link shape commits, with the links named ==="
+# Two scoped links chained to one tracked file, a shape this lane must not
+# refuse: a root CLAUDE.md tracked as a link to AGENTS.md, and a
+# .claude/CLAUDE.md linking back to the root. The lane names each link and
+# measures the one tracked file there is.
+echo "=== a chain of scoped links commits, with the links named ==="
 new_repo dualharness
 put AGENTS.md 'clean'
 ln -s AGENTS.md "$R/CLAUDE.md"
@@ -230,7 +230,7 @@ git -C "$R" add -A
 run_prose
 [ "$RC" -eq 0 ] && case "$OUT" in *"no history references in 1 scanned file(s)"*) true ;; *) false ;; esac \
   && ok "a repo whose CLAUDE.md links to AGENTS.md and back exits 0" \
-  || bad "dual-harness link shape exits 0" "rc=$RC out=$OUT"
+  || bad "chained link shape exits 0" "rc=$RC out=$OUT"
 case "$OUT" in *"not measured: CLAUDE.md"*) ok "the root link is named as unmeasured" ;; *) bad "root link named" "$OUT" ;; esac
 case "$OUT" in *"not measured: .claude/CLAUDE.md"*) ok "the rendered link is named as unmeasured" ;; *) bad "rendered link named" "$OUT" ;; esac
 # The control: the file both links point at is tracked and scoped, so a
