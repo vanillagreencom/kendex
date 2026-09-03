@@ -59,6 +59,7 @@ hooks = [
   "pre-commit-check",
   "session-drift-check",
   "task-completed-check",
+  "doc-drift-check",
 ]
 
 [bundles.orchestration]
@@ -118,6 +119,7 @@ hooks = [
   "pre-commit-check",
   "session-drift-check",
   "task-completed-check",
+  "doc-drift-check",
 ]
 skills = [
   "growth-guards",
