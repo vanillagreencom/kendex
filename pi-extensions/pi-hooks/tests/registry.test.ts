@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { GUARD_SETTING_NAMES } from "../extensions/hooks.ts";
@@ -20,15 +20,26 @@ import {
 	projectCommand,
 	registerProjectHook,
 	registerRendered,
+	renderedHookPath,
 	renderStub,
 	renderUserStub,
 	runGit,
 	toolResultEvent,
 	trusted,
 	useIsolatedGitEnv,
+	writePiConfig,
 } from "./harness.ts";
 
 useIsolatedGitEnv();
+
+/**
+ * The Pi event the carrier reads the `turn_end` registry key on. `Stop` and
+ * `TaskCompleted` are Claude Code's end of a response, and Pi's `turn_end` is
+ * inside the tool loop — one per LLM turn — so the registry is dispatched from
+ * `agent_settled`, the point Pi documents as "will not continue running
+ * automatically". The key kendex renders under is unchanged.
+ */
+const SETTLED_LISTENER = "agent_settled";
 
 /** A committed git repository, so a rendered guard's own registration resolves
  * the way it does in a real project. */
@@ -42,6 +53,17 @@ function initCleanRustRepo(prefix: string): string {
  * exists nowhere but the registry and can only run from there. */
 function customCommand(log: string, stderr: string, exitCode: number): string {
 	return `cat >> ${JSON.stringify(log)}; echo ${JSON.stringify(stderr)} >&2; exit ${exitCode}`;
+}
+
+/** A rendered guard of kendex's on any listener, registered the way kendex
+ * registers a project-scope one — so its per-guard setting is keyed by its
+ * name, which is the whole point of the map that holds those settings. */
+function renderRegisteredGuard(project: string, listener: string, name: string, log: string): void {
+	const script = renderedHookPath(project, name);
+	mkdirSync(join(script, ".."), { recursive: true });
+	writeFileSync(script, `#!/usr/bin/env bash\nset -euo pipefail\ncat >> ${JSON.stringify(log)}\nexit 0\n`);
+	chmodSync(script, 0o755);
+	registerRendered(join(project, ".pi"), listener, undefined, `bash "$(git rev-parse --show-toplevel)/.pi/kendex/hooks/${name}.sh"`);
 }
 
 /** The session-start dispatch is fire-and-forget, like the drift report beside
@@ -341,20 +363,55 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 		const log = join(project, "stop.log");
 		try {
 			const carrier = installCarrier();
-			const onTurnEnd = carrier.handler(TURN_END_LISTENER);
+			const onSettled = carrier.handler(SETTLED_LISTENER);
 
-			await onTurnEnd({}, trusted(project));
+			await onSettled({}, trusted(project));
 			expect(carrier.sent).toHaveLength(0);
 			expect(readLog(log)).toBe("");
 
 			registerRendered(join(project, ".pi"), TURN_END_LISTENER, "Bash", customCommand(log, "audit: this branch is unpushed", 2));
-			await onTurnEnd({}, trusted(project));
+			await onSettled({}, trusted(project));
 			expect(carrier.sent).toHaveLength(1);
 			expect(carrier.sent[0]!.message.content).toBe("audit: this branch is unpushed");
 			// Since pi#8022 only `triggerTurn: true` reaches a headless run
 			// that is ending, which is the whole delivery available here.
 			expect(carrier.sent[0]!.options).toEqual({ triggerTurn: true });
 			expect(JSON.parse(readLog(log))).toEqual({ hook_event_name: "Stop", stop_hook_active: false });
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	/**
+	 * Steering makes the agent answer, and that answer settles — so a dispatch
+	 * that steers asks to be run again over on-disk state nothing changed. The
+	 * steer is therefore spent once per consultation, and the dispatch it
+	 * caused says `stop_hook_active: true`, which is the field a `Stop` hook
+	 * reads to know it is already the reason the agent kept going. Without
+	 * both, a hook that never bails — or a registry that will not parse, which
+	 * needs no hook at all — drives an unattended run forever.
+	 */
+	test("the settle a steer caused does not steer again, and tells the hook it is the reason", async () => {
+		const project = initCleanRustRepo("pi-hooks-turn-end-bound-");
+		const log = join(project, "bound.log");
+		try {
+			const carrier = installCarrier();
+			const onSettled = carrier.handler(SETTLED_LISTENER);
+			registerRendered(join(project, ".pi"), TURN_END_LISTENER, undefined, customCommand(log, "audit: the tree is dirty", 2));
+
+			await onSettled({}, trusted(project));
+			await onSettled({}, trusted(project));
+			expect(carrier.sent).toHaveLength(2);
+			expect(carrier.sent[0]!.options).toEqual({ triggerTurn: true });
+			expect(carrier.sent[1]!.options).toEqual({ triggerTurn: false });
+			expect(readLog(log)).toContain('"stop_hook_active":false');
+			expect(readLog(log)).toContain('"stop_hook_active":true');
+
+			// And a settle this carrier did not cause is a new consultation:
+			// the second dispatch steered nothing, so nothing followed from it.
+			await onSettled({}, trusted(project));
+			expect(carrier.sent).toHaveLength(3);
+			expect(carrier.sent[2]!.options).toEqual({ triggerTurn: true });
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
@@ -401,26 +458,226 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 		}
 	});
 
+	/**
+	 * The half of the session vocabulary that actually translates, through the
+	 * handler rather than as a table pin: Pi's `new` and `fork` are Claude
+	 * Code's `clear`, and its `reload` is `resume`. A carrier passing Pi's own
+	 * word through would run neither hook below, and one skipping reloaded and
+	 * resumed sessions outright would run neither either.
+	 */
+	test("a matcher written in Claude Code's words fires for the Pi reason that means it", async () => {
+		const project = initCleanRustRepo("pi-hooks-session-vocab-");
+		// The native drift report shares this listener and is not the subject.
+		writePiConfig(project, { sessionDriftCheck: false });
+		const cleared = join(project, "cleared.log");
+		const resumed = join(project, "resumed.log");
+		try {
+			const carrier = installCarrier();
+			const onSessionStart = carrier.handler(SESSION_START_LISTENER);
+			const root = join(project, ".pi");
+			registerRendered(root, SESSION_START_LISTENER, "clear", `cat >> ${JSON.stringify(cleared)}; echo "kendex: a cleared session"; exit 0`);
+			registerRendered(root, SESSION_START_LISTENER, "resume", `cat >> ${JSON.stringify(resumed)}; echo "kendex: a resumed session"; exit 0`);
+
+			onSessionStart({ type: "session_start", reason: "new" }, trusted(project));
+			await waitForSent(carrier.sent, 1);
+			expect(carrier.sent.map((call) => call.message.content)).toEqual(["kendex: a cleared session"]);
+			expect(JSON.parse(readLog(cleared))).toEqual({ hook_event_name: "SessionStart", source: "clear" });
+			expect(readLog(resumed)).toBe("");
+
+			onSessionStart({ type: "session_start", reason: "reload" }, trusted(project));
+			await waitForSent(carrier.sent, 2);
+			expect(carrier.sent.map((call) => call.message.content)).toEqual([
+				"kendex: a cleared session",
+				"kendex: a resumed session",
+			]);
+			expect(JSON.parse(readLog(resumed))).toEqual({ hook_event_name: "SessionStart", source: "resume" });
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
 	/** The rule the `tool_call` gate states, on a listener with no call to
 	 * refuse: kendex labels these hooks enforced, so a registry that exists and
 	 * did not answer is said rather than read as no hooks installed. */
-	test("a registry that exists and cannot be read is reported, not passed over", async () => {
+	test("a registry that exists and cannot be read is reported on every listener, not passed over", async () => {
 		const project = initCleanRustRepo("pi-hooks-turn-end-unreadable-");
+		// The native drift report shares `session_start` and is not the subject.
+		writePiConfig(project, { sessionDriftCheck: false });
 		try {
 			const carrier = installCarrier();
-			const onTurnEnd = carrier.handler(TURN_END_LISTENER);
+			const onSettled = carrier.handler(SETTLED_LISTENER);
+			const onToolResult = carrier.handler(TOOL_RESULT_LISTENER);
+			const onSessionStart = carrier.handler(SESSION_START_LISTENER);
 			registerRendered(join(project, ".pi"), TURN_END_LISTENER, undefined, "exit 0");
 
 			// The control: the same fixture, readable.
-			await onTurnEnd({}, trusted(project));
+			await onSettled({}, trusted(project));
 			expect(carrier.sent).toHaveLength(0);
+			expect(await onToolResult(toolResultEvent("bash", { command: "ls" }, "ok"), trusted(project))).toBeUndefined();
 
 			writeFileSync(join(project, ".pi", "kendex", "hooks.json"), '{"hooks": {"turn_end": [');
-			await onTurnEnd({}, trusted(project));
+			await onSettled({}, trusted(project));
 			expect(carrier.sent).toHaveLength(1);
 			expect(carrier.sent[0]!.message.content).toContain("could not be read");
 			expect(carrier.sent[0]!.message.content).toContain(TURN_END_LISTENER);
+
+			// The same rule on its two sibling call sites, which have their own
+			// channel: the tool result the model reads, and the session's
+			// opening context.
+			const patched = await onToolResult(toolResultEvent("bash", { command: "ls" }, "ok"), trusted(project)) as {
+				content?: { text: string }[];
+			};
+			expect(patched.content?.at(-1)?.text).toContain("could not be read");
+			expect(patched.content?.at(-1)?.text).toContain(TOOL_RESULT_LISTENER);
+
+			onSessionStart({ type: "session_start", reason: "startup" }, trusted(project));
+			await waitForSent(carrier.sent, 2);
+			expect(carrier.sent).toHaveLength(2);
+			expect(carrier.sent[1]!.message.content).toContain("could not be read");
+			expect(carrier.sent[1]!.message.content).toContain(SESSION_START_LISTENER);
 		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	/**
+	 * Nobody awaits the session_start dispatch, and every hook on it runs to
+	 * its own budget while the session opens — so by the time the last one
+	 * settles the session may have been replaced, and Pi documents its captured
+	 * session-bound `pi` as throwing from that point on. Unguarded that is an
+	 * unhandled rejection rather than a handler error Pi absorbs: a probe under
+	 * bun 1.3.14 with a throwing `sendMessage` ended the process on it, exit 1
+	 * against exit 0 with the guard, and Node from 22 on — this package's
+	 * engines floor — defaults to the same. Below the crash is the quieter
+	 * half, which is what this case holds: one dead channel must lose its own
+	 * line and not the rest of what the listener had to say.
+	 */
+	test("a channel that is gone loses its own line, not the rest of the report", async () => {
+		const project = initCleanRustRepo("pi-hooks-stale-session-");
+		writePiConfig(project, { sessionDriftCheck: false });
+		try {
+			let stale = true;
+			const carrier = installCarrier(() => {
+				if (!stale) return;
+				stale = false;
+				throw new Error("session-bound pi is stale after replacement");
+			});
+			const root = join(project, ".pi");
+			registerRendered(root, SESSION_START_LISTENER, undefined, 'echo "kendex: the first hook spoke"');
+			registerRendered(root, SESSION_START_LISTENER, undefined, 'echo "kendex: the second hook spoke"');
+
+			carrier.handler(SESSION_START_LISTENER)({ type: "session_start", reason: "startup" }, trusted(project));
+			await waitForSent(carrier.sent, 2);
+			expect(carrier.sent.map((call) => call.message.content)).toEqual([
+				"kendex: the first hook spoke",
+				"kendex: the second hook spoke",
+			]);
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	/**
+	 * The three statuses that are neither a clean run nor a refusal, on a
+	 * listener with no call to refuse: a rendered script no scope holds, a run
+	 * past its budget, and a hook exiting anything else. kendex labels these
+	 * hooks enforced, so each is reported rather than read as an all-clear —
+	 * the direction the failure has to go.
+	 */
+	test("a hook that reached no verdict says so on the tool result", async () => {
+		const project = initCleanRustRepo("pi-hooks-no-verdict-");
+		writePiConfig(project, { hookTimeoutMs: 400 });
+		const log = join(project, "no-verdict.log");
+		const root = join(project, ".pi");
+		try {
+			// Registered as kendex registers a rendered guard, with no render
+			// behind it; then one that outlives the budget; then one that
+			// exits 1.
+			registerRendered(root, TOOL_RESULT_LISTENER, undefined, 'bash "$(git rev-parse --show-toplevel)/.pi/kendex/hooks/audit.sh"');
+			registerRendered(root, TOOL_RESULT_LISTENER, undefined, "sleep 30");
+			registerRendered(root, TOOL_RESULT_LISTENER, undefined, customCommand(log, "audit: it fell over", 1));
+
+			const onToolResult = installCarrier().handler(TOOL_RESULT_LISTENER);
+			const patched = await onToolResult(toolResultEvent("bash", { command: "ls" }, "ok"), trusted(project)) as {
+				content?: { text: string }[];
+			};
+			const said = patched.content?.at(-1)?.text ?? "";
+			expect(said).toContain("rendered script is missing");
+			expect(said).toContain("kendex refresh");
+			expect(said).not.toContain("No such file or directory");
+			expect(said).toContain("timed out after 400ms");
+			expect(said).toContain("exited 1 without reaching a verdict: audit: it fell over");
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	/**
+	 * The two guard settings this carrier also ports natively. The surface says
+	 * off turns both off, so the registered copy has to read the same switch —
+	 * and the switch is keyed by the hook's own rendered name, which is the
+	 * whole of what the map holds.
+	 */
+	test("the setting for a natively ported guard turns off a registered copy of it", async () => {
+		const project = initCleanRustRepo("pi-hooks-guard-settings-");
+		const cases = [
+			{ name: "session-drift-check", setting: "sessionDriftCheck", listener: SESSION_START_LISTENER },
+			{ name: "task-completed-check", setting: "taskCompletedCheck", listener: TURN_END_LISTENER },
+		];
+		try {
+			for (const { name, setting, listener } of cases) {
+				const log = join(project, `${name}.log`);
+				rmSync(join(project, ".pi", "kendex"), { recursive: true, force: true });
+				renderRegisteredGuard(project, listener, name, log);
+
+				for (const on of [true, false]) {
+					rmSync(log, { force: true });
+					writePiConfig(project, { [setting]: on });
+					const carrier = installCarrier();
+					if (listener === SESSION_START_LISTENER) {
+						carrier.handler(SESSION_START_LISTENER)({ type: "session_start", reason: "startup" }, trusted(project));
+						await grace();
+					} else {
+						await carrier.handler(SETTLED_LISTENER)({}, trusted(project));
+					}
+					expect(readLog(log) !== "", `${name} spawned with ${setting}: ${on}`).toBe(on);
+				}
+			}
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	/**
+	 * The trust gate, on each listener this change newly dispatches. Before it,
+	 * an untrusted clone's registry could only reach a spawn on a tool call;
+	 * now it could reach one at session start, before the person has typed
+	 * anything. The person's own global hook answers in the same fixture, so a
+	 * carrier that dispatched nothing at all could not pass this.
+	 */
+	test("an untrusted project's hooks run on none of them, and the person's own still answer", async () => {
+		const project = initCleanRustRepo("pi-hooks-untrusted-listeners-");
+		writePiConfig(project, { sessionDriftCheck: false });
+		const log = join(project, "project.log");
+		const agentDir = process.env.PI_CODING_AGENT_DIR!;
+		const globalLog = join(agentDir, "global.log");
+		const untrusted = { cwd: project, isProjectTrusted: () => false };
+		try {
+			for (const listener of [TOOL_RESULT_LISTENER, TURN_END_LISTENER, SESSION_START_LISTENER]) {
+				registerRendered(join(project, ".pi"), listener, undefined, customCommand(log, "the project's hook spoke", 2));
+				registerRendered(agentDir, listener, undefined, customCommand(globalLog, "the person's own hook spoke", 2));
+			}
+			const carrier = installCarrier();
+			await carrier.handler(TOOL_RESULT_LISTENER)(toolResultEvent("bash", { command: "ls" }, "ok"), untrusted);
+			await carrier.handler(SETTLED_LISTENER)({}, untrusted);
+			carrier.handler(SESSION_START_LISTENER)({ type: "session_start", reason: "startup" }, untrusted);
+			await waitForSent(carrier.sent, 2);
+
+			expect(readLog(log)).toBe("");
+			expect(readLog(globalLog).match(/hook_event_name/g)).toHaveLength(3);
+		} finally {
+			rmSync(join(agentDir, "kendex"), { recursive: true, force: true });
+			rmSync(globalLog, { force: true });
 			rmSync(project, { recursive: true, force: true });
 		}
 	});

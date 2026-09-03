@@ -32,7 +32,7 @@ The other hook events cannot stop anything in Pi, so the extension delivers what
 | Hook event | Pi listener | What happens with the hook's output |
 | --- | --- | --- |
 | `PostToolUse` | `tool_result` | Appended to the tool result the agent reads. |
-| `Stop`, `TaskCompleted` | `turn_end` | Sent to the agent as a message that starts the next turn. |
+| `Stop`, `TaskCompleted` | `turn_end`, read once per response on `agent_settled` | Sent to the agent once as a message that starts the next turn. A hook's answer to that message runs the hooks again with `stop_hook_active: true` and is not sent back, so a response runs them at most twice. |
 | `SessionStart` | `session_start` | Added to the session's opening context. |
 
 On those three events every matching hook runs. Exit `2` delivers the hook's stderr, exit `0` delivers its stdout, and any other exit status, a timeout or a missing script is reported to the agent as a hook that did not run. A `PostToolUse` matcher is read against the tool name and a `SessionStart` matcher against the source (`startup`, `resume` or `clear`); `Stop` and `TaskCompleted` hooks take no matcher.

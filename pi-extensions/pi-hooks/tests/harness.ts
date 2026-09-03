@@ -19,7 +19,9 @@ export function runGit(args: string[], cwd: string): void {
 	}
 }
 
-export function writePiConfig(project: string): void {
+/** `overrides` are merged over the fixture defaults, for a case whose subject
+ * is one setting: a budget a hook has to overrun, a guard toggle turned off. */
+export function writePiConfig(project: string, overrides: Record<string, unknown> = {}): void {
 	mkdirSync(join(project, ".pi"), { recursive: true });
 	writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({
 		kendex: {
@@ -30,6 +32,7 @@ export function writePiConfig(project: string): void {
 						preCommitCheck: true,
 						taskCompletedCheck: false,
 						clippyTimeoutMs: 3000,
+						...overrides,
 					},
 				},
 			},
@@ -103,7 +106,10 @@ export interface Carrier {
 	handler(event: string): ListenerHandler;
 }
 
-export function installCarrier(): Carrier {
+/** `onSend` runs after the call is recorded, for a case whose subject is a
+ * channel that fails: Pi's session-bound `pi` throws once the session it was
+ * captured from has been replaced. */
+export function installCarrier(onSend?: (message: SentMessage) => void): Carrier {
 	const handlers = new Map<string, ListenerHandler>();
 	const sent: SentCall[] = [];
 	const pi = {
@@ -112,6 +118,7 @@ export function installCarrier(): Carrier {
 		},
 		sendMessage(message: SentMessage, options?: Record<string, unknown>) {
 			sent.push({ message, options });
+			onSend?.(message);
 		},
 	};
 	piHooks(pi as never);

@@ -177,3 +177,23 @@ export function personLine(result: HookResult): string | undefined {
 export function unreadableLine(listener: string, cause: string): string {
 	return `pi-hooks: the rendered hook registry could not be read, so no ${listener} hook ran. ${cause}`;
 }
+
+/**
+ * Say one line through one channel, whatever that channel does. Never throws.
+ *
+ * Pi's session-bound `pi` and `ctx` objects throw once the session is replaced
+ * (`ctx.newSession`, `ctx.switchSession`, `ctx.fork`, `ctx.reload`), and a
+ * `session_start` report is delivered long after its handler returned — nobody
+ * awaits it, so a throw there is an unhandled rejection rather than a handler
+ * error Pi absorbs, and Node from 22 on ends the process on one. Each delivery
+ * is wrapped on its own, so a channel that is gone loses its own line rather
+ * than the rest of what the listener had to say. `deliverDrift` states the same
+ * invariant for the drift report beside it.
+ */
+export function deliver(send: (content: string) => void, content: string): void {
+	try {
+		send(content);
+	} catch {
+		// The channel itself is what failed; there is nowhere left to report it.
+	}
+}

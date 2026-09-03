@@ -243,14 +243,15 @@ pub fn installable(harness: HarnessId) -> bool {
     })
 }
 
-/// The listeners Pi's runtime actually fires, and the registry key each
-/// hook event maps onto. Pi has no per-hook artifact — a carrier package
-/// hosts these native listeners — and an event outside this map cannot
-/// fire on Pi, so it stays honestly unsupported in every label.
+/// The registry key each hook event maps onto, named for the listener Pi
+/// fires. Pi has no per-hook artifact — a carrier package hosts these
+/// native listeners — and an event outside this map cannot fire on Pi, so
+/// it stays honestly unsupported in every label.
 ///
 /// The carrier dispatches every key here, and a key on one side alone is a
 /// hook kendex labels enforced with nothing to run it (KEN-941, KEN-1189).
-/// Only `tool_call` gates: `docs/adapters/pi.md` says what the rest do.
+/// Only `tool_call` gates, and `turn_end` is read on `agent_settled`, which
+/// fires per response rather than per turn: `docs/adapters/pi.md` has both.
 pub fn pi_listener(event: &str) -> Option<&'static str> {
     match event {
         "PreToolUse" => Some("tool_call"),
