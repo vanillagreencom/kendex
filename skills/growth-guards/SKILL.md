@@ -1,7 +1,7 @@
 ---
 name: growth-guards
 description: "Load to add, tune, or debug a repo growth guard, its git hooks, or GROWTH_GUARDS_* settings."
-summary: "Ten repo growth guards beside size-ratchet (todo-ban, byte-ceiling, suppression-ban, conflict-markers, changelog-entries, prose, md-format, md-refs, comments, commit-msg) and the git hook shims that run them. md-format holds markdown to one paragraph per line and md-reflow rewrites it; md-refs judges every reference in the markdown agents load; comments is the opt-in lane over source comments; commit-msg judges header shape, subject length and the changelog a commit owes."
+summary: "Ten commit-time guards beside size-ratchet (markers, bytes, suppressions, conflicts, changelog, prose, markdown format and references, comments, commit message) and the git hook shims that run them."
 license: MIT
 user-invocable: true
 metadata:

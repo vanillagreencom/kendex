@@ -1,7 +1,7 @@
 ---
 name: arch-docs
 description: "Load to write, rewrite, or review a repository's AGENTS.md files or its docs/architecture/ against the shipped convention."
-summary: "The convention for agent-loaded instruction files and architecture docs: what belongs in root AGENTS.md, docs/architecture/overview.md, topic files and nested AGENTS.md, what is excluded, the formatting rule, the harness shims, templates, and the blank-page rewrite workflow."
+summary: "The convention for root and nested AGENTS.md and docs/architecture/: what each holds, what is excluded, the format, templates, and the rewrite workflow."
 license: MIT
 user-invocable: true
 metadata:
