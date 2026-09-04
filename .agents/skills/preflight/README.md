@@ -1,8 +1,22 @@
 # preflight
 
-A diff-scoped, fail-only checker for the escape classes worth catching mechanically: fail-open bash, new suites no runner invokes, scratch directories no EXIT trap removes, directories created at hardcoded absolute temp paths, docs citing repo paths that do not exist, source files citing docs that do not exist, edits to a migration a database has already run, and data files no parser accepts.
+A diff-scoped, fail-only checker for the escape classes worth catching mechanically: fail-open bash, new suites no runner invokes, scratch directories no EXIT trap removes, hardcoded absolute temp paths, docs citing repo paths that do not exist, edits to a migration a database has already run, and data files no parser accepts. For a repository that wants those caught before a long validation run, not in review.
 
-Findings land only on lines a change ADDED, and there is no warnings tier: a lane that cannot decide stays quiet, so every finding is worth a hard failure.
+## Install
+
+```bash
+kendex add vanillagreencom/kendex --skill preflight
+```
+
+Needs `git`, `awk` and the usual POSIX userland; Bash 3.2 is enough. `shellcheck` is optional and enables the two shellcheck lanes; `data-syntax` reads JSON through `jq` and TOML through `taplo` or a Python 3.11+ `tomllib`. A lane whose tool is missing skips silently.
+
+## What it does
+
+- Judges only the lines a change added, against the merge base, the index, or every tracked line.
+- Has no warnings tier: a lane that cannot decide stays quiet, so every finding is worth a hard failure.
+- Prints one line per finding and one summary line; exit `0` clean, `1` findings, `2` usage or environment error.
+
+## How it works
 
 ```bash
 .agents/skills/preflight/scripts/preflight              # vs the default branch's merge base
@@ -15,18 +29,14 @@ docs/guide.md:41: [docs-cited-paths] cites a path that does not exist: docs/setu
 preflight: 1 finding(s) across 3 changed file(s)
 ```
 
-`--base REF` sets the comparison point, `--repo PATH` runs against another checkout. Exit codes: `0` clean, `1` findings, `2` usage or environment error.
+Flags: `preflight --help`. The lane table, scope rules and the subtrees each lane skips: [SKILL.md](SKILL.md). Diff scope, the `unwired-suite` wiring grammar and the `applied-migration-edited` glob set: [references/lanes.md](references/lanes.md).
 
 ## Wiring it
 
-**Validation.** Run it ahead of the project's own build, lint and test command, so a finding lands before a long run does.
+- Validation: run it ahead of the project's own build, lint and test command.
+- Commit time: where `growth-guards` is installed, its pre-commit chain runs `preflight --staged` itself. Any other hook calls the script with `--staged`; the chain's `GROWTH_GUARDS_PRE_COMMIT_LOCAL` lane runs its executable with no arguments, so wiring preflight there needs a wrapper that adds the flag.
+- CI: `preflight --base origin/<default-branch>` on the PR head. The installed skill must be committed: a CI checkout sees tracked files only, never a machine-local `.agents` symlink.
 
-**Commit time.** Where `growth-guards` is also installed, its pre-commit chain runs `preflight --staged` itself — nothing to wire. Any other hook calls the script with `--staged`. The guard chain's `GROWTH_GUARDS_PRE_COMMIT_LOCAL` lane runs its executable with no arguments, so wiring preflight there needs a wrapper that adds `--staged`.
+## Customise
 
-**CI.** `preflight --base origin/<default-branch>` on the PR head. The installed skill must be committed: a CI checkout sees tracked files only, never a machine-local `.agents` symlink.
-
-## Requirements
-
-`git`, `awk`, and the usual POSIX userland; Bash 3.2 compatible. `shellcheck` is optional and enables the two shellcheck lanes. `data-syntax` reads JSON through `jq` and TOML through `taplo`, or, where `taplo` is absent, a `python3` new enough to carry `tomllib` (3.11 and later). A lane whose tool is missing skips silently.
-
-Lane table, scope rules, and the subtrees each lane skips: [SKILL.md](SKILL.md). Diff scope, the `unwired-suite` wiring grammar, and the `applied-migration-edited` glob set: [references/lanes.md](references/lanes.md).
+Nothing to configure; `--base REF` sets the comparison point and `--repo PATH` runs against another checkout.

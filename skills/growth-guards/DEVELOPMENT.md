@@ -1,39 +1,18 @@
-# growth-guards — development notes
+# growth-guards development
 
-What a maintainer must not break. What each check fails: [CHECKS.md](CHECKS.md); consumer text: [README.md](README.md).
+What a maintainer must not break. What each check fails: [CHECKS.md](CHECKS.md); consumer text: [README.md](README.md); every key: [SKILL.md](SKILL.md).
 
-## Structure
+## One definition each
 
-- `scripts/growth-guards` — dispatcher and router; `STAGED_SCOPED_CHECKS` names the checks the commit batch hands `--staged`
-- `scripts/todo-ban`, `byte-ceiling`, `suppression-ban`, `conflict-markers`, `changelog-entries`, `prose`, `md-format`, `md-refs`, `comments`, `commit-msg` — the ten checks, each standalone
-- `scripts/md-reflow` — md-format's reading, writing the file back
-- `scripts/pre-commit` — the chain the git `pre-commit` shim runs
-- `scripts/install-git-hooks` — hook installer, remover, `--check`
-- `scripts/lib/common.sh` — shared helpers, the one exit handler, `gg_content_carriers`, `gg_grep_lane`
-- `scripts/lib/settings.sh` — layered settings resolution
-- `scripts/lib/paths.sh` — capturing a path without losing a trailing newline
-- `scripts/lib/configured-paths.sh` — a glob-list lane's list, excludes, matcher, index walk, `gg_note_skip`
-- `scripts/lib/staged-lines.sh` — the lines a commit adds to one path, off a pinned `-U0` diff
-- `scripts/lib/comment-text.sh` — comment grammar per path and the `line<TAB>text` scanner; limits stated in CHECKS.md § comments, pinned by `tests/comments.test.sh`
-- `scripts/lib/commit-header.sh`, `changelog-grammar.sh` — what a commit header and a changelog fragment are; the two changelog scopes
-- `scripts/lib/commit-parent.sh` — the parent a commit will have; an amend read off `/proc/<pid>/cmdline`
-- `scripts/lib/changelog-record-scope.sh` — the record half of `changelog-entries`
-- `scripts/lib/changelog-collate.sh` — the fold `--collate` runs on a clean verdict
-- `scripts/lib/atomic-install.sh` — `gg_install_file`, a rename inside the destination's directory; its staging file is declared and removed in `common.sh`
-- `scripts/lib/hook-check.sh` — the `--check` verdict
-- `scripts/lib/hooks-path.sh` — where git reads hooks from; `hooks_path_origins`
-- `scripts/lib/helper-body.sh` — the exact bytes of `.git/hooks/kendex-guards`: `helper_body`, `helper_head_shape`, `gg_shell_quote`
-- `scripts/lib/skill-roots.sh` — the one definition of the skills roots, including the copy baked into the helper
-- `scripts/lib/md-blocks.awk` — the one reading of a markdown file's blocks: modes `check`, `reflow`, `lines`
-- `scripts/lib/md-shapes.awk` — the line-shape predicates md-blocks.awk asks; the first `-f` program of md-format, md-reflow and md-refs, never loaded alone
-- `scripts/lib/md-refs.awk` — what a file cites and defines, over the `lines` stream, resolved against the index
-- `scripts/lib/md-slug.awk` — code spans split from prose; a heading reduced to its GitHub anchor
-- `scripts/lib/md-scope.sh` — the three scopes the markdown lanes share
-- `kendex.settings.toml.example` — settings template for consumers
-- `SKILL.md` agent-facing; `README.md` consumer-facing; `CHECKS.md` what each check fails
-- `tests/` — run any file directly; every suite sources `tests/lib/harness.bash` first (scratch root, `TMPDIR` inside it, git-config isolation)
-- `tests/lib/install-hooks.bash` — the fixture repository the `install-git-hooks` suites share
-- `tests/lib/pty.bash` — `gg_pty_run`, sourced by `tests/terminal-paths.test.sh` alone
+- `scripts/growth-guards` is the dispatcher; `STAGED_SCOPED_CHECKS` names the checks the commit batch hands `--staged`.
+- `scripts/lib/common.sh` holds the shared helpers, the one exit handler, `gg_content_carriers` and `gg_grep_lane`.
+- `scripts/lib/configured-paths.sh` holds a glob-list lane's list, excludes, matcher, index walk and `gg_note_skip`.
+- `scripts/lib/staged-lines.sh` is the lines a commit adds to one path, off a pinned `-U0` diff.
+- `scripts/lib/comment-text.sh` is the comment grammar per path and the `line<TAB>text` scanner; its limits are stated in CHECKS.md § comments and pinned by `tests/comments.test.sh`.
+- `scripts/lib/commit-header.sh` and `changelog-grammar.sh` define what a commit header and a changelog fragment are; `commit-parent.sh` is the parent a commit will have, an amend read off `/proc/<pid>/cmdline`.
+- `scripts/lib/helper-body.sh` is the exact bytes of `.git/hooks/kendex-guards` (`helper_body`, `helper_head_shape`, `gg_shell_quote`); `skill-roots.sh` is the one definition of the skills roots, including the copy baked into the helper; `hooks-path.sh` is where git reads hooks from.
+- `scripts/lib/md-blocks.awk` is the one reading of a markdown file's blocks; `md-shapes.awk` the line-shape predicates it asks, always the first `-f` program of `md-format`, `md-reflow` and `md-refs`, never loaded alone; `md-refs.awk` what a file cites and defines; `md-slug.awk` a heading reduced to its GitHub anchor; `md-scope.sh` the three scopes the markdown lanes share.
+- `tests/`: run any file directly; every suite sources `tests/lib/harness.bash` first (scratch root, `TMPDIR` inside it, git-config isolation). `tests/lib/install-hooks.bash` is the fixture repository the installer suites share; `tests/lib/pty.bash` is sourced by `tests/terminal-paths.test.sh` alone.
 
 ## Design
 
@@ -63,6 +42,7 @@ The installer writes into `.git/hooks`, never `core.hooksPath`:
 - `--uninstall` drops the helper and the marked line, deletes a hook file this installer created outright, leaves every other line, and runs under `core.hooksPath` too. A line it may not edit keeps the helper and fails the removal.
 - `--check` writes nothing, not even the hooks directory. `0`: helper and both hooks pass the install predicate. `1`: a shim drifted or absent, or `core.hooksPath` set and empty. `2`: unmeasurable, or `core.hooksPath` naming a directory; the verifier reads `.git/hooks` only. Definitive drift outranks an unmeasured component. One stdout line carries every finding.
 - The helper is compared byte for byte against `helper_body`, its head against `helper_head_shape` with the per-checkout value blanked. Only `SCRIPT_DIR` may differ, and only when it round-trips through `gg_shell_quote` and names this project's scripts directory in another checkout of this repository; `project_rel` and `skill_roots` compare exactly.
+- `gg_install_file` in `scripts/lib/atomic-install.sh` is a rename inside the destination's directory; its staging file is declared and removed in `common.sh`.
 - kendex runs the installer through the `repo-effects` declaration in `SKILL.md`; every verb that drops the package runs `--uninstall` while the scripts are still on disk; `kendex guard install`, `guard uninstall` and `guard check` call it directly; `kendex check` relays `--check` only where `.git/hooks/kendex-guards` exists.
 
 ## The pre-commit chain
@@ -98,7 +78,7 @@ The pathspec table is in CHECKS.md § suppression-ban. The bare-allow count runs
 
 ## Settings sources
 
-Each key resolves environment > `.env.local` > `.kendex/settings.toml` > committed `kendex.settings.toml` (flat `KEY = "value"` under `[env]`) > default; `.env` is never read. Env files take `KEY=value` or `export KEY=value`, parsed, never sourced. Only an absent source is skipped; one that exists but is unusable (unreadable, a directory, FIFO, socket or device, a dangling symlink) is exit 2. `GROWTH_GUARDS_SETTINGS_FILE=/dev/null` selects no file source. Scripts `cd` to `git rev-parse --show-toplevel` first, so every relative path is repo-root-relative; a per-check flag overrides every source.
+`scripts/lib/settings.sh` resolves each key environment > `.env.local` > `.kendex/settings.toml` > committed `kendex.settings.toml` (flat `KEY = "value"` under `[env]`) > default; `.env` is never read. Env files take `KEY=value` or `export KEY=value`, parsed, never sourced. Only an absent source is skipped; one that exists but is unusable (unreadable, a directory, FIFO, socket or device, a dangling symlink) is exit 2. `GROWTH_GUARDS_SETTINGS_FILE=/dev/null` selects no file source. Scripts `cd` to `git rev-parse --show-toplevel` first, so every relative path is repo-root-relative; a per-check flag overrides every source.
 
 ## Excludes format
 
