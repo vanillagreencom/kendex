@@ -35,7 +35,7 @@ Codex reads only the root-to-cwd chain of `AGENTS.md` files, at launch, under a 
 
 - Docs change in the same commit as the code they describe. The `doc-drift-check` hook blocks a stop that changed code under a covered directory without touching its docs; confirm or update the docs, then finish.
 - One paragraph per line, one list item per line, no hard wraps inside either; blank lines separate paragraphs, list blocks, headings, and fences; tables and fenced code stay as written. The growth-guards `md-format` lane enforces it and `md-reflow` converts a file once.
-- Every relative path, `file.md § Heading` or `file.md#anchor` citation, and decision ID resolves; the `md-refs` lane checks them.
+- Every relative link, `<path>.md § Heading` or `<path>.md#anchor` citation, and decision ID resolves; the `md-refs` lane checks them.
 - No history prose in agent-loaded markdown; the `prose` lane checks it.
 - Size is a size-ratchet byte class per file kind (root `AGENTS.md`, nested `AGENTS.md`, `overview.md`, topic files); a file over its class is frozen in the baseline and only shrinks. A repo overrides a class through its settings, never by inventing a number in prose.
 - A topic file exists only where a subsystem has invariants or boundaries of its own; a subsystem with none is a line in the overview.

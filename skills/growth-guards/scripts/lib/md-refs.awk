@@ -101,21 +101,17 @@ function emit_links(s,   i, j, k, dest, raw) {
     if (is_local(dest)) printf "L\t%s\t%d\t%s\t%s\n", src, line_no, dest, raw
     i = j + 2
   }
-  if (s ~ /^[ \t]*\[[^]]+\]:[ \t]*[^ \t]/) {
+  if (s ~ /^[ \t]*\[[^][]+\]:[ \t]*[^ \t]/) {
     j = index(s, "]:")
     dest = parse_dest(s, j + 2)
     if (is_local(dest)) printf "L\t%s\t%d\t%s\t%s\n", src, line_no, dest, rtrim(ltrim(s))
   }
 }
 
-# A path alone is a citation only when it names a directory: a bare
-# `NAME.md` is how a file name is mentioned (a default value, a convention),
-# and read as a citation it would be dead in every tree that lacks the file.
+# A path alone in a code span is a file being named, not cited: a default
+# value, a file a skill writes, a convention. Only the § and # forms point a
+# reader at a place in a file, so only they are judged.
 function emit_citation(span,   path, rest, i) {
-  if (span ~ /^[A-Za-z0-9._-]+\/[A-Za-z0-9._\/-]*\.md$/) {
-    printf "C\t%s\t%d\t%s\tpath\t\t%s\n", src, line_no, span, span
-    return
-  }
   i = index(span, SECTION_SEP)
   if (i > 0) {
     path = substr(span, 1, i - 1)
@@ -296,7 +292,6 @@ mode == "resolve" {
         next
       }
     }
-    if (ckind == "path") next
     want_target(target)
     if (ckind == "section") {
       if (!((target "#" tolower(value)) in texts)) fail("`" raw "`: " target " has no heading '" value "'")

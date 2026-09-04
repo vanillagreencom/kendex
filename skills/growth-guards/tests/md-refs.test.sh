@@ -96,8 +96,9 @@ run_refs --all
 git -C "$R" rm -qf docs/architecture/topic.md
 
 echo "=== code-span citations: path, § heading, #anchor ==="
-cite "a path citation names a tracked file" 0 $'See `docs/guide.md`.\n'
-cite "control: a path citation naming no tracked file fails" 1 $'See `docs/nope.md`.\n' 1 "no tracked file at docs/nope.md"
+cite "a path alone in a code span is a name, not a citation" 0 $'See `docs/nope.md` and `tmp/out.md`.\n'
+cite "control: the same path with a heading is a citation" 1 $'See `docs/nope.md § Top`.\n' 1 "no tracked file at docs/nope.md"
+cite "a bracketed template line holding [X]: [Y] is not a definition" 0 $'   [For each item: "- [ID]: [SUMMARY] and [PATH]"]\n'
 cite "a bare file name in a code span is a name, not a citation" 0 $'The record is `CHANGELOG.md`; see `nope.md`.\n'
 cite "control: the same bare name with a heading is a citation" 1 $'See `nope.md § Top`.\n' 1 "no tracked file at nope.md"
 cite "a § citation matches a heading case-insensitively" 0 $'See `docs/architecture/overview.md § the ONE idea`.\n'
