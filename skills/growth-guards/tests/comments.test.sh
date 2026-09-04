@@ -15,7 +15,8 @@ GG="$SKILL_DIR/scripts/growth-guards"
 . "$TEST_DIR/lib/harness.bash"
 
 # Hermetic: a leaked setting would mask every case below.
-unset GROWTH_GUARDS_COMMENT_PATHS GROWTH_GUARDS_COMMENT_EXCLUDES GH_ISSUE_PATTERN \
+unset GROWTH_GUARDS_COMMENT_PATHS GROWTH_GUARDS_COMMENT_EXCLUDES \
+  GROWTH_GUARDS_COMMENT_REFERENCE_TYPES GROWTH_GUARDS_COMMENT_REVISION_WORDS GH_ISSUE_PATTERN \
   GROWTH_GUARDS_CHECKS GROWTH_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
@@ -99,7 +100,7 @@ case "$OUT" in *"(calendar date)"*) ok "named as a calendar date" ;; *) bad "nam
 put a.rs '// 2026-8-1 is not the shape'
 run_cm
 passes "an unpadded date is not the shape"
-for w in previously "used to" "no longer" reverted "an earlier" "earlier round" incident historically originally "at the time" added new "existing code" "phase 1" "phase 12"; do
+for w in previously "used to" "no longer" reverted "an earlier" "earlier round" incident historically originally "at the time" "existing code"; do
   put a.rs "// the flag $w applied to the batch"
   run_cm
   fails_at "the word '$w' fails" a.rs 1
@@ -118,6 +119,30 @@ put a.rs '// phase without a number, and a phrase with existing code'
 run_cm
 fails_at "control: the phrase 'existing code' fires while a bare 'phase' does not" a.rs 1
 [ "$(printf '%s\n' "$OUT" | grep -c 'FAIL history reference')" -eq 1 ] && ok "and it is the one hit" || bad "one hit" "$OUT"
+put a.rs '// Append a new row during phase 3 after a field was added.'
+run_cm
+passes "new, added and phase N are not revision narration by default"
+
+echo "=== reference and revision classes can run alone ==="
+put a.rs '// tracked as ABC-123 previously'
+OUT="$(cd "$R" && GROWTH_GUARDS_COMMENT_REFERENCE_TYPES= GROWTH_GUARDS_COMMENT_REVISION_WORDS=previously "$CM" 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 1 ] && [ "$(printf '%s\n' "$OUT" | grep -c 'history reference (revision narration)')" -eq 1 ] && case "$OUT" in *"history reference (issue id)"*) false ;; *) true ;; esac \
+  && ok "revision narration runs without issue and date references" \
+  || bad "revision-only configuration" "rc=$RC out=$OUT"
+OUT="$(cd "$R" && GROWTH_GUARDS_COMMENT_REFERENCE_TYPES=issue-id GROWTH_GUARDS_COMMENT_REVISION_WORDS= "$CM" 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 1 ] && [ "$(printf '%s\n' "$OUT" | grep -c 'history reference (issue id)')" -eq 1 ] && case "$OUT" in *"history reference (revision narration)"*) false ;; *) true ;; esac \
+  && ok "issue references run without revision narration" \
+  || bad "reference-only configuration" "rc=$RC out=$OUT"
+for mode in index staged; do
+  put a.rs '// Legacy behavior'
+  args=()
+  [ "$mode" != staged ] || args=(--staged)
+  OUT="$(cd "$R" && GROWTH_GUARDS_COMMENT_REFERENCE_TYPES= GROWTH_GUARDS_COMMENT_REVISION_WORDS=LeGaCy "$CM" ${args[@]+"${args[@]}"} 2>&1)" && RC=0 || RC=$?
+  fails_at "a mixed-case configured word matches in $mode scope" a.rs 1
+  put a.rs '// LegacyValue behavior'
+  OUT="$(cd "$R" && GROWTH_GUARDS_COMMENT_REFERENCE_TYPES= GROWTH_GUARDS_COMMENT_REVISION_WORDS=LeGaCy "$CM" ${args[@]+"${args[@]}"} 2>&1)" && RC=0 || RC=$?
+  [ "$RC" -eq 0 ] && ok "word boundaries still hold in $mode scope" || bad "configured word boundary" "rc=$RC out=$OUT"
+done
 put a.rs '// encoded as UTF-8'
 run_cm
 fails_at "the default key shape is any letter run, a hyphen and a digit run, so UTF-8 matches it (set GH_ISSUE_PATTERN to narrow)" a.rs 1
@@ -359,16 +384,20 @@ solo a.c 'char *s = "one \' "  // $W" '  three";'
 run_cm
 fails_at "a C string ends at its line, so the continued line's // is a comment (stated limit)" a.c 2
 
-echo "=== a file that ends inside a string, a block comment or a heredoc is not extractable ==="
+echo "=== an unextractable file is reported after later files are scanned ==="
 new_repo unclosed
 not_extractable() { # DESC PATH FRAGMENT — the last run was exit 2 naming PATH and the opener
-  [ "$RC" -eq 2 ] && case "$OUT" in *"could not extract the comment text of $2: $3"*) true ;; *) false ;; esac \
+  [ "$RC" -eq 2 ] && case "$OUT" in *"not measured: $2 — comment text could not be extracted: $3"*) true ;; *) false ;; esac \
     && ok "$1" || bad "$1" "rc=$RC out=$OUT"
-  case "$OUT" in *"scanned file(s)"*) bad "no clean count covers a file that was not extracted" "$OUT" ;; *) ok "no clean count covers a file that was not extracted" ;; esac
+  case "$OUT" in *"OK — no history references"*) bad "no clean count covers a file that was not extracted" "$OUT" ;; *) ok "no clean count covers a file that was not extracted" ;; esac
 }
 solo a.ts 'const re = /`/g;' "// $W"
+put b.rs "// $W"
 run_cm
 not_extractable "a regex literal holding a backtick opens a template literal that never closes (stated limit)" a.ts "a string literal opened at line 1 is never closed"
+[ "$RC" -eq 2 ] && case "$OUT" in *"b.rs:1:"*"1 history reference(s) found in 1 scanned file(s)"*) true ;; *) false ;; esac \
+  && ok "the extraction failure keeps the later file's finding" \
+  || bad "scan continues after an extraction failure" "rc=$RC out=$OUT"
 solo a.c 'int x;' '/* open' "int y; // $W"
 run_cm
 not_extractable "a block comment never closed is reported, not read to the end as one comment" a.c "a block comment opened at line 2 is never closed"

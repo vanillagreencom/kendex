@@ -13,7 +13,8 @@ PROSE="$SKILL_DIR/scripts/prose"
 . "$TEST_DIR/lib/harness.bash"
 
 # Hermetic: a leaked setting would mask every case below.
-unset GROWTH_GUARDS_PROSE_PATHS GROWTH_GUARDS_SETTINGS_FILE 2>/dev/null || true
+unset GROWTH_GUARDS_PROSE_PATHS GROWTH_GUARDS_PROSE_REVISION_WORDS \
+  GROWTH_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
 FAIL=0
@@ -71,6 +72,14 @@ run_prose
 put SKILL.md 'NO LONGER is shouted the same way.'
 run_prose
 [ "$RC" -eq 1 ] && ok "an all-caps history word fails too" || bad "all-caps word fails" "rc=$RC out=$OUT"
+put SKILL.md 'This rule was previously called legacy.'
+OUT="$(cd "$R" && GROWTH_GUARDS_PROSE_REVISION_WORDS=legacy "$PROSE" 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 1 ] && case "$OUT" in *"legacy"*) true ;; *) false ;; esac \
+  && ok "the configured prose word list replaces the default" \
+  || bad "configured prose words" "rc=$RC out=$OUT"
+OUT="$(cd "$R" && GROWTH_GUARDS_PROSE_REVISION_WORDS= "$PROSE" 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 0 ] && ok "an empty prose word list disables only the word class" \
+  || bad "empty prose word list" "rc=$RC out=$OUT"
 
 echo "=== a word glued inside a longer word never fires ==="
 put SKILL.md 'An incidental unreverted originality is not history.'
