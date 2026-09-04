@@ -187,6 +187,22 @@ fn a_nested_tracked_agents_file_gets_its_own_shim() {
     assert!(plan(&f).plan.is_empty());
 }
 
+/// A render tree is a harness's, and an `AGENTS.md` inside a rendered
+/// skill is that skill's content: tracked or not, it gets no shim.
+#[test]
+fn an_agents_file_inside_a_render_tree_gets_no_shim() {
+    let f = fixture("\"claude\"", true);
+    let rendered = f.project.join(".agents/skills/vendored");
+    fs::create_dir_all(&rendered).unwrap();
+    fs::write(rendered.join("AGENTS.md"), "# a skill's own file\n").unwrap();
+    commit(&f.project);
+
+    let report = apply_now(&f);
+    assert_eq!(touched(&f, &report), ["CLAUDE.md"]);
+    assert!(!rendered.join("CLAUDE.md").exists());
+    assert!(plan(&f).plan.is_empty());
+}
+
 /// A directory git does not track is never walked: the nested file is
 /// ignored, and only the root one is served.
 #[test]

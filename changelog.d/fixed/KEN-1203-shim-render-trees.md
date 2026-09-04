@@ -1,0 +1,1 @@
+- The CLAUDE.md shim is written beside a project's own AGENTS.md files only; an AGENTS.md inside a harness render tree such as a rendered skill gets none.

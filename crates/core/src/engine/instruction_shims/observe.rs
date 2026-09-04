@@ -19,6 +19,22 @@ use crate::model::{HarnessId, Scope};
 /// git's refusal to answer is read for the one reason this pass expects —
 /// no repository here — and every other failure is the pass's own error:
 /// a repository git will not read is not a project with one file in it.
+/// Whether any directory on the relative path is a dot directory, the
+/// shape every harness keeps its render tree under.
+fn under_dot_directory(relative: &Path) -> bool {
+    relative
+        .parent()
+        .map(|dir| {
+            dir.components().any(|component| {
+                component
+                    .as_os_str()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with('.'))
+            })
+        })
+        .unwrap_or(false)
+}
+
 pub(super) fn agents_files(root: &Path) -> Result<Vec<PathBuf>> {
     let nested = format!("*/{AGENTS_FILE}");
     let output = crate::guard::english(crate::process::Hardened::git(
@@ -50,6 +66,13 @@ pub(super) fn agents_files(root: &Path) -> Result<Vec<PathBuf>> {
         // so what counts as an instruction file is decided by this pass
         // and not by git's glob rules.
         if relative.file_name() != Some(OsStr::new(AGENTS_FILE)) {
+            continue;
+        }
+        // A harness render tree (`.agents`, `.claude`, `.codex`, `.pi`, and
+        // the rest) holds package payloads, and an `AGENTS.md` inside a
+        // rendered skill is that skill's content, not this project's
+        // instructions: no shim is owed there.
+        if under_dot_directory(&relative) {
             continue;
         }
         let path = root.join(relative);
