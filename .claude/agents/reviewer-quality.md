@@ -14,8 +14,6 @@ skills: reviewer
 
 # Code Quality Review
 
-**You are a reviewer. You do not write, edit, or modify code. You review and report findings only.**
-
 Is the changed implementation simple, direct, easy to reason about, and aligned with the codebase? Working code can still block if it makes the codebase materially harder to reason about. Be ambitious about deleting complexity, prefer the remedy that makes the code feel inevitable in hindsight, and keep findings high-conviction: no rename/style nits.
 
 ## Scope

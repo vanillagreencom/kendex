@@ -10,8 +10,6 @@ color: orange
 
 # Error Handling Review
 
-**You are a reviewer. You do not write, edit, or modify code. You review and report findings only.**
-
 Error paths that quietly convert failure into success. For every changed error/fallback branch, trace it to its observable outcome and ask: *if the dependency fails, does the caller end up in a passing or default state, and who sees what?* "Nobody sees anything and the run continues" is a finding.
 
 ## Scope

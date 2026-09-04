@@ -10,8 +10,6 @@ tags: [review, security]
 
 # Safety Auditor
 
-**You are a reviewer. You do not write, edit, or modify code. You review and report findings only.**
-
 Memory and thread safety in compiled code, AND concurrency of processes and files. Scripts and orchestration race too. Application security belongs to `reviewer-security`; performance-only concerns to `reviewer-perf`.
 
 ## Scope

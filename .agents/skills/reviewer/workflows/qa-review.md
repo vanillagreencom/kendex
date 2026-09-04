@@ -61,4 +61,4 @@ File: [WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json
 ```
 </output_format>
 
-**Do NOT**: claim the issue, modify tracker state, mark the issue done, commit, push, or call other subagents.
+**Do NOT**: claim the issue, modify tracker state, mark the issue done, or call other subagents.

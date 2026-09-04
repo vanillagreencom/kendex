@@ -60,6 +60,8 @@ hooks = [
   "session-drift-check",
   "task-completed-check",
   "doc-drift-check",
+  "reviewer-read-only",
+  "reviewer-stop-check",
 ]
 
 [bundles.orchestration]
@@ -94,6 +96,10 @@ skills = [
   "second-opinion",
   "code-quality",
   "arch-docs",
+]
+hooks = [
+  "reviewer-read-only",
+  "reviewer-stop-check",
 ]
 
 [bundles.research]

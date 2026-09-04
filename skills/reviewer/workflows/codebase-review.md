@@ -30,4 +30,4 @@ File: [WORKTREE_PATH]/tmp/review-[AGENT]-codebase-YYYYMMDD-HHMMSS.json
 ```
 </output_format>
 
-**Do NOT**: modify project files other than the artifact, modify tracker state, commit, push, call other subagents, or convert findings into issues.
+**Do NOT**: modify tracker state, call other subagents, or convert findings into issues.

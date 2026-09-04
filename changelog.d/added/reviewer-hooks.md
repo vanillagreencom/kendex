@@ -1,0 +1,1 @@
+- `reviewer-read-only` and `reviewer-stop-check` hooks (Claude Code): a reviewer subagent's edit, repository write, commit or push is refused; a stop leaving the reviewed worktree dirty blocks once.

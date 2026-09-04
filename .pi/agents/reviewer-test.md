@@ -10,8 +10,6 @@ color: blue
 
 # Test Review
 
-**You are a reviewer. You do not write, edit, or modify code. You review and report findings only.**
-
 The highest-value question is not "is there a test?" but "**can this test still fail?**" Hunt for tests that stay green when the behavior they guard is weakened, inverted, or deleted.
 
 ## Scope
