@@ -12,7 +12,7 @@ use test_util::source_path;
 use std::fs;
 
 use kendex_core::apply;
-use kendex_core::engine::{audit, ops};
+use kendex_core::engine::{PlanOptions, audit, ops, plan_apply, plan_record_existing};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::error::CoreError;
 use kendex_core::lock::{load as load_lock, lock_path};
@@ -201,6 +201,51 @@ fn an_interrupted_apply_rolls_the_whole_scope_back() {
     let lock = load_lock(&lock_path(&f.env, &f.scope)).unwrap();
     assert_eq!(lock.version, kendex_core::lock::LOCK_VERSION);
     assert!(lock.entries.contains_key("skill:gh:claude"));
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn matching_renders_are_recorded_without_being_rewritten() {
+    let f = fixture(&MANIFEST_SCHEMA.to_string());
+    let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+    apply::execute(&f.env, &install.plan).unwrap();
+    let rendered = f.project().join(".agents/skills/gh/SKILL.md");
+    let before = fs::read(&rendered).unwrap();
+    let lock_path = f.scope_lock();
+    fs::remove_file(&lock_path).unwrap();
+
+    let recovery = plan_record_existing(&f.env, &f.scope).unwrap();
+    assert_eq!(recovery.plan.ops.len(), 1, "only the record may change");
+    assert!(matches!(
+        recovery.plan.ops[0].op,
+        apply::Op::WriteLock { .. }
+    ));
+    apply::execute(&f.env, &recovery.plan).unwrap();
+
+    assert_eq!(fs::read(&rendered).unwrap(), before);
+    let recovered = load_lock(&lock_path).unwrap();
+    assert_eq!(recovered.version, kendex_core::lock::LOCK_VERSION);
+    assert!(recovered.entries.contains_key("skill:gh:claude"));
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn recording_existing_refuses_a_render_that_does_not_match() {
+    let f = fixture(&MANIFEST_SCHEMA.to_string());
+    let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+    apply::execute(&f.env, &install.plan).unwrap();
+    let rendered = f.project().join(".agents/skills/gh/SKILL.md");
+    fs::write(&rendered, "person's edit\n").unwrap();
+    let lock_path = f.scope_lock();
+    fs::remove_file(&lock_path).unwrap();
+
+    let error = plan_record_existing(&f.env, &f.scope).unwrap_err();
+    assert!(
+        matches!(error, CoreError::RecordExistingRefused { .. }),
+        "{error}"
+    );
+    assert_eq!(fs::read_to_string(&rendered).unwrap(), "person's edit\n");
+    assert!(!lock_path.exists());
 }
 
 impl Fixture {

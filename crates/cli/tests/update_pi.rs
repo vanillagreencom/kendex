@@ -108,6 +108,23 @@ fn update_reinstalls_from_the_declared_source() {
 
 #[test]
 #[allow(clippy::unwrap_used)]
+fn an_unreadable_lock_refuses_before_a_package_changes() {
+    let tmp = fixture();
+    let project = tmp.path().join("dev/app");
+    let installed = project.join(".pi/packages/pi-widgets/index.js");
+    fs::write(project.join(".kendex-lock.json"), "{\"version\":5}\n").unwrap();
+
+    let output = kendex(tmp.path(), &project, &["update-pi"]);
+
+    assert!(!output.status.success());
+    assert_eq!(
+        fs::read_to_string(installed).unwrap(),
+        "export const version = 1;\n"
+    );
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
 fn a_declared_package_not_yet_installed_installs_fresh() {
     let tmp = fixture();
     let project = tmp.path().join("dev/app");

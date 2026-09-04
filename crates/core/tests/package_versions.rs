@@ -526,8 +526,8 @@ fn a_pi_extension_reaches_the_updates_report() {
         .unwrap_or_else(|| panic!("no skill row in {:?}", report.rows));
     assert_eq!(gh.no_per_package_update, None, "{gh:?}");
 
-    // And it can never be acted on. Nothing records a Pi extension in the
-    // lock — update-pi installs them and writes none — so there is no
+    // And it cannot be acted on before update-pi records the installation.
+    // This fixture ran apply alone, so there is no
     // installed commit to move from, and every surface that offers Update
     // asks for one. If a Pi extension ever gains a lock entry this goes
     // red, and the Update those surfaces would start offering is a plan

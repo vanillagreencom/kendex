@@ -297,6 +297,47 @@ fn report_dry_run_routes_by_ownership_and_rejects_scope_all() {
 }
 
 #[test]
+fn report_routes_from_the_manifest_when_the_lock_is_unreadable() {
+    let tmp = sandbox_with_catalog();
+    let home = tmp.path();
+    let proj = home.join("proj");
+    fs::write(
+        proj.join("kendex.toml"),
+        "schema = 6\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[skills.gh]\nsource = \"kendex\"\n\n[pi-extensions.\"@vanillagreen/pi-nested-agents-md\"]\nsource = \"kendex\"\n",
+    )
+    .unwrap();
+    fs::write(proj.join(".kendex-lock.json"), r#"{"version":5}"#).unwrap();
+
+    for selector in [["--skill", "gh"], ["--asset", "pi-nested-agents-md"]] {
+        let output = kendex_in(
+            home,
+            &proj,
+            &[
+                "report",
+                selector[0],
+                selector[1],
+                "--title",
+                "T",
+                "--body",
+                "B",
+                "--dry-run",
+            ],
+            &[],
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8_lossy(&output.stderr);
+        assert!(text.contains("install record unreadable"), "{text}");
+        assert!(text.contains("ownership: kendex"), "{text}");
+        assert!(text.contains("--repo vanillagreencom/kendex"), "{text}");
+        assert!(text.contains("kendex routing warnings"), "{text}");
+    }
+}
+
+#[test]
 #[allow(clippy::unwrap_used)]
 fn report_files_through_a_stubbed_gh() {
     let tmp = sandbox_with_catalog();

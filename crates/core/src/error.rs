@@ -55,6 +55,9 @@ pub enum CoreError {
     )]
     LockCorrupt { path: PathBuf, message: String },
 
+    #[error("{path}: the existing install was not recorded — {reason}")]
+    RecordExistingRefused { path: PathBuf, reason: String },
+
     #[error(
         "{path} records {key} at {recorded}, which is not under {root} — a record claims only what sits under that root; move it aside and apply again"
     )]

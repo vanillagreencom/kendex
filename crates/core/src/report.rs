@@ -1,9 +1,8 @@
 //! Report routing: which repo an issue about an installed item belongs to.
-//! The lock is the one judge, and it records where every kind of asset came
-//! from, skills included. An item whose every lock entry was recorded from
-//! the upstream files there; everything else files against the user's own
-//! repo, the safe default. A name whose entries disagree about their origin
-//! is ambiguous, and an ambiguous name stays local.
+//! A current lock is the first judge. When it has no answer, current manifest
+//! declarations and installed skill or Pi-package metadata can prove the same
+//! provenance without hiding a lock read failure. Everything unresolved files
+//! against the user's own repo. A name whose candidates disagree stays local.
 //!
 //! A lock entry keeps the manifest's repo declaration verbatim, so the same
 //! repository arrives here spelled as a shorthand, an https URL or an scp
@@ -13,8 +12,9 @@
 //! `gh issue create --repo` and a GitHub issue-creation URL each
 //! take `owner/repo`, never the URL a subscription may be spelled with.
 
-use crate::lock::{Lock, LockEntry};
-use crate::model::ItemKind;
+use crate::lock::{Lock, LockEntry, LockFile};
+use crate::manifest::Manifest;
+use crate::model::{ItemKind, Scope};
 use crate::source_ref::{owner_repo, repo_identity};
 
 pub const DEFAULT_UPSTREAM: &str = crate::manifest::DEFAULT_SOURCE_REPO;
@@ -38,6 +38,189 @@ pub struct Route {
     /// The first seven characters of what the apply wrote, off that same
     /// entry, where it recorded one.
     pub rendered: Option<String>,
+}
+
+/// One routing decision plus the record failures the caller must show.
+/// Fallback provenance never turns an unreadable record into a readable one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedRoute {
+    pub route: Route,
+    pub warnings: Vec<String>,
+}
+
+/// Resolve report ownership from the durable record, then the manifest's
+/// expanded declarations, then metadata in the installed render. The latter
+/// two sources keep routing available while the record is absent or unreadable.
+pub fn resolve(
+    env: &crate::env::Env,
+    scope: &Scope,
+    name: &str,
+    kind: Option<ItemKind>,
+    upstream: &str,
+) -> ResolvedRoute {
+    let mut warnings = Vec::new();
+    let (mut lock, fallback) = match crate::lock::load_file(&crate::lock::lock_path(env, scope)) {
+        Ok(LockFile::Current(lock)) => (lock, false),
+        Ok(LockFile::Absent) => (Lock::default(), true),
+        Err(error) => {
+            warnings.push(format!("install record unreadable: {error}"));
+            (Lock::default(), true)
+        }
+    };
+    let manifest = match crate::manifest::load_current(&crate::manifest::manifest_path(env, scope))
+    {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            warnings.push(format!("manifest unreadable: {error}"));
+            None
+        }
+    };
+    if fallback && let Some(manifest) = &manifest {
+        match crate::engine::audit_without_record(env, scope, manifest) {
+            Ok(audit) => lock = audit.matching,
+            Err(error) => warnings.push(format!("render ownership could not be checked: {error}")),
+        }
+    }
+    let recorded = route(&lock, name, kind, upstream);
+    if has_match(&lock, name, kind) {
+        return ResolvedRoute {
+            route: recorded,
+            warnings,
+        };
+    }
+    if let Some(route) = manifest
+        .as_ref()
+        .and_then(|manifest| route_from_manifest(env, scope, manifest, name, kind, upstream))
+    {
+        return ResolvedRoute { route, warnings };
+    }
+    if let Some(route) = route_from_render(env, scope, name, kind, upstream, &mut warnings) {
+        return ResolvedRoute { route, warnings };
+    }
+    ResolvedRoute {
+        route: recorded,
+        warnings,
+    }
+}
+
+fn has_match(lock: &Lock, name: &str, kind: Option<ItemKind>) -> bool {
+    lock.entries
+        .values()
+        .any(|entry| entry.name == name && kind.is_none_or(|wanted| wanted == entry.kind))
+}
+
+fn route_from_manifest(
+    env: &crate::env::Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    name: &str,
+    kind: Option<ItemKind>,
+    upstream: &str,
+) -> Option<Route> {
+    let mut matches = Vec::new();
+    for declared in crate::engine::planned_declarations(env, scope, manifest) {
+        if kind.is_some_and(|wanted| wanted != declared.kind) {
+            continue;
+        }
+        let named = declared.name == name
+            || (declared.kind == ItemKind::PiExtension
+                && declared.name.rsplit('/').next() == Some(name));
+        if !named {
+            continue;
+        }
+        let repo = manifest
+            .sources
+            .get(&declared.decl.source)
+            .and_then(|source| source.repo.as_deref())?;
+        matches.push((declared.kind, repo));
+    }
+    unique_provenance(&matches, name, upstream)
+}
+
+fn route_from_render(
+    env: &crate::env::Env,
+    scope: &Scope,
+    name: &str,
+    kind: Option<ItemKind>,
+    upstream: &str,
+    warnings: &mut Vec<String>,
+) -> Option<Route> {
+    let roots = match crate::settings::load(env) {
+        Ok(settings) => settings.harness_roots,
+        Err(error) => {
+            warnings.push(format!("installed render roots unreadable: {error}"));
+            return None;
+        }
+    };
+    let mut matches = Vec::new();
+    for candidate in [ItemKind::Skill, ItemKind::PiExtension] {
+        if kind.is_some_and(|wanted| wanted != candidate) {
+            continue;
+        }
+        let Some(installed) = crate::scan::find_installed(env, &roots, scope, candidate, name)
+        else {
+            continue;
+        };
+        if let Some(repo) = rendered_repository(candidate, &installed.path) {
+            matches.push((candidate, repo));
+        }
+    }
+    let borrowed: Vec<(ItemKind, &str)> = matches
+        .iter()
+        .map(|(candidate, repo)| (*candidate, repo.as_str()))
+        .collect();
+    unique_provenance(&borrowed, name, upstream)
+}
+
+fn rendered_repository(kind: ItemKind, path: &std::path::Path) -> Option<String> {
+    match kind {
+        ItemKind::Skill => {
+            let text = crate::fs::read_if_exists(&path.join("SKILL.md")).ok()??;
+            let (yaml, _) = crate::frontmatter::split(&text).ok()?;
+            let parsed = crate::frontmatter::parse_tolerant(yaml).ok()?;
+            let crate::frontmatter::Value::Map(metadata) = parsed.map.get("metadata")? else {
+                return None;
+            };
+            metadata
+                .get("repository")
+                .and_then(crate::frontmatter::Value::as_str)
+                .map(str::to_owned)
+        }
+        ItemKind::PiExtension => {
+            let text = crate::fs::read_if_exists(&path.join("package.json")).ok()??;
+            let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+            match value.get("repository")? {
+                serde_json::Value::String(repo) => Some(repo.clone()),
+                serde_json::Value::Object(repo) => repo
+                    .get("url")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+                _ => None,
+            }
+        }
+        ItemKind::Agent
+        | ItemKind::Hook
+        | ItemKind::Command
+        | ItemKind::McpServer
+        | ItemKind::Plugin => None,
+    }
+}
+
+fn unique_provenance(matches: &[(ItemKind, &str)], name: &str, upstream: &str) -> Option<Route> {
+    let [(kind, repo)] = matches else {
+        return None;
+    };
+    let wanted = repo_identity(upstream);
+    let owned = repo_identity(repo) == wanted;
+    Some(Route {
+        kendex_owned: owned,
+        repo: owned.then(|| filing_target(upstream)),
+        label: (owned && wanted == repo_identity(DEFAULT_UPSTREAM))
+            .then(|| derive_label(name, Some(*kind)).to_owned()),
+        kind: Some(*kind),
+        source: None,
+        rendered: None,
+    })
 }
 
 /// The routing label for a kendex-owned asset, by what it is.
@@ -277,5 +460,27 @@ mod tests {
         let unresolved = route(&two_kinds, "dev", None, DEFAULT_UPSTREAM);
         assert_eq!(unresolved.kind, None);
         assert_eq!(unresolved.label.as_deref(), Some("cli"));
+    }
+
+    #[test]
+    fn a_committed_skill_render_routes_when_manifest_and_lock_cannot_answer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("project");
+        std::fs::create_dir_all(root.join(".agents/skills/guard")).unwrap();
+        std::fs::write(
+            root.join(".agents/skills/guard/SKILL.md"),
+            "---\nname: guard\nmetadata:\n  repository: https://github.com/vanillagreencom/kendex\n---\n",
+        )
+        .unwrap();
+        let env = crate::env::Env::fake(tmp.path(), crate::env::FakeOs::Linux);
+        let resolved = resolve(
+            &env,
+            &crate::model::Scope::Project { root },
+            "guard",
+            Some(ItemKind::Skill),
+            DEFAULT_UPSTREAM,
+        );
+        assert!(resolved.route.kendex_owned);
+        assert_eq!(resolved.route.repo.as_deref(), Some(DEFAULT_UPSTREAM));
     }
 }

@@ -37,6 +37,12 @@ pub struct ApplyArgs {
     /// Say yes to the repository changes a newly installed package declares
     #[arg(long)]
     allow_repo_effects: bool,
+    /// Record matching renders after moving an unreadable install record aside
+    #[arg(
+        long,
+        conflicts_with_all = ["discard_edits", "replace_unmanaged", "allow_repo_effects"]
+    )]
+    record_existing: bool,
 }
 
 pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
@@ -67,7 +73,10 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         };
         let report = {
             let _planning = ui::spinner(&format!("planning {}", scope_label(&scope)));
-            plan_apply(env, &scope, &options)?
+            match args.record_existing {
+                true => kendex_core::engine::plan_record_existing(env, &scope)?,
+                false => plan_apply(env, &scope, &options)?,
+            }
         };
         planned.push((scope.clone(), report));
     }

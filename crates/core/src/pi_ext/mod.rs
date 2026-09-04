@@ -53,6 +53,20 @@ pub fn append_system_path(scope_root: &Path) -> PathBuf {
     scope_root.join("APPEND_SYSTEM.md")
 }
 
+pub fn scope_root(env: &Env, scope: &crate::model::Scope) -> Result<PathBuf> {
+    use crate::harness::HarnessAdapter;
+    let settings = crate::settings::load(env)?;
+    let pi = crate::harness::pi::Pi;
+    Ok(match scope {
+        crate::model::Scope::Global => settings
+            .harness_roots
+            .get(pi.id().name())
+            .cloned()
+            .unwrap_or_else(|| pi.default_global_root(env)),
+        crate::model::Scope::Project { root } => root.join(".pi"),
+    })
+}
+
 /// The `package.json` fields kendex acts on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PiPackage {
@@ -65,6 +79,125 @@ pub struct PiPackage {
     pub append_system: Option<String>,
     /// `bin`, normalized to (cli name, package-relative path) pairs.
     pub bins: Vec<(String, String)>,
+}
+
+/// One declared Pi package resolved to the catalog bytes and provenance that
+/// installation, verification, recovery, and report routing share.
+#[derive(Debug, Clone)]
+pub struct DeclaredPackage {
+    pub source_dir: PathBuf,
+    pub source: String,
+    pub source_repo: String,
+    pub source_commit: Option<String>,
+}
+
+pub fn resolve_declared(
+    env: &Env,
+    scope: &crate::model::Scope,
+    manifest: &crate::manifest::Manifest,
+    name: &str,
+    decl: &crate::manifest::ItemDecl,
+) -> Result<DeclaredPackage> {
+    let ready = crate::source::require_ready(env, scope, &decl.source, manifest)?;
+    let sealed = crate::source_read::SealedSource::open(&ready.root)?;
+    let direct = sealed.root().join("pi-extensions").join(name);
+    let source_dir = if sealed.is_file(&direct.join("package.json")) {
+        direct
+    } else {
+        find_by_package_name(&sealed, name)?.ok_or_else(|| CoreError::PiPackage {
+            name: name.to_owned(),
+            message: format!(
+                "source '{}' no longer ships pi-extensions/{name}",
+                decl.source
+            ),
+        })?
+    };
+    Ok(DeclaredPackage {
+        source_dir,
+        source: decl.source.clone(),
+        source_repo: ready.provenance,
+        source_commit: ready.commit,
+    })
+}
+
+/// Build a durable record only when installed bytes equal declared source
+/// bytes. A mismatch is not ownership evidence.
+pub fn matching_lock_entry(
+    scope_root: &Path,
+    name: &str,
+    package: &DeclaredPackage,
+    existing: Option<&crate::lock::LockEntry>,
+) -> Result<Option<crate::lock::LockEntry>> {
+    let Some(source_hash) = package_hash(&package.source_dir)? else {
+        return Ok(None);
+    };
+    let Some(rendered_hash) = installed_hash(scope_root, name)? else {
+        return Ok(None);
+    };
+    if source_hash != rendered_hash {
+        return Ok(None);
+    }
+    let installed_at = existing
+        .filter(|entry| {
+            entry.kind == crate::model::ItemKind::PiExtension
+                && entry.name == name
+                && entry.source_hash == source_hash
+                && entry.rendered_hash.as_deref() == Some(rendered_hash.as_str())
+        })
+        .map(|entry| entry.installed_at.clone())
+        .unwrap_or_else(crate::clock::timestamp);
+    let dest = package_path(scope_root, name)?;
+    Ok(Some(crate::lock::LockEntry {
+        name: name.to_owned(),
+        kind: crate::model::ItemKind::PiExtension,
+        harness: crate::model::HarnessId::Pi,
+        source: package.source.clone(),
+        source_repo: package.source_repo.clone(),
+        method: crate::manifest::Method::Copy,
+        installed_at,
+        source_hash,
+        source_commit: package.source_commit.clone(),
+        rendered_hash: Some(rendered_hash),
+        enabled: true,
+        upstream_skills: None,
+        emitted: Some(crate::lock::EmittedArtifact {
+            kind: crate::model::ItemKind::PiExtension,
+            name: name.to_owned(),
+            paths: vec![dest],
+        }),
+        registration: None,
+        reasons: std::collections::BTreeSet::from([crate::lock::Reason::Requested]),
+    }))
+}
+
+/// Refresh the Pi-extension rows that current source and installed bytes can
+/// prove. Existing rows survive a temporary source or read failure.
+pub fn record_matching_manifest(
+    env: &Env,
+    scope: &crate::model::Scope,
+    manifest: &crate::manifest::Manifest,
+    lock: &mut crate::lock::Lock,
+) -> Result<()> {
+    lock.entries.retain(|_, entry| {
+        entry.kind != crate::model::ItemKind::PiExtension
+            || manifest.pi_extensions.contains_key(&entry.name)
+    });
+    let root = scope_root(env, scope)?;
+    for (name, decl) in &manifest.pi_extensions {
+        let package = match resolve_declared(env, scope, manifest, name, decl) {
+            Ok(package) => package,
+            Err(_) => continue,
+        };
+        let key = crate::lock::entry_key(
+            crate::model::ItemKind::PiExtension,
+            name,
+            crate::model::HarnessId::Pi,
+        );
+        if let Some(entry) = matching_lock_entry(&root, name, &package, lock.entries.get(&key))? {
+            lock.entries.insert(key, entry);
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]

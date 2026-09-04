@@ -1,7 +1,7 @@
 use std::process::ExitCode;
 
 use kendex_core::engine::{
-    DriftRow, DriftState, ShimStanding, audit, planned_declarations, recorded_by_the_plan,
+    DriftRow, DriftState, ShimStanding, audit, audit_without_record, planned_declarations,
 };
 use kendex_core::env::Env;
 use kendex_core::lock::{Lock, LockFile, load_file as load_lock_file, lock_path};
@@ -13,6 +13,97 @@ use super::{fail, fail_refusal, note, resolve_scopes, say, scope_label};
 use crate::scope::ScopeFilter;
 use crate::ui;
 
+struct VerifyAudit {
+    report: kendex_core::engine::EngineReport,
+    matching: Option<Lock>,
+}
+
+struct RecordRead {
+    lock: Lock,
+    fallback: bool,
+    problem: Option<String>,
+}
+
+fn read_record(path: &std::path::Path) -> RecordRead {
+    match load_lock_file(path) {
+        Ok(LockFile::Current(lock)) => RecordRead {
+            lock,
+            fallback: false,
+            problem: None,
+        },
+        Ok(LockFile::Absent) => RecordRead {
+            lock: Lock::default(),
+            fallback: true,
+            problem: None,
+        },
+        Err(error) => RecordRead {
+            lock: Lock::default(),
+            fallback: true,
+            problem: Some(error.to_string()),
+        },
+    }
+}
+
+fn report_record_problem(scope: &Scope, path: &std::path::Path, problem: Option<&str>) {
+    let detail = problem.map_or_else(
+        || format!("no install record at {}", path.display()),
+        |problem| format!("install record unreadable: {problem}"),
+    );
+    fail(&format!(
+        "! {}: {detail} — checking current manifest and render bytes",
+        scope_label(scope)
+    ));
+}
+
+fn audit_for_verify(
+    env: &Env,
+    scope: &Scope,
+    manifest: Option<&Manifest>,
+    fallback: bool,
+) -> Result<Option<VerifyAudit>, Box<dyn std::error::Error>> {
+    match (fallback, manifest) {
+        (true, Some(manifest)) => {
+            let recordless = audit_without_record(env, scope, manifest)?;
+            Ok(Some(VerifyAudit {
+                report: recordless.report,
+                matching: Some(recordless.matching),
+            }))
+        }
+        (true, None) => Ok(None),
+        (false, _) => Ok(Some(VerifyAudit {
+            report: audit(env, scope)?,
+            matching: None,
+        })),
+    }
+}
+
+fn missing_declarations(
+    declared: Vec<(ItemKind, String)>,
+    names: &[String],
+    lock: &Lock,
+    fallback: bool,
+) -> Vec<(ItemKind, String)> {
+    declared
+        .into_iter()
+        .filter(|(_, name)| names.is_empty() || names.contains(name))
+        .filter(|(kind, name)| {
+            let recorded = lock
+                .entries
+                .values()
+                .any(|entry| entry.kind == *kind && entry.name == *name);
+            match kind {
+                ItemKind::PiExtension => !recorded,
+                ItemKind::Agent
+                | ItemKind::Skill
+                | ItemKind::Hook
+                | ItemKind::Command
+                | ItemKind::McpServer
+                | ItemKind::Plugin => fallback && !recorded || lock.entries.is_empty(),
+            }
+        })
+        .collect()
+}
+
 /// Drift check over lock entries; non-zero exit on any failing row — this
 /// is the signal consuming repos compose in shell pipelines.
 ///
@@ -22,13 +113,9 @@ use crate::ui;
 /// instruction shims the scope owes — each printed as a row of its own,
 /// and a failing one closes the run non-zero like a failing lock row.
 ///
-/// One state closes the run non-zero on its own: a scope whose manifest
-/// asks for items and whose install record is not there. That is the
-/// state the lock version floor's move-it-aside remedy leaves, there is
-/// nothing on disk to weigh a declaration against, and a count that leaves
-/// such a scope out reads as a pass to the pipeline that composed it. A
-/// record that is present and empty is a judged scope: it says nothing is
-/// installed, and this verb agrees with it.
+/// A missing or unreadable install record closes the run non-zero. The verb
+/// still weighs current manifest and render bytes, so a recovery decision has
+/// the measured rows and the original record failure together.
 pub fn run(
     env: &Env,
     names: Vec<String>,
@@ -45,7 +132,7 @@ pub fn run(
     // of lock entries, so none of this reaches it, and a count printed
     // without them covers less than the scope does.
     let mut gaps: Vec<(Scope, Vec<(ItemKind, String)>)> = Vec::new();
-    // Whether any scope's record was gone. Read at the end for the exit
+    // Whether any scope's record was unavailable. Read at the end for the exit
     // code alone — the run already said which scope it was, where it found
     // it.
     let mut recordless = false;
@@ -56,14 +143,11 @@ pub fn run(
 
     for scope in resolve_scopes(env, filter)? {
         let path = lock_path(env, &scope);
-        // Absent and empty read alike through `load`, and here the
-        // difference decides the verdict.
-        let record = load_lock_file(&path)?;
-        let absent = matches!(record, LockFile::Absent);
-        let lock = match record {
-            LockFile::Current(lock) => lock,
-            LockFile::Absent => Lock::default(),
-        };
+        let RecordRead {
+            mut lock,
+            fallback,
+            problem: record_problem,
+        } = read_record(&path);
         // One read of the manifest per scope, so the gate below and the
         // declarations printed at the end are one answer about one file.
         // Read twice, the two can disagree: a read that fails and then
@@ -84,16 +168,11 @@ pub fn run(
             }
             Err(error) => return Err(error.into()),
         };
-        // The one state this run refuses, read off the manifest itself so
-        // no source, catalog or expansion can change the answer.
-        if absent && manifest.as_deref().is_some_and(declares_items) {
-            fail(&format!(
-                "! {}: no install record at {} — this scope was not checked",
-                scope_label(&scope),
-                path.display()
-            ));
+        // The record failure stays part of the verdict while the read-only
+        // fallback checks what current source and render bytes can prove.
+        if fallback && manifest.as_deref().is_some_and(declares_items) {
+            report_record_problem(&scope, &path, record_problem.as_deref());
             recordless = true;
-            continue;
         }
         // A scope with nothing installed has nothing to verify, and this
         // run reaches it only to name content nothing manages. That errand
@@ -102,9 +181,9 @@ pub fn run(
         // drift alone. A scope that does have installs fails loudly.
         let audited = {
             let _reading = ui::spinner(&format!("checking {}", scope_label(&scope)));
-            audit(env, &scope)
+            audit_for_verify(env, &scope, manifest.as_deref(), fallback)
         };
-        let report = match (audited, lock.entries.is_empty()) {
+        let Some(audited) = (match (audited, lock.entries.is_empty()) {
             (Ok(report), _) => report,
             (Err(error), true) => {
                 // The error picks its own door. A manifest that will not
@@ -113,11 +192,25 @@ pub fn run(
                 // would not open — is a sentence naming a path, and a break
                 // in that path is content rather than a line of kendex's
                 // own verdict.
-                fail_refusal(&format!("! {} not checked: ", scope_label(&scope)), &error);
+                fail_refusal(
+                    &format!("! {} not checked: ", scope_label(&scope)),
+                    error.as_ref(),
+                );
                 continue;
             }
-            (Err(error), false) => return Err(error.into()),
+            (Err(error), false) => return Err(error),
+        }) else {
+            fail(&format!(
+                "! {} not checked: {}",
+                scope_label(&scope),
+                record_problem.as_deref().unwrap_or("manifest absent")
+            ));
+            continue;
         };
+        if let Some(fallback_lock) = audited.matching {
+            lock = fallback_lock;
+        }
+        let report = audited.report;
         let declared = manifest
             .as_deref()
             .map(|manifest| declared_packages(env, &scope, manifest))
@@ -133,11 +226,7 @@ pub fn run(
         // A kind the plan derives no entry for is missing from the record
         // whatever else it holds; one the plan does derive is missing only
         // while the record holds nothing at all.
-        let gap: Vec<(ItemKind, String)> = declared
-            .into_iter()
-            .filter(|(_, name)| names.is_empty() || names.contains(name))
-            .filter(|(kind, _)| !recorded_by_the_plan(*kind) || lock.entries.is_empty())
-            .collect();
+        let gap = missing_declarations(declared, &names, &lock, fallback);
         if !gap.is_empty() {
             gaps.push((scope.clone(), gap));
         }
@@ -242,10 +331,6 @@ fn declares_items(manifest: &Manifest) -> bool {
 ///
 /// One headline, because both kinds of gap are the same fact — a
 /// declaration with no entry behind it — and what to do about each is not.
-/// A Pi extension has no entry by design and no `apply` gives it one;
-/// anything else is waiting on an `apply` that has not run. Each name
-/// carries which it is, so the headline stays true of the whole list and
-/// the reader still knows what to do with a row.
 ///
 /// Every name, uncapped, and the cap rule stays stated in the one place
 /// `print_unmanaged` states it. The list is the expanded closure, so one
@@ -264,9 +349,14 @@ fn print_gaps(scopes: &[(Scope, Vec<(ItemKind, String)>)]) {
             say(&format!(
                 "  - {} {name} — {}",
                 kind.name(),
-                match recorded_by_the_plan(*kind) {
-                    true => "kendex apply records it",
-                    false => "no record ever holds one; kendex update-pi checks it",
+                match kind {
+                    ItemKind::PiExtension => "kendex update-pi records it",
+                    ItemKind::Agent
+                    | ItemKind::Skill
+                    | ItemKind::Hook
+                    | ItemKind::Command
+                    | ItemKind::McpServer
+                    | ItemKind::Plugin => "kendex apply records it",
                 }
             ));
         }
