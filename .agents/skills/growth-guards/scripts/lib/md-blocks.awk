@@ -7,83 +7,14 @@
 #                    HTML block line, "H<TAB>line<TAB>text" per heading;
 #                    content has the blockquote prefix stripped
 #
-# An unterminated fence, front matter or HTML comment is "R<TAB>line<TAB>
-# reason" and exit 2 in every mode: what follows cannot be judged. A CRLF
-# line is refused the same way, except in check mode, where it is the
-# file's one violation. The grammar and the rules are stated once, in
-# CHECKS.md § md-format and § md-reflow; this file is that statement as a
-# state machine.
-
-function tab_stop(col) { return col + 4 - (col % 4) }
-
-# Sets BODY to S past its leading whitespace; returns the columns skipped.
-function lead_cols(s,   i, c, n) {
-  n = 0
-  i = 1
-  while (1) {
-    c = substr(s, i, 1)
-    if (c == " ") n++
-    else if (c == "\t") n = tab_stop(n)
-    else break
-    i++
-  }
-  BODY = substr(s, i)
-  return n
-}
-
-# Strips up to MAX blockquote markers (-1 for all) from S. Sets DEPTH to the
-# count stripped and PREFIX to the text taken off, and returns the rest.
-function strip_bq(s, max,   n) {
-  DEPTH = 0
-  PREFIX = ""
-  while (max < 0 || DEPTH < max) {
-    n = 0
-    while (n < 3 && substr(s, n + 1, 1) == " ") n++
-    if (substr(s, n + 1, 1) != ">") break
-    PREFIX = PREFIX substr(s, 1, n + 1)
-    s = substr(s, n + 2)
-    if (substr(s, 1, 1) == " " || substr(s, 1, 1) == "\t") {
-      PREFIX = PREFIX substr(s, 1, 1)
-      s = substr(s, 2)
-    }
-    DEPTH++
-  }
-  return s
-}
-
-function rtrim(s) { sub(/[ \t]+$/, "", s); return s }
-
-function is_thematic(s) {
-  return s ~ /^-[ \t]*-[ \t]*-([ \t]*-)*[ \t]*$/ \
-    || s ~ /^_[ \t]*_[ \t]*_([ \t]*_)*[ \t]*$/ \
-    || s ~ /^\*[ \t]*\*[ \t]*\*([ \t]*\*)*[ \t]*$/
-}
-
-# ATX heading: one to six `#`, then a space, a tab, or the end of the line.
-function is_atx(s,   n) {
-  n = 0
-  while (substr(s, n + 1, 1) == "#") n++
-  if (n < 1 || n > 6) return 0
-  return substr(s, n + 1, 1) ~ /^[ \t]?$/
-}
-
-# CommonMark's type-6 tag names, plus `source`, which GitHub suppresses too.
-function is_block_tag(s,   rest, tag) {
-  if (substr(s, 1, 1) != "<") return 0
-  rest = substr(s, 2)
-  if (substr(rest, 1, 1) == "/") rest = substr(rest, 2)
-  if (!match(rest, /^[A-Za-z][A-Za-z0-9-]*/)) return 0
-  tag = tolower(substr(rest, RSTART, RLENGTH))
-  rest = substr(rest, RLENGTH + 1)
-  if (rest != "" && rest !~ /^[ \t>]/ && rest !~ /^\/>/) return 0
-  return index(" " BLOCK_TAGS " ", " " tag " ") > 0
-}
-
-# A complete open or closing tag alone on its line (CommonMark type 7).
-function is_lone_tag(s) {
-  if (s ~ /^<\/[A-Za-z][A-Za-z0-9-]*[ \t]*>[ \t]*$/) return 1
-  return s ~ /^<[A-Za-z][A-Za-z0-9-]*([ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*([ \t]*=[ \t]*([^ \t"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>[ \t]*$/
-}
+# An unterminated fence, front matter, HTML comment or prompt-section block
+# is "R<TAB>line<TAB>reason" and exit 2 in every mode: what follows cannot
+# be judged. A CRLF line is refused the same way, except in check mode,
+# where it is the file's one violation. The grammar and the rules are
+# stated once, in CHECKS.md § md-format and § md-reflow; this file is that
+# statement as a state machine, and the line-shape predicates it asks
+# (heading, thematic break, tag, delimiter row, blockquote prefix) are
+# md-shapes.awk's, loaded as the first `-f` program beside it.
 
 function out(s) { if (mode == "reflow") print s }
 
@@ -98,6 +29,14 @@ function flush() {
 }
 
 function violation(rule) { if (mode == "check") printf "V\t%d\t%s\n", FNR, rule }
+
+# The blank line the format requires after a heading or a fence closer,
+# whatever follows; anything else just ends the open paragraph.
+function close_block() {
+  if (prev == "heading") separate("a heading not followed by a blank line")
+  else if (prev == "fence") separate("a fence not followed by a blank line")
+  else flush()
+}
 
 function refuse(line, reason) {
   printf "R\t%d\t%s\n", line, reason
@@ -133,7 +72,6 @@ BEGIN {
     printf "md-blocks.awk: mode must be check, reflow or lines (got '%s')\n", mode > "/dev/stderr"
     exit 2
   }
-  BLOCK_TAGS = "address article aside base basefont blockquote body caption center col colgroup dd details dialog dir div dl dt fieldset figcaption figure footer form frame frameset h1 h2 h3 h4 h5 h6 head header hr html iframe legend li link main menu menuitem nav noframes ol optgroup option p param search section source summary table tbody td tfoot th thead title tr track ul"
   region = ""
   prev = "start"
   prev_depth = 0
@@ -239,15 +177,22 @@ stopped { next }
   if (depth != prev_depth) {
     if (depth < prev_depth && prev == "para" && is_plain) {
       lazy = 1
-    } else {
-      flush()
-      prev = "blank"
+    } else if (prev != "start" && prev != "blank") {
+      # A depth change is a boundary. The blank line the format wants on
+      # either side of a heading, or after a fence closer, sits at the
+      # shallower depth, where it ends neither quote.
+      full = PREFIX
+      if (depth > prev_depth) strip_bq(raw, prev_depth)
+      bound_prefix = PREFIX
+      close_block()
+      PREFIX = full
+      prev = "bound"
     }
   }
 
   if (!is_marker) list_pop_to(ind)
 
-  if ((prev == "blank" || prev == "start" || prev == "code") && ind >= list_indent + 4) {
+  if ((prev == "blank" || prev == "start" || prev == "code" || prev == "bound") && ind >= list_indent + 4) {
     flush()
     out(raw)
     prev = "code"
@@ -261,9 +206,7 @@ stopped { next }
     while (substr(body, flen + 1, 1) == fchar) flen++
     if (fchar == "~" || index(substr(body, flen + 1), "`") == 0) {
       if (prev == "para" || prev == "item") separate("a fence directly under a paragraph or list line; put a blank line before it")
-      else if (prev == "heading") separate("a heading not followed by a blank line")
-      else if (prev == "fence") separate("a fence not followed by a blank line")
-      else flush()
+      else close_block()
       out(raw)
       region = "fence"
       open_line = FNR
@@ -276,7 +219,13 @@ stopped { next }
   }
 
   if (ind < list_indent + 4 && is_atx(body)) {
-    if (!(prev == "blank" || prev == "start" || prev == "html")) separate("a heading not preceded by a blank line")
+    if (prev == "bound") {
+      full = PREFIX
+      PREFIX = bound_prefix
+      separate("a heading not preceded by a blank line")
+      PREFIX = full
+    }
+    else if (!(prev == "blank" || prev == "start" || prev == "html")) separate("a heading not preceded by a blank line")
     else flush()
     out(raw)
     text = body
@@ -284,6 +233,19 @@ stopped { next }
     sub(/[ \t]+#+[ \t]*$/, "", text)
     emit("H", rtrim(text))
     prev = "heading"
+    prev_depth = depth
+    next
+  }
+
+  if (prev == "para" && !lazy && para_lines == 1 && ind < list_indent + 4 && index(para_body, "|") > 0 && is_delim_row(body)) {
+    # GFM: a one-line paragraph holding a pipe, over a delimiter row, is a
+    # table's header row, whether or not either line begins with a pipe.
+    have_buf = 0
+    buf = ""
+    out(para_raw)
+    out(raw)
+    emit("T", content)
+    prev = "table"
     prev_depth = depth
     next
   }
@@ -299,7 +261,7 @@ stopped { next }
   }
 
   if (is_thematic(body)) {
-    flush()
+    close_block()
     out(raw)
     emit("T", content)
     prev = "break"
@@ -307,8 +269,10 @@ stopped { next }
     next
   }
 
-  if (substr(body, 1, 1) == "|") {
-    flush()
+  # A pipe-first line opens a table; an open table runs to the next blank
+  # line (GFM), so every line until then is a row whatever it holds.
+  if (substr(body, 1, 1) == "|" || prev == "table") {
+    close_block()
     out(raw)
     emit("T", content)
     prev = "table"
@@ -324,15 +288,23 @@ stopped { next }
     else if (substr(body, 1, 9) == "<![CDATA[") { term = "]]>"; rest = substr(body, 10) }
     else if (substr(body, 1, 2) == "<!" && substr(body, 3, 1) ~ /[A-Za-z]/) { term = ">"; rest = substr(body, 3) }
     else if (is_block_tag(body)) term = ""
-    else if (prev != "para" && prev != "item" && is_lone_tag(body)) term = ""
+    else if (prev != "para" && prev != "item" && is_lone_tag(body)) {
+      term = ""
+      # No HTML element's name holds `_`: such a tag is a prompt section
+      # (`<output_format>`), and its block runs to its closing tag, blank
+      # lines included, because its lines are a template, not prose.
+      match(body, /^<[A-Za-z][A-Za-z0-9_-]*/)
+      if (index(substr(body, 1, RLENGTH), "_") > 0) term = "</" substr(body, 2, RLENGTH - 1) ">"
+    }
     if (term != "?") {
-      flush()
+      close_block()
       out(raw)
       emit("X", content)
       if (term == "" || index(rest, term) == 0) {
         region = "html"
         open_line = FNR
         html_end = term
+        html_kind = (substr(term, 1, 2) == "</") ? term : "HTML block"
         html_depth = depth
       }
       prev = "html"
@@ -342,7 +314,7 @@ stopped { next }
   }
 
   if (ind < list_indent + 4 && body ~ /^\[[^]]+\]:[ \t]*[^ \t]/) {
-    flush()
+    close_block()
     out(raw)
     emit("T", content)
     prev = "def"
@@ -358,9 +330,7 @@ stopped { next }
     list_pop_to(ind)
     list_push(ind, cind)
     if (prev == "para") separate("a list item directly under a paragraph line; put a blank line before the list")
-    else if (prev == "heading") separate("a heading not followed by a blank line")
-    else if (prev == "fence") separate("a fence not followed by a blank line")
-    else flush()
+    else close_block()
     if (raw ~ /  $/) violation("a trailing-double-space line break; join the lines instead")
     emit("T", content)
     buf = rtrim(raw)
@@ -375,13 +345,15 @@ stopped { next }
     violation(prev == "item" ? "a list item continued on the next line; put the whole item on one line" : "a paragraph hard-wrapped over lines; put the whole paragraph on one line")
     buf = buf " " rtrim(body)
     if (prev == "para") setext_text = setext_text " " rtrim(body)
+    para_lines++
   } else {
-    if (prev == "heading") separate("a heading not followed by a blank line")
-    else if (prev == "fence") separate("a fence not followed by a blank line")
-    else flush()
+    close_block()
     buf = rtrim(raw)
     have_buf = 1
     setext_text = rtrim(body)
+    para_raw = raw
+    para_body = body
+    para_lines = 1
     prev = "para"
     prev_depth = depth
   }
@@ -394,6 +366,6 @@ END {
   if (refused || stopped) exit (refused ? 2 : 0)
   if (region == "fence") refuse(open_line, "an unterminated fence")
   if (region == "front") refuse(open_line, "unterminated front matter")
-  if (region == "html" && html_end != "") refuse(open_line, "an unterminated HTML block")
+  if (region == "html" && html_end != "") refuse(open_line, (html_kind == "HTML block") ? "an unterminated HTML block" : "a block with no closing " html_kind)
   flush()
 }

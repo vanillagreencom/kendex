@@ -1,14 +1,16 @@
 # shellcheck shell=bash
 # Comment text out of a source file, for the comments lane: which grammar a
 # path takes, and the scanner that walks a file under it. Sourced by
-# scripts/comments; needs gg_collection_error from lib/common.sh.
+# scripts/comments; needs gg_collection_error and GG_TMP from lib/common.sh.
 #
 # The scanner is a character walk with four states — code, string, block
 # comment, heredoc body — carried across lines. It emits one
 # "line<TAB>text" record per line of comment text and nothing for code or
-# a string literal. It is not a parser: what it does not model is stated
-# in CHECKS.md § comments, and the controls in tests/comments.test.sh hold
-# each stated limit to its statement.
+# a string literal. A file that ends in any state but code is not
+# extractable: every comment after the opener would otherwise be swallowed
+# and the file counted clean. It is not a parser: what it does not model is
+# stated in CHECKS.md § comments, and the controls in tests/comments.test.sh
+# hold each stated limit to its statement.
 #
 # Bash 3.2-safe, like its parent; the awk inside is POSIX awk — no interval
 # expressions, no gensub, no IGNORECASE.
@@ -62,9 +64,10 @@ gg_comment_family() { # PATH BLOBFILE — family token on stdout, empty when non
 
 # The comment text of one file under one grammar, as "line<TAB>text"
 # records. A block comment spanning lines emits one record per line. A
-# shebang on line 1 of a hash-family file is not a comment.
-gg_comment_text() { # FAMILY FILE — records on stdout
-  local fam="$1" file="$2" status=0
+# shebang on line 1 of a hash-family file is not a comment. PATH is the
+# name a diagnostic gives the file; FILE is the blob it reads.
+gg_comment_text() { # FAMILY FILE PATH — records on stdout
+  local fam="$1" file="$2" path="$3" status=0 reason
   local base=c rust=0 tmpl=0 shell=0 esc_single=1 triple=0 str_multi=0
   case "$fam" in
     c) ;;
@@ -86,15 +89,21 @@ gg_comment_text() { # FAMILY FILE — records on stdout
   LC_ALL=C awk -v fam="$base" -v rust="$rust" -v tmpl="$tmpl" -v shell="$shell" \
     -v esc_single="$esc_single" -v triple="$triple" -v str_multi="$str_multi" -v sq="'" '
   function word(ch) { return ch ~ /[A-Za-z0-9_]/ }
+  # Whether S ends inside an arithmetic `((`: more openers than closers.
+  function in_arith(s,   n, k) {
+    n = 0
+    while ((k = index(s, "((")) > 0) { n++; s = substr(s, k + 2) }
+    return n > gsub(/\)\)/, "", s)
+  }
   BEGIN {
-    st = "code"; d = ""; e = 0; m = 0; pend = ""; hdw = ""; hds = 0
+    st = "code"; d = ""; e = 0; m = 0; pend = ""; hdw = ""; hds = 0; opened = 0
     if (fam == "c") { bo = "/*"; bc = "*/"; lead = "//"; cls = "[\"" sq "/" (tmpl ? "`" : "") "]" }
     else if (fam == "cblock") { bo = "/*"; bc = "*/"; lead = ""; cls = "[\"" sq "/]" }
     else if (fam == "hash") { bo = ""; bc = ""; lead = "#"; cls = "[\"" sq "#" (shell ? "<" : "") "]" }
     else if (fam == "sql") { bo = "/*"; bc = "*/"; lead = "--"; cls = "[\"" sq "/-]" }
     else if (fam == "lua") { bo = "--[["; bc = "]]"; lead = "--"; cls = "[\"" sq "-]" }
     else if (fam == "xml") { bo = "<!--"; bc = "-->"; lead = ""; cls = "[<]" }
-    else { print "gg_comment_text: unknown base family " fam > "/dev/stderr"; exit 3 }
+    else { print "gg_comment_text: unknown base family " fam > "/dev/stderr"; st = "bad"; exit 3 }
   }
   {
     line = $0; n = length(line); i = 1
@@ -128,7 +137,7 @@ gg_comment_text() { # FAMILY FILE — records on stdout
       c = substr(line, i, 1)
       if (bo != "" && substr(line, i, length(bo)) == bo) {
         j = index(substr(line, i + length(bo)), bc)
-        if (j == 0) { print NR "\t" substr(line, i + length(bo)); st = "block"; i = n + 1; break }
+        if (j == 0) { print NR "\t" substr(line, i + length(bo)); st = "block"; opened = NR; i = n + 1; break }
         print NR "\t" substr(line, i + length(bo), j - 1)
         i += length(bo) + j - 1 + length(bc); continue
       }
@@ -144,14 +153,26 @@ gg_comment_text() { # FAMILY FILE — records on stdout
       }
       if (c == "<") {
         # A shell heredoc: its body starts on the next line and is neither
-        # code nor comment until the terminator line. `<<<` is a here-string.
-        if (shell && substr(line, i, 2) == "<<" && substr(line, i + 2, 1) != "<") {
+        # code nor comment until the terminator line. `<<<` is a here-string
+        # and `<<` inside `((...))` is a shift. The word is any run up to a
+        # blank or an operator character, its quotes stripped, so the
+        # terminator line is matched whole (`END-OF`, not `END`).
+        if (shell && substr(line, i, 3) == "<<<") { i += 3; continue }
+        if (shell && substr(line, i, 2) == "<<" && !in_arith(substr(line, 1, i - 1))) {
           rest = substr(line, i + 2); hdflag = 0
           if (substr(rest, 1, 1) == "-") { hdflag = 1; rest = substr(rest, 2) }
           sub(/^[ \t]*/, "", rest)
           q = substr(rest, 1, 1)
-          if (q == sq || q == "\"") rest = substr(rest, 2)
-          if (pend == "" && match(rest, /^[A-Za-z_][A-Za-z0-9_]*/)) { pend = substr(rest, 1, RLENGTH); hds = hdflag }
+          if (q == "\\") { rest = substr(rest, 2); q = "" }
+          if (q == sq || q == "\"") {
+            rest = substr(rest, 2)
+            j = index(rest, q)
+            w = (j > 0) ? substr(rest, 1, j - 1) : rest
+          } else {
+            match(rest, /^[^ \t&;|<>]*/)
+            w = substr(rest, 1, RLENGTH)
+          }
+          if (pend == "" && w != "") { pend = w; hds = hdflag }
           i += 2; continue
         }
         i++; continue
@@ -189,11 +210,23 @@ gg_comment_text() { # FAMILY FILE — records on stdout
         if (shell && i > 1 && substr(line, i - 1, 1) == "$") e = 1
       }
       scls = "[" c "\\\\]"
-      st = "str"; i += length(d)
+      st = "str"; opened = NR; i += length(d)
     }
-    if (pend != "") { st = "heredoc"; hdw = pend; pend = "" }
+    if (pend != "") { st = "heredoc"; hdw = pend; pend = ""; opened = NR }
     else if (st == "str" && !m) st = "code"
   }
-  ' "$file" || status=$?
-  [ "$status" -eq 0 ] || gg_collection_error "could not extract the comment text of $(gg_shown "$file") (awk exit $status)"
+  END {
+    if (st == "bad") exit 3
+    if (st == "code") exit 0
+    if (st == "block") what = "a block comment"
+    else if (st == "heredoc") what = "a heredoc (terminator " hdw ")"
+    else what = "a string literal"
+    print what " opened at line " opened " is never closed" > "/dev/stderr"
+    exit 3
+  }
+  ' "$file" 2>"$GG_TMP/extract.err" || status=$?
+  if [ "$status" -ne 0 ]; then
+    reason="$(LC_ALL=C tr '\n' ' ' <"$GG_TMP/extract.err")"
+    gg_collection_error "could not extract the comment text of $(gg_shown "$path"): ${reason:-awk exit $status}"
+  fi
 }

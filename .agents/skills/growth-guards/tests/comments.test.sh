@@ -251,6 +251,19 @@ run_cm
 solo a.sh "x=\$((1<<2)) # $W"
 run_cm
 fails_at "a shift is not a heredoc" a.sh 1
+solo a.sh 'x=$(( 1 << n ))' "# $W"
+run_cm
+fails_at "a shift by a name inside ((...)) opens no heredoc, so the next line is judged" a.sh 2
+solo a.sh 'cat <<END-OF' "# $W" 'END-OF' "# $W"
+run_cm
+[ "$RC" -eq 1 ] && case "$OUT" in *": a.sh:2: "*) false ;; *": a.sh:4: "*) true ;; *) false ;; esac \
+  && ok "a heredoc word is taken whole, so END-OF terminates the body and the line after it is judged" \
+  || bad "heredoc word taken whole" "rc=$RC out=$OUT"
+solo a.sh 'cat <<"END-OF" | sort' "# $W" 'END-OF' "# $W"
+run_cm
+[ "$RC" -eq 1 ] && case "$OUT" in *": a.sh:2: "*) false ;; *": a.sh:4: "*) true ;; *) false ;; esac \
+  && ok "a quoted heredoc word is stripped of its quotes and stops before the pipe" \
+  || bad "quoted heredoc word" "rc=$RC out=$OUT"
 solo a.sh "read -r x <<<\"y\" # $W"
 run_cm
 fails_at "a here-string is not a heredoc" a.sh 1
@@ -346,6 +359,26 @@ solo a.c 'char *s = "one \' "  // $W" '  three";'
 run_cm
 fails_at "a C string ends at its line, so the continued line's // is a comment (stated limit)" a.c 2
 
+echo "=== a file that ends inside a string, a block comment or a heredoc is not extractable ==="
+new_repo unclosed
+not_extractable() { # DESC PATH FRAGMENT — the last run was exit 2 naming PATH and the opener
+  [ "$RC" -eq 2 ] && case "$OUT" in *"could not extract the comment text of $2: $3"*) true ;; *) false ;; esac \
+    && ok "$1" || bad "$1" "rc=$RC out=$OUT"
+  case "$OUT" in *"scanned file(s)"*) bad "no clean count covers a file that was not extracted" "$OUT" ;; *) ok "no clean count covers a file that was not extracted" ;; esac
+}
+solo a.ts 'const re = /`/g;' "// $W"
+run_cm
+not_extractable "a regex literal holding a backtick opens a template literal that never closes (stated limit)" a.ts "a string literal opened at line 1 is never closed"
+solo a.c 'int x;' '/* open' "int y; // $W"
+run_cm
+not_extractable "a block comment never closed is reported, not read to the end as one comment" a.c "a block comment opened at line 2 is never closed"
+solo a.sh 'cat <<EOF' 'body' "# $W"
+run_cm
+not_extractable "a heredoc never terminated is reported, naming its word" a.sh "a heredoc (terminator EOF) opened at line 1 is never closed"
+solo a.rs 'let s = "spans' 'lines";' "// $W"
+run_cm
+fails_at "control: a string that does close is a string, and the comment after it is judged" a.rs 3
+
 echo "=== a path with no grammar is named as unmeasured, never counted clean ==="
 new_repo grammar
 put run "#!/usr/bin/env bash" "# $W"
@@ -362,6 +395,17 @@ OUT="$(cd "$R" && GROWTH_GUARDS_COMMENT_PATHS='*.txt' "$CM" 2>&1)" && RC=0 || RC
 [ "$RC" -eq 0 ] && case "$OUT" in *"not measured: notes.txt"*) true ;; *) false ;; esac \
   && ok "an extension the table does not carry is named, not guessed at" \
   || bad "unknown extension named" "rc=$RC out=$OUT"
+# A `head` that fails on the shebang read alone: the binary sniff's `head -c`
+# still runs, so the error can only come from the grammar lookup.
+mkdir -p "$R/shim"
+printf '#!/bin/sh\ncase "$1" in -n) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v head)" >"$R/shim/head"
+chmod +x "$R/shim/head"
+put run "#!/usr/bin/env bash" "# $W"
+OUT="$(cd "$R" && PATH="$R/shim:$PATH" GROWTH_GUARDS_COMMENT_PATHS='run' "$CM" 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not read the first line of run"*) true ;; *) false ;; esac \
+  && ok "a shebang read that fails is a collection error, not a path with no grammar" \
+  || bad "failed shebang read is loud" "rc=$RC out=$OUT"
+case "$OUT" in *"no comment grammar"*) bad "the failed read must not be named as a grammar skip" "$OUT" ;; *) ok "and it is not named as a grammar skip" ;; esac
 
 echo "=== scope: each default extension is scanned, markdown is not ==="
 new_repo scope

@@ -259,6 +259,9 @@ mode == "resolve" {
   kind = f[1]
   src_path = f[2]
   line_no = f[3]
+  # Only normalize() sets ESCAPED, and a bare `#anchor` never calls it, so
+  # the flag is this record's only once it is cleared here.
+  ESCAPED = 0
   if (kind == "L") {
     dest = f[4]
     raw = f[5]

@@ -33,6 +33,7 @@ source "$SCRIPT_DIR/lib/md-scope.sh"
 
 PATHS_DEFAULT="*.md"
 BLOCKS_AWK="$SCRIPT_DIR/lib/md-blocks.awk"
+SHAPES_AWK="$SCRIPT_DIR/lib/md-shapes.awk"
 
 usage() {
   cat <<EOF
@@ -82,6 +83,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ -r "$BLOCKS_AWK" ] || gg_config_error "$BLOCKS_AWK is missing — reinstall the growth-guards skill"
+[ -r "$SHAPES_AWK" ] || gg_config_error "$SHAPES_AWK is missing — reinstall the growth-guards skill"
 if [ "${#PATHS[@]}" -gt 0 ] && { [ "$STAGED" -eq 1 ] || [ "$ALL" -eq 1 ]; }; then
   gg_config_error "PATH arguments and --staged/--all are exclusive"
 fi
@@ -128,7 +130,7 @@ while IFS= read -r -d '' f; do
   fi
   checked=$((checked + 1))
   status=0
-  LC_ALL=C awk -f "$BLOCKS_AWK" -v mode=reflow -- "$f" >"$GG_TMP/reflowed" 2>"$GG_TMP/reflow.err" || status=$?
+  LC_ALL=C awk -f "$SHAPES_AWK" -f "$BLOCKS_AWK" -v mode=reflow -- "$f" >"$GG_TMP/reflowed" 2>"$GG_TMP/reflow.err" || status=$?
   [ ! -s "$GG_TMP/reflow.err" ] || cat -- "$GG_TMP/reflow.err" >&2
   if [ "$status" -ne 0 ]; then
     refusal="$(grep '^R' -- "$GG_TMP/reflowed" | head -n 1 || true)"

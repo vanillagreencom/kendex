@@ -166,7 +166,12 @@ classify() { # IN — records on stdout
 # this lane cannot read is never folded into the scanned count.
 MATCHED=0
 family_or_skip() { # PATH BLOBFILE — sets FAM; returns 1 when the path is named
-  FAM="$(gg_comment_family "$1" "$2")"
+  local status=0
+  FAM="$(gg_comment_family "$1" "$2")" || status=$?
+  # The substitution is a subshell, so a collection error inside it ends
+  # only that subshell: its status is carried out here, or an unreadable
+  # blob would read as a path with no grammar.
+  [ "$status" -eq 0 ] || exit "$status"
   if [ -z "$FAM" ]; then
     gg_note_skip "$1" "no comment grammar for this path (CHECKS.md § comments)"
     return 1
@@ -178,7 +183,7 @@ family_or_skip() { # PATH BLOBFILE — sets FAM; returns 1 when the path is name
 # line ALLOW admits (empty ALLOW admits every line). Counts in GG_VIOLATIONS.
 judge_blob() { # FAMILY PATH BLOBFILE ALLOW
   local fam="$1" f="$2" blob="$3" allow="$4" rec ln shape text
-  gg_comment_text "$fam" "$blob" >"$GG_TMP/text"
+  gg_comment_text "$fam" "$blob" "$f" >"$GG_TMP/text"
   classify "$GG_TMP/text" >"$GG_TMP/hits"
   while IFS= read -r rec; do
     ln="${rec%%"$GG_TAB"*}"

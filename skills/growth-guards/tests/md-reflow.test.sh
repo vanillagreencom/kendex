@@ -89,6 +89,15 @@ corpus "a fence directly under a list item gets its blank line, inside the item"
   $'- item\n  ```\n  code\n  ```\n' $'- item\n\n  ```\n  code\n  ```\n'
 corpus "a heading inside a blockquote gets a quoted blank line" \
   $'> para\n> # heading\n' $'> para\n>\n> # heading\n'
+corpus "a heading gets its blank line before a table, a break, an HTML comment and a definition" \
+  $'# H\n| a |\n|---|\n\n# I\n---\n\n# J\n<!-- x -->\n\n# K\n[a]: x\n' \
+  $'# H\n\n| a |\n|---|\n\n# I\n\n---\n\n# J\n\n<!-- x -->\n\n# K\n\n[a]: x\n'
+corpus "a fence closer gets its blank line before a table" \
+  $'```\nx\n```\n| a |\n|---|\n' $'```\nx\n```\n\n| a |\n|---|\n'
+corpus "a heading beside a change of quote depth gets a blank line at the shallower depth" \
+  $'# H\n> q\n\n> p\n# I\n\n> # J\n>> deeper\n\n> # K\nafter\n' \
+  $'# H\n\n> q\n\n> p\n\n# I\n\n> # J\n>\n>> deeper\n\n> # K\n\nafter\n'
+corpus "a definition split over two lines joins into the one-line form" $'[ref]:\n  http://x\n' $'[ref]: http://x\n'
 
 echo "=== byte-identical: fences, tables, HTML, indented code, front matter ==="
 corpus "a fence keeps every line, backtick and tilde alike" \
@@ -99,6 +108,19 @@ corpus "a table keeps its rows, and a table under a paragraph is a boundary" \
 corpus "a details block keeps its lines" \
   $'<details>\n<summary>x</summary>\nwrapped\nlines\n\ninside\n</details>\n' \
   $'<details>\n<summary>x</summary>\nwrapped\nlines\n\ninside\n</details>\n'
+corpus "a prompt-section block keeps its lines, blank lines included, to its closing tag" \
+  $'Para\n\n<output_format>\nwrapped\nlines\n\nSource: [S]\nIssue: [I]\n</output_format>\n\nAfter\nwrapped\n' \
+  $'Para\n\n<output_format>\nwrapped\nlines\n\nSource: [S]\nIssue: [I]\n</output_format>\n\nAfter wrapped\n'
+corpus "a prompt-section block indented under a list item keeps its lines" \
+  $'1. step\n\n   <delegation_format>\n   Follow: x\n\n   Source: [S]\n   Issue: [I]\n   </delegation_format>\n' \
+  $'1. step\n\n   <delegation_format>\n   Follow: x\n\n   Source: [S]\n   Issue: [I]\n   </delegation_format>\n'
+corpus "control: a prompt-section opener sharing its line with prose is a paragraph line" \
+  $'<delegation_format> Do it.\nwrapped\n\nWorktree: [W]\n\n</delegation_format>\n' \
+  $'<delegation_format> Do it. wrapped\n\nWorktree: [W]\n\n</delegation_format>\n'
+corpus "a table without outer pipes keeps its rows, and a row after it without a pipe is a row" \
+  $'Para\n\na | b\n--|--\n1 | 2\nrow\n\nAfter\n' $'Para\n\na | b\n--|--\n1 | 2\nrow\n\nAfter\n'
+corpus "control: a pipe line over a plain dash line is a setext heading, and one over prose a wrap" \
+  $'a | b\n---\n\na | b\nc | d\n' $'a | b\n---\n\na | b c | d\n'
 corpus "indented code keeps its lines" $'Para\n\n    code\n    more\n' $'Para\n\n    code\n    more\n'
 corpus "front matter keeps its lines" $'---\ntitle: x\nwrapped:\n  y\n---\n\nPara\n' $'---\ntitle: x\nwrapped:\n  y\n---\n\nPara\n'
 corpus "reference definitions keep their lines" $'[a]: https://x\n[b]: y.md\n' $'[a]: https://x\n[b]: y.md\n'
@@ -135,6 +157,11 @@ printf 'Para\n\n```\nopen\n' >"$R/open.md"
 run_in "$R" "$MDR" open.md
 [ "$RC" -eq 2 ] && case "$OUT" in *"open.md:3: an unterminated fence"*) true ;; *) false ;; esac \
   && ok "an unterminated fence is refused at exit 2" || bad "unterminated fence refused" "rc=$RC out=$OUT"
+printf 'Para\n\n<output_format>\nprose\n\nmore\n' >"$R/section.md"
+run_in "$R" "$MDR" section.md
+[ "$RC" -eq 2 ] && case "$OUT" in *"section.md:3: a block with no closing </output_format>"*) true ;; *) false ;; esac \
+  && ok "a prompt-section block with no closing tag is refused at exit 2, naming the opener" || bad "unclosed section refused" "rc=$RC out=$OUT"
+[ "$(cat "$R/section.md")" = $'Para\n\n<output_format>\nprose\n\nmore' ] && ok "and nothing was written" || bad "unclosed section not written" "$(cat "$R/section.md")"
 ln -s clean.md "$R/link.md"
 run_in "$R" "$MDR" link.md
 [ "$RC" -eq 2 ] && case "$OUT" in *"is a symlink"*) true ;; *) false ;; esac \

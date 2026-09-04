@@ -31,6 +31,7 @@ source "$SCRIPT_DIR/lib/md-scope.sh"
 
 PATHS_DEFAULT="*.md"
 BLOCKS_AWK="$SCRIPT_DIR/lib/md-blocks.awk"
+SHAPES_AWK="$SCRIPT_DIR/lib/md-shapes.awk"
 
 usage() {
   cat <<EOF
@@ -75,6 +76,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ -r "$BLOCKS_AWK" ] || gg_config_error "$BLOCKS_AWK is missing — reinstall the growth-guards skill"
+[ -r "$SHAPES_AWK" ] || gg_config_error "$SHAPES_AWK is missing — reinstall the growth-guards skill"
 
 gg_repo_root_cd
 gg_md_load_paths md-format GROWTH_GUARDS_MD_PATHS "$PATHS_DEFAULT"
@@ -102,7 +104,7 @@ violations=0
 while IFS= read -r -d '' sha && IFS= read -r -d '' f; do
   gg_read_blob "$sha" "$f" "markdown file"
   status=0
-  LC_ALL=C awk -f "$BLOCKS_AWK" -v mode=check "$GG_TMP/blob" >"$GG_TMP/verdict" 2>"$GG_TMP/verdict.err" || status=$?
+  LC_ALL=C awk -f "$SHAPES_AWK" -f "$BLOCKS_AWK" -v mode=check "$GG_TMP/blob" >"$GG_TMP/verdict" 2>"$GG_TMP/verdict.err" || status=$?
   [ ! -s "$GG_TMP/verdict.err" ] || cat -- "$GG_TMP/verdict.err" >&2
   while IFS="$GG_TAB" read -r kind line text; do
     case "$kind" in

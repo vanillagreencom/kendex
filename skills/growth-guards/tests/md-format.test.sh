@@ -74,6 +74,19 @@ shape "a heading not followed by a blank line fails" 1 $'# Heading\nPara\n' 2 "a
 shape "a fence directly under a paragraph fails" 1 $'Para\n```\ncode\n```\n' 2 "a fence directly under a paragraph or list line"
 shape "a fence closer not followed by a blank line fails" 1 $'```\ncode\n```\nPara\n' 4 "a fence not followed by a blank line"
 shape "a list directly under a paragraph fails" 1 $'Para\n- item\n' 2 "a list item directly under a paragraph line"
+shape "a table directly under a heading fails" 1 $'# H\n| a |\n|---|\n' 2 "a heading not followed by a blank line"
+shape "a thematic break directly under a heading fails" 1 $'# H\n---\n' 2 "a heading not followed by a blank line"
+shape "an HTML comment directly under a heading fails" 1 $'# H\n<!-- x -->\n' 2 "a heading not followed by a blank line"
+shape "a definition directly under a heading fails" 1 $'# H\n[a]: x\n' 2 "a heading not followed by a blank line"
+shape "a blockquote directly under a heading fails" 1 $'# H\n> q\n' 2 "a heading not followed by a blank line"
+shape "a paragraph leaving the quote a heading sits in fails" 1 $'> # H\nafter\n' 2 "a heading not followed by a blank line"
+shape "a heading directly under a quoted paragraph fails" 1 $'> p\n# H\n' 2 "a heading not preceded by a blank line"
+shape "a table directly under a fence closer fails" 1 $'```\nx\n```\n| a |\n|---|\n' 4 "a fence not followed by a blank line"
+shape "a definition whose destination sits on the next line is a wrap" 1 $'[ref]:\n  http://x\n' 2 "a paragraph hard-wrapped over lines"
+shape "a prompt-section opener sharing its line with prose is a paragraph line" 1 $'<delegation_format> Do it.\nwrapped\n' 2 "a paragraph hard-wrapped over lines"
+shape "control: an HTML element's block still ends at the blank line" 1 $'<details>\nx\n\nwrapped\nlines\n</details>\n' 5 "a paragraph hard-wrapped over lines"
+shape "control: a pipe line over prose is a wrap, not a table" 1 $'a | b\nc | d\n' 2 "a paragraph hard-wrapped over lines"
+shape "control: a delimiter row under a line with no pipe is a wrap" 1 $'a\n--|--\n' 2 "a paragraph hard-wrapped over lines"
 shape "a trailing double space fails" 1 $'Line one  \n\nLine two\n' 1 "a trailing-double-space line break"
 shape "a hard wrap inside a blockquote fails" 1 $'> quoted\n> continued\n' 2 "a paragraph hard-wrapped over lines"
 shape "a lazy continuation of a quoted paragraph fails" 1 $'> quoted\ncontinued\n' 2 "a paragraph hard-wrapped over lines"
@@ -88,6 +101,11 @@ shape "fenced code keeps its lines, tilde and backtick alike" 0 $'```\nwrapped\n
 shape "a longer fence closes only on a run at least as long" 0 $'````\n```\ninner\n```\n````\n'
 shape "a table is not judged" 0 $'| a | b |\n|---|---|\n| c | d |\n'
 shape "a table directly under a paragraph is a boundary, not a wrap" 0 $'Para\n| a | b |\n|---|---|\n'
+shape "a table without outer pipes is a table" 0 $'a | b\n:--|--:\n1 | 2\n'
+shape "a table runs to the next blank line, so a row without a pipe is a row" 0 $'| a |\n|---|\nrow\n\nPara\n'
+shape "a prompt-section block is not judged, blank lines included, to its closing tag" 0 $'<output_format>\nwrapped\nlines\n\nSource: [S]\nIssue: [I]\n</output_format>\n'
+shape "a prompt-section block indented under a list item is not judged" 0 $'1. step\n\n   <delegation_format>\n   Follow: x\n\n   Source: [S]\n   Issue: [I]\n   </delegation_format>\n'
+shape "a quote directly under a paragraph is a boundary" 0 $'Para\n> q\n'
 shape "an HTML block is not judged" 0 $'<details>\n<summary>x</summary>\nwrapped\nlines\n</details>\n'
 shape "an HTML comment block is not judged" 0 $'<!--\nwrapped\nlines\n-->\n'
 shape "a heading directly under a one-line HTML comment passes (the render marker shape)" 0 $'<!-- kendex:project-instructions:start -->\n## Project Instructions\n\n<!-- kendex:shared-instructions:start -->\nOne line.\n<!-- kendex:shared-instructions:end -->\n<!-- kendex:project-instructions:end -->\n'
@@ -104,6 +122,8 @@ echo "=== a construct with no end is a collection error, not a pass ==="
 shape "an unterminated fence is exit 2" 2 $'Para\n\n```\nnever closed\n'
 case "$OUT" in *"doc.md:3: an unterminated fence"*) ok "the refusal names the file and line" ;; *) bad "refusal names file and line" "$OUT" ;; esac
 shape "unterminated front matter is exit 2" 2 $'---\ntitle: x\n'
+shape "a prompt-section block with no closing tag is exit 2" 2 $'Para\n\n<output_format>\nprose\n\nmore\n'
+case "$OUT" in *"doc.md:3: a block with no closing </output_format>"*) ok "the refusal names the opener's line and tag" ;; *) bad "refusal names the opener" "$OUT" ;; esac
 
 echo "=== scopes: --staged judges the files a commit touches, in full ==="
 new_repo scopes

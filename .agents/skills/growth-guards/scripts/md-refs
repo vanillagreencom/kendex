@@ -34,6 +34,7 @@ source "$SCRIPT_DIR/lib/md-scope.sh"
 # them.
 PATHS_DEFAULT="AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
 BLOCKS_AWK="$SCRIPT_DIR/lib/md-blocks.awk"
+SHAPES_AWK="$SCRIPT_DIR/lib/md-shapes.awk"
 REFS_AWK="$SCRIPT_DIR/lib/md-refs.awk"
 SLUG_AWK="$SCRIPT_DIR/lib/md-slug.awk"
 # The decider skill's scheme: DECISIONS_DIR holds `<ID>-<slug>.md`, the ID a
@@ -90,6 +91,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ -r "$BLOCKS_AWK" ] || gg_config_error "$BLOCKS_AWK is missing — reinstall the growth-guards skill"
+[ -r "$SHAPES_AWK" ] || gg_config_error "$SHAPES_AWK is missing — reinstall the growth-guards skill"
 [ -r "$REFS_AWK" ] || gg_config_error "$REFS_AWK is missing — reinstall the growth-guards skill"
 [ -r "$SLUG_AWK" ] || gg_config_error "$SLUG_AWK is missing — reinstall the growth-guards skill"
 
@@ -137,7 +139,7 @@ fi
 
 lines_of() { # BLOBFILE PATH — md-blocks' line stream, refusing what it cannot end
   local status=0
-  LC_ALL=C awk -f "$BLOCKS_AWK" -v mode=lines -- "$1" >"$GG_TMP/lines" 2>"$GG_TMP/lines.err" || status=$?
+  LC_ALL=C awk -f "$SHAPES_AWK" -f "$BLOCKS_AWK" -v mode=lines -- "$1" >"$GG_TMP/lines" 2>"$GG_TMP/lines.err" || status=$?
   [ ! -s "$GG_TMP/lines.err" ] || cat -- "$GG_TMP/lines.err" >&2
   if [ "$status" -ne 0 ]; then
     local refusal

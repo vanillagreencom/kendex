@@ -76,9 +76,16 @@ cite "a duplicate heading takes the -1 suffix" 0 $'[a](docs/architecture/overvie
 cite "control: the -2 suffix names no heading" 1 $'[a](docs/architecture/overview.md#the-one-idea-2)\n' 1 "no heading or explicit anchor #the-one-idea-2"
 cite "punctuation is dropped, spaces become hyphens, code text stays" 0 $'[a](docs/architecture/overview.md#fish--chips-v2-code)\n'
 cite "an explicit <a id> is an anchor" 0 $'[a](docs/architecture/overview.md#explicit)\n'
+cite "a non-ASCII letter keeps its case in the slug and in the § comparison" 0 \
+  $'## Über Ünïcode\n\n[v](#Über-Ünïcode) `AGENTS.md § Über Ünïcode`\n'
+cite "control: the lower-cased spelling of that slug is dead" 1 $'## Über Ünïcode\n\n[u](#über-ünïcode)\n' 3 "has no heading or explicit anchor #über-ünïcode"
+cite "control: and so is the lower-cased § citation" 1 $'## Über Ünïcode\n\n`AGENTS.md § über ünïcode`\n' 3 "has no heading 'über ünïcode'"
 cite "a bare #anchor resolves in the citing file" 0 $'# Map\n\n[here](#map)\n'
 cite "control: a bare #anchor with no such heading fails" 1 $'# Map\n\n[gone](#gone)\n' 3 "AGENTS.md has no heading or explicit anchor #gone"
 cite "a link climbing above the root fails" 1 $'[a](../etc/passwd)\n' 1 "climbs above the repository root"
+cite "a bare #anchor after a climbing link is judged on its own" 1 $'# Root\n\n[a](../x.md) [b](#root)\n' 3 "](../x.md): the link climbs above the repository root"
+case "$OUT" in *"](#root)"*) bad "the bare anchor beside the climbing link lands" "$OUT" ;; *"1 dead reference(s)"*) ok "the bare anchor beside the climbing link lands" ;; *) bad "the bare anchor beside the climbing link lands" "$OUT" ;; esac
+cite "control: a dead bare #anchor after a climbing link is named for what it is" 1 $'# Root\n\n[a](../x.md) [b](#gone)\n' 3 "](#gone): AGENTS.md has no heading or explicit anchor #gone"
 cite "an anchor into a file that is not markdown fails" 1 $'[a](pic.png#view)\n' 1 "an anchor into a file that is not markdown"
 cite "a scheme, a mailto and a leading slash are not judged" 0 $'[a](https://x/y.md#z) [b](mailto:x@y.z) [c](/abs/nope.md)\n'
 cite "a reference definition is judged" 1 $'[label]: docs/nope.md\n' 1 "no tracked file or directory at docs/nope.md"
