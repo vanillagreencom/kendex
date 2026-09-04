@@ -102,7 +102,7 @@ describe("a read whose address changes while it is out", () => {
   });
 
   // Moving addresses puts the page back to loading rather than leaving the
-  // answer for the address before it on screen under the new name.
+  // answer for the address before it on screen under the name it moved to.
   it("shows nothing of the address before it while the new read is out", async () => {
     const first = parked<Answer>();
     const second = parked<Answer>();
@@ -125,9 +125,9 @@ describe("a read whose address changes while it is out", () => {
   });
 
   // A transport rejection is a read that failed, not an exception for the
-  // page to drop: left raw it spent the ticket with no landing at all,
-  // leaving the reader a skeleton or a blank with nothing to retry from
-  // and an unhandled rejection on its way out.
+  // page to drop: left raw it would spend the ticket with no landing at
+  // all, leaving the reader a skeleton or a blank with nothing to retry
+  // from and an unhandled rejection on its way out.
   it("shows the failure when the read rejects rather than answering", async () => {
     const read = vi
       .fn<(address: string) => Promise<Answer>>()

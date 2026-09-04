@@ -69,9 +69,10 @@ fn lock_of(scope: &Scope) -> PathBuf {
     }
 }
 
-/// A lock an older kendex wrote is refused, and the project beside it keeps
-/// its own answer: the flag is the scope's, not the query's. Hardcoding the
-/// field either way reddens this — it asserts both answers from one read.
+/// A lock whose schema this build rejects is refused, and the project
+/// beside it keeps its own answer: the flag is the scope's, not the query's.
+/// Hardcoding the field either way reddens this — it asserts both answers
+/// from one read.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn each_scope_answers_for_its_own_records() {

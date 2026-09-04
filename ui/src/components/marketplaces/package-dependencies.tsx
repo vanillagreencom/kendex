@@ -18,7 +18,7 @@ import {
  *  person removed stays removed until they add it back, one the catalog
  *  carries twice is one the engine will not choose between, one whose
  *  landing place has no readable record cannot be spoken for either way,
- *  and one the catalog no longer carries cannot be installed at all — each
+ *  and one the catalog has dropped cannot be installed at all — each
  *  a fact about the row, said beside it and never blamed on the wrong
  *  party. Unknown is named rather than falling through: the row would
  *  otherwise read "not offered here" about a package the catalog offers. */
@@ -31,8 +31,8 @@ export function dependencyNote(state: InstallState): string | null {
   return DEPENDENCY_NOT_OFFERED_NOTE;
 }
 
-/** A dependency this install must not be asked for: the catalog no longer
- *  offers it, offers it under more than one plugin and will not guess, the
+/** A dependency this install must not be asked for: the catalog has
+ *  dropped it, offers it under more than one plugin and will not guess, the
  *  person removed it themselves and that removal is recorded — the engine
  *  keeps each of those out of every plan — or the landing place's lock
  *  cannot be read, in which case an install there meets that same record

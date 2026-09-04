@@ -35,8 +35,8 @@ import { originLabel, originTitle } from "@/stores/provenance";
 
 /** How the customization mark reads once the name cell is hovered or
  *  focused: one type step under the package name, muted and otherwise
- *  unstyled, in the line the mark used to hold permanently. The package
- *  header states the same fact in the same words, so neither styles it. */
+ *  unstyled. The package header states the same fact in the same words,
+ *  so neither styles it. */
 const MARK_ON_HOVER =
   "mt-0.5 hidden text-xs text-muted-foreground group-hover/name:block group-focus-within/name:block";
 
@@ -138,9 +138,9 @@ export function InstalledRow({
               ) : null}
             </span>
             {/* On demand, not at rest: the description is what a reader
-                scans a row for, and a permanent line above it pushed the
-                description down on every customized package to answer a
-                question few rows were being asked. The coloured icon
+                scans a row for, and a permanent line above it would push
+                the description down on every customized package to answer
+                a question few rows are being asked. The coloured icon
                 still says a package is customized at rest; the words say
                 where. Keyboard reaches it too — the mark is focusable
                 where it opens a place, and focus reveals the cell the

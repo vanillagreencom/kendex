@@ -13,9 +13,8 @@ const render = (overrides: Partial<DraftFrontmatter>) =>
   );
 
 // Every box in this grid carries a placeholder example. Read as values,
-// they make a place customized only through Settings look untouched —
-// which is how a real customization got reported as the app failing to
-// load the manifest holding it.
+// they make a place customized only through Settings look untouched, and
+// the manifest holding the customization look unloaded.
 describe("a field holding a value of the reader's", () => {
   it("says so on its label, in words as well as in colour", () => {
     const shown = render({ effort: "xhigh" });

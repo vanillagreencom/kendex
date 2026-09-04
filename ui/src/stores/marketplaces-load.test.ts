@@ -105,8 +105,8 @@ describe("the marketplaces overview read failing", () => {
     expect(useMarketplacesStore.getState().read.error).toBeNull();
   });
 
-  // A rejected call used to escape the store entirely: the read stayed
-  // landed and the tile kept counting rows nobody could confirm.
+  // A rejected call that escaped the store would leave the read landed and
+  // the tile counting rows nobody could confirm.
   it("lands a rejected call the same as a returned refusal", async () => {
     vi.mocked(commands.marketplacesOverview).mockRejectedValue(
       new Error("ipc down"),

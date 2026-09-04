@@ -37,7 +37,7 @@ export function sourceActions(set: Set, get: () => Sources) {
         const response = await commands.sourcesRefresh();
         if (response.status === "ok") {
           for (const warning of response.data) toast.message(warning);
-          // A fetch can move any subscription to a new commit; everything
+          // A fetch can move any subscription to another commit; everything
           // derived from catalog bytes re-reads.
           dropCatalogCaches(set);
           await get().load();

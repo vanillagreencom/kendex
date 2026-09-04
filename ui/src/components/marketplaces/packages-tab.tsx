@@ -89,13 +89,14 @@ export function PackagesTab() {
     // nothing the app receives carries one: neither a subscription's
     // catalog nor the kendex.ai directory index publishes installs, stars
     // or a per-package timestamp, so any "most installed" order here would
-    // be invented. Name is the order that is true today; the moment the
-    // registry publishes a count, it belongs in front of this comparison.
+    // be invented. Name is the only order that is true; a count the
+    // registry publishes belongs in front of this comparison.
     //
     // Compared through the same formatter the cell renders. A hook's
     // identifier is "<event>:<matcher>:<name>" and the column shows only
-    // the trailing name, so sorting the raw identifier put a hook spelled
-    // "PreToolUse:*:alpha" among the Ps while the reader saw "alpha".
+    // the trailing name, so sorting the raw identifier would put a hook
+    // spelled "PreToolUse:*:alpha" among the Ps while the reader sees
+    // "alpha".
     return out.sort((a, b) =>
       packageDisplayName(a.row).localeCompare(packageDisplayName(b.row)),
     );

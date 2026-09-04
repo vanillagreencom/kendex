@@ -77,8 +77,8 @@ beforeEach(() => {
 // The card's count is the app's only mention of unmanaged content, and the
 // only way to the page that offers to take it on. A project registered while
 // this page is open has no AuditView until something asks for one, and a
-// scope with no view counts zero — so the card would hide the very items the
-// new project holds.
+// scope with no view counts zero — so the card would hide the very items
+// that project holds.
 describe("a project added while the list is on screen", () => {
   it("counts what it holds, without a revisit", async () => {
     vi.mocked(commands.registerProject).mockResolvedValue({

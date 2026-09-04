@@ -5,17 +5,17 @@ import { NO_REASON_GIVEN } from "@/lib/settled";
 
 // The seam every `Result`-returning command answers through — tauri-specta
 // emits the runtime only where there is a refusal type to name, so the four
-// commands returning a plain value reject to their callers as before. The
-// transport rejects with an `Error` when it fails rather than when the
-// command refuses, and the runtime tauri-specta ships rethrows that — so the
-// write paths that fire their command and forget it dropped the rejection:
-// the busy flag fell and nothing was said. `typedError` is replaced at
+// commands returning a plain value reject to their callers. The transport
+// rejects with an `Error` when it fails rather than when the command
+// refuses, and the runtime tauri-specta ships rethrows that — so a write
+// path that fires its command and forgets it would drop the rejection: the
+// busy flag falls and nothing is said. `typedError` is replaced at
 // generation time (`specta_builder` in `crates/app/src/lib.rs`) to fold the
 // rejection into the refusal shape instead, and this is what holds the
 // replacement in place. The fold puts a bare message where a shaped refusal
 // is declared, which the signature admits as `E | string`: that is what makes
-// `tsc` name a reader branching on a discriminant the runtime no longer
-// guarantees. Regenerate with
+// `tsc` name a reader branching on a discriminant the runtime does not
+// guarantee. Regenerate with
 // `cargo test -p kendex-app -- --ignored regenerate_bindings`.
 //
 // Driven through the transport the app really has — the bridge Tauri reads

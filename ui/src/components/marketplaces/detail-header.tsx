@@ -177,7 +177,7 @@ export function DetailHeader({
                 <Star className="size-3" /> {FEATURED_MARKER}
               </Badge>
             ) : null}
-            {/* The switch moved to Projects, so the page has to say by
+            {/* The switch lives in Projects, so the page has to say by
                 itself that the place it opened as is not offering these
                 packages — otherwise the list reads as installable. */}
             {row && !row.enabled ? (

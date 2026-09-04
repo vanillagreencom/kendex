@@ -52,16 +52,16 @@ pub use disclose::disclose;
 ///
 /// Only that. A second `add` of an installed package adds nothing to what
 /// the scope carries, so it brings no effect to offer — naming `add` here
-/// sent people to a command that would do nothing and say nothing.
+/// would send people to a command that does nothing and says nothing.
 /// The repository-effects account and its separate yes, run so that what
 /// the caller owes for what it already wrote happens whatever the answer.
 ///
 /// The prompt comes after the write by design: the script an effect runs
 /// is the one the install just put on disk. That puts a fallible call
-/// between a write and the run's closing line, and a `?` there returned
-/// to `main` with disk changed, no snapshot recorded and no ledger said —
-/// so the next session-start check read a stale snapshot for a scope that
-/// had just been written.
+/// between a write and the run's closing line, and a `?` there would
+/// return to `main` with disk changed, no snapshot recorded and no ledger
+/// said — leaving the next session-start check a stale snapshot for a
+/// scope just written.
 ///
 /// `finalize` runs on every path: a yes, a decline, a failure, and a
 /// cancel. Only then does the error propagate, carrying the code the
@@ -116,8 +116,7 @@ pub fn confirm(pending: &[Disclosure], allowed: bool) -> Result<bool, Box<dyn st
     };
     // The shared prompt, not a write of our own: it draws whatever block
     // is still open before it reads, so the question cannot reach the
-    // reader ahead of the disclosure it is about. Its plain rendering is
-    // the same bytes this site used to write itself, `[y/N] ` included.
+    // reader ahead of the disclosure it is about.
     // Handed on as it came back, never as its text: a cancel is an
     // io::Error whose kind main reads to exit 130, and a String would
     // leave it looking like any other failure.

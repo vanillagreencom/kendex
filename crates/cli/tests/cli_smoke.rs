@@ -2,17 +2,16 @@
 //! then let each harness's own CLI read them.
 //!
 //! Unit tests assert what our renderers produce. They cannot tell us that
-//! the far end accepts it, and every consumer-side bug found so far has
-//! been of that shape: green unit tests over a render the harness threw
-//! away. This is the only check in the suite where something other than
-//! kendex reads kendex's output.
+//! the far end accepts it: green unit tests over a render the harness
+//! throws away is the failure they cannot see. This is the only check in
+//! the suite where something other than kendex reads kendex's output.
 //!
 //! A probe is a command that *loads* the rendered tree and answers with
-//! what it loaded or what it rejected. `--version` is not one: sixteen
-//! unreadable `.codex/agents/*.toml` files shipped behind a green
-//! `codex --version` (KEN-786), because starting a binary says nothing
-//! about files it never opens. A harness that ships no such command is
-//! named as uncovered, with the reason — never counted as checked.
+//! what it loaded or what it rejected. `--version` is not one: starting a
+//! binary says nothing about files it never opens, so unreadable
+//! `.codex/agents/*.toml` files ship behind a green `codex --version`. A
+//! harness that ships no such command is named as uncovered, with the
+//! reason — never counted as checked.
 //!
 //! Opt-in: set `KENDEX_CLI_SMOKE=1`. Without it the test does nothing and
 //! says so, because installing seven CLIs is not a precondition for
@@ -202,8 +201,7 @@ const PROBES: &[Probe] = &[
     },
 ];
 
-/// The `tags` key Codex refused, written back exactly as the renderer used
-/// to emit it (KEN-786).
+/// A `tags` table, which Codex refuses in an agent file.
 fn append_tags_table(body: &str) -> String {
     format!("{body}\ntags = [\"review\"]\n")
 }
@@ -492,8 +490,7 @@ fn every_harness_cli_reads_what_kendex_wrote() {
 }
 
 /// The control the probes exist for: put back a render the harness refuses
-/// and watch its own probe go red. A probe that cannot fail is not a check,
-/// and every `--version` probe this file used to carry was one.
+/// and watch its own probe go red. A probe that cannot fail is not a check.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_render_the_harness_refuses_reds_its_probe() {

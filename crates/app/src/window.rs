@@ -1,5 +1,5 @@
 //! Titlebar controls for the frameless window — the UI draws its own
-//! chrome, so these replace what the OS window frame used to provide.
+//! chrome, so these stand in for the OS window frame's controls.
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 

@@ -305,7 +305,7 @@ describe("the update a place is waiting for", () => {
   });
 });
 
-// Core stamps a new install date whenever the source hash moves, and that
+// Core stamps a fresh install date whenever the source hash moves, and that
 // date lives only in each place's own record. A tab that read the records
 // once would keep showing the age of the copy the update replaced.
 describe("the date a place shows after an update lands", () => {
@@ -318,8 +318,8 @@ describe("the date a place shows after an update lands", () => {
 
     await click(host, "Update");
 
-    // What a landed update leaves behind: the place is on a new commit and
-    // its record carries the date core stamped when the hash moved.
+    // What a landed update leaves behind: the place is on another commit
+    // and its record carries the date core stamped when the hash moved.
     vi.mocked(commands.packageMeta).mockResolvedValue({
       status: "ok",
       data: meta(A_DAY_AGO),

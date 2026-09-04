@@ -10,9 +10,6 @@ import { useAccountStore } from "@/stores/account";
 import { mount, settle } from "@/test/dom";
 import { MineSubmitDialog } from "./mine-submit-dialog";
 
-/** The name core mints for a sign-in; two answers about one
- *  credential carry the same one. */
-
 vi.mock("@/bindings", () => ({
   commands: {
     mineSubmit: vi.fn(),

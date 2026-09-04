@@ -67,9 +67,9 @@ pub fn run(
         // One read of the manifest per scope, so the gate below and the
         // declarations printed at the end are one answer about one file.
         // Read twice, the two can disagree: a read that fails and then
-        // succeeds on the retry left the gate saying the scope asked for
-        // nothing while the line under it named what the scope asked for,
-        // and the run closed green having checked none of it.
+        // succeeds on the retry leaves the gate saying the scope asked for
+        // nothing while the line under it names what the scope asked for,
+        // and the run closes green having checked none of it.
         let manifest = match load_manifest(&manifest_path(env, &scope)) {
             Ok(ManifestFile::Current(manifest)) => Some(manifest),
             Ok(ManifestFile::Absent) => None,
@@ -189,7 +189,7 @@ fn head(checked: usize, failed: usize, named: bool) -> String {
 /// bundle is not read as asking for nothing. It costs one expansion pass,
 /// which is less than the `audit` this verb already runs on every scope.
 ///
-/// It does not answer for plugins, and the plugin table is added here
+/// It does not answer for plugins, and the plugin table is chained on here
 /// rather than there. A `PlannedDeclaration` carries an `ItemDecl`, which
 /// names the source a package is read from; a plugin declares through
 /// `[plugins.<key>]` with an enabled flag and a harness, and has no source

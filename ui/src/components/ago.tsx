@@ -3,11 +3,10 @@ import { useNowTick } from "@/lib/use-now-tick";
 
 /** A moment, read coarsely, with the exact one on the element.
  *
- *  The pairing is a component rather than a convention because a
- *  convention did not hold: the coarse reading is a string and the title
- *  was a separate hand-added attribute, so twice now a new call site got
- *  the reading and lost the date, silently. A year reading with no title
- *  says "2y ago" and nothing else — the year itself is gone.
+ *  The pairing is a component rather than a convention: the coarse reading
+ *  is a string and the title a separate attribute, so a call site that
+ *  takes the reading alone loses the date, silently. A year reading with
+ *  no title says "2y ago" and nothing else — the year itself is gone.
  *
  *  The reading keeps up with the clock rather than with whatever else
  *  happens to re-render the page: it reads `lib/use-now-tick.ts`, which is

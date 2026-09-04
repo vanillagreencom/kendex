@@ -113,7 +113,7 @@ export const countingWrites = (
  *  same shape as [`installedCommits`] and read beside it.
  *
  *  A write that commits and then cannot be read back leaves the rows on the
- *  commit they had: nothing confirmed a new one, which is the truth about the
+ *  commit they had: nothing confirmed a later one, which is the truth about the
  *  rows and not about the files under them. So a landed write moves this
  *  whether or not the read behind it moved the commit, and a page about the
  *  place reads its package again either way. */
@@ -126,7 +126,7 @@ export const landedWrites = (
   scopes.map((scope) => writes[placeKey(kind, name, scope)] ?? 0).join("|");
 
 /** The commit each place has installed, as one string to watch. Core
- *  stamps a new install date whenever the source hash moves, so a landed
+ *  stamps a fresh install date whenever the source hash moves, so a landed
  *  update changes this while an unrelated store touch leaves it alone —
  *  which makes it the one signal that a place's own record is worth
  *  reading again. */

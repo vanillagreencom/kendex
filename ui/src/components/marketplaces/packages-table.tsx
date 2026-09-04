@@ -96,11 +96,10 @@ export function PackagesTable({
   // A bare repository's table is one catalog's; the cross-marketplace tab
   // only ever carries subscriptions. So what the repository offers is
   // decided once for the table, from the same key and the same
-  // `repoAction` the page header reads — a cell deciding for itself
-  // offered a Subscribe the engine refuses whenever a switched-off
-  // subscription already declared the repository. It also says the
-  // sentence once: the tooltip it replaces was the same constant rendered
-  // per row.
+  // `repoAction` the page header reads — a cell deciding for itself would
+  // offer a Subscribe the engine refuses whenever a switched-off
+  // subscription already declared the repository. The sentence is said
+  // once, above the table, rather than as a tooltip on every row.
   const browsing = entries.find((entry) => entry.catalog.by === "repo");
   // `repo` is the subscription this table is a page for; the bare
   // repository it may be browsing instead takes the longer name.
@@ -124,20 +123,19 @@ export function PackagesTable({
   // cross-marketplace tab neither loads it nor re-renders on it.
   const provenance = useProvenanceStore((s) => (showPlaces ? s.rows : EMPTY));
   // One read, when the column appears. Keeping it current afterwards is not
-  // this table's job and was not something it could do: it watched `entries`
-  // for a while, which is a proxy for "something installed" and holds only
-  // while the install lands in this page's own scope — a redirected one
-  // writes its rows under the destination's key and never touches these.
-  // `lib/rescan.ts` refreshes the join behind every write instead, and the
-  // rows arrive here as a store read like any other.
+  // this table's job, and `entries` is no proxy for it: it stands for
+  // "something installed" only while the install lands in this page's own
+  // scope — a redirected one writes its rows under the destination's key
+  // and never touches these. `lib/rescan.ts` refreshes the join behind
+  // every write, and the rows arrive here as a store read like any other.
   const reloadProvenance = useProvenanceStore((s) => s.reload);
   useEffect(() => {
     if (showPlaces) void reloadProvenance();
   }, [showPlaces, reloadProvenance]);
 
   const ordered = useMemo(() => orderPackages(entries, sort), [entries, sort]);
-  // One pass over the join for the whole table: per row it was a full scan
-  // of every installation on the machine, once per render.
+  // One pass over the join for the whole table, rather than a full scan of
+  // every installation on the machine per row, once per render.
   const places = useMemo(
     () =>
       subscription

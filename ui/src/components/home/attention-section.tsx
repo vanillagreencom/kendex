@@ -14,10 +14,10 @@ export interface AttentionRow {
  * The lead of Home: what needs a person's judgment, worst first. Home drops
  * the whole section when there is nothing in it.
  *
- * One list, not a stack of cards. Rows that all land in the same place used
- * to print the same blue button once each, which reads as several different
- * places to go; the row itself is the way in now, and where it lands is said
- * once, quietly, beside the chevron.
+ * One list, not a stack of cards. Rows that all land in the same place, each
+ * with the same blue button, read as several different places to go; the row
+ * itself is the way in, and where it lands is said once, quietly, beside the
+ * chevron.
  */
 export function AttentionSection({ rows }: { rows: AttentionRow[] }) {
   return (

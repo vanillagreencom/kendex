@@ -112,10 +112,11 @@ export const useAuditStore = create<AuditState>((set, get) => {
       const force = opts?.force === true;
       if (inFlight) {
         // The running audit may already have read the files this force is
-        // about, so it cannot answer for them. Dropping the force left
-        // every score on screen quoting the state before whatever prompted
-        // it. Exactly one follow-up waits: a second force joins that one
-        // rather than stacking a queue of identical machine-wide reads.
+        // about, so it cannot answer for them. Dropping the force would
+        // leave every score on screen quoting the state before whatever
+        // prompted it. Exactly one follow-up waits: a second force joins
+        // that one rather than stacking a queue of identical machine-wide
+        // reads.
         if (!force) return inFlight;
         queued ??= inFlight.then(() => {
           queued = null;

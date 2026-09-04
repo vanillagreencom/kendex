@@ -1,7 +1,7 @@
-//! What the app does with a manifest an older kendex wrote: says so, and
+//! What the app does with an unsupported manifest schema: says so, and
 //! leaves it alone. The preview reports the refusal as a scope error and
-//! the apply refuses too, so nothing rewrites a file this build cannot
-//! read — the person's comments included.
+//! the apply refuses too, so nothing rewrites a file this build cannot read
+//! — the person's comments included.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]
@@ -35,7 +35,7 @@ impl Fixture {
 /// spacing and a trailing comment on a value.
 const KEPT: &str = "# my project setup\nschema = {schema}\n\n# where the content comes from\n[sources.cat]\n{source}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"   # keep this\n";
 
-/// The tables schema 6 retired, as a pre-6 kendex wrote them.
+/// The tables accepted by manifest schema 5 and rejected by schema 6.
 const RETIRED: &str = "[safety-overrides.\"skill:gh:claude\"]\nreview-hash = \"abc\"\nruleset = 3\nfindings = [\"f1\"]\ngranted-at = \"2026-01-01T00:00:00Z\"\n\n[safety-reviews.\"skill:gh:claude\"]\nreview-hash = \"abc\"\nruleset = 3\n\n[safety-reviews.\"skill:gh:claude\".dismissed.f2]\nreason = \"intended\"\ndismissed-at = \"2026-01-01T00:00:00Z\"\n";
 
 #[allow(clippy::unwrap_used)]

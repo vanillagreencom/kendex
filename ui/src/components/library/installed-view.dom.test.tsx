@@ -40,9 +40,8 @@ const markOf = (host: HTMLElement) =>
 
 // A row's mark answers for the package, so the Where filter may decide
 // which rows are on screen and never what one of them says. Read from the
-// filtered groups, this row said "Customized in vg" while the package's
-// own page named both places — the contradiction the issue is about,
-// arriving through the filter instead of through the header.
+// filtered groups, this row would say "Customized in vg" while the
+// package's own page names both places.
 describe("the Library's mark under a Where filter", () => {
   beforeEach(() => {
     vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();

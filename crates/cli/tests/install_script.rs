@@ -620,7 +620,7 @@ fn the_privileged_branch_installs_with_flags_bsd_install_reads_alike() {
     );
 }
 
-/// The other half of what `install -D` did: make the directory. The
+/// The other half of what `install -D` does: make the directory. The
 /// unprivileged `mkdir -p` a few lines earlier cannot, because the parent
 /// belongs to root — `/usr/local` on a stock mac, and here a `.local` the
 /// fixture made unwritable — so without an elevated `mkdir` the elevated

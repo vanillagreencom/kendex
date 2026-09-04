@@ -7,8 +7,7 @@
 //! with `ico` and the ICNS with `tauri-icns`, and a container is only ever
 //! as readable as what the bundler produced. A decoder of this suite's own
 //! would be a second opinion about the format rather than a reading of the
-//! file, and it was: three hundred lines of chunk walking, run-length
-//! decoding and directory arithmetic, none of which the bundler consults.
+//! file.
 
 use std::path::{Path, PathBuf};
 
@@ -47,7 +46,7 @@ fn app_crate() -> &'static Path {
 }
 
 /// The bundled set, read from the config rather than listed here: an icon
-/// added to the bundle and never generated is exactly the gap this closes.
+/// the bundle lists and nobody generated is exactly the gap this closes.
 #[allow(clippy::expect_used)]
 fn configured_icons() -> Vec<String> {
     let config: serde_json::Value = serde_json::from_str(

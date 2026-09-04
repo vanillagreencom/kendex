@@ -158,7 +158,7 @@ export const updatesReadNote = (
  *
  *  The row's own array is handed back, and the no-row answer is one shared
  *  empty array rather than a fresh one: this is read through a store
- *  selector, and a new reference on every call is a render loop. */
+ *  selector, and a fresh reference on every call is a render loop. */
 const NO_PARENTS: string[] = [];
 
 export const packageRequiredBy = (

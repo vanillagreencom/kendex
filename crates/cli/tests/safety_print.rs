@@ -1,5 +1,5 @@
-//! The one advisory format, and the absence of everything that used to
-//! decide anything.
+//! The one advisory format, and the absence of any verb, flag, or prompt
+//! that decides on it.
 //!
 //! Every verb that writes content shows the same block: the package's
 //! score, then each finding on a line of its own — severity in words,
@@ -107,7 +107,7 @@ fn a_critical_install_prints_score_then_findings_and_completes() {
 }
 
 /// add, apply and refresh print the identical block for the identical
-/// content: one format, not three that happen to agree today.
+/// content: one format, not three that happen to agree.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn add_apply_and_refresh_print_the_same_block() {
@@ -327,8 +327,8 @@ fn report_is_hidden_from_root_help_but_keeps_its_own_help() {
 }
 
 /// A repository that is one skill has no path inside itself, so the score
-/// line names the package and stops. The old wording left the empty path
-/// in place and printed "deploy at  scores".
+/// line names the package and stops, rather than printing "deploy at
+/// scores" around an empty path.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_root_skill_catalog_scores_without_an_empty_path() {

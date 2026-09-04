@@ -21,7 +21,7 @@ import { useScanStore } from "@/stores/scan";
 
 /** Every package customized at this scope: settings, a hand edit, or a
  *  fork. A row opens that package's own page, which is where its edits are
- *  made; a row for something no longer installed has no page to open, so
+ *  made; a row for something not installed here has no page to open, so
  *  it offers only to drop the settings, where there are any to drop. */
 export function CustomizedIndex({
   items,
@@ -41,7 +41,8 @@ export function CustomizedIndex({
 }) {
   const goToPackage = useNavStore((s) => s.goToPackage);
   // Selects the result, not a fallback array: a fresh `[]` from a selector
-  // is a new snapshot every render, and React re-renders until it is not.
+  // is a different snapshot every render, and React re-renders until it
+  // is not.
   const installed = useScanStore((s) => s.result)?.items ?? [];
 
   const note =

@@ -71,7 +71,7 @@ const view: AuditView_Serialize = {
 
 /** One rendering an apply wrote, for a report that says it moved
  *  something. `stale` is what a rendering the plan rewrites is: it is on
- *  disk and no longer matches the declaration, which is one of the two
+ *  disk and does not match the declaration, which is one of the two
  *  states `package::outcome::moving` counts. */
 const wrote: DriftRow_Serialize = {
   kind: "skill",
@@ -160,11 +160,11 @@ const holding = (element: HTMLElement): boolean =>
 const outstanding: (() => void)[] = [];
 
 /** A command that has been called but has not answered, so a test can read
- *  the page mid-write — where the freeze used to be. `fallback` answers it
- *  whatever the test did: the applier's chain and its in-flight count are
- *  made once with the store module and no reset here can reach them, so a
- *  command left hanging by a failed assertion fails the tests after it too,
- *  for a reason that is not theirs. */
+ *  the page mid-write. `fallback` answers it whatever the test did: the
+ *  applier's chain and its in-flight count are made once with the store
+ *  module and no reset here can reach them, so a command left hanging by a
+ *  failed assertion fails the tests after it too, for a reason that is not
+ *  theirs. */
 function pending<T>(fallback: T) {
   let answered = false;
   let answer!: (value: T) => void;
@@ -337,8 +337,8 @@ describe("the Follow source switch", () => {
     // engine has them rather than wearing a position it never took.
     expect(useUpdatesStore.getState().pendingFollows).toEqual([]);
     expect(following(followSwitch("gh", USER_LEVEL_PLACE))).toBe(false);
-    // And said once. A second announcement re-opened a dialog the person
-    // had already dismissed.
+    // And said once: a second announcement would re-open a dialog the
+    // person had already dismissed.
     expect(
       showError.mock.calls.filter(
         (call) => call[0].message === "manifest busy",
@@ -436,9 +436,9 @@ describe("the Follow source switch", () => {
     });
 
     // One write at a time, page-wide, whichever scope the second would
-    // reach: `busy` is a flag, and a second flip released it the moment it
-    // finished — with the first still committing, and a check free to build
-    // a report the commit is not in.
+    // reach: `busy` is a flag, and a second flip would release it the
+    // moment it finished — with the first still committing, and a check
+    // free to build a report the commit is not in.
     await act(async () => {
       void useUpdatesStore.getState().setAutoUpdate(rows[0], true);
       void useUpdatesStore.getState().setAutoUpdate(rows[2], false);

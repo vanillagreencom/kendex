@@ -5,7 +5,7 @@
 
 use super::*;
 
-/// The verbs this change routed through the module and gave a frame to.
+/// The verbs routed through the module and given a frame.
 const FRAMED: [&[&str]; 6] = [
     &["refresh", "-y", "--scope", "project"],
     &["apply", "--plan", "--scope", "project"],
@@ -21,9 +21,9 @@ const FRAMED: [&[&str]; 6] = [
     &["check", "--scope", "project"],
 ];
 
-/// Verbs that route through the module and were never given a frame. They
-/// are the reason framing is armed rather than detected: an unmigrated
-/// verb has to keep printing plain lines on a terminal, not block glyphs
+/// Verbs that route through the module with no frame of their own. They
+/// are the reason framing is armed rather than detected: a verb with no
+/// frame has to keep printing plain lines on a terminal, not block glyphs
 /// hanging off a gutter nobody drew.
 const UNFRAMED: [&[&str]; 4] = [
     &["list"],

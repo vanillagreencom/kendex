@@ -52,7 +52,7 @@ export function ProjectList() {
     <div className={PAGE_BODY}>
       <div className={cn("flex flex-col gap-4", CONTENT_WIDTH)}>
         {/* Adding a project is a short errand, not part of reading the list
-            — as a form pinned under the cards it took more of the page than
+            — a form pinned under the cards would take more of the page than
             the projects themselves. */}
         <div className="flex justify-end gap-2">
           <Button onClick={() => setAdding(true)}>Add a project</Button>

@@ -83,9 +83,9 @@ export interface UpdateOffer {
  *
  *  The update read's own standing comes last (`updates-read-state.ts`
  *  [`updatesReadNote`]): a check still running or one that failed says
- *  nothing about this package, and letting it speak first was how a real
- *  failure of this page's reads went unsaid in exactly the correlated case —
- *  the transport being down takes the standing out too. It is silent where a
+ *  nothing about this package, and letting it speak first would leave a real
+ *  failure of this page's reads unsaid in exactly the correlated case — the
+ *  transport being down takes the standing out too. It is silent where a
  *  landed row already covers the place, which is that function's own rule:
  *  the page keeps its version-changing controls on screen through a check
  *  rather than swapping them for a note.

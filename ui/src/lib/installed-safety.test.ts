@@ -126,9 +126,8 @@ describe("installedSafety", () => {
 });
 
 describe("a finding's identity", () => {
-  // One rule fires at many lines of one file. While the line lived inside
-  // `location` the fold could tell them apart for free; taking it out
-  // without putting it in the key showed one problem where there are two.
+  // One rule fires at many lines of one file. A key without the line
+  // shows one problem where there are two.
   it("keeps two findings that differ only by line", () => {
     const first = finding("dangerous-commands", "high", 848);
     const second = finding("dangerous-commands", "high", 950);

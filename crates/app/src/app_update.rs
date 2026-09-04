@@ -92,8 +92,7 @@ pub fn app_update_channel() -> Result<InstallChannel, String> {
 ///
 /// Without this the app replaces itself, restarts, and clears its card
 /// while the terminal command stays on the old release with nothing on
-/// screen having said so — the silent divergence this issue was written
-/// about, arrived at from the other side.
+/// screen having said so.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn app_update_command_channel() -> Result<Option<CommandNotice>, String> {
@@ -317,9 +316,9 @@ pub async fn app_update_install(
     let update = aim_at_install(app.updater_builder(), &install)
         .endpoints(vec![manifest_endpoint()?])
         .map_err(|error| error.to_string())?
-        // What is left here after the cask fix is the app failing to place
-        // itself. The plugin's own text for that is a bare io error, which
-        // names no doer and no stage.
+        // A failure here is the app failing to place itself. The plugin's
+        // own text for that is a bare io error, which names no doer and no
+        // stage.
         .build()
         .map_err(|error| format!("kendex could not start an update for this install: {error}"))?
         .check()
@@ -332,7 +331,7 @@ pub async fn app_update_install(
     // those bytes are the version being installed. The read is blocking, so
     // it runs off the async runtime. Every failure from here names the
     // command half too — it has moved by now, and a bare app error would
-    // report no update while the terminal answers the new version.
+    // report no update while the terminal already answers the release.
     let bytes = update
         .download(|_chunk, _total| {}, || {})
         .await

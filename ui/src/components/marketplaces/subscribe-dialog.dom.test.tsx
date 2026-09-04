@@ -55,7 +55,7 @@ beforeEach(() => {
 
 // The refusal is the dialog's own. `load` writes error: null on every
 // landing overview read, and reads overlap an open dialog, so rendering the
-// shared slot meant one finishing under the dialog wiped the refusal off
+// shared slot would let one finishing under the dialog wipe the refusal off
 // the screen — open, input intact, and no account of why nothing happened.
 describe("a refused subscribe", () => {
   it("keeps its reason on screen when a concurrent read clears the store", async () => {

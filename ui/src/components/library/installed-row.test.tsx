@@ -107,7 +107,8 @@ describe("opening a package from its Library row", () => {
     const { host, onOpen } = mount();
     // A completed click on the button is intent to open even while text
     // stands selected somewhere — on WebKit a button click leaves the
-    // selection be, and a guard here made this a dead click.
+    // selection be, so a guard on the selection would make this a dead
+    // click.
     vi.spyOn(window, "getSelection").mockReturnValue({
       isCollapsed: false,
     } as Selection);
@@ -153,10 +154,10 @@ describe("opening a package from its Library row", () => {
 });
 
 // The mark answers a question most rows are not being asked, and a
-// permanent line above the description pushed the description down on
-// every customized package to answer it. It is drawn on demand instead:
-// the cell that shows it and the mark that hides until then have to be
-// the same pair, so both halves are read here.
+// permanent line above the description would push the description down
+// on every customized package to answer it. It is drawn on demand: the
+// cell that shows it and the mark that hides until then have to be the
+// same pair, so both halves are read here.
 describe("where the row's mark is drawn", () => {
   const nameCell = (host: HTMLElement) => {
     const cell = host.querySelector("td");

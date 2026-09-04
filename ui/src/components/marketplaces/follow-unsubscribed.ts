@@ -42,8 +42,8 @@ export function useFollowUnsubscribed(
     if (elsewhere) {
       goToMarketplace(subscription(elsewhere.scope, elsewhere.name));
     } else {
-      // Left, not navigated away from: this page is a subscription that no
-      // longer exists, so it must not be somewhere Back can return to.
+      // Left, not navigated away from: this page is a subscription that is
+      // gone, so it must not be somewhere Back can return to.
       leaveMarketplace("subscribed");
     }
   }, [catalog, row, read.status, rows, goToMarketplace, leaveMarketplace]);

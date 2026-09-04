@@ -22,7 +22,7 @@ const esc = (copy: string) => copy.replace(/'/g, "&#x27;");
 
 /** Markup for a disabled button carrying `label`. Nothing between the tag
  *  and the label may open another button: `.*` on one line of static markup
- *  would let an earlier disabled button reach this one's words and pass
+ *  would let a disabled button before it reach this one's words and pass
  *  over a button that is live. */
 const disabledButton = (label: string) =>
   new RegExp(`<button[^>]*disabled=""[^>]*>(?:(?!<button)[\\s\\S])*?${label}<`);
@@ -114,8 +114,8 @@ describe("the Updates page across its read states", () => {
     );
   });
 
-  // With every noteworthy row muted, a failed check used to strand the
-  // page: the stale note and error with no way to try again anywhere.
+  // With every noteworthy row muted, a failed check would otherwise strand
+  // the page: the stale note and error with no way to try again anywhere.
   it("keeps the retry reachable when only hidden rows remain", () => {
     stub.rows = [updateRow("gh", null, { ignored: true })];
     stub.read = { status: "failed", error: "no network" };

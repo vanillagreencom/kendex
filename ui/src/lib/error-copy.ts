@@ -19,11 +19,11 @@
 // error-copy.test.ts exempts it by name.
 import type { ProblemKind } from "@/stores/problems";
 
-// Nothing converts a file from another version of kendex, so "old" and
-// "damaged" reach these kinds together: a lock this build cannot read is
-// lock-corrupt either way, and a manifest an older kendex wrote is
-// manifest-outdated. The two are kept apart because the remedies differ —
-// a lock is a cache to throw away, a manifest is what the person wrote.
+// Nothing converts a file from an unsupported version of kendex, so an
+// unreadable lock is lock-corrupt whether its bytes or schema cause the
+// refusal. A manifest under a retired schema is manifest-outdated. The two
+// are kept apart because the remedies differ — a lock is a cache to throw
+// away, a manifest is what the person wrote.
 export const PROBLEM_HEADLINES: Record<ProblemKind, string> = {
   "lock-corrupt": "A kendex file can't be read",
   "manifest-outdated": "This manifest comes from an older version",
@@ -68,7 +68,7 @@ export const PROBLEM_STEPS: Record<ProblemKind, string[]> = {
 //
 // Null where there is no one file to name — a scan failure is about no
 // place at all, `other` is whatever the engine couldn't finish, and a
-// too-new schema can be either file. A lead line there would be a guess.
+// an unsupported schema can be either file. A lead line there would be a guess.
 export const PROBLEM_LEADS: Record<
   ProblemKind,
   ((place: string) => string) | null

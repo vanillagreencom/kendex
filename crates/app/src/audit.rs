@@ -13,14 +13,14 @@ use crate::scopes::env;
 #[derive(Serialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum ScopeErrorKind {
-    /// The lock is not readable as this build's lock: damaged JSON, or a
-    /// record an older kendex wrote. Nothing converts either, and the way
-    /// out is the same — move it aside and apply again.
+    /// The lock is not readable as this build's lock: damaged JSON, or an
+    /// unsupported schema. Nothing converts either, and the way out is the
+    /// same — move it aside and apply again.
     LockCorrupt,
-    /// The manifest was written by an older kendex: it parses, but not
-    /// into a shape this build reads, and nothing converts it. Kept
-    /// apart from a damaged lock because the file is intact and the
-    /// person's own — moving it aside loses what they wrote in it.
+    /// The manifest parses under an unsupported schema, and nothing
+    /// converts it. Kept apart from a damaged lock because the file is
+    /// intact and the person's own — moving it aside loses what they wrote
+    /// in it.
     ManifestOutdated,
     /// The manifest or lock was written by a newer kendex than this one.
     SchemaTooNew,
@@ -207,8 +207,9 @@ pub fn adopt_item(
 ) -> Result<AuditView, String> {
     let env = env()?;
     // Every tool the item is blocked for, in one plan: handed over one at a
-    // time, each tool's copy landed on top of the last and the declaration
-    // kept only the first tool, leaving the rest with files nothing manages.
+    // time, each tool's copy would land on top of the last and the
+    // declaration would keep only the first tool, leaving the rest with
+    // files nothing manages.
     let move_plan =
         engine::adopt::adopt(&env, &scope, kind, &name, &harnesses).map_err(|e| e.to_string())?;
     apply::execute(&env, &move_plan).map_err(|e| e.to_string())?;

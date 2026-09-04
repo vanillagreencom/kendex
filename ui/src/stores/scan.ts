@@ -71,8 +71,8 @@ export const useScanStore = create<ScanState>((set, get) => {
 
     // A scan already out cannot answer for what has happened since it began
     // reading — which is the whole of what a write behind it needs read. So
-    // an overlapping request is not dropped, as it was: it waits on the one
-    // running and takes a re-read behind it. Exactly one waits, a second
+    // an overlapping request is not dropped: it waits on the one running
+    // and takes a re-read behind it. Exactly one waits, a second
     // arrival joining that one rather than stacking identical whole-machine
     // reads.
     refresh: (opts) => {

@@ -172,7 +172,7 @@ fn a_legacy_named_package_at_the_other_scope_blocks_the_scoped_name() {
         "{\"name\": \"@vanillagreen/pi-hooks\", \"version\": \"1.0.0\"}\n",
     );
     fs::create_dir_all(project.join(".pi")).unwrap();
-    // The pre-1.0.0 unscoped name still sits at the global scope; it
+    // The unscoped compatibility name still sits at the global scope; it
     // registers the same resources as the scoped package.
     write(
         &tmp.path().join(".pi/agent/packages/pi-hooks/package.json"),

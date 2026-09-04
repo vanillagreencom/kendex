@@ -211,9 +211,9 @@ fn catalog_shipping(home: &Path, template: &str) -> std::path::PathBuf {
     catalog
 }
 
-/// A template nobody checked reached a consumer's shell before it reached
+/// A template nobody checks reaches a consumer's shell before it reaches
 /// anything else. `marketplace check` runs strict, which is where a
-/// malformed one now stops.
+/// malformed one stops.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_malformed_settings_template_fails_marketplace_check() {
@@ -255,12 +255,11 @@ fn a_malformed_settings_template_fails_marketplace_check() {
 /// end: the key is never written, and it is never reported as unanswered
 /// either, because nothing downstream knows it was ever marked.
 ///
-/// Every presentation runs here because the check exiting 0 is what the
-/// review measured. `# Required` reached this surface as a clean pass
-/// while the lowercase word failed it, and so did each of these once the
-/// fold named a closed list of trailing ASCII marks. A rule that widened
-/// in the scan and not in what an author actually runs would read as fixed
-/// and not be.
+/// Every presentation runs here because the check exiting 0 is what an
+/// author measures. A fold naming a closed list of trailing ASCII marks
+/// passes `# Required` while failing the lowercase word, and a rule that
+/// widens in the scan and not in what an author actually runs reads as
+/// fixed and is not.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_marker_on_its_own_comment_line_fails_marketplace_check() {
@@ -386,7 +385,7 @@ fn every_finding_names_a_file_that_opens() {
 }
 
 /// A one-skill repo IS the catalog root, so the item's own path is empty.
-/// Joining a path with a separator by hand spelled `/kendex...example`,
+/// Joining a path with a separator by hand would spell `/kendex...example`,
 /// which reads as absolute and opens something else entirely.
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -425,9 +424,9 @@ fn a_root_level_skill_names_a_relative_path() {
     assert_eq!(settings["line"], 5, "{json}");
 }
 
-/// A file whose own name ends in a colon and digits keeps its name. While
-/// the line was spelled into the location, nothing downstream could tell
-/// `notes:123` from `notes` at line 123 — and both readers guessed wrong.
+/// A file whose own name ends in a colon and digits keeps its name. With
+/// the line spelled into the location, nothing downstream could tell
+/// `notes:123` from `notes` at line 123.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_filename_ending_in_a_line_number_survives() {

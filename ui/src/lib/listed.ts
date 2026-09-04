@@ -8,8 +8,8 @@
  *  (`installed-places.ts`), the kinds a catalog holds
  *  (`copy-marketplaces.ts`), and the harnesses a hook runs in
  *  (`copy-customize.ts`) — where `copy.ts` holds a page's own prose. Do not
- *  fold it back in: a shared rule living beside page copy is how it grew a
- *  second copy the first time.
+ *  fold it back in: a shared rule living beside page copy grows a second
+ *  copy.
  *
  *  A list with nothing in it is the caller's to handle — what an empty list
  *  should say differs by surface, and this one has no opinion about it.

@@ -81,8 +81,9 @@ describe("updates store", () => {
   });
 
   // The age is the middle link of the round trip: the command reports it,
-  // the store has to carry it, the page draws it. Only `landOk` moves it,
-  // for every landing kind, and a store that quietly dropped it would leave
+  // the store has to carry it, the page draws it. Only the landing in
+  // `updates-standing.ts` moves it, for every landing kind, and a store
+  // that quietly dropped it would leave
   // the page saying "Not checked for updates yet" over a check that ran.
   const CHECKED_AT = 1_700_000_000;
 
@@ -156,9 +157,9 @@ describe("updates store", () => {
     expect(visibleUpdateCount(rows)).toBe(2);
   });
 
-  // A failed read used to leave only a not-landed flag behind —
-  // indistinguishable from a read still on its way, so Home and the badge
-  // had nothing to show for it.
+  // A failed read that left only a not-landed flag behind would be
+  // indistinguishable from a read still on its way, and Home and the badge
+  // would have nothing to show for it.
   it("keeps why a read failed, and a good read clears it", async () => {
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "error",
@@ -177,8 +178,9 @@ describe("updates store", () => {
     expect(useUpdatesStore.getState().read.status).toBe("landed");
   });
 
-  // A rejected call used to escape the store entirely — no error recorded,
-  // the promise discarded by its callers — while a returned refusal landed.
+  // A rejected call that escaped the store — no error recorded, the
+  // promise discarded by its callers — would land nothing where a returned
+  // refusal lands a failure.
   it("lands a rejected read the same as a returned refusal", async () => {
     const kept = [row({})];
     useUpdatesStore.setState({ rows: kept, read: READ_LANDED });
@@ -316,7 +318,7 @@ describe("updates store", () => {
     const reloading = useUpdatesStore.getState().reload();
 
     // The rows are still the last landed answer, which is exactly the
-    // state that used to let this through.
+    // state nothing in `read` tells apart from a settled one.
     expect(useUpdatesStore.getState().read.status).toBe("landed");
     useProblemsStore.setState({
       dialog: { open: false, title: "", steps: [], actions: [] },
@@ -410,7 +412,7 @@ describe("updates store", () => {
   });
 
   // A transport failure rejects instead of returning an error result —
-  // only the applier sees it, and dropping its return left updateOne
+  // only the applier sees it, and dropping its return would leave updateOne
   // silent and setAutoUpdate mute about a switch that never happened.
   it("surfaces an update whose transport failed instead of staying silent", async () => {
     useProblemsStore.setState({
@@ -548,7 +550,7 @@ describe("updates store", () => {
 
   // The machine reads are owed whichever way the apply answered, on
   // `lib/rescan.ts`'s rule. Gated on the answer, Home's inventory and the
-  // audit scores went on reporting copies already taken off disk until
+  // audit scores would go on reporting copies already taken off disk until
   // something else forced a read. Both arms of the choice `applyRow` makes
   // between the two single-package commands, since a held row moves its
   // hold through the other one.

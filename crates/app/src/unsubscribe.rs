@@ -56,11 +56,11 @@ pub fn marketplace_unsubscribe_preview(
 /// What unsubscribing did about the repository effects of the packages
 /// that left with the source — the same account the terminal prints.
 ///
-/// A struct rather than the bare list it used to be, spelling the account
-/// `undone` like every other command that can make one. The window reads
-/// the account off an answer by that name, so a bare list is a shape it
-/// can only be told about by hand, and the day this write goes through
-/// the shared one it would fall silent with nothing going red.
+/// A struct spelling the account `undone`, like every other command that
+/// can make one, rather than a bare list. The window reads the account off
+/// an answer by that name, so a bare list is a shape it can only be told
+/// about by hand. The answer must keep this shape when the write moves to
+/// the shared path, or the window falls silent with nothing going red.
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Unsubscribed {

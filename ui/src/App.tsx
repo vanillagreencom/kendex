@@ -112,7 +112,8 @@ export function useStartupLoads() {
   useEffect(() => {
     // Independent reads, started together: the audit is the slow one
     // (it scores every installed file), and chaining it behind the scan
-    // meant the Library sat empty waiting on work it does not need.
+    // would leave the Library sitting empty waiting on work it does not
+    // need.
     void load();
     void refresh();
     void auditRefresh();

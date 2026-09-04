@@ -203,8 +203,7 @@ pub fn write(env: &Env, report: &EngineReport) -> Result<Vec<String>, String> {
 /// sources, the sets, the packages — is enrichment, and a `?` on one of
 /// those discards the account with the answer it was riding on. The person
 /// is then shown a listing error over a repository that was disarmed a
-/// moment earlier, which is this issue's own failure mode reached through
-/// the error path instead of the happy one.
+/// moment earlier, with no word of what ran.
 ///
 /// Carried on the error rather than dropped, and never at the cost of the
 /// error itself: an irreversible side effect is not made reversible by

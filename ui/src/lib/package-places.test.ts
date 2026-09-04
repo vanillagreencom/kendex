@@ -331,9 +331,9 @@ describe("which places kendex can remove", () => {
 });
 
 // A place holds one installation per harness, and the safety reading merges
-// every one of them. Reading the vendor off the first row alone answered for
+// every one of them. Reading the vendor off the first row alone answers for
 // a set it does not speak for: a tool's bundled copy beside a copy the
-// reader owns would have suppressed the second one's real score.
+// reader owns would suppress the second one's real score.
 describe("vendorAt", () => {
   it("names the vendor when every copy in the place is theirs", () => {
     expect(

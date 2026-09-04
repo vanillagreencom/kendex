@@ -63,9 +63,9 @@ export const SCAN_FOLDER_HELP =
   "Look inside a folder for repositories, then add the ones you want.";
 export const NO_PROJECTS_FOUND = "Nothing that looks like a project in there.";
 
-// The one toggle on an item. It was a button reading "Turn off", which said
-// what the click does but never what the state is or what turning it off
-// costs you — a switch shows the state, and the sentence under it says the
+// The one toggle on an item. A button reading "Turn off" would say what
+// the click does but never what the state is or what turning it off costs
+// you — a switch shows the state, and the sentence under it says the
 // files stay put.
 export const ENABLED_LABEL = "Enabled";
 export const ENABLED_HELP =

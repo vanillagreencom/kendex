@@ -7,7 +7,7 @@ use clap::Args;
 use crate::commands;
 use crate::commands::add::AddArgs;
 
-/// The v1 add surface — shared by `add` and the bare form, flag for flag.
+/// The add flags — shared by `add` and the bare form, flag for flag.
 #[derive(Args)]
 pub struct AddFlags {
     /// Install to the user-level scope
@@ -61,7 +61,7 @@ pub struct AddFlags {
     /// Skip auto-install of skills referenced by selected agents
     #[arg(long)]
     no_auto_skills: bool,
-    /// Hold what this installs at today's version (manual updates)
+    /// Hold what this installs at the resolved version (manual updates)
     #[arg(long)]
     hold: bool,
     /// Say yes to the repository changes a package declares

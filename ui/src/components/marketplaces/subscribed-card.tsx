@@ -14,7 +14,7 @@ const NAMED_PLACES = 3;
 
 /** One subscribed marketplace: what it is, where it came from, and which
  * places hold it. The whole card opens the marketplace's own page — the
- * per-place switch lives there now, in its Projects section, so this card
+ * per-place switch lives there, in its Projects section, so this card
  * carries no control that changes anything from a list. */
 export function SubscribedCard({ group }: { group: SubscribedMarketplace }) {
   const goToMarketplace = useNavStore((s) => s.goToMarketplace);

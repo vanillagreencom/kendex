@@ -1,7 +1,7 @@
 //! The plain lines, verb by verb. Held here rather than only on refresh
 //! because a difference nobody pinned is a difference nobody notices: the
 //! contract is that a script reading these keeps reading them, and it is
-//! only a contract where every verb the change touched is under it.
+//! only a contract where every verb is under it.
 
 use crate::test_util::source_path;
 
@@ -83,7 +83,7 @@ fn apply_plan() {
 }
 
 /// add closes on the verb that was typed: the count is of changes, and a
-/// run whose only change is the declaration added something rather than
+/// run whose only change is its declaration writes something rather than
 /// installing anything.
 #[test]
 fn add() {
@@ -205,7 +205,7 @@ fn a_name_off_a_foreign_tree_cannot_forge_a_line() {
             "a control character reached the terminal ({ui}): {printed:?}"
         );
         // The line it appears on is one line. Escaped after the message
-        // was composed, the break inside the name split this in two.
+        // is composed, the break inside the name would split this in two.
         let carrying: Vec<&str> = printed
             .lines()
             .filter(|line| line.contains("we\\nir"))
@@ -384,8 +384,8 @@ fn a_value_in_the_closing_refusal_cannot_forge_a_line() {
 /// three below take all of it: a sentence, the parser's diagram, and one
 /// finding per line. The headline is one line under every one of them,
 /// whatever the place is called. Composed rather than routed, a directory
-/// named `ap<break>0 checked, 0 OK, 0 failed` printed that count as a line
-/// of kendex's own verdict.
+/// named `ap<break>0 checked, 0 OK, 0 failed` would print that count as a
+/// line of kendex's own verdict.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_scope_that_could_not_be_checked_is_named_on_one_line() {

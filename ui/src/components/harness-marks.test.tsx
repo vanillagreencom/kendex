@@ -6,12 +6,12 @@ import { mount } from "@/test/dom";
 import { HarnessIcon } from "./harness-icon";
 
 // `harness-icon.tsx` colours a mark with `text-harness-<id>`, which reaches
-// the drawing only where the file hands its paint to the caller. Copilot
-// shipped with no fill at all, so both its paths took SVG's default black
-// and ignored the token (KEN-930). SOURCES.md re-pulls these marks from
-// vendor brand kits and edits their fills by hand, which is how that
-// arrives, so the check resolves the paint that reaches each drawn shape
-// rather than reading whichever element happens to carry a fill.
+// the drawing only where the file hands its paint to the caller. A mark
+// with no fill at all paints every path SVG's default black and ignores
+// the token. SOURCES.md re-pulls these marks from vendor brand kits and
+// edits their fills by hand, which is how that arrives, so the check
+// resolves the paint that reaches each drawn shape rather than reading
+// whichever element happens to carry a fill.
 const SHAPES = "path, circle, ellipse, rect, polygon, polyline, line";
 // Geometry under these draws nothing itself; it defines a mask, a clip or a
 // paint server, where a fill is a channel value rather than a colour. They

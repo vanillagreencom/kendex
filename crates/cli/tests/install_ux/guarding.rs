@@ -153,9 +153,9 @@ fn disarming_before_removal_leaves_the_repository_committable() {
 /// files go, and says what it ran.
 ///
 /// The package declares an uninstaller, and the only moment it can run is
-/// while the script is still on disk. Removing the files first left the
-/// shims pointing at nothing, and a repository nobody could commit to until
-/// they found two files under `.git/hooks` by hand.
+/// while the script is still on disk. Removing the files first would leave
+/// the shims pointing at nothing, and a repository nobody could commit to
+/// until they found two files under `.git/hooks` by hand.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn removing_the_package_disarms_the_repository_first() {
@@ -270,8 +270,9 @@ fn removing_a_copied_package_disarms_the_repository_too() {
 /// has live shims — and removing it has to run the uninstaller like any
 /// other removal.
 ///
-/// Probing only `SKILL.md` read this package as one that declares
-/// nothing, and the removal took the scripts out from under the shims.
+/// Probing only `SKILL.md` would read this package as one that declares
+/// nothing, and the removal would take the scripts out from under the
+/// shims.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn removing_a_disabled_package_disarms_the_repository_too() {

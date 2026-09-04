@@ -95,8 +95,8 @@ fn taking_over_one_row_leaves_the_other_row_alone() {
     assert_eq!(still_waiting, vec!["lint"], "{:?}", after.drift);
 }
 
-/// The page a click comes from can be a minute old. A choice that is no
-/// longer on offer must not run the scope's apply anyway and report success
+/// The page a click comes from can be a minute old. A choice the page has
+/// since withdrawn must not run the scope's apply anyway and report success
 /// — the row it was made on is gone, and what would have been applied is
 /// everything else.
 #[test]
@@ -147,7 +147,7 @@ fn the_page_is_told_which_kinds_can_be_kept() {
 /// The take-over is an apply like any other, so it reads the manifest the
 /// way every other apply does — and refuses an older schema rather than
 /// planning against a file this build cannot read. Planned from a copy
-/// normalized in memory, an older schema looked current and was written
+/// normalized in memory, an older schema would look current and be written
 /// back over the person's bytes.
 #[test]
 #[allow(clippy::unwrap_used)]

@@ -30,8 +30,8 @@ const text = (node: { textContent: string | null }): string =>
   node.textContent ?? "";
 
 describe("the Bundles tab", () => {
-  // The bug: a pending read looked the same as a catalog with no sets, so
-  // the tab said the marketplace offers none while its read was still out.
+  // A pending read must not look like a catalog with no sets: the tab
+  // would say the marketplace offers none while its read is still out.
   it("says it is reading while the read is pending, never that there are none", () => {
     const host = mount(
       <BundleCards catalog={catalog} bundles={undefined} error={undefined} />,

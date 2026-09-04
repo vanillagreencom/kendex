@@ -1,8 +1,8 @@
 //! The Homebrew and AUR recipes under packaging/ point at per-architecture
 //! release assets by hand. CI has neither brew nor makepkg, so this checks
 //! the text: every non-Windows lane in release.yml must be selectable from
-//! each recipe, and a lane added to the workflow fails here until the
-//! recipes catch up.
+//! each recipe, and a lane the workflow gains fails here until the recipes
+//! catch up.
 
 use std::fs;
 use std::path::{Path, PathBuf};

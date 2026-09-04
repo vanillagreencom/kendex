@@ -37,12 +37,12 @@ export interface CatalogCaches {
 }
 
 /** Bumped by [droppedSetCaches], the one place a drop is declared;
- * [dropCatalogCaches] spreads that result and bumps nothing itself. A read that began before one describes a
- * checkout that may no longer be the one installed from, and every derived
- * cache keys on presence rather than freshness — a stale answer landing in
- * the emptied slot would pin the commit before the change for the session,
- * with nothing left to ask again. Shared with the pre-install scores, which
- * the same drop clears. */
+ * [dropCatalogCaches] spreads that result and bumps nothing itself. A read
+ * that began before one describes a checkout the mutation may have
+ * replaced, and every derived cache keys on presence rather than freshness
+ * — a stale answer landing in the emptied slot would pin the commit before
+ * the change for the session, with nothing left to ask again. Shared with
+ * the pre-install scores, which the same drop clears. */
 export const catalogDrops = invalidations();
 
 /** One subscription's cache key: where it lives plus its alias, encoded so
@@ -215,9 +215,9 @@ export async function openLead(scope: Scope, source: string, lead: string) {
  * open. Once the read has settled, that page is told what this build can
  * actually tell it — nothing here declares the repository — and Subscribe
  * is offered. Being wrong there costs a refusal the engine spells out;
- * being permanently pending costs the page its only control. Carrying
- * `repo_identity` onto the summary and the directory row is what makes the
- * answer exact, and is filed separately. */
+ * being permanently pending costs the page its only control. An exact
+ * answer needs `repo_identity` carried onto the summary and the directory
+ * row. */
 type RepoActionKind = "checking" | "subscribe" | "turn-on" | "refresh";
 
 export function repoAction(

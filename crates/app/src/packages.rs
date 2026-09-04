@@ -90,7 +90,7 @@ pub enum ForkBesideError {
     Recorded { message: String },
 }
 
-/// Keep an edited install as a local fork under a new name, leave the
+/// Keep an edited install as a local fork under another name, leave the
 /// original on its source, then render both.
 #[tauri::command(async)]
 #[specta::specta]
@@ -146,7 +146,7 @@ pub fn apply_discard_edits(
     rev: Option<String>,
 ) -> Result<AuditView, String> {
     let env = env()?;
-    // A held package's "use new version" moves the hold and drops the
+    // A held package's version-change action moves the hold and drops the
     // edits in one apply; planned from the old manifest, the discard would
     // only restore the version the edits were made on.
     if let Some(rev) = rev {

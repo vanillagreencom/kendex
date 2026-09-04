@@ -56,8 +56,8 @@ describe("a listed marketplace's card", () => {
     expect(render(listed())).not.toContain(FEATURED_MARKER);
   });
 
-  // The counts were a bare "42 pkgs · 4 bundles" dropped mid-row. They are
-  // still there, spelled out, and set as metadata.
+  // The counts are spelled out and set as metadata, not a bare
+  // "42 pkgs · 4 bundles" dropped mid-row.
   it("says its counts in words, as metadata", () => {
     const html = render(listed());
     expect(html).toContain("42 packages · 4 bundles");

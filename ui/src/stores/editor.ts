@@ -134,7 +134,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     const { scope, base, manifestDirty, settingsEdits, settings } = get();
     // A save reaches `repo_effects`, so the machine is read again whatever
     // it answered — `lib/rescan.ts` holds the rule and the reasons, the
-    // provenance join it refreshes included, which this used not to.
+    // provenance join it refreshes included.
     await writingRepo(async () => {
       set({ saving: true });
       let response: Awaited<ReturnType<typeof commands.saveCustomize>>;

@@ -32,7 +32,7 @@ fn said(output: &Output) -> String {
 }
 
 /// A project declaring skill `deploy` from a local catalog, with `deploy`
-/// already on disk in the shape an earlier tool left it.
+/// already on disk, laid out by another tool.
 #[allow(clippy::unwrap_used)]
 fn migrating_project(home: &Path) -> PathBuf {
     let project = home.join("dev/app");
@@ -122,7 +122,7 @@ fn a_blocked_declaration_is_printed_with_both_exits_that_resolve_it() {
 
 /// Listed by one command and invisible to the others is a thin line
 /// between "safely ignored" and "silently unmanaged". Both commands that
-/// report on a scope now say what they did not look at.
+/// report on a scope say what they did not look at.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn content_nothing_declares_is_named_by_apply_and_by_verify() {
@@ -204,9 +204,9 @@ fn an_unplannable_scope_with_nothing_installed_does_not_fail_the_run() {
     );
 }
 
-/// The footnote belongs to the two commands that report on a whole scope.
-/// It rode inside the shared report printer for a while, which put an
-/// inventory of hand-made content at the end of every add and every pin.
+/// The footnote belongs to the two commands that report on a whole scope;
+/// in the shared report printer it would put an inventory of hand-made
+/// content at the end of every add and every pin.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn only_the_commands_that_report_on_a_scope_name_unmanaged_content() {

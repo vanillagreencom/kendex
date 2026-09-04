@@ -18,7 +18,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use super::{CLOSED, FRAMED, Mode, capable, mode};
 
 /// Which symbol a block opens with. Plain mode has no use for it: the
-/// text carries its own `warning:`/`note:` prefix and always did.
+/// text carries its own `warning:`/`note:` prefix.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Tone {
     Step,
@@ -84,8 +84,8 @@ impl cliclack::Theme for Kendex {
     }
 }
 
-/// The last line of a run that failed. Plain mode prints what it always
-/// printed; a frame closes on it in the failure style.
+/// The last line of a run that failed. Plain mode prints it as a line; a
+/// frame closes on it in the failure style.
 pub(super) fn fail_frame(line: &str) {
     flush();
     CLOSED.store(true, Ordering::Relaxed);

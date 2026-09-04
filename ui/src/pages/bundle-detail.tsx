@@ -115,8 +115,8 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
   // The lock of the place this install would land in could not be read, so
   // no member's standing is known and every per-member box is already off.
   // "Install all" asks about the set rather than a member, so it reads that
-  // place's own answer off the payload: a member the catalog dropped says
-  // "no longer offered" with or without a lock, so no scan of the rows
+  // place's own answer off the payload: a member the catalog does not offer
+  // has the same state with or without a lock, so no scan of the rows
   // could tell. Landing place, not browsed one — the engine mutates where
   // the install goes.
   const recordsUnknown = detail?.recordsUnreadable ?? false;
@@ -183,8 +183,8 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
                   // destination, so a choice made against another one is not
                   // an answer here. Nor is a ticked member: the box was
                   // ticked against the state the place before it answered,
-                  // and the new place may already hold that member or refuse
-                  // to say.
+                  // and the place chosen may already hold that member or
+                  // refuse to say.
                   setChoice(NO_CHOICE);
                   setSelected(new Set());
                   setDestination(next);

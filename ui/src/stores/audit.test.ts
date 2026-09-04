@@ -64,8 +64,8 @@ describe("audit store refresh", () => {
     expect(toast.error).toHaveBeenCalledTimes(1);
   });
 
-  // A rejected call used to escape the store: auditedAt stayed null with
-  // no error, which Home read as an audit still on its way — forever.
+  // A rejected call that escaped the store would leave auditedAt null with
+  // no error, which Home reads as an audit still on its way — forever.
   it("lands a rejected call as a failed audit", async () => {
     vi.mocked(commands.auditAll).mockRejectedValue(new Error("ipc down"));
 
@@ -132,9 +132,9 @@ describe("audit store refresh", () => {
   });
 
   // A force says the bytes changed. Dropping it because a machine-wide read
-  // happened to be running left every score on screen answering for the
-  // state before whatever prompted it — and the earlier guard dropped it on
-  // the `auditing` flag, which a caller can leave standing.
+  // happened to be running would leave every score on screen answering for
+  // the state before whatever prompted it — and a guard on the `auditing`
+  // flag would drop it, since a caller can leave that flag standing.
   //
   // Each call parks until the test lets it go, which is the only way to have
   // a request arrive while an audit is genuinely in flight.
@@ -307,7 +307,7 @@ describe("audit store run() actions", () => {
 
   // Removing a package that armed the repository runs its uninstaller
   // first, and what ran is the removal's own account — a removal that
-  // said nothing left people hunting for shims under `.git/hooks`.
+  // says nothing leaves people hunting for shims under `.git/hooks`.
   it("says what the removal ran in the repository", async () => {
     vi.mocked(commands.removeItem).mockResolvedValue({
       status: "ok",
@@ -382,8 +382,8 @@ describe("an audit that lands after a command it cannot answer for", () => {
     return { parked, land: (value: T) => land(value) };
   };
 
-  // Two parked audits, because every one of these commands now asks for one
-  // of its own: the reading that overlapped the attempt, and the forced one
+  // Two parked audits, because every one of these commands asks for one of
+  // its own: the reading that overlapped the attempt, and the forced one
   // the rescan behind the command queues after it. Landing only the first
   // is what the assertions are about — the second is landed at the end so
   // the action can finish.

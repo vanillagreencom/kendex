@@ -81,10 +81,10 @@ fn chosen_backend<'a>(session: Session<'a>) -> Option<&'a str> {
 /// it.
 ///
 /// The AppImage's bundled GTK hook exports `GDK_BACKEND=x11` before the app
-/// starts. What it dodges is not the DMABUF crash `webview_env` handles —
-/// it is tauri-apps/tauri#8541, a GLib-GIO settings-schema lookup that
-/// aborts the process, hit by AppImages built on an old distro and run on a
-/// newer one. The cost of the pin is paid by everyone: the shipped app
+/// starts. What it dodges is not the DMABUF crash `webview_env` handles,
+/// but a GLib-GIO settings-schema lookup that aborts the process when an
+/// AppImage built on an old distro runs on a newer one. The cost of the pin
+/// is paid by everyone: the shipped app
 /// always lands on XWayland, where a Wayland compositor reports a scale of
 /// 1 while driving the display at 2, so the whole window comes out at half
 /// size.
@@ -93,10 +93,9 @@ fn chosen_backend<'a>(session: Session<'a>) -> Option<&'a str> {
 /// `g_error` kills the process after GDK has already chosen Wayland, and
 /// the second entry is never reached. Overriding the pin is judged worth it
 /// because upstream reports the abort does not occur for bundles built on
-/// current Ubuntu, which is what `release.yml` builds on, and because the
-/// released AppImage patched to this value was run on a Wayland session and
-/// came up native with an empty log. `KENDEX_GDK_BACKEND=x11` is the way
-/// back for anyone whose host proves that judgement wrong.
+/// current Ubuntu, which is what `release.yml` builds on.
+/// `KENDEX_GDK_BACKEND=x11` is the way back for anyone whose host proves
+/// that judgement wrong.
 ///
 /// No other packaging needs the push: with the variable unset, GDK already
 /// tries Wayland before X11.
@@ -117,9 +116,9 @@ fn gdk_backend(wayland: bool, session: Session<'_>) -> Option<String> {
 /// asks for makes the next call return nothing, since every entry is only
 /// emitted when the variable does not already hold the wanted value. That
 /// is checked rather than asserted — see the test. A sentinel variable
-/// would be the obvious alternative and was the wrong one: children inherit
-/// it, so a kendex launched from a process kendex started would read a
-/// stale marker and skip a plan its own environment needs.
+/// would not do: children inherit it, so a kendex launched from a process
+/// kendex started would read a stale marker and skip a plan its own
+/// environment needs.
 fn plan(session: Session<'_>) -> Vec<(&'static str, String)> {
     let wayland = wayland_session(session.session_type, session.wayland_display);
     let mut vars = Vec::new();
@@ -149,10 +148,10 @@ fn overriding_the_bundle(session: Session<'_>, vars: &[(&'static str, String)]) 
             .any(|(name, value)| *name == "GDK_BACKEND" && value == WAYLAND_THEN_X11)
 }
 
-/// Relaunch with the fixes in the environment. Setting them in this process
-/// instead would need `unsafe` — the workspace forbids it, and changing the
-/// environment in place is not thread-safe — and relaunching is already how
-/// the WebKit fix has always been delivered.
+/// Relaunch with the selected environment values. Setting them in this
+/// process instead would need `unsafe` — the workspace forbids it, and
+/// changing the environment in place is not thread-safe — and the WebKit
+/// setting rides the same relaunch.
 #[cfg(target_os = "linux")]
 fn relaunch_with(vars: &[(&'static str, String)]) {
     use std::io::Write;

@@ -91,7 +91,7 @@ fn fixture() -> (tempfile::TempDir, PathBuf) {
 /// A record at `lock`, carrying the version this build writes — read from
 /// the crate rather than typed here, because a floor bump is what strands a
 /// scope in the first place and a number copied into a test would go on
-/// asserting the old one.
+/// asserting a stale one.
 #[allow(clippy::unwrap_used)]
 fn assert_record_landed(lock: &Path) {
     assert!(lock.is_file(), "no install record at {}", lock.display());
@@ -114,9 +114,9 @@ fn assert_record_landed(lock: &Path) {
 /// tell the two apart. `verify` closes it — the record is there, so the run
 /// does not refuse, and the declaration is named as one no record holds.
 ///
-/// The global scope is where this was found and is a second path through the
-/// write, its record sitting under the app's own directory and naming no
-/// root, so it is driven here rather than left to the project spelling.
+/// The global scope is a second path through the write, its record sitting
+/// under the app's own directory and naming no root, so it is driven here
+/// rather than left to the project spelling.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn apply_writes_the_record_once_for_a_pi_extension_only_scope() {

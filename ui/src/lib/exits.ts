@@ -3,7 +3,7 @@ import type { DriftRow, HarnessId, RowExits } from "@/bindings";
 /** The ways out of each blocked installation, looked up by row. Core works
  *  these out; this module reads them back, and never re-derives one from
  *  the cause or the state. A page that did would drift from the plan the
- *  moment a cause was added, and draw a button the plan then refuses. */
+ *  moment a cause arrives, and draw a button the plan then refuses. */
 export class Exits {
   private readonly byKey: Map<string, RowExits>;
 

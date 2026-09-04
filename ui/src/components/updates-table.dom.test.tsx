@@ -156,7 +156,8 @@ describe("installing beside an edited place, from the row", () => {
       "'gh-edited' already installed from this scope's manifest",
     );
     expect(dialog()).not.toBeNull();
-    // Typing a new name clears the refusal, which was about the old one.
+    // Typing a different name clears the refusal, which was about the
+    // name refused.
     const field = open.querySelector<HTMLInputElement>("input");
     if (!field) throw new Error("no name field");
     await userEvent.type(field, "2");

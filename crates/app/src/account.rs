@@ -233,8 +233,8 @@ mod tests {
         ));
     }
 
-    /// The seam the account fix crosses: which half of the read failed is
-    /// decided in core, and this carries that across unchanged. Swapping
+    /// The seam between core and the surface: which half of the read failed
+    /// is decided in core, and this carries that across unchanged. Swapping
     /// the arms would put "Offline — signed in when kendex.ai was last
     /// reached" back in front of someone whose keychain is locked, and the
     /// sentence is the producer's, so a rewrite here would lose the cause

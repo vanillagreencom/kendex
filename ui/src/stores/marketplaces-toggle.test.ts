@@ -44,7 +44,7 @@ const row = (repo: string, repoKey: string | null): MarketplaceRow => ({
   recordsUnreadable: false,
 });
 
-// The client-side "these rows are not current" refusal is gone: the action
+// There is no client-side "these rows are not current" refusal: the action
 // goes out and the engine is the judge. That trade only holds if a refusal
 // is honoured here — a toggle that reported failure and dropped every
 // catalog cache anyway would leave the pages re-reading behind a write that

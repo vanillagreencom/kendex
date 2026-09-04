@@ -141,7 +141,7 @@ mod tests {
 
     /// The report decides whether the run is clean, not the page. A
     /// finding the renderer's budget dropped wholesale leaves nothing
-    /// indented behind, and a verdict read off the page alone called that
+    /// indented behind, and a verdict read off the page alone calls that
     /// all clear while findings were cut.
     #[test]
     fn a_report_whose_findings_were_all_truncated_is_not_all_clear() {

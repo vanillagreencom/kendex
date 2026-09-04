@@ -186,10 +186,8 @@ fn two_tools_holding_one_item_are_kept_by_one_offer() {
     );
 }
 
-/// A file where a folder goes is files kendex did not write, and the
-/// replacement handles it — but adoption reads a skill's position as a
 /// Adoption reads one tool's position, and left unsaid it reads Claude
-/// Code's. A conflict on any other tool was directing the reader at a
+/// Code's. A conflict on any other tool would direct the reader at a
 /// place that is not the one blocked — so the offer names the tool, and
 /// following it settles the item.
 #[test]
@@ -216,9 +214,6 @@ fn one_tool_blocked_is_kept_through_the_tool_that_is_blocked() {
     );
 }
 
-/// The same folder, with no declared tool sitting at the link that reads
-/// it. Adoption works at a tool's own place, and every tool here has an
-/// empty one — so the row says the way out that does work rather than a
 /// An item can be blocked for one tool and edited under another, and the two
 /// conflicts come out in whichever order the tools are listed. The way out
 /// of the hand-made files has to be said either way: printed only when it
@@ -263,12 +258,6 @@ fn hand_made_files_beside_an_edited_install_keep_their_offer() {
     }
 }
 
-/// A shape adoption cannot take, beside one it can. Keeping is one move for
-/// the whole item, so an offer that quietly drops the place it cannot take
-/// settles the rest and rewrites the declaration around them — leaving that
-/// place blocked with the item no longer its tool's. Neither exit fits, and
-/// The exits are what a reader types next, so they carry the scope they
-/// were read in. Printed while looking at the global scope without it,
 mod refusals;
 mod shared;
 

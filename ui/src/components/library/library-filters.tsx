@@ -79,7 +79,7 @@ export function LibraryFilters({
   const searchRef = useRef<HTMLInputElement>(null);
 
   // The "/" shortcut fires from any page, so it bumps a counter rather than
-  // reaching for a box that may not have been mounted at the time.
+  // reaching for a box that may not be mounted when it fires.
   useEffect(() => {
     if (searchFocus === 0) return;
     searchRef.current?.focus();

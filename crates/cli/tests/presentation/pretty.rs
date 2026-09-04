@@ -78,8 +78,8 @@ fn the_frame_carries_every_line_the_plain_run_said() {
 }
 
 /// And in the order it said them. Flattening the session into one string
-/// would let a block drawn after the thing it explains pass, which is the
-/// defect the buffering makes possible.
+/// would let a block drawn after the thing it explains pass, which buffering
+/// makes possible.
 #[test]
 fn the_frame_says_them_in_the_order_the_plain_run_did() {
     let (plain, pretty) = both(&REFRESH);
@@ -210,10 +210,10 @@ fn one_line_verdicts_are_drawn_as_one_group() {
 }
 
 /// A run that ends on anything but its ledger still closes its frame.
-/// `FRAMED` records that a frame was opened and nothing recorded that one
+/// `FRAMED` records that a frame was opened and nothing records that one
 /// was closed, so a ledger drawn as an ordinary block — because output
-/// followed it — left the reader a gutter bar hanging off the bottom of
-/// the run with no closing line under it.
+/// followed it — would leave the reader a gutter bar hanging off the
+/// bottom of the run with no closing line under it.
 #[test]
 fn a_run_ending_outside_its_ledger_still_closes_the_frame() {
     let printed = said(&nothing_declared(&["refresh", "--scope", "project"]));
@@ -230,8 +230,8 @@ fn a_run_ending_outside_its_ledger_still_closes_the_frame() {
 /// The closing line is genuinely last, even when the work after the
 /// writes has something to say. The snapshot pass runs once every scope
 /// is written and can warn; emitted from inside the scope loop, the
-/// ledger was drawn as an ordinary block and the run ended on that
-/// warning and a bare corner instead of on its outcome.
+/// ledger would be drawn as an ordinary block and the run would end on
+/// that warning and a bare corner instead of on its outcome.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_warning_after_the_writes_lands_above_the_closing_ledger() {

@@ -7,17 +7,16 @@ use crate::{
 };
 use std::process::Command;
 
-/// The shims are armed, a plain `git commit` runs the package's chain, and
 /// A work marker for a fixture to write, spelled in halves.
 ///
 /// The check under test scans this repository too, so a fixture that spells
 /// the word it is about would fail the very gate it proves works — and the
-/// failure would name the test file, not the code. The suite this replaced
-/// split it the same way; spelling it whole is what turned the lane red.
+/// failure would name the test file, not the code.
 fn work_marker(head: &str, tail: &str) -> String {
     format!("// {head}{tail}\n")
 }
 
+/// The shims are armed, a plain `git commit` runs the package's chain, and
 /// a violation the package defines blocks the commit.
 #[test]
 #[allow(clippy::unwrap_used)]

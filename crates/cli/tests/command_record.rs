@@ -2,9 +2,8 @@
 //! command, whichever verb was run.
 //!
 //! Asserted against the built binary rather than the function behind it:
-//! the defect was never that the write was wrong, it was that nothing
-//! called it outside `kendex update`, and a test that calls the seam
-//! itself would have passed throughout.
+//! a write that only `kendex update` reaches is the failure, and a test
+//! that calls the seam itself would pass over it.
 //!
 //! Which is why every case here needs a runner that can write a record.
 //! A run acting as root writes none, and the refusals below — a record
@@ -232,8 +231,8 @@ fn concurrent_first_runs_leave_one_whole_record() {
         format!("{}\n", recorded.path.display()),
         "the record holds more than the line the run that won wrote"
     );
-    // Nothing writes a name like that today: this guards against a staged
-    // write coming back, not against one a writer here makes.
+    // Nothing writes a name like that: this guards against a staged write,
+    // not against one a writer here makes.
     let beside: Vec<_> = fs::read_dir(env.installed_command_file().parent().unwrap())
         .unwrap()
         .filter_map(|entry| entry.ok().map(|entry| entry.file_name()))
@@ -272,9 +271,9 @@ fn a_run_does_not_take_the_record_off_another_install() {
 }
 
 /// The record a run writes is the one `XDG_DATA_HOME` names rather than the
-/// one under `HOME`. The withdrawn fix carried `HOME` onto a `sudo` line and
-/// so was correct only for people who do not set this; a record written by
-/// the person's own run reads their own variable.
+/// one under `HOME`. A path composed off `HOME` is right only for people
+/// who do not set this; a record written by the person's own run reads
+/// their own variable.
 ///
 /// Linux alone: `XDG_DATA_HOME` is the layout `dirs` reads there, and the
 /// macOS layout has no such variable to honour.

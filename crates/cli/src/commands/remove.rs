@@ -104,7 +104,7 @@ fn takes_anything(report: &EngineReport) -> bool {
 /// carried and leaves the rest, so both halves are said out loud, each with
 /// what accounts for it — otherwise the user is left guessing which members
 /// survived and why. The planner's reason for a removal reads as disowning
-/// ("no longer declared here"), so with the declaration kept only the kept
+/// ("the declaration does not include it"), so with the declaration kept only the kept
 /// rows carry theirs.
 fn say_split(report: &EngineReport, mode: Removal) {
     for change in &report.set_changes {

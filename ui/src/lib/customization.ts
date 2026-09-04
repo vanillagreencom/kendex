@@ -1,7 +1,7 @@
 // What the manifest overlays onto one installed package, read out of the
-// manifest the editor already loads. Nothing here is a new fact — it is the
-// same tables the Customize page writes, sliced per package so a package's
-// own page can show and change its own row.
+// manifest the editor already loads. Nothing here is a fact of its own — it
+// is the same tables the Customize page writes, sliced per package so a
+// package's own page can show and change its own row.
 
 import type { HarnessId, ItemKind } from "@/bindings";
 import {
@@ -23,7 +23,7 @@ export interface ItemCustomization {
   /** Agents: text written above and below what the author wrote. */
   launch: string | null;
   additional: string | null;
-  /** Skills: text added to the author's own instructions. */
+  /** Skills: text appended to the author's own instructions. */
   instructions: string | null;
   /** Agents: the skills this agent gets, or null while kendex picks them. */
   skills: string[] | null;

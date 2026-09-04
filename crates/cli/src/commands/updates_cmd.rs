@@ -14,7 +14,7 @@ pub enum UpdatesCommand {
         kind: String,
         name: String,
     },
-    /// Notify about a previously ignored package again
+    /// Resume notifications for an ignored package
     Unignore {
         /// agent | skill | hook | command | mcp-server | pi-extension
         kind: String,

@@ -5,9 +5,9 @@ import { pickFolder } from "@/lib/pick-folder";
 
 /**
  * A path field with the folder picker inside it, rather than a labelled
- * input, a browse button and a submit button in a row of three — the label
- * only repeated the placeholder, and the picker is part of filling the field
- * in, not a step of its own.
+ * input, a browse button and a submit button in a row of three — a label
+ * would only repeat the placeholder, and the picker is part of filling the
+ * field in, not a step of its own.
  */
 export function PathField({
   id,

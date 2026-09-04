@@ -59,7 +59,7 @@ pub fn scope_label(scope: &Scope) -> String {
 }
 
 /// The scopes a filter selects on this machine: the current project (walked
-/// up from CWD, v1 rules) and/or global.
+/// up from CWD) and/or global.
 pub fn resolve_scopes(env: &Env, filter: ScopeFilter) -> Result<Vec<Scope>, String> {
     let current = current_project(env);
     match filter {

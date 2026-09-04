@@ -146,8 +146,8 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
 /// Whether the run has a count to report, and what it is.
 ///
 /// `None` only where nothing was planned and nothing was written, which
-/// is how `add` reads a scope that had nothing to do. Reading it off the
-/// member plans alone said "up to date" over a run that wrote: a reused
+/// is how `add` reads a scope that had nothing to do. Read off the member
+/// plans alone it says "up to date" over a run that wrote: a reused
 /// source whose member is already declared plans nothing and still writes
 /// its subscription, or the pin holding it at the snapshot.
 fn wrote_count(applied: usize, planned_anything: bool) -> Option<usize> {
@@ -276,11 +276,10 @@ mod tests {
 
     /// A run that wrote reports what it wrote, whatever the member plans
     /// said. The pin and the subscription are writes the member plan
-    /// never carries, so a ledger deciding from that plan alone called a
-    /// run that had just changed the scope up to date.
+    /// never carries, so a ledger deciding from that plan alone calls a
+    /// run that has just changed the scope up to date.
     #[test]
     fn a_run_that_wrote_never_reads_as_up_to_date() {
-        // The defect: empty member plans, and writes all the same.
         assert_eq!(wrote_count(2, false), Some(2));
         // Unchanged where the plan carried the work.
         assert_eq!(wrote_count(4, true), Some(4));

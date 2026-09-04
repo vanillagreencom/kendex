@@ -22,9 +22,9 @@ pub mod update_check;
 mod whole_file;
 mod window;
 
-// Declared once for the whole lib test tree. Two `#[cfg(test)]` modules used
-// to `#[path]`-include the file separately, which is one module compiled twice
-// under two names; every `use` of it now names this one.
+// Declared once for the whole lib test tree: a second `#[path]` include of
+// the file would be one module compiled twice under two names, so every
+// `use` of it names this one.
 #[cfg(test)]
 #[path = "../../test_util.rs"]
 mod test_util;
@@ -56,13 +56,13 @@ fn constants(builder: Builder<tauri::Wry>) -> Builder<tauri::Wry> {
 /// A command returning a plain value gets no wrapper, tauri-specta emitting
 /// one only where there is a refusal type to name: `app_version`,
 /// `capability_table`, `mine_authoring_doc` and `window_zoom_state` reject
-/// to their callers as before, so a fire-and-forget read of one still drops
+/// to their callers unfolded, so a fire-and-forget read of one still drops
 /// its rejection. Nothing in `specta_builder` can reach them.
 ///
 /// `E | string` in the signature is what holds a reader honest: the fold
 /// puts a bare message in the `E` slot, and declaring that widening is what
-/// makes `tsc` name every reader branching on a discriminant the runtime no
-/// longer guarantees. Read the refusal through `ui/src/lib/refusal.ts`
+/// makes `tsc` name every reader branching on a discriminant the runtime
+/// does not guarantee. Read the refusal through `ui/src/lib/refusal.ts`
 /// rather than off its fields — `refusalKind` still branches on the kind,
 /// it just answers `null` where a shape never arrived. The words a
 /// rejection with nothing to say falls back to are `NO_REASON_GIVEN` in

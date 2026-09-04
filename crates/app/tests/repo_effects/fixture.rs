@@ -38,10 +38,9 @@ pub struct Fixture {
 /// kendex spawns, whose argv belongs to core and whose environment is
 /// whatever this process hands down; covering that one means writing the
 /// variables onto the process, and the workspace forbids `unsafe`, which
-/// `std::env::set_var` now requires. So a maintainer who has configured a
+/// `std::env::set_var` requires. So a maintainer who has configured a
 /// hooks path still sees the arming cases stand down — the same shape
-/// `crates/cli/tests/install_ux/guarding.rs` has, and a suite-wide
-/// property rather than anything this file introduced.
+/// `crates/cli/tests/install_ux/guarding.rs` has.
 pub fn empty_git_config() -> &'static Path {
     static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     PATH.get_or_init(|| {

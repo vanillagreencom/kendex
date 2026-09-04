@@ -1,4 +1,4 @@
-// The default is what runs on all 124 real test files, and no nested run
+// The default is what runs on every real test file, and no nested run
 // exercises it: the one control whose verdict turns on a window passes its
 // own. So it is pinned here, on the resolver alone, with no timing.
 import { describe, expect, it } from "vitest";

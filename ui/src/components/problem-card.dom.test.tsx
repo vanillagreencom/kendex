@@ -93,9 +93,9 @@ describe("a scan that could not finish", () => {
       />,
     );
 
-    // Every paragraph the card holds, in order. Read as a whole rather
-    // than searched for today's wording: a lead invented for this kind is
-    // a paragraph that isn't here, whatever words it were given.
+    // Every paragraph the card holds, in order. Read as a whole rather than
+    // searched by phrase: a lead invented for this kind is a paragraph that
+    // is not here, whatever words it receives.
     expect([...host.querySelectorAll("p")].map((p) => p.textContent)).toEqual([
       "This machine",
       "the machine could not be read",

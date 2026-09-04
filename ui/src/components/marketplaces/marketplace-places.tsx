@@ -25,10 +25,8 @@ import { scopeName, scopeNames, scopePath } from "@/lib/labels";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 
 /** Every place that subscribes to this marketplace, and the one switch
- * each place has over it. The switch used to sit on the Subscribed list,
- * where it changed a place the list never named and said nothing about
- * what switching it off costs; here the place is the row and the sentence
- * under the list is the answer.
+ * each place has over it. The place is the row, and the sentence under the
+ * list says what switching it off costs.
  *
  * Mounted as a tab panel, so it carries no heading of its own: the tab
  * spells [MARKETPLACE_PLACES_TITLE] already, and repeating it as an h2
@@ -100,8 +98,7 @@ function PlaceRow({
           deactivates every install this marketplace put in one place. It is
           the full path rather than the basename, because two projects can
           end in the same folder name and would announce identically; the
-          visible column keeps the short name, which is KEN-1142's to
-          settle. */}
+          visible column keeps the short name. */}
       <label
         htmlFor={switchId}
         className="shrink-0 cursor-pointer text-xs text-muted-foreground"

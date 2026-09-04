@@ -120,11 +120,11 @@ export const useNoticeStore = create<NoticeState>((set, get) => ({
       commands.appUpdateInstall(get().commandChannel),
     );
     // A replacement that restarts does not come back: the app relaunches
-    // into the new version. What does come back is an install that failed,
-    // or one that went through with something still to say about the
-    // command beside the app — told apart here rather than read out of the
-    // sentence, because a person whose update worked must not be shown a
-    // failure and invited to run it again.
+    // as the release it installed. What does come back is an install that
+    // failed, or one that went through with something still to say about
+    // the command beside the app — told apart here rather than read out of
+    // the sentence, because a person whose update worked must not be shown
+    // a failure and invited to run it again.
     if (response.status === "ok" && response.data === null) return;
     set(
       response.status === "ok"
@@ -135,8 +135,8 @@ export const useNoticeStore = create<NoticeState>((set, get) => ({
     // card says about it is read again — and a read that failed says
     // nothing rather than guessing, the same rule the first read follows.
     // Kept, the description would be the one drawn before the install, and
-    // the card would be describing a machine as it no longer is with no
-    // action left on it to ask again.
+    // the card would be describing a machine as it was before the install
+    // with no action left on it to ask again.
     const fresh = await settled(commands.appUpdateCommandChannel());
     set({ commandChannel: fresh.status === "ok" ? fresh.data : null });
   },

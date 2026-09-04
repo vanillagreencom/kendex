@@ -3,11 +3,8 @@
 // the reason a refusal is no account of the disk.
 //
 // The refusal arm is what the first cases are about, and the wrapper cannot
-// tell it from the landing one. The landing arm is not where this file's
-// coverage was thin, but it was not whole either: the editor refreshed the
-// audit and the scan without the join, and an item action refreshed the scan
-// alone. `rescanEverything` sends three reads, and `readAgain` below says
-// which two of them every case asks about.
+// tell it from the landing one. `rescanEverything` sends three reads, and
+// `readAgain` below says which two of them every case asks about.
 //
 // Nothing waits on those reads, so `rescansSettled` is what a test waits on.
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -313,7 +310,7 @@ describe("a write that reaches repo_effects and is refused", () => {
 // is at least an answer; a rejection is the transport failing over a command
 // that may have written throughout — `bindings.ts`'s `typedError` rethrows
 // an Error rather than folding it into a refusal, so this reaches the stores
-// as a rejection and always has.
+// as a rejection.
 describe("a write that reaches repo_effects and throws", () => {
   it("reads the machine again when the command rejects rather than refuses", async () => {
     vi.mocked(commands.marketplaceInstall).mockRejectedValue(
@@ -354,9 +351,9 @@ describe("a write that reaches repo_effects and throws", () => {
 
 // The read behind a write is the only one that can answer for it: a scan
 // already out began reading before the write landed. Dropping the write's
-// own scan because one was in flight left Home's inventory — which renders
-// from that result — counting copies the write had just taken off disk,
-// with the footer saying "scanned just now" over it.
+// own scan because one was in flight would leave Home's inventory — which
+// renders from that result — counting copies the write had just taken off
+// disk, with the footer saying "scanned just now" over it.
 describe("a write under a scan that was already out", () => {
   it("still gets a scan of its own, behind the one running", async () => {
     const focus = park<Awaited<ReturnType<typeof commands.scanMachine>>>();

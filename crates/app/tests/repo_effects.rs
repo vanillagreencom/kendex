@@ -176,11 +176,10 @@ fn commit(f: &Fixture, message: &str) -> std::process::Output {
 /// Removing the package from the window disarms the repository first, and
 /// the action's own result says what ran.
 ///
-/// The terminal has done this since the uninstaller was declared; the
-/// window called `apply::execute` on the plan and dropped the report, so
-/// the scripts went and the shims stayed — and every commit in that
-/// repository failed closed until somebody found two files under
-/// `.git/hooks` by hand.
+/// The terminal does the same. A window that executed the plan and
+/// dropped the report would take the scripts and leave the shims — and
+/// every commit in that repository would fail closed until somebody found
+/// two files under `.git/hooks` by hand.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn removing_a_package_disarms_the_repository_and_says_so() {
@@ -236,8 +235,8 @@ fn unsubscribing_disarms_the_packages_that_leave_with_the_source() {
     );
 }
 
-/// A whole-scope apply takes a package away when the manifest no longer
-/// declares it — the shape a hand edit and the built-in editor both
+/// A whole-scope apply takes a package away when the manifest stops
+/// declaring it — the shape a hand edit and the built-in editor both
 /// arrive at — and that removal disarms first too.
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -354,8 +353,8 @@ fn removing_an_inert_package_says_nothing() {
 fn a_write_that_must_remove_nothing_refuses_when_it_would() {
     let f = fixture();
     arm(&f);
-    // The report a whole-scope apply builds once the manifest no longer
-    // declares the package: a real removal, with the effect leaving.
+    // The report a whole-scope apply builds once the manifest stops
+    // declaring the package: a real removal, with the effect leaving.
     let manifest = f.project.join("kendex.toml");
     let text = fs::read_to_string(&manifest).unwrap();
     fs::write(

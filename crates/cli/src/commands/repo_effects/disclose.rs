@@ -23,9 +23,9 @@ use super::super::say;
 ///
 /// On the human channel, with the question it belongs to. This is not
 /// output a caller composes with — it is the context for `[y/N]`, and the
-/// prompt writes to stderr. Sending the block to stdout meant
-/// `kendex add ... > log` asked the question with the reasons for it in the
-/// file, which is a consent prompt with nothing to consent to.
+/// prompt writes to stderr. Sent to stdout, `kendex add ... > log` asks
+/// the question with the reasons for it in the file, which is a consent
+/// prompt with nothing to consent to.
 pub fn disclose(
     env: &Env,
     scope: &Scope,
@@ -56,8 +56,8 @@ fn print(disclosure: &Disclosure) {
         say("  writes");
         // Marked one by one. A package that writes into `.git/hooks` and
         // into `.github` writes one file every work tree sees and one only
-        // this checkout has, and a sentence under the whole list claimed
-        // the first about both.
+        // this checkout has, and a sentence under the whole list would
+        // claim the first about both.
         for written in &disclosure.writes {
             let mark = match written.shared {
                 true => "  (shared)",
@@ -86,7 +86,7 @@ fn print(disclosure: &Disclosure) {
         }
         // The names and whether each is here, and nothing about what that
         // means. What a companion's presence or absence does is the
-        // package's own contract, and kendex stating it here stated
+        // package's own contract, and kendex stating it here would state
         // growth-guards' for every package that declares any. A package
         // with something to say about its companions says it in `notes`.
     }

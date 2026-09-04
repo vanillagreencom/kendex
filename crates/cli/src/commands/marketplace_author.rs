@@ -1,6 +1,5 @@
-//! The authoring verbs: `marketplace new|use|import|mine`. Every wizard
-//! question the app asks has a flag here, so CI and scripts can do what
-//! the dialogs do.
+//! The marketplace authoring verbs. Every wizard question the app asks has
+//! a flag here, so CI and scripts can do what the dialogs do.
 
 use std::path::PathBuf;
 

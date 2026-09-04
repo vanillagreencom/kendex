@@ -51,16 +51,16 @@ export function SubscribeDialog({
   // The refusal this dialog shows is its own, held here and set from what
   // `subscribe` handed back. The store's shared `error` is written by every
   // marketplaces action and cleared by `load` on each landing overview
-  // read, so rendering it meant a read finishing under an open dialog wiped
-  // the refusal off the screen — dialog open, input intact, no account of
-  // why nothing happened. UnsubscribeDialog already keeps its own for the
-  // same reason.
+  // read, so rendering it would let a read finishing under an open dialog
+  // wipe the refusal off the screen — dialog open, input intact, no account
+  // of why nothing happened. UnsubscribeDialog keeps its own for the same
+  // reason.
   const [error, setError] = useState<string | null>(null);
   // The page mounts this dialog permanently, so each opening starts clean
   // rather than showing the refusal of an attempt the person cancelled.
   // `clearError` empties the shared slot alongside it: nothing renders that
-  // slot any more, and leaving a stale message in it would mislead the next
-  // reader of the store.
+  // slot, and leaving a stale message in it would mislead the next reader
+  // of the store.
   const clearError = useMarketplacesStore((s) => s.clearError);
   useEffect(() => {
     if (open) {

@@ -166,9 +166,8 @@ fn a_copy_delivery_for_cursor_writes_its_own_directory() {
     assert!(!world.at(".agents/skills/deploy").exists());
 }
 
-/// The delivery is made even when the tool's own directory does not exist
-/// yet — the bug class the Vercel installer shipped, where a successful
-/// install left the tool seeing nothing.
+/// The delivery creates the tool's own directory when it does not exist;
+/// otherwise a successful install leaves the tool seeing nothing.
 #[test]
 fn a_tool_with_no_directory_yet_still_gets_its_link() {
     let world = World::new(&[]);

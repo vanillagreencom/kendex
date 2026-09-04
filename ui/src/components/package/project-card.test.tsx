@@ -14,8 +14,8 @@ const place: PackagePlace = {
 };
 
 // The card renders the path whether or not the date reads, so an
-// unreadable one reaches the title. Formatting it used to throw, which
-// took the whole Projects tab with it rather than dropping one attribute.
+// unreadable one reaches the title. Formatting it must not throw: that
+// would take the whole Projects tab down rather than drop one attribute.
 describe("a place whose install date cannot be read", () => {
   it("renders the card without a title rather than throwing", () => {
     const html = renderToStaticMarkup(

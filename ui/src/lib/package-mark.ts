@@ -13,8 +13,8 @@ import { useUpdatesStore } from "@/stores/updates";
  *
  *  No place is passed in on purpose: the page names a place, but the mark
  *  is about the package. Answering for the one place the page happened to
- *  open at is what let the Library and this page state two different
- *  facts under the same words. */
+ *  open at would let the Library and this page state two different facts
+ *  under the same words. */
 export function markFor(
   saved: Record<string, Draft>,
   rows: UpdateRow[],
@@ -38,8 +38,8 @@ export function markFor(
  *
  *  Reads the manifests it counts rather than trusting whatever a page
  *  happened to open. The editor holds one place at a time, and a mark
- *  drawn over the places nobody read is the answer the header used to
- *  give — right about one place and silent about the rest. */
+ *  drawn over the places nobody read is right about one place and silent
+ *  about the rest. */
 export function usePackageMark(group: ItemGroup | null): PlaceMark | null {
   const saved = useEditorStore((s) => s.saved);
   const settings = useEditorStore((s) => s.savedSettings);

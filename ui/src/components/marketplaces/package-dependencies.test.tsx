@@ -39,9 +39,9 @@ const picker = (dependencies: PackageDependencies) =>
     />,
   );
 
-/** Both surfaces the issue names draw this one component — the package
- *  page's facts column and the install picker — so what a state says, and
- *  whether an extra can be ticked, is settled once for both. */
+/** Both surfaces draw this one component — the package page's facts
+ *  column and the install picker — so what a state says, and whether an
+ *  extra can be ticked, is settled once for both. */
 describe("a package's declared dependencies on both surfaces", () => {
   it("names each list, says what each state means, and ticks nothing by default", () => {
     for (const html of [facts(declared), picker(declared)]) {

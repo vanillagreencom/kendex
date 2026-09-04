@@ -87,8 +87,8 @@ export function usePackageData(ref: PackageRef | null): {
       : installedCommits(s.rows, ref.kind, ref.name, [ref.scope]),
   );
   // The commit's other half: a write that committed and could not be read
-  // back leaves the commit where it was, and the files under it are new all
-  // the same.
+  // back leaves the commit where it was, and the files under it have
+  // changed all the same.
   const written = useUpdatesStore((s) =>
     ref === null ? "" : landedWrites(s.writes, ref.kind, ref.name, [ref.scope]),
   );

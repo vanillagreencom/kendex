@@ -124,7 +124,7 @@ describe("the lead line", () => {
     );
   });
 
-  // A too-new schema can be either file and a scan failure is about no
+  // An unsupported schema can be either file and a scan failure is about no
   // place at all, so a line naming one would be invented.
   it("stays silent where there is no one file to name", () => {
     expect(PROBLEM_LEADS["schema-too-new"]).toBeNull();

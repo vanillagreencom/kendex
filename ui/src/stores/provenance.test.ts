@@ -201,11 +201,11 @@ describe("overlapping reads of the join", () => {
     expect(published.at(-1)).toBe(true);
   });
 
-  // The two failures a shipped path still produces. A refusal after a read
-  // that landed takes the join back off current: the rows it leaves are the
+  // The two failure shapes. A refusal after a read that
+  // landed takes the join back off current: the rows it leaves are the
   // older read's, and the gate closes on `read` alone. A refusal naming no
   // reason is still a failure with something to say, which is what `settled`
-  // is here for now that the wrapper answers rather than throws.
+  // is here for, since the wrapper answers rather than throws.
   it("lands an engine refusal as a failed read, empty reason and all", async () => {
     vi.mocked(commands.libraryProvenance)
       .mockResolvedValueOnce({ status: "ok", data: AFTER })

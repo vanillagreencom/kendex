@@ -27,8 +27,8 @@ vi.mock("@/bindings", () => ({
 beforeEach(() => {
   fresh();
   vi.clearAllMocks();
-  // A read that finds the credential replaced asks for the new account's
-  // rows, so the harness has an answer for it.
+  // A read that finds the credential replaced asks for the replacing
+  // account's rows, so the harness has an answer for it.
   vi.mocked(commands.mineSubmissions).mockResolvedValue({
     status: "ok",
     data: [],
@@ -111,7 +111,7 @@ describe("the account state a read settles on", () => {
   });
 });
 
-// A read that failed knows nothing new, so it takes nothing away.
+// A read that failed learned nothing, so it takes nothing away.
 describe("a read that could not be made", () => {
   it("becomes offline when the directory was asked and a name is in hand", async () => {
     useAccountStore.setState({

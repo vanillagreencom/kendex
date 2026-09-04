@@ -58,9 +58,10 @@ export function catalogReads(set: SetReads) {
  *
  * A read that outlives a cache drop is not stored — ok and error alike, since
  * a stale failure pins the page on a superseded reason and `readDue` will not
- * retry it. The read is asked once more under the new generation rather than
- * only discarded: the slot the drop emptied has no other asker, and every
- * consumer keys on presence, so discarding alone leaves the page blank. */
+ * retry it. The read is asked once more under the generation after the drop
+ * rather than only discarded: the slot the drop emptied has no other asker,
+ * and every consumer keys on presence, so discarding alone leaves the page
+ * blank. */
 async function settle<F extends Exclude<keyof CatalogCaches, "readErrors">>(
   set: SetReads,
   field: F,

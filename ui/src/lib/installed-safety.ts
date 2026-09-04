@@ -18,11 +18,10 @@ import { sameScope } from "@/lib/scope";
 /** What makes two findings the same finding. The severity is in it because
  *  one rule can fire at different weights, the message because one rule can
  *  match twice at one address for different reasons, and the line because
- *  one rule fires at many lines of one file — while the line lived inside
- *  `location` that came for free, and leaving it out folds real defects
- *  away. Used both to fold repeats out of a reading and to key the lines
- *  rendered from it, so a screen never shows two rows a reader cannot tell
- *  apart, and never one row where there are two. */
+ *  one rule fires at many lines of one file, and leaving it out folds real
+ *  defects away. Used both to fold repeats out of a reading and to key the
+ *  lines rendered from it, so a screen never shows two rows a reader cannot
+ *  tell apart, and never one row where there are two. */
 export const findingKey = (finding: Finding): string =>
   `${finding.rule}:${finding.severity}:${finding.location}:${finding.line}:${finding.message}`;
 

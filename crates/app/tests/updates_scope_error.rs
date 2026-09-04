@@ -1,10 +1,11 @@
 //! One project's unreadable record must not blank the whole Updates read.
 //!
 //! `overview` folds every registered scope's standing together. Bubbling a
-//! scope's failure out of that fold left the page with a generic error and
-//! the sidebar with a bare "?" on a machine where every other project's
-//! standing was known. The scope is carried as data instead, named, so both
-//! surfaces can say which project and send the reader to Problems.
+//! scope's failure out of that fold would leave the page with a generic
+//! error and the sidebar with a bare "?" on a machine where every other
+//! project's standing is known. The scope is carried as data instead,
+//! named, so both surfaces can say which project and send the reader to
+//! Problems.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]
@@ -49,9 +50,10 @@ fn fixture(name: &str) -> Fixture {
     }
 }
 
-/// A lock an older kendex wrote, alongside the personal scope. The personal
-/// scope's standing still lands; the project is named with the reason the
-/// engine gave, which is what the page shows instead of a bare "?".
+/// A lock whose schema this build rejects, alongside the personal scope.
+/// The personal scope's standing still lands; the project is named with the
+/// reason the engine gave, which is what the page shows instead of a bare
+/// "?".
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unreadable_project_is_named_and_leaves_the_other_scopes_alone() {

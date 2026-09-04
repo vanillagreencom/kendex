@@ -42,8 +42,9 @@ fn fixture(name: &str) -> Fixture {
     }
 }
 
-/// Nothing converts a v1 lock: it reaches the page as the same structured
-/// refusal a damaged one does, with the fresh-install path in its message.
+/// Lock schema 1 is not converted: it reaches the page as the same
+/// structured refusal a damaged lock does, with the fresh-install path in
+/// its message.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_v1_lock_scope_carries_a_structured_error() {

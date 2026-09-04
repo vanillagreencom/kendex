@@ -17,7 +17,8 @@ import { openInventory, useEditorStore } from "./editor";
 
 // The real module comes through, with only the commands stubbed: the
 // constants it exports are the numbers the code under test writes into a
-// draft, and a second copy of one here is the drift the export removed.
+// draft, and a second copy of one here would be the drift the export
+// exists to prevent.
 vi.mock("@/bindings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/bindings")>()),
   commands: {
@@ -261,7 +262,7 @@ describe("editor store", () => {
     expect(useEditorStore.getState().savedSettings.global).toBeUndefined();
   });
 
-  /// A place read once and unreadable since is no longer known. Left in
+  /// A place read once and unreadable since is unknown. Left in
   /// `savedSettings`, its entry reads as a completed read, and the
   /// Library row, the package header and the Customize index go on
   /// answering stock or customized off a file nobody can read.
@@ -466,11 +467,12 @@ describe("editor store", () => {
   });
 
   /// Save is fired and forgotten — `onSave={() => void save()}` — so a
-  /// transport failure that escaped here left the busy flag falling with
-  /// nothing shown. It folds into the refusal's place as the message alone
-  /// (`bindings.test.ts`), which is neither arm of `WriteRefused`: read by
-  /// `kind` it misses the stale arm this reader tests first and falls to the
-  /// else, showing a blank error — the same silence by another route.
+  /// transport failure that escaped here would leave the busy flag falling
+  /// with nothing shown. It folds into the refusal's place as the message
+  /// alone (`bindings.test.ts`), which is neither arm of `WriteRefused`:
+  /// read by `kind` it would miss the stale arm this reader tests first and
+  /// fall to the else, showing a blank error — the same silence by another
+  /// route.
   it("shows the message when the transport failed rather than the engine refusing", async () => {
     useEditorStore.setState({ draft: emptyDraft(), base: "b1" });
     vi.mocked(commands.saveCustomize).mockResolvedValue({

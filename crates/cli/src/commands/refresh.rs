@@ -14,8 +14,8 @@ use crate::ui;
 /// Regenerate every declared installation, and re-derive what those
 /// declarations pull in — a dependency that appeared upstream, one that went
 /// away. Regenerating is automatic; changing *what is installed* is shown
-/// first and needs an answer. Orphans nobody derived are left alone, as in
-/// v1: `remove` and `apply` clean those up.
+/// first and needs an answer. Orphans nobody derived are left alone:
+/// `remove` and `apply` clean those up.
 #[derive(clap::Args)]
 pub struct RefreshArgs {
     #[arg(short = 'g', long)]
@@ -68,12 +68,12 @@ fn refreshed(count: Option<usize>) -> Wrote<'static> {
 
 /// What a run owes the scopes it got through, whether it got through all
 /// of them or stopped at a cancel: their snapshots derived, and the
-/// closing line each one earned. Skipping this on a cancel left writes on
-/// disk the run said nothing about, and a snapshot the next session-start
-/// check would have read stale.
+/// closing line each one earned. Skipped on a cancel, writes are left on
+/// disk the run said nothing about, and the next session-start check
+/// reads a stale snapshot.
 ///
-/// The snapshot warnings come first for the same reason they always did:
-/// a warning under a closing line is a run that ended twice.
+/// The snapshot warnings come first because a warning under a closing
+/// line is a run that ended twice.
 fn finish_scopes(env: &Env, reached: &[kendex_core::model::Scope], closing: Vec<Closing>) {
     record_snapshots(env, reached);
     for scope in closing {

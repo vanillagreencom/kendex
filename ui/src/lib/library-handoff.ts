@@ -5,7 +5,7 @@ import type { LibraryFilter } from "@/stores/nav-types";
 /** Everything the Library's table is showing: the narrowing its filter strip
  * holds, what the search box holds, and where it is looking. The strip's own
  * fields stay grouped as the store defines them rather than being restated
- * here, so a filter added to the strip is part of the view by construction. */
+ * here, so a filter the strip gains is part of the view by construction. */
 export interface LibraryView {
   filters: FilterSelection;
   search: string;
@@ -22,7 +22,7 @@ export const UNFILTERED: LibraryView = {
 
 /** Whether a view is holding anything back, which is what makes offering to
  * clear it worth doing. Compared against {@link UNFILTERED} rather than
- * tested field by field, so a filter added to the strip counts here too. */
+ * tested field by field, so a filter the strip gains counts here too. */
 export function isNarrowed(view: LibraryView): boolean {
   if (view.search !== UNFILTERED.search || view.scope !== UNFILTERED.scope) {
     return true;
@@ -37,7 +37,7 @@ export function isNarrowed(view: LibraryView): boolean {
  *
  * A link states the whole view it wants, so everything it does not name goes
  * back to unfiltered rather than carrying over: otherwise "everything in this
- * project" arrives still narrowed to the last kind, tag or search an earlier
+ * project" arrives still narrowed to the last kind, tag or search the last
  * visit left behind.
  */
 export function libraryViewFromHandoff(

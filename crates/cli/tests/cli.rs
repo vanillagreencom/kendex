@@ -367,7 +367,7 @@ fn the_read_only_verbs_answer_in_a_checkout_seeded_with_another_checkouts_lock()
 
 /// A plan that cannot write says so. An install kendex refuses to touch
 /// leaves no op behind, and reporting only "nothing to do" or "up to date"
-/// hid the reason from every command that could show it.
+/// would hide the reason from every command that could show it.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_blocked_install_is_named_instead_of_passing_as_up_to_date() {

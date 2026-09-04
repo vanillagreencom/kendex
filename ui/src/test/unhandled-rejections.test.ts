@@ -1,10 +1,10 @@
 // The control for `unhandled-rejections.ts`, which claims two things: a
-// rejection settling after the file ends now reddens the run, and one
-// settling while the file runs still reddens it exactly as before. Each is a
-// fixture run under both configs — `guarded` carries the setup file,
-// `unguarded` does not — so the guarded verdict is read against a measured
-// baseline. The fake-timers fixture is the exception, guarded only: without
-// the closing window there is nothing there to hang.
+// rejection settling after the file ends reddens the run, and one settling
+// while the file runs reddens it too. Each is a fixture run under both
+// configs — `guarded` carries the setup file, `unguarded` does not — so the
+// guarded verdict is read against a measured baseline. The fake-timers
+// fixture is the exception, guarded only: without the closing window there
+// is nothing there to hang.
 //
 // Each run is a real `vitest run` in its own process: the closing window is
 // a property of how a worker is torn down, which nothing nested in this one
@@ -226,13 +226,12 @@ describe("an exported KENDEX_CLOSING_WINDOW_MS", () => {
   );
 });
 
-// The one control for `rendered`, because every case above now depends on it
+// The one control for `rendered`, because every case above depends on it
 // and none of them would notice it gone: on this machine the capture carries
 // no colour, so they stay green either way. The sample is the shape CI
-// failed on — the `RUN` banner it printed, and the summary lines the cases
-// match on, painted where vitest paints them. Take the strip out and the
-// escapes sit between the words: each `toContain` here misses exactly as it
-// missed in CI.
+// paints — the `RUN` banner, and the summary lines the cases match on,
+// painted where vitest paints them. Take the strip out and the escapes sit
+// between the words, and each `toContain` here misses.
 describe("the colour CI puts in the captured output", () => {
   it("normalises to the text every case above asserts", () => {
     const coloured =

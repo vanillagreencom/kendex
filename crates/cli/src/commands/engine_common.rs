@@ -172,8 +172,8 @@ pub fn ask_before_writing(question: &str, yes: bool) -> CliResult {
     }
 }
 
-/// A refresh failure per v1: any per-item failure or a locked item missing
-/// from its source is a hard error.
+/// A refresh failure: any per-item failure or a locked item missing from
+/// its source is a hard error.
 pub fn refresh_failures(report: &EngineReport) -> Vec<String> {
     report
         .notes
