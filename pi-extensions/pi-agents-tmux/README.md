@@ -29,8 +29,9 @@ Via [kendex](https://github.com/vanillagreencom/kendex):
 
 ```bash
 cargo install --git https://github.com/vanillagreencom/kendex.git kendex
-kendex add vanillagreencom/kendex --pi-extension pi-agents-tmux --harness pi -y
 ```
+
+Then declare `[pi-extensions."@vanillagreen/pi-agents-tmux"]` with `source = "kendex"` in the scope's `kendex.toml` and run `kendex update-pi`.
 
 Restart Pi after installation. Persistent panes require running Pi inside tmux.
 

@@ -32,7 +32,7 @@ assert_tmpdir TMP_ROOT
 
 # GIT_DIR outranks -C, so where it is inherited `git -C "$TMP_ROOT" init` below
 # re-inits the ambient repository and leaves no fixture repo at all. All four go,
-# which is the house rule in .claude/CLAUDE.md.
+# which is the house rule in the repository's AGENTS.md.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/.cache/linear"

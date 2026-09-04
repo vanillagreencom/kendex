@@ -49,7 +49,7 @@ Run from the main checkout of a git repo with an `origin` remote. New-work claim
 [env]
 WORKTREE_BASE_DIR = "~/dev/.worktrees/myproject"
 WORKTREE_SYMLINKS = ".env.local .cache node_modules"
-WORKTREE_RELATIVE_SYMLINKS = ".claude/CLAUDE.md=../AGENTS.md"
+WORKTREE_RELATIVE_SYMLINKS = "ui/.env=../.env.worktree"
 WORKTREE_MKDIRS = "tmp"
 ```
 

@@ -339,9 +339,8 @@ segment: a tracked path under the root names a subdirectory only when
 something follows its first component. An entry directly under the root
 derives nothing, whatever its mode — `.claude/settings.json`, a file this repo
 owns and can fix, which a glob one shape too wide would silence review on; and
-`.claude/CLAUDE.md`, which six consumer repos track as a `120000` link to
-`../AGENTS.md` and which would otherwise emit a `.claude/CLAUDE.md/**` glob
-covering nothing. The consumer repos link per skill (`.claude/skills/code-quality`),
+a `.claude/CLAUDE.md` tracked as a `120000` link, which would otherwise emit
+a `.claude/CLAUDE.md/**` glob covering nothing. The consumer repos link per skill (`.claude/skills/code-quality`),
 whose tracked path already carries the further segment.
 
 The rendered exclusion lists are not compared against each other, nor against

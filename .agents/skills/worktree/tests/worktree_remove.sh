@@ -236,7 +236,7 @@ git -C "$LINK_ROOT/main" add AGENTS.md .claude/settings.json
 git -C "$LINK_ROOT/main" commit -q -m agents
 cat > "$LINK_ROOT/main/.env.local" <<'ENV'
 WORKTREE_SYMLINKS=".env.local .claude/settings.json .claude/agents"
-WORKTREE_RELATIVE_SYMLINKS=".claude/CLAUDE.md=../AGENTS.md"
+WORKTREE_RELATIVE_SYMLINKS=".claude/POINTER.md=../AGENTS.md"
 ENV
 git -C "$LINK_ROOT/main" worktree add -q -b issue-links "$LINK_ROOT/trees/issue-links" main
 links_out=$(cd "$LINK_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$LINK_ROOT/trees/issue-links")
@@ -245,7 +245,7 @@ assert_symlink_target "$LINK_ROOT/trees/issue-links/.env.local" "$LINK_ROOT/main
 assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/settings.json" "$LINK_ROOT/main/.claude/settings.json" "configured file symlink points to main checkout"
 assert_git_status_clean_for_path "$LINK_ROOT/trees/issue-links" ".claude/settings.json" "configured tracked file symlink is hidden from git status"
 assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/agents" "$LINK_ROOT/main/.claude/agents" "configured dir symlink points to main checkout"
-assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/CLAUDE.md" "../AGENTS.md" "relative symlink keeps worktree-local AGENTS target"
+assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/POINTER.md" "../AGENTS.md" "relative symlink keeps worktree-local AGENTS target"
 
 # Locked worktree: `git worktree remove --force` cannot override a lock, so
 # removal fails here. TWO mechanisms are asserted below, and they are not the
@@ -267,7 +267,7 @@ git -C "$LOCKED_ROOT/main" add AGENTS.md
 git -C "$LOCKED_ROOT/main" commit -q -m agents
 cat > "$LOCKED_ROOT/main/.env.local" <<'ENV'
 WORKTREE_SYMLINKS=".env.local .agents .claude/agents"
-WORKTREE_RELATIVE_SYMLINKS=".claude/CLAUDE.md=../AGENTS.md"
+WORKTREE_RELATIVE_SYMLINKS=".claude/POINTER.md=../AGENTS.md"
 ENV
 git -C "$LOCKED_ROOT/main" worktree add -q -b issue-locked "$LOCKED_ROOT/trees/issue-locked" main
 (cd "$LOCKED_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$LOCKED_ROOT/trees/issue-locked") >/dev/null
@@ -285,7 +285,7 @@ assert_branch_exists "$LOCKED_ROOT/main" "issue-locked" "locked branch survives 
 assert_symlink_target "$LOCKED_ROOT/trees/issue-locked/.env.local" "$LOCKED_ROOT/main/.env.local" "refused removal leaves .env.local symlink intact"
 assert_symlink_target "$LOCKED_ROOT/trees/issue-locked/.agents" "$LOCKED_ROOT/main/.agents" "refused removal leaves .agents symlink intact"
 assert_symlink_target "$LOCKED_ROOT/trees/issue-locked/.claude/agents" "$LOCKED_ROOT/main/.claude/agents" "refused removal leaves configured dir symlink intact"
-assert_symlink_target "$LOCKED_ROOT/trees/issue-locked/.claude/CLAUDE.md" "../AGENTS.md" "refused removal leaves relative symlink intact"
+assert_symlink_target "$LOCKED_ROOT/trees/issue-locked/.claude/POINTER.md" "../AGENTS.md" "refused removal leaves relative symlink intact"
 
 # The guard refuses only while the lock is held: unlocking restores the normal
 # removal path, symlink cleanup included.
@@ -308,7 +308,7 @@ git -C "$RMFAIL_ROOT/main" add AGENTS.md
 git -C "$RMFAIL_ROOT/main" commit -q -m agents
 cat > "$RMFAIL_ROOT/main/.env.local" <<'ENV'
 WORKTREE_SYMLINKS=".env.local .agents .claude/agents"
-WORKTREE_RELATIVE_SYMLINKS=".claude/CLAUDE.md=../AGENTS.md"
+WORKTREE_RELATIVE_SYMLINKS=".claude/POINTER.md=../AGENTS.md"
 ENV
 git -C "$RMFAIL_ROOT/main" worktree add -q -b issue-rmfail "$RMFAIL_ROOT/trees/issue-rmfail" main
 (cd "$RMFAIL_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$RMFAIL_ROOT/trees/issue-rmfail") >/dev/null
@@ -336,7 +336,7 @@ assert_branch_exists "$RMFAIL_ROOT/main" "issue-rmfail" "git-refused removal pre
 assert_symlink_target "$RMFAIL_ROOT/trees/issue-rmfail/.env.local" "$RMFAIL_ROOT/main/.env.local" "git-refused removal leaves .env.local symlink intact"
 assert_symlink_target "$RMFAIL_ROOT/trees/issue-rmfail/.agents" "$RMFAIL_ROOT/main/.agents" "git-refused removal leaves .agents symlink intact"
 assert_symlink_target "$RMFAIL_ROOT/trees/issue-rmfail/.claude/agents" "$RMFAIL_ROOT/main/.claude/agents" "git-refused removal leaves configured dir symlink intact"
-assert_symlink_target "$RMFAIL_ROOT/trees/issue-rmfail/.claude/CLAUDE.md" "../AGENTS.md" "git-refused removal leaves relative symlink intact"
+assert_symlink_target "$RMFAIL_ROOT/trees/issue-rmfail/.claude/POINTER.md" "../AGENTS.md" "git-refused removal leaves relative symlink intact"
 
 # Codex Desktop owns worktree lifecycle. codex-setup applies project setup to
 # an already-created app worktree; codex-cleanup is a non-destructive hook and

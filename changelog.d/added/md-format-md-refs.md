@@ -1,0 +1,1 @@
+- growth-guards gains `md-format` (one paragraph per line, checked at commit on the files it touches), `md-refs` (dead links, citations and decision IDs) and the `md-reflow` rewriter.

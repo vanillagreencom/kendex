@@ -1,0 +1,303 @@
+#!/usr/bin/env bash
+# comments — a code comment states the constraint that holds now. A history
+# reference in the COMMENT TEXT of a tracked source file fails: an issue id
+# (GH_ISSUE_PATTERN), a three- or four-digit issue number after '#', a
+# calendar date, or a word narrating a revision rather than a rule. String
+# literals and code are never judged, and markdown belongs to the prose lane.
+#
+# Comment text is extracted per language family, decided by the path's
+# extension or, for a file with none, by its shebang: `//` and `/* */` for
+# the C family, `#` for the hash family, `--` for SQL and Lua, `<!-- -->` for
+# markup. The extractor is a character scanner, not a parser: it tracks
+# string literals so a leader inside one is not a comment, tracks a comment
+# that spans lines, and skips a shell heredoc body. Its stated limits are in
+# CHECKS.md § comments.
+#
+# Two scopes, as todo-ban has them: the lines the staged diff ADDS
+# (--staged), and every tracked file the configured globs name (default).
+# The excludes file names generated and vendored trees. Content comes from
+# the index; a symlink, a gitlink, binary content and a path with no
+# comment grammar are named as unmeasured, never folded into a clean count.
+#
+# Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
+set -euo pipefail
+# Pathname expansion off: the configured paths are globs, and splitting them
+# into words would otherwise expand each against the work tree.
+set -f
+
+GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
+GG_BOOT="${GG_BOOT%x}"
+# The one newline `pwd` prints; anything before it is the path.
+SCRIPT_DIR="${GG_BOOT%$'\n'}"
+GG_CHECK="comments"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/settings.sh
+source "$SCRIPT_DIR/lib/settings.sh"
+# shellcheck source=lib/staged-lines.sh
+source "$SCRIPT_DIR/lib/staged-lines.sh"
+# shellcheck source=lib/comment-text.sh
+source "$SCRIPT_DIR/lib/comment-text.sh"
+
+# Every extension the extractor has a grammar for, spelled once here and
+# once in the table in CHECKS.md § comments. Two spellings of each name
+# because `*` crosses `/` but never stands in for the separator.
+PATHS_DEFAULT="*.rs *.go *.c *.h *.cc *.cpp *.hpp *.java *.kt *.kts *.swift *.wgsl *.js *.mjs *.cjs *.jsx *.ts *.tsx *.css *.scss *.less *.sh *.bash *.zsh *.py *.rb *.toml *.yml *.yaml *.sql *.lua *.html *.htm *.xml *.svg *.vue *.svelte Makefile */Makefile *.mk Dockerfile */Dockerfile"
+ISSUE_DEFAULT='[A-Z]+-[0-9]+'
+EXCLUDES_DEFAULT="tools/comments-excludes"
+
+usage() {
+  cat <<EOF
+usage: comments [--staged] [--excludes FILE]
+
+A history reference in the comment text of a tracked source file fails: an
+issue id matching GH_ISSUE_PATTERN, a three- or four-digit issue number
+after '#', a calendar date (20YY-MM-DD), or a word narrating a revision
+(added, new, existing code, phase N, previously, no longer, used to,
+reverted, originally, historically, at the time, an earlier, earlier round,
+incident). Matching is case-insensitive and whole-word. String literals and
+code are never judged; markdown is the prose lane's.
+
+  (default)   every tracked file the configured globs name, from the index
+  --staged    only the lines the staged diff ADDS (pre-commit scope)
+
+Configuration (env > .env.local > .kendex/settings.toml >
+kendex.settings.toml [env] > default):
+  GROWTH_GUARDS_COMMENT_PATHS      space-separated shell globs against the
+                                   full repo-relative path, '*' crossing '/'
+                                   (default: the extensions in CHECKS.md)
+  GROWTH_GUARDS_COMMENT_EXCLUDES   exclusion-list path
+                                   (default $EXCLUDES_DEFAULT)
+  GH_ISSUE_PATTERN                 POSIX ERE for an issue id; empty keeps
+                                   the default ($ISSUE_DEFAULT)
+Flag --excludes overrides the path setting.
+
+Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
+EOF
+}
+
+EXCLUDES_OPT=""
+MODE="index"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --staged) MODE="staged" ;;
+    --excludes)
+      [ $# -ge 2 ] || gg_config_error "--excludes requires a path"
+      shift
+      EXCLUDES_OPT="$1"
+      ;;
+    --excludes=*) EXCLUDES_OPT="${1#--excludes=}" ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *) gg_config_error "unknown argument '$1' (see --help)" ;;
+  esac
+  shift
+done
+
+gg_repo_root_cd
+
+PATHS_RAW="$(gg_setting GROWTH_GUARDS_COMMENT_PATHS "$PATHS_DEFAULT")" || exit 2
+gg_load_path_globs "$PATHS_RAW" comments GROWTH_GUARDS_COMMENT_PATHS || exit 2
+EXCLUDES_FILE="$(gg_resolve_path "$EXCLUDES_OPT" GROWTH_GUARDS_COMMENT_EXCLUDES "$EXCLUDES_DEFAULT" excludes)" || exit 2
+gg_load_excludes "$EXCLUDES_FILE"
+ISSUE_ERE="$(gg_setting GH_ISSUE_PATTERN "")" || exit 2
+# Empty is the github skill's "unconfigured", which leaves each reader its
+# own default — this lane's is the generic key shape.
+[ -n "$ISSUE_ERE" ] || ISSUE_ERE="$ISSUE_DEFAULT"
+gg_tmpdir
+
+# The shapes. Word boundaries are non-word characters rather than \< and \>,
+# which not every awk carries, and the digit runs are spelled out because
+# an interval expression is not in every awk either. The issue-number shape
+# is prose's: no leading boundary, and a trailing class that refuses a hex
+# digit so '#12345' and a colour token pass. The issue id is matched against
+# the text as written, lowered and uppered, which is case-insensitivity for
+# a pattern written in any one case.
+WORD='previously|used to|no longer|reverted|an earlier|earlier round|incident|historically|originally|at the time|added|new|existing code|phase [0-9]+'
+DATE_ERE='20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+HASH_ERE='#[0-9][0-9][0-9][0-9]?([^0-9A-Fa-f]|$)'
+WORD_ERE="(^|[^A-Za-z0-9_])($WORD)([^A-Za-z0-9_]|\$)"
+ISSUE_BOUNDED="(^|[^A-Za-z0-9_])($ISSUE_ERE)([^A-Za-z0-9_]|\$)"
+# What the index pre-filter lists carriers by: a file whose whole content
+# matches no shape has no comment that does either.
+UNION_ERE="$DATE_ERE|$HASH_ERE|$WORD_ERE|$ISSUE_BOUNDED"
+REMEDY="state the constraint that holds now and delete the story; the issue id, the number and the date belong in the commit that made the change; a generated or vendored tree belongs in $EXCLUDES_FILE with a reason"
+
+# A pattern this lane cannot compile is a configuration error, never a
+# silent no-match: both engines that read it are asked first.
+# The patterns travel through the environment, never `-v`: awk decodes
+# backslash escapes in a -v value, so a pattern carrying one would arrive
+# changed.
+export DATE_ERE HASH_ERE WORD_ERE ISSUE_BOUNDED
+probe_status=0
+LC_ALL=C awk 'BEGIN { if ("" ~ ENVIRON["ISSUE_BOUNDED"]) { } }' </dev/null 2>"$GG_TMP/awk.err" || probe_status=$?
+[ "$probe_status" -eq 0 ] && [ ! -s "$GG_TMP/awk.err" ] \
+  || gg_config_error "GH_ISSUE_PATTERN is not a POSIX ERE awk can read: '$(gg_scrubbed "$ISSUE_ERE")'"
+probe_status=0
+printf '' | LC_ALL=C grep -E -- "$UNION_ERE" >/dev/null 2>"$GG_TMP/grep.err" || probe_status=$?
+[ "$probe_status" -le 1 ] && [ ! -s "$GG_TMP/grep.err" ] \
+  || gg_config_error "GH_ISSUE_PATTERN is not a POSIX ERE grep can read: '$(gg_scrubbed "$ISSUE_ERE")'"
+
+# Which shape a comment line carries, one record per (line, shape):
+# "line<TAB>shape<TAB>text". Reads the extractor's "line<TAB>text" records.
+classify() { # IN — records on stdout
+  local status=0
+  LC_ALL=C awk -F '\t' -v OFS='\t' '
+    BEGIN {
+      date = ENVIRON["DATE_ERE"]; hash = ENVIRON["HASH_ERE"]
+      word = ENVIRON["WORD_ERE"]; issue = ENVIRON["ISSUE_BOUNDED"]
+    }
+    {
+      ln = $1
+      text = substr($0, length(ln) + 2)
+      low = tolower(text)
+      if (text ~ issue || low ~ issue || toupper(text) ~ issue) print ln, "issue id", text
+      if (text ~ date) print ln, "calendar date", text
+      if (text ~ hash) print ln, "issue number", text
+      if (low ~ word) print ln, "revision narration", text
+    }
+  ' "$1" || status=$?
+  [ "$status" -eq 0 ] || gg_collection_error "could not classify the comment text (awk exit $status)"
+}
+
+# The grammar a matched path takes, or the path named as unmeasured: a file
+# this lane cannot read is never folded into the scanned count.
+MATCHED=0
+family_or_skip() { # PATH BLOBFILE — sets FAM; returns 1 when the path is named
+  local status=0
+  FAM="$(gg_comment_family "$1" "$2")" || status=$?
+  # The substitution is a subshell, so a collection error inside it ends
+  # only that subshell: its status is carried out here, or an unreadable
+  # blob would read as a path with no grammar.
+  [ "$status" -eq 0 ] || exit "$status"
+  if [ -z "$FAM" ]; then
+    gg_note_skip "$1" "no comment grammar for this path (CHECKS.md § comments)"
+    return 1
+  fi
+  MATCHED=$((MATCHED + 1))
+}
+
+# One file: extract its comment text, classify, and print every hit whose
+# line ALLOW admits (empty ALLOW admits every line). Counts in GG_VIOLATIONS.
+judge_blob() { # FAMILY PATH BLOBFILE ALLOW
+  local fam="$1" f="$2" blob="$3" allow="$4" rec ln shape text
+  gg_comment_text "$fam" "$blob" "$f" >"$GG_TMP/text"
+  classify "$GG_TMP/text" >"$GG_TMP/hits"
+  while IFS= read -r rec; do
+    ln="${rec%%"$GG_TAB"*}"
+    rec="${rec#*"$GG_TAB"}"
+    shape="${rec%%"$GG_TAB"*}"
+    text="${rec#*"$GG_TAB"}"
+    if [ -n "$allow" ]; then
+      case "$allow" in
+        *$'\n'"$ln"$'\n'*) ;;
+        *) continue ;;
+      esac
+    fi
+    echo "$GG_CHECK FAIL history reference ($shape): $(gg_shown "$f"):$ln: $(gg_scrubbed "$text")"
+    echo "  remedies: $REMEDY"
+    GG_VIOLATIONS=$((GG_VIOLATIONS + 1))
+  done <"$GG_TMP/hits"
+}
+
+# --- index scope -------------------------------------------------------------
+# The walk classifies every matched record — symlink, gitlink, binary — and
+# hands over the ones it can read; the pre-filter below then keeps the
+# extractor off every file no shape occurs in at all, which on a source tree
+# is most of them.
+index_file() { # PATH BLOBFILE
+  local f="$1" blob="$2" status=0
+  gg_is_excluded "$f" && return 0
+  family_or_skip "$f" "$blob" || return 0
+  LC_ALL=C grep -qiaE -- "$UNION_ERE" "$blob" || status=$?
+  [ "$status" -le 1 ] || gg_collection_error "could not pre-scan $(gg_shown "$f") (grep exit $status)"
+  [ "$status" -eq 0 ] || return 0
+  judge_blob "$FAM" "$f" "$blob" ""
+}
+
+index_lane() {
+  gg_walk_configured_paths "source" "source file" index_file
+}
+
+# --- staged scope ------------------------------------------------------------
+# A, M and T, renames held to exact content as todo-ban holds them: a pure
+# move adds no line, a file that moved and changed is read whole. Comment
+# text is extracted from the WHOLE staged blob, because a block comment's
+# state comes from lines the commit did not touch, and only hits on the
+# lines the diff adds are reported.
+staged_lane() {
+  local meta f dstmode dstsha allow rec
+  gg_require_merged_index
+  git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% \
+    --diff-filter=AMT >"$GG_TMP/raw.z" \
+    || gg_collection_error "could not collect the staged changes (git diff --cached --raw failed)"
+  while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
+    # Record shape: ":srcmode dstmode srcsha dstsha status". Only A, M and T
+    # survive the filter, none of which renames a path, so each carries one.
+    set -- $meta
+    dstmode="$2"
+    dstsha="$4"
+    gg_matches_path_glob "$f" || continue
+    gg_is_excluded "$f" && continue
+    case "$dstmode" in
+      120000)
+        gg_note_skip "$f" "tracked as a symlink, not source"
+        continue
+        ;;
+      160000)
+        gg_note_skip "$f" "tracked as a submodule gitlink, not source"
+        continue
+        ;;
+    esac
+    gg_read_blob "$dstsha" "$f" "source file"
+    if gg_blob_is_binary "$GG_TMP/blob" "$f"; then
+      gg_note_skip "$f" "binary content, not source"
+      continue
+    fi
+    family_or_skip "$f" "$GG_TMP/blob" || continue
+    # The admitted set is one newline-delimited string matched by `case`,
+    # the shape todo-ban's carrier set takes: Bash 3.2 has no associative
+    # array. A blob the diff gives no line to has nothing to judge.
+    gg_staged_added_lines "$f" >"$GG_TMP/added"
+    allow=$'\n'
+    while IFS= read -r rec; do
+      allow="$allow${rec%%"$GG_TAB"*}"$'\n'
+    done <"$GG_TMP/added"
+    [ "$allow" != $'\n' ] || continue
+    judge_blob "$FAM" "$f" "$GG_TMP/blob" "$allow"
+  done <"$GG_TMP/raw.z"
+}
+
+unmeasured() { # the qualifier for this run, empty when everything matched was read
+  [ "$GG_WALK_SKIPPED" -eq 0 ] || printf '; %s matched path(s) not measured' "$GG_WALK_SKIPPED"
+}
+
+if [ "$MODE" = "staged" ]; then
+  : >"$GG_TMP/skipped.z"
+  staged_lane
+  if [ "$GG_VIOLATIONS" -gt 0 ]; then
+    echo "comments: $GG_VIOLATIONS history reference(s) in comments added by the staged diff — excludes $EXCLUDES_FILE$(unmeasured)"
+    exit 1
+  fi
+  echo "comments: OK — the staged diff adds no history references in comments ($MATCHED file(s) read)$(unmeasured)"
+  exit 0
+fi
+
+index_lane
+if [ "$MATCHED" -eq 0 ]; then
+  # Same two states prose tells apart: nothing matched at all, or everything
+  # that matched was named as unmeasured.
+  if [ "$GG_WALK_SKIPPED" -eq 0 ]; then
+    echo "comments: OK — no tracked file matches GROWTH_GUARDS_COMMENT_PATHS ($GG_PATH_GLOBS_SHOWN)"
+  else
+    echo "comments: OK — nothing measurable to scan$(unmeasured)"
+  fi
+  exit 0
+fi
+if [ "$GG_VIOLATIONS" -gt 0 ]; then
+  echo "comments: $GG_VIOLATIONS history reference(s) in the comments of $MATCHED scanned file(s) — excludes $EXCLUDES_FILE$(unmeasured)"
+  exit 1
+fi
+echo "comments: OK — no history references in the comments of $MATCHED scanned file(s)$(unmeasured)"

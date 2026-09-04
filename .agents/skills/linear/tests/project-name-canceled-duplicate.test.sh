@@ -22,7 +22,7 @@ assert_tmpdir TMP_ROOT
 # for a hook run in a linked worktree; a hook in the main checkout gets
 # GIT_INDEX_FILE instead. Reaching the developer's real cache needs GIT_WORK_TREE
 # or core.worktree inherited as well, so all four go, which is the house rule in
-# .claude/CLAUDE.md. Unsetting at suite scope covers git and the CLI alike.
+# the repository's AGENTS.md. Unsetting at suite scope covers git and the CLI alike.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/.cache/linear"

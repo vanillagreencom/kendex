@@ -70,9 +70,9 @@ enum Command {
         #[arg(long, conflicts_with_all = ["sweep", "no_sweep"])]
         keep_declaration: bool,
     },
-    /// Regenerate every declared installation from its source
+    /// Regenerate every declared installation from its source, and the instruction shims
     Refresh(commands::refresh::RefreshArgs),
-    /// Check installs against the lock; non-zero exit on drift
+    /// Check installs against the lock and the instruction shims; non-zero exit on drift
     Verify {
         names: Vec<String>,
         #[arg(short = 'g', long)]
@@ -81,7 +81,7 @@ enum Command {
         #[arg(long)]
         scope: Option<String>,
     },
-    /// Make disk match declaration, orphan cleanup included
+    /// Make disk match declaration — orphan cleanup and instruction shims included
     Apply(commands::apply_cmd::ApplyArgs),
     /// Record an observed item into the manifest (content moves to the
     /// local source)

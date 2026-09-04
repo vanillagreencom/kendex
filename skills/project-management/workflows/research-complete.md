@@ -19,7 +19,7 @@ This workflow updates labels, descriptions, and issue state, so it reconciles be
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
 ```
 
-Read `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md` and summarize the key findings. If it is missing, route back to `research-issue.md § 4` to run the research — never ask the user to execute it externally.
+Read `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md` and summarize the key findings. If it is missing, route back to `research-issue.md § 2. Prepare Assets` to run the research — never ask the user to execute it externally.
 
 Capture the researcher metadata from `raw-exa.json` (`.metadata`: `researchMode`, `type`, `queryCount`, `sourceCount`, `uniqueSourceCount`, `elapsedMs`, `rawOutputPath`). Treat `agent:researcher` as the producer unless the issue history says otherwise.
 
@@ -53,21 +53,20 @@ With several references, convert to a bulleted list under one `**Research**:` he
 
 Run exactly one flow, unless it escalates. Both flows fill the delegation the same way.
 
-Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
-`[DIR]` is the caller's own checkout, main checkout included.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the caller's own checkout, main checkout included.
 
 ### 5.1 Targeted
 
 Delegate to the domain agent:
 
-<delegation_format>
-Analyze the impact of these research findings on your domain.
+<delegation_format> Analyze the impact of these research findings on your domain.
 
 Worktree: [WORKTREE_PATH]
 
 Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md
 
 Report with tables:
+
 - Decision content: summary, reasoning, revisit conditions
 - Technical changes: | Type | Description | Est | Paths | QA triggers |
 - Supersedes: topics or patterns this replaces
@@ -76,8 +75,7 @@ Report with tables:
 - Cross-domain impact: yes/no and which domains
 - Scope: refactor-level or initiative-level?
 
-List a technical change only when it changes what a user or operator experiences, or blocks work that does. Say so plainly when the finding needs no work.
-</delegation_format>
+List a technical change only when it changes what a user or operator experiences, or blocks work that does. Say so plainly when the finding needs no work. </delegation_format>
 
 **Cross-domain impact reported** → add the new domain labels (compute the final set, preflight, update), append `## Affected Domains` to the description, and switch to § 5.2. Do not assess severity yourself.
 
@@ -89,25 +87,23 @@ Delegate the same analysis to every affected domain agent in parallel, minus the
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
-<delegation_format>
-Synthesize the domain reports into a cross-cutting impact analysis.
+<delegation_format> Synthesize the domain reports into a cross-cutting impact analysis.
 
 Worktree: [WORKTREE_PATH]
 
 Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md
 
-Domain reports:
-[summaries]
+Domain reports: [summaries]
 
 Report with tables:
+
 1. Unified decision content: summary, reasoning, revisit conditions
 2. Documentation drift: | File | Issue | Severity |
 3. Conflicting issues: | Issue | Conflict | Resolution |
 4. Cross-module dependencies
 5. Breaking changes at module boundaries
 6. Prioritized issues: | # | Description | Est | Dependencies | Domain |
-7. Scope: refactor-level or initiative-level?
-</delegation_format>
+7. Scope: refactor-level or initiative-level? </delegation_format>
 
 Initiative-level scope escalates to § 5.3 the same way as § 5.1.
 

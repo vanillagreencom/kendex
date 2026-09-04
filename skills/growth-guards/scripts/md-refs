@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# md-refs — every reference in agent-loaded markdown and architecture docs
+# lands: a relative link's path is a tracked file or directory and its
+# anchor a heading slug or explicit anchor in that file; a code-span citation
+# (`path.md`, `path.md § Heading`, `path.md#anchor`) names a tracked file and
+# a heading it has; a decision ID names a tracked decision file. Fenced code
+# is never read. The grammar is lib/md-refs.awk's (with lib/md-slug.awk's
+# reductions) over lib/md-blocks.awk's line stream, stated in CHECKS.md §
+# md-refs.
+#
+# Scopes: --staged judges every matching markdown file the staged diff adds
+# or changes; --all judges every tracked matching file; with neither,
+# GROWTH_GUARDS_MD_SCOPE decides (lib/md-scope.sh). Targets resolve against
+# the index, so a link to a file this commit deletes is dead.
+#
+# Exit codes: 0 clean; 1 dead references; 2 usage/config/collection error.
+set -euo pipefail
+set -f
+
+GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
+GG_BOOT="${GG_BOOT%x}"
+# The one newline `pwd` added; anything before it is the path.
+SCRIPT_DIR="${GG_BOOT%$'\n'}"
+GG_CHECK="md-refs"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/settings.sh
+source "$SCRIPT_DIR/lib/settings.sh"
+# shellcheck source=lib/md-scope.sh
+source "$SCRIPT_DIR/lib/md-scope.sh"
+
+# What an agent harness loads, plus the architecture docs those files point
+# at; each name spelled at the root and below it, as the prose lane spells
+# them.
+PATHS_DEFAULT="AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
+BLOCKS_AWK="$SCRIPT_DIR/lib/md-blocks.awk"
+SHAPES_AWK="$SCRIPT_DIR/lib/md-shapes.awk"
+REFS_AWK="$SCRIPT_DIR/lib/md-refs.awk"
+SLUG_AWK="$SCRIPT_DIR/lib/md-slug.awk"
+# The decider skill's scheme: DECISIONS_DIR holds `<ID>-<slug>.md`, the ID a
+# prefix and at least WIDTH digits.
+DECISIONS_DIR_DEFAULT="docs/decisions"
+DECISION_ID_PREFIX_DEFAULT="D"
+DECISION_ID_WIDTH_DEFAULT="3"
+
+usage() {
+  cat <<EOF
+usage: md-refs [--staged | --all]
+
+A dead reference in agent-loaded markdown fails: a relative link whose path
+is not a tracked file or directory or whose #anchor is no heading of the
+target; a code-span citation (\`path.md\`, \`path.md § Heading\`,
+\`path.md#anchor\`) naming no tracked file or no heading it has; a decision
+ID with no tracked file under DECISIONS_DIR. Fenced code is never read.
+Decision IDs are judged only where DECISIONS_DIR is tracked.
+
+--staged judges every matching markdown file the staged diff adds or
+changes; --all judges every tracked matching file. With neither,
+GROWTH_GUARDS_MD_SCOPE decides: 'touched' (the default) is --staged and
+judges nothing when nothing is staged; 'all' is --all.
+
+Configuration (env > .env.local > .kendex/settings.toml >
+kendex.settings.toml [env] > default):
+  GROWTH_GUARDS_MD_REFS_PATHS   space-separated shell globs against the
+                                full repo-relative path, '*' crossing '/'
+                                (default $PATHS_DEFAULT)
+  GROWTH_GUARDS_MD_EXCLUDES     exclusion list, pattern<TAB>reason per line
+                                (default $GG_MD_EXCLUDES_DEFAULT)
+  GROWTH_GUARDS_MD_SCOPE        touched | all (default $GG_MD_SCOPE_DEFAULT)
+  DECISIONS_DIR                 decision records (default $DECISIONS_DIR_DEFAULT)
+  DECISION_ID_PREFIX            (default $DECISION_ID_PREFIX_DEFAULT)
+  DECISION_ID_WIDTH             least digits in an ID (default $DECISION_ID_WIDTH_DEFAULT)
+
+Exit codes: 0 clean; 1 dead references; 2 usage/config/collection error.
+EOF
+}
+
+STAGED=0
+ALL=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --staged) STAGED=1 ;;
+    --all) ALL=1 ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *) gg_config_error "unknown argument '$1' (see --help)" ;;
+  esac
+  shift
+done
+
+[ -r "$BLOCKS_AWK" ] || gg_config_error "$BLOCKS_AWK is missing — reinstall the growth-guards skill"
+[ -r "$SHAPES_AWK" ] || gg_config_error "$SHAPES_AWK is missing — reinstall the growth-guards skill"
+[ -r "$REFS_AWK" ] || gg_config_error "$REFS_AWK is missing — reinstall the growth-guards skill"
+[ -r "$SLUG_AWK" ] || gg_config_error "$SLUG_AWK is missing — reinstall the growth-guards skill"
+
+gg_repo_root_cd
+gg_md_load_paths md-refs GROWTH_GUARDS_MD_REFS_PATHS "$PATHS_DEFAULT"
+
+DEC_DIR_RAW="$(gg_setting DECISIONS_DIR "$DECISIONS_DIR_DEFAULT")" || exit 2
+DEC_DIR="$(gg_config_path "$DEC_DIR_RAW" DECISIONS_DIR)" || exit 2
+ID_PREFIX="$(gg_setting DECISION_ID_PREFIX "$DECISION_ID_PREFIX_DEFAULT")" || exit 2
+case "$ID_PREFIX" in
+  "" | *[!A-Za-z0-9_-]*) gg_config_error "DECISION_ID_PREFIX must be letters, digits, '_' or '-', got '$(gg_scrubbed "$ID_PREFIX")'" ;;
+esac
+ID_WIDTH="$(gg_setting DECISION_ID_WIDTH "$DECISION_ID_WIDTH_DEFAULT")" || exit 2
+gg_positive_int "$ID_WIDTH" DECISION_ID_WIDTH
+
+gg_md_scope md-refs "$STAGED" "$ALL"
+[ "$GG_MD_MODE" != none ] || exit 0
+
+gg_tmpdir
+gg_md_select markdown
+skipped="$GG_WALK_SKIPPED"
+UNMEASURED=""
+[ "$skipped" -eq 0 ] || UNMEASURED="; $skipped matched path(s) not measured"
+SCOPE_DESC="$(gg_md_scope_desc)"
+
+if [ "$GG_MD_COUNT" -eq 0 ]; then
+  if [ "$skipped" -eq 0 ]; then
+    echo "md-refs: OK — no $SCOPE_DESC to judge (GROWTH_GUARDS_MD_REFS_PATHS $GG_PATH_GLOBS_SHOWN)"
+  else
+    echo "md-refs: OK — nothing measurable to judge$UNMEASURED"
+  fi
+  exit 0
+fi
+
+# The index's paths, one per line, are what a reference may land on. A path
+# holding a newline splits here and can be no link target; that direction
+# is loud (the link fails), never a pass.
+git ls-files -z >"$GG_TMP/tracked.z" || gg_collection_error "git ls-files failed"
+LC_ALL=C tr '\0' '\n' <"$GG_TMP/tracked.z" >"$GG_TMP/tracked"
+
+DEC_JUDGE=0
+if git ls-files --error-unmatch -- "$DEC_DIR" >/dev/null 2>&1; then
+  DEC_JUDGE=1
+fi
+
+lines_of() { # BLOBFILE PATH — md-blocks' line stream, refusing what it cannot end
+  local status=0
+  LC_ALL=C awk -f "$SHAPES_AWK" -f "$BLOCKS_AWK" -v mode=lines -- "$1" >"$GG_TMP/lines" 2>"$GG_TMP/lines.err" || status=$?
+  [ ! -s "$GG_TMP/lines.err" ] || cat -- "$GG_TMP/lines.err" >&2
+  if [ "$status" -ne 0 ]; then
+    local refusal
+    refusal="$(grep '^R' -- "$GG_TMP/lines" | head -n 1 || true)"
+    refusal="${refusal#R"$GG_TAB"}"
+    gg_collection_error "$(gg_shown "$2"):${refusal%%"$GG_TAB"*}: ${refusal#*"$GG_TAB"} — the file cannot be read past it; close the construct"
+  fi
+}
+
+# Pass one: what each selected file cites.
+: >"$GG_TMP/refs.tsv"
+while IFS= read -r -d '' sha && IFS= read -r -d '' f; do
+  gg_read_blob "$sha" "$f" "markdown file"
+  lines_of "$GG_TMP/blob" "$f"
+  LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=refs -v src="$f" -v id_prefix="$ID_PREFIX" -v id_width="$ID_WIDTH" -- "$GG_TMP/lines" >>"$GG_TMP/refs.tsv" \
+    || gg_collection_error "could not read the references in $(gg_shown "$f")"
+done <"$GG_TMP/md-files.z"
+
+# Pass two: the headings of every file a citation reaches into, read from
+# the index whether or not the file is in scope.
+LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=targets -v tracked="$GG_TMP/tracked" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/targets" \
+  || gg_collection_error "could not resolve the reference targets"
+: >"$GG_TMP/headings.tsv"
+while IFS= read -r target; do
+  [ -n "$target" ] || continue
+  gg_read_blob ":0:$target" "$target" "markdown file"
+  if gg_blob_is_binary "$GG_TMP/blob" "$target"; then
+    gg_collection_error "$(gg_shown "$target") is cited by heading but holds binary content"
+  fi
+  lines_of "$GG_TMP/blob" "$target"
+  LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=index -v src="$target" -- "$GG_TMP/lines" >>"$GG_TMP/headings.tsv" \
+    || gg_collection_error "could not index the headings of $(gg_shown "$target")"
+done <"$GG_TMP/targets"
+
+# Pass three: the verdict.
+LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=verdict -v tracked="$GG_TMP/tracked" -v headings="$GG_TMP/headings.tsv" \
+  -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/verdict" \
+  || gg_collection_error "could not resolve the references"
+
+REMEDY="point the reference at a tracked file, a heading it has, or a recorded decision, or delete it"
+violations=0
+judged=""
+while IFS="$GG_TAB" read -r kind a b c; do
+  case "$kind" in
+    V)
+      echo "md-refs FAIL dead reference: $(gg_shown "$a"):$b: $(gg_scrubbed "$c")"
+      echo "  remedies: $REMEDY"
+      violations=$((violations + 1))
+      ;;
+    N) judged="$a" ;;
+    *) gg_collection_error "unexpected record '$(gg_scrubbed "$kind")' in the verdict" ;;
+  esac
+done <"$GG_TMP/verdict"
+[ -n "$judged" ] || gg_collection_error "the verdict carried no reference count; refusing to read its silence as a pass"
+
+if [ "$DEC_JUDGE" -eq 1 ]; then
+  DEC_NOTE="decision IDs judged against $DEC_DIR"
+else
+  DEC_NOTE="decision IDs not judged ($DEC_DIR is not tracked)"
+fi
+
+if [ "$violations" -gt 0 ]; then
+  echo "md-refs: $violations dead reference(s) among $judged in $GG_MD_COUNT $SCOPE_DESC; $DEC_NOTE$UNMEASURED"
+  exit 1
+fi
+echo "md-refs: OK — $judged reference(s) resolve in $GG_MD_COUNT $SCOPE_DESC; $DEC_NOTE$UNMEASURED"

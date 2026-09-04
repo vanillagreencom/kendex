@@ -121,6 +121,10 @@ run SIZE_RATCHET_THRESHOLD=400 SIZE_RATCHET_DEFAULT_CLASSES=
 echo "=== the shipped class list judges each kind of file by its own number ==="
 new_repo shipped
 mkbytes AGENTS.md 30000
+mkbytes pkg/AGENTS.md 7000
+mkbytes docs/architecture/overview.md 13000
+mkbytes docs/architecture/topic.md 25000
+mkbytes docs/architecture/small.md 13000
 mkbytes pkg/CLAUDE.md 30000
 mkbytes skills/x/SKILL.md 30000
 mkbytes skills/x/workflows/do.md 45000
@@ -133,7 +137,10 @@ git -C "$R" add -A
 run
 [ "$RC" -eq 1 ] || bad "the shipped list fails the over-sized files" "rc=$RC out=$OUT"
 for pair in \
-  "AGENTS.md — 30000 bytes > threshold 24576 (class AGENTS.md)" \
+  "AGENTS.md — 30000 bytes > threshold 16384 (class AGENTS.md)" \
+  "pkg/AGENTS.md — 7000 bytes > threshold 6144 (class */AGENTS.md)" \
+  "docs/architecture/overview.md — 13000 bytes > threshold 12288 (class docs/architecture/overview.md)" \
+  "docs/architecture/topic.md — 25000 bytes > threshold 16384 (class docs/architecture/*.md)" \
   "pkg/CLAUDE.md — 30000 bytes > threshold 24576 (class */CLAUDE.md)" \
   "skills/x/SKILL.md — 30000 bytes > threshold 24576 (class */SKILL.md)" \
   "skills/x/workflows/do.md — 45000 bytes > threshold 40960 (class */workflows/*.md)" \
@@ -145,7 +152,7 @@ done
 # Nothing under its class is mentioned — the report names offenders only.
 # The `offender: ` prefix keeps each name exact: a bare `CLAUDE.md` would
 # match the `pkg/CLAUDE.md` line that IS an offender and pass vacuously.
-for quiet in src/tests/big.rs docs/small.md CLAUDE.md; do
+for quiet in src/tests/big.rs docs/small.md CLAUDE.md docs/architecture/small.md; do
   has "offender: $quiet" && bad "$quiet is under its class and must not be reported" "$OUT" \
     || ok "$quiet is under its shipped class and is not mentioned"
 done
@@ -239,7 +246,7 @@ run 'SIZE_RATCHET_CLASSES=*/SKILL.md=8k'
 [ "$RC" -eq 1 ] && has "skills/x/SKILL.md — 10000 bytes > threshold 8192 (class */SKILL.md)" \
   && ok "the repo's own entry decides the class it names" \
   || bad "a repo entry overrides its class" "rc=$RC out=$OUT"
-has "AGENTS.md — 30000 bytes > threshold 24576" \
+has "AGENTS.md — 30000 bytes > threshold 16384" \
   && ok "and the rest of the shipped list still decides everything else" \
   || bad "the shipped list survives an override" "out=$OUT"
 # The control: the same SKILL.md passes under the shipped 24k, so the override

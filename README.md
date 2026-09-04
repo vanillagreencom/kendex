@@ -156,7 +156,7 @@ kendex apply --plan                                     # preview the full recon
 | `updates` | Which packages have newer versions, and per-package notification |
 | `remove`, `adopt`, `apply` | undeclare (`--keep-declaration` uninstalls only), take ownership, reconcile |
 | `refresh` | re-resolve sources, regenerate every installation |
-| `verify` | drift check; exit 1 on any failing row |
+| `verify` | drift check over installs and the instruction shims (`CLAUDE.md` beside each tracked `AGENTS.md`, Gemini's `context.fileName`); exit 1 on any failing row |
 | `list` (`ls`), `check` | observe everything; sanity report |
 | `drift-hook` | Install the session-start drift report hook for a scope |
 | `guard` | Commit-time quality guards and the git hooks that run them |

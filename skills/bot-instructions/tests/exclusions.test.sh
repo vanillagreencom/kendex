@@ -238,8 +238,8 @@ expect_red exclusion-consistency \
   'and --staged refuses it too, from the same derivation' \
   check --staged --repo "$repo"
 
-# The real consumer layout: `.claude/CLAUDE.md` is a symlink at a FILE
-# (`../AGENTS.md`), which six of the eight repos track, and `.claude/skills`
+# A consumer layout: `.claude/CLAUDE.md` is a symlink at a FILE
+# (`../AGENTS.md`), and `.claude/skills`
 # is linked per skill so its tracked path already carries the further slash
 # this rule reads. git stores a symlink as a blob, so an entry with no further
 # slash derives nothing whatever its target: a `.claude/CLAUDE.md/**` glob

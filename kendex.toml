@@ -46,6 +46,7 @@ skills = [
   "review-gate",
   "second-opinion",
   "code-quality",
+  "arch-docs",
   "deep-research",
   "growth-guards",
   "size-ratchet",
@@ -58,6 +59,7 @@ hooks = [
   "pre-commit-check",
   "session-drift-check",
   "task-completed-check",
+  "doc-drift-check",
 ]
 
 [bundles.orchestration]
@@ -91,6 +93,7 @@ skills = [
   "review-gate",
   "second-opinion",
   "code-quality",
+  "arch-docs",
 ]
 
 [bundles.research]
@@ -116,6 +119,7 @@ hooks = [
   "pre-commit-check",
   "session-drift-check",
   "task-completed-check",
+  "doc-drift-check",
 ]
 skills = [
   "growth-guards",

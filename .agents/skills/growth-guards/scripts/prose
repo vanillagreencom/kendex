@@ -39,8 +39,9 @@ source "$SCRIPT_DIR/lib/settings.sh"
 # name is spelled twice — at the repository root and anywhere below it —
 # because `*` crosses `/` but never stands in for the separator itself, and
 # the second spelling is also what reaches a rendered copy under `.claude/`
-# or `.agents/`.
-PATHS_DEFAULT="SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md"
+# or `.agents/`. The architecture docs those files point at are loaded the
+# same way, so they hold the same rule.
+PATHS_DEFAULT="SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
 
 usage() {
   cat <<EOF

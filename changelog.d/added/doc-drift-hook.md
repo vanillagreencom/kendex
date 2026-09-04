@@ -1,0 +1,1 @@
+- `doc-drift-check` hook (Claude Code Stop): blocks a stop once per session when code changed under a directory an `AGENTS.md` or `docs/architecture/` topic covers and no such doc changed.

@@ -33,6 +33,7 @@ use crate::process::{DEFAULT_TIMEOUT, Hardened};
 mod repo;
 mod resolve;
 pub use repo::Repo;
+pub(crate) use repo::{english, path_from};
 pub use resolve::Installed;
 /// The tool directories the verbs search, in order — the same roots the
 /// package's own helper searches at commit time. `guard_skill_roots` holds

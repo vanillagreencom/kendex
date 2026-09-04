@@ -195,9 +195,10 @@ gg_blob_is_binary() { # FILE LABEL — 0 when a NUL falls in the leading bytes
 # clean verdict over content it never read. Each is NAMED here and counted
 # apart from the clean total, in GG_WALK_SKIPPED.
 #
-# Needs gg_tmpdir and the configured globs already loaded. ON_FILE runs in
-# the caller's own shell, as `ON_FILE PATH BLOBFILE`, so it may set the
-# caller's counters.
+# Needs gg_tmpdir and the configured globs already loaded, and the excludes
+# list where the lane has one — an empty list excludes nothing. ON_FILE runs
+# in the caller's own shell, as `ON_FILE PATH BLOBFILE SHA`, so it may set
+# the caller's counters.
 #
 # The tally is of PATHS, which is what the verdict line claims — and one path
 # reaches the sniff once per scan that lists it, so a check running several
@@ -247,6 +248,7 @@ gg_walk_configured_paths() { # NOUN UNREAD-NOUN ON_FILE
     # Record shape: "<mode> <sha> <stage>\t<path>".
     f="${rec#*"$GG_TAB"}"
     gg_matches_path_glob "$f" || continue
+    gg_is_excluded "$f" && continue
     mode="${rec%% *}"
     rest="${rec#* }"
     sha="${rest%% *}"
@@ -265,7 +267,7 @@ gg_walk_configured_paths() { # NOUN UNREAD-NOUN ON_FILE
       gg_note_skip "$f" "binary content, not $noun"
       continue
     fi
-    "$on_file" "$f" "$GG_TMP/blob"
+    "$on_file" "$f" "$GG_TMP/blob" "$sha"
   done <"$GG_TMP/files.z"
 }
 

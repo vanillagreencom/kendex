@@ -32,6 +32,10 @@ pub mod fork;
 mod gemini;
 mod holds;
 mod installed;
+mod instruction_shims;
+pub use instruction_shims::{
+    CLAUDE_SHIM, ShimStanding, ShimState, observe as observe_instruction_shims,
+};
 mod item_plan;
 mod item_record;
 mod item_source;
@@ -146,6 +150,19 @@ pub fn plan_scope(
     // posture changed.
     let (mut scope_notes, settings_drift) = plan_settings_seed(scope, &state, options, &mut ops)?;
     drift.extend(settings_drift);
+    // The shims a project owes its instruction files, read off the
+    // harness list the manifest declares: committed files, never lock
+    // entries, so they are planned beside the settings file rather than
+    // through the item model.
+    let (instruction_shims, shim_drift) = instruction_shims::plan_instruction_shims(
+        env,
+        scope,
+        &manifest.install.harnesses,
+        options,
+        &mut ops,
+        &mut config_edits,
+    )?;
+    drift.extend(shim_drift);
 
     // Trash ops all pass one guard: writes for this pass are already
     // planned, so anything still wanted is known, and no path goes to the
@@ -203,6 +220,7 @@ pub fn plan_scope(
         sweepable,
         kept,
         safety,
+        instruction_shims,
     };
     report.notes.extend(scope_notes);
     unmanaged_rows(env, scope, &manifest, lock, &state.items, &mut report.drift)?;
@@ -306,6 +324,7 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
         safety: Vec::new(),
         repo_effects: Vec::new(),
         repo_effects_leaving: Vec::new(),
+        instruction_shims: Vec::new(),
     };
     let empty = Manifest::default();
     unmanaged_rows(env, scope, &empty, &lock, &[], &mut report.drift)?;

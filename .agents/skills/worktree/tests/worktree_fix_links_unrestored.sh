@@ -42,7 +42,7 @@ assert_lacks() {
 write_base_env() {
   printf '%s\n%s\n' \
     'WORKTREE_SYMLINKS="harness runtime"' \
-    'WORKTREE_RELATIVE_SYMLINKS=".claude/CLAUDE.md=../AGENTS.md"' >"$MAIN/.env.local"
+    'WORKTREE_RELATIVE_SYMLINKS=".claude/POINTER.md=../AGENTS.md"' >"$MAIN/.env.local"
 }
 
 mkdir -p "$TMP_ROOT/bin"
@@ -96,16 +96,16 @@ echo "=== a healthy worktree still reports success ==="
 run_fix_links
 if [[ "$RC" == 0 ]]; then ok "exit 0 when every entry is healthy"; else bad "exit 0 when every entry is healthy" "rc=$RC: $OUT"; fi
 assert_contains "$OUT" "Restored symlinks in $WT" "success message on a healthy worktree"
-if [[ "$(readlink "$WT/.claude/CLAUDE.md" 2>/dev/null || true)" == "../AGENTS.md" ]]; then
+if [[ "$(readlink "$WT/.claude/POINTER.md" 2>/dev/null || true)" == "../AGENTS.md" ]]; then
   ok "the relative entry is set up, and reads healthy"
 else
-  bad "the relative entry is set up, and reads healthy" "readlink: $(readlink "$WT/.claude/CLAUDE.md" 2>/dev/null || echo absent)"
+  bad "the relative entry is set up, and reads healthy" "readlink: $(readlink "$WT/.claude/POINTER.md" 2>/dev/null || echo absent)"
 fi
 
 echo "=== an entry with no source in the main checkout is named, not skipped ==="
 printf '%s\n%s\n' \
   'WORKTREE_SYMLINKS="harness runtime absent-here"' \
-  'WORKTREE_RELATIVE_SYMLINKS=".claude/CLAUDE.md=../AGENTS.md"' >"$MAIN/.env.local"
+  'WORKTREE_RELATIVE_SYMLINKS=".claude/POINTER.md=../AGENTS.md"' >"$MAIN/.env.local"
 run_fix_links
 if [[ "$RC" != 0 ]]; then ok "nonzero exit for an entry missing from the main checkout"; else bad "nonzero exit for an entry missing from the main checkout" "rc=0: $OUT"; fi
 assert_contains "$OUT" "absent-here" "names the skipped entry"
@@ -157,16 +157,16 @@ else
   # simply relinks and the state is healthy again — what is being proved is
   # that a wrong-target link is JUDGED unhealthy, not that fix-links fails to
   # repair one.
-  rm -f "$WT/.claude/CLAUDE.md"
-  ln -s ../notes.md "$WT/.claude/CLAUDE.md"
+  rm -f "$WT/.claude/POINTER.md"
+  ln -s ../notes.md "$WT/.claude/POINTER.md"
   chmod a-w "$WT/.claude"
   run_fix_links
   chmod u+w "$WT/.claude"
   if [[ "$RC" != 0 ]]; then ok "nonzero exit for a link with the wrong target"; else bad "nonzero exit for a link with the wrong target" "rc=0: $OUT"; fi
-  assert_contains "$OUT" ".claude/CLAUDE.md" "names the wrong-target link"
+  assert_contains "$OUT" ".claude/POINTER.md" "names the wrong-target link"
   assert_contains "$OUT" "expected ../AGENTS.md" "states the target it expected"
   assert_lacks "$OUT" "Restored symlinks" "no success message for a wrong-target link"
-  rm -f "$WT/.claude/CLAUDE.md"
+  rm -f "$WT/.claude/POINTER.md"
 fi
 
 echo "=== the worktree is healthy again once nothing blocks the pass ==="

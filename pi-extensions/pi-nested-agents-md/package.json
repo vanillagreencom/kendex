@@ -1,0 +1,67 @@
+{
+  "name": "@vanillagreen/pi-nested-agents-md",
+  "version": "0.1.0",
+  "description": "Attaches a subdirectory's AGENTS.md to the model's context the first time a file under it is read. Pi loads the root AGENTS.md and the ancestors of the cwd only; this adds the nested ones, once per session per file, bounded by the project root.",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "coding-agent",
+    "agents-md",
+    "context"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/nested-agents-md.ts"
+    ]
+  },
+  "scripts": {
+    "test": "bun test ./tests"
+  },
+  "kendex": {
+    "extensionManager": {
+      "displayName": "Nested AGENTS.md",
+      "settings": [
+        {
+          "key": "enabled",
+          "label": "Enable nested AGENTS.md",
+          "description": "Master toggle. On a read of a file under a subdirectory, attach each AGENTS.md between that directory and the project root that this session has not seen. Disable to make the extension inert without uninstalling.",
+          "type": "boolean",
+          "default": true,
+          "category": "General",
+          "apply": "live"
+        }
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "files": [
+    "extensions/",
+    "README.md",
+    "CHANGELOG.md",
+    "package.json"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vanillagreencom/kendex.git",
+    "directory": "pi-extensions/pi-nested-agents-md"
+  },
+  "homepage": "https://github.com/vanillagreencom/kendex/tree/main/pi-extensions/pi-nested-agents-md",
+  "bugs": {
+    "url": "https://github.com/vanillagreencom/kendex/issues"
+  },
+  "author": "vanillagreen",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

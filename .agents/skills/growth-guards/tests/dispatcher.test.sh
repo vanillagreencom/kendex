@@ -18,6 +18,7 @@ unset GROWTH_GUARDS_CHECKS GROWTH_GUARDS_TODO_EXCLUDES GROWTH_GUARDS_BYTE_CEILIN
   GROWTH_GUARDS_BYTE_EXCLUDES GROWTH_GUARDS_SUPPRESSION_EXCLUDES \
   GROWTH_GUARDS_SUPPRESSION_BASELINE GROWTH_GUARDS_CONFLICT_EXCLUDES \
   GROWTH_GUARDS_COMMIT_TYPES GROWTH_GUARDS_PROSE_PATHS \
+  GROWTH_GUARDS_MD_PATHS GROWTH_GUARDS_MD_REFS_PATHS GROWTH_GUARDS_MD_EXCLUDES GROWTH_GUARDS_MD_SCOPE \
   GROWTH_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 TD="TO""DO"
@@ -59,9 +60,9 @@ printf 'fn main() {}\n' >"$R/ok.rs"
 git -C "$R" add -A
 run_gg
 [ "$RC" -eq 0 ] \
-  && case "$OUT" in *"growth-guards: todo-ban"*"growth-guards: byte-ceiling"*"growth-guards: suppression-ban"*"growth-guards: conflict-markers"*"growth-guards: changelog-entries"*"growth-guards: prose"*"growth-guards: OK"*) true ;; *) false ;; esac \
-  && ok "the batch runs todo-ban, byte-ceiling, suppression-ban, conflict-markers, changelog-entries, prose and reports OK" \
-  || bad "batch runs the six default checks" "rc=$RC out=$OUT"
+  && case "$OUT" in *"growth-guards: todo-ban"*"growth-guards: byte-ceiling"*"growth-guards: suppression-ban"*"growth-guards: conflict-markers"*"growth-guards: changelog-entries"*"growth-guards: prose"*"growth-guards: md-format"*"growth-guards: md-refs"*"growth-guards: OK"*) true ;; *) false ;; esac \
+  && ok "the batch runs todo-ban, byte-ceiling, suppression-ban, conflict-markers, changelog-entries, prose, md-format, md-refs and reports OK" \
+  || bad "batch runs the eight default checks" "rc=$RC out=$OUT"
 run_gg -- all
 [ "$RC" -eq 0 ] && ok "'all' is the same batch" || bad "'all' is the same batch" "rc=$RC out=$OUT"
 
@@ -137,6 +138,15 @@ run_gg -- all --staged
 [ "$RC" -eq 0 ] && case "$OUT" in *"growth-guards: todo-ban --staged"*) true ;; *) false ;; esac \
   && ok "the batch hands todo-ban --staged, so a commit adding no marker passes" \
   || bad "batch forwards --staged to todo-ban" "rc=$RC out=$OUT"
+case "$OUT" in *"growth-guards: md-format --staged"*"growth-guards: md-refs --staged"*) ok "and hands md-format and md-refs --staged too" ;; *) bad "batch forwards --staged to the markdown lanes" "$OUT" ;; esac
+printf 'Wrapped\ntext.\n' >"$R/doc.md"
+git -C "$R" add doc.md
+run_gg -- all --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"md-format FAIL format: doc.md:2:"*) true ;; *) false ;; esac \
+  && ok "control: a hard-wrapped markdown file staged beside the code fails the staged batch" \
+  || bad "control: staged batch reaches md-format" "rc=$RC out=$OUT"
+git -C "$R" rm -q --cached doc.md
+rm "$R/doc.md"
 run_gg -- --staged
 [ "$RC" -eq 0 ] && ok "'--staged' without 'all' is the same batch" \
   || bad "'--staged' alone is the same batch" "rc=$RC out=$OUT"

@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# md-format — markdown holds one paragraph per line and one list item per
+# line, with blank lines between paragraphs, list blocks, headings and
+# fences, and no trailing-double-space line break. Fenced code, tables, HTML
+# blocks, indented code and front matter are left as they are. The grammar
+# is lib/md-blocks.awk's, stated in CHECKS.md § md-format; md-reflow is the
+# remedy.
+#
+# Scopes: --staged judges every markdown file the staged diff adds or
+# changes, in full; --all judges every tracked markdown file the path globs
+# name; with neither, GROWTH_GUARDS_MD_SCOPE decides (lib/md-scope.sh).
+# Content comes from the index, like every scan in this family.
+#
+# Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
+set -euo pipefail
+# Pathname expansion off: the configured paths are globs matched against the
+# index, never against the work tree.
+set -f
+
+GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
+GG_BOOT="${GG_BOOT%x}"
+# The one newline `pwd` added; anything before it is the path.
+SCRIPT_DIR="${GG_BOOT%$'\n'}"
+GG_CHECK="md-format"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/settings.sh
+source "$SCRIPT_DIR/lib/settings.sh"
+# shellcheck source=lib/md-scope.sh
+source "$SCRIPT_DIR/lib/md-scope.sh"
+
+PATHS_DEFAULT="*.md"
+BLOCKS_AWK="$SCRIPT_DIR/lib/md-blocks.awk"
+SHAPES_AWK="$SCRIPT_DIR/lib/md-shapes.awk"
+
+usage() {
+  cat <<EOF
+usage: md-format [--staged | --all]
+
+A markdown file is one paragraph per line and one list item per line, with
+blank lines between paragraphs, list blocks, headings and fences, and no
+trailing-double-space line break. Fenced code, tables, HTML blocks, indented
+code and front matter are not judged. Reflow a file with md-reflow.
+
+--staged judges every markdown file the staged diff adds or changes, in
+full; --all judges every tracked markdown file the path globs name. With
+neither, GROWTH_GUARDS_MD_SCOPE decides: 'touched' (the default) is --staged
+and judges nothing when nothing is staged; 'all' is --all.
+
+Configuration (env > .env.local > .kendex/settings.toml >
+kendex.settings.toml [env] > default):
+  GROWTH_GUARDS_MD_PATHS      space-separated shell globs against the full
+                              repo-relative path, '*' crossing '/'
+                              (default $PATHS_DEFAULT)
+  GROWTH_GUARDS_MD_EXCLUDES   exclusion list, pattern<TAB>reason per line
+                              (default $GG_MD_EXCLUDES_DEFAULT)
+  GROWTH_GUARDS_MD_SCOPE      touched | all (default $GG_MD_SCOPE_DEFAULT)
+
+Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
+EOF
+}
+
+STAGED=0
+ALL=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --staged) STAGED=1 ;;
+    --all) ALL=1 ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *) gg_config_error "unknown argument '$1' (see --help)" ;;
+  esac
+  shift
+done
+
+[ -r "$BLOCKS_AWK" ] || gg_config_error "$BLOCKS_AWK is missing — reinstall the growth-guards skill"
+[ -r "$SHAPES_AWK" ] || gg_config_error "$SHAPES_AWK is missing — reinstall the growth-guards skill"
+
+gg_repo_root_cd
+gg_md_load_paths md-format GROWTH_GUARDS_MD_PATHS "$PATHS_DEFAULT"
+gg_md_scope md-format "$STAGED" "$ALL"
+[ "$GG_MD_MODE" != none ] || exit 0
+
+gg_tmpdir
+gg_md_select markdown
+skipped="$GG_WALK_SKIPPED"
+UNMEASURED=""
+[ "$skipped" -eq 0 ] || UNMEASURED="; $skipped matched path(s) not measured"
+SCOPE_DESC="$(gg_md_scope_desc)"
+
+if [ "$GG_MD_COUNT" -eq 0 ]; then
+  if [ "$skipped" -eq 0 ]; then
+    echo "md-format: OK — no $SCOPE_DESC to judge (GROWTH_GUARDS_MD_PATHS $GG_PATH_GLOBS_SHOWN)"
+  else
+    echo "md-format: OK — nothing measurable to judge$UNMEASURED"
+  fi
+  exit 0
+fi
+
+REMEDY="reflow the file with md-reflow (scripts/md-reflow PATH), then stage it"
+violations=0
+while IFS= read -r -d '' sha && IFS= read -r -d '' f; do
+  gg_read_blob "$sha" "$f" "markdown file"
+  status=0
+  LC_ALL=C awk -f "$SHAPES_AWK" -f "$BLOCKS_AWK" -v mode=check "$GG_TMP/blob" >"$GG_TMP/verdict" 2>"$GG_TMP/verdict.err" || status=$?
+  [ ! -s "$GG_TMP/verdict.err" ] || cat -- "$GG_TMP/verdict.err" >&2
+  while IFS="$GG_TAB" read -r kind line text; do
+    case "$kind" in
+      V)
+        echo "md-format FAIL format: $(gg_shown "$f"):$line: $text"
+        echo "  remedies: $REMEDY"
+        violations=$((violations + 1))
+        ;;
+      R) gg_collection_error "$(gg_shown "$f"):$line: $text — the file cannot be judged past it; close the construct" ;;
+      *) gg_collection_error "unexpected record '$(gg_scrubbed "$kind")' judging $(gg_shown "$f")" ;;
+    esac
+  done <"$GG_TMP/verdict"
+  [ "$status" -eq 0 ] || gg_collection_error "could not judge $(gg_shown "$f") (awk exit $status)"
+done <"$GG_TMP/md-files.z"
+
+if [ "$violations" -gt 0 ]; then
+  echo "md-format: $violations format violation(s) in $GG_MD_COUNT $SCOPE_DESC$UNMEASURED"
+  exit 1
+fi
+echo "md-format: OK — $GG_MD_COUNT $SCOPE_DESC clean$UNMEASURED"

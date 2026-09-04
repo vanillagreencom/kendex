@@ -9,7 +9,7 @@
 # Which checks the batch runs, space separated. The full list and what each
 # one bans is in CHECKS.md; naming a subset is how a project takes the
 # family a lane at a time.
-GROWTH_GUARDS_CHECKS = "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose"
+GROWTH_GUARDS_CHECKS = "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs"
 
 # Kilobytes a single tracked file may reach before byte-ceiling refuses it.
 # Declared asset trees are exempted through GROWTH_GUARDS_BYTE_EXCLUDES
@@ -34,6 +34,33 @@ GROWTH_GUARDS_CHANGELOG_RECORD = "CHANGELOG.md"
 # release commit collating them), or carry [no-changelog] in its subject.
 # Empty = rule off.
 GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = ""
+
+# What md-format and md-refs judge with neither --staged nor --all: "touched"
+# is the markdown files a commit touches, and nothing when nothing is staged;
+# "all" is every tracked file the path globs name. Set "all" once the
+# repository's markdown is reflowed (scripts/md-reflow --all), so CI judges
+# the whole tree.
+GROWTH_GUARDS_MD_SCOPE = "touched"
+
+# The markdown md-format and md-reflow take under --all, and the markdown
+# md-refs judges: space-separated shell globs against the full repo-relative
+# path. GROWTH_GUARDS_MD_EXCLUDES (default tools/md-excludes, pattern<TAB>reason
+# rows) drops vendored or generated markdown from both.
+GROWTH_GUARDS_MD_PATHS = "*.md"
+GROWTH_GUARDS_MD_REFS_PATHS = "AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
+
+# The source files the comments lane reads, a space-separated list of shell
+# globs against the full repo-relative path (`*` crosses `/`), replacing the
+# default extension list in CHECKS.md § comments. Add the shapes an
+# extension cannot name (`hooks/* */scripts/*`): a file with no extension
+# takes the grammar its shebang names. The lane is opt-in: name `comments`
+# in GROWTH_GUARDS_CHECKS to run it, and set GH_ISSUE_PATTERN (the github
+# skill's key) to the tracker's own key shape.
+# GROWTH_GUARDS_COMMENT_PATHS = ""
+
+# The comments lane's exclusion list, pattern<TAB>reason rows naming the
+# generated and vendored trees whose comments are not this repository's.
+GROWTH_GUARDS_COMMENT_EXCLUDES = "tools/comments-excludes"
 
 # Repo-local check the pre-commit shim runs LAST: a repo-root-relative
 # executable following the family exit contract (0 clean, 1 violations,

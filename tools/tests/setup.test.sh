@@ -31,7 +31,7 @@ new_fixture() { # NAME — a clone-shaped repo carrying the package and these to
   chmod +x "$R/tools/guard"
   printf '[env]\nGROWTH_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"\nGROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = "%s"\n' \
     "$REQUIRED_PATHS" >"$R/kendex.settings.toml"
-  printf '# fixture\n' >"$R/README.md"
+  printf '# fixture\n\n' >"$R/README.md"
   git -C "$R" init -q
   git -C "$R" symbolic-ref HEAD refs/heads/main
   git -C "$R" config user.email test@example.com

@@ -6,7 +6,9 @@
 # changelog-entries judges the changelog (fragments and the collated record
 # alike), todo-ban catches work markers, suppression-ban catches blanket
 # allows, conflict-markers catches merge markers, prose keeps history out of
-# the markdown agents load. What is here is what none of them ships.
+# the markdown agents load, md-format and md-refs hold that markdown to one
+# paragraph per line with live references, and the opt-in comments lane
+# judges source comments. What is here is what none of them ships.
 # Checks the working tree, not the staged index — accepted trade-off:
 # agents commit whole files; partial staging is out of scope.
 set -uo pipefail
@@ -243,9 +245,6 @@ done <<<"$render_changed"
 }
 
 # Structural invariants.
-[ "$(readlink .claude/CLAUDE.md 2>/dev/null)" = "../AGENTS.md" ] ||
-  say ".claude/CLAUDE.md must be a symlink to ../AGENTS.md"
-
 if [ -f Cargo.toml ] && cargo tree -p kendex-core -e normal 2>/dev/null | grep -qE '\btauri v'; then
   say "crates/core must not depend on tauri"
 fi
