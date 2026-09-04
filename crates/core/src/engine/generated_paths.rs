@@ -56,18 +56,14 @@ pub(super) fn plan(
             })
             .map(|shim| shim.path.clone()),
     );
-    if paths.is_empty() {
+    let path = root.join(".kendex-generated.json");
+    if paths.is_empty() && !path.exists() {
         return Ok(());
     }
-    let path = root.join(".kendex-generated.json");
     paths.insert(path.clone());
     let relative: BTreeSet<String> = paths
         .iter()
-        .filter_map(|path| {
-            path.strip_prefix(root)
-                .ok()
-                .map(|path| path.to_string_lossy().replace('\\', "/"))
-        })
+        .filter_map(|path| path.strip_prefix(root).ok().map(crate::paths::slashed))
         .collect();
     let mut text =
         serde_json::to_string(&relative).map_err(|error| crate::error::CoreError::JsonParse {

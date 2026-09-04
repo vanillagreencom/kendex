@@ -568,4 +568,7 @@ fn generated_inventory_tracks_renders_and_excludes_source() {
             .iter()
             .any(|path| path == ".agents/skills/generated/helper.sh")
     );
+    fs::write(f.project.join("kendex.toml"), "schema = 6\n[install]\nharnesses = [\"codex\"]\n[skills.authored]\nsource = \"in-place\"\n").unwrap();
+    apply_now(&f);
+    assert_eq!(read_paths(), vec![".kendex-generated.json".to_owned()]);
 }

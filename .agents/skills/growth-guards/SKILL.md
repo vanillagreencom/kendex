@@ -77,7 +77,7 @@ Arming and disarming apply to the whole repository. Disarm before removing the s
 
 ## Configuration
 
-Exclude immutable first-party sources, including applied SQL migrations, from the comments and prose lanes through their shared excludes lists. Keep preflight’s `applied-migration-edited` lane enabled as the authority on migration bytes.
+Exclude immutable first-party sources, including applied SQL migrations, from the comments and prose lanes through their shared excludes lists. Keep preflight’s `applied-migration-edited` lane enabled as the authority on migration bytes. Set `PREFLIGHT_MIGRATION_GLOBS` for excluded migration paths outside that lane’s defaults.
 
 | Key | Default | Meaning |
 |---|---|---|

@@ -71,10 +71,13 @@ pub fn audit(
 }
 
 /// Origin for display and report routing, distinct from mutation ownership.
+#[derive(Default)]
 pub struct Evidence {
     pub kind: Option<ItemKind>,
     pub source: String,
     pub repo: String,
+    pub source_commit: Option<String>,
+    pub rendered_hash: Option<String>,
 }
 
 /// A readable lock outranks declarations, which outrank installed metadata.
@@ -86,23 +89,10 @@ pub fn find(
     name: &str,
     kind: Option<ItemKind>,
 ) -> Option<Evidence> {
-    let entries: Vec<_> = records
-        .lock
-        .entries
-        .values()
-        .filter(|entry| entry.name == name && kind.is_none_or(|kind| kind == entry.kind))
-        .collect();
-    if !entries.is_empty() {
-        return agreed(
-            entries
-                .iter()
-                .map(|entry| Evidence {
-                    kind: Some(entry.kind),
-                    source: entry.source.clone(),
-                    repo: entry.source_repo.clone(),
-                })
-                .collect(),
-        );
+    match locked(&records.lock, name, kind) {
+        Recorded::Found(evidence) => return Some(evidence),
+        Recorded::Ambiguous => return None,
+        Recorded::Absent => {}
     }
     if let Some(manifest) = &records.manifest {
         let mut candidates = Vec::new();
@@ -123,6 +113,7 @@ pub fn find(
                     kind: Some(declared.kind),
                     source: declared.decl.source.clone(),
                     repo: declared.decl.source.clone(),
+                    ..Evidence::default()
                 });
                 continue;
             }
@@ -132,6 +123,7 @@ pub fn find(
                 kind: Some(declared.kind),
                 source: declared.decl.source.clone(),
                 repo,
+                ..Evidence::default()
             });
         }
         if !candidates.is_empty() {
@@ -162,10 +154,37 @@ pub fn find(
                 kind: Some(candidate),
                 source: repo.clone(),
                 repo,
+                ..Evidence::default()
             });
         }
     }
     agreed(candidates)
+}
+
+pub(crate) enum Recorded {
+    Absent,
+    Ambiguous,
+    Found(Evidence),
+}
+
+/// One lock lookup shared by origin display and report routing.
+pub(crate) fn locked(lock: &Lock, name: &str, kind: Option<ItemKind>) -> Recorded {
+    let candidates: Vec<_> = lock
+        .entries
+        .values()
+        .filter(|entry| entry.name == name && kind.is_none_or(|wanted| wanted == entry.kind))
+        .map(|entry| Evidence {
+            kind: Some(entry.kind),
+            source: entry.source.clone(),
+            repo: entry.source_repo.clone(),
+            source_commit: entry.source_commit.clone(),
+            rendered_hash: entry.rendered_hash.clone(),
+        })
+        .collect();
+    if candidates.is_empty() {
+        return Recorded::Absent;
+    }
+    agreed(candidates).map_or(Recorded::Ambiguous, Recorded::Found)
 }
 
 fn agreed(candidates: Vec<Evidence>) -> Option<Evidence> {
@@ -226,6 +245,7 @@ mod tests {
             kind: Some(kind),
             source: "cat".to_owned(),
             repo: repo.to_owned(),
+            ..Evidence::default()
         };
         let same = agreed(vec![
             evidence(ItemKind::Skill, "owner/repo"),

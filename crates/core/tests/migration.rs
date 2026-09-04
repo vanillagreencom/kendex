@@ -207,12 +207,17 @@ fn an_interrupted_apply_rolls_the_whole_scope_back() {
 #[allow(clippy::unwrap_used)]
 fn matching_renders_are_recorded_without_being_rewritten() {
     let f = fixture(&MANIFEST_SCHEMA.to_string());
+    let initialized = kendex_core::process::Hardened::git(&["init", "-q"], Some(f.project()))
+        .run()
+        .unwrap();
+    assert!(initialized.status.success());
     let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
     apply::execute(&f.env, &install.plan).unwrap();
     let rendered = f.project().join(".agents/skills/gh/SKILL.md");
     let before = fs::read(&rendered).unwrap();
     let lock_path = f.scope_lock();
     fs::remove_file(&lock_path).unwrap();
+    fs::remove_file(f.project().join(".kendex-generated.json")).unwrap();
 
     let recovery = plan_record_existing(&f.env, &f.scope).unwrap();
     assert_eq!(recovery.plan.ops.len(), 1, "only the record may change");

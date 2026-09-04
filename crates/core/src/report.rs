@@ -12,7 +12,7 @@
 //! `gh issue create --repo` and a GitHub issue-creation URL each
 //! take `owner/repo`, never the URL a subscription may be spelled with.
 
-use crate::lock::{Lock, LockEntry};
+use crate::lock::Lock;
 use crate::model::{ItemKind, Scope};
 use crate::source_ref::{owner_repo, repo_identity};
 
@@ -55,32 +55,8 @@ pub fn resolve(
     upstream: &str,
 ) -> ResolvedRoute {
     let mut records = crate::ownership::read(env, scope);
-    let recorded = route(&records.lock, name, kind, upstream);
-    if records
-        .lock
-        .entries
-        .values()
-        .any(|entry| entry.name == name && kind.is_none_or(|wanted| wanted == entry.kind))
-    {
-        return ResolvedRoute {
-            route: recorded,
-            warnings: records.warnings,
-        };
-    }
-    let route =
-        crate::ownership::find(env, scope, &mut records, name, kind).map_or(recorded, |evidence| {
-            let wanted = repo_identity(upstream);
-            let owned = repo_identity(&evidence.repo) == wanted;
-            Route {
-                kendex_owned: owned,
-                repo: owned.then(|| filing_target(upstream)),
-                label: (owned && wanted == repo_identity(DEFAULT_UPSTREAM))
-                    .then(|| derive_label(name, evidence.kind).to_owned()),
-                kind: evidence.kind,
-                source: None,
-                rendered: None,
-            }
-        });
+    let evidence = crate::ownership::find(env, scope, &mut records, name, kind);
+    let route = from_evidence(evidence, name, kind, upstream);
     ResolvedRoute {
         route,
         warnings: records.warnings,
@@ -100,38 +76,39 @@ pub fn derive_label(name: &str, kind: Option<ItemKind>) -> &'static str {
 }
 
 pub fn route(lock: &Lock, name: &str, kind: Option<ItemKind>, upstream: &str) -> Route {
-    let matching: Vec<&LockEntry> = lock
-        .entries
-        .values()
-        .filter(|entry| entry.name == name && kind.is_none_or(|k| k == entry.kind))
-        .collect();
-    // Provenance, not delivery. One entry recorded from anywhere else — a
-    // second marketplace, a path, `local` — means the name does not name a
-    // kendex asset on its own, and the report stays with the user's repo
-    // rather than going to a stranger's.
+    let evidence = match crate::ownership::locked(lock, name, kind) {
+        crate::ownership::Recorded::Found(evidence) => Some(evidence),
+        crate::ownership::Recorded::Absent | crate::ownership::Recorded::Ambiguous => None,
+    };
+    from_evidence(evidence, name, kind, upstream)
+}
+
+fn from_evidence(
+    evidence: Option<crate::ownership::Evidence>,
+    name: &str,
+    kind: Option<ItemKind>,
+    upstream: &str,
+) -> Route {
     let wanted = repo_identity(upstream);
-    let owned = !matching.is_empty()
-        && matching
-            .iter()
-            .all(|e| repo_identity(&e.source_repo) == wanted);
-    let kind = kind.or_else(|| agreed_kind(&matching));
-    let recorded = matching.first();
+    let owned = evidence
+        .as_ref()
+        .is_some_and(|evidence| repo_identity(&evidence.repo) == wanted);
+    let kind = kind.or_else(|| evidence.as_ref().and_then(|evidence| evidence.kind));
     Route {
         kendex_owned: owned,
         repo: owned.then(|| filing_target(upstream)),
         label: (owned && wanted == repo_identity(DEFAULT_UPSTREAM))
             .then(|| derive_label(name, kind).to_owned()),
         kind,
-        source: recorded.and_then(|entry| {
-            let commit = entry.source_commit.as_deref()?;
-            Some(format!(
-                "{}@{}",
-                filing_target(&entry.source_repo),
-                short(commit)
-            ))
+        source: evidence.as_ref().and_then(|evidence| {
+            evidence
+                .source_commit
+                .as_deref()
+                .map(|commit| format!("{}@{}", filing_target(&evidence.repo), short(commit)))
         }),
-        rendered: recorded
-            .and_then(|entry| entry.rendered_hash.as_deref())
+        rendered: evidence
+            .as_ref()
+            .and_then(|evidence| evidence.rendered_hash.as_deref())
             .map(short),
     }
 }
@@ -149,15 +126,10 @@ fn filing_target(upstream: &str) -> String {
     owner_repo(upstream).unwrap_or_else(|| upstream.to_owned())
 }
 
-/// The one kind the matching entries are, when they are all one kind.
-fn agreed_kind(matching: &[&LockEntry]) -> Option<ItemKind> {
-    let first = matching.first()?.kind;
-    matching.iter().all(|e| e.kind == first).then_some(first)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lock::LockEntry;
 
     fn entry(name: &str, kind: ItemKind, source_repo: &str) -> LockEntry {
         LockEntry {

@@ -63,7 +63,15 @@ pub fn plan_record_existing(env: &Env, scope: &Scope) -> Result<EngineReport> {
             });
         }
     }
-    let recovered = audit_without_record(env, scope, &manifest)?;
+    let mut recovered = audit_without_record(env, scope, &manifest)?;
+    // CI metadata can be regenerated after the durable record is restored.
+    if let Scope::Project { root } = scope {
+        let inventory = root.join(".kendex-generated.json");
+        recovered.report.plan.ops.retain(|planned| {
+            !matches!(&planned.op,
+            crate::apply::Op::WriteFile { path, .. } if path == &inventory)
+        });
+    }
     let every_declaration_recorded =
         planned_declarations(env, scope, &manifest)
             .iter()
