@@ -77,6 +77,8 @@ Arming and disarming apply to the whole repository. Disarm before removing the s
 
 ## Configuration
 
+Exclude immutable first-party sources, including applied SQL migrations, from the comments and prose lanes through their shared excludes lists. Keep preflight’s `applied-migration-edited` lane enabled as the authority on migration bytes.
+
 | Key | Default | Meaning |
 |---|---|---|
 | `GROWTH_GUARDS_CHECKS` | `todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs` | Batch check list (`commit-msg` never batches). |
@@ -98,7 +100,7 @@ Arming and disarming apply to the whole repository. Disarm before removing the s
 | `GROWTH_GUARDS_MD_SCOPE` | `touched` | What the markdown lanes judge with neither `--staged` nor `--all`: `touched` is the staged files, and nothing when nothing is staged; `all` is every tracked matching file. |
 | `DECISIONS_DIR`, `DECISION_ID_PREFIX`, `DECISION_ID_WIDTH` | `docs/decisions`, `D`, `3` | The decider skill's scheme, read by md-refs to judge decision IDs; IDs are not judged where the directory is not tracked. |
 | `GROWTH_GUARDS_COMMENT_PATHS` | the extensions in [CHECKS.md § comments](CHECKS.md#comments) | Space-separated globs naming the source files the comments lane scans, matched against the full repo-relative path (`*` crosses `/`); replaces the default. |
-| `GROWTH_GUARDS_COMMENT_EXCLUDES` | `tools/comments-excludes` | comments exclusion list (generated and vendored trees). `GH_ISSUE_PATTERN` (the github skill's key) is the issue-id shape; empty keeps `[A-Z]+-[0-9]+`. |
+| `GROWTH_GUARDS_COMMENT_EXCLUDES` | `tools/comments-excludes` | comments exclusion list (generated, vendored, and immutable first-party files). `GH_ISSUE_PATTERN` (the github skill's key) is the issue-id shape; empty keeps `[A-Z]+-[0-9]+`. |
 | `GROWTH_GUARDS_COMMENT_REFERENCE_TYPES` | `issue-id issue-number date` | Reference classes the comments lane checks; empty disables this half. |
 | `GROWTH_GUARDS_COMMENT_REVISION_WORDS` | [CHECKS.md § comments](CHECKS.md#comments) | POSIX ERE alternatives for revision narration; empty disables this half. |
 | `GROWTH_GUARDS_COMMIT_TYPES` | `build chore ci docs feat fix perf refactor revert style test` | Accepted commit types. |
