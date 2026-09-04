@@ -3,7 +3,7 @@
 # name: doc-drift-check
 # event: Stop
 # matcher:
-# description: Blocks a stop once per session when code changed under a directory a doc covers and no covering doc changed. A directory is covered by a tracked non-root `AGENTS.md` at or above it (the nearest one counts) and by every `docs/architecture/*.md` whose `Covers:` line names an ancestor (space- or comma-separated repo-relative directories, trailing slash optional). Markdown paths are never code. The block message names each doc to confirm or update; the session is then marked in `<git common dir>/kendex/doc-drift/<session_id>` so later stops in that session pass, and `stop_hook_active` true passes outright. Claude Code only: Codex has no Stop event, and Pi's turn-end dispatch does not exist yet.
+# description: Blocks a stop once per session when code changed under a directory a doc covers and no covering doc changed. Changed means every path that differs between the working tree and the branch's merge-base with the default branch (`origin/HEAD`, else `main`, else `master`), committed or not, plus untracked non-ignored paths; on the default branch itself, or where no merge-base resolves, the working tree alone, and the block message says which. A directory is covered by a tracked non-root `AGENTS.md` at or above it (the nearest one counts) and by every `docs/architecture/*.md` whose `Covers:` line names an ancestor (space- or comma-separated repo-relative directories, trailing slash optional). Markdown paths are never code. The block message names each doc to confirm or update; the session is then marked in `<git common dir>/kendex/doc-drift/<session_id>` so later stops in that session pass, and `stop_hook_active` true passes outright. Claude Code only: Codex has no Stop event, and Pi's turn-end dispatch does not exist yet.
 # safety: Reads git state and the docs; the only write is the per-session marker under the git common dir. Exit 2 never suggests bypassing — it names the docs and asks for them to be confirmed or updated. jq is required to read the session id; without it a warranted block cannot be recorded, so it is refused each time until the docs change.
 # timeout: 30
 # harnesses: [claude-code]
@@ -33,14 +33,74 @@ git_failed() { # SUBCOMMAND OUTPUT — an unreadable changed set is not an empty
 # whose metadata it cannot read, and the hook has no way to tell which.
 REPO_ROOT=$(git rev-parse --show-toplevel 2>&1) || git_failed 'rev-parse' "$REPO_ROOT"
 
-# What counts as changed: the worktree, the index, and untracked non-ignored
-# paths. Without that last set a stop whose only work is a new file presents
-# an empty changed set and skips the gate entirely. `-z` asks for the paths
-# themselves. Line-oriented git output C-quotes a non-ASCII path, and a
-# quoted path ends in a quote rather than in its own suffix.
-CHANGED=$(git diff --name-only -z 2>&1 | tr '\0' '\n') || git_failed 'diff' "$CHANGED"
-STAGED=$(git diff --cached --name-only -z 2>&1 | tr '\0' '\n') ||
-  git_failed 'diff --cached' "$STAGED"
+# What counts as changed is everything the branch did: every path that
+# differs between the working tree and the branch's merge-base with the
+# default branch, committed or not, plus untracked non-ignored paths. The
+# workflow commits before it stops, so a set read off the working tree
+# alone is empty at the one moment the gate matters. On the default branch
+# itself, or where no merge-base resolves, the working tree alone is
+# judged, and the block message says so.
+#
+# The probes for the default branch exit 1 when the ref is absent and
+# otherwise on a repository git cannot read; only the first is an answer.
+# The answer lands in REF rather than on stdout: a substitution would run
+# the probe in a subshell, where the exit on a failed git ends only that
+# subshell and reads to the caller as "absent".
+probe_ref() { # ARGS... — sets REF; returns 1 when the ref is absent
+  local rc=0
+  REF=$(git "$@" 2>&1) || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) git_failed "$1" "$REF" ;;
+  esac
+}
+DEFAULT=""
+if probe_ref symbolic-ref -q refs/remotes/origin/HEAD; then
+  DEFAULT="${REF#refs/remotes/}"
+elif probe_ref rev-parse -q --verify refs/heads/main; then
+  DEFAULT=main
+elif probe_ref rev-parse -q --verify refs/heads/master; then
+  DEFAULT=master
+fi
+# A detached HEAD has no branch name and is never the default branch.
+CURRENT=""
+if probe_ref symbolic-ref -q --short HEAD; then
+  CURRENT="$REF"
+fi
+
+BASE=""
+if [ -z "$DEFAULT" ]; then
+  JUDGED="the working tree alone: no origin/HEAD, main or master to compare against"
+elif [ "$CURRENT" = "${DEFAULT#origin/}" ]; then
+  JUDGED="the working tree alone: $CURRENT is the default branch"
+else
+  rc=0
+  BASE=$(git merge-base HEAD "$DEFAULT" 2>&1) || rc=$?
+  case "$rc" in
+    0) JUDGED="every change since $BASE, the merge-base with $DEFAULT" ;;
+    1)
+      BASE=""
+      JUDGED="the working tree alone: HEAD shares no history with $DEFAULT"
+      ;;
+    *) git_failed 'merge-base' "$BASE" ;;
+  esac
+fi
+
+# `-z` asks for the paths themselves. Line-oriented git output C-quotes a
+# non-ASCII path, and a quoted path ends in a quote rather than in its own
+# suffix. Against a base, one diff covers the worktree and the index both;
+# without one, the two are read separately. Untracked paths are added in
+# either case: without them a stop whose only work is a new file presents
+# an empty changed set and skips the gate entirely.
+if [ -n "$BASE" ]; then
+  CHANGED=$(git diff --name-only -z "$BASE" 2>&1 | tr '\0' '\n') || git_failed 'diff' "$CHANGED"
+  STAGED=""
+else
+  CHANGED=$(git diff --name-only -z 2>&1 | tr '\0' '\n') || git_failed 'diff' "$CHANGED"
+  STAGED=$(git diff --cached --name-only -z 2>&1 | tr '\0' '\n') ||
+    git_failed 'diff --cached' "$STAGED"
+fi
 UNTRACKED=$(git ls-files --others --exclude-standard --full-name -z -- :/ 2>&1 | tr '\0' '\n') ||
   git_failed 'ls-files' "$UNTRACKED"
 ALL_CHANGED=$(printf '%s\n%s\n%s' "$CHANGED" "$STAGED" "$UNTRACKED" | sort -u | sed '/^$/d')
@@ -148,6 +208,7 @@ fi
 # the same characters inside a transcript path or a cwd.
 if ! command -v jq >/dev/null 2>&1; then
   printf '%s' "$STALE" >&2
+  echo "doc-drift-check: judged $JUDGED" >&2
   echo "doc-drift-check: jq is not on PATH, so the session id cannot be read and this block cannot be recorded. Confirm each doc above still holds or update it, then finish." >&2
   exit 2
 fi
@@ -186,5 +247,6 @@ fi
 
 echo "doc-drift-check: code changed under directories these docs cover, and none of them changed:" >&2
 printf '%s' "$STALE" >&2
+echo "doc-drift-check: judged $JUDGED" >&2
 echo "Confirm each doc still holds or update it, then finish." >&2
 exit 2

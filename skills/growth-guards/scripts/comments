@@ -55,8 +55,9 @@ issue id matching GH_ISSUE_PATTERN, a three- or four-digit issue number
 after '#', a calendar date (20YY-MM-DD), or a word narrating a revision
 (added, new, existing code, phase N, previously, no longer, used to,
 reverted, originally, historically, at the time, an earlier, earlier round,
-incident). Matching is case-insensitive and whole-word. String literals and
-code are never judged; markdown is the prose lane's.
+incident). Words are matched case-insensitively and whole-word; the issue id
+as written, lowered and uppered (write the pattern in one case). String
+literals and code are never judged; markdown is the prose lane's.
 
   (default)   every tracked file the configured globs name, from the index
   --staged    only the lines the staged diff ADDS (pre-commit scope)
