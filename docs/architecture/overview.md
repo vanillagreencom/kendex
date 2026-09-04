@@ -1,6 +1,6 @@
 # kendex architecture
 
-kendex is a desktop app (Rust + Tauri + React) and a thin CLI over one Rust core, managing AI coding-harness customizations (agents, skills, hooks, commands, MCP servers, plugins, Pi extensions) across a global scope and per-project scopes. Claude Code is first-class; codex, opencode, cursor, pi, gemini and copilot sit behind the same adapter seam. There is no server: manifests, locks and the harnesses' own directories are the whole state.
+kendex is a desktop app (Rust + Tauri + React) and a thin CLI over one Rust core, managing AI coding-harness customizations across a global scope and per-project scopes. Claude Code is first-class; codex, opencode, cursor, pi, gemini and copilot sit behind the same adapter seam. There is no server: manifests, locks and the harnesses' own directories are the whole state.
 
 ## The one idea
 
@@ -34,7 +34,7 @@ Four verbs over one model: scan, declare, diff, apply. Scan reads harness-native
 5. Enable and disable are lossless: file-backed kinds toggle by rename, kinds inside a shared config file toggle by a structured edit that keeps every unrelated key. Enforced by `crates/core/tests/invariants.rs::invariant_5_toggle_is_lossless_rename`.
 6. Never touch the unowned: unmanaged files are reported, never deleted; a foreign symlink is a conflict; ownership is read from the positions lock entries wrote, never from a lock key alone. Enforced by `crates/core/tests/invariants.rs::invariant_6_never_touch_the_unowned` and `crates/core/tests/unmanaged_ownership.rs`.
 7. Applies are transactional: preconditions revalidate against observed hashes right before mutation, pre-images are journaled first, a failure rolls back, an interrupted apply recovers on next launch, and removals go to a trash. Enforced by `crates/core/tests/invariants.rs::invariant_7_applies_are_transactional`, `crates/core/tests/migration.rs::an_interrupted_apply_rolls_the_whole_scope_back` and `crates/app/tests/recovery.rs`.
-8. One writer per scope: every apply holds an OS-level scope lock, journal recovery runs under it, and a busy scope is an error. Enforced by `crates/core/tests/invariants.rs::invariant_8_one_writer_per_scope`.
+8. One writer per scope: every apply holds an OS-level scope lock, journal recovery runs under it, and a busy scope is an error. Enforced by `crates/core/tests/invariants.rs::invariant_8_one_writer_per_scope` for the refusal; recovery under the lock is not mechanically enforced.
 9. kendex never stages, commits or resets in a repository it did not create; managed scopes are the only writable surface. Not mechanically enforced.
 10. In-place edits are byte-faithful: an edit changes the keys it names and nothing else, newline included, and a file that cannot be read is refused. The one exception, a repositioned list entry losing keys the model does not carry, is stated in `crates/core/src/manifest/fold.rs`. Enforced by `crates/core/tests/byte_faithful.rs::every_config_edit_is_byte_stable_on_reapply`.
 11. Validation precedes mutation: a rejected operation leaves manifest, lock and install tree byte-identical, and every rendering is read back through the target harness's own loader rules inside plan preview. Enforced by `crates/core/tests/byte_faithful.rs::a_refused_apply_leaves_every_surface_byte_identical` and `crates/core/src/render/validate/tests.rs`.

@@ -1,0 +1,1 @@
+- `kendex add --pi-extension` names the real path (declare the package in `kendex.toml`, then `kendex update-pi`) instead of saying support is coming.
