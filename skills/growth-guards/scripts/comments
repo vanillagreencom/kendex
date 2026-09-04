@@ -45,6 +45,8 @@ source "$SCRIPT_DIR/lib/comment-text.sh"
 PATHS_DEFAULT="*.rs *.go *.c *.h *.cc *.cpp *.hpp *.java *.kt *.kts *.swift *.wgsl *.js *.mjs *.cjs *.jsx *.ts *.tsx *.css *.scss *.less *.sh *.bash *.zsh *.py *.rb *.toml *.yml *.yaml *.sql *.lua *.html *.htm *.xml *.svg *.vue *.svelte Makefile */Makefile *.mk Dockerfile */Dockerfile"
 ISSUE_DEFAULT='[A-Z]+-[0-9]+'
 EXCLUDES_DEFAULT="tools/comments-excludes"
+REFERENCE_TYPES_DEFAULT="issue-id issue-number date"
+REVISION_WORDS_DEFAULT='previously|used to|no longer|reverted|an earlier|earlier round|incident|historically|originally|at the time|existing code'
 
 usage() {
   cat <<EOF
@@ -52,10 +54,9 @@ usage: comments [--staged] [--excludes FILE]
 
 A history reference in the comment text of a tracked source file fails: an
 issue id matching GH_ISSUE_PATTERN, a three- or four-digit issue number
-after '#', a calendar date (20YY-MM-DD), or a word narrating a revision
-(added, new, existing code, phase N, previously, no longer, used to,
-reverted, originally, historically, at the time, an earlier, earlier round,
-incident). Words are matched case-insensitively and whole-word; the issue id
+after '#', a calendar date (20YY-MM-DD), or a configured word narrating a
+revision. Reference types and revision words are separate settings, so either
+class can run alone. Words are matched case-insensitively and whole-word; the issue id
 as written, lowered and uppered (write the pattern in one case). String
 literals and code are never judged; markdown is the prose lane's.
 
@@ -69,6 +70,13 @@ kendex.settings.toml [env] > default):
                                    (default: the extensions in CHECKS.md)
   GROWTH_GUARDS_COMMENT_EXCLUDES   exclusion-list path
                                    (default $EXCLUDES_DEFAULT)
+  GROWTH_GUARDS_COMMENT_REFERENCE_TYPES
+                                   space-separated subset of: issue-id,
+                                   issue-number, date
+                                   (default $REFERENCE_TYPES_DEFAULT)
+  GROWTH_GUARDS_COMMENT_REVISION_WORDS
+                                   POSIX ERE alternatives; empty disables
+                                   revision narration
   GH_ISSUE_PATTERN                 POSIX ERE for an issue id; empty keeps
                                    the default ($ISSUE_DEFAULT)
 Flag --excludes overrides the path setting.
@@ -107,6 +115,8 @@ ISSUE_ERE="$(gg_setting GH_ISSUE_PATTERN "")" || exit 2
 # Empty is the github skill's "unconfigured", which leaves each reader its
 # own default — this lane's is the generic key shape.
 [ -n "$ISSUE_ERE" ] || ISSUE_ERE="$ISSUE_DEFAULT"
+REFERENCE_TYPES="$(gg_setting GROWTH_GUARDS_COMMENT_REFERENCE_TYPES "$REFERENCE_TYPES_DEFAULT")" || exit 2
+REVISION_WORDS="$(gg_setting GROWTH_GUARDS_COMMENT_REVISION_WORDS "$REVISION_WORDS_DEFAULT")" || exit 2
 gg_tmpdir
 
 # The shapes. Word boundaries are non-word characters rather than \< and \>,
@@ -116,11 +126,27 @@ gg_tmpdir
 # digit so '#12345' and a colour token pass. The issue id is matched against
 # the text as written, lowered and uppered, which is case-insensitivity for
 # a pattern written in any one case.
-WORD='previously|used to|no longer|reverted|an earlier|earlier round|incident|historically|originally|at the time|added|new|existing code|phase [0-9]+'
 DATE_ERE='20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
 HASH_ERE='#[0-9][0-9][0-9][0-9]?([^0-9A-Fa-f]|$)'
-WORD_ERE="(^|[^A-Za-z0-9_])($WORD)([^A-Za-z0-9_]|\$)"
+WORD_ERE="(^|[^A-Za-z0-9_])($REVISION_WORDS)([^A-Za-z0-9_]|\$)"
 ISSUE_BOUNDED="(^|[^A-Za-z0-9_])($ISSUE_ERE)([^A-Za-z0-9_]|\$)"
+CHECK_ISSUE=0
+CHECK_HASH=0
+CHECK_DATE=0
+for reference_type in $REFERENCE_TYPES; do
+  case "$reference_type" in
+    issue-id) CHECK_ISSUE=1 ;;
+    issue-number) CHECK_HASH=1 ;;
+    date) CHECK_DATE=1 ;;
+    *) gg_config_error "GROWTH_GUARDS_COMMENT_REFERENCE_TYPES contains unknown type '$(gg_scrubbed "$reference_type")'" ;;
+  esac
+done
+[ "$CHECK_ISSUE" -eq 1 ] || ISSUE_BOUNDED='a^'
+[ "$CHECK_HASH" -eq 1 ] || HASH_ERE='a^'
+[ "$CHECK_DATE" -eq 1 ] || DATE_ERE='a^'
+[ -n "$REVISION_WORDS" ] || WORD_ERE='a^'
+[ -n "$REFERENCE_TYPES" ] || [ -n "$REVISION_WORDS" ] \
+  || gg_config_error "GROWTH_GUARDS_COMMENT_REFERENCE_TYPES and GROWTH_GUARDS_COMMENT_REVISION_WORDS cannot both be empty"
 # What the index pre-filter lists carriers by: a file whose whole content
 # matches no shape has no comment that does either.
 UNION_ERE="$DATE_ERE|$HASH_ERE|$WORD_ERE|$ISSUE_BOUNDED"
@@ -131,15 +157,21 @@ REMEDY="state the constraint that holds now and delete the story; the issue id, 
 # The patterns travel through the environment, never `-v`: awk decodes
 # backslash escapes in a -v value, so a pattern carrying one would arrive
 # changed.
-export DATE_ERE HASH_ERE WORD_ERE ISSUE_BOUNDED
-probe_status=0
-LC_ALL=C awk 'BEGIN { if ("" ~ ENVIRON["ISSUE_BOUNDED"]) { } }' </dev/null 2>"$GG_TMP/awk.err" || probe_status=$?
-[ "$probe_status" -eq 0 ] && [ ! -s "$GG_TMP/awk.err" ] \
-  || gg_config_error "GH_ISSUE_PATTERN is not a POSIX ERE awk can read: '$(gg_scrubbed "$ISSUE_ERE")'"
-probe_status=0
-printf '' | LC_ALL=C grep -E -- "$UNION_ERE" >/dev/null 2>"$GG_TMP/grep.err" || probe_status=$?
-[ "$probe_status" -le 1 ] && [ ! -s "$GG_TMP/grep.err" ] \
-  || gg_config_error "GH_ISSUE_PATTERN is not a POSIX ERE grep can read: '$(gg_scrubbed "$ISSUE_ERE")'"
+export DATE_ERE HASH_ERE WORD_ERE ISSUE_BOUNDED CHECK_ISSUE CHECK_HASH CHECK_DATE
+probe_ere() { # VALUE KEY — require both engines to accept one configured ERE
+  local value="$1" key="$2" status=0
+  GG_PROBE_ERE="$value"
+  export GG_PROBE_ERE
+  LC_ALL=C awk 'BEGIN { if ("" ~ ENVIRON["GG_PROBE_ERE"]) { } }' </dev/null 2>"$GG_TMP/awk.err" || status=$?
+  [ "$status" -eq 0 ] && [ ! -s "$GG_TMP/awk.err" ] \
+    || gg_config_error "$key is not a POSIX ERE awk can read: '$(gg_scrubbed "$value")'"
+  status=0
+  printf '' | LC_ALL=C grep -E -- "$value" >/dev/null 2>"$GG_TMP/grep.err" || status=$?
+  [ "$status" -le 1 ] && [ ! -s "$GG_TMP/grep.err" ] \
+    || gg_config_error "$key is not a POSIX ERE grep can read: '$(gg_scrubbed "$value")'"
+}
+probe_ere "$ISSUE_BOUNDED" GH_ISSUE_PATTERN
+[ "$WORD_ERE" = 'a^' ] || probe_ere "$WORD_ERE" GROWTH_GUARDS_COMMENT_REVISION_WORDS
 
 # Which shape a comment line carries, one record per (line, shape):
 # "line<TAB>shape<TAB>text". Reads the extractor's "line<TAB>text" records.
@@ -154,10 +186,10 @@ classify() { # IN — records on stdout
       ln = $1
       text = substr($0, length(ln) + 2)
       low = tolower(text)
-      if (text ~ issue || low ~ issue || toupper(text) ~ issue) print ln, "issue id", text
-      if (text ~ date) print ln, "calendar date", text
-      if (text ~ hash) print ln, "issue number", text
-      if (low ~ word) print ln, "revision narration", text
+      if (ENVIRON["CHECK_ISSUE"] && (text ~ issue || low ~ issue || toupper(text) ~ issue)) print ln, "issue id", text
+      if (ENVIRON["CHECK_DATE"] && text ~ date) print ln, "calendar date", text
+      if (ENVIRON["CHECK_HASH"] && text ~ hash) print ln, "issue number", text
+      if (word != "a^" && low ~ word) print ln, "revision narration", text
     }
   ' "$1" || status=$?
   [ "$status" -eq 0 ] || gg_collection_error "could not classify the comment text (awk exit $status)"
@@ -166,6 +198,7 @@ classify() { # IN — records on stdout
 # The grammar a matched path takes, or the path named as unmeasured: a file
 # this lane cannot read is never folded into the scanned count.
 MATCHED=0
+GG_COMMENT_EXTRACT_ERRORS=0
 family_or_skip() { # PATH BLOBFILE — sets FAM; returns 1 when the path is named
   local status=0
   FAM="$(gg_comment_family "$1" "$2")" || status=$?
@@ -184,7 +217,12 @@ family_or_skip() { # PATH BLOBFILE — sets FAM; returns 1 when the path is name
 # line ALLOW admits (empty ALLOW admits every line). Counts in GG_VIOLATIONS.
 judge_blob() { # FAMILY PATH BLOBFILE ALLOW
   local fam="$1" f="$2" blob="$3" allow="$4" rec ln shape text
-  gg_comment_text "$fam" "$blob" "$f" >"$GG_TMP/text"
+  if ! gg_comment_text "$fam" "$blob" "$f" >"$GG_TMP/text"; then
+    gg_note_skip "$f" "comment text could not be extracted: $GG_COMMENT_ERROR"
+    GG_COMMENT_EXTRACT_ERRORS=$((GG_COMMENT_EXTRACT_ERRORS + 1))
+    MATCHED=$((MATCHED - 1))
+    return 0
+  fi
   classify "$GG_TMP/text" >"$GG_TMP/hits"
   while IFS= read -r rec; do
     ln="${rec%%"$GG_TAB"*}"
@@ -278,6 +316,10 @@ unmeasured() { # the qualifier for this run, empty when everything matched was r
 if [ "$MODE" = "staged" ]; then
   : >"$GG_TMP/skipped.z"
   staged_lane
+  if [ "$GG_COMMENT_EXTRACT_ERRORS" -gt 0 ]; then
+    echo "comments: scan incomplete — $GG_COMMENT_EXTRACT_ERRORS file(s) could not be scanned; $GG_VIOLATIONS history reference(s) found in $MATCHED scanned file(s)$(unmeasured)"
+    exit 2
+  fi
   if [ "$GG_VIOLATIONS" -gt 0 ]; then
     echo "comments: $GG_VIOLATIONS history reference(s) in comments added by the staged diff — excludes $EXCLUDES_FILE$(unmeasured)"
     exit 1
@@ -287,6 +329,10 @@ if [ "$MODE" = "staged" ]; then
 fi
 
 index_lane
+if [ "$GG_COMMENT_EXTRACT_ERRORS" -gt 0 ]; then
+  echo "comments: scan incomplete — $GG_COMMENT_EXTRACT_ERRORS file(s) could not be scanned; $GG_VIOLATIONS history reference(s) found in $MATCHED scanned file(s)$(unmeasured)"
+  exit 2
+fi
 if [ "$MATCHED" -eq 0 ]; then
   # Same two states prose tells apart: nothing matched at all, or everything
   # that matched was named as unmeasured.

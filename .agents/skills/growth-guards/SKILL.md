@@ -91,6 +91,7 @@ Arming and disarming apply to the whole repository. Disarm before removing the s
 | `GROWTH_GUARDS_CHANGELOG_RECORD` | `CHANGELOG.md` | The collated record file; empty switches that scope off. |
 | `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS` | *(empty)* | Globs whose change obliges a changelog entry, judged by `commit-msg`; empty switches the rule off. |
 | `GROWTH_GUARDS_PROSE_PATHS` | `SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md` | Space-separated globs naming the markdown the prose lane scans, matched against the full repo-relative path (`*` crosses `/`). |
+| `GROWTH_GUARDS_PROSE_REVISION_WORDS` | [CHECKS.md § prose](CHECKS.md#prose) | POSIX ERE alternatives for prose past-state words; empty disables the word class. |
 | `GROWTH_GUARDS_MD_PATHS` | `*.md` | Globs naming the markdown md-format and md-reflow take under `--all`. |
 | `GROWTH_GUARDS_MD_REFS_PATHS` | the `GROWTH_GUARDS_PROSE_PATHS` default | Globs naming the markdown md-refs judges under `--all`. |
 | `GROWTH_GUARDS_MD_EXCLUDES` | `tools/md-excludes` | Exclusion list both markdown lanes honour in every scope, and md-reflow under `--staged` and `--all`. |
@@ -98,6 +99,8 @@ Arming and disarming apply to the whole repository. Disarm before removing the s
 | `DECISIONS_DIR`, `DECISION_ID_PREFIX`, `DECISION_ID_WIDTH` | `docs/decisions`, `D`, `3` | The decider skill's scheme, read by md-refs to judge decision IDs; IDs are not judged where the directory is not tracked. |
 | `GROWTH_GUARDS_COMMENT_PATHS` | the extensions in [CHECKS.md § comments](CHECKS.md#comments) | Space-separated globs naming the source files the comments lane scans, matched against the full repo-relative path (`*` crosses `/`); replaces the default. |
 | `GROWTH_GUARDS_COMMENT_EXCLUDES` | `tools/comments-excludes` | comments exclusion list (generated and vendored trees). `GH_ISSUE_PATTERN` (the github skill's key) is the issue-id shape; empty keeps `[A-Z]+-[0-9]+`. |
+| `GROWTH_GUARDS_COMMENT_REFERENCE_TYPES` | `issue-id issue-number date` | Reference classes the comments lane checks; empty disables this half. |
+| `GROWTH_GUARDS_COMMENT_REVISION_WORDS` | [CHECKS.md § comments](CHECKS.md#comments) | POSIX ERE alternatives for revision narration; empty disables this half. |
 | `GROWTH_GUARDS_COMMIT_TYPES` | `build chore ci docs feat fix perf refactor revert style test` | Accepted commit types. |
 | `GROWTH_GUARDS_SUBJECT_MAX` | `72` | Characters allowed in a hand-written commit header. |
 | `GROWTH_GUARDS_PRE_COMMIT_LOCAL` | *(empty)* | Repo-root-relative executable the pre-commit shim runs last. |

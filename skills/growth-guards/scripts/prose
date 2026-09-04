@@ -47,6 +47,7 @@ source "$SCRIPT_DIR/lib/settings.sh"
 PATHS_CORE="SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md"
 PATHS_ARCH="docs/architecture/*.md"
 PATHS_DEFAULT="$PATHS_CORE $PATHS_ARCH"
+REVISION_WORDS_DEFAULT='previously|used to|no longer|reverted|an earlier|earlier round|incident|historically|originally|at the time'
 
 usage() {
   cat <<EOF
@@ -68,6 +69,9 @@ kendex.settings.toml [env] > default):
   GROWTH_GUARDS_MD_EXCLUDES   exclusion list, pattern<TAB>reason per line,
                               shared with md-format and md-refs
                               (default tools/md-excludes)
+  GROWTH_GUARDS_PROSE_REVISION_WORDS
+                              POSIX ERE alternatives for past-state words;
+                              empty disables this part of the check
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF
@@ -112,8 +116,11 @@ gg_load_excludes "$EXCLUDES"
 # trailing class excludes hex digits, so longer numbers and colour values pass.
 # Three- and four-digit shorthand still fires, which is the one collision the
 # shape cannot resolve.
-WORD='previously|used to|no longer|reverted|an earlier|earlier round|incident|historically|originally|at the time'
-PROSE_ERE="20[0-9]{2}-[0-9]{2}-[0-9]{2}|#[0-9]{3,4}([^0-9A-Fa-f]|\$)|(^|[^[:alnum:]_])($WORD)([^[:alnum:]_]|\$)"
+REVISION_WORDS="$(gg_setting GROWTH_GUARDS_PROSE_REVISION_WORDS "$REVISION_WORDS_DEFAULT")" || exit 2
+PROSE_ERE="20[0-9]{2}-[0-9]{2}-[0-9]{2}|#[0-9]{3,4}([^0-9A-Fa-f]|\$)"
+if [ -n "$REVISION_WORDS" ]; then
+  PROSE_ERE="$PROSE_ERE|(^|[^[:alnum:]_])($REVISION_WORDS)([^[:alnum:]_]|\$)"
+fi
 
 gg_tmpdir
 

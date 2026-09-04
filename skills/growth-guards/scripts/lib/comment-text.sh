@@ -68,6 +68,7 @@ gg_comment_family() { # PATH BLOBFILE — family token on stdout, empty when non
 # name a diagnostic gives the file; FILE is the blob it reads.
 gg_comment_text() { # FAMILY FILE PATH — records on stdout
   local fam="$1" file="$2" path="$3" status=0 reason
+  GG_COMMENT_ERROR=""
   local base=c rust=0 tmpl=0 shell=0 esc_single=1 triple=0 str_multi=0
   case "$fam" in
     c) ;;
@@ -227,6 +228,7 @@ gg_comment_text() { # FAMILY FILE PATH — records on stdout
   ' "$file" 2>"$GG_TMP/extract.err" || status=$?
   if [ "$status" -ne 0 ]; then
     reason="$(LC_ALL=C tr '\n' ' ' <"$GG_TMP/extract.err")"
-    gg_collection_error "could not extract the comment text of $(gg_shown "$path"): ${reason:-awk exit $status}"
+    GG_COMMENT_ERROR="${reason:-awk exit $status}"
+    return "$status"
   fi
 }
