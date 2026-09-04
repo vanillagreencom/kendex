@@ -27,6 +27,7 @@ What changed, what you saw or asserted to verify it, and any framework invariant
 ## Required Skills
 
 Read each before acting:
+
 - code-quality: .agents/skills/code-quality/SKILL.md
 - decider: .agents/skills/decider/SKILL.md
 - dev: .agents/skills/dev/SKILL.md

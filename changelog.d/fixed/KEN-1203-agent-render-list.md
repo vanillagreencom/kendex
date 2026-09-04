@@ -1,0 +1,1 @@
+- An agent's rendered Required Skills list is preceded by a blank line, so the render passes the markdown format lane every harness reads it under.

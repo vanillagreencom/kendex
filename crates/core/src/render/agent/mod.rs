@@ -248,7 +248,7 @@ pub fn skills_prose(agent: &EffectiveAgent, skill_root_hint: &str) -> Option<Str
     if agent.skills.is_empty() {
         return None;
     }
-    let mut out = String::from("## Required Skills\n\nRead each before acting:\n");
+    let mut out = String::from("## Required Skills\n\nRead each before acting:\n\n");
     for skill in &agent.skills {
         out.push_str(&format!("- {skill}: {skill_root_hint}/{skill}/SKILL.md\n"));
     }
