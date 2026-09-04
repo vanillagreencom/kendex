@@ -156,15 +156,16 @@ pub struct ItemWarning {
 }
 
 /// Whether the pass could account for the full declared installation set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DeclarationStatus {
+    #[default]
     Complete,
     Incomplete,
 }
 
 impl DeclarationStatus {
     pub(super) fn of(state: &super::desired::DesiredState) -> Self {
-        if state.notes.is_empty()
+        if state.declaration_status == Self::Complete
             && state.refused.is_empty()
             && state.unreadable_catalogs.is_empty()
             && state.rev_conflicts.is_empty()

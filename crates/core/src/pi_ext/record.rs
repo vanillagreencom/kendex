@@ -1,4 +1,12 @@
-use super::*;
+//! Carrier provenance and byte comparisons share one record builder.
+
+use std::path::{Path, PathBuf};
+
+use crate::env::Env;
+use crate::error::{CoreError, Result};
+
+use super::files::package_path;
+use super::{find_by_package_name, installed_hash, package_hash};
 
 /// One declared Pi package resolved to the catalog bytes and provenance that
 /// installation, verification, recovery, and report routing share.

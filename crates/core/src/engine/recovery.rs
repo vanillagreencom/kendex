@@ -1,4 +1,13 @@
-use super::*;
+//! Recovery proves installed bytes and writes only their install record.
+
+use crate::apply::Plan;
+use crate::env::Env;
+use crate::error::Result;
+use crate::lock::{Lock, LockFile, lock_path};
+use crate::manifest::{self, Manifest};
+use crate::model::Scope;
+
+use super::{DeclarationStatus, DriftState, EngineReport, PlanOptions, owned, plan_scope, targets};
 
 /// A read-only audit and the ownership entries proven by current source and
 /// disk bytes when no readable lock is available.

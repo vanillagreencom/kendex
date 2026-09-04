@@ -289,6 +289,54 @@ fn recovery_rechecks_render_bytes_before_recording() {
     );
 }
 
+#[test]
+fn recovery_accepts_informational_dependency_notes() {
+    let f = fixture(&MANIFEST_SCHEMA.to_string());
+    let skills = f._tmp.path().join("catalog/skills");
+    fs::write(
+        skills.join("gh/SKILL.md"),
+        "---\nname: gh\ndescription: fixture\ndependencies:\n  required: [peer]\n---\nBody.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(skills.join("peer")).unwrap();
+    fs::write(
+        skills.join("peer/SKILL.md"),
+        "---\nname: peer\ndescription: fixture\ndependencies:\n  required: [gh]\n---\nBody.\n",
+    )
+    .unwrap();
+    let adapter = kendex_core::harness::adapter(kendex_core::model::HarnessId::Codex);
+    fs::create_dir_all(adapter.default_global_root(&f.env)).unwrap();
+    let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+    assert!(
+        install
+            .notes
+            .iter()
+            .any(|note| note.contains("also installs"))
+    );
+    apply::execute(&f.env, &install.plan).unwrap();
+    fs::remove_file(f.scope_lock()).unwrap();
+    let recovery = plan_record_existing(&f.env, &f.scope).unwrap();
+    apply::execute(&f.env, &recovery.plan).unwrap();
+    let lock = load_lock(&f.scope_lock()).unwrap();
+    assert!(lock.entries.values().any(|entry| entry.name == "peer"));
+}
+
+#[test]
+fn recovery_refuses_an_unresolved_required_dependency() {
+    let f = fixture(&MANIFEST_SCHEMA.to_string());
+    fs::write(
+        f._tmp.path().join("catalog/skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: fixture\ndependencies:\n  required: [missing]\n---\nBody.\n",
+    )
+    .unwrap();
+    let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+    apply::execute(&f.env, &install.plan).unwrap();
+    assert!(f.project().join(".agents/skills/gh/SKILL.md").is_file());
+    fs::remove_file(f.scope_lock()).unwrap();
+    assert!(plan_record_existing(&f.env, &f.scope).is_err());
+    assert!(!f.scope_lock().exists());
+}
+
 impl Fixture {
     fn project(&self) -> &std::path::Path {
         match &self.scope {

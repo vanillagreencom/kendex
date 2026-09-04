@@ -132,6 +132,7 @@ pub struct Refused {
 
 #[derive(Debug, Default)]
 pub struct DesiredState {
+    pub declaration_status: super::DeclarationStatus,
     pub items: Vec<Desired>,
     /// Sources that could not be read (pending remotes, missing paths) and
     /// declared items the source does not carry.
@@ -185,10 +186,15 @@ pub struct DesiredState {
 }
 
 impl DesiredState {
+    pub(super) fn mark_incomplete(&mut self) {
+        self.declaration_status = super::DeclarationStatus::Incomplete;
+    }
+
     /// A declaration whose source item cannot be parsed. Un-marking it keeps
     /// what it already installed out of the orphan sweep: a source file
     /// someone broke this morning must never uninstall a working artifact.
     pub(super) fn unreadable(&mut self, kind: ItemKind, name: &str, note: String) {
+        self.mark_incomplete();
         self.notes.push(note);
         self.processed.remove(&(kind, name.to_owned()));
     }
@@ -284,6 +290,7 @@ fn compute(
             };
             super::catalog::notes(&config, &decl.source, &mut state);
             let Some(item_path) = find_item(&sealed, &config, kind, name) else {
+                state.mark_incomplete();
                 state
                     .notes
                     .push(format!("{name}: not found in source '{}'", decl.source));

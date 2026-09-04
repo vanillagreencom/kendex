@@ -63,6 +63,7 @@ pub(super) fn no_harness_note(
     manifest: &Manifest,
     state: &mut DesiredState,
 ) {
+    state.mark_incomplete();
     let asked: Vec<&str> = decl
         .harnesses
         .as_ref()
