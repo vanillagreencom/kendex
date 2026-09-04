@@ -47,6 +47,10 @@ GROWTH_GUARDS_MD_SCOPE = "touched"
 # path. GROWTH_GUARDS_MD_EXCLUDES (default tools/md-excludes, pattern<TAB>reason
 # rows) drops vendored or generated markdown from both.
 GROWTH_GUARDS_MD_PATHS = "*.md"
+
+# The markdown md-refs judges under --all: the agent-loaded files and the
+# architecture docs, space-separated shell globs against the full
+# repo-relative path.
 GROWTH_GUARDS_MD_REFS_PATHS = "AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
 
 # The source files the comments lane reads, a space-separated list of shell
