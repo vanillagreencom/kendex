@@ -62,6 +62,8 @@ The package ships this list, most specific entry first because the first match w
 | `CLAUDE.md` and nested `*/CLAUDE.md` | 24k bytes |
 | nested `*/AGENTS.md` | 6k bytes |
 | `*/SKILL.md` | 24k bytes |
+| `README.md` | 16k bytes |
+| nested `*/README.md` | 12k bytes |
 | `*/workflows/*.md` | 40k bytes |
 | every other `*.md` | 64k bytes |
 | `tests/*`, `test/*`, `__tests__/*`, `tests.rs` and their `*/` forms, plus `*test_util.rs`, `*.test.*`, `*.spec.*` | 800 lines |

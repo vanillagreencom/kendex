@@ -22,6 +22,7 @@ pi-extensions/pi-agents-tmux/tests/session-lanes.test.ts	2439
 pi-extensions/pi-background-tasks/extensions/background-tasks.ts	965
 pi-extensions/pi-background-tasks/extensions/wake-events.ts	600
 pi-extensions/pi-background-tasks/package.json	421
+pi-extensions/pi-claude-bridge/README.md	13349b
 pi-extensions/pi-claude-bridge/src/assistant-stream.ts	729
 pi-extensions/pi-claude-bridge/src/config.ts	486
 pi-extensions/pi-claude-bridge/src/connectors.ts	750
@@ -37,6 +38,7 @@ pi-extensions/pi-extension-manager/extensions/manager/quick-settings-ui.ts	443
 pi-extensions/pi-output-policy/extensions/output-policy.ts	788
 pi-extensions/pi-output-policy/tests/output-policy.test.ts	881
 pi-extensions/pi-prompt-stash/extensions/prompt-stash.ts	479
+pi-extensions/pi-qol/README.md	13554b
 pi-extensions/pi-qol/extensions/qol.ts	983
 pi-extensions/pi-qol/extensions/qol/context-usage.ts	527
 pi-extensions/pi-qol/extensions/qol/rate-limit-auto-resume.ts	447
@@ -118,6 +120,7 @@ skills/second-opinion/scripts/second-opinion	2683
 skills/second-opinion/tests/cli-failure-gate.test.sh	1204
 skills/second-opinion/tests/lane-scratch-durability.test.sh	999
 skills/second-opinion/tests/review-dual-model.test.sh	1516
+skills/size-ratchet/README.md	14370b
 skills/size-ratchet/scripts/lib/settings.sh	546
 skills/size-ratchet/scripts/size-ratchet	1094
 skills/worktree/scripts/worktree	4545
