@@ -6,7 +6,7 @@ source "$SCRIPT_DIR/lib/settings.sh"
 TAB="$(printf '\t')"
 NL='
 '
-SHIPPED_CLASSES="docs/architecture/overview.md=12k;docs/architecture/*.md=16k;AGENTS.md=16k;CLAUDE.md=24k;*/AGENTS.md=6k;*/CLAUDE.md=24k;*/SKILL.md=24k;*/workflows/*.md=40k;*.md=64k;tests/*=800;*/tests/*=800;test/*=800;*/test/*=800;__tests__/*=800;*/__tests__/*=800;tests.rs=800;*/tests.rs=800;*test_util.rs=800;*.test.*=800;*.spec.*=800"
+SHIPPED_CLASSES="docs/architecture/overview.md=12k;docs/architecture/*.md=16k;AGENTS.md=16k;CLAUDE.md=24k;*/AGENTS.md=6k;*/CLAUDE.md=24k;*/SKILL.md=24k;*/workflows/*.md=40k;README.md=16k;*/README.md=12k;*.md=64k;tests/*=800;*/tests/*=800;test/*=800;*/test/*=800;__tests__/*=800;*/__tests__/*=800;tests.rs=800;*/tests.rs=800;*test_util.rs=800;*.test.*=800;*.spec.*=800"
 SHIPPED_FROZEN_CLASSES="*.md;tests/*;*/tests/*;test/*;*/test/*;__tests__/*;*/__tests__/*;tests.rs;*/tests.rs;*test_util.rs;*.test.*;*.spec.*"
 DEFAULT_EXCLUDES="CHANGELOG*.md${TAB}one long file is the documented norm; entries carry the rule"
 STAGED=0 ATTR_SCOPE=""

@@ -44,6 +44,7 @@ Build and validate the complete label set against the live inventory and the pro
 ```bash
 .agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description "[BODY]" --project "[PROJECT]" --labels "[LABELS]" --priority [PRIORITY] --estimate [ESTIMATE] --format=ids
 ```
+
 ```bash
 .agents/skills/linear/scripts/linear.sh issues block [BLOCKED_ID] --by [BLOCKER_ID] --reason "Plan dependency"
 ```

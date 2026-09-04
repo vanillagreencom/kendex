@@ -9,6 +9,7 @@ Left-click add fixed point, right-click remove fixed point.
 </div>
 
 You can run with cargo:
+
 ```
 cargo run --package sierpinski_triangle
 ```

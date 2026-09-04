@@ -36,6 +36,7 @@ Maintainability regressions, avoidable complexity, mechanism-level misses, god o
 ## Required Skills
 
 Read each before acting:
+
 - reviewer: .agents/skills/reviewer/SKILL.md
 
 ## Additional Instructions

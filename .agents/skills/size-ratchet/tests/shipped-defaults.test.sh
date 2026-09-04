@@ -129,6 +129,8 @@ mkbytes pkg/CLAUDE.md 30000
 mkbytes skills/x/SKILL.md 30000
 mkbytes skills/x/workflows/do.md 45000
 mkbytes docs/reference.md 70000
+mkbytes README.md 17000
+mkbytes pkg/README.md 13000
 mklines src/big.rs 500
 mklines src/tests/big.rs 500
 mkbytes docs/small.md 50000
@@ -145,6 +147,8 @@ for pair in \
   "skills/x/SKILL.md — 30000 bytes > threshold 24576 (class */SKILL.md)" \
   "skills/x/workflows/do.md — 45000 bytes > threshold 40960 (class */workflows/*.md)" \
   "docs/reference.md — 70000 bytes > threshold 65536 (class *.md)" \
+  "README.md — 17000 bytes > threshold 16384 (class README.md)" \
+  "pkg/README.md — 13000 bytes > threshold 12288 (class */README.md)" \
   "src/big.rs — 500 lines > threshold 400 (default)"; do
   has "$pair" && ok "shipped class: ${pair%% —*} is judged at its own threshold" \
     || bad "shipped class for ${pair%% —*}" "out=$OUT"

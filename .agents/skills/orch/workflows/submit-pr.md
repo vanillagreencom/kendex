@@ -130,8 +130,7 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
 
    `[ISSUE_TITLE]` comes from `linear.sh cache issues get [ISSUE_ID]` or `gh issue view [N] --json title --jq '.title'`.
 
-Once the PR exists, this run is a continuing action. Clear any stop left by an
-earlier capped run before entering another post-PR gate:
+Once the PR exists, this run is a continuing action. Clear any stop a capped run left before entering another post-PR gate:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.post_pr_stop = null'
@@ -221,9 +220,7 @@ For `off`, skip the wait and go to § 5 — the internal review, CI, and comment
 
    **Triage pass**: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 4 step 1` with managed context. It applies the external cap to its own fix pushes; what bounds this step is the Restart check.
 
-   **Restart check.** Every automatic path that would restart the wait passes
-   through the one atomic budget owner first. Resolve the authoritative head
-   immediately before each take so a triage push resets the counter:
+   **Restart check.** Every automatic path that would restart the wait passes through the one atomic budget owner first. Resolve the authoritative head immediately before each take so a triage push resets the counter:
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
@@ -238,17 +235,12 @@ For `off`, skip the wait and go to § 5 — the internal review, CI, and comment
    ```bash
    .agents/skills/orch/scripts/workflow-state post-pr-stop record [ISSUE_ID] review-round-cap review "[REMAINING_FEEDBACK]" [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
    ```
+
    ```bash
    .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
    ```
 
-   `ask` presents `Triage again` | `Force merge` | `Stop here`, with
-   `Triage again` recommended, before an automatic budget transition. A
-   standing `changes_requested` verdict on the current head outlives a
-   disposition. Only a dismissal or a newer review clears it. Under `ask`,
-   `Triage again` is the user's override for one more pass, `Force merge`
-   records the override and continues to step 2 with the § 6.1 gates applying,
-   and `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
+   `ask` presents `Triage again` | `Force merge` | `Stop here`, with `Triage again` recommended, before an automatic budget transition. A standing `changes_requested` verdict on the current head outlives a disposition. Only a dismissal or a newer review clears it. Under `ask`, `Triage again` is the user's override for one more pass, `Force merge` records the override and continues to step 2 with the § 6.1 gates applying, and `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
 
    **On `timeout` under `ask`**: `Keep waiting` goes to the Restart check; `Force merge` records the override and continues to step 2 with the § 6.1 gates still applying; `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
 
@@ -346,10 +338,7 @@ Ask once, naming what the diff touches and which gate is unmet: `Admin-merge pas
 
 **Skip if** managed → § 7.
 
-`MERGE_READY = false` records the unmet gate here, so § 7 returns a named stop
-instead of reading as complete; only the managed `start-worktree.md` § 5 caller
-recorded it before. `record-if-empty` keeps a precise upstream stop, and only
-`recorded` writes the file the post below sends:
+`MERGE_READY = false` records the unmet gate here, so § 7 returns a named stop instead of reading as complete; only the managed `start-worktree.md` § 5 caller recorded it before. `record-if-empty` keeps a precise upstream stop, and only `recorded` writes the file the post below sends:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state post-pr-stop record-if-empty [ISSUE_ID] merge-gates-unmet merge "[UNMET_GATE_AND_REMAINING_WORK]" [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md

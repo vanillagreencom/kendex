@@ -128,6 +128,12 @@ awk '
   }
   dropping && /^[[:space:]]*$/ { dropping = 0 }
   dropping { next }
+  # The body is one paragraph per line, so the wrap is planted here too: the
+  # phrase edit 7 quotes is split across two body lines, as a hand-wrapped
+  # body would carry it.
+  !/^[0-9]+\. / && /an upstream fix not yet re-vendored/ {
+    sub(/an upstream fix not yet re-vendored/, "an upstream fix not\nyet re-vendored")
+  }
   { print }
 ' "$TEMPLATE" >"$TMP/wrapped.md"
 grep -qF -- 'replace "cross-repo sync timing' "$TMP/wrapped.md" ||

@@ -1,23 +1,21 @@
-# pi-questions
+# @vanillagreen/pi-questions
 
-![Questions workflow](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-questions/assets/questions-workflow.gif)
-
-Structured inline questions for Pi. Multi-tab categories, built-in free-text fallback answers, and bridge-driven replies.
-
-## Highlights
-
-- `question` tool for multiple-choice question tabs with a bottom `Something else` free-text fallback row by default.
-- Editor-area UI by default; optional floating overlay.
-- OpenCode-style question UI: tab hints and highlighted active rows.
-- Compact answered tool output lists every category answer and expands inline to show each question with the selected choice marked.
-- Wrapped option labels stay readable in narrow panes.
-- `pi-session-bridge` integration lets external clients list, answer, and reject pending questions.
-- When the bridge is loaded, question opened/answered/rejected lifecycle points publish structured `question.*` activity broker events without adding chat messages.
-- Optional **Answers as user message** setting (off by default) mirrors each answered question into the conversation as a steer-delivered user message for observer extensions such as [pi-automode](https://github.com/czottmann/pi-automode).
-- `pi-qol` notification hook fires before prompts open.
-- RPC hosts without custom TUI support (Paseo, pi-web, VS Code bridges) get a sequential native-dialog fallback. See [RPC hosts](#rpc-hosts).
+Structured questions for Pi. The agent's `question` tool opens a multiple-choice questionnaire in the editor area, one tab per question with a free-text fallback row, and the answer comes back as selected labels or typed text.
 
 ## Install
+
+Declare the package in the scope's kendex manifest, then let `kendex update-pi` install it and register it in Pi's `settings.json`. For a project, in its `kendex.toml`:
+
+```toml
+[pi-extensions."@vanillagreen/pi-questions"]
+source = "kendex"
+```
+
+```bash
+kendex update-pi
+```
+
+The same declaration in `~/.config/kendex/kendex.toml` installs it for every project. `kendex update-pi --check` prints the plan and changes nothing.
 
 Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-questions):
 
@@ -25,60 +23,26 @@ Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-questions):
 pi install npm:@vanillagreen/pi-questions
 ```
 
-Via [kendex](https://github.com/vanillagreencom/kendex):
-
-```bash
-cargo install --git https://github.com/vanillagreencom/kendex.git kendex
-kendex add vanillagreencom/kendex --pi-extension pi-questions --harness pi -y
-```
-
 Restart Pi after installation.
 
-## RPC hosts
+## What it does
 
-Interactive Pi sessions render the questionnaire with the custom TUI described above. RPC hosts (Paseo, pi-web, VS Code-based bridges) cannot render custom TUI components, so when `ctx.mode === "rpc"` — or when `ctx.ui.custom()` resolves without producing a result — the extension walks the questions one at a time through the host's native dialogs instead:
+- The `question` tool asks one or more single-select or multi-select questions in one call, each on its own tab, with a submit tab added when more than one answer is needed.
+- Every question carries a bottom free-text row, labelled `Something else` unless the agent renames it, so there is always an escape hatch.
+- The questionnaire renders in the editor area by default or as a floating overlay, with tab hints and highlighted rows; a wrapped option stays readable in a narrow pane.
+- The answered tool output lists every answer compactly and expands inline to show each question with its choice marked.
+- In an RPC host that cannot render a custom TUI, the questions are walked one at a time through the host's native select and input dialogs; a host with neither returns an error instead of hanging.
+- With `pi-session-bridge` loaded, pending questions can be listed, answered and rejected from outside the session, and each open, answer and rejection publishes a `question.*` activity event.
+- With `answersAsUserMessage` on, every answered question is also delivered to the agent as one user message quoting the question and the answers, for observer extensions that read the conversation stream and ignore tool output.
+- A `pi-qol` notification fires before a question opens.
 
-- **Single-select** questions open a native select dialog listing the numbered options plus the free-text fallback row; picking the fallback row opens a text input for the custom answer.
-- **Multi-select** questions open a text input with the numbered option list folded into the prompt. Answer with comma-separated option numbers (e.g. `1,3`). Including the fallback row's number opens a follow-up input for the custom text; any non-numeric answer is taken whole as a custom answer. Out-of-range numbers re-prompt with an error note, and the option list (including the fallback row) is always shown in full.
-- Blank custom answers re-show the question rather than submitting an empty answer; repeated invalid input cancels after a few attempts.
-- Requests with several questions (or any multi-select) add a `Skip (no selection)` row to single-select dialogs and accept empty multi-select input — the same tabs the TUI lets you leave unanswered via its confirm tab. A lone single-select question cannot be skipped, matching the TUI.
-- Dismissing any dialog cancels the whole questionnaire, matching Escape in the TUI. Answers keep the same `QuestionResult` shape in both modes.
+## How it works
 
-If the host supports neither custom TUI components nor native select/input dialogs, the `question` tool returns a clear error instead of hanging. Headless non-RPC contexts (e.g. bridge-driven sessions) still leave requests pending for `pi-bridge` replies.
-
-## Settings
-
-Open `/extensions:settings`; settings appear under the **Questions** tab.
-
-Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted; before trust, kendex Pi extensions read user/global settings only.
-
-| Setting | What it does |
-| --- | --- |
-| Question UI mode | `editor` replaces the input area; `overlay` uses a floating popup. |
-| Overlay popup width | Overlay mode only. |
-| Overlay popup max height | Overlay mode only. Number or percentage string. |
-| Visible option rows | Rows shown before scrolling. |
-| Default question header | Fallback title when a request has no header. |
-| Bridge replies enabled | Allow `pi-session-bridge` to answer/reject pending questions. |
-| Answers as user message | Off by default. Mirror each answered question into the conversation as a steer-delivered user message. See [Answers as user messages](#answers-as-user-messages). |
-
-Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across kendex Pi extensions while leaving tool/model/user content unchanged.
-
-## Answers as user messages
-
-Off by default. Enable **Answers as user message** in `/extensions:settings` to have every answered question also delivered to the agent as one steer user message, with the question quoted and the chosen answers below:
-
-```
-> Which path?
-
-Use current branch
-```
-
-Multi-question requests emit one block per tab, prefixed with the tab header (`> Path: Which path?`); a tab with nothing selected shows `(no selection)`; cancelled or dismissed questions send nothing. Enable this when observer extensions such as [pi-automode](https://github.com/czottmann/pi-automode) need to read decisions from the conversation stream — they classify user messages but ignore tool output for security reasons. On Pi cores without `sendUserMessage` steer delivery, the setting silently falls back to tool output only.
+The tool normalises the request, opens the questionnaire through Pi's custom UI, and resolves with the answers, a cancellation, or a completion that arrived through the bridge while the questionnaire was open. Headless sessions leave the request pending for a bridge reply. Answers keep one shape in every mode: an array of selected labels per tab.
 
 ## Bridge control
 
-Requires `pi-session-bridge`. From any shell:
+With `pi-session-bridge` installed, from any shell:
 
 ```bash
 pi-bridge questions
@@ -86,4 +50,13 @@ pi-bridge answer --request-id que_example --answers '[["Stop here"]]'
 pi-bridge reject --request-id que_example
 ```
 
-See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for the `question` tool payload, result shapes, and free-text fallback semantics.
+## Customise
+
+Open `/extensions:settings`; settings appear under the **Questions** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted.
+
+- `enabled`: master toggle.
+- `renderMode`, `popupWidth`, `popupMaxHeight`, `optionRows`, `defaultHeader`, `glyphStyle`: where and how the questionnaire renders.
+- `bridgeRepliesEnabled`: whether `pi-session-bridge` may answer or reject a pending question.
+- `answersAsUserMessage`: mirror each answer into the conversation as a user message.
+
+Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).

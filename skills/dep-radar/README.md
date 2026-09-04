@@ -1,30 +1,27 @@
 # Dep Radar
 
-Dep Radar inventories pinned SDKs, binaries, packages, forks, model weights, and
-GitHub Actions. It checks upstream releases, updates eligible pins with their
-required fixes in one PR per surface, and writes a dated report for every run.
+A dependency sweep for a repository: it inventories every pinned SDK, binary, package, fork, model weight and GitHub Action, checks upstream for releases, applies the safe bumps, and reports the rest. For a project owner who wants pins kept current without reading every changelog.
+
+## Install
+
+```bash
+kendex add vanillagreencom/kendex --skill dep-radar
+```
+
+Needs the `github` skill for the PR flow. Add `worktree` when several bumps land in one run, one working copy per surface. Invoke it from your harness (`/dep-radar`), on demand or from a schedule.
+
+## What it does
+
+- Writes and maintains `docs/dep-radar/inventory.md`: every pinned surface with its pin location, upstream check, refresh procedure, verify command and risk tier.
+- Compares upstream against `docs/dep-radar/last-seen.json`, so a run where nothing moved costs a few registry calls.
+- Reads the real changelog for each surface that moved and classifies the change.
+- Opens one PR per surface for the automatic tier, carrying the bump plus the fixes its fallout needs, verified locally first.
+- Writes a dated report every run, with the bumps that need an owner decision.
 
 ## How it works
 
-The skill generates and maintains `docs/dep-radar/inventory.md` — every pinned
-surface with its pin location, upstream check, refresh procedure, verify
-command, and risk tier — then compares upstream against
-`docs/dep-radar/last-seen.json`, so a run where nothing moved costs a few
-registry calls and stops early. For each surface that did move it reads the real
-changelog, classifies the change, and for the automatic tier opens one PR per
-surface carrying the bump plus the fixes its fallout needs (API migrations,
-re-vendored bridges, tests, CI), verified locally before the PR opens. Every run
-ends with a dated report.
+Nothing in the skill is project-specific. Everything about your repository lives in the inventory, which the skill writes on the first run and keeps in sync afterwards. Review the risk tiers in that first inventory; they decide what gets bumped without asking.
 
-Nothing in the skill is project-specific. Everything about *your* repo — which
-packages are pinned where, how to refresh and verify each one, extra owner
-rules — lives in the inventory, which the skill writes on first run and keeps in
-sync afterwards.
+## Customise
 
-## Setup
-
-Install the `github` skill, which the PR flow requires; add `worktree` for
-per-surface branch isolation when several bumps land in one run. Invoke it from
-your AI coding harness (`/dep-radar`), on demand or from a schedule. On the first
-run, review the risk tiers in the generated inventory. No configuration keys are
-needed.
+- The inventory is the configuration: risk tiers, refresh procedures and owner rules are rows in `docs/dep-radar/inventory.md`. No settings keys.

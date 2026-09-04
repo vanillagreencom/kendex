@@ -56,41 +56,28 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 | `edit-comment <id> [body \| --body-file PATH]` | Edit existing comment. |
 | `sticky-comment <PR> [--verdict\|--analysis\|--body]` | Get bot sticky comment. `--verdict`: quick pass/fail. `--analysis`: deep recommendation. |
 
-CI waiting belongs to `.agents/skills/orch/scripts/ci-wait`; `await-mergeable`
-waits for merge-state resolution.
+CI waiting belongs to `.agents/skills/orch/scripts/ci-wait`; `await-mergeable` waits for merge-state resolution.
 
-Contracts: `label-add --help`, `git-https-auth --help`,
-`git-diff-summary --help`.
+Contracts: `label-add --help`, `git-https-auth --help`, `git-diff-summary --help`.
 
 ### PR Merge Outcomes
 
-Full contract: `pr-merge --help`.
-Exit `75` is volatile, so keep a watcher running until `MERGED`.
-If `can_merge` is false with no `issues`, read `state`.
-The thread gate is **Policy, not mechanism.** `--force` and the explicit-user-only `--admin` are its overrides.
+Full contract: `pr-merge --help`. Exit `75` is volatile, so keep a watcher running until `MERGED`. If `can_merge` is false with no `issues`, read `state`. The thread gate is **Policy, not mechanism.** `--force` and the explicit-user-only `--admin` are its overrides.
 
 ### PR blocked with no visible conversations
 
-Under `required_conversation_resolution`, an outdated thread can block a merge
-while the UI shows none; `resolve-thread` reaches it by id.
+Under `required_conversation_resolution`, an outdated thread can block a merge while the UI shows none; `resolve-thread` reaches it by id.
 
 ```bash
 github.sh pr-threads 42                  # complete list, outdated included
 github.sh resolve-thread PRRT_kwDO...    # resolve by thread id
 ```
 
-`pr-threads` follows every page and fails rather than returning a partial list,
-so a thread id absent from its output is genuinely absent. Repeat
-`resolve-thread` per blocking id until the merge clears.
+`pr-threads` follows every page and fails rather than returning a partial list, so a thread id absent from its output is genuinely absent. Repeat `resolve-thread` per blocking id until the merge clears.
 
 ### Waiting for merge state
 
-**Never gate termination on `gh pr view --json mergeable`.** That field stays
-`UNKNOWN` permanently after a merge. Use `await-mergeable` (resolution rules
-and exit codes: `await-mergeable --help`). To watch MANY PRs, do not
-hand-roll a poll loop keyed on state transitions. Use the review-gate
-skill's reducer when installed
-(`.agents/skills/review-gate/scripts/pr-watch.sh`).
+**Never gate termination on `gh pr view --json mergeable`.** That field stays `UNKNOWN` permanently after a merge. Use `await-mergeable` (resolution rules and exit codes: `await-mergeable --help`). To watch MANY PRs, do not hand-roll a poll loop keyed on state transitions. Use the review-gate skill's reducer when installed (`.agents/skills/review-gate/scripts/pr-watch.sh`).
 
 ## Output Formats
 
@@ -98,8 +85,7 @@ Formats and flag rules: `github.sh --help`.
 
 ## Configuration
 
-Keep secrets in `.env.local`; commit non-secret defaults to
-`kendex.settings.toml` under `[env]`. Other contracts: `github.sh --help`.
+Keep secrets in `.env.local`; commit non-secret defaults to `kendex.settings.toml` under `[env]`. Other contracts: `github.sh --help`.
 
 ## Troubleshooting
 

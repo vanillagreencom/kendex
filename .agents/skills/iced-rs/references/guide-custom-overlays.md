@@ -39,6 +39,7 @@ stack![
 ```
 
 **Common mistakes:**
+
 - Missing outer `opaque` → base content receives clicks through the scrim
 - Missing inner `opaque` → clicking inside the dialog dismisses it
 - `opaque` wrapping the entire stack layer instead of just the scrim → keyboard events blocked while modal is closed
@@ -90,6 +91,7 @@ where
 ```
 
 Key differences from `Widget`:
+
 - `layout()` takes `Size` (not `Limits`)
 - `draw()` and `update()` have no `viewport` parameter
 - No `size()` — overlays aren't slotted into parent layouts
@@ -443,12 +445,14 @@ where
 ```
 
 **Rigid (the overlay contract — never change):**
+
 - `children()` returns exactly 2, always, regardless of `show`
 - `diff()` reconciles both children every frame
 - `overlay()` switches on `show` → `Some`/`None`, never changes child count
 - All descendant calls pass `&Rectangle::INFINITE`
 
 **Customizable:**
+
 - **Positioning** — replace `Overlay::layout()` math
 - **Content** — `self.content` is any `Element` tree
 - **Trigger** — hover, click, right-click, focus, keyboard shortcut, state flag

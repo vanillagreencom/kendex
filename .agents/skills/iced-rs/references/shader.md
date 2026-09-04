@@ -169,24 +169,12 @@ impl shader::Primitive for MyPrimitive {
 
 ## Gotchas
 
-- The `wgpu` feature is required, and `Shader` is only meaningful in
-  renderers that speak `wgpu` (e.g. `iced_wgpu`). Software backends
-  ignore it.
-- `Primitive::draw` returns `bool`. Return `true` if you've done the
-  drawing inside the supplied render pass. Return `false` if you couldn't
-  and want iced to invoke `render()` with a fresh encoder — that path is
-  slower because it needs its own command encoder and render target.
-- `prepare()` is called every frame and is the only place where you can
-  touch the `Device` / `Queue` (for uploading buffers). It must be fast
-  and must not do heavy GPU work.
-- `Pipeline` objects live as long as the shared `Storage`. If you store
-  too many pipelines, call `Storage::trim()` to drop unused ones.
-- `Primitive` types are compared by `TypeId` for pipeline sharing — two
-  different primitive structs cannot share a pipeline even if their
-  behaviour is identical.
-- Follow iced's coordinate conventions: the `bounds` and `viewport`
-  passed to `prepare` are in logical pixels; multiply by the viewport's
-  scale factor when uploading physical pixel data.
+- The `wgpu` feature is required, and `Shader` is only meaningful in renderers that speak `wgpu` (e.g. `iced_wgpu`). Software backends ignore it.
+- `Primitive::draw` returns `bool`. Return `true` if you've done the drawing inside the supplied render pass. Return `false` if you couldn't and want iced to invoke `render()` with a fresh encoder — that path is slower because it needs its own command encoder and render target.
+- `prepare()` is called every frame and is the only place where you can touch the `Device` / `Queue` (for uploading buffers). It must be fast and must not do heavy GPU work.
+- `Pipeline` objects live as long as the shared `Storage`. If you store too many pipelines, call `Storage::trim()` to drop unused ones.
+- `Primitive` types are compared by `TypeId` for pipeline sharing — two different primitive structs cannot share a pipeline even if their behaviour is identical.
+- Follow iced's coordinate conventions: the `bounds` and `viewport` passed to `prepare` are in logical pixels; multiply by the viewport's scale factor when uploading physical pixel data.
 - The iced repository's `custom_shader` example is the canonical full reference.
 
 ## See also

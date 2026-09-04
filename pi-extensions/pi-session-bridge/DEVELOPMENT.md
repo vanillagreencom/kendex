@@ -1,65 +1,26 @@
-# pi-session-bridge — development notes
+# pi-session-bridge development
 
-Implementation details for contributors and custom client authors. End-user setup, commands, settings, and security guidance live in [`README.md`](./README.md).
+For maintainers and authors of custom clients. What it does for a consumer is [README.md](README.md); the agent-facing CLI contract is `instructions.md`; the request handlers and event shapes are in `extensions/session-bridge.ts`, with the module header stating discovery and framing.
 
-## Raw protocol
+## Protocol
 
-Connect to the advertised Unix socket and exchange one JSON object per LF-delimited record. Requests may include `id`; responses use `type:"response"` with the same `id`.
+One JSON object per LF-delimited line, both directions. A request may carry an `id`; the response is `type: "response"` with the same `id`, the `command` it answered, `success`, and `data`. Events are `type: "event"` with `event`, `timestamp` and `data`; clients receive them by default and mute them with `{"type":"subscribe","enabled":false}`. `pi-bridge request` sends any raw request. The protocol name is `PROTOCOL` in `extensions/session-bridge.ts`, and the events republished to clients are `BRIDGE_STREAM_EVENT_NAMES`; the subset in `REGISTRY_REFRESH_EVENT_NAMES` also rewrites the registry file.
 
-Example requests:
+`prompt` takes `deliverAs` (`auto`, `steer`, `followUp`, `now`), and `steer`, `follow_up` and `abort` are their own request types. Question requests (`questions`, `question_reply`, `question_reject`) resolve the `pi-questions` service through `Symbol.for("kendex.pi-questions.service")` and fail with a plain error when it is not loaded.
 
-```json
-{"id":"1","type":"get_state"}
-{"id":"2","type":"prompt","message":"Run tests","deliverAs":"auto"}
-{"id":"3","type":"steer","message":"Focus on errors"}
-{"id":"4","type":"follow_up","message":"Summarize when done"}
-{"id":"5","type":"abort"}
+## Invariants
+
+- Nothing leaves the process unbounded. Every event is sanitized to a compact envelope (`extensions/event-sanitizer.ts::sanitizeBridgeEvent`): `input`, `message_update`, `tool_execution_*` and `agent_end` keep counts and previews, and a shrunk envelope carries `truncated`, `originalBytes`, `rawEventPath` and `rawEventRef`. `extensions/event-history.ts::BridgeHistory` evicts by count and by total bytes, caps each `history` response and reports `responseTruncated`, and spills raw payloads to `<bridgeDir>/raw/<pid>.jsonl` under `maxRawSpillBytes`, compacting live slots first and refusing with `rawError` rather than overflowing. Sidecars are removed at `session_shutdown` and process exit, and `cleanupStaleSpills` removes those of dead pids at start.
+- The activity broker is fail-open and in-process. `extensions/activity-broker.ts` installs it at `globalThis[Symbol.for("kendex.pi.activity")]`; `publishPiActivity` swallows every error so a producer never fails because activity did, `recent` replays a bounded ring newest-first, and the bridge forwards live publications as `kendex_activity` events only while connected. Broker rows are never `sendMessage` chat entries.
+- Slash dispatch matches Pi's editor. `pi-bridge send` expands `/skill:<name>` from the loaded skill's `sourceInfo.path` and prompt templates with Pi's substitution rules, and an extension or TUI command is pasted into the session's own tmux pane, resolved by walking parent processes from `process.pid` rather than the active tmux client. A repeated skill send in one session sends a short reminder until the `SKILL.md` hash changes; the cache is evicted per session at shutdown and bounded to `MAX_SKILL_EXPANSION_CACHE_SESSIONS`. A failed command delivery falls back to a plain message.
+- Project settings are read only after Pi reports the workspace trusted (`recordProjectTrust`), the same rule every kendex Pi extension follows.
+- A child session spawned with `PI_BRIDGE_PARENT_SESSION_ID` advertises a synthesized `<parent>:c<pid>` id (`extensions/child-session-id.ts::resolveSessionId`) so parents can tell their children apart in `pi-bridge list`.
+
+## Tests
+
+```bash
+bun test tests/*.test.ts extensions/__tests__/*.test.ts
+npm run check
 ```
 
-Example response and event:
-
-```json
-{"type":"response","id":"1","command":"get_state","success":true,"data":{}}
-{"type":"event","event":"input","timestamp":"...","data":{"source":"extension","streamingBehavior":"followUp","textBytes":42,"textLength":42,"textPreview":"summarize when done"},"truncated":true,"originalBytes":96,"rawEventPath":"/tmp/pi-session-bridge-1000/raw/12345.jsonl","rawEventRef":"6"}
-{"type":"event","event":"message_update","timestamp":"...","data":{"role":"assistant","contentIndex":0,"deltaLength":50000,"deltaBytes":50000,"deltaPreview":"Hello..."},"truncated":true,"originalBytes":50012,"rawEventPath":"/tmp/pi-session-bridge-1000/raw/12345.jsonl","rawEventRef":"7"}
-{"type":"event","event":"kendex_activity","timestamp":"...","data":{"type":"agent.task_completed","source":"pi-agents","severity":"success","importance":"normal","summary":"agent done"}}
-```
-
-Clients receive events by default. Send `{"type":"subscribe","enabled":false}` to mute them. `kendex_activity` rows are bridge events, not `sendMessage()` chat entries, so they do not render in the conversation.
-
-## Compact event envelopes
-
-`pi-bridge history` and the `stream` channel both default to compact event envelopes:
-
-- `input` -> `{ source, streamingBehavior, imagesCount, textBytes, textLength, textPreview, textTruncated }`.
-- `message_update` -> `{ role, type, contentIndex, deltaLength, deltaBytes, deltaPreview }`.
-- `tool_execution_*` -> `{ toolName, toolUseId, status, isError, *Bytes, *Preview, artifactPath, logPath, detailPath }`.
-- `agent_end` -> `{ status, stopReason, usage, messagesCount, finalTextBytes, finalTextLength, finalTextPreview }`.
-
-When a payload is shrunk, the envelope adds `truncated: true`, `originalBytes`, `rawEventPath`, and `rawEventRef`. Raw spills live in per-session JSONL files under `<bridgeDir>/raw/<pid>.jsonl`.
-
-The sidecar size is bounded by `maxRawSpillBytes`: each spill checks the current file size, lazily compacts to live slots when needed, and refuses the spill with `rawError` if it would still overflow. Sidecars are cleaned up on `session_shutdown` and process exit, and stale files belonging to dead pids are removed on bridge start.
-
-## Activity broker
-
-`pi-session-bridge` exposes an in-process broker at `globalThis[Symbol.for("kendex.pi.activity")]` for local Pi extensions:
-
-```ts
-interface PiActivityBroker {
-  publish(event: PiActivityEvent): void;
-  subscribe(listener: (event: PiActivityEvent) => void): () => void;
-  recent(limit?: number): PiActivityEvent[];
-}
-```
-
-`publish()` is best-effort and fail-open. The broker keeps a 100-event ring buffer; `recent(limit)` returns newest-first validated events for in-process replay. `pi-bridge stream` emits live broker publications as `event:"kendex_activity"` only while the bridge is connected.
-
-## Slash command delivery
-
-`pi-bridge send` uses a hybrid slash dispatch path:
-
-- Plain text keeps the normal `sendUserMessage` path.
-- `/skill:<name> ...` expands client-side from the loaded skill's `sourceInfo.path`.
-- Repeated skill sends in the same Pi session skip the `SKILL.md` body until the skill content hash changes, the session shuts down, or the bridge restarts.
-- Prompt templates expand client-side with Pi-compatible `$1`, `$@`, `$ARGUMENTS`, `${@:N[:L]}`, `${N:-default}`, `${@:-default}`, and `${ARGUMENTS:-default}` substitution.
-- Extension/TUI commands are pasted into Pi's own tmux pane with `send-keys -l` after resolving the pane by walking parent processes from `process.pid`.
+`check` also parses `bin/pi-bridge.js`. History budgets, sanitizer shapes, the slash-dispatch matrix against Pi's editor outcomes, tmux pane resolution, the CLI's history flags, child session ids and the broker each have a suite. A new bound ships with the control that overruns it; a new dispatch shape ships with its row in the matrix.

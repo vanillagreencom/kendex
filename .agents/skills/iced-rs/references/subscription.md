@@ -27,14 +27,9 @@ impl<T> Subscription<T> {
 }
 ```
 
-- **`none()`** — Empty subscription. Use when the current state has no
-  passive work.
+- **`none()`** — Empty subscription. Use when the current state has no passive work.
 - **`batch(iter)`** — Combines several subscriptions into one.
-- **`run_with(data, builder)`** — The lowest-level constructor: produce a
-  stream identified by `data` (which is hashed to deduplicate active
-  subscriptions) and a `builder` that constructs the `Stream`. Both the
-  data and the function pointer form the identity — if they change between
-  frames, the old stream is dropped and a new one is started.
+- **`run_with(data, builder)`** — The lowest-level constructor: produce a stream identified by `data` (which is hashed to deduplicate active subscriptions) and a `builder` that constructs the `Stream`. Both the data and the function pointer form the identity — if they change between frames, the old stream is dropped and a new one is started.
 
 ### Transformation
 
@@ -52,8 +47,7 @@ impl<T> Subscription<T> {
 ```
 
 - **`map(f)`** — Transform each emitted value via `f`.
-- **`with(data)`** — Pair each emission with the given data, so downstream
-  handlers know which instance of a subscription produced it.
+- **`with(data)`** — Pair each emission with the given data, so downstream handlers know which instance of a subscription produced it.
 
 ### Helper functions
 
@@ -66,12 +60,8 @@ pub fn iced::event::listen_with<Message>(
 ) -> Subscription<Message>;
 ```
 
-- **`event::listen()`** — Subscribe to every runtime `Event` for every
-  window.
-- **`event::listen_with(f)`** — Filter: `f` runs for every event; `None`
-  skips, `Some(message)` forwards. `f` receives `Event`, `Status` (whether
-  the event was captured already) and `Id` (the window the event belongs
-  to).
+- **`event::listen()`** — Subscribe to every runtime `Event` for every window.
+- **`event::listen_with(f)`** — Filter: `f` runs for every event; `None` skips, `Some(message)` forwards. `f` receives `Event`, `Status` (whether the event was captured already) and `Id` (the window the event belongs to).
 
 From `iced::keyboard`:
 
@@ -85,8 +75,7 @@ From `iced::time`:
 pub fn iced::time::every(duration: Duration) -> Subscription<Instant>;
 ```
 
-Fires every `duration`, emitting the current `Instant`. Requires either
-the `tokio` or `smol` feature, or a `wasm32` target.
+Fires every `duration`, emitting the current `Instant`. Requires either the `tokio` or `smol` feature, or a `wasm32` target.
 
 From `iced::window`:
 
@@ -156,23 +145,12 @@ fn subscribe_to_feed(state: &State) -> Subscription<Message> {
 
 ## Gotchas
 
-- Subscriptions are **re-queried after every `update`**. If `subscription(&state)`
-  returns a different set, the old subscriptions are dropped and new ones
-  started. This is how you "enable" and "disable" subscriptions reactively.
-- `Subscription::run_with` uses `data` **and the function pointer** as the
-  identity. Two closures that capture different state are different
-  subscriptions.
-- A `Subscription` is "not allowed to end on its own" — if your `Stream`
-  completes, iced treats that as a fatal error. Use `run_with` streams
-  that loop forever, or terminate by removing the subscription from
-  `subscription(&State)`.
-- `time::every` requires a runtime — if you disable both `tokio` and
-  `smol` features, you must provide your own executor.
-- `event::listen_with` receives **every** event, including those already
-  handled by a widget. Check the `Status` argument to decide whether to
-  produce a message.
-- Messages emitted by subscriptions go through the normal `update` loop —
-  don't forget to handle them in your match.
+- Subscriptions are **re-queried after every `update`**. If `subscription(&state)` returns a different set, the old subscriptions are dropped and new ones started. This is how you "enable" and "disable" subscriptions reactively.
+- `Subscription::run_with` uses `data` **and the function pointer** as the identity. Two closures that capture different state are different subscriptions.
+- A `Subscription` is "not allowed to end on its own" — if your `Stream` completes, iced treats that as a fatal error. Use `run_with` streams that loop forever, or terminate by removing the subscription from `subscription(&State)`.
+- `time::every` requires a runtime — if you disable both `tokio` and `smol` features, you must provide your own executor.
+- `event::listen_with` receives **every** event, including those already handled by a widget. Check the `Status` argument to decide whether to produce a message.
+- Messages emitted by subscriptions go through the normal `update` loop — don't forget to handle them in your match.
 - Map closures run outside the `update` context and cannot touch application state.
 
 ## See also

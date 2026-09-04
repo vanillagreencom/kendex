@@ -33,22 +33,4 @@ All three waiters share `scripts/lib/gh-auth.sh`, wrapping the GitHub skill's he
 
 ## Multi-PR watching
 
-The waiters above are single-PR blocking waits. For many PRs across a long
-horizon, the review-gate skill (optional
-dependency) ships `scripts/pr-watch.sh`, a needs-attention reducer — contract
-in `pr-watch.sh --help`, wrap-in-anything loop in review-gate's adoption guide.
-Orch consumes it through `oversee-watch` when the script is installed, passing
-`--heal`, so a `gate-stale` line dispatches the writer workflow itself. That
-WRITE needs, in this order, a `PR_WATCH_WRITER_WORKFLOW` workflow (default
-`Review gate writer`) present with Actions enabled in every repo covered, then
-a credential carrying `actions:write`. Missing any, the reducer emits
-`gate-stale` plus an `error` naming the failed dispatch and no
-`heal-dispatched`, and repair follows the same order: until a usable writer
-exists there is nothing to hand-dispatch either, and only the credential case
-is answered by a hand dispatch under a scoped token.
-The fallback without it is per-PR `approval-wait`/`queue-wait`, which cannot
-detect `gate-stale`: the waiters never read `REVIEW_GATE_CONTEXT` or verify
-writer convergence, so a PR that reads reviewed-and-clean but sits unmerged
-warrants a manual gate-status check
-(`gh api repos/<owner>/<repo>/commits/<head>/statuses`) and a writer dispatch —
-the hand-run equivalent of `pr-watch.sh --heal`.
+The waiters above are single-PR blocking waits. For many PRs across a long horizon, the review-gate skill (optional dependency) ships `scripts/pr-watch.sh`, a needs-attention reducer — contract in `pr-watch.sh --help`, wrap-in-anything loop in review-gate's adoption guide. Orch consumes it through `oversee-watch` when the script is installed, passing `--heal`, so a `gate-stale` line dispatches the writer workflow itself. That WRITE needs, in this order, a `PR_WATCH_WRITER_WORKFLOW` workflow (default `Review gate writer`) present with Actions enabled in every repo covered, then a credential carrying `actions:write`. Missing any, the reducer emits `gate-stale` plus an `error` naming the failed dispatch and no `heal-dispatched`, and repair follows the same order: until a usable writer exists there is nothing to hand-dispatch either, and only the credential case is answered by a hand dispatch under a scoped token. The fallback without it is per-PR `approval-wait`/`queue-wait`, which cannot detect `gate-stale`: the waiters never read `REVIEW_GATE_CONTEXT` or verify writer convergence, so a PR that reads reviewed-and-clean but sits unmerged warrants a manual gate-status check (`gh api repos/<owner>/<repo>/commits/<head>/statuses`) and a writer dispatch — the hand-run equivalent of `pr-watch.sh --heal`.

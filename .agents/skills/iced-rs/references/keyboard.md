@@ -186,8 +186,7 @@ impl Modifiers {
 ```
 
 - **`SHIFT` / `CTRL` / `ALT` / `LOGO`** — The four primary modifier bits.
-- **`COMMAND`** — Platform-aware alias: `LOGO` on macOS, `CTRL` elsewhere.
-  Use this when you want "Ctrl+C on Linux/Windows, Cmd+C on macOS".
+- **`COMMAND`** — Platform-aware alias: `LOGO` on macOS, `CTRL` elsewhere. Use this when you want "Ctrl+C on Linux/Windows, Cmd+C on macOS".
 - **`contains(other)`** — Returns true if all bits in `other` are set.
 - **`shift()` / `control()` / `alt()` / `logo()`** — Convenience accessors.
 
@@ -197,9 +196,7 @@ impl Modifiers {
 pub fn iced::keyboard::listen() -> Subscription<Event>;
 ```
 
-Returns a `Subscription<keyboard::Event>` that yields every keyboard event
-the runtime receives. For finer control (filtering, mapping), use
-`iced::event::listen_with`.
+Returns a `Subscription<keyboard::Event>` that yields every keyboard event the runtime receives. For finer control (filtering, mapping), use `iced::event::listen_with`.
 
 ## Patterns
 
@@ -259,23 +256,12 @@ assert_eq!(
 
 ## Gotchas
 
-- **`key` vs `modified_key` vs `physical_key`** is the most common
-  confusion. The docs give a clear rule: use `key` for combinations,
-  `modified_key` for single-key bindings, `physical_key` for layout-
-  independent bindings.
-- `Modifiers::COMMAND` is the portable way to express "the primary
-  modifier for keyboard shortcuts". Don't hard-code `CTRL` or you'll
-  alienate macOS users.
-- `text` is `Option<SmolStr>` because dead keys and composing characters
-  may emit a press without producing text (the composition happens on the
-  following key).
-- `repeat` can fire many times for a held key — debounce in application
-  state if your action should only happen once.
-- `Key::Character(SmolStr)` may be a multi-character grapheme cluster
-  (e.g. surrogate pair or ligature). Don't assume one key press = one
-  char.
-- `Key::Unidentified` is fairly rare but do handle it — otherwise
-  exotic keys will be silently dropped.
+- **`key` vs `modified_key` vs `physical_key`** is the most common confusion. The docs give a clear rule: use `key` for combinations, `modified_key` for single-key bindings, `physical_key` for layout- independent bindings.
+- `Modifiers::COMMAND` is the portable way to express "the primary modifier for keyboard shortcuts". Don't hard-code `CTRL` or you'll alienate macOS users.
+- `text` is `Option<SmolStr>` because dead keys and composing characters may emit a press without producing text (the composition happens on the following key).
+- `repeat` can fire many times for a held key — debounce in application state if your action should only happen once.
+- `Key::Character(SmolStr)` may be a multi-character grapheme cluster (e.g. surrogate pair or ligature). Don't assume one key press = one char.
+- `Key::Unidentified` is fairly rare but do handle it — otherwise exotic keys will be silently dropped.
 - No "just the pressed character" helper -- pattern-match on `Key::Character` explicitly.
 
 ## See also

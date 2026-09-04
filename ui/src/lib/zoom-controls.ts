@@ -71,7 +71,7 @@ interface ZoomControls {
    *  in that turn, nor after its microtasks. It lands where the runtime
    *  outlives the unload, which a reload or a navigation does and a close
    *  may not. A size chosen in the last moments before quitting can still
-   *  be lost; see the ARCHITECTURE bullet for why the close is not held
+   *  be lost; crates/app/AGENTS.md states why the close is not held
    *  open to prevent that. */
   flush: () => void;
 }

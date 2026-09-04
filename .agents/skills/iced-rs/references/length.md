@@ -54,20 +54,11 @@ row![
 
 ## Gotchas
 
-- **Shrink is the default** for most widgets, but **containers inherit Fill
-  from their children**. If you put a `Fill` child inside a container, the
-  container will stretch to its parent on that axis — even if you wanted it
-  to hug the child.
-- `FillPortion(1)` is equivalent to `Fill`. If you want strict ratios, give
-  all columns explicit `FillPortion` values — don't mix `Fill` and
-  `FillPortion`.
-- `Fixed(0.0)` is valid but rarely useful. Use `Shrink` to collapse to
-  content.
-- `From<u32>` yields a fixed length in **logical pixels**, not grid units.
-  `container.height(50)` is 50px, not 50 rem.
-- `fluid()` is the safe way to coerce an arbitrary `Length` into a
-  Fill-or-Shrink value when you don't want explicit sizes to leak into a
-  layout decision.
+- **Shrink is the default** for most widgets, but **containers inherit Fill from their children**. If you put a `Fill` child inside a container, the container will stretch to its parent on that axis — even if you wanted it to hug the child.
+- `FillPortion(1)` is equivalent to `Fill`. If you want strict ratios, give all columns explicit `FillPortion` values — don't mix `Fill` and `FillPortion`.
+- `Fixed(0.0)` is valid but rarely useful. Use `Shrink` to collapse to content.
+- `From<u32>` yields a fixed length in **logical pixels**, not grid units. `container.height(50)` is 50px, not 50 rem.
+- `fluid()` is the safe way to coerce an arbitrary `Length` into a Fill-or-Shrink value when you don't want explicit sizes to leak into a layout decision.
 - `FillPortion` only distributes across siblings in the same axis of the same parent.
 
 ## See also

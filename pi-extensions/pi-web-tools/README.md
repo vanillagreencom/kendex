@@ -1,24 +1,23 @@
-# pi-web-tools
+# @vanillagreen/pi-web-tools
 
-![Web Tools settings panel](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-web-tools/assets/settings-panel.png)
-![Exa web_search results renderer](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-web-tools/assets/web-search.png)
+Web access for Pi: search across several providers, Exa deep research, content fetch for pages, GitHub repositories, PDFs and videos, and code search. Everything fetched is stored in the session so the model can re-read it without fetching again.
 
-Web access tools for Pi: search, deep research, content fetch, and code search.
-
-For the Exa-specific API map and tool semantics, see [`EXA.md`](./EXA.md). Internals, design, and maintenance live in [`DEVELOPMENT.md`](./DEVELOPMENT.md).
-
-## Highlights
-
-- `web_search` with provider selection: `auto`, `exa`, `perplexity`, `gemini`, `exa-mcp`, `duckduckgo`, `openai-native`.
-- `web_research` runs Exa Deep Search with `lite`, `standard`, or `full` modes. Writes findings reports with raw-metadata sidecars.
-- `web_fetch` extracts GitHub repos (clone cache), URL and local PDFs, HTML/text/JSON, complete YouTube caption transcripts, and Gemini-powered YouTube/local video understanding, with Jina Reader fallback on blocked pages.
-- `web_answer` and `web_find_similar` for Exa-first quick answers.
-- `code_search` uses Exa Code `/context` with fallback to code-focused Exa search.
-- `get_web_content` retrieves stored full content by id — no refetch.
-- OpenAI-native `web_search` rewrite on supported Codex models.
-- `auto` provider tries keyed providers first (Exa, Perplexity, Gemini API), then no-key fallbacks (Exa MCP, DuckDuckGo), then Gemini Web cookies if enabled, then `openai-native`.
+![Web Tools settings panel](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-web-tools/assets/settings-panel.png) ![Exa web_search results renderer](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-web-tools/assets/web-search.png)
 
 ## Install
+
+Declare the package in the scope's kendex manifest, then let `kendex update-pi` install it and register it in Pi's `settings.json`. For a project, in its `kendex.toml`:
+
+```toml
+[pi-extensions."@vanillagreen/pi-web-tools"]
+source = "kendex"
+```
+
+```bash
+kendex update-pi
+```
+
+The same declaration in `~/.config/kendex/kendex.toml` installs it for every project. `kendex update-pi --check` prints the plan and changes nothing.
 
 Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-web-tools):
 
@@ -26,86 +25,44 @@ Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-web-tools):
 pi install npm:@vanillagreen/pi-web-tools
 ```
 
-Via [kendex](https://github.com/vanillagreencom/kendex):
+Restart Pi after installation. Web search lives here, not in `pi-codex-minimal-tools`.
 
-```bash
-cargo install --git https://github.com/vanillagreencom/kendex.git kendex
-kendex add vanillagreencom/kendex --pi-extension pi-web-tools --harness pi -y
-```
+## What it does
 
-Restart Pi after installation. `web_search` lives in this package rather than `pi-codex-minimal-tools`, which owns only `image_generation`, `view_image`, and `apply_patch`; install both updated packages together.
+- `web_search` with a provider chosen per call or by the `defaultProvider` setting: `exa`, `perplexity`, `gemini`, `exa-mcp`, `duckduckgo`, `openai-native`, or `auto`.
+- `web_fetch` for URLs and local files: HTML, JSON and text pages, GitHub repositories through a clone cache, remote and local PDFs, complete YouTube caption transcripts, and video understanding through Gemini. A blocked page falls back to Jina Reader.
+- `get_web_content` returns the full stored text of anything a search or fetch already produced, by content id, without another request.
+- `web_research` runs Exa deep search in `lite`, `standard` or `full` mode and writes a findings report with a raw-metadata sidecar.
+- `web_answer`, `web_find_similar` and `code_search` through Exa, behind the `exaAdvancedEnabled` setting.
+- On OpenAI and Codex models, `web_search` is rewritten to the provider's native tool when `nativeOpenAiWebSearch` is on.
+- `/web-tools` opens the settings, `/web-tools:doctor` prints status and diagnostics, and `/web-tools:provider:<name>` switches the provider for the session.
 
-## Commands
+## How it works
 
-| Command | Action |
-| --- | --- |
-| `/web-tools` | Open settings (or print status if extension-manager isn't installed). |
-| `/web-tools:doctor` | Show status and diagnostics. |
-| `/web-tools:provider:<name>` | Switch the active provider for this session. |
-
-## Fetch storage
-
-`web_fetch` returns a compact preview and stores extracted content in the current Pi session under a generated content id (e.g. `web-...`). Use `get_web_content` with that id to retrieve the stored text — it doesn't refetch the URL.
-
-- `textMaxCharacters` caps the immediate preview (default 4k chars); multi-URL calls additionally cap the aggregate preview and emit a manifest for large batches.
-- `get_web_content.maxCharacters` caps retrieval (default 50k chars).
-- Local PDFs supported via `filePath`/`filePaths`, `file://...`, or PDF-looking paths.
-- Exa-provider paths store provider-capped excerpts (default 6000 chars; raise with `textMaxCharacters`), which `get_web_content` labels as `stored excerpt`.
-
-## YouTube transcripts and video understanding
-
-`web_fetch` separates exact caption retrieval from model-generated video understanding:
-
-```typescript
-web_fetch({ url: "https://www.youtube.com/watch?v=...", videoMode: "transcript", transcriptLanguage: "en" })
-web_fetch({ url: "https://www.youtube.com/watch?v=...", videoMode: "understand", prompt: "Describe diagrams and code shown on screen." })
-```
-
-- `videoMode: "auto"` is the default. Prompts containing transcript, transcribe, verbatim, subtitle, caption, or lyrics terms use native YouTube captions; other prompts use Gemini.
-- Native transcripts include every caption segment as `[HH:MM:SS] text`, decode caption HTML entities, and store the complete result under the content id.
-- `transcriptLanguage` accepts a BCP 47 language code. When omitted, native extraction uses YouTube's first available caption track.
-- Gemini Web/API remains the path for visual details, questions about frames, and videos without a transcript request.
+The tools are added to Pi's active set whenever the model or settings change, keeping Pi's native tools untouched; a tool whose provider or key is missing is left out of the set rather than failing on call. In `auto` mode the search order is keyed providers first (Exa, Perplexity, the Gemini API), then the no-key providers (Exa MCP, DuckDuckGo), then Gemini through browser cookies if that is enabled, then the OpenAI native tool. Every fetch stores its extracted text in the session under a content id and returns a preview; the Exa paths store a provider-capped excerpt and say so.
 
 ## API keys
 
-Set via environment variables, project `.env.local`/`.env`, or a private config file. Process env wins over files.
+Set these as environment variables, in the project's `.env` or `.env.local`, or in a private JSON file named by `PI_WEB_TOOLS_CONFIG_FILE`. The process environment wins over files, and a project file is read only once Pi marks the workspace trusted.
 
 - `EXA_API_KEY`
 - `PERPLEXITY_API_KEY`
 - `GEMINI_API_KEY`
 - `OPENAI_API_KEY`
-- `JINA_API_KEY` (optional; anonymous Jina Reader works without it)
-- `PI_WEB_TOOLS_CONFIG_FILE=/path/to/private.json`
+- `JINA_API_KEY`, optional; Jina Reader works anonymously without it.
 
-Values may be 1Password references such as `op://Private/Exa API Key/credential` when the `op` CLI is installed and signed in. References resolve best-effort with a short startup timeout (default 1500 ms, override with `PI_WEB_TOOLS_OP_READ_TIMEOUT_MS`); unresolved references are treated as unset so Pi startup does not block.
+A value may be a 1Password reference such as `op://Private/Exa API Key/credential` when the `op` CLI is installed and signed in. A reference that does not resolve within the startup timeout is treated as unset so Pi starts anyway; `PI_WEB_TOOLS_OP_READ_TIMEOUT_MS` changes that timeout.
 
-## Deep research modes
+## Customise
 
-| Mode | Exa type | Results | Text cap | Highlight cap |
-| --- | --- | ---: | ---: | ---: |
-| `lite` | `deep-lite` | 15 | 10k | 600 |
-| `standard` | `deep-reasoning` | 50 | 16k | 900 |
-| `full` | `deep-reasoning` | 150 | 24k | 1200 |
+Open `/extensions:settings`; settings appear under the **Web Tools** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted.
 
-`standard` and `full` request Exa summaries and structured output. `full` runs the primary query plus each `additionalQueries` entry, then dedupes URLs. Override per-mode defaults with the **Exa research mode overrides** setting (JSON keyed by `lite`/`standard`/`full`).
+- `enabled`, `autoEnable`: the package and whether its tools join the active set on their own.
+- `defaultProvider`, `enabledProviders`: which provider answers `web_search` and which are allowed at all.
+- `nativeOpenAiWebSearch`, `openAiExternalWebAccess`: the native OpenAI rewrite.
+- `exaDeepResearchEnabled`, `exaResearchModes`, `exaAdvancedEnabled`: `web_research`, its per-mode overrides, and the advanced Exa tools.
+- `htmlExtraction.jinaFallback`, `githubClone.enabled`, `githubClone.maxRepoSizeMB`, `video.enabled`, `browserCookieAccess`: the fetch paths.
+- `compatibilityTools`: register the older tool names such as `fetch_content` and `web_search_exa`.
+- `glyphStyle`: Unicode or ASCII chrome; `pi-tool-renderer`'s global override wins when set.
 
-## Settings
-
-Open `/extensions:settings`; settings appear under the **Web Tools** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted; before trust, kendex Pi extensions read user/global settings only. Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across kendex Pi extensions while leaving tool/model/user content unchanged.
-
-| Group | Setting | What it does |
-| --- | --- | --- |
-| General | Auto-enable web tools | Add web tools to the active set while preserving Pi natives. |
-| General | Default provider | Provider used by `web_search` unless the call overrides. |
-| General | Enabled providers | Comma-separated allow-list. |
-| OpenAI native | OpenAI native web_search | Rewrite `web_search` to native OpenAI/Codex Responses `web_search`. |
-| OpenAI native | OpenAI external web access | Set `external_web_access` on native tools. |
-| Exa | Exa deep research | Register and enable `web_research`. |
-| Exa | Exa research mode overrides | JSON object keyed by `lite`/`standard`/`full`. |
-| Exa | Exa advanced tools | Enable `web_answer`, `web_find_similar`, `code_search`. |
-| Content | Jina Reader fallback | Fall back to `r.jina.ai` for blocked or 403/429/5xx pages. |
-| Content | GitHub clone extraction | Use a clone cache for GitHub repo URLs. |
-| Content | GitHub clone max size | Large-repo fallback threshold in MB. |
-| Content | Video extraction | Complete YouTube caption transcripts plus YouTube/local video understanding via Gemini. |
-| Content | Browser cookie access | Opt-in browser cookie extraction for Gemini Web fallback. |
-| Compatibility | Compatibility aliases | Register legacy aliases like `fetch_content` and `web_search_exa`. |
+The Exa endpoints each tool calls and what each stores are in [EXA.md](EXA.md). Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).

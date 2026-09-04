@@ -15,13 +15,8 @@ impl<Renderer> Frame<Renderer> {
 }
 ```
 
-- **`Frame::new(renderer, size)`** — Creates a frame with the given
-  drawable size. Anything drawn outside `size` is clipped away. The frame
-  is dropped when `into_geometry()` is called, consuming it.
-- **`into_geometry()`** — Consumes the frame and returns the associated
-  renderer's `Geometry` type. Each canvas `Program::draw` call returns a
-  `Vec<Geometry>`, so you can produce multiple independent geometries in a
-  single draw pass.
+- **`Frame::new(renderer, size)`** — Creates a frame with the given drawable size. Anything drawn outside `size` is clipped away. The frame is dropped when `into_geometry()` is called, consuming it.
+- **`into_geometry()`** — Consumes the frame and returns the associated renderer's `Geometry` type. Each canvas `Program::draw` call returns a `Vec<Geometry>`, so you can produce multiple independent geometries in a single draw pass.
 
 ### `Cache`
 
@@ -100,23 +95,12 @@ self.content.draw_with_bounds(renderer, visible_region, |frame| {
 
 ## Gotchas
 
-- **Caches are not invalidated automatically.** If you change the data you
-  draw from, you must call `cache.clear()` explicitly. Forgetting is the
-  classic "why isn't my chart updating?" bug.
-- The closure passed to `cache.draw(...)` is only called on the **first**
-  call after a clear or size change. Avoid side effects inside the closure
-  other than drawing — it may or may not run on any given frame.
-- Cache identity is keyed on the *size passed to `draw`*, not the widget
-  bounds. If your layout produces sub-pixel sizes, the cache might
-  invalidate every frame. Round your bounds when stable.
-- `draw_with_bounds` invalidates on `bounds` change, not just size change.
-  Use it when you need clipping to an absolute rectangle (for scrollable
-  viewports), not as a general "clip everything" helper.
-- A single `Cache` can only store **one** geometry. If you need multiple
-  layers that invalidate independently, use multiple caches.
-- `Cache::clear()` takes `&self`, not `&mut self`. You can clear from
-  inside an immutable context (which is essential because `Program::draw`
-  receives `&self`).
+- **Caches are not invalidated automatically.** If you change the data you draw from, you must call `cache.clear()` explicitly. Forgetting is the classic "why isn't my chart updating?" bug.
+- The closure passed to `cache.draw(...)` is only called on the **first** call after a clear or size change. Avoid side effects inside the closure other than drawing — it may or may not run on any given frame.
+- Cache identity is keyed on the *size passed to `draw`*, not the widget bounds. If your layout produces sub-pixel sizes, the cache might invalidate every frame. Round your bounds when stable.
+- `draw_with_bounds` invalidates on `bounds` change, not just size change. Use it when you need clipping to an absolute rectangle (for scrollable viewports), not as a general "clip everything" helper.
+- A single `Cache` can only store **one** geometry. If you need multiple layers that invalidate independently, use multiple caches.
+- `Cache::clear()` takes `&self`, not `&mut self`. You can clear from inside an immutable context (which is essential because `Program::draw` receives `&self`).
 - No API to inspect cached geometry size or pre-warm the cache.
 
 ## See also

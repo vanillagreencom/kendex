@@ -138,6 +138,7 @@ Iterating `self.children[sorted_indices[i]]` against Tree children stored in ins
 **The key→Tree-child-index association must not change with visual ordering, in any presentation mode.**
 
 Options:
+
 1. **Use `keyed::Column`** for list presentations — it diffs by key, not position. See `widget-lazy-keyed.md`.
 2. **Maintain a stable key→index mapping** in Tree state. When reordering visually, reorder draw calls (not child indices).
 3. **Use `Tree::diff_children_custom`** with key-aware reconciliation when items are added, removed, or reordered. See `advanced-tree.md`.
@@ -236,6 +237,7 @@ fn draw(&self, tree: &Tree, renderer: &mut Renderer, /* ... */) {
 ### Diagnostic
 
 If content is visible below where it should be during collapse:
+
 1. Is `layout()` returning the expanded height unconditionally?
 2. Is `draw()` clipping to the current animated bounds with `renderer.with_layer()`?
 3. Is `shell.invalidate_layout()` being called each animation frame so `layout()` re-runs?

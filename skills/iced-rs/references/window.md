@@ -57,13 +57,11 @@ pub fn iced::window::open_events()   -> Subscription<Id>;
 pub fn iced::window::close_events()  -> Subscription<Id>;
 ```
 
-- **`resize_events()`** — Subscribes to every `Event::Resized` in the
-  running application, emitting `(Id, Size)`.
+- **`resize_events()`** — Subscribes to every `Event::Resized` in the running application, emitting `(Id, Size)`.
 - **`open_events()`** — Every `Event::Opened`.
 - **`close_events()`** — Every `Event::Closed`.
 
-For everything else, use the general `event::listen_with` and match on
-`Event::Window(window_event)`.
+For everything else, use the general `event::listen_with` and match on `Event::Window(window_event)`.
 
 ## Patterns
 
@@ -130,24 +128,13 @@ Message::ConfirmClose(id) => {
 
 ## Gotchas
 
-- `window::open` returns both an **id** and a `Task` — you need to store
-  the id if you want to address the window later (resize, move, close).
-- With `iced::application()`, there is always one main window. With
-  `iced::daemon()`, you own every window — the process exits when the
-  last window closes.
-- `exit_on_close_request = false` means the runtime **will not** close the
-  window on the user's request. You must handle `CloseRequested` and
-  issue a `window::close` task yourself, otherwise the window becomes
-  un-closable.
-- `window::Event::RedrawRequested(Instant)` is emitted every frame — do
-  not log it at info level.
-- `decorations = false` removes the title bar on most platforms, but the
-  behaviour on Wayland is inconsistent; test there explicitly.
-- `blur = true` requires `transparent = true` to have any effect, and
-  even then only works on macOS and Linux.
-- `position` is a `window::Position` enum (`Default`, `Centered`,
-  `Specific(Point)`), not a `Point`. Don't pass raw coordinates to the
-  field directly.
+- `window::open` returns both an **id** and a `Task` — you need to store the id if you want to address the window later (resize, move, close).
+- With `iced::application()`, there is always one main window. With `iced::daemon()`, you own every window — the process exits when the last window closes.
+- `exit_on_close_request = false` means the runtime **will not** close the window on the user's request. You must handle `CloseRequested` and issue a `window::close` task yourself, otherwise the window becomes un-closable.
+- `window::Event::RedrawRequested(Instant)` is emitted every frame — do not log it at info level.
+- `decorations = false` removes the title bar on most platforms, but the behaviour on Wayland is inconsistent; test there explicitly.
+- `blur = true` requires `transparent = true` to have any effect, and even then only works on macOS and Linux.
+- `position` is a `window::Position` enum (`Default`, `Centered`, `Specific(Point)`), not a `Point`. Don't pass raw coordinates to the field directly.
 - No way to query the focused window id from `update()` -- track it via `Focused` subscription.
 
 ## See also

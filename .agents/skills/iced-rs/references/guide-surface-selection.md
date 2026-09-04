@@ -33,12 +33,14 @@ For **trading charts or dense visualizations** (>1000 primitives/frame), use Sha
 For non-chart visual surfaces:
 
 Use **Canvas** when:
+
 - Primitives/frame < ~5000
 - Update frequency ≤ 60fps or infrequent
 - Paths, rectangles, text, fills, strokes
 - Want minimal boilerplate
 
 Use **Shader** when:
+
 - Primitives/frame > 5000 or you need instancing
 - Continuous 60fps with per-frame GPU uploads
 - Custom shader effects (blur, gradients >16 stops, compute)
@@ -47,12 +49,14 @@ Use **Shader** when:
 ### Q4: Custom interaction / state / layout logic?
 
 Use **`iced::advanced::Widget`** when:
+
 - Persistent Tree state (hover, drag, animation phase, accumulators)
 - Non-rectangular hit-testing
 - Composite child widgets with custom layout math
 - Event capture the built-ins don't allow
 
 Skip custom Widget when:
+
 - Just styling → built-in + `.style(closure)`
 - Just handling clicks → `button.on_press`
 - Just handling drags → `mouse_area` wrapping normal content

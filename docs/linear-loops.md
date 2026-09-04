@@ -1,25 +1,10 @@
 # Linear Loops — Triage Janitor (template)
 
-Loops have no public GraphQL API; configure them by hand in the Linear UI at
-**Loops → New loop**.
+Loops have no public GraphQL API; configure them by hand in the Linear UI at **Loops → New loop**.
 
-**How to use this template:** copy this file to a sibling named
-linear-loops-local.md in the same directory (the `docs/*-local.md` gitignore
-rule keeps that copy untracked), fill in every SETUP placeholder — the
-`[BRACKETED]` entries whose text tells you what to put there — and paste the
-finished sections into the Linear UI. Leave every RUNTIME slot untouched: the
-angle-bracket `<...>` values the loop substitutes per issue, and the
-square-bracket slots inside the parent issue format (`[SUMMARY]`,
-`[ISSUE_ID]`, `[title]`, `[Criterion …]`), which the loop fills when it
-creates a parent.
+**How to use this template:** copy this file to a sibling named linear-loops-local.md in the same directory (the `docs/*-local.md` gitignore rule keeps that copy untracked), fill in every SETUP placeholder — the `[BRACKETED]` entries whose text tells you what to put there — and paste the finished sections into the Linear UI. Leave every RUNTIME slot untouched: the angle-bracket `<...>` values the loop substitutes per issue, and the square-bracket slots inside the parent issue format (`[SUMMARY]`, `[ISSUE_ID]`, `[title]`, `[Criterion …]`), which the loop fills when it creates a parent.
 
-Scope boundary: Loops own per-issue hygiene and routing — labels, project
-assignment, `agent:*` labels, duplicate flagging, actionability nudges,
-same-PR bundling under a template parent (Task 6) — and, in the Loop 3 sweep
-only, comment-only flagging of likely-obsolete issues. Cancellation, merging,
-and acting on an obsolete flag stay with the audit workflow
-(`skills/project-management/workflows/audit-issues.md`, over
-`workflows/tpm-audit.md`). Loops never cancel, merge, or consolidate issues.
+Scope boundary: Loops own per-issue hygiene and routing — labels, project assignment, `agent:*` labels, duplicate flagging, actionability nudges, same-PR bundling under a template parent (Task 6) — and, in the Loop 3 sweep only, comment-only flagging of likely-obsolete issues. Cancellation, merging, and acting on an obsolete flag stay with the audit workflow (`skills/project-management/workflows/audit-issues.md`, over `workflows/tpm-audit.md`). Loops never cancel, merge, or consolidate issues.
 
 ---
 
@@ -35,8 +20,7 @@ Runs once per newly created issue.
 | Teams | [Every team the janitor should cover — usually all public teams] |
 | Filter: Status | **Triage only** |
 
-No Agent Session filter. No Creator filter. Re-triage of an existing issue is
-Loop 2 (`re-triage` label).
+No Agent Session filter. No Creator filter. Re-triage of an existing issue is Loop 2 (`re-triage` label).
 
 ### Permissions
 
@@ -219,11 +203,12 @@ Parent rules:
 
 Comments are short, factual, and neutral. No greetings, no sign-offs.
 ```
+
 ---
+
 ## Loop 2 — Re-triage on demand
 
-Apply the `re-triage` label (manual, or from Loop 3's sweep) to any issue
-for one janitor pass. Create the workspace label `re-triage` first.
+Apply the `re-triage` label (manual, or from Loop 3's sweep) to any issue for one janitor pass. Create the workspace label `re-triage` first.
 
 ### Trigger
 
@@ -242,8 +227,7 @@ Identical to Loop 1.
 
 ### Instructions
 
-The full Loop 1 instructions text (with your ownership map filled in), plus
-this section appended at the end:
+The full Loop 1 instructions text (with your ownership map filled in), plus this section appended at the end:
 
 ```text
 ## First action — disarm the trigger
@@ -258,8 +242,7 @@ the removal always happens.
 
 ## Loop 3 — Backlog sweep (scheduled, flag-only)
 
-Weekly repo-grounded staleness sweep: flags, never fixes or cancels; chains
-Loop 2 via `re-triage`. Needs workspace Code Intelligence with Loops access.
+Weekly repo-grounded staleness sweep: flags, never fixes or cancels; chains Loop 2 via `re-triage`. Needs workspace Code Intelligence with Loops access.
 
 ### Trigger
 
@@ -343,6 +326,5 @@ Comments are short, factual, and neutral. No greetings, no sign-offs.
 ## Deliberate non-loops
 
 - No per-team loop copies; no "updated" catch-all loop.
-- No cancel/consolidation loop — cancellation and merging stay with the
-  gated audit workflow.
+- No cancel/consolidation loop — cancellation and merging stay with the gated audit workflow.
 - No priority/estimate loop — orchestration and cycle planning own those.

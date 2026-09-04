@@ -11,6 +11,7 @@ All the example code is located in the __[`main`]__ file.
 </div>
 
 You can run the native version with `cargo run`:
+
 ```
 cargo run --package todos
 ```

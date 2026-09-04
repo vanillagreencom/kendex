@@ -2,6 +2,7 @@ Output ONLY valid JSON — no markdown fences, no explanation before or after.
 
 This is a single fresh session with no prior turns and no session history. Output the COMPLETE JSON object in THIS response — do NOT claim the JSON was already delivered or appears above; there is no earlier message. If you have nothing to report, still emit the full JSON object below with an empty `blockers` array and verdict "pass":
 
+```json
 {
   "agent": "external-TARGET",
   "timestamp": "ISO_8601",
@@ -33,8 +34,10 @@ This is a single fresh session with no prior turns and no session history. Outpu
   "questions": [],
   "qa_metadata": {}
 }
+```
 
 Rules:
+
 - Every key shown above is REQUIRED in every response: verdict, and the blockers, suggestions, and questions arrays (emit [] when empty) plus the qa_metadata object. A response missing any of them is rejected as incomplete.
 - verdict: "action_required" if 1+ items in blockers[], "pass" if blockers[] is empty
 - Suggestions may exist even when verdict is "pass"

@@ -1,75 +1,25 @@
-# pi-qol — development notes
+# pi-qol development
 
-Implementation details for contributors. End-user setup, commands, settings, and behavior live in [`README.md`](./README.md). Consumer-visible changes live in [`CHANGELOG.md`](./CHANGELOG.md).
+For maintainers. What it does for a consumer is [README.md](README.md); mechanics live as doc comments on the modules under `extensions/qol/`, and this file holds the invariants that span them.
 
-## Long-session budget guard
+## Invariants
 
-Core implementation:
+- The budget guard is a two-phase protocol built on Pi's post-agent order, which is `agent_end`, then Pi's own compaction check (which may emit `session_compact`), then `agent_settled`. `agent_end` stages a trigger without calling `ctx.compact()`; a same-session `session_compact` satisfies it, so Pi's built-in compaction gets first refusal; `agent_settled` dispatches only a still-pending trigger and awaits the owned compaction's terminal callback, which keeps session shutdown and `pi-agents-tmux` one-shot teardown behind an active compaction. `extensions/qol/budget-guard-runtime.ts::BudgetGuardDriver`; `tests/qol-agent-end.test.ts` holds the ordering.
+- Trigger state is owned by a generation. Every reset mints a non-reusable generation, and a callback changes state only when both its generation and its in-flight object identity still match; `extensions/qol.ts` binds the active generation to the current session manager, so a delayed event from a replaced session can neither consume nor satisfy a newer session's trigger. The `Already compacted` error is benign only when the current generation saw a later `session_compact` after its own dispatch; otherwise it stays visible and clears suppression so the next cycle retries.
+- A satisfied threshold key suppresses repeat work until usage drops or advances to the next bucket; a transient failure suppresses nothing. `extensions/qol/budget-guard.ts::computeBudgetTrigger` owns the key.
+- Budget-guard dispatch marks its custom instructions with `extensions/qol/budget-guard.ts::QOL_BUDGET_GUARD_SENTINEL`, and `extensions/qol/compaction.ts::handleQolCompaction` routes a request carrying it through the bounded summarizer even when `compaction.customEnabled` is off. Manual and idle compactions take that path only when the setting is on. Both write the handoff artifact only under `compaction.handoffArtifactEnabled`.
+- `session_before_tree` is a separate path: `extensions/qol/compaction.ts::handleQolBranchSummary` uses the same chunked summarizer under `compaction.branchSummaryEnabled` and never writes a handoff artifact.
+- Every summarization request, chunk and reduce pass alike, is bounded by `compaction.maxInputChars`; `extensions/qol/budget-guard.ts::orchestrateChunkedSummary` chunks and tree-reduces, and `tests/budget-guard.test.ts` holds every request under the cap.
+- The handoff artifact lands under the shared per-session kendex tree, `<Pi root>/kendex/sessions/<session>/pi-qol/handoff/`, as a stamped file plus `latest.json`; `extensions/qol/compaction-handoff.ts::handoffBaseDir`. A write failure is a warning notification and a `handoffArtifactError` field, never a silent skip. `pi-session-manager` deletes that tree with the session.
+- The permission gate fails closed: a matched command with no UI to ask is blocked, not allowed. `extensions/qol/permission-gate.ts::permissionGateMatch` is the one matcher.
+- Scheduled prompts persist as `qol-schedule` custom session entries and are re-armed from the session branch on load; `extensions/qol/schedule.ts::createScheduleController`.
+- Sibling extensions are reached only through the `Symbol.for` keys in `extensions/qol/constants.ts` and the interfaces in `extensions/qol/bridges.ts`; a missing sibling disables the feature, never throws.
+- `/context` reports a failed transcript-risk estimate as a sanitized error block rather than omitting the warning; `extensions/qol/transcript-risk.ts::transcriptRiskState`.
 
-- `extensions/qol.ts` — Pi event wiring, active-session ownership, status, and settings.
-- `extensions/qol/budget-guard.ts` — threshold evaluation, trigger keys, bounded summarization, and sentinel detection.
-- `extensions/qol/budget-guard-runtime.ts` — staged, satisfied, and in-flight state machine.
-- `extensions/qol/compaction.ts` — bounded compaction handler.
-
-### Lifecycle ordering
-
-Pi awaits extension event handlers. Its post-agent order is:
-
-1. Extension `agent_end` handlers run.
-2. Pi performs its built-in compaction check and may emit `session_compact`.
-3. Pi emits `agent_settled`.
-
-QOL uses that order as a two-phase protocol:
-
-- `agent_end` computes and stages a budget trigger without calling `ctx.compact()`.
-- A same-session `session_compact` satisfies the staged trigger, so Pi's built-in compaction gets first refusal.
-- `agent_settled` dispatches only a still-pending trigger.
-
-`BudgetGuardDriver.dispatchPending()` returns both the immediate dispatch outcome and a completion promise. The `agent_settled` handler awaits that promise until the owned `ctx.compact()` `onComplete` or `onError` callback runs. This keeps terminal settlement and `pi-agents-tmux` one-shot shutdown behind active QOL compaction. Supported Pi hosts always route terminal compaction success or failure to one callback, so no timeout fallback is needed.
-
-### State and session ownership
-
-The driver owns three trigger states:
-
-- pending — threshold crossed, waiting for settled-time dispatch;
-- in flight — QOL called `ctx.compact()` and awaits its terminal callback;
-- satisfied — the current threshold key completed and remains suppressed until usage drops or advances to a new key.
-
-Every reset increments a non-reusable generation. Pending, satisfied, and in-flight records carry that generation. Callback effects require both generation ownership and in-flight object identity before changing state, status, or notifications.
-
-`extensions/qol.ts` associates the active generation with the current `ctx.sessionManager`. Event handlers resolve their context back to that active session before staging, dispatching, resetting, changing budget-guard status, or accepting `session_compact`. Stale callbacks and delayed host events from replaced sessions therefore cannot consume or satisfy a newer session's trigger.
-
-A satisfied threshold suppresses repeat work until usage drops or advances to a new key; transient failures leave nothing suppressed, so a later cycle retries.
-
-The exact `Already compacted` error is benign only when the current generation observed a later `session_compact` after QOL dispatched. Without that same-session evidence, the error remains visible and clears suppression so a later cycle can retry.
-
-### Bounded-handler routing
-
-Budget-guard dispatch adds `QOL_BUDGET_GUARD_SENTINEL` to its custom instructions. `session_before_compact` detects that sentinel and routes the request through QOL's bounded summarizer even when the general custom-compaction setting is off. The same handler invokes the handoff writer, which creates the stamped and latest artifacts only when `compaction.handoffArtifactEnabled` is on. Non-budget session compactions, including manual/user-triggered and idle compaction, use this handler only when `compaction.customEnabled` is on and follow the same handoff-artifact toggle.
-
-The handoff writer stamps `~/.pi/agent/kendex/sessions/<session>/pi-qol/handoff/<timestamp>.json` plus a `latest.json` pointer, each containing the previous summary, last task state, and referenced files/artifacts. A write failure surfaces as a QOL warning notification and a `handoffArtifactError` field in the compaction details.
-
-`session_before_tree` is a separate path. When `compaction.branchSummaryEnabled` is on, `handleQolBranchSummary()` uses `generateQolSummary()` and therefore the same bounded chunk/reduce summarization machinery, but it does not call `buildBudgetHandoff()` or `writeBudgetHandoffArtifact()`. Branch summaries never create pre-compaction handoff artifacts.
-
-### Bounded summarization
-
-Long transcripts are chunked at the **Chunked compaction input cap**, summarized chunk-by-chunk, then tree-reduced — every model/remote request (chunk + every reduce pass) is bounded so the compaction call itself cannot exceed provider buffer limits.
-
-`/context` estimates the serialized payload of the messages that would be sent on the next request and warns above **Transcript-risk warn budget (chars)**. If that estimation itself errors, `/context` shows a sanitized error in the `Transcript risk` block rather than silently hiding the warning.
-
-### Regression coverage
-
-`tests/budget-guard-runtime.test.ts` covers trigger-key deduplication, completion/error ownership, generation resets, duplicate-compaction evidence, and delayed callbacks.
-
-`tests/qol-agent-end.test.ts` covers Pi event wiring and ordering, including:
-
-- built-in compaction between `agent_end` and `agent_settled`;
-- settled handler completion/error awaiting;
-- session A dispatch, reset to session B, then a delayed A `session_compact` while B is pending;
-- the same delayed event while B is in flight, proving it cannot suppress B's `Already compacted` error.
-
-Run:
+## Tests
 
 ```bash
-cd pi-extensions/pi-qol && bun test ./tests
+bun test ./tests
 ```
+
+`bunfig.toml` preloads `tests/preload.ts`, which stubs the `@earendil-works/*` peers so the suite runs from a fresh checkout without `bun install`; a suite needing more of a peer overrides the stub with `mock.module` for itself. `tests/budget-guard-runtime.test.ts` covers key deduplication, ownership, resets and delayed callbacks; `tests/qol-agent-end.test.ts` covers the event wiring, including a delayed `session_compact` from a replaced session while the next one is pending or in flight.

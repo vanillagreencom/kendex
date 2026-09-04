@@ -1,23 +1,21 @@
-# pi-task-panel
+# @vanillagreen/pi-task-panel
 
-![Expanded task panel with phase grouping](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-task-panel/assets/panel-expanded.png)
-![Tasks manager overlay](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-task-panel/assets/manager.png)
-
-Persistent task panel above the Pi status line. Tasks are managed by the agent through the `tasks_write` tool or by you through `/tasks`.
-
-## Highlights
-
-- Compact panel above the editor shows active and pending tasks at a glance.
-- Expanded mode groups by phase and shows notes for the active task.
-- Auto-advance moves to the next pending task when the active one is completed or dropped.
-- Auto-hide when all tasks are done; auto-show happens only for the first non-empty task state each session and never overrides a panel you hid.
-- Bulk-edit, import, and export tasks as plain markdown.
-- Workflow reminders nudge the agent to keep the panel in sync.
-- Participates in kendex's stable mini-dashboard stack order: Orch → Tasks → Agents → BG tasks.
-- Per-session sidecar state keeps slash-command edits and pending tasks resumable before the next model turn writes tool-result history.
-- Large task panels keep tool-result history compact; oversized `tasks_write` details store only counts and id samples while sidecar state remains canonical for resume. If sidecar writes fail, Pi warns and keeps a full session-history fallback; `tasks_write` also keeps full tool-result details for that write.
+A persistent task panel above the Pi editor. The agent keeps it current through the `tasks_write` tool and you edit it through `/tasks`, so the plan for a multi-step turn is visible while the turn runs.
 
 ## Install
+
+Declare the package in the scope's kendex manifest, then let `kendex update-pi` install it and register it in Pi's `settings.json`. For a project, in its `kendex.toml`:
+
+```toml
+[pi-extensions."@vanillagreen/pi-task-panel"]
+source = "kendex"
+```
+
+```bash
+kendex update-pi
+```
+
+The same declaration in `~/.config/kendex/kendex.toml` installs it for every project. `kendex update-pi --check` prints the plan and changes nothing.
 
 Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-task-panel):
 
@@ -25,90 +23,30 @@ Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-task-panel):
 pi install npm:@vanillagreen/pi-task-panel
 ```
 
-Via [kendex](https://github.com/vanillagreencom/kendex):
-
-```bash
-cargo install --git https://github.com/vanillagreencom/kendex.git kendex
-kendex add vanillagreencom/kendex --pi-extension pi-task-panel --harness pi -y
-```
-
 Restart Pi after installation.
 
-## Commands
+## What it does
 
-| Command | Action |
-| --- | --- |
-| `/tasks` or `/tasks:manage` | Open the interactive manager. |
-| `/tasks:add <task>` | Add a task. Use `Phase :: task` to assign a phase. |
-| `/tasks:edit` | Bulk-edit tasks as plain text. |
-| `/tasks:start <task>` | Set a task active. |
-| `/tasks:done <task>` | Mark a task completed. |
-| `/tasks drop <task>` | Mark a task abandoned. |
-| `/tasks:remove <task>` | Remove a task. |
-| `/tasks hide` | Hide the panel. |
-| `/tasks show` | Show the compact panel. |
-| `/tasks show-all` | Show the expanded panel. |
-| `/tasks toggle` | Hide/restore the panel, or cycle all states with `toggleBehavior=cycle`. |
-| `/tasks:clear-completed` | Remove completed tasks. |
-| `/tasks:export <path>` | Write tasks to a markdown file. |
-| `/tasks:import <path>` | Load tasks from a markdown file. |
+- A compact panel shows the active and pending tasks; the expanded panel groups them by phase and shows the active task's notes.
+- The `tasks_write` tool replaces the list, adds a phase or task, starts, completes, drops or removes a task, appends a note, or sets the panel state. Completing or dropping the active task advances to the next pending one.
+- `/tasks` opens an interactive manager; `/tasks:add`, `/tasks:start`, `/tasks:done`, `/tasks:remove`, `/tasks:edit`, `/tasks:clear-completed`, `/tasks:export` and `/tasks:import` edit the list from the command line, with `Phase :: task` naming a phase and a markdown file as the import and export format.
+- The panel shows itself for the first non-empty task state of a session and hides itself when every task is done. A panel you hid stays hidden until you show it again, whatever the agent writes.
+- The toggle shortcut restores the last visible mode, or cycles hidden, compact and expanded when `toggleBehavior` is `cycle`.
+- Hidden reminders prompt the agent to reconcile the panel before replying and when a turn ends with incomplete tasks.
+- Task state survives a resume: it is written to a per-session sidecar file, with the session history as a fallback when the sidecar cannot be written.
 
-Arguments support autocomplete, including task names.
+## How it works
 
-## Manager keys
+The panel is a widget in kendex's shared mini-dashboard stack, ranked between the orchestration and agents widgets. Every mutation writes the state to a sidecar under the Pi user directory's `kendex/sessions` runtime and records it in the session as a custom entry, small enough not to grow the session file; a resume reads the sidecar first. The tool result the agent sees is one status line unless you expand it.
 
-`↑/↓` selects. `enter`/`s` starts, `d` marks done, `x` drops, `r` removes, `c` clears completed, `e` opens bulk edit.
+## Customise
 
-Bulk edit format:
+Open `/extensions:settings`; settings appear under the **Task Panel** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted.
 
-```
-- Phase A :: First task (active)
-- Phase A :: Second task (done)
-- Phase B :: Third task
-```
+- `enabled`: master toggle.
+- `panelDefaultState`, `maxCompactTasks`, `showNotesInExpanded`, `autoShowOnFirstTask`, `glyphStyle`: what the panel shows and when it appears.
+- `alternateShortcut`, `managerShortcut`, `toggleBehavior`, `takeoverCtrlT`: the shortcuts and what the toggle does; Pi's own thinking-visibility binding is left alone unless you opt in.
+- `compactToolOutput`: whether `tasks_write` results render as one line.
+- `showWorkflowReminder`, `showIncompleteReminder`: the hidden reminders to the agent.
 
-Status suffixes: `(active)`, `(done)`, `(dropped)`.
-
-## Visibility toggle
-
-The panel toggle (`alt+t` by default, `/tasks toggle`) hides the panel and restores the last visible mode when toggling back in — a compact panel reopens compact, an expanded panel reopens expanded. Set `toggleBehavior` to `cycle` to step through hidden → compact → expanded → hidden instead. After `/tasks hide` or a hide shortcut, task mutations stay hidden until `/tasks show`, `/tasks show-all`, or an explicit toggle-in. The manager popup opens with its own shortcut and documents its keys in the footer. All bindings are configurable via `/extensions:settings`; Pi's thinking-visibility binding is preserved unless you opt in to taking it over.
-
-## Settings
-
-Open `/extensions:settings`; settings appear under the **Task Panel** tab.
-
-Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted; before trust, kendex Pi extensions read user/global settings only.
-
-Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across kendex Pi extensions while leaving tool/model/user content unchanged.
-
-### Panel
-
-| Setting | What it does |
-| --- | --- |
-| Enable task panel | Master toggle for `tasks_write`, panel rendering, shortcuts, and reminders. |
-| Default panel state | `hidden`, `compact`, or `expanded` when tasks first appear; later settings changes do not override a user-hidden panel in the current session. |
-| Compact task count | Max tasks shown in compact mode. |
-| Show active notes | Show notes for the active task in expanded mode. |
-| Auto-show on first task | Reveal the panel automatically only for the first non-empty task state in a session; user-hidden panels stay hidden until explicit show/toggle. |
-
-### Keyboard
-
-| Setting | What it does |
-| --- | --- |
-| Take over thinking-visibility binding | Repurpose Pi's thinking-visibility binding for the task-panel toggle. |
-| Alternate shortcut | Always-available toggle. Configurable. |
-| Toggle behavior | `toggle` (default) hides/restores the last visible mode; `cycle` steps hidden → compact → expanded → hidden. |
-| Manager popup shortcut | Configurable. |
-
-### Tool output
-
-| Setting | What it does |
-| --- | --- |
-| Compact tasks_write output | Render `tasks_write` results as a single inline status row. |
-
-### Reminders
-
-| Setting | What it does |
-| --- | --- |
-| Task workflow reminders | Inject hidden task context so the agent reconciles state before replying. |
-| Incomplete-task reminders | Subtle reminder when a turn ends with incomplete tasks. |
+Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).

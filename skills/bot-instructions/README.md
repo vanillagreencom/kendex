@@ -1,41 +1,23 @@
 # bot-instructions
 
-Standardized instruction files for the GitHub review bots, generated from one
-doctrine source plus a per-repo TOML rather than hand-written five times.
+One review doctrine plus a per-repo `bot-instructions.toml`, rendered into the instruction file each GitHub review bot reads. For a repository that runs Codex, Copilot, CodeRabbit, Qodo or Macroscope review and wants every bot, in every repo, judging by the same rules.
 
-`scripts/bot-instructions` is the generator. It needs Python 3.11 or newer for
-`tomllib` and nothing else.
+## Install
 
-Five bots read four incompatible surfaces. Codex reads `AGENTS.md` § Code
-Review Rules and nothing else. Copilot code review reads
-`.github/copilot-instructions.md`, path-scoped
-`.github/instructions/*.instructions.md`, and `AGENTS.md`. CodeRabbit reads a
-single `.coderabbit.yaml` that outranks its dashboard, plus `AGENTS.md` where
-that file points it. Qodo reads `.pr_agent.toml` and `best_practices.md`.
-Macroscope reads a `.macroscope/` tree.
-
-Three of the five reach that `AGENTS.md` section, which is why it is the
-doctrine root and why a TOML turning `codex` off with `copilot` or `coderabbit`
-on is a schema error rather than a supported configuration. Written by hand,
-one repo's review doctrine drifts from the next repo's, and an exclusion list
-falls behind the tree it excludes without anything saying so.
-
-```
-doctrine (SKILL.md § Doctrine)  +  bot-instructions.toml
-                    │
-                    ▼ render
-   AGENTS.md § Code Review Rules      .coderabbit.yaml
-   .github/copilot-instructions.md    .pr_agent.toml + best_practices.md
-   .github/instructions/*.md          .macroscope/
+```bash
+kendex add vanillagreencom/kendex --skill bot-instructions
 ```
 
-A `[[surface]]` in the TOML is written once and reaches Copilot, CodeRabbit and
-Macroscope in each one's own dialect. An exclusion is written once and reaches
-every bot that has an exclusion mechanism. Doctrine is written once, in this
-package, for every repo, and one table in `schemas/renders.md` says which block
-lands in which file, in what order, and why each omission is deliberate.
+Needs Python 3.11 or newer. Then follow [references/checklist.md](references/checklist.md) § Adding a repo: one pass with every bot off, then one pass per bot that enables it, adopts its files and renders them.
 
-## Three verbs
+## What it does
+
+- Renders `AGENTS.md` § Code Review Rules, `.github/copilot-instructions.md`, `.github/instructions/*.instructions.md`, `.coderabbit.yaml`, `.pr_agent.toml` with `best_practices.md`, and the `.macroscope/` tree from one TOML.
+- `check` re-renders and reports any file that differs, or that carries the package's marker without the TOML producing it; `--staged` makes it a pre-commit lane.
+- `adopt` takes over a hand-written bot file once, printing what it replaced.
+- A path-scoped `[[surface]]` or an exclusion is written once and reaches every bot that has a mechanism for it.
+
+## How it works
 
 ```bash
 scripts/bot-instructions render [--repo REPO] [--spec SPEC] [--dry-run]
@@ -43,48 +25,12 @@ scripts/bot-instructions check [--repo REPO] [--spec SPEC] [--staged]
 scripts/bot-instructions adopt [--repo REPO] [--spec SPEC]
 ```
 
-`render` builds and validates in a scratch tree, then writes — and the checks
-that judge repository state rather than emitted bytes read the repo before the
-write, since a scratch tree is the one place they cannot fail. `check`
-re-renders and reports any file that differs, plus anything carrying the
-package's marker that the TOML no longer produces. `adopt` is the one-time verb
-for a repo whose bot files were written by hand: `render` refuses to replace a
-file that does not carry this package's marker, and `adopt` takes one over while
-printing what it replaced.
+`render` validates in a scratch tree, then writes. Generated files are outputs: a hand edit is erased at the next render, and `check` reds before that happens. `render` refuses a file that does not carry this package's marker; `adopt` is the one verb that takes such a file over.
 
-Generated files are outputs. A hand edit is erased at the next render, and
-`check` reds before that happens. There is no overwrite prompt and no merge of
-hand edits back into the source.
+Three of the five bots read `AGENTS.md` § Code Review Rules, so that section is the doctrine root: a TOML turning Codex off while Copilot or CodeRabbit is on is a schema error. Bots read their instruction files from the pull request's head, so a pull request can weaken the review it is about to get; what a repo whose merge gate consumes bot output does about that is [SKILL.md](SKILL.md) § A pull request changing its own review.
 
-## What this does not solve
+## Customise
 
-Copilot, CodeRabbit and Macroscope read their instruction files from the pull
-request's head, so a pull request can weaken the review it is about to get and
-re-render until every check passes. No repo file closes that. SKILL.md § A pull
-request changing its own review states what a repo whose merge gate consumes
-bot output has to do about it.
-
-## Reading order
-
-| File | What it settles |
-|------|-----------------|
-| [SKILL.md](SKILL.md) | The doctrine text, which bot reads what, and the trust boundary |
-| [schemas/repo-toml.md](schemas/repo-toml.md) | Every key of `bot-instructions.toml`, and the glob dialect |
-| [schemas/renders.md](schemas/renders.md) | Per-surface render rules, ordering and escaping |
-| [schemas/validators.md](schemas/validators.md) | Each validator's silent failure and what it rejects |
-| [references/validators.md](references/validators.md) | Why each validator needs a red fixture and a green control |
-| [references/limits.md](references/limits.md) | Vendor caps, enums and read semantics, each with its source |
-| [references/checklist.md](references/checklist.md) | How to add a repo, and the per-repo settings no file can configure |
-
-## Adding a repo
-
-The sequence is [references/checklist.md](references/checklist.md) § Adding a
-repo, and it is not a preference: `toml-schema`'s cross-flag clauses, `adopt`'s
-own rule, and `agents-section`'s ungated nested-`AGENTS.md` clause fix the
-order, so that file derives it from them rather than asserting it. Two passes —
-a repo-wide TOML with every bot off, then one pass per capability that enables
-it, adopts its paths and renders them.
-
-What a reader coming here for the shape needs: nothing that depends on a flag
-is written before the flag, and a bot whose install or enablement step is
-skipped reviews nothing while every file in the repo looks correct.
+- `bot-instructions.toml`: every key and the glob dialect, [schemas/repo-toml.md](schemas/repo-toml.md).
+- Which block lands in which file, and why each omission is deliberate: [schemas/renders.md](schemas/renders.md).
+- Per-repo settings no file can configure: [references/checklist.md](references/checklist.md) § The settings.

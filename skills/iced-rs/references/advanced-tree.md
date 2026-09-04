@@ -41,19 +41,11 @@ impl Tree {
 }
 ```
 
-- **`empty()`** — An empty, stateless `Tree` with no children. Equivalent to
-  `Tag::stateless()` + `State::None`.
-- **`new(widget)`** — Creates a new `Tree` for the provided widget. Internally
-  calls the widget's `tag()`, `state()`, and `children()`.
-- **`diff(&mut self, new)`** — Reconciles the current tree with a new widget.
-  If the `Tag` of `new` matches the tree's `Tag`, then `Widget::diff` is
-  called (a shallow reconcile). Otherwise, the whole tree is recreated from
-  scratch via `Tree::new(new)`.
-- **`diff_children(&mut self, new_children)`** — Reconciles the children vec
-  with a list of widgets.
-- **`diff_children_custom(...)`** — Same, but for composite containers where
-  children are not raw `Widget` trait objects — you supply custom `diff` and
-  `new_state` closures.
+- **`empty()`** — An empty, stateless `Tree` with no children. Equivalent to `Tag::stateless()` + `State::None`.
+- **`new(widget)`** — Creates a new `Tree` for the provided widget. Internally calls the widget's `tag()`, `state()`, and `children()`.
+- **`diff(&mut self, new)`** — Reconciles the current tree with a new widget. If the `Tag` of `new` matches the tree's `Tag`, then `Widget::diff` is called (a shallow reconcile). Otherwise, the whole tree is recreated from scratch via `Tree::new(new)`.
+- **`diff_children(&mut self, new_children)`** — Reconciles the children vec with a list of widgets.
+- **`diff_children_custom(...)`** — Same, but for composite containers where children are not raw `Widget` trait objects — you supply custom `diff` and `new_state` closures.
 
 ### `Tag` struct
 
@@ -66,9 +58,7 @@ impl Tag {
 }
 ```
 
-- **`Tag::of::<T>()`** — Identifies a widget state of type `T`. Tags are
-  compared during diffing; if the tag changes, the stored `State` is wiped
-  and recreated.
+- **`Tag::of::<T>()`** — Identifies a widget state of type `T`. Tags are compared during diffing; if the tag changes, the stored `State` is wiped and recreated.
 - **`Tag::stateless()`** — The tag for widgets with no persistent state.
 
 `Tag` derives `Copy`, `Clone`, `Eq`, `Hash`, `Ord`, `Debug`.
@@ -91,8 +81,7 @@ impl State {
 - **`State::None`** — No persistent state.
 - **`State::Some(Box<dyn Any>)`** — A boxed, dynamically typed state value.
 - **`State::new(state)`** — Wraps any `'static` value.
-- **`downcast_ref::<T>()`** — Returns `&T`. **Panics** if the downcast fails
-  or the state is `State::None`.
+- **`downcast_ref::<T>()`** — Returns `&T`. **Panics** if the downcast fails or the state is `State::None`.
 - **`downcast_mut::<T>()`** — Same, returning `&mut T`. Same panic behaviour.
 
 ## Patterns
@@ -150,17 +139,11 @@ fn diff(&self, tree: &mut Tree) {
 
 ## Gotchas
 
-- `tag()` and `state()` must agree. If `tag()` returns `Tag::of::<Foo>()`
-  but `state()` returns `State::None`, `downcast_ref::<Foo>()` will panic.
-- `downcast_ref` / `downcast_mut` panic on mismatch — always use the same
-  concrete `T` that `state()` produced.
-- Changing the state type `T` in a live widget will wipe the state (because
-  the `Tag` no longer matches), resetting any persistent state such as
-  scroll position.
-- For composite widgets, you **must** override both `children()` and `diff()`,
-  otherwise child state will not be created/reconciled.
-- `diff()` is called each frame; it should be cheap. Heavy work (layout,
-  paragraph shaping, etc.) belongs in `layout()`.
+- `tag()` and `state()` must agree. If `tag()` returns `Tag::of::<Foo>()` but `state()` returns `State::None`, `downcast_ref::<Foo>()` will panic.
+- `downcast_ref` / `downcast_mut` panic on mismatch — always use the same concrete `T` that `state()` produced.
+- Changing the state type `T` in a live widget will wipe the state (because the `Tag` no longer matches), resetting any persistent state such as scroll position.
+- For composite widgets, you **must** override both `children()` and `diff()`, otherwise child state will not be created/reconciled.
+- `diff()` is called each frame; it should be cheap. Heavy work (layout, paragraph shaping, etc.) belongs in `layout()`.
 - `Tree` is not `Send`. Do not move widget state across threads.
 
 ## See also

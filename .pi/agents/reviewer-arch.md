@@ -30,6 +30,7 @@ Architecture violations, boundary breaches, spec holes → `blockers[]`. Tech de
 ## Required Skills
 
 Read each before acting:
+
 - reviewer: .agents/skills/reviewer/SKILL.md
 
 ## Additional Instructions

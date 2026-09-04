@@ -36,14 +36,12 @@ impl Padding {
 
 - **`ZERO`** — The `Padding::ZERO` constant.
 - **`new(f32)`** — Creates equal padding on all four sides.
-- **`top(..)` / `right(..)` / `bottom(..)` / `left(..)`** — Builder methods
-  that replace one side and return the modified `Padding`.
+- **`top(..)` / `right(..)` / `bottom(..)` / `left(..)`** — Builder methods that replace one side and return the modified `Padding`.
 - **`horizontal(..)`** — Sets both `left` and `right`.
 - **`vertical(..)`** — Sets both `top` and `bottom`.
 - **`x()`** — Returns the total horizontal padding (`left + right`).
 - **`y()`** — Returns the total vertical padding (`top + bottom`).
-- **`fit(inner, outer)`** — Adjusts the padding so an inner size fits inside
-  an outer size.
+- **`fit(inner, outer)`** — Adjusts the padding so an inner size fits inside an outer size.
 
 From impls: `From<f32>` (uniform), `From<[f32; 2]>` (`[v, h]`), `From<[f32; 4]>` (`[t, r, b, l]`).
 
@@ -91,15 +89,11 @@ container(content).padding(Padding::ZERO)  // no padding
 
 ## Gotchas
 
-- **`Padding::from([v, h])` is vertical-first**, matching CSS shorthand.
-  Don't confuse with `[top, left]`.
+- **`Padding::from([v, h])` is vertical-first**, matching CSS shorthand. Don't confuse with `[top, left]`.
 - `Padding::from([t, r, b, l])` is **clockwise from top**, matching CSS.
-- `x()` and `y()` return **totals**, not averages — use them to compute
-  available content area: `content_width = bounds.width - padding.x()`.
-- Padding fields are `f32`, not `u16` — sub-pixel padding is allowed but
-  can cause blurry borders. Keep them integer for crisp rendering.
-- The builder methods (`top`, `right`, etc.) take `impl Into<Pixels>`, so
-  you can pass either a scalar or a `Pixels` type.
+- `x()` and `y()` return **totals**, not averages — use them to compute available content area: `content_width = bounds.width - padding.x()`.
+- Padding fields are `f32`, not `u16` — sub-pixel padding is allowed but can cause blurry borders. Keep them integer for crisp rendering.
+- The builder methods (`top`, `right`, etc.) take `impl Into<Pixels>`, so you can pass either a scalar or a `Pixels` type.
 - No `Padding::symmetric(v, h)` helper -- use `Padding::from([v, h])` or builder methods.
 
 ## See also

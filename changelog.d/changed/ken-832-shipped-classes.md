@@ -1,3 +1,1 @@
-- size-ratchet ships its own class list, so a repo with no
-  `SIZE_RATCHET_CLASSES` inherits one; `--staged` lowers a shrunk row itself
-  and stages the baseline into the commit.
+- size-ratchet ships its own class list, so a repo with no `SIZE_RATCHET_CLASSES` inherits one; `--staged` lowers a shrunk row itself and stages the baseline into the commit.

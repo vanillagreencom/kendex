@@ -39,6 +39,16 @@ Excluded everywhere: directory layouts and file-by-file descriptions, behaviour 
 
 Codex reads only the root-to-cwd chain of `AGENTS.md` files, at launch, under a 32 KiB combined cap, so everything a Codex session must know stays in the root file; nested files hold what is local to a directory. Claude Code and Gemini reach nested files through shims kendex writes and verifies (`kendex apply`, `kendex refresh`, `kendex verify`): a sibling `CLAUDE.md` holding `@AGENTS.md`, and `context.fileName` in `.gemini/settings.json`. Pi reaches them through the `pi-nested-agents-md` extension, declared in the manifest and installed by `kendex update-pi`. Shims are committed and never hand-written.
 
+## Package files
+
+| File | For | Holds |
+|---|---|---|
+| `README.md` | People, consumers of the package or repo. | What it is in a few sentences, install where needed, a short plain feature list, a few lines of how it works, and the need-to-know for customising it (settings), critical items only. |
+| `DEVELOPMENT.md` | Maintainers, human or agent. | Everything deeper: mechanics, edge cases, invariants a maintainer must not break, test strategy, internals. |
+| `SKILL.md`, agent files | Agents, on every load. | The shortest unambiguous rule and the commands; no mechanics, rationale, or history. |
+
+A fact lives in one of the three; the others point at it. A README that explains mechanics moves them to `DEVELOPMENT.md`; a `SKILL.md` that explains why moves the why to `DEVELOPMENT.md` or a decision record. READMEs are held to the same format and size lanes as every other markdown file (a README byte class in size-ratchet). Start from [templates/README.md](templates/README.md).
+
 ## Rules
 
 - Docs change in the same commit as the code they describe. The `doc-drift-check` hook blocks a stop that changed code under a covered directory without touching its docs; confirm or update the docs, then finish.

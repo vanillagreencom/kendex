@@ -1,4 +1,5 @@
-//! The eight ARCHITECTURE invariants, exercised end-to-end on a fixture
+//! The first eight invariants of docs/architecture/overview.md § Invariants,
+//! exercised end-to-end on a fixture
 //! project. Kind-specific extensions (structured-config toggles, shared
 //! targets) extend these in Phase 3+.
 #![cfg(unix)]

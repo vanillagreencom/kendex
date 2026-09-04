@@ -12,8 +12,7 @@ This workflow mutates project state, so it reconciles before anything reads the 
 
 1. **Delegate** to a one-shot `[TPM]` sub-agent.
 
-   Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
-   `[DIR]` is the caller's own checkout, main checkout included.
+   Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the caller's own checkout, main checkout included.
 
    <delegation_format>
    Follow workflow: .agents/skills/project-management/workflows/tpm-cycle-plan.md

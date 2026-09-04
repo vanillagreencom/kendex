@@ -274,6 +274,7 @@ See `advanced-shell.md` for all Shell methods.
 Animation = progress stored in `Tree` state + a redraw request each frame.
 
 **Paint-only animation** (color, opacity, transform, fixed bounds):
+
 ```rust
 if state.animation_active {
     shell.request_redraw();  // that's it
@@ -281,6 +282,7 @@ if state.animation_active {
 ```
 
 **Layout-affecting animation** (size, position, expand/collapse, clipping bounds):
+
 ```rust
 if state.animation_active {
     shell.invalidate_layout();  // REQUIRED — otherwise paint at new size with old layout
@@ -297,6 +299,7 @@ if state.animation_active {
 **Rule**: redraw-driven animation loops keep all motion state in `widget::Tree` state; widget struct fields are frozen until the next `view()`. Animation that depends on `App::update()` values must be driven by messages/tasks, not bare `request_redraw()`.
 
 For scheduled next-frame ticks:
+
 ```rust
 shell.request_redraw_at(
     window::RedrawRequest::At(Instant::now() + Duration::from_millis(16))

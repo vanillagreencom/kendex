@@ -15,10 +15,8 @@ pub trait Clipboard {
 }
 ```
 
-- **`read(kind)`** — Reads the current content of the clipboard as text.
-  Returns `None` if the clipboard is empty or the operation fails.
-- **`write(kind, contents)`** — Writes the given text contents to the
-  clipboard.
+- **`read(kind)`** — Reads the current content of the clipboard as text. Returns `None` if the clipboard is empty or the operation fails.
+- **`write(kind, contents)`** — Writes the given text contents to the clipboard.
 
 ### `Kind` enum
 
@@ -30,8 +28,7 @@ pub enum Kind {
 ```
 
 - **`Standard`** — The standard clipboard (Ctrl+C / Ctrl+V on most systems).
-- **`Primary`** — The primary selection clipboard. Normally only present on
-  X11 and Wayland; middle-click paste.
+- **`Primary`** — The primary selection clipboard. Normally only present on X11 and Wayland; middle-click paste.
 
 ## Patterns
 
@@ -64,15 +61,10 @@ fn update(
 
 ## Gotchas
 
-- The trait takes `&self` for `read` but `&mut self` for `write`. You can
-  call `read` from any context that holds a shared reference to the
-  clipboard.
-- Most platforms restrict clipboard access to foreground windows; a `read()`
-  from a background window may silently return `None`.
-- `Kind::Primary` is a no-op on Windows/macOS; both reads return `None` and
-  writes are dropped. Write to both for cross-platform drag-like flows.
-- The trait is **dyn-compatible** — widgets receive it as `&mut dyn Clipboard`
-  through `update()`.
+- The trait takes `&self` for `read` but `&mut self` for `write`. You can call `read` from any context that holds a shared reference to the clipboard.
+- Most platforms restrict clipboard access to foreground windows; a `read()` from a background window may silently return `None`.
+- `Kind::Primary` is a no-op on Windows/macOS; both reads return `None` and writes are dropped. Write to both for cross-platform drag-like flows.
+- The trait is **dyn-compatible** — widgets receive it as `&mut dyn Clipboard` through `update()`.
 - Only text MIME type supported -- no images, files, or custom types.
 
 ## See also

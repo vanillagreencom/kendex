@@ -5,9 +5,13 @@
 # sits under a covered directory and none of that directory's covering docs
 # changed. Pinned here: what covers what (a tracked non-root AGENTS.md, the
 # nearest one; a docs/architecture topic file's Covers: line), what counts
-# as changed (worktree, index, untracked non-ignored paths), the once-per-
-# session marker under the git common dir, and the fail-closed edges — a git
-# that cannot answer, an unreadable payload, a payload with no session id.
+# as changed (every path differing from the branch's merge-base with the
+# default branch, committed or not, plus untracked non-ignored paths; the
+# working tree alone on the default branch or where no merge-base resolves),
+# how the default branch is found (origin/HEAD, else main, else master), the
+# once-per-session marker under the git common dir, and the fail-closed
+# edges — a git that cannot answer, an unreadable payload, a payload with no
+# session id.
 #
 # Fixtures are throwaway git repositories built under a HOME of their own.
 #
@@ -30,13 +34,15 @@ fgit() {
   env HOME="$TMP_ROOT" git "$@"
 }
 
-# A fresh repository: a root AGENTS.md (covers nothing), crates/core with
-# its own AGENTS.md, a topic file covering crates/core, and ui/ under no
-# doc at all. Every case starts from this clean tree and states its change.
+# A fresh repository on a branch named main with no remote: a root AGENTS.md
+# (covers nothing), crates/core with its own AGENTS.md, a topic file
+# covering crates/core, and ui/ under no doc at all. Every case starts from
+# this clean tree and states its change.
 new_repo() {
   local repo="$TMP_ROOT/repo.$1"
   mkdir -p "$repo/crates/core/src" "$repo/docs/architecture" "$repo/ui/src"
   fgit init -q "$repo"
+  fgit -C "$repo" symbolic-ref HEAD refs/heads/main
   fgit -C "$repo" config user.email t@example.com
   fgit -C "$repo" config user.name t
   printf '# root\n' >"$repo/AGENTS.md"
@@ -47,6 +53,38 @@ new_repo() {
   fgit -C "$repo" add -A
   fgit -C "$repo" commit -q -m init
   printf '%s' "$repo"
+}
+
+# A clone of a fresh repository, so origin/HEAD resolves to origin/main,
+# checked out on a branch named feat.
+new_clone() {
+  local up clone="$TMP_ROOT/clone.$1"
+  up="$(new_repo "up.$1")"
+  fgit clone -q -- "$up" "$clone"
+  fgit -C "$clone" config user.email t@example.com
+  fgit -C "$clone" config user.name t
+  fgit -C "$clone" checkout -q -b feat
+  printf '%s' "$clone"
+}
+
+# A git on PATH that passes every subcommand through except $1, which dies
+# with $2 the way a git too old for the flags or a broken index would.
+broken_git() {
+  local bin="$TMP_ROOT/broken.$1" real
+  real="$(command -v git)"
+  mkdir -p "$bin"
+  cat >"$bin/git" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [ "\$a" = "$1" ]; then
+    echo "$2" >&2
+    exit 128
+  fi
+done
+exec "$real" "\$@"
+EOF
+  chmod +x "$bin/git"
+  printf '%s' "$bin"
 }
 
 # Run the hook inside $1 with a Stop payload on stdin. $2 is the session id
@@ -328,22 +366,7 @@ assert_contains "$err" "rev-parse failed" "names the probe that could not answer
 echo "doc-drift-check: git cannot answer what changed"
 REPO="$(new_repo brokengit)"
 printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-BROKEN_BIN="$TMP_ROOT/brokengit"
-mkdir -p "$BROKEN_BIN"
-REAL_GIT="$(command -v git)"
-# Passes every subcommand through except the untracked listing, which dies
-# the way a git too old for the flags or a broken index would.
-cat >"$BROKEN_BIN/git" <<EOF
-#!/usr/bin/env bash
-for a in "\$@"; do
-  if [ "\$a" = "ls-files" ]; then
-    echo "fatal: unable to read index" >&2
-    exit 128
-  fi
-done
-exec "$REAL_GIT" "\$@"
-EOF
-chmod +x "$BROKEN_BIN/git"
+BROKEN_BIN="$(broken_git ls-files 'fatal: unable to read index')"
 set +e
 ( cd "$REPO" && env HOME="$TMP_ROOT" PATH="$BROKEN_BIN:$PATH" bash "$HOOK" <<<'{"session_id":"s1"}' ) \
   >/dev/null 2>"$TMP_ROOT/stderr"
@@ -351,6 +374,113 @@ rc=$?
 set -e
 assert_eq "$rc" 2 "an unreadable changed set blocks rather than passing"
 assert_contains "$(cat "$TMP_ROOT/stderr")" "unable to read index" "carries git's own failure"
+
+echo "doc-drift-check: a committed code change on a branch"
+REPO="$(new_clone committed)"
+printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
+fgit -C "$REPO" commit -q -am code
+run_hook "$REPO"
+assert_eq "$rc" 2 "a committed code change with no doc change blocks"
+assert_contains "$err" "crates/core/AGENTS.md" "names the docs the branch owes"
+assert_contains "$err" "crates/core/src/lib.rs" "names the committed path"
+assert_contains "$err" "the merge-base with origin/main" "says which base it judged against"
+printf 'more\n' >>"$REPO/crates/core/AGENTS.md"
+run_hook "$REPO" s2
+assert_eq "$rc" 0 "an uncommitted doc change beside the committed code passes"
+
+echo "doc-drift-check: the doc changed in the same commit"
+REPO="$(new_clone samecommit)"
+printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
+printf 'more\n' >>"$REPO/crates/core/AGENTS.md"
+fgit -C "$REPO" commit -q -am both
+run_hook "$REPO"
+assert_eq "$rc" 0 "a doc committed beside the code passes"
+
+echo "doc-drift-check: the doc changed in an earlier commit on the branch"
+REPO="$(new_clone earlier)"
+printf 'more\n' >>"$REPO/docs/architecture/core.md"
+fgit -C "$REPO" commit -q -am doc
+printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
+fgit -C "$REPO" commit -q -am code
+run_hook "$REPO"
+assert_eq "$rc" 0 "a doc committed earlier on the branch passes"
+
+echo "doc-drift-check: on the default branch only the working tree counts"
+REPO="$(new_clone ondefault)"
+fgit -C "$REPO" checkout -q main
+printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
+fgit -C "$REPO" commit -q -am code
+run_hook "$REPO"
+assert_eq "$rc" 0 "a commit on the default branch is not a change"
+printf 'pub fn c() {}\n' >>"$REPO/crates/core/src/lib.rs"
+run_hook "$REPO"
+assert_eq "$rc" 2 "a working-tree change on the default branch still blocks"
+assert_contains "$err" "main is the default branch" "says the working tree alone was judged"
+
+echo "doc-drift-check: no origin/HEAD falls back to main, then master"
+REPO="$(new_repo nomain)"
+fgit -C "$REPO" checkout -q -b feat
+printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
+fgit -C "$REPO" commit -q -am code
+run_hook "$REPO"
+assert_eq "$rc" 2 "a committed change is judged against a local main"
+assert_contains "$err" "the merge-base with main" "names main as the base"
+REPO="$(new_repo master)"
+fgit -C "$REPO" branch -m main master
+fgit -C "$REPO" checkout -q -b feat
+printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
+fgit -C "$REPO" commit -q -am code
+run_hook "$REPO"
+assert_eq "$rc" 2 "a committed change is judged against a local master"
+assert_contains "$err" "the merge-base with master" "names master as the base"
+
+echo "doc-drift-check: neither default branch judges the working tree"
+REPO="$(new_repo trunk)"
+fgit -C "$REPO" branch -m main trunk
+fgit -C "$REPO" checkout -q -b feat
+printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
+fgit -C "$REPO" commit -q -am code
+run_hook "$REPO"
+assert_eq "$rc" 0 "a commit with no default branch to compare against is not a change"
+printf 'pub fn c() {}\n' >>"$REPO/crates/core/src/lib.rs"
+run_hook "$REPO"
+assert_eq "$rc" 2 "a working-tree change still blocks"
+assert_contains "$err" "no origin/HEAD, main or master" "says no base resolved"
+
+echo "doc-drift-check: a branch sharing no history with the default"
+REPO="$(new_repo orphan)"
+fgit -C "$REPO" checkout -q --orphan lone
+printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
+fgit -C "$REPO" add -A
+fgit -C "$REPO" commit -q -m lone
+run_hook "$REPO"
+assert_eq "$rc" 0 "a commit with no merge-base is not a change"
+printf 'pub fn c() {}\n' >>"$REPO/crates/core/src/lib.rs"
+run_hook "$REPO"
+assert_eq "$rc" 2 "a working-tree change still blocks"
+assert_contains "$err" "shares no history with main" "says no merge-base resolved"
+
+echo "doc-drift-check: git cannot answer the merge-base"
+REPO="$(new_clone brokenbase)"
+printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
+fgit -C "$REPO" commit -q -am code
+BROKEN_BIN="$(broken_git merge-base 'fatal: bad object HEAD')"
+set +e
+( cd "$REPO" && env HOME="$TMP_ROOT" PATH="$BROKEN_BIN:$PATH" bash "$HOOK" <<<'{"session_id":"s1"}' ) \
+  >/dev/null 2>"$TMP_ROOT/stderr"
+rc=$?
+set -e
+assert_eq "$rc" 2 "a merge-base git cannot answer blocks rather than judging the working tree"
+assert_contains "$(cat "$TMP_ROOT/stderr")" "bad object HEAD" "carries git's own failure"
+assert_contains "$(cat "$TMP_ROOT/stderr")" "git merge-base failed" "names the probe that could not answer"
+BROKEN_BIN="$(broken_git symbolic-ref 'fatal: unable to read refs')"
+set +e
+( cd "$REPO" && env HOME="$TMP_ROOT" PATH="$BROKEN_BIN:$PATH" bash "$HOOK" <<<'{"session_id":"s1"}' ) \
+  >/dev/null 2>"$TMP_ROOT/stderr"
+rc=$?
+set -e
+assert_eq "$rc" 2 "a default-branch probe git cannot answer blocks rather than reading as absent"
+assert_contains "$(cat "$TMP_ROOT/stderr")" "unable to read refs" "carries git's own failure"
 
 echo "doc-drift-check: the marker cannot be written"
 REPO="$(new_repo nomarker)"

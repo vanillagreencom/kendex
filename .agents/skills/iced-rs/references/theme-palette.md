@@ -62,8 +62,7 @@ pub struct Extended {
 }
 ```
 
-- **`is_dark`** — Whether the derived palette should be treated as a dark
-  theme. Useful for picking icons or inverting elements.
+- **`is_dark`** — Whether the derived palette should be treated as a dark theme. Useful for picking icons or inverting elements.
 
 ### `Pair` struct
 
@@ -167,20 +166,11 @@ let text_color = bg.text; // already computed by iced for contrast
 
 ## Gotchas
 
-- Prefer `.extended_palette()` over `.palette()` when styling widgets — the
-  extended palette already contains the strong/weak variants and paired
-  text colours, so you don't need to compute contrast yourself.
-- `is_dark` is a hint, not a rule — some colour combos are borderline.
-  Don't swap icons based on it; use it only when the rest of your theming
-  can tolerate a flip.
-- `Primary::generate(base, background, text)` takes the **background**
-  too, because it contrast-adjusts against it. Don't pass a stale
-  background when deriving variants.
-- `Background` has eight levels (`weakest` through `strongest`), but the
-  other accent structs only have three (`weak`/`base`/`strong`). Don't
-  expect parallel level counts.
-- `Extended` is plain data — it's cheap to clone, but it's usually
-  accessed through `theme.extended_palette()` which returns a borrow.
+- Prefer `.extended_palette()` over `.palette()` when styling widgets — the extended palette already contains the strong/weak variants and paired text colours, so you don't need to compute contrast yourself.
+- `is_dark` is a hint, not a rule — some colour combos are borderline. Don't swap icons based on it; use it only when the rest of your theming can tolerate a flip.
+- `Primary::generate(base, background, text)` takes the **background** too, because it contrast-adjusts against it. Don't pass a stale background when deriving variants.
+- `Background` has eight levels (`weakest` through `strongest`), but the other accent structs only have three (`weak`/`base`/`strong`). Don't expect parallel level counts.
+- `Extended` is plain data — it's cheap to clone, but it's usually accessed through `theme.extended_palette()` which returns a borrow.
 - No API for partial overrides -- rebuild the full `Extended` via `custom_with_fn`.
 
 ## See also

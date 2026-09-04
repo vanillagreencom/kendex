@@ -37,6 +37,7 @@ Coverage gaps, vacuous tests, missing must-fail controls, unwired suites → `bl
 ## Required Skills
 
 Read each before acting:
+
 - reviewer: .agents/skills/reviewer/SKILL.md
 
 ## Additional Instructions

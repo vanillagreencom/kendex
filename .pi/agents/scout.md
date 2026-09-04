@@ -39,6 +39,7 @@ Answer four things: where the relevant code lives, how the key types and functio
 ## Required Skills
 
 Read each before acting:
+
 - github: .agents/skills/github/SKILL.md
 - linear: .agents/skills/linear/SKILL.md
 

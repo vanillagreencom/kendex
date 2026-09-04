@@ -1,7 +1,7 @@
 //! How one hook reaches one harness at one scope. A hook's delivery is
 //! decided here by capability, never by which author wrote it, and every
 //! surface — the engine, the agent renderer, the editor preview — reads the
-//! same decision (ARCHITECTURE.md invariant).
+//! same decision (docs/architecture/harnesses.md § Boundaries).
 
 use crate::env::Env;
 use crate::harness::Enforcement;

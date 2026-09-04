@@ -150,6 +150,7 @@ Anything not handled by a specific widget event goes through the global `Subscri
 Default: use the existing widgets + `.style(closure)` for custom visuals.
 
 Write a custom `iced::advanced::Widget` when **any** of these is true:
+
 - You need persistent Tree state across frames (hover, drag phase, animation accumulator)
 - You need non-rectangular hit-testing
 - You need to compose child widgets with a custom layout algorithm

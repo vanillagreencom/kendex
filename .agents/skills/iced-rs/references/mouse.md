@@ -105,23 +105,12 @@ fn subscription(_: &State) -> Subscription<Message> {
 
 ## Gotchas
 
-- `ScrollDelta::Lines` and `ScrollDelta::Pixels` are both emitted by real
-  devices — always handle both. A common mistake is to only match on
-  `Lines` and silently drop trackpad scrolling.
-- "One line" is typically 16 px, but that's not guaranteed — document
-  your multiplier choice.
-- `CursorMoved { position }` is in **window** coordinates, not widget
-  coordinates. Use `Cursor::position_in(layout.bounds())` inside a widget
-  to get widget-relative coordinates.
-- The public `mouse` module and the `advanced::mouse` module share the
-  same types but the extended `Cursor::position_in`/`position_over`/`is_over`
-  methods are gated behind the `advanced` feature flag.
-- `Button::Other(u16)` is platform-specific — don't assume any particular
-  numeric code means a particular button.
-- There is no `Event::DoubleClick` variant — double-click detection is
-  done via the `iced::advanced::mouse::click::Click::new(position, button,
-  previous)` helper. If you need timing-based double-click, track
-  timestamps yourself.
+- `ScrollDelta::Lines` and `ScrollDelta::Pixels` are both emitted by real devices — always handle both. A common mistake is to only match on `Lines` and silently drop trackpad scrolling.
+- "One line" is typically 16 px, but that's not guaranteed — document your multiplier choice.
+- `CursorMoved { position }` is in **window** coordinates, not widget coordinates. Use `Cursor::position_in(layout.bounds())` inside a widget to get widget-relative coordinates.
+- The public `mouse` module and the `advanced::mouse` module share the same types but the extended `Cursor::position_in`/`position_over`/`is_over` methods are gated behind the `advanced` feature flag.
+- `Button::Other(u16)` is platform-specific — don't assume any particular numeric code means a particular button.
+- There is no `Event::DoubleClick` variant — double-click detection is done via the `iced::advanced::mouse::click::Click::new(position, button, previous)` helper. If you need timing-based double-click, track timestamps yourself.
 - No `is_inside_window` helper -- track `CursorEntered`/`CursorLeft` yourself.
 
 ## See also

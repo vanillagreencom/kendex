@@ -99,24 +99,15 @@ pub fn main() -> iced::Result {
 }
 ```
 
-A shortcut for when you don't need a custom `boot`. Uses
-`Default::default()` for the state.
+A shortcut for when you don't need a custom `boot`. Uses `Default::default()` for the state.
 
 ## Gotchas
 
-- `Message: Send + 'static` is required — async tasks need to move messages
-  across threads.
-- `update` may return `Task<Message>` (for async effects) **or** nothing
-  (for simple synchronous updates). Both are supported — iced infers the
-  right form via `UpdateFn`.
-- `boot` can return either a bare `State` or `(State, Task<Message>)` if
-  you need to kick off work on startup (e.g. loading a config file).
-- `.font(bytes)` loads fonts **synchronously** at startup — fine for a few
-  KB, but large fonts will delay first paint. Use `font::load(bytes)` from
-  within `boot` if you want async loading.
-- `iced::daemon()` will exit immediately if you don't open a window from
-  `boot` (via `Task::from(window::open(...))`) — a silent daemon with no
-  windows has nothing to render.
+- `Message: Send + 'static` is required — async tasks need to move messages across threads.
+- `update` may return `Task<Message>` (for async effects) **or** nothing (for simple synchronous updates). Both are supported — iced infers the right form via `UpdateFn`.
+- `boot` can return either a bare `State` or `(State, Task<Message>)` if you need to kick off work on startup (e.g. loading a config file).
+- `.font(bytes)` loads fonts **synchronously** at startup — fine for a few KB, but large fonts will delay first paint. Use `font::load(bytes)` from within `boot` if you want async loading.
+- `iced::daemon()` will exit immediately if you don't open a window from `boot` (via `Task::from(window::open(...))`) — a silent daemon with no windows has nothing to render.
 - Only one `iced::application()` or `iced::daemon()` per process.
 - The builder's `title` is a function that re-evaluates on each state change.
 

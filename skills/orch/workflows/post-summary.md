@@ -59,10 +59,7 @@ Write the summary to a file first with the harness file-write tool at `[WORKTREE
 **Fix rounds**: [N] | [STATUS_SUMMARY]
 ```
 
-Omit empty sections. Render Orchestration stopped only when `post_pr_stop` is
-non-null. Created Issues comes from `audit_issues_created` plus
-`pr_comment_review.issues_created`, with project names. Deduplicate
-Recommendations Processed by description across cycles.
+Omit empty sections. Render Orchestration stopped only when `post_pr_stop` is non-null. Created Issues comes from `audit_issues_created` plus `pr_comment_review.issues_created`, with project names. Deduplicate Recommendations Processed by description across cycles.
 
 **Commit SHAs.** When workflow state carries a `.rebase_map`, resolve every published SHA through it before posting — follow the chain until no key matches; publishing an unreconciled pre-rebase SHA is forbidden. Artifact-sourced references such as a perf QA `benchmark_commit` are the ones still unreconciled (`submit-pr.md` § 2). A stored fix commit reading `dropped:<sha>` names a commit that vanished in a rebase — report that item without a SHA (or cite the upstream commit that carries the patch), never print the dead hash.
 

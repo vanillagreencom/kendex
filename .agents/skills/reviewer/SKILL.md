@@ -46,6 +46,8 @@ Shared contract for every review specialist; each agent's domain and probes live
 - Fewer high-conviction findings beat lists of nits.
 - A reviewer deletes every probe it wrote and leaves the tree exactly as it found it.
 - Project decisions and architecture docs outrank generic heuristics. Do not contradict or re-litigate the decisions the delegation lists.
+- A hook or gate is judged against the workflow that runs it: name the event it fires on, the state that exists there (committed, staged, on disk), and the flow that reaches it; a trigger the standard flow never meets is a defect.
+- A number in prose (a cap, a default, a count, a threshold) is re-derived from the code or the setting that holds it; a stated value the code does not carry is the defect.
 - Do not re-verify what deterministic gates already enforce (preflight, size-ratchet, project lint/CI); cite gate output instead of re-deriving it.
 - `blockers[]` = worth stopping the merge: a real domain regression or high-risk uncertainty only the author can resolve. `suggestions[]` = actionable now (`fix`) or worth tracking (`issue`). Cosmetic items belong in neither. `pass` means your domain has no verified blocker in scope.
 
@@ -75,20 +77,13 @@ The delegation's `Diff-range` is the fix diff: scope the pass to that range and 
 
 ## Mutation-Stability Pairing
 
-Mutation proves a test can fail; stability proves it fails only for the
-right reason. Run both with one command, on a copy, never in the shared
-tree:
+Mutation proves a test can fail; stability proves it fails only for the right reason. Run both with one command, on a copy, never in the shared tree:
 
 ```bash
 .agents/skills/reviewer/scripts/mutation-stability --worktree [WORKTREE_PATH] --sha [SHA] --test '[TEST_CMD]' --build '[BUILD_CMD]' --mutate '[MUTATE_CMD]'
 ```
 
-- Kill the mutant under every selection/invocation mode the changed code
-  exposes, not only the default (one call per mode).
-- A kill counts only when the mutated copy compiles. Use the suite's
-  compile-without-running command for `--build`.
-- Copy the printed `mutation: … stability: …` line into your artifact's
-  `summary`; that field and `qa_metadata` are the only carriers read as
-  your own measurement.
-- Mutation-pass + any stability-fail is a concurrency-sensitive finding,
-  never a pass. A survived mutant means the test is not evidence.
+- Kill the mutant under every selection/invocation mode the changed code exposes, not only the default (one call per mode).
+- A kill counts only when the mutated copy compiles. Use the suite's compile-without-running command for `--build`.
+- Copy the printed `mutation: … stability: …` line into your artifact's `summary`; that field and `qa_metadata` are the only carriers read as your own measurement.
+- Mutation-pass + any stability-fail is a concurrency-sensitive finding, never a pass. A survived mutant means the test is not evidence.

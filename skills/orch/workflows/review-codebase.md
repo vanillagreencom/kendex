@@ -15,8 +15,7 @@ Ad-hoc whole-codebase reviewer fanout. No PR, no issue, no diff, no fix delegati
 
 Not a git worktree → report `review-codebase requires a git worktree` and **END**. Otherwise use the output as `WT_PATH` and `mkdir -p "$WT_PATH/tmp"`.
 
-Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
-`[DIR]` is the `[PATH_OR_PWD]` § 1 resolves `WT_PATH` from.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the `[PATH_OR_PWD]` § 1 resolves `WT_PATH` from.
 
 ## 2. Delegate
 

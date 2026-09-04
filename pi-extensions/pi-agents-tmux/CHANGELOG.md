@@ -15,12 +15,7 @@
 
 ### 2.8.8
 
-- `PANE_LAUNCHER_VERSION` bumped 10 → 11: the launcher template changed
-  without the bump that recycles running panes, so live persistent panes
-  recorded at version 10 were still on the older launcher. On upgrade each
-  such pane is killed and relaunched once so it picks up the current
-  template. The pinning test caught this on its first CI run after the
-  suites returned.
+- `PANE_LAUNCHER_VERSION` bumped 10 → 11: the launcher template changed without the bump that recycles running panes, so live persistent panes recorded at version 10 were still on the older launcher. On upgrade each such pane is killed and relaunched once so it picks up the current template. The pinning test caught this on its first CI run after the suites returned.
 
 ### 2.8.7
 

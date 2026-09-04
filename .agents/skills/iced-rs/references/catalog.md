@@ -18,18 +18,13 @@ pub trait Catalog {
 }
 ```
 
-- **`Class<'a>`** — The "style specifier" type the widget stores. Usually
-  a boxed closure `Box<dyn Fn(&Theme, Status) -> Style + 'a>`, but can be
-  a plain enum like `ButtonClass::{Primary, Secondary, Danger}`.
-- **`default()`** — Returns the default class produced by the catalog.
-  Used when the user doesn't pass `.style(...)` or a custom class.
-- **`style(&self, class, status)`** — Returns the `Style` for the given
-  class and status. This is what the widget calls in its `draw()`.
+- **`Class<'a>`** — The "style specifier" type the widget stores. Usually a boxed closure `Box<dyn Fn(&Theme, Status) -> Style + 'a>`, but can be a plain enum like `ButtonClass::{Primary, Secondary, Danger}`.
+- **`default()`** — Returns the default class produced by the catalog. Used when the user doesn't pass `.style(...)` or a custom class.
+- **`style(&self, class, status)`** — Returns the `Style` for the given class and status. This is what the widget calls in its `draw()`.
 
 ### The closure-based `Class`
 
-Most built-in widgets use a closure-based `Class` so you can override style
-inline:
+Most built-in widgets use a closure-based `Class` so you can override style inline:
 
 ```rust
 impl Catalog for Theme {
@@ -153,27 +148,12 @@ impl Catalog for Theme {
 
 ## Gotchas
 
-- The `Catalog` trait is **not dyn-compatible** ( "This trait is
-  not dyn compatible"). Consequently, widgets cannot store a `Box<dyn
-  Catalog>` — they are generic over `Theme: Catalog` and the compiler
-  monomorphises per theme.
-- `Class<'a>` is generic over a lifetime, so the style closure can borrow
-  from the view function's local state. The view function's `Element`
-  lifetime becomes the upper bound.
-- The enum-style `Class` (e.g. `ButtonClass::Primary`) is a great fit when
-  you have a fixed palette of variants. The closure style is better when
-  the user's style needs to depend on the theme's extended palette or
-  dynamic state.
-- `Style` structs have many fields; use `..Style::default()` or
-  `..button::default(theme, status)` to inherit the baseline and override
-  only the fields you care about.
-- The `default()` function **doesn't mean "default value"** — it means
-  "the default `Class` the widget starts with before any `.style(...)`
-  override". Don't confuse with `Default::default()`.
-- If your custom widget has asymmetric states (e.g. a `Status` variant
-  that carries extra data like `is_checked`), make it part of the `Status`
-  enum itself, not a separate parameter — that keeps the catalog shape
-  uniform.
+- The `Catalog` trait is **not dyn-compatible** ( "This trait is not dyn compatible"). Consequently, widgets cannot store a `Box<dyn Catalog>` — they are generic over `Theme: Catalog` and the compiler monomorphises per theme.
+- `Class<'a>` is generic over a lifetime, so the style closure can borrow from the view function's local state. The view function's `Element` lifetime becomes the upper bound.
+- The enum-style `Class` (e.g. `ButtonClass::Primary`) is a great fit when you have a fixed palette of variants. The closure style is better when the user's style needs to depend on the theme's extended palette or dynamic state.
+- `Style` structs have many fields; use `..Style::default()` or `..button::default(theme, status)` to inherit the baseline and override only the fields you care about.
+- The `default()` function **doesn't mean "default value"** — it means "the default `Class` the widget starts with before any `.style(...)` override". Don't confuse with `Default::default()`.
+- If your custom widget has asymmetric states (e.g. a `Status` variant that carries extra data like `is_checked`), make it part of the `Status` enum itself, not a separate parameter — that keeps the catalog shape uniform.
 - No macro for building `Catalog` impls -- all hand-rolled.
 
 ## See also

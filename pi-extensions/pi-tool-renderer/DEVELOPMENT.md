@@ -1,46 +1,27 @@
-# pi-tool-renderer — development notes
+# pi-tool-renderer development
 
-Internals, design, and maintenance for the pi-tool-renderer Pi extension. Consumer docs live in [`README.md`](./README.md); consumer-visible changes live in [`CHANGELOG.md`](./CHANGELOG.md).
+For maintainers of the renderer. What it does for a consumer is [README.md](README.md); each module's doc comments hold its own mechanics, and this file holds what spans them.
 
-## Install order
+## Invariants
 
-`extensions/tool-renderer.ts` is the entry point. It guards against double installation with a `Symbol.for("kendex.pi-tool-renderer.installed")` marker, returns early when the `enabled` setting is off, records project trust on `session_start`, and then installs in a fixed order: stack events, the tool-execution renderer patch, live-settings refresh, tool chrome, the working indicator and loader alignment, markdown code blocks, and the compaction-summary renderer. Message renderers and tool renderers are registered afterwards, once the host agent module is imported.
-
-`edit`/`write` renderers are registered only when `renderMutationTools` is on; `tool_batch` only when `registerBatchTool` is on.
-
-## Module layout
-
-| Module | Responsibility |
-| --- | --- |
-| `extensions/tool-renderer.ts` | Entry point and registration order. |
-| `extensions/tool-renderer/tools.ts` | `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls` renderers; execution delegates to Pi's built-in tools. |
-| `extensions/tool-renderer/batch.ts` | `registerToolBatch()` — the `tool_batch` composite tool. |
-| `extensions/tool-renderer/stack.ts` | Legacy stacking of consecutive native tool calls. |
-| `extensions/tool-renderer/chrome.ts` | Tool chrome rules, tool-execution renderer patch, working indicator, loader alignment. |
-| `extensions/tool-renderer/messages.ts` | User, assistant, compaction-summary, and skill-invocation renderers; custom-message spacing; markdown code blocks. |
-| `extensions/tool-renderer/diff.ts` | Structured diff model, hunk numbering, Shiki highlighting, diff background theme capture, `MAX_DIFF_INPUT_BYTES`. |
-| `extensions/tool-renderer/generic.ts` | OpenAI-style, MCP, and unknown-tool renderers plus `apply_patch` call/result previews. |
-| `extensions/tool-renderer/images.ts` | Overlay-aware image rendering for `read` results. |
-| `extensions/tool-renderer/overlay.ts` | Floating-overlay detection through the shared kendex modal-lock symbol. |
-| `extensions/tool-renderer/settings.ts` | `CONFIG_ID`, kendex config reads, typed setting accessors, project-trust gating. |
-| `extensions/tool-renderer/live-settings.ts` | Re-renders tracked tool-execution components on `kendex:extension-settings-changed`. |
-| `extensions/tool-renderer/glyphs.ts` | Unicode/ASCII glyph sets and `globalGlyphStyleOverride` resolution. |
-| `extensions/tool-renderer/theme.ts` | Theme token lookups with fallbacks, tree connectors, tool labels. |
-| `extensions/tool-renderer/text.ts` | Terminal normalization, line counting, previews, line clipping. |
-| `extensions/tool-renderer/ansi.ts` | ANSI/OSC helpers and visible-width math. |
-
-## Terminal normalization
-
-`normalizeTerminalText()` collapses CRLF and lone CR to `\n`, then delegates to the host's `normalizeTerminalOutput` when `@earendil-works/pi-tui` exposes it, so rendered text matches Pi's own normalization. Without that export it falls back to expanding tabs to three spaces. Line counting, splitting, and previews all route through it.
+- Rendering only. Every replacement tool registered in `extensions/tool-renderer/tools.ts` executes through the built-in tool it replaces (`getBuiltInTool`) and draws the result; `tool_batch` in `extensions/tool-renderer/batch.ts` is the one tool with execution of its own, and it only fans out to those same built-ins. A change that alters what a tool does belongs in a different package.
+- Install order in `extensions/tool-renderer.ts` is fixed: the stack events, the tool-execution renderer patch and live-settings refresh go in before chrome and message renderers, and tool renderers go in last, after the host agent module is imported. A patch that reads a symbol another patch installs depends on that order.
+- Every patch on a host component is guarded by a `Symbol.for("kendex.pi-tool-renderer.*")` marker so a reload does not stack a second copy. A new patch gets its own marker; a change to a patch's shape gets a new marker name, the way `installToolExecutionRendererPatch` carries `.v2`.
+- Text reaches a line count, a preview or a clip only through `extensions/tool-renderer/text.ts::normalizeTerminalText`, which defers to `@earendil-works/pi-tui`'s `normalizeTerminalOutput` when the host exports it. A count taken from raw text disagrees with what Pi draws.
+- Glyph resolution is one function, `extensions/tool-renderer/glyphs.ts::glyphStyle`: the global override wins, then the local `glyphStyle`, then the legacy `treeStyle`. The other kendex extensions read the override from this package's config id, so its key name is a cross-package contract.
+- Project settings are read only after `recordProjectTrust` has seen Pi report the workspace trusted; `extensions/tool-renderer/settings.ts::readPackageConfig` reads the user file alone until then. `PI_CODING_AGENT_DIR` counts only when root-anchored, matching `crates/core/src/harness/pi.rs::pi_root_is_absolute_for`.
+- A diff is built only from input under `extensions/tool-renderer/diff.ts::MAX_DIFF_INPUT_BYTES`; above it `readTextForDiff` yields nothing, so the edit or write renders without a structured diff rather than stalling the UI.
+- `tool_batch` is one tool result, so it caps the combined child output to fit Pi's tool-result budget, head and tail preserved, after each built-in tool has applied its own truncation. A child past `batchCallTimeoutMs` is reported as timed out, never dropped.
+- Images in `read` results are hidden while a floating overlay is up (`extensions/tool-renderer/overlay.ts`, through the shared modal-lock symbol) but keep their reserved rows, so the layout does not jump when the overlay closes.
 
 ## Tests
 
-Regression coverage lives in `extensions/__tests__/` and runs on `bun:test` — batch timeouts, code blocks, diff borders, file hyperlinks, glyphs, line counting, OSC 133 prompt-zone markers, stale message context, read images, terminal normalization, theme tokens, and tool chrome.
-
-The suites import the host packages, which are optional peer dependencies, so install them before running:
+The suites under `extensions/__tests__/` run on `bun:test` and import the host packages, which are optional peers and are not installed in the tree:
 
 ```bash
 cd pi-extensions/pi-tool-renderer
-npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1
-bun test ./extensions/__tests__
+npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1
+npm test
 ```
+
+The pinned version is the Pi release the extensions are audited against; `.github/workflows/skill-tests.yml` runs the same install. A renderer change ships with a case in the suite that draws it, and a change to a normalisation or width rule with one that measures it.

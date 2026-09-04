@@ -9,6 +9,7 @@ Use when: isolated context for a focused task; specialist review (security, perf
 Do not use for: trivial work the parent can do directly with read/grep/find; anything where you need streaming tool output to make decisions (results return as a final summary).
 
 Calling rules:
+
 - One self-contained `task` string per delegation — the subagent cannot ask follow-ups.
 - Default `agentScope` is `"project"`. Pass `"both"` only when user-level agents at `~/.pi/agent/agents` or `~/.claude/agents` are explicitly needed.
 - Bg (`pane: false`) agents start in a fresh one-shot session when `sessionKey` is omitted. Pass a stable `sessionKey` only when you intentionally want to reuse memory across calls; reused lanes are preflight-guarded near context limit and default to refuse-and-warn.
