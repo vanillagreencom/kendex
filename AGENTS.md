@@ -13,11 +13,7 @@ Desktop app and thin CLI (Rust + Tauri + React) for managing AI coding-harness c
 ## Conventions
 
 - Open work lives in Linear (team KEN); scratch goes to `tmp/` (gitignored), never `/tmp`.
-- A commit header is `type(scope)!: subject`, the whole line at most 72 characters, and a change under `crates/` or `ui/` ships a changelog fragment or says `[no-changelog]` in the subject; the commit-msg gate holds these three.
-- The changelog is for consumers (Keep a Changelog): app, CLI and package changes only, an entry at most 200 characters with a **Breaking:** migration inline and `— thanks @name` for an outside contributor.
-- An entry is a file, `changelog.d/<section>/<name>.md`, per `changelog.d/README.md`; the growth-guards `changelog-entries --collate` script folds them in at release.
-- Every CI job runs on GitHub-hosted runners; no workflow reads `vars.CI_RUNNER_*`.
-- Every suite and the aggregator over them run on the pull request and in the merge queue, so a red shard is fixed on the PR, never requeued; anything in `.github/workflows/skill-tests.yml` that does not run on every event carries an `if:` saying why.
+- A change under `crates/` or `ui/` ships a changelog fragment, one consumer-facing list item in `changelog.d/<section>/<name>.md` per `changelog.d/README.md`, or says `[no-changelog]` in the subject; the growth-guards commit-msg gate holds it, and `changelog-entries --collate` folds the fragments in at release.
 - A source with a tracked render (`skills/`, `agents/<n>.md`, `hooks/<n>`) lands the render in the same commit; the rule is in `skills/AGENTS.md`.
 - Review bots follow `review-bots.md` and `.github/instructions/*.instructions.md`; engineering rules are the code-quality skill, round scope the dev skill, finding dispositions `skills/orch/references/finding-disposition.md`.
 

@@ -28,17 +28,9 @@ KENDEX_REAL_HOME=1 cargo run -p kendex-cli --bin kendex -- list
 
 ## The commit chain
 
-`tools/setup`, once per clone, arms the growth-guards hooks. The pre-commit line runs the package's staged-scope chain (size-ratchet and preflight where installed, then the growth-guards lanes) and ends in `tools/guard`, named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL` in `kendex.settings.toml`. The guard runs `cargo fmt --check`, clippy, `cargo doc`, `cargo test --workspace` and the UI type, lint and test checks, so every commit is slow; batch work into few commits. The commit-msg line holds every commit-message rule. Read `tools/guard`: it is the list of repo-specific rules, and every rule a shipped package already judges is left to that package.
+`tools/setup`, once per clone, arms the growth-guards hooks. The chain and its order are `skills/growth-guards/DEVELOPMENT.md` § The pre-commit chain; its last lane is `tools/guard`, named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL` in `kendex.settings.toml`. Read `tools/guard`: it is the list of repo-specific rules and of what it runs, and every rule a shipped package already judges is left to that package. Every commit is slow because the guard runs the whole test surface; batch work into few commits. The commit-msg line holds every commit-message rule.
 
-The same checks by hand:
-
-```sh
-cargo test --workspace
-npm run --prefix ui check && npm run --prefix ui test
-tools/guard
-```
-
-`tools/guard` judges the working tree, not the index. A skill's suite lives under `skills/<name>/tests/`, a Pi package's under its own `test` script, and `.github/workflows/skill-tests.yml` runs them on every pull request and in the merge queue.
+`tools/guard` by hand judges the working tree, not the index. A skill's suite lives under `skills/<name>/tests/`, a Pi package's under its own `test` script, and `.github/workflows/skill-tests.yml` runs them on every pull request and in the merge queue.
 
 ## The self-install
 

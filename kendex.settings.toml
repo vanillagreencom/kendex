@@ -240,6 +240,11 @@ GROWTH_GUARDS_CHANGELOG_PATHS = "changelog.d/*/*.md"
 # subject is the escape for a change none of them notices.
 GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = "crates/* ui/*"
 
+# The markdown lanes judge every tracked markdown file, not only the files a
+# commit touches: the tree is reflowed, and tools/md-excludes names the
+# vendored text they leave alone.
+GROWTH_GUARDS_MD_SCOPE = "all"
+
 GH_BOT_USERNAME = ""
 GH_VERIFY_CMD = ""
 

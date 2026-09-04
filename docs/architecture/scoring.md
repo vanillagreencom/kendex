@@ -11,7 +11,7 @@ Two advisory scores over an item's own bytes: safety answers "is this dangerous"
 
 ## Invariants
 
-1. Neither score holds anything back: severity is named in words, never colour-only, and install, update and apply proceed regardless. Enforced by `crates/core/tests/authoring_check.rs::a_safety_finding_is_reported_and_fails_nothing`.
+1. Neither score holds anything back: severity is named in words, never colour-only, and install, update and apply proceed regardless. Enforced by `crates/core/tests/authoring_check.rs::a_safety_finding_is_reported_and_fails_nothing` for the check and `crates/core/tests/quality/advisory.rs::a_critical_finding_is_reported_and_installs_anyway` for the install.
 2. Safety is `100 − Σ deductions` (Critical 25, High 15, Medium 8, Low 3), first hit per rule at full weight, repeats a point each up to as much again. Enforced by `crates/core/tests/quality/scoring.rs`.
 3. A matched token never appears in any message, log or record, only a fingerprint. Enforced by `crates/core/tests/quality/scoring.rs::a_secret_finding_never_repeats_the_token` and `crates/core/tests/quality/rules.rs::an_mcp_rule_never_echoes_a_token_it_happened_to_quote`.
 4. The file a harness loads is scanned at full weight, fences included: a fenced `sh` block in a SKILL.md is the instruction, and a switch counts wherever it stands as code rather than in a markdown code span. One severity less for a blockquote and for a skill's supporting files (`tests`, `fixtures`, `references`); secrets never weigh less anywhere. Enforced by `crates/core/tests/quality/rules_blocks.rs` and `crates/core/tests/quality/advisory.rs`.

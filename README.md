@@ -53,7 +53,7 @@ The full per-tool facts are in [docs/adapters](docs/adapters/README.md).
 
 ## How it works
 
-Four verbs, always in this order: **scan** what every tool has, read-only; **declare** what you want in one `kendex.toml` per place; **diff** wanted against actual, which is the Sync page and `kendex verify`; **apply** with a preview, transactionally. A package is fetched into a local cache, rendered with your own instructions and overrides baked in, written once into the project or your home, and linked into every tool that reads it. A lock file records what was installed, from where, and a content fingerprint.
+Four verbs, always in this order: **scan** what every tool has, read-only; **declare** what you want in one `kendex.toml` per place; **diff** wanted against actual, which is the Home page's audit, `kendex apply --plan` and `kendex verify`; **apply** with a preview, transactionally. A package is fetched into a local cache, rendered with your own instructions and overrides baked in, written once into the project or your home, and linked into every tool that reads it. A lock file records what was installed, from where, and a content fingerprint.
 
 What you can count on:
 

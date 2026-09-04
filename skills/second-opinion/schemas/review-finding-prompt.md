@@ -2,7 +2,39 @@ Output ONLY valid JSON — no markdown fences, no explanation before or after.
 
 This is a single fresh session with no prior turns and no session history. Output the COMPLETE JSON object in THIS response — do NOT claim the JSON was already delivered or appears above; there is no earlier message. If you have nothing to report, still emit the full JSON object below with an empty `blockers` array and verdict "pass":
 
-{ "agent": "external-TARGET", "timestamp": "ISO_8601", "verdict": "pass or action_required", "summary": "1-2 sentence summary of findings", "blockers": [ { "id": 1, "title": "Concise issue title (5-10 words)", "location": "src/file.rs (`function_name`)", "description": "What the issue is", "recommendation": "How to fix it", "priority": 1, "estimate": 2 } ], "suggestions": [ { "id": 1, "title": "Concise issue title (5-10 words)", "location": "src/file.rs (`function_name`)", "description": "What could be improved", "recommendation": "How to improve it", "priority": 3, "estimate": 2, "category": "fix" } ], "questions": [], "qa_metadata": {} }
+```json
+{
+  "agent": "external-TARGET",
+  "timestamp": "ISO_8601",
+  "verdict": "pass or action_required",
+  "summary": "1-2 sentence summary of findings",
+  "blockers": [
+    {
+      "id": 1,
+      "title": "Concise issue title (5-10 words)",
+      "location": "src/file.rs (`function_name`)",
+      "description": "What the issue is",
+      "recommendation": "How to fix it",
+      "priority": 1,
+      "estimate": 2
+    }
+  ],
+  "suggestions": [
+    {
+      "id": 1,
+      "title": "Concise issue title (5-10 words)",
+      "location": "src/file.rs (`function_name`)",
+      "description": "What could be improved",
+      "recommendation": "How to improve it",
+      "priority": 3,
+      "estimate": 2,
+      "category": "fix"
+    }
+  ],
+  "questions": [],
+  "qa_metadata": {}
+}
+```
 
 Rules:
 

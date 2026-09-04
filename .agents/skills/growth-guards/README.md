@@ -9,7 +9,7 @@ kendex add vanillagreencom/kendex --skill growth-guards
 kendex guard install
 ```
 
-Needs `git`, `awk` and the usual POSIX userland; Bash 3.2 is enough. `kendex guard install` runs `scripts/install-git-hooks`, which writes a helper into `.git/hooks` plus one marked line in `pre-commit` and `commit-msg`, never `core.hooksPath`; an existing hook keeps its content. Git never clones hooks, so every fresh clone runs it once. `kendex guard check` or `install-git-hooks --check` says whether the hooks are armed, and never passes silently.
+Needs `git`, `awk` and the usual POSIX userland; Bash 3.2 is enough. `kendex guard install` runs `scripts/install-git-hooks`, which arms `.git/hooks`; what it writes and leaves alone is [DEVELOPMENT.md](DEVELOPMENT.md) § Git hook install contract. Git never clones hooks, so every fresh clone runs it once. `kendex guard check` or `install-git-hooks --check` says whether the hooks are armed, and never passes silently.
 
 ## What it does
 
@@ -32,7 +32,7 @@ scripts/growth-guards CHECK [ARGS]    # one check, flags passed through
 
 Every check is a standalone executable with one exit contract: `0` clean, `1` violations, `2` usage, config or collection error. Nothing fails open: a check that could not complete is `2`, never a pass. Scans read index content and skip binaries.
 
-The `pre-commit` hook judges one commit snapshot: `size-ratchet --staged` and `preflight --staged` where installed, `growth-guards all --staged`, then the repo-local executable named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`. `commit-msg` runs the message gate. Both block on any failure; `git commit --no-verify` is the only bypass.
+The `pre-commit` hook judges one commit snapshot and `commit-msg` runs the message gate; the chain and its order are [DEVELOPMENT.md](DEVELOPMENT.md) § The pre-commit chain. Both block on any failure; `git commit --no-verify` is the only bypass.
 
 The markdown lanes start narrow: `md-format` and `md-refs` judge the files a commit touches. Reflow the tree once with `scripts/md-reflow --all`, commit, then set `GROWTH_GUARDS_MD_SCOPE = "all"` so CI judges every tracked markdown file. Vendored or generated markdown goes in `tools/md-excludes` with a reason.
 

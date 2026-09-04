@@ -25,4 +25,4 @@
 
 ## Topics
 
-- [<topic>.md](<topic>.md): read when <the condition>.
+- `<topic>.md` as a relative link: read when <the condition>.
