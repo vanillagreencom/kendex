@@ -19,9 +19,7 @@ Resolve `ORCH_DECISION_MODE` once for this post-PR workflow:
 
 **Standalone init** (`lifecycle: "self"`): `gh pr view --json number -q .number` gives `PR_NUMBER`, and `git-context issue-from-branch .` gives `ISSUE_ID` when the branch carries an issue id. When it does not, `ISSUE_ID` is `pr-[PR_NUMBER]`, the same repository-local fallback key [`ci-fix.md` § 1](ci-fix.md) and [`merge-pr.md` § 3](merge-pr.md) use; a branch with no issue id is ordinary, not a stop. Then, when `workflow-state exists --json [ISSUE_ID]` reports false, resolve `WT_PATH`, read the branch with `git-context branch`, and run `workflow-state init`.
 
-Both commands below write to that state, so the key must resolve and the state
-must exist before either runs. Except under `--dry-run`, this triage pass is a
-continuing action:
+Both commands below write to that state, so the key must resolve and the state must exist before either runs. Except under `--dry-run`, this triage pass is a continuing action:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.post_pr_stop = null'
@@ -203,9 +201,11 @@ The `fix set` is every § 5 row marked Fixing plus every `structural-close` row:
 {"cause": "[ONE_LINE]", "issue": "[CLASS_ISSUE_ID]"}
 {"cause": "[ONE_LINE]", "commit": "[COMMIT_SHA]"}
 ```
+
 ```bash
 .agents/skills/orch/scripts/workflow-state append-file [ISSUE_ID] pr_comment_review.frozen_causes [WORKTREE_PATH]/tmp/frozen-cause-[ISSUE_ID].json
 ```
+
 ```bash
 .agents/skills/orch/scripts/workflow-state append-file [ISSUE_ID] pr_comment_review.patched_causes [WORKTREE_PATH]/tmp/patched-cause-[ISSUE_ID].json
 ```
@@ -227,6 +227,7 @@ It prints `below [COUNT]/[CAP]` or `at-cap [COUNT]/[CAP]`, counting `pr_comment_
 ```bash
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
 ```
+
 ```bash
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
@@ -273,9 +274,11 @@ Recommendation: "[RECOMMENDATION]"
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_round_id // empty'
 ```
+
 ```bash
 .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items-from-round
 ```
+
 ```bash
 git -C "[WORKTREE_PATH]" status --porcelain
 git -C "[WORKTREE_PATH]" log -1 --oneline
@@ -330,6 +333,7 @@ This is the only writer of `pr_comment_review.iterations` in any workflow: one t
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{known: (.pr_review_baseline.last_threads // [])}'
 ```
+
 ```bash
 .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved
 ```
@@ -384,8 +388,7 @@ Under `ask` only: awaiting your response to ask questions, override skipped item
 
 `auto-recommended` logs `Continue`, clears any stop, and goes to § 8 without a question, while `ask` stops here and a managed run returns the pending choice to its caller rather than continuing because its lifecycle is managed.
 
-A request to fix a skipped item delegates that single item via § 6.1, pushes,
-and returns here. Confirmation clears any stop and goes to § 8.
+A request to fix a skipped item delegates that single item via § 6.1, pushes, and returns here. Confirmation clears any stop and goes to § 8.
 
 **Standalone only**: post the cumulative summary as a PR comment when there were fixes or created issues, written to a file first, and on the Linear issue too when `TRACKER` is `linear`.
 
@@ -409,12 +412,15 @@ One tool call per block — each append runs per item. A fix and a skip entry ca
 ```json
 {"description": "[DESC]", "location": "[LOC]", "commit": "[SHA]", "source": "[SOURCE]"}
 ```
+
 ```bash
 .agents/skills/orch/scripts/workflow-state append-file [ISSUE_ID] pr_comment_review.fixes [WORKTREE_PATH]/tmp/state-fix-[ISSUE_ID].json
 ```
+
 ```json
 {"description": "[DESC]", "reason": "[REASON]"}
 ```
+
 ```bash
 .agents/skills/orch/scripts/workflow-state append-file [ISSUE_ID] pr_comment_review.skipped [WORKTREE_PATH]/tmp/state-skipped-[ISSUE_ID].json
 ```

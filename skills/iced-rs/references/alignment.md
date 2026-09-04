@@ -65,19 +65,10 @@ container(inner)
 
 ## Gotchas
 
-- `Alignment::Start` / `End` are **direction-neutral**. On a row they mean
-  left/right; on a column they mean top/bottom. In RTL locales, "start" and
-  "end" may flip — iced does not currently document an explicit
-  direction-aware mode, so test layouts in both directions if you support
-  RTL.
-- For text, prefer the explicit `Horizontal` / `Vertical` enums — they are
-  less ambiguous than `Alignment::Start` when discussing a specific axis.
-- `Horizontal::Center` and `Vertical::Center` both convert from
-  `Alignment::Center` — you never need a different "center" value for each
-  axis.
-- Centering a child inside a container requires the container to have a
-  `Fill` size on that axis. If the container shrinks to the child, there is
-  no free space to centre within, and alignment has no visible effect.
+- `Alignment::Start` / `End` are **direction-neutral**. On a row they mean left/right; on a column they mean top/bottom. In RTL locales, "start" and "end" may flip — iced does not currently document an explicit direction-aware mode, so test layouts in both directions if you support RTL.
+- For text, prefer the explicit `Horizontal` / `Vertical` enums — they are less ambiguous than `Alignment::Start` when discussing a specific axis.
+- `Horizontal::Center` and `Vertical::Center` both convert from `Alignment::Center` — you never need a different "center" value for each axis.
+- Centering a child inside a container requires the container to have a `Fill` size on that axis. If the container shrinks to the child, there is no free space to centre within, and alignment has no visible effect.
 - No `SpaceBetween`/`SpaceAround` variants. Use `row!`/`column!` with `.spacing(...)`.
 
 ## See also

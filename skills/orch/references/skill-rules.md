@@ -1,7 +1,6 @@
 # Skill rules
 
-Rules the orch workflows execute. [../SKILL.md](../SKILL.md) § Skill Rules
-routes here; load this file when a workflow cites one of these sections.
+Rules the orch workflows execute. [../SKILL.md](../SKILL.md) § Skill Rules routes here; load this file when a workflow cites one of these sections.
 
 ## Delegation
 

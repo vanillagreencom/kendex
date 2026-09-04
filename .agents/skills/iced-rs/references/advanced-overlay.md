@@ -103,8 +103,7 @@ impl<'a, Message, Theme, Renderer> Group<'a, Message, Theme, Renderer> {
 }
 ```
 
-`Group` is an overlay container that displays multiple overlay children and
-implements `Overlay` itself.
+`Group` is an overlay container that displays multiple overlay children and implements `Overlay` itself.
 
 ## Patterns
 

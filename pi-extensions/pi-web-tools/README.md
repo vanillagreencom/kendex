@@ -1,7 +1,6 @@
 # pi-web-tools
 
-![Web Tools settings panel](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-web-tools/assets/settings-panel.png)
-![Exa web_search results renderer](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-web-tools/assets/web-search.png)
+![Web Tools settings panel](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-web-tools/assets/settings-panel.png) ![Exa web_search results renderer](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-web-tools/assets/web-search.png)
 
 Web access tools for Pi: search, deep research, content fetch, and code search.
 

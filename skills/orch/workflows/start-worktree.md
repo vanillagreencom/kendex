@@ -85,9 +85,7 @@ Before either summary, `MERGE_READY = false` preserves submit-pr's stop or creat
 .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
 ```
 
-`kept` posts nothing. The file at that path is the one submit-pr rendered for
-the stop it recorded, and submit-pr already posted it; posting again would put
-a byte-identical duplicate on the PR.
+`kept` posts nothing. The file at that path is the one submit-pr rendered for the stop it recorded, and submit-pr already posted it; posting again would put a byte-identical duplicate on the PR.
 
 Read the final stop before § 5.1. `MERGE_READY = true` clears it:
 
@@ -158,9 +156,7 @@ Terminate every still-active agent in `child_sessions`, then retire the records:
 
 ### 5.5 Merge
 
-**Skip if** no PR was created. When CI is not passing or `submit-pr.md` § 6.1
-reported `MERGE_READY = false`, return the final stop already rendered in
-§ 5 before the summaries, then stop.
+**Skip if** no PR was created. When CI is not passing or `submit-pr.md` § 6.1 reported `MERGE_READY = false`, return the final stop already rendered in § 5 before the summaries, then stop.
 
 ```bash
 .agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY auto

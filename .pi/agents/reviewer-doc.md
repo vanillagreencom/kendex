@@ -33,6 +33,7 @@ Wrong claims, wrong values, dead citations, contradicted invariants → `blocker
 ## Required Skills
 
 Read each before acting:
+
 - reviewer: .agents/skills/reviewer/SKILL.md
 
 ## Additional Instructions

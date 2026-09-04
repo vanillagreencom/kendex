@@ -7,6 +7,7 @@ Use when: the next action depends on a choice only the user can make (which file
 Do not use for: simple yes/no that fits in conversation; anything you can determine yourself by reading the code; speculative "would you like me to also…" follow-ups — finish the asked work first.
 
 Calling rules:
+
 - Provide a clear `header`, per-tab `question` text, and concise mutually-exclusive `options`.
 - `multiple: true` only when several answers can co-exist; default is single-select.
 - Every question automatically includes a bottom free-text fallback row labelled `Something else`; agents do not need `allowCustom` for the basic escape hatch.

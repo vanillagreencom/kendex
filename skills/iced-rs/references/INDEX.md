@@ -112,7 +112,4 @@ Iced 0.14 API references and guides. Load on demand.
 
 ## Reading strategy
 
-**Building new**: guide → API refs → canonical example → code → gotchas.
-**Animated layered UI**: `guide-animated-layout.md` + `guide-animation-debugging.md` first.
-**Debugging**: `SKILL.md` rules → guide failure-modes → API gotchas. `container.rs unwrap on None` → `guide-custom-overlays.md`. Animation bugs → `guide-animation-debugging.md`.
-**Charts**: chart-specific skill if available.
+**Building new**: guide → API refs → canonical example → code → gotchas. **Animated layered UI**: `guide-animated-layout.md` + `guide-animation-debugging.md` first. **Debugging**: `SKILL.md` rules → guide failure-modes → API gotchas. `container.rs unwrap on None` → `guide-custom-overlays.md`. Animation bugs → `guide-animation-debugging.md`. **Charts**: chart-specific skill if available.

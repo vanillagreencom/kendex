@@ -2,18 +2,9 @@
 
 ## The in-place read
 
-The manifests come from the selected head tree. The reader knows the one shape
-kendex writes: a `[skills.<name>]` header holding a bare or plain double-quoted
-key, then `source = "in-place"`. It does not parse the other spellings TOML
-allows.
+The manifests come from the selected head tree. The reader knows the one shape kendex writes: a `[skills.<name>]` header holding a bare or plain double-quoted key, then `source = "in-place"`. It does not parse the other spellings TOML allows.
 
-The reader counts every line that could take part in spelling the value instead,
-including a bare `in-place`, a `\u`/`\U`/`\x` escape, or a multiline `source`
-string. It carves every `.agents/skills` path when one goes unaccounted. An
-apostrophe-quoted key, dotted key, inline table, nested table, name with
-whitespace, escaped name, or escaped value answers `false` that way.
-`source = "in-place"` under any table except `[skills.<name>]` also answers
-`false`.
+The reader counts every line that could take part in spelling the value instead, including a bare `in-place`, a `\u`/`\U`/`\x` escape, or a multiline `source` string. It carves every `.agents/skills` path when one goes unaccounted. An apostrophe-quoted key, dotted key, inline table, nested table, name with whitespace, escaped name, or escaped value answers `false` that way. `source = "in-place"` under any table except `[skills.<name>]` also answers `false`.
 
 ## Tests
 
@@ -31,6 +22,4 @@ whitespace, escaped name, or escaped value answers `false` that way.
 
 Run one locally with `bash skills/harness-ci/tests/path-set.test.sh`.
 
-`tools/bash32-lint` checks the shipped script for Bash 4+ syntax. It scans the
-roster from `tools/bash32-lint --list`; consumer runners include macOS system
-Bash 3.2.
+`tools/bash32-lint` checks the shipped script for Bash 4+ syntax. It scans the roster from `tools/bash32-lint --list`; consumer runners include macOS system Bash 3.2.

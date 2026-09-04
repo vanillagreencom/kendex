@@ -97,6 +97,7 @@ pub enum Side {
 ### `Value`, `State`, `Cursor` structs
 
 Internal types available via `iced::widget::text_input::{Value, State, Cursor}`.
+
 - `Value` — wraps the text content for cursor/selection computation.
 - `State` — the internal focus/cursor state stored on `Tree`.
 - `Cursor` — text cursor tracking (offset, selection range).

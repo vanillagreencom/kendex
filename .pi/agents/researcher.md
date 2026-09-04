@@ -30,6 +30,7 @@ Provider-backed research and the report it produces. Not production code, not ar
 ## Required Skills
 
 Read each before acting:
+
 - decider: .agents/skills/decider/SKILL.md
 - deep-research: .agents/skills/deep-research/SKILL.md
 - github: .agents/skills/github/SKILL.md

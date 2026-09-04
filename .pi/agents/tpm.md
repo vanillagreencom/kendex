@@ -29,6 +29,7 @@ Findings the caller can act on without re-deriving them, structured as JSON when
 ## Required Skills
 
 Read each before acting:
+
 - decider: .agents/skills/decider/SKILL.md
 - dev: .agents/skills/dev/SKILL.md
 - github: .agents/skills/github/SKILL.md

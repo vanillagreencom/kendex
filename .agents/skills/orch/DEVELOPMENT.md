@@ -78,12 +78,7 @@ Reruns re-execute the workflow definition and verifier state pinned at the origi
 
 ## Container close
 
-`container-close` owns Linear container closure and `sync-base` owns base
-resolution, fetch, checkout ownership, and the fast-forward. Both contracts are
-in their own `--help`. Completion validation inside `container-close` must
-provide Boolean `all_ok`, exactly one typed parent result, and Boolean
-`has_summary`; the helper never infers that a later child completion came from
-a parent cascade.
+`container-close` owns Linear container closure and `sync-base` owns base resolution, fetch, checkout ownership, and the fast-forward. Both contracts are in their own `--help`. Completion validation inside `container-close` must provide Boolean `all_ok`, exactly one typed parent result, and Boolean `has_summary`; the helper never infers that a later child completion came from a parent cascade.
 
 ## Codex app worktree routing
 

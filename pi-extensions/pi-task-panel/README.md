@@ -1,7 +1,6 @@
 # pi-task-panel
 
-![Expanded task panel with phase grouping](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-task-panel/assets/panel-expanded.png)
-![Tasks manager overlay](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-task-panel/assets/manager.png)
+![Expanded task panel with phase grouping](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-task-panel/assets/panel-expanded.png) ![Tasks manager overlay](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-task-panel/assets/manager.png)
 
 Persistent task panel above the Pi status line. Tasks are managed by the agent through the `tasks_write` tool or by you through `/tasks`.
 

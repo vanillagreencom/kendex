@@ -1,3 +1,1 @@
-- **Breaking:** `check --catalog --json` and `marketplace mine --json` are
-  schema 3: `file` is a path to open and its line is in `line`, part of a
-  finding's identity. Read `line`, never split `file`.
+- **Breaking:** `check --catalog --json` and `marketplace mine --json` are schema 3: `file` is a path to open and its line is in `line`, part of a finding's identity. Read `line`, never split `file`.

@@ -29,9 +29,11 @@ Record the lane. Read `[NOW]` as `date -u +%Y-%m-%dT%H:%M:%SZ` before the launch
 ```bash
 .agents/skills/orch/scripts/workflow-state exists --json oversee
 ```
+
 ```bash
 .agents/skills/orch/scripts/workflow-state init oversee
 ```
+
 ```bash
 .agents/skills/orch/scripts/workflow-state append oversee lanes '{"issue":"[ISSUE_ID]","surface":"[SURFACE]","launched_at":"[NOW]"}'
 ```
@@ -46,54 +48,23 @@ One blocking command, passed the fleet's start as `--since` (the first lane's `l
 
 ### Judgement at every event
 
-The overseer owns fleet judgement, not just liveness; every § 4 event is
-handled under these rules:
+The overseer owns fleet judgement, not just liveness; every § 4 event is handled under these rules:
 
-- **Heartbeat backstop for lane filings.** Read every issue a lane creates — the
-  `heartbeat` triage pass below surfaces them. A hypothetical,
-  an unreproduced edge case, or a feature no issue's Done-when carries is
-  canceled with a comment naming what it failed; genuine defects stay.
-  Cancel only where the fleet brief grants triage authority and the lane's
-  authorship is beyond doubt; any uncertainty means comment the
-  recommendation and leave the issue open — elsewhere the
-  project-management skill's approval gate stays the rule.
-- **Cut scope blowups.** A PR whose diff outgrows its issue's Done-when goes
-  back to the contract: keep the oversized work on a branch, land the
-  contract. Machinery no issue ordered — a new subsystem, scanner, or lexer —
-  is cut, never reviewed into shape.
-- **End spirals.** A round whose finding shares a root cause with one a
-  prior round patched is dispositioned by
-  [references/finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence),
-  which states the branches and their limits. Bots drip-feeding one class
-  get the class exhausted in one audit pass, then dispositions without
-  pushes. The overseer never orders a blanket `Declined` across a PR's open
-  findings: each one is dispositioned on its own mechanism, and a decline
-  that is nothing but a label turns the gate red.
-- **Fix the source.** The same finding class on a third PR is a mechanism
-  gap: file it and route the smallest deterministic check (a guard lane, a
-  preflight rule, a refusing script) or one sentence in the owning skill
-  through a lane as its own item — the overseer still implements nothing.
-  Deterministic beats prose where it stays simple; complex or brittle
-  machinery is worse than either.
-- **Compact a lane before it runs out.** On the § 1 tmux surface, at every
-  § 4 event, read each live lane's context use:
+- **Heartbeat backstop for lane filings.** Read every issue a lane creates — the `heartbeat` triage pass below surfaces them. A hypothetical, an unreproduced edge case, or a feature no issue's Done-when carries is canceled with a comment naming what it failed; genuine defects stay. Cancel only where the fleet brief grants triage authority and the lane's authorship is beyond doubt; any uncertainty means comment the recommendation and leave the issue open — elsewhere the project-management skill's approval gate stays the rule.
+- **Cut scope blowups.** A PR whose diff outgrows its issue's Done-when goes back to the contract: keep the oversized work on a branch, land the contract. Machinery no issue ordered — a new subsystem, scanner, or lexer — is cut, never reviewed into shape.
+- **End spirals.** A round whose finding shares a root cause with one a prior round patched is dispositioned by [references/finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), which states the branches and their limits. Bots drip-feeding one class get the class exhausted in one audit pass, then dispositions without pushes. The overseer never orders a blanket `Declined` across a PR's open findings: each one is dispositioned on its own mechanism, and a decline that is nothing but a label turns the gate red.
+- **Fix the source.** The same finding class on a third PR is a mechanism gap: file it and route the smallest deterministic check (a guard lane, a preflight rule, a refusing script) or one sentence in the owning skill through a lane as its own item — the overseer still implements nothing. Deterministic beats prose where it stays simple; complex or brittle machinery is worse than either.
+- **Compact a lane before it runs out.** On the § 1 tmux surface, at every § 4 event, read each live lane's context use:
 
   ```bash
   .agents/skills/orch/scripts/lanes context
   ```
 
-  A lane past ~50 `CONTEXT_USED_PCT` is compacted at its next safe point — an
-  idle prompt, or the gap between review rounds, never mid-round — with a
-  focus note naming its item, its open PRs and their thread state, what
-  remains in its queue, and the standing rulings it works under.
+  A lane past ~50 `CONTEXT_USED_PCT` is compacted at its next safe point — an idle prompt, or the gap between review rounds, never mid-round — with a focus note naming its item, its open PRs and their thread state, what remains in its queue, and the standing rulings it works under.
 
-  Surfaces 2 and 3 register no lane claim, so `lanes context` reports an empty
-  fleet and this rule does not run there; they compact on their own harness's
-  prompt, and the focus note is still the overseer's to hand over.
-- **Decide without the user.** SKILL.md's ask gates stand unchanged — scope
-  expansion, recorded decisions, and merge autonomy still ask. Any other
-  reversible call takes the option that costs nothing, recorded in the fleet
-  log; destructive actions and product direction wait for a human.
+  Surfaces 2 and 3 register no lane claim, so `lanes context` reports an empty fleet and this rule does not run there; they compact on their own harness's prompt, and the focus note is still the overseer's to hand over.
+
+- **Decide without the user.** SKILL.md's ask gates stand unchanged — scope expansion, recorded decisions, and merge autonomy still ask. Any other reversible call takes the option that costs nothing, recorded in the fleet log; destructive actions and product direction wait for a human.
 
 
 - `merged` → the PR is in; the owning lane finishes `merge-pr.md` § 5 on its own and a GitHub merge alone is not lane completion. Wake it only if it is not still inside that run, and read a reported failure there rather than advancing the item. Then run the repo's post-merge routine in the overseer main checkout: pull the merged base, build, refresh, verify, and run its lifecycle check. When the fleet's LAST item completes, run the `heartbeat` triage pass before closing out, whatever the tracker; items living in Linear also get `.agents/skills/orch/scripts/reconcile-work-items` (a GitHub-item fleet skips that with a note). Report both with the close-out.
@@ -104,8 +75,7 @@ handled under these rules:
 - A lane whose session ended AFTER its PR merged but before `merge-pr.md` § 5 steps 2-6 finished → relaunch it into `merge-pr [PR_NUMBER]`. That run's already-merged route skips the merge and runs the tracker sync, project verification and worktree removal the dead lane never reached. The rule below does not reach this lane: its PR did merge.
 - `window-gone`, or any lane whose session ended with no merged PR → inspect its worktree and PR state, re-launch once with the same brief and `open-terminal --relaunch` (without the flag the existing worktree reads as another session's claim and the item is skipped); a second death is surfaced to the user, not retried.
 - `lane-asking` → read the pane, answer when available evidence already decides it, apply the ruling, and record it in the fleet log. Repo state, the issue body, a stated convention, scope-narrowing calls, and a lane's own well-argued recommendation are available evidence. Relay to the user only what changes the product for a user or spends the owner's standing (retiring a reviewer, filing outside the repo, closing as won't-do). Either way, send the answer back to the lane. On a surface with neither messaging nor an inspectable pane, prolonged lane silence is itself the needs-attention signal — inspect the session through that surface's own status tools.
-- `triage` → team-wide: apply the filing bar to every emitted team item, regardless of lane authorship. Route a kept item or cancel it, then record a kept or canceled verdict in the fleet state's `triaged` list before re-running the watch. An emitted item is never left without that record.
-  triaged is the verdict log, not the watcher baseline. The watcher rebuilds acknowledged triage keys from it in the first repository's OVERSEE_WATCH_STATE_DIR baseline; the default directory is `<project-root>/tmp/oversee-watch`. Deleting that baseline resets watcher dedup: the next pass rebuilds kept and canceled keys, while pending items emit again.
+- `triage` → team-wide: apply the filing bar to every emitted team item, regardless of lane authorship. Route a kept item or cancel it, then record a kept or canceled verdict in the fleet state's `triaged` list before re-running the watch. An emitted item is never left without that record. triaged is the verdict log, not the watcher baseline. The watcher rebuilds acknowledged triage keys from it in the first repository's OVERSEE_WATCH_STATE_DIR baseline; the default directory is `<project-root>/tmp/oversee-watch`. Deleting that baseline resets watcher dedup: the next pass rebuilds kept and canceled keys, while pending items emit again.
 - `pr-watch` → handle every attention line. What each kind MEANS is `pr-watch.sh --help`; what follows is only what the overseer does about it. A detail ending in `(QUEUED: dequeue before pushing)` rides several kinds and outranks all of them: the lane dequeues before it can push anything.
   - `gate-stale` → healed only where a `heal-dispatched` line rides the same reduction. The reducer re-dispatches on every pass the line stands, so a standing line is dispatch-to-converge lag, not a queue of work: judge it on whether the dispatched writer run COMPLETED, never on a pass count, and read a cancelled pending duplicate in the writer's concurrency group as ordinary lag too. A standing line comes back only as reducer output appended to the next wake or heartbeat, never as a fresh event. Beside an `error` naming a failed writer dispatch, nothing was healed and the once-per-invocation budget is spent, so no other stale PR got a dispatch either: fix the dispatch path for the repo the line names before waiting on another pass, the workflow name against `PR_WATCH_WRITER_WORKFLOW`, `actions:write` on the credential, Actions enabled on that repo.
   - `heal-dispatched` → the reducer's note that this invocation's one dispatch fired. Nothing to do, and never an event on its own.

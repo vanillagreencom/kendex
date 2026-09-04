@@ -36,9 +36,11 @@ Initialize state unless it exists:
 ```bash
 .agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
 ```
+
 ```bash
 .agents/skills/orch/scripts/git-context branch [WT_PATH]
 ```
+
 ```bash
 .agents/skills/orch/scripts/workflow-state init [ISSUE_ID] --worktree [WT_PATH] --branch "[BRANCH_FROM_PREVIOUS_COMMAND]"
 ```
@@ -63,9 +65,11 @@ Before EVERY implementation delegation, including each group's delegation in bun
 ```bash
 .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
 ```
+
 ```bash
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
 ```
+
 ```bash
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
@@ -137,6 +141,7 @@ Acceptance is a pure function of **A** (the on-disk artifact) and **B** (git and
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_round_id // empty'
 ```
+
 ```bash
 .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND]
 ```

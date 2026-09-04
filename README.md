@@ -1,16 +1,12 @@
 # kendex
 
-One place to manage AI coding-tool customizations, personally and
-per-project.
+One place to manage AI coding-tool customizations, personally and per-project.
 
 <p><img src="docs/img/harness-claude.png" alt="Claude Code" height="20"> <img src="docs/img/harness-codex.png" alt="Codex" height="20"> <img src="docs/img/harness-opencode.png" alt="OpenCode" height="20"> <img src="docs/img/harness-cursor.png" alt="Cursor" height="20"> <img src="docs/img/harness-pi.png" alt="Pi" height="20"> <img src="docs/img/harness-gemini.png" alt="Gemini CLI" height="20"> <img src="docs/img/harness-copilot.png" alt="GitHub Copilot" height="20"></p>
 
-Manages agents, skills, hooks, commands, MCP servers, plugins, and Pi
-extensions. Desktop app and CLI over one engine, with a community at
-[kendex.ai](https://kendex.ai).
+Manages agents, skills, hooks, commands, MCP servers, plugins, and Pi extensions. Desktop app and CLI over one engine, with a community at [kendex.ai](https://kendex.ai).
 
-Here for the packages? Browse the
-[marketplace of skills, agents, and Pi extensions](https://kendex.ai/m/vanillagreencom/kendex).
+Here for the packages? Browse the [marketplace of skills, agents, and Pi extensions](https://kendex.ai/m/vanillagreencom/kendex).
 
 ![kendex](docs/img/tour.gif)
 
@@ -62,27 +58,15 @@ The app and the CLI. Each command installs both.
 curl -fsSL https://kendex.ai/install.sh | sh
 ```
 
-On Linux this installs the app and the `kendex` command. On macOS it installs
-the command; get the app with the cask below.
+On Linux this installs the app and the `kendex` command. On macOS it installs the command; get the app with the cask below.
 
 - macOS: `brew install vanillagreencom/kendex/kendex`
 - Arch: `yay -S kendex-bin`
-- Windows: download the installer from
-  [kendex.ai/download](https://kendex.ai/download). The commit guards are
-  shell scripts that kendex runs through `sh`, so `guard install`, `guard
-  run` and `guard check` need the `sh` that Git for Windows ships — the
-  same one git uses to run a hook there.
+- Windows: download the installer from [kendex.ai/download](https://kendex.ai/download). The commit guards are shell scripts that kendex runs through `sh`, so `guard install`, `guard run` and `guard check` need the `sh` that Git for Windows ships — the same one git uses to run a hook there.
 
-Installing a package from a git repository needs git 2.41 or newer; kendex
-refuses on anything older, naming the version it found and where that git
-keeps its programs. Ubuntu 22.04, Debian 12 and the command line tools of
-Xcode 16 and earlier ship older ones. A package on a local path needs no git
-at all.
+Installing a package from a git repository needs git 2.41 or newer; kendex refuses on anything older, naming the version it found and where that git keeps its programs. Ubuntu 22.04, Debian 12 and the command line tools of Xcode 16 and earlier ship older ones. A package on a local path needs no git at all.
 
-For the CLI on its own: `brew install vanillagreencom/kendex/kendex-cli`,
-`yay -S kendex`, or the curl
-command on macOS. Every install option is on
-[kendex.ai/download](https://kendex.ai/download).
+For the CLI on its own: `brew install vanillagreencom/kendex/kendex-cli`, `yay -S kendex`, or the curl command on macOS. Every install option is on [kendex.ai/download](https://kendex.ai/download).
 
 Working on kendex itself: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
@@ -117,10 +101,7 @@ Installing the `github` skill into a project for Claude Code, Codex, and Pi:
 4. Claude Code links to it; Codex and Pi read the same folder. One copy, no drift.
 5. A lock file records what was installed, from where, and a content fingerprint.
 
-Agents are generated per tool from one source file. MCP servers and hooks
-are edits inside a tool's own config that leave every other key untouched.
-Pi extensions are npm packages, copied and registered. Generated files are
-safe to regenerate; your intent lives only in `kendex.toml`.
+Agents are generated per tool from one source file. MCP servers and hooks are edits inside a tool's own config that leave every other key untouched. Pi extensions are npm packages, copied and registered. Generated files are safe to regenerate; your intent lives only in `kendex.toml`.
 
 ## Quick start
 
@@ -179,11 +160,6 @@ Scopes: `--scope project|global|all`, `-g` as a shortcut for global.
 | `login` / `logout` | sign in to kendex.ai with a code and a browser tab; the credential lives in your system keychain |
 | `add https://kendex.ai/c/<id>` | install a shared collection in one preview |
 
-Make your own marketplace: `kendex marketplace new <name>` scaffolds the
-repository. The how-to and templates are in
-[docs/authoring](docs/authoring/README.md), and on
-[kendex.ai/docs/authoring](https://kendex.ai/docs/authoring).
+Make your own marketplace: `kendex marketplace new <name>` scaffolds the repository. The how-to and templates are in [docs/authoring](docs/authoring/README.md), and on [kendex.ai/docs/authoring](https://kendex.ai/docs/authoring).
 
-This repository is the default catalog. The `agents/`, `skills/`, `hooks/`
-and `pi-extensions/` directories at its root are what a fresh kendex
-install offers.
+This repository is the default catalog. The `agents/`, `skills/`, `hooks/` and `pi-extensions/` directories at its root are what a fresh kendex install offers.

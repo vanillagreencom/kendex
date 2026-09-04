@@ -36,23 +36,10 @@ Desktop app and thin CLI (Rust + Tauri + React) for managing AI coding-harness c
 
 ## Code Review Rules
 
-For automated reviewers (Codex code review, Copilot). Working agents: your
-reply contract is in the orch skill, not here.
+For automated reviewers (Codex code review, Copilot). Working agents: your reply contract is in the orch skill, not here.
 
-- Raise only defects in the changed lines or directly broken by them:
-  correctness, security, data loss, fail-open in gate/guard/CI code.
-- One comment per root cause, naming every affected site. Everything you
-  have about the diff goes in one round.
-- No style, wording, or naming preferences. No speculative hardening on
-  fail-closed paths. No test-coverage asks unless the diff changes behavior
-  no test exercises. Formatting and lint belong to CI, not review.
-- Do not re-raise a finding class already answered with a documented
-  rationale — `Declined: <reason>` on this PR, a settings comment, an engine
-  header comment, or a note in `skills/review-gate/references/` — unless the
-  relevant code changed since.
-- Author replies are `Fixed in <sha>`, `Declined: <reason>`, or
-  `Tracked: KEN-<n>` / `#<n>`. A decline takes a reason form
-  `skills/orch/references/finding-disposition.md` § Decision flow sets
-  out; a label is not a reason. The merge gate rejects tracking claims
-  that name no issue, and declines whose reason is nothing but a label
-  it knows.
+- Raise only defects in the changed lines or directly broken by them: correctness, security, data loss, fail-open in gate/guard/CI code.
+- One comment per root cause, naming every affected site. Everything you have about the diff goes in one round.
+- No style, wording, or naming preferences. No speculative hardening on fail-closed paths. No test-coverage asks unless the diff changes behavior no test exercises. Formatting and lint belong to CI, not review.
+- Do not re-raise a finding class already answered with a documented rationale — `Declined: <reason>` on this PR, a settings comment, an engine header comment, or a note in `skills/review-gate/references/` — unless the relevant code changed since.
+- Author replies are `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: KEN-<n>` / `#<n>`. A decline takes a reason form `skills/orch/references/finding-disposition.md` § Decision flow sets out; a label is not a reason. The merge gate rejects tracking claims that name no issue, and declines whose reason is nothing but a label it knows.

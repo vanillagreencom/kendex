@@ -2,8 +2,7 @@
 
 Works with OAuth subscription, no API key, no errors.
 
-![Claude bridge demo response](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-claude-bridge/assets/bridge-demo.png)
-![Pi Claude settings panel](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-claude-bridge/assets/settings-panel.png)
+![Claude bridge demo response](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-claude-bridge/assets/bridge-demo.png) ![Pi Claude settings panel](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-claude-bridge/assets/settings-panel.png)
 
 Run Claude Code as the `pi-claude` Pi provider while keeping Pi's tools and TUI.
 

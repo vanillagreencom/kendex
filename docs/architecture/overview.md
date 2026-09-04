@@ -44,7 +44,7 @@ Four verbs over one model: scan, declare, diff, apply. Scan reads harness-native
 15. An item's tags come from the closed vocabulary in `crates/core/src/tags.rs` and are never inferred from a name. Enforced by the tests in `crates/core/src/tags.rs`.
 16. A debug build gets its own home under `<data>/kendex-dev`, drops inherited harness-root variables, and only `KENDEX_REAL_HOME=1` opts out. Enforced by the tests in `crates/core/src/env/sandbox.rs` and the fixture-home lane in `tools/guard`.
 17. One spelling per path: a root is canonicalized on entry and never re-spelled, so no comparison meets two spellings. Enforced by the tests in `crates/core/src/paths.rs`, `crates/core/tests/symlinked_harness_dir.rs` and the `rooted()` lane in `tools/guard`.
-18. Beside every tracked `AGENTS.md`, kendex writes and verifies a `CLAUDE.md` whose whole content is `@AGENTS.md`, and for the gemini harness it writes `context.fileName` into `.gemini/settings.json`; a missing, stale or symlinked shim is drift. Enforced by `kendex verify`.
+18. Beside every tracked `AGENTS.md`, kendex writes and verifies a `CLAUDE.md` whose whole content is `@AGENTS.md`, and for the gemini harness it writes `context.fileName` into `.gemini/settings.json`; a missing, stale or symlinked shim is drift. Enforced by `crates/core/tests/instruction_shims.rs` and `crates/cli/tests/instruction_shims_cli.rs`.
 
 ## Decisions
 

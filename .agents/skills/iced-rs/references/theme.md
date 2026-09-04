@@ -59,18 +59,11 @@ impl Theme {
 }
 ```
 
-- **`ALL`** — A `&'static` slice of every built-in theme, useful for
-  building theme pickers.
-- **`custom(name, palette)`** — Creates a `Theme::Custom` variant from a
-  name and a base `Palette`. Iced auto-generates the `Extended` palette.
-- **`custom_with_fn(name, palette, generate)`** — Same, but lets you
-  override the auto-generator. Use this when you want precise control over
-  the derived (weak/strong) variants.
-- **`palette()`** — Returns the base `Palette` (6 colours: background,
-  text, primary, success, warning, danger).
-- **`extended_palette()`** — Returns an `&Extended` reference exposing the
-  derived (background/primary/secondary/success/warning/danger with
-  strong/weak variants and is_dark flag).
+- **`ALL`** — A `&'static` slice of every built-in theme, useful for building theme pickers.
+- **`custom(name, palette)`** — Creates a `Theme::Custom` variant from a name and a base `Palette`. Iced auto-generates the `Extended` palette.
+- **`custom_with_fn(name, palette, generate)`** — Same, but lets you override the auto-generator. Use this when you want precise control over the derived (weak/strong) variants.
+- **`palette()`** — Returns the base `Palette` (6 colours: background, text, primary, success, warning, danger).
+- **`extended_palette()`** — Returns an `&Extended` reference exposing the derived (background/primary/secondary/success/warning/danger with strong/weak variants and is_dark flag).
 
 ### `Custom` struct
 
@@ -152,20 +145,12 @@ pick_list(Theme::ALL, Some(state.theme.clone()), Message::ThemeSelected)
 
 ## Gotchas
 
-- `Theme::Custom` wraps the `Custom` in an `Arc`, so cloning a `Theme` is
-  cheap.
-- `Theme::custom(name, palette)` auto-generates derived colours — if you
-  need fine control over strong/weak variants, use `custom_with_fn`.
-- `Theme::ALL` enumerates **built-in** themes only; your custom themes
-  are not automatically added.
-- Widgets query the theme via `theme.extended_palette()`. When building a
-  custom `Catalog` implementation, prefer `Extended` fields over the raw
-  `Palette` so you get the cohesive weak/strong variants.
-- `Theme::custom_with_fn`'s `generate` closure runs **once** at
-  construction, not on every lookup — don't rely on it being called per
-  frame.
-- Iced doesn't have a built-in "theme variants" mechanism — to switch
-  between dark and light of the same theme you manually branch on state.
+- `Theme::Custom` wraps the `Custom` in an `Arc`, so cloning a `Theme` is cheap.
+- `Theme::custom(name, palette)` auto-generates derived colours — if you need fine control over strong/weak variants, use `custom_with_fn`.
+- `Theme::ALL` enumerates **built-in** themes only; your custom themes are not automatically added.
+- Widgets query the theme via `theme.extended_palette()`. When building a custom `Catalog` implementation, prefer `Extended` fields over the raw `Palette` so you get the cohesive weak/strong variants.
+- `Theme::custom_with_fn`'s `generate` closure runs **once** at construction, not on every lookup — don't rely on it being called per frame.
+- Iced doesn't have a built-in "theme variants" mechanism — to switch between dark and light of the same theme you manually branch on state.
 - No public API for iterating custom themes -- maintain that list yourself.
 
 ## See also

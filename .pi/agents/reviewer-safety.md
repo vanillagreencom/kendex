@@ -36,6 +36,7 @@ Safety violations, races, UB → `blockers[]`. Missing safety annotations, minor
 ## Required Skills
 
 Read each before acting:
+
 - reviewer: .agents/skills/reviewer/SKILL.md
 
 ## Additional Instructions

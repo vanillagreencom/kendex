@@ -77,6 +77,7 @@ Cancel ends the workflow; a selection goes to § 2.
    ```bash
    .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
    ```
+
    ```bash
    .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
    ```
@@ -134,6 +135,7 @@ Cancel ends the workflow; a selection goes to § 2.
    ```bash
    .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_round_id // empty'
    ```
+
    ```bash
    .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items-from-round
    ```

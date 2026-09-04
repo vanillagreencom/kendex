@@ -34,10 +34,8 @@ impl Node {
 - **`new(size)`** — Creates a leaf `Node`.
 - **`with_children(size, children)`** — Leaf with children already laid out.
 - **`container(child, padding)`** — Wraps a single child with padding.
-- **`align(...)`** — Aligns the node within some `space` using the given x/y
-  alignments.
-- **`move_to(p)` / `translate(v)`** — Position/offset the node; `_mut`
-  variants modify in place.
+- **`align(...)`** — Aligns the node within some `space` using the given x/y alignments.
+- **`move_to(p)` / `translate(v)`** — Position/offset the node; `_mut` variants modify in place.
 
 ### `layout::Limits`
 
@@ -65,11 +63,8 @@ impl Limits {
 ```
 
 - **`new(min, max)`** — Creates new `Limits` with min/max sizes.
-- **`width(...)` / `height(...)`** — Applies a length constraint to the limit
-  chain.
-- **`resolve(width, height, intrinsic_size)`** — Computes the resulting `Size`
-  that fits the `Limits`, combining explicit length strategies with the
-  widget's intrinsic size.
+- **`width(...)` / `height(...)`** — Applies a length constraint to the limit chain.
+- **`resolve(width, height, intrinsic_size)`** — Computes the resulting `Size` that fits the `Limits`, combining explicit length strategies with the widget's intrinsic size.
 
 ### `layout::Layout<'a>`
 
@@ -89,8 +84,7 @@ impl<'a> Layout<'a> {
 - **`position()`** — Absolute top-left `Point` of the laid-out node.
 - **`bounds()`** — Absolute `Rectangle` describing position and size.
 - **`children()`** — Double-ended iterator over the child `Layout`s.
-- **`child(index)`** — Index directly into a child layout. Panics on
-  out-of-bounds.
+- **`child(index)`** — Index directly into a child layout. Panics on out-of-bounds.
 
 ### Layout helper functions
 
@@ -124,8 +118,7 @@ pub fn flex::resolve<Message, Theme, Renderer>(
 ) -> Node
 ```
 
-- **`sized`** — Produce a sized `Node` from a closure that returns the
-  intrinsic size within the shrunk limits.
+- **`sized`** — Produce a sized `Node` from a closure that returns the intrinsic size within the shrunk limits.
 - **`padded`** — Produce a padded node, passing shrunk limits to `layout`.
 - **`flex::resolve`** — Full flex layout used by `Row`/`Column` internals.
 
@@ -171,17 +164,10 @@ pub fn next_to_each_other(
 ) -> Node
 ```
 
-- **`atomic`** — Simplest helper: resolves `Length` constraints into a
-  leaf `Node`. Use for widgets that have no children (e.g., a colored
-  rectangle, a rule).
-- **`contained`** — Like `sized` but delegates inner layout to a closure
-  that receives constrained `Limits`. Use when wrapping a single child.
-- **`positioned`** — Extends `padded` with a final positioning step. Use
-  when the child's position depends on the computed layout (e.g.,
-  alignment within remaining space).
-- **`next_to_each_other`** — Two-column layout helper. Lays out `left`
-  first, then gives `right` the remaining space. Used internally by
-  widgets that pair a label with a control.
+- **`atomic`** — Simplest helper: resolves `Length` constraints into a leaf `Node`. Use for widgets that have no children (e.g., a colored rectangle, a rule).
+- **`contained`** — Like `sized` but delegates inner layout to a closure that receives constrained `Limits`. Use when wrapping a single child.
+- **`positioned`** — Extends `padded` with a final positioning step. Use when the child's position depends on the computed layout (e.g., alignment within remaining space).
+- **`next_to_each_other`** — Two-column layout helper. Lays out `left` first, then gives `right` the remaining space. Used internally by widgets that pair a label with a control.
 
 ## Patterns
 
@@ -210,20 +196,12 @@ node.move_to_mut(Point::new(10.0, 10.0));
 
 ## Gotchas
 
-- `Node::new(size)` stores an intrinsic size; the *position* is 0,0 until you
-  `move_to`/`translate`. If you forget, a widget will render at the parent's
-  origin.
-- Alignment and padding consume bounds: shrink the limits before handing them
-  to a closure, or use the helper functions (`sized`, `padded`) which do it
-  for you.
-- `Layout::children()` and `Layout::child(i)` consume the `Layout` (they take
-  `self`). Re-derive them from the parent when you need them again.
-- `Length::Fill` is viral — any fill child in a shrink container will make the
-  container fill its parent on that axis.
-- Since 0.14, layout resolution prioritizes `Shrink` over `Fill` (0.13 was the
-  other way round).
-- `child(index)` panics if out of bounds — always mirror the number of
-  children you produce in `layout()`.
+- `Node::new(size)` stores an intrinsic size; the *position* is 0,0 until you `move_to`/`translate`. If you forget, a widget will render at the parent's origin.
+- Alignment and padding consume bounds: shrink the limits before handing them to a closure, or use the helper functions (`sized`, `padded`) which do it for you.
+- `Layout::children()` and `Layout::child(i)` consume the `Layout` (they take `self`). Re-derive them from the parent when you need them again.
+- `Length::Fill` is viral — any fill child in a shrink container will make the container fill its parent on that axis.
+- Since 0.14, layout resolution prioritizes `Shrink` over `Fill` (0.13 was the other way round).
+- `child(index)` panics if out of bounds — always mirror the number of children you produce in `layout()`.
 - No `position_over` helper at the `Layout` level -- use `layout.bounds()` directly.
 
 ## See also

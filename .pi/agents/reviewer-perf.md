@@ -29,6 +29,7 @@ Budget exceedances, classified regressions, hot-path cost introductions → `blo
 ## Required Skills
 
 Read each before acting:
+
 - reviewer: .agents/skills/reviewer/SKILL.md
 
 ## Additional Instructions

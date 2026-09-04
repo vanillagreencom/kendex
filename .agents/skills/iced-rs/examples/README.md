@@ -1,8 +1,9 @@
 # Examples
-__Iced moves fast and the `master` branch can contain breaking changes!__ If you want to browse examples that are compatible with the latest release,
-then [switch to the `latest` branch](https://github.com/iced-rs/iced/tree/latest/examples#examples).
+
+__Iced moves fast and the `master` branch can contain breaking changes!__ If you want to browse examples that are compatible with the latest release, then [switch to the `latest` branch](https://github.com/iced-rs/iced/tree/latest/examples#examples).
 
 ## [Tour](tour)
+
 A simple UI tour that can run both on native platforms and the web! It showcases different widgets that can be built using Iced.
 
 The __[`main`](tour/src/main.rs)__ file contains all the code of the example! All the cross-platform GUI is defined in terms of __state__, __messages__, __update logic__ and __view logic__.
@@ -21,11 +22,13 @@ The __[`main`](tour/src/main.rs)__ file contains all the code of the example! Al
 [`wgpu`]: https://github.com/gfx-rs/wgpu
 
 You can run the native version with `cargo run`:
+
 ```
 cargo run --package tour
 ```
 
 ## [Todos](todos)
+
 A todos tracker inspired by [TodoMVC]. It showcases dynamic layout, text input, checkboxes, scrollables, icons, and async actions! It automatically saves your tasks in the background, even if you did not finish typing them.
 
 The example code is located in the __[`main`](todos/src/main.rs)__ file.
@@ -37,6 +40,7 @@ The example code is located in the __[`main`](todos/src/main.rs)__ file.
 </div>
 
 You can run the native version with `cargo run`:
+
 ```
 cargo run --package todos
 ```
@@ -44,6 +48,7 @@ cargo run --package todos
 [TodoMVC]: http://todomvc.com/
 
 ## [Game of Life](game_of_life)
+
 An interactive version of the [Game of Life], invented by [John Horton Conway].
 
 It runs a simulation in a background thread while allowing interaction with a `Canvas` that displays an infinite grid with zooming, panning, and drawing support.
@@ -55,6 +60,7 @@ The relevant code is located in the __[`main`](game_of_life/src/main.rs)__ file.
 </div>
 
 You can run it with `cargo run`:
+
 ```
 cargo run --package game_of_life
 ```
@@ -63,6 +69,7 @@ cargo run --package game_of_life
 [John Horton Conway]: https://en.wikipedia.org/wiki/John_Horton_Conway
 
 ## [Styling](styling)
+
 An example showcasing custom styling with a light and dark theme.
 
 The example code is located in the __[`main`](styling/src/main.rs)__ file.
@@ -72,11 +79,13 @@ The example code is located in the __[`main`](styling/src/main.rs)__ file.
 </div>
 
 You can run it with `cargo run`:
+
 ```
 cargo run --package styling
 ```
 
 ## Extras
+
 A bunch of simpler examples exist:
 
 - [`bezier_tool`](bezier_tool), a Paint-like tool for drawing Bézier curves using the `Canvas` widget.
@@ -99,6 +108,7 @@ A bunch of simpler examples exist:
 - [`svg`](svg), an application that renders the [Ghostscript Tiger] by leveraging the `Svg` widget.
 
 All of them are packaged in their own crate and, therefore, can be run using `cargo`:
+
 ```
 cargo run --package <example>
 ```
@@ -109,8 +119,8 @@ cargo run --package <example>
 [`wgpu`]: https://github.com/gfx-rs/wgpu
 
 ## [Coffee]
-Since [Iced was born in May 2019], it has been powering the user interfaces in
-[Coffee], an experimental 2D game engine.
+
+Since [Iced was born in May 2019], it has been powering the user interfaces in [Coffee], an experimental 2D game engine.
 
 
 <div align="center">

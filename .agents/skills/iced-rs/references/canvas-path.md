@@ -109,16 +109,9 @@ let corner = Path::new(|p| {
 
 ## Gotchas
 
-- `Path` is **immutable once built** — to change it, build a new one.
-  This is the opposite of the retained-mode approach some other canvas
-  libraries take.
-- `arc_to` is the HTML5-style "smooth corner" function — it does **not**
-  actually draw a straight line to the first control point, it only
-  smooths the corner. Follow it with a `line_to` to the next intended
-  point.
-- `close()` is optional but needed for a filled path to render as a
-  closed region. An unclosed filled path is still filled (the fill rule
-  assumes implicit closure), but stroke behaviour differs.
+- `Path` is **immutable once built** — to change it, build a new one. This is the opposite of the retained-mode approach some other canvas libraries take.
+- `arc_to` is the HTML5-style "smooth corner" function — it does **not** actually draw a straight line to the first control point, it only smooths the corner. Follow it with a `line_to` to the next intended point.
+- `close()` is optional but needed for a filled path to render as a closed region. An unclosed filled path is still filled (the fill rule assumes implicit closure), but stroke behaviour differs.
 - `Radius::from(f32)` creates uniform corners. For asymmetric: `Radius::new(tl, tr, br, bl)`.
 - `Path::new(|p| ...)` implicitly builds -- no need to call `.build()` manually.
 - Paths are ref-counted and cheap to clone. Build once outside the draw closure for stable geometry.

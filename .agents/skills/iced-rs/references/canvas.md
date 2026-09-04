@@ -43,16 +43,10 @@ where
 }
 ```
 
-- **`State`** — persistent per-widget state (like the rest of iced, this
-  lives across frames).
-- **`draw(state, renderer, theme, bounds, cursor)`** — produces a `Vec` of
-  `Geometry`. You typically create a `Frame`, issue draw calls, then
-  `frame.into_geometry()` and collect.
-- **`update(state, event, bounds, cursor)`** — process an event,
-  optionally mutating state and returning an `Action<Message>` (which can
-  publish a message, capture the event, request a redraw, or a combination).
-- **`mouse_interaction(state, bounds, cursor)`** — which system cursor to
-  display.
+- **`State`** — persistent per-widget state (like the rest of iced, this lives across frames).
+- **`draw(state, renderer, theme, bounds, cursor)`** — produces a `Vec` of `Geometry`. You typically create a `Frame`, issue draw calls, then `frame.into_geometry()` and collect.
+- **`update(state, event, bounds, cursor)`** — process an event, optionally mutating state and returning an `Action<Message>` (which can publish a message, capture the event, request a redraw, or a combination).
+- **`mouse_interaction(state, bounds, cursor)`** — which system cursor to display.
 
 ### `Frame`
 
@@ -81,18 +75,13 @@ impl<Renderer> Frame<Renderer> {
 }
 ```
 
-- **`new(renderer, size)`** — Creates a frame of the given size. Geometry
-  drawn outside the size is clipped.
+- **`new(renderer, size)`** — Creates a frame of the given size. Geometry drawn outside the size is clipped.
 - **`fill(path, fill)`** — Fills a `Path` with a `Fill` style.
-- **`fill_rectangle(top_left, size, fill)`** — Fast path for axis-aligned
-  rectangles without building a path.
+- **`fill_rectangle(top_left, size, fill)`** — Fast path for axis-aligned rectangles without building a path.
 - **`stroke(path, stroke)`** — Strokes a `Path` with a `Stroke` style.
 - **`fill_text(text)`** — Draws text; accepts any `impl Into<Text>`.
-- **Transformation methods** — `translate`, `rotate`, `scale`, and
-  `scale_nonuniform` modify the current coordinate system.
-- **`with_save(f)`** — Runs `f` inside a saved transform stack; on return,
-  the transform is popped automatically (RAII form of
-  `push_transform`/`pop_transform`).
+- **Transformation methods** — `translate`, `rotate`, `scale`, and `scale_nonuniform` modify the current coordinate system.
+- **`with_save(f)`** — Runs `f` inside a saved transform stack; on return, the transform is popped automatically (RAII form of `push_transform`/`pop_transform`).
 - **`into_geometry()`** — Consumes the frame and returns its `Geometry`.
 
 ### `Cache`
@@ -196,23 +185,12 @@ frame.with_save(|frame| {
 
 ## Gotchas
 
-- `Program::draw` returns `Vec<Geometry>` — each element is a **separate
-  layer**. Order matters: later geometries are drawn on top. Split into
-  layers when you want different caching strategies (static grid + dynamic
-  overlay).
-- A `Cache` only invalidates on **size change or explicit `clear()`**.
-  Mutating `Program` fields (e.g. chart data) does **not** invalidate the
-  cache automatically — you must call `cache.clear()` when your data
-  changes.
-- `frame.fill_rectangle` is faster than building a `Path::rectangle`
-  because it bypasses the path pipeline.
-- Transformations on the frame use a stack — `with_save` is the
-  push/pop idiom. Forgetting to save/restore leaves transforms in place for
-  subsequent draw calls.
-- `into_geometry()` consumes the frame — you cannot add more draw calls
-  after converting.
-- `Canvas` intrinsic size is shrink by default — set `.width(Length::Fill)`
-  and `.height(Length::Fill)` (or fixed values) when wrapping in a layout.
+- `Program::draw` returns `Vec<Geometry>` — each element is a **separate layer**. Order matters: later geometries are drawn on top. Split into layers when you want different caching strategies (static grid + dynamic overlay).
+- A `Cache` only invalidates on **size change or explicit `clear()`**. Mutating `Program` fields (e.g. chart data) does **not** invalidate the cache automatically — you must call `cache.clear()` when your data changes.
+- `frame.fill_rectangle` is faster than building a `Path::rectangle` because it bypasses the path pipeline.
+- Transformations on the frame use a stack — `with_save` is the push/pop idiom. Forgetting to save/restore leaves transforms in place for subsequent draw calls.
+- `into_geometry()` consumes the frame — you cannot add more draw calls after converting.
+- `Canvas` intrinsic size is shrink by default — set `.width(Length::Fill)` and `.height(Length::Fill)` (or fixed values) when wrapping in a layout.
 - `Program::update` returns `Action<Message>`, not `Option<Message>`. Use `Action::publish(msg)`.
 
 ## See also

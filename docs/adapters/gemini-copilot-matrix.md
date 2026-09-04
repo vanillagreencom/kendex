@@ -1,24 +1,17 @@
 # Gemini CLI and GitHub Copilot — observation matrix
 
-The observation matrix behind the Gemini and Copilot adapter pages, cited
-from the code as `matrix §N`. Every claim below is checked against official
-documentation or upstream source; nothing rests on wshobson's adapters (see
-the discrepancy log).
+The observation matrix behind the Gemini and Copilot adapter pages, cited from the code as `matrix §N`. Every claim below is checked against official documentation or upstream source; nothing rests on wshobson's adapters (see the discrepancy log).
 
 Two upstream repos are the ground truth:
 
-- Gemini CLI — `github.com/google-gemini/gemini-cli`, `docs/` on `main`,
-  plus `packages/` source where docs are silent.
-- Copilot — `docs.github.com/en/copilot`, whose markdown source is
-  `github.com/github/docs` under `content/copilot/`. VS Code-only surfaces
-  come from `code.visualstudio.com/docs/agent-customization/`.
+- Gemini CLI — `github.com/google-gemini/gemini-cli`, `docs/` on `main`, plus `packages/` source where docs are silent.
+- Copilot — `docs.github.com/en/copilot`, whose markdown source is `github.com/github/docs` under `content/copilot/`. VS Code-only surfaces come from `code.visualstudio.com/docs/agent-customization/`.
 
 ---
 
 ## 1. Gemini CLI — observation matrix
 
-Global root is `~/.gemini`. Project root is `<project>/.gemini`. The two
-scopes are symmetric for every file-backed kind.
+Global root is `~/.gemini`. Project root is `<project>/.gemini`. The two scopes are symmetric for every file-backed kind.
 
 | Kind | Supported | Project location | Personal location | Format / key fields | Enable / disable | Notes |
 |---|---|---|---|---|---|---|
@@ -30,16 +23,7 @@ scopes are symmetric for every file-backed kind.
 | **plugin / extension** | yes, **global only** | none — there is no project extension directory | `~/.gemini/extensions/<name>/` | `gemini-extension.json`: `name`, `version`, `description`, `mcpServers`, `contextFileName`, `excludeTools`, `migratedTo`, `plan`, `settings[]`, `themes[]`. Layout: `commands/`, `skills/`, `agents/`, `hooks/hooks.json`, `policies/`, `GEMINI.md`, `.env` | `~/.gemini/extensions/extension-enablement.json` (path-scoped override rules, `!` prefix = disable, trailing `*` = include subdirs) and `extensions.disabled[]` in settings; CLI `gemini extensions enable\|disable <name> --scope <scope>` | An extension is installed once globally but can be enabled per workspace path. Confirmed global-only in `packages/cli/src/config/extensions/storage.ts` — `ExtensionStorage.getExtensionDir()` always resolves under the user extensions dir |
 | **context / instructions** | yes, both scopes | `GEMINI.md` at project root and every ancestor up to a boundary marker (default `.git`), plus just-in-time discovery in subdirectories when a tool touches a file | `~/.gemini/GEMINI.md` | Markdown; `@file.md` imports (relative or absolute) | Rename the file, or change `context.fileName` (accepts a string or an array such as `["AGENTS.md", "CONTEXT.md", "GEMINI.md"]`) | `/memory show`, `/memory reload`. kendex has no ItemKind for this today |
 
-Sources:
-[configuration reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md) ·
-[subagents](https://github.com/google-gemini/gemini-cli/blob/main/docs/core/subagents.md) ·
-[skills](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/skills.md) ·
-[creating skills](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/creating-skills.md) ·
-[custom commands](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/custom-commands.md) ·
-[hooks reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md) ·
-[extensions reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/extensions/reference.md) ·
-[GEMINI.md context](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/gemini-md.md) ·
-[tools reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/tools.md).
+Sources: [configuration reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md) · [subagents](https://github.com/google-gemini/gemini-cli/blob/main/docs/core/subagents.md) · [skills](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/skills.md) · [creating skills](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/creating-skills.md) · [custom commands](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/custom-commands.md) · [hooks reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md) · [extensions reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/extensions/reference.md) · [GEMINI.md context](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/gemini-md.md) · [tools reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/tools.md).
 
 ### Settings precedence (matters for apply)
 
@@ -55,34 +39,19 @@ defaults
             → command-line flags
 ```
 
-A value kendex writes into `.gemini/settings.json` can be overridden by the
-system layer. Env overrides for the two system paths are `GEMINI_CLI_SYSTEM_DEFAULTS_PATH` and
-`GEMINI_CLI_SYSTEM_SETTINGS_PATH`.
-([configuration reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md))
+A value kendex writes into `.gemini/settings.json` can be overridden by the system layer. Env overrides for the two system paths are `GEMINI_CLI_SYSTEM_DEFAULTS_PATH` and `GEMINI_CLI_SYSTEM_SETTINGS_PATH`. ([configuration reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md))
 
 ### Built-in tool identifiers
 
-Needed for any `tools:` allowlist kendex renders:
-`run_shell_command`, `glob`, `grep_search` (legacy alias `search_file_content`),
-`list_directory`, `read_file`, `read_many_files`, `replace`, `write_file`,
-`ask_user`, `write_todos`, `google_web_search`, `web_fetch`,
-`list_mcp_resources`, `read_mcp_resource`, `activate_skill`,
-`get_internal_docs`, `enter_plan_mode`, `exit_plan_mode`, `update_topic`,
-plus experimental `tracker_*`.
-([tools reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/tools.md))
+Needed for any `tools:` allowlist kendex renders: `run_shell_command`, `glob`, `grep_search` (legacy alias `search_file_content`), `list_directory`, `read_file`, `read_many_files`, `replace`, `write_file`, `ask_user`, `write_todos`, `google_web_search`, `web_fetch`, `list_mcp_resources`, `read_mcp_resource`, `activate_skill`, `get_internal_docs`, `enter_plan_mode`, `exit_plan_mode`, `update_topic`, plus experimental `tracker_*`. ([tools reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/tools.md))
 
 ---
 
 ## 2. GitHub Copilot — observation matrix
 
-Copilot is four products sharing filenames. kendex should treat **Copilot
-CLI + repository files** as the harness and ignore the rest; the columns
-below name which surface honors each row, because a file that only VS Code
-reads is not something a CLI-shaped adapter should claim to manage.
+Copilot is four products sharing filenames. kendex should treat **Copilot CLI + repository files** as the harness and ignore the rest; the columns below name which surface honors each row, because a file that only VS Code reads is not something a CLI-shaped adapter should claim to manage.
 
-Global root is `~/.copilot`, relocatable by the `COPILOT_HOME` environment
-variable (and by the legacy `--config-dir` flag). Repository files live
-under `.github/`.
+Global root is `~/.copilot`, relocatable by the `COPILOT_HOME` environment variable (and by the legacy `--config-dir` flag). Repository files live under `.github/`.
 
 | Kind | Supported | Project location | Personal location | Format / key fields | Enable / disable | Surfaces |
 |---|---|---|---|---|---|---|
@@ -95,20 +64,7 @@ under `.github/`.
 | **context / instructions** | yes, both scopes | `.github/copilot-instructions.md`; `.github/instructions/*.instructions.md` with required `applyTo` glob frontmatter and optional `excludeAgent` (`code-review`\|`cloud-agent`); `AGENTS.md` anywhere in the tree, nearest wins; `CLAUDE.md` / `GEMINI.md` at repo root only, one each | `~/.copilot/copilot-instructions.md`, `~/.copilot/instructions/*.instructions.md` | Markdown | Delete or rename only | Repository-wide: github.com, VS Code, Visual Studio, JetBrains, Xcode, Eclipse. Path-specific: github.com and cloud agent / code review (not the IDE as documented). kendex has no ItemKind for this |
 | **CLI extension** | experimental — recommend unsupported | `.github/extensions/<name>/extension.mjs` | `~/.copilot/extensions/<name>/extension.mjs` | Node module using the SDK shipped with the CLI; adds tools and slash commands | Requires `--experimental` or `/experimental on` | Distinct from plugins. Explicitly labelled experimental and subject to change |
 
-Sources:
-[CLI configuration directory](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference) ·
-[custom agents configuration](https://docs.github.com/en/copilot/reference/custom-agents-configuration) ·
-[custom agents for the CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/create-custom-agents-for-cli) ·
-[custom agents for the cloud agent](https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/customize-cloud-agent/create-custom-agents) ·
-[agent skills for the CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills) ·
-[hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference) ·
-[MCP servers for the CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers) ·
-[CLI plugin reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-plugin-reference) ·
-[finding and installing plugins](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/plugins-finding-installing) ·
-[repository instructions](https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions) ·
-[response customization](https://docs.github.com/en/copilot/concepts/response-customization) ·
-[CLI extensions](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/about-cli-extensions) ·
-[VS Code custom agents](https://code.visualstudio.com/docs/agent-customization/custom-agents).
+Sources: [CLI configuration directory](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference) · [custom agents configuration](https://docs.github.com/en/copilot/reference/custom-agents-configuration) · [custom agents for the CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/create-custom-agents-for-cli) · [custom agents for the cloud agent](https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/customize-cloud-agent/create-custom-agents) · [agent skills for the CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills) · [hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference) · [MCP servers for the CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers) · [CLI plugin reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-plugin-reference) · [finding and installing plugins](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/plugins-finding-installing) · [repository instructions](https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions) · [response customization](https://docs.github.com/en/copilot/concepts/response-customization) · [CLI extensions](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/about-cli-extensions) · [VS Code custom agents](https://code.visualstudio.com/docs/agent-customization/custom-agents).
 
 ### Settings precedence (matters for apply)
 
@@ -124,29 +80,15 @@ built-in defaults
             → command-line flags
 ```
 
-Only a fixed allowlist of keys is honored at repository scope — everything
-else in a repo settings file is silently ignored. The repo-overridable keys
-are `companyAnnouncements`, `contextTier`, `deniedUrls`, `disableAllHooks`,
-`disabledMcpServers`, `disabledSkills`, `effortLevel`, `enabledPlugins`,
-`extraKnownMarketplaces`, `hooks`, `includeCoAuthoredBy`, `mergeStrategy`,
-`model`, `respectGitignore`. Several merge as a union (repo can add, never
-remove) or tighten-only, so a kendex "disable" at project scope is
-expressible but a project-scope "enable" over a user-scope disable is not.
-([CLI configuration directory](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference))
+Only a fixed allowlist of keys is honored at repository scope — everything else in a repo settings file is silently ignored. The repo-overridable keys are `companyAnnouncements`, `contextTier`, `deniedUrls`, `disableAllHooks`, `disabledMcpServers`, `disabledSkills`, `effortLevel`, `enabledPlugins`, `extraKnownMarketplaces`, `hooks`, `includeCoAuthoredBy`, `mergeStrategy`, `model`, `respectGitignore`. Several merge as a union (repo can add, never remove) or tighten-only, so a kendex "disable" at project scope is expressible but a project-scope "enable" over a user-scope disable is not. ([CLI configuration directory](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference))
 
-**Copilot CLI also reads `.claude/settings.json` and
-`.claude/settings.local.json`** for a shared cross-tool subset:
-`companyAnnouncements`, `disableAllHooks`, `enabledPlugins`,
-`extraKnownMarketplaces`, `hooks`. This is load-bearing for kendex — see
-risk R6.
+**Copilot CLI also reads `.claude/settings.json` and `.claude/settings.local.json`** for a shared cross-tool subset: `companyAnnouncements`, `disableAllHooks`, `enabledPlugins`, `extraKnownMarketplaces`, `hooks`. This is load-bearing for kendex — see risk R6.
 
 ---
 
 ## 3. Detection roots
 
-Read-only scanning needs markers that are cheap and do not produce false
-positives. `.github/` on its own is worthless as a Copilot marker; almost
-every repository has one.
+Read-only scanning needs markers that are cheap and do not produce false positives. `.github/` on its own is worthless as a Copilot marker; almost every repository has one.
 
 ### Gemini CLI
 
@@ -160,8 +102,7 @@ every repository has one.
 | Ambiguous | `.agents/skills/` | weak — a cross-tool convention Copilot also reads; never treat as a Gemini-only marker |
 | Not a marker | `gemini-extension.json` | this marks a repo that *publishes* an extension, not one that *uses* Gemini CLI |
 
-Global root should be `~/.gemini` with no documented env override for the
-directory itself (only the two system-scope paths are overridable).
+Global root should be `~/.gemini` with no documented env override for the directory itself (only the two system-scope paths are overridable).
 
 ### Copilot
 
@@ -184,8 +125,7 @@ directory itself (only the two system-scope paths are overridable).
 
 ### Gemini CLI
 
-Accepted in an agent's `model:` frontmatter, the `--model` flag, and the
-`/model` picker:
+Accepted in an agent's `model:` frontmatter, the `--model` flag, and the `/model` picker:
 
 | Value | Notes |
 |---|---|
@@ -196,13 +136,9 @@ Accepted in an agent's `model:` frontmatter, the `--model` flag, and the
 | `inherit` | agent frontmatter only — use the parent session's model |
 | Auto (Gemini 3) / Auto (Gemini 2.5) | picker-only routing modes, not literal strings |
 
-([model docs](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/model.md) and
-[subagents](https://github.com/google-gemini/gemini-cli/blob/main/docs/core/subagents.md))
+([model docs](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/model.md) and [subagents](https://github.com/google-gemini/gemini-cli/blob/main/docs/core/subagents.md))
 
-Suggested kendex tier mapping: top → `gemini-3-pro-preview`,
-fast → `gemini-3-flash-preview`, inherit → `inherit`. Do **not** hardcode
-2.5 as wshobson does; and prefer `inherit` wherever a tier is unspecified,
-since the 3.x IDs carry a `-preview` suffix that will churn.
+Suggested kendex tier mapping: top → `gemini-3-pro-preview`, fast → `gemini-3-flash-preview`, inherit → `inherit`. Do **not** hardcode 2.5 as wshobson does; and prefer `inherit` wherever a tier is unspecified, since the 3.x IDs carry a `-preview` suffix that will churn.
 
 ### Copilot CLI
 
@@ -221,28 +157,15 @@ Documented values for `--model` / `COPILOT_MODEL` / the `model` settings key:
 
 ([CLI command reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference))
 
-The platform-wide catalog is much larger — Claude Fable 5, Claude Opus 5,
-Claude Sonnet 5, Claude Opus 4.7/4.8, GPT-5.5, GPT-5.6 Luna/Sol/Terra,
-Kimi K3, Grok 4.5, and others
-([supported models](https://docs.github.com/en/copilot/reference/ai-models/supported-models)) — but the CLI's own `--model` table does not list
-them, and availability is plan- and policy-dependent. A repository can
-further restrict IDs with a glob allowlist at `.github/allowed_models.txt`
-(the official example uses `gpt-5.2`, `gpt-5.4`, `claude-sonnet-*` and a
-required `fallback:` line).
+The platform-wide catalog is much larger — Claude Fable 5, Claude Opus 5, Claude Sonnet 5, Claude Opus 4.7/4.8, GPT-5.5, GPT-5.6 Luna/Sol/Terra, Kimi K3, Grok 4.5, and others ([supported models](https://docs.github.com/en/copilot/reference/ai-models/supported-models)) — but the CLI's own `--model` table does not list them, and availability is plan- and policy-dependent. A repository can further restrict IDs with a glob allowlist at `.github/allowed_models.txt` (the official example uses `gpt-5.2`, `gpt-5.4`, `claude-sonnet-*` and a required `fallback:` line).
 
-**Recommendation:** do not ship a hardcoded Copilot tier map. Emit `auto`
-when no tier is given, pass an explicit user-set string through unchanged,
-and surface the model as free text rather than a validated enum. Copilot's
-model list moves monthly and is gated by subscription, org policy, and
-`allowed_models.txt`.
+**Recommendation:** do not ship a hardcoded Copilot tier map. Emit `auto` when no tier is given, pass an explicit user-set string through unchanged, and surface the model as free text rather than a validated enum. Copilot's model list moves monthly and is gated by subscription, org policy, and `allowed_models.txt`.
 
 ---
 
 ## 5. Discrepancy log — wshobson vs. official docs
 
-"wshobson" refers to `tools/adapters/{gemini,copilot}.py`,
-`tools/adapters/capabilities.py`, and the harnesses doc of the wshobson repository at commit
-`c4b82b0`.
+"wshobson" refers to `tools/adapters/{gemini,copilot}.py`, `tools/adapters/capabilities.py`, and the harnesses doc of the wshobson repository at commit `c4b82b0`.
 
 | # | wshobson claims | Reality | Who's right | Official source |
 |---|---|---|---|---|
@@ -262,102 +185,40 @@ model list moves monthly and is gated by subscription, org policy, and
 | D14 | Copilot's context file is `AGENTS.md` | Partly right. `AGENTS.md` is honored and nests (nearest wins), but `.github/copilot-instructions.md` is the primary repository instruction file, `.github/instructions/*.instructions.md` adds path-scoped rules, and `CLAUDE.md`/`GEMINI.md` are root-only single-file fallbacks | **Official** | [repository instructions](https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions) |
 | D15 | (Not wshobson) GitHub's own docs contradict themselves on custom-agent precedence | The CLI config-directory reference says project-level `.github/agents/` wins over personal `~/.copilot/agents/`; the create-custom-agents-for-CLI page says the home-directory copy is used instead. | **Unresolved** — do not encode a precedence rule; report both as observed installations | [CLI config directory](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference) vs. [custom agents for the CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/create-custom-agents-for-cli) |
 
-One item where wshobson is right and worth keeping: Gemini's `@{path}`
-file-injection syntax in command prompts is real and is the correct way to
-pull a large body into a TOML command
-([custom commands](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/custom-commands.md)).
+One item where wshobson is right and worth keeping: Gemini's `@{path}` file-injection syntax in command prompts is real and is the correct way to pull a large body into a TOML command ([custom commands](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/custom-commands.md)).
 
 ---
 
 ## 6. Risk notes
 
-**R1 — Gemini extensions are global-only with path-scoped enablement.**
-Installation always lands in `~/.gemini/extensions/<name>/`, but enablement
-is a rule file (`extension-enablement.json`) whose entries are path globs
-with `!` for disable and a trailing `*` for "include subdirectories", with
-conflict and child-of-parent resolution in code. Hand-editing this is easy
-to get wrong and there is no schema doc. *Recommendation: observe global
-only; no install, no remove. Toggle only if it shells out to
-`gemini extensions enable|disable --scope`, otherwise leave toggle off too.*
+**R1 — Gemini extensions are global-only with path-scoped enablement.** Installation always lands in `~/.gemini/extensions/<name>/`, but enablement is a rule file (`extension-enablement.json`) whose entries are path globs with `!` for disable and a trailing `*` for "include subdirectories", with conflict and child-of-parent resolution in code. Hand-editing this is easy to get wrong and there is no schema doc. *Recommendation: observe global only; no install, no remove. Toggle only if it shells out to `gemini extensions enable|disable --scope`, otherwise leave toggle off too.*
 
-**R2 — Gemini's system settings layer outranks project settings.** On a
-managed machine, a project-scope value kendex writes can be inert. This
-does not block anything, but Audit must not report drift as "applied" when
-an override is winning. *Recommendation: scan the system paths read-only
-and flag the conflict rather than silently disagreeing with reality.*
+**R2 — Gemini's system settings layer outranks project settings.** On a managed machine, a project-scope value kendex writes can be inert. This does not block anything, but Audit must not report drift as "applied" when an override is winning. *Recommendation: scan the system paths read-only and flag the conflict rather than silently disagreeing with reality.*
 
-**R3 — Gemini subagents sit behind `experimental.enableAgents`.** The kind
-is documented and stable-looking, but a feature flag can flip. `kind: remote`
-subagents additionally reference off-machine execution. *Recommendation:
-manage `kind: local` agents; treat `kind: remote` as observe-only.*
+**R3 — Gemini subagents sit behind `experimental.enableAgents`.** The kind is documented and stable-looking, but a feature flag can flip. `kind: remote` subagents additionally reference off-machine execution. *Recommendation: manage `kind: local` agents; treat `kind: remote` as observe-only.*
 
-**R4 — Copilot's `COPILOT_HOME` relocates the entire global root.**
-Hardcoding `~/.copilot` will scan the wrong place for anyone using the env
-var (plus the legacy `--config-dir` flag). *Recommendation: resolve the root
-through `Env` the way the Claude adapter resolves `home`, with the env var
-checked first.*
+**R4 — Copilot's `COPILOT_HOME` relocates the entire global root.** Hardcoding `~/.copilot` will scan the wrong place for anyone using the env var (plus the legacy `--config-dir` flag). *Recommendation: resolve the root through `Env` the way the Claude adapter resolves `home`, with the env var checked first.*
 
-**R5 — Copilot hooks are all-or-nothing.** The only documented switch is
-`disableAllHooks`. There is no per-hook enable flag, so kendex's
-non-destructive toggle (invariant 5) must be a file rename for
-`.github/hooks/*.json` and `~/.copilot/hooks/*.json`, and must be
-unavailable for hooks declared inline in a settings `hooks` key — the
-structured-edit path there would have to remove and restore the entry,
-which is a lossy toggle. *Recommendation: manage file-backed hooks; observe
-inline settings hooks without offering toggle.*
+**R5 — Copilot hooks are all-or-nothing.** The only documented switch is `disableAllHooks`. There is no per-hook enable flag, so kendex's non-destructive toggle (invariant 5) must be a file rename for `.github/hooks/*.json` and `~/.copilot/hooks/*.json`, and must be unavailable for hooks declared inline in a settings `hooks` key — the structured-edit path there would have to remove and restore the entry, which is a lossy toggle. *Recommendation: manage file-backed hooks; observe inline settings hooks without offering toggle.*
 
-**R6 — Copilot reads Claude Code's files. This is the biggest modelling
-problem.** Copilot CLI discovers skills from `.claude/skills` and
-`.agents/skills`, VS Code discovers agents from `.claude/agents`, and the
-CLI reads `.claude/settings.json` and `.claude/settings.local.json` for
-`enabledPlugins`, `extraKnownMarketplaces`, `hooks`, `disableAllHooks`, and
-`companyAnnouncements`. Gemini symmetrically reads `.agents/skills`.
-Two consequences for kendex:
-  1. One file on disk is simultaneously an installation for two harnesses.
-     `Installation = item × harness × scope` will double-count unless the
-     adapter deliberately does *not* claim the shared directories.
-  2. A write kendex makes to Claude's `settings.json` now changes Copilot's
-     behavior. Invariant 2 (never clobber a user-set value) already covers
-     the mechanics, but the *blast radius* is wider than the Claude adapter
-     assumes.
+**R6 — Copilot reads Claude Code's files. This is the biggest modelling problem.** Copilot CLI discovers skills from `.claude/skills` and `.agents/skills`, VS Code discovers agents from `.claude/agents`, and the CLI reads `.claude/settings.json` and `.claude/settings.local.json` for `enabledPlugins`, `extraKnownMarketplaces`, `hooks`, `disableAllHooks`, and `companyAnnouncements`. Gemini symmetrically reads `.agents/skills`. Two consequences for kendex:
 
-  *Recommendation for v0.2: each adapter claims only its own namespace —
-  Copilot claims `.github/**` and `~/.copilot/**`, Gemini claims
-  `.gemini/**` and `~/.gemini/**`. Leave `.agents/` and `.claude/` to the
-  Claude adapter, and note the cross-read in the UI rather than modelling it
-  as a second installation.*
+  1. One file on disk is simultaneously an installation for two harnesses. `Installation = item × harness × scope` will double-count unless the adapter deliberately does *not* claim the shared directories.
+  2. A write kendex makes to Claude's `settings.json` now changes Copilot's behavior. Invariant 2 (never clobber a user-set value) already covers the mechanics, but the *blast radius* is wider than the Claude adapter assumes.
 
-**R7 — Copilot repository settings are an allowlist with directional
-merges.** Only 14 keys are honored at repo scope and several merge as
-union (repo can add, never remove) or tighten-only. A project-scope
-"enable" that contradicts a user-scope "disable" is not expressible.
-*Recommendation: at project scope offer disable but not enable for
-`disabledSkills` and `disabledMcpServers`; the capability table should
-carry this as a scope asymmetry, not a silent no-op.*
+  *Recommendation for v0.2: each adapter claims only its own namespace — Copilot claims `.github/**` and `~/.copilot/**`, Gemini claims `.gemini/**` and `~/.gemini/**`. Leave `.agents/` and `.claude/` to the Claude adapter, and note the cross-read in the UI rather than modelling it as a second installation.*
 
-**R8 — Preview and IDE-only surfaces to leave out of v0.2 entirely.**
-Prompt files (`.github/prompts/*.prompt.md`, public preview, IDE-only);
-chat modes (`.chatmode.md`, renamed to custom agents — old files require a
-manual rename, they do not auto-load); Copilot CLI extensions
-(`.github/extensions/`, `~/.copilot/extensions/`, explicitly experimental,
-needs `--experimental`); Gemini's task-tracker tools. None should appear in
-the capability table as supported.
+**R7 — Copilot repository settings are an allowlist with directional merges.** Only 14 keys are honored at repo scope and several merge as union (repo can add, never remove) or tighten-only. A project-scope "enable" that contradicts a user-scope "disable" is not expressible. *Recommendation: at project scope offer disable but not enable for `disabledSkills` and `disabledMcpServers`; the capability table should carry this as a scope asymmetry, not a silent no-op.*
 
-**R9 — Both tools' config formats have migrated recently.** Gemini's
-settings.json moved to a nested v2 schema with automatic migration; Copilot
-moved user-editable settings out of `config.json` into `settings.json` and
-migrates XDG-based paths into `~/.copilot` at startup. Machines that have
-not launched the newer CLI still hold the old shape. *Recommendation: the
-scanner should tolerate both shapes on read and only ever write the current
-one.*
+**R8 — Preview and IDE-only surfaces to leave out of v0.2 entirely.** Prompt files (`.github/prompts/*.prompt.md`, public preview, IDE-only); chat modes (`.chatmode.md`, renamed to custom agents — old files require a manual rename, they do not auto-load); Copilot CLI extensions (`.github/extensions/`, `~/.copilot/extensions/`, explicitly experimental, needs `--experimental`); Gemini's task-tracker tools. None should appear in the capability table as supported.
+
+**R9 — Both tools' config formats have migrated recently.** Gemini's settings.json moved to a nested v2 schema with automatic migration; Copilot moved user-editable settings out of `config.json` into `settings.json` and migrates XDG-based paths into `~/.copilot` at startup. Machines that have not launched the newer CLI still hold the old shape. *Recommendation: the scanner should tolerate both shapes on read and only ever write the current one.*
 
 ---
 
 ## 7. Recommended v0.2 capability table entries
 
-Derived from the matrices above. `managed` / `observe_only` / `unsupported`
-match the constructors in `crates/core/src/harness/caps.rs`; the scope
-constants are `BOTH`, `PROJECT`, `GLOBAL`, `NONE`.
+Derived from the matrices above. `managed` / `observe_only` / `unsupported` match the constructors in `crates/core/src/harness/caps.rs`; the scope constants are `BOTH`, `PROJECT`, `GLOBAL`, `NONE`.
 
 | Harness × kind | Recommendation | Why |
 |---|---|---|
@@ -376,10 +237,4 @@ constants are `BOTH`, `PROJECT`, `GLOBAL`, `NONE`.
 | Copilot × Plugin | `observe` + `toggle` at `BOTH`, install/remove parked | `enabledPlugins` is a clean boolean flip, but install needs marketplace resolution — park it with the Claude marketplace work |
 | Copilot × PiExtension | `unsupported()` | not a Copilot concept |
 
-Two new `Reader` variants are needed beyond what exists today:
-one for Copilot's hook-file JSON (`{version, disableAllHooks, hooks}` —
-different enough from `HooksObject` that reusing it would be a lie), and
-one for the `enabledPlugins` map in Copilot's settings files. Gemini's
-`mcpServers` and `hooks` both fit existing readers (`McpServersJson` needs
-only to accept the key nested inside settings.json rather than at the root
-of a dedicated file).
+Two new `Reader` variants are needed beyond what exists today: one for Copilot's hook-file JSON (`{version, disableAllHooks, hooks}` — different enough from `HooksObject` that reusing it would be a lie), and one for the `enabledPlugins` map in Copilot's settings files. Gemini's `mcpServers` and `hooks` both fit existing readers (`McpServersJson` needs only to accept the key nested inside settings.json rather than at the root of a dedicated file).

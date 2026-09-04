@@ -19,6 +19,7 @@ The __[`main`]__ file contains all the code of the example! All the cross-platfo
 [`wgpu`]: https://github.com/gfx-rs/wgpu-rs
 
 You can run the native version with `cargo run`:
+
 ```
 cargo run --package tour
 ```

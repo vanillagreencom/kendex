@@ -42,6 +42,7 @@ Write a file only when asked. Given no path, a technical plan goes to `docs/plan
 ## Required Skills
 
 Read each before acting:
+
 - github: .agents/skills/github/SKILL.md
 - linear: .agents/skills/linear/SKILL.md
 

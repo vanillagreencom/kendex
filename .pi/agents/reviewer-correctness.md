@@ -58,6 +58,7 @@ Regressions, boundary defects, compatibility/contract breaks, feature leaks, sta
 ## Required Skills
 
 Read each before acting:
+
 - reviewer: .agents/skills/reviewer/SKILL.md
 
 ## Additional Instructions

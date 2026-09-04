@@ -27,8 +27,7 @@ Analyze CI failures and route them to the right agent.
 
 </output_format>
 
-Standalone only: use the extracted issue as `[STATE_KEY]`, or
-`pr-[PR_NUMBER]` when empty. Run `init` only when `exists` is false:
+Standalone only: use the extracted issue as `[STATE_KEY]`, or `pr-[PR_NUMBER]` when empty. Run `init` only when `exists` is false:
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text
@@ -74,6 +73,7 @@ Stamp the round as separate tool calls immediately before delegating, and arm th
 ```bash
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
 ```
+
 ```bash
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
@@ -117,8 +117,7 @@ Cross-reference those commits with the original PRs to identify which file faile
 
 For an integration issue, create a worktree from the draft branch (`worktree create [ISSUE_ID] "[DRAFT_BRANCH]" --pr [DRAFT_PR_NUMBER]`) and delegate analysis.
 
-Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
-`[DIR]` is the worktree just created from the draft branch.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the worktree just created from the draft branch.
 
 <delegation_format>
 Merge queue CI failure — integration issue across stacked PRs.
@@ -198,10 +197,7 @@ Still failing:
 
 </output_format>
 
-Managed failures return to the caller, which owns `CI_FIX_MAX_CYCLES`.
-Standalone `auto-recommended` spends a cycle of the PR's budget. The count runs
-across the heads these cycles push, because each cycle pushes its own fix; only
-the passing-CI clear in this section resets it:
+Managed failures return to the caller, which owns `CI_FIX_MAX_CYCLES`. Standalone `auto-recommended` spends a cycle of the PR's budget. The count runs across the heads these cycles push, because each cycle pushes its own fix; only the passing-CI clear in this section resets it:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid

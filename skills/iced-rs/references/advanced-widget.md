@@ -77,37 +77,21 @@ where
 
 ### Required methods
 
-- **`size(&self) -> Size<Length>`** — Returns the `Size` of the `Widget` in
-  lengths (`Length::Fill`, `Shrink`, or `Fixed`).
-- **`layout(&mut self, tree, renderer, limits) -> Node`** — Returns the
-  `layout::Node` of the `Widget`. The runtime uses this node to compute the
-  `Layout` of the user interface.
-- **`draw(&self, tree, renderer, theme, style, layout, cursor, viewport)`** —
-  Draws the `Widget` using the associated `Renderer`.
+- **`size(&self) -> Size<Length>`** — Returns the `Size` of the `Widget` in lengths (`Length::Fill`, `Shrink`, or `Fixed`).
+- **`layout(&mut self, tree, renderer, limits) -> Node`** — Returns the `layout::Node` of the `Widget`. The runtime uses this node to compute the `Layout` of the user interface.
+- **`draw(&self, tree, renderer, theme, style, layout, cursor, viewport)`** — Draws the `Widget` using the associated `Renderer`.
 
 ### Provided methods
 
-- **`size_hint(&self) -> Size<Length>`** — A hint used by some containers to
-  adjust sizing strategy during construction.
-- **`tag(&self) -> Tag`** — Returns the `Tag` identifying the widget's state
-  type. Default is `Tag::stateless()`.
-- **`state(&self) -> State`** — Returns the initial `State` the widget should
-  be associated with. Default is `State::None`.
-- **`children(&self) -> Vec<Tree>`** — Returns the state `Tree` of the widget's
-  children. Override for composite widgets.
-- **`diff(&self, tree: &mut Tree)`** — Reconciles the widget with the provided
-  `Tree` (typically forwards to `tree.diff_children(...)`).
-- **`operate(...)`** — Applies a widget `Operation` (focus/scroll/etc.) to the
-  widget.
-- **`update(...)`** — Processes a runtime `Event`. Receives `&mut Tree`, the
-  `Event`, computed `Layout`, `Cursor`, `Renderer`, `Clipboard`, `Shell`, and
-  `viewport`. Default does nothing.
-- **`mouse_interaction(...)`** — Returns the current `mouse::Interaction` (e.g.
-  `Pointer`, `Grab`). Default is `Interaction::None`.
-- **`overlay(...)`** — Returns an optional overlay `Element` to render above
-  the normal widget layer (menus, tooltips, modals). Receives a
-  `translation: Vector` representing accumulated parent translation (needed
-  when a widget is inside a scrollable).
+- **`size_hint(&self) -> Size<Length>`** — A hint used by some containers to adjust sizing strategy during construction.
+- **`tag(&self) -> Tag`** — Returns the `Tag` identifying the widget's state type. Default is `Tag::stateless()`.
+- **`state(&self) -> State`** — Returns the initial `State` the widget should be associated with. Default is `State::None`.
+- **`children(&self) -> Vec<Tree>`** — Returns the state `Tree` of the widget's children. Override for composite widgets.
+- **`diff(&self, tree: &mut Tree)`** — Reconciles the widget with the provided `Tree` (typically forwards to `tree.diff_children(...)`).
+- **`operate(...)`** — Applies a widget `Operation` (focus/scroll/etc.) to the widget.
+- **`update(...)`** — Processes a runtime `Event`. Receives `&mut Tree`, the `Event`, computed `Layout`, `Cursor`, `Renderer`, `Clipboard`, `Shell`, and `viewport`. Default does nothing.
+- **`mouse_interaction(...)`** — Returns the current `mouse::Interaction` (e.g. `Pointer`, `Grab`). Default is `Interaction::None`.
+- **`overlay(...)`** — Returns an optional overlay `Element` to render above the normal widget layer (menus, tooltips, modals). Receives a `translation: Vector` representing accumulated parent translation (needed when a widget is inside a scrollable).
 
 ## Patterns
 

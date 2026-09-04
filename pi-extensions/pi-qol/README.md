@@ -1,8 +1,6 @@
 # pi-qol
 
-![QOL extension settings panel](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-qol/assets/settings-panel.png)
-![Session search popup](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-qol/assets/session-search.gif)
-![/context usage breakdown](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-qol/assets/context-usage.png)
+![QOL extension settings panel](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-qol/assets/settings-panel.png) ![Session search popup](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-qol/assets/session-search.gif) ![/context usage breakdown](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-qol/assets/context-usage.png)
 
 Quality-of-life extension for Pi: compact statusline, multiline input, session naming and search, scheduled prompts, notifications, and a permission gate.
 

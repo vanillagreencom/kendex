@@ -30,23 +30,10 @@ The editor treats an external value as read-only for its own reset paths: `delet
 
 ## APPEND_SYSTEM.md blocks
 
-Enable, disable and uninstall run the package's own vendored
-`scripts/append-system.mjs`, the same artifact npm runs at `postinstall` and
-`preuninstall`. The manager holds no second copy of the upsert. The spawn
-carries a bounded timeout and `SIGKILL`, because a package-supplied script runs
-on Pi's TUI thread.
+Enable, disable and uninstall run the package's own vendored `scripts/append-system.mjs`, the same artifact npm runs at `postinstall` and `preuninstall`. The manager holds no second copy of the upsert. The spawn carries a bounded timeout and `SIGKILL`, because a package-supplied script runs on Pi's TUI thread.
 
-The script resolves its own scope by walking up from its package dir to a
-`packages/` or `npm/node_modules/` segment. Finding neither, it falls back to
-`PI_CODING_AGENT_DIR` (or `~/.pi/agent`), but only when that directory already
-exists, so installing one of these packages on a machine without Pi writes
-nothing.
+The script resolves its own scope by walking up from its package dir to a `packages/` or `npm/node_modules/` segment. Finding neither, it falls back to `PI_CODING_AGENT_DIR` (or `~/.pi/agent`), but only when that directory already exists, so installing one of these packages on a machine without Pi writes nothing.
 
-The npm uninstall path runs the removal before `npm uninstall`, because npm 7+
-does not reliably run a removed package's own `preuninstall` and the script is
-deleted with the tree.
+The npm uninstall path runs the removal before `npm uninstall`, because npm 7+ does not reliably run a removed package's own `preuninstall` and the script is deleted with the tree.
 
-Test spawns go through `useSandboxedSpawn`, which pins the child's `HOME` and
-`PI_CODING_AGENT_DIR`. `spawnSync` snapshots the environment the process
-started with, so a child left to inherit it resolves the developer's real
-`~/.pi/agent` and writes into their live `APPEND_SYSTEM.md`.
+Test spawns go through `useSandboxedSpawn`, which pins the child's `HOME` and `PI_CODING_AGENT_DIR`. `spawnSync` snapshots the environment the process started with, so a child left to inherit it resolves the developer's real `~/.pi/agent` and writes into their live `APPEND_SYSTEM.md`.

@@ -1,0 +1,3 @@
+crates/cli/tests/fixtures/**	catalog fixtures whose bytes the CLI tests pin
+tools/tests/data/**	tool test data whose bytes the suites pin
+CHANGELOG.md	the collated record; its Unreleased section is judged line-for-line against HEAD by changelog-entries, so it is reflowed only through collate

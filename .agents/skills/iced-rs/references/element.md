@@ -59,16 +59,10 @@ element.explain(Color::from_rgb(1.0, 0.0, 0.0))
 
 ## Gotchas
 
-- The `Element` returned by `view()` **must have the same `Message` type**
-  as `update()`. Forgetting a `.map(...)` when composing child components
-  is the classic type-mismatch bug.
-- `Element` **borrows** from the app state via `'a`. Don't try to store
-  `Element`s in long-lived state — they only live until the next `view()`
-  call.
-- `.into()` requires the target type to be inferable. When Rust can't infer,
-  specify with `Element::from(widget)` or pin down the `Message` type.
-- `Element::new(widget)` is rarely used directly — prefer `.into()` through
-  the `From` impls each widget provides.
+- The `Element` returned by `view()` **must have the same `Message` type** as `update()`. Forgetting a `.map(...)` when composing child components is the classic type-mismatch bug.
+- `Element` **borrows** from the app state via `'a`. Don't try to store `Element`s in long-lived state — they only live until the next `view()` call.
+- `.into()` requires the target type to be inferable. When Rust can't infer, specify with `Element::from(widget)` or pin down the `Message` type.
+- `Element::new(widget)` is rarely used directly — prefer `.into()` through the `From` impls each widget provides.
 - No way to iterate an `Element`'s children from outside -- `as_widget()` exposes state tree, not child elements.
 
 ## See also

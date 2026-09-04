@@ -1,4 +1,5 @@
 # Scrollable
+
 An example showcasing the various size and style options for the Scrollable.
 
 All the example code is located in the __[`main`](src/main.rs)__ file.
@@ -10,6 +11,7 @@ All the example code is located in the __[`main`](src/main.rs)__ file.
 </div>
 
 You can run it with `cargo run`:
+
 ```
 cargo run --package scrollable
 ```

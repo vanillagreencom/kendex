@@ -41,6 +41,7 @@ Fail-open paths, silent failures, swallowed errors, wrong-cause diagnostics → 
 ## Required Skills
 
 Read each before acting:
+
 - reviewer: .agents/skills/reviewer/SKILL.md
 
 ## Additional Instructions

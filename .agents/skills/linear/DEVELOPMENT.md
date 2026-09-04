@@ -51,9 +51,7 @@ The guard proves a team is **configured**, not that a write lands in it. A mutat
 
 ## Authoring Rules
 
-- Resource help and a default-help command's bare form return before
-  `common.sh` loads project configuration. Nested help stays with the command
-  parser that owns its option arity.
+- Resource help and a default-help command's bare form return before `common.sh` loads project configuration. Nested help stays with the command parser that owns its option arity.
 - Build every GraphQL variables payload with `jq --arg` / `--argjson`. A name holding a quote must not be able to reshape the request, and a hand-built payload fails as "Invalid GraphQL variables JSON", which names neither the flag nor the value.
 - Validate any value spliced unquoted into JSON, a jq program, or shell arithmetic with `linear_require_pattern` before it gets there.
 - Read cache files through `cache_jq_file`. An absent file is a cold cache and returns the caller's default; a file that exists but does not parse must fail loudly, because the same empty default would report a corrupt cache as "no results".
