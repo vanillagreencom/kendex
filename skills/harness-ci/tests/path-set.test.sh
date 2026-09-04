@@ -43,6 +43,25 @@ case_verdict "product paths alone" false src/main.rs
 case_verdict "deeply nested render output" true \
   .agents/skills/review-gate/scripts/lib/settings.sh
 
+case_verdict "Pi runtime config is generated" true .pi/settings.json
+case_verdict "a Pi package without declared tests stays generated" true \
+  .pi/packages/example/package.json
+
+git -C "$repo" checkout -q -B "case" "$base"
+git -C "$repo" clean -qfd
+mkdir -p "$repo/.pi/packages/example/extensions"
+printf '%s\n' '{"name":"example","scripts":{"test":"node test.js"},"pi":{"extensions":["extensions/main.ts"]}}' >"$repo/.pi/packages/example/package.json"
+printf '%s\n' 'export const active = true;' >"$repo/.pi/packages/example/extensions/main.ts"
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "Pi source package"
+package_base="$(git -C "$repo" rev-parse HEAD)"
+assert_verdict "a tested Pi extension is product source" false \
+  --repo "$repo" --event push --base "$base" --head "$package_base"
+git -C "$repo" rm -q .pi/packages/example/extensions/main.ts
+git -C "$repo" commit -q -m "delete Pi source"
+assert_verdict "deleting tested Pi extension code is a product change" false \
+  --repo "$repo" --event push --base "$package_base" --head HEAD
+
 # The near misses. A prefix match without the separator is a different path,
 # and a suffix past the filename is a different file.
 case_verdict ".agentsfoo is not .agents/" false .agentsfoo/notes.md

@@ -15,7 +15,7 @@ tags: [automation]
 
 # Harness CI
 
-**One question, one answer: is this diff nothing but kendex render output?** The classifier reads a diff's changed-file set and prints `harness_only=true` when every path sits under `.agents/`, `.claude/`, `.codex/`, `.opencode/`, `.cursor/`, `.pi/`, or is the root `opencode.json`, or `opencode.jsonc` where a project carries that spelling. Anything else prints `false`, and so does every diff the classifier cannot read. A path the selected head tree's manifests (`kendex.toml`, and `kendex-local.toml` where a source catalog keeps its installs) declare in place, `.agents/skills/<name>` under `[skills.<name>] source = "in-place"`, and any `.agents/hooks/` script are project source, never render output.
+**One question, one answer: is this diff nothing but kendex render output?** The classifier reads a diff's changed-file set and prints `harness_only=true` when every path is kendex render output. Anything else prints `false`, and so does every diff the classifier cannot read. The generated roots are `.agents/`, `.claude/`, `.codex/`, `.opencode/`, `.cursor/`, `.pi/`, and the root OpenCode config. Source inside those roots stays product code: a manifest declaration with `source = "in-place"`, any `.agents/hooks/` script, and a Pi carrier package whose `package.json` declares extension entry points and a test command.
 
 ```bash
 .agents/skills/harness-ci/scripts/harness-only \

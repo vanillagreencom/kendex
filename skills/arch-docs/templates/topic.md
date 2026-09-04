@@ -1,6 +1,6 @@
 # <Subsystem>
 
-Covers: <dir/>, <dir/>
+Covers: <dir/>, <file>, <glob>
 
 <What this subsystem is for, in one or two sentences, and the one idea it is built on.>
 

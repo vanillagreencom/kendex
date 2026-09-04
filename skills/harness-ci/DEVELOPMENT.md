@@ -7,6 +7,7 @@ Maintainer notes. Consumer docs: [README.md](README.md); the wiring rules: [SKIL
 - `--no-renames` is fixed, never a flag. Rename detection emits only the post-image, so `git mv src/app.ts .agents/skills/x/app.ts` would list one harness path and nothing else, and the deletion of `src/app.ts` would go unjudged. Without it both paths are listed and the diff answers `false`.
 - `pull_request` uses the merge base (`base...head`) because the base branch moves under an open PR. `push` and `merge_group` use the two endpoints (`base head`): a force-push leaves the `before` sha off the head's history, and a merge base there is a commit the push already discarded, so measuring from it reads a push that dropped product work as render-only. A merge group's base is an ancestor of its head by construction, so the two forms agree there.
 - An empty changed-file set answers `false`, because it is also what a diff that read nothing looks like.
+- A Pi carrier package is source when its nearest `package.json` declares Pi extension entry points and a test command. The selected head and base both count, so deletion cannot remove its source classification.
 
 ## The in-place read
 

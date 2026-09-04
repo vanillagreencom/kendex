@@ -13,7 +13,7 @@ Install with the default symlink delivery, which writes the shared `.agents/skil
 ## What it does
 
 - Classifies a diff between two commits as render-only or not.
-- Treats content the repository authors inside the render trees as product source: a skill its manifest declares `source = "in-place"`, and any script under `.agents/hooks`.
+- Treats content the repository authors inside the render trees as product source: a skill its manifest declares `source = "in-place"`, any script under `.agents/hooks`, and a Pi carrier package whose metadata declares extension entry points and tests.
 - Answers `false` for anything it cannot prove, which runs every lane.
 - Ships workflow shapes to copy, and the tests that pin the semantics, run in kendex CI.
 
@@ -28,7 +28,7 @@ The consumer owns one thin step calling the rendered script, written by hand onc
 
 ## Semantics
 
-- The harness path set: `.agents/`, `.claude/`, `.codex/`, `.opencode/`, `.cursor/`, `.pi/`, and the root `opencode.json` or `opencode.jsonc`. Prefixes match on the separator and the config names match whole, so `.agentsfoo/x`, `opencode.json.bak` and `ui/opencode.json` are product paths.
+- The generated roots are `.agents/`, `.claude/`, `.codex/`, `.opencode/`, `.cursor/`, `.pi/`, and the root `opencode.json` or `opencode.jsonc`. A Pi package with extension entry points and tests is product input. Its metadata is read from both diff endpoints, so deleting it also runs the product lanes. Prefixes match on the separator and the config names match whole, so `.agentsfoo/x`, `opencode.json.bak` and `ui/opencode.json` are product paths.
 - `pull_request` diffs from the merge base (`base...head`); `push` and `merge_group` diff the two endpoints (`base head`), because a force-push leaves the `before` sha off the head's history.
 - Rename detection is off, so both sides of a `git mv` into a render tree are listed and the diff answers `false`.
 - `stdout` carries the verdict line and nothing else; changed paths and reasons go to `stderr`.

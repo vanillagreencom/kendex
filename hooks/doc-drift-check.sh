@@ -3,7 +3,7 @@
 # name: doc-drift-check
 # event: Stop
 # matcher:
-# description: Blocks a stop once per session when code changed under a directory a doc covers and no covering doc changed. Changed means every path that differs between the working tree and the branch's merge-base with the default branch (`origin/HEAD`, else `main`, else `master`), committed or not, plus untracked non-ignored paths; on the default branch itself, or where no merge-base resolves, the working tree alone, and the block message says which. A directory is covered by a tracked non-root `AGENTS.md` at or above it (the nearest one counts) and by every `docs/architecture/*.md` whose `Covers:` line names an ancestor (space- or comma-separated repo-relative directories, trailing slash optional). Markdown paths are never code. The block message names each doc to confirm or update; the session is then marked in `<git common dir>/kendex/doc-drift/<session_id>` so later stops in that session pass, and `stop_hook_active` true passes outright. Claude Code only: Codex has no Stop event, and Pi's turn-end dispatch does not exist yet.
+# description: Blocks a stop once per session when code changed at a path a doc covers and no covering doc changed. Changed means every path that differs between the working tree and the branch's merge-base with the default branch (`origin/HEAD`, else `main`, else `master`), committed or not, plus untracked non-ignored paths; on the default branch itself, or where no merge-base resolves, the working tree alone, and the block message says which. A tracked non-root `AGENTS.md` covers its directory and descendants; the nearest one counts. A `docs/architecture/*.md` `Covers:` entry is a repo-relative file, directory, or shell glob. Markdown paths are never code. The block message names each doc to confirm or update; the session is then marked in `<git common dir>/kendex/doc-drift/<session_id>` so later stops in that session pass, and `stop_hook_active` true passes outright. Claude Code only: Codex has no Stop event, and Pi's turn-end dispatch does not exist yet.
 # safety: Reads git state and the docs; the only write is the per-session marker under the git common dir. Exit 2 never suggests bypassing — it names the docs and asks for them to be confirmed or updated. jq is required to read the session id; without it a warranted block cannot be recorded, so it is refused each time until the docs change.
 # timeout: 30
 # harnesses: [claude-code]
@@ -126,7 +126,7 @@ AGENTS_DOCS=$(git ls-files -z --full-name -- ':(top)*/AGENTS.md' 2>&1 | tr '\0' 
 # Topic files are read from the working tree, so a file written this session
 # already covers what it says it covers; a tracked one deleted this session
 # covers nothing, and is in the changed set besides. Each pair is one line,
-# "<dir><TAB><topic path>". An entry of "." would cover the root, which
+# "<path pattern><TAB><topic path>". An entry of "." would cover the root, which
 # nothing does. `set -f` around the split: an entry is split on blanks,
 # never globbed, while the topic glob itself still expands.
 COVERS=""
@@ -135,13 +135,13 @@ for topic in "$REPO_ROOT"/docs/architecture/*.md; do
   rel="docs/architecture/${topic##*/}"
   entries=$(sed -n 's/^Covers:[[:space:]]*//p' "$topic" | tr ',' ' ')
   set -f
-  for dir in $entries; do
-    dir="${dir#./}"
-    dir="${dir%/}"
-    case "$dir" in
+  for covered in $entries; do
+    covered="${covered#./}"
+    covered="${covered%/}"
+    case "$covered" in
       "" | . | /*) continue ;;
     esac
-    COVERS="$COVERS$dir"$'\t'"$rel"$'\n'
+    COVERS="$COVERS$covered"$'\t'"$rel"$'\n'
   done
   set +f
 done
@@ -152,21 +152,35 @@ in_list() { # LIST NEEDLE
   printf '%s\n' "$1" | grep -Fx -- "$2" >/dev/null
 }
 
+# One matcher for every Covers entry. A plain path covers itself and anything
+# below it; that makes a file exact because a file cannot have descendants.
+# A shell glob matches the whole repository-relative changed path, and `*`
+# crosses `/` as it does in the other kendex path settings.
+covers_path() { # ENTRY PATH
+  local entry="$1" path="$2"
+  [ "$path" = "$entry" ] && return 0
+  case "$path" in "$entry"/*) return 0 ;; esac
+  # $entry must stay unquoted here so shell glob syntax remains active.
+  # shellcheck disable=SC2254
+  case "$path" in $entry) return 0 ;; esac
+  return 1
+}
+
 # The covering docs of a changed code path, one per line: the nearest
-# AGENTS.md at or above it, and every topic file naming an ancestor.
+# AGENTS.md at or above it, and every topic file whose entry matches it.
 covering_docs() {
-  local dir="$1" nearest="" cdir cdoc
-  dir=$(dirname "$dir")
+  local path="$1" dir nearest="" covered cdoc
+  while IFS=$'\t' read -r covered cdoc; do
+    covers_path "$covered" "$path" && printf '%s\n' "$cdoc"
+  done <<EOF
+$COVERS
+EOF
+  dir=$(dirname "$path")
   while [ "$dir" != "." ] && [ "$dir" != "/" ]; do
     if [ -z "$nearest" ] && in_list "$AGENTS_DOCS" "$dir/AGENTS.md"; then
       nearest="$dir/AGENTS.md"
       printf '%s\n' "$nearest"
     fi
-    while IFS=$'\t' read -r cdir cdoc; do
-      [ "$cdir" = "$dir" ] && printf '%s\n' "$cdoc"
-    done <<EOF
-$COVERS
-EOF
     dir=$(dirname "$dir")
   done
 }
@@ -245,7 +259,7 @@ if ! mkdir -p -- "$MARKER_DIR" || ! : >"$MARKER"; then
   exit 2
 fi
 
-echo "doc-drift-check: code changed under directories these docs cover, and none of them changed:" >&2
+echo "doc-drift-check: code changed at paths these docs cover, and none of them changed:" >&2
 printf '%s' "$STALE" >&2
 echo "doc-drift-check: judged $JUDGED" >&2
 echo "Confirm each doc still holds or update it, then finish." >&2

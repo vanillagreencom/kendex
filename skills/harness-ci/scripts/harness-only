@@ -247,6 +247,36 @@ in_place_path() { # PATH -> 0 when the path is the repo's own in-place content
   done
 }
 
+# A Pi carrier package with its own test command is product source even though
+# the carrier installs it under a harness directory. Read package metadata
+# from both diff endpoints, so deleting a package cannot erase the evidence
+# that makes its removal a product change. A package record that cannot be
+# read is source in the safe direction: every lane runs.
+pi_package_source_at() { # REF PACKAGE.JSON -> 0 when it declares Pi code and tests
+  local ref="$1" manifest="$2" entry content
+  entry="$(git_repo ls-tree "$ref" -- "$manifest" 2>/dev/null)" || return 0
+  [ -n "$entry" ] || return 1
+  case "$entry" in 100644* | 100755*) ;; *) return 0 ;; esac
+  content="$(git_repo show "$ref:$manifest" 2>/dev/null)" || return 0
+  grep -Eq '"pi"[[:space:]]*:' <<<"$content" || return 1
+  grep -Eq '"extensions"[[:space:]]*:' <<<"$content" || return 1
+  grep -Eq '"test"[[:space:]]*:' <<<"$content"
+}
+
+pi_package_source() { # PATH -> 0 when an ancestor package marks it as source
+  local path="$1" dir manifest
+  case "$path" in .pi/*) ;; *) return 1 ;; esac
+  dir="${path%/*}"
+  while [ "$dir" != ".pi" ] && [ "$dir" != "." ]; do
+    manifest="$dir/package.json"
+    if pi_package_source_at "$head" "$manifest" || pi_package_source_at "$base" "$manifest"; then
+      return 0
+    fi
+    dir="${dir%/*}"
+  done
+  return 1
+}
+
 # --no-renames, and it is load-bearing. With rename detection on,
 # `git diff --name-only` emits only the POST-image path, so moving a product
 # file INTO a render tree lists one harness path and nothing else — the diff
@@ -259,6 +289,10 @@ in_place_path() { # PATH -> 0 when the path is the repo's own in-place content
 harness_only=true
 while IFS= read -r path; do
   [ -n "$path" ] || continue
+  if pi_package_source "$path"; then
+    harness_only=false
+    break
+  fi
   case "$path" in
     .agents/*)
       # In-place content under the render tree is project source.
