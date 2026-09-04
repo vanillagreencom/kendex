@@ -11,7 +11,7 @@ pub struct Gemini;
 
 /// Gemini's own hook events, and the fleet event each one answers to
 /// ([hooks reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md),
-/// accessed 2026-08-13; matrix §1). Pairings are one-for-one in meaning:
+/// matrix §1). Pairings are one-for-one in meaning:
 /// an event with no counterpart is left unmapped rather than hung on a
 /// near-miss, because a safety hook on the wrong event is worse than one
 /// the user is told did not install.

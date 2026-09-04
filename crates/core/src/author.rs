@@ -6,8 +6,8 @@
 //! byte-stable — identical inputs produce identical trees; imports name
 //! their byte origin and never copy marketplace content past an unknown
 //! licence without an explicit basis; and readiness here is local only —
-//! whether the world can see the repository is phase 6's authenticated
-//! question, never guessed from here.
+//! whether the world can see the repository is the registry client's
+//! authenticated question, never guessed from here.
 
 pub mod import;
 pub mod preflight;

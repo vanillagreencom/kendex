@@ -192,7 +192,7 @@ fn the_package_page_carries_the_same_unknown_the_row_showed() {
     assert_eq!(preview(&f), InstallState::Unknown);
 }
 
-/// A member the catalog no longer carries answers NotOffered with or
+/// A member the catalog does not carry answers NotOffered with or
 /// without a lock, so the set page cannot read the scope's record off its
 /// rows: every member answering NotOffered is the shape that looks readable.
 /// `records_unreadable` is the scope's own answer, carried rather than

@@ -232,8 +232,7 @@ fn a_tool_without_its_copy_is_read_on_its_own() {
     apply::execute(&w.env, &planned.plan).unwrap();
     assert_eq!(report(&w), "", "what was asked for is installed");
 
-    // A second tool added to the list later, with the tool that came before
-    // still holding its place.
+    // Another tool joins the list while the first tool still holds its place.
     declare(
         &w,
         "copy",

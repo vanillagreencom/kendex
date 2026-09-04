@@ -58,7 +58,7 @@ fn hash_into(hasher: &mut Sha256, path: &Path, rel: &Path, depth: usize) -> Resu
 /// SHA-256 over a tree as it sits, never following a link: a plain file
 /// by relative path and bytes, a link by relative path and target,
 /// dangling or not, a directory by relative path before its entries, so
-/// an empty one added or removed is a change. What a directory move
+/// an empty one created or removed is a change. What a directory move
 /// binds to — a rename carries the entries themselves, a dangling link
 /// included, so the precondition names exactly those and never the bytes
 /// a link points at. Every record is framed: a kind byte, then each field
@@ -237,7 +237,7 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
 
 /// 64-bit FNV-1a as a 16-hex-digit string — the one implementation behind
 /// the scope-lock keys, the repo cache keys, and the settings-seed ledger.
-/// v1 used the same constants, which is what lets imported ledgers verify.
+/// Imported ledgers use the same constants and remain verifiable.
 pub fn fnv1a_hex(bytes: &[u8]) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in bytes {

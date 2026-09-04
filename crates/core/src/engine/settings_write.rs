@@ -97,7 +97,7 @@ pub(super) fn plan_settings_seed(
     // would have answered, and a conflict note names an owner whose value
     // never lands. On an arrival that is the one pass a marked key would
     // ever have been written on, so it goes neither into the file nor into
-    // a note — which is exactly what this issue exists to stop.
+    // a note.
     let giving_up = crate::settings_seed::Seeding::default();
     let path = crate::settings_seed::settings_file_path(root);
     let file = path

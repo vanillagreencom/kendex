@@ -4,8 +4,8 @@
 //! `kendex.settings.toml`, where the shell loaders read it. So the loaders
 //! decide what a template may say, and `settings_template::read` has to
 //! report a finding for exactly the samples they refuse or skip. Both sides
-//! run against `fixtures/settings-grammar.tsv` here: a divergence in either
-//! direction fails this test instead of reaching a review.
+//! run against `fixtures/settings-grammar.tsv` here, so a divergence in
+//! either direction fails this test.
 #![cfg(unix)]
 
 use std::path::{Path, PathBuf};

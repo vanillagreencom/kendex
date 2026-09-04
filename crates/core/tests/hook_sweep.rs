@@ -219,7 +219,7 @@ fn the_sweep_holds_a_hook_whose_current_record_has_no_anchor() {
         );
 
         // Take the anchor out and leave the version alone. The record
-        // stays one this build wrote and would read; what it no longer
+        // stays one this build wrote and would read; what it does not
         // does is say which bytes apply put on disk.
         let lock_path = f.project.join(".kendex-lock.json");
         let mut lock: serde_json::Value =

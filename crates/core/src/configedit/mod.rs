@@ -299,13 +299,13 @@ fn set_gemini_mcp_enabled(
 
 /// The file Gemini reads when `context.fileName` is not set. Written in
 /// beside the name a shim adds, since an absent key means this file and a
-/// key naming only the new one would stop Gemini reading it.
+/// key naming only the shim's would stop Gemini reading it.
 const GEMINI_DEFAULT_CONTEXT_FILE: &str = "GEMINI.md";
 
 /// `context.fileName` gains `name` in whichever shape it already has: a
 /// string becomes a two-element list with the string first, a list is
 /// appended to, an absent key is the default file then `name`. Anything
-/// else there is not a place a name can be added to, and is refused rather
+/// else there is not a place that can take a name, and is refused rather
 /// than replaced (invariant 2).
 fn gemini_add_context_file(root: &mut Map<String, Value>, name: &str) -> Result<(), String> {
     let context = ensure_object(root, "context")?;
@@ -349,9 +349,8 @@ pub(crate) fn spelled(matcher: Option<&str>) -> &str {
 ///
 /// The one place any of these editors decides that something in the file
 /// is the registration it is holding. Identifying by the command alone
-/// claims whatever else happens to run it, which is how a person's own
-/// registration came to be swept up beside kendex's — twice, in two
-/// editors. `None` names every matcher, which is what taking a whole
+/// would claim a person's own registration beside kendex's. `None` names
+/// every matcher, which is what taking a whole
 /// installation away means and never what putting one in does; an upsert
 /// asks for the one it writes under.
 ///

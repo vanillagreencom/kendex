@@ -31,7 +31,7 @@ pub(super) fn upsert_hook(
     //
     // Only the group this registration belongs to is rewritten. The same
     // command under a matcher somebody else chose is their registration,
-    // not a copy of this one: what an earlier pass of kendex's left
+    // not a copy of this one: what a previous pass of kendex's left
     // elsewhere is retired by the record that named it, and nothing else
     // in the file is claimed by carrying a command.
     let mut placed = false;

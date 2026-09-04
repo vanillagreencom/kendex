@@ -263,7 +263,7 @@ fn trash_receives_removals() {
 }
 
 /// An installation whose harness copies are only partly present: the
-/// plan named a copy that is no longer there. The removal reaches the
+/// plan named a copy that is not there. The removal reaches the
 /// end state that copy was planned for, so the rest of it lands
 /// instead of rolling back and leaving the item half-present with no
 /// way forward.
@@ -336,8 +336,8 @@ fn a_link_whose_target_is_gone_still_goes_to_the_trash() {
     assert_eq!(fs::read_link(held.unwrap().path()).unwrap(), gone);
 }
 
-/// The route the fix exists for, end to end: the artifact and the trash
-/// on different filesystems, so rename(2) refuses and the move is made
+/// The artifact and the trash are on different filesystems, so rename(2)
+/// refuses and the move is made
 /// by hand. /dev/shm is the second mount; a machine that does not have
 /// it as one has nothing to prove here.
 #[cfg(target_os = "linux")]

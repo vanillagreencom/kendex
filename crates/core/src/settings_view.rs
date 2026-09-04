@@ -37,7 +37,7 @@ pub enum SkillTemplate {
     /// This skill declares no settings.
     NoTemplate,
     /// Its template is out of reach here — a source that has not arrived,
-    /// a skill switched off, a source that no longer carries it.
+    /// a skill switched off, a source that does not carry it.
     Unreadable {
         reason: String,
     },

@@ -19,10 +19,10 @@ use super::{SKILL, guard_err};
 /// It is the harness adapters' own list — `a_root_for_every_harness_skills_
 /// surface` pins it against them, not merely against the shell copy below,
 /// because two duplicates agreeing is no evidence that either is right.
-/// `.cursor/rules` used to be here and is not a skills directory at all;
-/// cursor's own adapter says so, and `.gemini/skills` and `.github/skills`
-/// were missing, so a `method = copy` install into any of the three was a
-/// package the guard verbs could not find.
+/// `.cursor/rules` is not a skills directory at all — cursor's own adapter
+/// says so — and `.gemini/skills` and `.github/skills` are, so a list kept
+/// by hand would leave a `method = copy` install into one of them a package
+/// the guard verbs could not find.
 ///
 /// The package searches the same list, from a single definition in
 /// `lib/skill-roots.sh` that the installer bakes into the helper it writes.
@@ -54,10 +54,9 @@ impl Installed {
     /// Resolve one of the package's scripts the way an armed repository
     /// runs them, as closely as a caller standing outside `.git/hooks` can.
     ///
-    /// Not identically, and the difference is deliberate. The helper starts
-    /// from the scripts directory baked into it at install; this cannot,
-    /// because reading what a hook file says to run is the layer this crate
-    /// removed. So it starts from the project root the caller stood in —
+    /// The helper starts from the scripts directory baked into it at install.
+    /// This resolver does not read package-owned hook files, so it starts
+    /// from the project root the caller stood in —
     /// where a kendex install renders — then the MAIN checkout, then this
     /// work tree, and inside each the skill roots in turn, taking the first
     /// whose *script is executable* rather than the first directory that
@@ -73,9 +72,9 @@ impl Installed {
     /// holding a partial or non-executable copy must not shadow a working
     /// one beside it.
     ///
-    /// It used to consult the path baked into `.git/hooks/kendex-guards`
-    /// first. That was a read of hook content to decide what kendex runs,
-    /// which is the layer this module no longer has: the shim resolves its
+    /// The path baked into `.git/hooks/kendex-guards` is not consulted.
+    /// That would be a read of hook content to decide what kendex runs,
+    /// which is a layer this module does not have: the shim resolves its
     /// own scripts at commit time, and kendex resolves its own here.
     pub fn resolve(repo: &super::Repo, relative: &str) -> Option<Installed> {
         for root in search_roots(repo) {
@@ -115,8 +114,8 @@ impl Installed {
 /// the hooks directory and need not carry its own skills, so it is routinely
 /// gated by the main checkout's copy — and in a repository whose projects sit
 /// under `apps/web` the copy is at `<main>/apps/web`, not at `<main>`.
-/// Looking only at the top level found nothing there and reported a package
-/// the commit hook was running perfectly well as missing.
+/// Looking only at the top level would report a package as missing while the
+/// commit hook is running it.
 ///
 /// The two bare roots come last, in the helper's own order: the main checkout
 /// and then this work tree.

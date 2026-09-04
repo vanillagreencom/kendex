@@ -266,7 +266,7 @@ fn is_bounds_error(problem: &str) -> bool {
     problem.contains("nests deeper") || problem.contains("YAML nodes") || problem.contains("bytes")
 }
 
-/// Top-level frontmatter entries: a new entry starts at a line whose first
+/// Top-level frontmatter entries: an entry starts at a line whose first
 /// character is not whitespace (comments and blanks attach to the current
 /// entry, where YAML ignores them anyway).
 fn entry_blocks(yaml: &str) -> Vec<String> {

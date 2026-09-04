@@ -3,15 +3,14 @@
 //! Every line here is bounded, and the whole job is deciding HOW. A line
 //! kendex composed over a set this crate bounds is already the right
 //! length. A line carrying somebody else's whole sentence is not, and
-//! cannot be trimmed to fit — so past its bound it is replaced. Getting
-//! that wrong both ways is what this module remembers: the fragment cut
-//! that keeps an error's 4 KB out of an agent's context spelled a
-//! `commit hooks` line's second file half way and told a reader to fix
-//! files it then declined to name, and the same cut later took the remedy
-//! off the end of a relayed verdict.
+//! cannot be trimmed to fit — so past its bound it is replaced. The
+//! fragment cut that keeps an error's 4 KB out of an agent's context would
+//! otherwise spell a `commit hooks` line's second file half way, tell a
+//! reader to fix files it then declines to name, or take the remedy off
+//! the end of a relayed verdict.
 //!
-//! [`shown`] still cuts fragments, and `scope` composes lines around it.
-//! What no longer exists is a way to hand a WHOLE line to that cut.
+//! [`shown`] cuts fragments, and `scope` composes lines around it. There
+//! is no way to hand a WHOLE line to that cut.
 
 use super::*;
 

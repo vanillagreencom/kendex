@@ -1,5 +1,5 @@
 //! Keeping a user's edits beside the source's version: the edited
-//! installation becomes a local fork under a new name, and the original
+//! installation becomes a local fork under another name, and the original
 //! declaration stays on its source. The follow-up apply renders both — the
 //! source's content under the name it always had, the edits under the name
 //! the user chose.
@@ -22,14 +22,14 @@ use crate::render::skill::carries_name;
 /// repository can name — moves the original's hold to that commit, so the
 /// source version that lands is the newest rather than the one the edits
 /// were made on; `None` leaves the hold as it is. Everything is proven
-/// before anything is written (invariant 11): the new name is vacant and
-/// every target loader takes it, the source still carries the original at
-/// the target revision, and the edited bytes can carry the new name in
-/// their frontmatter.
+/// before anything is written (invariant 11): the chosen name is vacant
+/// and every target loader takes it, the source still carries the original
+/// at the target revision, and the edited bytes can carry the chosen name
+/// in their frontmatter.
 ///
 /// The plan: capture the edited bytes into the local source under the
-/// new name, trash the edited artifact so the follow-up apply re-renders
-/// the original from its source, and write the manifest — the new name
+/// chosen name, trash the edited artifact so the follow-up apply re-renders
+/// the original from its source, and write the manifest — the chosen name
 /// declared `local` with the original's provenance recorded on it.
 pub fn fork_beside(
     env: &Env,
@@ -84,7 +84,7 @@ pub fn fork_beside(
     let mut ops = capture_ops(env, scope, kind, new_name, &edited, named(files, new_name)?)?;
     let provenance = provenance(env, scope, kind, name, harness, &manifest, &decl)?;
     // An agent's configuration is keyed by its installed name, so a copy
-    // under a new one reads none of it: it would render without the
+    // under another one reads none of it: it would render without the
     // project's tool denies, without its instructions, and outside its own
     // hooks. The original keeps its own — it stays declared from its source
     // and goes on rendering under the name it always had.
@@ -134,7 +134,7 @@ pub fn fork_beside(
 }
 
 /// The captured bytes answering to `new_name` — [`named_bytes`] over the
-/// files that carry the name. A copy under a new name says that name, or
+/// files that carry the name. A copy under another name says that name, or
 /// it would shadow the original it sits beside: discovery treats a
 /// directory and its frontmatter disagreeing as a finding.
 fn named(captured: Capture, new_name: &str) -> Result<Capture> {

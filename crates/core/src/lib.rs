@@ -7,9 +7,8 @@
 #[cfg(test)]
 extern crate self as kendex_core;
 
-// Declared once for the whole lib test tree. Four `#[cfg(test)]` modules used
-// to `#[path]`-include the file separately, which is one module compiled four
-// times under four names; every `use` of it now names this one.
+// Declared once for the whole lib test tree so the shared helpers compile
+// under one module name.
 #[cfg(test)]
 #[path = "../../test_util.rs"]
 mod test_util;

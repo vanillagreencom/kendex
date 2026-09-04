@@ -29,9 +29,9 @@ fn tree(files: Vec<(&str, Vec<u8>)>) -> kendex_core::quality::AuditResult {
     })
 }
 
-/// One byte appended to a payload used to make the whole file invisible to
-/// every rule, and the item then scored 100 and clean. A file that will not
-/// decode is read as best it can be and what could not be read is named.
+/// A file that will not decode is read as far as possible, and the unreadable
+/// bytes are named. This prevents one byte from hiding the whole file from
+/// every rule and giving the item a clean score.
 #[test]
 fn one_byte_that_is_not_text_does_not_hide_a_file() {
     let mut corrupted = PAYLOAD.as_bytes().to_vec();
@@ -93,9 +93,8 @@ fn a_binary_asset_is_not_reported_as_undecodable() {
     assert_eq!(result.safety.score, 100);
 }
 
-/// The fold table used to hold 39 characters, and a confusable outside it
-/// passed every rule *and* produced no obfuscation finding — so the "never
-/// silent" property held only for letters already in the table.
+/// A confusable outside the fold table must produce an obfuscation finding.
+/// Otherwise, the "never silent" property holds only for letters in the table.
 #[test]
 fn confusables_outside_the_original_table_are_folded_and_reported() {
     const HIDDEN: &[&str] = &[

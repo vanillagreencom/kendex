@@ -6,7 +6,7 @@
 //! back, so an older copy can land on top of a newer file and silently
 //! undo whatever else wrote it. The base is the defence: the hash of the
 //! exact bytes the copy was read from, sent back with the write, refused
-//! when the file on disk is no longer those bytes.
+//! when the file on disk is not those bytes.
 
 use std::path::Path;
 
@@ -23,8 +23,9 @@ use crate::fs::read_if_exists;
 /// describes — because the failure this exists to prevent is a base paired
 /// with content nobody read together. A base taken by a read separate from
 /// the content it answers for describes a different moment: a writer
-/// landing between the two hands the caller old content under the new
-/// file's name, and the write that follows is accepted over that writer.
+/// landing between the two hands the caller old content under the
+/// replacement file's name, and the write that follows is accepted over
+/// that writer.
 /// Nothing here takes a path and hands back a base, deliberately — a path
 /// is not the bytes, and reading them apart is how the two come adrift.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]

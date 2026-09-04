@@ -250,8 +250,8 @@ fn mcp_declare_apply_remove_keeps_the_servers_we_never_declared() {
 }
 
 /// Two structured edits to one config file compose into a single mutation
-/// with a single precondition — before this, the second edit's precondition
-/// bound to the original bytes and the whole apply rolled back.
+/// with a single precondition. Separate preconditions would both bind to the
+/// original bytes and make the second edit refuse.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn two_mcp_servers_install_into_one_settings_file_in_one_apply() {

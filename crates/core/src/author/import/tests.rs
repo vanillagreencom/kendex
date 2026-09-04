@@ -280,8 +280,8 @@ fn a_write_that_stops_part_way_names_what_reached_the_folder() {
     );
     // What the copy leaves, pinned rather than assumed: the selections
     // before the failure are on disk, the one that failed is not, and
-    // nothing was rolled back. Restoring per-package atomicity would need
-    // the staging directory this issue removes.
+    // nothing was rolled back. Per-package atomicity would need a staging
+    // directory.
     assert!(
         target.join("skills/mine/SKILL.md").is_file(),
         "the earlier selection really is on disk"
@@ -464,7 +464,7 @@ fn a_stale_hash_refuses_instead_of_copying_moved_bytes() {
     let refused = apply(&env, &scopes, &target, std::slice::from_ref(&chosen));
     let message = refused.unwrap_err().to_string();
     assert!(message.contains("changed since the preview"), "{message}");
-    // Re-previewing picks up the new hash and the copy proceeds.
+    // Re-previewing picks up the current hash and the copy proceeds.
     let fresh = inventory(&env, &scopes).unwrap();
     chosen.hash = find(&fresh, "mine").origins[0].hash.clone();
     apply(&env, &scopes, &target, &[chosen]).unwrap();
@@ -475,9 +475,9 @@ mod rename;
 mod review;
 
 /// A skill adopted in place: its bytes live under the project's shared
-/// `.agents` tree, and the owned row reads from there — before KEN-700 the
-/// read went to the local source, found nothing, and the only claim left
-/// was whatever an unlocked harness happened to observe.
+/// `.agents` tree, and the owned row reads from there, not from the local
+/// source, where it would find nothing and be left with whatever an
+/// unlocked harness happened to observe.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_in_place_skill_is_an_own_candidate_read_from_its_tree() {

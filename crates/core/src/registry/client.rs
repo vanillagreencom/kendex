@@ -18,8 +18,8 @@ use crate::registry::{Fetch, FetchResponse, base_url};
 /// needed was ever put on the network. A request that went out and found
 /// no route is `Unreachable` too — it was sent, and the cache stands in
 /// for the answer it did not get. Each variant is chosen at the site that
-/// raises the failure, so a local failure added later cannot fall into the
-/// remote half by nobody naming it.
+/// raises the failure, so no local failure can fall into the remote half
+/// by nobody naming it.
 #[derive(Debug)]
 pub enum CallFailed {
     /// This machine holds no credential for the endpoint.
@@ -29,7 +29,7 @@ pub enum CallFailed {
     Expired(CoreError),
     /// This machine stopped the request the call needed: the credential
     /// store refused a read or a write, the refresh lock could not be
-    /// taken, the request could not be sent. An earlier request in the
+    /// taken, the request could not be sent. A previous request in the
     /// same call may well have gone out and come back; what did not is
     /// the one this call needed, so nothing was learned about the
     /// directory.

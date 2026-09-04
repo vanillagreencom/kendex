@@ -73,8 +73,7 @@ fn fixture() -> (tempfile::TempDir, Env, Scope, PathBuf) {
     (tmp, env, scope, project)
 }
 
-/// The pre-fix heuristic read every URL as a folder path; a full remote
-/// URL must declare a repository.
+/// A full remote URL must declare a repository, never a folder path.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_full_url_reference_declares_a_remote_not_a_path() {

@@ -46,8 +46,8 @@ fn save(env: &Env, authored: &AuthoredFile) -> Result<()> {
     atomic_write(&file(env), &text)
 }
 
-/// Every registered folder, in registration order. Folders that no longer
-/// exist stay listed — the row reports the problem rather than vanishing.
+/// Every registered folder, in registration order. Folders that have gone
+/// missing stay listed — the row reports the problem rather than vanishing.
 pub fn list(env: &Env) -> Result<Vec<PathBuf>> {
     Ok(load(env)?.marketplaces)
 }

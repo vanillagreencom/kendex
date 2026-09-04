@@ -162,7 +162,7 @@ fn a_cached_pin_resolves_offline_and_an_uncached_one_is_a_hard_error() {
 }
 
 /// A tag that moved upstream is followed on the next refresh, and the
-/// commit it used to point at keeps its own directory, unchanged.
+/// commit it pointed at before keeps its own directory, unchanged.
 #[test]
 fn a_moved_tag_re_resolves_without_disturbing_the_old_commit() {
     let f = fixture();
@@ -182,8 +182,8 @@ fn a_moved_tag_re_resolves_without_disturbing_the_old_commit() {
     );
 }
 
-/// No selector tracks the default branch — v0.1 behavior, now through a
-/// per-commit directory instead of a checkout that is reset in place.
+/// No selector tracks the default branch. Each resolved commit gets its own
+/// directory, so a failed refresh leaves the readable commit in place.
 #[test]
 fn the_default_branch_is_tracked_and_a_failed_refresh_keeps_serving() {
     let f = fixture();
@@ -222,7 +222,7 @@ fn republishing_a_commit_leaves_its_bytes_alone() {
     assert_eq!(modified(&first.root), stamp);
 }
 
-/// A checkout someone edited is no longer that commit, so it is rebuilt
+/// A checkout someone edited is not that commit, so it is rebuilt
 /// from the mirror rather than read as if it were.
 #[test]
 fn a_tampered_checkout_is_detected_and_rebuilt() {

@@ -279,7 +279,7 @@ fn updating_a_package_a_set_reaches_through_a_parent_still_moves_it() {
 }
 
 /// Once a declared member has moved on its own, the set's members sit on
-/// two commits and the moved one is no longer evidence of where the set
+/// two commits and the moved one is not evidence of where the set
 /// is. Read as evidence it leaves the set placeable at no commit at all,
 /// and the next update of anything else takes the set's undeclared members
 /// current.
@@ -395,7 +395,7 @@ fn a_conflict_with_a_hand_pinned_set_names_no_invented_commit() {
 /// installed here only as a member, so the set's own members are the only
 /// installations that can say where it is held. Left saying nothing it
 /// reads its source's tip, and an unrelated single-package update takes
-/// whatever the catalog has added to the set since — a package nobody
+/// any member present only at the source tip, a package nobody
 /// asked for, installed by an update about something else.
 #[test]
 #[allow(clippy::unwrap_used)]

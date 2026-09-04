@@ -131,16 +131,16 @@ impl CommandNotice {
     /// one the card described. Answered once both halves have landed.
     ///
     /// The card is the whole of what they are told about that command,
-    /// because Update now restarts the app and takes the card with it. A
+    /// because Update restarts the app and takes the card with it. A
     /// disposition that changed while the card sat on screen is a sentence
-    /// that was never said, and the command half then acted on the new
-    /// answer. Nothing is refused — the app is on the new release either
+    /// that was never said, and the command half then acted on the changed
+    /// answer. Nothing is refused — the app is on the fetched release either
     /// way — so this is where they hear about it, on a card the restart has
     /// not taken away yet.
     ///
     /// Compared as what was *said*, not as what was found: two `Ours` at
     /// different paths say the same nothing to a person and are the same
-    /// answer here, while `Ours` become `NotOurs` says something new, and
+    /// answer here, while `Ours` become `NotOurs` says something else, and
     /// so does the reverse. A value that prints a path said that path as
     /// well, so two `NeedsPrivilege` naming different files are two
     /// different sentences: the person was pointed at one file and another

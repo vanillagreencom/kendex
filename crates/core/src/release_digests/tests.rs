@@ -24,7 +24,7 @@ const APP: &[u8] = b"the linux appimage";
 const TARGET: &str = "x86_64-unknown-linux-gnu";
 const VERSION: &str = "9.9.9";
 
-/// The same lane's document from an earlier release, signed when it
+/// The same lane's document from a previous release, signed when it
 /// shipped: what a feed claiming 9.9.9 can serve to answer for a release
 /// it is not.
 const OLDER: &str = r#"{

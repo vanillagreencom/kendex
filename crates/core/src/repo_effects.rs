@@ -13,11 +13,6 @@
 //! what waits for the second answer is the effect — the part that outlives
 //! removing the package.
 //!
-//! Declared rather than hard-coded on purpose: the previous generation
-//! special-cased growth-guards by name in the installer, so the
-//! behaviour could never generalize and the documentation describing it
-//! drifted out of true the moment that code moved.
-//!
 //! This is not a safety finding. The safety rules score risk in content
 //! nobody vouched for; arming a hook the person asked for is a contract,
 //! and rendering it as a warning teaches people to click past the one
@@ -302,9 +297,8 @@ pub struct DeclaredEffects {
     ///
     /// A path, not a string of one. `display().to_string()` turns any byte
     /// that is not UTF-8 into U+FFFD, which is a different filename — so an
-    /// authorized effect resolved a path nobody has, for a package that had
-    /// just landed perfectly well. The same class #1669 closed on the guard
-    /// side, here for the same reason.
+    /// authorized effect would resolve a path nobody has, for a package
+    /// that landed perfectly well.
     pub root: std::path::PathBuf,
     #[serde(flatten)]
     pub effects: RepoEffects,

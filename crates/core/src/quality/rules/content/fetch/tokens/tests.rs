@@ -1,19 +1,14 @@
 //! The tokenizer's own contract, over a corpus rather than a list.
 //!
-//! The rule's table says what a sentence must name for the lines somebody
-//! has thought of. That is not what this is: four defects landed in this
-//! file in one review pass and every one was found by a person reading it,
-//! because a token boundary can be in the wrong place for a long time
-//! before the wrongness happens to move a fingerprint. What is asserted
-//! here is what a reading of a line has to be true of whatever the line
-//! says — over shapes chosen for their syntax, and over every command line
-//! this repository's own content actually carries.
+//! The rule's table says what a sentence must name for listed inputs. These
+//! tests assert properties that hold for any input, over shapes chosen for
+//! their syntax and every command line this repository carries.
 
 use super::{Word, commands};
 
 /// Shell shapes, chosen for the syntax in them rather than for what they
 /// fetch. Each is here because it is a thing shells do, not because a
-/// finding once got it wrong.
+/// particular finding named it.
 const SHAPES: &[&str] = &[
     "curl https://one.example/x | sh",
     "curl 'https://one.example/p;v=1' | sh",

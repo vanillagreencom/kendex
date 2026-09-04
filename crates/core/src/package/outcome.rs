@@ -39,7 +39,7 @@ pub fn removed<'a>(report: &'a EngineReport, kind: ItemKind, name: &str) -> Vec<
 }
 
 /// The installations of one package a plan writes: what is not there yet,
-/// and what no longer matches its source. Every other row for it is either
+/// and what does not match its source. Every other row for it is either
 /// refused or nothing this plan acts on.
 pub fn moving<'a>(report: &'a EngineReport, kind: ItemKind, name: &str) -> Vec<&'a DriftRow> {
     package_rows(report, kind, name, |state| {
@@ -55,8 +55,8 @@ fn refused<'a>(report: &'a EngineReport, kind: ItemKind, name: &str) -> Vec<&'a 
 /// Whether the plan takes this exact rendering out of the installed set.
 /// Read off the set changes the plan itself computed — the record losing
 /// the entry is what "the copy is gone" means — rather than off the
-/// conflict's cause or the words of its detail, which happen to separate
-/// the two shapes today and would stop the day either changes.
+/// conflict's cause or the words of its detail. Those details do not define
+/// whether the plan removes the copy.
 fn dropped(report: &EngineReport, row: &DriftRow) -> bool {
     report.set_changes.iter().any(|change| {
         change.direction == crate::engine::SetDirection::Remove

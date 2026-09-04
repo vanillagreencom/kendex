@@ -52,7 +52,7 @@ pub(crate) fn with_name(text: &str, installed: &str) -> std::result::Result<Stri
         // a flow collection and an indentless block sequence continue at
         // column 0 — so the question is which shapes are provably one
         // line rather than which are not. The value has to be whole on
-        // its own line, and what follows it has to open a new entry;
+        // its own line, and what follows it has to open another entry;
         // blank and comment-only lines attach to neither, which is what
         // YAML does with them.
         let bounded = lines[index + 1..]
@@ -82,7 +82,7 @@ pub(crate) fn with_name(text: &str, installed: &str) -> std::result::Result<Stri
     Ok(format!("{}{entry}{}", &text[..from], &text[to..]))
 }
 
-/// Whether this line opens a new top-level entry rather than continuing
+/// Whether this line opens a top-level entry rather than continuing
 /// the one above it. Indentation is the whole of it: YAML continues a
 /// value by indenting under it, and the one exception — a block sequence
 /// at column 0 — can only be the value of an entry whose own line held

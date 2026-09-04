@@ -139,7 +139,7 @@ fn reads(
 }
 
 /// A marketplace row's origins: the marketplace's own bytes, and — when
-/// the installed copy no longer matches them — the edited copy beside the
+/// the installed copy has drifted from them — the edited copy beside the
 /// original, so the choice pass 3 requires is a real choice.
 fn marketplace_origins(
     env: &Env,

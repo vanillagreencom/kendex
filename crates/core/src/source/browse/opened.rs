@@ -50,8 +50,8 @@ pub(crate) struct Records {
 
 /// Which scope's records one read answers for: the destination's where a
 /// page redirects the install into one, the browsed catalog's own where it
-/// does not. Resolved here rather than at each read, so a destination-aware
-/// read added later inherits the rule instead of restating it.
+/// does not. Resolved here rather than at each read, so every
+/// destination-aware read inherits the rule instead of restating it.
 pub(crate) fn landing<'a>(
     env: &Env,
     browsed: &'a Browsed,
@@ -200,7 +200,7 @@ impl Browsed {
     /// where the lock could not be read, every standing it alone could
     /// have given is [`InstallState::Unknown`]. Every surface offering an
     /// install for ONE package reads that state rather than deciding for
-    /// itself, so a new one inherits the rule instead of needing its own
+    /// itself, so each one inherits the rule instead of needing its own
     /// arm. The set page's Install all asks about the set rather than a
     /// package and reads [`super::BundleDetail::records_unreadable`].
     pub(super) fn state(&self, landing: &Records, kind: ItemKind, name: &str) -> InstallState {
@@ -214,13 +214,13 @@ impl Browsed {
     }
 
     /// One curated-set member's standing in `landing`. A member the catalog
-    /// names but no longer carries is a row, not a hard error: one bad
+    /// names but does not carry is a row, not a hard error: one bad
     /// entry must not sink the whole page.
     ///
     /// Where the lock could not be read the whole join goes first, ahead of
     /// suppression: "you removed this" is the manifest's word, but the row
     /// it draws offers Restore, and a restore lands on the same record this
-    /// read could not open. A member the catalog no longer carries needs no
+    /// read could not open. A member the catalog does not carry needs no
     /// lock to say so and offers nothing, so it answers NotOffered either
     /// way; with a readable lock, suppression still outranks it — that a
     /// removal was the user's own choice is worth saying about a member the

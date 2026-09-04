@@ -62,7 +62,7 @@ pub fn gemini_tool_name(tool: &str) -> String {
 
 /// Copilot's own tool names, as its custom-agent reference lists them
 /// ([custom agents configuration](https://docs.github.com/en/copilot/reference/custom-agents-configuration),
-/// accessed 2026-08-13). Names it does not document are left alone rather
+/// Names it does not document are left alone rather
 /// than guessed at: an allowlist entry Copilot does not recognize grants
 /// nothing, which is narrower than the author asked for, never wider.
 fn copilot_tool(tool: &str) -> Option<&'static str> {

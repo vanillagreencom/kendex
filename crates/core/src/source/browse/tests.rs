@@ -264,7 +264,7 @@ fn bundle_detail_derives_partly_installed_and_full() {
 }
 
 /// The Bundles tab lists what the catalog declares, not what its offered
-/// packages name. A set whose members the catalog no longer carries names
+/// packages name. A set whose members the catalog does not carry names
 /// nothing in the package list, so a derivation over package rows loses it
 /// entirely — the tab then says the marketplace offers no sets while its
 /// `kendex.toml` declares several.

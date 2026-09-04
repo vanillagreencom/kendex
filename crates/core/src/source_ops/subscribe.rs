@@ -181,7 +181,7 @@ pub fn install_project_from_personal(
     };
     let project = crate::engine::ops::manifest_for_mutation(env, &scope)?;
     // Redeclaring the same subscription the project already holds is fine; a
-    // different repo under a taken alias, or the same repo under a new one, is
+    // different repo under a taken alias, or the same repo under another, is
     // refused before anything is planned.
     if !project.sources.contains_key(source_name) {
         let reference = decl

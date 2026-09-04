@@ -11,9 +11,9 @@
 //!
 //! A shim's bytes are constant, which makes ownership a question of
 //! content: exact bytes are kendex's to rewrite, anything else at the
-//! position is the person's and a conflict (invariant 6). The old
-//! convention — a `.claude/CLAUDE.md` link at the root `AGENTS.md` — is
-//! retired by the same plan that writes the root shim.
+//! position is the person's and a conflict (invariant 6). The same plan that
+//! writes the root shim retires a `.claude/CLAUDE.md` link at the root
+//! `AGENTS.md`.
 
 use std::path::{Path, PathBuf};
 

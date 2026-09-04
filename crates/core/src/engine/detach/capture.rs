@@ -84,7 +84,7 @@ pub(super) fn source_form(
 }
 
 /// The write op for one detached item, after preflighting the local target:
-/// an occupied target holding different bytes (an earlier adopt, fork, or
+/// an occupied target holding different bytes (a previous adopt, fork, or
 /// detach of the same kind and name) is a refusal naming it — detach never
 /// overwrites what is already local (invariants 4 and 6). A target already
 /// holding the same bytes needs no write.

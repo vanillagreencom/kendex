@@ -105,12 +105,12 @@ fn a_surviving_entry_keeps_what_was_written_about_it() {
     );
 }
 
-/// A re-sorted list comes back in its new order, each entry still under the
+/// A re-sorted list comes back in its current order, each entry still under the
 /// comment written about it. The desktop editor hands the hook list back in
 /// whatever order it holds (`editor::custom_hook_deliveries` assigns it
 /// wholesale), so a swap is a real write. Survivors keep their own places, so
 /// the places have to be redealt in the order the entries now stand in or the
-/// file renders in the order they used to.
+/// file renders in the order they stood in before.
 #[test]
 fn a_re_sorted_list_renders_in_its_new_order() {
     let current = "schema = 6\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\n\n# and this one at the end\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n";
@@ -281,13 +281,9 @@ fn an_edited_entry_keeps_the_writing_around_it_and_inside_it() {
     );
 }
 
-/// The same document as the case above, under another name, and that is the
-/// point: replacing an entry with an unrelated one and editing the entry that
-/// was there produce byte-identical input, differing only in how much the new
-/// entry resembles the old. So a replacement inherits the slot's comment and
-/// the `note` inside it. This is not independent evidence — it cannot red
-/// while the edit case passes — it is the claim written down where the prose
-/// that describes it can be checked against it.
+/// Replacing an entry with an unrelated one must preserve the slot's comment
+/// and the `note` inside it. Replacement and editing can otherwise produce
+/// byte-identical input.
 #[test]
 fn an_entry_replacing_another_inherits_what_was_written_in_its_slot() {
     assert_eq!(
@@ -422,8 +418,9 @@ const THREE: &str = "schema = 6\n\n# about A\n[[custom-hooks]]\nevent = \"PreToo
 /// them can only have come from a slot between the same two.
 ///
 /// Three shapes the list's own length gets wrong. A same-length write that
-/// removes one entry and adds another moves the added one into the removed
-/// one's slot, so its `note` must not follow. A write that only ADDS still
+/// removes one entry and inserts another moves the inserted one into the
+/// removed one's slot, so its `note` must not follow. A write that only
+/// INSERTS still
 /// leaves an entry unplaceable — two looking for one free slot — so neither is
 /// its own. And a removal well AFTER the changed entry leaves that entry's
 /// slot forced, so it keeps everything written about it.

@@ -65,8 +65,7 @@ fn settings_register_carrier(scope_root: &Path) -> bool {
 
 /// Where the carrier is registered, of the settings layers Pi loads for
 /// this scope. Pi loads project and global settings both, so a
-/// project-installed hook with only a global carrier still runs — the
-/// v1 #1407 lesson, carried here as behavior.
+/// project-installed hook with only a global carrier still runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CarrierPresence {
     pub project: bool,

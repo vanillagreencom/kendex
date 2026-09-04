@@ -46,7 +46,7 @@ pub enum InstallState {
     Installed,
     /// Offered, nothing installed.
     Available,
-    /// The bundle names a member the catalog no longer offers — renamed or
+    /// The bundle names a member the catalog does not offer — renamed or
     /// removed upstream. A row saying so, never a dead page: the member list
     /// is catalog-authored text and one bad entry cannot break the read.
     NotOffered,
@@ -129,7 +129,7 @@ pub struct BundleDetail {
     /// the install is redirected, the browsed scope otherwise — could not be
     /// read. The set page's Install all asks about the set rather than about
     /// a member, so it needs that scope's own answer: no member row can
-    /// carry it, because a member the catalog no longer offers reads
+    /// carry it, because a member the catalog does not offer reads
     /// [`InstallState::NotOffered`] with or without a lock, and a set whose
     /// members were all dropped — or one declared with none — would leave the
     /// page deriving "readable" from rows that never consulted the record.

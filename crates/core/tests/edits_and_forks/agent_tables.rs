@@ -1,5 +1,5 @@
 //! The manifest configuration an agent answers to, every table of it keyed
-//! by the installed name. A copy under a new name reads none of it unless
+//! by the installed name. A copy under another name reads none of it unless
 //! it comes along, a rename leaves nothing behind keyed to a name no item
 //! answers to, and neither operation may take configuration off the agents
 //! it never mentioned.
@@ -12,7 +12,7 @@ use kendex_core::manifest::HookAgents;
 use super::*;
 
 /// Every manifest table an agent answers to is keyed by its installed
-/// name. A copy under a new name reads none of them unless they come with
+/// name. A copy under another name reads none of them unless they come with
 /// it, and the original — still declared from its source — has to keep
 /// its own.
 #[test]
@@ -157,7 +157,7 @@ fn renaming_an_agent_fork_carries_its_denies_and_instructions() {
 /// The skill assignment is the one table an agent does not read by exact
 /// name: a `reviewer-` agent with no row of its own reads the base
 /// agent's. A rename that moves exact rows alone leaves that assignment
-/// behind, and the new name resolves nothing — so the skills the person
+/// behind, and the target name resolves nothing, so the skills the person
 /// took off the reviewer family come back on the renamed agent. Nothing
 /// else covers it: unlike a fork beside, a rename runs no carry.
 #[test]
@@ -252,8 +252,7 @@ fn renaming_an_agent_carries_the_skill_assignment_it_read_through_the_base_row()
 /// A hook scoped to one agent by name reaches the copy only if its
 /// selector says so, and after a rename it points at a name nothing
 /// answers to. Either way an agent-scoped PreToolUse restriction quietly
-/// stops applying, which is this issue's own defect in the one table the
-/// first round did not move.
+/// stops applying unless the selector moves with the agent.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_agent_scoped_hook_reaches_the_copy_and_follows_a_rename() {
@@ -577,7 +576,7 @@ fn forking_beside_takes_a_name_that_reads_the_source_agents_own_skill_row() {
 
 /// A hook selects one agent by spelling its name, so the selector has to
 /// travel when the name does — but a selector spelling `all` or a role
-/// name is read as a population, and rewriting one to the new name would
+/// name is read as a population, and rewriting one to the target name would
 /// move the gate onto every agent that population holds. Nothing in the
 /// representation can say "this one agent, despite the spelling", so the
 /// destination is refused rather than written.

@@ -45,7 +45,7 @@ pub fn settings_templates(env: &Env, scope: &Scope) -> Result<BTreeMap<String, T
 /// What a pass records for a skill before it has reached it: every planned
 /// skill starts out of reach, and the pass overwrites this the moment it
 /// can say better. A skill still carrying it is one whose source never
-/// resolved, whose item the source no longer has, or that a hostile
+/// resolved, whose item the source does not have, or that a hostile
 /// catalog read refused — one answer for every way of not getting there,
 /// in place of an absent entry a reader would have to interpret.
 pub(super) fn out_of_reach(

@@ -28,8 +28,8 @@ fn a_finding_in_the_tail_reaches_the_preview_and_the_plan() {
     let big = upstream.join("skills/big");
     fs::create_dir_all(&big).unwrap();
     fs::write(big.join("SKILL.md"), "---\nname: big\n---\nplain body\n").unwrap();
-    // Filler enough that f250 sits past both halves of the prefix a reader
-    // used to stop at: the 251st file, and 3 KiB each puts it past 512 KiB.
+    // Filler enough that f250 sits past both halves of the prefix a bounded
+    // reader stops at: the 251st file, and 3 KiB each puts it past 512 KiB.
     let filler = "filler filler filler filler filler filler filler\n".repeat(64);
     for n in 0..260u32 {
         fs::write(big.join(format!("f{n:03}.md")), &filler).unwrap();

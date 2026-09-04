@@ -53,7 +53,7 @@ fn a_case_pattern_naming_sudo_is_not_running_sudo() {
 /// against a list written here. A document reaches only some of them, so
 /// the inputs below cover the rest: this test having quietly stopped
 /// covering a rule is how the defect kept coming back on rules nobody had
-/// touched, and a rule added without a case here now fails this rather than
+/// touched, and a rule without a case here fails this rather than
 /// shipping an identity nothing checked.
 #[test]
 fn every_rule_says_what_it_fired_on() {
@@ -171,9 +171,8 @@ fn read_files() -> kendex_core::quality::AuditResult {
 
 /// The property itself: within one rule, every finding here is about
 /// something different, so no two of them may share an identity. Asserted
-/// over whatever the input reached rather than over a list of rule names —
-/// the last two times this was fixed, the list was the thing that was
-/// wrong.
+/// over whatever the input reached rather than over a list of rule names,
+/// because a separate list can share the same omission.
 #[track_caller]
 fn each_match_is_its_own_question(findings: &[kendex_core::quality::Finding], least: usize) {
     let mut by_rule: std::collections::BTreeMap<&str, Vec<&kendex_core::quality::Finding>> =

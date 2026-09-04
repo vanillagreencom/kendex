@@ -9,10 +9,9 @@ use crate::harness::HarnessAdapter;
 use crate::model::Scope;
 
 /// Every category Gemini's nested settings schema defines at the top level
-/// ([configuration reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md),
-/// accessed 2026-08-13). The nesting arrived in CLI v0.3.0; a settings file
-/// carrying none of these has never been through a CLI that reads it, which
-/// is the only signal the docs give for the older flat shape (matrix §R9).
+/// ([configuration reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md)).
+/// A settings file carrying none of these is treated as the flat shape,
+/// because the docs give no other signal for that format (matrix §R9).
 const CATEGORIES: [&str; 25] = [
     "policyPaths",
     "adminPolicyPaths",

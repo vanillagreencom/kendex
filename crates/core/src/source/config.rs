@@ -330,7 +330,7 @@ pub fn find_item(
         // literal directory, else whichever directory's package.json
         // registers the name — kendex's own catalog shelves scoped names
         // in short directories. Without this, every declared Pi package
-        // reads as "no longer offered" the moment it is declared.
+        // reads as "not offered" the moment it is declared.
         ItemKind::PiExtension => {
             let base = root.join("pi-extensions");
             let literal = base.join(name);

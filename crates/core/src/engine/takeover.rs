@@ -9,7 +9,7 @@ use super::{DriftRow, PlanOptions};
 ///
 /// The name has to reach something still in the way, and nothing of that
 /// item may be left in the way afterwards: half an item taken over leaves
-/// the rest blocked with the item no longer theirs.
+/// the rest blocked with the item not theirs any more.
 ///
 /// Both forms refuse: the scope-wide sweep answers for every item it
 /// swept up, in [`refuse_unsettleable_sweep`].
@@ -46,7 +46,7 @@ pub(crate) fn refuse_unsettled_takeover(
 
 /// The scope-wide sweep settles every item it sweeps up, or none of them.
 /// An item a dead-stop row blocks cannot be settled whole — half a
-/// take-over leaves the rest in the way with the item no longer theirs —
+/// take-over leaves the rest in the way with the item not theirs any more —
 /// so the run refuses, naming each blocked item with the place that
 /// blocks it. Under the flag that row is the only place the dead stop
 /// shows: without it the files in the way are refused before the place

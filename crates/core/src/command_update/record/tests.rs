@@ -52,8 +52,8 @@ fn a_record_that_is_not_an_absolute_path_is_no_record() {
 
 /// The bootstrap widens who has a record, never what a record vouches for.
 /// A first run names the file it ran from and nothing else, so the wrapper
-/// case stays exactly where KEN-444 left it: a second `kendex` on `PATH`
-/// that this install never put there is still not ours to replace.
+/// case holds: a second `kendex` on `PATH` that this install never put
+/// there is not ours to replace.
 #[test]
 #[cfg(unix)]
 fn a_first_run_vouches_for_its_own_file_and_no_other() {
@@ -184,7 +184,7 @@ fn every_public_write_follows_this_process_uid() {
 
     // A home of its own for each: a record already there is what
     // `record_first_run` leaves alone, so one home shared between them
-    // would have an earlier entry answering for a later one.
+    // would have one entry answering for the next.
     for (entry, write) in entries {
         let dir = tempfile::tempdir().unwrap();
         let env = Env::host_rooted(dir.path());

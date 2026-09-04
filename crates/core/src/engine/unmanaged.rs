@@ -293,7 +293,7 @@ pub(crate) fn declared_over_existing_files(
             for harness in desired::target_harnesses(decl, manifest, kind, scope) {
                 // What the lock recorded writing, not merely that it holds
                 // a key for this item: an installation that changed method
-                // writes somewhere new, and a key alone would call that new
+                // writes somewhere else, and a key alone would call that
                 // position ours while a stranger's files sit on it.
                 let occupied = installation_paths(env, scope, manifest, kind, name, decl, harness)
                     .into_iter()

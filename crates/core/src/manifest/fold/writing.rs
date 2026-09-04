@@ -184,7 +184,7 @@ fn decoration(raw: Option<&RawString>) -> String {
 ///
 /// TOML has exactly these two, and this type is where that is said. Reading a
 /// list, and putting one back, both go through it, so a spelling that ever has
-/// to be added fails to BUILD at every site that must learn about it rather
+/// to join fails to BUILD at every site that must learn about it rather
 /// than reaching a run-time arm somebody remembered to write.
 pub(super) enum List<'a> {
     /// `[[key]]` blocks.

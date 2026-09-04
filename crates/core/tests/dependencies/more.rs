@@ -285,7 +285,7 @@ fn a_declared_skill_installs_and_reports_nothing_missing_when_it_is_also_kept_re
 }
 
 /// Two skills that require each other are walked more than once, because each
-/// pass teaches the other one something new. What they have to report is
+/// pass teaches the other one another reason. What they have to report is
 /// still reported once.
 #[test]
 #[allow(clippy::unwrap_used)]

@@ -93,7 +93,7 @@ pub(super) fn plan_tree(
         if written.claim_canonical(canonical) {
             // Taken over, the tree goes to the trash whole rather than
             // being written through: what kendex did not write is kept
-            // recoverable, never quietly merged under the new render.
+            // recoverable, never quietly merged under the fresh render.
             if let Some(hash) = wrong_shape.or_else(|| disk.clone().filter(|_| unowned)) {
                 ops.push(set_aside(canonical, Pre::HashIs { hash }));
             }

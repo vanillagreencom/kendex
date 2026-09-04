@@ -183,8 +183,7 @@ fn a_composed_line_is_scrubbed_even_though_it_is_not_cut() {
 /// error or a source's own name may say, so `shown` does.
 ///
 /// Asked of `shown` directly rather than through a folded line: `scope`
-/// composes lines around it, and the variant that used to hand it a whole
-/// line is gone.
+/// composes lines around it, and nothing hands it a whole line.
 ///
 /// The length is written out rather than taken from the constant. Compared
 /// against `FOREIGN_CHARS` both sides moved together, so the cut could be

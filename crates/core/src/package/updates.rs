@@ -82,7 +82,7 @@ pub struct UpdateRow {
     /// Whether dropping the edits can put the currently resolved content
     /// back in place, without moving any revision — the source content
     /// resolved, whether or not its history could be read. False once the
-    /// source no longer carries the package.
+    /// source does not carry the package.
     pub can_discard: bool,
     /// Whether this place can move to the newest content on its own: the
     /// newest is known, and the hold — if any — is this declaration's to
@@ -103,7 +103,7 @@ pub struct UpdateRow {
     pub forked: bool,
     /// Installations of this package disagree on their source commit.
     pub mixed: bool,
-    /// The source's tracked tip no longer carries this package at all.
+    /// The source's tracked tip does not carry this package at all.
     pub removed_upstream: bool,
     /// Why this place is never updated one package at a time, when it is
     /// not: the planner derives no plan for the kind, so an Update offered

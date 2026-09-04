@@ -138,7 +138,7 @@ fn a_removal_carries_the_effects_of_what_it_takes_away() {
 /// package declares nothing" is a removal that runs no uninstaller and
 /// takes the scripts away regardless, and every commit in the repository
 /// then fails on a hook delegating to a file that is gone. A locally
-/// edited `SKILL.md` gets there: the frontmatter no longer parses, and the
+/// edited `SKILL.md` gets there: the frontmatter does not parse, and the
 /// removal discards the edit anyway.
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -154,7 +154,7 @@ fn a_declaration_that_will_not_read_stops_the_removal() {
     fs::write(&shim, "#!/bin/sh\nexec .agents/skills/armer/scripts/arm\n").unwrap();
 
     // The declaration is edited on disk into frontmatter that will not
-    // parse — the block is still there, and kendex can no longer read it.
+    // parse: the block is still there, and kendex cannot read it.
     let declaration = tree.join("SKILL.md");
     let edited = fs::read_to_string(&declaration)
         .unwrap()

@@ -446,7 +446,7 @@ fn an_edge_recorded_against_another_source_exempts_nothing() {
 }
 
 /// The same class from the other end: an installation a rebind left behind
-/// is an installation of a package the declaration no longer is, so the
+/// is an installation of a package the declaration is not, so the
 /// edges it records are not this update's to follow. Seeding the exemption
 /// off every entry that shares the name walks them anyway and unpins
 /// whatever they lead to.

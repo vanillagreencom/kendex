@@ -591,10 +591,10 @@ export type Appearance = "system" | "light" | "dark";
  *  that shows a score embeds this whole — `engine::ItemSafety` and
  *  `browse::PackageSafety` flatten it into their serialized rows,
  *  `check_catalog::CheckedItem` carries it beside the structural pass — so
- *  a field added here reaches all of them without another hand-copy.
+ *  a field of this struct reaches all of them without another hand-copy.
  * 
  *  A flattened field lands in its embedder's own key space and nothing
- *  catches a clash at compile time, so a new field here must avoid the
+ *  catches a clash at compile time, so every field here must avoid the
  *  keys those embedders already occupy: `kind`, `name`, `targets`, `scope`,
  *  `notes`, `contentHash`, `fromCache`, `format` and
  *  `discovery`.
@@ -756,8 +756,9 @@ export type AvailablePackage = {
  *  describes — because the failure this exists to prevent is a base paired
  *  with content nobody read together. A base taken by a read separate from
  *  the content it answers for describes a different moment: a writer
- *  landing between the two hands the caller old content under the new
- *  file's name, and the write that follows is accepted over that writer.
+ *  landing between the two hands the caller old content under the
+ *  replacement file's name, and the write that follows is accepted over
+ *  that writer.
  *  Nothing here takes a path and hands back a base, deliberately — a path
  *  is not the bytes, and reading them apart is how the two come adrift.
  */
@@ -782,7 +783,7 @@ export type BundleDetail = {
 	 *  the install is redirected, the browsed scope otherwise — could not be
 	 *  read. The set page's Install all asks about the set rather than about
 	 *  a member, so it needs that scope's own answer: no member row can
-	 *  carry it, because a member the catalog no longer offers reads
+	 *  carry it, because a member the catalog does not offer reads
 	 *  [`InstallState::NotOffered`] with or without a lock, and a set whose
 	 *  members were all dropped — or one declared with none — would leave the
 	 *  page deriving "readable" from rows that never consulted the record.
@@ -811,8 +812,8 @@ export type CandidateGroup =
  */
 licenseRecognized: boolean } | 
 /**
- *  The installed copy of a marketplace package that no longer matches
- *  the marketplace's bytes — "your edited copy", shown beside the
+ *  The installed copy of a marketplace package whose bytes have drifted
+ *  from the marketplace's — "your edited copy", shown beside the
  *  original and gated by the same licence.
  */
 { group: "edited"; source: string; repo: string; license: string | null; licenseRecognized: boolean } | 
@@ -1067,9 +1068,8 @@ export type DeclaredEffects = {
 	 * 
 	 *  A path, not a string of one. `display().to_string()` turns any byte
 	 *  that is not UTF-8 into U+FFFD, which is a different filename — so an
-	 *  authorized effect resolved a path nobody has, for a package that had
-	 *  just landed perfectly well. The same class #1669 closed on the guard
-	 *  side, here for the same reason.
+	 *  authorized effect would resolve a path nobody has, for a package
+	 *  that landed perfectly well.
 	 */
 	root: string,
 } & RepoEffects;
@@ -1266,9 +1266,9 @@ export type DriftRow_Serialize = {
 export type DriftState = 
 /**  Declared but not on disk (or never recorded). */
 "missing" | 
-/**  On disk but no longer matching declaration + source. */
+/**  On disk but not matching declaration + source. */
 "stale" | 
-/**  Recorded in the lock but no longer declared. */
+/**  Recorded in the lock but not declared. */
 "orphaned" | 
 /**  On disk in a managed surface, but not ours. */
 "unmanaged" | 
@@ -1387,7 +1387,7 @@ export type ForkBesideError = { phase: "refused"; message: string } | { phase: "
  *  Where a fork came from. A fork keeps the item's installed name — the
  *  declaration just switches to the local source, so nothing that depends
  *  on the name breaks — and this records what it replaced. A fork made
- *  beside the original takes a new name and records the same provenance:
+ *  beside the original takes another name and records the same provenance:
  *  what it was copied from, and at which commit. Manifest, not lock,
  *  because the package page keeps reading it after any cache loss.
  */
@@ -1397,7 +1397,7 @@ export type ForkProvenance = ForkProvenance_Serialize | ForkProvenance_Deseriali
  *  Where a fork came from. A fork keeps the item's installed name — the
  *  declaration just switches to the local source, so nothing that depends
  *  on the name breaks — and this records what it replaced. A fork made
- *  beside the original takes a new name and records the same provenance:
+ *  beside the original takes another name and records the same provenance:
  *  what it was copied from, and at which commit. Manifest, not lock,
  *  because the package page keeps reading it after any cache loss.
  */
@@ -1414,7 +1414,7 @@ export type ForkProvenance_Deserialize = {
  *  Where a fork came from. A fork keeps the item's installed name — the
  *  declaration just switches to the local source, so nothing that depends
  *  on the name breaks — and this records what it replaced. A fork made
- *  beside the original takes a new name and records the same provenance:
+ *  beside the original takes another name and records the same provenance:
  *  what it was copied from, and at which commit. Manifest, not lock,
  *  because the package page keeps reading it after any cache loss.
  */
@@ -1667,7 +1667,7 @@ export type InstallState =
 /**  Offered, nothing installed. */
 "available" | 
 /**
- *  The bundle names a member the catalog no longer offers — renamed or
+ *  The bundle names a member the catalog does not offer — renamed or
  *  removed upstream. A row saying so, never a dead page: the member list
  *  is catalog-authored text and one bad entry cannot break the read.
  */
@@ -1842,8 +1842,8 @@ export type ItemWarning_Serialize = {
 
 /**
  *  What each operation supports for one harness × kind. `observe` is derived
- *  from adapter surface declarations (tested); mutation columns land with
- *  their phases and stay honest through those phases' tests.
+ *  from adapter surface declarations; tests hold the mutation columns to
+ *  their implementations.
  */
 export type KindCaps = {
 	observe: OpSupport,
@@ -2825,7 +2825,7 @@ export type SkillTemplate =
 { state: "no-template" } | 
 /**
  *  Its template is out of reach here — a source that has not arrived,
- *  a skill switched off, a source that no longer carries it.
+ *  a skill switched off, a source that does not carry it.
  */
 { state: "unreadable"; reason: string } | 
 /**
@@ -2857,7 +2857,7 @@ export type SourceDecl_Deserialize = {
 	/**
 	 *  Which revision of a remote to read. A full commit id is a pin: that
 	 *  commit and no other, forever, and it works offline once cached. A
-	 *  tag or branch tracks — every refresh re-resolves it and the new
+	 *  tag or branch tracks — every refresh re-resolves it and the incoming
 	 *  content is previewed before anything is written. Absent tracks the
 	 *  repository's default branch.
 	 */
@@ -2871,7 +2871,7 @@ export type SourceDecl_Serialize = {
 	/**
 	 *  Which revision of a remote to read. A full commit id is a pin: that
 	 *  commit and no other, forever, and it works offline once cached. A
-	 *  tag or branch tracks — every refresh re-resolves it and the new
+	 *  tag or branch tracks — every refresh re-resolves it and the incoming
 	 *  content is previewed before anything is written. Absent tracks the
 	 *  repository's default branch.
 	 */
@@ -3171,7 +3171,7 @@ export type UpdateRow = {
 	 *  Whether dropping the edits can put the currently resolved content
 	 *  back in place, without moving any revision — the source content
 	 *  resolved, whether or not its history could be read. False once the
-	 *  source no longer carries the package.
+	 *  source does not carry the package.
 	 */
 	canDiscard: boolean,
 	/**
@@ -3199,7 +3199,7 @@ export type UpdateRow = {
 	forked: boolean,
 	/**  Installations of this package disagree on their source commit. */
 	mixed: boolean,
-	/**  The source's tracked tip no longer carries this package at all. */
+	/**  The source's tracked tip does not carry this package at all. */
 	removedUpstream: boolean,
 	/**
 	 *  Why this place is never updated one package at a time, when it is

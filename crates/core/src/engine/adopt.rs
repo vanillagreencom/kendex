@@ -272,7 +272,7 @@ fn copies_differ(name: &str, first: HarnessId, second: HarnessId) -> CoreError {
 }
 
 // Writing the kept item into the manifest: which tools it names, and
-// which of the declaration's old facts no longer hold once its source is
+// which of the declaration's old facts stop holding once its source is
 // the local one.
 
 /// Write the item into the manifest, bound to the tools that had it. Only

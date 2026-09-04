@@ -45,8 +45,8 @@ pub enum AccountState {
 /// Why an account read could not answer at all.
 ///
 /// [`AccountState`] is what a read settles on; this is the absence of an
-/// answer. A surface holding a name from an earlier read has to choose
-/// between showing it as the last one confirmed and saying nothing new
+/// answer. A surface holding a name from a previous read has to choose
+/// between showing it as the last one confirmed and saying nothing more
 /// was learned, and only the difference between "the directory did not
 /// answer" and "this machine refused" settles that choice.
 #[derive(Debug)]
@@ -99,7 +99,7 @@ pub fn load(
     let Some(credential) = store.load().map_err(AccountUnread::Local)? else {
         return Ok(AccountState::SignedOut);
     };
-    // The sign-in's own name, which a rotation carries and only a new
+    // The sign-in's own name, which a rotation carries and only another
     // sign-in changes. The cache read next belongs to this one.
     let issued_under = credential.sign_in;
     // Keyed to this sign-in, so a generation the previous one left behind
@@ -158,7 +158,7 @@ pub fn load(
 }
 
 /// Commit a fresh sign-in and drop the previous account's cached
-/// identity, so the new credential never pairs with the old name.
+/// identity, so the fresh credential never pairs with the old name.
 ///
 /// The cache is forgotten twice. The first runs before anything is
 /// installed and fails the call, because failing there leaves nothing

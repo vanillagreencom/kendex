@@ -10,7 +10,7 @@
 //! `git@` one. Every comparison runs over `source_ref::repo_identity`, which
 //! folds those to one string, so a spelling never decides ownership. The
 //! judge names the destination too, in the shape a caller can file against:
-//! `gh issue create --repo` and a `github.com/<repo>/issues/new` URL both
+//! `gh issue create --repo` and a GitHub issue-creation URL each
 //! take `owner/repo`, never the URL a subscription may be spelled with.
 
 use crate::lock::{Lock, LockEntry};

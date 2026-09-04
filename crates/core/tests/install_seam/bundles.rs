@@ -269,7 +269,7 @@ fn request(name: &str) -> ops::AddRequest {
 /// member, and what that member requires. Both derive to nothing while the
 /// body is unreadable, and `kendex apply` sweeps what nothing derives, so a
 /// catalog-side edit would otherwise trash a consumer's files and tell them
-/// they were no longer wanted. The same holds when the control file cannot be
+/// they were not wanted. The same holds when the control file cannot be
 /// opened at all: a symlink the sealed reader refuses to look through, whose
 /// error is dropped one layer up.
 #[test]

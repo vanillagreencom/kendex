@@ -23,8 +23,8 @@ const HOOK_REGISTRY_UNPARSED: &str = "the config file holding this hook's regist
 /// them. Sibling entries and the `permissions.ask`/`permissions.deny` lists are
 /// not this hook's content — an ask-list entry is a guard *against* a
 /// dangerous command, and reading the whole file as every hook's script
-/// turned one `mkfs` guard into a high-severity finding on all fifteen
-/// hooks registered in the same settings.json (KEN-558). The file is
+/// would turn one `mkfs` guard into a high-severity finding on every
+/// hook registered in the same settings.json. The file is
 /// parsed by the reader the scan chose for its harness and matched by the
 /// same name construction the scan listed it under, so the entry the scan
 /// found is the entry scored here.

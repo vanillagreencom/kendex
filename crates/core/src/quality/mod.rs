@@ -44,7 +44,7 @@ pub use text::{Line, Normalization};
 pub(crate) const DIGEST_CHARS: usize = 16;
 
 /// A short, stable name for content a message cannot print — too long, or
-/// no longer in hand at all. Never an identity on its own: it goes beside
+/// not in hand at all. Never an identity on its own: it goes beside
 /// what *is* printed, so the sentence still says what the rule fired on and
 /// the digest only tells apart what the printing left out.
 fn digest(material: &str) -> String {
@@ -55,7 +55,7 @@ fn digest(material: &str) -> String {
 }
 
 /// The rule set findings were produced by. Cached scores are keyed by it,
-/// so any change to what a finding *is* must bump this — a new rule, a
+/// so any change to what a finding *is* must bump this — a further rule, a
 /// widened pattern, a re-calibrated severity, and equally a change to how a
 /// finding is identified.
 pub const RULESET_VERSION: u32 = 5;
@@ -339,10 +339,10 @@ pub struct SkippedRule {
 /// that shows a score embeds this whole — `engine::ItemSafety` and
 /// `browse::PackageSafety` flatten it into their serialized rows,
 /// `check_catalog::CheckedItem` carries it beside the structural pass — so
-/// a field added here reaches all of them without another hand-copy.
+/// a field of this struct reaches all of them without another hand-copy.
 ///
 /// A flattened field lands in its embedder's own key space and nothing
-/// catches a clash at compile time, so a new field here must avoid the
+/// catches a clash at compile time, so every field here must avoid the
 /// keys those embedders already occupy: `kind`, `name`, `targets`, `scope`,
 /// `notes`, `contentHash`, `fromCache`, `format` and
 /// `discovery`.

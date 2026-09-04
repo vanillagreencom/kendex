@@ -173,7 +173,7 @@ fn a_newer_lock_refuses_to_load() {
 
 /// The version is the whole gate: a record naming this build's number
 /// loads whatever else it holds, and one naming any other number — or
-/// none — is refused, because every field a later version added is a fact
+/// none — is refused, because every field a later version introduced is a fact
 /// this build reads and an older record does not carry.
 #[test]
 fn only_this_builds_version_loads() {

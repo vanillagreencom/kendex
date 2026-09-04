@@ -159,7 +159,7 @@ fn a_multi_edge_installation_survives_every_removal_order() {
     apply_now(&f);
 
     // The dependent goes first: github was asked for, so it stays, and its
-    // record no longer claims anything requires it.
+    // record then claims that nothing requires it.
     remove(&f, "dev", false);
     assert!(!installed(&f, "dev") && installed(&f, "github"));
     assert_eq!(

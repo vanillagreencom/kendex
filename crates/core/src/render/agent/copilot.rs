@@ -9,7 +9,7 @@ use crate::render::{RenderWarning, yaml_quoted, yaml_scalar};
 /// `<name>.agent.md`. `description` is the only required key; `tools` is a
 /// real allowlist of tool names, so an `AllowOnly` intent renders natively
 /// ([custom agents configuration](https://docs.github.com/en/copilot/reference/custom-agents-configuration),
-/// accessed 2026-08-13; matrix §2).
+/// matrix §2).
 ///
 /// A model is written only when one was asked for: Copilot inherits its
 /// default when the key is absent, and its own list moves monthly and is

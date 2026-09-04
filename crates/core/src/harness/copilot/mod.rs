@@ -11,7 +11,7 @@ pub struct Copilot;
 
 /// Copilot's own hook events, and the fleet event each one answers to
 /// ([hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference),
-/// accessed 2026-08-13; matrix §2, §D9). Copilot accepts a PascalCase
+/// matrix §2, §D9). Copilot accepts a PascalCase
 /// spelling of each name too; the camelCase one is what its reference
 /// writes, so that is what kendex registers. An event with no counterpart
 /// stays unmapped rather than hung on a near-miss — a safety hook on the

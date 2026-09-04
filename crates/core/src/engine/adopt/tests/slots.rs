@@ -12,10 +12,10 @@ use crate::test_util::rooted;
 
 use super::trash_is_empty;
 
-/// The same nesting from the other side, and the direction that used to
+/// The same nesting from the other side, and the direction that would
 /// delete. `data-science/eda` is stored at `<local>/skills/data-science`,
 /// so the slot a plain `data-science` asks for is the directory holding
-/// it — and the slot existing is not an earlier copy of `data-science`,
+/// it — and the slot existing is not a previous copy of `data-science`,
 /// a name the local source lists nowhere. A project's plain skill is its
 /// own source in `.agents`, so the local source is a plain skill's
 /// destination only at the global scope.
@@ -444,7 +444,7 @@ fn a_plain_skill_over_a_slot_no_listing_names_refuses() {
 }
 
 /// A slot holding this very name is not a collision. The plain item stored
-/// there is an earlier copy of the name being kept, and replacing it is
+/// there is a previous copy of the name being kept, and replacing it is
 /// what a capture over it is for — the refusal above is the collision's,
 /// not a refusal of every plain name whose slot exists.
 #[test]

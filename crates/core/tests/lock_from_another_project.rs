@@ -2,7 +2,7 @@
 //! checkout it came from.
 //!
 //! Refresh reads `emitted.paths` as the positions this scope owns and takes
-//! back the ones it no longer renders. Pointed at another tree those are
+//! back the ones it does not render. Pointed at another tree those are
 //! somebody else's files. A record naming the root it was written under
 //! states each position as a remainder of that root, so the read resolves
 //! them onto the root reading instead and the other tree is never named; a
@@ -42,7 +42,7 @@ fn put(path: &Path, text: &str) {
 
 /// Every path under `root`, keyed by its place in the tree. Comparing two of
 /// these compares the file list and the contents at once, so a file gone, a
-/// file added and a byte changed all read as a difference.
+/// file created and a byte changed all read as a difference.
 #[allow(clippy::unwrap_used)]
 fn snapshot(root: &Path) -> BTreeMap<PathBuf, Entry> {
     let mut found = BTreeMap::new();
@@ -96,7 +96,7 @@ fn refresh() -> PlanOptions {
 
 /// The must-fail control for reading a travelled record against the root
 /// reading it. Without that the copied record is read as naming this
-/// project's positions where it stands: every path it holds is one the new
+/// project's positions where it stands: every path it holds is one the current
 /// render does not produce, so refresh takes them to the trash — out of the
 /// other checkout.
 #[test]

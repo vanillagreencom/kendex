@@ -1,8 +1,5 @@
-//! The four v1 bug classes v2 claims to have designed away, pinned:
-//! per-install source identity on refresh (#1313), trailing-newline
-//! preservation with a once-only repair (#1308), corrupt state failing
-//! closed (#1307), and no user-visible mutation before validation and
-//! confirmation (#1292).
+//! Cross-scope source identity, terminator preservation, corrupt-state
+//! refusal, and validation before user-visible mutation.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]
@@ -56,8 +53,8 @@ fn apply_scope(w: &World, scope: &Scope) {
     apply::execute(&w.env, &report.plan).unwrap();
 }
 
-/// The #1313 class: two scopes install the same package name from two
-/// different sources; a refresh regenerates each install from its own
+/// Two scopes install the same package name from different sources. A
+/// refresh regenerates each install from its own
 /// recorded source, never its neighbour's.
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -102,11 +99,9 @@ fn refresh_reads_each_installs_own_recorded_source_across_scopes() {
     assert!(project_body.contains("B, revised."), "{project_body}");
 }
 
-/// The #1308 class on kendex.toml: a write neither adds a terminator nor
-/// grows one. A file with none gets the one its last line needs, and every
-/// pass after that leaves the bytes alone. A repair that ran on every pass
-/// is how the file grew a blank line per apply. What a file already ends
-/// in is its own — the blank line a person leaves there is covered by
+/// A `kendex.toml` write supplies a missing terminator without growing one.
+/// Repeated passes leave the bytes alone. What a file already ends in is
+/// its own: the blank line a person leaves there is covered by
 /// `manifest::tests::the_files_own_terminator_survives`.
 ///
 /// The fixture carries a comment because it must survive: a write folds
@@ -124,8 +119,7 @@ fn a_manifest_write_ends_in_one_terminator_and_settles() {
     let scope = Scope::Project {
         root: w.project.clone(),
     };
-    // No trailing newline on the file the write starts from: the repair
-    // has something to do exactly once.
+    // The input has no trailing newline, so the write must supply one.
     fs::write(
         &manifest_path,
         format!(
@@ -155,14 +149,14 @@ fn a_manifest_write_ends_in_one_terminator_and_settles() {
         "exactly one terminator: {written:?}"
     );
 
-    // Stable from here: two more passes over the same scope change nothing.
+    // Repeated passes over the same scope change nothing.
     apply_scope(&w, &scope);
     assert_eq!(fs::read_to_string(&manifest_path).unwrap(), written);
     apply_scope(&w, &scope);
     assert_eq!(fs::read_to_string(&manifest_path).unwrap(), written);
 }
 
-/// The #1307 class: corrupt state fails the operation closed — a damaged
+/// Corrupt state fails the operation closed: a damaged
 /// lock, manifest, or app settings file is an error, never a default.
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -204,7 +198,7 @@ fn corrupt_state_fails_closed_instead_of_defaulting() {
     assert!(audit(&w.env, &scope).is_err());
 }
 
-/// The #1292 class: `add` mutates nothing user-visible before validation
+/// `add` mutates nothing user-visible before validation
 /// and confirmation. A rejected request and an unconfirmed plan both leave
 /// manifest, lock, and install tree byte-identical.
 #[test]

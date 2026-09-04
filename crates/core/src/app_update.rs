@@ -174,7 +174,7 @@ fn view(
 /// The read, the fetch and the write are one transaction because the write
 /// puts back the whole document, the body read before the fetch included.
 /// Two processes overlapping without this both read the old cache; the one
-/// whose fetch succeeds writes the new feed, and the one whose fetch fails
+/// whose fetch succeeds writes the fetched feed, and the one whose fetch fails
 /// writes the old body back over it under a fresh `last_attempt_at` — the
 /// release is gone and no automatic attempt is due for six hours. Re-reading
 /// just before the write would narrow that window and not close it, so the

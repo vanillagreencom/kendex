@@ -134,7 +134,7 @@ pub struct Refused {
 pub struct DesiredState {
     pub items: Vec<Desired>,
     /// Sources that could not be read (pending remotes, missing paths) and
-    /// declared items the source no longer carries.
+    /// declared items the source does not carry.
     pub notes: Vec<String>,
     pub warnings: Vec<super::ItemWarning>,
     pub refused: Vec<Refused>,

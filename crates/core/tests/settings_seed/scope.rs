@@ -64,7 +64,7 @@ pub(crate) fn fixture(enabled: bool) -> Fixture {
 }
 
 /// A pass over the scope that arrives nothing: every `kendex refresh`,
-/// every audit, every apply that declares no new skill.
+/// every audit, every apply that declares no skill.
 #[allow(clippy::unwrap_used)]
 pub(crate) fn refresh_now(f: &Fixture) {
     let report = audit(&f.env, &f.scope).unwrap();

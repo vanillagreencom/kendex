@@ -43,7 +43,7 @@ pub fn parse_text(path: &Path, text: &str) -> Result<LockFile> {
         });
     }
     // The floor, and the reason there is one: every field a later version
-    // added is a fact this build reads and an older record simply does not
+    // introduced is a fact this build reads and an older record simply does not
     // carry — where an installed set sits, which project wrote the record,
     // why an installation exists. Read as absent, each of those is a wrong
     // answer rather than a missing one: a set placeable at nothing comes

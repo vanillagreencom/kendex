@@ -74,7 +74,7 @@ fn is_token_char(c: char) -> bool {
 
 /// How a matched token is written down: the issuer's prefix, then a short
 /// digest of the whole token. Two findings about the same key fingerprint
-/// alike; nothing here can be used to authenticate as anyone.
+/// alike; nothing here authenticates as anyone.
 ///
 /// The digest is [`super::DIGEST_CHARS`] wide because it lands in a
 /// finding's message: the token it stands for is a value a project

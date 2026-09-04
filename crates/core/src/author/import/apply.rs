@@ -67,7 +67,7 @@ pub fn apply(
     Ok(outcome)
 }
 
-/// A copy taken under a new name declares that name.
+/// A copy taken under another name declares that name.
 ///
 /// A skill's SKILL.md and an agent's own file carry the name its tool
 /// answers to, so bytes copied verbatim under a different destination
@@ -164,8 +164,8 @@ fn declared_leaf(name: &str) -> &str {
 /// the person which file to open. Whether a name can be written in is
 /// asked of the bytes.
 ///
-/// What reaches it is narrower than it was. An agent whose bytes are not
-/// markdown with a frontmatter block is no longer offered at all
+/// An agent whose bytes are not markdown with a frontmatter block is
+/// not offered at all
 /// (`origins::offer::agent_shape_problem`), so Codex's TOML is refused
 /// before selection rather than here; what is left for this to name is a
 /// frontmatter file whose `name` cannot be written — given twice, or

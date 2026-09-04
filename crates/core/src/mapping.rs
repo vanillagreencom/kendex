@@ -216,7 +216,7 @@ mod tests {
     /// The built-in table, row by row. Asked of the table rather than
     /// through `upstream_skills`, which filters it against what a source
     /// carries and would read a shortened list as a correct one. `None` is
-    /// pinned beside the roles because a role added with no row of its own
+    /// pinned beside the roles because a role with no row of its own
     /// renders exactly like it: with no fleet skills at all.
     #[test]
     fn the_built_in_role_table_holds_one_list_per_role() {
@@ -268,8 +268,8 @@ mod tests {
 
     // One answer carries both halves. A caller that had only the list
     // could not tell a row an agent owns from one it reaches, and a
-    // caller that had only the key would look the list up again — which
-    // is how the same rule came to be spelled in three places.
+    // caller that had only the key would look the list up again. Returning
+    // both keeps ownership and reachability tied to the same entry.
     #[test]
     fn one_lookup_answers_with_the_entry_and_the_key_it_is_under() {
         let manifest = declaring(&[("rust", &["dev"]), ("orch", &["github"])]);

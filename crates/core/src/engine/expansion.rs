@@ -157,7 +157,7 @@ impl Expansion {
     }
 
     /// Record one derived reason, returning whether this taught the expansion
-    /// something new — which is what keeps a cycle from walking forever.
+    /// something — which is what keeps a cycle from walking forever.
     pub(super) fn add(
         &mut self,
         kind: ItemKind,
@@ -168,9 +168,9 @@ impl Expansion {
     ) -> bool {
         // A set weighs its revision against the one the person chose for
         // the item; every other derivation weighs it against the revision
-        // the item actually reads. What a dependency reads is its parent's
-        // own commit, invented pin included — KEN-765 is where that edge
-        // learns the difference.
+        // the item actually reads.
+        // A dependency uses its parent's commit, including a pin synthesized
+        // for the plan.
         let carried_by_a_set = matches!(reason, Reason::MemberOf { .. });
         let reason_owning = reason.clone();
         let fresh = self
@@ -386,8 +386,8 @@ mod tests {
     /// The rule stated as a fact about the product, not as a copy of the
     /// list behind it. The match below is exhaustive over `ItemKind`, so
     /// it cannot be satisfied by the list [`plans_per_package`] reads: a
-    /// kind moved into `PLANNED_KINDS` turns this red, and a variant added
-    /// to the enum stops this test compiling until it is classified here.
+    /// kind moved into `PLANNED_KINDS` turns this red, and a variant joining
+    /// the enum stops this test compiling until it is classified here.
     /// What this does not hold: the loop walks `ItemKind::ALL`, so a kind
     /// missing from that list is one it never visits, its arm here
     /// satisfied and unexercised. `ALL`'s declared `[ItemKind; 7]` reds a

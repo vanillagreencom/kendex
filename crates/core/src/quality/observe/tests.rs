@@ -69,7 +69,7 @@ fn an_installed_tree_is_read_to_its_last_file() {
     let root = tmp.path().join("big");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("SKILL.md"), "---\nname: big\n---\nplain body\n").unwrap();
-    // Past both halves of the prefix a reader used to stop at: the 251st
+    // Past both halves of the prefix a bounded reader stops at: the 251st
     // file, and 3 KiB each puts it past 512 KiB.
     let filler = "filler filler filler filler filler filler filler\n".repeat(64);
     for n in 0..260u32 {
@@ -243,9 +243,9 @@ fn hook_at(path: &Path, name: &str) -> ObservedItem {
 
 /// A `permissions.ask` entry is a guard *against* a dangerous command, and
 /// it is not any hook's content. Reading the whole settings file as each
-/// hook's script turned one `mkfs` guard into a high-severity finding on
-/// every hook in the file (KEN-558); a hook is scored on its own
-/// registration and nothing beside it.
+/// hook's script would turn one `mkfs` guard into a high-severity finding
+/// on every hook in the file; a hook is scored on its own registration and
+/// nothing beside it.
 #[test]
 fn a_permission_ask_guard_is_no_hooks_finding() {
     let tmp = tempfile::tempdir().unwrap();

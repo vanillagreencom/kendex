@@ -131,7 +131,7 @@ fn one_unsettleable_item_refuses_the_sweep_and_names_what_holds_it() {
 
 /// The button was clicked on an item one of whose places nothing can
 /// settle: replacing the rest would leave that place blocked with the
-/// item no longer its tool's, so the whole run refuses.
+/// item not owned by its tool, so the whole run refuses.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_named_take_over_with_an_unsettleable_place_refuses() {
@@ -219,7 +219,7 @@ fn a_sweep_that_can_replace_nothing_refuses() {
 /// link it cannot touch, so the refusal rolls that staged work back and
 /// the item leaves nothing behind but its dead stop. Read from what
 /// survived, the sweep sees a blocked item it never took and lets the run
-/// replace everything else — the hold-back this engine no longer does,
+/// replace everything else, which would bypass the engine's hold-back,
 /// arrived at by losing the evidence rather than by deciding to.
 #[test]
 #[allow(clippy::unwrap_used)]

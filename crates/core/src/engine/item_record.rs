@@ -1,11 +1,8 @@
 //! What the lock keeps about one installation, beside its name and its
 //! source: what this pass wrote, and what it registered.
 //!
-//! Both are records of the past, and both exist because the alternative —
-//! working them out again from what is rendered now — is right only until
-//! something changes. A catalog moving a hook to another event, or an
-//! upstream changing a file, is not the person's doing, and a pass that
-//! could not tell the difference said it was.
+//! These records separate a catalog change from a user edit. Deriving them
+//! from the current rendering would lose that distinction.
 
 use std::path::PathBuf;
 
@@ -18,11 +15,11 @@ use super::desired::{Artifact, Desired};
 /// the removal a change of identity needs before whatever it renders.
 ///
 /// A catalog is free to move a hook to another event or narrow its
-/// matcher, and what comes of that has to be one entry in its new place,
+/// matcher, and what comes of that has to be one entry in its current place,
 /// not two. It is the same when the hook is switched off in the same
 /// breath: the pass renders the removal of the entry it would write
 /// today, which is not the entry that is actually there, and recording
-/// the new identity over the old one leaves what is there with nothing
+/// the current identity over the old one leaves what is there with nothing
 /// naming it — running, and unfindable by every pass after.
 ///
 /// Where the record cannot name the old entry — one written before the
@@ -40,8 +37,8 @@ use super::desired::{Artifact, Desired};
 ///
 /// Nothing is retired where the record names what this pass names anyway,
 /// so a settled installation plans nothing. The edit goes to the file
-/// this pass registers in; one written into a file kendex no longer
-/// registers in — the old layout of a pi hook, say — is nothing this edit
+/// this pass registers in; one written into a file where kendex does not
+/// register — another layout of a Pi hook, for example — is nothing this edit
 /// would find, and belongs to whatever is retiring that file.
 pub(super) enum Previous {
     /// Nothing of this installation's is registered anywhere but where
@@ -65,9 +62,9 @@ pub(super) fn retire_previous(item: &Desired, existing: Option<&LockEntry>) -> P
         return Previous::Settled;
     };
     // The record names an entry. Whether it is still there is the
-    // document's to say, not the record's: trusting the record here is how
-    // a registration somebody moved by hand came to be left alone while a
-    // second one went in beside it. A record too old to name what it
+    // document's to say, not the record's. Trusting the record could leave
+    // a hand-moved registration live while a second one goes in beside it.
+    // A record too old to name what it
     // registered has only the command to look one up by, which would read
     // the person's own registration of the same command as kendex's
     // leftovers — so it settles and earns the record this pass.
@@ -235,7 +232,7 @@ fn named(item: &Desired) -> Option<Named<'_>> {
 /// The registry entry this installation wrote, for the record to keep.
 ///
 /// Kept for every hook that registers one, not only for the script-less
-/// kind. What a later pass has to find is what an earlier one wrote, and
+/// kind. What a later pass has to find is what a previous one wrote, and
 /// what the catalog renders today is a different question — a catalog is
 /// free to move a hook to another event, and a pass that answered "where
 /// did we put it?" out of the current rendering called that an act of the

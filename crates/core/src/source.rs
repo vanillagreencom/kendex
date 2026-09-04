@@ -206,7 +206,7 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
 /// The checkout for the commit this scope's lock recorded, if the cache
 /// still holds it unmodified. Only for the declaration that produced it: a
 /// manifest that now names another repository or another revision must not
-/// be served the previous one under the new one's name.
+/// be served the previous one under the current one's name.
 fn last_resolved(
     env: &Env,
     scope: &Scope,

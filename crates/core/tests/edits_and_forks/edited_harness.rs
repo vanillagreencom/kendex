@@ -83,7 +83,7 @@ fn an_edited_agent_names_the_rendering_that_was_edited() {
     assert_eq!(row.forkable_harness, Some(HarnessId::Claude));
 }
 
-/// "Discard edits" on a held, edited place: the hold moves to the new
+/// "Discard edits" on a held, edited place: the hold moves to the selected
 /// commit and the edits go in the same apply — two steps would restore
 /// the old held copy first and leave the update pending.
 #[test]
@@ -233,7 +233,7 @@ fn a_skill_shared_by_symlink_counts_as_one_edited_rendering() {
 
 /// The discard needs the source content, not its history: with the mirror
 /// gone the row loses its version labels and keeps the way out. A package
-/// the source no longer carries has nothing to put in the edits' place.
+/// the source does not carry has nothing to put in the edits' place.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn discard_survives_an_unreadable_history_but_not_a_vanished_package() {
@@ -374,7 +374,7 @@ fn updates_still_read_history_under_a_symlinked_home() {
     assert!(row.latest.is_some(), "{row:?}");
 }
 
-/// The fallback that binds a package the tip no longer offers: the pin's
+/// The fallback that binds a package the tip does not offer: the pin's
 /// own revision still carries it, and the rel that revision yields must
 /// land under the tip seal's spelling — through a symlinked home the
 /// published roots and the seals disagree, and a strip against the wrong

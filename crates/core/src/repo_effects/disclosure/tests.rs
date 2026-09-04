@@ -99,7 +99,7 @@ fn git_paths_land_in_the_common_dir_and_read_as_shared() {
 
 /// A `.git` path spelled the ways a person spells paths still lands in the
 /// git directory. A doubled separator, a `.` hop, and the directory named
-/// on its own all used to read as the checkout's own files.
+/// on its own would otherwise read as the checkout's own files.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_git_path_is_read_by_components_not_by_prefix() {
@@ -149,7 +149,7 @@ fn a_git_path_is_read_by_components_not_by_prefix() {
 
 /// The block names the command that undoes the effect, not only the prose
 /// a package may have written about it. A package declaring an uninstaller
-/// and no removal text used to read as declaring no way to undo it.
+/// and no removal text would otherwise read as declaring no way to undo it.
 #[test]
 fn a_declared_uninstaller_is_what_the_block_says_to_run() {
     let root = PathBuf::from("/repo");

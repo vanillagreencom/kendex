@@ -8,7 +8,7 @@ use crate::model::ItemKind;
 use crate::source::CatalogBundle;
 
 /// Declare one curated set, carried the way the request asked. Asking for
-/// the set is asking for all of it: a member held back by an earlier
+/// the set is asking for all of it: a member held back by a previous
 /// removal comes with it, the same way asking for an item again outranks
 /// the removal that took it away.
 pub(super) fn declare_bundle(

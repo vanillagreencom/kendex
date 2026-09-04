@@ -44,8 +44,8 @@ pub enum Enforcement {
 }
 
 /// What each operation supports for one harness × kind. `observe` is derived
-/// from adapter surface declarations (tested); mutation columns land with
-/// their phases and stay honest through those phases' tests.
+/// from adapter surface declarations; tests hold the mutation columns to
+/// their implementations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct KindCaps {
@@ -357,7 +357,7 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
         // A server is declared per scope, but the file recording whether it
         // is on is a single global one, so switching one off is a global
         // act; doing it under a project lock would write outside the scope
-        // that holds the lock (matrix §1, plan Phase 2).
+        // that holds the lock (matrix §1).
         (Gemini, McpServer) => KindCaps {
             toggle: GLOBAL,
             ..managed(BOTH)

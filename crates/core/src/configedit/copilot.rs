@@ -1,8 +1,7 @@
 //! Copilot's own hook-file shape: a `{version, disableAllHooks, hooks}`
 //! document whose entries carry their command, matcher and timeout
 //! themselves rather than nesting handlers under a matcher group
-//! ([hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference),
-//! accessed 2026-08-13).
+//! ([hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference)).
 
 use serde_json::{Map, Value, json};
 

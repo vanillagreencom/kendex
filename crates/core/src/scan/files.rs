@@ -178,7 +178,7 @@ pub fn scan_subdirs(dir: &Path, marker: &str, warnings: &mut Vec<String>) -> Vec
 
 /// Every `<dir>/*.<ext>` document, sorted by name. A `.disabled` suffix
 /// takes a file out of the list the same way it does everywhere else: the
-/// harness globs one extension, so the renamed file is no longer loaded.
+/// harness globs one extension, so the renamed file is not loaded.
 pub fn scan_documents(dir: &Path, ext: &str, warnings: &mut Vec<String>) -> Vec<PathBuf> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,

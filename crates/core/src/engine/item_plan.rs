@@ -125,7 +125,7 @@ pub(super) fn plan_item(
         // leaves carry no trace of that, so the sweep's all-or-none check
         // would find its dead stop with nothing to pair against and let the
         // run replace the other items without it — the hold-back this
-        // engine no longer does. The evidence is still in the ops here, so
+        // engine does not do. The evidence is still in the ops here, so
         // the row that records it goes out beside the conflict.
         if replace_unmanaged && ops[staged..].iter().any(file_plan::is_set_aside) {
             drift.push(row(DriftState::Missing, file_plan::TAKEN_OVER.into()));
@@ -270,11 +270,11 @@ fn plan_registration(
     let locked = existing.is_some();
     // What the record says this installation registered, where that is no
     // longer what it registers: a changed event or matcher is a move, and
-    // a move takes the old entry out before it puts the new one in. Added
-    // in front of this item's own edits, since the file is edited in the
-    // order they are collected — the other way round, an upsert under the
-    // new event would leave the old one live and the hook would fire
-    // twice.
+    // a move takes the old entry out before it puts the current one in.
+    // Placed in front of this item's own edits, since the file is edited in
+    // the order they are collected — the other way round, an upsert under
+    // the current event would leave the old one live and the hook would
+    // fire twice.
     let retire = match super::item_record::retire_previous(item, existing) {
         super::item_record::Previous::Settled => None,
         super::item_record::Previous::Retire(path, edit) => Some((path, edit)),

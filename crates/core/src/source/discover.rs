@@ -16,8 +16,9 @@ use crate::source_read::SealedSource;
 
 use super::plugin_registry::CatalogFinding;
 
-/// Part of the safety-cache key: a new table can change what a repository
-/// offers, so cached verdicts must not outlive the table that produced them.
+/// Part of the safety-cache key: a change of table can change what a
+/// repository offers, so cached verdicts must not outlive the table that
+/// produced them.
 pub const DISCOVERY_VERSION: u32 = 1;
 
 /// The closed table of directories searched for skills. `skills/` and its

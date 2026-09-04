@@ -60,7 +60,7 @@ pub(crate) fn read_tree(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
             }
             // The budget is spent on what was read, never on what the
             // metadata said: a file that grows between the two would leave
-            // every file after it a budget that no longer exists, and the
+            // every file after it a budget already spent, and the
             // bound would hold only for a tree that sat still. So the
             // reader is capped and the total counts the bytes it returned.
             let room = MAX_CAPTURE_BYTES.saturating_sub(*bytes);

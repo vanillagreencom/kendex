@@ -4,8 +4,8 @@
 //!
 //! Two entry points, one per end, because the order the steps run in is
 //! the whole guarantee. A read resolves and then judges: reverse those and
-//! every travelled record is refused before it can rebase, which is the
-//! bug this module was written to close. A write judges and then stamps.
+//! every travelled record is refused before it can rebase. A write judges
+//! and then stamps.
 //! Neither order is a caller's to choose, so neither step is a caller's to
 //! call.
 
@@ -125,7 +125,7 @@ fn outside_the_project(root: &Path, lock: &Lock) -> Option<(String, PathBuf)> {
 /// A project scope installs only inside its own root, so `emitted.paths`
 /// reaching past it is a position this scope may not touch. Refresh and
 /// removal read those paths as the ones this scope owns and take back what
-/// a new render no longer produces, which past the root is somebody else's
+/// a fresh render does not produce, which past the root is somebody else's
 /// files. So the record is refused, naming the path, at both ends: no read
 /// hands one out and no write puts one down.
 ///
@@ -262,8 +262,8 @@ fn resolve_provenance(root: &Path, reading: &Path, provenance: &mut String) {
 /// states every position, and the provenance of every source declared
 /// inside the project, as an absolute path under the root that wrote it.
 /// Read as written those are the other checkout's: refresh reads the
-/// positions as the ones this scope owns and takes back what a new render
-/// no longer produces, out of that checkout, and every entry reads as
+/// positions as the ones this scope owns and takes back what a fresh render
+/// does not produce, out of that checkout, and every entry reads as
 /// rebound to a source that only moved because the checkout did.
 ///
 /// So they are not read as written. The reading root plus the remainder a

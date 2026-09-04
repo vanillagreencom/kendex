@@ -222,7 +222,7 @@ fn a_batch_naming_a_stranger_is_refused_whole() {
 /// The membership guarantee, under a batch. A set every one of whose
 /// members is also declared has only its members to say where it is held,
 /// and holding it is what keeps the pass from enumerating the set at its
-/// source's tip — where a package the catalog has added since would
+/// source's tip, where a package present only at that tip would
 /// install itself, with a `MemberOf` entry, during an update about
 /// something else.
 ///

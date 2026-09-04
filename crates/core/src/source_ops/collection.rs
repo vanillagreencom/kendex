@@ -31,10 +31,9 @@ pub struct CollectionStep {
 }
 
 impl CollectionStep {
-    /// Every member this step installs, with the kind it installs as. One
-    /// definition of the five lists, because a reader that walked them
-    /// itself would keep answering about four of them the day a sixth kind
-    /// is added.
+    /// Every member this step installs, with the kind it installs as. This
+    /// is the one definition of the member lists, so readers cannot omit a
+    /// kind by walking their own list.
     pub fn members(&self) -> impl Iterator<Item = (ItemKind, &String)> {
         [
             (ItemKind::Agent, &self.agents),

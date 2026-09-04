@@ -58,7 +58,7 @@ pub(super) fn registry() -> Vec<Box<dyn AuditRule>> {
 }
 
 /// Every rule's id. The one list of what the registry holds, so a test that
-/// has to cover all of them cannot quietly stop covering one: a rule added
+/// has to cover all of them cannot quietly stop covering one: a rule
 /// without a case in `every_rule_says_what_it_fired_on` fails that test
 /// rather than shipping an identity nothing checked.
 pub fn ids() -> Vec<&'static str> {

@@ -39,7 +39,7 @@ struct Carried {
     by: String,
     /// The edge each set adds, against the tools that set installs on.
     edges: Vec<(Reason, Vec<HarnessId>)>,
-    /// Decls from other bundles that disagree on the held revision — added
+    /// Decls from other bundles that disagree on the held revision — kept
     /// alongside the winner so the rev-conflict check fires.
     rivals: Vec<ItemDecl>,
 }
