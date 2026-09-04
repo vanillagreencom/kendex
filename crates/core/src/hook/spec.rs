@@ -84,10 +84,12 @@ impl HookSpec {
     /// Advisory prose for harnesses without native hook support (codex
     /// unmapped events, cursor rules).
     pub fn safety_prose(&self) -> String {
-        let mut prose = format!("**Safety: {}**\n", self.description);
+        // One paragraph per line with a blank line between paragraphs, the
+        // shape the markdown format lane holds every rendered file to.
+        let mut prose = format!("**Safety: {}**\n\n", self.description);
         if let Some(safety) = &self.safety {
             prose.push_str(safety);
-            prose.push('\n');
+            prose.push_str("\n\n");
         }
         let action = match self.event.as_str() {
             "PreToolUse" => "Before executing",

@@ -146,6 +146,21 @@ run_prose
   && ok "README, CHECKS, docs, CHANGELOG, references and a workflows-named file keep their history, with the ten scoped files still read" \
   || bad "out-of-scope files keep their history" "rc=$RC out=$OUT"
 
+echo "=== the markdown excludes list carves a vendored skill out ==="
+new_repo excluded
+put SKILL.md 'clean'
+put .agents/skills/vendored/SKILL.md 'Seeded 2026-08-12.'
+run_prose
+[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: .agents/skills/vendored/SKILL.md:1:"*) true ;; *) false ;; esac \
+  && ok "control: a vendored skill is scanned before it is excluded" || bad "control: vendored skill scanned" "rc=$RC out=$OUT"
+mkdir -p "$R/tools"
+printf '.agents/skills/vendored/**\tthird-party skill pinned by hash\n' >"$R/tools/md-excludes"
+git -C "$R" add tools/md-excludes
+run_prose
+[ "$RC" -eq 0 ] && ok "an excludes row carves the vendored skill out of the prose scan" \
+  || bad "excludes row honoured" "rc=$RC out=$OUT"
+git -C "$R" rm -qf tools/md-excludes
+
 echo "=== GROWTH_GUARDS_PROSE_PATHS REPLACES the list (and that is provable) ==="
 new_repo override
 put SKILL.md 'Seeded 2026-08-12.'
