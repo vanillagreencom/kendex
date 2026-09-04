@@ -1,0 +1,1 @@
+- The prose lane scans `docs/architecture/*.md` by default only once a repo sets `GROWTH_GUARDS_MD_SCOPE = "all"`, so a consumer's commits are not blocked before its docs rewrite.

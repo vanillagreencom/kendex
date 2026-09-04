@@ -40,8 +40,13 @@ source "$SCRIPT_DIR/lib/settings.sh"
 # because `*` crosses `/` but never stands in for the separator itself, and
 # the second spelling is also what reaches a rendered copy under `.claude/`
 # or `.agents/`. The architecture docs those files point at are loaded the
-# same way, so they hold the same rule.
-PATHS_DEFAULT="SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
+# same way, so they hold the same rule — once the repository says its
+# markdown is rewritten (GROWTH_GUARDS_MD_SCOPE=all, the switch the markdown
+# lanes read); before that a repository's architecture docs are what the
+# rewrite is for, and this lane has no staged scope to spare them.
+PATHS_CORE="SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md"
+PATHS_ARCH="docs/architecture/*.md"
+PATHS_DEFAULT="$PATHS_CORE $PATHS_ARCH"
 
 usage() {
   cat <<EOF
@@ -77,6 +82,12 @@ fi
 
 gg_repo_root_cd
 
+MD_SCOPE="$(gg_setting GROWTH_GUARDS_MD_SCOPE touched)" || exit 2
+case "$MD_SCOPE" in
+  all) ;;
+  touched) PATHS_DEFAULT="$PATHS_CORE" ;;
+  *) gg_config_error "GROWTH_GUARDS_MD_SCOPE must be 'touched' or 'all', got '$(gg_scrubbed "$MD_SCOPE")'" ;;
+esac
 PATHS_RAW="$(gg_setting GROWTH_GUARDS_PROSE_PATHS "$PATHS_DEFAULT")" || exit 2
 
 # The path list, its validation and its matcher are the family's, shared with
