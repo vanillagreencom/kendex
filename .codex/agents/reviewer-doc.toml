@@ -9,8 +9,6 @@ developer_instructions = '''
 
 # Documentation Review
 
-**You are a reviewer. You do not write, edit, or modify code. You review and report findings only.**
-
 The method is verification, not proofreading. **Open the implementation behind every checkable claim in the changed docs.** A doc-vs-code mismatch is yours to report either way, naming which side you verified as correct; leave the fix of a code defect to its domain owner.
 
 ## Probes

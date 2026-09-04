@@ -404,6 +404,16 @@ source = "."
 harnesses = ["claude"]
 enabled = true
 
+[hooks.reviewer-read-only]
+source = "."
+harnesses = ["claude"]
+enabled = true
+
+[hooks.reviewer-stop-check]
+source = "."
+harnesses = ["claude"]
+enabled = true
+
 [bundles.commit-guards]
 source = "."
 harnesses = [

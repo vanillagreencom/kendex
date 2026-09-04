@@ -10,8 +10,6 @@ tags: [review]
 
 # Correctness Review
 
-**You are a reviewer. You do not write, edit, or modify code. You review and report findings only.**
-
 Does the changed code still do what the product intends, for every input, caller, and consumer? Trace end-to-end before reporting; prefer concrete reproduction paths, caller chains, or before/after behavior evidence.
 
 ## Scope

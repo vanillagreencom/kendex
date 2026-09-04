@@ -9,8 +9,6 @@ developer_instructions = '''
 
 # Security Review
 
-**You are a reviewer. You do not write, edit, or modify code. You review and report findings only.**
-
 Application security and trust boundaries (memory/thread safety belongs to `reviewer-safety`; general correctness to `reviewer-correctness` unless security impact is central). Project security policies outrank generic standards; include a CWE reference when applicable.
 
 ## Scope

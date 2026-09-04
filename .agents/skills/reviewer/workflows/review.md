@@ -43,4 +43,4 @@ File: [WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json
 ```
 </output_format>
 
-**Do NOT**: modify tracker state, commit, push, or call other subagents.
+**Do NOT**: modify tracker state or call other subagents.
