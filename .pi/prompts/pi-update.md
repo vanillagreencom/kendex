@@ -4,30 +4,27 @@ description: Audit kendex Pi extensions against every Pi package changelog since
 Audit `pi-extensions/*` against **every Pi package changelog** for the releases published since this command last ran. Fetch the changelogs yourself — nothing is pasted. Compute the delta from the marker file, classify each new entry, apply the fixes that should ship, and leave the rest documented with reasoning.
 
 ## Intent
+
 Pi ships all its packages in lockstep under one monorepo version (e.g. `0.82.0`). Each release adds entries across several package changelogs. This command finds every release newer than the last one we audited, unions the changelog entries across all packages plus the curated release notes, and decides — per entry — whether our extensions must change.
 
 Do not invent work that isn't supported by a changelog entry; do not skip an entry that touches a surface we own. Earlier releases (at or below the marker version) are assumed already absorbed.
 
 ## Sources (fetch all — do not wait for a paste)
-Every per-package changelog in `earendil-works/pi` on `main`. Enumerate them
-each run instead of trusting a list:
+
+Every per-package changelog in `earendil-works/pi` on `main`. Enumerate them each run instead of trusting a list:
 
 ```bash
 gh api repos/earendil-works/pi/git/trees/main?recursive=1 --jq '.tree[].path | select(endswith("/CHANGELOG.md"))'
 ```
 
-The key for a source is its path with `packages/` and `/CHANGELOG.md`
-stripped. Fetch each with
-`gh api repos/earendil-works/pi/contents/<path> -H "Accept: application/vnd.github.raw"`.
-Record every key fetched in the marker's `sourcesCovered`; a key present
-last run and absent now is reported, never silently dropped. Curated
-cross-package notes (<https://pi.dev/news/releases>) are a secondary
-cross-check only.
+The key for a source is its path with `packages/` and `/CHANGELOG.md` stripped. Fetch each with `gh api repos/earendil-works/pi/contents/<path> -H "Accept: application/vnd.github.raw"`. Record every key fetched in the marker's `sourcesCovered`; a key present last run and absent now is reported, never silently dropped. Curated cross-package notes (<https://pi.dev/news/releases>) are a secondary cross-check only.
 
 Each changelog uses `## [x.y.z] - YYYY-MM-DD` headers with `### New Features / Added / Changed / Fixed / Removed` sub-sections. A leading `## [Unreleased]` block is not a release: scan it for a heads-up only, and never advance the marker to it.
 
 ## Delta since last run (marker file)
+
 State lives in `pi-extensions/pi-update.state.json` (committed source; not a discovered extension — it has no `package.json`, and it sits beside the existing `pi-extensions/package-policy.test.mjs`). It is kept outside `.pi/` on purpose: `.pi/` is broadly gitignored and a marker there cannot be reliably re-included. Schema:
+
 ```json
 {
   "lastVersion": "0.82.0",
@@ -44,15 +41,17 @@ State lives in `pi-extensions/pi-update.state.json` (committed source; not a dis
 4. **Update on success (even a no-op):** after the audit — whether or not any fix shipped — rewrite the marker with the newest processed version/date, a fresh `lastRun`, and the run-start `lastRunHead`, and commit it. The marker commit records "audited through vX.Y.Z" so the next run does not re-audit.
 
 ## Hard rules
+
 - Do not bump any extension package version unless the user explicitly asks. `kendex refresh` ships behavior changes without a version bump.
 - Do not bump the CLI version or cut a release; that is `/gh-release`.
 - Do not npm-publish; that is `/npm-deploy`.
 - Stage only intended files in each commit. Mention unrelated dirty files; stop and ask if anything looks unintentional.
-- After every committed extension change, run `kendex refresh` and report which packages were updated. The Pi extension development workflow in `AGENTS.md` is binding: commit first, then refresh.
+- After every committed extension change, run `kendex refresh` and report which packages were updated. The order is binding: commit first, then refresh, so the render never carries an uncommitted source.
 - Do not claim "fixed" or "shipped" until commit + refresh both completed and reported.
 - If you cannot live-test inside Pi, say so explicitly rather than asserting parity.
 
 ## Audit process
+
 1. **Enumerate extensions.** `ls pi-extensions/` — every subdir with a `package.json` is in scope.
 2. **Triage each new entry by package** (which of our extensions the source most likely touches):
    - `coding-agent` — tools, hooks, agent runtime, SDK fields, `settings.json`. Highest impact; touches nearly every extension (`pi-tool-renderer`, `pi-hooks`, `pi-nested-agents-md`, `pi-agents-tmux`, `pi-task-panel`, `pi-questions`, `pi-qol`, `pi-output-policy`, `pi-skills-manager`, `pi-session-manager`, `pi-web-tools`, `pi-caveman`, `pi-claude-bridge`, `pi-codex-minimal-tools`, `pi-prompt-stash`, `pi-extension-manager`).
@@ -72,9 +71,11 @@ State lives in `pi-extensions/pi-update.state.json` (committed source; not a dis
 5. **For Non-impact items:** one-line justification each — enough that re-reading the audit later confirms it was considered.
 
 ## Apply fixes
+
 For every "ship now" item:
+
 1. Edit the canonical extension files only — never touch `.pi/`, `.claude/`, `.opencode/`, `.codex/`, `.agents/`, `.cursor/` mirrors. (`pi-extensions/pi-update.state.json` is source state, not an extension — updating it is expected.)
-2. If a fix touches a behavior covered by `hooks/*.sh`, mirror it in `pi-extensions/pi-hooks/extensions/hooks.ts` in the same commit (parity rule in `AGENTS.md`).
+2. If a fix touches a behavior covered by `hooks/*.sh`, mirror it in `pi-extensions/pi-hooks/extensions/hooks.ts` in the same commit (the shell hook and its Pi mirror hold one rule).
 3. If a fix changes user-visible behavior or settings, update the matching README/SKILL.md/`kendex.toml`/`.env.local.example` payload in the same commit.
 4. Add or extend a unit test where the fix is testable in isolation (favor regression coverage on numeric helpers, parsers, off-by-one bugs).
 5. Run any package-local test suite the fix touches. Document the result (pass/fail, count). If peer-dep imports prevent local execution, link the bundled Pi modules from `/usr/lib/node_modules/pi/node_modules/@earendil-works/*` into a temporary `node_modules/@earendil-works/` (symlinks only), run the tests, then remove the temp `node_modules/` and any generated lockfile so the working tree stays clean.
@@ -82,7 +83,9 @@ For every "ship now" item:
 7. After commit(s), run `kendex refresh` and capture the "Pi package(s) updated" line.
 
 ## Final report
+
 Produce a structured summary:
+
 - **Releases covered:** `lastVersion` → newest processed version, with dates, and the source keys that carried new entries.
 - **Classified entries:** count per bucket (Required / Optional / Non-impact).
 - **Shipped:** commit hash + one-line subject for each commit; affected extensions; tests run with pass count.
@@ -93,6 +96,7 @@ Produce a structured summary:
 - **Working tree:** confirm `git status --short` is clean.
 
 ## Notes
+
 - The package changelogs release in lockstep under one monorepo version, so `lastVersion` tracks the whole release. If a package ever diverges, split the marker to a per-source `{ key: version }` map and gate each source independently.
 - Pi `pi update` only reconciles `git:` and `npm:` scheme entries in Pi's `settings.json`. Vstack-installed extensions live as path packages (`./packages/<name>`) so they are out of scope for Pi-side `pi update` git-ref reconcile changes; flag this explicitly when a changelog entry mentions `pi update`.
 - Changes to model/provider config (Bedrock, Copilot, OpenCode Zen routing, `compat.*` flags) do not touch our extension surface unless we override a provider — confirm by grepping for the affected provider id before classifying as Non-impact.

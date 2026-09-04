@@ -92,11 +92,10 @@ Arming and disarming apply to the whole repository. Disarm before removing the s
 | `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS` | *(empty)* | Globs whose change obliges a changelog entry, judged by `commit-msg`; empty switches the rule off. |
 | `GROWTH_GUARDS_PROSE_PATHS` | `SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md` | Space-separated globs naming the markdown the prose lane scans, matched against the full repo-relative path (`*` crosses `/`). |
 | `GROWTH_GUARDS_MD_PATHS` | `*.md` | Globs naming the markdown md-format and md-reflow take under `--all`. |
-| `GROWTH_GUARDS_MD_REFS_PATHS` | the prose list plus `docs/architecture/*.md` | Globs naming the markdown md-refs judges under `--all`. |
-| `GROWTH_GUARDS_MD_EXCLUDES` | `tools/md-excludes` | Exclusion list both markdown lanes and md-reflow honour, in every scope. |
+| `GROWTH_GUARDS_MD_REFS_PATHS` | the `GROWTH_GUARDS_PROSE_PATHS` default | Globs naming the markdown md-refs judges under `--all`. |
+| `GROWTH_GUARDS_MD_EXCLUDES` | `tools/md-excludes` | Exclusion list both markdown lanes honour in every scope, and md-reflow under `--staged` and `--all`. |
 | `GROWTH_GUARDS_MD_SCOPE` | `touched` | What the markdown lanes judge with neither `--staged` nor `--all`: `touched` is the staged files, and nothing when nothing is staged; `all` is every tracked matching file. |
 | `DECISIONS_DIR`, `DECISION_ID_PREFIX`, `DECISION_ID_WIDTH` | `docs/decisions`, `D`, `3` | The decider skill's scheme, read by md-refs to judge decision IDs; IDs are not judged where the directory is not tracked. |
-| `GROWTH_GUARDS_PROSE_PATHS` | `SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md` | Space-separated globs naming the markdown the prose lane scans, matched against the full repo-relative path (`*` crosses `/`). |
 | `GROWTH_GUARDS_COMMENT_PATHS` | the extensions in [CHECKS.md § comments](CHECKS.md#comments) | Space-separated globs naming the source files the comments lane scans, matched against the full repo-relative path (`*` crosses `/`); replaces the default. |
 | `GROWTH_GUARDS_COMMENT_EXCLUDES` | `tools/comments-excludes` | comments exclusion list (generated and vendored trees). `GH_ISSUE_PATTERN` (the github skill's key) is the issue-id shape; empty keeps `[A-Z]+-[0-9]+`. |
 | `GROWTH_GUARDS_COMMIT_TYPES` | `build chore ci docs feat fix perf refactor revert style test` | Accepted commit types. |

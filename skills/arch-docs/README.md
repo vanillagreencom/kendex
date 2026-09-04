@@ -15,5 +15,5 @@ The rules the convention states mechanically are enforced by sibling packages, n
 ## Install
 
 ```bash
-kendex add skill arch-docs
+kendex add --skill arch-docs
 ```

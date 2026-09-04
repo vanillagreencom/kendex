@@ -31,13 +31,13 @@ Instruction files and architecture docs hold what the code cannot show: invarian
 |---|---|---|
 | Root `AGENTS.md` | A map: what the repo is in two or three sentences, commands that are not discoverable, conventions that differ from tool defaults, one line per deeper doc saying when to read it. | Every session, every harness. |
 | `docs/architecture/overview.md` | The one idea, vocabulary, layer boundaries, invariants as one line each with a pointer to the test or check that enforces it, an index of topic files. | On demand. |
-| `docs/architecture/<topic>.md` | The same kinds of content for one subsystem, opening with a `Covers:` line naming the directories it describes. | On demand, and by the `doc-drift-check` hook when code under a covered directory changes. |
+| `docs/architecture/<topic>.md` | The same kinds of content for one subsystem, opening with a `Covers:` line naming the directories it describes. | On demand; the `doc-drift-check` hook names it when code under a covered directory changes without it. |
 | Nested `AGENTS.md` | Conventions and invariants local to that directory, small. | When an agent works in the directory. |
 | `docs/decisions/` | The why ledger, through the `decider` skill. Architecture docs cite a decision by ID and never restate it. | When opened. |
 
 Excluded everywhere: directory layouts and file-by-file descriptions, behaviour walkthroughs, command listings a `--help` already gives, CI topology, step-by-step flows, history (dates, issue numbers, past states), and any list a declaration file or a checker already holds. A claim that a checker enforces something names the checker. A rule a shipped kendex package states is never restated in the repo's own markdown; the repo installs the package and customises through `kendex.toml`.
 
-Codex reads only the root-to-cwd chain of `AGENTS.md` files, at launch, under a 32 KiB combined cap, so everything a Codex session must know stays in the root file; nested files hold what is local to a directory. Claude Code, Pi and Gemini reach nested files through shims kendex writes and verifies (`kendex apply`, `kendex refresh`, `kendex verify`): a sibling `CLAUDE.md` holding `@AGENTS.md`, the `pi-nested-agents-md` extension, and `context.fileName` in `.gemini/settings.json`. Shims are committed and never hand-written.
+Codex reads only the root-to-cwd chain of `AGENTS.md` files, at launch, under a 32 KiB combined cap, so everything a Codex session must know stays in the root file; nested files hold what is local to a directory. Claude Code and Gemini reach nested files through shims kendex writes and verifies (`kendex apply`, `kendex refresh`, `kendex verify`): a sibling `CLAUDE.md` holding `@AGENTS.md`, and `context.fileName` in `.gemini/settings.json`. Pi reaches them through the `pi-nested-agents-md` extension, declared in the manifest and installed by `kendex update-pi`. Shims are committed and never hand-written.
 
 ## Rules
 
