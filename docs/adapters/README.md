@@ -1,46 +1,43 @@
 # Adapter reference
 
-One page per harness, holding the durable facts about that tool's on-disk surfaces: where things live, what format they take, which operations kendex supports there, and why. These are reference docs — when a capability changes, the code and the page beside it change together.
+One page per harness, holding the on-disk facts an adapter maintainer needs: roots and project markers, the surface for each kind and its shape, the format the harness loads, and what kendex may do there. The boundaries and invariants shared by every adapter are [../architecture/harnesses.md](../architecture/harnesses.md); a page here states facts, and the code it names is where each fact is enforced.
 
-| Harness | Doc | Global root | Project root |
-|---|---|---|---|
-| Claude Code | [claude.md](claude.md) | `~/.claude` | `.claude/` |
-| Codex | [codex.md](codex.md) | `~/.codex` (`CODEX_HOME`) | `.codex/`, `.agents/` |
-| OpenCode | [opencode.md](opencode.md) | `~/.config/opencode` (`OPENCODE_CONFIG_DIR`) | `.opencode/` |
-| Cursor | [cursor.md](cursor.md) | `~/.cursor` | `.cursor/` |
-| Pi | [pi.md](pi.md) | `~/.pi/agent` (`PI_CODING_AGENT_DIR`) | `.pi/`, `.agents/` |
-| Gemini CLI | [gemini.md](gemini.md) | `~/.gemini` | `.gemini/` |
-| GitHub Copilot | [copilot.md](copilot.md) | `~/.copilot` (`COPILOT_HOME`) | `.github/` |
+| Harness | Page | Owner | Global root | Project root |
+|---|---|---|---|---|
+| Claude Code | [claude.md](claude.md) | `crates/core/src/harness/claude.rs` | `~/.claude` | `.claude/` |
+| Codex | [codex.md](codex.md) | `crates/core/src/harness/codex.rs` | `~/.codex` (`CODEX_HOME`) | `.codex/`, `.agents/` |
+| OpenCode | [opencode.md](opencode.md) | `crates/core/src/harness/opencode.rs` | `~/.config/opencode` (`OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`) | `.opencode/` |
+| Cursor | [cursor.md](cursor.md) | `crates/core/src/harness/cursor.rs` | `~/.cursor` | `.cursor/` |
+| Pi | [pi.md](pi.md) | `crates/core/src/harness/pi.rs` | `~/.pi/agent` (`PI_CODING_AGENT_DIR`) | `.pi/`, `.agents/` |
+| Gemini CLI | [gemini.md](gemini.md) | `crates/core/src/harness/gemini/mod.rs` | `~/.gemini` | `.gemini/` |
+| GitHub Copilot | [copilot.md](copilot.md) | `crates/core/src/harness/copilot/mod.rs` | `~/.copilot` (`COPILOT_HOME`) | `.github/` |
 
-The Gemini and Copilot pages rest on [gemini-copilot-matrix.md](gemini-copilot-matrix.md) — the observation matrix, discrepancy log, and risk notes the code cites as `matrix §N`.
+The Gemini and Copilot pages rest on [gemini-copilot-matrix.md](gemini-copilot-matrix.md), the observation record the code cites as `matrix §N`; it is kept as written.
 
-## The capability model
+## The capability table
 
-Everything a page says about *what kendex may do* comes from one table, `crates/core/src/harness/caps.rs`, read by core and by the UI. It has four axes.
+What kendex may do on a harness is one table, `crates/core/src/harness/caps.rs`, read by core and the UI; a page's Caps column is a reading of it, never a second source.
 
-**The op table** — `capabilities(harness, kind) -> KindCaps` gives `observe · adopt · install · toggle · remove · refresh`, each as a pair of booleans for project and global scope. Three constructors cover almost every row: `managed(scopes)` (all six), `observe_only(scopes)` (read, never write), `unsupported()` (the harness has no such surface, and kendex never shims one in). A row may also carry `installs_as`, naming the kind the harness actually stores the item as — the only one today is a Codex command, stored as a skill, because the vendor itself retired its prompts directory.
+- `capabilities(harness, kind)` gives `observe`, `adopt`, `install`, `toggle`, `remove` and `refresh`, each as project and global booleans, built from `managed`, `observe_only` and `unsupported`; a row may carry `installs_as`, the kind the harness stores the item as.
+- `format_caps(harness)` gives the name rule the loader enforces (`Any`, or `LowerKebab` with an optional length) and the MCP transports the harness speaks; no harness caps a SKILL.md body.
+- `enforcement` is carried by Hook rows alone: `Enforced` where the tool runs the registered command and honours its result, `Advisory` where the hook installs as text.
+- A hold a harness's own configuration places on an item (Copilot's `disabledSkills`) is not a column; the switch kendex owns works both ways because it is a rename, and the hold is reported per item where it is read.
 
-Two tests keep the table honest: the `observe` column must equal what the adapters declare as surfaces, and no mutation column may exceed the observation of whatever the mutation writes.
+## Surface shapes
 
-**Format facts** — `format_caps(harness) -> FormatCaps` owns the name rule the harness's loader enforces (`Any` or `LowerKebab { max_len }`) and the MCP transports it speaks. No harness caps a SKILL.md body. These live beside the op table rather than as literals inside renderers, so the renderers, the validators and the surface model all read one source.
+A surface is one of four shapes, declared per kind and scope by each adapter (`Surface`, `crates/core/src/harness/mod.rs`):
 
-**Enforcement** — only Hook rows carry anything but `NotApplicable`. `Enforced` means the tool runs the registered command and honors its result; `Advisory` means the constraint installs as text the model may ignore. `managed` never implied enforcement, so an advisory install says so in the plan preview, the report and the tool's card.
+- `FileDir`: one item per `<dir>/<name>.<ext>`, one folder level of namespacing, `.disabled` suffix for a disabled item.
+- `SubdirPerItem`: one item per subdirectory holding a marker file, almost always `SKILL.md`.
+- `Structured`: items are entries inside one structured file; a `Reader` names the on-disk format.
+- `StructuredDir`: every `*.<ext>` in a directory is a document holding entries; a document holding none reports none.
 
-**Toggle direction** — where a harness's own configuration holds an item down from a layer this scope cannot answer (Copilot's `disabledSkills`, which a repository may add to but never take from), the table still says kendex's own switch works both ways, because it does: the switch is a rename kendex can undo. The external hold is reported per item where it is read.
-
-## The surface model
-
-A surface is one of four shapes, declared by each adapter per kind and per scope (`Surface` in `crates/core/src/harness/mod.rs`):
-
-- `FileDir` — one item per file, `<dir>/<name>.<ext>`, with one folder level of namespacing. A `.disabled` suffix marks a disabled item.
-- `SubdirPerItem` — one item per subdirectory holding a marker file, almost always `SKILL.md`.
-- `Structured` — items are entries inside one structured file; a `Reader` variant names the exact on-disk format.
-- `StructuredDir` — every `*.<ext>` in a directory is a document of its own holding entries. Copilot's hook files work this way, so a document holding no entries reports no items rather than reading as a live installation.
-
-Several tools read the same physical directory. Codex and Pi both consume `.agents/skills` in a project; Gemini and Copilot read skill trees other tools own. Harnesses whose skill directory resolves to the same path form a **surface group** carrying exactly one rendered variant, validated against every member's loader. A variant whose bytes match the shared tree collapses onto it through a link; a divergent one gets its own tree, and the move runs both ways. A refusal is per surface, not per tool.
-
-A cross-read is never a second installation. An adapter claims only its own namespace — Copilot claims `.github/**` and `~/.copilot/**` and leaves `.claude/` and `.agents/` to the harnesses they are named for — and the reach is reported as an input to effective state.
+Every harness but Claude Code reads a project's `.agents/skills`, so one rendered tree serves them all and a per-harness directory stays on the surface list for what is already there and for a copy delivery. Claude's own `.claude/skills/<name>` collapses onto the shared tree through a relative link when the bytes match. An adapter claims only its own namespace; a cross-read is reported as an input to effective state, never as a second installation.
 
 ## Names
 
-A namespaced `<plugin>/<item>` name is the identity in the manifest, the lock and the UI. The `/` never reaches disk: the plugin and item halves are joined with `__` by default, or `-` where the name rule is lower-kebab and an underscore would make the item unloadable. The separator is derived from the name rule, in the same file (`namespace_separator`, `crates/core/src/harness/caps.rs`).
+A namespaced `<plugin>/<item>` name is the identity in the manifest, the lock and the UI. On disk the two halves are joined by `__`, or by `-` where the name rule is lower-kebab; `namespace_separator` in `crates/core/src/harness/caps.rs` derives it from the rule. The shared tree always uses `__`.
+
+## Instruction shims
+
+Beside every tracked `AGENTS.md`, kendex writes a `CLAUDE.md` holding `@AGENTS.md`, and for the gemini harness it names `AGENTS.md` in `context.fileName` of `.gemini/settings.json`; both are committed files, and a missing, stale or symlinked shim is drift (`crates/core/src/engine/instruction_shims.rs`).

@@ -4,7 +4,7 @@ argument-hint: "[patch|minor|major]"
 ---
 Cut a kendex release. Optional bump: `$ARGUMENTS` (default: patch; minor when `changelog.d/added/` holds a fragment or CHANGELOG's Unreleased section has an Added entry; major only when asked).
 
-`docs/RELEASING.md` is the procedure; this prompt only sequences it.
+The `app-deploy` skill is the procedure and `docs/RELEASING.md` holds what a release carries; this prompt only sequences them.
 
 ## Rules
 

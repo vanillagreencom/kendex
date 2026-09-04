@@ -1,165 +1,72 @@
 # kendex
 
-One place to manage AI coding-tool customizations, personally and per-project.
+One place to manage AI coding-tool customizations, personally and per project.
 
 <p><img src="docs/img/harness-claude.png" alt="Claude Code" height="20"> <img src="docs/img/harness-codex.png" alt="Codex" height="20"> <img src="docs/img/harness-opencode.png" alt="OpenCode" height="20"> <img src="docs/img/harness-cursor.png" alt="Cursor" height="20"> <img src="docs/img/harness-pi.png" alt="Pi" height="20"> <img src="docs/img/harness-gemini.png" alt="Gemini CLI" height="20"> <img src="docs/img/harness-copilot.png" alt="GitHub Copilot" height="20"></p>
 
-Manages agents, skills, hooks, commands, MCP servers, plugins, and Pi extensions. Desktop app and CLI over one engine, with a community at [kendex.ai](https://kendex.ai).
-
-Here for the packages? Browse the [marketplace of skills, agents, and Pi extensions](https://kendex.ai/m/vanillagreencom/kendex).
+kendex installs agents, skills, hooks, commands, MCP servers, plugins and Pi extensions from git repositories of packages into the folders each coding tool reads. A desktop app and the `kendex` command share one engine. The community marketplace is at [kendex.ai](https://kendex.ai), and this repository's own `agents/`, `skills/`, `hooks/` and `pi-extensions/` are the [default catalog](https://kendex.ai/m/vanillagreencom/kendex) every install starts with.
 
 ![kendex](docs/img/tour.gif)
 
-## Features
-
-- Install a skill, agent, or hook once and it lands in the right place for every tool.
-- Write an agent or skill as one file. kendex builds each tool's own format from it.
-- See every change before it happens, and undo it after.
-- Your edits and removals stay. kendex does not touch files it did not create.
-- Keep a personal setup and a separate setup per project.
-- Manage your existing skills, agents, hooks, or extensions inside kendex.
-- Subscribe to any git repository of skills and install from it.
-- Browse the community marketplace, and publish your own.
-- Install a shared collection from one link.
-- See what is out of date across every tool and fix it in one step.
-- Set skills per agent, add instructions, and change per-tool settings.
-- Update the app and CLI from inside kendex.
-
-## What's supported
-
-| | Claude Code | Codex | OpenCode | Cursor* | Pi | Gemini CLI | GitHub Copilot† |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| Agents | ● | ● | ● | ● | ● | ● | ● |
-| Skills | ● | ● | ● | ● | ● | ● | ● |
-| Hooks | ● | ● | ● | ● | ●§ | ● | ● |
-| Commands | ● | ○ | ○ | ○ | ○ | ● | — |
-| MCP servers | ● | ○ | ○ | ○ | — | ●‡ | ● |
-| Plugins | ◐ | ○ | ○ | ○ | — | ○ | ◐ |
-| Pi extensions | — | — | — | — | ● | — | — |
-
-● managed · ◐ enable/disable · ○ shown read-only · — no such surface.
-
-Notes:
-
-- *Cursor is project-only.
-- †Copilot has no file-backed slash commands, so kendex cannot add them.
-- †A project can switch a Copilot skill or server off, but cannot switch back on what personal Copilot settings hold down.
-- †Copilot reads Claude Code's skills; one file stays one installation, listed under the tool it belongs to.
-- ‡Gemini records MCP server state in one machine-wide file, so a project can declare a server but not switch it off there.
-- ‡Gemini extensions install globally and switch on through an undocumented file, so they stay read-only.
-- §kendex manages Pi hooks at both scopes like any other surface; the `pi-hooks` extension is what makes Pi run them, and without it registered they are only instructions Pi can ignore.
-- `●` marks what kendex manages, not what the tool executes: OpenCode has no hook runtime, and kendex writes Cursor a rule rather than a registration, so a hook installed on either is instructions rather than a gate — though a `PreToolUse` hook on `Bash` also has kendex set OpenCode's `permission.bash` to ask.
-
 ## Install
-
-The app and the CLI. Each command installs both.
 
 ```sh
 curl -fsSL https://kendex.ai/install.sh | sh
 ```
 
-On Linux this installs the app and the `kendex` command. On macOS it installs the command; get the app with the cask below.
+On Linux that installs the app and the command. On macOS it installs the command; the app is `brew install vanillagreencom/kendex/kendex`. Arch: `yay -S kendex-bin`. Windows: the installer at [kendex.ai/download](https://kendex.ai/download), which also lists the CLI-only packages.
 
-- macOS: `brew install vanillagreencom/kendex/kendex`
-- Arch: `yay -S kendex-bin`
-- Windows: download the installer from [kendex.ai/download](https://kendex.ai/download). The commit guards are shell scripts that kendex runs through `sh`, so `guard install`, `guard run` and `guard check` need the `sh` that Git for Windows ships — the same one git uses to run a hook there.
+Installing a package from a git repository needs git 2.41 or newer; kendex refuses on an older one, naming the version it found. A package on a local path needs no git. On Windows, `kendex guard` runs the commit guards through `sh`, so it needs the one Git for Windows ships.
 
-Installing a package from a git repository needs git 2.41 or newer; kendex refuses on anything older, naming the version it found and where that git keeps its programs. Ubuntu 22.04, Debian 12 and the command line tools of Xcode 16 and earlier ship older ones. A package on a local path needs no git at all.
+## What it does
 
-For the CLI on its own: `brew install vanillagreencom/kendex/kendex-cli`, `yay -S kendex`, or the curl command on macOS. Every install option is on [kendex.ai/download](https://kendex.ai/download).
+- Install a skill, agent or hook once and it lands where every tool reads it.
+- Write an agent or skill as one file; kendex renders each tool's own format from it.
+- See every change before it happens, and undo it after.
+- Keep a personal setup and a separate setup per project.
+- Bring the skills, agents, hooks and extensions you already have under management.
+- Subscribe to any git repository of packages and install from it; browse and publish on the marketplace; install a shared collection from one link.
+- See what is out of date across every tool and update in one step, the app and the command included.
+- Set skills per agent, add your own instructions to a package, and override an agent's per-tool settings.
 
-Working on kendex itself: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+## What's supported
+
+| | Claude Code | Codex | OpenCode | Cursor | Pi | Gemini CLI | GitHub Copilot |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| Agents | ● | ● | ● | ●¹ | ● | ● | ● |
+| Skills | ● | ● | ● | ●¹ | ● | ● | ● |
+| Hooks | ● | ● | ●² | ●¹ ² | ●³ | ● | ● |
+| Commands | ● | ●⁴ | ○ | ○ | ○ | ● | — |
+| MCP servers | ● | ○ | ○ | ○ | — | ●⁵ | ● |
+| Plugins | ◐ | ○ | ○ | ○ | — | ○ | ◐ |
+| Pi extensions | — | — | — | — | ● | — | — |
+
+● managed · ◐ enable and disable · ○ shown read-only · — no such surface.
+
+1. Cursor is managed in projects only.
+2. OpenCode has no hook runtime and Cursor takes a rule rather than a registration, so a hook on either is instructions the model may ignore; a `PreToolUse` hook on `Bash` also sets OpenCode's `permission.bash` to ask.
+3. Pi runs hooks through the `pi-hooks` extension; without it registered they are only instructions.
+4. Codex stores a command as a skill.
+5. Gemini records whether an MCP server is on in one machine-wide file, so a project can declare a server but not switch it off there.
+
+The full per-tool facts are in [docs/adapters](docs/adapters/README.md).
 
 ## How it works
 
-```
-  CATALOGS                YOUR CHOICES               YOUR TOOLS
-  git repos of agents,    kendex.toml: what you      each tool's own folders
-  skills, hooks, more     want, plus your tweaks     (.claude/ .codex/ .pi/ …)
-       │                        │                          ▲
-       ▼                        ▼                          │
-  ┌──────────┐  render   ┌───────────────┐    apply   ┌────┴─────┐
-  │  cached  │ ────────▶ │ finished files│ ─────────▶ │ links,   │
-  │  copy    │           │ (your tweaks  │  preview,  │ copies,  │
-  └──────────┘           │  baked in)    │  confirm,  │ config   │
-                         └───────────────┘  journaled │ entries  │
-                                                      └──────────┘
-```
+Four verbs, always in this order: **scan** what every tool has, read-only; **declare** what you want in one `kendex.toml` per place; **diff** wanted against actual, which is the Sync page and `kendex verify`; **apply** with a preview, transactionally. A package is fetched into a local cache, rendered with your own instructions and overrides baked in, written once into the project or your home, and linked into every tool that reads it. A lock file records what was installed, from where, and a content fingerprint.
 
-Four verbs, always in this order:
+What you can count on:
 
-1. **scan** what every tool has (read-only).
-2. **declare** what you want in one `kendex.toml` per place.
-3. **diff** wanted against actual (the Sync page).
-4. **apply** with a preview, transactionally.
+- Delete anything kendex generated and the next apply builds it back; what you asked for lives in `kendex.toml` and nowhere else.
+- A value you set is never overwritten and one you deleted is never put back, in `kendex.toml` and in the keys kendex does not own in a tool's own config.
+- A file kendex did not create is reported, never deleted. A link standing where an installed item belongs is a conflict for you to settle.
+- Every installed item remembers where it came from; a second source claiming the same name is refused, naming the source that holds it.
+- Switching an item off keeps it whole and every unrelated setting in that file stays as you left it.
+- A tool's config file symlinked in from your dotfiles is edited through the link, and the link stays.
+- Two applies to the same place never interleave.
 
-Installing the `github` skill into a project for Claude Code, Codex, and Pi:
+## Customise
 
-1. The catalog repo is fetched into a local cache.
-2. The skill is rendered: catalog content with your project's instructions baked in.
-3. The rendered copy lands once in the project (`.agents/skills/github`).
-4. Claude Code links to it; Codex and Pi read the same folder. One copy, no drift.
-5. A lock file records what was installed, from where, and a content fingerprint.
-
-Agents are generated per tool from one source file. MCP servers and hooks are edits inside a tool's own config that leave every other key untouched. Pi extensions are npm packages, copied and registered. Generated files are safe to regenerate; your intent lives only in `kendex.toml`.
-
-## Quick start
-
-```sh
-kendex owner/catalog-repo --agent rust --skill github   # declare + install
-kendex list                                             # what exists, everywhere
-kendex verify                                           # non-zero exit on drift
-kendex refresh                                          # regenerate from sources
-kendex adopt skill handmade                             # manage an existing item
-kendex apply --plan                                     # preview the full reconcile
-```
-
-## What you can count on
-
-- Delete anything kendex generated and the next apply builds it back. What you asked for is written down in `kendex.toml` and nowhere else.
-- A value you set is never overwritten, and one you deleted is never put back. That holds for `kendex.toml` and for the keys kendex does not own in a tool's own config.
-- A file kendex did not create is reported to you, never deleted. A link standing where an installed item belongs is a conflict for you to settle, not something kendex writes over.
-- Keep a tool's config file in your dotfiles and symlink it into place. kendex edits the real file through the link and leaves the link alone.
-- Every installed item remembers where it came from. A second source claiming the same name is refused, and the refusal names the source that holds it.
-- Switching an item off keeps it whole, so switching it back on gets you what you had. Every unrelated setting in that file stays as you left it.
-- Two applies to the same place never interleave. Start one while another is running there and it tells you kendex is busy.
-
-## CLI surface
-
-| Verb | Does |
-|---|---|
-| `add` (or bare `kendex <source>`) | declare and install agents/skills from a source |
-| `diff` | What changed between two versions of a package |
-| `show` | A package's files, one file, its readme, or its provenance |
-| `fork` | Keep an edited install as your own local package |
-| `pin` | Hold an item at a version, or let it follow its source again |
-| `versions` | The versions a package's source offers |
-| `updates` | Which packages have newer versions, and per-package notification |
-| `remove`, `adopt`, `apply` | undeclare (`--keep-declaration` uninstalls only), take ownership, reconcile |
-| `refresh` | re-resolve sources, regenerate every installation |
-| `verify` | drift check over installs and the instruction shims (`CLAUDE.md` beside each tracked `AGENTS.md`, Gemini's `context.fileName`); exit 1 on any failing row |
-| `list` (`ls`), `check` | observe everything; sanity report |
-| `drift-hook` | Install the session-start drift report hook for a scope |
-| `guard` | Commit-time quality guards and the git hooks that run them |
-| `source add/remove/enable/disable/refresh` | manage catalogs per scope |
-| `project add/remove/list/discover` | the app's project registry |
-| `index` | Emit the summary of a marketplace directory the community directory consumes (default: the current directory) |
-| `version-compare` | Where the first version stands against the second under SemVer precedence: newer, same, or older |
-| `update`, `update-pi`, `init` | self-update, Pi packages, catalog scaffolding |
-
-Scopes: `--scope project|global|all`, `-g` as a shortcut for global.
-
-## Marketplaces and the community
-
-| Verb | Does |
-|---|---|
-| `marketplace subscribe/unsubscribe/list/browse` | point a scope at a catalog repo; leave keeping or removing its packages |
-| `marketplace new/use/mine/import` | build a marketplace: scaffold, register an existing folder, copy packages you have |
-| `marketplace check` (or `check --catalog . --strict`) | validate every package the way installing validates it |
-| `marketplace submit [--dry-run/--status]` | preflight and submit to the kendex.ai directory |
-| `login` / `logout` | sign in to kendex.ai with a code and a browser tab; the credential lives in your system keychain |
-| `add https://kendex.ai/c/<id>` | install a shared collection in one preview |
-
-Make your own marketplace: `kendex marketplace new <name>` scaffolds the repository. The how-to and templates are in [docs/authoring](docs/authoring/README.md), and on [kendex.ai/docs/authoring](https://kendex.ai/docs/authoring).
-
-This repository is the default catalog. The `agents/`, `skills/`, `hooks/` and `pi-extensions/` directories at its root are what a fresh kendex install offers.
+- `kendex.toml`, one per project root and one for your home: every declaration and every tweak. `[skill-instructions]` appends your instructions to a skill, `[agent-additional-instructions]` to an agent; `[agent-frontmatter.<tool>.<agent>]` overrides an agent's per-tool frontmatter; `[agent-skills]` sets skills per agent; `[[custom-hooks]]` declares your own hook commands; `[install] method = "copy"` writes a tree per tool instead of one shared tree, which is the way out on Windows without Developer Mode.
+- `kendex.settings.toml`: the `[env]` keys the packages you install read, edited on the app's Settings page. Secrets go in `.env.local`, never there.
+- Make a marketplace: [docs/authoring](docs/authoring/README.md). Work on kendex itself: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
