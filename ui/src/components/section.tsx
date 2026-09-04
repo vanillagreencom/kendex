@@ -9,10 +9,10 @@
 // | Row label | 14px medium, full contrast | the thing itself |
 // | Description | 13px, muted | the sentence under a label |
 //
-// A section title used to be an 11px uppercase grey label, which put the
-// name of a group below its own contents in the visual order — the eye
-// found the rows first and the heading last. Headings now outrank what they
-// introduce, which is the whole job of a heading.
+// An 11px uppercase grey label for a section title would put the name of a
+// group below its own contents in the visual order — the eye finds the rows
+// first and the heading last. Headings outrank what they introduce, which
+// is the whole job of a heading.
 
 import type { ComponentProps, ReactNode } from "react";
 import { cn } from "@/lib/utils";

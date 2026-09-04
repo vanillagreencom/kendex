@@ -1,5 +1,5 @@
 //! An agent's skill list: what the declaration holds, merged with what
-//! upstream added since the last sync, and where that merge is written.
+//! upstream has gained since the last sync, and where that merge is written.
 
 use crate::error::Result;
 use crate::lock::entry_key;
@@ -11,7 +11,7 @@ use crate::source::list_items;
 
 use super::desired::ItemCtx;
 
-/// The agent's skill list, merging anything upstream added since the last
+/// The agent's skill list, merging anything upstream gained since the last
 /// sync back into the manifest so the declaration keeps saying what the
 /// agent actually renders with. Held (`PlanOptions::hold_upstream_skills`),
 /// nothing merges: the list is the declaration's, and `upstream_now`

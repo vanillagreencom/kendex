@@ -1,5 +1,5 @@
 //! Renaming a fork: the declaration, its provenance record, and its files in
-//! the local source move to the new name together.
+//! the local source move to the target name together.
 
 use std::path::{Path, PathBuf};
 
@@ -119,7 +119,7 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
     Plan::landed(scope.clone(), ops)
 }
 
-/// The writes that leave the renamed fork answering to `new`. Moving the
+/// The writes that leave the renamed fork answering to `target`. Moving the
 /// directory and the declaration is not the whole rename: every tool knows
 /// a skill or an agent by the name its frontmatter gives, and the loader
 /// validators refuse a rendering whose file calls it something other than
@@ -128,7 +128,7 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
 ///
 /// Each write binds to the bytes the rename just carried, at the path it
 /// carried them to. Ops run in order and each proves its own precondition
-/// immediately before it writes, so what stands at the new path when the
+/// immediately before it writes, so what stands at the target path when the
 /// write runs is exactly the file hashed here at the old one; binding to
 /// the old path would prove nothing, the rename having emptied it.
 ///

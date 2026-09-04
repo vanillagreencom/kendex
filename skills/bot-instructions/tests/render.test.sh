@@ -97,9 +97,9 @@ expect_green "--repo through a symlink to the repository resolves" check --repo 
 
 # The AGENTS.md splice is a read-modify-write, and it splices the bytes the
 # write phase itself read. An edit landing immediately BEFORE that read is in
-# those bytes, so the run must carry it through — a splice fed from an
-# earlier, separate read computes its new bytes from the copy taken before the
-# edit and drops it, reporting success. Run in-process against the real verb,
+# those bytes, so the run must carry it through — a splice fed from a
+# separate read made before the edit computes its output from that stale copy
+# and drops the edit, reporting success. Run in-process against the real verb,
 # because a shell cannot land a write inside another process's write phase on
 # demand.
 window="$(bi_rendered_repo write-window)" || exit 1

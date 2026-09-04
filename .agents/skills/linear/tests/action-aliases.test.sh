@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test: documented legacy action aliases should route to the
+# documented legacy action aliases should route to the
 # canonical relation/dependency list commands.
 
 set -euo pipefail

@@ -2,7 +2,7 @@ import { highlightCode, languageFromPath } from "@/lib/highlight";
 
 // highlight.js tokenizes `content` as plain text and re-escapes what it
 // emits — it never interprets the file's own bytes as markup — so this is
-// as safe as the plain <pre><code>{content}</code> it replaces.
+// as safe as a plain <pre><code>{content}</code>.
 export function CodeBlock({
   path,
   content,

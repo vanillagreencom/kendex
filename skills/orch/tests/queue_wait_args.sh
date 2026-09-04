@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Regression tests for queue-wait's argument validation and -h/--help
-# (kendex#972, kendex#981, KEN-556), split from queue_wait.sh at this seam
+# Tests for queue-wait's argument validation and -h/--help
+# split from queue_wait.sh at this seam
 # (the poll/verdict suites and their fixture stubs live there). Every case
 # terminates in the arg parser, before auth or any gh call; the recording
 # gh stub makes any gh invocation visible.
@@ -63,7 +63,7 @@ run_qw() {
 
 echo "=== queue-wait argument validation ==="
 
-# --- 15. argument validation: poll_interval > max_wait (kendex#972) ---------
+# --- 15. argument validation: poll_interval > max_wait ----------
 # The reported invocation shape: `queue-wait 481 1800` reads as poll=1800,
 # max=600 and can only ever poll once while overshooting the budget.
 err="$TMP_ROOT/e15"
@@ -82,15 +82,15 @@ err="$TMP_ROOT/e17"
 out="$(run_qw --help 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "--help exits 0" "$err"
 assert_contains "$out" "Usage: queue-wait" "--help prints usage" "$err"
-# The heredoc is the contract's sole home (KEN-556): pin tokens whose
-# semantics live nowhere else (KEN-555: tokens, never sentences).
+# The heredoc is the contract's sole home: pin tokens whose
+# semantics live nowhere else: tokens, never sentences).
 assert_contains "$out" "Exit codes:" "--help carries the exit-code table" "$err"
 assert_contains "$out" "not_queued" "--help carries the verdict vocabulary" "$err"
 assert_contains "$out" "QUEUE_WAIT_ARM_GRACE" "--help carries the environment knobs" "$err"
 
 # --- 17b. an unknown flag is rejected in the parser, never absorbed ---------
 # Without the -*) branch, --bogus-flag lands in a positional slot and dies
-# later blaming poll_interval (kendex#981, same shape as ci-wait).
+# later blaming poll_interval, same shape as ci-wait).
 err="$TMP_ROOT/e17b"
 run_qw 1 30 600 --bogus-flag >/dev/null 2>"$err" && rc=0 || rc=$?
 assert_eq "$rc" "2" "unknown flag exits 2" "$err"

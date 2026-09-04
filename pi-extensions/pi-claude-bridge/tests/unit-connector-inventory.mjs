@@ -1,5 +1,5 @@
 /**
- * Tests for deterministic connector enumeration (kendex#838).
+ * Tests for deterministic connector enumeration.
  * Pins: credential resolution across split files and per-account CLAUDE_CONFIG_DIR,
  * the POST shape the endpoint requires, and — most importantly — that every
  * non-success path reports failure rather than an empty-but-successful list.

@@ -39,7 +39,7 @@ classify_error_type() {
 
     # Each grep reads a here-string, never a pipe: `grep -q` exits on its first
     # match, and past the 64KB pipe buffer that SIGPIPEs the writer, which
-    # `pipefail` reports as a 141 a condition reads as no-match (KEN-1143).
+    # `pipefail` reports as a 141 a condition reads as no-match.
     # `--lines` caps lines and never bytes, so no default holds the scanned
     # window under the buffer.
     if grep -qi 'cargo fmt\|Diff in' <<<"$logs"; then
@@ -195,7 +195,7 @@ main() {
     if [ "$log_status" -ne 0 ]; then
         # Clipped in-shell, and clipped BEFORE flattening: `| head -c 300`
         # SIGPIPEs `tr` past the pipe buffer and this assignment has no guard,
-        # so errexit takes down the branch that reports the failure (KEN-1143);
+        # so errexit takes down the branch that reports the failure;
         # `${var//…}` over a whole multi-megabyte log is quadratic, so the 300
         # characters that survive are the ones that get replaced. Newline for
         # space is one character for one, so the order does not change the text.
@@ -222,7 +222,7 @@ main() {
         # The log reaches jq on stdin, never in argv: a single argument over
         # MAX_ARG_STRLEN (128KB) is refused by the kernel, and `--arg logs`
         # dropped the whole result — no error_type, no run_id, nothing on
-        # stdout — for the large logs this command exists to report (KEN-1143).
+        # stdout — for the large logs this command exists to report.
         # `-Rs` slurps that raw text into the one string `.`. jq reads to EOF,
         # so nothing here closes on a writer.
         printf '%s' "$logs" | jq -Rs \

@@ -271,7 +271,7 @@ export function registerToolBatch(pi: ExtensionAPI, agent: any, cwd: string): vo
 				};
 			}
 			const concurrency = Math.max(1, Math.min(calls.length, Math.floor(Number(params?.concurrency) || calls.length), maxCalls));
-			// kendex#96: per-call timeout so a single wedged inner tool can't block the
+			// per-call timeout so a single wedged inner tool can't block the
 			// aggregate forever. Default 120s, minimum 1s. Each inner gets its own
 			// AbortController so timeout aborts only that call (parent abort still
 			// propagates to all children via the addEventListener bridge).

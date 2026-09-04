@@ -424,7 +424,7 @@ gh_read() {
 
 # The gate's own posted status must never be review evidence: with
 # REVIEW_GATE_CONTEXT listed as a trusted status context (or naming the
-# outage attestation), a previously posted gate success would satisfy the
+# outage attestation), a existing gate success would satisfy the
 # predicate by itself — once green, the gate could never close again even
 # after the real review evidence is withdrawn. Fail configuration instead.
 GATE_CONTEXT_SELF="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 2
@@ -563,7 +563,7 @@ for required in GH_REPO PR_NUMBER HEAD_SHA; do
   fi
 done
 
-# The one-switch gate disable (owner decision 2026-08-08): mode "off" answers
+# The one-switch gate disable (owner-controlled): mode "off" answers
 # approved BEFORE any evidence read — no API calls, no evidence model, no
 # thread term. The detail line is an attestation, not a review claim: every
 # status the writer converges from this verdict says the gate is disabled.
@@ -617,7 +617,7 @@ reviews="$(jq -s 'if (length > 0) and all(type == "array")
 # Changes-requested reduces each reviewer over their DECISIVE states only
 # (APPROVED / CHANGES_REQUESTED, ordered by submitted_at) across the WHOLE
 # PR — never scoped to the head: GitHub keeps an objection standing when the
-# author pushes new commits, so a head-scoped reduction would let any
+# author pushes further commits, so a head-scoped reduction would let any
 # evidence source on the fresh head open the gate past a standing human
 # objection. A later APPROVED from the same reviewer (on any commit) clears
 # it, so a superseded CR can't pin the PR red forever — but a trailing
@@ -735,7 +735,7 @@ if [ -n "${REVIEW_GATE_STATUS_SNAPSHOT_FILE:-}" ]; then
   # per value, and every downstream per-value jq read would emit multi-line
   # counts ("0\n0") that fail the string comparisons in the verdict logic —
   # with no trusted contexts configured that fell through to an approval
-  # with zero evidence (kendex#1086). Slurping also makes a zero-value
+  # with zero evidence. Slurping also makes a zero-value
   # (empty or whitespace-only) file hit the error branch instead of jq's
   # silent empty-output success.
   #
@@ -788,7 +788,7 @@ else
   # on broken evidence. A broken read is exit 2, never an empty-evidence
   # verdict. `length > 0` guards the vacuous case: a whitespace-only
   # response passes the -z check yet slurps to [], where all(...) is
-  # trivially true (kendex#1086).
+  # trivially true.
   status_resp="$(jq -s 'if (length > 0) and all(type == "array")
                         then {statuses: (add // [])}
                         else error("not a statuses page") end' \
@@ -833,7 +833,7 @@ while IFS= read -r ctx; do
   # workflow with `checks: write` can publish a check run under ANY name
   # through the shared `github-actions` app — trusted reviewer bots publish
   # under their own app slug. A github-actions-published name-match is
-  # therefore never clean-analysis evidence (VST-19); rejecting it here is
+  # therefore never clean-analysis evidence; rejecting it here is
   # the mechanical half of the settings doc's "only names produced by
   # trusted bots" precondition.
   #
@@ -849,11 +849,11 @@ while IFS= read -r ctx; do
   # on both surfaces accepts that either surface's newest clean row
   # satisfies the term.
   #
-  # NEWEST RUN DECIDES, per name (kendex#1110) — the check-run mirror of the
+  # NEWEST RUN DECIDES, per name: the check-run mirror of the
   # status branch's newest-row projection below. Counting "any clean
   # success" would let a reviewer's older clean run outlive its own NEWER
   # in-progress/failed round on the same head (a bot starting a fresh
-  # analysis creates a new run; the default filter=latest projects per
+  # analysis creates a separate run; the default filter=latest projects per
   # check SUITE, and a fresh analysis is a fresh suite) and open the gate
   # on stale evidence. Ordering keys on the run id — assigned monotonically
   # at creation, present on every real API row, and immune to the
@@ -915,7 +915,7 @@ while IFS= read -r ctx; do
   # projection — filtering for "any success" would let an old success
   # outlive a NEWER pending/failure on the same context and open the gate
   # on stale evidence (a reviewer starting a fresh round posts pending over
-  # its own earlier success). Publisher-rejected rows are dropped BEFORE
+  # its own prior success). Publisher-rejected rows are dropped BEFORE
   # choosing the newest — a rejected creator is "not evidence either way",
   # and letting a minted row mask real rows would hand PR content a
   # close-the-gate lever it should not have (only toward closed, but still
@@ -930,7 +930,7 @@ while IFS= read -r ctx; do
   # itself be a clean success: a newest row that is pending/failure, a
   # skip-filtered success ("rate limited"), or — while the reject list is
   # configured — a login-less anomaly, is silence — exactly what the
-  # combined endpoint's projection used to yield.
+  # combined endpoint's projection would yield.
   check_status="$(jq --arg ctx "$ctx" --arg skips "$SKIP_PATTERNS" --arg reject "$PUBLISHER_REJECT" '
       ($skips | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $sk
       | ($reject | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $rj
@@ -1097,7 +1097,7 @@ if [ -n "$OUTAGE_CONTEXT" ]; then
   outage_reason="$(cut -f2- <<<"$outageok_out")"
 fi
 
-# Evidence carry-forward across carry-safe deltas (VST-57). Evidence is
+# Evidence carry-forward across carry-safe deltas. Evidence is
 # review at the EXACT head, so every push — including one that changes no
 # executable behavior (review-servicing prose, comment rewording) — discards
 # existing evidence and restarts the full bot-review wait. When NO evidence
@@ -1110,7 +1110,7 @@ fi
 #   comments  every changed file is a MODIFIED code file whose patch touches
 #             only full-line comments (per a conservative per-extension
 #             comment-token table; unknown extensions refuse)
-# and an IDENTICAL tree (rebase residue, empty commits — the VST-58 shape)
+# and an IDENTICAL tree (rebase residue or empty commits)
 # always carries once any class is enabled. This is NOT the retired
 # docs-only waiver: real evidence must exist, and only EXTENDS across a
 # delta review would not re-examine — code changes OUTSIDE the enabled
@@ -1165,7 +1165,7 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
     fi
     # THE FILES LIST RIDES PAGE ONE ONLY: compare pagination paginates the
     # COMMITS array — later pages are healthy objects that carry no files
-    # (demanding one there, as the first kendex#1097 fix did, made every
+    # (demanding one there would make every
     # multi-page compare exit 2 and hard-failed the predicate). So: page
     # one must be an object WITH a files array (a page-one without it is a
     # malformed or truncated response — defaulting to [] would carry an
@@ -1205,7 +1205,7 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
       echo "::warning::compare $base...$HEAD_SHA returned $cmp_file_count files (the API caps the list at 300): the delta cannot be proven complete; refusing carry-forward" >&2
       break
     fi
-    # Path exclusions (kendex#1115): a delta that classifies carry-safe can
+    # Path exclusions: a delta that classifies carry-safe can
     # still change agent behavior — AGENTS.md and other instruction markdown
     # are "docs" by extension yet are obeyed mechanically, so a push editing
     # them deserves fresh review. Any changed file matching an exclusion glob
@@ -1264,7 +1264,7 @@ EOF_EXCL_FILES
         break
       fi
     fi
-    # The vendored class (KEN-666): a delta file under a path the repository
+    # The vendored class: a delta file under a path the repository
     # committed in REVIEW_GATE_VENDORED_PATHS is kendex's own render, and
     # carries whatever its extension or status — under the trust model the
     # exclusions already rely on (the settings are read from the default
@@ -1290,7 +1290,7 @@ $delta_files
 EOF_VENDORED_FILES
     fi
     # Classify every changed file into an ENABLED class; anything else —
-    # code lines, added/removed/renamed files under "comments", binary or
+    # code lines, included/removed/renamed files under "comments", binary or
     # patch-less files, unknown extensions — refuses the whole carry.
     carry_ok="$(jq -r --arg classes "$CARRY_FORWARD" --arg vendored "$VENDORED_FILES" '
       ($classes | split("[;|]"; "") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $cl
@@ -1357,7 +1357,7 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 # A thread's disposition is its newest non-bot comment that is a Fixed in
 # <sha>/Declined: reply or carries a track-word; other comments never move
 # it. It is an untracked claim when it is not such a reply and names no
-# issue (ABC-123 or #123); resolving the thread does not clear it, since the
+# Linear or GitHub issue; resolving the thread does not clear it, since the
 # claimant is also the resolver. Bot comments are exempt (they quote each
 # other); a missing comments field reads as none. A thread past 50 comments
 # cannot be fully read in this page shape, so it fails closed as malformed.
@@ -1425,7 +1425,7 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 # last ended, at a run start, the set of positions a lookbehind allows.
 # The space padded onto the END is how a word in the last position meets that
 # one-character boundary; nothing is asked of the left, and the closing trim
-# takes both pads back. Anything added here has to compile under both
+# takes both pads back. Anything included here has to compile under both
 # engines, and tests/predicate-re2-engine.test.sh is what says so.
 #
 # Position is the only thing that separates a suite name from prose — both

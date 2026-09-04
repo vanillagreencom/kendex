@@ -75,7 +75,7 @@ printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\
 git -C "$R" add -A
 git -C "$R" commit -qm ci
 # Staged: a new suite AND the workflow edit that wires it. The worktree copy
-# of the workflow is then reverted, so a lane reading the worktree would call
+# of the workflow is then restored, so a lane reading the worktree would call
 # the staged suite unwired.
 printf '#!/usr/bin/env bash\nset -euo pipefail\necho new\n' >"$R/tests/new.test.sh"
 printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/new.test.sh\n' >"$R/.github/workflows/ci.yml"
@@ -118,7 +118,7 @@ if [ "$RC" -eq 0 ] && ! has "never-added.md"; then
 else
   bad "--staged sees only the index, so the untracked file is out of scope" "rc=$RC out=$OUT"
 fi
-# A new doc under a NEW directory is judged as it will be once committed:
+# A new doc under a new directory is judged as it will be once committed:
 # its citation of a missing sibling fires even though nothing tracked lives
 # in that directory yet.
 seed newdir

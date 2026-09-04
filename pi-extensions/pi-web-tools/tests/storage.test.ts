@@ -269,8 +269,8 @@ test("web_fetch emits a manifest for large multi-URL batches (6+ URLs) and stays
 test("kendex#185: manifest with extremely long URLs falls back to id-only rows so every content id stays resolvable", () => {
 	// 50 URLs each with a 1000-char URL string — the full manifest with
 	// URL + bytes annotations vastly exceeds the 25 KiB aggregate cap.
-	// Pre-fix the head + body + tail was sliced mid-text and the bottom
-	// content ids were lost. Post-fix the manifest collapses to id-only
+	// A head + body + tail that still exceeds the cap must collapse to id-only
+	// rows instead of slicing mid-text and losing the bottom
 	// rows so every id remains in the visible output.
 	const longUrlPrefix = `https://example.com/${"a".repeat(900)}/path`;
 	const stored = makeStored(50, 8000, longUrlPrefix);

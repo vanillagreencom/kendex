@@ -366,7 +366,7 @@ if [ "$RC" -eq 0 ] && has "classes ui/src/*.test.ts=100 $NOTHING"; then
 else
   bad "a wholly yielded entry says so on the verdict line" "rc=$RC out=$OUT"
 fi
-# Shape two: it matches a counted path, but an EARLIER repo entry already
+# Shape two: it matches a counted path, but a prior repo entry already
 # claimed it. Nothing was frozen and nothing yielded.
 run SIZE_RATCHET_DEFAULT_CLASSES= SIZE_RATCHET_FROZEN_CLASSES= 'SIZE_RATCHET_CLASSES=*.ts=400;ui/*.ts=250'
 if [ "$RC" -eq 1 ] && has "classes *.ts=400;ui/*.ts=250 $NOTHING"; then
@@ -419,7 +419,7 @@ if [ "$RC" -eq 1 ] && has "new offender: src/a.test.ts — 900 lines > threshold
 else
   bad "NEW on a frozen path names the bootstrap" "rc=$RC out=$OUT"
 fi
-# The control: writing that row turns the same path into the ADDED verdict,
+# The control: writing that row turns the same path into the added-row verdict,
 # which names the same remedy, and the declaration then carries the run.
 printf 'src/a.test.ts	900
 src/big.ts	500

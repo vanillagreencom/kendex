@@ -3,8 +3,8 @@
 //!
 //! Which tools an install lands on is a choice made here rather than taken
 //! from the scope's manifest — detection is re-read at install time, so a
-//! tool added since the scope was set up is offerable and one removed since
-//! does not read as present.
+//! tool that arrived after the scope was set up is offerable and one gone
+//! since does not read as present.
 
 use kendex_core::engine::ops::{self as engine_ops, AddRequest};
 use kendex_core::env::Env;
@@ -34,8 +34,8 @@ pub struct InstallTarget {
 /// kinds being installed at this scope — the same one the install itself
 /// refuses by, so the picker cannot offer a choice the install turns down —
 /// and which are on this machine. Detection is read now rather than taken
-/// from the scope's manifest: a tool added since the scope was set up has
-/// to be offerable, and one removed since must not read as present.
+/// from the scope's manifest: a tool that arrived after the scope was set
+/// up has to be offerable, and one gone since must not read as present.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn install_targets(scope: Scope, kinds: Vec<ItemKind>) -> Result<Vec<InstallTarget>, String> {
@@ -193,7 +193,7 @@ pub fn install(
     // Both reads are enrichment past the write, so both carry the account
     // on their failure rather than through it: the uninstallers have run
     // and the plan is committed, and a listing error over a repository
-    // that was just disarmed is this issue's own failure mode.
+    // that was just disarmed would otherwise hide what ran.
     let repo_effects = crate::repo_effects::after_writing(
         &undone,
         kendex_core::repo_effects::offers_for(env, &target, &report.repo_effects)

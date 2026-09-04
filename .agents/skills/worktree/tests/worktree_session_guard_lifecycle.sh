@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Lifecycle integration between `worktree` and `worktree-session-guard` (#877).
+# Lifecycle integration between `worktree` and `worktree-session-guard`.
 #
 # The shape under test is Option C from the issue: claiming is NOT automatic —
 # `create` never takes a lease — while the DESTRUCTIVE operations all respect
@@ -10,7 +10,7 @@
 #     collecting merged worktrees entirely unless `--stale` were passed. The
 #     alternative — releasing on a provably merged branch — guts the guarantee,
 #     because uncommitted work in a merged tree is exactly what gets lost.
-#   * The destructive side is where the incident actually was, so that is what
+#   * The destructive side is where the failure actually was, so that is what
 #     is wired: `cleanup` never collects a claimed tree, `remove` releases only
 #     its OWN lease, `create --reuse` refuses a foreign one and refreshes its
 #     own.
@@ -106,7 +106,7 @@ STUB
 # A merged worktree that `cleanup` would collect if nothing held it. The
 # branch carries a unique commit that reached main through a merge commit's
 # side parent: ancestry alone is not enough for collection — a zero-commit
-# branch sitting on the mainline is pending work and must survive (#923).
+# branch sitting on the mainline is pending work and must survive.
 add_merged_tree() {
   local root="$1" name="$2"
   git -C "$root/main" worktree add -q -b "$name" "$root/trees/$name" main
@@ -283,7 +283,7 @@ echo "=== cleanup skips zero-commit worktrees ==="
 
 # A freshly created branch has no commits of its own, so origin/main trivially
 # contains it and ancestry counts it as merged — which is how cleanup destroyed
-# a worktree seconds after `create`, inside the create→claim window (#923).
+# a worktree seconds after `create`, inside the create→claim window.
 ZC_ROOT="$TMP_ROOT/zero-commit"
 make_repo "$ZC_ROOT"
 add_merged_tree "$ZC_ROOT" "issue-merged"
@@ -348,7 +348,7 @@ echo "=== an unavailable guard degrades loudly ==="
 
 # A guard that cannot run must be announced, not silently skipped: the
 # lifecycle integrations returning 0 with no probe is how cleanup would
-# collect live worktrees again (#912). Once per invocation, not per worktree.
+# collect live worktrees again. Once per invocation, not per worktree.
 NOGUARD_ROOT="$TMP_ROOT/noguard"
 make_repo "$NOGUARD_ROOT"
 add_merged_tree "$NOGUARD_ROOT" "issue-ng1"
@@ -442,7 +442,7 @@ assert_eq "$(guard_status_code "$REUSE_WT" "$REUSE_ROOT/main")" "3" \
 echo "=== claim serializes on the guard mutex ==="
 
 # Two owners racing `claim` both reading "no lease", both writing, and both
-# exiting 0 is the incident this guard exists to stop, so claim's whole
+# exiting 0 is the failure this guard exists to stop, so claim's whole
 # read-decide-write runs under the common-dir mutex. Holding that lock the way
 # a mid-claim guard process holds it proves a second owner cannot get behind it.
 MUTEX_ROOT="$TMP_ROOT/mutex"
@@ -507,7 +507,7 @@ assert_contains "$("$GUARD_SCRIPT" sweep --repo "$REG_ROOT/main" --ttl-minutes 0
 echo "=== a newline in a worktree path ==="
 
 # A registration records its worktree path with a trailing newline, so reading
-# only the file's first line truncates a path that contains one (kendex#911).
+# only the file's first line truncates a path that contains one.
 NL_ROOT="$TMP_ROOT/newline"
 make_repo "$NL_ROOT"
 NL_WT="$NL_ROOT/trees/issue"$'\n'"nl"
@@ -522,7 +522,7 @@ assert_contains "$("$GUARD_SCRIPT" list --repo "$NL_ROOT/main")" \
 echo "=== the mkdir mutex serializes claims on a flock-less host ==="
 
 # Stock macOS ships no flock(1), so there the mkdir mutex is not a fallback:
-# it is the only thing serializing a claim, and a regression makes concurrent
+# it is the only thing serializing a claim, and a failure makes concurrent
 # claims fail open unnoticed. The probe PATH is derived from the real one
 # minus flock rather than naming the tools the guard uses, so it stays true as
 # the guard changes.

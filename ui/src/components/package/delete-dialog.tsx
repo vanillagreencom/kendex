@@ -23,7 +23,7 @@ import {
  *
  *  The read is taken on every open rather than once: `loaded` says a
  *  snapshot landed, never that it covers this installation, and the rows
- *  standing from an earlier open may answer for a different one. A
+ *  the last open left standing may answer for a different one. A
  *  marketplace named wrongly at the confirm step of a deletion is worse
  *  than none.
  *
@@ -81,8 +81,8 @@ function useReinstallNote(
  *
  *  Whether the page then leaves is the page's own judgment, not this
  *  dialog's: `package.tsx` navigates once the scan behind the removals
- *  lands and no longer knows the package. This dialog closes and says what
- *  a failed removal said, and nothing more. */
+ *  lands without the package. This dialog closes and says what a failed
+ *  removal said, and nothing more. */
 export function DeleteDialog({
   open,
   onOpenChange,

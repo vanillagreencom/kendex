@@ -76,7 +76,7 @@ fn refresh_regenerates_freely_but_asks_before_changing_what_is_installed() {
     let home = tmp.path();
     let project = project(&tmp);
 
-    // Same set, new content: nothing to ask about.
+    // Same set, changed content: nothing to ask about.
     skill(home, "github", "");
     fs::write(
         home.join("catalog/skills/github/SKILL.md"),
@@ -93,7 +93,7 @@ fn refresh_regenerates_freely_but_asks_before_changing_what_is_installed() {
             .contains("Newer body")
     );
 
-    // A new dependency upstream changes the set, so with no terminal to ask
+    // An extra dependency upstream changes the set, so with no terminal to ask
     // and no --yes, the refresh refuses before it writes.
     skill(home, "dev", "dependencies:\n  required: [github, linear]\n");
     let output = kendex(home, &project, &["refresh"]);

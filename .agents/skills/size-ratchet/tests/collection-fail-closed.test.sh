@@ -221,8 +221,7 @@ run_sr
   || bad "shim-free control: the absent offender is counted from its readable blob" "rc=$RC out=$OUT"
 
 echo "=== fail-closed: an unreadable index blob terminates, never skips ==="
-# Pre-fix behavior: git show's failure filed big.txt as absent and the gate
-# printed "OK — 1 tracked file(s) checked" at exit 0.
+# A failed `git show` must not classify big.txt as absent and print an OK verdict.
 run_sr_shimmed "$GIT_SHIM"
 [ "$RC" -eq 2 ] && case "$OUT" in *"cannot read index blob for tracked file 'big.txt'"*) true ;; *) false ;; esac \
   && ok "an unreadable blob is a collection error: exit 2, diagnostic names big.txt" \
@@ -274,8 +273,7 @@ run_sr
   || bad "shim-free control: no violations passes" "rc=$RC out=$OUT"
 
 echo "=== fail-closed: a broken violations count terminates, never passes ==="
-# Pre-fix behavior: `grep -c . || true` yielded an empty count, the numeric
-# test was false, and the gate printed OK at exit 0.
+# A failed count must not become an empty value that lets the gate print OK.
 run_sr_shimmed "$GREP_SHIM"
 [ "$RC" -eq 2 ] && case "$OUT" in *"could not count lines"*) true ;; *) false ;; esac \
   && ok "a grep execution failure on the count is a collection error, exit 2" \

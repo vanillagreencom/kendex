@@ -69,8 +69,8 @@ mod tests {
         ] {
             assert_eq!(ScopeFilter::parse(name).unwrap(), want);
         }
-        // The v1 aliases are gone: an unknown scope names the three that
-        // are left rather than resolving to one of them silently.
+        // Only the three names parse: an unknown scope names them rather
+        // than resolving to one of them silently.
         for gone in ["p", "local", "g", "user", "both", "*", "everywhere"] {
             assert!(ScopeFilter::parse(gone).is_err(), "{gone}");
         }

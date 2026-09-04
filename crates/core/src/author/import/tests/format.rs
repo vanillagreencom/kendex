@@ -5,8 +5,8 @@
 //! any other. A catalog keeps an agent at `agents/<name>.md`, the catalog
 //! check's structural pass never validates one, and every consumer's
 //! install refuses it — so a copy taken under the candidate's own name
-//! published breakage in silence, and one taken under a new name refused
-//! only at apply, with no way to finish the rename.
+//! would publish breakage in silence, and one taken under another name
+//! would refuse only at apply, with no way to finish the rename.
 
 use std::fs;
 
@@ -76,9 +76,9 @@ fn an_agent_in_another_format_is_not_offered_under_either_name() {
         find(&candidates, "drifter").origins
     );
 
-    // Both paths the issue names: under its own name, where the copy used
-    // to land TOML in a `.md` slot the catalog check calls clean, and
-    // under a new one, where the rename used to refuse at apply.
+    // Both paths: under its own name, where a copy would land TOML in a
+    // `.md` slot the catalog check calls clean, and under another one,
+    // where the rename would refuse at apply.
     for chosen in [
         selection("codexer", "codexer"),
         selection("codexer", "settled"),
@@ -253,9 +253,9 @@ fn an_agent_whose_bytes_are_not_text_is_not_offered() {
     assert!(!target.join("agents").exists());
 }
 
-/// The Own door, which is the migration path: a catalog a pre-fix kendex
-/// wrote already holds TOML at `agents/<name>.md`, and re-importing from
-/// it is how the breakage would reach a second package. Judged by the same
+/// A local catalog can already hold TOML at `agents/<name>.md`, and
+/// re-importing from it would carry the breakage into another package.
+/// Judged by the same
 /// rule as any other origin, because every read goes through `offered`.
 #[test]
 #[allow(clippy::unwrap_used)]

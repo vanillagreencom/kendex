@@ -115,7 +115,7 @@ beforeEach(() => {
   stub.audit = { auditedAt: null, read: READ_LANDED };
 });
 
-// `result` starting null and staying null used to leave every section on
+// `result` starting null and staying null must not leave every section on
 // its loading skeleton for the rest of the session: a read that came back
 // unable to answer is not a read still on its way.
 describe("Home when the first scan fails", () => {
@@ -172,8 +172,8 @@ describe("Home when a later scan fails", () => {
 });
 
 // Home derives its attention list from the updates store's rows; a failed
-// update check used to contribute silence, which reads as kendex having
-// looked and found nothing.
+// update check contributing silence would read as kendex having looked
+// and found nothing.
 describe("Home when the update check fails", () => {
   it("says updates couldn't be checked in the attention list", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
@@ -217,12 +217,12 @@ describe("Home when a place cannot be read at all", () => {
 });
 
 // auditedAt stays null forever after a failed startup audit; gating the
-// skeleton on it alone held the section in "still looking" for the session
-// and swallowed every other attention row.
+// skeleton on it alone would hold the section in "still looking" for the
+// session and swallow every other attention row.
 describe("Home when the audit fails", () => {
-  // The audit is the slowest read in the app and no longer holds this
+  // The audit is the slowest read in the app and does not hold this
   // section: every row bar the audit's own failure comes from the scan or
-  // the update check, so waiting on it hid rows that were ready.
+  // the update check, so waiting on it would hide rows that were ready.
   it("shows the section as soon as the scan answers, audit or no audit", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
     stub.updates = { read: readFailed("no network"), unreadable: [] };
@@ -275,8 +275,8 @@ describe("Home when the audit fails", () => {
 });
 
 // The tile opens the Library, whose table shows one row per package however
-// many harnesses carry it; counting installations here made the tile's
-// number exceed the total on the page it lands on.
+// many harnesses carry it; counting installations here would make the
+// tile's number exceed the total on the page it lands on.
 describe("the Installed tile", () => {
   it("counts packages the way the Library it opens does, not installations", () => {
     stub.scan = {
@@ -296,8 +296,8 @@ describe("the Installed tile", () => {
   });
 });
 
-// `marketplaceCount` used to read `rows.length` with no regard for how the
-// read went, presenting a failed read as a definite zero.
+// `marketplaceCount` reading `rows.length` with no regard for how the read
+// went would present a failed read as a definite zero.
 describe("the Marketplaces tile when its read is not current", () => {
   it("shows a dash and the failure note instead of a definite zero", () => {
     stub.scan = { result: scanned, error: null, scanning: false };

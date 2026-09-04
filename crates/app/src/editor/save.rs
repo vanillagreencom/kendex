@@ -166,7 +166,7 @@ fn write_customize(
     // rather than a copy to reload.
     let mut targets = Vec::new();
     // The manifest half. Without one, the scope is reconciled to the file
-    // as it sits and no manifest write is added.
+    // as it sits and the plan carries no manifest write.
     let edited = match draft {
         None => None,
         Some((draft, claimed)) => {

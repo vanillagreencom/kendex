@@ -22,7 +22,7 @@ use kendex_core::registry::{Fetch, FetchResponse};
 const FIXTURE: &str = include_str!("../fixtures/api-v1-me.json");
 
 /// The sign-in every fixture credential belongs to. A rotation carries it
-/// and only a new sign-in changes it, so a cache keyed to it survives one
+/// and only a different sign-in changes it, so a cache keyed to it survives one
 /// and not the other.
 const ADA: &str = "sign-in-ada";
 

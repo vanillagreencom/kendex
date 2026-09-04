@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for second-opinion artifact timestamp stamping (kendex#629).
+# Tests for second-opinion artifact timestamp stamping.
 #
 # The review artifact's `timestamp` field was serialized by the reviewing model,
 # so a stale or fabricated value could survive into the written JSON — and orch's
@@ -26,7 +26,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # --- Deterministic harness-free session -------------------------------------
 # A positively detected single-model harness now beats any contradicting
-# declaration, whatever its source — so a suite can no longer neutralize the
+# declaration, whatever its source — so a suite cannot neutralize the
 # harness that runs it by exporting an identity. It has to actually not have
 # one. This `ps` stand-in reports the first parent as init, so the ancestor walk
 # finds nothing and the declared identity below is what the script uses. It also
@@ -104,7 +104,7 @@ printf 'hello\n' > "$WORK/file.txt"
 git -C "$WORK" add file.txt
 git -C "$WORK" -c commit.gpgsign=false commit -q -m init
 # Uncommitted change so `--range HEAD` yields a non-empty diff — the scope
-# gate (kendex#652) refuses to run a review over an empty diff.
+# The scope gate refuses to run a review over an empty diff.
 printf 'world\n' >> "$WORK/file.txt"
 
 mkdir -p "$TMP_ROOT/out"

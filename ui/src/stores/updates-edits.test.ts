@@ -62,9 +62,9 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
 }
 
 /** `installAsNew` hands its refusal to a callback at the engine's answer,
- *  ahead of the reads behind it. A case about that answer reads the way it
- *  always did through this: it waits for the reads too, then reports what
- *  the callback was given. */
+ *  ahead of the reads behind it. A case about that answer reads through
+ *  this: it waits for the reads too, then reports what the callback was
+ *  given. */
 const refusalFrom = async (
   ...args: [UpdateRow, HarnessId, string]
 ): Promise<string | null | undefined> => {
@@ -89,8 +89,8 @@ describe("updates store: edited places", () => {
   });
 
   // A transport rejection never assigns work's error — only the applier
-  // sees it, and dropping its return let the fork and discard flows carry
-  // on to their success paths over an IPC failure.
+  // sees it, and dropping its return would let the fork and discard flows
+  // carry on to their success paths over an IPC failure.
   it("a fork whose transport failed does not proceed as success", async () => {
     useProblemsStore.setState({
       dialog: { open: false, title: "", steps: [], actions: [] },

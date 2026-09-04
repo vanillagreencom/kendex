@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for second-opinion review-prompt v2 (VST-124).
+# Tests for second-opinion review-prompt v2.
 #
 # GH-bot parity for local reviews requires two prompt-level changes:
 #   1. Holistic lens set: the old skip-list (documentation gaps, test-coverage
@@ -16,7 +16,7 @@
 # Also covers the reviewed_head stamp (per-push round accounting): the artifact
 # records which head commit the review covered.
 #
-# Drives a hermetic copy of the skill (kendex#580: the in-repo copy loads the
+# Drives a hermetic copy of the skill: the in-repo copy loads the
 # repository's committed kendex.settings.toml) with a fake target CLI that
 # captures the prompt it receives on stdin.
 
@@ -33,7 +33,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # --- Deterministic harness-free session -------------------------------------
 # A positively detected single-model harness now beats any contradicting
-# declaration, whatever its source — so a suite can no longer neutralize the
+# declaration, whatever its source — so a suite cannot neutralize the
 # harness that runs it by exporting an identity. It has to actually not have
 # one. This `ps` stand-in reports the first parent as init, so the ancestor walk
 # finds nothing and the declared identity below is what the script uses. It also
@@ -268,7 +268,7 @@ assert_contains "$PROMPT_CAPTURE" "RULE-DASHDIR" "AGENTS.md under a dash-leading
 echo "=== scenario 10: BSD utilities that reject '--' still build a full prompt ==="
 # The macOS/Bash 3.2 target ships BSD utilities, and they disagree with GNU
 # about the end-of-options marker — BSD sed reads `--` as a FILE operand, and
-# BSD dirname rejects it. An end-of-options sweep once added `--` to sed, which
+# BSD dirname rejects it. An end-of-options sweep can add `--` to sed, which
 # on that platform made the schema substitution fail; the failure is swallowed
 # by the command substitution, so the run still exits 0 having sent a prompt
 # with NO output schema at all. Shims stand in for the whole family, so

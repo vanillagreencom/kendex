@@ -135,7 +135,7 @@ pub(super) fn bundle_revisions(
 /// Which commit each source resolved to, for the lock to record. What
 /// earlier passes resolved is carried forward — a source that is offline
 /// today should not lose the commit it was reading yesterday — and a source
-/// the manifest no longer declares drops out.
+/// the manifest does not declare drops out.
 pub(super) fn source_revisions(
     manifest: &Manifest,
     lock: &Lock,

@@ -67,9 +67,8 @@ impl Pre {
     /// Whether this precondition binds to there being nothing, rather
     /// than to content.
     ///
-    /// Asked, never matched: a caller matching the variant itself stops
-    /// seeing the question the day a second spelling of "nothing is here"
-    /// appears.
+    /// Asked through this method so a caller cannot omit another spelling
+    /// of "nothing is here".
     pub fn binds_nothing(&self) -> bool {
         matches!(self, Pre::Absent)
     }

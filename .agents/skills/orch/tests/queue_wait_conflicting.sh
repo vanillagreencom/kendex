@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for queue-wait's `conflicting` verdict (KEN-837), split
+# Tests for queue-wait's `conflicting` verdict, split
 # from queue_wait.sh at the seam its fixture stub draws (the poll/verdict
 # suites and their sequenced stub live there).
 #
@@ -188,7 +188,7 @@ run_queue_wait() {
 echo "=== queue-wait conflicting verdict (KEN-837) ==="
 
 # --- 1. an armed, queued PR whose head conflicts with the base -------------
-# The shape that used to run out the clock as "still queued, still
+# The shape that would run out the clock as "still queued, still
 # progressing": nothing ejects it and nothing disarms it.
 new_case conflicting
 write_fixture state last "$(pr_state OPEN CONFLICTING)"

@@ -123,7 +123,7 @@ fn a_second_call_reads_the_verified_cache_and_a_moved_hash_rescores() {
     assert!(reread.from_cache);
     assert_eq!(reread.advisory.safety.score, 7);
 
-    // A content hash that no longer names the bytes — a parser change that
+    // A content hash that does not name the bytes — a parser change that
     // moves bytes between items — is a miss: re-scored, and the record
     // healed on disk.
     record["contentHash"] = "not-these-bytes".into();

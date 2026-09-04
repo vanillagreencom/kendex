@@ -19,11 +19,11 @@ use crate::model::{ItemKind, Scope};
 /// whatever content is present, hooks included. Explicitly asked-for
 /// removals are not gated here: the trash keeps what they take.
 pub fn edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
-    // A hook with no anchor used to sweep, read as the common stock of
-    // older installs that holding would exempt from cleanup for good. The
-    // version floor makes that reading false: a lock this build did not
-    // write is refused before any of this runs, so an absent anchor is no
-    // longer an old install. It is a current record this build cannot
+    // A hook with no anchor is not the common stock of older installs
+    // that holding would exempt from cleanup for good: a lock this build
+    // did not write is refused by the version floor before any of this
+    // runs, so an absent anchor is not an old install. It is a current
+    // record this build cannot
     // account for, and a removal that cannot prove the bytes are ours does
     // not take them. The rule is the anchor, not the harness.
     let holdable = matches!(

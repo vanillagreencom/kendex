@@ -72,8 +72,7 @@ const fromPackagePage = () =>
   });
 
 /** Every path that commits, and the command each one reaches. A write not
- *  in this list is a hole in the window below — which is what the Follow
- *  flip, the package page and keep-as-fork each were. */
+ *  in this list is a hole in the window below. */
 const WRITES = [
   [commands.updateSetIgnored, () => store().setIgnored(row(), true)],
   [commands.packageSetRev, () => store().setAutoUpdate(row(), false)],
@@ -124,10 +123,11 @@ describe("the check and the writes exclude each other", () => {
       const writing = start();
 
       expect(await checkRan()).toBe(false);
-      // And no second write. `busy` is a flag, and a second one releasing
-      // it the moment it finished — with the first still committing — is
-      // the window a count of who is still in used to cover. The next path
-      // round, so every one of them is the refuser once.
+      // And no second write. `busy` is a flag rather than a count, so a
+      // second write let in would release it the moment it finished — with
+      // the first still committing — and refusing the second is what closes
+      // that window. The next path round, so every one of them is the
+      // refuser once.
       const [next, second] = WRITES[(at + 1) % WRITES.length];
       vi.mocked(next).mockClear();
       await second();

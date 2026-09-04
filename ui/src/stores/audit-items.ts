@@ -76,10 +76,10 @@ export function auditRunner(
   /** Called at both ends of a command attempt, however it ends. An attempt
    *  is a span, not a moment: each of these runs a plan before a step that
    *  can still fail, so a command writes throughout its own run and one
-   *  that failed is not one that wrote nothing. Marking only the end left a
-   *  reading that landed mid-attempt looking current. Unconditional on
-   *  purpose: an attempt that turned out to write nothing costs one
-   *  re-read, which is the direction with nothing to lose. */
+   *  that failed is not one that wrote nothing. A mark at the end alone
+   *  would leave a reading that landed mid-attempt looking current.
+   *  Unconditional on purpose: an attempt that turned out to write nothing
+   *  costs one re-read, which is the direction with nothing to lose. */
   attempted: () => void,
 ): Run {
   // Every one of these reaches `repo_effects`, so the machine is read again
@@ -106,8 +106,9 @@ export function auditRunner(
         sayUndone(response.data.undone);
         return true;
       }
-      // The dialog and nowhere else: the audit store's `error` is gone, and
-      // the read behind this call answers for the machine either way.
+      // The dialog and nowhere else: the audit store's `read` is the
+      // audit's own signal, an item refusal is not a failed audit, and the
+      // read behind this call answers for the machine either way.
       const retry: ErrorAction = {
         label: "Retry",
         onClick: () => void run(action, opts),

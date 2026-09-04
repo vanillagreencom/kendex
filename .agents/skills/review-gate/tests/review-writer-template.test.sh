@@ -4,7 +4,7 @@
 #
 # What the template MEANS is read by one instrument: the relay step's SCRIPT,
 # extracted from the YAML and EXECUTED against a gh stub — not a pin, the real
-# shell (VST-210). Re-derivation of the rest of the template is deliberately
+# shell. Re-derivation of the rest of the template is deliberately
 # unasserted here. What the suite ALSO holds is template/adopted-copy
 # EQUALITY: the whole-file drift check (self-adoption only) and the relay
 # step's byte-identity across copies.
@@ -21,7 +21,7 @@
 # THE RELAY NEVER REDS is the invariant every relay case asserts, over both
 # the runner's shells AND over its own environment (each env: binding dropped
 # in turn) — a red or a hang on a PR-attached leg is a failed check on the PR
-# head, which is the whole defect VST-210 removes.
+# head, which would block the PR.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -227,7 +227,7 @@ relay_run() { # step-path, read_only, workflow_ref, gh_codes, event_name, header
     # THE INVARIANT, asserted on every case rather than per-case so a future
     # case cannot forget it: the relay never reds. It runs on PR-attached
     # legs, so a non-zero exit is a failed check on the PR head and pins
-    # mergeStateStatus at UNSTABLE — the defect VST-210 removes. Nothing this
+    # mergeStateStatus at UNSTABLE. Nothing this
     # step can hit justifies that, because it holds no statuses scope and can
     # only ever leave the gate stale, which the cron floor owns.
     # What was announced is what was slept, and the jitter stayed inside its
@@ -601,7 +601,7 @@ fi
 # files are the same artifact modulo the vendored script path, so any other
 # code difference is drift. In a CONSUMER one difference is legitimate and
 # indistinguishable from drift by diff: the check_run opt-in uncomments two
-# trigger lines, which a code diff reads as added code. A consumer's copy is
+# trigger lines, which a code diff reads as included code. A consumer's copy is
 # checked by validate-workflow.sh instead, which knows that opt-in. The
 # relay-step byte-identity check below stays unconditional — that script
 # carries no vendored path and no opt-in, so it is the same bytes in every

@@ -1,7 +1,7 @@
 //! Which items are installed because another item requires them.
 //!
-//! Dependencies are declared in an item's own frontmatter, the way v1
-//! declared them: a `dependencies` map holding `required` and `optional`
+//! Dependencies are declared in an item's own frontmatter: a `dependencies`
+//! map holding `required` and `optional`
 //! lists of bare names. Bare names are why the relation stays inside one
 //! catalog and one kind — a catalog author cannot know what a consumer
 //! calls their sources, so a name from somewhere else has no stable
@@ -69,7 +69,7 @@ pub(crate) fn declared_in(text: &str) -> Dependencies {
 }
 
 /// Everything the skills in this expansion require, walked until no
-/// installation learns a new reason. Cycles are fine — v1's `orch` and `dev`
+/// installation learns another reason. Cycles are fine — `orch` and `dev`
 /// require each other on purpose — because an item is only walked again when
 /// its reasons grow, and they cannot grow forever. Skills that came in as
 /// bundle members are walked like any other: what a skill needs does not
@@ -315,8 +315,8 @@ fn resolve(
 /// The index is built the first time a bare name misses an exact offer and
 /// kept for the rest of that catalog's read: the listing walks every plugin
 /// directory in the catalog, and walking it once per dependency name is
-/// quadratic in catalog size — KEN-1132 measured an 82.5x listing
-/// regression before this existed.
+/// quadratic in catalog size. The shared index keeps the cost to one catalog
+/// walk.
 #[derive(Default)]
 pub(crate) struct OfferedSkills {
     by_leaf: std::cell::OnceCell<BTreeMap<String, Vec<String>>>,

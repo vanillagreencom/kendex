@@ -173,7 +173,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Scaffold a new catalog item in the current directory
+    /// Scaffold a catalog item in the current directory
     Init {
         name: Option<String>,
         /// agent | skill | hook
@@ -259,11 +259,11 @@ pub fn main() -> ExitCode {
 /// Tell the desktop app which file the `kendex` command is, once, from
 /// whichever verb a person happens to run first.
 ///
-/// An install made before this record existed has none, so the app finds a
-/// command it cannot prove is kendex's, updates alone, and never gains a
-/// record of its own — the app writes one only where it already had one to
-/// match. Any run of this binary settles it, because the path a process is
-/// running from is the one thing no search by name can establish.
+/// An install with no record leaves the app finding a command it cannot
+/// prove is kendex's; it updates alone and never gains a record of its own,
+/// because the app writes one only where it already had one to match. Any
+/// run of this binary settles it, because the path a process is running
+/// from is the one thing no search by name can establish.
 ///
 /// Run before the arguments are parsed, because clap answers `--version`
 /// and `--help` itself and exits without reaching dispatch. Those are the

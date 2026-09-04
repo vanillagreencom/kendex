@@ -69,7 +69,7 @@ fn fork_keeps_the_name_pauses_updates_and_survives_refresh() {
 /// tree is the only thing holding the plan to the artifact it read. A
 /// trash op that answers "already gone, so we are done" belongs to a
 /// removal and nowhere else: here it would leave a fork made of bytes the
-/// disk no longer has.
+/// disk does not have.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edited_install_deleted_after_planning_fails_the_fork() {
@@ -285,7 +285,7 @@ fn a_fork_reached_through_a_link_refuses_the_rename() {
 
 /// The rename plan binds to the fork's files as they were when it was
 /// made. An edit landing on them after planning refuses the move — run
-/// anyway, the rename would carry the edit to the new name, where a later
+/// anyway, the rename would carry the edit to the target name, where a
 /// refusal's rollback could restore the old snapshot over it.
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -498,7 +498,7 @@ fn forking_the_users_own_content_is_refused() {
 }
 
 /// A fork in place captures under the name the item already has, so it
-/// never passes the vacancy check that asks a new name whether its slot is
+/// never passes the vacancy check that asks a proposed name whether its slot is
 /// reachable. `Pre::Absent` refuses a link wearing the item's own name, but
 /// a link one component above — the `skills` directory of the local source
 /// — leaves the slot absent past it, and the captured tree would land at

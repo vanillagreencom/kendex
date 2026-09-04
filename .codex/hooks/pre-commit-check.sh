@@ -96,8 +96,8 @@ for word in "${WORDS[@]}"; do
   if [ -z "$GIT" ]; then
     # A command name can carry a prefix that is not part of it: a path, an
     # opening backtick, or the `$(` a substitution glues to the word in front
-    # of it. Those are the two forms KEN-884 named, and dropping everything
-    # through the last of those characters is what makes both a `git` word.
+    # of it. Dropping everything through the last of those characters is what
+    # makes each a `git` word.
     # The commit word takes no such strip, so `--grep=commit` stays prose.
     [ "${word##*[\`\$\(/]}" = git ] && GIT=1
   elif [ -z "$COMMIT" ] && [ "$word" = commit ]; then

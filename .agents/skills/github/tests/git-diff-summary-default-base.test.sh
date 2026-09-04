@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# kendex#718: git-diff-summary without an explicit base must resolve against
+# git-diff-summary without an explicit base must resolve against
 # the fetched remote default branch (origin/main), not a stale local main.
-# A stale local main previously widened review scope to unrelated commits.
+# A stale local main must not widen review scope to unrelated commits.
 #
 # Run: bash skills/github/tests/git-diff-summary-default-base.test.sh
 set -euo pipefail
@@ -79,7 +79,7 @@ explicit_json="$($SUMMARY -C "$clone_repo" main)"
 assert_eq "explicit base argument still respected (stale local main widens scope)" \
     "3" "$(jq -r '.files_changed' <<<"$explicit_json")"
 
-# Without origin/HEAD (e.g. remote added manually), fall back to origin/main.
+# Without origin/HEAD, fall back to origin/main.
 git_c "$clone_repo" remote set-head origin --delete
 no_head_json="$($SUMMARY -C "$clone_repo")"
 assert_eq "origin/main candidate used when origin/HEAD is unset" \

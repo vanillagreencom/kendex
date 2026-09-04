@@ -241,8 +241,8 @@ mod tests {
     }
 
     /// One kind stored as another is the whole of the cross-kind mapping:
-    /// a renderer exists for exactly this pair, so a new entry in the
-    /// table must arrive with the renderer that serves it.
+    /// a renderer exists for exactly this pair, so any further entry in
+    /// the table must arrive with the renderer that serves it.
     #[test]
     fn the_only_kind_stored_as_another_is_a_codex_command() {
         for harness in HarnessId::ALL {

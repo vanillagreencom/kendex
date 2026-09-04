@@ -2,8 +2,8 @@
 // What an update started from the package page leaves behind. The Projects
 // tab's Update commits through the updates store, which refreshes the scan
 // and the audit and knows nothing about this page's own three reads: its
-// card was made to follow the landed commit in #1799, while the Overview and
-// the header went on describing the copy the update replaced.
+// card follows the landed commit, and the Overview and the header must not
+// go on describing the copy the update replaced.
 //
 // One control, and the fixture it needs. The page's other tests are
 // `package.test.tsx`'s.
@@ -331,7 +331,7 @@ describe("the package page after an update started from its Projects tab", () =>
 
   // An error is no account of what is on disk — `lib/rescan.ts`'s header
   // is the reasoning. Reading it as "nothing moved" is what leaves a page
-  // on screen the machine no longer matches.
+  // on screen the machine does not match.
   it("re-reads them when the write answers an error", async () => {
     const write = engineWrites();
     // The write landed and the command answered an error over it.
@@ -339,7 +339,7 @@ describe("the package page after an update started from its Projects tab", () =>
       write.landed = true;
       return Promise.resolve({ status: "error", error: "the apply stopped" });
     });
-    // Nothing confirmed a new commit, so the rows stay where they were.
+    // Nothing confirmed a later commit, so the rows stay where they were.
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
       data: {

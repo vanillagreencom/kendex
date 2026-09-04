@@ -87,8 +87,8 @@ fn direct(env: &Env, feed_url: &str, installed: &Path) -> CliResult {
     )
 }
 
-/// The defect this binding exists for: a binary the release key really
-/// signed, offered by a feed for a release it does not belong to. The
+/// The binding must reject a binary the release key really signed when a
+/// feed offers it for a release it does not belong to. The
 /// signature checks out — it is a genuine one over exactly these bytes —
 /// and the download is still refused, because this release published a
 /// different hash for its command.
@@ -114,7 +114,7 @@ fn a_signed_binary_from_another_release_is_refused() {
 }
 
 /// The two ways a feed can point this target at a release that is not the
-/// one it claims: serve another platform's digests, or an earlier
+/// one it claims: serve another platform's digests, or an older
 /// release's. Both documents are genuinely signed — nothing here can forge
 /// one — so what refuses them is the release and target they name.
 #[test]
@@ -313,7 +313,7 @@ fn missing_asset_message_never_calls_current_or_older_available() {
 /// by name cannot tell this binary from a wrapper someone wrote, and this
 /// run is the one place that knows. So it records the path, on a run that
 /// updated and on one that found nothing to do, which is how an install
-/// made before the record existed gains one.
+/// with no record gains one.
 #[test]
 fn an_update_records_the_command_it_is_running_as() {
     if no_record_on_this_runner() {
@@ -350,7 +350,7 @@ fn an_update_records_the_command_it_is_running_as() {
 }
 
 /// A run that finds nothing to do still records: the path is what an
-/// install made before this record existed is missing.
+/// install with no record is missing.
 #[test]
 fn a_run_with_nothing_to_do_still_records_the_command() {
     if no_record_on_this_runner() {

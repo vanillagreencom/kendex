@@ -18,9 +18,9 @@ use super::set_change::{KeptInstall, SetChange};
 pub enum DriftState {
     /// Declared but not on disk (or never recorded).
     Missing,
-    /// On disk but no longer matching declaration + source.
+    /// On disk but not matching declaration + source.
     Stale,
-    /// Recorded in the lock but no longer declared.
+    /// Recorded in the lock but not declared.
     Orphaned,
     /// On disk in a managed surface, but not ours.
     Unmanaged,
@@ -75,8 +75,8 @@ impl DriftCause {
     /// content is available" case, which a plan simply writes; all the rest
     /// need an explicit choice first, so until one is made the tree on disk
     /// is the tree that was there. Named as the question rather than as a
-    /// list, because a caller that lists them is a caller to revisit the day
-    /// a cause is added.
+    /// list, because a caller that lists them is a caller to revisit with
+    /// every further cause.
     pub fn holds_the_write(self) -> bool {
         !matches!(self, DriftCause::UpstreamChanged)
     }
@@ -198,7 +198,7 @@ pub type RemovalName = (Option<ItemKind>, String);
 #[derive(Debug, Clone, Default)]
 pub struct PlanOptions {
     /// Render each agent with the skills its declaration holds and keep the
-    /// lock's upstream record as it is, leaving what upstream added since
+    /// lock's upstream record as it is, leaving what upstream gained since
     /// for the next refresh to merge into kendex.toml. The removal that
     /// keeps declarations sets this: its plan writes no manifest, so a merge
     /// rendered and recorded here would never reach the file.
@@ -232,7 +232,7 @@ pub struct PlanOptions {
     /// replacement cannot settle — a foreign link, a source clash —
     /// refuses the whole run, naming each blocked item with the place that
     /// blocks it: half a take-over would leave the rest in the way with
-    /// the item no longer its tool's.
+    /// the item not its tool's any more.
     pub replace_unmanaged: bool,
     /// Replace them for these items only, by kind and name — leaving every
     /// other blocked declaration in the scope exactly as it is. The
@@ -269,7 +269,7 @@ pub struct PlanOptions {
     /// that moved after the copy was read is refused by the apply rather
     /// than overwritten. Binding by path after planning cannot do this: a
     /// scope still under the old product name retargets its writes to the
-    /// renamed file, and the path the caller knew no longer names them.
+    /// renamed file, and the path the caller knew does not name them.
     pub manifest_base: Option<crate::base::Base>,
     /// Settings values a person edited, and the base of the settings-file
     /// copy they were read from. A manifest save re-plans the scope and

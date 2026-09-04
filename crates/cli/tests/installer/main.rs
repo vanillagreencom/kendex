@@ -36,8 +36,8 @@ fn set_mode(path: &Path, mode: u32) {
     std::fs::set_permissions(path, permissions).expect("set mode");
 }
 
-/// Read off a file this process just made, rather than through a new
-/// dependency: its owner is whoever this process is.
+/// Read off a file this process just made, rather than through a crate:
+/// its owner is whoever this process is.
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 fn running_as_root() -> bool {
     let probe = tempfile::NamedTempFile::new().expect("probe file");
@@ -270,8 +270,8 @@ fn the_desktop_entry_names_the_window_class() {
 }
 
 /// Two files write a kendex desktop entry — this installer and the Arch
-/// package — and a launcher reads whichever one is installed, so a fix to
-/// one that misses the other fixes the app for half its Linux users.
+/// package — and a launcher reads whichever one is installed, so their
+/// window-class declarations must stay aligned.
 #[test]
 fn the_arch_package_installs_what_the_installer_installs() {
     let tmp = run_installer();

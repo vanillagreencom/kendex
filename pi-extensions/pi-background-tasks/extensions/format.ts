@@ -7,7 +7,7 @@ import { settingNumber } from "./settings.js";
 import type { BackgroundLogTruncation, BackgroundTaskSnapshot, BackgroundTaskStatus } from "./types.js";
 import { WAKE_MANIFEST_FIELD_MAX_CHARS, truncateForTranscript } from "./wake-events.js";
 
-// Transcript-facing summary-line cap (kendex#210 round 2). bg_task list /
+// Transcript-facing summary-line cap. bg_task list,
 // /bg list / dashboard summaries render task title/command directly into
 // transcript content; an agent-controlled 100KB title would otherwise leak
 // past pi-output-policy. Keep summaries terse (one-line use) so this is
@@ -25,7 +25,7 @@ export function taskLogTruncation(output: string, logFile: string, cwd?: string)
 	// Transcript-bounded path. The on-disk log is canonical; the truncation
 	// descriptor lives in tool-result details where an agent-controlled
 	// `cwd`/`taskDir` setting could otherwise pump a multi-KB string per
-	// inspection (kendex#210 round 2).
+	// inspection.
 	const safeLogFile = truncateForTranscript(logFile, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
 	return { direction: "tail", fullOutputPath: safeLogFile, shownChars: maxChars, totalChars: output.length, truncated: true };
 }
@@ -100,7 +100,7 @@ export function summarizeTaskStatus(
 ): string {
 	const base = baseStatusLabel(status, exitCode);
 	if (!terminationReason || terminationReason === "self-exit") return base;
-	// kendex#97: surface the non-self-exit cause inline so operators reading
+	// surface the non-self-exit cause inline so operators reading
 	// `bg_status list` can tell extension-stop from session-shutdown from a
 	// reconcile-on-restart coercion. Self-exit termination matches the
 	// historical wording so unchanged completed/failed rows stay terse.
@@ -127,9 +127,8 @@ export function taskDisplayName(task: Pick<BackgroundTaskSnapshot, "title" | "co
 }
 
 /**
- * Transcript-safe display name (kendex#210 round 2). Caller used to embed
- * the unbounded title/command into list / dashboard / spawn content strings
- * without truncation; a 100KB title would have leaked past pi-output-policy.
+ * Transcript-safe display name. An unbounded title or command in list,
+ * dashboard, or spawn content could bypass pi-output-policy.
  * Use this whenever the result ends up directly in a transcript-facing
  * `content` string.
  */

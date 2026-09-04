@@ -1,6 +1,6 @@
-//! What a generated command-as-skill is called, and what happens to the tree
-//! it used to occupy when that name changes. Two commands must never pick
-//! one name, and a tree an earlier install wrote is ours to clear away.
+//! What a generated command-as-skill is called, and what happens to its
+//! obsolete tree when that name changes. Two commands must never pick one
+//! name, and a tree recorded by an install is ours to clear away.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]

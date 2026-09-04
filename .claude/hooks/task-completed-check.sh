@@ -26,8 +26,8 @@ git_failed() { # SUBCOMMAND OUTPUT — an unreadable changed set is not an empty
 REPO_ROOT=$(git rev-parse --show-toplevel 2>&1) || git_failed 'rev-parse' "$REPO_ROOT"
 
 # What counts as changed: the worktree, the index, and untracked non-ignored
-# paths. Without that last set a task whose only work is a new file presents
-# an empty changed set and skips the gate entirely. `-z` asks for the paths
+# paths. Without that last set a task whose only work is an untracked file
+# presents an empty changed set and skips the gate entirely. `-z` asks for the paths
 # themselves. Line-oriented git output C-quotes a non-ASCII path, and a
 # quoted path ends in a quote rather than in .rs.
 CHANGED=$(git diff --name-only -z 2>&1 | tr '\0' '\n') || git_failed 'diff' "$CHANGED"

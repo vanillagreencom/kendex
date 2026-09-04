@@ -171,7 +171,7 @@ function manifestRow(item: StoredWebContent): string {
 	return `- ${item.id}  ${target} (${formatBytesApprox(item.content.length)}${extPart})`;
 }
 
-// kendex#185: id-only fallback row when the full manifest cannot fit the
+// id-only fallback row when the full manifest cannot fit the
 // aggregate cap. Caller can still resolve every content id via
 // get_web_content; URL/extension/byte metadata is dropped to keep rows
 // short and predictable in length.
@@ -355,12 +355,12 @@ export function buildWebFetchToolResult(
 		}
 		combined = head + body + tail;
 		if (combined.length > policy.aggregateCap) {
-			// kendex#185: head + body + tail still exceeds the cap, usually
+			// head + body + tail still exceeds the cap, usually
 			// because the manifest itself (head) has too many or too-long
 			// rows. Rebuild head with id-only rows so every content id stays
 			// resolvable through get_web_content, drop the preview body
 			// entirely, and replace it with a recovery note pointing at
-			// get_web_content. Pre-fix the original slice would silently
+			// get_web_content. A raw slice would silently
 			// drop manifest rows mid-text and leave the caller no way to
 			// recover the missing ids.
 			const idOnlyRows = stored.map(manifestIdOnlyRow).join("\n");
@@ -454,7 +454,7 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 			if (params.provider === "exa" && list.some(isLocalFileInput)) throw new Error("provider=exa can only fetch remote URLs. Use provider=auto or provider=http for local PDF paths.");
 			async function fetchWithExa(failedUrls: string[]) {
 				const client = createExaClient(settings.apiKeys.exa);
-				// kendex#185: Exa /contents stores excerpts (default 6k chars).
+				// Exa /contents stores excerpts (default 6k chars).
 				// Tag each stored item with the provider cap so `get_web_content`
 				// and operator-facing docs can distinguish Exa excerpts from
 				// direct/GitHub/PDF/HTTP full-text fetches.

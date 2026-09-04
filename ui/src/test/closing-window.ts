@@ -2,8 +2,8 @@
 // environment. It lives apart from `unhandled-rejections.ts` so it can be
 // asserted directly: the value that runs on every real test file is the
 // default, and no run that needs a window uses the default, so reaching it
-// through a nested run would take a fixture rejecting inside 50ms — the
-// racy shape the fixtures were widened away from.
+// through a nested run would take a fixture rejecting inside 50ms, which
+// races worker teardown.
 
 /** The window every test file gets unless a run asks for another. */
 export const DEFAULT_CLOSING_WINDOW_MS = 50;

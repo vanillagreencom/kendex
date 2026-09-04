@@ -15,7 +15,7 @@ export interface ResourceControlMetadata {
 /**
  * Why a tracked task left the running state. Surfaced on `bg_status list`,
  * the wake-event payload, and persisted snapshots so callers can distinguish
- * a clean self-exit from an external kill (kendex#97).
+ * a clean self-exit from an external kill.
  *
  * - `self-exit`: child closed on its own with no stop request. Reserved for
  *   `completed` (exitCode 0) and `failed` (non-zero exitCode). `external` is
@@ -30,7 +30,7 @@ export interface ResourceControlMetadata {
  *   (Pi may have crashed mid-bg_task, the OS may have OOM-killed the child,
  *   or an unrelated session-leader cascade may have hit it).
  * - `orphaned-pid-gone` / `orphaned-pid-reused`: the orphan-watcher polled
- *   a previously-restored alive task and found the pid gone or recycled.
+ *   a restored alive task and found the pid gone or recycled.
  */
 export type BackgroundTaskTerminationReason =
 	| "self-exit"
@@ -58,7 +58,7 @@ export type WakeDropReason =
 	| "voided"
 	| "wake-budget-exhausted";
 
-// Cumulative per-task accounting for the output-wake budget guard (kendex#210).
+// Cumulative per-task accounting for the output-wake budget guard.
 // Persisted so a session restart preserves the cap and a chatty task cannot
 // reset its inline-wake budget by triggering a Pi reload.
 export interface OutputWakeBudgetState {
@@ -101,7 +101,7 @@ export interface WakeDiagnostic {
 	timestamp: number;
 }
 
-// Identity tuple used to detect PID reuse on restore/poll. The kernel
+// Identity tuple that detects PID reuse on restore or poll. The kernel
 // may recycle a PID for an unrelated process; a bare `kill -0` check
 // would then return alive and the bg_task would be considered still
 // running against a foreign process. startToken is the process start
@@ -109,7 +109,7 @@ export interface WakeDiagnostic {
 // the absolute `ps -o lstart=` string everywhere else), which is
 // unique per PID lifetime. comm is the kernel comm name, a defensive
 // secondary signal. Mismatch on either field treats the original task
-// as gone (reviewer-error MAJOR, kendex#15 round 4).
+// as gone.
 export interface ProcessIdentity {
 	pid: number;
 	startToken: string;
@@ -149,7 +149,7 @@ export interface BackgroundTaskSnapshot {
 	lastOutputDedupeByKey?: Record<string, string>;
 	outputPatternMatched?: boolean;
 	/**
-	 * Per-task budget accounting for output wakes (kendex#210). Persists so a
+	 * Per-task budget accounting for output wakes. Persists so a
 	 * session restart preserves the cap. Absent on snapshots persisted by
 	 * versions <1.4.0 (this is the version that introduces the field) —
 	 * treated as a fresh budget on restore.
@@ -163,7 +163,7 @@ export interface BackgroundTaskSnapshot {
 	// running->stopped coercion at restore forces false, and an absent or
 	// false flag stays false.
 	exitNotified?: boolean;
-	// Pi session id at the time the snapshot was persisted. Used at restore
+	// Pi session id captured when the snapshot was persisted. Restore uses it
 	// to gate replay ("this snapshot belongs to a different session"
 	// short-circuits cross-session leaks) and to make audit logs explicit.
 	sessionId?: string;
@@ -172,14 +172,14 @@ export interface BackgroundTaskSnapshot {
 	// failed; the identity check degrades to PID-only for those.
 	procIdent?: ProcessIdentity;
 	/**
-	 * Optional metadata for opt-in resource controls (kendex#300). Systemd-run
+	 * Optional metadata for opt-in resource controls. Systemd-run
 	 * tasks persist their transient unit name so stop/timeout/shutdown paths can
 	 * stop the actual workload instead of only signaling the systemd-run wrapper.
 	 */
 	resourceControl?: ResourceControlMetadata;
 	/**
-	 * Why this task left the running state. Optional so snapshots persisted
-	 * before kendex#97 still load (treated as undefined). Set on every
+	 * Why this task left the running state. Undefined means no cause was
+	 * recorded. Set on every
 	 * terminal transition through finalizeTaskLifecycle, the
 	 * restoredTaskFromSnapshot coercion path, and the orphan watcher.
 	 */
@@ -206,7 +206,7 @@ export type ManagedTask = BackgroundTaskSnapshot & {
  * portion of full output. Both inline tails are bounded by
  * `outputAlertMaxChars` (default 2KB) and `details.task.logFile` always
  * points to the full on-disk log for recovery. Total `details` payload is
- * targeted to stay under 4KB to keep transcript growth bounded (kendex#210).
+ * targeted to stay under 4KB to keep transcript growth bounded.
  */
 export interface BackgroundTaskEventDetails {
 	deliveredAt: number;

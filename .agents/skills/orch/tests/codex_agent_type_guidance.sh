@@ -75,7 +75,7 @@ assert_contains "$codex_runtime_ref" "fallback-reason" "Codex reference names th
 assert_contains "$codex_runtime_ref" "never one" "Codex reference keeps a schema rejection out of the fallback path"
 
 # Every workflow that spawns reviewers or dev agents must route through the
-# adapter too — a workflow that hand-rolls the translation is the regression.
+# adapter too — a workflow that hand-rolls the translation is the failure.
 for doc in "$review_pr" "$review" "$codebase"; do
   assert_contains "$doc" "spawn-adapter spawn" "$(basename "$doc") routes reviewer spawns through the adapter"
 done

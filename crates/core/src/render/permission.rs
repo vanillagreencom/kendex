@@ -2,7 +2,7 @@
 //! every renderer. A surface that cannot express the intent renders the most
 //! restrictive expressible form or refuses with a finding — converting an
 //! allowlist to a deny-list by complement widens access the moment the tool
-//! grows a new built-in, so no renderer ever does that.
+//! grows another built-in, so no renderer ever does that.
 
 /// What the author said about tool access. `AllowOnly` with an empty allow
 /// list (a present but empty `tools:` key) and `Unspecified` (no key) are

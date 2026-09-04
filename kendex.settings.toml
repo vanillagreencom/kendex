@@ -248,9 +248,8 @@ GROWTH_GUARDS_MD_SCOPE = "all"
 GH_BOT_USERNAME = ""
 GH_VERIFY_CMD = ""
 
-# How a branch names its Linear issue, matched case-insensitively, so
-# ken-450 resolves to KEN-450. GitHub issues are deliberately absent: they
-# reach their issue through the PR's Closes line, not through the branch.
+# Branch names match Linear issue identifiers case-insensitively. GitHub
+# issues are deliberately absent because a PR's Closes line identifies them.
 GH_ISSUE_PATTERN = "ken-[0-9]+"
 
 LINEAR_FORMAT = "safe"

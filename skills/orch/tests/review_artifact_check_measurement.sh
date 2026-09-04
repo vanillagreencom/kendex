@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for review-artifact-check's MEASUREMENT gates: the
+# Tests for review-artifact-check's MEASUREMENT gates: the
 # zero_sample rejection, the perf-payload evidence requirement, the declared
 # instrument-failure escape, and the rule that a gate which could not run is
 # never read as a clean artifact. Split from review_artifact_check.sh, which
@@ -97,7 +97,7 @@ after=$((delegated_at + 100))
 later=$((delegated_at + 200))
 REAL_JQ="$(command -v jq)"
 
-# --- zero_sample: a measurement that produced no samples is not a result (kendex#1497) ---
+# --- zero_sample: a measurement that produced no samples is not a result ---
 # The gate reads the SAMPLE COUNT, never the result. A zero denominator or zero
 # thread count means the instrument selected nothing; a zero numerator means it
 # ran and everything failed, which is the finding SKILL.md calls "never a pass"
@@ -285,7 +285,7 @@ assert_eq "$(jq -r '.reason' <<<"$out")" "valid_undermeasured" "--file a declara
 assert_eq "$(jq -r '.measurement_failed' <<<"$out")" "cargo-mutants selected 0 mutants for the changed file" "--file the declaration is echoed on the result"
 
 # THE DEAD END: an artifact in the tolerant shape (no qa_metadata) that adopts
-# the escape must validate. Reaching the declaration used to require adding
+# the escape must validate. Reaching the declaration would require adding
 # qa_metadata, which then demanded the finding arrays.
 zs_tolerant="$worktree/tmp/review-external-20260815-080909.json"
 printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","measurement_failed":"cargo-mutants selected 0 mutants for this module"}' > "$zs_tolerant"
@@ -314,7 +314,7 @@ assert_eq "$(jq -r '.reason' <<<"$out")" "valid_undermeasured" "--file verdict p
 assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--file verdict pass plus a declaration is still an accepted artifact"
 
 # MUST-FAIL CONTROLS on the escape: it has to SAY something. Any single
-# character used to open it.
+# character would open it.
 # zs_decl_case <name> <json-literal> <expected-reason> [expected-detail-substring]
 # The detail argument is load-bearing: these rejection branches OVERLAP (a null
 # token is also short, bare punctuation is also short), so a verdict-only
@@ -401,7 +401,7 @@ set -e
 assert_eq "$(jq -r 'has("measurement_failed")' <<<"$out")" "false" "--file an undeclared artifact carries no measurement_failed field"
 
 # --- the escape suppresses ONE gate, wherever its block sits ---
-# The declaration's blast radius used to be a consequence of statement order:
+# The declaration's blast radius would be a consequence of statement order:
 # hoisting its block to the first step of artifact_content_gates turned
 # `review_performed: false` into an ACCEPTED valid_undermeasured, and a consumer
 # reading the contract saw a legitimate state rather than an anomaly. These
@@ -549,7 +549,7 @@ set -e
 assert_eq "$(jq -r '.path' <<<"$out")" "$torn_new" "with real jq the newest artifact is the answer"
 
 # --- the fail-closed default behind the rule ---
-# The predicate is what protects a gate added later that forgets to classify
+# The predicate is what protects a gate included later that forgets to classify
 # itself. Asserted directly, because every gate present does classify itself so
 # no artifact can reach the default. Run in a child shell: sourcing the lib here
 # would install its own EXIT trap over this suite's and leak $TMP_ROOT.
@@ -571,7 +571,7 @@ assert_substr "$disp_out" "unset=terminal" "an UNSET disposition is treated as t
 assert_substr "$disp_out" "typo_write=terminal" "an unrecognised disposition is treated as terminal"
 
 # --- glob mode: zero_sample is TERMINAL, not advisory ---
-# On a zero_sample hit the search used to record the rejection and keep walking,
+# On a zero_sample hit the search would record the rejection and keep walking,
 # so any older-but-fresh sibling was returned ok=true — and the reviewer's own
 # prescribed self-check uses boundary 0, which makes every prior artifact fresh.
 zs_glob_ok="$worktree/tmp/review-reviewer-zs-20260815-100000.json"

@@ -2,9 +2,7 @@
 # The one markdown reader the doc lints share. It lives under orch because
 # orch's lints are its callers; a suite in any skill may source it by path.
 #
-# Before this file every lint carried its own HTML-comment stripper, heading
-# slicer and planted-control scaffolding, and each grew to pin the sentences of
-# a workflow section. `review-bots.md` bans sentence-pinning lints on markdown:
+# `review-bots.md` bans sentence-pinning lints on markdown:
 # an editorial rephrase must not redden a suite while the contract holds. What
 # a doc lint may pin is an IDENTIFIER — a heading, a state field, an inline
 # code literal, a setting name — and the placement of one identifier relative
@@ -48,7 +46,7 @@
 # that removes MD_TMP, and `trap ... EXIT` replaces rather than adds, so a
 # suite setting its own leaks a mktemp directory per run — no symptom but
 # growth under TMPDIR. The idiom is common in this directory, which makes it
-# the shape a new lint would copy from its neighbours; see for yourself with
+# the shape a lint written here would copy from its neighbours; see with
 # `grep -l 'trap .* EXIT' skills/orch/tests/*.sh`. Put scratch under MD_TMP and
 # let this trap clean it up.
 #
@@ -57,7 +55,7 @@
 # HTML-comment spans ONLY outside a fence. Three consequences the lints depend
 # on. A heading-shaped line inside a fence is not a heading, so the summary
 # templates the orch workflows embed (`## Recommendations Processed` at column
-# zero, `# Linear` as a shell comment) no longer truncate the section around
+# zero, `# Linear` as a shell comment) do not truncate the section around
 # them. A `<!--` inside a fence is literal text, so `printf '<!--'` cannot
 # blank every line after it. And a rule commented out inside its own section,
 # or by a `<!--` opened above the heading, reads as absent.
@@ -101,8 +99,8 @@
 #   time (for f in skills/orch/tests/*lint*.test.sh; do bash "$f"; done)
 #   grep -cE '^(rule|rule_fenced) ' skills/orch/tests/*lint*.test.sh
 #
-# The shape that run showed: doubling the rules costs roughly four times the
-# time, while every orch lint suite together still finishes in a few seconds,
+# Doubling the rules costs roughly four times the time, while every orch lint
+# suite together finishes in a few seconds,
 # well inside the orch shard's timeout — `timeout-minutes` on the
 # skill-suites-shard job in `.github/workflows/skill-tests.yml`, which is where
 # to read it rather than here. What the law means for an author is that a suite
@@ -111,11 +109,10 @@
 #
 # One optimization is applied, above: the held-set pre-check is loop-invariant,
 # so computing it once takes the control pass from 2N^2 reads to N^2 + N. The
-# commands above are what measure what that is worth on a given machine. What
-# was measured and declined is a different set — per-path memoization of the
-# reader, a pre-stripped control scratch, and a file-grouped loop, each at 20
-# percent or worse against the orch shard's budget, which is what the redesign
-# they pointed at was declined against.
+# commands above are what measure what that is worth on a given machine.
+# Per-path memoization of the reader, a pre-stripped control scratch, and a
+# file-grouped loop each measure at 20 percent or worse against the orch
+# shard's budget, which does not pay for the redesign they point at.
 
 MD_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TESTS_DIR="$(cd "$MD_LIB_DIR/.." && pwd)"

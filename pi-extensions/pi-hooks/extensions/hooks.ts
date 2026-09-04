@@ -202,7 +202,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 			? `pi-hooks: clippy reported ${outcome.lines.length} workspace error(s) at turn end:\n${outcome.lines.slice(0, 5).join("\n")}`
 			: `pi-hooks: end-of-turn clippy proved nothing about the tree: ${outcome.reason}.`;
 
-		// Pi discards a turn_end handler's return value, and since pi#8022 a
+		// Pi discards a turn_end handler's return value. A
 		// `triggerTurn: false` message is recorded without steering, which a
 		// headless run that is ending never reads. `triggerTurn: true` steers
 		// the active run, so the loop drains it after this event and the agent

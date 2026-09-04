@@ -223,11 +223,11 @@ pub struct Changed {
 /// opens each record, and with every field NUL-terminated the opening
 /// shows up as `\0\0`. No path is empty and none may contain a NUL, so a
 /// catalog cannot write a name that opens a record. A printable or
-/// control-character delimiter can be: a file named
-/// `x<0x1e>2099-01-01T00:00:00+00:00` forged a whole record under the
-/// previous `%x1e` framing, dating a sibling package to 2099 and pinning
-/// it to the top of a newest-first sort — a freshness signal beside the
-/// safety dot in an install decision. The catalog owns its own filenames.
+/// control-character delimiter can be: under a `%x1e` framing, a file
+/// whose name is `x<0x1e>` followed by a year-2099 timestamp forges a
+/// whole record, dating a sibling package to 2099 and pinning it to the
+/// top of a newest-first sort — a freshness signal beside the safety dot
+/// in an install decision. The catalog owns its own filenames.
 pub fn last_changed(
     mirror: &Path,
     tip: &str,

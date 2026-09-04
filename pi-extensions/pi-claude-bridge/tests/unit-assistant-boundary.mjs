@@ -179,7 +179,7 @@ describe("assistant tool-use boundary fallback", () => {
 		// Ids are recorded (claims and result matching need them), but the content
 		// array is NOT appended to: after endToolUseTurn it is the message Pi
 		// already holds by reference, and a push would land a call in a delivered
-		// message behind Pi's back (kendex#1469). The unforwarded call reaches Pi
+		// message behind Pi's back. The unforwarded call reaches Pi
 		// through its next-turn replay instead.
 		assert.equal(c.turnBlocks.length, 1);
 		assert.equal(c.turnBlocks[0].name, "bash");
@@ -276,8 +276,8 @@ describe("no-stream-events fallback: same-message re-yields", () => {
 
 	it("renders a re-yielded identical text block only once", () => {
 		// The SDK yields the SAME assistant message more than once (partial +
-		// completed copies share one id). A rate-limited turn used to print
-		// "You've hit your weekly limit" twice through this path.
+		// completed copies share one id). A rate-limited turn must print its
+		// warning only once through this path.
 		const c = ctx();
 		c.resetTurnState(model);
 		const events = installFakeStream();
@@ -312,8 +312,8 @@ describe("no-stream-events fallback: same-message re-yields", () => {
 
 	it("renders identical text only once even when the yields carry different ids", () => {
 		// A rejected turn's synthesized error message arrives as multiple yields
-		// whose ids differ or are absent — measured 2026-07-28: one pi message
-		// carried two byte-identical "You've hit your weekly limit" blocks.
+		// whose ids differ or are absent. Identical error blocks must still
+		// collapse into one Pi message.
 		const c = ctx();
 		c.resetTurnState(model);
 		const events = installFakeStream();

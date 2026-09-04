@@ -3,7 +3,7 @@
 //!
 //! Seeding ([`crate::settings_seed`]) writes whole entries into this file
 //! and never touches a value line. This is the other half: reading what a
-//! value currently is, and writing a new one over exactly the quoted span
+//! value currently is, and writing another over exactly the quoted span
 //! it occupies — so the comment beside it, the file's line terminators,
 //! and every unrelated line come through untouched.
 //!

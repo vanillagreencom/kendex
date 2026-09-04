@@ -23,13 +23,14 @@ pub fn updates_overview() -> Result<updates::UpdatesReport, String> {
 /// The standing across the scopes given, with a scope kendex cannot read
 /// carried in `unreadable` rather than failing the whole query.
 ///
-/// A lock or manifest this build refuses belongs to one place. Bubbling
-/// it up left the page with no rows at all and the sidebar with a bare "?"
-/// while every other place's standing was known, so the scope is carried
-/// as data instead, the way [`crate::audit::AuditView`] carries its own.
+/// A lock or manifest this build refuses belongs to one place. Bubbled
+/// up, it would leave the page with no rows at all and the sidebar with a
+/// bare "?" while every other place's standing is known, so the scope is
+/// carried as data instead, the way [`crate::audit::AuditView`] carries
+/// its own.
 /// Only as far as the message, though: an `AuditView` also carries a typed
 /// [`crate::audit::ScopeErrorKind`], and a surface wanting to word a
-/// corrupt lock differently from a too-new one reads that on the Problems
+/// corrupt lock differently from one whose schema is too recent reads that on the Problems
 /// page rather than parsing the prose here.
 pub fn overview(env: &Env, scopes: &[Scope]) -> updates::UpdatesReport {
     let mut reports = Vec::new();
@@ -140,10 +141,10 @@ mod tests {
         );
     }
 
-    /// A project just added, or one whose sources are all local paths, has
-    /// never fetched. Global is folded first, so an oldest-wins rule would
-    /// let that scope drag the header to "Not checked for updates yet" while
-    /// every other scope fetched minutes ago.
+    /// A project just registered, or one whose sources are all local paths,
+    /// has never fetched. Global is folded first, so an oldest-wins rule
+    /// would let that scope drag the header to "Not checked for updates yet"
+    /// while every other scope fetched minutes ago.
     #[test]
     fn a_scope_that_never_fetched_does_not_drag_the_page_back() {
         assert_eq!(

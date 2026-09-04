@@ -36,8 +36,9 @@ export function VersionMenu({
   versions: VersionRow[];
   /** The declaration holds a version (manual updates). */
   held: boolean;
-  /** The page's manifest gate. A check is added here: these two commit
-   *  through the updates store, so one must not run beside them. */
+  /** The page's manifest gate. A running check holds these two as well:
+   *  they commit through the updates store, so one must not run beside
+   *  them. */
   busy: boolean;
   onSwitch: (row: VersionRow) => void;
   onCompare: (row: VersionRow) => void;

@@ -413,7 +413,7 @@ export function detailsWithTruncation(details: SubagentDetails, prepared: Prepar
  * call order: each append starts after the previous one settles, because
  * concurrent `appendFile` calls on one path complete in any order and a
  * transcript whose records are out of order misreports the last assistant
- * text (kendex#1311). A failed write never blocks the next one.
+ * text. A failed write never blocks the next one.
  */
 export function createTranscriptAppender(
 	transcriptPath: string,
@@ -671,10 +671,10 @@ async function runSingleAgentAttempt(
 		let timedOut = false;
 
 		// Resolved after the last args push but BEFORE subagents:started, so a
-		// refused spawn (depth guard, kendex#192) never announces itself — a
+			// refused spawn from the depth guard never announces itself. A
 		// throw after `started` would leave the task permanently "running" in
 		// the dashboard/registry because nothing emits a terminal event for the
-		// taskId (PR #1178 round 4). Also outside the spawn promise so the
+			// taskId. This runs outside the spawn promise so the
 		// throw rejects through the finally cleanup below instead of wedging
 		// inside the promise executor.
 		const invocation = getPiInvocation(args);
@@ -698,7 +698,7 @@ async function runSingleAgentAttempt(
 
 		const exitCode = await new Promise<number>((resolve) => {
 			// Child identity env mirrors the pane launcher's agent identity
-			// for bg one-shot lanes (issue #228). Restricted delegation reads
+				// for bg one-shot lanes. Restricted delegation reads
 			// PI_SUBAGENT_CHILD_AGENT to authorize the caller. Strip pane-only
 			// ownership/session markers, including PI_SUBAGENT_CHILD_PANE, so
 			// bg lanes never mutate an inherited tmux pane or attach to pane
@@ -710,7 +710,7 @@ async function runSingleAgentAttempt(
 			// runtime root.
 			const childEnv: NodeJS.ProcessEnv = { ...process.env, PI_SUBAGENT_CHILD_AGENT: agent.name };
 			childEnv[PI_SUBAGENT_DEPTH_ENV] = String(invocation.childDepth);
-			// PR #1178 round 3: a relative script override was resolved for THIS
+			// a relative script override was resolved for THIS
 			// spawn only; the child would inherit the relative form and
 			// re-resolve it from its delegated cwd. Hand down the resolved value.
 			if (invocation.childEntryOverride) childEnv[PI_SUBAGENT_ENTRY_ENV] = invocation.childEntryOverride;
@@ -924,12 +924,12 @@ async function runSingleAgentAttempt(
 			};
 
 			const flushFilteredMessageUpdate = (reason: "nonzero_exit" | "process_error" | "timeout") => {
-				// Pi's delta-only wire event leaves the newest update holding one delta, so restore the
-				// cumulative `message` Pi used to send. Every transcript reader (summary backfill,
+				// Pi's delta-only wire event leaves the latest update holding one delta, so restore the
+				// cumulative `message` that transcript readers require. Every transcript reader (summary backfill,
 				// dashboard activity, transcript display) already looks there, so putting the
 				// reconstruction anywhere else leaves the record unreadable.
 				const partialMessage = partialAssistantMessage(partialMessageState);
-				// Computed before any early return. A stream whose shapes we no longer recognize
+				// Computed before any early return. A stream with unrecognized shapes
 				// produces NO partialMessage, so the diagnostic is the only signal that the wire
 				// format moved -- skipping it on any path restores the silent failure this
 				// accumulator exists to prevent.
@@ -1320,7 +1320,7 @@ async function runSingleAgentAttempt(
 		return currentResult;
 	} finally {
 		await transcript.settled();
-		// kendex#192: recursive+force removal so the session tmp dir is reclaimed
+		// recursive+force removal so the session tmp dir is reclaimed
 		// on child failure/refusal paths too, not only after a clean unlink.
 		if (tmpPromptDir) removePromptTempDir(tmpPromptDir);
 	}

@@ -68,7 +68,7 @@ fn update_settings_at(
 /// action sends the whole object, so a copy read before some other
 /// surface wrote the file — a resize, a project registered in another
 /// window — would put the older file back over it. A copy of a file that
-/// is no longer there is refused, never applied.
+/// is gone is refused, never applied.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn update_settings(
@@ -250,10 +250,9 @@ mod tests {
         );
     }
 
-    /// The loss this surface used to allow: a copy read before the person
-    /// resized, written back, would put the older size over the one on
-    /// disk. It is refused as stale now — never applied — and the file
-    /// keeps everything the copy predates.
+    /// A copy read before the person resized, written back, would put the
+    /// older size over the one on disk. It is refused as stale — never
+    /// applied — and the file keeps everything the copy predates.
     #[test]
     fn a_copy_from_before_a_resize_is_refused_not_applied() {
         let tmp = tempfile::tempdir().unwrap();
@@ -276,7 +275,7 @@ mod tests {
 
     /// The way out of the refusal: re-read, carry the change onto the
     /// fresh copy, write with the fresh base. Nothing the copy predated is
-    /// reverted.
+    /// lost.
     #[test]
     fn a_fresh_copy_carries_the_change_without_reverting_anything() {
         let tmp = tempfile::tempdir().unwrap();

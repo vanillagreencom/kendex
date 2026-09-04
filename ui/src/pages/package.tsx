@@ -110,8 +110,8 @@ export function PackagePage() {
   // to show and no actions that would land anywhere.
   const installedHere = installationAt(group, ref?.scope) !== undefined;
 
-  // The scan no longer knows this package (removed, renamed): leave the
-  // way the user came.
+  // The scan has lost this package (removed, renamed): leave the way the
+  // user came.
   useEffect(() => {
     if (ref && result && !installedHere) back();
   }, [ref, result, installedHere, back]);

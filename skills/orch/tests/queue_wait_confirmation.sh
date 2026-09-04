@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Regression tests for queue-wait's confirmation count against its deadline
-# (KEN-837), split from the verdict suites at the seam the mechanism draws:
+# Tests for queue-wait's confirmation count against its deadline
+# split from the verdict suites at the seam the mechanism draws:
 # these cases are about WHEN a candidate is confirmed, not which verdict it
 # carries.
 #
@@ -22,11 +22,11 @@
 #   5. the count is still the whole rule: a candidate that cannot reach it
 #      even shortened is reported beside the timeout, never as a verdict
 #   6. the squeeze allowance is per candidate verdict, so a transition
-#      arriving after an earlier candidate spent it is still confirmed
-#      (KEN-886)
+#      arriving after a prior candidate spent it is still confirmed
+#
 #   7. a transition whose owed polls fit the budget exactly is squeezed
 #      anyway, because a gap landing ON the deadline is a poll never made
-#      (KEN-886)
+#
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -195,7 +195,7 @@ assert_eq "$(jq -r .cause <<<"$out")" "merge_group_failed" \
   "the confirmed ejection names its cause" "$err"
 
 # 3. The budget is still the upper bound. The confirmation polls are moved
-# INSIDE max_wait, never added after it, so a caller's own deadline still
+# INSIDE max_wait, never included after it, so a caller's own deadline still
 # holds.
 assert_le "$(jq -r .elapsed_seconds <<<"$out")" "3" \
   "confirming inside the budget does not overrun max_wait" "$err"
@@ -257,7 +257,7 @@ assert_eq "$(jq -r .unconfirmed_verdict <<<"$out")" "ejected" \
 assert_le "$(jq -r .elapsed_seconds <<<"$out")" "4" \
   "an unreachable count does not spin the poll loop past the budget" "$err"
 
-# --- 6. the squeeze allowance is per candidate verdict (KEN-886) ----------
+# --- 6. the squeeze allowance is per candidate verdict -----------
 # A conflicting reading stands first and spends the run's one squeeze, then
 # the poll after it reads the PR out of the queue. That second candidate is a
 # TRANSITION: cut off here it is re-observed by nobody, and merge-pr re-arms
@@ -280,7 +280,7 @@ assert_eq "$(jq -r .cause <<<"$out")" "merge_group_failed" \
 assert_le "$(jq -r .elapsed_seconds <<<"$out")" "5" \
   "the second confirmation still finishes inside the budget" "$err"
 
-# --- 7. owed polls that fit the budget exactly (KEN-886) ------------------
+# --- 7. owed polls that fit the budget exactly -------------------
 # The loop runs while elapsed < max_wait, so polls owed at exactly the
 # remaining budget land the last one ON the deadline, where it is never made.
 # Three confirmations at a one-second interval, first seen within two seconds

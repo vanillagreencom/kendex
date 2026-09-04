@@ -1,6 +1,6 @@
 // How a fresh audit folds over the one already on screen.
 //
-// Kept apart from the store because it is the whole of what "a new audit
+// Kept apart from the store because it is the whole of what "a fresh audit
 // arrived" means, and it is decided per scope: the machine-wide answer says
 // only that the command ran.
 import type { AuditView } from "@/bindings";

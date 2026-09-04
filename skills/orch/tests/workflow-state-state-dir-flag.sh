@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Regression tests for the classifier-safe `--state-dir` global flag on
+# Tests for the classifier-safe `--state-dir` global flag on
 # workflow-state. The env-prefix form `ORCH_STATE_DIR=… workflow-state …` is
 # rejected under Codex approval=never (env-assignment prefix is a flagged
 # command shape), so worktree sessions target a canonical state directory with
 # the plain `--state-dir <path>` flag instead. ORCH_STATE_DIR stays supported as
-# a fallback. These tests fail against a pre-fix script that lacks the flag
+# a fallback. These tests fail against a unguarded script that lacks the flag
 # (`--state-dir` dispatches as an unknown command).
 
 set -euo pipefail

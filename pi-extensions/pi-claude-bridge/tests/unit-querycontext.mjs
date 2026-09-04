@@ -133,7 +133,7 @@ describe("QueryContext class", () => {
 	it("takeStaleQueuedResults drains the queue and names tools across message resets", () => {
 		ctx().recordToolCall("bash-lost", "bash", { command: "echo hi", timeout: 120 });
 		ctx().pendingResults.set("bash-lost", { content: [{ type: "text", text: "hi" }] });
-		ctx().resetToolTracking(); // new child message: per-message records cleared
+		ctx().resetToolTracking(); // per-message records are cleared at a child-message boundary
 
 		const progress = ctx().toolResultProgress();
 		assert.equal(progress.queuedCount, 1);

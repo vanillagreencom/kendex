@@ -95,8 +95,7 @@ describe("restoredTaskFromSnapshot", () => {
 	});
 
 	test("PID-reuse safe: alive pid with mismatched startToken coerces to stopped", () => {
-		// kendex#15 round 4 reviewer-error MAJOR: the original orphan
-		// died, the OS reused the PID for an unrelated process, and a
+		// An orphan can die before the OS reuses its PID for an unrelated process. A
 		// bare kill -0 would treat the task as still running. Start-time
 		// comparison detects the reuse and coerces the restored task to
 		// stopped so the canonical exit wake fires.
@@ -108,8 +107,7 @@ describe("restoredTaskFromSnapshot", () => {
 	});
 
 	test("comm drift (bash -lc 'sleep N'): same pid + startToken, different comm -> still running", () => {
-		// kendex#15 round 5 reviewer-error BLOCK: bash often exec(2)s
-		// the target binary in the same pid (the canonical example is
+		// Bash often exec(2)s the target binary in the same pid. For example,
 		// /bin/bash -lc "sleep 5" which rotates /proc/<pid>/comm from
 		// "bash" to "sleep"). startToken is the kernel-stable signal;
 		// gating identity on comm would falsely finalize this live task.

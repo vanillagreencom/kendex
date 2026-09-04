@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Regression tests for kendex#705: `workflow-state set` stores non-JSON values
-# as RAW strings — it never parses JSON string literals. submit-pr § 4 used to
+# Tests that `workflow-state set` stores non-JSON values
+# as RAW strings — it never parses JSON string literals. submit-pr § 4 would
 # document `set … pr_review.mode '"[GATE_MODE]"'`, which stored the quote
 # characters literally (serialized `"\"review\""`) and broke the § 6.1 gate 4
 # mode comparison. Pinned here:
@@ -125,7 +125,7 @@ assert_eq "$rc|$out" "0|" \
   "gate 4 read yields empty and exits 0 when no mode was recorded"
 
 # Teeth: the same read against a record that is not there exits 1 on empty
-# stdout, the shape the assertion above used to accept.
+# stdout, the shape the assertion above would accept.
 out="$("$WS" --state-dir "$sd" get issue-705x "$GATE4_READ" 2>/dev/null)" && rc=0 || rc=$?
 assert_eq "$([[ "$rc|$out" != "0|" ]] && echo flagged)" "flagged" \
   "the empty-state assertion reds on a failing read, not just a non-empty one"

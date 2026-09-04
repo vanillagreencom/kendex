@@ -180,7 +180,7 @@ fi
 
 # Same-provider flow should never produce more than 1 distinct sessionId:
 # one created on first turn (or none for clean-start), reused thereafter.
-# A regression that churns UUIDs per turn would surface here even if the
+# A failure that churns UUIDs per turn would surface here even if the
 # distribution checks above still passed.
 if [ "$UNIQUE_SIDS" -gt 1 ]; then
   echo "  FAIL: expected at most 1 distinct sessionId in same-provider flow, got $UNIQUE_SIDS"

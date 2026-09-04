@@ -13,9 +13,8 @@
 //! and the frame cannot be left half-open by a call site forgetting to
 //! start one.
 //!
-//! Plain is byte for byte what the same call printed before this module
-//! existed. Framing needs a terminal on both streams: a redirected stdout
-//! is somebody reading the bytes, whatever stderr is attached to.
+//! Framing needs a terminal on both streams: a redirected stdout is
+//! somebody reading the bytes, whatever stderr is attached to.
 //! `KENDEX_UI` takes `plain` or `pretty` and overrides the detection.
 //!
 //! **A line is escaped here.** Names, paths and messages off a catalog, a
@@ -35,8 +34,8 @@
 //! interpolated into such a message is escaped where it was composed,
 //! because a break inside one would become a line of its own here.
 //!
-//! A type carries that obligation where it can, because a sentence here is
-//! what `commands::verify` skipped. `CoreError::ManifestInvalid` holds
+//! A type carries that obligation where it can, so no call site can hand
+//! this door a sentence. `CoreError::ManifestInvalid` holds
 //! `manifest::Finding`, whose `Display` escapes all three of its parts, so
 //! a constructor cannot hand it text nobody escaped. `CoreError::TomlParse`
 //! cannot be typed the same way — its breaks are a parser's caret diagram —
@@ -188,7 +187,7 @@ pub fn escaped(text: &str) -> String {
     kendex_core::names::shown(text)
 }
 
-/// v1 prints human tables to stderr; stdout stays clean for composition.
+/// Human tables go to stderr; stdout stays clean for composition.
 /// A sentence a verb puts on stdout goes here and is never framed — but
 /// the block above it is drawn first, so the two streams reach a terminal
 /// in the order they were written. What a program parses goes through
@@ -254,9 +253,9 @@ pub(super) fn drawn_fail(line: &str) {
     drawn(Tone::Error, line);
 }
 
-/// One line, already fit to print. Plain writes the same bytes it always
-/// did; the framed rendering groups it, and an empty line closes the block
-/// above it.
+/// One line, already fit to print. Plain writes the line as given; the
+/// framed rendering groups it, and an empty line closes the block above
+/// it.
 fn drawn(tone: Tone, line: &str) {
     match mode() {
         Mode::Plain => write_line(line),

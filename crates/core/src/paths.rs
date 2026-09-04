@@ -199,8 +199,7 @@ mod tests {
     }
 
     /// The spelling rule, driven with a Windows-shaped path on whatever
-    /// host runs the suite. Against `to_string_lossy` — the call every one
-    /// of these sites used to make — this is red.
+    /// host runs the suite. Against `to_string_lossy` this is red.
     #[test]
     fn a_windows_path_is_spelled_with_slashes_on_any_host() {
         assert_eq!(
@@ -262,7 +261,7 @@ mod tests {
         );
     }
 
-    /// The must-fail control for the exception the doc now states: a
+    /// The must-fail control for the documented exception: a
     /// blanket strip would hand back a path naming something else, or
     /// nothing. Each of these keeps the prefix.
     #[test]

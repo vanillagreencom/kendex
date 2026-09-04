@@ -1,5 +1,5 @@
 //! Anything but a terminal gets the lines a script already parses. What
-//! this file pins is that the presentation layer added nothing to them:
+//! this file pins is that the presentation layer adds nothing to them:
 //! no frame, no symbol, no colour, and the same hierarchy the verbs
 //! wrote — a headline at column 0 and its detail two spaces in.
 
@@ -7,8 +7,8 @@ use crate::test_util::source_path;
 
 use super::*;
 
-/// The run the issue names, said plainly. Every line of it, in order,
-/// with nothing repeated and nothing framed.
+/// The blocked refresh, said plainly. Every line of it, in order, with
+/// nothing repeated and nothing framed.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_blocked_refresh_prints_the_lines_scripts_parse() {
@@ -57,8 +57,8 @@ fn the_blocked_refresh_prints_the_lines_scripts_parse() {
     );
 }
 
-/// The bound the issue set, and the reason for it: a run whose output a
-/// reader scrolls past is a run that reported nothing.
+/// The bound, and the reason for it: a run whose output a reader scrolls
+/// past is a run that reported nothing.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_blocked_refresh_reads_under_twenty_lines() {
@@ -106,8 +106,8 @@ fn nothing_is_said_twice() {
 }
 
 /// Not one character of the frame reaches anything but a terminal. This
-/// is the whole non-interactive contract: a script's `grep` sees the same
-/// bytes it saw before a presentation layer existed.
+/// is the whole non-interactive contract: a script's `grep` sees the bytes
+/// the verbs wrote and nothing the frame adds.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn no_framing_reaches_a_pipe() {
@@ -204,8 +204,9 @@ fn show_file_prints_the_files_own_lines() {
 /// The repository-effects account is asked after the write, because the
 /// script an effect runs is the one the install just put on disk. That
 /// puts a fallible call between the write and the closing line, and an
-/// error there used to return straight to main: disk changed, no snapshot
-/// recorded for the next session-start check, and nothing said about it.
+/// error there returning straight to main would leave the disk changed, no
+/// snapshot recorded for the next session-start check, and nothing said
+/// about it.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_failure_after_the_write_still_records_and_reports_it() {

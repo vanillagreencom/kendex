@@ -90,8 +90,7 @@ fn check_reports_whether_the_shims_are_armed() {
 ///
 /// The project has to DECLARE the package for this to mean anything: a
 /// scope that does not is skipped before the question is asked, so a
-/// fixture without a lock passes whatever the answer would have been. That
-/// is what this test used to do.
+/// fixture without a lock would pass whatever the answer was.
 ///
 /// And there is nothing to say here. "Not armed, run `kendex guard
 /// install`" is advice that cannot be taken — the installer exits 2 outside
@@ -309,7 +308,7 @@ fn an_agent_of_the_same_name_is_not_consent_to_commit_hooks() {
 ///
 /// Its contract is one summary line on stdout and its warnings on stderr
 /// (`install-git-hooks --help`), and a caller piping `kendex guard` is
-/// reading for that one line. Relaying both to stdout handed them a
+/// reading for that one line. Relaying both to stdout would hand them a
 /// `::warning::` stream to filter out.
 ///
 /// `core.hooksPath` set is the case that prints both: the install stands
@@ -350,10 +349,10 @@ fn each_of_the_packages_streams_is_relayed_on_its_own() {
 /// A repository the package calls foreign is reported in the package's own
 /// sentence, under the package's own exit code.
 ///
-/// The whole delegation, end to end. kendex used to answer this from the
-/// hook bytes with a grammar of its own, and the two grammars disagreed
-/// about which files count as this package's for as long as both existed.
-/// So the helper here is one the installer refuses to own — an executable
+/// The whole delegation, end to end: a grammar of kendex's own over the
+/// hook bytes would disagree with the package's about which files count
+/// as this package's. So the helper here is one the installer refuses to
+/// own — an executable
 /// file of the right name carrying none of its marker, which is exactly
 /// what the uninstaller preserves and the checker declines to vouch for —
 /// and what `kendex check` prints is the line `install-git-hooks --check`
@@ -559,8 +558,8 @@ fn an_installer_that_could_not_run_is_never_relayed_as_a_verdict() {
     );
 }
 
-/// A package this project declared, armed, and no longer renders is drift
-/// with a remedy that fits it.
+/// A package this project declared and armed, whose render is gone, is
+/// drift with a remedy that fits it.
 ///
 /// The lock records the package and the search finds no copy: a state to
 /// fix, not one nobody could measure. The line says those two and stops,
@@ -618,9 +617,9 @@ fn a_declared_package_with_no_render_is_drift_naming_the_render() {
 /// The package writes its summary only once `--check` runs, so a script cut
 /// short says nothing and carries whatever status the shell last set —
 /// truncated at a clean `}` boundary that is exit 0. Read exit-first, the
-/// fold reported `all clear` about a repository it never looked at, on the
-/// one line whose own module doc says a check reporting all clear while
-/// nothing gates commits is worse than no check.
+/// fold would report `all clear` about a repository it never looked at, on
+/// the one line whose own module doc says a check reporting all clear
+/// while nothing gates commits is worse than no check.
 ///
 /// The cut is at a real boundary of the real script rather than a stub, so
 /// what is pinned is the state a truncated sync actually leaves.
@@ -691,9 +690,9 @@ fn an_installer_that_exits_zero_with_no_verdict_is_not_all_clear() {
 ///
 /// Two shapes, because the direct child is not the only thing that can hold
 /// the run open. The second exits at once and leaves a descendant on the
-/// pipes, which is the shape that read `check_repo` as finished and then
-/// blocked in collection for the full minute, outliving the bound and the
-/// hook budget both.
+/// pipes, the shape that reads `check_repo` as finished and then blocks in
+/// collection for the full minute, outliving the bound and the hook budget
+/// both.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_wedged_installer_gives_up_inside_the_session_start_bound() {

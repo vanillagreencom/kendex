@@ -59,7 +59,7 @@ const settings = { "/work/vg": stock, "/work/hyprtrade": stock };
 
 describe("markFor", () => {
   // The page names a place; the mark is about the package. Answering for
-  // the place the page happened to open at is what let the Library row and
+  // the place the page happened to open at would let the Library row and
   // the package's header state two different facts under the same words.
   it("answers for the package, not for the place the page opened at", () => {
     expect(markFor(saved as never, rows, true, settings, group)?.label).toBe(

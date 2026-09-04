@@ -8,7 +8,7 @@
 //!
 //! Every marker-file control here is a security boundary's only proof, so
 //! each has its positive half beside it: a control that cannot fail has
-//! stopped controlling, and this file has already had one.
+//! stopped controlling.
 
 use crate::test_util::rooted;
 
@@ -44,12 +44,12 @@ fn arm_by_hand(root: &std::path::Path) {
 /// An installer that says whether anything ran it, in place of the real one.
 ///
 /// The marker path is SINGLE-QUOTED into the script, and the script fails
-/// loudly rather than exiting 0 regardless. Both matter, and neither was
-/// true when this helper was written: an unquoted temporary path holding a
-/// space made `touch` create two files of other names, the `exit 0` after
-/// it hid the failure, and the two tests that prove kendex executes nothing
-/// then passed whether or not the installer had run. A control for a
-/// security boundary that cannot fail is worse than no control.
+/// loudly rather than exiting 0 regardless. Both matter: an unquoted
+/// temporary path holding a space makes `touch` create two files of other
+/// names, an `exit 0` after it hides the failure, and the two tests that
+/// prove kendex executes nothing then pass whether or not the installer
+/// ran. A control for a security boundary that cannot fail is worse than
+/// no control.
 ///
 /// `spaced_fixture` is what keeps that honest: every caller builds its
 /// fixture under a directory whose name contains a space, so the quoting is
@@ -166,9 +166,9 @@ fn check_runs_nothing_where_no_project_declared_the_package() {
 /// announcing installer runs, and the marker is there.
 ///
 /// Without this, the two no-execution tests above rest on a marker file
-/// nothing has shown can be written at all — which is exactly how they came
-/// to pass vacuously once before, under a fixture path holding a space.
-/// Same helper, same spaced root, opposite expectation.
+/// nothing has shown can be written at all — which is how they would pass
+/// vacuously under a fixture path holding a space. Same helper, same
+/// spaced root, opposite expectation.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_execution_control_writes_its_marker_when_consent_is_given() {
@@ -200,7 +200,7 @@ fn the_execution_control_writes_its_marker_when_consent_is_given() {
 ///
 /// The package refuses to write behind a `core.hooksPath`, so this
 /// repository has no helper for the same reason it has no shims. Naming
-/// `kendex guard install` here offered a remedy that prints `skipped`,
+/// `kendex guard install` here would offer a remedy that prints `skipped`,
 /// exits 0, writes nothing, and leaves the next check byte-identical — the
 /// same line every session with no way to make it stop.
 #[test]
@@ -212,7 +212,8 @@ fn an_unarmable_repository_is_never_told_to_run_an_install_that_stands_down() {
     install_package(home, &root, &["growth-guards"]);
     git_ok(home, &root, &["config", "core.hooksPath", ".githooks"]);
 
-    // The remedy the old line named, run: it stands down and writes nothing.
+    // The remedy that must not be named, run: it stands down and writes
+    // nothing.
     let arming = run(home, &root, "kendex", &["guard", "install"]);
     assert_eq!(arming.status.code(), Some(0), "{}", said(&arming));
     assert!(said(&arming).contains("skipped"), "{}", said(&arming));
@@ -237,7 +238,7 @@ fn an_unarmable_repository_is_never_told_to_run_an_install_that_stands_down() {
 /// of it a guard testing for EMPTY stdout could not see. A script that
 /// stopped mid-sync after printing something of its own exits 0 with
 /// stdout that is not the package's summary, and reading the exit code
-/// first reported `all clear` about hooks nobody had looked at.
+/// first would report `all clear` about hooks nobody had looked at.
 ///
 /// The stub prints and exits rather than being a cut of the real script,
 /// because what is under test is the shape of what reached stdout: a
@@ -288,8 +289,8 @@ fn exit_zero_with_words_that_are_not_a_verdict_is_not_all_clear() {
 /// `core.hooksPath` set after. The package answers exit 2 with a summary
 /// line saying git's report of where the setting comes from is on stderr,
 /// and `hooks_path_origins` writes those origins and the one remedy there.
-/// Relaying the summary by itself printed the pointer and not the thing it
-/// points at, on the one report a reader gets at session start.
+/// Relaying the summary by itself would print the pointer and not the
+/// thing it points at, on the one report a reader gets at session start.
 ///
 /// Asserted on the single folded line, because both halves travel as one
 /// and the bound measures them together.
@@ -324,9 +325,9 @@ fn a_verdict_that_points_at_stderr_arrives_with_it() {
 ///
 /// The repository below IS armed — helper and both lanes written by the
 /// package's own installer — and only the directory's mode changes. Read as
-/// a boolean, the `EACCES` from the helper probe was the same `false` as a
-/// plain absence, so kendex announced that nothing had armed a repository
-/// whose commits were gated perfectly well.
+/// a boolean, the `EACCES` from the helper probe is the same `false` as a
+/// plain absence, and kendex would announce that nothing had armed a
+/// repository whose commits are gated perfectly well.
 #[cfg(unix)]
 #[test]
 #[allow(clippy::unwrap_used)]

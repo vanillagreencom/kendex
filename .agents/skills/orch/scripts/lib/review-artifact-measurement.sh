@@ -52,7 +52,7 @@ measurement_declaration() {
   '
 }
 
-# kendex#1497: a measurement instrument that produced no samples still emits a
+# a measurement instrument that produced no samples still emits a
 # number, and a zero reads as green. Two shapes are refused.
 #
 # The SAMPLE COUNT — the denominator of the reviewer skill's fixed citation

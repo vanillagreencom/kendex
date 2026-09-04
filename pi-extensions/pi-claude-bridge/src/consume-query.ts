@@ -111,7 +111,7 @@ export async function consumeQuery(
 		if (account) {
 			// Thunk, not a value: this runs once per SDK message — including one
 			// stream_event per streamed token — and debug() only evaluates function
-			// args after its DEBUG early return (VST-15).
+			// args after its DEBUG early return.
 			debug("consumeQuery: managed message", () => JSON.stringify({
 				type: message.type,
 				subtype: (message as any).subtype,
@@ -203,8 +203,8 @@ export async function consumeQuery(
 					}
 					// Other non-success subtypes (error_max_turns,
 					// error_during_execution) surface at completion via the held
-					// failure — an explicit error event where these turns previously
-					// ended silently. Session persistence and deferred replay still run.
+					// failure. These turns require an explicit error event instead of
+					// silent completion. Session persistence and deferred replay still run.
 				}
 				break;
 			case "system":

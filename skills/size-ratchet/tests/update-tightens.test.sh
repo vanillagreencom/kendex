@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pins for --update's tighten-only contract: rows are lowered or removed to
-# match reality, NEVER added and NEVER raised — a grown file keeps its old
+# match reality, NEVER present and NEVER raised — a grown file keeps its old
 # row (and keeps failing), a new offender stays out of the baseline, and
 # deliberate growth is a hand-edit that then passes (control).
 set -euo pipefail
@@ -103,7 +103,7 @@ row="$(cat "$R/tools/size-ratchet-baseline.tsv")"
   && ok "--update keeps a tracked-but-absent over-threshold row at its index-counted size" \
   || bad "--update keeps the tracked-but-absent row (index count)" "rc=$RC row=$row out=$OUT"
 
-# Sparse fail-open guard: a tracked-but-absent NEW offender still fails.
+# Sparse fail-open guard: a tracked-but-absent new offender still fails.
 R="$TMP/sparse-offender"
 mkdir -p "$R"
 git -C "$R" -c init.defaultBranch=main init -q
@@ -131,13 +131,13 @@ run_sr --update
   || bad "--update without a baseline writes nothing" "rc=$RC out=$OUT"
 
 echo "=== --update stages the replacement on the destination's own filesystem ==="
-# The replacement used to be built under `mktemp -d` (i.e. TMPDIR, commonly a
+# The replacement would be built under `mktemp -d` (i.e. TMPDIR, commonly a
 # separate filesystem from the checkout), so the final `mv` could not rename and
 # fell back to copy-then-remove — an interruption mid-copy left the tracked
 # baseline truncated or missing, defeating the stated atomic-replace intent.
 #
 # Asserted by WHERE the staging file is created, not by running across a real
-# device boundary: a cross-device run SUCCEEDS under both the old and the new
+# device boundary: a cross-device run SUCCEEDS under both the before and after
 # code (mv's copy fallback is correct, just not atomic), so a success assertion
 # would be vacuous for this bug. Same-directory staging is the property that
 # makes the rename atomic, and it is directly observable.

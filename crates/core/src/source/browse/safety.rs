@@ -100,8 +100,8 @@ pub fn package_safety(
 /// whose instructions the installed item would carry.
 ///
 /// Asked of the same enumeration the rendering subtracts by, never of a
-/// second transcription of it: two lists of one thing is how both ended up
-/// missing the same entries. Browse scores catalog bytes, which carry none
+/// second transcription that can omit the same entries. Browse scores
+/// catalog bytes, which carry none
 /// of this, so the page says what it did not read rather than showing a
 /// number the install will not give.
 fn injected_here(manifest: &crate::manifest::Manifest, kind: ItemKind, name: &str) -> bool {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Path-boundary regressions for worktree issue IDs, setup config, and direct
+# Path-boundary tests for worktree issue IDs, setup config, and direct
 # path arguments. These cases must fail before writing outside the intended
 # worktree or mutating another repository's registered worktree.
 set -euo pipefail

@@ -19,9 +19,9 @@ describe("saying what a removal ran", () => {
 
   // The account interleaves kendex's own notes with each departing
   // package's output, in name order. A cut by position would spend itself
-  // on whoever talks first — the party kendex does not control — and the
-  // line it ate was the second package's stand-down notice, the only place
-  // kendex says an effect was left standing and names the manual remedy.
+  // on whoever talks first — the party kendex does not control — and eat
+  // the second package's stand-down notice, the only place kendex says an
+  // effect was left standing and names the manual remedy.
   it("says a later package's stand-down after a chatty one", () => {
     const account = [
       "aaa-loud: running scripts/out",

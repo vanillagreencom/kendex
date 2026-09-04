@@ -49,7 +49,7 @@ fn a_shared_skill_folder_adopts_the_target_and_keeps_every_tool_reading() {
     crate::apply::execute(&env, &plan).unwrap();
 
     // The folder moved into the shared tree and every link that read it was
-    // cleared, so nothing is left pointing at where it used to be.
+    // cleared, so nothing is left pointing at where it came from.
     assert!(project.join(".agents/skills/browser/SKILL.md").is_file());
     assert!(!project.join(".kendex-local").exists());
     assert!(!shared.exists());

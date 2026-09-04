@@ -44,7 +44,7 @@ interface UpdatesState extends Standing {
    *  `package-places.ts` [`placeKey`]. A page about one of them keys its own
    *  reads on this beside the installed commit: a write that commits and then
    *  cannot be read back leaves that commit where it was, and the files under
-   *  it are new all the same. Counted per place, so a write to another
+   *  it have changed all the same. Counted per place, so a write to another
    *  package refetches nothing here. */
   writes: Record<string, number>;
   /** Follow switches already moved on screen whose write has not answered.

@@ -25,8 +25,8 @@ export type Why = "settings" | "values" | "edited" | "forked";
  *  Three answers, not two. A place whose manifest was read and holds
  *  nothing is not the same as a place nobody could read: the first is
  *  "yours is the stock copy", the second is "nobody knows", and printing
- *  the first over the second is the badge lying in a new way. A
- *  customized place always says why; the other two never do. */
+ *  the first over the second is the badge lying. A customized place
+ *  always says why; the other two never do. */
 export type PlaceStanding =
   | { scope: Scope; standing: "customized"; why: Why }
   | { scope: Scope; standing: "stock" | "unknown"; why: null };
@@ -103,7 +103,7 @@ export function manifestsForEditing(
 /** The three facts about one package at one place, each null when nobody
  *  can say. Null is a real answer: a manifest that was not read and a
  *  place with no update row both leave the question open, and reading
- *  either as false is the mark lying in a new way. */
+ *  either as false is the mark lying. */
 interface PlaceFacts {
   forked: boolean | null;
   settings: boolean | null;

@@ -194,7 +194,7 @@ run_stack() {
             # `grep -m 5` caps the summary and `tr` reads to EOF, so no stage
             # closes on a writer: `| head -5` SIGPIPEs grep, and the 141
             # pipefail puts on this unguarded assignment kills the branch
-            # wherever errexit is live (KEN-1143). `|| true` covers a no-match,
+            # wherever errexit is live. `|| true` covers a no-match,
             # which is a blank summary and not a failure to record one.
             local error_summary
             error_summary=$(grep -m 5 -E "^error|^Error|FAILED" <<<"$output" | tr '\n' ' ' || true)
@@ -268,7 +268,7 @@ verify_prs() {
         "$(printf '%s\n' "${pr_nums[@]}" | jq -R . | jq -s 'map(tonumber)')" \
         '.merge_order = $order')
 
-    # Phase 1: Create verification worktree
+# Create verification worktree
     progress "Creating verification worktree..."
 
     local default_branch
@@ -286,7 +286,7 @@ verify_prs() {
     cd "$VERIFY_DIR"
     progress_ok "Worktree created"
 
-    # Phase 2: Merge PRs sequentially
+# Merge PRs sequentially
     progress "Merging PRs sequentially..."
 
     local all_merged=true
@@ -301,7 +301,7 @@ verify_prs() {
 
         if ! git merge FETCH_HEAD --no-edit -m "Merge PR #$pr_num for verification" 2>/dev/null; then
             # Captured whole, then windowed in-shell, for the reason the two
-            # summary branches above carry (KEN-1143): `| head -10` closing on
+            # summary branches above carry: `| head -10` closing on
             # git leaves a 141 on an assignment errexit takes the branch down
             # for, and this branch is the one that reports the conflict.
             local conflicts conflict_files diff_status=0
@@ -329,7 +329,7 @@ verify_prs() {
         exit 0
     fi
 
-    # Phase 3: Detect and run stacks
+# Detect and run stacks
     progress "Detecting project stacks..."
 
     # Check for explicit override first
@@ -405,7 +405,7 @@ verify_prs() {
 
     progress_ok "Detected: ${stack_names[*]}"
 
-    # Phase 4: Build and test each stack
+# Build and test each stack
     progress "Building and testing..."
 
     while IFS= read -r stack_spec; do

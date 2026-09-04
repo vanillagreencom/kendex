@@ -5,7 +5,7 @@
 // nothing in the result distinguishes "these are the connectors" from "these are
 // the connectors the search happened to return this time". Downstream then stored
 // that lower bound as authoritative, so an account with Slack attached could
-// report an inventory without Slack and no failure signal (kendex#838).
+// report an inventory without Slack and no failure signal.
 //
 // This module asks the account instead of the model. Verified live against a
 // personal claude_max org: the endpoint is POST (a GET returns 405) and each
@@ -18,12 +18,11 @@
 // installed. It says nothing about whether a given connector's MCP server has
 // finished attaching inside the `claude` child that is about to run a turn —
 // this is a plain HTTPS call and does not consult that process at all. The two
-// were previously conflated by accident: the ToolSearch probe could only report
-// what was already attached, so an inventory implied availability (wrongly, but
-// conservatively — it under-reported, which fails safe). They are now separately
+// are separate: the ToolSearch probe can report only what is attached, so an
+// inventory must not imply availability. They are
 // observable and can legitimately disagree: a correct `complete: true` inventory
 // can name Slack while `mcp__claude_ai_Slack__*` is not yet callable in this
-// process (kendex#832). Treat an inventory as NECESSARY BUT NOT SUFFICIENT for
+// process. Treat an inventory as NECESSARY BUT NOT SUFFICIENT for
 // availability and keep an attach-time check on the call path; do not derive
 // "can I call this tool right now" from this result.
 //
@@ -47,8 +46,7 @@ export type ConnectorEntry = {
 	/**
 	 * Account-side install state. `"connected"` marks the connectors the CLI
 	 * actually attempts; everything else it never gives a `Starting connection`
-	 * line at all. Verified live 2026-07-26: 7 `connected` / 20 `unknown` on the
-	 * app account, and the CLI connected exactly those 7.
+	 * line at all. The CLI attempts exactly the entries marked `connected`.
 	 */
 	installState?: string;
 	description?: string;

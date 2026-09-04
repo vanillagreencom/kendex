@@ -92,7 +92,7 @@ assert_eq "$(ORCH_STATE_DIR="$state_dir" CI_FIX_MAX_CYCLES=2 "$WS" head-budget t
   "a passing CI run clearing ci_fix is what resets the ci-fix budget"
 
 # Round-id identity: the token is the ONLY thing binding an artifact to its
-# delegation, so rapid consecutive mints must all differ. A regression to a
+# delegation, so rapid consecutive mints must all differ. A failure to a
 # non-injective form (e.g. concatenated $RANDOM$RANDOM) is caught here.
 rid1="$(ORCH_STATE_DIR="$state_dir" "$WS" new-round-id issue-353 dev_round_id)"
 rid2="$(ORCH_STATE_DIR="$state_dir" "$WS" new-round-id issue-353 dev_round_id)"
@@ -177,7 +177,7 @@ assert_file_contains "$merge_workflow" '| Base sync |' \
   "merge-pr never omits the Base sync row, so a stale base cannot pass unreported"
 
 # A push that rebases rewrites every stored fix SHA. Without reconciliation the
-# PR body cites commits that no longer exist; worktree-push owns that remap.
+# PR body cites commits that does not exist; worktree-push owns that remap.
 assert_file_contains "$submit_workflow" 'scripts/worktree-push --worktree' \
   "submit-pr pushes through the SHA-reconciling worktree-push wrapper"
 start_workflow="$SKILL_DIR/workflows/start-worktree.md"

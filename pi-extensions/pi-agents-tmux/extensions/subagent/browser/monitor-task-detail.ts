@@ -114,7 +114,7 @@ export function monitorFooterHint(theme: Theme): string {
 // the conditional "Transcript" tab (index 2) whenever the record has a
 // transcriptPath — not the static MONITOR_SUBTAB_LABELS placeholder length
 // (Summary/Completion only). Before the trace items load, fall back to the
-// placeholder count so navigation stays bounded (kendex#611).
+// placeholder count so navigation stays bounded.
 export function monitorSubtabCount(entry: MonitorDetailEntry | undefined): number {
 	return entry?.items?.length ?? MONITOR_SUBTAB_LABELS.length;
 }

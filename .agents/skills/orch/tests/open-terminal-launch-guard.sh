@@ -2,12 +2,11 @@
 # The last layer before a window opens: a launch whose working directory does
 # not exist is refused by name.
 #
-# The class this closes was reached repeatedly in the real fleet (KEN-1084). A
-# suite that drives `open-terminal` with a stubbed worktree CLI gets an empty
+# A suite that drives `open-terminal` with a stubbed worktree CLI gets an empty
 # path back the moment the stub exits 0 without printing one — the shape a
 # PATH stub leaves when its fixture tree is deleted under it — and open_gui
-# then handed that empty path to a real GUI terminal, which opened a window on
-# the operator's desktop at a directory that was gone. The same is true of any
+# handing that empty path to a real GUI terminal opens a window on the
+# operator's desktop at a directory that is gone. The same is true of any
 # lane whose worktree was removed while it ran. Refusing here closes it
 # whatever produced the launch, without asking who did.
 #
@@ -101,8 +100,8 @@ run() {
   set -e
   ERR="$(cat "$TMP_ROOT/$name.err")"
   # open_gui detaches the launch (`setsid ... &`), so the stub's line can land
-  # after open-terminal has already exited — on a loaded box it did, and the
-  # case read an empty log. Which wait to take is DERIVED from the script's own
+  # after open-terminal has already exited, and a case on a loaded box then
+  # reads an empty log. Which wait to take is DERIVED from the script's own
   # report rather than from a flag each call site remembers: an exit 0 says a
   # launch was started, so wait for its line; any other status says none was, so
   # watch a real interval and prove none appears.
@@ -151,8 +150,7 @@ echo "=== the refusal can fail: with the guard gone the window opens ==="
 
 # The must-fail control, run over BOTH shapes the guard refuses. `launchable_dir`
 # is the whole protection, so the mutation is its one test — with that gone the
-# function returns 0 for every path and each launch proceeds exactly as it did
-# before this guard existed.
+# function returns 0 for every path and each launch proceeds.
 MUTANT="$TMP_ROOT/mutant"
 mkdir -p "$MUTANT"
 sed 's/\[\[ -d "$1" \]\] && return 0/return 0/' "$SRC_OT" > "$MUTANT/open-terminal"
@@ -169,7 +167,7 @@ assert_eq "$RC" "0" "control: without the guard the deleted-path launch is repor
 assert_contains "$TERM_LOG_TEXT" "term -e bash -lc" \
   "control: and a terminal really is opened at the directory that is gone"
 
-# The empty path is the shape the leak actually took, so it carries its own
+# The empty path is the shape the leak takes, so it carries its own
 # control rather than riding on the deleted one: a guard written as a stat of a
 # non-empty path would refuse the case above and still launch this one.
 run mutant_empty "$MUTANT_REPO/scripts/open-terminal" empty --ghostty CC-1

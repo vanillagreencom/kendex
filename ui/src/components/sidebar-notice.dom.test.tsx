@@ -157,7 +157,7 @@ describe("what the card says", () => {
 
 describe("the action each channel allows", () => {
   // In flight is the last state this offer has: the real command does not
-  // come back when it works, the app restarts into the new version. So the
+  // come back when it works, the app restarts into the release. So the
   // replacement is held open here and the card read while it runs.
   it("offers the replacement where kendex owns the files", async () => {
     let finish = () => {};
@@ -370,8 +370,8 @@ describe("a replacement that went through", () => {
 
   // A read that failed says nothing rather than guessing, which is the
   // rule the first read follows too. Kept, the description on the card
-  // would be the one drawn before the install — a machine as it no longer
-  // is, with the action gone so nobody can ask again.
+  // would be the one drawn before the install — a machine that has since
+  // changed, with the action gone so nobody can ask again.
   it("drops the command description it could not read again", async () => {
     const left = "kendex 5.1.0 is installed and starts on the next launch";
     vi.mocked(commands.appUpdateInstall).mockResolvedValue({

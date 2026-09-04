@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for `worktree create` reuse rebase-conflict recovery (kendex#567).
+# Tests for `worktree create` reuse rebase-conflict recovery.
 #
 # When `create` reuses an existing worktree and the rebase onto origin/<default>
 # conflicts, the default path aborts the rebase — so the worktree is clean and
@@ -198,7 +198,7 @@ make_published_clean_pair() {
   git -C "$root/main" push -q origin main
 }
 
-# Build the production-shaped case behind kendex#591: the first local commit is
+# Build the production-shaped case: the first local commit is
 # already represented (with further edits) on main, so resolving its conflict
 # to current-main bytes makes it empty; a later refresh-only commit must still
 # replay after the guarded skip.

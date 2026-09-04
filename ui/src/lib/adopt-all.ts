@@ -17,7 +17,7 @@ export interface SharedLink {
 
 // An install that is a live symlink adopts the *target* — a folder the
 // user may have pointed several harnesses at. That is a bigger move than
-// adopting a plain folder (the old folder is trashed, and links kendex
+// adopting a plain folder (the original folder is trashed, and links kendex
 // cannot see will break), so it gets a confirmation naming the folder and
 // every harness reading it. Detection reads the scan, which resolves links.
 export function sharedLinkOf(group: MergedDriftRow): SharedLink | null {

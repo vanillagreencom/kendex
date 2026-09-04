@@ -115,7 +115,7 @@ impl Op {
 
     /// The same paths, borrowed so they can be replaced by where they
     /// land ([`super::landing`]). Exhaustive like [`Op::touched`], so an
-    /// op added to this enum can no more skip the landing than the
+    /// op joining this enum can no more skip the landing than the
     /// journal.
     pub(super) fn touched_mut(&mut self) -> Vec<&mut PathBuf> {
         match self {

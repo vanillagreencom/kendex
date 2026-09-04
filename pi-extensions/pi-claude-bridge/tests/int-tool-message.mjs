@@ -66,7 +66,7 @@ describe("tool-message integration", () => {
 	});
 
 	it("steer during tool execution still delivers tool result", { timeout: 15_000 }, async () => {
-		// Issue #3: steer injects a user message into the context during an active
+		// steer injects a user message into the context during an active
 		// tool call. extractAllToolResults stops at the user message and returns 0
 		// results, leaving the pending handler stuck.
 		const collector = collectText();

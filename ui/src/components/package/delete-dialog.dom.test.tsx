@@ -190,7 +190,7 @@ describe("the read behind the note", () => {
   // A read that failed leaves the rows a previous one put in the store,
   // and those may answer for a different installation. Naming a
   // marketplace off them at the confirm step of a deletion sends the
-  // reader somewhere the package may no longer be installable from.
+  // reader somewhere the package may not be installable from.
   it("names nothing off rows this open's read did not land", async () => {
     useProvenanceStore.setState({
       rows: rowsFor([[VG, MARKET("acme")]]),

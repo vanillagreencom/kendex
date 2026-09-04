@@ -162,7 +162,7 @@ settle_arm "a zero settle asks for no wait at all" absent MUTATION_STABILITY_SET
 has "settle: 0 — copies are not mtime-separated" \
   "a skipped boundary is named in the run's own output"
 
-# KEN-999: one timeout control also checks adoption under a non-reaping PID 1.
+# one timeout control also checks adoption under a non-reaping PID 1.
 export HANG_PID_FILE="$TMP/timeout-child.pid"
 if command -v unshare >/dev/null 2>&1 \
   && command -v python3 >/dev/null 2>&1 \

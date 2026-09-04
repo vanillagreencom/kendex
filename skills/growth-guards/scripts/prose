@@ -26,7 +26,7 @@ set -f
 
 GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
 GG_BOOT="${GG_BOOT%x}"
-# The one newline `pwd` added; anything before it is the path.
+# The trailing newline from `pwd` terminates its output; anything before it is the path.
 SCRIPT_DIR="${GG_BOOT%$'\n'}"
 GG_CHECK="prose"
 # shellcheck source=lib/common.sh
@@ -108,12 +108,10 @@ gg_load_excludes "$EXCLUDES"
 # than stating what holds. Word boundaries are spelled as non-word characters
 # rather than \< and \>, which are a GNU extension the regex engines behind
 # `git grep` do not all carry. The issue-number shape takes no leading
-# boundary — a reference glued to a filename ('spec.md#1204') is the same
-# reference — and its trailing class excludes the hex digits, so a longer
-# token passes: '#12345' and the six-digit colour '#1234ab' are neither of
-# them a reference. Three- and four-digit shorthand still fires ('#900' is
-# also how issue 900 is written), which is the one collision the shape
-# cannot resolve.
+# boundary because a reference glued to a filename is still a reference. Its
+# trailing class excludes hex digits, so longer numbers and colour values pass.
+# Three- and four-digit shorthand still fires, which is the one collision the
+# shape cannot resolve.
 WORD='previously|used to|no longer|reverted|an earlier|earlier round|incident|historically|originally|at the time'
 PROSE_ERE="20[0-9]{2}-[0-9]{2}-[0-9]{2}|#[0-9]{3,4}([^0-9A-Fa-f]|\$)|(^|[^[:alnum:]_])($WORD)([^[:alnum:]_]|\$)"
 

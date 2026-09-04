@@ -117,9 +117,10 @@ beforeEach(() => {
 });
 
 // An install writes the very bytes a score answers for. The audit that ran
-// a moment earlier knows nothing about the new package, so a page opened on
-// it has no row — and a block that renders nothing there reads as a package
-// the check found nothing in, which is the one claim it has not made.
+// a moment before knows nothing about the package just installed, so a
+// page opened on it has no row — and a block that renders nothing there
+// reads as a package the check found nothing in, which is the one claim it
+// has not made.
 describe("a package installed just now", () => {
   it("shows its score, with the audit's freshness window already open", async () => {
     // The state right after any earlier visit: a clean audit, well inside
@@ -192,8 +193,8 @@ describe("when the check could not run", () => {
   it("dates the kept reading rather than only calling it an earlier one", async () => {
     const checkedAt = Date.now() - 3 * 60 * 60 * 1000;
     // Three hours is well past the freshness window, so the mount asks for a
-    // new audit — and it is that ask which fails, leaving the old reading on
-    // screen. Exactly the state the words have to be honest about.
+    // fresh audit — and it is that ask which fails, leaving the kept reading
+    // on screen. Exactly the state the words have to be honest about.
     vi.mocked(commands.auditAll).mockResolvedValue({
       status: "error",
       error: "audit crashed",

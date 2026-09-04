@@ -1,5 +1,4 @@
-// Round-2 fix (kendex#63 reviewer-arch + reviewer-error major): the
-// idle-stall watchdog must consult the real bridge isIdle signal
+// The idle-stall watchdog must consult the bridge isIdle signal
 // instead of returning true unconditionally. Default-busy on any
 // failure so the watchdog skips rather than false-fires.
 

@@ -1,6 +1,6 @@
 //! Reading and writing a manifest file: what sits at a path, how a
 //! mutation upgrades the schema as a side effect of writing at all, and
-//! the one place a new scope gets its default source.
+//! the one place a fresh scope gets its default source.
 
 use std::path::Path;
 
@@ -216,7 +216,7 @@ pub fn load_for_mutation(path: &Path) -> Result<Option<Manifest>> {
 ///
 /// Two reads would pair a manifest with the base of whatever replaced it:
 /// a writer landing between them hands the caller old content under the
-/// new file's name, and the write that follows is accepted over that
+/// replacement file's name, and the write that follows is accepted over that
 /// writer — the one thing a base exists to prevent. So the text is read
 /// once and both answers come from it.
 pub fn read_for_mutation(path: &Path) -> Result<(Option<Manifest>, Base)> {

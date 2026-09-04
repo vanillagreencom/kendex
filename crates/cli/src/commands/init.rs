@@ -4,8 +4,8 @@ use std::path::Path;
 use super::{CliResult, out, say};
 
 /// Maintainer scaffolding: create a source-catalog item skeleton in the
-/// current directory (v1 contract: no name → usage + exit 0; a name
-/// without --kind, or with '/' or a leading '-', → error).
+/// current directory (no name → usage + exit 0; a name without --kind, or
+/// with '/' or a leading '-', → error).
 pub fn run(name: Option<String>, kind: Option<String>) -> CliResult {
     let Some(name) = name else {
         say("usage: kendex init <name> --kind agent|skill|hook");
@@ -57,8 +57,7 @@ pub fn run(name: Option<String>, kind: Option<String>) -> CliResult {
 
 /// What a freshly declared catalog says about itself. The `[bundles]` keys
 /// come from the list that reads them rather than from a copy: a marker
-/// teaching a shape no reader looks at is how the four kendex bundles
-/// shipped installing nothing.
+/// teaching a shape no reader looks at ships bundles that install nothing.
 fn catalog_marker() -> String {
     format!(
         "# This file marks the folder as a kendex catalog. Items live in\n\

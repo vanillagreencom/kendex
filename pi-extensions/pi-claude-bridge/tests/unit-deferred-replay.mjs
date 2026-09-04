@@ -2,7 +2,7 @@
  * Tests for planDeferredUserReplay — the re-entrant branch's capture plan for
  * user messages pi injects mid-query (steer drain, followUp delivery).
  *
- * kendex#967: when the context ended in MULTIPLE trailing user messages, only
+ * When the context ends in MULTIPLE trailing user messages, only
  * the last was deferred while the cursor advanced past all of them — the
  * earlier ones were permanently and silently lost. The plan must cover the
  * entire trailing user run, and the caller advances the cursor to the end of
@@ -59,10 +59,8 @@ describe("planDeferredUserReplay", () => {
 	});
 });
 
-// kendex#993 item 2: the replay queue was text-only (string[]), so a mid-query
-// user message carrying image blocks replayed as its text alone and the images
-// were silently dropped. The plan now also carries the block form when images
-// are present, and an image-only run must be captured, not skipped.
+// The replay plan carries both text and image blocks. An image-only run must be
+// captured rather than skipped.
 describe("planDeferredUserReplay image blocks (kendex#993)", () => {
 	const image = () => ({ type: "image", data: "aGk=", mimeType: "image/png" });
 
@@ -101,12 +99,8 @@ describe("planDeferredUserReplay image blocks (kendex#993)", () => {
 	});
 });
 
-// kendex#1009: the plan took no lower bound, so a second mid-query steer
-// callback re-derived the ENTIRE trailing user run from scratch — including the
-// message the first callback already queued. The replay loop sends each queue
-// entry as its own continuation query, so the first steer reached Claude twice.
-// The caller now passes the position it already captured through
-// (queryCtx.latestCursor), and the run walk must never cross below it.
+// The caller passes the captured position through queryCtx.latestCursor. The
+// run walk must never cross below it or queue the same steer twice.
 describe("planDeferredUserReplay capture bound (kendex#1009)", () => {
 	it("issue reproduction: a second steer queues each message exactly once", () => {
 		// steer #1 arrives with the tool result; captured, cursor advances.
@@ -127,7 +121,7 @@ describe("planDeferredUserReplay capture bound (kendex#1009)", () => {
 		assert.deepEqual(queue, ["STEER-ONE", "STEER-TWO"]);
 		assert.equal(second.runStart, 4, "the walk must stop at the captured position");
 		assert.equal(second.userMessageCount, 1);
-		// Cursor math stays consistent: the new capture covers exactly the run.
+		// Cursor math stays consistent: this capture covers exactly the run.
 		assert.equal(messages.length, second.runStart + second.userMessageCount);
 	});
 

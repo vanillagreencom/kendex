@@ -296,7 +296,7 @@ gh_stub_answer() {
 # A call past the last staged one is refused, which is what makes "the code
 # polled once more than it should have" a failure rather than a repeat.
 #
-# Staging after a call of VERB has already been served starts a NEW sequence:
+# Staging after a call of VERB has been served starts another sequence:
 # the served count and the earlier answers go, and TEXT becomes the first
 # answer. A scenario that restages a verb the previous scenario consumed is
 # saying "from here, this", and serving the previous scenario's unconsumed

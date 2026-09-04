@@ -1,9 +1,9 @@
 import { renderMarkdown, stripFrontmatter } from "@/lib/markdown";
 
 /** Untrusted markdown, rendered hardened: raw HTML escaped, unsafe link and
- *  image URLs stripped (see lib/markdown.ts), and link clicks swallowed —
- *  there's no safe "open externally" command wired up, so a preview link
- *  that navigated the app window would be worse than no link at all. */
+ *  image URLs stripped (see lib/markdown.ts), and link clicks swallowed — a
+ *  preview link that navigated the app window would be worse than no link
+ *  at all. */
 export function MarkdownView({ source }: { source: string }) {
   return (
     // This is a click guard on rendered content, not an interactive

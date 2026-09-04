@@ -70,8 +70,7 @@ beforeEach(() => {
 });
 
 /** Change one settings value, save it alone, and have that save refused
- *  as stale — the path this PR added, and the one the note's old sentence
- *  was never written for. */
+ *  as stale — a refusal with no change to kendex.toml behind it. */
 const refuseSettingsSave = async () => {
   await useEditorStore.getState().setScope(VG);
   useEditorStore.getState().editSetting({

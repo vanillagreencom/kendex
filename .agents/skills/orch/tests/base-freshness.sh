@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Behavioral tests for base-freshness — the start-worktree.md § 1 review-cycle
-# gate (kendex#904). A reused worktree can sit many commits behind origin, and
-# the review cycle previously ran with no fetch anywhere on that path, so
-# eleven reviewers evaluated a stale base. The helper must FETCH origin (a
+# gate. A reused worktree can sit many commits behind origin, and a review
+# cycle with no fetch on that path evaluates a stale base. The helper must
+# FETCH origin (a
 # stale remote-tracking ref is not evidence), report ahead/behind of HEAD vs
 # the resolved base branch, and exit 0 fresh / 4 stale / 1 unverifiable.
 #
@@ -88,8 +88,8 @@ assert_eq "$(printf '%s' "$out" | jq -r '.branch')" "issue-42" "JSON carries the
 assert_eq "$(printf '%s' "$out" | jq -r '.base_branch')" "main" "JSON carries the resolved base branch"
 
 # Stale: origin/main advances AFTER the clone. The worktree's remote-tracking
-# ref still points at the old tip, so a nonzero `behind` here proves the
-# helper fetched rather than trusting local refs — the kendex#904 failure.
+# ref points at the tip before the advance, so a nonzero `behind` here proves
+# the helper fetched rather than trusting local refs.
 commit_upstream upstream-1
 commit_upstream upstream-2
 git -C "$UPSTREAM" push -q origin main

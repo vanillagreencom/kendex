@@ -193,10 +193,8 @@ mod tests {
         );
         // `.` and doubled separators are spelling, not an escape: a run of
         // separators collapses, so both of these name the same file under the
-        // package and resolve there. The second is where the old code judged
-        // one string and joined another — trimming `./` off the front left a
-        // rooted path that `join` then dropped the base for, landing it on
-        // `/dist/sub/index.js` on Unix as much as on Windows.
+        // package and resolve there. Both must be judged and joined in the
+        // same form, or a rooted suffix can make `join` drop the base.
         for spelling in ["dist/./sub//index.js", ".//dist/sub/index.js"] {
             assert_eq!(
                 inside(base, spelling, "p").unwrap(),

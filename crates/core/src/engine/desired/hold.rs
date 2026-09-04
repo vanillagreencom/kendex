@@ -32,10 +32,10 @@ use super::super::expansion::PLANNED_KINDS;
 ///
 /// The source is part of the identity, because every reference the lock
 /// records carries one. A rebind leaves entries naming a declaration this
-/// scope no longer reads, and matched by name alone one package's
+/// scope does not read, and matched by name alone one package's
 /// installations speak for another's: the wrong declaration is exempted
 /// from holding and moves, which is the side effect a single-package
-/// update exists to remove. An owner whose source no longer matches simply
+/// update exists to remove. An owner whose source does not match simply
 /// matches no declaration.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Owner {
@@ -116,7 +116,7 @@ fn owners_of(
     owners
 }
 
-/// The synthetic pins one held plan added — exactly these and nothing else
+/// The synthetic pins one held plan wrote — exactly these and nothing else
 /// are taken back out, so a revision the user pinned is never touched.
 pub(crate) struct HeldPins {
     items: Vec<(ItemKind, String)>,
@@ -189,7 +189,7 @@ pub(crate) fn planning_manifest<'a>(
 ///
 /// A declaration the lock cannot place — nothing installed, installations
 /// disagreeing on their commit, or any one of them recorded against a
-/// source this declaration no longer reads from — is left to resolve
+/// source this declaration does not read from — is left to resolve
 /// fresh: a wrong pin would move it somewhere nobody asked for, and fresh
 /// is what a whole-scope apply gives it anyway.
 fn held_manifest(
@@ -280,7 +280,7 @@ fn exempted_by(manifest: &Manifest, lock: &Lock, target: &(ItemKind, String)) ->
     }
     // Its installations under that source, and the declarations they came
     // in under. An entry a rebind left behind is an installation of a
-    // package this declaration no longer is, and its edges lead to
+    // package this declaration is not, and its edges lead to
     // declarations this update has no business unpinning.
     for entry in lock.entries.values().filter(|entry| {
         entry.kind == target.0
@@ -309,7 +309,7 @@ fn source_repo<'a>(manifest: &'a Manifest, source: &str) -> Option<&'a str> {
 
 /// Whether this installation came from where the declaration reads now.
 /// An entry recorded under a different source alias, or under a repository
-/// that alias no longer points at, carries a commit out of another
+/// that alias does not point at, carries a commit out of another
 /// history: pinning at it holds the package at content nobody chose, or at
 /// a sha the source cannot resolve at all. One such entry is enough to
 /// leave the declaration to resolve fresh — the same answer the lock's
@@ -321,7 +321,7 @@ fn from_source(entry: &LockEntry, source: &str, repo: &str) -> bool {
 /// The one commit a declaration may be held at, or `None` where holding it
 /// would have to invent a revision: no installation, an installation with
 /// no commit recorded, two that disagree, or one that came from somewhere
-/// this declaration no longer reads.
+/// this declaration does not read.
 ///
 /// Every installation of this item is asked, not only the ones that still
 /// match the source. Filtering first reads the survivors as agreement and
@@ -351,7 +351,7 @@ fn held_at(lock: &Lock, kind: ItemKind, name: &str, source: &str, repo: &str) ->
 /// A set has no installation of its own, so this is the only account of
 /// where it sits that survives its members moving. Read back only where
 /// the declaration still reads from what the record names — a rebind
-/// leaves it describing a set this scope no longer installs.
+/// leaves it describing a set this scope does not install.
 fn held_commit(lock: &Lock, bundle: &str, source: &str, repo: &str) -> Option<String> {
     let recorded = lock.bundles.get(bundle)?;
     (recorded.source == source && recorded.source_repo == repo).then(|| recorded.commit.clone())

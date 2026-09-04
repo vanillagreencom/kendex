@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test (#1002): the project's own key must win over an inherited one.
+# the project's own key must win over an inherited one.
 #
 # Per-repo Linear workspaces make a box-global LINEAR_API_KEY export actively
 # wrong for every other repo, so the precedence is: LINEAR_API_KEY_OVERRIDE

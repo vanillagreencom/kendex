@@ -166,7 +166,7 @@ run_sr
 
 echo "=== a tracked-but-absent exclusion list still applies, from the index ==="
 # Same sparse-checkout shape as the baseline case above, for the OTHER tracked
-# policy file. A worktree missing the list used to mean zero exclusions, so a
+# policy file. A worktree missing the list would mean zero exclusions, so a
 # fresh or partial tree reported violations against the vendored and generated
 # files the tracked list excludes — the opposite direction from the baseline
 # fallback (noise, not a smuggled offender), but equally a broken scope
@@ -468,7 +468,7 @@ run_sr
   || bad "control: the newline-terminated baseline gives the same verdict" "rc=$RC out=$OUT"
 
 echo "=== a run with no HEAD reference says so on the verdict line ==="
-# "No reference" passes, but it is not "checked and clean": the added and
+# "No reference" passes, but it is not "checked and clean": the present and
 # raised checks had nothing to judge against. A bare OK reads as clean, so the
 # verdict discloses which of the two it is.
 DISCLOSURE="HEAD carries no baseline rows, so added and raised rows were not judged"

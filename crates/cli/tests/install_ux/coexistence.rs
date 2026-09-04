@@ -1,5 +1,5 @@
-//! What kendex did not write, it does not touch — through every path the
-//! install work added.
+//! What kendex did not write, it does not touch — through every install
+//! path.
 
 use crate::{World, read, tree};
 
@@ -118,7 +118,7 @@ fn a_scope_whose_lock_cannot_be_read_fails_at_the_read() {
     world.declare_catalog();
     world.run(&["add", "cat", "--skill", "deploy", "-y"]);
 
-    // The record an older kendex left: this build reads no such version.
+    // A record version this build does not read.
     let lock = world.at(".kendex-lock.json");
     let current = kendex_core::lock::LOCK_VERSION;
     let older = read(&lock).replace(

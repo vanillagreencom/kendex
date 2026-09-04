@@ -93,8 +93,9 @@ describe("the curated set page", () => {
   // Everything the destination decides on this page, in one pass. The read
   // is asked again for the project and served from that project's own slot
   // when it comes back to one already read; a tick made against the place
-  // before it is not carried into the new one; the record standing is that
-  // project's, so Install all withholds on it and the reason names it.
+  // before it is not carried into the one chosen next; the record standing
+  // is that project's, so Install all withholds on it and the reason names
+  // it.
   it("reads, gates and says why for the place the install would land in", async () => {
     const host = mount(<BundleDetailPage />);
     await settle();

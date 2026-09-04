@@ -11,9 +11,8 @@ import {
 // The two rules every store's standing lands under, and the two pages that
 // read per address. Six call sites hold one of these, and each reds on its
 // own mutation — but a rule tested only through its callers can be mocked
-// out from under its own guarantee, which is how a bump moved into a
-// module a sibling suite stubs nearly shipped. So the contract is pinned
-// here, where nothing stands between the assertion and the rule.
+// out from under its own guarantee. So the contract is pinned here, where
+// nothing stands between the assertion and the rule.
 
 describe("readOrder", () => {
   // Of two answers about one thing, the later-begun read saw the newer

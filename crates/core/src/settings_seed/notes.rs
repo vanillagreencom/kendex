@@ -258,7 +258,7 @@ struct Shipped<'a> {
 ///
 /// Which delimiter was left open is deliberately not named. Completeness
 /// comes off the enumerated grammar in [`crate::settings_toml`], so a form
-/// added there would leave a list here stale, and the message would send
+/// listed here as well would go stale, and the message would send
 /// somebody to the wrong part of their template. The key name is what
 /// tells them where to look. There is no complete text to copy whatever
 /// the shape, and writing what there is would leave the consumer's file

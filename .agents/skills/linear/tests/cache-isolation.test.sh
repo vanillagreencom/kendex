@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for kendex#799: a test suite could not point the scripts at a
+# Verifies a test suite could not point the scripts at a
 # cache of its own, so every suite that created a comment or completed an issue
 # wrote its fixture identifiers into the developer's real .cache/linear.
 # Entering a throwaway repo was the only isolation that worked, and PROJECT_ROOT

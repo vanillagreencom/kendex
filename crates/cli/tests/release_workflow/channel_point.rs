@@ -547,7 +547,7 @@ fn a_run_handed_no_manifests_writes_nothing() {
 
 /// The channel's two manifests are one answer, and either one alone is half
 /// of it: the app stays on the version the stale latest.json names while
-/// `kendex update` follows feed.json to the new one, with nothing on the
+/// `kendex update` follows feed.json to the newer one, with nothing on the
 /// channel reporting the two as disagreeing. Driven over both names, so
 /// neither direction can regress on its own.
 #[cfg(unix)]

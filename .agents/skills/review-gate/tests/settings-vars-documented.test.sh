@@ -75,7 +75,7 @@ done
 # Failing-direction self-check: the forbidden-assignment guard above only
 # ever runs against examples where the keys are absent, so it would stay
 # green even if the matcher stopped recognizing assignments. Prove each
-# TOML spelling actually trips the matcher (kendex#1086).
+# TOML spelling actually trips the matcher.
 matcher_fixture="$(mktemp)"
 while IFS= read -r spelling; do
   printf '%s\n' "$spelling" >"$matcher_fixture"
@@ -93,7 +93,6 @@ SPELLINGS
 
 # And the reverse direction: spellings that are NOT assignments of the key
 # must NOT match — an over-broad matcher would flag innocent example text
-# (kendex#1092).
 while IFS= read -r spelling; do
   printf '%s\n' "$spelling" >"$matcher_fixture"
   if forbidden_assignment_matches "REVIEW_GATE_SETTINGS_FILE" "$matcher_fixture"; then

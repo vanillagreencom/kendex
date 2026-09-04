@@ -10,7 +10,7 @@
 # offset, so within that window either side of a cycle boundary the answer is
 # wrong: east of UTC `current` names a cycle that has not started, and west of
 # it `current` names the previous cycle, or nothing at all when no earlier cycle
-# is incomplete (KEN-1175).
+# is incomplete.
 
 # Now, in the shape the cache stores.
 cache_now_utc() {

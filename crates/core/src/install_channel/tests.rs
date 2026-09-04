@@ -536,7 +536,7 @@ fn a_mac_bundle_is_the_one_behind_the_name_it_was_launched_under() {
 /// pinned above by the two link tests,
 /// `an_appimage_reached_through_a_link_belongs_to_whatever_it_points_at`
 /// and `a_mac_bundle_is_the_one_behind_the_name_it_was_launched_under`.
-/// New here is the accessor, and on macOS that it stays the executable:
+/// What this pins is the accessor, and on macOS that it stays the executable:
 /// `for_app` reaches the bundle from it by the same `bundle_root` asserted
 /// here. Whether the updater plugin derives that same bundle is the app
 /// crate's test, not this one's.

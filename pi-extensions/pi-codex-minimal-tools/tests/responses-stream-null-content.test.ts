@@ -28,11 +28,8 @@ const model = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 } as any;
 
-// earendil-works/pi#5819: OpenAI-compatible streams (e.g. vLLM) can emit
-// reasoning -> empty message (content: null) -> function_call. Before the null
-// guard, the message branch of response.output_item.done did item.content.map()
-// with no guard, threw TypeError, aborted the stream, and silently dropped the
-// tool call. This asserts the tool call survives a null-content message item.
+// OpenAI-compatible streams can emit reasoning -> empty message (content: null)
+// -> function_call. The tool call must survive the null-content message item.
 test("processResponsesStream tolerates a null-content message item before a function_call", async () => {
 	const output = createAssistantOutput();
 

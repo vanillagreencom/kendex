@@ -1,4 +1,4 @@
-// kendex#97 hardening: protect bg_task children from parent/session/pgid
+// Protect bg_task children from parent, session, and process-group
 // cascades when Pi exits, restarts, or its session leader dies.
 //
 // H1 (process-group / parent-death cascade) + H3 (session-leader cascade)
@@ -7,7 +7,7 @@
 // orphan-watcher metadata-only — no kill() under reconcile.
 //
 // These tests don't actually spawn child processes; they exercise the
-// helpers and module source so a future regression in the contract trips
+// helpers and module source so a contract change trips
 // the suite.
 
 import { describe, expect, test } from "bun:test";
@@ -107,8 +107,7 @@ describe("spawn hardening (kendex#97)", () => {
 
 	test("orphan-watcher does not invoke its hooks beyond finalizeTaskLifecycle", () => {
 		// Belt-and-braces: spy that the watcher only causes the finalize
-		// path (which itself is non-killing). A future regression that
-		// added an unexpected hook would surface here.
+		// path, which does not kill the process. An unexpected hook call must fail here.
 		const calls: string[] = [];
 		const hooks: LifecycleHooks = {
 			clearTaskTimers: () => calls.push("clearTaskTimers"),

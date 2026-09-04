@@ -83,10 +83,10 @@ assert_at_exit() {
 # repository the process is standing in, which for a suite is the developer's
 # own kendex checkout. A suite that creates a comment or completes an issue
 # therefore wrote its fixture identifiers into the real .cache/linear, where
-# `cache issues list` and any audit can see them (kendex#799).
+# `cache issues list` and any audit can see them.
 #
 # The redirect is installed here, once, for every suite that sources this file:
-# no suite has to remember it, and a new one is isolated before its first line
+# no suite has to remember it, and each suite is isolated before its first line
 # runs. LINEAR_CACHE_ROOT outranks the git root in the scripts under test, and
 # the scratch root goes with the suite's other scratch directories at exit — on
 # success, on a failed assertion, and on an abort alike, taking any lock file
@@ -299,7 +299,7 @@ __assert_on_exit() {
 
 	# A background job still running has not finished writing to the ledger, so
 	# the totals below would be computed over a record that is still being
-	# added to — and the ledger is removed a few lines later, so what the job
+# updated — and the ledger is removed a few lines later, so what the job
 	# writes afterwards goes nowhere. Waiting on it is the other option and it
 	# can hang forever on a job that never exits, so the verdict fails closed
 	# on the job's presence instead: a suite that leaves work outstanding has

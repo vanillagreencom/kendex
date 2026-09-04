@@ -16,7 +16,7 @@
 # So per workflow, select the latest run holding at least one non-skipped check,
 # falling back to the latest all-skipped run only when no substantive run exists.
 #
-# "Latest" is NOT run-id order: a rerun starts a new attempt under the ORIGINAL
+# "Latest" is NOT run-id order: a rerun starts another attempt under the ORIGINAL
 # run id, so a re-executed attempt can carry a LOWER run id than a run dispatched
 # between the original attempt and the rerun. Order instead by when the checks
 # actually RAN — greatest [latest check `startedAt`, run id]. Time ordering

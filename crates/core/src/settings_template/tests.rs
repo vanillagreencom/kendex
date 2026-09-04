@@ -153,7 +153,7 @@ fn the_required_marker_rides_with_the_value_and_nothing_else_may() {
     // word is what the seeder honours, so every other presentation of it
     // is a template refused — and the seeder is asked in the same loop,
     // because the check exists to keep the two from parting. Fold one and
-    // not the other and `# Required` passes review while the seeder still
+    // not the other and `# Required` passes this check while the seeder still
     // ignores it: the key is never written AND never reported unanswered.
     for said in ["Required", "REQUIRED", "required.", "required:"] {
         let template = format!("[env]\n# How long to wait.\nWAIT = \"900\" # {said}\n");

@@ -277,7 +277,7 @@ PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
 source "$SCRIPT_DIR/lib/kendex-env.sh"
 # errexit would abort on a refused load anyway, but this marker is the
 # OBSERVABLE contract: it names the terminator, so a later tolerance
-# regression (`|| true`, a set +e window) cannot pass the pin on the
+# failure (`|| true`, a set +e window) cannot pass the pin on the
 # loader's own stderr plus an unrelated exit 1.
 kendex_load_project_env "$PROJECT_ROOT" || {
   echo "second-opinion: refusing to run on a rejected settings load" >&2
@@ -300,30 +300,30 @@ CWD="."
 RANGE=""
 FOREGROUND_CAP=false
 DETACHED_WORKER=false
-# Distinct exit codes (kendex#652) so callers can tell "there was nothing to
-# review" and "the model reported it performed no review" apart from generic
-# failures (1). A response missing the required qa_metadata object (kendex#672)
-# or still structurally incomplete after the one-shot retry (kendex#678) is
-# rejected the same way. None of these paths writes the --output artifact.
+# Distinct exit codes so callers can tell "there was nothing to review" and
+# "the model reported it performed no review" apart from generic failures (1).
+# A response missing the required qa_metadata object or still structurally
+# incomplete after the one-shot retry is rejected the same way. None of these
+# paths writes the --output artifact.
 #
-# EXIT_CLI_FAILED (kendex#809): the external CLI failed to produce ANY review at
-# all — it exited non-zero (quota/auth/network), timed out, or returned nothing
-# usable on a zero exit. That yields no external verdict, so like exits 3/4 it
-# must never be a silent exit-0 success; it joins the no-verdict class. It is
-# kept DISTINCT from EXIT_NO_REVIEW (4) on purpose: 4 is a response-level defect
+# EXIT_CLI_FAILED: the external CLI failed to produce ANY review at all — it
+# exited non-zero (quota/auth/network), timed out, or returned nothing usable
+# on a zero exit. That yields no external verdict, so like exits 3/4 it must
+# never be a silent exit-0 success; it joins the no-verdict class. It is kept
+# DISTINCT from EXIT_NO_REVIEW (4) on purpose: 4 is a response-level defect
 # (the model answered, but the answer is unusable), whereas 5 is a lane-level
 # failure (the model never answered) — an operator retries a down lane but reads
 # a code-4 as a real signal about the review. Only review/audit modes (the ones
 # with the no-verdict contract) use it; challenge/quick keep the generic 1.
 #
-# EXIT_CLI_KILLED (KEN-1061): the CLI, or a lane running it, died to a SIGNAL —
-# something outside the run (a reaper, a sweeper, an operator) took the
-# reviewer away. Folded into 5 that reads as a refused review, so a session
-# cannot tell its reviewer was killed until the pattern has cost several runs.
-# Own code in the same no-verdict class, every report naming the signal. The
-# shell cannot tell a child killed by signal N from one that chose
-# `exit $((128+N))`, so 128+N for a nameable signal N is a kill and any other
-# non-zero status a plain failure; that misreports only a CLI faking a kill.
+# EXIT_CLI_KILLED: the CLI, or a lane running it, died to a SIGNAL — something
+# outside the run (a reaper, a sweeper, an operator) took the reviewer away.
+# Folded into 5 it would read as a refused review, so a session could not tell
+# that its reviewer was killed. Own code in
+# the same no-verdict class, every report naming the signal. The shell cannot
+# tell a child killed by signal N from one that chose `exit $((128+N))`, so
+# 128+N for a nameable signal N is a kill and any other non-zero status a plain
+# failure; that misreports only a CLI faking a kill.
 EXIT_NO_SCOPE=3
 EXIT_NO_REVIEW=4
 EXIT_CLI_FAILED=5
@@ -355,7 +355,7 @@ signal_name() {
 #   * dirname and basename are replaced by parameter expansion — path_dir below
 #     and `${BASH_SOURCE[0]##*/}` — needing no utility and no marker.
 # Adding `--` to sed/head/stat/cat/basename here would buy nothing and break
-# the BSD path; this note exists because a sweep already did it once.
+# the BSD path.
 #
 # The containing directory of a path, without `dirname`. --output is caller
 # input and may legitimately begin with '-', which dirname parses as options.
@@ -371,9 +371,6 @@ path_dir() {
     printf '%s' "$dir"
   fi
 }
-
-# --- Help ---------------------------------------------------------------------
-
 
 # --- Argument parsing ---------------------------------------------------------
 # A malformed argument does not exit here: it records PARSE_ERROR and stops the
@@ -478,8 +475,8 @@ roster_entries() {
 #
 # A removal that fails — read-only filesystem, a directory that denies write, an
 # immutable file — must not abort under set -e with a bare `rm: cannot remove`
-# and no context: that is the wrong-cause shape already fixed twice here, for
-# the artifact home and the record writers. rm's own text is the actionable
+# and no context: that is the wrong-cause shape the artifact home and the
+# record writers guard against too. rm's own text is the actionable
 # part (which path, which errno), so it is captured and reported INSIDE a named
 # cause rather than discarded or left to stand alone.
 # Is $1 a review artifact THIS SKILL wrote? Content only — a filename proves
@@ -499,11 +496,10 @@ roster_entries() {
 #           produces. Anything else is somebody else's file.
 #
 # The PREFIX is the whole test. The writer stamps `external-<target>` over
-# whatever the provider returned, so a current artifact's suffix does track its
-# lane — but a union carries `external-union(...)`, and an artifact written by
-# an earlier version carries whatever the model chose, so matching the suffix
-# against the filename would strand both. The prefix accepts every shape this
-# skill has ever produced and nothing another tool produces.
+# whatever the provider returned, so a lane artifact's suffix does track its
+# lane — but a union carries `external-union(...)`, so matching the suffix
+# against the filename would strand it. The prefix accepts every shape this
+# skill produces and nothing another tool produces.
 #
 # Read through a redirection, never a path operand: the name is built from the
 # caller's --output and may begin with '-'.
@@ -884,7 +880,7 @@ target_model() {
 # A target is a NAME plus a full command line. claude and codex carry built-in
 # default commands; any other name resolves ONLY through its
 # SECOND_OPINION_<NAME>_CMD variable, so another local model CLI is a settings
-# entry, not new code.
+# entry, not code.
 
 DEFAULT_CLAUDE_CMD="claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
 DEFAULT_CODEX_CMD="codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
@@ -1268,8 +1264,8 @@ vet_relative_home() {
 #    directory holding a curated .gitignore — `SECOND_OPINION_ARTIFACT_DIR=docs`
 #    must not make every future file under docs/ invisible to git status and
 #    `git add -A`. A directory this run just created can hold nothing at all,
-#    which also removes the symlink vector: an existence test cannot be used to
-#    decide, because `-e` follows symlinks and reads false for a DANGLING one,
+#    which also removes the symlink vector: an existence test cannot decide
+#    it, because `-e` follows symlinks and reads false for a DANGLING one,
 #    so a committed `.gitignore -> /somewhere/outside` in the reviewed checkout
 #    would have turned this into an arbitrary-file-create primitive.
 #
@@ -1443,10 +1439,10 @@ store_record() {
   [[ -n "$path" ]] || return 0
   # The write's own message is the actionable half — a directory at the path, a
   # read-only filesystem, an exclusive create that lost its race all read the
-  # same from outside. Suppressing it left the caller saying only that the
-  # record went nowhere, which is the wrong-cause shape this file has fixed
-  # twice already. Captured and named here; still never fatal, because a record
-  # is a diagnostic and losing it must not change the caller's exit class.
+  # same from outside. Suppressed, it would leave the caller saying only that
+  # the record went nowhere — the wrong-cause shape this file guards against
+  # elsewhere. Captured and named here; still never fatal, because a record is
+  # a diagnostic and losing it must not change the caller's exit class.
   if ! err=$(write_owned "$path" "$content" 2>&1); then
     [[ -z "$err" ]] || echo "→ record could not be written to $path: $err" >&2
     return 0
@@ -1455,7 +1451,7 @@ store_record() {
 }
 
 # --- Review scope derivation (review mode) ------------------------------------
-# kendex#652: the external model must never be asked to guess its own scope. A
+# The external model must never be asked to guess its own scope. A
 # no-scope session can answer with a schema-valid `verdict: "pass"` while
 # admitting it reviewed nothing. Derive branch + diff range + changed-file list
 # from the worktree BEFORE invoking the CLI, embed them in the prompt, and fail
@@ -1524,7 +1520,7 @@ derive_review_scope() {
 }
 
 # --- Repo instruction collection (review mode) --------------------------------
-# VST-124: GitHub review bots read the repo's own instruction files
+# GitHub review bots read the repo's own instruction files
 # (.github/instructions/*, copilot-instructions, review-bots.md) and enforce
 # them; the local review must see the same rules or repo-rule findings are
 # structurally impossible. Globs resolve inside the reviewed repo ($CWD). A
@@ -1833,10 +1829,10 @@ if $MULTI_LANE; then
     # The capture exists only so the lane's log can be replayed, so it must
     # never be able to stop the lane from running. A redirection named on the
     # launch itself is performed by the forked child BEFORE the command runs:
-    # if the scratch directory has gone by then — the same actor this whole
-    # change is about, and every lane after the first is exposed for as long as
-    # the fan-out takes — the child dies without ever reviewing, and scratch
-    # loss costs a VERDICT rather than a log.
+    # if the scratch directory has gone by then — an outsider can remove it at
+    # any moment, and every lane after the first is exposed for as long as the
+    # fan-out takes — the child dies without ever reviewing, and scratch loss
+    # costs a VERDICT rather than a log.
     #
     # So the lane opens the capture itself, in its own process, with a fallback
     # that cannot fail, and hands the result to the review as an already-open
@@ -1886,7 +1882,7 @@ if $MULTI_LANE; then
       else
         detached_worker_arg=
       fi
-      # `=` form throughout: a split-form option now refuses a flag-shaped
+      # `=` form throughout: a split-form option refuses a flag-shaped
       # value, and every one of these is derived from caller input that may
       # legitimately begin with '-' (--output above all). The child would
       # otherwise reject its own lane path.
@@ -1939,8 +1935,8 @@ if $MULTI_LANE; then
     wait "${LANE_PIDS[$i]}" || lane_rc=$?
     # Replay the lane's stderr with a lane prefix so parallel logs stay
     # attributable in sequential order. The stderr capture is scratch: when it
-    # is gone (VST-221 — the reviewed repo's own agent CLI, a sandbox, or a tmp
-    # reaper can clear scratch while lanes run) the log is lost and nothing
+    # is gone (the reviewed repo's own agent CLI, a sandbox, or a tmp reaper
+    # can clear scratch while lanes run) the log is lost and nothing
     # else is. Branch on the read ITSELF rather than a prior -r test: a capture
     # removed between the test and the read would otherwise emit the bare
     # "can't read" error this branch exists to replace. The one message covers
@@ -1958,21 +1954,21 @@ if $MULTI_LANE; then
       echo "→ lane stderr replay unavailable (scratch capture unreadable): $lane" >&2
     fi
     lane_ok=false
-    # Read the artifact ONCE, into memory (VST-221). Everything downstream —
-    # the wrap, and the cause reported when the wrap is refused — works on
-    # those same bytes, so a test-then-read pair can no longer straddle the
-    # mid-run clearing this fix is about, and the reported cause is always the
-    # one that actually rejected the lane rather than whatever a later re-read
-    # happens to find (an artifact removed a moment after being rejected as
-    # malformed would otherwise be explained as "No such file or directory").
+    # Read the artifact ONCE, into memory. Everything downstream — the wrap,
+    # and the cause reported when the wrap is refused — works on those same
+    # bytes, so a test-then-read pair cannot straddle a mid-run clearing, and
+    # the reported cause is always the one that actually rejected the lane
+    # rather than whatever a later re-read happens to find (an artifact
+    # removed a moment after being rejected as malformed would otherwise be
+    # explained as "No such file or directory").
     # Which failure class a lane lands in is decided by what it WROTE, so the
     # test is the artifact's size on disk. A shell string cannot stand in for
     # that: command substitution cannot hold NUL bytes, so an artifact holding
     # only a NUL would read back as the empty string and be called
     # never-answered even though the lane did produce a byte — and the contract
     # is that the line between the classes is whether any bytes exist at all.
-    # Testing before reading cannot revive the older hazard: an artifact that
-    # vanishes between the two lands in answered-unusably, because the gate
+    # Testing before reading opens no hazard: an artifact that vanishes
+    # between the two lands in answered-unusably, because the gate
     # then has nothing to parse, and never in never-answered.
     lane_raw=""
     if [[ $lane_rc -eq 0 && -s "${LANE_OUTS[$i]}" ]]; then
@@ -2217,7 +2213,7 @@ run_target_cli() {
   return "$rc"
 }
 
-# kendex#809: a failed external-CLI invocation on the primary call — non-zero
+# A failed external-CLI invocation on the primary call — non-zero
 # exit (quota/auth/network), timeout, or a zero exit that returned nothing
 # usable — produces no external verdict, exactly like the no-scope/no-review
 # gates. Left as a bare exit-0 it fails invisibly precisely when the lane is
@@ -2239,9 +2235,9 @@ preserve_cli_failure_and_fail() {
 
   # The CLI's own stderr is the authoritative cause (e.g. the quota message).
   # Some CLIs report the failure on stdout with an empty stderr — the Claude
-  # quota-limit message is the concrete case — which left the cause block empty
-  # and made a capped lane read as broken. Fall back to the tail of captured
-  # stdout so the reason surfaces whichever stream carried it.
+  # quota-limit message is the concrete case — which would leave the cause
+  # block empty and make a capped lane read as broken. Fall back to the tail
+  # of captured stdout so the reason surfaces whichever stream carried it.
   if [[ -s "$STDERR_TMP" ]]; then
     cause=$(head -20 "$STDERR_TMP")
     cause_source="${TARGET_CLI} stderr"
@@ -2372,12 +2368,12 @@ extract_json() {
 # serialize now. The retry runs in a fresh session (--no-session-persistence /
 # --ephemeral), so it must carry the complete original prompt — scope block
 # included — or the model has nothing to review and can only produce a
-# context-free verdict (kendex#672). The schema file is the shared source of
-# the JSON structure for both review and audit, so re-reading it here works
-# regardless of which mode produced the first response. The optional second
-# arg names the defect in the first response (default: no parseable JSON) so
-# an incomplete-schema retry (kendex#678) tells the model exactly what was
-# missing instead of claiming the JSON did not parse.
+# context-free verdict. The schema file is the shared source of the JSON
+# structure for both review and audit, so re-reading it here works regardless
+# of which mode produced the first response. The optional second arg names
+# the defect in the first response (default: no parseable JSON) so an
+# incomplete-schema retry tells the model exactly what was missing instead of
+# claiming the JSON did not parse.
 build_retry_prompt() {
   local raw="$1"
   local problem="${2:-did not contain a parseable JSON object}"
@@ -2401,7 +2397,7 @@ Emit exactly this JSON structure:
 ${schema}
 RETRY
 }
-# kendex#940: persist the raw first response the moment a retry is attempted —
+# Persist the raw first response the moment a retry is attempted —
 # BEFORE the retry outcome is known. A successful reformat retry replaces
 # RESULT wholesale, so without this sidecar the only record of what the model
 # actually said is discarded exactly when the retry "succeeds", making a
@@ -2428,8 +2424,8 @@ preserve_raw_and_fail() {
   local retry="${2:-}"
   local raw_path retry_path=""
 
-  # The raw first response was already written when the retry was attempted
-  # (kendex#940) — reuse that sidecar instead of writing it a second time.
+  # The raw first response was already written when the retry was attempted —
+  # reuse that sidecar instead of writing it a second time.
   if [[ -n "$RAW_PRESERVED_PATH" ]]; then
     raw_path="$RAW_PRESERVED_PATH"
   elif [[ -n "$OUTPUT_PATH" ]]; then
@@ -2466,7 +2462,7 @@ preserve_raw_and_fail() {
 }
 
 # --- No-review self-report gate (review/audit) --------------------------------
-# kendex#652: a schema-valid response whose qa_metadata admits no review
+# A schema-valid response whose qa_metadata admits no review
 # happened (review_performed=false or a no-scope/no-review reason) must never
 # become the --output artifact, regardless of its verdict.
 response_reports_no_review() {
@@ -2479,7 +2475,7 @@ response_reports_no_review() {
   ' >/dev/null 2>&1
 }
 
-# kendex#672: the schema REQUIRES a qa_metadata object ({} for a performed
+# The schema REQUIRES a qa_metadata object ({} for a performed
 # review), so a response with no qa_metadata key cannot attest that any review
 # happened — non-conforming, structurally detected, no prose parsing. Catches
 # in particular a retried response that dropped the field along with the rest
@@ -2489,14 +2485,14 @@ response_missing_qa_metadata() {
   ! printf '%s' "$1" | jq -e '(.qa_metadata? | type) == "object"' >/dev/null 2>&1
 }
 
-# kendex#678: extraction can yield truncated-but-valid JSON — verdict and
-# summary survive while the finding arrays are silently dropped, so the
-# artifact looks reviewable but the actual blockers/suggestions are lost. The
-# schema requires verdict plus all three arrays (empty [] is fine), so anything
-# less is structurally incomplete: an incomplete FIRST response goes through
-# the one-shot retry (full original context, kendex#672); a still-incomplete
-# retried response is rejected. qa_metadata is deliberately NOT part of this
-# predicate — its absence rejects without a retry (kendex#672 contract).
+# Extraction can yield truncated-but-valid JSON — verdict and summary survive
+# while the finding arrays are silently dropped, so the artifact looks
+# reviewable but the actual blockers/suggestions are lost. The schema requires
+# verdict plus all three arrays (empty [] is fine), so anything less is
+# structurally incomplete: an incomplete FIRST response goes through the
+# one-shot retry (full original context); a still-incomplete retried response
+# is rejected. qa_metadata is deliberately NOT part of this predicate — its
+# absence rejects without a retry.
 response_incomplete_schema() {
   ! printf '%s' "$1" | jq -e '
     ((.verdict? | type) == "string")
@@ -2510,7 +2506,7 @@ response_incomplete_schema() {
 # written, so no pass artifact can exist for a review that did not verifiably
 # happen. The optional second arg overrides the error message (default: the
 # qa_metadata self-report); the optional third arg overrides the sidecar
-# suffix (default "noreview" — "incomplete" for the kendex#678 schema gate).
+# suffix (default "noreview" — "incomplete" for the incomplete-schema gate).
 preserve_no_review_and_fail() {
   local json="$1"
   local errmsg="${2:-}"
@@ -2540,17 +2536,17 @@ preserve_no_review_and_fail() {
 }
 if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
   # Two retryable defects in the first response share the one-shot retry: no
-  # parseable JSON at all (kendex#509 — prose claiming the JSON was "already
-  # delivered above", impossible with --no-session-persistence / --ephemeral),
-  # and parseable-but-truncated JSON that lost the required finding arrays
-  # (kendex#678). The retry resends the full original request (kendex#672), so
-  # a truncated extraction gets one chance to re-serialize completely instead
-  # of being written as a findings-less artifact.
+  # parseable JSON at all (prose claiming the JSON was "already delivered
+  # above", impossible with --no-session-persistence / --ephemeral), and
+  # parseable-but-truncated JSON that lost the required finding arrays. The
+  # retry resends the full original request, so a truncated extraction gets
+  # one chance to re-serialize completely instead of being written as a
+  # findings-less artifact.
   RETRY_WHY=""
   RETRY_PROBLEM=""
   # Byte counts of the raw responses, recorded into the artifact's qa_metadata
-  # (kendex#940) so a reformat that shrank the review is visible in the
-  # artifact itself. Measured on the untouched CLI output, before extraction.
+  # so a reformat that shrank the review is visible in the artifact itself.
+  # Measured on the untouched CLI output, before extraction.
   RAW_RESPONSE_BYTES=${#RESULT}
   RETRY_RESPONSE_BYTES=""
   if JSON=$(extract_json "$RESULT"); then
@@ -2565,8 +2561,8 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
   fi
   if [[ -n "$RETRY_WHY" ]]; then
     echo "→ $RETRY_WHY; retrying once with captured response" >&2
-    # Persist the raw first response now, before the retry outcome is known
-    # (kendex#940) — a successful reformat must not erase the original.
+    # Persist the raw first response now, before the retry outcome is known —
+    # a successful reformat must not erase the original.
     preserve_raw_response "$RESULT"
     RETRY_PROMPT_TMP=$(mktemp)
     if [[ -n "$RETRY_PROBLEM" ]]; then
@@ -2598,7 +2594,7 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
     elif JSON=$(extract_json "$RETRY_RESULT"); then
       # Same completeness discipline on the retried response: a retry that is
       # still missing the required arrays must not become the artifact either
-      # (kendex#678) — preserve it and fail with the distinct no-review code.
+      # — preserve it and fail with the distinct no-review code.
       if response_incomplete_schema "$JSON"; then
         echo "→ retry response JSON is still structurally incomplete" >&2
         preserve_no_review_and_fail "$JSON" \
@@ -2626,17 +2622,17 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
   fi
   # Stamp the authoritative timestamp ourselves. The reviewing model serializes
   # a `timestamp` field, but a model-supplied value is unverifiable — it can emit
-  # a stale or fabricated time (kendex#629). Overwrite it with the wrapper's own
+  # a stale or fabricated time. Overwrite it with the wrapper's own
   # UTC wall clock so the artifact's content timestamp is trustworthy and matches
   # its filesystem mtime. The schema keeps ISO_8601 as a hint; this is the
   # authoritative value. RESULT is already jq-validated JSON here, so the rewrite
   # succeeds; if jq unexpectedly fails, keep the extracted JSON unchanged.
-  # Also record the raw response byte counts in qa_metadata (kendex#940) —
+  # Also record the raw response byte counts in qa_metadata —
   # retry_response_bytes only when a retry actually ran — so a reformat that
   # shrank the review is visible in the artifact, next to the .raw.txt sidecar.
-  # reviewed_head (review mode, VST-124): record the head commit the review
-  # covered so callers can budget review passes per pushed head instead of per
-  # submission — a new head is a new round.
+  # reviewed_head (review mode): record the head commit the review covered so
+  # callers can budget review passes per pushed head instead of per submission
+  # — each pushed head is its own round.
   STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   REVIEWED_HEAD=""
   if [[ "$MODE" == "review" ]]; then

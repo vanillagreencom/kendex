@@ -99,8 +99,8 @@ printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 3/
 zs_mut="$worktree/tmp/review-external-20260815-010101.json"
 printf '{"agent":"reviewer-test","verdict":"pass","summary":"validated: mutation: killed 0/0; stability: 10/10 at 16 threads"}' > "$zs_mut"
 
-# --- a gate that could not run is never silence (kendex#1497 review) ---
-# Both gate helpers used to signal "no problem" with an empty string, so a jq
+# --- a gate that could not run is never silence ---
+# Both gate helpers would signal "no problem" with an empty string, so a jq
 # failure — a torn read of a non-atomically written artifact — was
 # indistinguishable from a clean artifact, and --wait's `out="$(glob_check)"`
 # capture suspends errexit for the whole body, turning it into ok=true.
@@ -160,7 +160,7 @@ set -e
 assert_eq "$(jq -r '.reason' <<<"$out")" "no_review" "with real jq the predicate answers no_review"
 
 # CONTROLS. The shim must be selective, or "invalid" above would just be jq
-# being broken for everything: an artifact rejected by an EARLIER gate still
+# being broken for everything: an artifact rejected by a prior gate still
 # reports that gate's own reason under the same shim.
 zs_shim_ctl="$worktree/tmp/review-external-20260815-090909.json"
 printf '{"verdict":"pass","qa_metadata":{"review_performed":false,"reason":"no_scope_provided"}}' > "$zs_shim_ctl"
@@ -217,7 +217,7 @@ assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file the chatty jq doe
 assert_substr "$(jq -r '.detail' <<<"$out")" "killed 0/0" "--file the detail is the gate's finding, not jq's chatter"
 
 # --- no mode exits without a parseable result ---
-# emit needs jq too, so when jq is unavailable the script used to exit 127 with
+# emit needs jq too, so when jq is unavailable the script would exit 127 with
 # empty stdout (or, in --wait, a blank line): a caller reading .ok got a parse
 # error rather than a refusal.
 NOJQ_BIN="$TMP_ROOT/nojq-bin"
@@ -265,7 +265,7 @@ fi
 # --- an accept path that could not emit an acceptance is not an acceptance ---
 # emit catching a failed `jq -n` and printing a rejection is only half the job:
 # the caller has to learn the answer changed. Printing `ok:false` while exiting
-# 0 is this issue's own defect class inside the emitter added to close it, and
+# 0 is this issue's own defect class inside the emitter included to close it, and
 # every caller that branches on exit status — orch's waiters, review-pr.md
 # § 3.1, submit-pr.md § 1, the reviewer self-check — reads that 0 as accepted.
 # Asserted in ALL THREE modes: the rule lived in --wait alone.

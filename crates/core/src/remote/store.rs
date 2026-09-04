@@ -302,7 +302,7 @@ pub fn publish(env: &Env, key: &str, mirror: &Path, commit: &str) -> Result<Path
     let _ = fs::remove_dir_all(&replaced);
     // Two trees of one commit can share a signature, so the order is what
     // keeps a receipt from vouching for the directory it replaces: the old
-    // directory leaves view, the receipt lands, the new directory lands. A
+    // directory leaves view, the receipt lands, the fresh directory lands. A
     // reader that sees a directory always finds the receipt for it, and in
     // between sees none, which reads as a miss.
     let result = check_out(&staging, mirror, commit)

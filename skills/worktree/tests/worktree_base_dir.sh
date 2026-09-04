@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Coverage for kendex#692: external default worktree base dir
+# Tests for an external default worktree base directory.
 # (<parent-of-checkout>/.worktrees/<checkout-name>), absolute and ~ overrides,
 # canonical (symlink-resolved) path comparisons, and compatibility with
 # worktrees registered under an older base-dir convention.
@@ -120,7 +120,7 @@ make_repo() {
 
 # merge_worktree_branch REPO WT BRANCH: give WT's branch a unique commit and
 # merge it into main, so `cleanup` sees merged work rather than a zero-commit
-# pending worktree (#923).
+# pending worktree.
 merge_worktree_branch() {
   local repo="$1" wt="$2" branch="$3"
   printf '%s\n' "$branch" >"$wt/$branch.txt"
@@ -148,7 +148,7 @@ assert_path_exists "$DEFAULT_ROOT/.worktrees/repo-a/issue-default/.git" "default
 assert_path_absent "$DEFAULT_ROOT/repo-a/trees" "create adds nothing under the repo root"
 merge_worktree_branch "$DEFAULT_ROOT/repo-a" "$DEFAULT_ROOT/.worktrees/repo-a/issue-default" issue-default
 
-# cleanup parses the registry under the new layout, excludes the main checkout
+# cleanup parses the registry under the configured layout, excludes the main checkout
 # by canonical comparison, and removes merged worktrees before deleting their
 # checked-out branches.
 set +e

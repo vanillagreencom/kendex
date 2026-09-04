@@ -173,7 +173,7 @@ describe("a declared item whose place already holds files", () => {
 
   // One installation core refuses takes the offer off the whole item: both
   // exits act on all of it, and half an item settled leaves the rest
-  // blocked with the item no longer its tool's.
+  // blocked with the item out of its tool's hands.
   it("offers neither exit when one installation refuses it", async () => {
     stage([
       view({
@@ -338,8 +338,8 @@ describe("a declared item whose place already holds files", () => {
     ]);
   });
 
-  // The heading is half of what the dialog says, and the old one asked
-  // whether to keep files — a choice the button under it does not run.
+  // The heading is half of what the dialog says; one asking whether to
+  // keep files would offer a choice the button under it does not run.
   it("heads the confirm with the action rather than with keeping files", async () => {
     stage([oneBlocked(ACME, "deploy")]);
     const host = mount(<ProblemsPage />);

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Regression coverage for secondary-remote ownership discovery (kendex#575):
-# an unreachable non-origin remote must not brick new-work claims, a reachable
+# Tests for secondary-remote ownership discovery:
+# an unreachable non-origin remote must not block new-work claims, a reachable
 # secondary remote must still count as ownership, and origin stays required.
 set -euo pipefail
 

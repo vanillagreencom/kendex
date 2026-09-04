@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cache cycles list --team (KEN-1150).
+# cache cycles list --team.
 #
 # `--team` was consumed and discarded here — `--team) shift 2 ;;` — so the flag
 # was accepted at rc 0 and did nothing: on a cache holding more than one team,

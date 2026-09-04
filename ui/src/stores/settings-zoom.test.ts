@@ -152,7 +152,7 @@ describe("zoom, on screen", () => {
     await useSettingsStore.getState().setZoom(150);
     await useSettingsStore.getState().saveZoom();
 
-    // The reload: a new store, and a window still at the resized size.
+    // The reload: a fresh store, and a window still at the resized size.
     useSettingsStore.setState({
       settings: null,
       zoom: null,
@@ -240,7 +240,7 @@ describe("zoom, on screen", () => {
   /// A refusal is about the press that was refused. Another press made
   /// while it was out has already moved the display past it, and putting
   /// the old size back would take the person off the size they are looking
-  /// at because an earlier one failed.
+  /// at because the press before it failed.
   it("does not undo a newer size when an older resize comes back refused", async () => {
     const first = deferred<ReturnType<typeof failed>>();
     vi.mocked(commands.windowSetZoom).mockReturnValueOnce(first.promise);

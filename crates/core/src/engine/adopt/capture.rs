@@ -4,7 +4,7 @@
 //! One copy goes in, so every tool's copy has to be that copy: tools that
 //! disagree refuse rather than being merged, and the position each one held
 //! is cleared by an op rather than by anything this pass does to disk.
-//! Project skills no longer come through here — they are their own source,
+//! Project skills do not come through here — they are their own source,
 //! moved in place — so what is left is agents, and skills at global scope.
 
 use std::fs;

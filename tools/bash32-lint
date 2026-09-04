@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # The one scan for Bash 4+ syntax in the shell this repository ships.
 #
-# A copy of this scan used to sit in the tests/ of each skill that wanted one,
-# with a further one inlined in a github suite. The copies were justified by
-# skills installing independently, so a judge inside one skill is absent from
-# an install that skips it. No consumer runs those suites:
+# This scanner stays at the repository level because skills install
+# independently and no consumer runs their source suites.
 # .github/workflows/skill-tests.yml proves quality at the source precisely so
 # consuming repos can drop tracked vendoring. The judge belongs where the
 # proving happens, and there is one of it.
@@ -23,8 +21,8 @@ set -uo pipefail
 
 # --- the roster ---------------------------------------------------------
 # Discovered, not enumerated: every skill's scripts/ and tests/ are scanned,
-# so a new skill is covered the day it lands rather than the day someone
-# remembers to add it. tests/ is in the shape because skill suites run on
+# so every skill is covered without a second roster. tests/ is in the shape
+# because skill suites run on
 # macOS system bash — a Bash 4 construct in a suite, or in the lib a suite
 # sources, breaks the run on a 3.2 host as surely as one in a script.
 #
@@ -99,8 +97,8 @@ PATTERN="$PATTERN"'|\|&|&>>|;;?&'
 # 3.2.57 aborts on the braced spelling with `@: unbound variable` while the
 # bare one expands to nothing. Write `"$@"`, or guard it as `${@+"$@"}`.
 PATTERN="$PATTERN"'|\$\{@\}'
-# The shell variables Bash 4 and 5 added, referenced without a guard. On
-# 3.2.57 the name simply does not exist, and every script here runs `set -u`,
+# Shell variables unavailable in Bash 3.2 must be guarded. On 3.2.57 the name
+# simply does not exist, and every script here runs `set -u`,
 # so the reference is not a wrong value but a fatal `unbound variable` — in an
 # EXIT trap, fatal before the cleanup the trap exists for. Write
 # `${BASHPID:-$$}`: a guarded expansion carries its own 3.2 answer and is not

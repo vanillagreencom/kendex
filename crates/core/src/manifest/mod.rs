@@ -19,9 +19,8 @@ pub(crate) use file::save;
 pub use validate::{Finding, joined, validate};
 
 /// Current manifest schema, and the only one that loads. Nothing converts
-/// an older file: each schema changed what a table means — schema 3 added
-/// per-item `rev` and `[forks]`, schemas 4 and 5 carried the recorded
-/// safety decisions schema 6 retired — so reading one under this build's
+/// an older file: each schema changed what a table means, so reading one
+/// under this build's
 /// rules answers wrongly rather than incompletely, and the write that
 /// follows makes it durable over the person's own bytes. A schema newer
 /// than this build refuses too; downgrades must never corrupt. Either way
@@ -62,7 +61,7 @@ pub struct SourceDecl {
     pub path: Option<String>,
     /// Which revision of a remote to read. A full commit id is a pin: that
     /// commit and no other, forever, and it works offline once cached. A
-    /// tag or branch tracks — every refresh re-resolves it and the new
+    /// tag or branch tracks — every refresh re-resolves it and the incoming
     /// content is previewed before anything is written. Absent tracks the
     /// repository's default branch.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -231,7 +230,7 @@ fn is_default_hook_agents(value: &HookAgents) -> bool {
 /// Where a fork came from. A fork keeps the item's installed name — the
 /// declaration just switches to the local source, so nothing that depends
 /// on the name breaks — and this records what it replaced. A fork made
-/// beside the original takes a new name and records the same provenance:
+/// beside the original takes another name and records the same provenance:
 /// what it was copied from, and at which commit. Manifest, not lock,
 /// because the package page keeps reading it after any cache loss.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -351,7 +350,7 @@ impl Manifest {
     }
 
     /// Record that this item stays removed. Re-suppressing is a no-op, so a
-    /// second removal of the same name writes nothing new.
+    /// second removal of the same name writes nothing.
     pub fn suppress(&mut self, kind: crate::model::ItemKind, name: &str) {
         if self.is_suppressed(kind, name) {
             return;

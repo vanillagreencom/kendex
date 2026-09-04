@@ -93,7 +93,7 @@ pub fn execute(env: &Env, plan: &Plan) -> Result<ApplyOutcome> {
     let recovered_first = recover(env, &plan.scope)?;
     let applied = run_journaled(env, &plan.ops, &scope_key(&plan.scope))?;
     // The scope just changed; a drift snapshot describing the old state
-    // would send the next session chasing drift that no longer exists.
+    // would send the next session chasing drift that is not there.
     // Invalidation is the cheap honest move: the check reads "not yet
     // evaluated" and its background job re-derives. Verbs that already do
     // the deep work re-record right after this returns. Best-effort — a

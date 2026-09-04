@@ -141,8 +141,8 @@ fn publish_inputs(ref_name: &str) -> (bool, bool) {
 /// The workflow and the build it produces have to mean the same thing by
 /// "candidate". SemVer keeps build metadata after a `+` and out of the
 /// version, so v1.0.0+build-1 is a full release that merely contains a
-/// dash — the tag shape that made the two halves disagree, and the reason
-/// this is asked of core rather than of a hand-written list.
+/// dash — the tag shape a hand-written list and core part ways on, and the
+/// reason this is asked of core rather than of one.
 #[cfg(unix)]
 #[test]
 fn the_workflow_and_the_build_agree_on_what_a_candidate_is() {

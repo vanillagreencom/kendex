@@ -1,7 +1,7 @@
 //! The repository a guard verb is standing in.
 //!
-//! Small on purpose, and smaller than it was. kendex arms hooks through the
-//! growth-guards package and no longer reasons about them: it needs to know
+//! Small on purpose. kendex arms hooks through the growth-guards package
+//! and does not reason about them: it needs to know
 //! which repository it is in and where the package's scripts should be run
 //! from. Where the hook files sit, and what "armed" means, belong to the
 //! package.
@@ -48,15 +48,13 @@ pub(crate) fn english(hardened: Hardened) -> Hardened {
 
 /// One path out of git, as the bytes git wrote.
 ///
-/// Asked one path at a time, and read as bytes rather than text. Both halves
-/// matter and both were wrong here.
-///
-/// Two paths in one `rev-parse` came back as two lines, so a checkout whose
+/// Asked one path at a time, because two paths in one `rev-parse` come back
+/// as two lines. A checkout whose
 /// name contains a newline — legal on Unix, and a name a person can create —
-/// shifted the second answer onto part of the first. And `from_utf8_lossy`
+/// could shift the second answer onto part of the first. Read as bytes because
+/// `from_utf8_lossy`
 /// turns any byte that is not UTF-8 into U+FFFD, which is not a filename: the
-/// canonicalize below then fails for a repository that is perfectly fine, on
-/// every verb, with a diagnostic naming a path nobody has.
+/// canonicalize below would then fail with a diagnostic naming a path nobody has.
 ///
 /// git terminates the answer with exactly one newline, which is the only
 /// byte removed.

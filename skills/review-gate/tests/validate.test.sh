@@ -200,7 +200,7 @@ dir="$DIR"
 printf '\n[env] # comment\nREVIEW_GATE_THREADS = "off"\n' >>"$dir/kendex.settings.toml"
 expect_fail "a header the loader cannot parse is its own finding" "$dir" "table header(s) the loader cannot parse"
 
-# An override naming something other than a regular file used to read as
+# An override naming something other than a regular file would read as
 # ABSENT here, so the scan reported "every key resolves to its built-in
 # default" about a policy file it never opened. Present-but-unusable is a
 # finding naming the path, and the ABSENT control below keeps that branch

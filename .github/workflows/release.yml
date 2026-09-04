@@ -116,7 +116,7 @@ jobs:
           # an unset key fails bundling rather than skipping signing.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # macOS Developer ID signing + notarization (KEN-394) arrives
+          # macOS Developer ID signing and notarization arrive
           # from the staging step above via GITHUB_ENV, only when the
           # secrets exist. APPLE_API_KEY there is the key ID in tauri's
           # vocabulary; the .p8 content travels by APPLE_API_KEY_PATH.
@@ -163,8 +163,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-24.04
-    # Where this tag's kind and version reach the channel job below, now
-    # that the repoint is no longer a step here.
+    # The channel job reads this tag's kind and version through these outputs.
     outputs:
       prerelease: ${{ steps.tag.outputs.prerelease }}
       version: ${{ steps.tag.outputs.version }}
@@ -308,7 +307,7 @@ jobs:
 
   # Because "latest" skips pre-releases, a candidate has no way to reach the
   # next one. This release is that way: one fixed tag whose manifests and
-  # digests documents are overwritten by each new candidate, which is the URL
+  # digests documents are overwritten by each candidate, which is the URL
   # `update_channel::feed_url_for` sends a candidate to. They name their
   # downloads by the tag that built them, so what they point at is that tag's
   # own release, published by the job above.

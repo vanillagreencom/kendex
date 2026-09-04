@@ -28,10 +28,10 @@ fn the_window_opens_hidden_so_the_saved_zoom_lands_first() {
 /// copy core holds for `kendex update` can only be kept honest by an
 /// assertion. Two keys means one delivery path trusting what the other
 /// would turn away — and two identical pins are still the wrong pin if
-/// nothing names the key, which is how a pin whose private half exists
-/// nowhere shipped. So the key id parsed out of the key file's payload —
-/// the half minisign verifies with, not the comment above it — is held to
-/// the key id the release is signed with as well.
+/// nothing names the key: a pin whose private half exists nowhere would
+/// ship with both checks green. So the key id parsed out of the key file's
+/// payload — the half minisign verifies with, not the comment above it —
+/// is held to the key id the release is signed with as well.
 #[test]
 #[allow(clippy::expect_used)]
 fn the_app_and_the_cli_pin_one_updater_key() {

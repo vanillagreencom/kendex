@@ -201,7 +201,7 @@ attach_download_url() {
     ) 203>"$ATTACH_MANIFEST.lock"
 }
 
-# Download all new attachments found in cached issues/comments
+# Download all unseen attachments found in cached issues and comments
 # Usage: attach_sync [--quiet]
 # Returns count of newly downloaded files
 attach_sync() {
@@ -221,7 +221,7 @@ attach_sync() {
         return
     fi
 
-    # Filter to only new URLs (not in manifest or file missing)
+# Keep only unseen URLs (not in manifest or file missing)
     local new_count=0
     local download_count=0
     local fail_count=0

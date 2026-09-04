@@ -6,8 +6,8 @@ use std::fs;
 
 use super::{folder_at, follow, link_at, offer, plan, project_with, settled};
 
-/// The layout the whole issue started from: one real folder at one tool's
-/// place, the other tool reading it through a link somebody made. Both
+/// The shared layout: one real folder at one tool's place, the other tool
+/// reading it through a link somebody made. Both
 /// tools are blocked, and keeping it is one move covering both — named for
 /// the tools adoption can act through, not the tool a row happens to be
 /// about.

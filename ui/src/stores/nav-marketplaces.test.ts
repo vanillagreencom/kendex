@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { useNavStore } from "./nav";
 
 // The Marketplaces half of navigation: its tab memory, the nested refs, and
-// where the "/" shortcut lands now that more than one page holds a search box.
+// where the "/" shortcut lands when more than one page holds a search box.
 describe("nav store — marketplaces", () => {
   beforeEach(() => {
     useNavStore.setState({
@@ -88,10 +88,10 @@ describe("nav store — marketplaces", () => {
   });
 
   // A marketplace page whose last subscription was just removed does not
-  // exist any more. Departing through a pushing helper recorded it, so
-  // Back remounted a deleted subscription — a dead alias in the header over
-  // a failing read. It is left, not navigated away from: what came before
-  // it is still where Back goes.
+  // exist any more. Departing through a pushing helper would record it,
+  // and Back would remount a deleted subscription — a dead alias in the
+  // header over a failing read. It is left, not navigated away from: what
+  // came before it is still where Back goes.
   it("does not send Back to a marketplace that was just removed", () => {
     useNavStore.getState().goTo("harnesses");
     useNavStore.getState().goToMarketplace({

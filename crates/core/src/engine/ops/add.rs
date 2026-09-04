@@ -91,8 +91,8 @@ pub fn add_seeded(
         manifest.sources.insert(name, decl);
     }
     let mut notes = Vec::new();
-    // Which tools are on this machine is a fact about the machine now, not
-    // about the day the manifest was seeded, so a request that leaves the
+    // Which tools are on this machine is current state, not manifest state,
+    // so a request that leaves the
     // targets to the scope defaults re-reads them first: a tool installed
     // since then would otherwise be skipped by every install forever, with
     // nothing said. The list only grows — dropping a tool would orphan

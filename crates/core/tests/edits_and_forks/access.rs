@@ -69,8 +69,8 @@ const ROLELESS: &str = "---\nname: rev\ndescription: agent rev\n---\nUpstream bo
 const PLANNER: &str =
     "---\nname: rev\ndescription: agent rev\nrole: planner\n---\nUpstream body.\n";
 
-/// The rename the old name-keyed deny could not survive, taken both ways.
-/// `planner` is a name like any other now: an agent whose author declared
+/// A rename must carry name-keyed denies in both directions. `planner` is
+/// a name like any other: an agent whose author declared
 /// no role keeps every harness's deny through a move onto it, and through
 /// the move back off it.
 #[test]

@@ -155,16 +155,15 @@ describe("a Community row's Subscribed marker", () => {
     expect(subscribedKeys([row("", null)]).size).toBe(0);
   });
 
-  // The client-side "these rows are not current" refusal is gone: the
+  // There is no client-side "these rows are not current" refusal: the
   // action goes out and the engine is the judge. That trade only holds if
   // the refusal is honoured here — an unsubscribe that reported failure
   // and then dropped the caches, reloaded and toasted success would tell
   // the person a subscription went that is still there.
-  // The dialog that shows the refusal used to read it back out of the
-  // shared slot, and `load` empties that slot on every landing read — so a
-  // read arriving in the gap left the dialog open with an empty error area
-  // and no account of why nothing happened. The words travel with the
-  // answer instead.
+  // The words travel with the answer rather than through the shared slot:
+  // `load` empties that slot on every landing read, so a dialog reading
+  // the refusal back out of it is left open by a read arriving in the gap,
+  // with an empty error area and no account of why nothing happened.
   it("hands back a refusal a concurrent read would have erased", async () => {
     useMarketplacesStore.setState({ rows: [], read: READ_LANDED });
     vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
@@ -235,7 +234,7 @@ describe("a Community row's Subscribed marker", () => {
     expect(rowSubscribed({ ...listed, subscribed: true }, live)).toBe(false);
   });
 
-  // The one reason marketplace_unsubscribe stopped answering with nothing:
+  // The one reason marketplace_unsubscribe answers with anything at all:
   // a package leaving with its source may have armed this repository, and
   // its uninstaller ran. Rust proves it produces the lines; this proves
   // the window shows them.

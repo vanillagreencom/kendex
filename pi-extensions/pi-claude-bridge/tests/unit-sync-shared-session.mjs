@@ -1,15 +1,12 @@
 /**
  * Tests for syncSharedSession's REUSE path (and the disk-free clean start).
  *
- * The planner unit tests alone cannot protect the caller contract: a mutation
- * that returns the last message instead of the whole pending batch passes them
- * while still dropping every queued follow-up but one (kendex#963). These tests
- * pin syncSharedSession itself: same sessionId kept (no rebuild), promptStart
+ * The caller contract requires the same sessionId (no rebuild), promptStart
  * covering the WHOLE trailing user run by content, and the stored cursor.
  *
  * REUSE and clean start touch no disk or API, so no fixtures are needed; the
  * destructive REBUILD path is covered by the int-session-* integration tests.
- * The foreign-conversation guard tests (#1001) that do exercise REBUILD keep
+ * The foreign-conversation guard tests that exercise REBUILD keep
  * its writes inside a throwaway CLAUDE_CONFIG_DIR (withTempClaudeDir).
  */
 import { afterEach, describe, it } from "node:test";
@@ -62,7 +59,7 @@ describe("syncSharedSession REUSE path", () => {
 			cursor: 2,
 			cwd: CWD,
 			// A REUSE match proves identity, so a pre-fingerprint record adopts
-			// the conversation anchor (#1001).
+			// the conversation anchor.
 			conversationFingerprint: conversationFingerprint(messages),
 		});
 	});

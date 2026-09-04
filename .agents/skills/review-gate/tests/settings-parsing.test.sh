@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Unit pins for lib/settings.sh's rg_setting contract (kendex#1059):
+# Unit pins for lib/settings.sh's rg_setting contract:
 # leading whitespace before a key is valid TOML, so matching must be
 # whitespace-tolerant EVERYWHERE — presence, the duplicate-key ambiguity
 # guard, and extraction. Column-one anchoring let an indented duplicate
@@ -80,7 +80,7 @@ run_setting $'[env]\n_REVIEW_GATE_U = "u1"' _REVIEW_GATE_U "dflt"
 echo "=== dash-prefixed settings path is a filename, never grep options ==="
 # Without `--` before "$file", a relative path like "-e" parses as a grep
 # OPTION: the presence probe errors, and the reader silently falls back to the
-# caller default — fail-open on permissive defaults (hyprtrade#515 review,
+# caller default — fail-open on permissive defaults (
 # qodo). Red-first: fails against a build without the -- terminators.
 printf '[env]\nREVIEW_GATE_TD = "dashfile"\n' > "$TMP/-e"
 OUT=""; RC=0

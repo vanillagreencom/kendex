@@ -21,11 +21,11 @@ name: Skill Tests
 "on":
   pull_request:
   # Required checks must exist on merge-group shas too, or queue entries
-  # block forever on contexts nothing creates (VST-10). And a re-queued
+  # block forever on contexts nothing creates. And a re-queued
   # entry can inherit a stale FAILED run when the group resolves to the
   # same synthetic sha — the queue ejects it citing the previous attempt
   # while the fresh run is still green. The recovery is dequeue-push-rearm:
-  # a new head mints a new group.
+  # a changed head mints a separate group.
   merge_group:
   push:
     branches: [main]
@@ -39,7 +39,7 @@ jobs:
   # were one `shell` shard whose halves ran serially and bounded every queue
   # run; `pi-claude-bridge` was the node shard's hottest step. The ruleset's
   # required context is the AGGREGATOR below — shard names are not, so shards
-  # can be rebalanced or added without touching repo settings.
+  # can be rebalanced or extended without touching repo settings.
   skill-suites-shard:
     name: Skill suites shard (${{ matrix.shard }})
     strategy:
@@ -238,7 +238,7 @@ jobs:
       # The two pane-preflight cases in pane-cwd-stale.test.ts call
       # ensureTmux(), which throws when $TMUX is unset; they skip themselves
       # on a bare runner the same way they already skip off Linux. The whole
-      # directory is still globbed, so new test files run here without
+      # directory is globbed, so all test files run here without
       # editing this step.
       - name: pi-agents-tmux suite
         if: matrix.shard == 'node'
@@ -434,8 +434,8 @@ jobs:
   # run (the fail-open this line exists to close).
   #
   # The results are asserted as a SET, not entry by entry: `toJSON(needs)`
-  # carries whatever the list holds, so an entry added above is gated the
-  # moment it is added and there is no per-entry step to forget. Any result
+  # carries every list entry, so each dependency is gated without a separate
+  # assertion. Any result
   # other than `success` — failure, cancelled, or the `skipped` a dropped
   # `if:` would produce — fails this job and the required context with it.
   # `length > 0` is the one thing `all` cannot say for itself: over an empty
@@ -550,7 +550,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # Same reasoning as clippy above, for the two lanes tools/guard was the
       # only runner of. Before this, --no-verify or a clone tools/setup never
-      # armed could land a format regression or a broken rustdoc link with
+      # armed could land a format failure or a broken rustdoc link with
       # every required check green. Reach is narrower than clippy's above.
       # --document-private-items takes the rustdoc deny to a citation of a
       # private item, but cargo doc builds lib and bin targets and offers no

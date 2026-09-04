@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
 # The proof for `tools/bash32-lint`.
 #
-# A copy of the scan used to sit in each skill that wanted one, with a further
-# one inlined in a github suite; a parity suite held those copies
-# byte-identical and proved the set once. There is one copy now, so the parity
-# half is gone and this file is the proof half: teeth against the fixtures in
-# tools/tests/data, a planted construct in every directory the roster resolves
-# to, and a red for each way the lint can fail closed.
+# This is the proof for the single shared scanner: fixtures in tools/tests/data,
+# a planted construct in every directory the roster resolves to, and a red for
+# each way the lint can fail closed.
 #
 # EVERY CHECK HERE FAILS CLOSED. No result is read out of an empty string:
 # git, grep and the lint itself are asked for their status, and a command that
@@ -157,11 +154,8 @@ done
 [ "$planted" -eq "$roster_count" ] ||
   bad "planted into $planted of $roster_count roster directories"
 
-# A violation the lint cannot name is a report nobody can act on. The filename
-# used to be interpolated into a sed PROGRAM, so a `|` in it closed the s
-# command's delimiter and a `\1` read as a backreference; sed died either way
-# and every hit for that file was discarded under a header that still printed.
-# Asserted on the exact reported line — file, line number, matched text —
+# A violation report must preserve a filename that contains sed metacharacters.
+# Assert the exact reported line — file, line number, matched text —
 # because a check on the exit code alone passes against that prefixer: the run
 # reds regardless, on a trailing newline rather than on a report.
 mkdir -p "$TMP/odd-name" || bad "could not stage the odd-name directory"

@@ -3,7 +3,7 @@
 # Go's RE2: no lookaround, at all. Every OTHER proof puts that same
 # program through the LOCAL jq, whose Oniguruma accepts patterns RE2
 # refuses to compile, so this is the only place the shipping engine reads
-# the program at all. That is how #1930 shipped a lookbehind: local jq took
+# the program at all. A lookbehind can pass local jq because it takes
 # it, and every live evaluation of a PR carrying a `Declined:` reply died
 # with `invalid regular expression`, leaving the writer to red without
 # posting anything and the gate status frozen where it stood.
@@ -16,7 +16,7 @@
 # Three controls, because "the outputs matched" is a claim a broken harness
 # also makes:
 #   1. a planted `(?<!` in the reason pass must red the RE2 run while local
-#      jq stays green — the #1930 defect, reproduced on demand;
+#      jq stays green — the defect, reproduced on demand;
 #   2. a planted `(?<!` in the untracked-claim test must red it too — that
 #      regex is only ever compiled if a fixture reply reaches it, and no
 #      corpus reply does;
@@ -80,7 +80,7 @@ trap cleanup EXIT
       }}}}}))}' >"$srv/pages.json"
 replies="$(jq -r '.pages | length' "$srv/pages.json")"
 # A floor, not the exact count: the corpus grows by design, and a test that
-# restated its size would red on every added reply. What must never happen
+# restated its size would red on every included reply. What must never happen
 # is the fixture silently emptying and every assertion below passing over
 # nothing.
 if [ "${replies:-0}" -lt 100 ]; then
@@ -181,7 +181,7 @@ else
 fi
 
 # ------------------------------------------------------------- control one ---
-# The #1930 defect, planted back into the line it shipped on: local jq must
+# The defect, planted back into the line it shipped on: local jq must
 # stay green and RE2 must refuse to compile. A suite that keeps passing here
 # is reading the wrong engine again.
 lookbehind="$(printf '%s' "$prog" | plant \

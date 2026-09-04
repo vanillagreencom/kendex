@@ -14,8 +14,8 @@ describe("shouldAdoptActiveContext", () => {
 		expect(shouldAdoptActiveContext({ hasUI: true }, { hasUI: true })).toBe(true);
 	});
 
-	// pi#7214: direct RPC bash now reaches the user_bash handler. Its context has
-	// no UI, and adopting it used to blank the mini-dashboard on the next refresh.
+	// Direct RPC bash reaches the user_bash handler with no UI. Adopting that
+	// context would blank the mini-dashboard on the next refresh.
 	test("a non-UI context does not replace a retained UI context", () => {
 		expect(shouldAdoptActiveContext({ hasUI: true }, { hasUI: false })).toBe(false);
 		expect(shouldAdoptActiveContext({ hasUI: true }, {})).toBe(false);

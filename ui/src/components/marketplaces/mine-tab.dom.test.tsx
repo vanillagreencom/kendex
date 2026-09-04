@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 // The submissions poll is the only thing on this tab that keeps asking
 // after the page settles, and it shows nothing of its own: a tick that
-// found the sign-in dead used to be discarded, so a session could die
-// under an open window and every surface go on saying signed in.
+// finds the sign-in dead has to end the session, or it dies under an open
+// window and every surface goes on saying signed in.
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { commands, type MineListRow } from "@/bindings";
@@ -126,7 +126,7 @@ it("stops polling once a tick has found the sign-in expired", async () => {
   });
 
   // The interval itself, not the store guard behind it: without the
-  // cleanup, or with the effect no longer keyed to holding a credential,
+  // cleanup, or with the effect keyed to anything but holding a credential,
   // a timer is still armed here and the advance below finds it.
   expect(vi.getTimerCount()).toBe(0);
 
@@ -163,8 +163,8 @@ it("leaves the account alone when a tick fails for any other reason", async () =
 // Which of the three states a marketplace is in, and what each draws as a
 // line and an offer, is `mine-submission.ts`'s ruling and is proven there.
 // What the tab owes is that a row the server named survives a tick that
-// failed — the defect this tab had, where the failure blanked the label
-// back to an offer to submit.
+// failed, rather than the failure blanking the label back to an offer to
+// submit.
 describe("what a marketplace's submission reads as", () => {
   // Stale and labelled beats empty: the rows are what the server last
   // said, so a row it named stays submitted under a tick that failed.

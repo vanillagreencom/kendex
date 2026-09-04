@@ -32,8 +32,8 @@ fn desktop_arg(path: &str) -> String {
 }
 
 /// Every character the spec reserves, plus the percent that introduces a
-/// field code — one case each, because an encoder built from the characters
-/// someone thought of is how the same defect arrives twice.
+/// field code — one case each, so the encoder follows the specification
+/// rather than a hand-picked character list.
 ///
 /// Held to the bytes on disk rather than to a round trip through a reader
 /// written here. A reader is the Desktop Entry grammar spelled a second

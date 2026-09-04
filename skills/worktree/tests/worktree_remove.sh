@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for worktree remove diagnostics and branch cleanup.
+# Tests for worktree remove diagnostics and branch cleanup.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -249,7 +249,7 @@ assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/POINTER.md" "../AGEN
 
 # Locked worktree: `git worktree remove --force` cannot override a lock, so
 # removal fails here. TWO mechanisms are asserted below, and they are not the
-# same thing (#800):
+# same thing:
 #   1. Symlink preservation comes from never pre-stripping — the tree stays
 #      intact until git itself starts deleting, so a refusal issued before that
 #      point (including a lock raced in after the precheck) leaves it whole.

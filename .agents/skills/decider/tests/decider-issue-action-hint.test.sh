@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# Regression tests for the unsupported `issue` action hint (kendex#641).
+# The unsupported `issue` action hint.
 #
-# During an orch dev-fix cycle, generated guidance told a specialist to run
-# `decisions issue CC-125`. The CLI has no `issue` action — the supported
-# lookup is `decisions search --issue CC-125` — but the generic unknown-action
-# error gave no pointer to it. The dispatcher now catches `issue`/`issues`
-# with a targeted error naming the supported form so an agent that receives
-# stale guidance self-corrects in one step. These tests assert that hint, that
-# other unknown actions keep the generic error + usage, and that the supported
-# `search --issue` lookup still works.
+# The CLI has no `issue` action — the supported lookup is
+# `decisions search --issue CC-125` — and generated guidance can tell an agent
+# to run `decisions issue CC-125`. The dispatcher catches `issue`/`issues`
+# with a targeted error naming the supported form, so an agent that receives
+# stale guidance self-corrects in one step. Pinned here: that hint, that other
+# unknown actions keep the generic error + usage, and that the supported
+# `search --issue` lookup works.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -8,6 +8,8 @@ use std::fs;
 
 use super::{folder_at, kendex, link_at, offer, plan, project_with, said};
 
+/// A file where a folder goes is files kendex did not write, and the
+/// replacement handles it — but adoption reads a skill's position as a
 /// folder, so the keep line must not be printed here.
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -31,6 +33,9 @@ fn a_file_where_a_folder_goes_is_not_offered_the_adopt() {
     );
 }
 
+/// The same folder, with no declared tool sitting at the link that reads
+/// it. Adoption works at a tool's own place, and every tool here has an
+/// empty one — so the row says the way out that does work rather than a
 /// command that would error on the spot.
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -53,6 +58,10 @@ fn a_link_no_declared_tool_sits_at_offers_no_command() {
     );
 }
 
+/// A shape adoption cannot take, beside one it can. Keeping is one move for
+/// the whole item, so an offer that quietly drops the place it cannot take
+/// settles the rest and rewrites the declaration around them — leaving that
+/// place blocked, with the item taken off its tool. Neither exit fits, and
 /// the row says so.
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -75,6 +84,8 @@ fn a_shape_that_cannot_be_kept_takes_the_whole_item_s_offer_with_it() {
     );
 }
 
+/// The exits are what a reader types next, so they carry the scope they
+/// were read in. Printed while looking at the global scope without it,
 /// both run against whatever project the terminal happens to be in.
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -210,8 +221,8 @@ fn a_hard_conflict_beside_the_files_takes_both_exits_with_it() {
 
 /// A place adoption cannot enter, beside one it can. Keeping is one move
 /// for the whole item, so an offer naming only the tool that works would
-/// settle its copy and leave the other blocked with the item no longer
-/// its tool's.
+/// settle its copy and leave the other blocked, with the item taken off
+/// its tool.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_place_adoption_cannot_enter_takes_the_offer_with_it() {

@@ -114,9 +114,9 @@ describe("SubscribedTab with rows a failed read left behind", () => {
   });
 });
 
-// The list used to repeat a catalog once per place, with nothing saying
-// the rows were the same catalog. One card answers for the marketplace and
-// says how many places hold it.
+// One card answers for the marketplace and says how many places hold it,
+// rather than a row per place with nothing saying the rows are the same
+// catalog.
 describe("SubscribedTab with one marketplace held in several places", () => {
   it("draws one card naming every place", () => {
     stub.rows = [

@@ -81,7 +81,7 @@ export const installedAsNewToastLabel = (name: string, own: string): string =>
 // The rename went into the manifest and the write to disk did not, so this
 // says both halves rather than only the one that worked. It names no way to
 // finish: the page that ran a recorded plan is gone, and pointing at a
-// screen that no longer exists is worse than the reason on its own.
+// screen that is not there is worse than the reason on its own.
 export const installedBesideUnfinishedToast = (
   name: string,
   own: string,

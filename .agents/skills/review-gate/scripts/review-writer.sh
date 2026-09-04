@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Review-gate SINGLE WRITER — the one place the gate commit status is written
-# (review-gate v2; vanillagreencom/kendex#1099). Shipped by the kendex
-# review-gate skill, vendored into consumers at
+# Review-gate SINGLE WRITER — the one place the gate commit status is written.
+# Shipped by the kendex review-gate skill and vendored into consumers at
 # .agents/skills/review-gate/scripts/, invoked only by the writer workflow
 # (templates/review-gate-writer.yml).
 #
@@ -30,7 +29,7 @@
 #
 # A repo that holds jobs back behind the gate AND has no merge queue
 # satisfies neither, and untested code can merge there. That is a branch
-# protection gap; this script cannot close it and no longer pretends to.
+# protection gap; this script cannot close it and does not claim to.
 #
 # CONVERGE-ALL, EVERY LEG: except for the merge_group leg and the fork
 # read-only no-op, EVERY invocation enumerates and converges EVERY open PR.
@@ -41,7 +40,7 @@
 # happens in a recursive single-head invocation (PR_NUMBER + HEAD_SHA set),
 # an internal contract rather than a workflow input.
 #
-# WRITE DISCIPLINE (VST-65): two writer runs can interleave on one head, so
+# WRITE DISCIPLINE: two writer runs can interleave on one head, so
 # before ANY success post the current gate status is RE-READ and the post is
 # DEFERRED when any gate entry was created at/after this run's evaluation
 # instant (that run evaluated newer state — deferring protects both the
@@ -54,7 +53,7 @@
 # NO FORK SPECIAL CASES: every leg that reaches this script holds a
 # write-capable default-branch token, so fork heads take the same path as
 # same-repo heads. The read-only exception is pull_request_review fired by a
-# FORK PR — and since VST-210 that leg never reaches this script at all: it
+# FORK PR. That leg never reaches this script: it
 # lands on the shipped workflow's RELAY job, which flags the case, dispatches
 # nothing, and exits green, so fork review evidence converges on the cron
 # floor. WRITER_READ_ONLY below remains an honored input (defaulting to 0)
@@ -174,7 +173,7 @@ if [ -z "${HEAD_SHA:-}" ]; then
   exit 1
 fi
 
-# Stamped BEFORE the predicate reads (VST-65): any gate status created at or
+# Stamped BEFORE the predicate reads: any gate status created at or
 # after this instant may reflect newer review state than this evaluation —
 # the success-post ordering guard compares against it.
 evaluated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -247,7 +246,7 @@ if [ "$desired" != "success" ]; then
   exit 0
 fi
 
-# POST-ORDERING GUARD (VST-65). Before posting SUCCESS, re-read the current
+# POST-ORDERING GUARD. Before posting SUCCESS, re-read the current
 # gate status and DEFER when ANY gate entry was created at/after this run's
 # evaluation — that run evaluated newer state than this one, and overwriting
 # its post would regress either the gate state (a changes-requested landing

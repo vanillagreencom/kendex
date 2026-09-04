@@ -168,7 +168,7 @@ fn marketplace_browse_lists_a_subscriptions_packages() {
     assert!(names.contains(&"helper"), "{listed:#}");
     // `bundles` is part of this schema-1 envelope: a scripted consumer reads
     // which curated sets carry a package from here and nowhere else in the
-    // CLI. The app dropped its own use of the field, so this is what pins it.
+    // CLI. The app does not read the field, so this is what pins it.
     let gh = listed["packages"]
         .as_array()
         .unwrap()
@@ -245,8 +245,7 @@ fn marketplace_unsubscribe_removes_or_keeps() {
 }
 
 /// Subscribing prints the preview line naming scope, alias, and target,
-/// and a full URL declares a remote (the pre-fix heuristic read it as a
-/// folder path).
+/// and a full URL declares a remote rather than a folder path.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn marketplace_subscribe_names_what_it_declares() {

@@ -167,7 +167,7 @@ fn a_record_that_names_no_registration_leaves_their_duplicate_alone() {
 /// The same record one field better: it names the event and the command
 /// but was kept before matchers were. Read as "no matcher, so no
 /// difference", a matcher the catalog changed is never retired and the
-/// upsert adds a second registration under the new one.
+/// upsert inserts a second registration under the target one.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_record_that_names_no_matcher_still_retires_the_entry_it_left() {
@@ -396,7 +396,7 @@ fn a_recorded_entry_moved_by_hand_does_not_hold_the_hook() {
 
 /// A render that changes the command's spelling — the machine's own path
 /// giving way to one a clone can follow — is a move like any other: the
-/// entry the record names comes out, and the new spelling goes in alone.
+/// entry the record names comes out, and the current spelling goes in alone.
 /// Keyed on the rendered command, the upsert would find nothing to replace
 /// and the hook would fire twice on the machine that installed it.
 #[test]

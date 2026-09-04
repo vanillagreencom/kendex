@@ -16,23 +16,23 @@
 #   - rewrites each recorded fix commit whose SHA is a prefix of a mapped old
 #     SHA: to the new SHA truncated to the recorded length, or to the marked
 #     form `dropped:<recorded-sha>` when the mapping is `dropped` — the
-#     commit no longer exists on the branch, so publishers must omit it or
+#     commit does not exist on the branch, so publishers must omit it or
 #     cite the upstream equivalent, never print it as a live SHA;
 #   - prints one `sha-reconcile:` summary line naming what changed.
 #
 # A fix round in flight is refused rather than reconciled: its record pins the
 # commit the delegated agent is working from, and the rebase this command runs
 # would move every commit out from under it, leaving the round's receipt to
-# name a `.commit` no longer on the branch. The round in flight is the ACTIVE
+# name a `.commit` that does not exist on the branch. The round in flight is the ACTIVE
 # one — the record whose token equals workflow state `dev_round_id`. Two things
 # end that: the round's dev-return receipt landing, or a fresh `dev_round_id`
-# whose token names no stamped record. An earlier round's leftover record does
+# whose token names no stamped record. A prior round's leftover record does
 # not block, and neither does a worktree with no state file.
 #
 # `--check-live-round` runs that question alone and exits on its answer,
 # pushing nothing. It exists for merge-pr's restack cycle, which rebases
 # without reaching this script's push, so that path asks the owner of the
-# predicate instead of restating its arms in prose (kendex#944).
+# predicate instead of restating its arms in prose.
 #
 # The rebase happens BEFORE the network push, so a rejected push can still
 # have rewritten the branch: the map is applied to workflow state whatever the
@@ -163,7 +163,7 @@ while [[ $# -gt 0 ]]; do
 		;;
 	# Everything outside this wrapper's own namespace is `worktree push`'s to
 	# accept or reject; push fails closed on a flag it does not know, so
-	# pass-through here keeps one copy of that vocabulary (KEN-570).
+	# pass-through here keeps one copy of that vocabulary.
 	*)
 		push_args+=("$1")
 		shift
@@ -193,7 +193,7 @@ git -C "$worktree_abs" rev-parse --absolute-git-dir >/dev/null 2>&1 \
 state_flags=()
 [[ -z "$state_dir" ]] || state_flags=(--state-dir "$state_dir")
 
-# Apply one map (a JSON object of old->new) to workflow state atomically and
+# Apply one map (a JSON object of before->after) to workflow state atomically and
 # print the sha-reconcile summary. The map travels by environment variable so
 # the jq program stays a plain single-quoted literal. A recorded short SHA
 # matches when it is a prefix of a mapped old SHA; comparisons always run
@@ -268,7 +268,7 @@ fi
 # fails, and an answer that is neither yes nor no, both leave the question
 # unanswered, and an unanswered question is not permission to rebase. What is
 # left is the active round itself. With no state file there is no active round
-# to read, and a record from an earlier round does not block.
+# to read, and a record from a prior round does not block.
 if [[ "$state_present" == "true" ]]; then
 	active_round="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.dev_round_id // ""')" \
 		|| fail "could not read the active dev round for $issue"

@@ -71,8 +71,8 @@ pub enum CandidateGroup {
         /// recognized one is confirmable, anything else needs a basis.
         license_recognized: bool,
     },
-    /// The installed copy of a marketplace package that no longer matches
-    /// the marketplace's bytes — "your edited copy", shown beside the
+    /// The installed copy of a marketplace package whose bytes have drifted
+    /// from the marketplace's — "your edited copy", shown beside the
     /// original and gated by the same licence.
     Edited {
         source: String,
@@ -245,7 +245,7 @@ pub fn inventory(env: &Env, scopes: &[Scope]) -> Result<Vec<ImportCandidate>> {
 /// catalog cannot store them, and widens what an empty `hash` means: under
 /// schema 1 it was a read that failed, and it now also covers those
 /// unstorable bytes. `problem` tells the two apart. Null is still the
-/// schema-1 read that failed, and a set one names the new case. The
+/// schema-1 read that failed, and a set one names unstorable bytes. The
 /// addition is free; the change of meaning in a field that was already
 /// there is what the bump is for, the same call
 /// [`crate::check_catalog::CHECK_SCHEMA`] made when a finding's line came

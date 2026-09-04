@@ -392,7 +392,7 @@ cache_get_issue() {
         # are emitted so consumers that key on either field (raw cache reader
         # vs formatted output reader) work consistently — the cache schema
         # uses `identifier` for the human-readable form, formatted output
-        # uses `id` for it. Defensive parity prevents the Round-4 class of
+        # uses `id` for it. Defensive parity prevents the class of
         # 'id: null' / 'identifier missing' bugs across format variants.
         local result
         result=$(jq -n \
@@ -716,9 +716,9 @@ cache_get_project() {
     fi
 
     # Linear keeps a canceled project under the name a live one reuses
-    # (KEN-1022), and `.[] | select(.id == $ref or .name == $ref)` emitted one
+    # and `.[] | select(.id == $ref or .name == $ref)` emitted one
     # top-level object PER match: `cache projects get "<name>" | jq -r '.id'`
-    # read two ids at rc 0 and the safe formatter shaped each object (KEN-1153).
+    # read two ids at rc 0 and the safe formatter shaped each object.
     # The selection below is the cache-side spelling of lib/common.sh
     # resolve_project_id's rule, so both spellings of `projects get` answer
     # alike: an id match wins outright whatever its state, a canceled match
@@ -1032,7 +1032,7 @@ cache_list_cycles() {
 
 main() {
     # `--help` anywhere selects usage, but the token after a value-taking flag
-    # is that flag's VALUE, never a request for help: `--search -h` used to
+# is that flag's VALUE, never a request for help. Without this rule, `--search -h`
     # print usage and exit 0, which a caller parsing the output reads as an
     # empty result set.
     local arg skip_value="false"

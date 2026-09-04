@@ -34,8 +34,8 @@ interface LibraryViewState extends FilterSelection {
   setFrom: (from: string) => void;
   setScrollTop: (scrollTop: number) => void;
   /** Adopt a whole narrowing at once — a link's, or the empty one behind
-   * Clear. Taken as one object rather than field by field, so a filter added
-   * to the strip is applied without anyone having to remember it here. */
+   * Clear. Taken as one object rather than field by field, so a filter the
+   * strip gains later is applied without anyone having to remember it here. */
   setFilters: (filters: FilterSelection) => void;
 }
 

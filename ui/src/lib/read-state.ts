@@ -81,11 +81,11 @@ export function readOrder(): {
   };
 }
 
-/** What a read may no longer answer for. Where [readOrder] asks which of two
+/** When a read's answer is void. Where [readOrder] asks which of two
  *  reads is newer, this asks whether what a read was about still exists: a
  *  cache emptied because a mutation moved every catalog, a credential that
  *  changed hands. A read that began before the change describes a state that
- *  is gone, however new its answer is.
+ *  is gone, however fresh its answer is.
  *
  *  Keyed caches need this and not the ordering: two reads under different
  *  keys are not competing answers, and ranking them would drop the second

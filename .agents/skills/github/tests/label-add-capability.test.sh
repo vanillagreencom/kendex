@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for label-add capability and policy handling.
+# Tests for label-add capability and policy handling.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

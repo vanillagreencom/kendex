@@ -1,5 +1,5 @@
 //! Installing beside: the edited copy becomes the user's own package under
-//! a new name and the source's version comes back under the old one — with
+//! a chosen name and the source's version comes back under its source name, with
 //! everything proven before anything is written.
 
 use std::fs;
@@ -11,7 +11,7 @@ use super::*;
 const REV_AGENT: &str = "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n";
 
 /// Installing beside: the edits become the user's own package under the
-/// new name, answering to it, and the original name goes back to its
+/// chosen name, answering to it, and the source name goes back to its
 /// source — the newest version when the hold moves along.
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -56,7 +56,7 @@ fn fork_beside_keeps_the_edit_under_a_new_name_and_lands_the_source_under_the_ol
     let report = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
 
-    // The fork's bytes live in the local source under the new name and say
+    // The fork's bytes live in the local source under the chosen name and say
     // that name; they render there too.
     let own =
         fs::read_to_string(w.home.join("app/.kendex-local/skills/gh-edited/SKILL.md")).unwrap();
@@ -329,8 +329,8 @@ fn fork_beside_without_a_rev_keeps_the_hold_and_records_the_commit() {
     );
 }
 
-/// An agent forks beside the same way: the local copy answers to the new
-/// name, and the tool's file for the old name carries the source again.
+/// An agent forks beside the same way: the local copy answers to the chosen
+/// name, and the tool's file for the source name carries the source again.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_beside_keeps_an_edited_agent_under_the_new_name() {

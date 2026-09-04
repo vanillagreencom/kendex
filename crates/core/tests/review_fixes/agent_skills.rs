@@ -2,7 +2,7 @@
 //!
 //! The manifest holds the person's declaration; the mapping turns it into
 //! the list the agent actually has — filtered to what is installed, with
-//! whatever upstream added since the last sync merged back in. Reading the
+//! upstream changes since the last sync merged back in. Reading the
 //! declaration again anywhere else is how a rendering and the manifest end
 //! up disagreeing about what an agent carries.
 
@@ -78,7 +78,7 @@ fn a_declaration_under_the_base_agents_key_holds_on_the_first_apply() {
 /// Keeping the declaration means the plan writes the manifest nowhere, so
 /// the upstream skill merge that would want a save waits for the refresh:
 /// the agent renders and records as it stands, and the refresh merges what
-/// upstream added. An agent whose upstream skill list grew is what makes
+/// upstream gained. An agent whose upstream skill list grew is what makes
 /// the planner want that save.
 #[test]
 #[allow(clippy::unwrap_used)]

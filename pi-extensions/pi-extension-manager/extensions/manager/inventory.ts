@@ -360,7 +360,7 @@ export function buildInventory(_pi: ExtensionAPI, ctx: ExtensionContext): Invent
 		if (item.kind !== "package" || !item.packageName) continue;
 		// Manifest was already parsed above when building the inventory entry; the version
 		// is recorded on the item to avoid a second readFileSync+JSON.parse pass per
-		// package on popup open (kendex#74).
+		// package on popup open.
 		if (!item.installedVersion) item.installedVersion = readPackageVersionFromDir(item.packageDir);
 	}
 	applyUpdateMetadata(items, settingsFiles, ctx.cwd);

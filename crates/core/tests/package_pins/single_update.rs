@@ -85,7 +85,7 @@ fn moving_a_hold_leaves_the_scopes_followers_at_their_commits() {
     let second = commit(&w.upstream, "two");
     fetch_mirrors(&w);
 
-    // Pin `a` at the new commit — the Updates page's Update on a held
+    // Pin `a` at the selected commit: the Updates page's Update on a held
     // place. The plan is scoped to the package it names.
     let report = package::set_rev_with(
         &w.env,

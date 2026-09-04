@@ -514,7 +514,7 @@ describe("the package page's safety tab", () => {
       data: [scoredView],
     });
     useAuditStore.setState({ auditedAt: 1, views: [scoredView] });
-    // The bundled copy is listed first, exactly the order that hid the score.
+    // The bundled copy is listed first, the order that would hide the score.
     useScanStore.setState({
       result: {
         harnesses: [],
@@ -549,7 +549,7 @@ describe("the package page's safety tab", () => {
 // The page names a place; the mark is about the package. It has to say
 // the same thing the package's Library row says, wherever the page was
 // opened from and wherever the editor is pointed — those are the two ways
-// the same package used to get two different answers.
+// the same package could get two different answers.
 describe("the package page's mark", () => {
   beforeEach(() => {
     useUpdatesStore.setState({
@@ -640,8 +640,8 @@ describe("the package page's file actions", () => {
 
   // Delete takes every copy at once, and the dialog closes on its own the
   // moment the removals answer. Leaving the page is this effect's alone to
-  // decide — the dialog used to keep a copy of the judgment, read off a
-  // scan taken before the removals, and it is gone.
+  // decide: a copy of the judgment kept by the dialog would be read off a
+  // scan taken before the removals.
   it("leave with the page once the scan knows the package nowhere", async () => {
     const back = vi.fn();
     useNavStore.setState({ back });

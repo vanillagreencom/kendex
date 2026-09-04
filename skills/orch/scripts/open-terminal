@@ -238,7 +238,7 @@ fi
 
 # Resolve the launch lane BEFORE creating any worktree. A fleet launch that
 # discovers "every account is full" after spawning three worktrees has already
-# done the expensive, hard-to-undo half of the work (kendex#894).
+# done the expensive, hard-to-undo half of the work.
 #
 # The lane becomes an env prefix on the launched command rather than a different
 # binary, so it works whether or not the machine has a shell alias per account.
@@ -311,7 +311,7 @@ if [[ -n "$LANE" ]]; then
       esac
       ;;
   esac
-  # Refused here, before any worktree is created (kendex#894: resolve the lane
+  # Refused here, before any worktree is created: resolve the lane
   # before mutating anything). The value is single-quoted in the rendered
   # launch command, and a single quote inside the path cannot be embedded
   # safely; a tab or newline cannot survive the claim record's field
@@ -342,7 +342,7 @@ start_cmd() {
   # composed line crosses at least one more quoting layer (e.g. an agent-confine
   # wrapper) before the spawned window's shell runs it, so a `$` that has lost
   # its single quotes gets expanded there and codex launches with no prompt at
-  # all (kendex#976).
+  # all.
   # Each flag token is single-quoted in the rendered line. The validator bars
   # quotes and every shell-active character except `[`/`]`, which bracketed
   # model ids (`opus[1m]`) legitimately carry — and those are glob syntax to the
@@ -491,12 +491,12 @@ open_tmux() {
   fi
   echo "Opened tmux window '$title' in $dir"
   [[ -n "$brief" ]] || return 0
-  # Delivery verification (kendex#1173): a first-run dialog (theme / trust /
+  # Delivery verification: a first-run dialog (theme / trust /
   # browser integration) can consume the CLI-arg brief, leaving a healthy TUI
   # at an empty composer while the launch looks successful. Confirm the brief
   # actually reached the TUI; if not, re-send it once into the composer and
   # re-verify; if still absent, fail this lane loudly instead of reporting
-  # success. Sibling of the codex kickoff fix in kendex#976.
+  # success. The Codex kickoff path has the same delivery requirement.
   tmux_verify_brief "$pane" "$brief" && return 0
   if ! tmux_wait_composer "$pane"; then
     echo "Error: '$title' never reached a ready composer (first-run dialog stuck?) — attach and start it manually: $brief" >&2
@@ -585,10 +585,10 @@ for raw in "${ITEMS[@]}"; do
   # `--lane auto` is re-resolved for every item after the first: the claim the
   # previous window recorded is what moves this item off that account, and a
   # single upfront pick puts a whole batch on one lane. The trigger is "an
-  # earlier item was attempted", never "an earlier item succeeded" — a window
+  # prior item was attempted", never "a prior item succeeded" — a window
   # that was created and then failed its brief still holds that account, and
   # its claim must still be read. Still ahead of this item's worktree, so a
-  # stopped batch leaves no orphan tree behind. A pick that can no longer
+  # stopped batch leaves no orphan tree behind. A pick that can does not
   # prove a lane stops the batch rather than launching onto an account nothing
   # vouched for. tmux only: a claim's liveness handle is a pane, so on a GUI
   # surface a re-pick would re-read numbers nothing has moved.

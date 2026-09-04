@@ -329,7 +329,7 @@ fn an_attribute_source_from_the_environment_reaches_no_git_call() {
 ///
 /// The working copy here is the one that rule produces, written by an
 /// ordinary checkout rather than by hand, and then touched so the index's
-/// stat cache no longer vouches for it and `status` has to hash the file
+/// stat cache does not vouch for it and `status` has to hash the file
 /// again. Reading it under the repository's own rule finds no change.
 /// Reading it with the conversion forced off finds a modification nobody
 /// made, and `author::preflight` then refuses to submit a tree that is in
@@ -384,8 +384,8 @@ fn a_status_read_honours_the_line_endings_the_repository_asked_for() {
 }
 
 /// A user whose catalog needs a specific key sets `GIT_SSH_COMMAND`.
-/// Replacing it defeats that setup — and defeats the `core.sshCommand`
-/// workaround too, since the variable outranks the config.
+/// Replacing it defeats that setup and `core.sshCommand`, since the
+/// variable outranks the config.
 #[test]
 fn an_inherited_ssh_command_keeps_its_options() {
     assert_eq!(ssh_command(None), "ssh -oBatchMode=yes");

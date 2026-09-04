@@ -10,9 +10,7 @@
 //! - [`parse_untrusted`] — references arriving from content kendex did
 //!   not type: directory rows, collections, deep links. GitHub only,
 //!   normalized to `owner/repo`; every other host, scheme, and every
-//!   path is refused. Nothing calls it yet — the channels it guards are
-//!   later phases — but it is built beside the permissive one so the
-//!   stricter rule exists before the first untrusted reference does.
+//!   path is refused.
 //!
 //! Both refuse a leading `-` (an argument is not a flag), `..` in any
 //! repository or URL component, and — after percent-decoding URL segments

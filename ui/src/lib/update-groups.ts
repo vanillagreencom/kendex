@@ -61,7 +61,7 @@ export const packageCount = (rows: UpdateRow[]): number =>
  *  in full.
  *
  *  One nullable note, and not a verdict beside it: a reason that cannot be
- *  said is a reason that cannot be added here, so a gate reading this can
+ *  said is a reason that cannot be written here, so a gate reading this can
  *  never hide a button it has no words for. The kind's refusal is core's
  *  own, carried on the row; the UI never works out for itself which kinds
  *  are brought current one at a time.

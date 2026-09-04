@@ -1,7 +1,6 @@
-// One marketplace, however many places declare it. The Subscribed tab used
-// to list a row per (place, marketplace), so a catalog subscribed
-// everywhere appeared once per project with nothing saying the three rows
-// were the same catalog. Grouping is the whole difference: the card is the
+// One marketplace, however many places declare it. A row per (place,
+// marketplace) would show a catalog subscribed everywhere once per project
+// with nothing saying the rows are the same catalog. The card is the
 // marketplace, and the places it is subscribed in are a fact about it.
 import type { MarketplaceRow } from "@/bindings";
 import { scopeLabel } from "@/lib/derive";
@@ -32,7 +31,7 @@ export interface SubscribedMarketplace {
  * `repoIdentity` is core's `source_ref::repo_identity` — one string per
  * repository on any host, the same value subscription dedup and update
  * grouping compare. It is not `repoKey`, which is the GitHub `owner/repo`
- * and is null everywhere else: keying on that left every GitLab or
+ * and is null everywhere else: keying on that would leave every GitLab or
  * self-hosted remote falling through to the alias, and an alias is
  * per-declaration. `auto_alias` takes the reference's last path segment and
  * uniquifies it only inside one scope's manifest, so a personal
@@ -54,7 +53,7 @@ export interface SubscribedMarketplace {
  * platforms' shapes, while `path_root` asks `Path::is_absolute`, which
  * answers for one. On Unix `C:/catalog` is re-rooted per scope and keyed
  * here as one folder; a POSIX-rooted path on Windows mirrors it. Core
- * shipping the resolved path closes that, and is filed as KEN-1142.
+ * shipping the resolved path would close that.
  *
  * The alias is the last resort for a declaration carrying neither. It
  * usually over-splits, which is harmless — but two scopes declaring such a
@@ -124,17 +123,17 @@ export function groupByMarketplace(
         places,
         open,
         // From `open`, like every other field on the card. Taking the
-        // first place that had fetched anything meant a card could name
-        // one subscription, show its revision and open its page while
+        // first place that has fetched anything would let a card name one
+        // subscription, show its revision and open its page while
         // reporting another's count — and scopes can pin the same
-        // repository to different revisions, so the number was sometimes
-        // genuinely someone else's.
+        // repository to different revisions, so the number can genuinely
+        // be someone else's.
         //
         // The cost is deliberate: a card whose open place has not fetched
-        // now reads "Not fetched yet" even where a sibling place has. That
-        // is the honest answer, because the card describes the destination
-        // it takes you to rather than the best number available anywhere
-        // in the group.
+        // reads "Not fetched yet" even where a sibling place has. That is
+        // the honest answer, because the card describes the destination it
+        // takes you to rather than the best number available anywhere in
+        // the group.
         packages: offered(open),
       };
     })

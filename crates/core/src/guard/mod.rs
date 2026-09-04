@@ -10,14 +10,10 @@
 //! kendex implements no check and no verdict. These verbs find the installed
 //! package and hand it the work, then relay what it said and how it ended.
 //!
-//! There was a second engine here — a native reader of hook files with its
-//! own grammar for what "armed" means, kept in step with the package's by
-//! hand. It never was in step. Every fix landed on one side, and the review
-//! round after found the other. So the package owns every verdict about
-//! what the shims ARE, on every surface, `kendex check` included. What
-//! kendex may still say for itself is only what it can reach from local
-//! state without running anything — whether this repository holds a helper
-//! at all, whether the declared package is rendered.
+//! The package owns every verdict about what the shims are, on every
+//! surface, including `kendex check`. Kendex may say only what it can reach
+//! from local state without running anything: whether this repository holds
+//! a helper and whether the declared package is rendered.
 //!
 //! Exit taxonomy, the family contract the package defines and this module
 //! relays unchanged: 0 clean, 1 violations, 2 the check could not run. Both

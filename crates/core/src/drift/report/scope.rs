@@ -150,7 +150,7 @@ impl ScopeCheck<'_> {
             return;
         };
         // No lock file at all is the state this reports on most often: a
-        // repository declaring what an earlier tool already put on disk.
+        // repository declaring what another tool already put on disk.
         // A lock this build cannot read says nothing either way, and the
         // `could not check` line above already carries that.
         let empty = crate::lock::Lock::default();

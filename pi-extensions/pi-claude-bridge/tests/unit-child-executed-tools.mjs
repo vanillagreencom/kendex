@@ -1,8 +1,5 @@
-// A claude.ai connector tool is executed INSIDE the claude child. Mirroring one
-// into the Pi stream made Pi's agent loop dispatch a tool it does not have and
-// write `Tool <name> not found` into the transcript for a call that succeeded
-// (drovr#311 / memsira#320). These tests pin the three emission paths that used
-// to do it, plus the observation half.
+// A claude.ai connector tool executes INSIDE the claude child. It must stay out
+// of the Pi stream on every emission path while remaining observable to audit.
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { noteChildExecutedToolResults, processAssistantMessage, processStreamEvent } from "../src/index.ts";
@@ -73,7 +70,7 @@ describe("child-executed tool classification", () => {
 	});
 
 	it("matches child-internal names exactly, never as a prefix, suffix, or case variant", () => {
-		// "ToolSearchTool" guards the kendex#1007 lesson from being "fixed" with
+		// "ToolSearchTool" keeps the exact-name alias rule from being changed with
 		// suffix matching: an SDK alias earns membership by being LISTED, never
 		// by resembling a listed name.
 		for (const name of ["ToolSearchX", "mytoolsearch", "toolsearch", "XToolSearch", "ToolSearch2", "ToolSearchTool", "listmcpresources", "ReadMcpResourceToolX"]) {
@@ -214,7 +211,7 @@ describe("child-executed tools are never mirrored as Pi tool calls", () => {
 		assert.equal(c.turnBlocks.length, 1, "only the Pi tool call is mirrored");
 		assert.equal(c.turnBlocks[0].name, "read");
 		assert.deepEqual(c.turnToolCallIds, ["toolu_pi"]);
-		// The boundary no longer ends the turn directly — it arms the grace timer
+		// The boundary arms the grace timer instead of ending the turn directly
 		// and lets message_stop end it, so message_delta's usage can land first.
 		assert.equal(c.turnSawToolCall, true);
 		assert.ok(c.scheduledToolUseEnd, "a real Pi tool call arms the deferred turn end");
@@ -504,7 +501,7 @@ describe("usage across a Pi turn that spans several child messages", () => {
 
 	it("accumulates on the no-stream-events path too", () => {
 		// The SDK can deliver a turn as complete `assistant` messages with no
-		// stream events. That path is where a new child message begins for it, so
+		// stream events. That path begins the following child message, so
 		// it must bank the previous one exactly as `message_start` does.
 		const c = ctx();
 		c.resetTurnState(model);
@@ -524,7 +521,7 @@ describe("usage across a Pi turn that spans several child messages", () => {
 	});
 
 	it("does not double-count a message whose message_start already streamed", () => {
-		// The regression this guards: a child message that emits message_start but
+		// A child message that emits message_start but
 		// NO content blocks leaves `turnSawStreamEvent` false, so the SDK's completed
 		// copy of that SAME message lands on the no-stream-events path. Banking per
 		// call site counted it twice; banking per message id does not.

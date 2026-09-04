@@ -6,9 +6,9 @@ import { kindIcon } from "@/lib/kind-icon";
 import { harnessName, hookDisplayName, kindLabel } from "@/lib/labels";
 import { useNavStore } from "@/stores/nav";
 
-/** The last things to change on this machine. "Activity" said nothing about
- *  what happened; this is a file's own timestamp, so what it can honestly
- *  report is that the file changed, and when. */
+/** The last things to change on this machine. This is a file's own
+ *  timestamp, so what it can honestly report is that the file changed, and
+ *  when — not what happened to it. */
 export function RecentActivity({ groups }: { groups: RecentGroup[] }) {
   const goToLibrary = useNavStore((s) => s.goToLibrary);
 

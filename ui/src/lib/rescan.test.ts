@@ -57,11 +57,11 @@ describe("Scan again", () => {
     expect(commands.auditAll).toHaveBeenCalledTimes(1);
   });
 
-  // The third standing read. Every reader of the join used to guess when
-  // something might have installed, and each guess missed a route — an
-  // install redirected into another project being the one that got through
-  // twice. Reading it here is what makes the guesses unnecessary: a write
-  // that already asks for a rescan refreshes where things came from too.
+  // The third standing read. A reader of the join guessing when something
+  // might have installed misses a route — an install redirected into
+  // another project is the one that gets through. Reading it here is what
+  // makes the guessing unnecessary: a write that already asks for a rescan
+  // refreshes where things came from too.
   it("reads where every installation came from, alongside the other two", async () => {
     vi.mocked(commands.libraryProvenance).mockResolvedValue({
       status: "ok",

@@ -38,7 +38,7 @@ pub fn detected_harnesses(env: &Env) -> Vec<HarnessId> {
 }
 
 /// Bring a manifest's install targets up to date with the machine, and say
-/// which tools that added. Detection is re-read at install time rather than
+/// which tools that gained. Detection is re-read at install time rather than
 /// trusted from the manifest seed: a tool installed after the scope was set
 /// up would otherwise never receive anything, and nothing would say why.
 ///

@@ -482,9 +482,9 @@ fn the_urls_core_builds_are_the_artifact_the_release_signs_and_its_signature() {
     }
 }
 
-/// Tauri v2 signs the AppImage itself. The `.AppImage.tar.gz` shape belongs
-/// to the deprecated v1-compatible updater, and looking for it leaves Linux
-/// out of the inputs, so the tag job fails before writing the manifest.
+/// Tauri signs the AppImage itself. Looking for an `.AppImage.tar.gz`
+/// leaves Linux out of the inputs, so the tag job fails before writing the
+/// manifest.
 #[test]
 fn no_step_hunts_for_the_v1_compatible_linux_updater_archive() {
     let workflow = workflow();
@@ -570,7 +570,7 @@ fn every_lane_the_staging_step_stages_reaches_the_manifest() {
     }
 }
 
-/// A lane added to the matrix with no fixture here publishes a platform
+/// A lane the matrix gains with no fixture here publishes a platform
 /// nothing above covers, and every assertion still passes.
 #[test]
 fn the_lane_fixture_covers_every_lane_the_matrix_builds() {

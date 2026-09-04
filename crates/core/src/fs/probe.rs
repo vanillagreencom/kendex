@@ -42,7 +42,7 @@ pub(crate) fn entry(path: &Path) -> Result<Option<fs::Metadata>> {
 /// Whether the filesystem said nothing is there, rather than declining to
 /// say. Absent has two spellings — no such name, and a name built under a
 /// file — and every probe that keeps the third answer apart from the
-/// second reads them from here, so a spelling added for one is not missed
+/// second reads them from here, so a spelling listed for one is not missed
 /// by another in the opposite fail direction.
 pub(crate) fn absent(error: &std::io::Error) -> bool {
     matches!(error.kind(), NotFound | NotADirectory)

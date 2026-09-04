@@ -100,7 +100,7 @@ while [[ $# -gt 0 ]]; do
       # An unrecognized flag must never fall through into a positional slot:
       # under `set -u` it dies later as an unbound-variable abort naming a
       # variable the caller never typed, and a backgrounded wrapper then exits
-      # 0 while the wait silently never happened (kendex#981).
+      # 0 while the wait silently never happened.
       echo "ci-wait: unknown option '$1'" >&2
       print_usage >&2
       exit 2
@@ -269,7 +269,7 @@ if [ -z "$REPO" ]; then
   origin_url=$(git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null || true)
   # Capture owner/repo greedily, then strip a trailing ".git" explicitly. GNU
   # sed / POSIX ERE has no non-greedy quantifier, so a `[^/]+?(\.git)?$` pattern
-  # would greedily swallow ".git" into the slug (kendex#476). Do the suffix
+  # would greedily swallow ".git" into the slug. Do the suffix
   # strip with bash parameter expansion instead — portable for both SSH
   # (git@github.com:owner/repo.git) and HTTPS origins, with or without ".git",
   # and safe for repo names that merely contain the substring "git".
@@ -327,7 +327,7 @@ if [ "$max_no_checks" -lt 1 ]; then
 fi
 
 # Guard against stale-check race condition: when a fresh run was just
-# triggered (new push, review-approval dispatch), checks from an old run
+# triggered (push, review-approval dispatch), checks from an old run
 # (SUCCESS/SKIPPED) may be the only ones visible.
 # Only declare "passed" after we've seen at least one check go through
 # IN_PROGRESS/PENDING, proving a fresh run was observed.
@@ -336,7 +336,7 @@ stale_count=0
 max_stale=6  # ~90s of only completed/skipped before assuming genuinely done
 
 # The log is captured whole and windowed in-shell, and head and grep read
-# here-strings, which have no producer to signal (KEN-1143): `gh | head -200`
+# here-strings, which have no producer to signal: `gh | head -200`
 # SIGPIPEs gh past the 64KB pipe buffer, and pipefail hands that 141 to
 # `|| return 1`, which means only that gh itself failed.
 is_transient_failure() {
@@ -356,7 +356,7 @@ is_transient_failure() {
 
 # Scope a `gh pr checks` array to the current authoritative substantive run per
 # workflow. Shared with github `pr-merge.sh` so the waiter and the merge gate
-# cannot disagree about which run is current (kendex#876) — see the library for
+# cannot disagree about which run is current. See the library for
 # the full rationale.
 CI_RUN_CORRELATION_LIB="$SCRIPT_DIR/../../github/scripts/lib/ci-run-correlation.sh"
 if [[ ! -f "$CI_RUN_CORRELATION_LIB" ]]; then
@@ -369,7 +369,7 @@ source "$CI_RUN_CORRELATION_LIB"
 # Failure check `link` is `https://github.com/owner/repo/actions/runs/<RUN_ID>/job/<JOB_ID>` —
 # extract RUN_ID, not the trailing JOB_ID (which `gh run rerun` won't accept as a workflow run).
 # Scope to the current run first so a rerun never targets a superseded/canceled
-# run (kendex#492).
+# run.
 get_failed_run_id() {
   local pr="$1"
   gh pr checks "$pr" --repo "$REPO" --json name,state,bucket,link,startedAt,workflow 2>/dev/null | \
@@ -380,14 +380,9 @@ get_failed_run_id() {
     head -1 | sed -nE 's#.*/actions/runs/([0-9]+)(/.*)?$#\1#p'
 }
 
-# Decide whether a settled failure verdict is genuinely terminal (kendex#650).
-# `gh pr checks` builds on the head commit's check-suite rollup, and GitHub
-# omits some dispatch events' suites from that rollup entirely — observed on a
-# pull_request_review_comment run whose same-second pull_request_review sibling
-# was cancelled by concurrency: only the cancelled sibling's checks and the
-# stale `CI Required` status pointing at it stayed visible, while the newer
-# substantive run never appeared. Correlate the failing checks' runs against
-# the Actions run list for the current head instead:
+# Decide whether a settled failure verdict is terminal. `gh pr checks` can omit
+# dispatch-event suites from the head rollup, so correlate failing checks
+# against the Actions run list for the current head:
 #   active     - the failing run is re-running, or ANY substantive-event run
 #                on this head is queued or in progress; the failure is
 #                provisional, keep waiting.
@@ -403,16 +398,14 @@ get_failed_run_id() {
 # unattributable stays terminal so the waiter still fails closed, and a
 # cancelled run with no newer sibling remains a terminal failure as before.
 #
-# Run-id order is not event order: a rerun starts a new attempt under the
-# ORIGINAL run id and creation time, and that attempt's results overwrite the
-# run's check runs when they land — observed as attempt 2 of an older
-# pull_request run executing while a newer review-event run sat cancelled
-# (kendex#699). The active test is therefore deliberately NOT scoped to the
+# Run-id order is not event order. A rerun starts an additional attempt under
+# the ORIGINAL run id and creation time. The attempt's results overwrite the
+# run's check runs when they land. The active test is deliberately NOT scoped to the
 # failing run's workflow or to run-id order: any in-flight substantive run on
-# the head is replacement current-head work, and holding the verdict pending
+# the head is current-head work, and holding the verdict pending
 # is bounded by the waiter timeout while a wrong terminal fail is not
-# recoverable (matches the kendex#656 contract — an aggregate failure stays
-# pending while a newer substantive run has no failures). It also makes the
+# recoverable. An aggregate failure stays pending while a newer substantive run
+# has no failures. It also makes the
 # in-flight-$newest case unreachable below. Discarding failures stays
 # stricter: superseded still requires a completed-success run of the SAME
 # workflow, and a rerun attempt of an older run only counts when its
@@ -571,7 +564,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
   no_checks_count=0
 
   # Drop checks belonging to superseded workflow runs before classifying, so a
-  # prior canceled run can't be reported as a current failure (kendex#492).
+  # prior canceled run can't be reported as a current failure.
   checks_json=$(echo "$checks_json" | scope_current_run)
 
   # Count checks by GitHub's bucket classifier, with state fallbacks for older
@@ -591,7 +584,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
   # Check for failure (only when all checks have settled). Before declaring
   # the failure terminal, correlate it with the head's Actions runs: a verdict
   # built entirely from superseded runs must wait for the newest substantive
-  # run instead (kendex#650). The correlation only runs when every failed
+  # run instead. The correlation only runs when every failed
   # check links to an Actions run; anything unattributable fails closed.
   if [ "$failed_count" -gt 0 ] && [ "$pending_count" -eq 0 ]; then
     supersede_state="terminal"
@@ -622,8 +615,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
       *)
         # `gh pr checks` exits nonzero when checks have failed; without the
         # guard the pipefail status escapes the substitution and errexit kills
-        # the script before any result is emitted (silent-exit class of
-        # kendex#454).
+        # the script before any result is emitted.
         failed_run=$(get_failed_run_id "$PR_NUM" || true)
 
         # Try auto-retry for transient failures
@@ -631,7 +623,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
           echo "Retrying transient failure (attempt $((retries + 1))/$max_retries)..." >&2
           gh run rerun "$failed_run" --repo "$REPO" --failed 2>/dev/null || true
           retries=$((retries + 1))
-          seen_in_progress=false  # Reset — rerun will produce new checks
+          seen_in_progress=false  # Reset because rerun will produce new checks
           sleep 10
           update_elapsed
           continue
@@ -655,7 +647,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
     # we started watching. Use stale counter to distinguish.
     stale_count=$((stale_count + 1))
     if [ "$stale_count" -ge "$max_stale" ]; then
-      # Waited long enough for new checks to appear — genuinely complete
+      # Waited long enough for subsequent checks to appear — genuinely complete
       emit_result "complete" "$check_classes"
       exit 0
     fi

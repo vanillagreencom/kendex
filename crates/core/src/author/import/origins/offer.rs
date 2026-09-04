@@ -52,8 +52,8 @@ fn agent_shape_problem(kind: ItemKind, bytes: &Bytes) -> Option<&'static str> {
 /// carries the reason instead.
 ///
 /// Every origin goes through here, because [`super::origins_of`] maps it
-/// over everything `reads` produces. A producer added later is judged by
-/// having been written, not by its author remembering to ask.
+/// over everything `reads` produces. Every producer is judged by having
+/// been written, not by its author remembering to ask.
 pub(super) fn offered(kind: ItemKind, mut read: OriginRead) -> OriginRead {
     let Some(bytes) = &read.bytes else {
         return read;

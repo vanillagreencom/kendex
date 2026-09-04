@@ -470,8 +470,8 @@ describe("a marketplace's own packages table", () => {
   });
 
   // A path-backed subscription has no repository at all, so a join keyed on
-  // the declaration's own `repo` left this column empty for every row of
-  // one, always. Both sides carry what the subscription resolved to — a
+  // the declaration's own `repo` would leave this column empty for every
+  // row of one. Both sides carry what the subscription resolved to — a
   // canonical path here — which is what the lock recorded.
   it("names places for a subscription backed by a path", () => {
     stub.scores = {};

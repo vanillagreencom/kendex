@@ -313,13 +313,9 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			MINI_DASHBOARD_RANK.BACKGROUND_TASKS,
 			(tui, theme) => {
 				requestWidgetRender = () => tui.requestRender();
-				// Previously: setInterval(() => tui.requestRender(), 1_000) to refresh
-				// formatRelativeTime() output. That forced a TUI render every second purely
-				// to advance "5s ago" → "6s ago", which re-diffs the full screen and triggers
-				// pi-tui's above-viewport flicker every time the chat overflows. Relative-time
-				// text is now refreshed only on real task events (start / output / end / mode
-				// toggle / dashboard mutation), accepting a few seconds of staleness between
-				// events as a worthwhile tradeoff against the redraw storm.
+				// Refresh relative-time text only on task events. A timer would redraw the
+				// full screen for each label change and cause above-viewport flicker when
+				// the chat overflows. Labels can stay stale between task events.
 				return {
 					dispose() {
 						if (requestWidgetRender) requestWidgetRender = null;
@@ -491,7 +487,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 	const finalizeTask = (task: ManagedTask, exitCode: number | null, statusOverride?: BackgroundTaskStatus): ManagedTask =>
 		finalizeTaskLifecycle(task, exitCode, lifecycleHooks, statusOverride);
 
-	// kendex#15 (reviewer-error BLOCK): orphan-running tasks (status=
+	// Orphan-running tasks (status=
 	// running, child=null, restored=true) need a liveness watcher.
 	// When the recorded pid eventually disappears, finalize and emit
 	// the canonical exit wake so the silent stall does not survive Pi
@@ -514,7 +510,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 	// without ever notifying the agent. The canonical failure path: a long-
 	// running session_shutdown or a mid-session restore coerced status
 	// running->stopped (restoredTaskFromSnapshot) and the agent never saw
-	// the exit. Without this replay the bg_task silently stalls (kendex#15).
+	// the exit. Without this replay the bg_task silently stalls.
 	//
 	// Restored tasks whose process is still alive remain status='running'
 	// (handled by restoredTaskFromSnapshot) and are skipped by
@@ -584,7 +580,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		}
 
 		task.stopReason = reason;
-		// kendex#97: stamp terminationReason eagerly so when the child's
+		// stamp terminationReason eagerly so when the child's
 		// close handler later calls finalizeTaskLifecycle the annotation
 		// is already in place. session_shutdown calls requestStop with
 		// reason="shutdown" so the two paths land on distinct values.
@@ -600,7 +596,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 
 		// Bound the command preview embedded in the stop message so a 100KB
 		// heredoc command cannot leak into the bg_task/bg_status stop tool
-		// result content (kendex#210 round 3).
+		// result content.
 		const safeCommand = truncateForTranscript(task.command, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
 
 		const stopResult = killTaskProcess(task, "SIGTERM");
@@ -655,7 +651,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		for (const warning of spawnPlan.warnings) warnResourceControlFallback(warning, cwd);
 		// kendex#97 hardening: spawn the child in its own session / process
 		// group via `detached: true` (Node calls setsid() on POSIX before
-		// exec). This addresses two of the issue's hypotheses:
+		// exec). This protects against two signal paths:
 		//
 		//   H1 (process-group / parent-death cascade): when Pi exits or is
 		//   restarted, the kernel does NOT propagate SIGHUP / SIGTERM to
@@ -865,7 +861,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		for (const task of tasks.values()) {
 			if (task.status === "running") {
 				task.stopReason = "shutdown";
-				// kendex#97: explicit annotation for the session_shutdown
+				// explicit annotation for the session_shutdown
 				// kill path so a later restore can tell shutdown-kills from
 				// reconcile-on-restart coercion.
 				task.terminationReason = "session-shutdown";
@@ -962,4 +958,3 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		widgetToggleShortcut,
 	});
 }
-

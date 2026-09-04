@@ -165,7 +165,7 @@ grep -qF -- 'the one beginning with "The fix lands' "$TMP/beginning-with.md" ||
 check_anchors "$TMP/beginning-with.md" "control: an edit whose only quote follows the word with goes dark, and reds" expect-dark:3
 
 echo "=== the recipe states the number of edits it carries ==="
-# A spelled-out count in prose goes stale the next time an edit is added; this
+# A spelled-out count in prose goes stale the next time an edit is included; this
 # is the fixture that reds when it does. Both statements of it are covered: the
 # fill comment at the head of the file, and the block's own instruction.
 split_template "$TEMPLATE"

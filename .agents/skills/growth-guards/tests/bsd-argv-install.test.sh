@@ -2,7 +2,7 @@
 # install-git-hooks under BSD argv rules, as a program rather than a lint.
 #
 # growth-guards installs on macOS, where the utilities are BSD, not GNU. That
-# used to be a text scan for the shapes a BSD utility rejects, and it was
+# would be a text scan for the shapes a BSD utility rejects, and it was
 # wrong four times running: each spelling missed an argument form the next
 # reviewer found, because a lint over shell source has no bottom — the same
 # command can be written in more ways than a regex can enumerate.

@@ -130,9 +130,9 @@ interface InstanceInfo {
 	startedAt: string;
 	updatedAt: string;
 	lastReason?: string;
-	/** kendex#60: parent session id when this bridge runs in a spawned subagent pane. */
+	/** Parent session id when this bridge runs in a spawned subagent pane. */
 	parentSessionId?: string;
-	/** kendex#60: PI_BRIDGE_CHILD_ROLE env value when set (e.g. 'subagent'). */
+	/** PI_BRIDGE_CHILD_ROLE env value when set (e.g. 'subagent'). */
 	childRole?: string;
 }
 
@@ -282,7 +282,7 @@ export default function sessionBridge(pi: ExtensionAPI) {
 		const ctx = currentCtx;
 		const model = ctx?.model;
 		const defaultId = callOptional(ctx?.sessionManager, "getSessionId");
-		// kendex#60: subagent panes inherit the parent session id from
+		// subagent panes inherit the parent session id from
 		// pi-core; synthesize a unique id when launched with the env vars
 		// pi-agents-tmux sets on subagent spawn.
 		const resolvedSession = resolveSessionId({ defaultId, pid: process.pid });
@@ -623,7 +623,7 @@ export default function sessionBridge(pi: ExtensionAPI) {
 		const deliverAs = requested === "auto" ? (idle ? undefined : "steer") : requested === "now" ? undefined : requested;
 		const options = deliverAs ? { deliverAs } : undefined;
 
-		// kendex#13: pi.sendUserMessage hardcodes expandPromptTemplates:
+		// pi.sendUserMessage hardcodes expandPromptTemplates:
 		// false, so bridge delivery recreates the slash resolver in two
 		// safe pieces. Skills/prompt templates can be expanded from public
 		// command metadata and still preserve steer/followUp. Extension/TUI

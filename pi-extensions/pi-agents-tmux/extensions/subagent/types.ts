@@ -11,11 +11,9 @@ export const STATS_BRIDGE_SYMBOL = Symbol.for("kendex.pi.agents");
 export const SUBAGENT_STATE_TYPE = "kendex-subagents:runtime-state";
 export const MAX_CONCURRENCY = 4;
 export const COLLAPSED_ITEM_COUNT = 10;
-// Bump whenever writeLauncher's generated script content changes:
-// cleanupPaneRegistry kills and recycles live panes recorded at an older
-// version, so a stale constant leaves running panes on the previous launcher
-// (kendex#192 shipped the depth-guard/entry exports this way). A pinning test
-// in tests/pi-invocation.test.ts ties this constant to the template text.
+// Bump whenever writeLauncher's generated script content changes. The cleanup
+// path recycles panes with an older version, and tests/pi-invocation.test.ts
+// ties this constant to the template text.
 export const PANE_LAUNCHER_VERSION = 11;
 export const SUBAGENT_WIDGET_KEY = "kendex-agents-dashboard";
 export const FIRST_AGENT_COLUMN_ROWS = 3;

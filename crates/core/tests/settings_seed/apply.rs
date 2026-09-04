@@ -240,8 +240,7 @@ fn a_bundle_arrives_the_skills_it_carries() {
     assert!(text.contains("[bundles.kit]"), "{text}");
     assert!(!text.contains("[skills.carried]"), "{text}");
 
-    // And the other half of the same reading, which is the regression this
-    // closes: the member is installed now, so a second add of the bundle
+    // The member is installed, so a second add of the bundle
     // gains nothing and arrives nothing. The raw skills map calls it
     // absent both times, so read that way every add re-arrives it and
     // writes back the key the consumer deleted.
@@ -328,16 +327,7 @@ fn disabled_skill_does_not_seed() {
 ///
 /// What that costs is worth knowing, because it is what an author chooses
 /// when they mark a key. A consumer who set the key through the app has
-/// its comment as the template read at THAT moment, and it stays that way.
-///
-/// What kills this one is a mechanism rather than a mutation, so no line
-/// of the tree reaches it: restore `settings_seed::refresh_comments` and
-/// the ledger it is gated on, and call it from `settings_write::settle`
-/// before the merge. Its own history is the proof it can go red — the
-/// assertion here is the exact negative of
-/// `a_revised_template_refreshes_an_unedited_comment_through_a_real_apply`,
-/// which passed on the commit before this rule landed and asserted the
-/// rewrite this now refuses.
+/// the comment from that write, and a template revision must not replace it.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_revised_template_does_not_follow_its_comment_into_the_file() {
@@ -447,8 +437,8 @@ fn a_skill_installed_on_no_harness_seeds_nothing() {
     let f = fixture(true);
     let manifest = f.project.join("kendex.toml");
     let text = fs::read_to_string(&manifest).unwrap();
-    // Cursor reads the shared skills tree now, so "a tool that cannot take
-    // it" is no longer a tool — it is a scope that targets none.
+    // Cursor reads the shared skills tree, so "a tool that cannot take it"
+    // means a scope that targets no tool.
     fs::write(&manifest, text.replace("[\"claude\"]", "[]")).unwrap();
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(

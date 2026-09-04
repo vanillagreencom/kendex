@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pins for the collection sites whose failure used to escape as the failing
+# Pins for the collection sites whose failure would escape as the failing
 # tool's OWN status. The contract reserves exit 1 for "a size violation was
 # measured" and exit 2 for "could not measure", so a broken environment
 # leaving through `set -e` with status 1 told every caller the opposite of
@@ -67,7 +67,7 @@ run_sr_shimmed() { # SHIMDIR [args...] — run_sr with SHIMDIR first on PATH
 
 echo "=== the repository-root cd is a config error, never the violation code ==="
 # `git rev-parse --show-toplevel` answering with a path the process cannot
-# enter (a repository removed mid-run, a permission change) used to kill the
+# enter (a repository removed mid-run, a permission change) would kill the
 # script through set -e with cd's own status 1.
 CD_SHIM="$TMP/cd-shim"
 mkdir -p "$CD_SHIM"
@@ -160,7 +160,7 @@ run_sr_shimmed "$COUNTS_SHIM"
 
 echo "=== a failed working copy of the baseline is exit 2 ==="
 # The baseline is copied into the scratch dir before anything reads it; that
-# cp's failure used to leave through set -e with status 1.
+# cp's failure would leave through set -e with status 1.
 CP_STAGE_SHIM="$TMP/cp-stage-shim"
 mkdir -p "$CP_STAGE_SHIM"
 cat >"$CP_STAGE_SHIM/cp" <<EOF
@@ -270,7 +270,7 @@ row="$(cat "$R/tools/size-ratchet-baseline.tsv")"
   || bad "the baseline is unchanged after the aborted update" "row=$row"
 
 echo "=== a broken index probe never reads as 'file absent' ==="
-# The probe used to be `[ "$(git cat-file -t ":$FILE" 2>/dev/null)" = "blob" ]`.
+# The probe would be `[ "$(git cat-file -t ":$FILE" 2>/dev/null)" = "blob" ]`.
 # cat-file exits 128 for "not in the index" AND for a corrupt or unavailable
 # object, so with its status discarded a broken read compared unequal to "blob"
 # and fell through to "absent" — an EMPTY baseline (every frozen offender

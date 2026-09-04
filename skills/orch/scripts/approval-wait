@@ -201,7 +201,7 @@ while [[ $# -gt 0 ]]; do
     -*)
       # An unrecognized flag must never fall through into a positional slot:
       # it would be consumed as the PR#/interval and die downstream blaming
-      # an argument the caller never typed (kendex#981, same as ci-wait).
+      # an argument the caller never typed, same as ci-wait).
       echo "approval-wait: unknown option '$1'" >&2
       print_usage >&2
       exit 2
@@ -224,7 +224,7 @@ if $RESOLVE_MODE; then
   # loud, and a typo must never silently disable a wait.
   #
   # Resolved through the ENGINE's own resolver so waiter and gate cannot
-  # split by construction (PR #1615): rg_setting honors set-even-empty env,
+  # split: rg_setting honors set-even-empty env,
   # the REVIEW_GATE_SETTINGS_FILE override (including the /dev/null
   # force-defaults sentinel), skips dotenv for this key, and fails loud on
   # a malformed or duplicate assignment — exactly as the predicate does.
@@ -269,8 +269,8 @@ if $RESOLVE_MODE; then
   case "$mode" in
     approval|review|off) ;;
     "")
-      # Legacy PR_APPROVAL_GATE derivation: off → off, anything else (or
-      # unset) → approval — the pre-#642 binary gate semantics.
+      # When PR_REVIEW_GATE is unset, PR_APPROVAL_GATE=off disables the wait.
+      # Every other value selects approval mode.
       if [[ "${PR_APPROVAL_GATE:-}" == "off" ]]; then
         mode="off"
       else
@@ -310,7 +310,7 @@ MAX_WAIT="${POSITIONAL[2]:-$("$SCRIPT_DIR/orch-env" PR_REVIEW_WAIT_SECS 900)}"
 START_TIME="$(date +%s)"
 elapsed=0
 
-# Review-check evidence (kendex#654, kendex#681): PR_REVIEW_CHECK names the
+# Review-check evidence: PR_REVIEW_CHECK names the
 # check the repo's review bot publishes on analyzed heads; review mode accepts
 # a successful signal of that name on the current head as an alternative to a
 # review object, on EITHER surface — a check-run concluding "success"
@@ -369,7 +369,7 @@ last_check_surface=""
 last_check_app=""
 last_check_creator=""
 
-# Transient-failure bookkeeping (kendex#748): every gh call in the poll loop
+# Transient-failure bookkeeping: every gh call in the poll loop
 # writes stderr to GH_ERR_FILE so a failure can be classified before it is
 # allowed to terminate the wait. retry_interval doubles per consecutive
 # transient failure (capped) and resets after any fully successful poll.
@@ -411,14 +411,13 @@ emit_result() {
   local status="$1" error_msg="${2:-}" mode_fields
   update_elapsed
   if $JSON_OUTPUT; then
-    # Review-mode fields are additive only, so approval-mode JSON stays
-    # byte-compatible with the pre-#642 contract.
+    # Review-mode fields are additive, so approval-mode JSON keeps its field set.
     mode_fields='{}'
     if [[ "$MODE" == "review" ]]; then
       # review_evidence appears only when the gate passed — "review" for a
-      # review object at head, "check" for PR_REVIEW_CHECK success (kendex#654)
+      # review object at head, "check" for PR_REVIEW_CHECK success
       # on either surface; review_evidence_surface then pins which API surface
-      # matched — "check_run" or "status" (kendex#681).
+      # matched — "check_run" or "status".
       mode_fields=$(jq -n \
         --arg mode "$MODE" \
         --arg head "$last_head_sha" \
@@ -570,7 +569,7 @@ fi
 REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
 if [ -z "$REPO" ]; then
   origin_url=$(git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null || true)
-  # Strip a trailing ".git" with parameter expansion, not the ERE (kendex#476).
+  # Strip a trailing ".git" with parameter expansion, not the ERE.
   REPO=$(echo "$origin_url" | sed -nE 's#^.*github\.com[:/]+([^/]+/[^/]+)$#\1#p')
   REPO="${REPO%.git}"
 fi
@@ -587,13 +586,13 @@ REPO_NAME="${REPO#*/}"
 # late-findings guard so the waiter and the guard cannot disagree about what an
 # open thread is. gh's stderr lands in GH_ERR_FILE for the transient/terminal
 # classification below, so the file is emptied first: the classifier must read
-# THIS call's failure, never one an earlier probe left behind.
+# THIS call's failure, never one a prior probe left behind.
 count_unresolved_threads() {
   : > "$GH_ERR_FILE"
   orch_count_unresolved_threads "$OWNER" "$REPO_NAME" "$PR_NUM" "$GH_ERR_FILE"
 }
 
-# Classify the failed gh call whose stderr sits in GH_ERR_FILE (kendex#748).
+# Classify the failed gh call whose stderr sits in GH_ERR_FILE.
 # Transient — retryable inside the wait budget — means the service or
 # transport hiccuped: HTTP 5xx, HTTP 429 rate limits, timeouts,
 # connection/DNS/TLS failures, or a
@@ -616,9 +615,8 @@ gh_failure_is_transient() {
 
 # Absorb one transient GitHub failure: count and log it, then sleep the
 # backed-off interval so the caller can `continue` the poll loop. When the
-# max_wait budget is already spent, the failure becomes terminal instead —
-# same error message and exit code as the pre-#748 immediate path, plus the
-# transient_api_errors count in the JSON.
+# max_wait budget is already spent, the failure becomes terminal with the
+# standard error, exit code, and transient_api_errors count.
 transient_retry() {
   local what="$1" detail
   detail="$(head -c 200 "$GH_ERR_FILE" 2>/dev/null | tr '\n' ' ')"
@@ -722,7 +720,7 @@ while true; do
                       and (.user.login // "") != $author)]
         | group_by(.user.login) | map(.[-1])
         | .[] | select(.state == "APPROVED")] | length' <<<"$reviews_json")
-    # --- trusted review-check evidence (kendex#654, kendex#681): consulted
+    # --- trusted review-check evidence: consulted
     # only when no review object is pinned to the current head. Both queries
     # target the CURRENT head, so a success on a superseded commit can never
     # satisfy the gate. Check-runs first (when the bot re-analyzed the same
@@ -912,7 +910,7 @@ while true; do
     break
   fi
   # Reaching here means every query in this poll succeeded — end any
-  # transient-failure backoff streak (kendex#748).
+  # transient-failure backoff streak.
   retry_interval="$POLL_INTERVAL"
   sleep "$POLL_INTERVAL"
   update_elapsed

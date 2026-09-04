@@ -3,8 +3,8 @@
  *
  * A parent query can end abnormally (abort, child process death) while a
  * reentrant subagent context is still pushed. Teardown keyed on the live ctx()
- * used to mutate the subagent's state and skip the parent's own drain entirely.
- * These tests pin the fixed behavior: teardownQuery touches only the context it
+ * would mutate the subagent's state and skip the parent's own drain entirely.
+ * These tests require teardownQuery to touch only the context it
  * was given, and popContextFor never pops someone else's context.
  * Uses the real module — no API calls, no extension activation.
  */
@@ -209,8 +209,8 @@ describe("teardownQuery shared-record gating (#1001)", () => {
 	afterEach(() => __testSetBridgeIntegrityState({ sharedSession: null, ui: null }));
 
 	// Simulates a query dying with an unresolved tool call: recorded, a handler
-	// still waiting, teardown drains it. This is the exact path that used to
-	// mark the PARENT's record needsRebuild/forceRotate from a detached query.
+	// still waiting, teardown drains it. This path must not mark the PARENT's
+	// record needsRebuild/forceRotate from a detached query.
 	const teardownWithUnresolvedCall = async (queryCtx, cause) => {
 		const sdkQuery = { id: "sdk-query" };
 		queryCtx.activeQuery = sdkQuery;

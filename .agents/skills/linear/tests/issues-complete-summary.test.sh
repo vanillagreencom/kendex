@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for #553: issues complete must parse --summary/--summary-file
+# issues complete must parse --summary/--summary-file
 # (post the completion comment BEFORE transitioning to Done) and reject unknown
 # or trailing arguments before any mutation.
 
@@ -15,7 +15,7 @@ mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 # Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this
 # throwaway root — without this, cache writes land in the real project's
-# `.cache/linear` (kendex#43).
+# `.cache/linear`.
 git -C "$TMP_ROOT" init -q -b main
 
 cat >"$TMP_ROOT/bin/curl" <<'SH'

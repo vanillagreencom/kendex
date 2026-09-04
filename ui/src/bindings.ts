@@ -25,8 +25,7 @@ export const commands = {
 	 * 
 	 *  Without this the app replaces itself, restarts, and clears its card
 	 *  while the terminal command stays on the old release with nothing on
-	 *  screen having said so — the silent divergence this issue was written
-	 *  about, arrived at from the other side.
+	 *  screen having said so.
 	 */
 	appUpdateCommandChannel: () => typedError<
 /**
@@ -108,7 +107,7 @@ export const commands = {
 	 *  action sends the whole object, so a copy read before some other
 	 *  surface wrote the file — a resize, a project registered in another
 	 *  window — would put the older file back over it. A copy of a file that
-	 *  is no longer there is refused, never applied.
+	 *  is gone is refused, never applied.
 	 */
 	updateSettings: (settings: AppSettings, base: string | null) => typedError<SettingsRead, WriteRefused>(__TAURI_INVOKE("update_settings", { settings, base })),
 	/**
@@ -286,8 +285,8 @@ export const commands = {
 	 *  kinds being installed at this scope — the same one the install itself
 	 *  refuses by, so the picker cannot offer a choice the install turns down —
 	 *  and which are on this machine. Detection is read now rather than taken
-	 *  from the scope's manifest: a tool added since the scope was set up has
-	 *  to be offerable, and one removed since must not read as present.
+	 *  from the scope's manifest: a tool that arrived after the scope was set
+	 *  up has to be offerable, and one gone since must not read as present.
 	 */
 	installTargets: (scope: Scope, kinds: ItemKind[]) => typedError<InstallTarget[], string>(__TAURI_INVOKE("install_targets", { scope, kinds })),
 	repoEffectsApply: (scope: Scope, declared: DeclaredEffects) => typedError<Said, string>(__TAURI_INVOKE("repo_effects_apply", { scope, declared })),
@@ -387,7 +386,7 @@ export const commands = {
 	 *  here as it would under a whole-scope apply.
 	 * 
 	 *  The answer is the same `PackageUpdate` the update command gives, and
-	 *  for the same reason: the manifest takes the new hold either way, while
+	 *  for the same reason: the manifest takes the requested hold either way, while
 	 *  a rendering somebody edited is held back on disk, so a caller reading
 	 *  the view alone would report a switch that never reached the files.
 	 */
@@ -396,7 +395,7 @@ export const commands = {
 	/**  Keep an edited install as a local fork, then render it in place. */
 	packageFork: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("package_fork", { scope, kind, name, harness })),
 	/**
-	 *  Keep an edited install as a local fork under a new name, leave the
+	 *  Keep an edited install as a local fork under another name, leave the
 	 *  original on its source, then render both.
 	 */
 	packageForkBeside: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId, newName: string, rev: string | null) => typedError<AuditView_Serialize, ForkBesideError>(__TAURI_INVOKE("package_fork_beside", { scope, kind, name, harness, newName, rev })),
@@ -591,10 +590,10 @@ export type Appearance = "system" | "light" | "dark";
  *  that shows a score embeds this whole — `engine::ItemSafety` and
  *  `browse::PackageSafety` flatten it into their serialized rows,
  *  `check_catalog::CheckedItem` carries it beside the structural pass — so
- *  a field added here reaches all of them without another hand-copy.
+ *  a field of this struct reaches all of them without another hand-copy.
  * 
  *  A flattened field lands in its embedder's own key space and nothing
- *  catches a clash at compile time, so a new field here must avoid the
+ *  catches a clash at compile time, so every field here must avoid the
  *  keys those embedders already occupy: `kind`, `name`, `targets`, `scope`,
  *  `notes`, `contentHash`, `fromCache`, `format` and
  *  `discovery`.
@@ -756,8 +755,9 @@ export type AvailablePackage = {
  *  describes — because the failure this exists to prevent is a base paired
  *  with content nobody read together. A base taken by a read separate from
  *  the content it answers for describes a different moment: a writer
- *  landing between the two hands the caller old content under the new
- *  file's name, and the write that follows is accepted over that writer.
+ *  landing between the two hands the caller old content under the
+ *  replacement file's name, and the write that follows is accepted over
+ *  that writer.
  *  Nothing here takes a path and hands back a base, deliberately — a path
  *  is not the bytes, and reading them apart is how the two come adrift.
  */
@@ -782,7 +782,7 @@ export type BundleDetail = {
 	 *  the install is redirected, the browsed scope otherwise — could not be
 	 *  read. The set page's Install all asks about the set rather than about
 	 *  a member, so it needs that scope's own answer: no member row can
-	 *  carry it, because a member the catalog no longer offers reads
+	 *  carry it, because a member the catalog does not offer reads
 	 *  [`InstallState::NotOffered`] with or without a lock, and a set whose
 	 *  members were all dropped — or one declared with none — would leave the
 	 *  page deriving "readable" from rows that never consulted the record.
@@ -811,8 +811,8 @@ export type CandidateGroup =
  */
 licenseRecognized: boolean } | 
 /**
- *  The installed copy of a marketplace package that no longer matches
- *  the marketplace's bytes — "your edited copy", shown beside the
+ *  The installed copy of a marketplace package whose bytes have drifted
+ *  from the marketplace's — "your edited copy", shown beside the
  *  original and gated by the same licence.
  */
 { group: "edited"; source: string; repo: string; license: string | null; licenseRecognized: boolean } | 
@@ -1067,9 +1067,8 @@ export type DeclaredEffects = {
 	 * 
 	 *  A path, not a string of one. `display().to_string()` turns any byte
 	 *  that is not UTF-8 into U+FFFD, which is a different filename — so an
-	 *  authorized effect resolved a path nobody has, for a package that had
-	 *  just landed perfectly well. The same class #1669 closed on the guard
-	 *  side, here for the same reason.
+	 *  authorized effect would resolve a path nobody has, for a package
+	 *  that landed perfectly well.
 	 */
 	root: string,
 } & RepoEffects;
@@ -1266,9 +1265,9 @@ export type DriftRow_Serialize = {
 export type DriftState = 
 /**  Declared but not on disk (or never recorded). */
 "missing" | 
-/**  On disk but no longer matching declaration + source. */
+/**  On disk but not matching declaration + source. */
 "stale" | 
-/**  Recorded in the lock but no longer declared. */
+/**  Recorded in the lock but not declared. */
 "orphaned" | 
 /**  On disk in a managed surface, but not ours. */
 "unmanaged" | 
@@ -1387,7 +1386,7 @@ export type ForkBesideError = { phase: "refused"; message: string } | { phase: "
  *  Where a fork came from. A fork keeps the item's installed name — the
  *  declaration just switches to the local source, so nothing that depends
  *  on the name breaks — and this records what it replaced. A fork made
- *  beside the original takes a new name and records the same provenance:
+ *  beside the original takes another name and records the same provenance:
  *  what it was copied from, and at which commit. Manifest, not lock,
  *  because the package page keeps reading it after any cache loss.
  */
@@ -1397,7 +1396,7 @@ export type ForkProvenance = ForkProvenance_Serialize | ForkProvenance_Deseriali
  *  Where a fork came from. A fork keeps the item's installed name — the
  *  declaration just switches to the local source, so nothing that depends
  *  on the name breaks — and this records what it replaced. A fork made
- *  beside the original takes a new name and records the same provenance:
+ *  beside the original takes another name and records the same provenance:
  *  what it was copied from, and at which commit. Manifest, not lock,
  *  because the package page keeps reading it after any cache loss.
  */
@@ -1414,7 +1413,7 @@ export type ForkProvenance_Deserialize = {
  *  Where a fork came from. A fork keeps the item's installed name — the
  *  declaration just switches to the local source, so nothing that depends
  *  on the name breaks — and this records what it replaced. A fork made
- *  beside the original takes a new name and records the same provenance:
+ *  beside the original takes another name and records the same provenance:
  *  what it was copied from, and at which commit. Manifest, not lock,
  *  because the package page keeps reading it after any cache loss.
  */
@@ -1667,7 +1666,7 @@ export type InstallState =
 /**  Offered, nothing installed. */
 "available" | 
 /**
- *  The bundle names a member the catalog no longer offers — renamed or
+ *  The bundle names a member the catalog does not offer — renamed or
  *  removed upstream. A row saying so, never a dead page: the member list
  *  is catalog-authored text and one bad entry cannot break the read.
  */
@@ -1842,8 +1841,8 @@ export type ItemWarning_Serialize = {
 
 /**
  *  What each operation supports for one harness × kind. `observe` is derived
- *  from adapter surface declarations (tested); mutation columns land with
- *  their phases and stay honest through those phases' tests.
+ *  from adapter surface declarations; tests hold the mutation columns to
+ *  their implementations.
  */
 export type KindCaps = {
 	observe: OpSupport,
@@ -2625,7 +2624,7 @@ export type ReportRouteView = {
 	kendexOwned: boolean,
 	repo: string | null,
 	label: string | null,
-	/**  Prefilled new-issue page — only when the report belongs upstream. */
+	/**  Prefilled issue page — only when the report belongs upstream. */
 	issueUrl: string | null,
 };
 
@@ -2724,16 +2723,16 @@ export type ScopeError = {
  */
 export type ScopeErrorKind = 
 /**
- *  The lock is not readable as this build's lock: damaged JSON, or a
- *  record an older kendex wrote. Nothing converts either, and the way
- *  out is the same — move it aside and apply again.
+ *  The lock is not readable as this build's lock: damaged JSON, or an
+ *  unsupported schema. Nothing converts either, and the way out is the
+ *  same — move it aside and apply again.
  */
 "lock-corrupt" | 
 /**
- *  The manifest was written by an older kendex: it parses, but not
- *  into a shape this build reads, and nothing converts it. Kept
- *  apart from a damaged lock because the file is intact and the
- *  person's own — moving it aside loses what they wrote in it.
+ *  The manifest parses under an unsupported schema, and nothing
+ *  converts it. Kept apart from a damaged lock because the file is
+ *  intact and the person's own — moving it aside loses what they wrote
+ *  in it.
  */
 "manifest-outdated" | 
 /**  The manifest or lock was written by a newer kendex than this one. */
@@ -2825,7 +2824,7 @@ export type SkillTemplate =
 { state: "no-template" } | 
 /**
  *  Its template is out of reach here — a source that has not arrived,
- *  a skill switched off, a source that no longer carries it.
+ *  a skill switched off, a source that does not carry it.
  */
 { state: "unreadable"; reason: string } | 
 /**
@@ -2857,7 +2856,7 @@ export type SourceDecl_Deserialize = {
 	/**
 	 *  Which revision of a remote to read. A full commit id is a pin: that
 	 *  commit and no other, forever, and it works offline once cached. A
-	 *  tag or branch tracks — every refresh re-resolves it and the new
+	 *  tag or branch tracks — every refresh re-resolves it and the incoming
 	 *  content is previewed before anything is written. Absent tracks the
 	 *  repository's default branch.
 	 */
@@ -2871,7 +2870,7 @@ export type SourceDecl_Serialize = {
 	/**
 	 *  Which revision of a remote to read. A full commit id is a pin: that
 	 *  commit and no other, forever, and it works offline once cached. A
-	 *  tag or branch tracks — every refresh re-resolves it and the new
+	 *  tag or branch tracks — every refresh re-resolves it and the incoming
 	 *  content is previewed before anything is written. Absent tracks the
 	 *  repository's default branch.
 	 */
@@ -3085,11 +3084,8 @@ export type UnsubscribePreview = {
  *  What unsubscribing did about the repository effects of the packages
  *  that left with the source — the same account the terminal prints.
  * 
- *  A struct rather than the bare list it used to be, spelling the account
- *  `undone` like every other command that can make one. The window reads
- *  the account off an answer by that name, so a bare list is a shape it
- *  can only be told about by hand, and the day this write goes through
- *  the shared one it would fall silent with nothing going red.
+ *  The UI reads `undone` by name, so this response must remain an object rather
+ *  than a bare list.
  */
 export type Unsubscribed = Unsubscribed_Serialize | Unsubscribed_Deserialize;
 
@@ -3097,11 +3093,8 @@ export type Unsubscribed = Unsubscribed_Serialize | Unsubscribed_Deserialize;
  *  What unsubscribing did about the repository effects of the packages
  *  that left with the source — the same account the terminal prints.
  * 
- *  A struct rather than the bare list it used to be, spelling the account
- *  `undone` like every other command that can make one. The window reads
- *  the account off an answer by that name, so a bare list is a shape it
- *  can only be told about by hand, and the day this write goes through
- *  the shared one it would fall silent with nothing going red.
+ *  The UI reads `undone` by name, so this response must remain an object rather
+ *  than a bare list.
  */
 export type Unsubscribed_Deserialize = {
 	undone: string[],
@@ -3111,11 +3104,8 @@ export type Unsubscribed_Deserialize = {
  *  What unsubscribing did about the repository effects of the packages
  *  that left with the source — the same account the terminal prints.
  * 
- *  A struct rather than the bare list it used to be, spelling the account
- *  `undone` like every other command that can make one. The window reads
- *  the account off an answer by that name, so a bare list is a shape it
- *  can only be told about by hand, and the day this write goes through
- *  the shared one it would fall silent with nothing going red.
+ *  The UI reads `undone` by name, so this response must remain an object rather
+ *  than a bare list.
  */
 export type Unsubscribed_Serialize = {
 	undone?: string[],
@@ -3171,7 +3161,7 @@ export type UpdateRow = {
 	 *  Whether dropping the edits can put the currently resolved content
 	 *  back in place, without moving any revision — the source content
 	 *  resolved, whether or not its history could be read. False once the
-	 *  source no longer carries the package.
+	 *  source does not carry the package.
 	 */
 	canDiscard: boolean,
 	/**
@@ -3199,7 +3189,7 @@ export type UpdateRow = {
 	forked: boolean,
 	/**  Installations of this package disagree on their source commit. */
 	mixed: boolean,
-	/**  The source's tracked tip no longer carries this package at all. */
+	/**  The source's tracked tip does not carry this package at all. */
 	removedUpstream: boolean,
 	/**
 	 *  Why this place is never updated one package at a time, when it is
@@ -3340,7 +3330,7 @@ export type Withheld = {
  */
 export type WriteRefused = 
 /**
- *  The file is no longer the one this copy was read from, and the
+ *  The file has changed since this copy was read from it, and the
  *  refusal carries no account with it. Something else wrote the file
  *  — a fork, a hold, an install, another window — and writing this
  *  copy would put that back, so reading the file again is the whole

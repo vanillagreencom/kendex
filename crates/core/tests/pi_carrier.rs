@@ -1,8 +1,8 @@
 //! Pi hooks, enforced through the carrier: events map onto the listeners
 //! Pi actually fires (unmappable ones stay honestly unsupported), labels
 //! read carrier reality at both scopes — a project-installed hook with a
-//! global carrier is enforced, the v1 #1407 lesson — and everything
-//! renders through the ordinary plan.
+//! global carrier is enforced — and everything renders through the ordinary
+//! plan.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]
@@ -105,9 +105,8 @@ fn carrier_presence_is_read_per_settings_layer_and_either_scope_enforces() {
         "no carrier anywhere: a rendered registry is prose"
     );
 
-    // The #1407 case: the hook installs in the project, the carrier is
-    // registered only globally — Pi loads both settings layers, so the
-    // hook is enforced.
+    // The hook installs in the project while the carrier is registered only
+    // globally. Pi loads both settings layers, so the hook is enforced.
     register_carrier(&w.home.join(".pi/agent"));
     let presence = carrier::presence(&w.env, &project_scope);
     assert!(presence.global && !presence.project);
@@ -310,21 +309,20 @@ fn bun_on_path() -> Option<std::path::PathBuf> {
 
 /// The lane that has to prove the case below rather than skip it: CI on
 /// Linux, where `.github/workflows/skill-tests.yml`'s `cargo-tests` job
-/// installs bun. Without this, deleting that one step turns KEN-941's only
-/// end-to-end proof into a permanent silent pass — cargo swallows the
-/// `eprintln!` of a passing test. macOS and Windows install no bun and skip.
+/// installs bun. Without bun, the end-to-end case skips and cargo swallows
+/// the `eprintln!` of a passing test. macOS and Windows install no bun and skip.
 fn bun_is_required() -> bool {
     cfg!(target_os = "linux")
         && (std::env::var_os("GITHUB_ACTIONS").is_some() || std::env::var_os("CI").is_some())
 }
 
-/// End to end, KEN-475: a hook declared in `kendex.toml` fires under Pi.
+/// A hook declared in `kendex.toml` fires under Pi.
 ///
 /// A `[[custom-hooks]]` entry is the case that proves it, because a custom
 /// hook has no file of its own — kendex registers the person's command
 /// verbatim, so it exists nowhere but the rendered registry. The engine
 /// renders it here and the `pi-hooks` carrier's own `tool_call` handler runs
-/// it, which is the whole chain the `enforced` label claims (KEN-941).
+/// it, which is the whole chain the `enforced` label claims.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_declared_custom_hook_fires_through_the_carrier() {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for pr-threads resolution filters in --format=raw.
+# Tests for pr-threads resolution filters in --format=raw.
 #
 # The raw branch echoed the GraphQL result unfiltered, so
 # `--unresolved --format=raw` returned resolved threads and a verification

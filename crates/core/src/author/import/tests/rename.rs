@@ -1,4 +1,4 @@
-//! What a copy taken under a new name declares: the rename itself, the
+//! What a copy taken under another name declares: the rename itself, the
 //! kinds carrying no name anything keys on, and the refusals that decide
 //! before the first byte is written.
 
@@ -25,7 +25,7 @@ fn checked(target: &Path) -> (usize, Vec<String>) {
     (check.tally().items, breakage)
 }
 
-/// A copy taken under a new name has to declare that name: a skill copied
+/// A copy taken under another name has to declare that name: a skill copied
 /// verbatim under a renamed destination lands a SKILL.md calling it
 /// something else, which the catalog check reports as breakage — run here
 /// over what the import wrote, so this holds only as long as it does.
@@ -63,7 +63,7 @@ fn a_renamed_skill_declares_its_destination_and_leaves_the_catalog_whole() {
     // The rest of the tree is a copy. A rewrite reaching a body file would
     // refuse the whole import, because a file with no frontmatter has no
     // line to carry a name, so a skill with a references/ directory could
-    // not be imported under a new name at all.
+    // not be imported under another name at all.
     let Scope::Project { root } = &scope else {
         unreachable!()
     };

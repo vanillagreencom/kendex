@@ -23,7 +23,7 @@ export interface SessionState {
 	// never rewrite those opening messages — compact/tree-nav mutations set
 	// needsRebuild instead — so a component mismatch marks a FOREIGN
 	// conversation (a subagent-shaped query arriving while the parent is idle,
-	// kendex#1001) that must run as a clean one-shot without touching this
+	//) that must run as a clean one-shot without touching this
 	// record. The user component must always match; the assistant component is
 	// compared only when BOTH sides carry one, so a record stamped on turn 1
 	// (no assistant yet) still matches its own grown conversation and upgrades
@@ -169,10 +169,9 @@ export const INTEGRITY_CUSTOM_TYPE = "claude-bridge-integrity";
 /**
  * Persist a bridge integrity event into the pi session transcript.
  *
- * The diag log and a piUI toast both die with the machine or the render cycle:
- * the 2026-07-28 post-mortem found `Error: Claude bridge: …` messages that were
- * SHOWN but existed nowhere in the pi session file, making analysis from the
- * session alone impossible. A `CustomEntry` closes that gap the same way the
+ * The diag log and a piUI toast both die with the machine or render cycle, so
+ * they cannot support analysis from the session alone. A `CustomEntry` persists
+ * the record in the same way the
  * connector-call audit does — persisted, never part of built context, never
  * dispatchable by pi's agent loop. Payloads must stay compact metadata (ids,
  * counts, tool names), never tool output.
@@ -242,7 +241,7 @@ export function reportToolResultMismatch(
 		queryCtx.reportedToolResultMismatch = true;
 		// The single choke point every mismatch path funnels through (abort,
 		// unmatched result, stream-idle, teardown). A context with no claim on
-		// the shared record (reentrant subagent or foreign one-shot, kendex#1001)
+		// the shared record (reentrant subagent or foreign one-shot,)
 		// still gets the full diagnostics below, but its unresolved tool state is
 		// its own — marking the PARENT's record needsRebuild/forceRotate here
 		// would flush the parent's prompt cache for a query that never touched

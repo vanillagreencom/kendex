@@ -133,9 +133,8 @@ fn rendered(w: &World, scope: &Scope) -> String {
     fs::read_to_string(path).unwrap()
 }
 
-/// One repository, two revisions, two scopes — each reads its own commit
-/// and neither can disturb the other, which the single mutable checkout of
-/// v0.1 could not do.
+/// Each scope reads its own commit of one repository, and neither scope can
+/// disturb the other.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn two_scopes_pin_different_revisions_of_one_repo() {
@@ -179,8 +178,8 @@ fn two_scopes_pin_different_revisions_of_one_repo() {
 }
 
 /// Pointing a source at another repository is a change of identity, not of
-/// revision: until the new repository is fetched, the old one's content is
-/// nobody's answer — least of all under the new one's name.
+/// revision: until the target repository is fetched, the source repository's
+/// content is nobody's answer, least of all under the target's name.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn repointing_a_source_never_serves_the_old_repository() {
@@ -211,7 +210,7 @@ fn repointing_a_source_never_serves_the_old_repository() {
         report.notes
     );
 
-    // Fetching the new repository makes it readable, and the installed copy
+    // Fetching the target repository makes it readable, and the installed copy
     // is then a rebind the user has to settle — never a silent swap.
     remote::sync_sources(&w.env, &loaded(&w, &scope)).unwrap();
     let report = audit(&w.env, &scope).unwrap();

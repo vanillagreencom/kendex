@@ -115,11 +115,11 @@ impl Installer for Placed {
 }
 
 /// The boundary itself, driven through the step the install takes rather
-/// than through its halves. Everything else about this change can be right
-/// while the check never runs on the way to the installer, which is the
-/// whole defect: the plugin's signature check admits any kendex release's
-/// bytes, so what this release published for this target is the only thing
-/// between an older signed download and the disk.
+/// than through its halves: the halves can each be right while the check
+/// never runs on the way to the installer. The plugin's signature check
+/// admits any kendex release's bytes, so what this release published for
+/// this target is the only thing between an older signed download and
+/// the disk.
 #[test]
 fn only_the_download_this_release_published_reaches_the_installer() {
     let digests = published();
@@ -152,10 +152,9 @@ impl ReplacementTarget for Recorder {
     }
 }
 
-/// The handoff itself. Everything else about this change can be right
-/// while the approved path never leaves `app_update_install`, and the
-/// plugin then falls back to rebuilding its own from the launch
-/// environment, which is the whole defect.
+/// The handoff itself: the judgement can be right while the approved path
+/// never leaves `app_update_install`, and the plugin then falls back to
+/// rebuilding its own from the launch environment.
 #[test]
 fn the_approved_path_reaches_whatever_will_replace_it() {
     for install in [
@@ -215,12 +214,13 @@ impl kendex_core::install_channel::HostProbe for OnlyWritable {
 /// the two agree. This asks the plugin.
 ///
 /// Getting it wrong is not a failed update. The derived path is what the
-/// macOS installer removes before moving the new bundle in, escalating a
-/// permission error to a shell `rm -rf` under `with administrator
-/// privileges`. Hand over the bundle instead of the executable inside it
-/// and the plugin climbs one level further, to the directory holding
-/// every other app on the machine. The dependency is a caret range, so a
-/// minor bump can move this derivation under an unchanged kendex.
+/// macOS installer removes before moving the downloaded bundle in,
+/// escalating a permission error to a shell `rm -rf` under `with
+/// administrator privileges`. Hand over the bundle instead of the
+/// executable inside it and the plugin climbs one level further, to the
+/// directory holding every other app on the machine. The dependency is a
+/// caret range, so a minor bump can move this derivation under an
+/// unchanged kendex.
 #[test]
 fn the_plugin_derives_the_unit_for_app_approved() {
     let exe = "/Applications/kendex.app/Contents/MacOS/kendex";

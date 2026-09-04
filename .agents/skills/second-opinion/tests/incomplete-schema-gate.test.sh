@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for the second-opinion structural-completeness gate (kendex#678).
+# Tests for the second-opinion structural-completeness gate.
 #
 # JSON extraction can yield truncated-but-valid JSON: agent/timestamp/verdict/
 # summary survive while the required finding arrays are silently dropped, so the
@@ -7,7 +7,7 @@
 # reviewable. Fix in the script:
 #   1. A parseable first response missing verdict or any of the blockers/
 #      suggestions/questions arrays goes through the existing one-shot retry
-#      (full original context, kendex#672) instead of being written.
+#      (full original context) instead of being written.
 #   2. A retried response that is STILL structurally incomplete is rejected:
 #      preserved as <output>.incomplete.json, exit 4, no artifact.
 #   3. A complete response with empty arrays is accepted unchanged, no retry.
@@ -30,7 +30,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # --- Deterministic harness-free session -------------------------------------
 # A positively detected single-model harness now beats any contradicting
-# declaration, whatever its source — so a suite can no longer neutralize the
+# declaration, whatever its source — so a suite cannot neutralize the
 # harness that runs it by exporting an identity. It has to actually not have
 # one. This `ps` stand-in reports the first parent as init, so the ancestor walk
 # finds nothing and the declared identity below is what the script uses. It also
@@ -140,7 +140,7 @@ git -C "$WORK" add file.txt
 git -C "$WORK" -c commit.gpgsign=false commit -q -m init
 git -C "$WORK" checkout -q -b scope-branch
 # Uncommitted change so `--range HEAD` yields a non-empty diff — the scope
-# gate (kendex#652) refuses to run a review over an empty diff.
+# The scope gate refuses to run a review over an empty diff.
 printf 'world\n' >> "$WORK/file.txt"
 
 COUNTER="$TMP_ROOT/counter"
@@ -168,7 +168,7 @@ run_review() {
   return "$rc"
 }
 
-# The kendex#678 incident shape: parseable JSON carrying ONLY agent/timestamp/
+# Failure shape: parseable JSON carrying ONLY agent/timestamp/
 # verdict/summary — the finding arrays (and qa_metadata) were truncated away.
 TRUNCATED_RESP="$TMP_ROOT/truncated-resp.txt"
 cat > "$TRUNCATED_RESP" <<'JSON'

@@ -59,7 +59,7 @@ export function mapToolName(name: string, customToolNameToPi?: Map<string, strin
 }
 
 // Renames for Claude Code SDK param names that differ from pi's native names.
-// Keys not listed here pass through unchanged, so new pi params work automatically.
+// Keys not listed here pass through unchanged, so additional Pi parameters work automatically.
 const SDK_KEY_RENAMES: Record<string, Record<string, string>> = {
 	read:  { file_path: "path" },
 	write: { file_path: "path" },

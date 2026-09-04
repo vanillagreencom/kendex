@@ -504,7 +504,7 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 
-	// Missing-completion watchdog (kendex#66): rides on `pi.on("agent_settled")`
+	// Missing-completion watchdog: rides on `pi.on("agent_settled")`
 	// for tasks delivered without an inbox file (bridge follow-ups). The handler
 	// above already covers the childCurrentTaskFile path; this watchdog covers
 	// active task records for the same agent that lack a processing file.
@@ -539,7 +539,7 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// Rate-limit watchdog (kendex#108): rides on `pi.on("message_end")` for
+	// Rate-limit watchdog: rides on `pi.on("message_end")` for
 	// the canonical Claude / pi-coding-agent rate-limit error shape.
 	// Schedules a retry-with-backoff steer via pi.sendUserMessage and
 	// gates the settled-run watchdog so its synthetic needs_completion
@@ -569,7 +569,7 @@ export default function (pi: ExtensionAPI) {
 		logWarn: (message) => console.warn(message),
 	});
 
-	// Idle-stall watchdog (kendex#63 workaround): polls active tasks for
+	// The idle-stall watchdog polls active tasks for
 	// pi-core post-compaction stalls where no terminal lifecycle event fires. Reuses
 	// the W5 O_EXCL writer so a racing real complete_subagent always wins.
 
@@ -610,8 +610,7 @@ export default function (pi: ExtensionAPI) {
 			record.outboxFile ??
 			completionPath(currentRuntimeRoot ?? "", record.agent, record.taskId),
 		isPaneIdle: async (record) => {
-			// Round-2 fix (reviewer-arch + reviewer-error major): probe the
-			// child Pi's bridge state directly via pi-bridge state and treat
+			// Probe the child Pi's bridge state directly via pi-bridge state and treat
 			// the response's data.isIdle === true as the authoritative
 			// signal. Any error / timeout / missing-metadata defaults to
 			// FALSE so the watchdog skips rather than false-fires against a
@@ -694,7 +693,7 @@ export default function (pi: ExtensionAPI) {
 			const payload: PersistedSubagentRuntimeState = { version: 1, panes, tasks, updatedAt: new Date().toISOString() };
 			// Bounded append: full payload only when within the size cap, otherwise a tiny manifest. The on-disk
 			// pane and task registries remain canonical, so a manifest-only session entry still restores fully
-			// on /resume (kendex#177).
+			// on /resume.
 			appendBoundedSnapshot({
 				appender: pi,
 				customType: SUBAGENT_STATE_TYPE,
@@ -1490,14 +1489,14 @@ export default function (pi: ExtensionAPI) {
 		poll();
 		completionPoller = setInterval(poll, Math.max(500, Math.floor(settingNumber("completionPollMs", 2000, ctx.cwd))));
 
-		// kendex#63 workaround: idle-stall watchdog rides on the parent
+		// The idle-stall watchdog runs in the parent
 		// session and polls active tasks for post-compaction stalls.
 		currentRuntimeRoot = runtimeRoot;
 		flushRuntimeDiagnostics();
 		idleStallWatchdog.start();
 	});
 
-	// kendex#108: rate-limit-watchdog rides on message_end so it can
+	// The rate-limit watchdog uses message_end so it can
 	// observe the canonical Claude rate-limit signature (assistant turn
 	// with stopReason==="error" + "temporarily limiting requests" prose)
 	// before agent_settled fires the missing-completion path. The
@@ -1534,7 +1533,7 @@ export default function (pi: ExtensionAPI) {
 	const handleChildSettled = async (ctx: ExtensionContext): Promise<void> => {
 		if (!childAgentName) return;
 		lastChildLifecycleCtx = ctx;
-		// kendex#108: when the rate-limit watchdog has a retry scheduled for
+		// When the rate-limit watchdog has a retry scheduled for
 		// this pane, skip the missing-completion watchdog path so
 		// the steer can race the synthetic outbox.
 		let rateLimitAwaitingRetry = rateLimitWatchdog.isAwaitingRetry(childAgentName);
@@ -1559,7 +1558,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (!pendingMatches && !manualCompletionOk && rateLimitAwaitingRetry) {
-				// kendex#108: rate-limit retry will reissue the steer; defer
+				// Rate-limit retry will reissue the steer, so defer
 				// the immediate needs_completion mark + UI status until the
 				// retry either succeeds (rate_limit_resolved) or exhausts.
 				return;
@@ -1580,7 +1579,7 @@ export default function (pi: ExtensionAPI) {
 					display: true,
 				});
 				// Intentionally do NOT clear childCurrentTaskFile: the inbox poll guard
-				// blocks new task pickup while it is set, which keeps a misbehaving agent
+				// blocks further task pickup while it is set, which keeps a misbehaving agent
 				// pinned in needs_completion until a human resets the pane instead of
 				// silently piling up additional partial tasks. pendingChildCompletion is
 				// also left as-is; later completions are matched by taskId equality.
@@ -1633,7 +1632,7 @@ export default function (pi: ExtensionAPI) {
 		// agent is still active and has no outbox after the grace window, write
 		// a synthetic needs_completion outbox so the parent's wake handler runs.
 		//
-		// kendex#108: skip this scan when the rate-limit watchdog has a retry
+		// skip this scan when the rate-limit watchdog has a retry
 		// in flight for this pane — otherwise the synthetic outbox races the
 		// scheduled steer and the parent gets a misleading 'needs completion'.
 		if (rateLimitAwaitingRetry) return;

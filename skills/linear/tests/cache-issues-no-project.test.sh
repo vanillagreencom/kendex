@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# cache issues list --no-project (kendex #966).
+# cache issues list --no-project.
 #
-# `cache issues list --no-project` used to be an UNIMPLEMENTED flag: the arg loop
+# `cache issues list --no-project` must be implemented by the argument loop
 # silently swallowed any unknown flag, so the requested "only unassigned" filter
 # never ran and the command returned every issue up to the limit — project-
 # assigned rows included. Consumers reading it as unassigned triage debt (TPM

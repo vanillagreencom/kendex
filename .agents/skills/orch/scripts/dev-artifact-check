@@ -2,10 +2,10 @@
 # Deterministically validate a dev agent's on-disk completion artifact for
 # dev-start / dev-fix / review-pr-comments acceptance. The live return message can
 # be lost when a long tools/validate-class command exceeds the harness Bash tool
-# timeout mid-tail and ends the turn (kendex#770), so the artifact — written after
+# timeout mid-tail and ends the turn, so the artifact — written after
 # commit/labels/summary via `dev-return-write` — is the durable completion record.
 #
-# IDENTITY IS BY ROUND ID, NOT MTIME (kendex#776). Each delegation stamps a unique
+# IDENTITY IS BY ROUND ID, NOT MTIME. Each delegation stamps a unique
 # round token (`workflow-state new-round-id [ISSUE] dev_round_id`) that is embedded
 # in the delegation. `dev-return-write` names its file
 # [WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json and writes "round_id":
@@ -20,7 +20,7 @@
 #   { "schema_version": 1, "round_id": "…", "kind": "implement"|"fix",
 #     "issue": "…", "branch": "…", "commit": "…", "validate": "pass"|"FAILING: …",
 #     "baseline_lines": 138 (implement only),
-#     "validate_note": "…"|null (optional free-text qualifier — kendex#884),
+#     "validate_note": "…"|null (optional free-text qualifier),
 #     "qa_labels": […], "summary_posted": bool, "summary": "…"|null,
 #     "bundled": bool, "items": [{"n": <number>, "decision": "Applied"|"Skipped"|"Blocked", "reasoning": "…"}] }
 
@@ -28,18 +28,18 @@
 # The scalars prove the agent finished its tail; the items gates prove a fix or
 # bundled artifact carries its per-item results. In round mode, when the
 # worktree is a git repo and the artifact carries a .commit, the recorded SHA is
-# additionally checked against that repo (kendex#994): a SHA that names no
+# additionally checked against that repo: a SHA that names no
 # object fails with reason=commit_unresolvable (a hand-fabricated SHA — same
 # short prefix as HEAD, invented tail — passes every schema gate yet proves
 # nothing), and a commit that resolves but is not an ancestor of HEAD is
 # surfaced as the NON-FATAL warning=commit_unreachable (a legitimate rebase
-# orphans the SHAs of previously accepted rounds, so this is a signal for the
+# orphans the SHAs of beforehand accepted rounds, so this is a signal for the
 # orchestrator, not a failure). Exact-commit binding (.commit == the observed
 # HEAD) and tracker corroboration stay in the orch workflow.
 #
 # The same rebase orphans the round record's base_sha, and there the answer is
 # to stop: the protected-additions gate does not run, says so on stderr, and
-# names no file (kendex#944).
+# names no file.
 
 set -euo pipefail
 
@@ -212,7 +212,7 @@ check_id_token() {
 # `validate` and `validate_note` are surfaced here, not just stored in the file:
 # this output IS what the orchestrator reads to accept a completion, so a
 # qualified result recorded in the artifact and never echoed would be as lost as
-# one that was never recorded (kendex#884). Both are null when the artifact is
+# one that was never recorded. Both are null when the artifact is
 # missing or unparseable.
 emit() {
   local ok="$1" path="$2" reason="$3" warning="${4:-}" hint="${5:-}" files="${6:-[]}" validate=null validate_note=null
@@ -278,7 +278,7 @@ has_required_fields() {
   ' "$1" >/dev/null 2>&1
 }
 
-# kendex#678 parity fallback (no --expect-items): an artifact of kind "fix" OR with
+# Parity fallback (no --expect-items): an artifact of kind "fix" OR with
 # bundled == true must carry a non-empty .items array whose every element is an
 # object with a numeric .n, a decision ∈ {Applied,Skipped,Blocked}, and a non-empty
 # .reasoning. kind "implement" without bundled is unaffected (items: [] allowed).
@@ -366,12 +366,11 @@ is_protected_addition() {
 # probe would compare nothing — fail-open in the same direction.
 #
 # base_sha is HEAD at delegation, and a rebase orphans it exactly as it orphans
-# the artifact's .commit (kendex#944). The orphaned sha still resolves, so the
+# the artifact's `.commit`. The orphaned SHA still resolves, so the
 # comparison succeeds across the base branch's whole advance and names files
 # another author merged as this round's additions. No comparison recovers the
 # round's real starting tree once it is off the branch, so the gate does not
-# run: it says that on stderr and names no file. Three approximations of "did
-# this round add this path" were tried and each excused something real.
+# run: it says that on stderr and names no file.
 collect_unapproved_additions() {
   local repo="$1" round_record="$2" result="$3" base_sha path probe
   local additions=()
@@ -423,7 +422,7 @@ collect_unapproved_additions() {
 }
 
 # Shared gate. `--help` § "Gates ordered" is the single statement of the order
-# these run in; keep the two in step when a gate is added or moved. Emits
+# these run in; keep the two in step when a gate is included or moved. Emits
 # {ok, path, reason, warning}, returns 0 iff valid.
 # want_round "" skips the round_id match (--file mode without --round-id).
 # expect_items "" uses the fix/bundled fallback instead of the exact-set rule.
@@ -446,11 +445,11 @@ validate_artifact() {
     emit false "$file" "invalid"
     return 1
   fi
-  # kendex#994: a .commit that passed the scalar gate must name a real commit
+  # A `.commit` that passed the scalar gate must name a real commit
   # object in the worktree's repo — a fabricated SHA (same short prefix as HEAD,
   # invented tail) reads as evidence while proving nothing. Resolvable but not
   # an ancestor of HEAD is the orphaned-by-rebase signature: non-fatal warning,
-  # because a legitimate rebase produces it on every previously accepted round.
+  # because a legitimate rebase produces it on every already accepted round.
   local commit=""
   if [[ -n "$repo" ]] && git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
     commit="$(jq -r 'if (.commit? | type) == "string" then .commit else "" end' "$file" 2>/dev/null || true)"
@@ -477,7 +476,7 @@ validate_artifact() {
     fi
     # 4 is the orphaned-base stop. Accepting it would not defer the gate, it
     # would lose it: dev-round-write stamps the next round's base_sha at the
-    # rebased HEAD, which already contains whatever this round added, so no
+    # rebased HEAD, which already contains whatever this round included, so no
     # later round can ever see it as an addition. Gate code fails closed, so
     # this refuses and names no file.
     if (( additions_rc == 4 )); then
@@ -514,7 +513,7 @@ validate_artifact() {
     # it was delegated to fix. The tripwire moves here rather than being
     # dropped: the cut's receipt is accepted only if the branch actually came
     # back to the cap, so declaring a round a cut is a way to run one, never a
-    # way to grow the branch past the limit unchecked (KEN-1165).
+    # way to grow the branch past the limit unchecked.
     if jq -e '.cut? == true' "$round_record" >/dev/null 2>&1; then
       if ! measure_size_tripwire "$repo" "${issue:-}" "$SCRIPT_DIR"; then
         printf '%s: cut round: %s\n' "$PROG" "$BRANCH_GROWTH_ERROR" >&2
@@ -625,7 +624,7 @@ elif [[ "${1:-}" == --* ]]; then
   repo="$worktree"
   file="$worktree/tmp/dev-return-$issue-$round_id.json"
 
-  # Derive the expected item set from the persisted round record (kendex#1230).
+  # Derive the expected item set from the persisted round record.
   # A record that cannot supply the set — missing, unparseable, wrong internal
   # token, or malformed items — is a usage/environment failure (exit 2), never
   # a silent downgrade to the weaker fix/bundled fallback gate.
@@ -681,7 +680,7 @@ fi
 # additions list, so validate_artifact would fall back to the weak
 # non-empty-items rule and skip the protected-additions gate entirely — a
 # bypass reachable by omitting a flag. Implement rounds write no round record
-# and stay flagless. This replaces the re-exec that used to
+# and stay flagless. This replaces the re-exec that would
 # silently upgrade the invocation: refusing keeps the caller's command honest.
 require_round_record_flag() {
   [[ "$round_mode" == "true" && "$expect_from_round" != "true" && -f "$file" ]] || return 0

@@ -106,7 +106,7 @@ pub(crate) fn package_ref_for(
     };
     let sealed = SealedSource::open(&root)?;
     let config = crate::source::source_config(&sealed, crate::source::repo_leaf(&repo))?;
-    // The tip may no longer offer the item (moved, deleted); the effective
+    // The tip may not offer the item (moved, deleted); the effective
     // revision the declaration reads is the fallback that keeps the page
     // and the diff working for what is actually installed.
     let item_path = crate::source::find_item(&sealed, &config, kind, name).or_else(|| {
@@ -183,7 +183,7 @@ pub fn set_rev(
 }
 
 /// `set_rev` whose plan takes the caller's options, so moving a hold and
-/// discarding the held copy's edits can be one apply: planning the new
+/// discarding the held copy's edits can be one apply: planning the target
 /// revision from the old manifest first would restore the old version.
 pub fn set_rev_with(
     env: &Env,

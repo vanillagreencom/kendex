@@ -59,7 +59,8 @@ describe("the harness row's name", () => {
     if (!name) throw new Error("no show-everything button rendered");
     // A completed click on the button is intent to open even while text
     // stands selected somewhere — on WebKit a button click leaves the
-    // selection be, and a guard here made this a dead click.
+    // selection be, so a guard on the selection would make this a dead
+    // click.
     vi.spyOn(window, "getSelection").mockReturnValue({
       isCollapsed: false,
     } as Selection);

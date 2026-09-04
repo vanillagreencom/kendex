@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# Regression tests for body-scoped decision search (kendex#853).
+# Body-scoped decision search.
 #
-# `decisions search` matched only the INDEX.md summary columns (decision,
-# rationale, id), never the decision document itself. A keyword appearing
-# prominently in a decision's prose but not in its one-line summary returned
-# `[]` — indistinguishable from "no decision governs this area", the opposite of
-# the truth. That silently passes the pre-mutation guards that call this search
-# (orch review-pr § 1.1, dev-fix § 2, tpm-audit § 2, and the issue template).
+# `decisions search` reads the decision document itself, not only the INDEX.md
+# summary columns (decision, rationale, id). A search over the summary alone
+# returns `[]` for a keyword that appears only in a decision's prose —
+# indistinguishable from "no decision governs this area", the opposite of the
+# truth — and that silently passes the pre-mutation guards that call this
+# search (orch review-pr § 1.1, dev-fix § 2, tpm-audit § 2, and the issue
+# template).
 #
-# These tests pin the fix and, just as importantly, the ranking contract: body
-# matches surface BELOW every summary match, so results that worked before keep
-# their position and scores rather than being displaced by newly-found ones.
+# Pinned here: the body match and the ranking contract: body matches surface
+# BELOW every summary match, so a summary match keeps its position and score
+# rather than being displaced by a body match.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

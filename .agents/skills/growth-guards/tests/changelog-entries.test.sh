@@ -399,7 +399,7 @@ printf '# changelog.d\n\nHow to write one of these.\n' >"$R/changelog.d/README.m
 stage
 # Narrowed to one section: the root IS changelog.d/fixed, so the README
 # directly under it documents the format — and it matches the glob, which is
-# what used to get it judged as a fragment instead.
+# what would get it judged as a fragment instead.
 run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=changelog.d/fixed/*.md'
 [ "$RC" -eq 0 ] && ok "a README under the root a narrowed pattern derives is exempt, though the glob reaches it" \
   || bad "a README under the root a narrowed pattern derives is exempt" "rc=$RC out=$OUT"
@@ -433,8 +433,8 @@ run_ce_env 'GROWTH_GUARDS_CHANGELOG_RECORD=changelog.d/CHANGELOG.md'
 echo "=== the pattern says where the section sits, and at what depth ==="
 # One rule for every pattern shape: a pattern is <root...>/<section>/<name>,
 # so its own last two segments place a path and its own depth decides which
-# paths it places. A count applied after the root instead is what makes each
-# new pattern shape a new defect.
+# paths it places. A count applied after the root would make each additional
+# pattern shape a separate defect.
 new_repo shapes
 printf -- '- A proper entry.\n' | frag fixed x.md
 mkdir -p "$R/changelog.d/archive/fixed"

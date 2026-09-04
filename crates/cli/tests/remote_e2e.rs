@@ -1,4 +1,4 @@
-//! Phase 5 end to end: a fresh consuming repo installs from the DEFAULT
+//! End to end: a fresh consuming repo installs from the DEFAULT
 //! remote catalog, customizes it, and refreshes clean — the GitHub host
 //! swapped for a local file:// git fixture via KENDEX_GIT_BASE.
 #![cfg(unix)]
@@ -175,7 +175,7 @@ fn consuming_repo_installs_customizes_and_refreshes_from_the_default_catalog() {
     assert!(text.contains("Team note."), "{text}");
     assert!(kendex(home, &proj, &["verify"]).status.success());
 
-    // The refresh published the new commit beside the old one instead of
+    // The refresh publishes the second commit beside the first instead of
     // resetting a shared checkout: the first commit's bytes are still there.
     assert_eq!(children(&only_child(&sources.join("commits"))).len(), 2);
     assert!(
@@ -331,7 +331,7 @@ fn updates_refresh_fetches_before_the_listing() {
         "no fetch was asked for, so nothing newer was found: {stale}"
     );
 
-    // With it, the fetch happens first and the listing sees the new commit.
+    // With it, the fetch happens first and the listing sees the later commit.
     let printed = said(&kendex(home, &proj, &["updates", "--refresh"]));
     assert!(
         printed.lines().any(|line| line.contains("skill gh")),

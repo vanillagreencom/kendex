@@ -96,11 +96,10 @@ describe("scan store", () => {
     expect(state.error).toBe("boom");
   });
 
-  // What this reverses: a request arriving mid-scan used to be dropped
-  // outright — a silent no-op, nothing retrying — so the read behind a
-  // write went missing whenever any background scan was out, and the write
-  // is exactly what the scan already running cannot answer for. Home
-  // renders its inventory from this result.
+  // A request arriving mid-scan dropped outright — a silent no-op, nothing
+  // retrying — would leave the read behind a write missing whenever any
+  // background scan was out, and the write is exactly what the scan already
+  // running cannot answer for. Home renders its inventory from this result.
   it("takes a re-read behind a scan already running rather than dropping it", async () => {
     const parked = park();
     vi.mocked(commands.scanMachine)
@@ -231,8 +230,8 @@ describe("scan store", () => {
     expect(toast.error).toHaveBeenCalledTimes(2);
   });
 
-  // A rejected call used to escape the store entirely: no error, no
-  // result, and Home read the silence as a scan still on its way.
+  // A rejected call that escaped the store would leave no error and no
+  // result, and Home reads that silence as a scan still on its way.
   it("lands a rejected call as a failed scan, keeping the last result", async () => {
     useScanStore.setState({ result: emptyResult });
     vi.mocked(commands.scanMachine).mockRejectedValue(new Error("ipc down"));

@@ -13,7 +13,7 @@ export interface AccountIdentity {
  * `signed-in` carries the identity once the backend has one; a credential
  * in the keychain is enough to be signed in before then. `offline` is a
  * credential we know the owner of but could not confirm; `expired` is one
- * the server no longer accepts. */
+ * the server rejects. */
 export type AccountState =
   | { kind: "loading" }
   | { kind: "signed-out" }
@@ -31,14 +31,14 @@ type WithIdentity = Extract<AccountState, { kind: "signed-in" | "offline" }>;
 export const hasCredential = (account: AccountState): account is WithIdentity =>
   account.kind === "signed-in" || account.kind === "offline";
 
-/** The same credential, no longer confirmed: what a read whose request
- *  went out and came back with nothing leaves when it already knew who
- *  holds it. Reserved for that read, a network with no route to kendex.ai
- *  included, since the machine did ask. A failure on this machine never
- *  gets here — the answer this read needed was never asked for, so "when
- *  kendex.ai was last reached" would name a cause nothing observed. Null
- *  when there is nothing to go offline with, which is a credential whose
- *  name has not been read yet, or no credential at all. */
+/** The same credential, unconfirmed: what a read whose request went out
+ *  and came back with nothing leaves when it already knew who holds it.
+ *  Reserved for that read, a network with no route to kendex.ai included,
+ *  since the machine did ask. A failure on this machine never gets here —
+ *  the answer this read needed was never asked for, so "when kendex.ai was
+ *  last reached" would name a cause nothing observed. Null when there is
+ *  nothing to go offline with, which is a credential whose name has not
+ *  been read yet, or no credential at all. */
 export const asOffline = (account: AccountState): SettledAccount | null =>
   hasCredential(account) && account.identity
     ? { kind: "offline", identity: account.identity }

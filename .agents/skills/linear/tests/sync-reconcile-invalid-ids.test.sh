@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test (kendex#43): reconcile_issues sends every cached issue id in
+# reconcile_issues sends every cached issue id in
 # one `id: {in: [...]}` GraphQL filter. Linear validates each entry as
 # UUID-or-identifier and rejects the WHOLE query on one malformed entry — a
 # handful of test-fixture ids (`child-uuid`, `issue-uuid`, `uuid-1`) that leaked
@@ -42,8 +42,8 @@ jq -n --arg synced "$(date -Iseconds)" \
 
 RECONCILE_LOG="$ROOT/reconcile-payload.json"
 
-# kendex#799: a pre-#799 cache carries one .lock beside every issue whose
-# comments were ever written, and the sync below is the shape that used to miss
+# The cache carries one `.lock` file beside every issue whose comments were
+# written. The sync below must not miss
 # them — an incremental run whose issues delta comes back empty, so
 # write_comments, where the sweep first lived, is never called at all. The
 # shared lock sits in the cache root rather than in comments/, so the sweep's

@@ -199,7 +199,7 @@ function createAgentsBrowserComponent(
 	let closed = false;
 	let resizeTimer: ReturnType<typeof setTimeout> | undefined;
 	const spinnersAnimated = () => animateSpinnersEnabled(cwd);
-	// Single tick for both concerns: pick up live lifecycle changes (a new agent, a
+	// Single tick for both concerns: pick up live lifecycle changes (an agent starting or
 	// finished one) and animate spinners. It renders only when something moved, so
 	// an idle pop-up stays still. Always armed — agents can start after the pop-up
 	// opened, when nothing was animating yet.

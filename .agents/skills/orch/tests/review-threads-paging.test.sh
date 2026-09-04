@@ -142,7 +142,7 @@ eq "$(cat "$STUB_CALLS")" "2" "the non-advancing cursor is caught on the page th
 # The missing-cursor rule, isolated from the non-advancing one beside it. On
 # page 1 the two are indistinguishable -- an empty cursor equals the empty
 # starting cursor, so either rule refuses after one query and deleting one
-# leaves the case green. From page 2 they part: an empty cursor no longer
+# leaves the case green. From page 2 they part: an empty cursor does not
 # equals "CURSOR2", so with `[ -n "$page_cursor" ]` deleted the walk accepts
 # it, restarts from page 1 and oscillates to the page bound. The query TALLY
 # is what tells the two apart -- two calls means the missing cursor was
@@ -160,7 +160,7 @@ cursor_missing_on_page_two "hasNextPage with a null cursor is refused" null
 cursor_missing_on_page_two "hasNextPage with an empty cursor is refused" '""'
 
 # --- where the page bound sits ---------------------------------------------
-# The bound is new to approval-wait, which paginated without one before, so a
+# approval-wait must keep this bound while paginating, so a
 # PR past it now fails the waiter and the late-findings guard closed and stays
 # that way. That cliff has to be measured, not just shown to exist: an
 # always-advancing stub driven by a call COUNTER (never $RANDOM, so the page

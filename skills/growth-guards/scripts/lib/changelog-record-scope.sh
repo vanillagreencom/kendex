@@ -46,8 +46,7 @@ gg_record_head_probe() { # fills RECORD_HEAD_ENTRY, _MODE and _SHA, or leaves th
 # shape. HEAD is history — the committer cannot change what it holds — so
 # each of these is a comparison skipped with its reason, never a refusal.
 #
-# One classifier over every dimension, so a dimension added later belongs in
-# here, in front of the comparison, rather than in a third pass beside it.
+# One classifier covers every dimension before the comparison.
 #
 # The staged side is stricter and stays so: a non-regular mode there is
 # refused outright, because that is what the commit is MAKING.
@@ -80,8 +79,8 @@ gg_record_head_comparable() { # 0 when HEAD's copy is one this scope can compare
 # release legitimately breaks — it exists to fold entries in — and everything
 # else this scope judges is as true during a release as outside one.
 #
-# Read at ONE call site, which is what makes a rule added later fall outside
-# the declaration without anyone choosing: to be inside it, a rule would have
+# Read at ONE call site. A rule outside
+# the declaration is outside the release exception: to be inside it, the rule must
 # to be written into the one branch whose whole body is a note saying nothing
 # was compared.
 gg_collation_declared() { # 0 when this run is the release commit's own write
@@ -97,7 +96,7 @@ gg_collation_declared() { # 0 when this run is the release commit's own write
 # only the thing the staged one is compared against, and HEAD is history —
 # the committer cannot change what it holds, so a HEAD this rejects is a
 # comparison skipped, never a refusal. Asking the same question both times is
-# what keeps a malformed state added later from needing a second exemption:
+# what keeps every malformed state from needing a second exemption:
 # whatever the staged copy would be refused for, HEAD is merely not compared
 # for.
 #
@@ -246,8 +245,7 @@ gg_changelog_record_scope() { # fills RECORD_NOTE; counts violations
       #
       # Every way HEAD can fail to be a record is one answer, given by
       # gg_record_head_comparable over mode, bytes and shape together. A
-      # dimension added there is covered here without anyone deciding it
-      # should be.
+      # dimension handled there is covered here too.
       head_ok=1
       head_why=""
       if ! gg_record_head_comparable; then
@@ -276,7 +274,7 @@ gg_changelog_record_scope() { # fills RECORD_NOTE; counts violations
       elif gg_collation_declared; then
         # THE one thing the declaration permits, at the one place it is read.
         # Everything above ran whether or not it is set, which is the property
-        # that keeps a rule added later out of here.
+        # that keeps undeclared rules out of here.
         RECORD_NOTE="; $(gg_shown "$RECORD") NOT compared — GROWTH_GUARDS_CHANGELOG_COLLATE=1 declares this write"
       else
         # No comm -u: a second copy of a line HEAD carries once is a line this

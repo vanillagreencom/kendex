@@ -163,8 +163,8 @@ export const useNavStore = create<NavState>((set) => ({
       history: pushHistory(state, "marketplaces"),
       future: [],
     })),
-  // Not `pushHistory`: the page being left no longer exists, so it must
-  // not become somewhere Back can return to. History and future are left
+  // Not `pushHistory`: the page being left is gone, so it must not become
+  // somewhere Back can return to. History and future are left
   // exactly as they are.
   leaveMarketplace: (tab) =>
     set((state) => ({

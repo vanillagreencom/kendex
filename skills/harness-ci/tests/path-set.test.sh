@@ -56,7 +56,7 @@ case_verdict ".claudefoo is not .claude/" false .claudefoo
 case_verdict "a bare .agents file is not the tree" false .agents
 
 # A deletion is a change like any other: removing a product file cannot read
-# as harness-only just because nothing was added outside the render.
+# as harness-only merely because the change touches nothing outside the render.
 git -C "$repo" checkout -q -B "case" "$base"
 git -C "$repo" rm -q README.md
 git -C "$repo" commit -q -m "delete the product file"

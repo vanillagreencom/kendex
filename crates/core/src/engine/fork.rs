@@ -38,7 +38,7 @@ use vacant::vacant_name;
 /// edit lives in exactly one rendering. Skills capture the canonical tree,
 /// the one place every tool's link resolves to.
 ///
-/// The plan: capture the edited bytes into the local source (an earlier
+/// The plan: capture the edited bytes into the local source (a previous
 /// local copy goes to the trash first, never overwritten), trash the edited
 /// artifact so the follow-up apply re-renders it from the fork, and write
 /// the manifest — source flipped to `local`, any hold cleared (a fork of a
@@ -258,14 +258,14 @@ fn local_item(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> PathBuf {
     crate::source::local_slot(&local_source_root(env, scope), kind, name)
 }
 
-/// The ops that move the edited bytes into the local source: an earlier
+/// The ops that move the edited bytes into the local source: a previous
 /// local copy goes to the trash (never overwritten in place), the bytes
 /// are captured under the same name, and the edited artifact itself goes
 /// to the trash — bound to the exact bytes just captured (invariant 7) —
 /// so the follow-up apply renders the fork in its place.
 ///
 /// The slot has to be one this scope's local source can read back, asked
-/// here rather than at each caller: a fork in place has no new name to ask
+/// here rather than at each caller: a fork in place has no other name to ask
 /// it of. `Pre::Absent` refuses a link wearing the item's own name, but a
 /// link one component above leaves the slot absent past it, and the
 /// capture lands at the far end, outside anything kendex manages.

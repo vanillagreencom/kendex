@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Regression tests for orch/scripts/queue-wait (kendex#819).
+# Tests for orch/scripts/queue-wait.
 #
 # queue-wait is the merge-queue membership waiter merge-pr § 3.2 routes on.
 # Its reason to exist is the CROSS-POLL memory a re-entering orchestrator
-# cannot keep: WAS_QUEUED — whether any earlier poll observed the PR queued
+# cannot keep: WAS_QUEUED — whether any prior poll observed the PR queued
 # or armed. Without it, "ejected from the queue" and "never entered it" look
 # identical, and a PR ejected by a failed merge-group run goes unnoticed.
 #
@@ -23,7 +23,7 @@
 #   13. human-readable (non --json) output names the verdict
 #   14. a transient GitHub error is absorbed inside the wait budget
 #   15-19. argument validation, --help, low-confidence one-poll flag, budget bound
-#   20. late-findings guard (kendex#1289): ANY unresolved thread while queued
+#   20. late-findings guard: ANY unresolved thread while queued
 #       disarms auto-merge first, then dequeues with the PR node id
 #   21. pre-existing unresolved threads trigger too (late by construction);
 #       a fully resolved thread set never triggers
@@ -36,7 +36,7 @@
 #   26. an errors[] body on HTTP success is a mutation failure (named half)
 #   27. the final guard probe fires before a still-queued timeout return
 #   28. the pagination walk is bounded — an overlong walk is a failed read
-#   29. progress signal on the budget-exhausted queued verdict (VST-249):
+#   29. progress signal on the budget-exhausted queued verdict:
 #       advancing check-run count, or a check-run still running on a flat
 #       count → progressing true / still_progressing; nothing moving (or a
 #       change older than the window) with nothing running → false / stalled;
@@ -262,7 +262,7 @@ q_in_queue='{"data":{"repository":{"pullRequest":{"id":"PR_node123","isInMergeQu
 q_out='{"data":{"repository":{"pullRequest":{"id":"PR_node123","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":null}}}}'
 q_armed_only='{"data":{"repository":{"pullRequest":{"id":"PR_node123","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":{"enabledAt":"2026-07-24T09:00:00Z"}}}}}'
 
-# Late-findings guard (kendex#1289) fixtures: unresolved review-thread sets,
+# Late-findings guard fixtures: unresolved review-thread sets,
 # anomalous read shapes (each planting an unresolved node so a fail-open read
 # would fire), and the mutation replies.
 t_none='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}'
@@ -288,7 +288,7 @@ dq_err='{"errors":[{"message":"Pull request is not in the merge queue"}]}'
 am_ok='{"data":{"disablePullRequestAutoMerge":{"clientMutationId":null}}}'
 am_errs_on_200='{"data":{"disablePullRequestAutoMerge":null},"errors":[{"message":"auto merge is not enabled"}]}'
 
-# Progress-signal (VST-249) fixtures: a queue entry that exposes its
+# Progress-signal fixtures: a queue entry that exposes its
 # merge-group head commit, and REST check-runs bodies for that commit.
 q_in_queue_head='{"data":{"repository":{"pullRequest":{"id":"PR_node123","isInMergeQueue":true,"mergeQueueEntry":{"state":"AWAITING_CHECKS","position":1,"headCommit":{"oid":"aaa111"}},"autoMergeRequest":{"enabledAt":"2026-07-24T09:00:00Z"}}}}}'
 # checkruns_body <completed> <in_progress>
@@ -534,7 +534,7 @@ assert_eq "$(jq -r .elapsed_seconds <<<"$out")" "4" "elapsed lands on max_wait e
 
 # --- 20. late-findings guard: unresolved thread while queued -----------------
 # ANY unresolved thread seen while queued triggers, with no baseline: an
-# unresolved thread in the queue is unsafe whenever it appeared (kendex#1289).
+# unresolved thread in the queue is unsafe whenever it appeared.
 # The queued PR is also armed, so the guard must disarm auto-merge FIRST (a
 # bare dequeue can be raced back into the queue by the arming) and then issue
 # dequeuePullRequest with the PR NODE id (not the queue-entry id).
@@ -739,7 +739,7 @@ out="$(run_queue_wait -- 1 1 1 --json --no-check-probe 2>"$err")" && rc=0 || rc=
 assert_eq "$(jq -r .verdict <<<"$out")" "queued" "overlong walk is a failed read, not a count" "$err"
 assert_eq "$([ -f "$SEQ_DIR/mutations.log" ] && echo present || echo absent)" "absent" "overlong walk never mutates" "$err"
 
-# --- 29. progress signal on the budget-exhausted queued verdict (VST-249) ----
+# --- 29. progress signal on the budget-exhausted queued verdict -----
 # A `queued` verdict at the deadline cannot by itself tell "the merge-group
 # suite is still running" from "nothing has moved". queue-wait tracks the
 # entry tuple (state, position, headCommit.oid) and, when the head commit is

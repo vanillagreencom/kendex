@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for GitHub SSH remote HTTPS fallback helper.
+# Tests for GitHub SSH remote HTTPS fallback helper.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

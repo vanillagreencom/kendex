@@ -4,8 +4,8 @@ import { settled } from "@/lib/settled";
 
 /** How a read of one address stands. `loading` is both the first read and
  *  every re-read after the address changes: what is on screen belonged to
- *  the address before it, and drawing it under the new one would name the
- *  wrong package. */
+ *  the address before it, and drawing it under the one now on screen would
+ *  name the wrong package. */
 type OrderedRead<T> =
   | { status: "loading" }
   | { status: "ok"; data: T }
@@ -22,8 +22,8 @@ type OrderedRead<T> =
  *  hand-roll its own.
  *
  *  `read` is called for its current value rather than watched: it closes
- *  over the address, so it is a new function every render and would restart
- *  the read forever. `address` alone says when to ask again. */
+ *  over the address, so it is a different function every render and would
+ *  restart the read forever. `address` alone says when to ask again. */
 export function useOrderedRead<T>(
   address: string | null,
   read: () => Promise<
@@ -46,9 +46,9 @@ export function useOrderedRead<T>(
     setAnswer({ status: "loading" });
     // `settled` so a transport rejection lands as the failure the page
     // already knows how to draw, under this ticket like any other answer.
-    // Left raw, the landing never ran at all: the ticket was spent, the
-    // page held its skeleton or drew a blank with no message and no retry,
-    // and the rejection went out unhandled.
+    // Left raw, the landing would never run: the ticket is spent, the page
+    // holds its skeleton or draws a blank with no message and no retry,
+    // and the rejection goes out unhandled.
     void settled(latest.current()).then((response) => {
       if (!order.current.lands(ticket)) return;
       setAnswer(

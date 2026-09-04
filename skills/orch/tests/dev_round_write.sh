@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Regression tests for dev-round-write: the orchestrator-side writer that
+# Tests for dev-round-write: the orchestrator-side writer that
 # persists a fix round's delegated item set to the round-scoped record
-# ([WORKTREE]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json) at delegation time
-# (kendex#1230). Without it the delegated set exists only in the orchestrator's
+# ([WORKTREE]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json) at delegation time.
+# Without it the delegated set exists only in the orchestrator's
 # context: a respawned dev agent cannot write a truthful completion artifact,
 # and dev-artifact-check --expect-items has no on-disk source of truth. The
-# record follows the dev-return round-token discipline (kendex#776): the round
+# record follows the dev-return round-token discipline: the round
 # token in the filename AND as internal "round_id".
 
 set -euo pipefail
@@ -159,7 +159,7 @@ assert_eq "$(jq -r '.items[1].text' "$out")" "$ITEM2" ".items[].text preserves t
 # An identical re-invocation is an idempotent retry → success, same path,
 # content untouched. A DIFFERENT set under the same round id would silently
 # rewrite the authoritative delegated set (e.g. a retry with a partial list) —
-# refused: a changed delegation needs a NEW round id.
+# refused: a changed delegation needs a round id of its own.
 out_rerun="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id "$RID" \
   --item 1 "$ITEM1" "$REACH1" --item 2 "$ITEM2" "$REACH2" \
   --adds "$ADDS")"
@@ -313,10 +313,10 @@ assert_exit2 "--items-file with whitespace-only text exits 2" \
   --worktree "$worktree" --issue i --round-id 5-5 --items-file "$items_file"
 
 # --- the reach bar: an item names the producer that reaches the finding ---
-# A merged-PR audit found fix rounds answering a review thread rather than a
-# producer (KEN-1046), so a shape a bot typed was patched as if a user had
-# reached it. The writer refuses an item with no reach and an item whose reach
-# is on the refusal list: that item is a `Declined:` reply.
+# A fix round that answers a review thread rather than a producer patches a
+# shape a bot typed as if a user had reached it. The writer refuses an item
+# with no reach and an item whose reach is on the refusal list: that item is a
+# `Declined:` reply.
 # Each case takes its own round id: sharing one would let the first accepted
 # write shadow every later refusal behind the immutability arm.
 assert_exit2 "--item with no reach exits 2 (the field is required)" \

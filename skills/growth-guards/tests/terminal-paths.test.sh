@@ -210,7 +210,7 @@ orphan="$(cat "$ROOT/orphan.pid" 2>/dev/null || true)"
 # A suite killed mid-run takes the poll loop above with it, and `script` has
 # already setsid'd the session out of every group that killer could name, so the
 # cap on this side stops existing. What is left is the deadline the session
-# holds over itself (KEN-1084). The body traps TERM away, so nothing short of
+# holds over itself. The body traps TERM away, so nothing short of
 # the SIGKILL that deadline sends can end it.
 cat >"$ROOT/abandon-runner.sh" <<'RUNNER'
 set -euo pipefail

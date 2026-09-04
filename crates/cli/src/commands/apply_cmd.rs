@@ -9,7 +9,6 @@ use crate::scope::ScopeFilter;
 use crate::ui;
 
 /// Make disk match declaration — orphan cleanup included, plan shown first.
-/// (Repurposed from v1's theme-pack apply; extras are gone in v2.)
 ///
 /// The two overrides say which bytes on disk a declaration outranks: ones
 /// the user edited, and ones kendex never wrote at all. Both are refusals

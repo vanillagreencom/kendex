@@ -34,7 +34,8 @@ pub(crate) fn local_slot(root: &Path, kind: ItemKind, name: &str) -> PathBuf {
     }
 }
 
-/// Whether nothing stands in `slot`, the path a new item would take. A dangling link is in it — it exists to
+/// Whether nothing stands in `slot`, the path an incoming item would take.
+/// A dangling link is in it — it exists to
 /// the OS and to nothing that follows it — and so is a folding neighbour,
 /// which a case- or composition-folding volume hands back as the same
 /// directory, where the planner would refuse both names and sweep the one

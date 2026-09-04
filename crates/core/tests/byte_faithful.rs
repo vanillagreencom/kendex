@@ -20,7 +20,7 @@ use serde_json::json;
 /// Applying the same structured edit twice must be byte-identical the
 /// second time, trailing newline included — that equality is the drift
 /// check for config-entry kinds, and a writer that drops the newline pins
-/// corruption forever (the v1 lesson).
+/// corruption forever.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn every_config_edit_is_byte_stable_on_reapply() {

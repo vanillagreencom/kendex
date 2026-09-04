@@ -49,7 +49,7 @@ fn a_hand_tightened_deny_refuses_the_fork_and_writes_nothing() {
     assert!(!manifest_text(&w).contains("[forks.agent.rev]"));
 }
 
-/// The same refusal from the other direction: an allowlist added by hand
+/// The same refusal from the other direction: a hand-written allowlist
 /// to a file that stated none. What the fork would give back is every
 /// tool outside it, so the refusal names the allowlist instead.
 #[test]
@@ -368,7 +368,7 @@ fn a_hand_written_hook_refuses_the_fork() {
 }
 
 /// A hook is its scope as well as its command. Tightening the scope by
-/// hand — the same command moved to an earlier event, or onto a broader
+/// hand: the same command moved to a different event, or onto a broader
 /// matcher — leaves the command alone, so a reading that compares commands
 /// sees no difference and lets the fork restore the looser gate.
 #[test]

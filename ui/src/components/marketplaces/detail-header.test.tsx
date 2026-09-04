@@ -97,9 +97,8 @@ describe("DetailHeader for a subscription a failed read left behind", () => {
   });
 });
 
-// The repository and the homepage used to be plain text in a mono line and
-// a link buried in the About tab. Both belong in the header, and both open
-// the person's own browser rather than a page inside the app.
+// The repository and the homepage belong in the header, and both open the
+// person's own browser rather than a page inside the app.
 describe("the header's links out", () => {
   it("makes the repository a link to its page", () => {
     const html = render();

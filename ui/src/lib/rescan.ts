@@ -2,17 +2,16 @@
 //
 // Three reads stand behind every page: the scan says what is on the machine,
 // the audit says what it scored, and the provenance join says where each
-// installation came from. A refresh of only the first left every score on
-// screen answering for content the same call had just re-read — so they go
-// together, and none waits on another.
+// installation came from. A refresh of only the first would leave every
+// score on screen answering for content the same call had just re-read — so
+// they go together, and none waits on another.
 //
-// The join was left out of this for a long time, and every reader of it grew
-// its own guess at when to re-read. Those guesses are proxies for "something
-// installed" and each one has been wrong about a route somebody later found:
-// an install redirected into another project writes its rows under the
-// destination's key, so a page watching its own rows sees nothing happen.
-// The join belongs here instead, where every write that already says "read
-// the machine again" refreshes it, including routes nobody has thought of.
+// The join is read here rather than on each reader's own guess at when to
+// re-read. Such guesses are proxies for "something installed", and every
+// one misses a route: an install redirected into another project writes its
+// rows under the destination's key, so a page watching its own rows sees
+// nothing happen. Here, every write that already says "read the machine
+// again" refreshes it, including routes nobody has thought of.
 //
 // The rule, for every write that reaches `repo_effects`: the machine is read
 // again once the write has been answered for, whatever it answered. No
@@ -124,8 +123,8 @@ const readBehindWrites = (): Promise<void> => {
  *  it. It is not awaited: the caller's promise settles on `body`'s value,
  *  because a caller renders from it — the unsubscribe dialog draws its
  *  refusal beside the button, and holding that back through a forced audit
- *  left a destructive button live with nothing under it. So no hold covers
- *  the read, and every busy window stays where its caller had it.
+ *  would leave a destructive button live with nothing under it. So no hold
+ *  covers the read, and every busy window stays where its caller had it.
  *  [`rescansSettled`] is how a test waits for what no caller waits for. */
 export async function writingRepo<R>(body: () => Promise<R>): Promise<R> {
   try {

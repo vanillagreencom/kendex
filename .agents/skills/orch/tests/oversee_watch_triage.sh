@@ -105,7 +105,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT triage KEN-1201" \
   "a later tracker item fires on the next run" "$err"
 assert_not_contains "$out" "EVENT triage KEN-1200" "the prior item stays deduplicated" "$err"
 
-# Control: no new item emits no triage event.
+# Control: no unseen item emits no triage event.
 new_case triage_empty
 printf '[]\n' > "$STUB_DIR/tracker.out"
 err="$TMP_ROOT/triage-d"
@@ -115,7 +115,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026
 assert_not_contains "$out" "EVENT triage" "no new item emits no triage event" "$err"
 
 # A missing CLI is a broken install: triage fails closed rather than dropping
-# every new team item on a stderr note.
+# every unseen team item on a stderr note.
 new_case triage_requires_tracker
 printf '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]\n' > "$STUB_DIR/tracker.out"
 err="$TMP_ROOT/triage-needs-tracker"
@@ -154,7 +154,7 @@ assert_contains "$(cat "$err")" "LINEAR_TEAM is unset or empty" \
   "the note names an empty team as well as an absent one" "$err"
 
 # The case above exits on the merged event before check_triage runs, so triage
-# being off is proved here instead: a live tracker stub with a new item, and
+# being off is proved here instead: a live tracker stub with an unseen item, and
 # nothing to wake the watch before the triage check.
 new_case triage_no_team_reaches_the_triage_check
 printf '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]\n' > "$STUB_DIR/tracker.out"
@@ -169,7 +169,7 @@ if [[ -e "$STUB_DIR/tracker.args" ]]; then tracker_called=yes; fi
 assert_eq "$tracker_called" "no" "a working tracker goes unread with no team" "$err"
 
 # The bare sentinel above drops the name entirely. An exported empty value is
-# the other spelling of no team, and the one this change moved: it used to die
+# the other spelling of no team, and the one this change moved: it would die
 # on the removed check. It takes the same skip path.
 new_case triage_skipped_by_an_empty_export
 printf '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]\n' > "$STUB_DIR/tracker.out"

@@ -79,7 +79,7 @@ describe("pi-background-tasks bounded snapshots", () => {
 	test("payloads over the byte cap downgrade to a bounded manifest", () => {
 		const appended: { customType: string; payload: any }[] = [];
 		const ctx = fakeCtx("session-bloated");
-		// 70 completed tasks each carrying a 10 KiB heredoc command (kendex#177).
+		// 70 completed tasks each carrying a 10 KiB heredoc command.
 		const heredoc = "x".repeat(10 * 1024);
 		const snapshots: BackgroundTaskSnapshot[] = Array.from({ length: 70 }, (_value, index) => fakeSnapshot({
 			id: `bg-${index}`,
@@ -144,11 +144,9 @@ describe("pi-background-tasks bounded snapshots", () => {
 	});
 
 	test("kendex#184: restore barrier - manifest entry re-applies sidecar state", () => {
-		// Repro shape: branch contains [older-full-snapshot, later bounded
-		// manifest]. Sidecar has the latest task set ("bg-new"). Pre-fix the
-		// older full snapshot replaced the sidecar state and the manifest
-		// was skipped, regressing canonical state to "bg-old". The barrier
-		// helper now restores the sidecar when it hits the manifest.
+		// The branch contains [older-full-snapshot, later bounded manifest]. The
+		// sidecar has the latest task set. The barrier must prevent the older full
+		// snapshot from replacing that canonical state.
 		const sidecarTasks: BackgroundTaskSnapshot[] = [fakeSnapshot({ id: "bg-new", status: "completed" })];
 		const olderTasks: BackgroundTaskSnapshot[] = [fakeSnapshot({ id: "bg-old", status: "completed" })];
 		let current: BackgroundTaskSnapshot[] = [];

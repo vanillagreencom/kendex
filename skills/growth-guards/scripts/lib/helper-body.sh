@@ -25,8 +25,7 @@ set -euo pipefail
 # refuse, written by the package itself.
 #
 # The escape is the POSIX one: close the quote, an escaped quote, reopen.
-# Every value goes through here — SCRIPT_DIR did it by hand and the two
-# added later did not, which is the whole of how this happened.
+# Every value goes through this quoting function.
 gg_shell_quote() { # VALUE -> the value, safe inside single quotes
   local sq="'"
   printf '%s' "${1//$sq/$sq\\$sq$sq}"
@@ -118,7 +117,7 @@ fail() {
 # `$(...)` strips trailing newlines, and a checkout directory may end in
 # one — so a naive capture names a directory that is not there and every
 # search below finds nothing. The sentinel gives the shell something to
-# strip that is not the path; then the one newline git added comes off.
+# strip that is not the path; then git's trailing newline comes off.
 # Written out rather than sourced: this file runs from .git/hooks, where
 # the package it would source may be gone.
 gg_nl='

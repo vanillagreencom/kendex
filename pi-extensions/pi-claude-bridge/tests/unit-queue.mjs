@@ -177,7 +177,7 @@ describe("abort", () => {
 		assert.equal(bridge.resultsQueued, 2);
 		bridge.drain({ content: [] });
 		assert.equal(bridge.resultsQueued, 0);
-		// New handler should block, not get stale data
+		// A following handler must block instead of receiving stale data.
 		const p = bridge.waitForResult("t2");
 		assert.equal(bridge.handlersWaiting, 1);
 		bridge.deliverResult({ toolCallId: "t2", content: [{ type: "text", text: "fresh" }] });
@@ -229,7 +229,7 @@ describe("fresh query after drain", () => {
 });
 
 // --- Scenario H: extractAllToolResults must stop at assistant messages ---
-// Regression: extractAllToolResults only stopped at "user", not "assistant".
+// extractAllToolResults must stop at an assistant boundary as well as a user boundary.
 // In a multi-turn agentic loop (user → assistant → toolResult × N → assistant → toolResult × M),
 // it collected ALL tool results from the entire conversation, not just the current turn.
 // This fed stale results into the queue, causing result/tool_use mismatches.
@@ -285,7 +285,7 @@ describe("extractAllToolResults boundaries", () => {
 // --- Scenario H2: interleaved messages in tool result sequences ---
 // Tests all permutations of non-toolResult messages appearing in contexts
 // where extractAllToolResults needs to find tool results.
-// Issue #3: pi can inject user messages (steer, followUp, orchestrator context)
+// pi can inject user messages (steer, followUp, orchestrator context)
 // between tool_use and toolResult, breaking the backward walk.
 
 describe("interleaved messages in tool result sequences", () => {

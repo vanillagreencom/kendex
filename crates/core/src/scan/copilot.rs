@@ -10,7 +10,7 @@ use crate::hook::command_stem;
 /// `{version, disableAllHooks, hooks: {<event>: [entry]}}` — a Copilot hook
 /// file, or the `hooks` key of one of its settings files
 /// ([hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference),
-/// accessed 2026-08-13). Each entry carries its own command and matcher
+/// Each entry carries its own command and matcher
 /// rather than nesting handlers under a matcher group, which is why the
 /// shape claude and gemini share cannot read it: every entry would come back
 /// with no command and no name (matrix §7).

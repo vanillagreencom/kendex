@@ -2,9 +2,8 @@
 //
 // All per-query and per-turn mutable state lives here. Reentrant queries
 // (subagents) push the parent context onto a stack and get a fresh instance.
-// Adding a new field = one property on the class.
 //
-// Extracted from index.ts so tests can import without activating the extension.
+// Separate from index.ts so tests can import it without activating the extension.
 
 import type { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 import type { AssistantMessage, AssistantMessageEventStream, Model } from "@earendil-works/pi-ai";
@@ -15,8 +14,7 @@ import { currentRequestLaneId } from "./request-lane.js";
 /** A mid-query user run captured for replay after the active query ends.
  *  `text` is the joined text form (previews, and the replay prompt when no
  *  image blocks were captured). `blocks` is present when the run carried
- *  images — the replay must send the blocks or the images are silently lost
- *  (kendex#993). */
+ *  images — the replay must send the blocks or the images are silently lost. */
 export interface DeferredUserMessage {
 	text: string;
 	blocks?: ContentBlockParam[];
@@ -25,7 +23,7 @@ export interface DeferredUserMessage {
 /** Diag payload for a deferred-message drop: counts, sites, and lengths only.
  *  The messages are user-authored prompt text and the diag log sits outside
  *  any host app's retention boundary, so no content — not even a preview —
- *  may appear in the entry (VST-15). */
+ *  may appear in the entry. */
 export function summarizeDroppedUserMessages(site: string, dropped: DeferredUserMessage[]): Record<string, unknown> {
 	return {
 		site,
@@ -40,7 +38,7 @@ export interface PendingToolCall {
 	/** The MCP invocation's schema-validated arguments. The SDK hands the handler
 	 *  the COMPLETE input, so this is the authoritative copy — the grace-timer
 	 *  finalize settles a still-partial streamed block from here instead of from
-	 *  its truncated partial JSON (kendex#1469: a `{}` settle made Pi execute
+	 *  its truncated partial JSON (a `{}` settle would make Pi execute
 	 *  empty-argument calls). */
 	args: Record<string, unknown>;
 	/** `QueryContext.callbackGeneration` at registration. A handler from an older
@@ -106,7 +104,7 @@ export function strandedToolCallResult(): McpResult {
  *  forwarded (Pi owes it a result — steer-split deliveries arrive turns later)
  *  or nothing is waiting. Marks the id dead so a lagging stream replay can
  *  never forward it AFTER the model was told it failed — that late forward
- *  would execute the call a second time behind the model's back (kendex#1469).
+ *  would execute the call a second time behind the model's back.
  *  Returns true when a handler was failed. */
 export function failStrandedToolCall(queryCtx: QueryContext, id: string): boolean {
 	if (queryCtx.forwardedToolCallIds.has(id)) return false;
@@ -166,7 +164,7 @@ export function takeQueuedOrParkedResult(queryCtx: QueryContext, id: string): Mc
 export interface ConnectorCallAuditState {
 	name: string;
 	/** The child session that issued it, captured when the call was seen — a
-	 *  continuation query gets a new one, and a call is audited against the session
+	 *  continuation query gets its own, and a call is audited against the session
 	 *  that actually made it. */
 	childSessionId?: string;
 	recorded: boolean;
@@ -253,19 +251,18 @@ export class QueryContext {
 	pendingToolCalls = new Map<string, PendingToolCall>();
 	pendingResults = new Map<string, McpResult>();
 	/** Results a message-boundary reap moved OUT of pendingResults so they stop
-	 *  poisoning mismatch reports, kept CONSUMABLE for a handler that fires later.
-	 *  The 2026-08-17 deadlock session showed the reap's "no consumer will ever
-	 *  come" assumption failing routinely: Pi delivers a turn's results in one
-	 *  callback while the SDK staggers handler invocations past the next message
-	 *  boundary. Query-scoped, bounded by the query's tool-call count. */
+	 *  poisoning mismatch reports, kept CONSUMABLE for a handler that fires later:
+	 *  Pi delivers a turn's results in one callback while the SDK staggers handler
+	 *  invocations past the next message boundary, so a boundary never proves that
+	 *  no consumer will come. Query-scoped, bounded by the query's tool-call count. */
 	reapedResults = new Map<string, McpResult>();
 	/** Every tool-call id this query has handed to Pi inside an ENDED turn — the
 	 *  set endToolUseTurn stamps from the turn's content. A forwarded id is one Pi
 	 *  will execute and answer; it must never be emitted again (a lagging stream
 	 *  replays the same tool_use into the NEXT turn, and per-message turnBlocks
-	 *  dedup cannot see across turns — kendex#1469's duplicate executions), and a
-	 *  handler waiting on it must be left waiting at the stranded-handler drains.
-	 *  Query-scoped, never reset per message. */
+	 *  dedup cannot see across turns), and a handler waiting on it must be left
+	 *  waiting at the stranded-handler drains. Query-scoped, never reset per
+	 *  message. */
 	forwardedToolCallIds = new Set<string>();
 	/** Ids whose waiting handler was resolved with strandedToolCallResult. The
 	 *  model has been told these calls failed; forwarding one later would execute
@@ -287,15 +284,15 @@ export class QueryContext {
 	 * resets at every message boundary, but `pendingResults` is query-scoped, so a
 	 * result stranded there outlives the message that named it. Without this map a
 	 * teardown report can only say "1 queued" with empty toolNames and 0/0
-	 * counters — which is exactly the unactionable record the 2026-07-28 diag log
-	 * showed. Bounded by the number of tool calls in one query.
+	 * counters — an unactionable record. Bounded by the number of tool calls in
+	 * one query.
 	 */
 	queryToolNames = new Map<string, string>();
 	/** id → last-known arguments, query-scoped like queryToolNames and for the
 	 *  same reason: a late handler firing after resetToolTracking wiped the
 	 *  per-message records must still be able to exact-match the parked/queued
 	 *  result of ITS OWN call — without stored args the only fallback is
-	 *  sole-same-name, which can hand it a LIVE sibling's id (kendex#1469). */
+	 *  sole-same-name, which can hand it a LIVE sibling's id. */
 	queryToolArgs = new Map<string, Record<string, unknown>>();
 	claimedToolCallIds = new Set<string>();
 	deliveredToolResultIds = new Set<string>();
@@ -310,8 +307,8 @@ export class QueryContext {
 	// resetTurnState must not clear it.
 	committedOutput = false;
 	/** True when this query holds NO claim on the module-level shared session
-	 *  record: a reentrant (subagent) query, or a foreign-conversation one-shot
-	 *  (kendex#1001). Every shared-record mutation reachable from this context —
+	 *  record: a reentrant (subagent) query, or a foreign-conversation one-shot.
+	 *  Every shared-record mutation reachable from this context —
 	 *  reportToolResultMismatch's needsRebuild/forceRotate mark, the cursor
 	 *  advances on the tool-result-delivery and orphaned-result paths — must
 	 *  no-op so the PARENT's record stays untouched. Assigned at fresh-query
@@ -349,18 +346,17 @@ export class QueryContext {
 	childSessionId: string | undefined;
 	/** Anthropic content-block indexes of the current assistant message that carry
 	 *  a child-executed tool_use. Scoped to one message: cleared at message_start,
-	 *  and an index is released as soon as a new block starts there. */
+	 *  and an index is released as soon as another block starts there. */
 	childExecutedStreamIndexes = new Set<number>();
 
 	// Usage accounting for a Pi turn that spans SEVERAL child assistant messages.
 	//
 	// Every child message is a separate billed API call, and each reports its own
 	// counters — `message_start`/`message_delta` REPLACE rather than accumulate. A
-	// Pi turn used to end at the first tool call, so one Pi message meant one child
-	// message and replacing was right. A turn containing a child-executed connector
-	// call now keeps running across the child's follow-up messages, so replacing
-	// would silently drop everything the earlier ones billed (measured: 55,685
-	// cache-write tokens lost on a single connector turn).
+	// Pi turn that ends at its first tool call spans one child message, where
+	// replacing is right. A turn containing a child-executed connector call keeps
+	// running across the child's follow-up messages, so replacing would silently
+	// drop everything the earlier ones billed.
 	//
 	// So: `turnUsageCarry` holds the totals of the child messages already COMPLETE
 	// in this Pi turn, `currentMessageUsage` holds the one in flight, and the Pi
@@ -420,8 +416,8 @@ export class QueryContext {
 		this.turnSawStreamEvent = false;
 		this.turnSawToolCall = false;
 		this.handledTerminalError = false;
-		// A new pi message means the previous turn's stream is done with; an armed
-		// end-timer for it must not fire into the new turn's state.
+		// A fresh pi message means the previous turn's stream is done with; an
+		// armed end-timer for it must not fire into this turn's state.
 		if (this.scheduledToolUseEnd) {
 			clearTimeout(this.scheduledToolUseEnd.timer);
 			this.scheduledToolUseEnd = null;
@@ -432,8 +428,8 @@ export class QueryContext {
 		this.currentMessageUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 		this.currentMessageId = undefined;
 		// Tool-call tracking is NOT reset here — it persists across the
-		// tool-result delivery callback for the same assistant message. New
-		// assistant messages call resetToolTracking() explicitly.
+		// tool-result delivery callback for the same assistant message. Each
+		// assistant message boundary calls resetToolTracking() explicitly.
 	}
 
 	resetToolTracking(): void {
@@ -517,7 +513,7 @@ export class QueryContext {
 		// Ids whose RESULT already sits queued or parked. A handler can fire after
 		// the message boundary wiped the per-message records — by then Pi has
 		// executed its call and only these query-scoped stores still know it
-		// (kendex#1469: the boundary reap used to make such a handler error out
+		// (dropping them at the boundary would make such a handler error out
 		// and the model re-run an already-executed side-effectful call). An
 		// exact-args match here outranks the live sole-same-name fallback below,
 		// so a late handler can never steal a live sibling's id while its own
@@ -556,10 +552,9 @@ export class QueryContext {
 			//   - the handler receives the MCP server's schema-VALIDATED copy of
 			//     the input (zod may strip unknown keys or apply defaults) while
 			//     the record holds the raw streamed input.
-			// Refusing here stranded the call outright: the handler errored into
-			// the child while pi's real result sat queued forever (diag log
-			// 2026-07-28, `edit` with argKeys [edits, path] on both sides). A
-			// same-type sole-candidate claim is strictly safer than that. With
+			// Refusing here strands the call outright: the handler errors into
+			// the child while pi's real result sits queued forever. A same-type
+			// sole-candidate claim is strictly safer than that. With
 			// SEVERAL same-name candidates and no exact match we still refuse —
 			// cross-pairing two live calls is the one outcome worse than failing.
 			chosen = byName[0];
@@ -585,9 +580,8 @@ export class QueryContext {
 	 * assistant fallback). Left in pendingResults, each entry poisons every later
 	 * mismatch report for the whole query (queued>0 with 0/0 counters and no tool
 	 * names) and forces a session rebuild per turn. But the boundary does NOT
-	 * prove the handler gave up — the SDK staggers handler invocations, and the
-	 * 2026-08-17 deadlock session (kendex#1469) had three of five parallel
-	 * handlers fire after this reap destroyed their results. So the reap parks
+	 * prove the handler gave up — the SDK staggers handler invocations, and
+	 * handlers in a parallel batch routinely fire after it. So the reap parks
 	 * instead of dropping: reports stay clean, and a late handler still gets its
 	 * real result through takeQueuedOrParkedResult.
 	 */
@@ -629,9 +623,9 @@ export class QueryContext {
 		const counts = new Map<string, number>();
 		if (affectedIds.size > 0) {
 			// Name the affected ids from the query-scoped map, not just this
-			// message's records: a queued straggler from an earlier child message is
+		// message's records: a queued straggler from a prior child message is
 			// exactly the case a mismatch report exists for, and this message's
-			// turnToolCalls no longer knows it.
+			// turnToolCalls does not know it.
 			for (const id of affectedIds) {
 				const name = this.queryToolNames.get(id)
 					?? this.turnToolCalls.find((call) => call.id === id)?.toolName

@@ -138,7 +138,7 @@ pub fn planned_declarations(
 /// entry for one however many the manifest declares.
 ///
 /// Exhaustive on purpose. `PLANNED_KINDS` is an array, so a match is the
-/// only thing that makes a kind added to the enum fail to compile until it
+/// only thing that makes a kind joining the enum fail to compile until it
 /// is classified, and a kind whose plan participation moves is one whose
 /// scope would otherwise lose its record.
 pub fn recorded_by_the_plan(kind: ItemKind) -> bool {

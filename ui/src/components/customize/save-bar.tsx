@@ -9,7 +9,8 @@ export function SaveBar({
 }: {
   saving: boolean;
   /** Another rewrite of the same manifest is in flight: a save landing
-   *  on top of it would carry a draft that no longer matches the file. */
+   *  on top of it would carry a draft written against the file as it
+   *  was. */
   busy?: boolean;
   onSave: () => void;
   onDiscard: () => void;

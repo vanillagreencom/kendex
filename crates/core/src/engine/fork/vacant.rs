@@ -16,7 +16,7 @@ use crate::error::{CoreError, Result};
 use crate::manifest::{ItemDecl, LOCAL_SOURCE_NAME, Manifest};
 use crate::model::{HarnessId, ItemKind, Scope};
 
-/// Whether `new` can be declared here as a local item, proven before any
+/// Whether `target` can be declared here as a local item, proven before any
 /// durable write: a legal name every target tool's loader will hold, no
 /// declaration or lock entry of this kind under it (a derived bundle
 /// member or dependency is installed without a declaration, and is no less
@@ -24,12 +24,12 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// included, which exists to the OS and to nothing that follows it —
 /// nothing that folds to it, nothing standing between the local source's
 /// root and that slot, and nothing already sitting where it would
-/// render. A declared `Docs` beside a new `docs`, or a `café` spelled two
+/// render. A declared `Docs` beside an incoming `docs`, or a `café` spelled two
 /// ways, renders to one path on a case- or composition-folding filesystem,
 /// where the planner would refuse both and sweep the one that was there;
 /// each tool's rendered name and a local-source sibling fold the same way.
 /// `from` is the name being left, whose configuration has to mean the same
-/// under `new` for the move to mean what it says.
+/// under `target` for the move to mean what it says.
 pub(super) fn vacant_name(
     env: &Env,
     scope: &Scope,
@@ -78,8 +78,8 @@ pub(super) fn vacant_name(
         return Err(collision("this scope's installed items"));
     }
     // An agent answers to its name in the manifest's own tables as well as
-    // in its declaration, and that configuration has to travel to the new
-    // name and mean the same thing there.
+    // in its declaration, and that configuration has to travel to the
+    // target name and mean the same thing there.
     if kind == ItemKind::Agent
         && let Some(problem) = crate::engine::agent_carry::cannot_carry(manifest, from, new)
     {

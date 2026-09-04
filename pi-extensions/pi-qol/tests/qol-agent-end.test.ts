@@ -1,7 +1,7 @@
 // End-to-end wiring test: loads the qol extension against a fake Pi
 // event bus, fires `agent_end` with over-budget usage, and asserts
 // ctx.compact is invoked with the budget-guard sentinel. Guards against a
-// regression where the budget guard call could be removed from the
+// guard against removing the budget check from the
 // agent_end handler without any unit test catching it.
 
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
@@ -230,7 +230,7 @@ test("Pi auto-compaction between agent_end and agent_settled resolves without di
 
 	expect(ctx.compact.mock.calls.length).toBe(0);
 	// Fake usage remains in the same trigger bucket. A later agent cycle stays
-	// suppressed until usage drops below threshold or advances to a new key.
+	// suppressed until usage drops below threshold or advances to another key.
 	agentEndHandler!({ messages: [], type: "agent_end" }, ctx);
 	await agentSettledHandler!({ type: "agent_settled" }, ctx);
 	expect(ctx.compact.mock.calls.length).toBe(0);

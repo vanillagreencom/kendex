@@ -101,7 +101,7 @@ impl Eval<'_> {
                 ),
                 Some("refresh sources to evaluate it".into()),
             )),
-            // The tip no longer carries the package: a fact with its own
+            // The tip does not carry the package: a fact with its own
             // remedy — and a mute on it still mutes, or the report would
             // nag about it every session with no way to silence it.
             CoreError::ItemNotInSource { .. } => {

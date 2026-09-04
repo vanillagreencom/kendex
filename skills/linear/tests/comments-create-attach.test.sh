@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# VST-126: `comments create <ID> --attach <PATH>`. Files upload through
+# `comments create <ID> --attach <PATH>`. Files upload through
 # Linear's fileUpload flow and are referenced from the comment body: images
 # embed as ![name](assetUrl), other files append a [name](assetUrl) markdown
 # link (comments have no attachmentCreate surface). --attach composes with

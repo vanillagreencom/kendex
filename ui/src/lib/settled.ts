@@ -14,10 +14,10 @@ const failure = (thrown: unknown): { status: "error"; error: string } => {
 };
 
 /** Await work so it always answers. A rejected call — transport failing,
- *  not the engine refusing — used to escape the stores entirely, leaving
- *  no error and no result: to the person that silence read as a read still
- *  on its way. Here it lands as the one failure shape, whatever the work
- *  answers with when it succeeds. */
+ *  not the engine refusing — would otherwise escape the stores entirely,
+ *  leaving no error and no result: to the person that silence reads as a
+ *  read still on its way. Here it lands as the one failure shape, whatever
+ *  the work answers with when it succeeds. */
 export async function caught<T>(work: Promise<T>): Promise<CommandResult<T>> {
   try {
     return { status: "ok", data: await work };

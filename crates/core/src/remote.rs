@@ -139,7 +139,7 @@ pub fn cached(env: &Env, repo: &str, rev: Option<&str>) -> Result<Option<Resolut
             return Ok(Some(Resolution::at(&commit, root)));
         }
         // The mirror holds the objects even when the checkout is missing or
-        // no longer matches what was published: rebuilding it is local.
+        // does not match what was published: rebuilding it is local.
         if store::has_commit(&mirror, &commit) {
             match store::lock_repo(env, &key) {
                 Ok(_guard) => {
@@ -179,7 +179,7 @@ pub(crate) fn stamp_fetch(env: &Env, key: &str, mirror: &std::path::Path, fetche
 /// Fetch every enabled remote source's mirror, pins included. `sync`
 /// deliberately skips the network for a cached pin — that is what makes a
 /// pinned install work offline — so update discovery needs its own fetch:
-/// a repository someone pinned still grows new versions worth knowing
+/// a repository someone pinned still grows versions worth knowing
 /// about. Failures degrade to warnings; discovery is never worth failing
 /// a scope over.
 pub fn fetch_all(env: &Env, manifest: &Manifest) -> Vec<String> {

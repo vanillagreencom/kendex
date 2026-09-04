@@ -237,8 +237,7 @@ fn render_or_refuse(
 // Everything a project contributes to how an agent renders, in one place.
 //
 // The rendering that folds it in and the preview that warns it was not
-// previewed both read this, so neither can miss an entry the other has —
-// two lists of one thing is how both ended up missing the same entries.
+// previewed both read this, so neither can miss an entry the other has.
 
 /// Everything this project contributes to one agent's rendering, gathered
 /// in one place.
@@ -246,14 +245,12 @@ fn render_or_refuse(
 /// The publisher's own rendering is this, defaulted — `Project::default()`
 /// — never the effective agent minus a list of fields. A list is a
 /// blocklist: whatever is not on it is trusted as the publisher's, so the
-/// next project-supplied input inherits the bug in silence. Here the
-/// failure runs the other way. An input added to this struct is cleared
-/// with the rest and cannot be forgotten; an input that is not in it is
-/// not the project's, and saying so is a deliberate act with a place to
-/// write it down.
+/// omitted project-supplied input would be trusted as the publisher's.
+/// Every field in this struct is cleared with the rest and cannot be
+/// forgotten; an input outside it is not the project's.
 ///
 /// `is_empty` destructures rather than testing fields by name, so a field
-/// added without an answer does not compile.
+/// without an answer does not compile.
 #[derive(Default)]
 struct Project<'a> {
     launch_instructions: Option<String>,

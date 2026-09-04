@@ -53,8 +53,8 @@ pub fn fail_refusal(headline: &str, error: &(dyn std::error::Error + 'static)) {
 ///
 /// One place, so the two doors cannot drift apart, and no call site is
 /// handed the choice: a `&str` door is one a future caller can reach for
-/// with a message it composed out of values nobody escaped, which is
-/// exactly how `verify` came to forge a line of its own verdict.
+/// with a message it composed out of values nobody escaped, and a value
+/// carrying a break would then forge a line of the verdict.
 fn lines(headline: &str, error: &(dyn std::error::Error + 'static)) -> Vec<String> {
     let text = error.to_string();
     let body: Vec<String> = match owns_its_breaks(error) {
@@ -79,8 +79,8 @@ fn lines(headline: &str, error: &(dyn std::error::Error + 'static)) -> Vec<Strin
 /// Both core errors escape the path they name where they compose it, and
 /// neither escapes the rest — a `Finding` escapes its own three parts, and
 /// a `toml::de::Error`'s text is the parser's, written by the one crate
-/// every constructor of that variant hands it. Escaping either whole is
-/// what took the caret out from under its line.
+/// every constructor of that variant hands it. Escaping either whole takes
+/// the caret out from under its line.
 fn owns_its_breaks(error: &(dyn std::error::Error + 'static)) -> bool {
     use kendex_core::error::CoreError;
     error.is::<Lines>()
@@ -91,8 +91,8 @@ fn owns_its_breaks(error: &(dyn std::error::Error + 'static)) -> bool {
 }
 
 /// The last line of a run that failed, said as one line whatever a value
-/// inside it holds. Plain mode prints what it always printed; a frame
-/// closes on it in the failure style.
+/// inside it holds. Plain mode prints it as a line; a frame closes on it
+/// in the failure style.
 pub fn outro_fail(text: &str) {
     closed(&escaped(text));
 }

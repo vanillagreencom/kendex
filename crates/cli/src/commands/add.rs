@@ -195,7 +195,7 @@ fn write_and_close(
             // "done" answered whether the process ended, never what it
             // did. The verb is the one that was typed, because the count
             // is of changes and not of packages: a run whose only change
-            // is the declaration added something, and installed nothing.
+            // is its declaration writes something, and installs nothing.
             let count = (!report.plan.is_empty()).then_some(applied);
             say_ledger(
                 scope,

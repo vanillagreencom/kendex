@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# Regression tests for the codex kickoff prompt emitted by open-terminal.
+# Tests for the codex kickoff prompt emitted by open-terminal.
 #
-# Bug (kendex#976): the codex arms emitted `codex '\$orch start <item>'`. The
-# composed line crosses another quoting layer (e.g. an agent-confine wrapper)
-# before the spawned window's shell runs it; once the single quotes were
-# consumed, fish expanded the bare `$orch` to empty and errored, so codex
-# launched with NO prompt argv and every fleet worker sat at an empty composer.
+# The composed line crosses another quoting layer (e.g. an agent-confine
+# wrapper) before the spawned window's shell runs it; once the single quotes
+# are consumed, fish expands a bare `$orch` to empty and errors, so codex
+# launches with NO prompt argv and the fleet worker sits at an empty composer.
 # Codex also has no /orch slash command, so the arms must deliver a plain-prose
 # kickoff naming .agents/skills/orch/SKILL.md, built only from shell-inert
 # characters — no `$`, backtick, or anything else a downstream shell layer

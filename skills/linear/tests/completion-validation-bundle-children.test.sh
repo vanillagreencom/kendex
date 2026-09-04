@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Regression test for kendex #634.
+# Tests for completion validation of bundle children.
 #
-# validate_completion() used to expand --include-children-of with the filter
+# validate_completion() must expand --include-children-of with the filter
 #   select(.state_type | IN("completed", "canceled") | not)
 # which DROPPED completed (and canceled) children and kept only pending ones.
 # Because bundle children are validated with the "bundle-child" role — which
@@ -19,7 +19,7 @@
 #   B. One child still pending -> child present + failing, all_ok false.
 #   C. A canceled child        -> excluded from the expansion entirely.
 #
-# Pre-fix, scenario A fails (children CC-901/CC-902 omitted), scenario B fails
+# unguarded, scenario A fails (children CC-901/CC-902 omitted), scenario B fails
 # (CC-912 omitted rather than reported failing), and scenario C's canceled child
 # was already excluded (unchanged).
 
@@ -139,7 +139,7 @@ check() {
   assert_jq "$1" "$2" "$3"
 }
 
-# --- Scenario A: all children completed (the #634 regression) --------------
+# --- Scenario A: all children completed ------------------------------
 outA="$(run_validate CC-900 --include-children-of CC-900 2>/dev/null)"
 check "A: three results (root + 2 completed children)" "$outA" \
   '(.results | length) == 3'
@@ -211,5 +211,3 @@ assert_ne "F: --container with mismatched --include-children-of exits nonzero" "
 outS="$(run_validate CC-901 2>/dev/null)"
 check "S: single-issue validate has exactly one result" "$outS" \
   '(.results | length) == 1 and .results[0].id == "CC-901"'
-
-

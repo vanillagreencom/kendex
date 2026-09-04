@@ -1,5 +1,5 @@
 /**
- * Completion-path tests for the foreign-conversation guard (kendex#1001).
+ * Completion-path tests for the foreign-conversation guard.
  *
  * The sync-level tests pin that a fingerprint mismatch never REUSEs or
  * REBUILDs. These drive streamClaudeAgentSdk end to end with a fake SDK
@@ -156,8 +156,8 @@ describe("foreign-conversation completion (#1001)", () => {
 			{ type: "stream_event", event: { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 5 } } },
 			{ type: "stream_event", event: { type: "message_stop" } },
 			// Iterator ends here: the recorded pi-owed call never gets a result,
-			// so teardown reports a tool-result mismatch — the path that used to
-			// mark the PARENT's record needsRebuild/forceRotate from a foreign
+			// so teardown reports a tool-result mismatch. This path must not mark
+			// the PARENT's record needsRebuild/forceRotate from a foreign
 			// query's abort/teardown.
 		]));
 

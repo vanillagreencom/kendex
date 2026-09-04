@@ -112,7 +112,7 @@ check_pr_watch() {
     [[ -z "$out" ]] || out_all+="$(pw_prefix "$repo" "$out")"$'\n'
     [[ -z "$err" ]] || err_all+="$(pw_prefix "$repo" "$err")"$'\n'
     # Rows this pass does not own. Stated as what it DOES own — its own
-    # attention keys, `<pr number>\t<kind>` — so a row kind added later
+    # attention keys, `<pr number>\t<kind>` — so a row kind included later
     # survives by default instead of vanishing on the pass after it is written,
     # with a feature quietly ceasing to work as the only symptom. Triage keys
     # are `triage\t<id>`, the same width, and are told apart by the numeric
@@ -128,7 +128,7 @@ check_pr_watch() {
     # not attention on the PR it is attributed to. Keyed like the rest it would
     # wake the overseer for a line whose handler is "nothing to do", and its
     # attribution moves to whichever gate-stale PR comes first, so one dispatch
-    # mints a new key every time the leading PR converges. It stays in $out,
+    # mints a distinct key every time the leading PR converges. It stays in $out,
     # where every event carries it as context.
     keys="$(awk -F'\t' 'NF >= 3 && $3 != "heal-dispatched" { print $1 "\t" $3 }' <<<"$out")"
     new_keys=""

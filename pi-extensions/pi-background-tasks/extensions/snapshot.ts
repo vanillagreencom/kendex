@@ -96,7 +96,7 @@ export function defaultProcessAlive(pid: number): boolean {
 // field 22 (starttime in jiffies since boot) + /proc/<pid>/comm. Other
 // platforms: `ps -o lstart=,comm= -p <pid>` returns an absolute start
 // time string + comm. Returns null when the pid is gone or the probe
-// failed. Used to detect PID reuse: the kernel may recycle a PID for
+// failed. This detects PID reuse: the kernel may recycle a PID for
 // an unrelated process, but the start token cannot collide for the
 // same recycled pid within the same boot.
 export function defaultReadProcessIdentity(pid: number): ProcessIdentity | null {
@@ -137,7 +137,7 @@ export function defaultReadProcessIdentity(pid: number): ProcessIdentity | null 
 // the common `bash -lc "sleep 5"` pattern rotates /proc/<pid>/comm
 // from "bash" to "sleep" via exec(2) without changing pid or
 // starttime. Gating identity on comm would false-finalize a still-live
-// task (reviewer-error BLOCK, kendex#15 round 5).
+// task.
 //
 // A snapshot with no identity (the spawn-time probe failed) is treated
 // as a match because there is no pre-recorded token to compare against;
@@ -164,7 +164,7 @@ export interface RestoreOptions {
 	// Current Pi session id. Snapshots whose sessionId disagrees with this
 	// value are still rehydrated (so the dashboard can show their final
 	// state) but are not eligible for missed-exit replay; replay is scoped
-	// to the session that originally spawned the task.
+	// to the session that spawned the task.
 	sessionId?: string;
 	// Optional systemd unit liveness probe for resource-controlled tasks.
 	// Returns true while the persisted transient unit is active, false
@@ -176,10 +176,10 @@ export interface RestoreOptions {
 // process is gone in the vast majority of cases, so closed=true and timers
 // are zeroed. Two cases get special treatment:
 //
-// 1. snapshot.status === 'running' AND the recorded PID is no longer
+// 1. snapshot.status === 'running' AND the recorded PID is not
 //    alive -> coerce to 'stopped', stopReason=shutdown, exitNotified=false
 //    so selectMissedExits / replayMissedExits can deliver the deferred
-//    'exit' wake. This is the primary defense from kendex#15.
+//    'exit' wake. This is the primary defense against a missed exit.
 //
 // 2. snapshot.status === 'running' AND the recorded PID is still alive
 //    (Pi restarted but the detached child group is still chugging) ->
@@ -229,7 +229,7 @@ export function restoredTaskFromSnapshot(snapshot: BackgroundTaskSnapshot, optio
 		exitNotified = snapshot.exitNotified === true;
 	}
 
-	// kendex#97: annotate the running -> stopped coercion so callers can
+	// annotate the running -> stopped coercion so callers can
 	// distinguish a Pi-restart reconcile from a clean self-exit or an
 	// explicit extension stop. Pre-existing termination reasons (e.g. a
 	// snapshot persisted at extension-stop time) are preserved.

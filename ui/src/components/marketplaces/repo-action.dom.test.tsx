@@ -84,10 +84,10 @@ describe("a repository page with nothing to match against", () => {
     expect(buttons(host)).not.toContain(TRY_AGAIN_LABEL);
   });
 
-  // The failure this whole arm was added for. Nothing else on the page
-  // mentions the subscription list — the page's own banner belongs to the
-  // summary read — so without this there is no reason on screen and no way
-  // back short of leaving and returning.
+  // Nothing else on the page mentions the subscription list — the page's
+  // own banner belongs to the summary read — so without the retry here
+  // there is no reason on screen and no way back short of leaving and
+  // returning.
   it("offers the retry, not a dead check, once the read has failed", async () => {
     // The key is known — from the directory row — so the overview read is
     // the only thing left holding this neutral.

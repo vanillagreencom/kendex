@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for the create-time reach guard. Filing is the cheap
+# Tests for the create-time reach guard. Filing is the cheap
 # disposition — `Declined:` needs a disproof a gate checks, `Tracked: <ID>` needs
 # only an issue to exist — so creation is the one chokepoint that can hold the
 # filing bar. With LINEAR_REQUIRE_REACH set in kendex.settings.toml [env],

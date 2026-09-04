@@ -21,10 +21,10 @@ use kendex_core::env::Env;
 /// one that never armed any.
 ///
 /// The verdict is the package's own `install-git-hooks --check`, and its
-/// summary line is folded whole. kendex used to read the hook files itself
-/// here, with a second grammar for what "armed" means; the two never agreed
-/// for long, and the disagreement showed up as a session-start report
-/// contradicting the gate that actually runs.
+/// summary line is folded whole. Nothing here reads the hook files: a
+/// second grammar for what "armed" means diverges from the package's, and
+/// the disagreement shows up as a session-start report contradicting the
+/// gate that actually runs.
 ///
 /// This runs a script out of a checkout, unattended, at every session start
 /// — so what may run it is the question the rest of this is about.
@@ -36,7 +36,7 @@ use kendex_core::env::Env;
 /// after its status therefore executes none of its code, whatever the
 /// repository ships.
 ///
-/// The install record is NOT that license and never was: `.kendex-lock.json`
+/// The install record is NOT that license: `.kendex-lock.json`
 /// sits under the work tree and arrives with the fetch, so a checkout can
 /// write one declaring anything. It answers a different question — whether
 /// this project asked for a commit gate — and so decides only whether an
@@ -65,11 +65,11 @@ pub(super) fn fold_commit_hooks(
             continue;
         }
         // No repository here is no verdict: there is nothing to arm and no
-        // drift to report. Folding it into "not armed" told a scope with no
-        // work tree to run `kendex guard install`, which exits 2 there —
-        // advice that cannot be taken, every session. The installer's own
-        // refusal is exit 2, so asking it would report could-not-check
-        // there for ever instead.
+        // drift to report. Folding it into "not armed" would tell a scope
+        // with no work tree to run `kendex guard install`, which exits 2
+        // there — advice that cannot be taken, every session. The
+        // installer's own refusal is exit 2, so asking it would report
+        // could-not-check there for ever instead.
         let repo = match kendex_core::guard::Repo::probe(&root) {
             Ok(Some(repo)) => repo,
             Ok(None) => continue,
@@ -120,7 +120,7 @@ pub(super) fn fold_commit_hooks(
                 // through while this line says they cannot. What git does
                 // next is the package's to report, and reading the lane
                 // files to find out is the second grammar this module
-                // exists to be rid of.
+                // keeps out.
                 Err(error) => match kendex_core::guard::installer_present(&repo) {
                     Ok(false) => (
                         Class::Drift,
@@ -229,8 +229,8 @@ fn verdict_of(
         // there: under a configured `core.hooksPath` the summary line says
         // git's report of where the setting comes from is on stderr, and
         // `hooks_path_origins` puts the origins and the one remedy there.
-        // Relaying the pointer without what it points at gave the reader a
-        // verdict naming a report they were never shown.
+        // Relaying the pointer without what it points at would give the
+        // reader a verdict naming a report they were never shown.
         //
         // Still one line, and still the bounded one: the composition
         // happens here, so `Text::Relayed` measures the whole of it against

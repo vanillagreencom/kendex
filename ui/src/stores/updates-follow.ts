@@ -1,7 +1,7 @@
 // The Follow source switch: one row's state change, then a write that
 // settles behind it. The chain a flip starts — move the hold, apply the
 // scope, then read every scope's standing again — takes seconds of git and
-// planning, and awaiting it before the switch moved left the switch itself
+// planning, and awaiting it before the switch moves would leave the switch
 // dead under the hand that clicked it. The flip is recorded here as
 // pending, worn by the rows on screen until the read that follows the
 // write lands.
@@ -88,7 +88,7 @@ interface FollowStore {
 
 /** The store's `setAutoUpdate`: record the flip, then let the write and the
  *  read that reconciles it settle. Nothing on the click path awaits them —
- *  the rows carry the new position before the first command is sent. */
+ *  the rows carry the flipped position before the first command is sent. */
 export function followSwitch({
   set,
   get,

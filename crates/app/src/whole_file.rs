@@ -2,7 +2,7 @@
 //!
 //! Two whole-file surfaces exist — the Customize tab's manifest and the
 //! Settings page's app-settings file — and both refuse a copy of a
-//! file that is no longer there. The refusal is one type so the pages
+//! file that is gone. The refusal is one type so the pages
 //! render one choice for it, and so the next whole-file surface returns
 //! it too instead of inventing a message the UI would have to recognise
 //! by its words.
@@ -19,7 +19,7 @@ use specta::Type;
 #[derive(Debug, Serialize, Type)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum WriteRefused {
-    /// The file is no longer the one this copy was read from, and the
+    /// The file has changed since this copy was read from it, and the
     /// refusal carries no account with it. Something else wrote the file
     /// — a fork, a hold, an install, another window — and writing this
     /// copy would put that back, so reading the file again is the whole

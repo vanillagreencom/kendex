@@ -155,7 +155,7 @@ function canonicalize(p: string | undefined): string | undefined {
 // Decides whether a persisted bridge-session marker is safe to restore.
 //
 // The fork case is the load-bearing one: pi/core's createBranchedSession copies
-// every non-label entry from root→leaf into the new session file. That includes
+// every non-label entry from root→leaf into the fork session file. That includes
 // our claude-bridge-session markers from the parent. Restoring from them would
 // --resume parent's Claude jsonl on the fork's first turn, leaking conversation
 // past the fork point.
@@ -287,7 +287,7 @@ export function schedulePersistSharedSession(ctxLike?: { sessionManager?: unknow
 			// A failed persist means the next startup restores a stale (or no)
 			// bridge marker and silently rebuilds — worth a diagnostic entry.
 			// Like all diagDump output this lands only under CLAUDE_BRIDGE_DEBUG=1
-			// (VST-15); the failure itself stays non-fatal either way.
+			// and the failure itself stays non-fatal either way.
 			diagDump("persist_shared_session_failed", {
 				sessionId: snapshot.sessionId.slice(0, 8),
 				cursor: snapshot.cursor,
@@ -391,7 +391,7 @@ export function planIncrementalPromptBatch(
 
 	// A cursor past the end is PROOF this messages array is not the conversation
 	// the cursor describes (e.g. a reentrant subagent's short context arriving
-	// while the parent's cursor is large). Clamping it used to fabricate a REUSE
+	// while the parent's cursor is large). Clamping it would fabricate a REUSE
 	// plan against foreign history — reject so the caller takes the rebuild path.
 	if (cursor > lastIndex) {
 		debug(`planIncrementalPromptBatch: rejected — cursor=${cursor} beyond last index ${lastIndex}; messages are not the conversation this cursor describes`);
@@ -479,7 +479,7 @@ function debugSessionPaths(label: string, cwd: string, jsonlPath: string, claude
 //     promptStart can never land on a user message Claude already persisted:
 //     Claude owns [0, cursor), promptStart starts at the cursor and only ever
 //     advances (past the one optional assistant), so everything from
-//     promptStart on is new input. Returns the existing sessionId. Keeps CC's
+//     promptStart on is uncaptured input. Returns the existing sessionId. Keeps CC's
 //     prompt cache warm.
 //   REBUILD — no session yet, or pi's history has diverged (non-trailing
 //     missed messages, e.g. another provider took a turn). Wipes the existing
@@ -509,12 +509,12 @@ export function syncSharedSession(
 	account?: AccountSessionScope,
 ): SyncResult {
 	const sharedSession = getSharedSession();
-	const priorMessages = messages.slice(0, -1); // everything before the new user prompt
+	const priorMessages = messages.slice(0, -1); // everything before the current user prompt
 	const accountProfileId = account?.accountProfileId;
 	const scopeConfigDir = account?.claudeConfigDir; // resolved dir for managed, undefined for legacy
 	// What cc-session-io reads/writes. Managed requests always carry a resolved
 	// dir (accountSessionScope) so this never falls back to the process env the
-	// child no longer sees; legacy keeps the env rule unchanged.
+	// child does not see; legacy keeps the env rule unchanged.
 	const claudeDir = scopeConfigDir ?? process.env.CLAUDE_CONFIG_DIR;
 	const sameAccount = Boolean(
 		sharedSession &&
@@ -523,7 +523,7 @@ export function syncSharedSession(
 	);
 	const incomingFingerprint = conversationFingerprint(messages);
 
-	// FOREIGN-CONVERSATION guard (Case 6, kendex#1001). A subagent-shaped query
+	// FOREIGN-CONVERSATION guard. A subagent-shaped query
 	// arriving while the parent is IDLE is not reentrant, so it lands here as an
 	// outermost query. Without an identity check its short foreign context takes
 	// the REBUILD path — rewriting the PARENT's session file from foreign
@@ -568,7 +568,7 @@ export function syncSharedSession(
 			// Read the pre-update cursor first: setSharedSession reassigns the live
 			// binding, so comparing against sharedSession.cursor afterwards would
 			// always be equal and the "advanced past trailing assistant" debug
-			// branch could never print (kendex#993).
+			// branch could never print.
 			const cursorBeforeUpdate = sharedSession.cursor;
 			// A REUSE match proves identity, so the anchor may only strengthen here:
 			// a pre-3.1.1 record adopts it outright, and a turn-1 user-only anchor

@@ -13,12 +13,12 @@ import { useNavStore } from "@/stores/nav";
 /** One place the Packages tab could not fully answer for, and why.
  *
  * Keyed by place, not by marketplace alias: one alias subscribed in three
- * projects printed three identical lines naming nothing a reader could act
- * on. `sources` is a marketplace here that refused to load, so its packages
- * are missing from the table; `records` is this place's lock, which the
- * overview read reports for the place as a whole and the Problems page
- * explains. A place with both is named once, under `sources` — the missing
- * rows are the larger fact. */
+ * projects would print three identical lines naming nothing a reader can
+ * act on. `sources` is a marketplace here that refused to load, so its
+ * packages are missing from the table; `records` is this place's lock,
+ * which the overview read reports for the place as a whole and the
+ * Problems page explains. A place with both is named once, under `sources`
+ * — the missing rows are the larger fact. */
 export interface TroubledScope {
   key: string;
   scope: Scope;

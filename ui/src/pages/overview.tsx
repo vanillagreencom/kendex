@@ -140,7 +140,7 @@ export function OverviewPage() {
         <div className={cn("flex flex-col gap-10", CONTENT_WIDTH)}>
           {/* The store keeps the last good result so the page does not
               blank, but a re-scan that failed means everything below
-              answers for an earlier moment — said here once, over all of
+              answers for the scan before it — said here once, over all of
               it, rather than presented as current. */}
           {result && error !== null ? (
             <StatusNote

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for pr-merge on a PR that has already left OPEN.
+# Tests for pr-merge on a PR that has already left OPEN.
 #
 # `mergeable` is permanently UNKNOWN after a merge, so running the readiness
 # checks against a merged PR invented blockers — `unknown:`, `ci_pending:` from

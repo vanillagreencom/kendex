@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Regression test for #557: the Linear CLI has an explicit Bash 4+ contract.
-# Under Bash 3 this delegates to the full hierarchy regression, which proves
+# the Linear CLI has an explicit Bash 4+ contract.
+# Under Bash 3 this delegates to the full hierarchy failure, which proves
 # the clear preflight diagnostic and that no API request is attempted.
 #
 # This is the opposite of what `tools/bash32-lint` asserts everywhere else, so

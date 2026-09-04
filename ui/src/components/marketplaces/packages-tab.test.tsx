@@ -106,8 +106,8 @@ describe("ordering the packages list", () => {
   });
 
   // The column shows a hook's trailing name, so the order has to be
-  // decided on that. Sorting the raw identifier put "PreToolUse:*:alpha"
-  // among the Ps while the reader saw "alpha" at the top.
+  // decided on that. Sorting the raw identifier would put
+  // "PreToolUse:*:alpha" among the Ps while the reader sees "alpha".
   it("orders a hook by the name the column shows, not its identifier", async () => {
     useMarketplacesStore.setState({
       packages: {
@@ -216,7 +216,7 @@ describe("naming what could not be read", () => {
 
   // A project registered after the app's startup update read: that read has
   // not run again, so a `records` joined from its list of places would find
-  // nothing and leave the new project's unknown rows under no line at all.
+  // nothing and leave that project's unknown rows under no line at all.
   // The overview read that produced the rows carries the answer with them.
   it("names a place the update read has never heard of", () => {
     const row = {

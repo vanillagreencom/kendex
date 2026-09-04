@@ -117,9 +117,8 @@ describe("getPiInvocation entry resolution (kendex#192)", () => {
 	});
 
 	test("an unreadable nearest manifest fails closed even under a pi ancestor (PR #1178 r3)", () => {
-		// EACCES (or any non-ENOENT read failure) must reject immediately — the
-		// old behavior treated it like a missing manifest and let the pi-named
-		// ancestor accept. Root ignores file modes, so skip there: the EACCES
+		// EACCES or any non-ENOENT read failure must reject immediately instead of
+		// falling through to a pi-named ancestor. Root ignores file modes, so the EACCES
 		// path cannot be exercised.
 		if (typeof process.getuid === "function" && process.getuid() === 0) return;
 		const outer = join(tempDir(), "pkg");
@@ -130,7 +129,7 @@ describe("getPiInvocation entry resolution (kendex#192)", () => {
 		writeFileSync(innerManifest, JSON.stringify({ name: PI_PACKAGE_NAME }));
 		chmodSync(innerManifest, 0o000);
 		try {
-			// PR #1178 r4: probe that mode bits actually deny reads here — some
+			// Probe that mode bits actually deny reads here. Some
 			// CI filesystems ignore them — so the assertion only runs where the
 			// EACCES path is genuinely exercisable.
 			try {
@@ -164,7 +163,7 @@ describe("getPiInvocation entry resolution (kendex#192)", () => {
 		expect(invocation.command).toBe("/usr/bin/bun");
 		expect(invocation.args[0]).toBe(override);
 		expect(isAbsolute(invocation.args[0])).toBe(true);
-		// PR #1178 round 3: children must inherit the RESOLVED form, not the
+		// Children must inherit the RESOLVED form, not the
 		// relative one, or a delegating child re-resolves from ITS cwd.
 		expect(invocation.childEntryOverride).toBe(override);
 	});
@@ -212,7 +211,7 @@ describe("getPiInvocation entry resolution (kendex#192)", () => {
 		// needs a shebang, so skip on Windows.
 		if (process.platform === "win32") return;
 		const fixtureRoot = tempDir("pi-agents-real-spawn-");
-		// PR #1178 r7: probe that this environment can exec shebang scripts from
+		// Probe that this environment can exec shebang scripts from
 		// the temp dir at all — noexec temp mounts or bashless CI would
 		// false-fail the assertions below. Same pattern as the chmod probe.
 		const probe = join(fixtureRoot, "probe.sh");
@@ -248,7 +247,7 @@ describe("getPiInvocation entry resolution (kendex#192)", () => {
 		// executed with cwd = the delegated dir, which resolves the command from
 		// that cwd. Bun's own spawnSync resolves relative commands against the
 		// parent cwd, so only this form can distinguish a resolved absolute
-		// entry from the pre-fix relative one.
+		// absolute entry from a relative one.
 		const writeTestLauncher = (name: string, command: string, args: string[]): string => {
 			const launcherPath = join(fixtureRoot, name);
 			writeFileSync(launcherPath, `#!/usr/bin/env bash\nset -euo pipefail\nexec ${[command, ...args].map(shellQuote).join(" ")}\n`);
@@ -260,7 +259,7 @@ describe("getPiInvocation entry resolution (kendex#192)", () => {
 		expect(viaLauncher.status).toBe(0);
 		expect(readFileSync(marker, "utf-8")).toBe("ran");
 
-		// Negative control: a launcher embedding the pre-fix RELATIVE form fails
+		// Negative control: a launcher embedding the RELATIVE form fails
 		// command lookup from the delegated cwd (exit 127).
 		const broken = spawnSync(writeTestLauncher("launcher-broken.sh", relativeExecutable, []), [], { cwd: delegatedCwd });
 		expect(broken.status).toBe(127);
@@ -394,7 +393,7 @@ describe("bg one-shot runner depth guard wiring (kendex#192)", () => {
 			).rejects.toThrow(new RegExp(`${PI_SUBAGENT_DEPTH_ENV} recursion guard`));
 			expect(envs).toHaveLength(0);
 			expect(promptTempDirs()).toEqual(before);
-			// PR #1178 round 4: the refusal must not announce the task. A
+			// A refusal must not announce the task. A
 			// subagents:started with no terminal event would persist the task as
 			// permanently "running" in the dashboard/registry.
 			expect(emitted.filter((name) => name.startsWith("subagents:"))).toEqual([]);

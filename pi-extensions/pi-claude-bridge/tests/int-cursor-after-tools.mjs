@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Regression test: cursor after a tool-using first turn.
+// Cursor state after a tool-using first turn.
 //
 // When the first provider turn triggers tool calls (Case 1 clean start),
 // sharedSession is null throughout, so tool-result cursor tracking never

@@ -10,10 +10,8 @@ const listed: SubmissionRow = {
   indexed_at: null,
 };
 
-// This ruling used to live in core, where it had unit tests of its own.
-// Moving it into the app moved the cases with it: what a marketplace's
-// submission reads as turns on how the last read went, and the three
-// outcomes have to stay apart.
+// What a marketplace's submission reads as turns on how the last read
+// went, and the three outcomes have to stay apart.
 describe("submissionFor", () => {
   // A submission is keyed by the GitHub repository, so a marketplace with
   // no remote has nothing the server could have listed. No read makes that
@@ -67,8 +65,8 @@ describe("submissionFor", () => {
 
 // A read that never landed is not a server that answered with nothing.
 // Both surfaces the row draws have to keep them apart: a first submit
-// offered over work already in review is the defect, and a blank line
-// under it is the same claim made silently.
+// offered over work already in review is wrong, and a blank line under it
+// makes the same claim silently.
 describe("what an unanswered submission draws", () => {
   it("names the unknown state rather than leaving the row blank", () => {
     expect(submissionLine({ kind: "unknown" })).toBe(

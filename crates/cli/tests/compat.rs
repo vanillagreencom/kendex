@@ -79,9 +79,6 @@ fn kendex_copy(exe: &Path, home: &Path, args: &[&str], envs: &[(&str, String)]) 
     }
 }
 
-/// The CLI replaces a desktop app only where the release publishes one it
-/// installed. Elsewhere the app arrives by its own route and is not the
-/// command's to touch or to describe.
 fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
@@ -324,9 +321,9 @@ fn report_files_through_a_stubbed_gh() {
         std::env::var("PATH").unwrap_or_default()
     );
 
-    // Triage dates a report against the fix that already landed, so the
-    // marker carries what the lock recorded. An installation the lock never
-    // dated says so and still files.
+    // Triage compares a report with the installed record, so the marker
+    // carries what the lock recorded. An installation the lock never dated
+    // says so and still files.
     for (recorded, stamped) in [
         (
             r#","sourceCommit":"abc1234def5678","renderedHash":"9f8e7d6c5b4a""#,
@@ -567,7 +564,7 @@ fn update_over_a_local_feed_refuses_a_command_it_cannot_verify() {
 }
 
 /// A half-updated machine is the one state this command must never leave,
-/// because the command's own version is what the next run reads: a new
+/// because the command's own version is what the next run reads: an updated
 /// command beside an old app answers already-up-to-date forever. So the
 /// app goes first and a refusal there stops the run with the old command
 /// still on disk — which is what lets the next run try both halves again,

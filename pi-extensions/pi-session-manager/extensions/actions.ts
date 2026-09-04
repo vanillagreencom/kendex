@@ -25,7 +25,7 @@ function safeFileName(value: string): string {
 	return value.replace(/[^\w.-]+/g, "_");
 }
 
-// Per-session kendex tree (new layout):
+// Per-session kendex tree:
 //   ~/.pi/agent/kendex/sessions/<id>/<package>/...
 // Deleting this dir removes data from every kendex extension that opted into
 // the shared layout (pi-agents-tmux, pi-prompt-stash, pi-output-policy, ...).

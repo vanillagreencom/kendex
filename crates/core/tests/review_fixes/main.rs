@@ -1,5 +1,4 @@
-//! One end-to-end test per confirmed correctness finding from the engine
-//! review. Each fails on the behavior it replaced.
+//! End-to-end tests for engine constraints that need a complete fixture.
 #![cfg(unix)]
 
 #[path = "../../../test_util.rs"]
@@ -243,7 +242,7 @@ fn reviewer_agents_merge_additions_into_the_key_that_is_read() {
     apply_now(&w, &scope);
 
     // Upstream gains a prefix-matching skill: it merges into the entry the
-    // agent actually reads, never into a new one that shadows it.
+    // agent actually reads, never into another one that shadows it.
     add_skill(&w.source, "rust-perf");
     apply_now(&w, &scope);
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Regression tests for dev-return-write: the deterministic writer for a dev
+# Tests for dev-return-write: the deterministic writer for a dev
 # agent's round-scoped completion artifact
 # ([WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json). Running the writer instead
 # of hand-authoring the JSON makes the receipt well-formed and complete by
-# construction (kendex#776) — every artifact it emits must round-trip through
+# construction — every artifact it emits must round-trip through
 # dev-artifact-check (round mode) as valid, and every bad invocation must exit 2.
 
 set -euo pipefail
@@ -149,7 +149,7 @@ out="$("$WRITE" --worktree "$worktree" --kind fix --issue issue-b --round-id 9-9
   --branch b --commit c --validate pass --item 3 Blocked "needs API design")"
 assert_eq "$(jq -r '.items[0].decision' "$out")" "Blocked" "fix item Blocked decision accepted"
 
-# --- kendex#1236: inline --summary — a round must not depend on a file write
+# --- inline --summary: a round must not depend on a file write
 # the harness can refuse. Exactly one of --summary/--summary-file.
 printf '## Summary\nOne paragraph of completion detail.\n' > "$worktree/summary-file.md"
 out="$("$WRITE" --worktree "$worktree" --kind implement --issue issue-1236i --round-id 12-12 \
@@ -201,7 +201,7 @@ assert_exit2 "bundled implement with no --item exits 2" \
 assert_exit2 "unknown argument exits 2" \
   --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass --frobnicate
 
-# kendex#1236: one summary source only — both flags at once must be a loud
+# One summary source only — both flags at once must be a loud
 # error (a silent precedence rule would quietly misrecord the deliverable).
 assert_exit2 "implement with both --summary and --summary-file exits 2" \
   --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass \
@@ -281,7 +281,7 @@ set -e
 assert_eq "$([[ -f "$worktree/tmp/dev-return-issue-noitems-$RID.json" ]] && echo yes || echo no)" "no" \
   "rejected fix (no items) writes no artifact file"
 
-# --- kendex#884: a qualified validation result is recordable ---
+# --- a qualified validation result is recordable ---
 # `validate` stays a closed enumeration (orch gates on it); the note is the
 # additive channel for a caveat the enumeration cannot express. Without it a
 # pass-only-on-re-run is recorded as a bare "pass" and the caveat is lost from

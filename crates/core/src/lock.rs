@@ -13,7 +13,7 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// one is refused as damaged and a newer one as written by a newer build,
 /// and either way the way out is to move it aside and install fresh.
 ///
-/// The floor is not ceremony. Every field a version added is a fact this
+/// The floor is not ceremony. Every field a version introduced is a fact this
 /// build reads and an older record does not carry — which bytes are whose,
 /// where an installed set sits, why an installation exists, which project
 /// wrote the record — and read as absent each of those is a wrong answer
@@ -98,7 +98,7 @@ pub struct SourceRev {
 /// One installed set's resolution at the last write.
 ///
 /// Where it was read from is part of the record, because a rebind leaves
-/// it naming a set this scope no longer reads: matched by name alone, one
+/// it naming a set this scope does not read: matched by name alone, one
 /// catalog's set would say where another catalog's is held.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -196,7 +196,7 @@ pub struct LockEntry {
     pub emitted: Option<EmittedArtifact>,
     /// The registry entry this hook registered, as the registry keys it.
     /// Kept for every hook that registers one: what a later pass has to
-    /// find is what an earlier one wrote, and what the catalog renders
+    /// find is what a previous one wrote, and what the catalog renders
     /// today is a different question — deriving one from the other read a
     /// catalog moving a hook to another event as the person moving it by
     /// hand. A script-less hook is recorded for a second reason: its

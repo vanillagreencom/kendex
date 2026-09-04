@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for multi-lane scratch durability and lane-artifact handling
-# (VST-221).
+# Tests for multi-lane scratch durability and lane-artifact handling
 #
 # The multi-lane parent kept two things in one `mktemp -d` scratch directory:
 # each lane's captured stderr, and a `wrap-<lane>.json` re-wrap of the lane's
@@ -34,7 +33,7 @@
 #     caused to be written there — without letting that cleanup change the
 #     run's exit status.
 #
-# Drives a hermetic copy of the skill (kendex#580) with fake lane CLIs.
+# Drives a hermetic copy of the skill with fake lane CLIs.
 
 set -euo pipefail
 
@@ -54,7 +53,7 @@ trap 'chmod -R u+rwX "$TMP_ROOT" 2>/dev/null || true; rm -rf "$TMP_ROOT" || true
 
 # --- Deterministic harness-free session -------------------------------------
 # A positively detected single-model harness now beats any contradicting
-# declaration, whatever its source — so a suite can no longer neutralize the
+# declaration, whatever its source — so a suite cannot neutralize the
 # harness that runs it by exporting an identity. It has to actually not have
 # one. This `ps` stand-in reports the first parent as init, so the ancestor walk
 # finds nothing and the declared identity below is what the script uses. It also
@@ -621,7 +620,7 @@ assert_stderr_has "lane failed: claude (exit 4)" "the unusable lane records 4"
 # to /dev/null while every other assertion still passes.
 echo "=== scenario 7: healthy lanes -> both logs replayed, artifacts owner-only ==="
 out7="$TMP_ROOT/out7.json"
-# A reused --output path can already carry a lane family from an earlier run.
+# A reused --output path can already carry a lane family from a prior run.
 # The umask governs only files a child CREATES: writing through a surviving
 # inode keeps that inode's mode, so a stale 0644 artifact would stay
 # world-readable through every later run against the same path.
@@ -658,7 +657,7 @@ assert_stderr_has "lane failed: codex (exit 5)" "the failed lane is recorded"
 
 # --- Scenario 9: a finding the merge cannot consume ---------------------------
 # Schema-complete at the top level, but `blockers: ["bad"]`. It parses, so the
-# wrap used to accept it — and then the union merge aborted on it under set -e,
+# wrap would accept it — and then the union merge aborted on it under set -e,
 # delivering NO union at all even though the other lane was perfect. The same
 # harm as the original bug, fail-closed instead of fail-open.
 echo "=== scenario 9: malformed finding -> that lane is unusable, the union still ships ==="

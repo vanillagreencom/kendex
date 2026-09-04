@@ -1,5 +1,5 @@
 /**
- * Regression coverage for kendex#1469: the grace-timer finalize forwarding
+ * Coverage for grace-timer finalize forwarding
  * partial `{}` arguments, the same tool_use dispatching twice across turns, and
  * handlers stranded forever when their call never reached Pi.
  * Uses the real modules — no API calls, no extension activation.
@@ -220,7 +220,7 @@ describe("post-boundary claim recovery (production path)", () => {
 		c.pendingResults.set("x", { toolCallId: "x", content: [{ type: "text", text: "deployed" }] });
 		c.takeStaleQueuedResults();
 		c.resetToolTracking();
-		// Next turn streams a NEW same-name call Y — the sole live candidate.
+		// The following turn streams same-name call Y, the sole live candidate.
 		c.recordToolCall("y", "bash", { command: "echo other" });
 
 		const lateClaim = c.claimToolCall("bash", { command: "make deploy" });

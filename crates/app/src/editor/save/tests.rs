@@ -261,10 +261,9 @@ fn a_save_carrying_the_base_of_the_file_it_read_lands() {
     );
 }
 
-/// The loss this command used to allow: a copy read before something
-/// else wrote the file, saved wholesale, would put the older file back
-/// over the writer in between. It is refused now, and the newer file
-/// stands untouched.
+/// A copy read before something else wrote the file, saved wholesale,
+/// would put the older file back over the writer in between. It is
+/// refused, and the newer file stands untouched.
 #[test]
 fn a_save_from_a_stale_copy_is_refused_and_the_newer_file_stands() {
     let (_tmp, env, scope) = scope_with_manifest();
@@ -638,8 +637,7 @@ fn scope_carrying_a_declaring_package() -> (tempfile::TempDir, Env, Scope) {
 /// and runs nothing. That is a fact about THIS door only — a refused
 /// rendering drops the entry regardless, which
 /// `an_uninstaller_that_ran_before_a_refusal_is_still_reported` proves
-/// below. Both are here because one of them used to stand for the whole
-/// route, and a doc comment rested on it.
+/// below.
 #[cfg(unix)]
 #[test]
 fn dropping_a_declaration_leaves_the_package_and_runs_nothing() {
@@ -657,7 +655,7 @@ fn dropping_a_declaration_leaves_the_package_and_runs_nothing() {
         view.undone
     );
     // And it really did leave the package's files alone — an empty account
-    // over a removal that happened would be the defect, not the state.
+    // over a removal would misstate the result.
     assert!(
         tmp.path()
             .join("dev/app/.agents/skills/guards/scripts/arm")
@@ -690,10 +688,9 @@ fn scope_whose_package_stops_rendering(
 
 /// A refusal that lands after the uninstaller ran keeps its account.
 ///
-/// This is the issue's own end state reached from the other direction: the
-/// repository is disarmed, the write does not land, and a bare reload
-/// notice would tell the person nothing happened. The lines ride on the
-/// refusal instead.
+/// The end state reached from the other direction: the repository is
+/// disarmed, the write does not land, and a bare reload notice would tell
+/// the person nothing happened. The lines ride on the refusal instead.
 #[cfg(unix)]
 #[test]
 fn an_uninstaller_that_ran_before_a_refusal_is_still_reported() {

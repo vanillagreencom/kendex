@@ -80,7 +80,7 @@ esac
 SH
 chmod +x "$TMP_ROOT/bin/curl"
 
-# Run this complete regression file with the unsupported macOS-era runtime.
+# Run this complete failure file with the unsupported macOS-era runtime.
 # The CLI must reject it before shared config loads or any API request occurs.
 if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   payload_log="$TMP_ROOT/bash3-payloads.jsonl"

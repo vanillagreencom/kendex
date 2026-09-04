@@ -18,7 +18,7 @@ import {
 describe("rate-limit reset timestamps", () => {
 	// SDKRateLimitInfo.resetsAt is a bare number in epoch SECONDS. Treating it
 	// as milliseconds rendered "resets Jan 21, 1970" for a Jul 2026 reset.
-	const JUL_30_2026_SECONDS = 1785412800; // 2026-07-30T04:00:00-07:00
+	const JUL_30_2026_SECONDS = 1785412800;
 
 	it("treats a bare numeric resetsAt as epoch seconds", () => {
 		assert.equal(resetTimestampMs(JUL_30_2026_SECONDS), JUL_30_2026_SECONDS * 1000);
@@ -50,8 +50,8 @@ describe("rate_limit_event allowed_warning", () => {
 		assert.equal(warning, undefined);
 	});
 
-	// VST-16: exact 1 used to fall between the fractional (0<v<1) and percent
-	// (1<v<=100) branches and normalize to undefined — suppressing the warning
+	// Exact 1 falls between the fractional (0<v<1) and percent (1<v<=100)
+	// branches unless handled directly, which suppresses the warning.
 	// at precisely 100% utilization. It now reads as the fractional form (100%):
 	// the fail-closed direction, since under the percent convention 1% is below
 	// the threshold anyway and nothing is lost by warning.

@@ -410,7 +410,7 @@ fn every_harness_gives_back_one_line_for_every_line() {
         "Use the WebFetch tool last.\n",
     );
     // Claude hands the body straight back, so the count holds for it
-    // trivially and a harness added to ALL is covered the day it lands.
+    // trivially and every harness in ALL is covered.
     for harness in HarnessId::ALL {
         let (text, _) = rewrite_prose(body, harness);
         assert_eq!(

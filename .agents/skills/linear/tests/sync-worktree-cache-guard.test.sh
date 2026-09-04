@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression for kendex#1032: a git operation re-materialized a
+# Verifies a git operation re-materialized a
 # WORKTREE_SYMLINKS-managed `.cache` symlink in a linked worktree as a real
 # directory holding only the tracked `.gitkeep`, and sync — seeing what looked
 # like a cold cache — silently re-pulled the entire ~21 MB Linear history into
@@ -54,7 +54,7 @@ SH
 chmod +x "$TMP_BASE/bin/curl"
 
 # make_repo <root> <settings-body-or-empty>
-# Main checkout tracking .cache/.gitkeep (the incident's generator: a tracked
+# The main checkout tracks `.cache/.gitkeep` (the source is a tracked
 # file under the symlinked dir), plus a linked worktree that git therefore
 # materializes with a REAL .cache directory.
 make_repo() {

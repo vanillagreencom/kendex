@@ -1,8 +1,8 @@
-//! What a refresh says when it ends. The run this pins is the one a
-//! consumer hit: a skill already on disk from a pre-rename install, blocked
-//! for every tool it is declared on, beside one that installs and carries a
-//! safety finding. The output alone has to answer what changed, what did
-//! not, why, and what to type next.
+//! What a refresh says when it ends. The run this pins: a skill already on
+//! disk in the absolute-link layout, blocked for every tool it is declared
+//! on, beside one that installs and carries a safety finding. The output
+//! alone has to answer what changed, what did not, why, and what to type
+//! next.
 #![cfg(unix)]
 
 #[path = "../../../test_util.rs"]
@@ -91,7 +91,7 @@ fn flagged_items(listed: &str) -> BTreeSet<String> {
 }
 
 /// A project declaring two skills on two tools. `growth-guards` already
-/// sits at both places, written by v1 and out of date by one file;
+/// sits at both places through absolute links and is out of date by one file;
 /// `tidy` is free to install and has a finding of its own.
 #[allow(clippy::unwrap_used)]
 fn pre_rename_project(home: &Path) -> PathBuf {
@@ -180,7 +180,7 @@ fn a_blocked_refresh_ends_on_a_ledger_naming_every_outcome_and_its_next_step() {
         "the flagged part carries its next step: {printed}"
     );
 
-    // The two sentences that hid these outcomes before.
+    // The two sentences that would hide these outcomes.
     assert!(
         !printed.contains("nothing installed") && !printed.contains("up to date"),
         "a run with a blocked install is neither empty nor up to date: {printed}"

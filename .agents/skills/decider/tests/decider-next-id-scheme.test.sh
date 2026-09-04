@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for scheme-aware decisions next-id (kendex#956).
+# Scheme-aware decisions next-id.
 #
 # next-id must derive the next decision number from the INDEX.md ID column, not
 # from DNNN-looking tokens in prose cells, and it must preserve repositories'

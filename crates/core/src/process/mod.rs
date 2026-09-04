@@ -1,8 +1,7 @@
 //! Every external process this crate launches is built here (invariant 13):
 //! environment that can redirect it is cleared, every prompt path is closed,
 //! and every call carries a timeout. A per-call-site discipline misses call
-//! sites — v1 had 27 unguarded `Command::new("git")` invocations — so the
-//! raw pattern is guard-banned everywhere but this file.
+//! sites, so the raw pattern is guard-banned everywhere but this file.
 //!
 //! The threat that shapes `git_in`: a catalog repository is other people's
 //! data. Its `.git/config` may set `core.worktree` to a directory outside
@@ -90,8 +89,8 @@ const PINNED: &[&str] = &["protocol.ext.allow=never"];
 /// writes a working tree, and Git for Windows' installer puts
 /// `autocrlf=true` in the system config — which is what the GitHub Actions
 /// Windows runner carries — so the same catalog gave one set of bytes
-/// there and another on Linux. Settled here, that configuration no longer
-/// reaches the write. Both rather than one, because `core.eol` decides for
+/// there and another on Linux. Settled here, that configuration does not
+/// reach the write. Both rather than one, because `core.eol` decides for
 /// a repository that marks its files as text and `core.autocrlf` for one
 /// that does not.
 ///

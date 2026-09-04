@@ -50,7 +50,7 @@ scan() {
 }
 
 # Paths where a raw filesystem read would be a read of catalog content, so
-# one added there is caught. The alternation below is what the rule covers
+# each matching read is caught. The alternation below is what the rule covers
 # and the whole of it — chosen, not exhaustive, and not every module that
 # reads a catalog: author/import does and is not here, and neither is every
 # file under source/. Widening it is a judgement each time, because a module
@@ -125,7 +125,7 @@ else
   have_head=0
 fi
 
-# New integration-test temp roots take their canonical spelling immediately
+# Integration-test temp roots take their canonical spelling immediately
 # through the shared rooted() helper, on the next source line, and that call
 # must take the root just declared — the follow-line test is built from the
 # declared name, so rooting some other binding does not clear it. Diff-scoped:
@@ -171,7 +171,7 @@ fi
 # Presence, not byte equality — a render can carry an injected block the
 # source has no copy of, so bytes cannot be compared. Rendered is judged at
 # the tree: a skill with anything tracked under .agents/skills/<x> renders
-# every file, so a new source there owes a new render, and an agent owes a
+# every file, so each source there owes a render, and an agent owes a
 # file to each harness directory that tracks any. Hooks are judged per file
 # instead — the harness hook sets are deliberately not uniform, and
 # hooks/tests/* renders nowhere. A source with no tracked render has nothing
@@ -181,7 +181,7 @@ fi
 # matches neither the case arms nor its own render.
 #
 # The roots live in one place because the arms and the tracked-set query both
-# read them: a root added to an arm alone would never be tracked, so that
+# read them: a root named only in an arm is not tracked, so that
 # harness's renders would be silently unowed. Agent roots carry the render's
 # extension after the colon.
 agent_roots=(.claude/agents:md .codex/agents:toml .pi/agents:md)

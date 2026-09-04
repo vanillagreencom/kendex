@@ -34,11 +34,9 @@ beforeEach(() => {
   useMarketplacesStore.setState({ rows: [], toggle });
 });
 
-// Where the per-place switch went, and what it does there. The switch used
-// to sit on the Subscribed list, changing a place the list never named;
-// here the place is the row, the label says what the switch does, and the
-// click has to reach that row's own subscription. Static markup never
-// reaches the handler, so this mounts.
+// The per-place switch and what it does: the place is the row, the label
+// says what the switch does, and the click has to reach that row's own
+// subscription. Static markup never reaches the handler, so this mounts.
 describe("a marketplace's Projects section", () => {
   it("names what the switch does and switches the place it sits beside", async () => {
     useMarketplacesStore.setState({
@@ -68,8 +66,8 @@ describe("a marketplace's Projects section", () => {
   // Two registered projects can end in the same folder. A row labelled
   // "kendex" beside another labelled "kendex" names neither, over a switch
   // that deactivates every install this marketplace put in one of them —
-  // the branch's own rule that a list never carries a control whose target
-  // it does not name, failing on the name itself.
+  // the rule that a list never carries a control whose target it does not
+  // name, failing on the name itself.
   it("tells apart two projects whose folders share a name", () => {
     useMarketplacesStore.setState({
       rows: [

@@ -6,7 +6,7 @@
 # transcript names no artifact path at all. Pinned here: what names the
 # worktree (the newest <dir>/tmp/review-*.json mention, in a Write call or
 # a File: line), what counts as dirty (a modified tracked file, an untracked
-# file, one inside a new directory), the once-per-agent marker under the
+# file, one inside an untracked directory), the once-per-agent marker under the
 # reviewed repository's git common dir, that a sibling worktree's dirt is
 # not this worktree's, and the fail-closed edges — an unreadable payload,
 # a transcript that cannot be read, a git that cannot answer.

@@ -622,7 +622,7 @@ case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany a broken parse
 echo "=== the carriers pre-filter is chunked, and every chunk survives ==="
 # The chunk size is 256, so a change set larger than that is the only shape
 # that runs the loop more than once. A chunk that overwrites its
-# predecessors instead of appending drops the carrier named by an earlier
+# predecessors instead of appending drops the carrier named by a prior
 # one, and the lane prints OK: this repository's own render-propagation
 # commits stage several hundred files at a time, so the shape is routine.
 new_repo chunking

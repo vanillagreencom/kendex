@@ -38,9 +38,9 @@ fn a_clone_has_working_skills_with_no_kendex_run() {
     assert!(clone.join("kendex.toml").is_file());
 }
 
-/// An install written before relative links converges on the next apply
-/// instead of being called a conflict — the migration path for every scope
-/// that already exists.
+/// An install holding absolute links converges on the next apply instead
+/// of being called a conflict — the migration path for every scope that
+/// already has them.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_absolute_link_from_an_older_install_migrates_on_refresh() {
@@ -48,7 +48,7 @@ fn an_absolute_link_from_an_older_install_migrates_on_refresh() {
     world.declare_catalog();
     world.run(&["add", "cat", "--skill", "deploy", "-y"]);
 
-    // Respell the link the way the older build wrote it.
+    // Respell the link absolute, the compatibility layout under test.
     let link = world.at(".claude/skills/deploy");
     let canonical = world.at(".agents/skills/deploy");
     fs::remove_file(&link).unwrap();

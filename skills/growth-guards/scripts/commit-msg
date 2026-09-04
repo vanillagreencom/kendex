@@ -27,7 +27,7 @@ set -f
 
 GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
 GG_BOOT="${GG_BOOT%x}"
-# The one newline `pwd` added; anything before it is the path.
+# The trailing newline from `pwd` terminates its output; anything before it is the path.
 SCRIPT_DIR="${GG_BOOT%$'\n'}"
 GG_CHECK="commit-msg"
 # shellcheck source=lib/common.sh
@@ -342,7 +342,7 @@ if [ -n "$REQUIRED" ]; then
       *"[no-changelog]"*) echo "commit-msg: OK — [no-changelog] in the header waives the entry for $(gg_shown "$touched")" ;;
       *)
         # The record is deliberately not offered here: changelog-entries runs
-        # earlier in the same commit chain and refuses a line added under
+        # first in the same commit chain and refuses a hand-written line under
         # [Unreleased] by hand, so pointing a writer at it would send them
         # into the next lane's refusal.
         violation "$(gg_shown "$touched") changed without a changelog entry" \

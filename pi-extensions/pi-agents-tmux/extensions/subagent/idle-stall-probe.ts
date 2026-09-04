@@ -1,8 +1,6 @@
-// Real bridge-idle probe for the idle-stall watchdog (kendex#63
-// reviewer follow-up). The original wiring hardcoded isPaneIdle to
-// `true`, so a long-running tool call with no registry pokes (large
-// test suite, slow model inference) crossed the staleness threshold
-// and the watchdog false-fired against a still-working task.
+// Bridge-idle probe for the idle-stall watchdog. A constant `true` would make
+// a long-running tool call with no registry updates cross the staleness
+// threshold and make the watchdog fire against a working task.
 //
 // This module exposes a pure helper `probePaneIdle(input, deps)` that
 // shells out to `pi-bridge state --socket <s>` (or `--pid <p>`),

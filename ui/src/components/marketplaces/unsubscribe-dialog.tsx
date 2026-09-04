@@ -14,8 +14,8 @@ import { kindLabel, scopeName } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 
-/** §4.3's choice: leaving a marketplace either uninstalls what came from it
- * or keeps it as the user's own. Nothing installed makes it a plain confirm,
+/** Leaving a marketplace either uninstalls what came from it or keeps it
+ * as the user's own. Nothing installed makes it a plain confirm,
  * and an edited package pauses the whole thing until it is decided. */
 export function UnsubscribeDialog({
   open,

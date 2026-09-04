@@ -6,7 +6,7 @@
 # a database has already run, malformed JSON/TOML.
 #
 # Precision before coverage: a lane that cannot decide says nothing. The
-# line-scoped lanes report only on lines this diff ADDED, so a pre-existing
+# line-scoped lanes report only on lines this diff added, so an existing
 # violation on an untouched line never fails somebody else's change. A
 # missing optional tool (shellcheck, jq, taplo, python3) skips its lane
 # silently — the run never fails because a tool is absent, and a lane never
@@ -189,7 +189,7 @@ case "$MODE" in
     git_diff --name-only --diff-filter=d -z "$BASE" -- >"$TMP/files.z" || env_error "git diff against $BASE failed"
     git_diff --name-only --no-renames --diff-filter=A "$BASE" -- >"$TMP/newfiles.list" || env_error "git diff against $BASE failed"
     # A file never added is invisible to `git diff` yet is part of the change
-    # the author is about to commit: every non-ignored untracked file is a new
+    # the author is about to commit. Every non-ignored untracked file is a new
     # file with every line added, exactly what it will be at the PR.
     git -c core.quotePath=false ls-files --others --exclude-standard -z >"$TMP/untracked.z" || env_error "git ls-files --others failed"
     ;;
@@ -309,7 +309,7 @@ fi
 # opened with ">" exactly once. A SECOND, non-adjacent group for a path
 # already closed would reopen its record and truncate the lines collected
 # for it, which is how a hijacked record turned into a LOST finding rather
-# than a duplicated one. The parser above no longer accepts the forged header
+# than a duplicated one. The parser above rejects the forged header
 # that produced such a group, so this can only fire on a producer bug; either
 # way the record set is wrong and no verdict may be reported over it.
 split_status=0
@@ -486,7 +486,7 @@ doc_token_is_dead() { # TOKEN DOC-SUBTREE — 0 when the token names a path that
   # leading forms name something outside this repo root; a trailing slash
   # names a location the docs are describing, not a file they point at.
   case "$tok" in
-    /* | ~* | -* | .* | */) return 1 ;;
+    /* | ~* | -* |.* | */) return 1 ;;
     *[!A-Za-z0-9_./-]*) return 1 ;;
     *//* | */./* | */../*) return 1 ;;
   esac
@@ -823,7 +823,7 @@ while IFS= read -r f; do
       done <<<"$(run_shellcheck "$cpath")"
     fi
 
-    # A brand-new script that never turns on errexit, nounset and pipefail
+    # A new script that never turns on errexit, nounset and pipefail
     # fails open at its first unchecked command. Test trees and fixtures set
     # their own rules.
     if [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$sourced_lib" = 0 ] && [ "$is_new" = 1 ]; then
@@ -949,7 +949,7 @@ done <"$TMP/files.list"
 # A versioned migration a database has already run is frozen. refinery
 # (`abort_divergent` by default) and Flyway record a checksum over the file's
 # name and text and refuse to run against a database whose recorded checksum
-# no longer matches, so the edit has no forward fix: the correction would be
+# does not match, so the edit has no forward fix: the correction would be
 # one more edit to the same frozen file. The default globs are that filename
 # shape under both directory names those runners use, and nothing else, because
 # a runner recording a version without a checksum reopens its database: goose,

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # `create --reuse` must be able to rebase a worktree whose WORKTREE_SYMLINKS
-# entries shadow tracked files (kendex #873, #874).
+# entries shadow tracked files.
 #
-# Since VST-37 setup provisions such an entry as a REAL directory with only the
+# Setup provisions such an entry as a REAL directory with only the
 # untracked children symlinked, so git owns the tracked paths and the rebase
 # writes them directly. The reuse path must still succeed, and re-applying
 # setup afterwards must keep the per-child layout intact.
@@ -84,7 +84,7 @@ printf 'v2\n' >"$ROOT/main/harness/skills/tool.md"
 printf 'moved on\n' >"$ROOT/main/other.txt"
 # -f because `worktree create` appends a bare `harness` entry to the COMMON
 # git dir's info/exclude, which makes plain `git add` refuse tracked paths
-# underneath it even in the main checkout (kendex #878).
+# underneath it even in the main checkout.
 git -C "$ROOT/main" add -f harness/skills/tool.md other.txt
 git -C "$ROOT/main" commit -q -m 'advance main and touch tracked harness file'
 git -C "$ROOT/main" push -q origin main
@@ -105,7 +105,7 @@ set -e
 assert_eq "$reuse_status" "0" "create --reuse succeeds"
 assert_contains "$reuse_out" "$WT" "reuse prints the worktree path"
 
-# The rebase actually happened: main's new commit is an ancestor of the branch.
+# The rebase actually happened: main's separate commit is an ancestor of the branch.
 set +e
 git -C "$WT" merge-base --is-ancestor origin/main HEAD
 ancestor_status=$?

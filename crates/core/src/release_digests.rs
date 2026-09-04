@@ -14,7 +14,7 @@
 //! (`tools/release-digests`). An update reads it from the channel it read
 //! the feed from, holds it to the release and target it asked for, and
 //! installs nothing whose hash is not the one named there. A genuine
-//! signature over the wrong artifact no longer passes.
+//! signature over the wrong artifact does not pass.
 
 use sha2::{Digest, Sha256};
 

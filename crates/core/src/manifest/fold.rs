@@ -39,7 +39,7 @@
 //!
 //! Which half a write pays is decided by whether the entries AROUND the
 //! changed one fix which slot was its own — not by what the write meant, nor
-//! by whether it added or removed anything. Two changes side by side leave
+//! by whether it inserted or removed anything. Two changes side by side leave
 //! each other unplaceable and both lose their keys though the list never
 //! changed length; a removal well past a change leaves that change one slot it
 //! could have come from, and it keeps everything. [`own_slot`] is that
@@ -315,7 +315,7 @@ fn paired(standing: usize, held: &[Item], target: &[Item]) -> Vec<Option<Slot>> 
 /// Whether two serialized entries say the same thing. Both sides come from
 /// this crate's own serializer, so this is structural equality and nothing is
 /// exempt from it — the question `paired` asks is which entry of the manifest
-/// this used to be, not which bytes a person wrote around it.
+/// this was, not which bytes a person wrote around it.
 fn same_entry(left: &Item, right: &Item) -> bool {
     if let (Some(left), Some(right)) = (left.as_table_like(), right.as_table_like()) {
         return left.len() == right.len()

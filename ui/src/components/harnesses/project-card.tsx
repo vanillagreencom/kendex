@@ -11,8 +11,8 @@ import { PLACE_UNCHECKED_LABEL, unmanagedHereLabel } from "@/lib/copy";
  * One place a setup applies — Personal, or a project folder. Personal and a
  * project are the same kind of thing to a reader, so they get the same card:
  * name and subtitle on top, counts along the bottom, actions on the right.
- * They used to differ, and the counts landing in a different place each time
- * made two identical facts look like two different ones.
+ * Counts landing in a different place on each would make two identical facts
+ * look like two different ones.
  */
 export function ProjectCard({
   name,
@@ -35,8 +35,8 @@ export function ProjectCard({
   path?: string;
   counts: [ItemKind, number][];
   /** Show everything installed here — what the project's name is a button
-   * for. A count badge narrows to one kind, and there was no way to ask for
-   * everything without picking a kind first. */
+   * for. A count badge narrows to one kind, and nothing else on the card
+   * asks for everything without picking a kind first. */
   onOpen: () => void;
   onKindClick: (kind: ItemKind) => void;
   emptyLabel: string;

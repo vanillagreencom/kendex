@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Regression for kendex#779: cache and attachment paths must come from the
-# authoritative git worktree root, not the logical spelling used to reach the
+# Verifies cache and attachment paths must come from the
+# authoritative git worktree root, not the logical spelling that reached the
 # installed skill. A symlinked checkout path makes `pwd` and `git rev-parse`
 # disagree lexically; the cache must use the git root.
 set -euo pipefail
@@ -99,4 +99,3 @@ assert_missing_cache_diagnostic() {
 
 assert_missing_cache_diagnostic "$EMPTY_LINK/.agents/skills/linear/scripts/linear.sh" "logical installed invocation"
 assert_missing_cache_diagnostic "$SKILL_DIR/scripts/linear.sh" "canonical source-path invocation"
-

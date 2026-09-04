@@ -65,8 +65,8 @@ def coderabbit_schema(ctx, out):
         return
     schema = ctx.schema
     chosen = render_coderabbit.overrides(ctx.model)
-    # Before the early return below: an override the vendored copy no longer
-    # defines is a question about the schema and the overrides, and a missing
+    # Before the early return below: an override the vendored copy does not
+    # define is a question about the schema and the overrides, and a missing
     # render does not make it go away.
     missing = render_coderabbit.unresolved(schema, chosen)
     if missing:

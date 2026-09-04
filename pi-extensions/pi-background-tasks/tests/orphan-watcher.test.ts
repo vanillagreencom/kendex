@@ -1,4 +1,4 @@
-// Orphan-running liveness watcher tests (kendex#15 reviewer-error BLOCK).
+// Orphan-running liveness watcher tests.
 //
 // Scenario: Pi dies, bg_task keeps running. On restart, restoredTaskFromSnapshot
 // rehydrates the task as `running` because kill -0 still reports the pid
@@ -150,8 +150,7 @@ describe("createOrphanWatcher.checkOnce", () => {
 	});
 
 	test("comm drift (bash -lc 'sleep N') → still running, no finalize", () => {
-		// kendex#15 round 5 reviewer-error BLOCK: a typical workload is
-		// /bin/bash -lc "sleep 5". After the shell exec(2)s the target
+		// A typical workload is /bin/bash -lc "sleep 5". After the shell exec(2)s the target
 		// the pid and start time stay identical but /proc/<pid>/comm
 		// rotates "bash" -> "sleep". The watcher must rely on startToken
 		// only, NOT comm, or it will falsely finalize a live task.
@@ -174,8 +173,7 @@ describe("createOrphanWatcher.checkOnce", () => {
 	});
 
 	test("PID reuse: alive pid with mismatched startToken → finalize with pid-reused reason", () => {
-		// kendex#15 round 4 reviewer-error MAJOR + reviewer-test #1: the
-		// original orphan exited and the OS reused PID 12345 for an
+		// The orphan exited before the OS reused PID 12345 for an
 		// unrelated process (different start time). Bare kill -0 would
 		// call it alive; startToken comparison detects the reuse and
 		// treats the original task as gone.

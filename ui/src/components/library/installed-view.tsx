@@ -77,8 +77,8 @@ export function InstalledView() {
     void loadAll();
   }, [loadAll]);
   // Re-joined whenever a scan lands, so an install or unsubscribe made
-  // elsewhere shows its new origin without a manual refresh. Before the
-  // first scan there are no rows to label, so there is nothing to join.
+  // elsewhere shows its changed origin without a manual refresh. Before
+  // the first scan there are no rows to label, so there is nothing to join.
   useEffect(() => {
     if (!result) return;
     void loadProvenance();
@@ -88,7 +88,7 @@ export function InstalledView() {
 
   // Pick up where the table was last scrolled to, and record it again on the
   // way out — unless a link replaced the list, in which case that offset
-  // belongs to something no longer on screen.
+  // belongs to the list the link replaced.
   useEffect(() => {
     const node = scroller.current;
     if (!node) return;
@@ -122,9 +122,8 @@ export function InstalledView() {
   );
   // Read from those, never from the filtered set: a mark answers for the
   // package, so narrowing the table to one project must not change what it
-  // says. Read from `groups`, a package customized in two projects said
-  // "Customized in vg" here and named both on its own page — the same
-  // contradiction, arriving through the Where filter.
+  // says. Read from `groups`, a package customized in two projects would
+  // say "Customized in vg" here and name both on its own page.
   const standingsFor = useLibraryStandings(everywhere);
   // The count the filtered total is measured against: every row the table
   // could show, not the ones left after the current narrowing. Shared with

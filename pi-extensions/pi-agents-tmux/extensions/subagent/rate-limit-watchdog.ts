@@ -8,7 +8,7 @@
  */
 
 /**
- * Subagent rate-limit watchdog (kendex#108).
+ * Subagent rate-limit watchdog.
  *
  * Rides on `pi.on("message_end")` inside a persistent subagent pane.
  * When the canonical rate-limit signature appears (assistant message_end
@@ -21,8 +21,8 @@
  *      endpoint data wins scheduling when available, SDK reset/retry
  *      fields win next, and prose reset parsing is marked degraded.
  *   2. Schedules a `pi.sendUserMessage(STEER_MESSAGE, { deliverAs })` for that retry
- *      time. The fixed steer prose is mandated by the issue body so the
- *      child agent has a deterministic recovery signal.
+ *      time. The fixed steer text gives the child agent a deterministic
+ *      recovery signal.
  *   3. Emits agent.rate_limited (first detection per pane) and
  *      agent.rate_limit_retry (each scheduled attempt) broker events so
  *      the dashboard Activity tab shows the recovery timeline.
@@ -65,7 +65,7 @@ export type RateLimitOutcome =
 export interface SubagentRateLimitWatchdogDeps {
 	/**
 	 * Cross-process mirror of the pending-retry state (marker file under the
-	 * shared runtime root): the parent's idle-stall watchdog reads it, since
+		 * shared runtime root): the parent's idle-stall watchdog reads it, since
 	 * this watchdog's in-process state lives in the child. Called with the
 	 * retry epoch on schedule and null on fire/resolve/cancel/exhaustion.
 	 */

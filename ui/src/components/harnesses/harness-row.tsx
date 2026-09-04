@@ -15,8 +15,8 @@ import { useNavStore } from "@/stores/nav";
  *
  * Where the harness keeps its files is the row's second line, and changing it
  * is a pencil on that line — a page-long second list of the same seven
- * harnesses, one "Set folder" button each, said the same thing twice and buried
- * the fact that almost nobody needs it. */
+ * harnesses, one "Set folder" button each, would say the same thing twice and
+ * bury the fact that almost nobody needs it. */
 export function HarnessRow({
   id,
   detectedRoot,

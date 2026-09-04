@@ -6,8 +6,7 @@ use kendex_core::quality::Severity;
 
 use super::fixture::{fixture, installed, plan};
 
-/// A critical finding is reported on the row and installs anyway — the
-/// exact content the old gate held back.
+/// A critical finding is reported on the row and installs anyway.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_critical_finding_is_reported_and_installs_anyway() {

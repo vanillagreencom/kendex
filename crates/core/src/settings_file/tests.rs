@@ -360,7 +360,7 @@ fn a_key_inside_a_string_an_array_element_opened_is_not_writable() {
     for open in ["\"\"\"", "'''"] {
         let file = format!("BLOB = [\n  [{open}\n[env]\nMODE = \"shadow\"\n{open}]\n]\n");
         // Without the carried state this reads as a writable value with a
-        // span inside BLOB — a save would put the new bytes in the middle
+        // span inside BLOB — a save would put the written bytes in the middle
         // of somebody else's string.
         assert_eq!(current(&file, "MODE"), Current::Absent, "{open}");
         assert!(sites(&file).iter().all(|site| site.key != "MODE"), "{open}");

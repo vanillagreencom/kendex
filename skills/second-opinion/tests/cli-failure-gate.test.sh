@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Regression test for the second-opinion CLI-failure gate (kendex#809).
+# Tests for the second-opinion CLI-failure gate.
 #
 # When the external CLI fails to produce ANY review — it exits non-zero
 # (quota/auth/network), times out, or returns nothing on a zero exit — the
-# wrapper used to exit 0 with no artifact and no sidecar (or a generic exit 1),
+# wrapper would exit 0 with no artifact and no sidecar (or a generic exit 1),
 # so a caller trusting the documented exit-code contract recorded success with
 # no external opinion, invisibly, exactly when the lane was down. The fix routes
 # these into the no-verdict class (like the no-scope/no-review gates): review/
@@ -34,7 +34,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # --- Deterministic harness-free session -------------------------------------
 # A positively detected single-model harness now beats any contradicting
-# declaration, whatever its source — so a suite can no longer neutralize the
+# declaration, whatever its source — so a suite cannot neutralize the
 # harness that runs it by exporting an identity. It has to actually not have
 # one. This `ps` stand-in reports the first parent as init, so the ancestor walk
 # finds nothing and the declared identity below is what the script uses. It also
@@ -156,12 +156,12 @@ git -C "$WORK" add file.txt
 git -C "$WORK" -c commit.gpgsign=false commit -q -m init
 git -C "$WORK" checkout -q -b scope-branch
 # Uncommitted change so `--range HEAD` yields a non-empty diff — the scope gate
-# (kendex#652) refuses to run a review over an empty diff.
+# The scope gate refuses to run a review over an empty diff.
 printf 'world\n' >> "$WORK/file.txt"
 
 COUNTER="$TMP_ROOT/counter"
 
-# The exact usage-limit shape from the incident report.
+# The quota fixture uses the CLI's usage-limit response.
 QUOTA_ERR="ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits."
 
 # run_mode <mode> <extra-args...> then env passed via caller — returns rc.
@@ -270,7 +270,7 @@ echo
 
 # --- Scenario 6: failure reported on stdout with empty stderr ------------------
 # The Claude CLI prints its quota-limit message to stdout and exits non-zero with
-# an empty stderr. The cause block used to read only stderr, so it came out empty
+# an empty stderr. The cause block would read only stderr, so it came out empty
 # and a capped lane was indistinguishable from a broken one. The cause now falls
 # back to the stdout tail, tagged as the stdout source.
 echo "=== scenario 6: non-zero exit, cause on stdout, empty stderr names the stdout cause ==="
@@ -568,7 +568,7 @@ S10_SIDECARS="raw.txt retry.txt failed.json noreview.json incomplete.json"
 S10_LANES="claude codex"
 
 # seed_stale_family <output>: the artifact, its five sidecars, and the lane
-# family the roster could have produced on an earlier run at the same path.
+# family the roster could have produced on a prior run at the same path.
 seed_stale_family() {
   local base="$1" suffix lane
   printf '%s\n' "$S10_STALE" > "$base"
@@ -642,7 +642,7 @@ for s10d_bad in --timeout=abc --bogus; do
   assert_family_cleared "$s10d_out" "($s10d_bad)"
 done
 
-# (b3) a lane artifact belonging to a target the roster no longer names is
+# (b3) a lane artifact belonging to a target the roster does not name is
 # still a complete, schema-valid review with its own verdict — the guarantee is
 # written without an exception for renamed or retired targets. But a sibling
 # outside the roster is not a path this run writes, so its NAME cannot authorize
@@ -870,7 +870,7 @@ for s10j_agent in 'null' '"someone-elses-reviewer"'; do
   assert_eq "$(jq -r '.summary' "$s10j_out")" "provider text" \
     "(agent=$s10j_agent) the rest of the provider's review is untouched"
   # ...and because it now carries the marker, a later run reclaims it once its
-  # target is no longer in the roster: the producer and consumer rules meet.
+  # target is not in the roster: the producer and consumer rules meet.
   s10j_lane="$TMP_ROOT/out/review10j-sweep.json"
   rm -f -- "$s10j_lane" "$s10j_lane".*
   cp -- "$s10j_out" "$s10j_lane.retired-model.json"

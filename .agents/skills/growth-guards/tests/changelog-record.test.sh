@@ -282,7 +282,7 @@ run_ce
 [ "$RC" -eq 1 ] && case "$OUT" in *"gained lines under [Unreleased]"*"- SNEAKED IN BY HAND."*) true ;; *) false ;; esac \
   && ok "a shorter run inside a longer fence does not end it, and the heading after it is found" \
   || bad "a shorter run inside a longer fence does not end it" "rc=$RC out=$OUT"
-# The control: the same document with nothing added passes, so the refusal
+# The control: the same document with no extra content passes, so the refusal
 # above is the line and not the fence shape failing outright.
 {
   printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n'
@@ -577,8 +577,8 @@ run_ce
 echo "=== the declaration bypasses the comparison and nothing else ==="
 # Read in one place and permitting one thing. Every other rule in this scope
 # is as true during a release as outside one, so each is pinned as still
-# running with the declaration set — a rule added later is outside it by
-# construction, and these are what would catch it being opted back in.
+# running with the declaration set. A rule outside the declaration stays outside
+# it by construction.
 new_repo recorddeclared
 printf -- '- A fragment.\n' | frag fixed ken-1.md
 printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n' >"$R/CHANGELOG.md"
@@ -667,7 +667,7 @@ run_ce
 # A record that NEVER opened the section is the same refusal, not a lesser
 # one: a release folds every fragment into that heading and deletes the files
 # they came from, so there is nowhere to put them either way. The collator
-# used to be the only thing that said so, at the tag.
+# would be the only thing that said so, at the tag.
 new_repo recordnoheading
 printf -- '- A fragment.\n' | frag fixed ken-1.md
 printf '# Log\n\n- Nothing calls itself unreleased.\n' >"$R/CHANGELOG.md"
@@ -685,7 +685,7 @@ run_ce
 [ "$RC" -eq 0 ] && ok "control: opening the section is all it takes" \
   || bad "control: opening the section is all it takes" "rc=$RC out=$OUT"
 # A level-3 heading inside the section that names no section is refused here
-# too, which is the other half the collator used to catch alone.
+# too, which is the other half the collator would catch alone.
 printf '# Log\n\n## [Unreleased]\n\n### Notes\n\n- Not a section.\n' >"$R/CHANGELOG.md"
 stage
 run_ce

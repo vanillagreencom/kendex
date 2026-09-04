@@ -4,8 +4,8 @@
  * The guard exists to keep forks from inheriting the parent's pointer at the
  * parent's external Claude jsonl. When pi forks a session, createBranchedSession
  * duplicates every non-label entry (including our claude-bridge-session markers)
- * from root→leaf into the new pi.jsonl. The guard rejects markers whose
- * piSessionId or cwd no longer matches the active session, forcing the bridge
+ * from root→leaf into the fork pi.jsonl. The guard rejects markers whose
+ * piSessionId or cwd does not match the active session, forcing the bridge
  * down the rebuild path instead.
  */
 import { describe, it } from "node:test";

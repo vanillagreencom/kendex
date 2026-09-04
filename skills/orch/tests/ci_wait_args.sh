@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Regression tests for ci-wait's argument validation (kendex#981), split
-# from ci_wait.sh at this seam (the poll/verdict suites live there). Usage
-# errors must terminate in the arg parser, before auth or any gh call: an
-# unknown flag used to fall through into a positional slot and die under
-# `set -u`, and --help was taken as the PR number and crashed in jq. The
-# recording gh stub proves gh was never reached.
+# Tests for ci-wait's argument validation, split from ci_wait.sh
+# at this seam (the poll/verdict suites live there). Usage errors must
+# terminate in the arg parser, before auth or any gh call: an unknown flag
+# that falls through into a positional slot dies under `set -u`, and --help
+# taken as the PR number crashes in jq. The recording gh stub proves gh was
+# never reached.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -78,10 +78,10 @@ chmod +x "$TMP_ROOT/argbin/gh"
 echo "=== ci-wait argument validation (kendex#981) ==="
 
 # Usage errors must terminate in the arg parser, before auth or any gh call:
-# an unknown flag used to fall through into a positional slot and die under
-# `set -u` as "timeout: unbound variable", and `--help` was taken as the PR
-# number and crashed in jq. This gh stub records every invocation so a clean
-# pass proves gh was never reached.
+# an unknown flag that falls through into a positional slot dies under
+# `set -u` as "timeout: unbound variable", and `--help` taken as the PR number
+# crashes in jq. This gh stub records every invocation so a clean pass proves
+# gh was never reached.
 run_wait_args() {
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/argbin:$PATH" \
@@ -107,8 +107,8 @@ rc=$?
 set -e
 assert_eq "$rc" "0" "case32: --help exits 0" "$stderr"
 assert_contains "$output" "Usage: ci-wait" "case32: --help prints usage"
-# The heredoc is the contract's sole home (KEN-556): pin tokens whose
-# semantics live nowhere else (KEN-555: tokens, never sentences).
+# The heredoc is the contract's sole home: pin tokens whose semantics live
+# nowhere else (tokens, never sentences).
 assert_contains "$output" "Exit codes:" "case32: --help carries the exit-code table"
 assert_contains "$output" "no-CI route" "case32: --help carries the verdict=none contract"
 assert_contains "$output" "CI_WAIT_NO_CHECKS_GRACE" "case32: --help carries the grace knob"

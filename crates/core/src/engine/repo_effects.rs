@@ -48,7 +48,7 @@ use super::set_change::{SetChange, SetDirection};
 /// and whether it was named on the command line or required by something
 /// that was; a package already installed does not appear, because the scope
 /// already carried it; and a package the plan refuses to write never
-/// reaches the new lock at all. `blocked` stays as a second gate, because a
+/// reaches the written lock at all. `blocked` stays as a second gate, because a
 /// disclosure for a tree kendex did not write is the one that runs somebody
 /// else's script.
 pub(super) fn run(
@@ -58,8 +58,8 @@ pub(super) fn run(
     before: &crate::lock::Lock,
 ) -> Vec<DeclaredEffects> {
     // A lock row is per harness, so a package the scope already carried
-    // produced an Add the day a new tool was detected and its copy fanned
-    // out — and an unrelated `add` then armed a package whose effect had
+    // can produce an Add when another tool is detected and its copy fans
+    // out. An unrelated `add` must not arm a package whose effect was
     // been declined. The effect belongs to the package, so the question is
     // about the package: was this name anywhere in the scope before.
     let already_here = crate::lock::skill_names(before);
@@ -125,8 +125,8 @@ pub(super) fn run(
 /// way, and it matters for the same reason and more: the effect would
 /// disclose the catalog's bytes and then run the edited script sitting on
 /// disk. Asking the cause whether it holds the write, rather than listing
-/// the causes that do, is what keeps this from having to be revisited each
-/// time a cause is added.
+/// the causes that do, is what keeps this from having to be revisited for
+/// each further cause.
 ///
 /// Whatever the reason, the directory an effect would run its script out of
 /// is whatever was already there — so the effect is not disclosed and not
@@ -147,7 +147,7 @@ fn blocked(drift: &[DriftRow], name: &str) -> bool {
 /// package still installed, and its effect still wanted.
 ///
 /// Read off the tree on disk, not off the desired state, because the
-/// desired state no longer has the item — that is what leaving means. The
+/// desired state does not have the item — that is what leaving means. The
 /// tree is still there while this plan is only planned, which is the whole
 /// window the CLI has to run the uninstaller in: once the plan executes the
 /// scripts are gone, and shims that exec a script that is not there fail

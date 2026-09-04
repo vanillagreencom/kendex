@@ -88,7 +88,7 @@ pub struct ReportRouteView {
     pub kendex_owned: bool,
     pub repo: Option<String>,
     pub label: Option<String>,
-    /// Prefilled new-issue page — only when the report belongs upstream.
+    /// Prefilled issue page — only when the report belongs upstream.
     pub issue_url: Option<String>,
 }
 

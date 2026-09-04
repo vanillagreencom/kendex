@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test: issues create --parent must link the created issue.
+# issues create --parent must link the created issue.
 
 set -euo pipefail
 
@@ -13,7 +13,7 @@ mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/.cache/linear"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 # Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this
 # throwaway root — without this, cache writes from `issues create` land in
-# the real project's `.cache/linear` (kendex#43).
+# the real project's `.cache/linear`.
 git -C "$TMP_ROOT" init -q -b main
 
 cat >"$TMP_ROOT/bin/curl" <<'SH'

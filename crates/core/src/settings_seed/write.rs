@@ -12,8 +12,8 @@ use crate::settings_toml::Row;
 
 use super::{SeededEnv, Seeding, assigned_keys, env_blocked, opens_env, table_row, written_for};
 
-/// The terminator new lines are written with: whatever the file's first
-/// terminated line uses, `\n` where it has nothing to say.
+/// Inserted lines use the file's first line terminator, or `\n` when the file
+/// has no terminated line.
 pub(super) fn file_eol(rows: &[Row]) -> &'static str {
     match rows
         .iter()
@@ -62,8 +62,8 @@ fn render_entries(entries: &[&SeededEnv], eol: &str) -> String {
 
 /// Merge into the settings text the entries `seeding` admits, byte-
 /// faithfully: the inserted block is the only change, spelled in the
-/// file's own line terminator. `None` = nothing to add. Returns the new
-/// text plus the keys that were added.
+/// file's own line terminator. `None` = nothing to insert. Returns the
+/// merged text plus the keys that were inserted.
 ///
 /// What is written is [`Seeding`]'s answer, not "every key the file does
 /// not have". A template's other keys ship values their own code already
@@ -111,7 +111,7 @@ pub fn merge(
     let rows = crate::settings_toml::rows(original);
     let eol = file_eol(&rows);
     let env = env_section(&rows);
-    // Where the new block lands: the end of the `[env]` section, or the end
+    // Where the inserted block lands: the end of the `[env]` section, or the end
     // of the file (with a header) when there is none.
     let insert_at = env.map_or(rows.len(), |(_, end)| end);
 

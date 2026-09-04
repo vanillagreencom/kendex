@@ -45,7 +45,7 @@ function stableValue(value: unknown): unknown {
 
 function stableTaskPanelFingerprint(state: TaskPanelState): string {
 	const { updatedAt: _ignored, ...rest } = state as TaskPanelState & { updatedAt?: string };
-	// kendex#183: hash to a fixed-size digest. Returning the full canonical
+	// hash to a fixed-size digest. Returning the full canonical
 	// JSON would embed the entire state inside the overflow manifest and
 	// defeat the 64 KiB cap.
 	return createHash("sha256").update(JSON.stringify(stableValue(rest))).digest("hex");
@@ -814,7 +814,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			return;
 		}
 		const sessionKey = sessionIdForContext(activeCtx);
-		// Fingerprint excludes updatedAt so cosmetic timestamp bumps don't burn a session entry (kendex#177).
+		// Fingerprint excludes updatedAt so cosmetic timestamp bumps don't burn a session entry.
 		const fingerprint = stableTaskPanelFingerprint(state);
 		if (lastFingerprintBySession.get(sessionKey) === fingerprint) return;
 		const snapshot = cloneState(state);
@@ -836,7 +836,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 				counts: { tasks: state.tasks.length, phases: state.phases.length },
 				updatedAt: state.updatedAt,
 			};
-			// kendex#183 defensive: the manifest itself must stay under cap.
+			// The manifest itself must stay under the cap.
 			const manifestBytes = Buffer.byteLength(JSON.stringify(manifest), "utf8");
 			if (manifestBytes <= TASK_PANEL_SNAPSHOT_MAX_BYTES) {
 				pi.appendEntry<TaskPanelBoundedManifest>(STATE_TYPE, manifest);
@@ -854,7 +854,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		state = sidecarState ?? emptyState(ctx.cwd);
 		for (const entry of ctx.sessionManager.getBranch()) {
 			if (entry.type === "custom" && entry.customType === STATE_TYPE) {
-				// kendex#184: any `fullSnapshot: false` manifest is a sidecar-wins
+				// Any `fullSnapshot: false` manifest is a sidecar-wins
 				// barrier. Without this, an older full snapshot earlier in the
 				// branch can replace the sidecar-restored state before the manifest
 				// is reached, regressing canonical state to stale data. Re-load

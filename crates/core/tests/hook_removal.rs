@@ -1,4 +1,4 @@
-//! What removal leaves behind, when the registration is no longer where
+//! What removal leaves behind when the registration has moved from where
 //! kendex put it. A script and the entry that runs it go together or not
 //! at all: an entry outliving its script points at a path with nothing at
 //! it, and the tool runs it anyway.

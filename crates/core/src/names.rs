@@ -64,10 +64,8 @@ fn is_device(segment: &str) -> bool {
 /// Whether the Win32 path parser hands this segment back exactly as
 /// written — the proof `paths::plain` needs before it takes a prefix off.
 ///
-/// Stated as what is proven rather than what is known to break, and
-/// deliberately: the parser rewrites more shapes than are worth listing,
-/// and the list was short three times. A segment nobody anticipated now
-/// reads as "cannot prove it", so the prefix stays and the path goes on
+/// The parser rewrites more shapes than are useful to list. A segment that
+/// this function cannot prove safe keeps its prefix, so the path goes on
 /// naming what it named — a spelling left ugly, never one left wrong.
 ///
 /// The proof is that every character is one the parser carries through, the

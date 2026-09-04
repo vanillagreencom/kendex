@@ -116,9 +116,8 @@ pub struct CatalogItem {
     pub name: String,
 }
 
-/// A plugin as an installable set. Phase 4 installs one of these as a unit;
-/// today it is what the browse view lists and what says which items came
-/// from the same place.
+/// A plugin as an installable set: what the browse view lists and what
+/// says which items came from the same place.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogGroup {
     pub name: String,

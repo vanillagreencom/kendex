@@ -496,14 +496,14 @@ reconcile_issues() {
 
     # Validate every cached id before it goes into the batch query. Linear's
     # `id: {in: [...]}` filter validates each entry as UUID-or-identifier and
-    # rejects the WHOLE query on one malformed entry (kendex#43: a handful of
+    # rejects the WHOLE query on one malformed entry: a handful of
     # test-fixture ids like `child-uuid` bricked every sync thereafter).
     # Malformed entries can never be real Linear issues, so they are also
     # purged from the cache below rather than kept around to re-poison every
     # future reconcile.
     # Identifier arm is UPPERCASE-only: Linear team keys are uppercase, and a
     # lowercase pattern would re-accept leaked fixture ids shaped like
-    # `uuid-1` — one of the exact values this regression is about.
+    # `uuid-1` — one of the exact values this failure is about.
     local id_shape_regex='^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[A-Z][A-Z0-9]*-[0-9]+)$'
     local valid_uuids invalid_uuids invalid_count
     valid_uuids=$(echo "$cached_uuids" | grep -E "$id_shape_regex" || true)
@@ -633,7 +633,7 @@ main() {
         esac
     done
 
-    # Fail-closed budget guard (kendex#1032): when the cache dir is a
+    # Fail-closed budget guard: when the cache dir is a
     # clobbered worktree-local real directory, refuse before touching the lock
     # or the API. Gated to syncs that would go full (--full, or no meta.json —
     # exactly what a freshly re-materialized empty dir looks like) or
@@ -671,15 +671,11 @@ main() {
     fi
     cache_ensure_dir
 
-    # One-time sweep of the per-issue lock files a pre-kendex#799 cache
-    # accumulated. Nothing opens those paths any more — comment writes share
-    # $CACHE_DIR/.comments.lock — so this disturbs no live lock, and without it
-    # a cache that carries them keeps them forever. It sits inside the sync lock
-    # and above the full/delta branch because a sync that finds nothing changed
-    # must sweep too; on a write path the common case never reaches it. Then
-    # `|| true`, because cleanup of files nothing opens must never refuse a
-    # sync: an unmatched glob exits 0 already, but one matched file that will
-    # not unlink would end the run right here, before any sync work and short
+# Sweep obsolete per-issue comment lock files. Comment writes use
+# $CACHE_DIR/.comments.lock, so no live writer opens these paths. The sweep sits
+# inside the sync lock and above the full/delta branch so every sync reaches it.
+# Cleanup is best-effort because a lock file that cannot be removed must not
+# refuse sync work or shorten
     # of cache_unlock, blaming a dead lock file for it.
     rm -f "$CACHE_DIR"/comments/*.json.lock || true
 
@@ -775,7 +771,7 @@ main() {
             # An aborted merge means the issues query returned less than the
             # cache holds — likely a transient/partial API result. Refusing
             # the overwrite is correct, but it must fail the sync loudly, not
-            # end as "no changes" (#930).
+            # end as "no changes".
             if ! cache_merge "issues.json" "$CACHE_DIR/.delta_issues.json"; then
                 rm -f "$CACHE_DIR/.delta_issues.json" "$CACHE_DIR/.delta_issues_raw.json" "$CACHE_DIR/.delta_comments.json"
                 cache_unlock

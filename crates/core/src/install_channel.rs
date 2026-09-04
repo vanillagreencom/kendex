@@ -146,7 +146,7 @@ pub fn in_appimage(appimage: Option<&OsStr>, appdir: Option<&OsStr>, exe: Option
 }
 
 /// A directory-valued variable's bytes need not be UTF-8. An
-/// exported-but-empty one matters here: `Path::new("")` has no components,
+/// exported-but-empty one matters here: a `Path` built from `""` has no components,
 /// so every path starts with it.
 fn said_dir(value: Option<&OsStr>) -> Option<&Path> {
     let dir = value?;

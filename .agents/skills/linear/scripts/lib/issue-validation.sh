@@ -62,7 +62,7 @@ completion_state_matches() {
 # target => session-root; bundle-expanded child => bundle-child; positional
 # target under --container => container); it — not parent_id — drives the
 # expected-state decision, so a parented issue run as the managed session root
-# is no longer forced to Done. It is a late, defaulted argument so the first
+# is not forced to Done. It is a late, defaulted argument so the first
 # four positions stay compatible with the original signature. parent_id is
 # retained for call-site provenance and to keep the record shape
 # self-describing.

@@ -1,6 +1,6 @@
-//! The add surface covers every installable kind, spelled the way §4.2
-//! says: per-kind flags for hooks, commands and MCP servers, bare names
-//! found by search, and Pi extensions refused toward their carrier.
+//! The add surface covers every installable kind: per-kind flags for
+//! hooks, commands and MCP servers, bare names found by search, and Pi
+//! extensions refused toward their carrier.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]
@@ -101,7 +101,7 @@ fn hook_command_and_mcp_server_flags_declare_and_install() {
 }
 
 /// `--pi-extension` reaches the engine and comes back with the carrier
-/// explanation, not a phase excuse.
+/// explanation, not a refusal that says nothing.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_pi_extension_flag_is_refused_toward_its_carrier_bundle() {

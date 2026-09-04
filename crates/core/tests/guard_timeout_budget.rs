@@ -3,11 +3,9 @@
 //!
 //! Two files that have to agree and no code that reads both: the constant
 //! carries a comment citing the hook's frontmatter, and the frontmatter
-//! carries a number. Raise one or lower the other and every test still
-//! passed while the bound stopped doing the only thing it was added for —
-//! the harness killing the hook mid-check and losing the whole drift report
-//! instead of the check folding a could-not-check line and the report
-//! printing.
+//! carries a number. Their relationship keeps the harness from killing the
+//! hook mid-check and losing the whole drift report before the check can
+//! fold a could-not-check line and print the report.
 
 use kendex_core::drift::hook::HOOK_SCRIPT;
 use kendex_core::guard::CHECK_TIMEOUT;

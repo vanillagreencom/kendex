@@ -1,6 +1,5 @@
-//! Review-driven pins: strictest-provenance merge, the edited-copy
-//! choice, licence evidence, cross-selection collisions, and the
-//! origin-overlap refusal.
+//! Strictest-provenance merge, the edited-copy choice, licence evidence,
+//! cross-selection collisions, and the origin-overlap refusal.
 
 use std::fs;
 

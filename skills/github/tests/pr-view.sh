@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for github.sh pr-view bounded auth and no-PR behavior.
+# Tests for github.sh pr-view bounded auth and no-PR behavior.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

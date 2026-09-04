@@ -26,8 +26,8 @@ vi.mock("@/bindings", () => ({
 beforeEach(() => {
   fresh();
   vi.clearAllMocks();
-  // A read that finds the credential replaced asks for the new account's
-  // rows, so the harness has an answer for it.
+  // A read that finds the credential replaced asks for the replacing
+  // account's rows, so the harness has an answer for it.
   vi.mocked(commands.mineSubmissions).mockResolvedValue({
     status: "ok",
     data: [],
@@ -83,8 +83,8 @@ describe("a call refused because the sign-in expired", () => {
     expect(useAccountStore.getState().submissions).toBeNull();
   });
 
-  // KEN-742 leaves the credential, and its cached identity, where the
-  // removal fails. An outage then answers `offline` off that warm cache
+  // A failed removal leaves the credential, and its cached identity, in
+  // place. An outage then answers `offline` off that warm cache
   // for a sign-in the server has already refused, and offline holds a
   // credential: without the same rule the signed-out answer gets, the dead
   // sign-in comes back usable and the Submit it cannot carry is offered
@@ -253,9 +253,9 @@ describe("a call refused because the sign-in expired", () => {
 });
 
 // The other refusal. It says nothing about the credential, so the account
-// stays where it is — but it does say the rows on screen are no longer
-// confirmed, and dropping that left the tab reporting work already in
-// review as never submitted.
+// stays where it is — but it does say the rows on screen are not current,
+// and dropping that leaves the tab reporting work already in review as
+// never submitted.
 describe("a submissions read the server could not answer", () => {
   const ROW = {
     repo: "ada/team-skills",
@@ -315,7 +315,7 @@ describe("a submissions read the server could not answer", () => {
   // are not current.
   //
   // The transport folds its own failure into the error arm as the message
-  // alone, so that — not a rejection — is what the poll now meets. Left
+  // alone, so that — not a rejection — is what the poll meets. Left
   // read by `kind` the message answers `undefined`, the write falls to the
   // arm that writes nothing, and an empty tab offers a first submit over
   // work already in review.

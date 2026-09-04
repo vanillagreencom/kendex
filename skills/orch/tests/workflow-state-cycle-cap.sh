@@ -6,7 +6,7 @@
 # taken, so the setting is the number of entries allowed and the stored count
 # never exceeds it: at a cap of 4 the fifth write is refused at exactly 4.
 #
-# `cycles` decides nothing here (KEN-592). It is the general fix-round tally
+# `cycles` decides nothing here. It is the general fix-round tally
 # `dev-fix.md` keeps, bumped by QA fix rounds and by review/submit fix rounds
 # that run before the loop starts; those must leave the loop budget untouched.
 # The failing direction runs first so a green pass is evidence.
@@ -88,7 +88,7 @@ after4="$("$WS" --state-dir "$sd" get KEN-1 .rereview_cycles)"
   && ok "the fifth entry is refused at the cap and spends nothing" \
   || bad "the fifth entry is refused at the cap and spends nothing" "rc=$rc got=$after4"
 
-# --- KEN-592: fix rounds outside the loop leave the loop budget alone -------
+# --- fix rounds outside the loop leave the loop budget alone --------
 # `dev-fix.md` increments `cycles` on EVERY fix round it runs — QA fixes in
 # review-pr § 7, and review.md / submit-pr.md rounds before the loop starts.
 # While the gate read `.cycles`, those rounds spent loop budget they never
@@ -107,7 +107,7 @@ budget="$("$WS" --state-dir "$sd_qa" get KEN-9 .rereview_cycles)"
   && ok "seven fix rounds spend no loop budget — the re-entry still passes" \
   || bad "seven fix rounds spend no loop budget — the re-entry still passes" "rc=$rc rereview_cycles=$budget"
 
-# --- KEN-592: the issue's scenario, end to end ----------------------------
+# --- the loop scenario, end to end --------------------------------
 # Four § 4 cycles reach the cap, a QA fix round follows, and its § 7 → § 6
 # re-check must run. The re-check panel goes to its own key: a QA re-check is
 # not a re-review cycle, so the cap neither refuses it nor counts it.
@@ -140,7 +140,7 @@ again="$("$WS" --state-dir "$sd_scn" get KEN-8 .rereview_cycles)"
   && ok "a second QA re-check is permitted and still spends nothing" \
   || bad "a second QA re-check is permitted and still spends nothing" "rc=$rc got=$again"
 
-# --- KEN-592: § 7 states which counter governs it -------------------------
+# --- § 7 states which counter governs it --------------------------
 # The doc side of the same separation. § 7 must name its own key and must not
 # read or raise the § 4 budget.
 # The pins are IDENTIFIERS and a heading reference — the key § 7 writes, the
@@ -196,7 +196,7 @@ plant() {
   ! cmp -s "$CTRL_SCRIPTS/workflow-state" "$WS"
 }
 
-# The pre-KEN-592 gate: read `.cycles`, the tally every fix round bumps. It
+# Tally control: read `.cycles`, the tally every fix round bumps. It
 # must refuse the very re-entry the fixed gate allows.
 if ! plant tally 's/(\.rereview_cycles \/\/ 0) as \\\$n/(.cycles \/\/ 0) as \\$n/'; then
   bad "tally control planted nothing — its sed program matched no text"
@@ -228,7 +228,7 @@ else
 fi
 
 # Planted control: a refusal carrying only the escalated half. The assertion
-# above must go red on it, or it is pinning nothing the round-1 wording did not
+# above must go red on it, or it is pinning nothing the shared wording did not
 # already satisfy.
 if ! plant supersede 's/ and drops its superseded fixed_items entry in the same write//'; then
   bad "supersede control planted nothing — its sed program matched no text"
@@ -246,7 +246,7 @@ else
   fi
 fi
 
-# The pre-fix wording: only the re-review cycle is stopped, which leaves a
+# The unguarded wording: only the re-review cycle is stopped, which leaves a
 # post-cap fix round licensed.
 if ! plant fix 's/ and no further fix round//'; then
   bad "fix-round control planted nothing — its sed program matched no text"
@@ -293,7 +293,7 @@ else
   fi
 fi
 
-# § 7 reverted to the shared key: the assertion must catch the counter
+# § 7 changed to the shared key: the assertion must catch the counter
 # coming back into the section that must not spend it.
 CTRL_WF="$TMP_ROOT/review-pr-shared.md"
 sed 's/the § 4 budget `REVIEW_MAX_CYCLES` bounds is neither read nor raised in this section/`rereview_cycles` is read here/' "$REVIEW_PR_WF" > "$CTRL_WF"
@@ -316,7 +316,7 @@ else
   bad "the assertion MISSED § 7 routing through the cap check again"
 fi
 
-# § 7 back to convergence exits alone: a loop whose every round finds a new
+# § 7 back to convergence exits alone: a loop whose every round finds an unseen
 # blocker would never end.
 CTRL_WF="$TMP_ROOT/review-pr-norecur.md"
 sed 's|\[finding-disposition[.]md § Recurrence\](../references/finding-disposition[.]md#recurrence).s structural close|a structural close|' "$REVIEW_PR_WF" > "$CTRL_WF"
@@ -378,7 +378,7 @@ done
 
 # --- the external round cap's own row --------------------------------------
 # The comment loop and submit-pr read REVIEW_MAX_EXTERNAL_ROUNDS through the
-# same table, and `review-external-rounds-cap.test.sh` used to prove its row
+# same table, and `review-external-rounds-cap.test.sh` would prove its row
 # from its own scratch repos. This is where that proof lives now. This repo's
 # `kendex.settings.toml` names every cap at the table's own number, so a bare
 # read here would hold whatever default the table carried. Where a default is
@@ -430,7 +430,7 @@ got="$(cd "$no_settings" && env -u CI_FIX_MAX_CYCLES "$WS" --state-dir "$cd_sd" 
 
 # The roster is derived, never spelled. The refusal and the help text once held
 # their own copies of it beside the two case arms that resolved a cap, so a cap
-# added in one place was missing from the others. Both must now name exactly the
+# included in one place was missing from the others. Both must now name exactly the
 # settings the table resolves.
 roster_of() { tr ',' '\n' <<<"$1" | tr -d ' ' | grep -v '^$' | sort; }
 refusal_roster="$(roster_of "$("$WS" --state-dir "$cd_sd" cap NOT_A_CAP 2>&1 >/dev/null | sed 's/.*(known: //; s/)$//')")"
@@ -495,7 +495,7 @@ got="$("$WS" --state-dir "$cd_sd" get KEN-CAP '.pr_comment_review.patched_causes
   || bad "the cause reaches the state verbatim, shell metacharacters and all" "got=$got"
 
 # The array is created where the field is absent — the // [] the workflows
-# used to spell at every call site.
+# would spell at every call site.
 "$WS" --state-dir "$cd_sd" append-file KEN-CAP pr_comment_review.frozen_causes "$cause" >/dev/null
 got="$("$WS" --state-dir "$cd_sd" get KEN-CAP '.pr_comment_review.frozen_causes | length')"
 [[ "$got" == "1" ]] && ok "append-file creates the array when the field is absent" \
@@ -521,7 +521,7 @@ append_strays() { grep -rnF 'patched_causes // []) + [' "$1" 2>/dev/null || true
 stray="$(append_strays "$REPO_ROOT/skills/orch/workflows")"
 [[ -z "$stray" ]] && ok "no workflow spells the patched_causes append by hand" \
   || bad "no workflow spells the patched_causes append by hand" "$stray"
-# Planted: the hand-spelled jq the workflows used to carry.
+# Planted: the hand-spelled jq the workflows would carry.
 CTRL_DIR="$TMP_ROOT/append-stray-workflows"
 mkdir -p "$CTRL_DIR"
 cat > "$CTRL_DIR/dev-fix.md" <<'CTRL'

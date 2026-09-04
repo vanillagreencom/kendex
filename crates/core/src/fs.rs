@@ -147,9 +147,8 @@ pub fn read_if_exists(path: &Path) -> Result<Option<String>> {
 /// structured storage, NTFS alternate data streams, security resource
 /// attributes and file attributes; on Unix it carries the mode, which a
 /// restored hook needs to still be executable. Neither carries the
-/// owner or the access-control list: a new file's ACLs are inherited
-/// from its parent directory, on both platforms and before this helper
-/// existed too.
+/// owner or the access-control list: a fresh file's ACLs are inherited
+/// from its parent directory, on both platforms.
 pub(crate) fn copy_file_durable(from: &Path, to: &Path) -> Result<()> {
     fs::copy(from, to).map_err(|e| CoreError::io(from, e))?;
     sync_written_file(to)
@@ -223,7 +222,7 @@ fn writable(mode: &fs::Permissions) -> fs::Permissions {
 
 /// Persist a directory's own entries — the names in it, not the bytes of
 /// what they name. Unix only: Windows has no handle to a directory to
-/// flush, so there a new or renamed *name* rides on the volume flush
+/// flush, so there a created or renamed *name* rides on the volume flush
 /// while the *bytes* under it are already durable, through
 /// `copy_file_durable` or `atomic_write_durable`. That asymmetry is the
 /// whole of the platform gap — file contents are guaranteed on both,

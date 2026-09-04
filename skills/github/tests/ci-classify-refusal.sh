@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for ci-classify-refusal: reducing a pr-merge refusal to
+# Tests for ci-classify-refusal: reducing a pr-merge refusal to
 # one cause: word, with fail:/superseded: detail run-correlated against the
 # checks snapshot embedded in pr-merge --check's JSON.
 set -euo pipefail

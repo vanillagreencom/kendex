@@ -286,7 +286,7 @@ describe("balanced policy caps inline text", () => {
 		// balanced caps: spill 48 KB, maxTextBlockKb 24 KB, maxLineCount 400,
 		// maxLineWidth 3000. Construct ~32 KB with every other cap comfortably
 		// under threshold so ONLY the per-block byte cap can fire — that proves
-		// the round-2 trigger and is not satisfied by line-width/line-count
+		// the threshold trigger and is not satisfied by line-width/line-count
 		// fallback if maxTextBlockKb were removed from the predicate.
 		withConfig({}, (cwd) => {
 			const ctx = fakeCtx(cwd);
@@ -808,7 +808,7 @@ describe("handler-level counter lifecycle", () => {
 						isError: false,
 					}, ctx);
 					const meta2 = r2.details.kendexOutputPolicy[0];
-					// Turn counter restarted from 0, then this call added saved bytes.
+					// The turn counter restarts before this call contributes saved bytes.
 					expect(meta2.turnSavedBytes).toBe(meta2.savedBytes);
 					expect(meta2.turnSavedBytes).toBeLessThan(meta1.sessionSavedBytes + meta2.savedBytes);
 					expect(meta2.sessionSavedBytes).toBe(meta1.sessionSavedBytes + meta2.savedBytes);
@@ -840,7 +840,7 @@ describe("handler-level counter lifecycle", () => {
 						isError: false,
 					}, ctx);
 					const meta2 = r2.details.kendexOutputPolicy[0];
-					// Session reset means sessionSavedBytes equals what this single call added.
+					// After session reset, sessionSavedBytes equals this call's saved bytes.
 					expect(meta2.sessionSavedBytes).toBe(meta2.savedBytes);
 					expect(meta2.turnSavedBytes).toBe(meta2.savedBytes);
 					resolveTest();

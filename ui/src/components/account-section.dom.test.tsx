@@ -107,15 +107,15 @@ describe("the state the section draws", () => {
     expect(host.textContent).toContain(ADA.name);
     expect(initial(host)).toBe("A");
     expect(offered(host)).toEqual([ACCOUNT_SIGN_OUT_LABEL]);
-    // A confirmed sign-in and an unconfirmed credential are the pair the
-    // old `hasCredential` read collapsed, and the name, the letter and the
-    // button are the same on both. The sentence and the marker are not.
+    // A confirmed sign-in and an unconfirmed credential share the name, the
+    // letter and the button. The sentence and the marker are what tell
+    // them apart.
     expect(host.textContent).toContain(ACCOUNT_SIGNED_IN_NOTE);
     expect(host.textContent).not.toContain(ACCOUNT_OFFLINE_LABEL);
   });
 
-  // The bug this section had: `hasCredential` is true for offline, so an
-  // unconfirmed credential drew as a confirmed sign-in.
+  // An offline account holds a credential too; holding one is not a
+  // confirmed sign-in.
   it("marks an unconfirmed credential offline, not signed in", () => {
     const host = show({
       account: { kind: "offline", identity: ADA },
@@ -129,8 +129,8 @@ describe("the state the section draws", () => {
     expect(offered(host)).toEqual([ACCOUNT_SIGN_OUT_LABEL]);
   });
 
-  // The other half of that bug: `hasCredential` is false for expired, so a
-  // rejected credential drew as a plain signed-out account.
+  // An expired account holds no credential either, and is still not a
+  // plain signed-out account.
   it("says a rejected credential was rejected, not signed out", () => {
     const host = show({ account: { kind: "expired" } });
     expect(host.textContent).toContain(ACCOUNT_EXPIRED_TITLE);

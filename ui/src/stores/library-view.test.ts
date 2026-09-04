@@ -3,8 +3,9 @@ import { NO_FILTERS, useLibraryViewStore } from "./library-view";
 
 describe("library view store", () => {
   // Reset to what the store was created with rather than to a restatement of
-  // it, so a filter added to the strip is reset here without anyone editing
-  // this line — and so the opening state below is the store's own answer.
+  // it, so a filter the strip gains later is reset here without anyone
+  // editing this line — and so the opening state below is the store's own
+  // answer.
   beforeEach(() => {
     useLibraryViewStore.setState(useLibraryViewStore.getInitialState(), true);
   });

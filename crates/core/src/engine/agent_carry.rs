@@ -93,10 +93,9 @@ impl AgentCarry {
 /// `in_scope` is the scope the operation leaves behind, so an assignment
 /// nothing there can answer refuses now — the same rule the renderer
 /// applies to a recorded fork, at the moment the copy is made rather than
-/// the moment it is next rendered. Left to the renderer alone it arrives
-/// too late: the copy is already written, its next audit fails, and the
-/// section it kept as prose becomes a second copy the day the source
-/// comes back.
+/// the next rendering. Left to the renderer alone, the copy is already
+/// written and its next audit fails. The prose section then duplicates when
+/// the source becomes readable.
 pub(crate) fn agent_carry(
     manifest: &Manifest,
     sealed: &SealedSource,
@@ -231,7 +230,7 @@ fn carry<T: Clone>(table: &mut BTreeMap<String, T>, from: &str, to: &str, gone: 
     }
 }
 
-/// Point one hook's agent selector at the new name. A selector naming the
+/// Point one hook's agent selector at the target name. A selector naming the
 /// agent reaches the copy only by saying so, and after a rename it points
 /// at a name nothing answers to, which is how an agent-scoped `PreToolUse`
 /// restriction disappears.
@@ -268,7 +267,7 @@ fn reselect(agents: &mut HookAgents, from: &str, to: &str, gone: bool) {
 }
 
 /// Why an agent's configuration cannot travel from `from` to `to`: this
-/// scope already configures an agent under the new name, or the new name
+/// scope already configures an agent under the target name, or that name
 /// is a spelling some reader takes for a population and cannot hold one
 /// agent's. One question, because a caller asking half of it writes a key
 /// that means something wider than it meant to.
@@ -359,7 +358,7 @@ fn gated_by_name<'a>(manifest: &'a Manifest, name: &str) -> Option<&'a CustomHoo
 /// refusing it there would invent a naming rule the operation never
 /// needed.
 fn unwritable_under(manifest: &Manifest, from: &str, to: &str) -> Option<String> {
-    // What the new spelling would gate, said as the refusal says it, or
+    // What the target spelling would gate, said as the refusal says it, or
     // `None` where it names one agent and the selector can simply move.
     let population = match crate::render::agent::selects(to) {
         Selects::Named => None,

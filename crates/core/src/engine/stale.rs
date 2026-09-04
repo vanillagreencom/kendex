@@ -1,7 +1,7 @@
-//! What an earlier install left that the record this pass writes no longer
-//! accounts for: files under positions nothing renders anymore, and config
-//! rows pointing at them. Both sweeps judge by the new lock, never by what
-//! this pass happened to render.
+//! What a previous install left that the record this pass writes does not
+//! account for: files under positions nothing renders anymore, and config
+//! rows pointing at them. Both sweeps judge by the written lock, never by
+//! what this pass happened to render.
 
 use crate::apply::PlannedOp;
 use crate::env::Env;
@@ -12,9 +12,9 @@ use crate::model::{ItemKind, Scope};
 use super::config_edits::ConfigEditPlan;
 use super::removal::{TrashGuard, trash};
 
-/// An earlier install of a still-declared item wrote somewhere this one will
+/// A previous install of a still-declared item wrote somewhere this one will
 /// not: a codex command whose emitted name changed when a skill claimed it,
-/// a skill whose link a later layout no longer produces. What it left is
+/// a skill whose link a later layout does not produce. What it left is
 /// ours and nobody wants it now — without this it stays on disk forever,
 /// offered by the tool under a name nobody declared, or absolute and
 /// committed.
@@ -81,7 +81,7 @@ pub(super) fn stale_emitted(
 /// pre-rename tool's render — is not this sweep's to take, exactly as the
 /// scan surface observes only marker-named files there.
 ///
-/// Planned only where the lock — old or new — shows kendex registering
+/// Planned only where the lock — previous or written — shows kendex registering
 /// instruction rows at this scope: a config kendex never wrote into holds
 /// nothing of ours to sweep. A config that cannot be read back is skipped,
 /// not failed: every registration into it already reports that conflict,

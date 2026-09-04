@@ -114,11 +114,11 @@ dir="$DIR"
 cp "$dir/.github/workflows/review-gate-writer.yml" "$dir/.github/workflows/scratch.yml"
 expect_clean "an UNTRACKED workflow copy is not counted as a second writer" "$dir"
 
-# ONE assertion, many spellings. Every case below satisfied some earlier
+# ONE assertion, many spellings. Every case below satisfied some prior
 # derived check while breaking the contract — a flipped operator, an appended
 # `|| true`, a substring activity type, an inline flow mapping, a foreign
 # `repository:`, a downgraded permission. Under equality they are one thing:
-# the copy stopped being a copy. Adding a spelling to this list needs no new
+# the copy stopped being a copy. Adding a spelling to this list needs no separate
 # rule in the validator, which is the point of the model.
 diverges() { # NAME SED-EXPR
   sandbox

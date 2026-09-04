@@ -28,7 +28,7 @@ const placeWord = (scopes: Scope[]): string =>
  *
  *  One rule wherever it is drawn. A Library row and the package's own
  *  header ask the same question about the same package, so a header that
- *  answered only for the place its page was opened at had the app
+ *  answered only for the place its page was opened at would have the app
  *  contradicting itself — "3 of 3 places" on the row, "Customized in
  *  hyprtrade" on the page, both true by their own rule and neither saying
  *  which question it answered.

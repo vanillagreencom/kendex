@@ -114,10 +114,10 @@ describe("settings store", () => {
     expect(useSettingsStore.getState().settings).toEqual(updated);
   });
 
-  /// The refusal that closes the class: a copy read before something else
-  /// wrote the file is never applied. The change is a field-level intent,
-  /// so it is carried onto a freshly read copy and written again — nothing
-  /// the stale copy predated is reverted, and the person sees no error.
+  /// The refusal: a copy read before something else wrote the file is
+  /// never applied. The change is a field-level intent, so it is carried
+  /// onto a freshly read copy and written again — nothing the stale copy
+  /// predated is lost, and the person sees no error.
   it("re-reads and re-applies the change when the copy in hand is stale", async () => {
     useSettingsStore.setState({ settings, base: "old" });
     const onDisk = { ...settings, projects: ["/home/x/acme-web"], zoom: 150 };

@@ -64,7 +64,7 @@ fn the_repository_effect_is_disclosed_and_not_applied_without_a_yes() {
     );
     assert!(out.contains("to undo:"), "{out}");
 
-    // Marked path by path. A sentence under the whole list said the
+    // Marked path by path: a sentence under the whole list would claim the
     // repository shares every file in it, including the checkout-local one.
     assert!(out.contains(".git/hooks/pre-commit  (shared)"), "{out}");
     assert!(

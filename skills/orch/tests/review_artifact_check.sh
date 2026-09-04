@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for review-artifact-check: deterministic on-disk acceptance
+# Tests for review-artifact-check: deterministic on-disk acceptance
 # of reviewer JSON artifacts in the orch review-pr workflow.
 
 set -euo pipefail
@@ -236,7 +236,7 @@ assert_eq "$rc" "1" "--file missing verdict exits 1"
 assert_eq "$(jq -r '.reason' <<<"$out")" "invalid" "--file missing verdict reports reason=invalid"
 assert_eq "$(jq -r '.path' <<<"$out")" "$ext_invalid" "--file invalid reports the file path"
 
-# --- no_review: self-reported no-review artifacts are rejected (kendex#652) ---
+# --- no_review: self-reported no-review artifacts are rejected ---
 # A schema-valid pass verdict whose qa_metadata admits no review happened must
 # never validate, regardless of verdict.
 noreview="$worktree/tmp/review-external-20260718-010101.json"
@@ -269,7 +269,7 @@ assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--file artifact without qa_metadata
 assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file artifact without qa_metadata reports reason=valid"
 
 # empty qa_metadata (the schema's performed-review shape) with the finding
-# arrays validates — declaring qa_metadata requires the arrays (kendex#678)
+# arrays validates — declaring qa_metadata requires the arrays
 empty_qa="$worktree/tmp/review-external-20260718-040404.json"
 printf '{"verdict":"pass","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}' > "$empty_qa"
 out="$("$CHECK" --file "$empty_qa")"
@@ -296,7 +296,7 @@ assert_eq "$(jq -r '.path' <<<"$out")" "$glob_noreview" "glob no-review report p
 # ...and it is TERMINAL: an older fresh sibling does NOT rescue it. no_review is
 # the reviewer's self-report about the RUN, and the prescribed self-check
 # boundary of 0 makes every prior artifact fresh, so falling back would answer
-# "did some earlier round leave a file?" instead of "did this review happen?"
+# "did some prior round leave a file?" instead of "did this review happen?"
 glob_valid="$worktree/tmp/review-reviewer-ext-20260718-000000.json"
 printf '{"verdict":"pass","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$glob_valid"
 touch -d "@$after" "$glob_valid"
@@ -316,7 +316,7 @@ touch -d "@$before" "$glob_noreview"
 expect_glob_valid "$worktree" reviewer-ext "$delegated_at" "$glob_valid" "a STALE no-review artifact does not block a fresh valid one"
 touch -d "@$later" "$glob_noreview"
 
-# --- incomplete: qa-shaped artifacts must carry the finding arrays (kendex#678) ---
+# --- incomplete: qa-shaped artifacts must carry the finding arrays ---
 # A truncated write can keep verdict/summary while losing blockers/suggestions —
 # schema-valid on the `.verdict` gate, but the findings are gone. An artifact
 # that declares qa_metadata without the arrays is rejected reason=incomplete;
@@ -407,7 +407,7 @@ for pct in 20 40 60 80 90 95 99; do
 done
 assert_eq "$trunc_bad" "" "every prefix truncation is rejected as invalid before any content gate"
 
-# --- incomplete: qa-shaped artifacts must carry USABLE finding items (kendex#810) ---
+# --- incomplete: qa-shaped artifacts must carry USABLE finding items ---
 # qa_shaped_incomplete only catches arrays lost wholesale. An artifact can carry
 # present, non-empty blockers[]/suggestions[] whose ITEMS omit the required
 # review-finding fields — present in prose but unroutable, because the
@@ -485,7 +485,7 @@ out="$("$CHECK" --file "$okblk")"
 assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "--file blocker without category is valid (category is suggestions-only)"
 
 # priority/estimate range + type per review-finding.md (priority 1..4, estimate
-# 1..5, kendex#810): a present-but-out-of-range or non-numeric value is unusable
+# 1..5: a present-but-out-of-range or non-numeric value is unusable
 badpri="$worktree/tmp/review-external-20260810-090909.json"
 printf '{"verdict":"pass","blockers":[],"suggestions":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":5,"estimate":2,"category":"fix"}],"qa_metadata":{}}' > "$badpri"
 set +e; out="$("$CHECK" --file "$badpri")"; rc=$?; set -e
@@ -746,7 +746,7 @@ assert_eq "$rc" "0" "the bare three-positional contract still validates"
 
 echo "=== -h/--help answers before any temp-file initialization (KEN-556) ==="
 
-# Token pins per KEN-555: the heredoc is the contract's sole home.
+# Token pins per: the heredoc is the contract's sole home.
 set +e
 help_out="$("$CHECK" --help 2>"$TMP_ROOT/help.err")"
 rc=$?

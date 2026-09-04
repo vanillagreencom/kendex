@@ -185,7 +185,7 @@ extract() { # extract SHA into $1, stamped past the build before it
 run_command() { # run $2 in $1, capture output in $3, label it $4
   dir="$1" command="$2" log="$3" label="$4"
 
-  # A handler cannot stop the new group until the fork's pid is assigned.
+# A handler cannot stop the child group until the fork's pid is assigned.
   # Record cancellation across that window, then exit once cleanup owns it.
   CANCEL_RC=""
   trap 'request_cancel 129' HUP

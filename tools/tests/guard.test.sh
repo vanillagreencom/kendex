@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pins what tools/guard still judges once the shipped packages judge the
-# rest: new test fixtures take their canonical root at creation, and that is
+# rest: test fixtures take their canonical root at creation, and that is
 # nearly all of it.
 # It also pins the absence — a size cap, an undeclared size-ratchet row, a
 # work marker, a blanket allow, an oversized file, a malformed fragment, an
@@ -323,7 +323,7 @@ echo "=== this suite isolates every RATCHET_ key the gate reads ==="
 # reach a file outside it — so the one suite here that runs the gate (through
 # guard's size-ratchet lane, and again as the control above) asserts it where
 # it lives. The keys are derived from the script this suite actually runs, so
-# a key added there is covered without anyone remembering this list.
+# every key there is covered without a second list.
 ratchet_keys="$(grep -rhoE '[A-Z_]*RATCHET_[A-Z][A-Z_]*' "$(dirname "$RATCHET")" | LC_ALL=C sort -u)"
 missing_keys=""
 for key in $ratchet_keys; do
@@ -445,7 +445,7 @@ else
 fi
 git -C "$R" checkout -q -- skills .agents
 
-# Rendered is judged at the tree, so a new file in a rendered skill owes a
+# Rendered is judged at the tree, so each file in a rendered skill owes a
 # render the tree does not track yet.
 printf '#!/usr/bin/env bash\necho added\n' >"$R/skills/demo/scripts/added.sh"
 git -C "$R" add skills/demo/scripts/added.sh
@@ -545,7 +545,7 @@ run_guard
   || bad "an agent edit with one harness render deleted reds, naming that render alone" "rc=$RC out=$OUT"
 git -C "$R" checkout -q -- agents .claude/agents .codex .pi
 
-# A new agent definition owes a render to every harness directory that
+# An agent definition owes a render to every harness directory that
 # tracks any, though none of its own is tracked yet. The control puts the
 # per-file judgement back — a render owed only when it is already tracked.
 printf '# fresh agent\n' >"$R/agents/fresh.md"

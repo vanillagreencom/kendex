@@ -1,5 +1,5 @@
 // Must load before any bridge module: diag assertions need the debug flag
-// set when src/debug.ts is evaluated (VST-15).
+// set when src/debug.ts is evaluated.
 import "./lib/debug-env.mjs";
 
 import assert from "node:assert/strict";
@@ -166,7 +166,7 @@ const STREAMED_TEXT = (text) => [
 
 describe("legacy sessions (no account router)", () => {
 	it("completes a rejected rate limit + streamed recovery exactly like a success", async () => {
-		// The B1 regression: a rejected five_hour rate_limit_event followed by
+		// A rejected five_hour rate_limit_event followed by
 		// the SDK's own fallback-model recovery must yield ONE rate-limit
 		// notification, NO trailing error event, and a persisted session.
 		let calls = 0;
@@ -218,7 +218,7 @@ describe("legacy sessions (no account router)", () => {
 		// Surfacing a terminal failure ends the Pi stream. A continuation query
 		// spawned after that would run with its output invisible while its tool
 		// side effects still execute — so the deferred-replay loop must not run.
-		// The dropped steers must be dropped LOUDLY (#967): the cursor already
+		// The dropped steers must be dropped LOUDLY: the cursor already
 		// advanced over them on the promise of replay, so the surviving record
 		// must carry needsRebuild (rebuild re-imports them from Pi history) and
 		// the drop must be diagnosed.
@@ -246,14 +246,14 @@ describe("legacy sessions (no account router)", () => {
 		assert.equal(sharedSession?.needsRebuild, true, "record with dropped steers behind its cursor must rebuild");
 		const diag = readDiagLog();
 		assert.match(diag, /deferred_user_messages_dropped/, "the drop must be diagnosed");
-		// VST-15: the entry records count + text length — never the steer's content.
+		// the entry records count + text length — never the steer's content.
 		assert.doesNotMatch(diag, /queued steer/, "no user-authored text in the diagnostic");
 		assert.match(diag, /"textLengths":\[12\]/, "the entry records the dropped steer's length");
 	});
 
 	it("surfaces other non-success result subtypes as an explicit error and persists the session", async () => {
-		// S6: error_max_turns / error_during_execution used to end the turn
-		// silently; they now surface — with session bookkeeping intact.
+		// error_max_turns and error_during_execution must surface while session
+		// bookkeeping remains intact.
 		__testSetSdkQueryFactory(() => fakeSdkQuery([
 			{ type: "system", subtype: "init", session_id: "session-legacy" },
 			...STREAMED_TEXT("partial work"),
@@ -416,8 +416,8 @@ describe("managed account stream rotation", () => {
 	});
 
 	it("surfaces a mid-retry throw as an error event instead of ending the stream silently", async () => {
-		// VST-53: the retry drain used to end the stream in a `finally`, so a
-		// throw while forwarding the rotated attempt's events ended the stream
+		// A throw while forwarding the rotated attempt's events must surface
+		// instead of ending the stream
 		// FIRST and the pipeline .catch then pushed its error event into an
 		// already-ended stream — a silent drop. The consumer read a failed
 		// rotation as a normal completion.
@@ -785,7 +785,7 @@ describe("reentrant subagent queries and the shared session (C1)", () => {
 	it("a foreign short context arriving mid-query never shrinks the parent cursor", async () => {
 		// While a parent query is active, a reentrant subagent call routed through
 		// this instance lands in the tool-result delivery path carrying ITS OWN
-		// short conversation. Writing that context's length used to shrink the
+		// short conversation. Writing that context's length would shrink the
 		// parent's cursor from 40 down to the foreign context's length.
 		const parentRecord = { sessionId: "parent-session-0001", cursor: 40, cwd: "/parent" };
 		runInRequestLane("parent", () => __testSetBridgeIntegrityState({ sharedSession: { ...parentRecord } }));
@@ -830,8 +830,8 @@ describe("reentrant subagent queries and the shared session (C1)", () => {
 	it("a subagent-shaped fresh query gets no resume id from the parent record", async () => {
 		// A subagent call can also arrive while no query is active (parent idle
 		// between turns). Its short [user] context with the parent's large cursor
-		// used to CLAMP into a REUSE plan that resumed the parent's Claude
-		// session; the plan now rejects and the query runs as a clean one-shot.
+		// must not CLAMP into a REUSE plan for the parent's Claude session. The
+		// plan rejects and the query runs as a clean one-shot.
 		runInRequestLane("subagent", () => __testSetBridgeIntegrityState({ sharedSession: { sessionId: "parent-session-0002", cursor: 40, cwd: "/parent" } }));
 		let queryOptions;
 		__testSetSdkQueryFactory((input) => {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression coverage for worktree_for_branch (kendex#575): success must
+# Tests for worktree_for_branch: success must
 # always carry a non-empty worktree path, so command-substitution callers can
 # treat empty output as "no worktree" without also getting exit 0.
 set -euo pipefail

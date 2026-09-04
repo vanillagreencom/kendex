@@ -115,10 +115,10 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     set({ reading: false });
     // A read overtaken by a sign-in or sign-out is news about an account
     // that has already moved on, and writing it would show a credential
-    // this machine no longer holds.
+    // this machine has already given up.
     if (handover.stale(before)) return;
     if ("error" in answer) {
-      // A read that failed knows nothing new, so it never takes anything
+      // A read that failed learned nothing, so it never takes anything
       // away. Where it reached kendex.ai and came back with nothing, an
       // identity already in hand is exactly offline; a credential without
       // a name stays signed in, and a state never read stays unread with

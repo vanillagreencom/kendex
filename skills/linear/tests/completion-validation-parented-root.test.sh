@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Regression test for kendex #519.
+# Tests for completion validation of parented session roots.
 #
-# completion_expected_state() used to return "Done" for ANY issue with a parent,
+# completion_expected_state() must not return "Done" for every issue with a parent,
 # so a decomposition child run as the managed top-level session (kept In Review
 # until PR merge per orch start-worktree.md § 5.3) failed validate-completion's
 # state_ok gate. The lib now keys the expected state on an explicit call-site
@@ -10,7 +10,7 @@
 #   - session-root : the managed top-level issue (parented or not) -> expects a
 #                    pre-merge managed state (In Progress OR In Review).
 #
-# This exercises the pure function lib directly (no network). The pre-fix lib
+# This exercises the pure function lib directly (no network). The unguarded lib
 # fails the case-2 assertions below (a parented session root in In Review/In
 # Progress yielded state_ok=false).
 
@@ -25,7 +25,7 @@ LIB="$SCRIPT_DIR/../scripts/lib/issue-validation.sh"
 source "$LIB"
 
 # assert_result LABEL WANT_STATE_OK WANT_OK -- <args to build_completion_validation_result>
-# Defensive against a build failure (e.g. a pre-fix signature mismatch): a
+# Defensive against a build failure (e.g. a unguarded signature mismatch): a
 # nonzero/invalid result is recorded as a clean failure rather than aborting.
 assert_result() {
 	local label="$1" want_state_ok="$2" want_ok="$3"
@@ -55,8 +55,8 @@ assert_result "case1 bundle-child Done"       true  true  "CC-C1" "Done"      "C
 assert_result "case1 bundle-child In Review"  false false "CC-C1" "In Review" "CC-PARENT" "true" "bundle-child"
 assert_result "case1 bundle-child In Progress" false false "CC-C1" "In Progress" "CC-PARENT" "true" "bundle-child"
 
-# --- Case 2: managed session-root issue WITH a parent (the #519 fix) ---
-# No longer forced to Done; accepts the pre-merge managed state.
+# --- Case 2: managed session-root issue WITH a parent ---
+# Accepts the pre-merge managed state instead of forcing Done.
 assert_result "case2 parented root In Review"   true  true  "CC-R1" "In Review"   "CC-PARENT" "true" "session-root"
 assert_result "case2 parented root In Progress" true  true  "CC-R1" "In Progress" "CC-PARENT" "true" "session-root"
 assert_result "case2 parented root Backlog"     false false "CC-R1" "Backlog"     "CC-PARENT" "true" "session-root"
@@ -86,4 +86,3 @@ assert_result "case5 container In Progress"          true  true  "CC-P1" "In Pro
 assert_result "case5 container already Done"         true  true  "CC-P1" "Done"        "" "false" "container" "completed"
 assert_result "case5 container canceled fails"       false false "CC-P1" "Canceled"    "" "false" "container" "canceled"
 assert_result "case5 container missing state_type fails closed" false false "CC-P1" "Todo" "" "false" "container" ""
-

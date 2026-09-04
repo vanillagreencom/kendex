@@ -40,7 +40,7 @@ describe("PackageHeader", () => {
     const shown = render(mark);
     // The kind icon takes the customized colour, as it does on the row.
     expect(shown).toContain("translate-y-[0.1875rem] text-customized");
-    // And the words are plain text, not the pill this header used to draw.
+    // And the words are plain text, not a pill.
     expect(shown).not.toContain("badge");
   });
 

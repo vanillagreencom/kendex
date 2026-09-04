@@ -32,7 +32,7 @@ pub enum GuardCommand {
 ///
 /// The package prints one summary line on stdout and its warnings on stderr,
 /// and a caller piping `kendex guard check` is reading for that one line.
-/// Relaying both to stdout handed them a `::warning::` stream to filter.
+/// Relaying both to stdout would hand them a `::warning::` stream to filter.
 fn report(report: &GuardReport) -> ExitCode {
     for line in &report.stderr {
         say(line);

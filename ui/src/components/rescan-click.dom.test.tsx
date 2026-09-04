@@ -4,8 +4,8 @@
 // not nag — but somebody who pressed a button is waiting on an answer, and
 // silence there reads as a scan that worked. That only holds if the click
 // path asks to be told, which is a thing about the call sites and not about
-// `rescanEverything`: the option was inert for a whole round because every
-// caller took the default.
+// `rescanEverything`: a caller that takes the default leaves the option
+// inert.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
 import { ProblemCard } from "@/components/problem-card";
@@ -50,8 +50,8 @@ beforeEach(() => {
   vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
   // Home reads the marketplaces overview on mount. It is nothing to do
   // with the button under test, and a command still in flight when the
-  // file's module registry comes down throws from a mock that is no longer
-  // there — so the store's own read is stubbed out rather than mocked at
+  // file's module registry comes down throws from a mock already torn
+  // down — so the store's own read is stubbed out rather than mocked at
   // the command.
   useMarketplacesStore.setState({ load: async () => {} });
   useScanStore.setState({

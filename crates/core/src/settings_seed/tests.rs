@@ -159,7 +159,7 @@ fn a_seed_lands_after_the_env_table_and_never_inside_a_value() {
     );
     assert!(text.contains("DEPTH = \"2\""), "{text}");
 
-    // And a header the boundary test used to miss ends the section.
+    // And a header carrying a trailing comment ends the section.
     let commented = "[env]\nMODE = \"a\"\n\n[other] # note\nKEEP = \"b\"\n";
     let (text, _) = merge(Some(commented), &seeded, &all(&seeded)).expect("DEPTH is missing");
     let depth = text.find("DEPTH").expect("seeded");
@@ -224,7 +224,7 @@ fn membership_tracks_the_loaders_where_the_boundary_tracks_toml() {
 
 /// Every spelling TOML gives the env table is the table a seed lands in.
 /// Missing one appends a second `[env]`, which is the duplicate-table
-/// corruption this has now been fixed for three spellings running.
+/// corruption these spellings guard against.
 #[test]
 fn any_spelling_of_the_env_header_is_the_table_a_seed_lands_in() {
     let seeded = [SeededEnv {

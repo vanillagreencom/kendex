@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for worktree-push: the push wrapper that reconciles
+# Tests for worktree-push: the push wrapper that reconciles
 # rebased commit SHAs in workflow state. A `rebase-map:` line from the
 # worktree skill's push must land in `.rebase_map` and rewrite every recorded
 # fix commit in the same call — including when the network push itself fails,
@@ -130,7 +130,7 @@ assert_contains "$(cat "$args_log")" "push $wt --set-upstream" "worktree push re
 STUB_PUSH_STDOUT="" run_push "$work" "--worktree=$wt" --issue=KEN-1
 assert_eq "$RUN_RC" "0" "equals-form flags parse"
 
-# KEN-570: the wrapper keeps no copy of push's flag vocabulary. A flag it does
+# the wrapper keeps no copy of push's flag vocabulary. A flag it does
 # not own is forwarded verbatim, and `worktree push` — which fails closed on an
 # unknown flag — is the one that rejects it.
 : >"$args_log"
@@ -142,7 +142,7 @@ STUB_ARGS_LOG="$args_log" STUB_PUSH_EXIT=1 run_push "$work" --worktree "$wt" --i
 assert_eq "$RUN_RC" "1" "a flag push rejects fails the wrapper with push's own exit code"
 assert_contains "$(cat "$args_log")" "push $wt --force" "the rejected flag reached push rather than being screened here"
 
-# KEN-570: a mangled --state-dir (--sate-dir here, a transposition no prefix
+# a mangled --state-dir (--sate-dir here, a transposition no prefix
 # guess catches) is push's to reject, not this wrapper's — the flag vocabulary
 # lives in one place. This case runs the REAL worktree script, so the two
 # scripts' wiring is held: the argument order the wrapper sends, and push's
@@ -236,7 +236,7 @@ assert_eq "$(cat "$live_state/tmp/workflow-state-KEN-LIVE.json" | jq -r ".rebase
 
 # The record's existence is the conjunct that decides in the PERMISSIVE
 # direction, so only a passing push can prove it. An implement round mints a
-# round id through new-round-id and never runs dev-round-write, so its state
+# round id through `workflow-state new-round-id` and never runs dev-round-write, so its state
 # names a round with no record at all: without this check every such push would
 # refuse, and a suite of refusal assertions alone would call that correct.
 (cd "$live_state" && "$STATE" set KEN-LIVE dev_round_id 9-9)
@@ -280,10 +280,10 @@ echo "=== --check-live-round answers the question alone, for the restack path ==
 
 # merge-pr's restack cycle rebases without reaching the push, so it asks here.
 # Exit 0 permits the rebase, 3 is a live round, and anything else is a question
-# left unanswered — which is not permission (kendex#944).
+# left unanswered — which is not permission.
 check_args="$TMP_ROOT/check-args.log"
 : > "$check_args"
-# The must-fail control above left round 1-1 live; land its receipt again so
+# The must-fail control above left -1 live; land its receipt again so
 # this block starts from a branch that may be rebased.
 "$RETURN_WRITE" --worktree "$live_wt" --kind fix --issue KEN-LIVE --round-id 1-1 \
   --branch main --commit "$live_head" --validate pass --item 1 Applied done >/dev/null

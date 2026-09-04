@@ -1,8 +1,8 @@
-// VST-15: diagnostics discipline.
+// diagnostics discipline.
 //
 // 1. diagDump is gated on CLAUDE_BRIDGE_DEBUG exactly like debug(): a host
-//    that has not opted into debugging gets NO diag file — previously every
-//    "should never happen" path wrote to disk unconditionally, including
+//    that has not opted into debugging gets NO diag file. This includes
+//    every "should never happen" path.
 //    60-char previews of user-authored prompt text, outside any host app's
 //    retention boundary.
 // 2. The deferred_user_messages_dropped entry carries counts/sites/lengths
@@ -60,8 +60,8 @@ function runProbeChild({ debugOn }) {
 
 // Run a child (DEBUG on) whose debug() call mixes healthy args with args whose
 // formatting throws: a throwing thunk, a circular structure, and a BigInt
-// (JSON.stringify throws on the last two). kendex#1041: the formatting used to
-// run outside debug()'s try, so any of these aborted the caller — including
+// (JSON.stringify throws on the last two). Formatting must stay inside
+// debug()'s try so none of these aborts the caller, including
 // the consumeQuery stream loop.
 function runThrowingArgsProbeChild() {
 	const scriptPath = join(dir, "probe-throwing-args.mjs");

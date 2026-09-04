@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test: the Linear CLI must never substitute a guessed team.
+# the Linear CLI must never substitute a guessed team.
 #
 # A team name resolves inside whatever workspace LINEAR_API_KEY reaches, so a
 # hardcoded default silently targets another project's tracker. With no team

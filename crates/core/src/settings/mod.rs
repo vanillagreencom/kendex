@@ -94,8 +94,8 @@ pub fn load(env: &Env) -> Result<AppSettings> {
 }
 
 /// The settings and the base of the file they came from, from one read.
-/// Read apart, the settings could be the old file's and the base the new
-/// one's, and the write that follows would be accepted over the writer in
+/// Read apart, the settings could be the old file's and the base the
+/// replacement's, and the write that follows would be accepted over the writer in
 /// between.
 pub fn read_for_mutation(env: &Env) -> Result<(AppSettings, Base)> {
     let path = env.settings_file();
@@ -183,7 +183,7 @@ pub fn mutate(
 }
 
 /// The whole-file write path: replace everything with a copy something
-/// held, refusing a copy of a file that is no longer there. Returns the
+/// held, refusing a copy of a file that is not there. Returns the
 /// base of the bytes written — the base for the next write from the same
 /// copy. There is no way to write a whole settings object without
 /// presenting the base its copy was read from.

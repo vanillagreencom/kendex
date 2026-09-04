@@ -10,9 +10,9 @@ import { toast } from "sonner";
  *  Every line, uncut. Nothing below the window can tell kendex's own
  *  stand-down notices from a departing package's output by the time the
  *  account reaches here, so a cut by position would eat whichever line
- *  happens to fall past it — and the first one it ate was a later
- *  package's "declares no uninstaller" notice, the only place kendex says
- *  an effect was left standing and names the manual remedy. */
+ *  happens to fall past it — a later package's "declares no uninstaller"
+ *  notice, the only place kendex says an effect was left standing and
+ *  names the manual remedy. */
 export function sayUndone(undone: string[] | undefined) {
   for (const line of undone ?? []) toast.message(line);
 }

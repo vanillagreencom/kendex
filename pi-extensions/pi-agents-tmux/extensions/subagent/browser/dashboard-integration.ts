@@ -15,7 +15,7 @@ export function activeDashboardItems(items: SubagentDashboardItem[]): SubagentDa
 
 // Multiple bg launches of the same agent name produce distinct dashboard rows
 // (keyed by taskId). Disambiguate the rendered label with a 1-based occurrence
-// suffix in start-time order: "reviewer-arch", "reviewer-arch 2", ... Pane
+// suffix in start-time order: "reviewer", "reviewer 2",... Pane
 // agents collapse to a single row per name so they never collide here.
 export function dashboardDisplayLabels(items: SubagentDashboardItem[], persistentTaskNumbers?: Map<string, number>): Map<string, string> {
 	// Numbering source order:

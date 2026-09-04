@@ -57,7 +57,7 @@ export function connectorsEnabledFor(config?: Config): boolean {
 // isolation (no sources), which drops the connectors even with
 // ENABLE_CLAUDEAI_MCP_SERVERS=1. So connectors mode must pass SOME source list.
 //
-// It must be `["user"]` and nothing more (kendex#990). Connector state lives in
+// It must be `["user"]` and nothing more. Connector state lives in
 // USER scope — the account's config dir (CLAUDE_CONFIG_DIR for managed router
 // profiles) — so user scope is sufficient for connectors to surface. Claude
 // Code settings files can also carry an `env` map and `apiKeyHelper`; including
@@ -98,7 +98,7 @@ export const CLAUDE_AI_CONNECTOR_TOOL_PATTERNS = [
 	"mcp__claude_ai_Atlassian__*",
 ];
 
-// --- The SDK's two-name trap for built-in tools (kendex#1007, kendex#1011) ---
+// --- The SDK's two-name trap for built-in tools ---
 //
 // The CLI gives some built-ins TWO spellings, and which one you see depends on
 // which SURFACE the name crosses:
@@ -118,9 +118,9 @@ export const CLAUDE_AI_CONNECTOR_TOOL_PATTERNS = [
 // This map declares each alias pair ONCE; every delivered-side membership set
 // derives its spellings from it instead of hand-copying names. Both prior
 // instances of the trap were exactly that hand-copy: CHILD_INTERNAL_TOOLS held
-// request-side spellings that no stream name ever matched (kendex#1007), and
+// request-side spellings that no stream name ever matched, and
 // the connectors allowlist hook DENIED the two discovery tools it exists to
-// permit (kendex#1011). Delivered-side sets accept BOTH spellings, so a CLI
+// permit. Delivered-side sets accept BOTH spellings, so a CLI
 // version that drops the aliasing cannot reintroduce the bug in either
 // direction.
 const SDK_TOOL_ALIASES: Record<string, string> = {
@@ -149,7 +149,7 @@ export const CONNECTOR_DISCOVERY_TOOLS = ["ToolSearch", ...MCP_RESOURCE_TOOLS];
 
 // Delivered-side membership sets carry both spellings, derived from the one
 // alias declaration above. The resource-only set keeps those audit calls
-// dispatchable without making ToolSearch a Pi call (kendex#1007, kendex#1011).
+// dispatchable without making ToolSearch a Pi call.
 const CONNECTOR_DISCOVERY_TOOL_NAMES = new Set(CONNECTOR_DISCOVERY_TOOLS.flatMap(deliveredSpellings));
 const MCP_RESOURCE_TOOL_NAMES = new Set(MCP_RESOURCE_TOOLS.flatMap(deliveredSpellings));
 
@@ -247,12 +247,12 @@ function connectorNameWords(segment: string): string[] {
 // exact tool id (the CLI matcher only supports exact ids or a whole-server glob).
 //
 // PUBLIC CONTRACT — this list and `isConnectorWriteTool` have downstream
-// dependents that gate real user-facing approvals on them (kendex#892):
+// dependents that gate real user-facing approvals on them:
 //
 //   memsira  routes connector writes through its own gated approval flow
 //   drovr    keeps its chat sidecar permanently write-`deny` and runs an
 //            approved write as a separate one-shot `claude -p` scoped by
-//            `--allowedTools` to exactly one connector tool (drovr#288)
+//            `--allowedTools` to exactly one connector tool
 //
 // Both pin the actions they expose against this classification, because "the
 // sidecar structurally cannot do this itself" is THIS module's claim, not
@@ -333,23 +333,21 @@ export function isConnectorTool(name: string | undefined): boolean {
 // `content_block_start` / assistant-message blocks, the exact fields
 // processStreamEvent/processAssistantMessage read. Stream names are a
 // DELIVERED surface (see SDK_TOOL_ALIASES): the two MCP-resource built-ins'
-// request-side spellings used to sit in this set and never matched anything
-// (kendex#1007). If an aliased name is ever added here, derive its spellings
-// via deliveredSpellings rather than hand-copying them.
+// request-side spellings do not belong in this set because they match nothing.
+// Derive every aliased name via deliveredSpellings rather than hand-copying it.
 //
-// The MCP-resource tools are now EXCLUDED deliberately, under BOTH spellings:
+// The MCP-resource tools are EXCLUDED under BOTH spellings:
 // a resource read is a real account-surface access, and both consumer hosts
 // audit it through the Pi mirror (an out-of-process sidecar has no view of the
 // bridge's own connector-call entries or the child transcript), so it stays
-// mirrored into Pi. Do not re-add either spelling without revisiting that
-// decision in kendex#1007. The allowlist hook is what lets those calls run at
-// all — see isAllowlistedConnectorSessionTool (kendex#1011).
+// mirrored into Pi. Do not add either spelling to this set. The allowlist hook
+// is what lets those calls run; see isAllowlistedConnectorSessionTool.
 const CHILD_INTERNAL_TOOLS = new Set(["ToolSearch", "ScheduleWakeup"]);
 
 /**
  * True for a Claude Code built-in meta-tool the child resolves in-process.
  *
- * Mirroring one into the Pi stream (kendex#980) made Pi's agent loop dispatch a
+ * Mirroring one into the Pi stream would make Pi's agent loop dispatch a
  * tool it does not have and deliver an error result for an id no MCP handler
  * ever claimed. The result queued in `pendingResults` until the reaper dropped
  * it — one "dropped 1 tool result(s) whose handler never matched (ToolSearch)"
@@ -379,13 +377,13 @@ export function isChildInternalTool(name: string | undefined): boolean {
  *    miss, and write a synthetic `Tool <name> not found` error result into the
  *    transcript — while the child went on and executed the real call. The Pi
  *    transcript then RECORDED A FAILURE FOR A CALL THAT SUCCEEDED, next to an
- *    answer built from the real payload, so the model's correct answer read as
- *    a fabrication (drovr#311, memsira#320). The false result is also projected
+ *    answer built from the real payload, so the model's correct answer appears
+ *    fabricated. The false result is also projected
  *    back into the child's session on a rebuild (`syncSharedSession`), which is
  *    how a lie in a mirror becomes a lie in the conversation of record.
  *
  * 2. Claude Code's own in-process meta-tools (`isChildInternalTool`), which the
- *    child resolves without any dispatcher at all (kendex#980).
+ *    child resolves without any dispatcher at all.
  *
  * Takes the RAW SDK tool name, before `mapToolName` — child-executed names have
  * no Pi-side counterpart, so mapping them is meaningless. Accepts a missing
@@ -491,7 +489,7 @@ export function connectorWriteDenyHook(): HookCallback {
 		// the tool call proceed (fail OPEN) — so any exception in this body
 		// must convert to a deny, never an allow. Today's body is pure string
 		// checks on schema-validated input; the catch pins that invariant for
-		// whatever gets added here later.
+		// subsequent changes to this body.
 		try {
 			if (input.hook_event_name !== "PreToolUse") return { continue: true };
 			// A non-string tool name cannot be classified, and this hook fails
@@ -511,7 +509,7 @@ export function connectorWriteDenyHook(): HookCallback {
 // stay PRODUCT-NEUTRAL: this is shared source and every consuming app shows it.
 // Naming one host told a different app's model to use a product it has never
 // heard of, which is confusing at exactly the moment someone is debugging a
-// refused write (kendex#892). Each host describes its own approval flow in its
+// refused write. Each host describes its own approval flow in its
 // own prompt; this string only has to say that one exists.
 function connectorWriteDenyOutput(toolName: string) {
 	return {
@@ -537,8 +535,8 @@ function connectorWriteDenyOutput(toolName: string) {
 //
 // This is a DELIVERED-side check — `name` is a hook's `input.tool_name`, which
 // carries the canonical spelling — so membership is tested against
-// CONNECTOR_DISCOVERY_TOOL_NAMES (both spellings), not the request-side list
-// (kendex#1011). That also carries kendex#1007's mirroring decision: the
+// CONNECTOR_DISCOVERY_TOOL_NAMES (both spellings), not the request-side list.
+// The allowlist hook also carries the mirroring rule: the
 // MCP-resource tools are deliberately NOT child-internal so every resource
 // read mirrors into Pi as the consumers' audit surface — a mirror that can
 // only exist if this allowlist lets the call execute. Denying the canonical
@@ -673,14 +671,12 @@ export function toolIsolationForQuery(connectorsEnabled: boolean, writeMode: Con
 /**
  * Explicit `mcpServers` declarations for the account's CONNECTED connectors.
  *
- * Why this exists (kendex#832): claude.ai connectors load async and non-blocking,
+ * Why this exists: claude.ai connectors load async and non-blocking,
  * and the turn-1 tool manifest is built at +410-665ms — roughly 300ms BEFORE the
  * CLI has even fetched the connector list. The model therefore composes its first
  * answer against a manifest containing no connectors and says it has no access,
- * while the connector attaches ~1s later and is never asked. Measured end to end
- * on 40 cold sidecars (memsira, 2026-07-26): a connector tool call happened in
- * 7/20 baseline runs versus 20/20 with the declaration, and "I don't have access"
- * went 13/20 → 0/20, one-sided Fisher exact p = 6.4e-6. Confirmed at seven
+ * while the connector attaches later and is never asked. The declaration must
+ * be available before the first query. Confirmed at seven
  * declarations over a further 30 runs: 5/10 → 10/10 calls, 5/10 → 0/10 denials.
  *
  * It is also FASTER, which is the opposite of what the startup barrier suggests.
@@ -740,9 +736,8 @@ export function connectorMcpServers(inventory: ConnectorInventory): Record<strin
 
 /**
  * `CLAUDE_BRIDGE_CONNECTOR_DECLARE=off` (or `0`/`false`/`no`) disables explicit
- * connector declarations while leaving connectors themselves enabled. Falls back
- * to the pre-#832 behaviour: connectors still load, they just race the turn-1
- * manifest again.
+ * connector declarations while leaving connectors themselves enabled. Without
+ * declarations, connector loading races the turn-1 manifest.
  */
 export function connectorDeclarationsDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
 	const v = (env.CLAUDE_BRIDGE_CONNECTOR_DECLARE ?? "").trim().toLowerCase();

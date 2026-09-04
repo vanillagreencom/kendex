@@ -105,7 +105,7 @@ echo "=== every guarantee of the fold, on one record and one exact expected outp
 # One fixture, because these rules only meet in a file: all six section
 # headings spelled from the section names alone, two fragments in one section
 # to make within-section filename order observable, a lead carrying a blank
-# RUN so the collapse to one blank is visible, and a second '### Added'
+# RUN so the collapse to one blank is visible, and a second section heading
 # further down so the collapse of two headings into one is too.
 printf '%s' '# Changelog
 

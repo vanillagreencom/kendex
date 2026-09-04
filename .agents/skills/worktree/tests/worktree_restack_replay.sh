@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Behavioral tests for the policy-blocked restack replay engine (kendex#899).
+# Behavioral tests for the policy-blocked restack replay engine.
 #
 # `create <ID> --reuse --replay` / `--restack --replay` must produce the same
 # rebased history as the rebase engine from ordered plain cherry-picks — no

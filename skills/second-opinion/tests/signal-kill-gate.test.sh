@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Regression test for the second-opinion signal-kill gate (KEN-1061).
+# Tests for the second-opinion signal-kill gate.
 #
 # An external killer — a reaper, a sweeper, an operator — taking the review CLI
-# used to fold into EXIT_CLI_FAILED (5), so a killed reviewer read exactly like
+# would fold into EXIT_CLI_FAILED (5), so a killed reviewer read exactly like
 # one that refused. A CLI that died to a signal now exits EXIT_CLI_KILLED (6)
 # with the signal named in the report and the .failed.json record, and a
 # multi-lane run records a lane child that died to a signal as status "killed"
 # in qa_metadata.lanes.
 #
 # Drives the real script with fake target CLIs that die to, or deal, real
-# signals; the multi-lane case runs a hermetic copy of the skill (kendex#580).
+# signals; the multi-lane case runs a hermetic copy of the skill.
 # The lane-killing stub is waited for before the fixture tree goes, so no
 # timeout/group-run chain outlives the suite.
 

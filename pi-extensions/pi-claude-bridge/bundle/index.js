@@ -28261,19 +28261,18 @@ var QueryContext = class {
   pendingToolCalls = /* @__PURE__ */ new Map();
   pendingResults = /* @__PURE__ */ new Map();
   /** Results a message-boundary reap moved OUT of pendingResults so they stop
-   *  poisoning mismatch reports, kept CONSUMABLE for a handler that fires later.
-   *  The 2026-08-17 deadlock session showed the reap's "no consumer will ever
-   *  come" assumption failing routinely: Pi delivers a turn's results in one
-   *  callback while the SDK staggers handler invocations past the next message
-   *  boundary. Query-scoped, bounded by the query's tool-call count. */
+   *  poisoning mismatch reports, kept CONSUMABLE for a handler that fires later:
+   *  Pi delivers a turn's results in one callback while the SDK staggers handler
+   *  invocations past the next message boundary, so a boundary never proves that
+   *  no consumer will come. Query-scoped, bounded by the query's tool-call count. */
   reapedResults = /* @__PURE__ */ new Map();
   /** Every tool-call id this query has handed to Pi inside an ENDED turn — the
    *  set endToolUseTurn stamps from the turn's content. A forwarded id is one Pi
    *  will execute and answer; it must never be emitted again (a lagging stream
    *  replays the same tool_use into the NEXT turn, and per-message turnBlocks
-   *  dedup cannot see across turns — kendex#1469's duplicate executions), and a
-   *  handler waiting on it must be left waiting at the stranded-handler drains.
-   *  Query-scoped, never reset per message. */
+   *  dedup cannot see across turns), and a handler waiting on it must be left
+   *  waiting at the stranded-handler drains. Query-scoped, never reset per
+   *  message. */
   forwardedToolCallIds = /* @__PURE__ */ new Set();
   /** Ids whose waiting handler was resolved with strandedToolCallResult. The
    *  model has been told these calls failed; forwarding one later would execute
@@ -28295,15 +28294,15 @@ var QueryContext = class {
    * resets at every message boundary, but `pendingResults` is query-scoped, so a
    * result stranded there outlives the message that named it. Without this map a
    * teardown report can only say "1 queued" with empty toolNames and 0/0
-   * counters — which is exactly the unactionable record the 2026-07-28 diag log
-   * showed. Bounded by the number of tool calls in one query.
+   * counters — an unactionable record. Bounded by the number of tool calls in
+   * one query.
    */
   queryToolNames = /* @__PURE__ */ new Map();
   /** id → last-known arguments, query-scoped like queryToolNames and for the
    *  same reason: a late handler firing after resetToolTracking wiped the
    *  per-message records must still be able to exact-match the parked/queued
    *  result of ITS OWN call — without stored args the only fallback is
-   *  sole-same-name, which can hand it a LIVE sibling's id (kendex#1469). */
+   *  sole-same-name, which can hand it a LIVE sibling's id. */
   queryToolArgs = /* @__PURE__ */ new Map();
   claimedToolCallIds = /* @__PURE__ */ new Set();
   deliveredToolResultIds = /* @__PURE__ */ new Set();
@@ -28318,8 +28317,8 @@ var QueryContext = class {
   // resetTurnState must not clear it.
   committedOutput = false;
   /** True when this query holds NO claim on the module-level shared session
-   *  record: a reentrant (subagent) query, or a foreign-conversation one-shot
-   *  (kendex#1001). Every shared-record mutation reachable from this context —
+   *  record: a reentrant (subagent) query, or a foreign-conversation one-shot.
+   *  Every shared-record mutation reachable from this context —
    *  reportToolResultMismatch's needsRebuild/forceRotate mark, the cursor
    *  advances on the tool-result-delivery and orphaned-result paths — must
    *  no-op so the PARENT's record stays untouched. Assigned at fresh-query
@@ -28356,17 +28355,16 @@ var QueryContext = class {
   childSessionId;
   /** Anthropic content-block indexes of the current assistant message that carry
    *  a child-executed tool_use. Scoped to one message: cleared at message_start,
-   *  and an index is released as soon as a new block starts there. */
+   *  and an index is released as soon as another block starts there. */
   childExecutedStreamIndexes = /* @__PURE__ */ new Set();
   // Usage accounting for a Pi turn that spans SEVERAL child assistant messages.
   //
   // Every child message is a separate billed API call, and each reports its own
   // counters — `message_start`/`message_delta` REPLACE rather than accumulate. A
-  // Pi turn used to end at the first tool call, so one Pi message meant one child
-  // message and replacing was right. A turn containing a child-executed connector
-  // call now keeps running across the child's follow-up messages, so replacing
-  // would silently drop everything the earlier ones billed (measured: 55,685
-  // cache-write tokens lost on a single connector turn).
+  // Pi turn that ends at its first tool call spans one child message, where
+  // replacing is right. A turn containing a child-executed connector call keeps
+  // running across the child's follow-up messages, so replacing would silently
+  // drop everything the earlier ones billed.
   //
   // So: `turnUsageCarry` holds the totals of the child messages already COMPLETE
   // in this Pi turn, `currentMessageUsage` holds the one in flight, and the Pi
@@ -28543,9 +28541,8 @@ var QueryContext = class {
    * assistant fallback). Left in pendingResults, each entry poisons every later
    * mismatch report for the whole query (queued>0 with 0/0 counters and no tool
    * names) and forces a session rebuild per turn. But the boundary does NOT
-   * prove the handler gave up — the SDK staggers handler invocations, and the
-   * 2026-08-17 deadlock session (kendex#1469) had three of five parallel
-   * handlers fire after this reap destroyed their results. So the reap parks
+   * prove the handler gave up — the SDK staggers handler invocations, and
+   * handlers in a parallel batch routinely fire after it. So the reap parks
    * instead of dropping: reports stay clean, and a late handler still gets its
    * real result through takeQueuedOrParkedResult.
    */

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pr-watch.sh -h/--help contract (KEN-556), split from pr-watch.test.sh at
+# pr-watch.sh -h/--help contract, split from pr-watch.test.sh at
 # this seam (the reduction-table suites and their sandbox live there).
 # --help must answer before the GH_REPO requirement, with the heredoc as
 # the contract's sole home; nothing here needs the predicate or gh.
@@ -36,7 +36,7 @@ echo "=== pw71: --help answers before the GH_REPO requirement (KEN-556) ==="
 
 # The -h/--help pre-scan runs BEFORE the GH_REPO check — that ordering is
 # load-bearing: the contract must be readable with no environment at all.
-# Token pins guard the heredoc, the contract's sole home (KEN-555).
+# Token pins guard the heredoc, the contract's sole home.
 set +e
 out=$(cd "$TMP_ROOT" && env -u GH_REPO "$PW" --help 2>"$TMP_ROOT/help.err")
 rc=$?

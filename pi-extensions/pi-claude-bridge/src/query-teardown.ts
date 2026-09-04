@@ -2,8 +2,8 @@
 // operates on the ONE context captured at query start — never the live ctx().
 // The two only differ while a reentrant (subagent) context is pushed, which is
 // exactly when a parent query ending abnormally (abort, child process death)
-// used to run this against the subagent's state: the parent's drain, audit
-// flush, and activeQuery clear were skipped, leaking its pending MCP handlers.
+// teardown must run against the parent state. Using the subagent state skips
+// the parent's drain, audit flush, and activeQuery clear, which leaks handlers.
 
 import { reportToolResultMismatch } from "./bridge-state.js";
 import { flushConnectorCallAudit } from "./connector-audit.js";
@@ -11,7 +11,7 @@ import { debug } from "./debug.js";
 import { drainPendingToolCalls, popContextFor, type QueryContext, type ToolCallDrainCause } from "./query-state.js";
 
 /** Tear down `queryCtx` after its SDK query settled. No-ops when the query is
- *  no longer the context's active one (a continuation replaced it, or teardown
+ *  is not the context's active one (a continuation replaced it, or teardown
  *  already ran). Returns true when teardown actually ran. */
 export function teardownQuery(
 	queryCtx: QueryContext,

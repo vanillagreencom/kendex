@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for the unsupported `view` action hint (kendex#687).
+# Tests for the unsupported `view` action hint.
 #
 # A focused Linear issue audit's read-only post-mutation verification produced
 # `linear.sh issues view` — an action the issues namespace does not have; the

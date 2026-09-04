@@ -189,7 +189,7 @@ mod tests {
     }
 
     /// git reads its rules last-match-wins, so a negation below an ignore
-    /// leaves the lock tracked and the block still has to be added — and
+    /// leaves the lock tracked and the block is still owed — and
     /// an ignore below a negation is coverage.
     #[test]
     fn the_last_matching_rule_is_the_one_that_counts() {

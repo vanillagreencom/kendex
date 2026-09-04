@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for the script's timeout handling: the built-in default is
+# Tests for the script's timeout handling: the built-in default is
 # 1080s, a caller env override wins, --timeout 0 is refused, and a host
 # without a timeout binary warns and still runs.
 #
@@ -21,7 +21,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # --- Deterministic harness-free session -------------------------------------
 # A positively detected single-model harness now beats any contradicting
-# declaration, whatever its source — so a suite can no longer neutralize the
+# declaration, whatever its source — so a suite cannot neutralize the
 # harness that runs it by exporting an identity. It has to actually not have
 # one. This `ps` stand-in reports the first parent as init, so the ancestor walk
 # finds nothing and the declared identity below is what the script uses. It also
@@ -46,7 +46,7 @@ unset CLAUDECODE CLAUDE_CODE CLAUDE_PROJECT_DIR CODEX_SANDBOX \
 # Hermetic copy: the script resolves PROJECT_ROOT from its own location and
 # loads that project's settings files, so running the in-repo copy leaks the
 # repository's committed kendex.settings.toml (e.g. SECOND_OPINION_TIMEOUT)
-# into a test that pins the BUILT-IN default (kendex#580). Copy the skill to
+# into a test that pins the BUILT-IN default. Copy the skill to
 # a temp root with no git repo and no settings so only defaults + caller env
 # apply.
 mkdir -p "$TMP_ROOT/proj/skills"
@@ -56,7 +56,7 @@ SECOND_OPINION="$TMP_ROOT/proj/skills/second-opinion/scripts/second-opinion"
 
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/work"
 
-# The scope gate (kendex#652) needs a git worktree with a non-empty diff, so
+# The scope gate needs a git worktree with a non-empty diff, so
 # review runs use `--range HEAD` over an uncommitted change.
 WORK="$TMP_ROOT/work"
 git -C "$WORK" init -q

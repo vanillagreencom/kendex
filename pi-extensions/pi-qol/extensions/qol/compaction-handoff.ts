@@ -84,7 +84,7 @@ const ARTIFACT_REF_PATTERN = /(?:^|\s|["'`(\[<])((?:\.{1,2}\/|\/|~\/)?[\w.\-+@/]
 
 /**
  * Collects up to `maxRefs` file path-shaped strings from message contents,
- * walking newest-first. Used to give the handoff artifact a quick "if you
+ * walking newest-first. Gives the handoff artifact a quick "if you
  * are recovering, here are recent files" pointer list.
  */
 export function collectArtifactRefs(branch: unknown[], maxRefs = 20): string[] {

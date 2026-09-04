@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# Regression tests for decisions missing-directory handling (kendex#561).
+# decisions missing-directory handling.
 #
 # In a repository with no decisions directory, read-only lookups (search,
-# list) previously exited 1 with "DECISIONS_DIR '...' does not exist", turning
-# an inapplicable lookup into a workflow failure. They now emit an empty JSON
-# array with a stderr note and exit 0. These tests assert that soft path for
-# both the configured-but-absent and unset-undiscovered cases, and that real
-# errors are preserved: zero-match searches in an existing directory are
-# unchanged, a configured path that exists but is a file stays a hard error,
-# and creation-workflow commands (next-id, get) still require the directory.
+# list) emit an empty JSON array with a stderr note and exit 0: an
+# inapplicable lookup is not a workflow failure. Pinned here: that soft path
+# for both the configured-but-absent and unset-undiscovered cases, and that
+# real errors stay hard: a zero-match search in an existing directory is
+# unchanged, a configured path that exists but is a file is a hard error, and
+# creation-workflow commands (next-id, get) require the directory.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

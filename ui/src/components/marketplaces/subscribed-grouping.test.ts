@@ -23,7 +23,7 @@ const row = (over: Partial<MarketplaceRow> = {}): MarketplaceRow => ({
 });
 
 // A non-GitHub remote. `repoKey` is source_ref::owner_repo, which answers
-// only for github.com, so keying on it left every other host falling
+// only for github.com, so keying on it would leave every other host falling
 // through to the per-place alias — and auto_alias uniquifies a name inside
 // one scope's manifest only.
 const elsewhere = (over: Partial<MarketplaceRow> = {}): MarketplaceRow =>
@@ -62,7 +62,7 @@ describe("what makes two declarations one marketplace", () => {
 });
 
 // Every field on the card describes one subscription — the one it opens.
-// Reporting whichever place had fetched first meant a card could name the
+// Reporting whichever place fetched first would let a card name the
 // project's subscription, show its revision and open its page while
 // printing the personal one's count, which scopes pinned to different
 // revisions can make a different number.

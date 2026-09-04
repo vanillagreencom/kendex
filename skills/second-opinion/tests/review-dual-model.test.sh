@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for second-opinion target selection and multi-lane review.
+# Tests for second-opinion target selection and multi-lane review.
 #
 # Cross-model is the guarantee: every mode walks the SECOND_OPINION_MODELS
 # roster in priority order, never dispatches to the model this session runs
@@ -18,7 +18,7 @@
 #     never past the self-exclusion guard;
 #   - another target is a settings entry (SECOND_OPINION_<NAME>_CMD), not code.
 #
-# Drives a hermetic copy of the skill (kendex#580) with fake lane CLIs.
+# Drives a hermetic copy of the skill with fake lane CLIs.
 
 set -euo pipefail
 
@@ -33,7 +33,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # --- Harness-free environment for the identity scenarios ---------------------
 # A positively detected single-model harness now beats any contradicting
-# declaration, whatever its source, so a scenario can no longer simulate an
+# declaration, whatever its source, so a scenario cannot simulate an
 # arbitrary session by exporting an identity while a real harness is visible —
 # it has to genuinely not have one. Detection reads the process tree first and
 # the environment markers second, so both are neutralized: a `ps` stand-in that
@@ -252,7 +252,7 @@ assert_jq "$out4" '.agent' "external-claude" "single-lane artifact keeps the lan
 assert_jq "$out4" '.qa_metadata.reviewed_head' "$HEAD_SHA" "single lane also records reviewed head"
 assert_file_absent "$out4.codex.json" "no lane sidecars in single-lane mode"
 
-# --- Scenario 5: a third target is a settings entry, not new code -------------
+# --- Scenario 5: a third target is a settings entry, not code change -------------
 echo "=== scenario 5: custom lane via SECOND_OPINION_MODELS + <NAME>_CMD ==="
 reset_counts
 out5="$TMP_ROOT/out5.json"
@@ -1050,7 +1050,7 @@ if $ANCESTOR_VISIBLE; then
   # ...and it carries NO roster-spelling requirement, because the operator never
   # typed it for this session: it only repeats what detection already knew. A
   # roster naming just the cross-model target is the most natural configuration
-  # there is and must work — the same regression already fixed for plain
+  # there is and must work — the same failure already fixed for plain
   # detection, re-entering through the project-sourced path.
   reset_counts
   rm -f "$TMP_ROOT/out33.json"

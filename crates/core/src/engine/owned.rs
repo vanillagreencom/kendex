@@ -13,7 +13,7 @@ use crate::model::{ItemKind, Scope};
 use crate::render::agent::file_name;
 
 /// Every position this scope's installs recorded writing — including the
-/// ones an earlier install wrote under another kind's name, and the ones
+/// ones a previous install wrote under another kind's name, and the ones
 /// several harnesses share. Ownership is a property of the path, not of the
 /// entry asking about it (invariant 6): read per key, one harness would
 /// call another harness's copy of the same tree a stranger's, and the
@@ -160,7 +160,7 @@ fn hook_owned(
                 // A hook whose script goes with it takes its registration
                 // wherever that has got to. An entry taken from an event
                 // somebody moved it to is a smaller wrong than a command
-                // left pointing at a script that is no longer there — and
+                // left pointing at a script that is not there — and
                 // the command is the record's, which is what kendex
                 // registered, not what it would render today.
                 Some(recorded) => (None, None, recorded.command.clone()),

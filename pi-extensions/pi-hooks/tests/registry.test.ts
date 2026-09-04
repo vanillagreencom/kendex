@@ -35,10 +35,9 @@ function customCommand(log: string, stderr: string, exitCode: number): string {
 }
 
 describe("pi-hooks registry dispatch", () => {
-	// The Done-when of KEN-941. A `[[custom-hooks]]` entry has no file of its
-	// own — kendex registers the person's command verbatim — so a carrier
-	// running a fixed list of script names reported it enforced and ran
-	// nothing. The control is the same fixture with the registration absent.
+	// A `[[custom-hooks]]` entry has no file of its own because kendex registers
+	// the person's command verbatim. Registry dispatch must not depend on a fixed
+	// list of script names. The control has no registration.
 	test("a custom PreToolUse hook runs, and nothing runs where the registry names it not", async () => {
 		const project = initCleanRustRepo("pi-hooks-custom-");
 		const log = join(project, "custom.log");
@@ -58,8 +57,7 @@ describe("pi-hooks registry dispatch", () => {
 		}
 	});
 
-	// The other half of the same defect: a catalog hook whose name is not one
-	// of the three the carrier used to spell out.
+	// A catalog hook can use a name the carrier does not know.
 	test("a rendered hook the carrier has never heard of runs because the registry names it", async () => {
 		const project = initCleanRustRepo("pi-hooks-unknown-");
 		const log = join(project, "audit.log");

@@ -2,16 +2,14 @@
 //! skills into.
 //!
 //! Derived from the harness adapters rather than transcribed from them. The
-//! list had `.cursor/rules`, which is not a skills directory at all, and was
-//! missing `.gemini/skills` and `.github/skills` — so a `method = copy`
-//! install into any of those three produced a package the guard verbs could
-//! not find, and a repository armed from it read as having no package.
+//! list must include `.gemini/skills` and `.github/skills` and must not include
+//! `.cursor/rules`, which is not a skills directory. Otherwise a `method =
+//! copy` install can produce a package the guard verbs cannot find.
 //!
 //! The package has its own copy, in `scripts/lib/skill-roots.sh`, which the
 //! installer bakes into the helper it writes into `.git/hooks`. Both lists
 //! are pinned here, and both to the adapters rather than only to each
-//! other: two copies agreeing is no evidence either is right, and for three
-//! rounds they agreed on a wrong list.
+//! other, because two copies can agree on the same wrong list.
 //!
 //! Order as well as membership, which is why the shell list is compared as
 //! tokens and not as a set. `guard::Installed::resolve` takes the first

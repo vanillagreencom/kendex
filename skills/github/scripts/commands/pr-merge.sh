@@ -275,7 +275,7 @@ run_checks() {
 
     # 3. Check actionable review threads. GitHub does not protect merges on
     # unresolved conversations by default, so this is a local hard gate rather
-    # than a warning. Outdated threads no longer refer to the current diff and
+# than a warning. Outdated threads do not refer to the current diff and
     # are not actionable. A failed or malformed lookup also blocks: treating an
     # unknown review state as clean would recreate the unsafe merge path.
     local threads_json unresolved

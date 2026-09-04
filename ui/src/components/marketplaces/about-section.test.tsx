@@ -79,9 +79,9 @@ describe("the About tab as a profile", () => {
     expect(html).not.toContain("Contains");
   });
 
-  // The tags, the reading mode and the per-root table were an engineer's
-  // account of kendex's own work. The payload no longer carries the last
-  // two at all; the header says the tags once.
+  // The reading mode and the per-root table are an engineer's account of
+  // kendex's own work, and the payload does not carry them; the header says
+  // the tags once.
   it("says nothing about how kendex read the catalog", () => {
     const html = render({}, { tags: ["review"] }, { skill: 3 });
     expect(html).not.toContain("kendex.toml");

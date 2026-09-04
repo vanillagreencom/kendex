@@ -185,8 +185,8 @@ fn the_scaffolded_bundle_example_is_a_set_the_reader_accepts() {
         .collect();
     // What the example is expected to yield is the example itself, read back
     // through the reader: every kind, under the name the scaffold wrote for
-    // it. A kind added to the grammar extends both sides at once, and a kind
-    // the reader stops seeing shortens only one.
+    // it. Every kind in the grammar extends both sides at once, while a kind
+    // the reader does not see shortens only one.
     let expected: Vec<String> = kendex_core::source::bundles::member_list_example()
         .lines()
         .map(|line| {
@@ -271,8 +271,7 @@ fn a_path_whose_last_component_is_not_a_name_refuses_and_writes_nothing() {
 
 /// A folder is made inside one that is already there, and a containing
 /// folder that is not gets a refusal naming it rather than being brought
-/// into being. `CreateRequest.dir` has said "its parent must exist" all
-/// along; before this the create made the whole chain instead.
+/// into being. `CreateRequest.dir` requires its parent to exist.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_containing_folder_that_does_not_exist_refuses_and_makes_nothing() {

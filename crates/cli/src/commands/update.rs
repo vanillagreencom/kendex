@@ -71,9 +71,9 @@ fn run_on(
     channel.allow_replacement()?;
     // The running command is at this path and is one of ours, which is the
     // one thing no lookup by name can establish. Recorded before anything
-    // is fetched, so a machine that installed before this record existed
-    // gains it from any run — including one that finds nothing to do — and
-    // the desktop app can carry the command across from then on.
+    // is fetched, so a machine with no record yet gains one from any run —
+    // including one that finds nothing to do — and the desktop app can
+    // carry the command across from then on.
     if let Err(why) = record_command(env, current_exe) {
         say(&format!(
             "the desktop app will not update this command until it can be recorded: {why}"
@@ -160,7 +160,7 @@ fn release_digests(
 }
 
 /// What to say when the command itself could not be replaced. An app
-/// already on the new release does leave the machine split, but the
+/// already on the latest release does leave the machine split, but the
 /// command still reads older than the feed, so running it again repeats
 /// both halves rather than stopping at already-up-to-date.
 fn command_failure(latest: &str, app_replaced: bool, error: &str) -> String {

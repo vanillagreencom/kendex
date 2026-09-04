@@ -1,11 +1,9 @@
-// kendex#60 workaround regression test: when pi-agents-tmux spawns a
-// subagent Pi pane, the generated launcher script must export
+// A generated subagent launcher must export
 // PI_BRIDGE_PARENT_SESSION_ID + PI_BRIDGE_CHILD_ROLE so the
 // pi-session-bridge in the child synthesizes a unique session id.
 //
-// Round-2 reviewer-arch minor #M1: the env names are no longer
-// hardcoded as magic strings inside the heredoc — they're declared as
-// module constants in pane.ts and interpolated. The bridge package
+// The environment names are module constants in pane.ts instead of literals
+// inside the heredoc. The bridge package
 // owns the canonical names (PARENT_SESSION_ENV / CHILD_ROLE_ENV in
 // pi-extensions/pi-session-bridge/extensions/child-session-id.ts); the
 // parity test at the bottom asserts both sides agree.

@@ -71,7 +71,7 @@ describe("shipped connector API", () => {
 		}
 	});
 
-	// Regression for the actual defect: this helper is unused by index.ts, so it
+	// This helper is unused by index.ts, so it
 	// was dropped from the extension bundle by tree-shaking. A named export in
 	// src is not a shipped export.
 	it("keeps exports that the extension entry point never calls", () => {

@@ -37,8 +37,8 @@ fn a_failed_upload_fails_the_job_and_defers_to_the_next_run() {
         "a failed upload was survivable: {:?}",
         run.calls
     );
-    // The fixture reached the upload rather than stopping at an earlier read,
-    // so it is that branch this exercises and not one above it.
+    // The fixture reached the upload rather than stopping at one of the reads
+    // above it, so it is that branch this exercises and not one above it.
     assert!(
         run.ran("release upload").is_some(),
         "the run never got as far as the upload: {:?}",
@@ -97,9 +97,9 @@ fn a_failed_upload_that_kept_latest_json_is_written_by_the_re_run() {
 /// and every later run refuses it. The tag re-run publishes nothing, and the
 /// message that sent the operator at it is the one that says so.
 ///
-/// The two messages are asserted against each other here, because nothing
-/// checking them together is how the failure's claim about the next run
-/// outran the refusals twice. What is checked is the claim as the WEAKEST
+/// The two messages are asserted against each other here, because with
+/// nothing checking them together the failure's claim about the next run
+/// can outrun the refusals. What is checked is the claim as the WEAKEST
 /// refusal can keep it: that the run refuses and says what it found. Four
 /// refusals can follow this failure and they differ — two of them fail
 /// because a read failed, so an asset list is not something they could ever

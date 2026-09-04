@@ -68,8 +68,8 @@ const MAX_DATED_COMMITS: usize = 1_000;
 /// content the skill publishes and an install copies — `crates/`, `ui/`
 /// and `docs/` included. Asking history for that set is the only way to
 /// date such an item honestly; the bare tip would count a `target/`-only
-/// commit, which changed nothing the skill contains. A folder added to
-/// the one list is added here by construction.
+/// commit, which changed nothing the skill contains. Every folder in
+/// the one list is excluded here by construction.
 fn root_tree_specs() -> Vec<String> {
     crate::source_read::NOT_CONTENT
         .iter()
@@ -82,7 +82,7 @@ pub(crate) struct Offered {
     pub(crate) kind: ItemKind,
     pub(crate) name: String,
     /// Absolute, as [`super::super::find_item`] answers. `None` for a name
-    /// the catalog lists but no longer carries.
+    /// the catalog lists but does not carry.
     pub(crate) found: Option<PathBuf>,
 }
 
@@ -217,7 +217,7 @@ pub(crate) fn package_dates(
 /// one query over it answers for the whole catalog. The About tab can
 /// therefore never read older than a package on the Packages tab beside
 /// it, and a commit that adds a root skill moves the date, because it
-/// added something the marketplace offers.
+/// brought in something the marketplace offers.
 pub(crate) fn catalog_date(env: &Env, browsed: &Browsed, items: &[Offered]) -> Option<String> {
     let (mirror, commit) = mirror_at(env, browsed)?;
     let (asked, roots) = split(browsed, items);

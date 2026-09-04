@@ -28,7 +28,7 @@ pub(crate) fn carries_name(rel: &Path) -> bool {
 /// The bytes answering to `name`. A tool knows a skill or an agent by the
 /// name its frontmatter gives, and the loader validators refuse a
 /// rendering whose file calls it something other than the name it
-/// installs under — so a copy landing under a new name says that name.
+/// installs under — so a copy landing under another name says that name.
 /// A frontmatter without a name gets one, exactly as rendering would give
 /// it one.
 ///
@@ -129,7 +129,7 @@ fn strip_block(text: &str) -> String {
     let Some((start, cut_to)) = instructions_block_range(text) else {
         return text.to_owned();
     };
-    // Remove exactly what inject added: the separator newline before the
+    // Remove exactly what inject wrote: the separator newline before the
     // block (when present) and the block's own trailing newline.
     let cut_from = if start > 0 && text.as_bytes()[start - 1] == b'\n' {
         start - 1

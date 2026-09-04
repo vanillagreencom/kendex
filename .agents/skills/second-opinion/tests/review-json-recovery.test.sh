@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for second-opinion review/audit JSON recovery (kendex#509).
+# Tests for second-opinion review/audit JSON recovery.
 #
 # The one-shot reviewer (claude --no-session-persistence / codex --ephemeral)
 # sometimes returns prose claiming the JSON verdict was "already delivered
@@ -26,7 +26,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # --- Deterministic harness-free session -------------------------------------
 # A positively detected single-model harness now beats any contradicting
-# declaration, whatever its source — so a suite can no longer neutralize the
+# declaration, whatever its source — so a suite cannot neutralize the
 # harness that runs it by exporting an identity. It has to actually not have
 # one. This `ps` stand-in reports the first parent as init, so the ancestor walk
 # finds nothing and the declared identity below is what the script uses. It also
@@ -146,7 +146,7 @@ printf 'hello\n' > "$WORK/file.txt"
 git -C "$WORK" add file.txt
 git -C "$WORK" -c commit.gpgsign=false commit -q -m init
 # Uncommitted change so `--range HEAD` yields a non-empty diff — the scope
-# gate (kendex#652) refuses to run a review over an empty diff.
+# The scope gate refuses to run a review over an empty diff.
 printf 'world\n' >> "$WORK/file.txt"
 
 COUNTER="$TMP_ROOT/counter"
@@ -186,7 +186,7 @@ assert_eq "$rc1" "0" "scenario 1 exits 0 after retry"
 assert_file_exists "$s1_out" "scenario 1 writes the --output artifact"
 assert_file_contains "$s1_out" "Null deref in parser" "scenario 1 artifact contains the retry's findings"
 assert_eq "$(cat "$COUNTER")" "2" "scenario 1 invoked the CLI twice (retry ran)"
-# kendex#940: a successful reformat retry must not discard the raw first
+# a successful reformat retry must not discard the raw first
 # response — it is the only evidence of what the model actually said.
 assert_file_exists "$s1_out.raw.txt" "scenario 1 preserves the raw first response on retry success"
 assert_file_contains "$s1_out.raw.txt" "already delivered above" "scenario 1 raw sidecar holds the original raw bytes"

@@ -105,7 +105,7 @@ control_mutation_wanted() {
 }
 
 # control_expect STRING — the assertion the next mutation must redden. Name the
-# assertion description, so a suite reddening on an earlier, unrelated check —
+# assertion description, so a suite reddening on a prior, unrelated check —
 # or on one of the harness verdicts in tests/lib/assert.sh, which carry the
 # same FAIL: prefix — is not mistaken for a working mutation.
 #
@@ -116,8 +116,8 @@ control_expect() {
 	printf '%s\n' "$1" >>"$CONTROL_PENDING_FILE"
 }
 
-# control_replace FILE COUNT OLD NEW — replace exactly COUNT whole lines equal
-# to OLD with NEW. Whole-line and literal: no pattern syntax to mis-escape.
+# control_replace FILE COUNT OLD REPLACEMENT — replace exactly COUNT whole lines
+# equal to OLD. Whole-line and literal: no pattern syntax to mis-escape.
 control_replace() {
 	local rel="$1" want="$2" old="$3" new="$4"
 	local path="$CONTROL_ROOT/$rel" hits=0 line out=""

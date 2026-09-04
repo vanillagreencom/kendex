@@ -30,7 +30,7 @@ const MEMBER_LISTS: [(&str, ItemKind); 5] = [
 /// The list keys a set's members are written under, in reading order.
 ///
 /// The texts that teach catalog authors this shape are written elsewhere —
-/// the `kendex init` marker, the `kendex marketplace new` scaffold — and
+/// the `kendex init` marker, the marketplace scaffold — and
 /// they build their sentence from this rather than spelling the keys again.
 /// A hand-written copy is how the shape shipped wrong, and a copy cannot be
 /// held to the original by searching it for words.

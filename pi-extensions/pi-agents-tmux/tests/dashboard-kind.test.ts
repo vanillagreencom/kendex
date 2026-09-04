@@ -36,8 +36,8 @@ test("bg records stay bg even after legacy pane artifact pollution", async () =>
 		agent: "reviewer-error",
 		task: "Review error handling.",
 		status: "completed",
-		// Legacy refreshTaskDiagnostics used to add these pane handoff paths to bg
-		// records, which made dashboard restore label bg agents as pane.
+		// Background records can contain pane handoff paths, but dashboard restore
+		// must still label them as background agents.
 		inboxFile: taskMarkdownPath(runtimeRoot, "inbox", "reviewer-error", taskId),
 		outboxFile: completionPath(runtimeRoot, "reviewer-error", taskId),
 		transcriptPath: oneShotTranscriptPath(runtimeRoot, "reviewer-error", taskId),

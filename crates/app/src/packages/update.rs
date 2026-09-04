@@ -184,7 +184,7 @@ pub fn package_update_many(
 /// here as it would under a whole-scope apply.
 ///
 /// The answer is the same `PackageUpdate` the update command gives, and
-/// for the same reason: the manifest takes the new hold either way, while
+/// for the same reason: the manifest takes the requested hold either way, while
 /// a rendering somebody edited is held back on disk, so a caller reading
 /// the view alone would report a switch that never reached the files.
 #[tauri::command(async)]

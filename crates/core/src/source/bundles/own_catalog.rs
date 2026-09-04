@@ -1,13 +1,9 @@
 //! This repository's own catalog, read through the same reader every
 //! consumer install reads it through.
 //!
-//! The four sets this catalog then offered were declared with a
-//! `members = ["skill/orch", ...]` list, which the reader beside this file
-//! never looked at: `kendex add --bundle` recorded the set and installed
-//! nothing, with every check green. That key is now the set's own breakage,
-//! but a set is still only ever as real as what [`super::declared`] gets out
-//! of it — a list key spelt right and pointing nowhere reads back empty —
-//! so that is what is asserted here.
+//! A set is only as real as what [`super::declared`] reads from it. A list
+//! key that points nowhere reads back empty, so each declared set must read
+//! back with its members.
 //!
 //! A set also has to carry what its agent members load. The agent-to-skill
 //! expansion in `engine::ops::add` walks `request.agents` — the agents asked
@@ -35,9 +31,9 @@ const WHOLE: &str = "workflow";
 const DRAWN_FROM: [&str; 3] = ["orchestration", "code-review", "commit-guards"];
 
 /// What [`WHOLE`] carries beyond those three. Written down so the
-/// containment check runs both ways: a member added to `workflow` and to
+/// containment check runs both ways: a member of `workflow` and of
 /// nothing else has to be a deliberate entry here rather than a quiet
-/// one, which is how deep-research came to be undescribed.
+/// one, or it goes undescribed.
 const BEYOND: [(ItemKind, &str); 1] = [(ItemKind::Skill, "deep-research")];
 
 /// One member per kind these sets carry, each of which has to read back.
@@ -259,10 +255,10 @@ fn the_whole_workflow_set_carries_what_its_members_require() {
 }
 
 /// The whole-workflow set is the three sets it is drawn from plus
-/// [`BEYOND`], read both ways. A member added to one of the three would
-/// otherwise leave `workflow` silently short, and a member added to
-/// `workflow` alone would leave every description of it silently wrong —
-/// which is how deep-research came to be a member nothing mentioned.
+/// [`BEYOND`], read both ways. A member of one of the three would
+/// otherwise leave `workflow` silently short, and a member of `workflow`
+/// alone would leave every description of it silently wrong — a member
+/// nothing mentions.
 #[test]
 fn the_whole_workflow_set_is_the_sets_it_is_drawn_from_plus_what_is_written_down() {
     let (sealed, config) = open();

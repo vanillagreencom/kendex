@@ -60,7 +60,7 @@ fn fixture() -> Fixture {
 
 /// A tool allowlist must survive parse → merge → render, and a harness that
 /// cannot express it (Pi) must refuse: conflict row, no fresh artifact, and
-/// the previously-installed wider rendering leaves the disk on apply.
+/// the installed wider rendering leaves the disk on apply.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_refused_rendering_is_a_conflict_and_removes_the_wide_artifact() {

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# #857: replacing a configured symlink must not leave the destination absent,
+# replacing a configured symlink must not leave the destination absent,
 # so the swap goes through a pre-built temp link and a rename. The hazard that
 # introduces is following a symlinked-to-directory destination — a plain `mv`
 # deposits the temp link INSIDE the target instead of replacing it, which is
 # why the swap needs `mv -T` (GNU) / `mv -h` (BSD). These assertions fail on a
-# naive rename just as loudly as on a regression to the old rm+ln pair.
+# naive rename just as loudly as on a failure to the old rm+ln pair.
 #
-# #860: `claude-setup` / `claude-cleanup` must provide the same provisioning
+# `claude-setup` / `claude-cleanup` must provide the same provisioning
 # and teardown semantics as the Codex pair, for worktrees Claude Code creates
 # itself via its WorktreeCreate hook.
 set -euo pipefail

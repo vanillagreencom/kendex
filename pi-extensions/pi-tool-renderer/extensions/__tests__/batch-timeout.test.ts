@@ -1,4 +1,4 @@
-// Regression coverage for kendex#96: tool_batch hangs indefinitely when an
+// tool_batch must not hang indefinitely when an
 // inner tool never resolves. The fix wraps each inner call in a
 // Promise.race against a per-call timeout and aborts the child signal so
 // cooperative tools can clean up subprocess handles.
