@@ -253,6 +253,42 @@ fn recording_existing_refuses_a_render_that_does_not_match() {
     assert!(!lock_path.exists());
 }
 
+#[test]
+fn recovery_requires_the_whole_declared_set() {
+    for extra in [
+        "\n[bundles.missing]\nsource = \"cat\"\n",
+        "\n[plugins.\"fmt@main\"]\nenabled = true\nharness = \"codex\"\n",
+    ] {
+        let f = fixture(&MANIFEST_SCHEMA.to_string());
+        let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+        apply::execute(&f.env, &install.plan).unwrap();
+        fs::remove_file(f.scope_lock()).unwrap();
+        fs::write(&f.manifest_path, format!("{}{extra}", f.original)).unwrap();
+        assert!(
+            plan_record_existing(&f.env, &f.scope).is_err(),
+            "incomplete declaration accepted: {extra}"
+        );
+        assert!(!f.scope_lock().exists());
+    }
+}
+
+#[test]
+fn recovery_rechecks_render_bytes_before_recording() {
+    let f = fixture(&MANIFEST_SCHEMA.to_string());
+    let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+    apply::execute(&f.env, &install.plan).unwrap();
+    fs::remove_file(f.scope_lock()).unwrap();
+    let recovery = plan_record_existing(&f.env, &f.scope).unwrap();
+    let rendered = f.project().join(".agents/skills/gh/SKILL.md");
+    fs::write(&rendered, "edited during confirmation\n").unwrap();
+    assert!(apply::execute(&f.env, &recovery.plan).is_err());
+    assert!(!f.scope_lock().exists());
+    assert_eq!(
+        fs::read_to_string(rendered).unwrap(),
+        "edited during confirmation\n"
+    );
+}
+
 impl Fixture {
     fn project(&self) -> &std::path::Path {
         match &self.scope {

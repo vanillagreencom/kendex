@@ -55,7 +55,12 @@ pub fn resolve(
     upstream: &str,
 ) -> ResolvedRoute {
     let mut records = crate::ownership::read(env, scope);
-    let evidence = crate::ownership::find(env, scope, &mut records, name, kind);
+    let evidence = crate::ownership::find(
+        env,
+        scope,
+        &mut records,
+        crate::ownership::Subject::Named { name, kind },
+    );
     let route = from_evidence(evidence, name, kind, upstream);
     ResolvedRoute {
         route,
@@ -76,7 +81,7 @@ pub fn derive_label(name: &str, kind: Option<ItemKind>) -> &'static str {
 }
 
 pub fn route(lock: &Lock, name: &str, kind: Option<ItemKind>, upstream: &str) -> Route {
-    let evidence = match crate::ownership::locked(lock, name, kind) {
+    let evidence = match crate::ownership::locked(lock, name, kind, None) {
         crate::ownership::Recorded::Found(evidence) => Some(evidence),
         crate::ownership::Recorded::Absent | crate::ownership::Recorded::Ambiguous => None,
     };

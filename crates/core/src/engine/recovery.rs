@@ -72,16 +72,6 @@ pub fn plan_record_existing(env: &Env, scope: &Scope) -> Result<EngineReport> {
             crate::apply::Op::WriteFile { path, .. } if path == &inventory)
         });
     }
-    let every_declaration_recorded =
-        planned_declarations(env, scope, &manifest)
-            .iter()
-            .all(|declared| {
-                recovered
-                    .matching
-                    .entries
-                    .values()
-                    .any(|entry| entry.kind == declared.kind && entry.name == declared.name)
-            });
     let blocked = recovered
         .report
         .drift
@@ -94,11 +84,73 @@ pub fn plan_record_existing(env: &Env, scope: &Scope) -> Result<EngineReport> {
             .ops
             .iter()
             .all(|planned| matches!(planned.op, crate::apply::Op::WriteLock { .. }));
-    if blocked || !only_lock || !every_declaration_recorded {
+    if blocked || !only_lock || recovered.report.declaration_status == DeclarationStatus::Incomplete
+    {
         return Err(crate::error::CoreError::RecordExistingRefused {
             path,
             reason: "the declared installs do not exactly match current source and disk bytes; no file was changed".to_owned(),
         });
     }
+    bind_reads(env, scope, &recovered.matching, &mut recovered.report.plan)?;
     Ok(recovered.report)
+}
+
+fn bind_reads(env: &Env, scope: &Scope, matching: &Lock, plan: &mut Plan) -> Result<()> {
+    use crate::apply::{Pre, ReadCheck};
+    let manifest_path = manifest::manifest_path(env, scope);
+    plan.reads.push(ReadCheck::File {
+        pre: Pre::observed(&manifest_path)?,
+        path: manifest_path,
+    });
+    for entry in matching.entries.values() {
+        let owned = owned::installed(env, scope, entry);
+        if entry.kind == crate::model::ItemKind::PiExtension {
+            for path in owned.files {
+                let hash = entry.rendered_hash.clone().ok_or_else(|| {
+                    crate::error::CoreError::RecordExistingRefused {
+                        path: path.clone(),
+                        reason: "the Pi package has no measured render hash".to_owned(),
+                    }
+                })?;
+                plan.reads.push(ReadCheck::PiPackage { path, hash });
+            }
+            continue;
+        }
+        for path in owned.files {
+            for candidate in [targets::disabled_name(&path), path] {
+                let pre = if candidate.exists() || candidate.is_symlink() {
+                    let hash = crate::hash::hash_tree(&candidate)?;
+                    if entry
+                        .rendered_hash
+                        .as_ref()
+                        .is_some_and(|expected| expected != &hash)
+                    {
+                        return Err(crate::error::CoreError::PlanStale { path: candidate });
+                    }
+                    if candidate.is_symlink() {
+                        let target = std::fs::read_link(&candidate)
+                            .map_err(|error| crate::error::CoreError::io(&candidate, error))?;
+                        plan.reads.push(ReadCheck::File {
+                            path: candidate.clone(),
+                            pre: Pre::SymlinkTo { target },
+                        });
+                    }
+                    Pre::HashIs { hash }
+                } else {
+                    Pre::Absent
+                };
+                plan.reads.push(ReadCheck::File {
+                    path: candidate,
+                    pre,
+                });
+            }
+        }
+        for (path, _) in owned.edits {
+            plan.reads.push(ReadCheck::File {
+                pre: Pre::observed(&path)?,
+                path,
+            });
+        }
+    }
+    Ok(())
 }

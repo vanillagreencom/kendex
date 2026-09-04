@@ -154,7 +154,7 @@ fn verification_and_record_recovery_compare_pi_bytes() {
 fn a_busy_scope_refuses_pi_mutation() {
     let tmp = fixture();
     let project = tmp.path().join("dev/app");
-    let env = kendex_core::env::Env::fake(tmp.path(), kendex_core::env::FakeOs::Linux);
+    let env = kendex_core::env::Env::host_rooted(tmp.path());
     let scope = kendex_core::model::Scope::Project {
         root: project.clone(),
     };
@@ -206,6 +206,40 @@ fn changing_pi_source_refuses_before_package_mutation() {
     assert_eq!(
         fs::read_to_string(project.join(".pi/packages/pi-widgets/index.js")).unwrap(),
         "export const version = 2;\n"
+    );
+}
+
+#[test]
+fn generic_orphan_cleanup_keeps_pi_payload_and_registration_together() {
+    let tmp = fixture();
+    let project = tmp.path().join("dev/app");
+    assert!(
+        kendex(tmp.path(), &project, &["update-pi"])
+            .status
+            .success()
+    );
+    let settings = fs::read(project.join(".pi/settings.json")).unwrap();
+    fs::write(project.join("kendex.toml"), "schema = 6\n").unwrap();
+    let env = kendex_core::env::Env::host_rooted(tmp.path());
+    let scope = kendex_core::model::Scope::Project {
+        root: project.clone(),
+    };
+    let options = kendex_core::engine::PlanOptions {
+        remove_orphans: true,
+        ..Default::default()
+    };
+    let report = kendex_core::engine::plan_apply(&env, &scope, &options).unwrap();
+    kendex_core::apply::execute(&env, &report.plan).unwrap();
+    assert!(project.join(".pi/packages/pi-widgets/index.js").is_file());
+    assert_eq!(
+        fs::read(project.join(".pi/settings.json")).unwrap(),
+        settings
+    );
+    let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
+    assert!(
+        lock.entries
+            .values()
+            .any(|entry| entry.name == "pi-widgets")
     );
 }
 

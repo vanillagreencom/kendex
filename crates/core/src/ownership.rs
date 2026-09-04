@@ -3,7 +3,7 @@
 use crate::env::Env;
 use crate::lock::{Lock, LockFile};
 use crate::manifest::Manifest;
-use crate::model::{ItemKind, Scope};
+use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source_ref::repo_identity;
 
 /// Current records and the failures preserved alongside fallback evidence.
@@ -82,14 +82,31 @@ pub struct Evidence {
 
 /// A readable lock outranks declarations, which outrank installed metadata.
 /// Candidates must agree on their repository; delivery harnesses may differ.
+pub enum Subject<'a> {
+    Named {
+        name: &'a str,
+        kind: Option<ItemKind>,
+    },
+    Observed(&'a crate::model::ObservedItem),
+}
+
+/// Resolve an asset name or one observed installation through the shared origin rules.
 pub fn find(
     env: &Env,
     scope: &Scope,
     records: &mut Records,
-    name: &str,
-    kind: Option<ItemKind>,
+    subject: Subject<'_>,
 ) -> Option<Evidence> {
-    match locked(&records.lock, name, kind) {
+    let (name, kind, harness, observed_path) = match subject {
+        Subject::Named { name, kind } => (name, kind, None, None),
+        Subject::Observed(item) => (
+            item.name.as_str(),
+            Some(item.kind),
+            Some(item.harness),
+            Some(&item.path),
+        ),
+    };
+    match locked(&records.lock, name, kind, harness) {
         Recorded::Found(evidence) => return Some(evidence),
         Recorded::Ambiguous => return None,
         Recorded::Absent => {}
@@ -97,7 +114,9 @@ pub fn find(
     if let Some(manifest) = &records.manifest {
         let mut candidates = Vec::new();
         for declared in crate::engine::planned_declarations(env, scope, manifest) {
-            if kind.is_some_and(|kind| kind != declared.kind) {
+            if harness.is_some_and(|harness| !declared.harnesses.contains(&harness))
+                || kind.is_some_and(|kind| kind != declared.kind)
+            {
                 continue;
             }
             if declared.name != name
@@ -144,12 +163,22 @@ pub fn find(
         if kind.is_some_and(|kind| kind != candidate) {
             continue;
         }
-        let Some(installed) =
-            crate::scan::find_installed(env, &settings.harness_roots, scope, candidate, name)
-        else {
-            continue;
+        let path = match observed_path {
+            Some(path) => path.clone(),
+            None => {
+                let Some(installed) = crate::scan::find_installed(
+                    env,
+                    &settings.harness_roots,
+                    scope,
+                    candidate,
+                    name,
+                ) else {
+                    continue;
+                };
+                installed.path
+            }
         };
-        if let Some(repo) = rendered_repository(candidate, &installed.path) {
+        if let Some(repo) = rendered_repository(candidate, &path) {
             candidates.push(Evidence {
                 kind: Some(candidate),
                 source: repo.clone(),
@@ -168,11 +197,20 @@ pub(crate) enum Recorded {
 }
 
 /// One lock lookup shared by origin display and report routing.
-pub(crate) fn locked(lock: &Lock, name: &str, kind: Option<ItemKind>) -> Recorded {
+pub(crate) fn locked(
+    lock: &Lock,
+    name: &str,
+    kind: Option<ItemKind>,
+    harness: Option<HarnessId>,
+) -> Recorded {
     let candidates: Vec<_> = lock
         .entries
         .values()
-        .filter(|entry| entry.name == name && kind.is_none_or(|wanted| wanted == entry.kind))
+        .filter(|entry| {
+            entry.name == name
+                && kind.is_none_or(|wanted| wanted == entry.kind)
+                && harness.is_none_or(|wanted| wanted == entry.harness)
+        })
         .map(|entry| Evidence {
             kind: Some(entry.kind),
             source: entry.source.clone(),

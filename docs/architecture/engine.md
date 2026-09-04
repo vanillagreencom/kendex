@@ -28,6 +28,9 @@ The engine turns a manifest into a plan and a plan into disk. Planning derives t
 11. Every atomic write gets its own temp file: `fs::write_then_rename` names it per write, not per process. Not mechanically enforced.
 12. Journal recovery is idempotent, so a crash mid-rollback recovers by rolling back again; an empty journal is never written because it would read as an interrupted apply. Enforced by `crates/app/tests/recovery.rs`.
 
+- Record-only recovery requires a complete declaration audit and read preconditions that still match at execution. Enforced by `crates/core/tests/migration.rs::recovery_requires_the_whole_declared_set` and `::recovery_rechecks_render_bytes_before_recording`.
+- Generic orphan cleanup keeps Pi payloads and registrations together until carrier removal handles both. Enforced by `crates/cli/tests/update_pi.rs::generic_orphan_cleanup_keeps_pi_payload_and_registration_together`.
+
 ## Decisions
 
 - A catalog hook and a manifest `[[custom-hooks]]` entry both become one `HookSpec` (`crates/core/src/hook/spec.rs`), and `crates/core/src/hook/delivery.rs` decides once how a spec reaches each harness at each scope; the engine, the agent renderer and the editor read that one decision, so a registered hook never also renders as prose. Enforced by `crates/core/tests/custom_hooks.rs`.

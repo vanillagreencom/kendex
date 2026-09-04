@@ -11,7 +11,12 @@ use crate::error::{CoreError, Result};
 
 /// Execute ops under a lock the caller already holds for `key` and after
 /// it recovered. Returns how many ops ran.
-pub(super) fn run_journaled(env: &Env, ops: &[PlannedOp], key: &str) -> Result<usize> {
+pub(super) fn run_journaled(
+    env: &Env,
+    ops: &[PlannedOp],
+    key: &str,
+    reads: &[super::ReadCheck],
+) -> Result<usize> {
     // Nothing to do leaves nothing behind: an empty journal would read as
     // an interrupted apply to the next recovery pass.
     if ops.is_empty() {
@@ -23,7 +28,11 @@ pub(super) fn run_journaled(env: &Env, ops: &[PlannedOp], key: &str) -> Result<u
     journal::write(&journal_dir, &touched)?;
 
     for (index, planned) in ops.iter().enumerate() {
-        if let Err(error) = planned.op.run(env) {
+        let result = reads
+            .iter()
+            .try_for_each(super::ReadCheck::check)
+            .and_then(|()| planned.op.run(env));
+        if let Err(error) = result {
             journal::rollback_mutated(&journal_dir, &mutated_before_failure(ops, index, &error))?;
             return Err(CoreError::RolledBack {
                 reason: format!("'{}' failed: {error}", planned.line()),

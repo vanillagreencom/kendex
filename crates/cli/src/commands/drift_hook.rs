@@ -30,6 +30,7 @@ pub fn install(env: &Env, scope: &Scope, yes: bool) -> CliResult {
             say(&format!("  - {}", op.line()));
         }
         let report = kendex_core::engine::EngineReport {
+            declaration_status: kendex_core::engine::DeclarationStatus::Complete,
             repo_effects: Vec::new(),
             repo_effects_leaving: Vec::new(),
             drift: Vec::new(),

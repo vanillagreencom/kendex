@@ -208,6 +208,16 @@ pub(super) fn orphans(
             new_lock.entries.insert(key.clone(), entry.clone());
             continue;
         }
+        if entry.kind == ItemKind::PiExtension {
+            new_lock.entries.insert(key.clone(), entry.clone());
+            drift.push(DriftRow {
+                kind: entry.kind, name: entry.name.clone(), harness: entry.harness, scope: scope.clone(),
+                state: DriftState::Conflict,
+                detail: "Pi carrier cleanup must remove registrations and runtime files together; package and record were kept".to_owned(),
+                cause: None, compared: None, also_in_the_way: Vec::new(),
+            });
+            continue;
+        }
         let unneeded = derived_only(entry);
         let unfiltered = options.removal_filter.is_none();
         let removable = (options.remove_orphans && (named || unfiltered))

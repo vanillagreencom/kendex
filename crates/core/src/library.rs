@@ -81,17 +81,22 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
         let Some(records) = records_by_scope.get_mut(&item.scope) else {
             unreachable!("every observed scope was requested");
         };
-        let origin = crate::ownership::find(env, &item.scope, records, &item.name, Some(item.kind))
-            .map_or(Origin::Unmanaged, |evidence| {
-                let empty = Manifest::default();
-                origin_of(
-                    records.manifest.as_deref().unwrap_or(&empty),
-                    item.kind,
-                    &item.name,
-                    &evidence.source,
-                    &evidence.repo,
-                )
-            });
+        let origin = crate::ownership::find(
+            env,
+            &item.scope,
+            records,
+            crate::ownership::Subject::Observed(&item),
+        )
+        .map_or(Origin::Unmanaged, |evidence| {
+            let empty = Manifest::default();
+            origin_of(
+                records.manifest.as_deref().unwrap_or(&empty),
+                item.kind,
+                &item.name,
+                &evidence.source,
+                &evidence.repo,
+            )
+        });
         rows.entry((item.scope, item.kind, item.name, item.harness))
             .or_insert(origin);
     }

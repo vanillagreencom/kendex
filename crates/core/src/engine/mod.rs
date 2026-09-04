@@ -67,7 +67,7 @@ pub(crate) use desired_agent::contributes_to_agent;
 pub use expansion::{NO_PER_PACKAGE_UPDATE, plans_per_package};
 pub use item_source::ItemSource;
 pub use observed::observed_rows;
-pub use planned::{PlannedDeclaration, planned_declarations, recorded_by_the_plan};
+pub use planned::{PlannedDeclaration, planned_declarations};
 pub use scoring::{ItemSafety, SafetyTarget};
 
 /// The conservative "cannot prove these bytes are our render" hold.
@@ -99,7 +99,9 @@ mod compared;
 pub use compared::Comparison;
 mod repo_effects;
 mod report_types;
-pub use report_types::{DriftCause, DriftRow, DriftState, EngineReport, ItemWarning, PlanOptions};
+pub use report_types::{
+    DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, ItemWarning, PlanOptions,
+};
 
 /// Compute drift and the plan that would fix it — the Audit page and
 /// `apply` both consume this.
@@ -214,7 +216,9 @@ pub fn plan_scope(
     scope_notes.extend(scope_wide(scope, &mut ops)?);
     generated_paths::plan(scope, &state, &instruction_shims, &mut ops)?;
 
+    let declaration_status = DeclarationStatus::of(&state);
     let mut report = EngineReport {
+        declaration_status,
         // Ahead of the moves out of `state` below, and read before `drift`
         // moves in: an effect belongs to a package this pass adds to what
         // the scope carries, and to no other.
@@ -330,6 +334,7 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
     // Nothing is declared here: the scope reads as observation-only rather
     // than failing the whole audit, so a stranger's files still get a row.
     let mut report = EngineReport {
+        declaration_status: DeclarationStatus::Complete,
         drift: Vec::new(),
         plan: Plan::landed(scope.clone(), Vec::new())?,
         notes: Vec::new(),

@@ -1,0 +1,1 @@
+- Ownership stays within each observed harness. Record-only recovery refuses incomplete declarations and render edits made after its preview.
