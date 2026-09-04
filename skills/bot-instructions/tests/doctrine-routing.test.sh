@@ -281,11 +281,26 @@ git ls-files -- ':(glob)vendor'
 """
 OVERRIDE
 } > "$fenced/bot-instructions.toml"
-bi_must adopt --repo "$fenced" || exit 1
-bi_must render --repo "$fenced" || exit 1
-if python3 - "$BI_ROOT/skills/bot-instructions" "$fenced" <<'PROBE'; then
+# The package copy's own doctrine is one paragraph per line, so the joining
+# half needs a spec copy with a wrap planted in it: one line break inside the
+# `rounds` block, the rest byte-identical.
+wrapped_spec="$BI_TMP/wrapped-spec"
+mkdir -p "$wrapped_spec" || exit 1
+cp -R "$PKG/SKILL.md" "$PKG/schemas" "$wrapped_spec/"
+python3 - "$wrapped_spec/SKILL.md" <<'PLANT' || exit 1
+import sys
+p = sys.argv[1]
+s = open(p).read()
+needle = "in one round. A finding"
+if s.count(needle) != 1:
+    sys.exit(f"the rounds block no longer holds {needle!r}; plant the wrap elsewhere")
+open(p, "w").write(s.replace(needle, "in one round.\nA finding"))
+PLANT
+bi_must adopt --repo "$fenced" --spec "$wrapped_spec" || exit 1
+bi_must render --repo "$fenced" --spec "$wrapped_spec" || exit 1
+if python3 - "$BI_ROOT/skills/bot-instructions" "$fenced" "$wrapped_spec" <<'PROBE'; then
 import os, sys
-PKG, repo = sys.argv[1], sys.argv[2]
+PKG, repo, SPEC = sys.argv[1], sys.argv[2], sys.argv[3]
 sys.path.insert(0, os.path.join(PKG, "scripts"))
 from lib import run, spec as spec_mod, tree
 
@@ -300,7 +315,7 @@ for rel in CARRIERS:
 # which collapsed every newline in it unconditionally. `render-out-of-scope`
 # is the block it carries, so the fixture overrides that one too.
 OUT_OF_SCOPE = "```\ngit ls-files -- \':(glob)vendor\'\n```"
-ctx = run.Context(repo, tree.Worktree(repo), tree.Worktree(PKG),
+ctx = run.Context(repo, tree.Worktree(repo), tree.Worktree(SPEC),
                   ("SKILL.md", "schemas/renders.md"), "check",
                   ("SKILL.md", "schemas/renders.md"))
 doc = ctx.build.data[".coderabbit.yaml"]
@@ -321,10 +336,10 @@ if depth:
 
 # The other half: a block the repo did NOT override still arrives joined, so
 # the spec copy's own wrapping is not carried into the outputs as line breaks.
-blocks = spec_mod.load(tree.Worktree(PKG), "SKILL.md", "schemas/renders.md").blocks
+blocks = spec_mod.load(tree.Worktree(SPEC), "SKILL.md", "schemas/renders.md").blocks
 wrapped = [b for b, t in blocks.items() if "\n" in t.strip() and b != "severity"]
-if not wrapped:
-    sys.exit("no package-authored block is hard-wrapped, so the pair proves nothing")
+if "rounds" not in wrapped:
+    sys.exit("the planted wrap in the rounds block did not register, so the pair proves nothing")
 copilot = open(os.path.join(repo, CARRIERS[0])).read()
 for bid in wrapped:
     first = blocks[bid].strip().split("\n")[0]

@@ -10,7 +10,7 @@ Rewrite, do not patch. The old files are read for facts and the code is read for
 4. Write the root `AGENTS.md` from [../templates/root-AGENTS.md](../templates/root-AGENTS.md). Keep the `## Code Review Rules` section the bot-instructions package writes as it renders it.
 5. Write a nested `AGENTS.md` from [../templates/nested-AGENTS.md](../templates/nested-AGENTS.md) in each directory with local rules; delete hand-written `CLAUDE.md`, `.claude/rules`, and every other harness-specific instruction file.
 6. Run `kendex refresh` so the shims are written, then `kendex verify`.
-7. Reflow every tracked markdown file with the growth-guards `md-reflow` script, set `GROWTH_GUARDS_MD_SCOPE = "all"` in `kendex.settings.toml`, and run the `md-format`, `md-refs` and `prose` lanes over the whole tree.
+7. Reflow every tracked markdown file with the growth-guards `md-reflow` script, set `GROWTH_GUARDS_MD_SCOPE = "all"` in `kendex.settings.toml`, and run the `md-format`, `md-refs` and `prose` lanes over the whole tree. Test fixtures whose bytes a suite pins, and a collated `CHANGELOG.md` whose Unreleased section the `changelog-entries` lane holds to HEAD, go in `tools/md-excludes` with their reason.
 8. Supersede any decision record the rewrite shows to be obsolete through the `decider` skill; never delete one.
 9. Remove every instruction the installed packages now enforce from the prose, and report anything portable the packages lack upstream through `kendex report`.
 10. Run the repository's own validation and the size ratchet; a file over its class shrinks or freezes, it is never raised.
