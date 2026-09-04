@@ -1,0 +1,1 @@
+- Ownership routing checks every observed copy and accepts short Pi names. Pi check previews now refuse the same source conflicts as updates.

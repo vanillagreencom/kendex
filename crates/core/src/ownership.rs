@@ -97,13 +97,13 @@ pub fn find(
     records: &mut Records,
     subject: Subject<'_>,
 ) -> Option<Evidence> {
-    let (name, kind, harness, observed_path) = match subject {
+    let (name, kind, harness, observation) = match subject {
         Subject::Named { name, kind } => (name, kind, None, None),
         Subject::Observed(item) => (
             item.name.as_str(),
             Some(item.kind),
             Some(item.harness),
-            Some(&item.path),
+            Some(item),
         ),
     };
     match locked(&records.lock, name, kind, harness) {
@@ -119,10 +119,7 @@ pub fn find(
             {
                 continue;
             }
-            if declared.name != name
-                && !(declared.kind == ItemKind::PiExtension
-                    && declared.name.rsplit('/').next() == Some(name))
-            {
+            if !matches_name(declared.kind, &declared.name, name) {
                 continue;
             }
             if declared.decl.source == crate::manifest::LOCAL_SOURCE_NAME
@@ -158,29 +155,25 @@ pub fn find(
             return None;
         }
     };
+    let scanned;
+    let observed = match observation {
+        Some(item) => std::slice::from_ref(item),
+        None => {
+            scanned =
+                crate::scan::scan_scopes(env, &settings.harness_roots, std::slice::from_ref(scope));
+            records.warnings.extend(scanned.warnings.iter().cloned());
+            scanned.items.as_slice()
+        }
+    };
     let mut candidates = Vec::new();
-    for candidate in [ItemKind::Skill, ItemKind::PiExtension] {
-        if kind.is_some_and(|kind| kind != candidate) {
+    for item in observed {
+        if kind.is_some_and(|kind| kind != item.kind) || !matches_name(item.kind, &item.name, name)
+        {
             continue;
         }
-        let path = match observed_path {
-            Some(path) => path.clone(),
-            None => {
-                let Some(installed) = crate::scan::find_installed(
-                    env,
-                    &settings.harness_roots,
-                    scope,
-                    candidate,
-                    name,
-                ) else {
-                    continue;
-                };
-                installed.path
-            }
-        };
-        if let Some(repo) = rendered_repository(candidate, &path) {
+        if let Some(repo) = rendered_repository(item.kind, &item.path) {
             candidates.push(Evidence {
-                kind: Some(candidate),
+                kind: Some(item.kind),
                 source: repo.clone(),
                 repo,
                 ..Evidence::default()
@@ -207,7 +200,7 @@ pub(crate) fn locked(
         .entries
         .values()
         .filter(|entry| {
-            entry.name == name
+            matches_name(entry.kind, &entry.name, name)
                 && kind.is_none_or(|wanted| wanted == entry.kind)
                 && harness.is_none_or(|wanted| wanted == entry.harness)
         })
@@ -223,6 +216,11 @@ pub(crate) fn locked(
         return Recorded::Absent;
     }
     agreed(candidates).map_or(Recorded::Ambiguous, Recorded::Found)
+}
+
+fn matches_name(kind: ItemKind, actual: &str, requested: &str) -> bool {
+    actual == requested
+        || kind == ItemKind::PiExtension && actual.rsplit('/').next() == Some(requested)
 }
 
 fn agreed(candidates: Vec<Evidence>) -> Option<Evidence> {

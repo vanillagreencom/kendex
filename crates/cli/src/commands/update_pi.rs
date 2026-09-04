@@ -92,6 +92,18 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
         return Ok(());
     }
     for plan in &plans {
+        let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, &plan.scope))?;
+        let mut notes = Vec::new();
+        for (name, package) in declared_sources(env, &plan.scope, &mut notes) {
+            let key = kendex_core::lock::entry_key(
+                kendex_core::model::ItemKind::PiExtension,
+                &name,
+                kendex_core::model::HarnessId::Pi,
+            );
+            pi_ext::check_origin(&name, &package, lock.entries.get(&key))?;
+        }
+    }
+    for plan in &plans {
         print_plan(plan);
     }
 
@@ -103,18 +115,6 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
             ));
         }
         return Ok(());
-    }
-    for plan in &plans {
-        let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, &plan.scope))?;
-        let mut notes = Vec::new();
-        for (name, package) in declared_sources(env, &plan.scope, &mut notes) {
-            let key = kendex_core::lock::entry_key(
-                kendex_core::model::ItemKind::PiExtension,
-                &name,
-                kendex_core::model::HarnessId::Pi,
-            );
-            pi_ext::check_origin(&name, &package, lock.entries.get(&key))?;
-        }
     }
     update(env, &plans)
 }

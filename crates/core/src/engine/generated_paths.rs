@@ -14,6 +14,7 @@ pub(super) fn plan(
     scope: &Scope,
     state: &DesiredState,
     shims: &[ShimStanding],
+    drift: &[super::DriftRow],
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
     let Scope::Project { root } = scope else {
@@ -24,7 +25,17 @@ pub(super) fn plan(
     }
     let mut paths = BTreeSet::new();
     for item in &state.items {
-        if item.source_name == crate::manifest::INPLACE_SOURCE_NAME {
+        if item.source_name == crate::manifest::INPLACE_SOURCE_NAME
+            || drift.iter().any(|row| {
+                row.kind == item.kind
+                    && row.name == item.name
+                    && row.harness == item.harness
+                    && matches!(
+                        row.state,
+                        super::DriftState::Conflict | super::DriftState::Unmanaged
+                    )
+            })
+        {
             continue;
         }
         match &item.artifact {

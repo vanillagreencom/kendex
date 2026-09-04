@@ -214,7 +214,7 @@ pub fn plan_scope(
     let repo_effects_leaving = repo_effects::leaving(env, scope, lock, &new_lock)?;
     plan_lock_write(env, scope, declared, disk_lock, new_lock, &mut ops)?;
     scope_notes.extend(scope_wide(scope, &mut ops)?);
-    generated_paths::plan(scope, &state, &instruction_shims, &mut ops)?;
+    generated_paths::plan(scope, &state, &instruction_shims, &drift, &mut ops)?;
 
     let declaration_status = DeclarationStatus::of(&state);
     let mut report = EngineReport {

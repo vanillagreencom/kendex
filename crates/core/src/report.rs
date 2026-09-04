@@ -136,6 +136,64 @@ mod tests {
     use super::*;
     use crate::lock::LockEntry;
 
+    #[test]
+    fn scoped_pi_names_keep_recorded_markers_when_reported_by_short_name() {
+        let mut lock = Lock::default();
+        let mut recorded = entry("@scope/pi-helper", ItemKind::PiExtension, DEFAULT_UPSTREAM);
+        recorded.harness = crate::model::HarnessId::Pi;
+        recorded.source_commit = Some("abcdefghi".to_owned());
+        recorded.rendered_hash = Some("123456789".to_owned());
+        lock.entries.insert("pi".to_owned(), recorded);
+        let result = route(&lock, "pi-helper", None, DEFAULT_UPSTREAM);
+        assert!(result.kendex_owned);
+        assert_eq!(
+            result.source.as_deref(),
+            Some("vanillagreencom/kendex@abcdefg")
+        );
+        assert_eq!(result.rendered.as_deref(), Some("1234567"));
+    }
+
+    #[test]
+    fn conflicting_render_origins_do_not_depend_on_scan_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::test_util::rooted(&tmp);
+        let project = root.join("project");
+        let write = |directory: &str, repo: &str| {
+            let directory = project.join(directory).join("shared");
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join("SKILL.md"), format!("---\nname: shared\ndescription: fixture\nmetadata:\n  repository: {repo}\n---\nBody.\n")).unwrap();
+        };
+        write(".claude/skills", DEFAULT_UPSTREAM);
+        write(".agents/skills", "other/repo");
+        let env = crate::env::Env::fake(&root, crate::env::FakeOs::Linux);
+        let scope = Scope::Project {
+            root: project.clone(),
+        };
+        assert!(
+            !resolve(
+                &env,
+                &scope,
+                "shared",
+                Some(ItemKind::Skill),
+                DEFAULT_UPSTREAM
+            )
+            .route
+            .kendex_owned
+        );
+        std::fs::remove_dir_all(project.join(".agents/skills/shared")).unwrap();
+        assert!(
+            resolve(
+                &env,
+                &scope,
+                "shared",
+                Some(ItemKind::Skill),
+                DEFAULT_UPSTREAM
+            )
+            .route
+            .kendex_owned
+        );
+    }
+
     fn entry(name: &str, kind: ItemKind, source_repo: &str) -> LockEntry {
         LockEntry {
             name: name.to_owned(),

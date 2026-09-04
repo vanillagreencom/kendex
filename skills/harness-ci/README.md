@@ -28,6 +28,7 @@ The consumer owns one thin step calling the rendered script, written by hand onc
 
 ## Semantics
 
+- Runs product checks when the inventory gains paths; a head cannot grant itself generated ownership.
 - Reads `.kendex-generated.json` at both diff endpoints. Every changed file must be recorded as generated at each endpoint where the file exists. An unrecorded file runs product checks, regardless of its directory.
 - `pull_request` diffs from the merge base (`base...head`); `push` and `merge_group` diff the two endpoints (`base head`), because a force-push leaves the `before` sha off the head's history.
 - Rename detection is off, so both sides of a `git mv` into a render tree are listed and the diff answers `false`.

@@ -197,6 +197,9 @@ fn changing_pi_source_refuses_before_package_mutation() {
         "export const version = 3;\n",
     )
     .unwrap();
+    let preview = kendex(tmp.path(), &project, &["update-pi", "--check"]);
+    assert!(!preview.status.success(), "{preview:?}");
+    assert!(!String::from_utf8_lossy(&preview.stderr).contains("run without --check"));
     assert!(
         !kendex(tmp.path(), &project, &["update-pi"])
             .status
