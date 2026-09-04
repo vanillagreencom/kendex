@@ -133,6 +133,16 @@ OUT="$(cd "$R" && GROWTH_GUARDS_COMMENT_REFERENCE_TYPES=issue-id GROWTH_GUARDS_C
 [ "$RC" -eq 1 ] && [ "$(printf '%s\n' "$OUT" | grep -c 'history reference (issue id)')" -eq 1 ] && case "$OUT" in *"history reference (revision narration)"*) false ;; *) true ;; esac \
   && ok "issue references run without revision narration" \
   || bad "reference-only configuration" "rc=$RC out=$OUT"
+for mode in index staged; do
+  put a.rs '// Legacy behavior'
+  args=()
+  [ "$mode" != staged ] || args=(--staged)
+  OUT="$(cd "$R" && GROWTH_GUARDS_COMMENT_REFERENCE_TYPES= GROWTH_GUARDS_COMMENT_REVISION_WORDS=LeGaCy "$CM" ${args[@]+"${args[@]}"} 2>&1)" && RC=0 || RC=$?
+  fails_at "a mixed-case configured word matches in $mode scope" a.rs 1
+  put a.rs '// LegacyValue behavior'
+  OUT="$(cd "$R" && GROWTH_GUARDS_COMMENT_REFERENCE_TYPES= GROWTH_GUARDS_COMMENT_REVISION_WORDS=LeGaCy "$CM" ${args[@]+"${args[@]}"} 2>&1)" && RC=0 || RC=$?
+  [ "$RC" -eq 0 ] && ok "word boundaries still hold in $mode scope" || bad "configured word boundary" "rc=$RC out=$OUT"
+done
 put a.rs '// encoded as UTF-8'
 run_cm
 fails_at "the default key shape is any letter run, a hyphen and a digit run, so UTF-8 matches it (set GH_ISSUE_PATTERN to narrow)" a.rs 1

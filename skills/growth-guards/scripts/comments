@@ -34,6 +34,8 @@ GG_CHECK="comments"
 source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/settings.sh
 source "$SCRIPT_DIR/lib/settings.sh"
+# shellcheck source=lib/revision-words.sh
+source "$SCRIPT_DIR/lib/revision-words.sh"
 # shellcheck source=lib/staged-lines.sh
 source "$SCRIPT_DIR/lib/staged-lines.sh"
 # shellcheck source=lib/comment-text.sh
@@ -116,8 +118,8 @@ ISSUE_ERE="$(gg_setting GH_ISSUE_PATTERN "")" || exit 2
 # own default — this lane's is the generic key shape.
 [ -n "$ISSUE_ERE" ] || ISSUE_ERE="$ISSUE_DEFAULT"
 REFERENCE_TYPES="$(gg_setting GROWTH_GUARDS_COMMENT_REFERENCE_TYPES "$REFERENCE_TYPES_DEFAULT")" || exit 2
-REVISION_WORDS="$(gg_setting GROWTH_GUARDS_COMMENT_REVISION_WORDS "$REVISION_WORDS_DEFAULT")" || exit 2
 gg_tmpdir
+gg_load_revision_words GROWTH_GUARDS_COMMENT_REVISION_WORDS "$REVISION_WORDS_DEFAULT" || exit 2
 
 # The shapes. Word boundaries are non-word characters rather than \< and \>,
 # which not every awk carries, and the digit runs are spelled out because
@@ -128,7 +130,6 @@ gg_tmpdir
 # a pattern written in any one case.
 DATE_ERE='20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
 HASH_ERE='#[0-9][0-9][0-9][0-9]?([^0-9A-Fa-f]|$)'
-WORD_ERE="(^|[^A-Za-z0-9_])($REVISION_WORDS)([^A-Za-z0-9_]|\$)"
 ISSUE_BOUNDED="(^|[^A-Za-z0-9_])($ISSUE_ERE)([^A-Za-z0-9_]|\$)"
 CHECK_ISSUE=0
 CHECK_HASH=0
@@ -171,7 +172,6 @@ probe_ere() { # VALUE KEY — require both engines to accept one configured ERE
     || gg_config_error "$key is not a POSIX ERE grep can read: '$(gg_scrubbed "$value")'"
 }
 probe_ere "$ISSUE_BOUNDED" GH_ISSUE_PATTERN
-[ "$WORD_ERE" = 'a^' ] || probe_ere "$WORD_ERE" GROWTH_GUARDS_COMMENT_REVISION_WORDS
 
 # Which shape a comment line carries, one record per (line, shape):
 # "line<TAB>shape<TAB>text". Reads the extractor's "line<TAB>text" records.
@@ -180,7 +180,7 @@ classify() { # IN — records on stdout
   LC_ALL=C awk -F '\t' -v OFS='\t' '
     BEGIN {
       date = ENVIRON["DATE_ERE"]; hash = ENVIRON["HASH_ERE"]
-      word = ENVIRON["WORD_ERE"]; issue = ENVIRON["ISSUE_BOUNDED"]
+      issue = ENVIRON["ISSUE_BOUNDED"]
     }
     {
       ln = $1
@@ -189,10 +189,10 @@ classify() { # IN — records on stdout
       if (ENVIRON["CHECK_ISSUE"] && (text ~ issue || low ~ issue || toupper(text) ~ issue)) print ln, "issue id", text
       if (ENVIRON["CHECK_DATE"] && text ~ date) print ln, "calendar date", text
       if (ENVIRON["CHECK_HASH"] && text ~ hash) print ln, "issue number", text
-      if (word != "a^" && low ~ word) print ln, "revision narration", text
     }
   ' "$1" || status=$?
   [ "$status" -eq 0 ] || gg_collection_error "could not classify the comment text (awk exit $status)"
+  gg_revision_records "$1"
 }
 
 # The grammar a matched path takes, or the path named as unmeasured: a file
