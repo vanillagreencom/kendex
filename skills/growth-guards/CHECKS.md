@@ -82,7 +82,7 @@ Lines joined with CR stripped, whitespace runs collapsed to one space, trimmed, 
 
 A history reference in a scanned markdown file fails: a calendar date (`20YY-MM-DD`), a three- or four-digit issue number after `#`, or one of `previously`, `used to`, `no longer`, `reverted`, `an earlier`, `earlier round`, `incident`, `historically`, `originally`, `at the time`. Matching is case-insensitive and whole-word (`incidental`, `unreverted` do not fire). The issue-number shape takes no leading boundary (`<file>.md#1204` fires), and the character after the digits must be neither a digit nor a hex letter (`#12345`, `#1234ab`, `#0088cc` pass). A decision ID (`D042`) carries no `#` and never fires.
 
-Scope is `GROWTH_GUARDS_PROSE_PATHS`; there is no excludes list. `docs/architecture/*.md` joins the default only under `GROWTH_GUARDS_MD_SCOPE=all`, the switch a repository flips once its markdown is rewritten; an explicit path list is used as given. The default, each name spelled twice because `*` crosses `/` but never stands in for the separator:
+Scope is `GROWTH_GUARDS_PROSE_PATHS` minus `GROWTH_GUARDS_MD_EXCLUDES`, the exclusion list the markdown lanes read, so a vendored skill under a render tree is carved out with a reason rather than by narrowing the scan. `docs/architecture/*.md` joins the default only under `GROWTH_GUARDS_MD_SCOPE=all`, the switch a repository flips once its markdown is rewritten; an explicit path list is used as given. The default, each name spelled twice because `*` crosses `/` but never stands in for the separator:
 
 ```
 SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md

@@ -65,6 +65,9 @@ kendex.settings.toml [env] > default):
                               repo-relative path, '*' crossing '/' as in the
                               excludes lists
                               (default $PATHS_DEFAULT)
+  GROWTH_GUARDS_MD_EXCLUDES   exclusion list, pattern<TAB>reason per line,
+                              shared with md-format and md-refs
+                              (default tools/md-excludes)
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF
@@ -94,6 +97,11 @@ PATHS_RAW="$(gg_setting GROWTH_GUARDS_PROSE_PATHS "$PATHS_DEFAULT")" || exit 2
 # the sibling lane scoped the same way: lib/configured-paths.sh § configured
 # path globs.
 gg_load_path_globs "$PATHS_RAW" prose GROWTH_GUARDS_PROSE_PATHS || exit 2
+# The markdown lanes' exclusion list, honoured here for the same reason: a
+# vendored skill under a render tree matches `*/SKILL.md` and its body is
+# not this repository's to edit.
+EXCLUDES="$(gg_resolve_path "" GROWTH_GUARDS_MD_EXCLUDES tools/md-excludes excludes)" || exit 2
+gg_load_excludes "$EXCLUDES"
 
 # History, and only history. The word list is the drift this catches in
 # practice: a rule that reaches for one of them is narrating a change rather
