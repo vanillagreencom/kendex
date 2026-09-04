@@ -57,8 +57,9 @@ The package ships this list, most specific entry first because the first match w
 | Class | Threshold |
 |---|---|
 | `docs/architecture/overview.md` | 12k bytes |
-| `docs/architecture/*.md` | 24k bytes |
-| `AGENTS.md`, `CLAUDE.md`, and nested `*/CLAUDE.md` | 24k bytes |
+| `docs/architecture/*.md` | 16k bytes |
+| `AGENTS.md` | 16k bytes |
+| `CLAUDE.md` and nested `*/CLAUDE.md` | 24k bytes |
 | nested `*/AGENTS.md` | 6k bytes |
 | `*/SKILL.md` | 24k bytes |
 | `*/workflows/*.md` | 40k bytes |
