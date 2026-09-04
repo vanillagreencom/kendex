@@ -96,4 +96,11 @@ case "$reason" in
   *) assert_eq "the reason names the event and the consequence" pass "$reason" ;;
 esac
 
+git -C "$repo" rm -q .kendex-generated.json
+git -C "$repo" commit -qm "missing inventory"
+closed "a missing generated inventory" --repo "$repo" --event push --base "$base"
+printf '%s\n' 'invalid' >"$repo/.kendex-generated.json"
+git -C "$repo" add -A
+git -C "$repo" commit -qm "invalid inventory"
+closed "an invalid generated inventory" --repo "$repo" --event push --base "$base"
 report fail-closed

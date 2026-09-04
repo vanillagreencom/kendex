@@ -11,6 +11,8 @@ The engine turns a manifest into a plan and a plan into disk. Planning derives t
 - Every apply, from the app or the CLI, holds the OS-level scope lock keyed off `apply::scope_key`, which reads the canonical scope so two spellings of one root cannot hold two locks. Enforced by `crates/core/tests/invariants.rs::invariant_8_one_writer_per_scope`.
 - Ownership is what kendex wrote, read from the positions lock entries recorded, never from a lock key alone or from an entry merely on the books; a record carried in from another checkout resolves against the root reading it (`crates/core/src/lock/roots.rs`). Enforced by `crates/core/tests/unmanaged_ownership.rs` and `crates/core/tests/lock_from_another_project.rs`.
 
+- CI reads the committed generated-file inventory from the render plan. In-place sources and Pi carrier payloads stay outside it. Enforced by `crates/core/tests/instruction_shims.rs::generated_inventory_tracks_renders_and_excludes_source` and the harness-ci package tests.
+
 ## Invariants
 
 1. A declaration landing on files kendex never wrote is a conflict with two exits, adopt and take-over, and the row names every position in the way. Take-over trashes the files bound to the bytes the plan read, whole or not at all: a place nothing can settle refuses the run and nothing is written. Enforced by `crates/core/tests/unmanaged_takeover/` and `crates/app/tests/replace_unmanaged.rs`.

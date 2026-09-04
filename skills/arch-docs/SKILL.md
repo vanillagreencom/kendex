@@ -23,7 +23,7 @@ Instruction files and architecture docs hold what the code cannot show: invarian
 |---|---|---|
 | Root `AGENTS.md` | A map: what the repo is in two or three sentences, commands that are not discoverable, conventions that differ from tool defaults, one line per deeper doc saying when to read it. | Every session, every harness. |
 | `docs/architecture/overview.md` | The one idea, vocabulary, layer boundaries, invariants as one line each with a pointer to the test or check that enforces it, an index of topic files. | On demand. |
-| `docs/architecture/<topic>.md` | The same kinds of content for one subsystem, opening with a `Covers:` line naming the directories it describes. | On demand; the `doc-drift-check` hook names it when code under a covered directory changes without it. |
+| `docs/architecture/<topic>.md` | The same kinds of content for one subsystem, opening with a `Covers:` line naming the paths it describes. A plain repo-relative path covers that file or directory. A shell glob matches the full path, with `*` crossing `/`. | On demand; the `doc-drift-check` hook names it when covered code changes without it. |
 | Nested `AGENTS.md` | Conventions and invariants local to that directory, small. | When an agent works in the directory. |
 | `docs/decisions/` | The why ledger, through the `decider` skill. Architecture docs cite a decision by ID and never restate it. | When opened. |
 
@@ -43,7 +43,7 @@ A fact lives in one of the three; the others point at it. A README that explains
 
 ## Rules
 
-- Docs change in the same commit as the code they describe. The `doc-drift-check` hook blocks a stop that changed code under a covered directory without touching its docs; confirm or update the docs, then finish.
+- Docs change in the same commit as the code they describe. The `doc-drift-check` hook blocks a stop that changed covered code without touching its docs; confirm or update the docs, then finish.
 - One paragraph per line, one list item per line, no hard wraps inside either; blank lines separate paragraphs, list blocks, headings, and fences; tables and fenced code stay as written. The growth-guards `md-format` lane enforces it and `md-reflow` converts a file once.
 - Every relative link, `<path>.md § Heading` or `<path>.md#anchor` citation, and decision ID resolves; the `md-refs` lane checks them.
 - No history prose in agent-loaded markdown; the `prose` lane checks it.

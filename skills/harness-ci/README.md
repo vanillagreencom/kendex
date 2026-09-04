@@ -13,7 +13,7 @@ Install with the default symlink delivery, which writes the shared `.agents/skil
 ## What it does
 
 - Classifies a diff between two commits as render-only or not.
-- Treats content the repository authors inside the render trees as product source: a skill its manifest declares `source = "in-place"`, and any script under `.agents/hooks`.
+- Reads the generated-file inventory written by kendex. In-place skills and carrier packages remain product source.
 - Answers `false` for anything it cannot prove, which runs every lane.
 - Ships workflow shapes to copy, and the tests that pin the semantics, run in kendex CI.
 
@@ -24,11 +24,11 @@ Install with the default symlink delivery, which writes the shared `.agents/skil
   --event pull_request --base "$BASE_SHA" --head "$HEAD_SHA"
 ```
 
-The consumer owns one thin step calling the rendered script, written by hand once from [references/wiring.md](references/wiring.md); the package never touches `.github/`, because a workflow installed into a stranger's CI renames jobs, drops required contexts and wedges merge queues. Checkout with `fetch-depth: 0`: the classifier diffs two real commits. Flags and exit codes: `harness-only --help`. The rules a wiring must hold: [SKILL.md](SKILL.md) § The rules to hold when wiring it.
+The consumer owns one thin step calling the rendered script, written by hand once from [references/wiring.md](references/wiring.md); the package never touches `.github/`, because a workflow installed into a stranger's CI renames jobs, drops required contexts and wedges merge queues. Install `jq` on the runner. Commit the inventory with the renders. Checkout with `fetch-depth: 0`: the classifier diffs two real commits. Flags and exit codes: `harness-only --help`. The rules a wiring must hold: [SKILL.md](SKILL.md) § The rules to hold when wiring it.
 
 ## Semantics
 
-- The harness path set: `.agents/`, `.claude/`, `.codex/`, `.opencode/`, `.cursor/`, `.pi/`, and the root `opencode.json` or `opencode.jsonc`. Prefixes match on the separator and the config names match whole, so `.agentsfoo/x`, `opencode.json.bak` and `ui/opencode.json` are product paths.
+- Reads `.kendex-generated.json` at both diff endpoints. Every changed file must be recorded as generated at each endpoint where the file exists. An unrecorded file runs product checks, regardless of its directory.
 - `pull_request` diffs from the merge base (`base...head`); `push` and `merge_group` diff the two endpoints (`base head`), because a force-push leaves the `before` sha off the head's history.
 - Rename detection is off, so both sides of a `git mv` into a render tree are listed and the diff answers `false`.
 - `stdout` carries the verdict line and nothing else; changed paths and reasons go to `stderr`.
@@ -36,7 +36,7 @@ The consumer owns one thin step calling the rendered script, written by hand onc
 
 ## Fail-closed
 
-Every unprovable case answers `false`: an unclassified event; a missing, empty or unresolvable endpoint, the all-zero sha of a first push included; a diff git cannot read; an empty changed-file set; a path git had to quote; a manifest the head tree lists but that will not read. No flag turns any of these into a `true`.
+Every unprovable case answers `false`: an unclassified event; a missing, empty or unresolvable endpoint, the all-zero sha of a first push included; a diff git cannot read; an empty changed-file set; a path git had to quote; an absent or invalid generated-file inventory. No flag turns any of these into a `true`.
 
 ## Customise
 

@@ -30,6 +30,7 @@ mod expansion;
 mod file_plan;
 pub mod fork;
 mod gemini;
+mod generated_paths;
 mod holds;
 mod installed;
 mod instruction_shims;
@@ -205,6 +206,7 @@ pub fn plan_scope(
     let repo_effects_leaving = repo_effects::leaving(env, scope, lock, &new_lock)?;
     plan_lock_write(env, scope, declared, disk_lock, new_lock, &mut ops)?;
     scope_notes.extend(scope_wide(scope, &mut ops)?);
+    generated_paths::plan(scope, &state, &instruction_shims, &mut ops)?;
 
     let mut report = EngineReport {
         // Ahead of the moves out of `state` below, and read before `drift`

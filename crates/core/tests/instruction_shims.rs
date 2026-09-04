@@ -118,6 +118,10 @@ fn touched(f: &Fixture, report: &EngineReport) -> Vec<String> {
             }
             _ => Vec::new(),
         })
+        .filter(|path| {
+            path.file_name()
+                .is_none_or(|name| name != ".kendex-generated.json")
+        })
         .map(|path| {
             path.strip_prefix(&f.project)
                 .map(|rel| rel.display().to_string())
@@ -509,4 +513,59 @@ fn shims_follow_the_declared_harnesses() {
     );
     assert_eq!(shim_bytes(&both.project.join("CLAUDE.md")), CLAUDE_SHIM);
     assert!(plan(&both).plan.is_empty());
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn generated_inventory_tracks_renders_and_excludes_source() {
+    let f = fixture("\"claude\", \"gemini\"", true);
+    let catalog = f.project.join("catalog");
+    fs::create_dir_all(catalog.join("skills/generated")).unwrap();
+    fs::write(
+        catalog.join("skills/generated/SKILL.md"),
+        "---\nname: generated\ndescription: fixture\n---\nBody.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(f.project.join(".agents/skills/authored")).unwrap();
+    fs::write(
+        f.project.join(".agents/skills/authored/SKILL.md"),
+        "---\nname: authored\ndescription: fixture\n---\nSource.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(f.project.join(".pi/packages/example/extensions")).unwrap();
+    fs::write(
+        f.project.join(".pi/packages/example/extensions/main.ts"),
+        "export {};\n",
+    )
+    .unwrap();
+    let manifest_path = f.project.join("kendex.toml");
+    let mut manifest = fs::read_to_string(&manifest_path).unwrap();
+    manifest.push_str(&format!("\n[sources.catalog]\n{}\n[skills.generated]\nsource = \"catalog\"\n[skills.authored]\nsource = \"in-place\"\n", test_util::source_path(&catalog)));
+    fs::write(manifest_path, manifest).unwrap();
+    apply_now(&f);
+    let read_paths = || -> Vec<String> {
+        serde_json::from_str(&fs::read_to_string(f.project.join(".kendex-generated.json")).unwrap())
+            .unwrap()
+    };
+    let paths = read_paths();
+    for rendered in [
+        ".agents/skills/generated/SKILL.md",
+        "CLAUDE.md",
+        ".gemini/settings.json",
+    ] {
+        assert!(
+            paths.iter().any(|path| path == rendered),
+            "missing {rendered}: {paths:?}"
+        );
+    }
+    assert!(!paths.iter().any(|path| path.contains("authored")
+        || path.starts_with("catalog/")
+        || path.starts_with(".pi/packages/")));
+    fs::write(catalog.join("skills/generated/helper.sh"), "true\n").unwrap();
+    apply_now(&f);
+    assert!(
+        read_paths()
+            .iter()
+            .any(|path| path == ".agents/skills/generated/helper.sh")
+    );
 }

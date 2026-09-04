@@ -15,7 +15,7 @@ tags: [automation]
 
 # Harness CI
 
-**One question, one answer: is this diff nothing but kendex render output?** The classifier reads a diff's changed-file set and prints `harness_only=true` when every path sits under `.agents/`, `.claude/`, `.codex/`, `.opencode/`, `.cursor/`, `.pi/`, or is the root `opencode.json`, or `opencode.jsonc` where a project carries that spelling. Anything else prints `false`, and so does every diff the classifier cannot read. A path the selected head tree's manifests (`kendex.toml`, and `kendex-local.toml` where a source catalog keeps its installs) declare in place, `.agents/skills/<name>` under `[skills.<name>] source = "in-place"`, and any `.agents/hooks/` script are project source, never render output.
+Run the classifier to decide whether CI can skip product checks. Commit `.kendex-generated.json` with the renders after `kendex refresh`. The engine writes that inventory from rendered artifacts. In-place content and carrier package source remain outside it.
 
 ```bash
 .agents/skills/harness-ci/scripts/harness-only \

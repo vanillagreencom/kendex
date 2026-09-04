@@ -2,9 +2,9 @@
 # Tests for the doc-drift-check hook.
 #
 # The hook blocks a stop once per session when a changed non-markdown path
-# sits under a covered directory and none of that directory's covering docs
+# matches a covered directory, file, or glob and none of its covering docs
 # changed. Pinned here: what covers what (a tracked non-root AGENTS.md, the
-# nearest one; a docs/architecture topic file's Covers: line), what counts
+# nearest one; a docs/architecture topic file's Covers: path matcher), what counts
 # as changed (every path differing from the branch's merge-base with the
 # default branch, committed or not, plus untracked non-ignored paths; the
 # working tree alone on the default branch or where no merge-base resolves),
@@ -293,6 +293,26 @@ printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
 run_hook "$REPO"
 assert_contains "$err" "docs/architecture/ui.md" "a second topic file naming the same directory is named too"
 assert_contains "$err" "docs/architecture/core.md" "beside the first"
+
+echo "doc-drift-check: one Covers matcher accepts a file and a glob"
+REPO="$(new_repo covers-paths)"
+mkdir -p "$REPO/crates/eval/src"
+printf '# Selected paths\n\nCovers: ui/src/app.ts, crates/*/src/eval*.rs\n' >"$REPO/docs/architecture/selected.md"
+printf 'pub fn score() {}\n' >"$REPO/crates/eval/src/eval_score.rs"
+fgit -C "$REPO" add -A
+fgit -C "$REPO" commit -q -m selected
+printf 'export const b = 2;\n' >>"$REPO/ui/src/app.ts"
+printf 'pub fn more() {}\n' >>"$REPO/crates/eval/src/eval_score.rs"
+run_hook "$REPO"
+assert_eq "$rc" 2 "an exact file and a glob both reach the topic"
+assert_contains "$err" "docs/architecture/selected.md" "the shared path matcher names the topic"
+REPO="$(new_repo covers-file-sibling)"
+printf '# Selected path\n\nCovers: ui/src/app.ts\n' >"$REPO/docs/architecture/selected.md"
+fgit -C "$REPO" add -A
+fgit -C "$REPO" commit -q -m selected
+printf 'export const other = 2;\n' >"$REPO/ui/src/other.ts"
+run_hook "$REPO"
+assert_eq "$rc" 0 "an exact file entry does not cover a sibling"
 
 echo "doc-drift-check: a Covers: entry of the root covers nothing"
 REPO="$(new_repo coversroot)"
