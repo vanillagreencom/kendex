@@ -151,7 +151,7 @@ done
 # What the index pre-filter lists carriers by: a file whose whole content
 # matches no shape has no comment that does either.
 UNION_ERE="$DATE_ERE|$HASH_ERE|$WORD_ERE|$ISSUE_BOUNDED"
-REMEDY="state the constraint that holds now and delete the story; the issue id, the number and the date belong in the commit that made the change; a generated or vendored tree belongs in $EXCLUDES_FILE with a reason"
+REMEDY="state the constraint that holds now and delete the story; the issue id, the number and the date belong in the commit that made the change; a generated, vendored, or immutable file belongs in $EXCLUDES_FILE with a reason"
 
 # A pattern this lane cannot compile is a configuration error, never a
 # silent no-match: both engines that read it are asked first.
