@@ -35,11 +35,12 @@ pub fn scope_key(scope: &Scope) -> String {
 /// Exclusive writer lock over one scope journal key (invariant 8). Held for
 /// the whole journal → mutate → clear window; recovery runs under the same
 /// lock.
-struct ScopeGuard {
+pub struct ScopeGuard {
     _file: crate::fs::LockedFile,
 }
 
-fn lock_scope(env: &Env, scope: &Scope) -> Result<ScopeGuard> {
+/// Hold the scope writer lock across a carrier update and its record write.
+pub fn lock_scope(env: &Env, scope: &Scope) -> Result<ScopeGuard> {
     lock_key(env, &scope_key(scope))
 }
 

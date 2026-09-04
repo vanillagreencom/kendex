@@ -1,48 +1,15 @@
 use std::process::ExitCode;
 
-use kendex_core::engine::{
-    DriftRow, DriftState, ShimStanding, audit, audit_without_record, planned_declarations,
-};
+use kendex_core::engine::{DriftRow, DriftState, ShimStanding, planned_declarations};
 use kendex_core::env::Env;
-use kendex_core::lock::{Lock, LockFile, load_file as load_lock_file, lock_path};
-use kendex_core::manifest::{Manifest, ManifestFile, load as load_manifest, manifest_path};
+use kendex_core::lock::{Lock, lock_path};
+use kendex_core::manifest::Manifest;
 use kendex_core::model::{ItemKind, Scope};
 
 use super::engine_common::print_unmanaged;
 use super::{fail, fail_refusal, note, resolve_scopes, say, scope_label};
 use crate::scope::ScopeFilter;
 use crate::ui;
-
-struct VerifyAudit {
-    report: kendex_core::engine::EngineReport,
-    matching: Option<Lock>,
-}
-
-struct RecordRead {
-    lock: Lock,
-    fallback: bool,
-    problem: Option<String>,
-}
-
-fn read_record(path: &std::path::Path) -> RecordRead {
-    match load_lock_file(path) {
-        Ok(LockFile::Current(lock)) => RecordRead {
-            lock,
-            fallback: false,
-            problem: None,
-        },
-        Ok(LockFile::Absent) => RecordRead {
-            lock: Lock::default(),
-            fallback: true,
-            problem: None,
-        },
-        Err(error) => RecordRead {
-            lock: Lock::default(),
-            fallback: true,
-            problem: Some(error.to_string()),
-        },
-    }
-}
 
 fn report_record_problem(scope: &Scope, path: &std::path::Path, problem: Option<&str>) {
     let detail = problem.map_or_else(
@@ -53,28 +20,6 @@ fn report_record_problem(scope: &Scope, path: &std::path::Path, problem: Option<
         "! {}: {detail} — checking current manifest and render bytes",
         scope_label(scope)
     ));
-}
-
-fn audit_for_verify(
-    env: &Env,
-    scope: &Scope,
-    manifest: Option<&Manifest>,
-    fallback: bool,
-) -> Result<Option<VerifyAudit>, Box<dyn std::error::Error>> {
-    match (fallback, manifest) {
-        (true, Some(manifest)) => {
-            let recordless = audit_without_record(env, scope, manifest)?;
-            Ok(Some(VerifyAudit {
-                report: recordless.report,
-                matching: Some(recordless.matching),
-            }))
-        }
-        (true, None) => Ok(None),
-        (false, _) => Ok(Some(VerifyAudit {
-            report: audit(env, scope)?,
-            matching: None,
-        })),
-    }
 }
 
 fn missing_declarations(
@@ -143,76 +88,36 @@ pub fn run(
 
     for scope in resolve_scopes(env, filter)? {
         let path = lock_path(env, &scope);
-        let RecordRead {
-            mut lock,
-            fallback,
-            problem: record_problem,
-        } = read_record(&path);
-        // One read of the manifest per scope, so the gate below and the
-        // declarations printed at the end are one answer about one file.
-        // Read twice, the two can disagree: a read that fails and then
-        // succeeds on the retry leaves the gate saying the scope asked for
-        // nothing while the line under it names what the scope asked for,
-        // and the run closes green having checked none of it.
-        let manifest = match load_manifest(&manifest_path(env, &scope)) {
-            Ok(ManifestFile::Current(manifest)) => Some(manifest),
-            Ok(ManifestFile::Absent) => None,
-            // A file this build could not open is not a file declaring
-            // nothing, and the gate never answers for one. It leaves by
-            // the door a manifest break already leaves by, on that door's
-            // terms: a line where there is nothing installed to misreport,
-            // and the run's own error where there is.
-            Err(error) if lock.entries.is_empty() => {
-                fail_refusal(&format!("! {} not checked: ", scope_label(&scope)), &error);
-                continue;
-            }
-            Err(error) => return Err(error.into()),
-        };
-        // The record failure stays part of the verdict while the read-only
-        // fallback checks what current source and render bytes can prove.
-        if fallback && manifest.as_deref().is_some_and(declares_items) {
-            report_record_problem(&scope, &path, record_problem.as_deref());
+        let records = kendex_core::ownership::read(env, &scope);
+        let fallback = records.fallback;
+        let manifest = records.manifest.as_deref();
+        if records.record_problem.is_some() || fallback && manifest.is_some_and(declares_items) {
+            report_record_problem(&scope, &path, records.record_problem.as_deref());
             recordless = true;
         }
-        // A scope with nothing installed has nothing to verify, and this
-        // run reaches it only to name content nothing manages. That errand
-        // never costs the run: a manifest this build cannot plan against
-        // is worth a line, not a failure, and the exit code answers about
-        // drift alone. A scope that does have installs fails loudly.
-        let audited = {
-            let _reading = ui::spinner(&format!("checking {}", scope_label(&scope)));
-            audit_for_verify(env, &scope, manifest.as_deref(), fallback)
-        };
-        let Some(audited) = (match (audited, lock.entries.is_empty()) {
-            (Ok(report), _) => report,
-            (Err(error), true) => {
-                // The error picks its own door. A manifest that will not
-                // parse names one finding per line and keeps those breaks;
-                // every other failure here — unreadable TOML, a file that
-                // would not open — is a sentence naming a path, and a break
-                // in that path is content rather than a line of kendex's
-                // own verdict.
-                fail_refusal(
-                    &format!("! {} not checked: ", scope_label(&scope)),
-                    error.as_ref(),
-                );
+        if let Some(error) = &records.manifest_problem {
+            fail_refusal(&format!("! {} not checked: ", scope_label(&scope)), error);
+            recordless |= records.record_problem.is_some() || !records.lock.entries.is_empty();
+            continue;
+        }
+        for warning in &records.warnings {
+            fail(&format!("! {}: {warning}", scope_label(&scope)));
+        }
+        if manifest.is_none() && !records.warnings.is_empty() {
+            recordless = true;
+            continue;
+        }
+        let audited = match kendex_core::ownership::audit(env, &scope, &records) {
+            Ok(audited) => audited,
+            Err(error) => {
+                fail_refusal(&format!("! {} not checked: ", scope_label(&scope)), &error);
+                recordless = true;
                 continue;
             }
-            (Err(error), false) => return Err(error),
-        }) else {
-            fail(&format!(
-                "! {} not checked: {}",
-                scope_label(&scope),
-                record_problem.as_deref().unwrap_or("manifest absent")
-            ));
-            continue;
         };
-        if let Some(fallback_lock) = audited.matching {
-            lock = fallback_lock;
-        }
+        let lock = audited.matching;
         let report = audited.report;
         let declared = manifest
-            .as_deref()
             .map(|manifest| declared_packages(env, &scope, manifest))
             .unwrap_or_default();
         unmanaged.extend(
@@ -248,10 +153,12 @@ pub fn run(
     print_unmanaged(&unmanaged);
     print_gaps(&gaps);
     ui::ledger(&head(checked, failed, !gaps.is_empty()), &[]);
-    Ok(match failed > 0 || shims_failed > 0 || recordless {
-        true => ExitCode::FAILURE,
-        false => ExitCode::SUCCESS,
-    })
+    Ok(
+        match failed > 0 || shims_failed > 0 || recordless || !gaps.is_empty() {
+            true => ExitCode::FAILURE,
+            false => ExitCode::SUCCESS,
+        },
+    )
 }
 
 /// The line that closes the run: the count, or why there was none.

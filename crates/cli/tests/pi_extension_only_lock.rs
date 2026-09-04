@@ -198,7 +198,10 @@ fn verify_names_what_the_record_does_not_hold() {
 
     let checked = kendex(&home, &home, &["verify", "-g"]);
 
-    assert!(checked.status.success(), "{checked:?}");
+    assert!(
+        !checked.status.success(),
+        "unrecorded declarations must fail: {checked:?}"
+    );
     assert_eq!(
         said(&checked).lines().collect::<Vec<_>>(),
         vec![

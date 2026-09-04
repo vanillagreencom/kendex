@@ -1,15 +1,10 @@
 .github/workflows/review-gate-writer.yml	656
 .github/workflows/skill-tests.yml	623
-crates/cli/src/commands/verify.rs	441
-crates/cli/tests/compat.rs	820
 crates/core/src/engine/deps.rs	455
 crates/core/src/engine/detach.rs	417
 crates/core/src/engine/expansion.rs	414
-crates/core/src/engine/mod.rs	424
 crates/core/src/error.rs	520
 crates/core/src/mapping.rs	411
-crates/core/src/pi_ext/mod.rs	531
-crates/core/src/report.rs	486
 crates/core/src/settings_file.rs	408
 docs/architecture/overview.md	12619b
 pi-extensions/pi-agents-tmux/extensions/subagent/browser.ts	650

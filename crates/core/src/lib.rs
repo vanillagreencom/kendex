@@ -40,6 +40,7 @@ pub mod manifest;
 pub mod mapping;
 pub mod model;
 pub mod names;
+pub mod ownership;
 pub mod package;
 pub mod parallel;
 pub mod paths;

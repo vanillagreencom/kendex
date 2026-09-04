@@ -60,8 +60,17 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
         .get(Pi.id().name())
         .cloned()
         .unwrap_or_else(|| Pi.default_global_root(env));
+    let scopes = resolve_scopes(env, filter)?;
+    let mut guards = Vec::new();
+    if !check {
+        for scope in &scopes {
+            guards.push(kendex_core::apply::lock_scope(env, scope)?);
+            kendex_core::apply::recover(env, scope)?;
+            kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))?;
+        }
+    }
     let mut plans = Vec::new();
-    for scope in resolve_scopes(env, filter)? {
+    for scope in scopes {
         let root = match &scope {
             Scope::Global => global_root.clone(),
             Scope::Project { root } => root.join(".pi"),
@@ -96,7 +105,16 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
         return Ok(());
     }
     for plan in &plans {
-        kendex_core::lock::load(&kendex_core::lock::lock_path(env, &plan.scope))?;
+        let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, &plan.scope))?;
+        let mut notes = Vec::new();
+        for (name, package) in declared_sources(env, &plan.scope, &mut notes) {
+            let key = kendex_core::lock::entry_key(
+                kendex_core::model::ItemKind::PiExtension,
+                &name,
+                kendex_core::model::HarnessId::Pi,
+            );
+            pi_ext::check_origin(&name, &package, lock.entries.get(&key))?;
+        }
     }
     update(env, &plans)
 }
@@ -368,9 +386,12 @@ fn record_pi_installs(env: &Env, plans: &[ScopePlan]) -> CliResult {
         let path = kendex_core::lock::lock_path(env, &plan.scope);
         let mut lock = kendex_core::lock::load(&path)?;
         let before = lock.clone();
-        pi_ext::record_matching_manifest(env, &plan.scope, &manifest, &mut lock)?;
+        let drift = pi_ext::record_matching_manifest(env, &plan.scope, &manifest, &mut lock)?;
         if lock != before {
             kendex_core::lock::save(&path, &lock)?;
+        }
+        for row in drift {
+            say(&format!("  ! {}: {}", row.name, row.detail));
         }
     }
     Ok(())
