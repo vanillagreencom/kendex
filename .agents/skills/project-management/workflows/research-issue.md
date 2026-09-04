@@ -113,7 +113,7 @@ Reply with a structured section per item.
 Under `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/`:
 
 - **prompt.txt** — research objective (one sentence), context summary (2-3 sentences), attached files with descriptions, the merged and prioritized questions, scope constraints, deliverables.
-- **context-[topic].md** — the agents' extractions, fully self-contained. Every reference is resolved into the file: no doc paths, no issue IDs, no decision IDs, no "per project rules". "See docs/architecture/module.md" becomes the extracted content; "Reference [ISSUE_ID] findings" becomes the findings inline; "Message Bus Design (D001)" becomes "Message Bus Design". The researcher has no repository access.
+- **context-[topic].md** — the agents' extractions, fully self-contained. Every reference is resolved into the file: no doc paths, no issue IDs, no decision IDs, no "per project rules". "See docs/architecture/module.md" becomes the extracted content; "Reference [ISSUE_ID] findings" becomes the findings inline; "Message Bus Design ([DECISION_ID])" becomes "Message Bus Design". The researcher has no repository access.
 - **run.sh** (and `command.txt` with the same command):
 
   ```bash
