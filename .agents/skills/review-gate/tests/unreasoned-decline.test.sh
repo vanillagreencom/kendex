@@ -21,8 +21,7 @@
 # untracked-claim.
 #
 # The fixtures are tests/corpus/, not literals in here, and adding a label
-# starts there — see the sweep below. The declines that shipped..
-#  head that file. Each label is paired with the real reason that must
+# starts there. Each label is paired with the real reason that must
 # NOT be counted, because the test is subtraction: a label BESIDE a mechanism
 # is untouched, and a check rejecting both would fail every honest decline.
 #
@@ -111,11 +110,9 @@ CORPUS="$SCRIPT_DIR/corpus"
 
 # THE CORPUS IS THE CONTRACT. Every fixture below is a line in one of three
 # files, not a literal in this script, because the subtraction is a word list
-# and a hand-maintained word list is always one label behind.
-# Three rounds of this issue each landed one missing label. Adding the next
-# one starts by writing the reply in tests/corpus/declines-unreasoned.txt the
-# way a person types it; this suite goes red until the list in
-# review-predicate.sh covers it.
+# and a hand-maintained word list can miss a valid label. Add each fixture to
+# tests/corpus/declines-unreasoned.txt first; this suite stays red until the
+# list in review-predicate.sh covers it.
 #
 # Both directions run, and the must-pass half is what stops the must-catch
 # half being satisfied by a rule that fails every decline.
@@ -263,8 +260,7 @@ case "$out" in malformed) ok "a 50+-comment thread fails closed as malformed";; 
 echo "=== the verdict reaches its consumers ==="
 # The writer's mapping is RUN, not grepped: review-writer.test.sh w8/w8b
 # drive this verdict through the writer and assert the failure post and the
-# remedy text. A presence grep stood here until 's second review
-# round and passed on a branch nothing executed.
+# remedy text. A presence grep would pass on a branch nothing executed.
 #
 # pr-watch's arm is the one consumer still checked by presence. Its
 # behavioural rows belong in pr-watch.test.sh beside every other verdict,
@@ -342,7 +338,7 @@ fi
 echo
 echo "--- must-fail probe: the tracker-id strip, removed ---"
 # Same jq with the tracker-id strip dropped. Without it the punctuation pass
-# splits  and the number pass takes only the digits, so "ken" survives
+# splits a tracker id at its hyphen, so the prefix survives
 # as a stated reason. The bare reference must stop being counted here while a
 # label keeps counting, so the count is this strip's rather than the term's.
 UNSTRIPPED="$(sed '/gsub("\[A-Z\]\[A-Z0-9\]+-\[0-9\]+|#\[0-9\]+"; " ")/d' <<<"$prog")"

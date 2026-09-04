@@ -2,9 +2,8 @@
 // after pi-core auto-compaction.
 //
 // The settled-run watchdog in agent-end-watchdog.ts requires Pi to emit a
-// terminal lifecycle event. Upstream is that after auto-compaction
-// the child Pi can sit idle indefinitely without reaching `agent_settled`, so
-// that watchdog never runs. This polling watchdog
+// terminal lifecycle event. A child can sit idle after auto-compaction without
+// reaching `agent_settled`, so that watchdog never runs. This polling watchdog
 // fills that gap: every N seconds it walks the task registry and
 // checks each active task for the combination of (a) bridge reports
 // isIdle, (b) time-since-last-activity exceeds the staleness
@@ -56,7 +55,7 @@ export interface IdleStallWatchdogDeps {
 	now: () => number;
 	listActiveTasks: () => Promise<PaneTaskRecord[]>;
 	/**
-	 *  meets: a pane waiting on a scheduled rate-limit
+	 * A pane waiting on a scheduled rate-limit
 	 * retry is genuinely idle, stale, and outbox-less — all three stall
 	 * signals hold — yet it recovers on its own. The rate-limit watchdog owns
 	 * that state; while it has a retry pending this watchdog must not

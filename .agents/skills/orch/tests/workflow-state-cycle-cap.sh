@@ -88,7 +88,7 @@ after4="$("$WS" --state-dir "$sd" get KEN-1 .rereview_cycles)"
   && ok "the fifth entry is refused at the cap and spends nothing" \
   || bad "the fifth entry is refused at the cap and spends nothing" "rc=$rc got=$after4"
 
-# ---: fix rounds outside the loop leave the loop budget alone -------
+# --- fix rounds outside the loop leave the loop budget alone --------
 # `dev-fix.md` increments `cycles` on EVERY fix round it runs — QA fixes in
 # review-pr § 7, and review.md / submit-pr.md rounds before the loop starts.
 # While the gate read `.cycles`, those rounds spent loop budget they never
@@ -107,7 +107,7 @@ budget="$("$WS" --state-dir "$sd_qa" get KEN-9 .rereview_cycles)"
   && ok "seven fix rounds spend no loop budget — the re-entry still passes" \
   || bad "seven fix rounds spend no loop budget — the re-entry still passes" "rc=$rc rereview_cycles=$budget"
 
-# ---: the issue's scenario, end to end ----------------------------
+# --- the loop scenario, end to end --------------------------------
 # Four § 4 cycles reach the cap, a QA fix round follows, and its § 7 → § 6
 # re-check must run. The re-check panel goes to its own key: a QA re-check is
 # not a re-review cycle, so the cap neither refuses it nor counts it.
@@ -140,7 +140,7 @@ again="$("$WS" --state-dir "$sd_scn" get KEN-8 .rereview_cycles)"
   && ok "a second QA re-check is permitted and still spends nothing" \
   || bad "a second QA re-check is permitted and still spends nothing" "rc=$rc got=$again"
 
-# ---: § 7 states which counter governs it -------------------------
+# --- § 7 states which counter governs it --------------------------
 # The doc side of the same separation. § 7 must name its own key and must not
 # read or raise the § 4 budget.
 # The pins are IDENTIFIERS and a heading reference — the key § 7 writes, the
@@ -160,7 +160,7 @@ grep -q -F 'At The Cap' <<<"$S7" \
   && bad "§ 7 still routes through § 4's At The Cap check" \
   || ok "§ 7 routes through no cap check"
 # With no counter, the two convergence exits both need a round to surface
-# nothing unseen. A loop where every round finds a DIFFERENT blocker fires
+# nothing new. A loop where every round finds a DIFFERENT blocker fires
 # neither, so the section needs the recurrence exit as well: one root cause
 # reappearing ends it with a structural close, not another patch round.
 grep -q -F 'finding-disposition.md#recurrence' <<<"$S7" \
@@ -196,7 +196,7 @@ plant() {
   ! cmp -s "$CTRL_SCRIPTS/workflow-state" "$WS"
 }
 
-# The pre- gate: read `.cycles`, the tally every fix round bumps. It
+# Tally control: read `.cycles`, the tally every fix round bumps. It
 # must refuse the very re-entry the fixed gate allows.
 if ! plant tally 's/(\.rereview_cycles \/\/ 0) as \\\$n/(.cycles \/\/ 0) as \\$n/'; then
   bad "tally control planted nothing — its sed program matched no text"
@@ -316,7 +316,7 @@ else
   bad "the assertion MISSED § 7 routing through the cap check again"
 fi
 
-# § 7 back to convergence exits alone: a loop whose every round finds a unseen
+# § 7 back to convergence exits alone: a loop whose every round finds an unseen
 # blocker would never end.
 CTRL_WF="$TMP_ROOT/review-pr-norecur.md"
 sed 's|\[finding-disposition[.]md § Recurrence\](../references/finding-disposition[.]md#recurrence).s structural close|a structural close|' "$REVIEW_PR_WF" > "$CTRL_WF"

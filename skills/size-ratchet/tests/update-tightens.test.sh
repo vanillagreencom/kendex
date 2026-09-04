@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pins for --update's tighten-only contract: rows are lowered or removed to
 # match reality, NEVER present and NEVER raised — a grown file keeps its old
-# row (and keeps failing), a unrecorded offender stays out of the baseline, and
+# row (and keeps failing), a new offender stays out of the baseline, and
 # deliberate growth is a hand-edit that then passes (control).
 set -euo pipefail
 
@@ -44,7 +44,7 @@ git -C "$R" config user.name test
 #   loose.txt   actual 15, row 30  -> lowered to 15
 #   shrunk.txt  actual  5, row 12  -> removed (under threshold)
 #   gone.txt    no file,   row 40  -> removed (left the tracked set)
-#   newoff.txt  actual 25, no row  -> NOT inserted, still fails
+#   newoff.txt  actual 25, no row  -> NOT added, still fails
 mkfile grown.txt 20
 mkfile loose.txt 15
 mkfile shrunk.txt 5
@@ -86,7 +86,7 @@ run_sr
 # A tracked-but-absent file (unstaged deletion / sparse checkout) counts
 # from the INDEX blob — "every tracked file" holds without the worktree
 # copy. An over-threshold baselined row therefore survives --update at its
-# real size, and a sparse tree cannot smuggle a unrecorded offender past the gate.
+# real size, and a sparse tree cannot smuggle a new offender past the gate.
 R="$TMP/upd-absent"
 mkdir -p "$R"
 git -C "$R" -c init.defaultBranch=main init -q
@@ -103,7 +103,7 @@ row="$(cat "$R/tools/size-ratchet-baseline.tsv")"
   && ok "--update keeps a tracked-but-absent over-threshold row at its index-counted size" \
   || bad "--update keeps the tracked-but-absent row (index count)" "rc=$RC row=$row out=$OUT"
 
-# Sparse fail-open guard: a tracked-but-absent unrecorded offender still fails.
+# Sparse fail-open guard: a tracked-but-absent new offender still fails.
 R="$TMP/sparse-offender"
 mkdir -p "$R"
 git -C "$R" -c init.defaultBranch=main init -q

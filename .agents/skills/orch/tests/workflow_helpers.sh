@@ -76,7 +76,7 @@ ORCH_STATE_DIR="$state_dir" "$WS" update issue-404 '.post_pr_budgets.review_wait
 assert_eq "$(ORCH_STATE_DIR="$state_dir" "$WS" get issue-404 '.post_pr_budgets.review_wait')" "null" "accepted review evidence clears its budget"
 ORCH_STATE_DIR="$state_dir" CI_FIX_MAX_CYCLES=1 "$WS" head-budget take issue-404 ci-fix ci-head-a >/dev/null
 assert_eq "$(ORCH_STATE_DIR="$state_dir" CI_FIX_MAX_CYCLES=1 "$WS" head-budget take issue-404 ci-fix ci-head-a)" "at-cap 1/1" "ci-fix persists its cap"
-# Every ci-fix cycle pushes its fix, so the next take always presents a replacement head.
+# Every ci-fix cycle pushes its fix, so the next take always presents a new head.
 # A head-keyed reset here would return continue forever and CI_FIX_MAX_CYCLES
 # would bound nothing; the cap must survive the changed head. The two takes below
 # are the two cycles of a cap of 2, each on the head its own push produced.

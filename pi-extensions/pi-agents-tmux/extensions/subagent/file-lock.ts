@@ -159,7 +159,7 @@ export async function withCrossProcessFileLock<T>(filePath: string, fn: () => Pr
 /**
  * Write content to filePath atomically: stream into a sibling tmp file, then
  * rename into place. Concurrent readers always observe either the previous
- * complete content or the replacement complete content — never a torn write.
+ * complete content or the new complete content — never a torn write.
  *
  * Use for files that may be read by another process (peer parents, child
  * panes) without holding a lock. The tmp suffix is unique per process+call so

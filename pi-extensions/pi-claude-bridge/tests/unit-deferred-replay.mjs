@@ -59,10 +59,8 @@ describe("planDeferredUserReplay", () => {
 	});
 });
 
-//  item 2: the replay queue was text-only (string[]), so a mid-query
-// user message carrying image blocks replayed as its text alone and the images
-// were silently dropped. The plan now also carries the block form when images
-// are present, and an image-only run must be captured, not skipped.
+// The replay plan carries both text and image blocks. An image-only run must be
+// captured rather than skipped.
 describe("planDeferredUserReplay image blocks (kendex#993)", () => {
 	const image = () => ({ type: "image", data: "aGk=", mimeType: "image/png" });
 
@@ -101,12 +99,8 @@ describe("planDeferredUserReplay image blocks (kendex#993)", () => {
 	});
 });
 
-// the plan took no lower bound, so a second mid-query steer
-// callback re-derived the ENTIRE trailing user run from scratch — including the
-// message the first callback already queued. The replay loop sends each queue
-// entry as its own continuation query, so the first steer reached Claude twice.
-// The caller now passes the position it already captured through
-// (queryCtx.latestCursor), and the run walk must never cross below it.
+// The caller passes the captured position through queryCtx.latestCursor. The
+// run walk must never cross below it or queue the same steer twice.
 describe("planDeferredUserReplay capture bound (kendex#1009)", () => {
 	it("issue reproduction: a second steer queues each message exactly once", () => {
 		// steer #1 arrives with the tool result; captured, cursor advances.

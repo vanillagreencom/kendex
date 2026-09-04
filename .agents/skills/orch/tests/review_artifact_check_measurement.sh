@@ -97,7 +97,7 @@ after=$((delegated_at + 100))
 later=$((delegated_at + 200))
 REAL_JQ="$(command -v jq)"
 
-# --- zero_sample: a measurement that produced no samples is not a result  ---
+# --- zero_sample: a measurement that produced no samples is not a result ---
 # The gate reads the SAMPLE COUNT, never the result. A zero denominator or zero
 # thread count means the instrument selected nothing; a zero numerator means it
 # ran and everything failed, which is the finding SKILL.md calls "never a pass"

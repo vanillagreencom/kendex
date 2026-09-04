@@ -179,7 +179,7 @@ export interface RestoreOptions {
 // 1. snapshot.status === 'running' AND the recorded PID is not
 //    alive -> coerce to 'stopped', stopReason=shutdown, exitNotified=false
 //    so selectMissedExits / replayMissedExits can deliver the deferred
-//    'exit' wake. This is the primary defense from.
+//    'exit' wake. This is the primary defense against a missed exit.
 //
 // 2. snapshot.status === 'running' AND the recorded PID is still alive
 //    (Pi restarted but the detached child group is still chugging) ->

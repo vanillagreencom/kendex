@@ -98,7 +98,7 @@ export const CLAUDE_AI_CONNECTOR_TOOL_PATTERNS = [
 	"mcp__claude_ai_Atlassian__*",
 ];
 
-// --- The SDK's two-name trap for built-in tools () ---
+// --- The SDK's two-name trap for built-in tools ---
 //
 // The CLI gives some built-ins TWO spellings, and which one you see depends on
 // which SURFACE the name crosses:
@@ -149,7 +149,7 @@ export const CONNECTOR_DISCOVERY_TOOLS = ["ToolSearch", ...MCP_RESOURCE_TOOLS];
 
 // Delivered-side membership sets carry both spellings, derived from the one
 // alias declaration above. The resource-only set keeps those audit calls
-// dispatchable without making ToolSearch a Pi call ().
+// dispatchable without making ToolSearch a Pi call.
 const CONNECTOR_DISCOVERY_TOOL_NAMES = new Set(CONNECTOR_DISCOVERY_TOOLS.flatMap(deliveredSpellings));
 const MCP_RESOURCE_TOOL_NAMES = new Set(MCP_RESOURCE_TOOLS.flatMap(deliveredSpellings));
 
@@ -334,22 +334,20 @@ export function isConnectorTool(name: string | undefined): boolean {
 // processStreamEvent/processAssistantMessage read. Stream names are a
 // DELIVERED surface (see SDK_TOOL_ALIASES): the two MCP-resource built-ins'
 // request-side spellings do not belong in this set because they match nothing.
-// Derive every aliased name
-// via deliveredSpellings rather than hand-copying them.
+// Derive every aliased name via deliveredSpellings rather than hand-copying it.
 //
-// The MCP-resource tools are now EXCLUDED deliberately, under BOTH spellings:
+// The MCP-resource tools are EXCLUDED under BOTH spellings:
 // a resource read is a real account-surface access, and both consumer hosts
 // audit it through the Pi mirror (an out-of-process sidecar has no view of the
 // bridge's own connector-call entries or the child transcript), so it stays
-// mirrored into Pi. Do not re-add either spelling without revisiting that
-// decision in. The allowlist hook is what lets those calls run at
-// all — see isAllowlistedConnectorSessionTool.
+// mirrored into Pi. Do not add either spelling to this set. The allowlist hook
+// is what lets those calls run; see isAllowlistedConnectorSessionTool.
 const CHILD_INTERNAL_TOOLS = new Set(["ToolSearch", "ScheduleWakeup"]);
 
 /**
  * True for a Claude Code built-in meta-tool the child resolves in-process.
  *
- * Mirroring one into the Pi stream  made Pi's agent loop dispatch a
+ * Mirroring one into the Pi stream would make Pi's agent loop dispatch a
  * tool it does not have and deliver an error result for an id no MCP handler
  * ever claimed. The result queued in `pendingResults` until the reaper dropped
  * it — one "dropped 1 tool result(s) whose handler never matched (ToolSearch)"
@@ -379,8 +377,8 @@ export function isChildInternalTool(name: string | undefined): boolean {
  *    miss, and write a synthetic `Tool <name> not found` error result into the
  *    transcript — while the child went on and executed the real call. The Pi
  *    transcript then RECORDED A FAILURE FOR A CALL THAT SUCCEEDED, next to an
- *    answer built from the real payload, so the model's correct answer read as
- *    a fabrication (). The false result is also projected
+ *    answer built from the real payload, so the model's correct answer appears
+ *    fabricated. The false result is also projected
  *    back into the child's session on a rebuild (`syncSharedSession`), which is
  *    how a lie in a mirror becomes a lie in the conversation of record.
  *
@@ -537,7 +535,7 @@ function connectorWriteDenyOutput(toolName: string) {
 //
 // This is a DELIVERED-side check — `name` is a hook's `input.tool_name`, which
 // carries the canonical spelling — so membership is tested against
-// CONNECTOR_DISCOVERY_TOOL_NAMES (both spellings), not the request-side list
+// CONNECTOR_DISCOVERY_TOOL_NAMES (both spellings), not the request-side list.
 // The allowlist hook also carries the mirroring rule: the
 // MCP-resource tools are deliberately NOT child-internal so every resource
 // read mirrors into Pi as the consumers' audit surface — a mirror that can
@@ -738,9 +736,8 @@ export function connectorMcpServers(inventory: ConnectorInventory): Record<strin
 
 /**
  * `CLAUDE_BRIDGE_CONNECTOR_DECLARE=off` (or `0`/`false`/`no`) disables explicit
- * connector declarations while leaving connectors themselves enabled. Falls back
- * to the pre- behaviour: connectors still load, they just race the turn-1
- * manifest again.
+ * connector declarations while leaving connectors themselves enabled. Without
+ * declarations, connector loading races the turn-1 manifest.
  */
 export function connectorDeclarationsDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
 	const v = (env.CLAUDE_BRIDGE_CONNECTOR_DECLARE ?? "").trim().toLowerCase();

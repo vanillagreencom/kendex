@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Behavioral tests for resolve-base-branch — the base-branch resolver used by
-# base-freshness and the worktree flows.: a nonexistent worktree
+# base-freshness and the worktree flows. A nonexistent worktree
 # path fell through the `|| true` swallow to the main fallback with exit 0,
 # handing callers an unverified base. The resolver must fail closed (exit 1,
 # actionable error) on a missing path or a non-repository directory — on BOTH

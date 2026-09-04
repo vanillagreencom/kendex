@@ -31,7 +31,7 @@ export interface LifecycleHooks {
 //   - terminationReason is set on every terminal transition so callers
 //     can distinguish self-exit from extension-stop, session-shutdown,
 //     external kill, reconcile-on-restart, and orphan-watcher finalizes
-//  An explicit `terminationReason` argument wins over
+// An explicit `terminationReason` argument wins over
 //     whatever the caller pre-stamped on `task.terminationReason`; the
 //     default falls back to a derivation from stopReason and exitCode.
 //

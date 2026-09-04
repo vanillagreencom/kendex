@@ -12,7 +12,7 @@
 #                          changes_requested | threads | ci_failed |
 #                          ci_pending | computing | merged | closed | none.
 #                          An issue prefix outside that vocabulary becomes
-#                          the cause word itself, so an additional pr-merge prefix
+#                          the cause word itself, so a new pr-merge prefix
 #                          names itself instead of reading as all-clear
 #   issue: <raw>           every refusal issue, verbatim
 #   head-run: <ids>        (ci_failed/ci_pending only) run ids the CI

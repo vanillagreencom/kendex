@@ -3,10 +3,8 @@
 # one's live usage, so a fleet launch can pick the account with real headroom
 # instead of relying on supervisor memory.
 #
-# The failure this exists for: when one account hits its limit mid-fleet, every
-# session on that account stalls at once. Observed live test on hyprtrade — an
-# account-level limit froze 5 of 7 workers simultaneously and each had to be
-# migrated by hand.
+# One account can back several sessions, so an account-level limit can stall
+# several workers at once.
 #
 # SCOPE: mechanism only — inventory, measurement, and a default chooser.
 # Policy (which model/effort tier, per-lane preferences, reserve thresholds)

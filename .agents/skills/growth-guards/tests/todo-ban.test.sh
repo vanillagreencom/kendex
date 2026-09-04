@@ -481,7 +481,7 @@ run_tb --staged
   && ok "a type change to a clean regular file passes: a marker shape in the PATH is not content" \
   || bad "a clean type change passes" "rc=$RC out=$OUT"
 
-# The same type change, its replacement regular file carrying a marker on one line
+# The same type change, its new regular file carrying a marker on one line
 # and clean content on the next. This is the arm that reaches the parser:
 # the path is listed, both diff sections are read, and only the line the
 # file actually carries may be named — not the creation section's header,
@@ -543,7 +543,7 @@ run_tb --staged
   || bad "shim-free control passes" "rc=$RC out=$OUT"
 
 # One shim per collection step, so each error path is proven on its own: the
-# change-set collection, then the per-file read of the appended lines.
+# change-set collection, then the per-file read of the added lines.
 REAL_GIT="$(command -v git)"
 make_diff_shim() { # DIR MATCH — a git whose `diff` fails when MATCH is in argv
   mkdir -p "$1"

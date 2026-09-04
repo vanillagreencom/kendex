@@ -101,7 +101,7 @@ usage_reset_key() {
     return 0
   fi
   # A run of digits carrying neither minutes nor a meridiem is a number that
-  # follows the word, not a clock: `resets reset date` would otherwise put the
+  # follows the word, not a clock: `resets 2026-09-03` would otherwise put the
   # `20` of the year on the event as an hour. Every shape above carries one or
   # the other, so nothing attested is lost.
   [[ -n "$min" || -n "$meridiem" ]] || return 0

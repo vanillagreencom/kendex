@@ -1,4 +1,4 @@
-// rate-limit retry-with-backoff watchdog for subagent panes.
+// Rate-limit retry-with-backoff watchdog for subagent panes.
 // The integration test injects deterministic clock + scheduler so the
 // per-pane attempt counter, retry-at scheduling, steer dispatch, and
 // exhaustion fallback all surface synchronously.

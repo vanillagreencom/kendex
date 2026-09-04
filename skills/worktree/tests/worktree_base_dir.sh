@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Coverage for: external default worktree base dir
+# Tests for an external default worktree base directory.
 # (<parent-of-checkout>/.worktrees/<checkout-name>), absolute and ~ overrides,
 # canonical (symlink-resolved) path comparisons, and compatibility with
 # worktrees registered under an older base-dir convention.

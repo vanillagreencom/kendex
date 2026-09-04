@@ -1,4 +1,4 @@
-// Tests for: bounded inline wake payloads, default notifyMode
+// Tests for bounded inline wake payloads and the default notifyMode.
 // resolution, and the per-task output-wake budget guard.
 
 import { describe, expect, test } from "bun:test";

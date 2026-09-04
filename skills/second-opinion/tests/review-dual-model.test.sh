@@ -18,7 +18,7 @@
 #     never past the self-exclusion guard;
 #   - another target is a settings entry (SECOND_OPINION_<NAME>_CMD), not code.
 #
-# Drives a hermetic copy of the skill  with fake lane CLIs.
+# Drives a hermetic copy of the skill with fake lane CLIs.
 
 set -euo pipefail
 
@@ -33,7 +33,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # --- Harness-free environment for the identity scenarios ---------------------
 # A positively detected single-model harness now beats any contradicting
-# declaration, whatever its source, so a scenario can cannot simulate an
+# declaration, whatever its source, so a scenario cannot simulate an
 # arbitrary session by exporting an identity while a real harness is visible —
 # it has to genuinely not have one. Detection reads the process tree first and
 # the environment markers second, so both are neutralized: a `ps` stand-in that

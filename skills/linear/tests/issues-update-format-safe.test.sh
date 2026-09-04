@@ -2,12 +2,12 @@
 # `issues update <ID>... --format=safe` must be
 # accepted by the parser and emit the documented safe output for the updated
 # issue. The README documents `safe` as the default/global output format, yet
-# `update` must accept supported `--format` flags before its `-*` catch-all
-# catch-all. Workflows that
+# `update` must accept supported `--format` flags before its `-*` catch-all.
+# Workflows that
 # uniformly append `--format=safe` to every call failed on the update path.
 #
-# Runs fully offline against a mocked curl — the bug is a pre-mutation parse
-# rejection, so no live Linear is needed.
+# Runs fully offline against a mocked curl because this is a pre-mutation parse
+# rejection.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -253,7 +253,7 @@ echo
 echo "=== pr-merge --check superseded-run scoping (kendex#492/#494) ==="
 
 # An OLD superseded run (RUN_ID 29098545030) left several CANCELLED named jobs;
-# the authoritative replacement run (RUN_ID 29099680623) on the current head is still
+# the new authoritative run (RUN_ID 29099680623) on the current head is still
 # in progress ("Changes"). Scoping must drop the superseded run's CANCELLED jobs
 # so they are NOT reported as ci_failed blockers — only the current run's
 # still-pending check gates the merge (transient, retryable).
@@ -309,10 +309,8 @@ assert_eq "$status" "1" "prepared head drift fails before arming"
 assert_contains "$out" "prepared head changed before merge attempt" "prepared-head refusal names the race"
 assert_not_contains "$(cat "$call_log")" "pr merge" "prepared-head mismatch never reaches merge mutation"
 
-# Exact Hyprtrade false-negative shape at head
-# 28132e9b990a595417f79f4e213b4e984bf676fd: gh accepted the guarded
-# mutation, the PR remained OPEN, autoMergeRequest was null, and the active
-# mergeQueueEntry was authoritative proof that the operation succeeded.
+# An OPEN PR with no autoMergeRequest can still be queued. An active
+# mergeQueueEntry is authoritative proof that the guarded mutation succeeded.
 set +e
 out=$(STUB_CHECKS="$checks" \
     STUB_HEAD="28132e9b990a595417f79f4e213b4e984bf676fd" \

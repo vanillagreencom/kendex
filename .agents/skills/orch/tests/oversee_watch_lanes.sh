@@ -205,7 +205,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
 
 # Codex on a dialog. It marks the row it has selected with `›`, not `❯`, and
 # words its key hints its own way, so nothing Claude Code draws reaches these
-# two screens: before  both fell through every predicate and the pass
+# two screens: both fell through every predicate and the pass
 # said nothing about the lane. The marker is the whole signature — these two
 # cases are what proves a Codex enter hint would be redundant.
 new_case question_codex_dialog_trust

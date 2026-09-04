@@ -59,7 +59,7 @@ test("toolIsolationForQuery(true) exposes connectors: drops empty tools, allows 
 	for (const b of ["Read", "Write", "Bash", "WebFetch"]) assert.ok(iso.disallowedTools.includes(b), `still block ${b}`);
 });
 
-// ---: connectors mode must not load repo-controlled settings ---
+// --- connectors mode must not load repo-controlled settings ---
 
 test("CONTRACT: connectors mode loads USER setting sources only", () => {
 	// Settings files carry `env` and `apiKeyHelper`; "project"/"local" would let
@@ -129,13 +129,13 @@ test("allowlist hook permits bridged custom tools, connector tools, and discover
 	}
 });
 
-// ---: hooks see the CLI's canonical (aliased) tool names ---
+// --- hooks see the CLI's canonical (aliased) tool names ---
 
 test("allowlist hook permits the discovery built-ins under BOTH spellings (kendex#1011)", async () => {
 	// Literal names, deliberately NOT derived from CONNECTOR_DISCOVERY_TOOLS: a
 	// hook's tool_name carries the CLI's canonical (aliased) spelling, and a
-	// test written from the request-side constant passes either way. 3.1.0
-	// denied ListMcpResourcesTool/ReadMcpResourceTool — the exact tools the
+	// test written from the request-side constant passes either way. The test
+	// names ListMcpResourcesTool and ReadMcpResourceTool directly because these are the tools the
 	// allowlist documents as permitted (verified live on claude 2.1.220).
 	const spellings = [
 		"ToolSearch",
@@ -216,7 +216,7 @@ test("connectorQueryOptions wires the allowlist hook in BOTH write modes", async
 	assert.equal(connectorQueryOptions(true, "allow").hooks.PreToolUse[0].hooks.length, 1);
 });
 
-// ---: the deny reason is shared source shown verbatim to a model ---
+// --- the deny reason is shared source shown verbatim to a model ---
 
 test("CONTRACT: the connector write-deny reason names no host product", async () => {
 	const hook = connectorWriteDenyHook();
@@ -244,7 +244,7 @@ test("CONTRACT: the connector write-deny reason names no host product", async ()
 	}
 });
 
-// ---: CONNECTOR_WRITE_TOOLS is a public contract, not an internal ---
+// --- CONNECTOR_WRITE_TOOLS is a public contract, not an internal detail ---
 
 // memsira routes connector writes through its own gated approval flow; drovr
 // keeps its chat sidecar permanently write-`deny` and runs an approved write as

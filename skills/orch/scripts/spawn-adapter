@@ -112,7 +112,7 @@ cmd_spawn() {
 # primary session. MultiAgentV2 reads
 # `features.multi_agent_v2.max_concurrent_threads_per_session`; the legacy
 # `agents.max_threads` is SILENTLY IGNORED by it, so raising only that key
-# changes nothing (openai/codex7, openai/codex9). A running session
+# changes nothing. A running session
 # also keeps its old cap until restarted. Reporting the discrepancy is the whole
 # point — it is the trap that costs a wasted config edit and a confusing
 # `agent thread limit reached` at spawn time.

@@ -114,7 +114,7 @@ run_bc
 [ "$RC" -eq 1 ] && case "$OUT" in *"elsewhere.bin"*"5120 bytes"*) true ;; *) false ;; esac \
   && ok "a file moved AND grown past the ceiling fails at its new path" \
   || bad "a file moved AND grown past the ceiling fails at its new path" "rc=$RC out=$OUT"
-# A type change carries a replacement blob too: the symlink's target was a few bytes.
+# A type change carries a new blob too: the symlink's target was a few bytes.
 new_repo typechange
 mkbytes payload.bin 5
 ln -s payload.bin "$R/thing"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# failure coverage for secondary-remote ownership discovery:
-# an unreachable non-origin remote must not brick initial-work claims, a reachable
+# Tests for secondary-remote ownership discovery:
+# an unreachable non-origin remote must not block new-work claims, a reachable
 # secondary remote must still count as ownership, and origin stays required.
 set -euo pipefail
 
@@ -94,7 +94,7 @@ export PATH="$ROOT/bin:$PATH"
 echo "=== worktree create secondary-remote ownership discovery ==="
 
 # An unreachable non-origin remote cannot receive other sessions' pushes, so
-# discovery skips it with a warning instead of refusing every initial-work claim.
+# discovery skips it with a warning instead of refusing every new-work claim.
 git -C "$ROOT/main" remote add flaky "$ROOT/does-not-exist.git"
 set +e
 create_out="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-second 2>"$ROOT/create.err")"

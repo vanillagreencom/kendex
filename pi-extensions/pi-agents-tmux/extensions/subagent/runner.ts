@@ -671,10 +671,10 @@ async function runSingleAgentAttempt(
 		let timedOut = false;
 
 		// Resolved after the last args push but BEFORE subagents:started, so a
-		// refused spawn (depth guard,  never announces itself — a
+			// refused spawn from the depth guard never announces itself. A
 		// throw after `started` would leave the task permanently "running" in
 		// the dashboard/registry because nothing emits a terminal event for the
-		// taskId (). Also outside the spawn promise so the
+			// taskId. This runs outside the spawn promise so the
 		// throw rejects through the finally cleanup below instead of wedging
 		// inside the promise executor.
 		const invocation = getPiInvocation(args);
@@ -698,7 +698,7 @@ async function runSingleAgentAttempt(
 
 		const exitCode = await new Promise<number>((resolve) => {
 			// Child identity env mirrors the pane launcher's agent identity
-			// for bg one-shot lanes (). Restricted delegation reads
+				// for bg one-shot lanes. Restricted delegation reads
 			// PI_SUBAGENT_CHILD_AGENT to authorize the caller. Strip pane-only
 			// ownership/session markers, including PI_SUBAGENT_CHILD_PANE, so
 			// bg lanes never mutate an inherited tmux pane or attach to pane

@@ -218,7 +218,7 @@ describe("legacy sessions (no account router)", () => {
 		// Surfacing a terminal failure ends the Pi stream. A continuation query
 		// spawned after that would run with its output invisible while its tool
 		// side effects still execute — so the deferred-replay loop must not run.
-		// The dropped steers must be dropped LOUDLY (): the cursor already
+		// The dropped steers must be dropped LOUDLY: the cursor already
 		// advanced over them on the promise of replay, so the surviving record
 		// must carry needsRebuild (rebuild re-imports them from Pi history) and
 		// the drop must be diagnosed.

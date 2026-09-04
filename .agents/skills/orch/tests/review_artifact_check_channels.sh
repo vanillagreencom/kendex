@@ -99,7 +99,7 @@ printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 3/
 zs_mut="$worktree/tmp/review-external-20260815-010101.json"
 printf '{"agent":"reviewer-test","verdict":"pass","summary":"validated: mutation: killed 0/0; stability: 10/10 at 16 threads"}' > "$zs_mut"
 
-# --- a gate that could not run is never silence  review) ---
+# --- a gate that could not run is never silence ---
 # Both gate helpers would signal "no problem" with an empty string, so a jq
 # failure — a torn read of a non-atomically written artifact — was
 # indistinguishable from a clean artifact, and --wait's `out="$(glob_check)"`

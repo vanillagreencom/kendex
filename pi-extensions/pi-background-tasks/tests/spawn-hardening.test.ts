@@ -1,4 +1,4 @@
-//  hardening: protect bg_task children from parent/session/pgid
+// Protect bg_task children from parent, session, and process-group
 // cascades when Pi exits, restarts, or its session leader dies.
 //
 // H1 (process-group / parent-death cascade) + H3 (session-leader cascade)

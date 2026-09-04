@@ -130,9 +130,9 @@ interface InstanceInfo {
 	startedAt: string;
 	updatedAt: string;
 	lastReason?: string;
-	/**: parent session id when this bridge runs in a spawned subagent pane. */
+	/** Parent session id when this bridge runs in a spawned subagent pane. */
 	parentSessionId?: string;
-	/**: PI_BRIDGE_CHILD_ROLE env value when set (e.g. 'subagent'). */
+	/** PI_BRIDGE_CHILD_ROLE env value when set (e.g. 'subagent'). */
 	childRole?: string;
 }
 

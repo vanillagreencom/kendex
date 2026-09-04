@@ -2,7 +2,7 @@
 # `create --reuse` must be able to rebase a worktree whose WORKTREE_SYMLINKS
 # entries shadow tracked files.
 #
-# Since  setup provisions such an entry as a REAL directory with only the
+# Setup provisions such an entry as a REAL directory with only the
 # untracked children symlinked, so git owns the tracked paths and the rebase
 # writes them directly. The reuse path must still succeed, and re-applying
 # setup afterwards must keep the per-child layout intact.

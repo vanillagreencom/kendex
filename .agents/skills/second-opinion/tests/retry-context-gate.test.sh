@@ -31,7 +31,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # --- Deterministic harness-free session -------------------------------------
 # A positively detected single-model harness now beats any contradicting
-# declaration, whatever its source — so a suite can cannot neutralize the
+# declaration, whatever its source — so a suite cannot neutralize the
 # harness that runs it by exporting an identity. It has to actually not have
 # one. This `ps` stand-in reports the first parent as init, so the ancestor walk
 # finds nothing and the declared identity below is what the script uses. It also
@@ -141,7 +141,7 @@ git -C "$WORK" add file.txt
 git -C "$WORK" -c commit.gpgsign=false commit -q -m init
 git -C "$WORK" checkout -q -b scope-branch
 # Uncommitted change so `--range HEAD` yields a non-empty diff — the scope
-# gate  refuses to run a review over an empty diff.
+# The scope gate refuses to run a review over an empty diff.
 printf 'world\n' >> "$WORK/file.txt"
 
 COUNTER="$TMP_ROOT/counter"

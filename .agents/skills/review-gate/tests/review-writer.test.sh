@@ -4,7 +4,7 @@
 # status to the predicate's verdict. Stubbed GitHub API, every leg driven
 # offline.
 #
-# The writer does not polices CI (that is branch protection's job — see the
+# The writer does not police CI (that is branch protection's job; see the
 # script header's adoption precondition), so there is no proof chain here to
 # test: no rerun, no provenance marker, no attempt floor, no evidence
 # ordering, no stall recovery. What remains is the decision table, the write
@@ -29,7 +29,7 @@
 #                                               description
 #   w9b. untracked-claim over a NEWER        -> posts failure directly
 #        success entry
-# Write discipline  ordering guard, success posts only):
+# Write discipline (ordering guard, success posts only):
 #   w10. guard re-read shows a non-success   -> defers (exit 0, no POST)
 #        entry at/after evaluated_at
 #   w10b. same-second non-success write      -> still defers (>=, not >)
@@ -158,7 +158,7 @@ case "$args" in
     echo "post:$args" >> "${STUB_POST_LOG:?}"
     ;;
   *"/commits/"*"/statuses?per_page=100"*)
-    # The  guard's re-read — distinguishable from the projection read
+    # The ordering guard's re-read — distinguishable from the projection read
     # by its explicit per_page, so the two can fail independently.
     # STUB_GUARD_HISTORY_PAGE2 emits a second page (gh --paginate emits one
     # array per page, concatenated) so first-page-only merges are catchable.

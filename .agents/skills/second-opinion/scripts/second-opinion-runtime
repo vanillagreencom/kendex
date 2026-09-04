@@ -63,7 +63,7 @@ second_opinion_runtime_setup() {
 #                 survivor holding the captured pipe open hangs the caller's
 #                 `RESULT=$(...)` for as long as it lives, long past the 124.
 #   default       kills the tree on expiry, but moves timeout into a private
-#                 process group the caller's own signal can cannot reach,
+#                 process group that the caller's own signal cannot reach,
 #                 so the lane outlives the session that started it.
 #
 # Both properties are required, so the wrapper below supplies the half timeout

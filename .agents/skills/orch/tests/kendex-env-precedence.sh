@@ -9,8 +9,8 @@
 # (single-line double-quoted, no `"`, no `\`), or a `[`-leading line that
 # is not a lone [name] header, fails the load.
 #
-# Parent values win over every project file, while the settings <.env.local
-# order holds for keys the parent did not set.
+# Parent values win over every project file. For other keys, `.env.local` stays
+# above both settings files.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 

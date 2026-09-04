@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for `workflow-state set` stores non-JSON values
+# Tests that `workflow-state set` stores non-JSON values
 # as RAW strings — it never parses JSON string literals. submit-pr § 4 would
 # document `set … pr_review.mode '"[GATE_MODE]"'`, which stored the quote
 # characters literally (serialized `"\"review\""`) and broke the § 6.1 gate 4

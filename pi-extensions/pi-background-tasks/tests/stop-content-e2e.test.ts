@@ -1,6 +1,5 @@
 // End-to-end test for the stop tool-result content bound. It spawns a real
-// bg_task via the registered tool
-// `execute` callback, then invokes the stop action through the same
+// bg_task via the registered tool `execute` callback, then invokes the stop action through the same
 // callback so the assertion runs against `makeToolResult` content (and
 // the live UI `notify` call) produced by `requestStop` in its actual
 // production wiring. This prevents a check that only re-derives the bounded

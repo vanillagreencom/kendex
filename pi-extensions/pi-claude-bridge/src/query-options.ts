@@ -136,7 +136,7 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 	// DISABLE_AUTO_COMPACT=1: pi owns context-management and propagates its own
 	// /compact via session_compact (see handler in the extension entry). Letting CC
 	// also autocompact would double-flush the prompt cache and races pi's
-	// threshold with CC's, including CC's anti-thrashing guard ().
+		// threshold with CC's, including CC's anti-thrashing guard.
 	// Manual /compact in CC still works (we never invoke it).
 	// When connectors are enabled, allow claude.ai cloud MCP servers so the
 	// authenticated account's Gmail/Calendar/Drive tools load. Default stays "0".

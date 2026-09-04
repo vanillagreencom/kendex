@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# failure coverage for active-work ownership guards.
+# Tests for active-work ownership guards.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -401,7 +401,7 @@ assert_eq "$(git -C "$RACE_ROOT/main" config --get extensions.worktreeConfig)" "
 echo "=== worktree create option/help parsing (#621) ==="
 
 # --help / -h print create-specific usage, exit 0, and create nothing. This is
-# the sibling of the remove --help fix  at both create parse sites.
+# both create parse sites must handle these flags.
 CREATE_HELP_ROOT="$TMP_ROOT/create-help"
 make_repo "$CREATE_HELP_ROOT"
 export GH_STATE="$CREATE_HELP_ROOT/gh-state"

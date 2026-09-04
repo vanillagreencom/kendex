@@ -257,7 +257,7 @@ assert_eq "$(jq -r .unconfirmed_verdict <<<"$out")" "ejected" \
 assert_le "$(jq -r .elapsed_seconds <<<"$out")" "4" \
   "an unreachable count does not spin the poll loop past the budget" "$err"
 
-# --- 6. the squeeze allowance is per candidate verdict  ----------
+# --- 6. the squeeze allowance is per candidate verdict -----------
 # A conflicting reading stands first and spends the run's one squeeze, then
 # the poll after it reads the PR out of the queue. That second candidate is a
 # TRANSITION: cut off here it is re-observed by nobody, and merge-pr re-arms
@@ -280,7 +280,7 @@ assert_eq "$(jq -r .cause <<<"$out")" "merge_group_failed" \
 assert_le "$(jq -r .elapsed_seconds <<<"$out")" "5" \
   "the second confirmation still finishes inside the budget" "$err"
 
-# --- 7. owed polls that fit the budget exactly  ------------------
+# --- 7. owed polls that fit the budget exactly -------------------
 # The loop runs while elapsed < max_wait, so polls owed at exactly the
 # remaining budget land the last one ON the deadline, where it is never made.
 # Three confirmations at a one-second interval, first seen within two seconds

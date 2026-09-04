@@ -433,8 +433,8 @@ run_ce_env 'GROWTH_GUARDS_CHANGELOG_RECORD=changelog.d/CHANGELOG.md'
 echo "=== the pattern says where the section sits, and at what depth ==="
 # One rule for every pattern shape: a pattern is <root...>/<section>/<name>,
 # so its own last two segments place a path and its own depth decides which
-# paths it places. A count applied after the root instead is what makes each
-# additional pattern shape a additional defect.
+# paths it places. A count applied after the root would make each additional
+# pattern shape a separate defect.
 new_repo shapes
 printf -- '- A proper entry.\n' | frag fixed x.md
 mkdir -p "$R/changelog.d/archive/fixed"

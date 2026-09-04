@@ -13,7 +13,7 @@
 #   1.  pr-watch: on the fleet's first run attention present at start is a
 #       baseline (no event, one stderr note, context on the next event); that
 #       baseline persists, so a line appearing between two runs is the next
-#       run's first-pass event and a standing line is not; a unseen `<pr> <kind>`
+#       run's first-pass event and a standing line is not; an unseen `<pr> <kind>`
 #       line mid-run is the event; a head-only change is not; GH_REPO reaches
 #       pr-watch and its argv is exactly --heal, for every repo; a
 #       heal-dispatched line is never a key — alone, re-attributed to another
@@ -74,7 +74,7 @@ assert_eq "$(cat "$STUB_DIR/prwatch.repo")" "owner/repo" "GH_REPO is exported to
 # green.
 assert_eq "$(cat "$STUB_DIR/prwatch.args")" "--heal" "pr-watch is invoked with --heal" "$err"
 
-# 1b. a unseen <pr> <kind> line mid-run is the event
+# 1b. an unseen <pr> <kind> line mid-run is the event
 new_case prwatch_new
 printf '0' > "$STUB_DIR/prwatch.rc.1"
 printf '12\tabcdef01\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out.2"
@@ -85,7 +85,7 @@ assert_eq "$rc" "0" "new pr-watch line exits 0" "$err"
 assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "a new attention line mid-run is the event" "$err"
 assert_contains "$out" "threads-open" "pr-watch output follows the event line" "$err"
 
-# 1c. the same <pr> <kind> under a replacement head is not unseen (a lane pushed)
+# 1c. the same <pr> <kind> under a new head is not new (a lane pushed)
 new_case prwatch_head_moved
 printf '12\taaaa0000\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out.1"
 printf '12\tbbbb0000\tthreads-open\t1 unresolved\n' > "$STUB_DIR/prwatch.out.2"
@@ -95,7 +95,7 @@ out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "same pr+kind under a new head is not an event" "$err"
 assert_contains "$out" "bbbb0000" "context carries the LATEST pr-watch output" "$err"
 
-# 1d. a unseen kind on an already-baselined PR is unseen
+# 1d. an unseen kind on an already-baselined PR is unseen
 new_case prwatch_new_kind
 printf '12\taaaa0000\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out.1"
 printf '12\taaaa0000\tthreads-open\t2 unresolved\n12\taaaa0000\tdisarmed\tauto-merge off\n' > "$STUB_DIR/prwatch.out.2"
@@ -483,7 +483,7 @@ assert_contains "$out" "$(printf 'other/repo\t7\tbbbb0000\tthreads-open')" \
 assert_eq "$(cat "$STATE_DIR/other_repo__none")" "$(printf '7\tthreads-open')" \
   "and the same pass writes its baseline" "$err"
 
-# 1q. a fleet that names a additional repo on a later run baselines that repo's
+# 1q. a fleet that names an additional repo on a later run baselines that repo's
 # standing attention rather than letting it preempt the lane checks
 new_case prwatch_new_repo_baseline
 printf '12\taaaa0000\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out.owner_repo"

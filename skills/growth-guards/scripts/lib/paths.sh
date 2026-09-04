@@ -15,7 +15,7 @@
 #
 # The idiom: capture with a sentinel `x` so the shell has something to strip
 # instead of the newlines, take the sentinel off, then take off exactly the
-# ONE newline the command itself appended. What is left is the path.
+# trailing newline from the command. What is left is the path.
 #
 # Sourced, never executed.
 set -euo pipefail

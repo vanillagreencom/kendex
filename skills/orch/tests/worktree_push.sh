@@ -236,7 +236,7 @@ assert_eq "$(cat "$live_state/tmp/workflow-state-KEN-LIVE.json" | jq -r ".rebase
 
 # The record's existence is the conjunct that decides in the PERMISSIVE
 # direction, so only a passing push can prove it. An implement round mints a
-# round id through round-token command and never runs dev-round-write, so its state
+# round id through `workflow-state new-round-id` and never runs dev-round-write, so its state
 # names a round with no record at all: without this check every such push would
 # refuse, and a suite of refusal assertions alone would call that correct.
 (cd "$live_state" && "$STATE" set KEN-LIVE dev_round_id 9-9)

@@ -2,11 +2,9 @@
 //
 // A claude.ai connector tool runs INSIDE the child, on the child's own MCP
 // servers, and is deliberately never mirrored into the Pi stream (see
-// isChildExecutedTool). That is the honest behaviour — mirroring wrote
-// `Tool <name> not found` into the transcript for calls that had SUCCEEDED
-//  — but it leaves the Pi session with no record that
-// the call happened at all, so "did it really look that up?" could only be
-// answered from the child's own transcript.
+// isChildExecutedTool). Mirroring would write `Tool <name> not found` into the
+// transcript for a successful call. Not mirroring leaves the Pi session with no
+// record that the call happened, so the audit entry records it without dispatch.
 //
 // A pi `CustomEntry` closes that gap without reintroducing the bug: it is
 // persisted in the session file, is NOT a content block, and is documented as

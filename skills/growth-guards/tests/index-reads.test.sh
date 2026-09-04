@@ -272,7 +272,7 @@ OUT="$(cd "$R" && "$SCRIPTS/byte-ceiling" --all 2>&1)" || RC=$?
   || bad "--all refuses it too, where ls-files emits one record per stage" "rc=$RC out=$OUT"
 
 # Control: the guard did not replace the measurement. A merged index with a
-# genuinely untracked oversized file still fails the ceiling, and a merged index
+# genuinely new oversized file still fails the ceiling, and a merged index
 # with nothing oversized still passes.
 new_repo bc-merged
 printf 'seed\n' >"$R/seed.txt"

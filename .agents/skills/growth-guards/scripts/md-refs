@@ -19,7 +19,7 @@ set -f
 
 GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
 GG_BOOT="${GG_BOOT%x}"
-# The one newline `pwd` appended; anything before it is the path.
+# The trailing newline from `pwd` terminates its output; anything before it is the path.
 SCRIPT_DIR="${GG_BOOT%$'\n'}"
 GG_CHECK="md-refs"
 # shellcheck source=lib/common.sh

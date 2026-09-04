@@ -319,7 +319,7 @@ DETACHED_WORKER=false
 # EXIT_CLI_KILLED: the CLI, or a lane running it, died to a SIGNAL — something
 # outside the run (a reaper, a sweeper, an operator) took the reviewer away.
 # Folded into 5 it would read as a refused review, so a session could not tell
-# its reviewer was killed until the pattern had cost several runs. Own code in
+# that its reviewer was killed. Own code in
 # the same no-verdict class, every report naming the signal. The shell cannot
 # tell a child killed by signal N from one that chose `exit $((128+N))`, so
 # 128+N for a nameable signal N is a kill and any other non-zero status a plain

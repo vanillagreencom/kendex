@@ -21,7 +21,7 @@
 # THE RELAY NEVER REDS is the invariant every relay case asserts, over both
 # the runner's shells AND over its own environment (each env: binding dropped
 # in turn) — a red or a hang on a PR-attached leg is a failed check on the PR
-# head, which is the whole defect  removes.
+# head, which would block the PR.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -227,7 +227,7 @@ relay_run() { # step-path, read_only, workflow_ref, gh_codes, event_name, header
     # THE INVARIANT, asserted on every case rather than per-case so a future
     # case cannot forget it: the relay never reds. It runs on PR-attached
     # legs, so a non-zero exit is a failed check on the PR head and pins
-    # mergeStateStatus at UNSTABLE — the defect  removes. Nothing this
+    # mergeStateStatus at UNSTABLE. Nothing this
     # step can hit justifies that, because it holds no statuses scope and can
     # only ever leave the gate stale, which the cron floor owns.
     # What was announced is what was slept, and the jitter stayed inside its

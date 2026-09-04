@@ -584,7 +584,7 @@ if [[ -z "$PROJECT_COMMON_GIT_DIR" ]]; then
   exit 1
 fi
 
-# Load project config and secrets; among project files.env.local wins.
+# Load project config and secrets; among project files, `.env.local` wins.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/kendex-env.sh
 # A rebase replaces a symlinked harness dir with a REAL directory holding only
@@ -835,11 +835,11 @@ remote_ref_lease_arg() {
 }
 
 # After a push auto-rebase rewrote the branch, print one machine-readable
-# "rebase-map: <before-sha> <after-sha>" line per rewritten commit on stdout so
+# "rebase-map: <old-sha> <new-sha>" line per rewritten commit on stdout so
 # callers (orch submit-pr) can remap commit SHAs recorded before the rebase.
 # A replayed commit that vanished (its patch was already upstream) maps to
-# "rebase-map: <old-sha> dropped". Inputs are the pre- and
-# post-rebase outputs of `git log --reverse --format='%H %s'
+# "rebase-map: <old-sha> dropped". Inputs are the pre-rebase and post-rebase
+# outputs of `git log --reverse --format='%H %s'`
 # origin/<default>..HEAD`. Commits pair by position when the counts match
 # (rebase preserves order); on a count mismatch they pair by subject,
 # consuming each post-rebase line at most once. Bash 3.2: consumed indices
@@ -3990,7 +3990,7 @@ case "${1:-}" in
       BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
       # Let git remove the INTACT tree — it deletes the worktree contents itself,
       # so there is nothing to pre-strip. Stripping the configured symlinks first
-      # would leave a live session's worktree without.agents/.claude/.env.local
+      # would leave a live session's worktree without `.agents`, `.claude`, or `.env.local`
       # whenever git then refuses the removal, and no precheck can close that
       # window: a lock acquired between the check and the strip lands right back
       # in that failure mode. Because nothing is mutated before git runs, a
@@ -4300,7 +4300,7 @@ case "${1:-}" in
           echo "→ origin/$DEFAULT_BRANCH already contained in $CURRENT_BRANCH; skipping rebase" >&2
         else
           # Snapshot the branch-only commits before/after the rebase so a
-          # rewrite is reported as an old→separate commit map.
+          # rewrite is reported as an old→new commit map.
           PRE_REBASE_COMMITS="$(git -C "$WT_PATH" log --reverse --format='%H %s' "origin/$DEFAULT_BRANCH..HEAD")"
           if ! git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" >/dev/null 2>&1; then
             git -C "$WT_PATH" rebase --abort >/dev/null 2>&1 || true

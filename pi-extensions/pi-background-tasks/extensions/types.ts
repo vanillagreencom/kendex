@@ -178,8 +178,8 @@ export interface BackgroundTaskSnapshot {
 	 */
 	resourceControl?: ResourceControlMetadata;
 	/**
-	 * Why this task left the running state. Optional so snapshots persisted
-	 * before  still load (treated as undefined). Set on every
+	 * Why this task left the running state. Undefined means no cause was
+	 * recorded. Set on every
 	 * terminal transition through finalizeTaskLifecycle, the
 	 * restoredTaskFromSnapshot coercion path, and the orphan watcher.
 	 */

@@ -43,8 +43,8 @@ gg_no_value_opt() { # ARG — 0 when ARG is a `git commit` option taking NO valu
   # value is absent by construction, in every spelling, and absence means "this
   # one swallowed the token behind it" — so an omission costs a refusal the
   # writer clears, never a commit excused by an entry it does not carry. A name
-  # appended here that git DOES take a value for would fail open: the one thing an
-  # edit to this list is read for.
+  # listed here that git DOES take a value for would fail open. Every list entry
+  # must describe a valueless option.
   local name
   case "$1" in
     -[aeinopqsuvzS]) return 0 ;;

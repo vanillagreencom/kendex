@@ -119,7 +119,7 @@ export function makeCliDebugOptions(tag: string): { debug?: boolean; debugFile?:
 }
 
 /** Diagnostic dump — for "should never happen" paths. Gated on the same
- *  CLAUDE_BRIDGE_DEBUG flag as debug() : the entries carry session metadata
+ *  CLAUDE_BRIDGE_DEBUG flag as debug(): the entries carry session metadata
  *  and land in a log outside any host app's retention/cleanup boundary, so
  *  a host that has not opted into debugging must get no disk write. */
 export function diagDump(label: string, data: Record<string, unknown>) {

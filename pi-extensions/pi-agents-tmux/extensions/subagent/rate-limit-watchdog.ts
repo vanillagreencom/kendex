@@ -65,7 +65,7 @@ export type RateLimitOutcome =
 export interface SubagentRateLimitWatchdogDeps {
 	/**
 	 * Cross-process mirror of the pending-retry state (marker file under the
-	 * shared runtime root) : the parent's idle-stall watchdog reads it, since
+		 * shared runtime root): the parent's idle-stall watchdog reads it, since
 	 * this watchdog's in-process state lives in the child. Called with the
 	 * retry epoch on schedule and null on fire/resolve/cancel/exhaustion.
 	 */

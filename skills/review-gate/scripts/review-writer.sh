@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Review-gate SINGLE WRITER — the one place the gate commit status is written
-# (review-gate v2; vanillagreencom/. Shipped by the kendex
-# review-gate skill, vendored into consumers at
+# Review-gate SINGLE WRITER — the one place the gate commit status is written.
+# Shipped by the kendex review-gate skill and vendored into consumers at
 # .agents/skills/review-gate/scripts/, invoked only by the writer workflow
 # (templates/review-gate-writer.yml).
 #
@@ -30,7 +29,7 @@
 #
 # A repo that holds jobs back behind the gate AND has no merge queue
 # satisfies neither, and untested code can merge there. That is a branch
-# protection gap; this script cannot close it and does not pretends to.
+# protection gap; this script cannot close it and does not claim to.
 #
 # CONVERGE-ALL, EVERY LEG: except for the merge_group leg and the fork
 # read-only no-op, EVERY invocation enumerates and converges EVERY open PR.
@@ -54,7 +53,7 @@
 # NO FORK SPECIAL CASES: every leg that reaches this script holds a
 # write-capable default-branch token, so fork heads take the same path as
 # same-repo heads. The read-only exception is pull_request_review fired by a
-# FORK PR — and since  that leg never reaches this script at all: it
+# FORK PR. That leg never reaches this script: it
 # lands on the shipped workflow's RELAY job, which flags the case, dispatches
 # nothing, and exits green, so fork review evidence converges on the cron
 # floor. WRITER_READ_ONLY below remains an honored input (defaulting to 0)

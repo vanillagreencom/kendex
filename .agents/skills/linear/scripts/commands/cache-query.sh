@@ -716,7 +716,7 @@ cache_get_project() {
     fi
 
     # Linear keeps a canceled project under the name a live one reuses
-    # and `.[] | select(.id == $ref or.name == $ref)` emitted one
+    # and `.[] | select(.id == $ref or .name == $ref)` emitted one
     # top-level object PER match: `cache projects get "<name>" | jq -r '.id'`
     # read two ids at rc 0 and the safe formatter shaped each object.
     # The selection below is the cache-side spelling of lib/common.sh

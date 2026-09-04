@@ -184,7 +184,7 @@ fi
 echo "=== and git's own diff attribute is what exempts it ==="
 # The authority is the record git already keeps: a path declared binary (or
 # -diff) is out of every textual diff, so its bytes were never reviewable
-# text. Same fixture, same exclusion list, one.gitattributes line inserted.
+# text. The same fixture and exclusion list gain one `.gitattributes` line.
 printf 'assets/* binary\n' >"$R/.gitattributes"
 run_in SIZE_RATCHET_THRESHOLD=400 -- --staged
 if [ "$RC" -eq 2 ] && has 'assets/icon.png: a NUL byte at offset 12'; then

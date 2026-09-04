@@ -50,8 +50,8 @@ JSON
 }
 
 # Mocked curl: logs every payload, and serves the archive/delete mutation
-# response shape selected via the mode file. "no_entity" is the exact live
-# response observed in.
+# response shape selected via the mode file. "no_entity" returns success
+# without an entity.
 cat >"$TMP_ROOT/bin/curl" <<SH
 #!/usr/bin/env bash
 config="\$(cat)"

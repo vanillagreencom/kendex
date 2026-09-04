@@ -2,7 +2,7 @@
 # Scope pins. Each mode decides which lines the line-scoped lanes may speak
 # about, so a mode that quietly widens or narrows its diff would either fail
 # innocent changes or wave real ones through. docs-cited-paths is the vehicle
-# throughout: one inserted line, one finding, in a file every mode can reach. Environment failures (bad flag,
+# throughout: one added line, one finding, in a file every mode can reach. Environment failures (bad flag,
 # no repository, unresolvable base) must exit 2 — distinct from a clean run
 # and from a run with findings.
 set -euo pipefail
@@ -74,7 +74,7 @@ mkdir -p "$R/tests" "$R/.github/workflows"
 printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/other.test.sh\n' >"$R/.github/workflows/ci.yml"
 git -C "$R" add -A
 git -C "$R" commit -qm ci
-# Staged: a untracked suite AND the workflow edit that wires it. The worktree copy
+# Staged: a new suite AND the workflow edit that wires it. The worktree copy
 # of the workflow is then restored, so a lane reading the worktree would call
 # the staged suite unwired.
 printf '#!/usr/bin/env bash\nset -euo pipefail\necho new\n' >"$R/tests/new.test.sh"
@@ -118,7 +118,7 @@ if [ "$RC" -eq 0 ] && ! has "never-added.md"; then
 else
   bad "--staged sees only the index, so the untracked file is out of scope" "rc=$RC out=$OUT"
 fi
-# A untracked doc under a untracked directory is judged as it will be once committed:
+# A new doc under a new directory is judged as it will be once committed:
 # its citation of a missing sibling fires even though nothing tracked lives
 # in that directory yet.
 seed newdir
@@ -339,7 +339,7 @@ else
 fi
 
 # git calls a blob binary on a NUL in its LEADING 8000 BYTES and reads the rest
-# as text. A wider window would drop a file git reads as text, taking its inserted
+# as text. A wider window would drop a file git reads as text, taking its added
 # lines out of every lane while the run still counted it changed.
 seed binary-window
 {
@@ -358,7 +358,7 @@ fi
 
 # The other half of "no lines": a file whose lines are withheld is still a
 # CHANGED FILE, and the whole-file lanes judge the path, not the content — no
-# amount of binary content makes a untracked suite wired. The temp-path line is what
+# amount of binary content makes a new suite wired. The temp-path line is what
 # makes the second half of this assertion mean something: it is a line-scoped
 # finding on that same path, and the NUL is the only reason it stays quiet.
 seed binary-wholefile
@@ -387,7 +387,7 @@ fi
 # every changed file's raw content to the patch parser unless content is judged
 # FIRST: a line reading '++ b/<path>' renders with the '+' prefix as a file
 # header at column 1, re-points the parser at that path, and the record split
-# then reopens and truncates it — destroying another file's inserted lines.
+# then reopens and truncates it — destroying another file's added lines.
 seed binary-forged-header
 printf '# Staged\n\nSee `docs/gone.md` for the rest.\n' >"$R/docs/staged.md"
 printf 'PNG\000\n++ b/docs/staged.md\n+junk\n' >"$R/zz.bin"
@@ -451,7 +451,7 @@ fi
 # The header state machine, pinned where excluding carriers cannot reach.
 # `+++ b/<path>` is a file header only where git can have written one: inside
 # the preamble a `diff --git` line opens, directly after `--- `. A hunk BODY
-# spells the same shape at column 0 whenever an inserted line reads `++ b/<path>`,
+# spells the same shape at column 0 whenever an added line reads `++ b/<path>`,
 # and an unanchored parser hands the victim's record to the carrier — the
 # splitter then reopens that record and truncates the findings already
 # collected for it. The carrier here is ORDINARY TEXT that content
@@ -461,7 +461,7 @@ fi
 # Both fixtures share the shape that makes the loss happen: the carrier sorts
 # AFTER the victim and writes at least one row under its OWN name before
 # forging, so the forged rows arrive as a second, non-adjacent group.
-forge_carrier() { # PATH — a text carrier whose third inserted line forges a header
+forge_carrier() { # PATH — a text carrier whose third added line forges a header
   printf 'seed\nnormal\n++ b/docs/staged.md\njunk\n' >"$R/$1"
 }
 
@@ -521,7 +521,7 @@ else
 fi
 
 # A flag set by `--- ` alone would still be forgeable: with --unified=0 a
-# hunk emits its removed lines before its inserted ones, so ONE hunk that
+# hunk emits its removed lines before its added ones, so ONE hunk that
 # replaces a line reading `-- a/<x>` with one reading `++ b/<victim>` spells
 # the whole header pair at column 0. `diff --git` is the record no body can
 # spell, which is why the flag is anchored there rather than on `--- `.
@@ -535,7 +535,7 @@ git -C "$R" add -A
 # Every half of the shape matters. The first hunk gives the carrier a record
 # under its OWN name, without which there is nothing to reopen and nothing to
 # truncate. The second spells the pair on ADJACENT records, which is what a
-# flag set by `--- ` alone accepts, and puts an inserted line AFTER it, without
+# flag set by `--- ` alone accepts, and puts an added line AFTER it, without
 # which the forged header re-points at nothing.
 PAIR="$(git -C "$R" diff --cached --no-color --unified=0 -- zz.txt | grep -A2 -e '^--- a/x$' | tr '\n' '|')"
 case "$PAIR" in
@@ -561,7 +561,7 @@ else
 fi
 
 # The forged line is not swallowed either: it is content of the file that
-# carries it, so a lane scanning that file's inserted lines still sees it.
+# carries it, so a lane scanning that file's added lines still sees it.
 seed forged-line-is-content
 printf 'seed\nnormal\n++ b/docs/staged.md\nmkdir -p /tmp/preflight-fixture\n' >"$R/zz.txt"
 git -C "$R" add -A

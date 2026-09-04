@@ -849,7 +849,7 @@ while IFS= read -r ctx; do
   # on both surfaces accepts that either surface's newest clean row
   # satisfies the term.
   #
-  # NEWEST RUN DECIDES, per name  — the check-run mirror of the
+  # NEWEST RUN DECIDES, per name: the check-run mirror of the
   # status branch's newest-row projection below. Counting "any clean
   # success" would let a reviewer's older clean run outlive its own NEWER
   # in-progress/failed round on the same head (a bot starting a fresh
@@ -1381,7 +1381,7 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 #
 # Tracker ids go first, while each is still one token and still uppercase:
 # punctuation normalization would otherwise leave the letters behind, and
-# `Declined: ` would read as a stated reason of "ken". The shape is
+# `Declined: KEN-881` would read as a stated reason of "ken". The shape is
 # the untracked-claim term's, so the two cannot disagree about what an id is.
 #
 # Two NAME strips ride after BOTH word lists, and both are positional rather

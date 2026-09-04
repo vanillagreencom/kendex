@@ -34,7 +34,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # --- Deterministic harness-free session -------------------------------------
 # A positively detected single-model harness now beats any contradicting
-# declaration, whatever its source — so a suite can cannot neutralize the
+# declaration, whatever its source — so a suite cannot neutralize the
 # harness that runs it by exporting an identity. It has to actually not have
 # one. This `ps` stand-in reports the first parent as init, so the ancestor walk
 # finds nothing and the declared identity below is what the script uses. It also
@@ -156,12 +156,12 @@ git -C "$WORK" add file.txt
 git -C "$WORK" -c commit.gpgsign=false commit -q -m init
 git -C "$WORK" checkout -q -b scope-branch
 # Uncommitted change so `--range HEAD` yields a non-empty diff — the scope gate
-#  refuses to run a review over an empty diff.
+# The scope gate refuses to run a review over an empty diff.
 printf 'world\n' >> "$WORK/file.txt"
 
 COUNTER="$TMP_ROOT/counter"
 
-# The exact usage-limit shape from the failure report.
+# The quota fixture uses the CLI's usage-limit response.
 QUOTA_ERR="ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits."
 
 # run_mode <mode> <extra-args...> then env passed via caller — returns rc.
@@ -642,7 +642,7 @@ for s10d_bad in --timeout=abc --bogus; do
   assert_family_cleared "$s10d_out" "($s10d_bad)"
 done
 
-# (b3) a lane artifact belonging to a target the roster cannot names is
+# (b3) a lane artifact belonging to a target the roster does not name is
 # still a complete, schema-valid review with its own verdict — the guarantee is
 # written without an exception for renamed or retired targets. But a sibling
 # outside the roster is not a path this run writes, so its NAME cannot authorize
@@ -870,7 +870,7 @@ for s10j_agent in 'null' '"someone-elses-reviewer"'; do
   assert_eq "$(jq -r '.summary' "$s10j_out")" "provider text" \
     "(agent=$s10j_agent) the rest of the provider's review is untouched"
   # ...and because it now carries the marker, a later run reclaims it once its
-  # target is cannot in the roster: the producer and consumer rules meet.
+  # target is not in the roster: the producer and consumer rules meet.
   s10j_lane="$TMP_ROOT/out/review10j-sweep.json"
   rm -f -- "$s10j_lane" "$s10j_lane".*
   cp -- "$s10j_out" "$s10j_lane.retired-model.json"

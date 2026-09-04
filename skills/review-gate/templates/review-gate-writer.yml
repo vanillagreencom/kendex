@@ -1,5 +1,5 @@
 # SCAFFOLD from the kendex review-gate skill (templates/review-gate-writer.yml).
-# Copy it once into.github/workflows/ during adoption. The copy is repo-owned
+# Copy it once into `.github/workflows/` during adoption. The copy is repo-owned
 # because `kendex refresh` does not sync workflow YAML. Copy it verbatim because
 # it carries no per-repo values. This workflow is the only writer and
 # posts the gate commit status on every leg that reaches it

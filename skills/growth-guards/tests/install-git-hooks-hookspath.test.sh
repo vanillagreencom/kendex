@@ -129,9 +129,8 @@ case "$OUT" in
   *) bad "no stand-down statement" "$OUT" ;;
 esac
 # Recovery output is data, never a command line to paste
-# (docs/architecture/overview.md § Decisions). Every prior shape of this remedy was a command
-# this file composed, and every one of them was wrong about somebody's
-# configuration.
+# (docs/architecture/overview.md § Decisions). The script cannot infer a command
+# that is correct for every repository configuration.
 case "$OUT" in
   *"config --unset"* | *"--unset-all"* | *"git -C"*)
     bad "a pasteable command came back in the stand-down" "$OUT" ;;

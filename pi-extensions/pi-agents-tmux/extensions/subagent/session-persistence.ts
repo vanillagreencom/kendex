@@ -72,7 +72,7 @@ export function appendBoundedSnapshot<T>(opts: BoundedSnapshotOptions<T>): Bound
 		counts: opts.counts?.() ?? {},
 		updatedAt: new Date().toISOString(),
 	};
-	//  defensive: the manifest itself must stay under the cap.
+	// The manifest itself must stay under the cap.
 	// With the SHA-256 fingerprint the body is bounded, but the assertion
 	// catches future field growth that would silently regress the fix.
 	const manifestBytes = Buffer.byteLength(JSON.stringify(manifest) ?? "null", "utf8");
@@ -106,7 +106,7 @@ function stableValue(value: unknown): unknown {
 	return sorted;
 }
 
-// fingerprints are persisted inside the overflow manifest;
+// Fingerprints are persisted inside the overflow manifest;
 // returning the full canonical JSON defeats the byte cap that the
 // manifest exists to enforce. Hash the stable JSON down to a fixed-size
 // hex digest so an oversized payload yields a small manifest.

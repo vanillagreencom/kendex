@@ -112,7 +112,7 @@ make_repo() {
 
 echo "=== worktree push auto-rebase ==="
 
-# --- Core failure  ---------------------------------------------
+# --- Core case -------------------------------------------------
 # Feature branch merged origin/main and resolved a same-line conflict, so it
 # already contains origin/main as an ancestor. A plain rebase would re-replay
 # the feature edit onto main-edit and conflict. push must skip the rebase and
@@ -204,9 +204,9 @@ assert_path_exists "$BEHIND_ROOT/trees/issue-behind/main-advanced.txt" "rebase m
 assert_is_ancestor "$BEHIND_ROOT/trees/issue-behind" origin/main HEAD "origin/main is contained after rebase"
 assert_eq "$(git --git-dir="$BEHIND_ROOT/origin.git" rev-parse refs/heads/issue-behind)" "$behind_post_head" "remote branch matches rebased local head"
 
-# ---: the rebase prints an old→separate commit map -----------------------
+# --- the rebase prints an old→new commit map -----------------------------
 # Both branch commits were rewritten; push stdout must carry one
-# `rebase-map: <before-sha> <after-sha>` line per commit, paired by position.
+# `rebase-map: <old-sha> <new-sha>` line per commit, paired by position.
 behind_post_c1="$(git -C "$BEHIND_ROOT/trees/issue-behind" rev-parse HEAD~1)"
 behind_post_c2="$behind_post_head"
 behind_push_out="$(cat "$BEHIND_ROOT/push.out")"
@@ -246,7 +246,7 @@ assert_eq "$norebase_post_head" "$norebase_pre_head" "--no-rebase leaves HEAD un
 assert_path_absent "$NOREBASE_ROOT/trees/issue-norebase/main-advanced.txt" "--no-rebase does not pull in advanced main"
 assert_not_contains "$(cat "$NOREBASE_ROOT/push.out")" "rebase-map:" "--no-rebase emits no rebase-map lines"
 
-# ---: push rejects unknown flags --------------------------------------
+# --- push rejects unknown flags ---------------------------------------
 # The argument loop would end in a catch-all shift, so a typo'd flag was
 # dropped and the caller got a default-behavior push it never asked for. An
 # unrecognized flag must now be a usage error, which is what lets orch's
@@ -333,11 +333,11 @@ assert_eq "$PUSH_ARGS_RC" "1" "a real positional followed by an empty one is a d
 assert_contains "$(cat "$NOREBASE_ROOT/realthenempty.err")" "takes a single issue ID or path" "the empty second positional is reported as a duplicate"
 assert_eq "$(git -C "$NOREBASE_ROOT/trees/issue-norebase" rev-parse HEAD)" "$empty_pre_head" "an empty-target refusal pushes and rebases nothing"
 
-# ---: a commit dropped by the rebase maps to "dropped" --------------
+# --- a commit dropped by the rebase maps to "dropped" ------------------
 # The branch carries a commit whose patch main already merged (different SHA,
 # same patch-id) plus its own fix. The rebase drops the duplicated commit, so
 # pre/post counts differ and the map must pair by subject: the surviving commit
-# maps before→after, the vanished one maps old→dropped.
+# maps old→new, and the vanished one maps old→dropped.
 DROP_ROOT="$TMP_ROOT/dropped"
 make_repo "$DROP_ROOT/main"
 git init -q --bare "$DROP_ROOT/origin.git"

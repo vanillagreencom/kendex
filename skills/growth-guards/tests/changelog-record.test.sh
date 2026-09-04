@@ -68,7 +68,7 @@ rep() { # CHAR N
 
 echo "=== the record gains no line under [Unreleased] that HEAD does not carry ==="
 new_repo record
-# One writer for every variant: the appended line goes under [Unreleased],
+# One writer for every variant: the added line goes under [Unreleased],
 # which is where appending to a file that ends in a released section does not
 # put it.
 record() { # [EXTRA-LINE]
@@ -282,7 +282,7 @@ run_ce
 [ "$RC" -eq 1 ] && case "$OUT" in *"gained lines under [Unreleased]"*"- SNEAKED IN BY HAND."*) true ;; *) false ;; esac \
   && ok "a shorter run inside a longer fence does not end it, and the heading after it is found" \
   || bad "a shorter run inside a longer fence does not end it" "rc=$RC out=$OUT"
-# The control: the same document with nothing appended passes, so the refusal
+# The control: the same document with no extra content passes, so the refusal
 # above is the line and not the fence shape failing outright.
 {
   printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n'
@@ -577,8 +577,8 @@ run_ce
 echo "=== the declaration bypasses the comparison and nothing else ==="
 # Read in one place and permitting one thing. Every other rule in this scope
 # is as true during a release as outside one, so each is pinned as still
-# running with the declaration set — a rule appended later is outside it by
-# construction, and these are what would catch it being opted back in.
+# running with the declaration set. A rule outside the declaration stays outside
+# it by construction.
 new_repo recorddeclared
 printf -- '- A fragment.\n' | frag fixed ken-1.md
 printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n' >"$R/CHANGELOG.md"

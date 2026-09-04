@@ -1,8 +1,5 @@
-// A claude.ai connector tool is executed INSIDE the claude child. Mirroring one
-// into the Pi stream made Pi's agent loop dispatch a tool it does not have and
-// write `Tool <name> not found` into the transcript for a call that succeeded
-//  These tests pin the three emission paths that used
-// to do it, plus the observation half.
+// A claude.ai connector tool executes INSIDE the claude child. It must stay out
+// of the Pi stream on every emission path while remaining observable to audit.
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { noteChildExecutedToolResults, processAssistantMessage, processStreamEvent } from "../src/index.ts";

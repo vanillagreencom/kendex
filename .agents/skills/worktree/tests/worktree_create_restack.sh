@@ -198,7 +198,7 @@ make_published_clean_pair() {
   git -C "$root/main" push -q origin main
 }
 
-# Build the production-shaped case behind: the first local commit is
+# Build the production-shaped case: the first local commit is
 # already represented (with further edits) on main, so resolving its conflict
 # to current-main bytes makes it empty; a later refresh-only commit must still
 # replay after the guarded skip.

@@ -12,8 +12,8 @@ use crate::settings_toml::Row;
 
 use super::{SeededEnv, Seeding, assigned_keys, env_blocked, opens_env, table_row, written_for};
 
-/// The terminator inserted lines are written with: whatever the file's first
-/// terminated line uses, `\n` where it has nothing to say.
+/// Inserted lines use the file's first line terminator, or `\n` when the file
+/// has no terminated line.
 pub(super) fn file_eol(rows: &[Row]) -> &'static str {
     match rows
         .iter()

@@ -2,9 +2,8 @@
 # Tests for dev-artifact-check: deterministic on-disk acceptance of a
 # dev agent's completion JSON artifact in the orch dev-start / dev-fix /
 # review-pr-comments workflows. Identity is by per-delegation ROUND ID, not
-# mtime: the check resolves WT/tmp/dev-return-ISSUE-RID.json and requires the
-# internal.round_id to match.
-
+# mtime. The check resolves WT/tmp/dev-return-ISSUE-RID.json and requires the
+# internal `.round_id` to match.
 #
 # The markdown checks pin COMMAND and delegation-line shapes. review-bots.md:
 # a token pin establishes that a structural element is present, never that a

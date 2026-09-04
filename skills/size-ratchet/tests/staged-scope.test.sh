@@ -141,7 +141,7 @@ git -C "$R" add -A
 git -C "$R" commit -q -m seed
 git -C "$R" rm -q --cached tools/size-ratchet-baseline.tsv
 # Recreated on disk only: the commit deletes the baseline, so nothing is
-# frozen and the over-threshold blob is a unrecorded offender again.
+# frozen and the over-threshold blob is a new offender again.
 printf 'big.txt\t40\n' >"$R/tools/size-ratchet-baseline.tsv"
 run_sr --staged
 [ "$RC" -eq 1 ] && ok "a baseline staged for deletion no longer freezes anything" \
@@ -278,7 +278,7 @@ OUT="$(cd "$R" && "$SR" --staged 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && ok "control: the committed threshold admits the file" || bad "committed threshold admits" "rc=$RC out=$OUT"
 git -C "$R" rm -q --cached kendex.settings.toml
 # Recreated on disk only: the commit deletes the settings, so the built-in
-# default threshold applies and the file is a unrecorded offender.
+# default threshold applies and the file is a new offender.
 printf '[env]\nSIZE_RATCHET_THRESHOLD = "10"\n' >"$R/kendex.settings.toml"
 OUT=""; RC=0
 OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=5 "$SR" --staged 2>&1)" || RC=$?
@@ -314,7 +314,7 @@ git -C "$R" commit -q -m seed
 # An unstaged freeze row must survive an --update even under --staged, which
 # rewrites the worktree file it therefore has to read.
 printf 'also.txt\t30\nbig.txt\t40\n' >"$R/tools/size-ratchet-baseline.tsv"
-# The unrecorded row is one HEAD's baseline does not carry, so the run declares it;
+# The added row is one HEAD's baseline does not carry, so the run declares it;
 # what is under test here is that --update reads and keeps the worktree copy.
 OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 RATCHET_RAISE=1 "$SR" --staged --update 2>&1)" && RC=0 || RC=$?
 [ "$RC" -eq 0 ] && ok "--staged --update keeps an unstaged freeze row" \

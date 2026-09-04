@@ -166,8 +166,8 @@ resolve_common_dir() {
 # A registration's gitdir file may hold a relative path, which git writes
 # relative to the registration directory itself — never to the caller's cwd.
 #
-# The whole file, not its first line: a worktree path may contain a newline
-#. Command substitution strips the trailing newline git writes —
+# The whole file, not its first line: a worktree path may contain a newline.
+# Command substitution strips the trailing newline git writes,
 # and only that one, since the recorded value always ends in "/.git", so no
 # trailing newline can be part of the path itself.
 registered_gitdir() {

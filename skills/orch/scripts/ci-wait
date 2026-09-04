@@ -356,7 +356,7 @@ is_transient_failure() {
 
 # Scope a `gh pr checks` array to the current authoritative substantive run per
 # workflow. Shared with github `pr-merge.sh` so the waiter and the merge gate
-# cannot disagree about which run is current  — see the library for
+# cannot disagree about which run is current. See the library for
 # the full rationale.
 CI_RUN_CORRELATION_LIB="$SCRIPT_DIR/../../github/scripts/lib/ci-run-correlation.sh"
 if [[ ! -f "$CI_RUN_CORRELATION_LIB" ]]; then
@@ -380,14 +380,9 @@ get_failed_run_id() {
     head -1 | sed -nE 's#.*/actions/runs/([0-9]+)(/.*)?$#\1#p'
 }
 
-# Decide whether a settled failure verdict is genuinely terminal.
-# `gh pr checks` builds on the head commit's check-suite rollup, and GitHub
-# omits some dispatch events' suites from that rollup entirely — observed on a
-# pull_request_review_comment run whose same-second pull_request_review sibling
-# was cancelled by concurrency: only the cancelled sibling's checks and the
-# stale `CI Required` status pointing at it stayed visible, while the newer
-# substantive run never appeared. Correlate the failing checks' runs against
-# the Actions run list for the current head instead:
+# Decide whether a settled failure verdict is terminal. `gh pr checks` can omit
+# dispatch-event suites from the head rollup, so correlate failing checks
+# against the Actions run list for the current head:
 #   active     - the failing run is re-running, or ANY substantive-event run
 #                on this head is queued or in progress; the failure is
 #                provisional, keep waiting.
@@ -403,16 +398,14 @@ get_failed_run_id() {
 # unattributable stays terminal so the waiter still fails closed, and a
 # cancelled run with no newer sibling remains a terminal failure as before.
 #
-# Run-id order is not event order: a rerun starts a additional attempt under the
-# ORIGINAL run id and creation time, and that attempt's results overwrite the
-# run's check runs when they land — observed as attempt 2 of an older
-# pull_request run executing while a newer review-event run sat cancelled
-#. The active test is therefore deliberately NOT scoped to the
+# Run-id order is not event order. A rerun starts an additional attempt under
+# the ORIGINAL run id and creation time. The attempt's results overwrite the
+# run's check runs when they land. The active test is deliberately NOT scoped to the
 # failing run's workflow or to run-id order: any in-flight substantive run on
-# the head is replacement current-head work, and holding the verdict pending
+# the head is current-head work, and holding the verdict pending
 # is bounded by the waiter timeout while a wrong terminal fail is not
-# recoverable (matches the  contract — an aggregate failure stays
-# pending while a newer substantive run has no failures). It also makes the
+# recoverable. An aggregate failure stays pending while a newer substantive run
+# has no failures. It also makes the
 # in-flight-$newest case unreachable below. Discarding failures stays
 # stricter: superseded still requires a completed-success run of the SAME
 # workflow, and a rerun attempt of an older run only counts when its
@@ -622,8 +615,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
       *)
         # `gh pr checks` exits nonzero when checks have failed; without the
         # guard the pipefail status escapes the substitution and errexit kills
-        # the script before any result is emitted (silent-exit class of
-        #.
+        # the script before any result is emitted.
         failed_run=$(get_failed_run_id "$PR_NUM" || true)
 
         # Try auto-retry for transient failures
@@ -631,7 +623,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
           echo "Retrying transient failure (attempt $((retries + 1))/$max_retries)..." >&2
           gh run rerun "$failed_run" --repo "$REPO" --failed 2>/dev/null || true
           retries=$((retries + 1))
-          seen_in_progress=false  # Reset because rerun will produce replacement checks
+          seen_in_progress=false  # Reset because rerun will produce new checks
           sleep 10
           update_elapsed
           continue

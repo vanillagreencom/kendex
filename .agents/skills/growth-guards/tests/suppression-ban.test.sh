@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pins for scripts/suppression-ban: every blanket lane fires with its legal
 # per-line counterpart proven to pass, the bare-allow ratchet fails in all
-# directions (additional, grow, loose, stale), --update tightens only, and baseline
+# directions (new, grow, loose, stale), --update tightens only, and baseline
 # hygiene is enforced. The index readers this family of checks shares — the
 # per-carrier count among them — are pinned once, in index-reads.test.sh,
 # which drives them through this check.

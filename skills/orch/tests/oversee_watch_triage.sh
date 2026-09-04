@@ -154,7 +154,7 @@ assert_contains "$(cat "$err")" "LINEAR_TEAM is unset or empty" \
   "the note names an empty team as well as an absent one" "$err"
 
 # The case above exits on the merged event before check_triage runs, so triage
-# being off is proved here instead: a live tracker stub with a unseen item, and
+# being off is proved here instead: a live tracker stub with an unseen item, and
 # nothing to wake the watch before the triage check.
 new_case triage_no_team_reaches_the_triage_check
 printf '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]\n' > "$STUB_DIR/tracker.out"

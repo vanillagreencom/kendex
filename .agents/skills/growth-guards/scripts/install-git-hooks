@@ -57,7 +57,7 @@ gg_trusted_interpreter() { # SHEBANG-LINE -> 0 trusted
 }
 GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
 GG_BOOT="${GG_BOOT%x}"
-# The one newline `pwd` appended; anything before it is the path.
+# The trailing newline from `pwd` terminates its output; anything before it is the path.
 SCRIPT_DIR="${GG_BOOT%$'\n'}"
 # --check's read-only verdict, and the roots every search here uses.
 # shellcheck source=lib/paths.sh
@@ -216,8 +216,8 @@ write_helper() { # PATH
 # These bytes are compared exactly to decide whether a hook is current, so
 # changing them marks every already-armed repository drifted until it is
 # re-armed. The remedy the line names is left alone for that reason while
-# `kendex refresh` is wired to this installer  part 2), rather than
-# churned to another spelling and back.
+# `kendex refresh` invokes this installer directly. Keep the remedy stable so
+# refresh does not churn it to another spelling and back.
 # Lines this installer owns, as an ERE — for the repair and the removal,
 # which must agree about what is ours.
 #

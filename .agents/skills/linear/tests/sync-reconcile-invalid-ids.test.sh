@@ -42,8 +42,8 @@ jq -n --arg synced "$(date -Iseconds)" \
 
 RECONCILE_LOG="$ROOT/reconcile-payload.json"
 
-# a pre- cache carries one.lock beside every issue whose
-# comments were ever written. The sync below must not miss
+# The cache carries one `.lock` file beside every issue whose comments were
+# written. The sync below must not miss
 # them — an incremental run whose issues delta comes back empty, so
 # write_comments, where the sweep first lived, is never called at all. The
 # shared lock sits in the cache root rather than in comments/, so the sweep's

@@ -9,7 +9,7 @@ set -euo pipefail
 
 GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
 GG_BOOT="${GG_BOOT%x}"
-# The one newline `pwd` appended; anything before it is the path.
+# The trailing newline from `pwd` terminates its output; anything before it is the path.
 SCRIPT_DIR="${GG_BOOT%$'\n'}"
 GG_CHECK="todo-ban"
 # shellcheck source=lib/common.sh
@@ -148,7 +148,7 @@ staged_lane() { # numbered violations on stdout, counted in GG_VIOLATIONS
   for rec in ${cand_records[@]+"${cand_records[@]}"}; do
     dstsha="${rec%%"$GG_TAB"*}"
     f="${rec#*"$GG_TAB"}"
-    # Only a path the scoped scan named can have an appended line that matches.
+    # Only a path the scoped scan named can have an added line that matches.
     case "$carrier_set" in
       *$'\n'"$f"$'\n'*) ;;
       *) continue ;;

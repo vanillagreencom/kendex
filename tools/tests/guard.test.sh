@@ -261,7 +261,7 @@ git -C "$R" reset -q HEAD -- Cargo.toml
 rm -f "$R/Cargo.toml"
 
 echo "=== the shipped packages' verdicts are not twinned here ==="
-# HEAD has to carry a row set for the ratchet's unrecorded-row verdict to have
+# HEAD has to carry a row set for the ratchet's added-row verdict to have
 # anything to compare against: against an empty baseline every row reads as a
 # bootstrap one, and the control below would pass without judging anything.
 mkfile crates/existing.rs 401
@@ -282,7 +282,7 @@ printf -- '- %s\n' "$LONG" >"$R/changelog.d/fixed/ken-long.md"
 printf -- '- One entry.\n- A second entry.\n' >"$R/changelog.d/fixed/ken-two.md"
 # The record rule compares the index against HEAD, so HEAD has to carry it —
 # and this commit lands before the baseline row below, whose own verdict is
-# "absent from HEAD" and would read as carried if HEAD already had it.
+# "added since HEAD" and would read as carried if HEAD already had it.
 printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- One line.\n' >"$R/CHANGELOG.md"
 git -C "$R" add -A
 git -C "$R" commit -q -m "chore: land the changelog"

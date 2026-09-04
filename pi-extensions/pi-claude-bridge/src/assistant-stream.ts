@@ -179,7 +179,7 @@ export const FINALIZE_MAX_REARMS = 3;
  *  invocation — see scheduleToolUseTurnEnd).
  *
  *  The producer is pi's steer draining (tool result and drained steer arrive
- *  in one provider call) : the NEXT tool turn's tool_use streams in, the SDK
+ *  in one provider call): the NEXT tool turn's tool_use streams in, the SDK
  *  invokes the MCP handler — and neither terminal event ever arrives. The
  *  invocation itself proves the assistant turn is committed, so end the pi
  *  stream like the `message_stop` path — with this handler's schema-validated

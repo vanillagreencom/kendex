@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# a git operation (rebase/merge/checkout) can re-materialize a
+# A git operation (rebase/merge/checkout) can re-materialize a
 # WORKTREE_SYMLINKS-managed symlink as a real directory holding only the
-# tracked skeleton, and nothing re-asserted the links automatically — the
-# damage surfaced later (e.g. a 21 MB Linear cache re-synced into a
-# worktree-local `.cache`). `create`/`fix-links` now install shared
+# tracked skeleton. `create` and `fix-links` install shared
 # post-checkout/post-merge/post-rewrite hooks in the MAIN checkout's hooks dir
 # (worktrees resolve hooks there, so one install covers every worktree and
 # every harness) that run `repair-links`.
@@ -72,7 +70,7 @@ git -C "$MAIN" remote add origin "$ROOT/origin.git"
 git -C "$MAIN" push -q -u origin main
 
 # Two entries cover both provisioning modes: harness/ mixes ignored runtime
-# content with one tracked file (per-child links since, runtime/ is
+# content with one tracked file (per-child links); runtime/ is
 # untracked-only (plain parent symlink — the shape the safety check
 # still guards).
 mkdir -p "$MAIN/harness/skills" "$MAIN/runtime"

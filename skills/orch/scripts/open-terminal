@@ -496,7 +496,7 @@ open_tmux() {
   # at an empty composer while the launch looks successful. Confirm the brief
   # actually reached the TUI; if not, re-send it once into the composer and
   # re-verify; if still absent, fail this lane loudly instead of reporting
-  # success. Sibling of the codex kickoff fix in.
+  # success. The Codex kickoff path has the same delivery requirement.
   tmux_verify_brief "$pane" "$brief" && return 0
   if ! tmux_wait_composer "$pane"; then
     echo "Error: '$title' never reached a ready composer (first-run dialog stuck?) — attach and start it manually: $brief" >&2

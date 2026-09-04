@@ -1,13 +1,10 @@
 #!/usr/bin/env node
-// Verifies the bridge rebuilds CC's session JSONL after a pi-side /compact.
-//
-// Bug it guards against: syncSharedSession's REUSE check uses
+// syncSharedSession's REUSE check uses
 // `priorMessages.slice(sharedSession.cursor)`. After /compact, pi shrinks
 // its messages array — slice(N) on a shorter array returns []. Without an
 // explicit signal, REUSE wins and CC keeps `--resume`ing the pre-compact
-// session, which then thrashes its own autocompact ().
-//
-// Fix: subscribe to pi's `session_compact` event and set
+// session, which then thrashes its own autocompact. The bridge must subscribe
+// to pi's `session_compact` event and set
 // sharedSession.needsRebuild = true so the next syncSharedSession call
 // takes the REBUILD path.
 

@@ -56,7 +56,7 @@ out="$(run_watch -- --max-loops 1 --item issue-5 gh-1 gh-2 2>"$err")" && rc=0 ||
 assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
   "prompt A emits after disappearing behind an earlier event" "$err"
 
-# The same text in a replacement pane is a unseen prompt occurrence.
+# The same text in a replacement pane is an unseen prompt occurrence.
 new_case lane_asking_relaunch
 printf '7000 %%2\n' > "$STUB_DIR/pane-key-gh-2.txt"
 printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
@@ -68,7 +68,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
   "the same prompt emits in a replacement pane" "$err"
 
 # The prompt text can repeat in one pane after the operator answered it. The
-# submitted turn is the occurrence boundary even when the unseen dialog is equal.
+# submitted turn is the occurrence boundary even when the new dialog is equal.
 new_case lane_asking_identical_reprompt
 printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
 run_watch -- --max-loops 1 gh-1 gh-2 >/dev/null 2>"$TMP_ROOT/asking-reprompt-a"

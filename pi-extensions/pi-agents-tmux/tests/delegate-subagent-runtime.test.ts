@@ -222,7 +222,7 @@ describe("delegate_subagent runtime behavior (issue #228)", () => {
 		);
 		expect(result.isError).toBeFalsy();
 		expect(calls).toHaveLength(1);
-		// Child identity env () is set, bridge env is stripped.
+		// Child identity environment is set, and bridge environment is stripped.
 		expect(calls[0]?.env?.PI_SUBAGENT_CHILD_AGENT).toBe("scout");
 		expect(calls[0]?.env?.PI_BRIDGE_PARENT_SESSION_ID).toBeUndefined();
 		await waitForTerminalRegistryWrite(harness.cwd);

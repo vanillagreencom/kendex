@@ -756,7 +756,7 @@ read_check_run_counts() {
 # progress was measurable at all.
 observe_progress() {
   local tuple="$1" head_oid="$2" counts count="" running="" changed=false
-  # Both counts are per commit: a replacement merge-group head (or no entry)
+  # Both counts are per commit: a new merge-group head (or no entry)
   # invalidates the previous read until this head is read successfully, so a
   # cross-commit count comparison can never register as movement.
   [ "$head_oid" = "$prev_head_oid" ] || { last_running_count=""; prev_check_count=""; }
@@ -996,7 +996,7 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
   fi
 
   if [[ "$armed_now" == true ]]; then
-    # Late-findings guard first: a unseen unresolved thread outranks a CI probe,
+    # Late-findings guard first: an unseen unresolved thread outranks a CI probe,
     # because the queue merges past it on its own. Same rate limit as the
     # ci-wait probe, on its own clock.
     if $GUARD; then

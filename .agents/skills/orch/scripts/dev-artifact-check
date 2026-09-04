@@ -6,7 +6,7 @@
 # commit/labels/summary via `dev-return-write` — is the durable completion record.
 #
 # IDENTITY IS BY ROUND ID, NOT MTIME. Each delegation stamps a unique
-# round token (`workflow-state round-token command [ISSUE] dev_round_id`) that is embedded
+# round token (`workflow-state new-round-id [ISSUE] dev_round_id`) that is embedded
 # in the delegation. `dev-return-write` names its file
 # [WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json and writes "round_id":
 # ROUND_ID inside. This check resolves that exact path and requires the internal
@@ -20,7 +20,7 @@
 #   { "schema_version": 1, "round_id": "…", "kind": "implement"|"fix",
 #     "issue": "…", "branch": "…", "commit": "…", "validate": "pass"|"FAILING: …",
 #     "baseline_lines": 138 (implement only),
-#     "validate_note": "…"|null (optional free-text qualifier —,
+#     "validate_note": "…"|null (optional free-text qualifier),
 #     "qa_labels": […], "summary_posted": bool, "summary": "…"|null,
 #     "bundled": bool, "items": [{"n": <number>, "decision": "Applied"|"Skipped"|"Blocked", "reasoning": "…"}] }
 
@@ -278,7 +278,7 @@ has_required_fields() {
   ' "$1" >/dev/null 2>&1
 }
 
-#  parity fallback (no --expect-items): an artifact of kind "fix" OR with
+# Parity fallback (no --expect-items): an artifact of kind "fix" OR with
 # bundled == true must carry a non-empty .items array whose every element is an
 # object with a numeric .n, a decision ∈ {Applied,Skipped,Blocked}, and a non-empty
 # .reasoning. kind "implement" without bundled is unaffected (items: [] allowed).
@@ -366,12 +366,11 @@ is_protected_addition() {
 # probe would compare nothing — fail-open in the same direction.
 #
 # base_sha is HEAD at delegation, and a rebase orphans it exactly as it orphans
-# the artifact's.commit. The orphaned sha still resolves, so the
+# the artifact's `.commit`. The orphaned SHA still resolves, so the
 # comparison succeeds across the base branch's whole advance and names files
 # another author merged as this round's additions. No comparison recovers the
 # round's real starting tree once it is off the branch, so the gate does not
-# run: it says that on stderr and names no file. Three approximations of "did
-# this round add this path" were tried and each excused something real.
+# run: it says that on stderr and names no file.
 collect_unapproved_additions() {
   local repo="$1" round_record="$2" result="$3" base_sha path probe
   local additions=()
@@ -446,11 +445,11 @@ validate_artifact() {
     emit false "$file" "invalid"
     return 1
   fi
-  # a.commit that passed the scalar gate must name a real commit
+  # A `.commit` that passed the scalar gate must name a real commit
   # object in the worktree's repo — a fabricated SHA (same short prefix as HEAD,
   # invented tail) reads as evidence while proving nothing. Resolvable but not
   # an ancestor of HEAD is the orphaned-by-rebase signature: non-fatal warning,
-  # because a legitimate rebase produces it on every beforehand accepted round.
+  # because a legitimate rebase produces it on every already accepted round.
   local commit=""
   if [[ -n "$repo" ]] && git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
     commit="$(jq -r 'if (.commit? | type) == "string" then .commit else "" end' "$file" 2>/dev/null || true)"

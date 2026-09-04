@@ -16,7 +16,7 @@
 # Three controls, because "the outputs matched" is a claim a broken harness
 # also makes:
 #   1. a planted `(?<!` in the reason pass must red the RE2 run while local
-#      jq stays green — The defect, reproduced on demand;
+#      jq stays green — the defect, reproduced on demand;
 #   2. a planted `(?<!` in the untracked-claim test must red it too — that
 #      regex is only ever compiled if a fixture reply reaches it, and no
 #      corpus reply does;

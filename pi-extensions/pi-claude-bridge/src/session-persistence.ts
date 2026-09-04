@@ -523,7 +523,7 @@ export function syncSharedSession(
 	);
 	const incomingFingerprint = conversationFingerprint(messages);
 
-	// FOREIGN-CONVERSATION guard (Case 6,). A subagent-shaped query
+	// FOREIGN-CONVERSATION guard. A subagent-shaped query
 	// arriving while the parent is IDLE is not reentrant, so it lands here as an
 	// outermost query. Without an identity check its short foreign context takes
 	// the REBUILD path — rewriting the PARENT's session file from foreign

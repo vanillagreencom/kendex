@@ -30,8 +30,8 @@ import type { BackgroundTaskSnapshot } from "./types.js";
 // Hard cap on the JSON byte size of a `kendex-background-tasks:state` custom
 // entry appended to a Pi session JSONL file. Sessions are append-only, so
 // repeatedly writing full task lists with multi-KB heredoc commands
-// accumulates 10s-100s of MB of session history that crashes `/resume`
-//  Sidecar state remains canonical at this size and is read
+// can make session history too large for `/resume`. Sidecar state remains
+// canonical at this size and is read
 // first on restore; oversized session payloads degrade to a tiny manifest.
 export const BG_TASKS_SNAPSHOT_MAX_BYTES = 64 * 1024;
 
@@ -51,9 +51,8 @@ export function isBgTasksBoundedManifest(value: unknown): value is BgTasksBounde
 	return candidate.version === 2 && candidate.fullSnapshot === false;
 }
 
-// extracted from background-tasks.ts so the barrier semantics
-// can be unit tested without dragging the full @earendil-works/pi-coding-agent
-// dependency chain into the test runtime. Handles a single session-branch
+// This leaf module exposes the barrier semantics without loading the full
+// @earendil-works/pi-coding-agent dependency chain. It handles a single session-branch
 // custom entry of type BG_STATE_TYPE.
 //
 // When the entry is a bounded manifest (`fullSnapshot: false`, any
@@ -91,7 +90,7 @@ function stableValue(value: unknown): unknown {
 	return sorted;
 }
 
-// fingerprints are persisted inside the overflow manifest;
+// Fingerprints are persisted inside the overflow manifest;
 // returning the full canonical JSON defeats the byte cap. Hash to a
 // fixed-size hex digest so an oversized task list yields a small
 // manifest even when the underlying payload is many MB.
@@ -246,7 +245,7 @@ export function createPersistence(deps: PersistenceDeps): {
 							counts: { tasks: payload.tasks.length },
 							updatedAt: payload.updatedAt,
 						};
-						//  defensive: the manifest must stay under the cap.
+						// The manifest must stay under the cap.
 						const manifestBytes = Buffer.byteLength(JSON.stringify(manifest), "utf8");
 						if (manifestBytes > maxBytes) {
 							appendReason = "manifest-oversize-skipped";

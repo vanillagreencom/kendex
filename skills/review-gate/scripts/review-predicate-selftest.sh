@@ -418,7 +418,7 @@ unset GH_SHIM_FAIL
 # Check-run names are not reserved: any PR workflow with checks:write can
 # publish under ANY name through the shared github-actions app, while real
 # reviewer bots publish under their own app slug. A github-actions-published
-# name-match must stay not-evidence  — the paired trusted-app case
+# name-match must stay not-evidence; the paired trusted-app case
 # proves the rejection is what separates them.
 reset
 CFG_CONTEXTS="mech-ctx"
@@ -538,8 +538,8 @@ run "slugless anomaly as the newest run masks toward closed (never revives the o
 # ALSO dropped while the list is configured: the predicate reads the statuses
 # LIST endpoint, where every real publisher carries a login, so a missing one
 # is an anomaly and trusting anomalies is the fail-open direction. (The
-# COMBINED endpoint nulls every App-posted creator, which made this filter
-# inert —, caught live by sandbox scenario 6.) The shipped
+# COMBINED endpoint nulls every App-posted creator, so this filter must use the
+# LIST endpoint. The shipped
 # default (empty list) must change nothing.
 reset
 CFG_CONTEXTS="mech-ctx"; CFG_PUBLISHER_REJECT="github-actions[bot]"
@@ -680,7 +680,7 @@ jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:true
   >"$fixtures/graphql.json"
 run "cursor outside the fixture-key namespace is a loud read failure" "" 2
 
-# Zero bytes from the thread read is a BROKEN READ  family), never an
+# Zero bytes from the thread read is a BROKEN READ, never an
 # authoritative verdict in either direction — pr-watch parity.
 reset
 CFG_CONTEXTS="mech-ctx"; CFG_THREADS="enforce"
@@ -740,9 +740,7 @@ reviews_set "$(review "reviewer" COMMENTED)"
 run "min_state=any: COMMENTED review counts (compatible default)" approved
 
 # An ERRORED auto-review is a normal COMMENTED row whose body is the
-# reviewer's own "nothing ran" attestation (observed live: Copilot errored
-# at head and the row alone satisfied the gate as review evidence, then a
-# genuine re-review produced real findings). Silence, both directions:
+# reviewer's own "nothing ran" attestation. Silence, both directions:
 # never evidence, never a blocker, never masking genuine rows. The battery
 # pins the shipped default marker explicitly (mechanism-layer convention) so
 # a repo's own REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS cannot skew it; the
@@ -788,7 +786,7 @@ run "a genuine body mentioning errors is NOT the attestation (no over-match)" ap
 # The marker list is the repo's to own (REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS,
 # same shape as the check-run skip patterns): a configured value REPLACES
 # the default list — the custom attestation withdraws, the default-shaped
-# body does not does — and empty disables the filter entirely.
+# body does not. An empty value disables the filter entirely.
 reset
 CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
 CFG_ERROR_PATTERNS="analysis could not be completed"
@@ -828,9 +826,8 @@ reviews_set "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "
 run "leading blank line and quote marker are trimmed before matching" awaiting
 
 # NON-SUPERSESSION: a trailing COMMENTED from the same reviewer at the same
-# head must not mask its prior APPROVED (observed live: APPROVED at
-# :47, COMMENTED at :50 on the same commit — a latest-review-per-reviewer
-# reduction reads that as "no approval").
+# head must not mask its prior APPROVED. A latest-review-per-reviewer reduction
+# would read that as "no approval".
 reset
 CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="approved"
 reviews_set "$(review "reviewer" APPROVED "2026-08-02T18:28:47Z")" \
@@ -871,7 +868,7 @@ reviews_set "$(review "reviewer" APPROVED "2026-08-02T19:00:00Z")" \
 run "cleared CR fed in reversed array order stays cleared" approved
 
 # An objection persists ACROSS PUSHES: GitHub does not clear a
-# changes-requested when the author pushes a replacement head, so evidence on the
+# changes-requested when the author pushes a new head, so evidence on the
 # fresh head must not open the gate past it...
 reset
 CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
@@ -879,7 +876,7 @@ reviews_set "$(review "objector" CHANGES_REQUESTED "2026-08-02T18:00:00Z" "$OTHE
             "$(review "reviewer" APPROVED "2026-08-02T19:00:00Z")"
 run "CR on a previous commit still blocks a freshly-approved head" changes-requested
 
-# ...and a later APPROVED from the same reviewer (at the replacement head) clears it.
+# ...and a later APPROVED from the same reviewer at the new head clears it.
 reset
 CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
 reviews_set "$(review "objector" CHANGES_REQUESTED "2026-08-02T18:00:00Z" "$OTHER")" \
@@ -1077,7 +1074,7 @@ reviews_set "$(review "objector" DISMISSED "2026-08-02T18:00:00Z")" \
             "$(review "reviewer" APPROVED "2026-08-02T19:00:00Z")"
 run "a dismissed CHANGES_REQUESTED does not stand (reduction skips DISMISSED)" approved
 
-# Thread-term configurability (REVIEW_GATE_THREADS,: `off` never
+# Thread-term configurability: REVIEW_GATE_THREADS=off never
 # emits threads-open AND skips the GraphQL read entirely — proven by making
 # the endpoint fail, which must not matter when the read is skipped.
 reset
@@ -1094,7 +1091,7 @@ run "threads=off: the reviewThreads read is skipped entirely (failing endpoint c
 unset GH_SHIM_FAIL
 cases=$((cases + 1))
 # Fail-closed on the instrument itself: a missing/empty url log proves
-# nothing about the read being skipped  — the run above made
+# nothing about the read being skipped; the run above made
 # other API reads, so the log must exist and be non-empty.
 if [ ! -s "$fixtures/.urls.log" ]; then
   echo "FAIL  threads=off url log missing or empty - cannot prove the read was skipped" >&2
@@ -1117,7 +1114,7 @@ CFG_THREADS="sometimes"
 run "unknown REVIEW_GATE_THREADS value is a config error" "" 2
 
 # Bounded evidence-read retries (REVIEW_GATE_API_ATTEMPTS /
-# REVIEW_GATE_API_RETRY_DELAY_SECONDS,: a transient failure within
+# REVIEW_GATE_API_RETRY_DELAY_SECONDS: a transient failure within
 # the budget still reaches a verdict; the default single attempt does not
 # retry; failing through every attempt keeps the exit-2 contract.
 reset
@@ -1281,7 +1278,7 @@ run "whitespace-only comments response is exit 2, not absent evidence" "" 2
 # predicate must evaluate against them WITHOUT its own statuses read
 # (proven by failing that endpoint), and an unreadable or malformed
 # snapshot gets the read contract: exit 2. The snapshot must be BOUND to
-# this head (top-level sha == HEAD_SHA,: a snapshot for another
+# this head (top-level sha == HEAD_SHA); a snapshot for another
 # head passing shape validation would evaluate stale evidence.
 reset
 CFG_CONTEXTS="mech-ctx"
@@ -1548,7 +1545,7 @@ compare_fix ahead "[$(delta_file "src/new.sh" added '@@ -0,0 +1 @@
 +# new file of comments')]"
 run "carry: an ADDED file refuses under 'comments' (modified-only)" awaiting
 
-#  negative controls: shebang lines, renames into.md, and
+# Negative controls: shebang lines, renames into `.md`, and
 # malformed later compare pages must all refuse or fail loud.
 reset
 carry_candidate

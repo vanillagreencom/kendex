@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # dev-return-write — deterministically write a dev agent's on-disk completion
 # artifact that orch reads to accept a dev/QA completion without depending on the
-# live return message,.
+# live return message.
 #
 # The dev agent runs THIS one command instead of hand-authoring the JSON, so the
 # receipt is always well-formed and complete — it eliminates the truncated /
@@ -13,9 +13,8 @@
 # The artifact is bound to its delegation by a per-round token: the file is named
 # [WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json AND carries "round_id":
 # ROUND_ID inside. dev-artifact-check resolves that exact path and rejects any
-# receipt whose internal round_id differs — deterministic identity that replaces
-# the prior mtime>=delegation freshness heuristic (which proved only WHEN bytes
-# were written, not WHICH delegation wrote them).
+# receipt whose internal round_id differs. The token proves WHICH delegation
+# wrote the bytes; mtime proves only WHEN they were written.
 #
 # Usage:
 #   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \

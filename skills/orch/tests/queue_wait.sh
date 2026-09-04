@@ -739,7 +739,7 @@ out="$(run_queue_wait -- 1 1 1 --json --no-check-probe 2>"$err")" && rc=0 || rc=
 assert_eq "$(jq -r .verdict <<<"$out")" "queued" "overlong walk is a failed read, not a count" "$err"
 assert_eq "$([ -f "$SEQ_DIR/mutations.log" ] && echo present || echo absent)" "absent" "overlong walk never mutates" "$err"
 
-# --- 29. progress signal on the budget-exhausted queued verdict  ----
+# --- 29. progress signal on the budget-exhausted queued verdict -----
 # A `queued` verdict at the deadline cannot by itself tell "the merge-group
 # suite is still running" from "nothing has moved". queue-wait tracks the
 # entry tuple (state, position, headCommit.oid) and, when the head commit is

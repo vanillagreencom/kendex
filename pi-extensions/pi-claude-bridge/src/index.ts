@@ -245,8 +245,7 @@ export interface DeferredUserReplayPlan {
 
 /** Plan replay of user messages pi injected mid-query (steer drain, followUp).
  *  Captures the ENTIRE trailing consecutive user run, not just the last
- *  message — dropping the earlier ones was silent input loss  —
- *  but never walks below `capturedThrough`, the position a prior callback
+ *  message, but never walks below `capturedThrough`, the position a prior callback
  *  of the SAME query already captured (or deliberately held at, for an
  *  all-empty run). Without that lower bound a second mid-query steer re-planned
  *  the whole run from scratch and the first steer was queued — and delivered to
@@ -961,13 +960,13 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 
 	// 4. Capture context for abort handling (must be AFTER pushContext)
 	const abortCtx = ctx();
-	// Failure metadata consumeQuery observed, surviving an iterator THROW (the
-	// The catch below reuses it instead of re-classifying it. See the C5 note.
+	// Failure metadata from consumeQuery survives an iterator throw. The catch
+	// below reuses it instead of re-classifying it; see the C5 note.
 	const attemptFailure: { failure?: ClaudeAttemptFailure } = {};
 	// A reentrant (subagent) query must never write the module-level shared
 	// session: its completion/failure handlers would overwrite the PARENT's
 	// record with the child's session id and cursor. A foreign-conversation
-	// one-shot  has exactly the same non-claim on the record.
+	// one-shot has exactly the same non-claim on the record.
 	const persistSession = (next: SessionState | null): void => {
 		if (isReentrant || foreignContext) return;
 		setSharedSession(next && conversationFp ? { conversationFingerprint: conversationFp, ...next } : next);
@@ -1185,7 +1184,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 				// execute. Deferred user input is dropped LOUDLY, and when steers
 				// were dropped the record is marked needsRebuild: the cursor already
 				// advanced over them on the promise of replay, so a plain REUSE next
-				// turn would silently lose them forever ().
+					// turn would silently lose them forever.
 				if (!abortCtx.handledTerminalError) surfaceFailure(failure);
 				const droppedSteers = dropDeferredUserMessages("terminal-failure");
 				const activeSession = getSharedSession();
@@ -1250,7 +1249,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 							if (!abortCtx.handledTerminalError) surfaceFailure(continuation.failure);
 							// The shifted steer may never have reached the child, and any
 							// remaining ones certainly did not — the record must rebuild so
-							// they re-import from Pi history ().
+							// they re-import from Pi history.
 							if (dropDeferredUserMessages("continuation-failure", steer).length > 0) {
 								markRebuildForThisQuery();
 							}
@@ -1269,7 +1268,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 						};
 						recordAttemptFailure(continuationFailure);
 						if (!abortCtx.handledTerminalError) surfaceFailure(continuationFailure);
-						// Same  posture as the failure branch above.
+						// Apply the same rebuild rule as the failure branch above.
 						if (dropDeferredUserMessages("continuation-error", steer).length > 0) {
 							markRebuildForThisQuery();
 						}
@@ -1446,7 +1445,7 @@ export default function (pi: ExtensionAPI) {
 	// bridge. syncSharedSession's REUSE check would otherwise see
 	// slice(cursor) === [] (or skip entries) and keep --resume'ing a CC
 	// session that does not match pi's history. /compact in particular
-	// triggers CC's autocompact-thrashing guard (). Force the next
+		// triggers CC's autocompact-thrashing guard. Force the next
 	// call down the REBUILD path so CC sees the current history.
 	const markRebuild = (event: string) => {
 		const activeSession = getSharedSession();

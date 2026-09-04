@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
-# a rebase replaces a configured symlink with a real directory holding
+# A rebase can replace a configured symlink with a real directory holding
 # only the tracked files underneath, dropping every kendex-installed path there.
-# git sees nothing (the surviving files are the tracked ones), so the damage
-# surfaces much later as scripts failing exit 127 on files they would source.
+# Git sees nothing because the surviving files are tracked.
 #
 # Two detections are asserted here:
-#   1. the support-library guard, which is where the live failure actually
-#      presented — a bare 127 naming neither cause nor recovery;
+#   1. the support-library guard, which replaces a bare 127 with the cause and
+#      recovery;
 #   2. the use-time check on `push`, the usual first command after a MANUAL
 #      rebase (the case the script never sees and therefore never repairs).
 #
-# Both messages must send the operator to the MAIN CHECKOUT: in the observed
-# failure the worktree's own copy of the script was among the missing files.
+# Both messages must send the operator to the MAIN CHECKOUT because the
+# worktree's own copy of the script can be missing.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,7 +56,7 @@ git -C "$MAIN" remote add origin "$ROOT/origin.git"
 git -C "$MAIN" push -q -u origin main
 
 # Two entries cover both provisioning modes: harness/ mixes untracked
-# kendex-installed content with a tracked file (per-child links since,
+# kendex-installed content with a tracked file (per-child links);
 # runtime/ is untracked-only (plain parent symlink — the shape a rebase can
 # still materialize).
 mkdir -p "$MAIN/harness/skills" "$MAIN/runtime"

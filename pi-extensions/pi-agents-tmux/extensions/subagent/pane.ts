@@ -571,7 +571,7 @@ export interface PiInvocation {
 	 * script-form overrides this is the RESOLVED absolute path: a relative
 	 * override resolved for THIS spawn would otherwise reach the child
 	 * verbatim through process.env and re-resolve from the child's delegated
-	 * cwd (). Bare commands propagate unchanged (PATH or an
+	 * cwd. Bare commands propagate unchanged (PATH or an
 	 * absolute executable — cwd-independent, but tmux pane children do not
 	 * reliably inherit the parent's env, so the launcher must export it).
 	 * Unset when no override is active.
@@ -742,9 +742,9 @@ export PI_SUBAGENT_CHILD_AGENT=${shellQuote(agent.name)}
 ${agent.color ? `export PI_SUBAGENT_CHILD_COLOR=${shellQuote(agent.color)}` : "unset PI_SUBAGENT_CHILD_COLOR"}
 export ${PI_SUBAGENT_CHILD_PANE_ENV}=1
 export PI_SUBAGENT_PARENT_SESSION_ID=${shellQuote(parentSessionId)}
-#  mechanism: pi-session-bridge reads these on startup and
+# kendex#60 workaround: pi-session-bridge reads these on startup and
 # synthesizes a unique <parent>:c<pid> session id so 'pi-bridge state
-# --session <id>' does not match the parent's bridge too.
+# --session <id>' no longer matches the parent's bridge too.
 export ${PI_BRIDGE_PARENT_SESSION_ENV}=${shellQuote(parentSessionId)}
 export ${PI_BRIDGE_CHILD_ROLE_ENV}=${shellQuote(PI_BRIDGE_SUBAGENT_ROLE)}
 # Inherit cached 1Password service-account token if available so the child

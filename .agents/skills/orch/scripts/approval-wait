@@ -224,7 +224,7 @@ if $RESOLVE_MODE; then
   # loud, and a typo must never silently disable a wait.
   #
   # Resolved through the ENGINE's own resolver so waiter and gate cannot
-  # split by construction (): rg_setting honors set-even-empty env,
+  # split: rg_setting honors set-even-empty env,
   # the REVIEW_GATE_SETTINGS_FILE override (including the /dev/null
   # force-defaults sentinel), skips dotenv for this key, and fails loud on
   # a malformed or duplicate assignment — exactly as the predicate does.
@@ -269,8 +269,8 @@ if $RESOLVE_MODE; then
   case "$mode" in
     approval|review|off) ;;
     "")
-      # Legacy PR_APPROVAL_GATE derivation: off → off, anything else (or
-      # unset) → approval — the pre- binary gate semantics.
+      # When PR_REVIEW_GATE is unset, PR_APPROVAL_GATE=off disables the wait.
+      # Every other value selects approval mode.
       if [[ "${PR_APPROVAL_GATE:-}" == "off" ]]; then
         mode="off"
       else
@@ -310,7 +310,7 @@ MAX_WAIT="${POSITIONAL[2]:-$("$SCRIPT_DIR/orch-env" PR_REVIEW_WAIT_SECS 900)}"
 START_TIME="$(date +%s)"
 elapsed=0
 
-# Review-check evidence,: PR_REVIEW_CHECK names the
+# Review-check evidence: PR_REVIEW_CHECK names the
 # check the repo's review bot publishes on analyzed heads; review mode accepts
 # a successful signal of that name on the current head as an alternative to a
 # review object, on EITHER surface — a check-run concluding "success"
@@ -381,7 +381,7 @@ RETRY_INTERVAL_CAP=$((POLL_INTERVAL * 8))
 
 prev_head_sha=""
 # Set true if the head moves after the first poll. A force-push near MAX_WAIT
-# would otherwise let the very next poll see no evidence on the replacement commit and
+# would otherwise let the very next poll see no evidence on the new commit and
 # emit "proceeded" seconds later — skipping a reviewer who has not yet seen the
 # push. When the head changed during this wait, the deadline falls back to
 # "timeout" (the caller re-waits on the now-stable head, whose own wait can
@@ -411,8 +411,7 @@ emit_result() {
   local status="$1" error_msg="${2:-}" mode_fields
   update_elapsed
   if $JSON_OUTPUT; then
-    # Review-mode fields are additive only, so approval-mode JSON stays
-    # byte-compatible with the pre- contract.
+    # Review-mode fields are additive, so approval-mode JSON keeps its field set.
     mode_fields='{}'
     if [[ "$MODE" == "review" ]]; then
       # review_evidence appears only when the gate passed — "review" for a
@@ -616,9 +615,8 @@ gh_failure_is_transient() {
 
 # Absorb one transient GitHub failure: count and log it, then sleep the
 # backed-off interval so the caller can `continue` the poll loop. When the
-# max_wait budget is already spent, the failure becomes terminal instead —
-# same error message and exit code as the pre- immediate path, plus the
-# transient_api_errors count in the JSON.
+# max_wait budget is already spent, the failure becomes terminal with the
+# standard error, exit code, and transient_api_errors count.
 transient_retry() {
   local what="$1" detail
   detail="$(head -c 200 "$GH_ERR_FILE" 2>/dev/null | tr '\n' ' ')"
@@ -722,7 +720,7 @@ while true; do
                       and (.user.login // "") != $author)]
         | group_by(.user.login) | map(.[-1])
         | .[] | select(.state == "APPROVED")] | length' <<<"$reviews_json")
-    # --- trusted review-check evidence,: consulted
+    # --- trusted review-check evidence: consulted
     # only when no review object is pinned to the current head. Both queries
     # target the CURRENT head, so a success on a superseded commit can never
     # satisfy the gate. Check-runs first (when the bot re-analyzed the same
@@ -900,7 +898,7 @@ while true; do
   if [ "$last_head_sha" != "$prev_head_sha" ]; then
     # A change after the first observation disqualifies the proceed-on-timeout
     # degrade for the rest of this wait (see the deadline branch): the reviewer
-    # has not had a fair window on the replacement commit.
+    # has not had a fair window on the new commit.
     if [ -n "$prev_head_sha" ]; then
       head_changed_during_wait=true
     fi
@@ -931,7 +929,7 @@ done
 #     "down", so it must timeout, not proceed. And
 #   - the head did not change during this wait. elapsed is measured from
 #     START_TIME, so a force-push near MAX_WAIT would otherwise proceed seconds
-#     after the replacement commit appeared, before the reviewer could re-review it;
+#     after the new commit appeared, before the reviewer could re-review it;
 #     fall back to timeout so the caller re-waits on the now-stable head.
 # The caller records "proceeded" as a reviewer-down override; CI and the
 # comment-hygiene gate still apply.

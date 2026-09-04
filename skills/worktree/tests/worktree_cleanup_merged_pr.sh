@@ -28,7 +28,7 @@
 #     nor an answer from whatever repository a GH_REPO redirect points at;
 #   * `remove` deletes a squash-merged branch and still keeps an unmerged one,
 #     a moved-on one, and one merged only into its own tracking upstream —
-#     `git branch -d` accepted that last case and does not decides anything.
+#     `git branch -d` accepts that last case and does not decide anything.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

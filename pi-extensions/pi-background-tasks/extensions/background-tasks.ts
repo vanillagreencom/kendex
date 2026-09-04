@@ -649,9 +649,9 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			origin: options.origin ?? "bg_task",
 		});
 		for (const warning of spawnPlan.warnings) warnResourceControlFallback(warning, cwd);
-		//  hardening: spawn the child in its own session / process
+		// kendex#97 hardening: spawn the child in its own session / process
 		// group via `detached: true` (Node calls setsid() on POSIX before
-		// exec). This addresses two of the issue's hypotheses:
+		// exec). This protects against two signal paths:
 		//
 		//   H1 (process-group / parent-death cascade): when Pi exits or is
 		//   restarted, the kernel does NOT propagate SIGHUP / SIGTERM to

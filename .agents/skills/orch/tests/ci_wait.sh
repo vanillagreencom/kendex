@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for orch/scripts/ci-wait auth ladder.
 #
-# Covers:
+# The cases cover:
 #   1. stale GH_TOKEN + working keyring  -> sanitizer unsets, ci-wait passes
 #   2. no env tokens + working keyring   -> no warning, ci-wait passes
 #   3. stale GH_TOKEN + broken keyring + no .env.local bot token
@@ -42,7 +42,7 @@
 #
 # Plus rerun-attempt correlation: a rerun executes as another attempt under
 # the ORIGINAL run id and creation time, so an in-flight attempt 2 of an
-# OLDER pull_request run is replacement current-head work even though no run
+# OLDER pull_request run is current-head work even though no run
 # with a newer id exists. Any in-flight same-head substantive run keeps the
 # wait pending; the attempt's completed success supersedes via its fresher
 # updated_at, and its failure stays terminal (cases 29-31).
@@ -237,7 +237,7 @@ case "${1:-}" in
 JSON
         exit 8
       fi
-      #  (part 2): once the NEW run recreates a named job (Lint on
+      # Once the NEW run recreates a named job (Lint on
       # RUN_ID 29099680623, SUCCESS), that current-head instance must replace the
       # OLD run's CANCELLED "Lint" (RUN_ID 29098545030) by context name, leaving
       # no stale CANCELLED entry in failed_checks.

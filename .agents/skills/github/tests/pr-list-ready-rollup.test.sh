@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for pr-list-ready's statusCheckRollup classification
-# StatusContext nodes (classic commit statuses) carry.state, not
-# .conclusion — a conclusion-only predicate reads their missing conclusion as
+# StatusContext nodes (classic commit statuses) carry `.state`, not
+# `.conclusion`. A conclusion-only predicate reads their missing conclusion as
 # null and counts every one of them, pending and failing included, as
 # passing. Also pins: an in-progress CheckRun (null/empty conclusion) is
 # pending, never passing.

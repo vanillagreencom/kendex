@@ -671,15 +671,11 @@ main() {
     fi
     cache_ensure_dir
 
-    # One-time sweep of the per-issue lock files a pre- cache
-    # accumulated. Nothing opens those paths any more — comment writes share
-    # $CACHE_DIR/.comments.lock — so this disturbs no live lock, and without it
-    # a cache that carries them keeps them forever. It sits inside the sync lock
-    # and above the full/delta branch because a sync that finds nothing changed
-    # must sweep too; on a write path the common case never reaches it. Then
-    # `|| true`, because cleanup of files nothing opens must never refuse a
-    # sync: an unmatched glob exits 0 already, but one matched file that will
-    # not unlink would end the run right here, before any sync work and short
+# Sweep obsolete per-issue comment lock files. Comment writes use
+# $CACHE_DIR/.comments.lock, so no live writer opens these paths. The sweep sits
+# inside the sync lock and above the full/delta branch so every sync reaches it.
+# Cleanup is best-effort because a lock file that cannot be removed must not
+# refuse sync work or shorten
     # of cache_unlock, blaming a dead lock file for it.
     rm -f "$CACHE_DIR"/comments/*.json.lock || true
 

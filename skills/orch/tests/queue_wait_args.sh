@@ -63,7 +63,7 @@ run_qw() {
 
 echo "=== queue-wait argument validation ==="
 
-# --- 15. argument validation: poll_interval > max_wait  ---------
+# --- 15. argument validation: poll_interval > max_wait ----------
 # The reported invocation shape: `queue-wait 481 1800` reads as poll=1800,
 # max=600 and can only ever poll once while overshooting the budget.
 err="$TMP_ROOT/e15"

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# preflight — diff-scoped, fail-only checks: fail-open bash, untracked suites no
+# preflight — diff-scoped, fail-only checks: fail-open bash, new suites no
 # runner invokes, scratch directories no EXIT trap removes, directories
 # created at literal absolute temp paths, docs citing repo paths that do
 # not exist, source files citing docs that do not exist, edits to a migration
 # a database has already run, malformed JSON/TOML.
 #
 # Precision before coverage: a lane that cannot decide says nothing. The
-# line-scoped lanes report only on lines this diff inserted, so a pre-existing
+# line-scoped lanes report only on lines this diff added, so an existing
 # violation on an untouched line never fails somebody else's change. A
 # missing optional tool (shellcheck, jq, taplo, python3) skips its lane
 # silently — the run never fails because a tool is absent, and a lane never
@@ -150,7 +150,7 @@ content_is_binary() { # CONTENT-PATH PATH — 0 when git would call the content 
 # reshape the patch this parser reads. --text is the same pin against
 # .gitattributes: a committed '-diff' or 'binary' row makes git call the path
 # binary and emit 'Binary files ... differ' with no hunks, so one attributes
-# line would hide a whole extension's inserted lines from every line-scoped lane
+# line would hide a whole extension's added lines from every line-scoped lane
 # — a scan reported over a file it never read. What forcing text lets through
 # is judged on content by the verdict below, before the patch is taken.
 git_diff() { git -c core.quotePath=false -c diff.noprefix=false -c diff.mnemonicPrefix=false diff --no-ext-diff --no-textconv --text "$@"; }
@@ -188,16 +188,16 @@ case "$MODE" in
     BASE="$(resolve_base)" || env_error "could not resolve a default diff base (tried origin/HEAD, origin/main, main) — pass --base REF or --all"
     git_diff --name-only --diff-filter=d -z "$BASE" -- >"$TMP/files.z" || env_error "git diff against $BASE failed"
     git_diff --name-only --no-renames --diff-filter=A "$BASE" -- >"$TMP/newfiles.list" || env_error "git diff against $BASE failed"
-    # A file never inserted is invisible to `git diff` yet is part of the change
-    # the author is about to commit: every non-ignored untracked file is an additional
-    # file with every line inserted, exactly what it will be at the PR.
+    # A file never added is invisible to `git diff` yet is part of the change
+    # the author is about to commit. Every non-ignored untracked file is a new
+    # file with every line added, exactly what it will be at the PR.
     git -c core.quotePath=false ls-files --others --exclude-standard -z >"$TMP/untracked.z" || env_error "git ls-files --others failed"
     ;;
 esac
 [ -f "$TMP/untracked.z" ] || : >"$TMP/untracked.z"
 
 # Newline- and tab-free paths are a precondition for every record below, and
-# for the positional map that pairs a path with its inserted lines. Refuse the
+# for the positional map that pairs a path with its added lines. Refuse the
 # pathological path loudly rather than letting it desync the map.
 while IFS= read -r -d '' f; do
   case "$f" in
@@ -209,7 +209,7 @@ done <"$TMP/files.z" >"$TMP/files.list"
 # Which changed paths carry inspectable lines is decided HERE, once, before a
 # single byte reaches the patch parser. A binary blob that travelled through
 # that parser could forge a `+++ b/<path>` header out of its own bytes, take
-# over another file's record and destroy the inserted lines already collected for
+# over another file's record and destroy the added lines already collected for
 # it — and would pay a full decode of the asset to do it. The whole-file lanes
 # still see every changed path through files.list: only the LINES are withheld.
 : >"$TMP/textfiles.list"
@@ -228,7 +228,7 @@ while IFS= read -r f; do
 done <"$TMP/files.list"
 
 if [ "$MODE" = "all" ]; then
-  # Every line of a file with inspectable content counts as inserted.
+  # Every line of a file with inspectable content counts as added.
   while IFS= read -r f; do
     PF="$f" awk 'BEGIN { p = ENVIRON["PF"] } { print p "\t" FNR "\t" $0 }' "./$f" >>"$TMP/added.tsv"
   done <"$TMP/textfiles.list"
@@ -246,7 +246,7 @@ else
   # A `+++ b/<path>` record re-points the whole parse at another file, so it
   # is honoured only where git can actually have written one: inside the
   # preamble a `diff --git` line opens, on the record directly after `--- `.
-  # A hunk BODY can spell either header at column 0 — an inserted line reading
+  # A hunk BODY can spell either header at column 0 — an added line reading
   # `++ b/<victim>` renders as `+++ b/<victim>`, a removed line reading
   # `-- a/<x>` as `--- a/<x>` — and an unanchored parser accepts that forgery,
   # hands the victim's record to the carrier and lets the splitter below
@@ -256,7 +256,7 @@ else
   # a stage-0 path, an attributed-text blob and a plain text file all reach
   # the parser by different routes — so the state machine refuses the forgery
   # instead, and an unanchored `+++ ` record falls through to be recorded as
-  # what it is: an inserted line of the file that carries it.
+  # what it is: an added line of the file that carries it.
   awk -v out="$TMP/added.tsv" '
     /^diff --git / { state = 1; cur = ""; ln = 0; next }
     /^--- / { state = (state == 1) ? 2 : 0; next }
@@ -303,13 +303,13 @@ else
   done <"$TMP/untracked.z"
 fi
 
-# Split the inserted lines into one `line<TAB>content` file per changed file,
+# Split the added lines into one `line<TAB>content` file per changed file,
 # named by that file's position in files.list. Both producers group their
 # records by path, so one output file is open at a time — and a path is
 # opened with ">" exactly once. A SECOND, non-adjacent group for a path
 # already closed would reopen its record and truncate the lines collected
 # for it, which is how a hijacked record turned into a LOST finding rather
-# than a duplicated one. The parser above does not accepts the forged header
+# than a duplicated one. The parser above rejects the forged header
 # that produced such a group, so this can only fire on a producer bug; either
 # way the record set is wrong and no verdict may be reported over it.
 split_status=0
@@ -334,12 +334,12 @@ awk -F'\t' -v dir="$TMP" -v listfile="$TMP/files.list" '
 
 git ls-files >"$TMP/tracked.list" || env_error "git ls-files failed"
 # Every directory that holds tracked files, at every depth — plus the
-# directories of the untracked files in scope, so a untracked doc under an additional
+# directories of the untracked files in scope, so a new doc under a new
 # directory is judged as it will be once committed.
 { cat "$TMP/tracked.list"; tr '\0' '\n' <"$TMP/untracked.z"; } | awk -F/ '{ p = ""; for (i = 1; i < NF; i++) { p = (i == 1 ? $i : p "/" $i); print p } }' | LC_ALL=C sort -u >"$TMP/trackeddirs"
 
 # --- shared helpers ----------------------------------------------------------
-added_lines_of() { # IDX -> path to that file's inserted line numbers
+added_lines_of() { # IDX -> path to that file's added line numbers
   local out="$TMP/lines.$1"
   [ -f "$out" ] || cut -f1 -- "$TMP/rec.$1" >"$out"
   printf '%s' "$out"
@@ -598,7 +598,7 @@ build_runner_index() {
   local r c k=0 status kind scope
   [ ! -f "$TMP/runner.toks" ] || return 0
   # Untracked runners are in scope exactly when untracked suites are: a
-  # workflow inserted beside its suite wires it before either is committed.
+  # workflow added beside its suite wires it before either is committed.
   { cat "$TMP/tracked.list"; tr '\0' '\n' <"$TMP/untracked.z"; } | LC_ALL=C awk '
     /^\.github\/workflows\/[^\/]+\.(yml|yaml)$/ { print; next }
     /(^|\/)(tools|scripts)\/validate[^\/]*$/ { print; next }
@@ -823,7 +823,7 @@ while IFS= read -r f; do
       done <<<"$(run_shellcheck "$cpath")"
     fi
 
-    # A untracked script that never turns on errexit, nounset and pipefail
+    # A new script that never turns on errexit, nounset and pipefail
     # fails open at its first unchecked command. Test trees and fixtures set
     # their own rules.
     if [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$sourced_lib" = 0 ] && [ "$is_new" = 1 ]; then
@@ -858,7 +858,7 @@ while IFS= read -r f; do
       ;;
   esac
 
-  # --- lanes scoped to the lines this diff inserted ---
+  # --- lanes scoped to the lines this diff added ---
   while IFS= read -r rec; do
     n="${rec%%"$TAB"*}"
     content="${rec#*"$TAB"}"
@@ -949,7 +949,7 @@ done <"$TMP/files.list"
 # A versioned migration a database has already run is frozen. refinery
 # (`abort_divergent` by default) and Flyway record a checksum over the file's
 # name and text and refuse to run against a database whose recorded checksum
-# does not matches, so the edit has no forward fix: the correction would be
+# does not match, so the edit has no forward fix: the correction would be
 # one more edit to the same frozen file. The default globs are that filename
 # shape under both directory names those runners use, and nothing else, because
 # a runner recording a version without a checksum reopens its database: goose,
@@ -957,9 +957,9 @@ done <"$TMP/files.list"
 # a legitimate change. Every other layout, sqlx among them, is opt-in through
 # the setting, which is also where a Flyway repository excludes its repeatable
 # migrations. Only a path the MERGE BASE carries is the shape, since a
-# migration inserted at a later version is how a correction ships, and one this
-# branch inserted has reached no database. `--all` reads every tracked line as
-# inserted and a repository with no base to read answers nothing, so both leave
+# migration added at a new version is how a correction ships, and one this
+# branch added has reached no database. `--all` reads every tracked line as
+# added and a repository with no base to read answers nothing, so both leave
 # the lane quiet, as does an empty glob set.
 MIGRATION_GLOBS="${PREFLIGHT_MIGRATION_GLOBS-**/migrations/V*__*.sql **/db/migration/V*__*.sql}"
 
@@ -1023,7 +1023,7 @@ fi
 
 if [ -n "$MIGRATION_BASE" ] && [ -n "$MIGRATION_GLOBS" ]; then
   # MDR are the statuses the verb below names; the base read, not the filter,
-  # is what keeps an inserted file out.
+  # is what keeps an added file out.
   if [ "$MODE" = staged ]; then
     git_diff --cached --find-renames --name-status --diff-filter=MDR -z >"$TMP/migrations.z" || env_error "git diff --cached failed"
   else
@@ -1034,7 +1034,7 @@ if [ -n "$MIGRATION_BASE" ] && [ -n "$MIGRATION_GLOBS" ]; then
     case "$mstatus" in R*) IFS= read -r -d '' mnew || break ;; esac
     is_migration_path "$mpath" || continue
     # Staged scope diffs against HEAD, which reads a migration this branch
-    # inserted and then corrected as modified. No database has run that one.
+    # added and then corrected as modified. No database has run that one.
     git cat-file -e "$MIGRATION_BASE:$mpath" 2>/dev/null || continue
     case "$mstatus" in
       D*) mverb="deleted" ;;

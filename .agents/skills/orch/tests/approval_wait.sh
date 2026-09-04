@@ -6,7 +6,7 @@
 # (`gh pr view --json reviewDecision,latestReviews`, and in --mode review the
 # REST pulls/reviews listing pinned to the current head) plus the unresolved
 # review-thread count — never emoji reactions, sticky comments, or checklist
-# prose. Covers:
+# prose. Cases:
 #   1. reviewDecision APPROVED               -> approved, exit 0
 #   2. empty reviewDecision + latest APPROVED -> approved via fallback, exit 0
 #   3. latest CHANGES_REQUESTED               -> changes_requested, exit 1

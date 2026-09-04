@@ -3,30 +3,30 @@
 # workflow state, in one call.
 #
 # `worktree push` auto-rebases onto the updated base and prints one
-# 'rebase-map: <before-sha> <after-sha>' line per rewritten commit, with the
-# literal word `dropped` in place of the replacement SHA when the replayed patch was
+# 'rebase-map: <old-sha> <new-sha>' line per rewritten commit, with the
+# literal word `dropped` in place of the new SHA when the replayed patch was
 # already upstream. Every SHA recorded in workflow state before that rebase
 # — `fixed_items[].commit`, `pr_comment_review.fixes[].commit` — is stale the
 # moment the map prints, and publishing a stale SHA is forbidden. This
 # wrapper closes that gap at push time instead of leaving the remap to the
 # calling agent:
 #
-#   - merges every mapping into `.rebase_map` (before -> after, `dropped` stored
+#   - merges every mapping into `.rebase_map` (old -> new, `dropped` stored
 #     literally);
 #   - rewrites each recorded fix commit whose SHA is a prefix of a mapped old
-#     SHA: to the replacement SHA truncated to the recorded length, or to the marked
+#     SHA: to the new SHA truncated to the recorded length, or to the marked
 #     form `dropped:<recorded-sha>` when the mapping is `dropped` — the
-#     commit does not exists on the branch, so publishers must omit it or
+#     commit does not exist on the branch, so publishers must omit it or
 #     cite the upstream equivalent, never print it as a live SHA;
 #   - prints one `sha-reconcile:` summary line naming what changed.
 #
 # A fix round in flight is refused rather than reconciled: its record pins the
 # commit the delegated agent is working from, and the rebase this command runs
 # would move every commit out from under it, leaving the round's receipt to
-# name a `.commit` does not on the branch. The round in flight is the ACTIVE
+# name a `.commit` that does not exist on the branch. The round in flight is the ACTIVE
 # one — the record whose token equals workflow state `dev_round_id`. Two things
 # end that: the round's dev-return receipt landing, or a fresh `dev_round_id`
-# whose token names no stamped record. a prior round's leftover record does
+# whose token names no stamped record. A prior round's leftover record does
 # not block, and neither does a worktree with no state file.
 #
 # `--check-live-round` runs that question alone and exits on its answer,
