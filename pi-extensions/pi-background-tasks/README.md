@@ -1,20 +1,23 @@
-# pi-background-tasks
+# @vanillagreen/pi-background-tasks
 
-![Spawning background tasks](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-background-tasks/assets/spawn-tasks.png) ![Task summary](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-background-tasks/assets/task-summary.png) ![Inline mini-dashboard](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-background-tasks/assets/inline-dashboard.png) ![Full dashboard](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-background-tasks/assets/dashboard.png)
+Runs shell commands in the background of a Pi session without blocking the conversation, and wakes the agent when they finish or print something that matters. For anyone whose agent runs dev servers, watchers, log tails or long builds.
 
-Run shell commands in the background without blocking the conversation.
-
-## Highlights
-
-- `bg_task` spawns, lists, tails, stops, and clears background commands.
-- `/bg` opens an interactive dashboard with task logs, details, and controls. The inline mini-dashboard shows live task state; the full dashboard handles larger fleets without bloating chat history.
-- Blocking monitors (`watch`, `tail -f`, `journalctl -f`, polling loops) auto-background before they freeze the turn; `/bg:next` or the shortcut sends the next bash command to the background.
-- Exit and output-match wakeups bring the agent back when work finishes or important text appears.
-- Optional resource controls lower CPU/I/O priority via `systemd-run` or `nice`/`ionice` fallback.
-- Full logs stay on disk even when chat/tool output is truncated. Session sidecar state restores task history across reloads and resumes.
-- `pi-session-bridge` can publish structured `bg_task.*` activity events as a side channel, not chat messages.
+![Spawning background tasks](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-background-tasks/assets/spawn-tasks.png) ![Inline mini-dashboard](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-background-tasks/assets/inline-dashboard.png)
 
 ## Install
+
+Declare the package in the scope's kendex manifest, then let `kendex update-pi` install it and register it in Pi's `settings.json`. For a project, in its `kendex.toml`:
+
+```toml
+[pi-extensions."@vanillagreen/pi-background-tasks"]
+source = "kendex"
+```
+
+```bash
+kendex update-pi
+```
+
+The same declaration in `~/.config/kendex/kendex.toml` installs it for every project. `kendex update-pi --check` prints the plan and changes nothing.
 
 Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-background-tasks):
 
@@ -22,92 +25,35 @@ Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-background-tasks):
 pi install npm:@vanillagreen/pi-background-tasks
 ```
 
-Via [kendex](https://github.com/vanillagreencom/kendex):
-
-```bash
-cargo install --git https://github.com/vanillagreencom/kendex.git kendex
-kendex add vanillagreencom/kendex --pi-extension pi-background-tasks --harness pi -y
-```
-
 Restart Pi after installation.
 
-## Commands
+## What it does
 
-| Command | Action |
-| --- | --- |
-| `/bg` | Open the dashboard. |
-| `/bg:next` | Arm the next bash command for backgrounding. |
-| `/bg:run <command>` | Spawn a background shell task. |
-| `/bg:list` | Show tracked tasks. |
-| `/bg log <id\|pid>` | Show a task log tail. |
-| `/bg watch <id\|pid>` | Open the dashboard focused on a task. |
-| `/bg:stop <id\|pid>` | Terminate a running task. |
-| `/bg:clear` | Remove finished tasks. |
+- Gives the agent a `bg_task` tool that spawns, lists, tails, stops and clears background commands, and a read-only `bg_status` tool for inspecting and stopping them.
+- Diverts blocking monitors (`watch`, `tail -f`, `journalctl -f`, polling loops with `sleep`) into a background task before they freeze the turn; `/bg:next` or a shortcut forces the next bash command into the background.
+- Wakes the agent on exit, and optionally on new output or on output matching a pattern, with a bounded inline tail and the path of the full log.
+- Keeps the full log on disk for every task, and restores task history across reloads and resumes.
+- Replays a missed exit wake after a restart, and keeps watching a task that outlived Pi until it really ends.
+- Shows a mini-dashboard beside the editor and a full `/bg` dashboard with logs, details and controls.
+- Optionally runs tasks at lower CPU and I/O priority through `systemd-run` or `nice` and `ionice`.
+- Publishes task lifecycle events to `pi-session-bridge` clients when that package is loaded, without adding chat messages.
 
-Arguments support autocomplete, including task IDs.
+`/bg` opens the dashboard; `/bg:run`, `/bg:list`, `/bg:stop`, `/bg:clear` and `/bg:next` do one thing each, and `/bg log <id>` and `/bg watch <id>` take a task id or pid with autocomplete. Tasks inherit Pi's environment and working directory and are stopped when the session shuts down.
 
-## Auto-background
+## How it works
 
-Bash commands matching obvious monitor patterns are intercepted before they start and run as a background task instead. The foreground bash tool returns a short acknowledgement with the task id, PID, and log path so the agent turn keeps moving. Built-in matches: `watch ...`, `tail -f`, `journalctl -f`, Pi-bridge/tmux polling loops, and shell loops with `sleep` that monitor session state.
+A spawned command runs in its own process group with stdout and stderr captured to a log file. The extension keeps a bounded in-memory tail per task, debounces output, and delivers wakes to the agent as custom messages that steer the current turn or follow it up. Task snapshots persist in the session file and in a sidecar, so a resumed session sees the same tasks. The agent-facing rules ship in `instructions.md`, appended to the system prompt at install.
 
-Use the arm-next-bash shortcut or `/bg:next` to force the next bash command into the background even if it doesn't match the built-in patterns. Only applies to commands not yet started.
+## Customise
 
-## Settings
+Open `/extensions:settings`; settings appear under the **Background Tasks** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted.
 
-Open `/extensions:settings`; settings appear under the **Background Tasks** tab.
+- `enabled`: master toggle; `glyphStyle` picks Unicode or ASCII chrome, and `pi-tool-renderer`'s global override wins when set.
+- Auto-backgrounding: `autoBackgroundBash`, `autoBackgroundPatterns`, `forcedBackgroundWindowSeconds`, `forcedBackgroundNotifyOnOutput`.
+- Execution: `defaultTimeoutSeconds`, `forceKillGraceMs`, and the `resourceControl*` group (`resourceControlEnabled` turns it on, `resourceControlMode` picks the mechanism, the rest set weights, niceness and where controls apply).
+- Wakes and output: `outputSettleMs`, `outputAlertMaxChars`, `outputWakeBudgetMaxWakes`, `outputWakeBudgetMaxBytes`, `outputBufferMaxChars`, `logTailMaxChars`.
+- UI: `showWidget`, `widgetPlacement`, `widgetDefaultMode`, `widgetFinishedRetentionSeconds`, `toolRenderMode`, `toolExpandedLogLines`, `dashboardOutputMaxLines`.
+- Shortcuts: `backgroundBashShortcut`, `widgetToggleShortcut`, `dashboardShortcut`; `none` disables one, and a change takes effect on restart.
+- Storage: `taskDir`; the `PI_BG_TASK_DIR` environment variable overrides it.
 
-Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted; before trust, kendex Pi extensions read user/global settings only.
-
-Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across kendex Pi extensions while leaving tool/model/user content unchanged.
-
-### Execution
-
-| Setting | What it does |
-| --- | --- |
-| Enable background tasks | Master toggle for `bg_task`, auto-backgrounding, and the widget. |
-| Default timeout | Spawn timeout. `0` disables. |
-| Auto-background blocking bash monitors | Auto-divert long-running bash commands into `bg_task`. |
-| Extra auto-background patterns | Newline-separated regexes for project-specific monitors. |
-| Shortcut arming window | Seconds the arm-next-bash shortcut / `/bg:next` stays armed. |
-| Force-kill grace | Milliseconds between SIGTERM and SIGKILL. |
-| Resource controls | Opt-in lower-priority execution for spawned background tasks. Off by default; when off, spawn/stop behavior is unchanged. |
-| Resource control mode | `auto` prefers a probed `systemd-run --user` transient service on Linux, then `nice`/`ionice` fallback. `systemd-run`, `nice-ionice`, and `off` force one path. |
-| Apply controls to bg_task | Apply controls to explicit `bg_task` and `/bg:run` spawns. |
-| Apply controls to auto-backgrounded bash | Apply controls to bash commands diverted by auto-backgrounding, `/bg next`, or the arm-next-bash shortcut. |
-| CPU weight / I/O weight | `systemd-run` `CPUWeight=` / `IOWeight=` values (1-10000). Lower values yield resources. Defaults are 100. |
-| Nice value | `systemd-run` `Nice=` and `nice` fallback value (-20 to 19). Default 10 lowers CPU priority. |
-| ionice class / level | `systemd-run` `IOSchedulingClass=` / `IOSchedulingPriority=` and `ionice` fallback. Default best-effort level 7 lowers I/O priority. |
-| Warn on resource-control fallback | Show at most one warning/diagnostic when configured controls fall back or no-op because helpers are unavailable. |
-
-### Wakeups, output, and UI
-
-| Setting | What it does |
-| --- | --- |
-| Shortcut output wakeups | Wake the agent on new output from shortcut-forced tasks. |
-| Output settle delay | Debounce before output wakeups fire. |
-| In-memory output buffer | Per-task in-memory cap. Logs always keep full output. |
-| Wakeup output tail | Characters included in output/exit wakeup messages. Default 2000; wakes are steer messages that bypass `pi-output-policy`, so this is the per-wake transcript budget. Raise only for monitors whose verbose inline tail is genuinely useful. |
-| Dashboard/log tail | Characters shown in dashboard and log actions. Default 10000; truncated tool output points at the full log file. |
-| Output wake budget (count) | Maximum output wakes per task before further output wakes are suppressed and a single "wake budget exhausted; inspect log" notice is emitted. Set 0 to disable. Exit wakes are unaffected. |
-| Output wake budget (bytes) | Cumulative inline output-tail bytes per task before output wakes are suppressed. Set 0 to disable. |
-| Task log directory | Override log file location. `PI_BG_TASK_DIR` env var still wins. |
-| Show task widget | Compact background-task widget. Manual hide wins over task lifecycle refreshes until you toggle it back in. |
-| Widget placement | Above or below the editor. |
-| Tool output style | `compact` one-liner or `stacked` rows with expandable details. |
-| Expanded tool log lines | Maximum lines shown when expanding log output. |
-| Dashboard output line cap | Maximum lines in the interactive dashboard viewport. |
-| Mini-dashboard default mode | `compact`, `expanded`, or `hidden` at session start; runtime hide/show is user-controlled for the rest of the session. |
-| Mini-dashboard finished retention | Seconds finished tasks stay visible in the inline widget. |
-| Background next bash shortcut | Configurable. |
-| Mini-dashboard toggle shortcut | Configurable show/hide toggle; toggling back in restores the last visible mode. |
-| Dashboard shortcut | Configurable. |
-
-## Notes
-
-Tasks are scoped to the current Pi runtime, inherit Pi's environment and working directory, and are stopped on session shutdown. Exit wakeups are durable across session restarts and PID reuse — if a task ends while Pi is gone, the next session replays the missed wake.
-
-See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for the `bg_task` tool surface, wake-metadata schema, activity broker mapping, diagnostics, and orphan/PID-reuse identity probe.
-
-## Attribution
-
-Locally owned by kendex, based on the MIT-licensed `@ifi/pi-background-tasks` from `ifiokjr/oh-pi`. See `THIRD_PARTY_NOTICES.md`.
+Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md). The package is kendex's own, based on the MIT-licensed `@ifi/pi-background-tasks`; see `THIRD_PARTY_NOTICES.md`.

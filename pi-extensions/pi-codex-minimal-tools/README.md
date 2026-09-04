@@ -1,27 +1,25 @@
-# pi-codex-minimal-tools
+# @vanillagreen/pi-codex-minimal-tools
+
+Codex-style tools for Pi on OpenAI and Codex models: `image_generation`, `view_image` and `apply_patch`, plus a background `/image-gen` command. Pi's native `read`, `grep`, `find`, `ls`, `bash`, `edit` and `write` stay as they are. Web search is in [pi-web-tools](../pi-web-tools/README.md).
 
 ![apply_patch side-by-side diff rendering](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-codex-minimal-tools/assets/apply-patch-rendering.png)
 
 ![image_generation lifecycle](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-codex-minimal-tools/assets/image-generation.gif)
 
-Minimal Codex/OpenAI tools for Pi. Adds Codex-style tools without replacing Pi natives like `read`, `grep`, `find`, `ls`, `bash`, `edit`, or `write`. Pi 0.75 ships general image-generation APIs and OpenRouter image models; this package keeps the Codex-specific in-chat `image_generation` bridge, `/image-gen` Codex OAuth flow, `view_image`, and `apply_patch`.
-
-## Highlights
-
-- `image_generation` — Codex-specific native image generation on supported `openai-codex` models, with saved local outputs.
-- `view_image` — return a local image as model image content (off by default).
-- `apply_patch` — local Codex-style patch application.
-- `/image-gen <prompt> [reference.png]` — background image generation/editing via Codex OAuth, with a live status card.
-- Generated images saved with timestamp filenames, `latest.<ext>` mirrors, metadata, and inline previews.
-- Tools only activate on OpenAI/Codex-like models; hidden on Anthropic/Claude-bridge sessions.
-- Optional direct OpenAI Images API fallback when `OPENAI_API_KEY` is set.
-- Codex provider failures keep HTTP status prefixes such as `HTTP 429:` or `HTTP 503:` so Pi can classify retries and limits.
-- Codex session parity matches Pi 0.82: cache/session IDs clamp to provider limits, `cacheRetention: "none"` disables session cache keys, sessionless WebSockets use UUIDv7, and missing cached continuations retry once with full context.
-- Codex tool parity includes strict JSON-schema sampling, OpenAI grammar tools, and cache-friendly transcript-positioned loading for dynamically activated tools.
-
-For web search, install [`pi-web-tools`](../pi-web-tools/README.md) alongside this package.
-
 ## Install
+
+Declare the package in the scope's kendex manifest, then let `kendex update-pi` install it and register it in Pi's `settings.json`. For a project, in its `kendex.toml`:
+
+```toml
+[pi-extensions."@vanillagreen/pi-codex-minimal-tools"]
+source = "kendex"
+```
+
+```bash
+kendex update-pi
+```
+
+The same declaration in `~/.config/kendex/kendex.toml` installs it for every project. `kendex update-pi --check` prints the plan and changes nothing.
 
 Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-codex-minimal-tools):
 
@@ -29,62 +27,30 @@ Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-codex-minimal-tools):
 pi install npm:@vanillagreen/pi-codex-minimal-tools
 ```
 
-Via [kendex](https://github.com/vanillagreencom/kendex):
-
-```bash
-cargo install --git https://github.com/vanillagreencom/kendex.git kendex
-kendex add vanillagreencom/kendex --pi-extension pi-codex-minimal-tools --harness pi -y
-```
-
 Restart Pi after installation.
 
-## Commands
+## What it does
 
-| Command | Action |
-| --- | --- |
-| `/codex-minimal-tools` | Open settings (or print status if extension-manager isn't installed). |
-| `/codex-minimal-tools:doctor` | Run self-checks. |
-| `/image-gen <prompt> [reference.png]` | Background image generation/editing via Codex OAuth. |
+- `image_generation` on image-capable `openai-codex` models, through OpenAI's native tool; generated images are saved with a timestamp name and a `latest.<ext>` mirror and previewed inline.
+- `/image-gen <prompt> [reference.png]` generates or edits an image in the background through Codex OAuth, with a live status card, while the agent carries on. It needs no `OPENAI_API_KEY`.
+- `view_image` returns a local image to the model as image content. Off by default.
+- `apply_patch` applies a Codex-format patch locally, with add, update, delete and move, and rolls back every touched file when one hunk fails.
+- A Codex provider shim that keeps session and cache identifiers within provider limits, retries a missing cached continuation once with full context, and preserves `HTTP <status>:` prefixes on failures so Pi can classify limits and retries.
+- `/codex-minimal-tools` opens the settings and `/codex-minimal-tools:doctor` prints which tools are supported and active for the current model, and why.
 
-`/image-gen` uses Codex/ChatGPT OAuth headers from Pi's model registry. It does **not** require `OPENAI_API_KEY`. Reference images may be `@reference.png` or bare local PNG/JPEG/WebP paths. The in-chat `image_generation` tool remains in-stream; use `/image-gen` when you want image work to continue while the agent does other things.
+## How it works
 
-## Settings
+The tools register once an OpenAI or Codex model is loaded and join Pi's active set only on a model that supports them; on any other model they are removed again. On `openai-codex` the outgoing request is rewritten so `image_generation` becomes the provider's native tool. Patch paths resolve against the workspace and a path that escapes it is refused unless `allowAbsolutePatchPaths` is on. Rendering of `apply_patch` is left to `pi-tool-renderer` when it is present.
 
-Open `/extensions:settings`; settings appear under the **Codex Minimal Tools** tab.
+## Customise
 
-Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted; before trust, kendex Pi extensions read user/global settings only.
+Open `/extensions:settings`; settings appear under the **Codex Minimal Tools** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted.
 
-Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across kendex Pi extensions while leaving tool/model/user content unchanged.
+- `enabled`, `autoEnable`: the package and whether its tools join the active set on their own.
+- `nativeProviderTools`: the Codex provider shim and the native `image_generation` rewrite.
+- `imageGeneration`, `imageOutputDir`, `imageModel`, `directImageApiFallback`: image generation, where images land (relative to the workspace), and the direct Images API fallback, which needs `OPENAI_API_KEY`.
+- `viewImage`, `viewImageWorkspaceOnly`: the `view_image` tool and whether it may read outside the workspace.
+- `applyPatchEnabled`, `strictPatchMode`, `allowAbsolutePatchPaths`, `deferApplyPatchRendering`: the patch tool; strict mode removes `edit` and `write` from the active set so every edit goes through `apply_patch`.
+- `glyphStyle`: Unicode or ASCII chrome; `pi-tool-renderer`'s global override wins when set.
 
-### General
-
-| Setting | What it does |
-| --- | --- |
-| Enable Codex minimal tools | Register `image_generation`, `view_image`, and `apply_patch`. |
-| Auto-add tools to active set | Auto-activate this package's tools when a supported model is selected. |
-
-### Provider
-
-| Setting | What it does |
-| --- | --- |
-| Native image_generation on Codex | Rewrite this package's `image_generation` function into OpenAI's Responses-API native tool on `openai-codex`. This is Codex-specific and coexists with Pi 0.75's general image APIs. |
-
-### Images
-
-| Setting | What it does |
-| --- | --- |
-| Enable image_generation | Expose `image_generation` on supported models. |
-| Image output directory | Where generated images are saved. Relative paths resolve against the workspace root. |
-| Direct image API model | Model for direct OpenAI Images API fallback. |
-| Direct Images API fallback | Allow direct OpenAI Images API generation when native Codex generation is unavailable. |
-| Enable view_image | Expose `view_image` on image-capable models. |
-| Restrict view_image to workspace | Reject `view_image` paths outside the workspace. |
-
-### Patch
-
-| Setting | What it does |
-| --- | --- |
-| Enable apply_patch | Expose `apply_patch`. |
-| Strict patch mode | Block `edit`/`write` so all edits go through `apply_patch`. |
-| Allow absolute patch paths | Permit absolute paths in `apply_patch`. |
-| Defer apply_patch rendering | Let `pi-tool-renderer` (preferred) handle display instead of registering an in-package renderer. |
+Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).

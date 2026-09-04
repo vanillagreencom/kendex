@@ -1,17 +1,23 @@
-# pi-prompt-stash
+# @vanillagreen/pi-prompt-stash
+
+A per-session prompt stash for Pi. Save a draft, write something else, restore the draft later.
 
 ![Prompt Stash popup](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-prompt-stash/assets/stash-popup.png)
 
-Per-session prompt stash. Save a draft, write something else, restore later.
-
-## Highlights
-
-- Dedicated stash shortcut: stashes the current draft when the editor has text, opens the popup when the editor is empty.
-- Searchable popup with restore, delete, and clear-all.
-- Stashes are per-session and survive Pi restarts within the session.
-- Optional deduplication discards older entries with identical text.
-
 ## Install
+
+Declare the package in the scope's kendex manifest, then let `kendex update-pi` install it and register it in Pi's `settings.json`. For a project, in its `kendex.toml`:
+
+```toml
+[pi-extensions."@vanillagreen/pi-prompt-stash"]
+source = "kendex"
+```
+
+```bash
+kendex update-pi
+```
+
+The same declaration in `~/.config/kendex/kendex.toml` installs it for every project. `kendex update-pi --check` prints the plan and changes nothing.
 
 Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-prompt-stash):
 
@@ -19,36 +25,25 @@ Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-prompt-stash):
 pi install npm:@vanillagreen/pi-prompt-stash
 ```
 
-Via [kendex](https://github.com/vanillagreencom/kendex):
-
-```bash
-cargo install --git https://github.com/vanillagreencom/kendex.git kendex
-kendex add vanillagreencom/kendex --pi-extension pi-prompt-stash --harness pi -y
-```
-
 Restart Pi after installation.
 
-## Commands
+## What it does
 
-| Command | Action |
-| --- | --- |
-| `/prompt-stash` | Open the stash popup. |
+- One shortcut does both: with text in the editor it stashes the draft, with an empty editor it opens the popup. `/prompt-stash` opens the popup too.
+- The popup searches, restores, deletes and clears stashes, and documents its keys in the footer.
+- Stashes belong to the session and survive Pi restarts within it.
+- Optional deduplication drops older entries with the same text.
 
-The stash shortcut both stashes (when the editor has text) and opens the popup (when the editor is empty). The popup itself documents its own keys in the footer — search, select, restore, delete, delete-all, close.
+## How it works
 
-## Settings
+Stashes are a JSON file under the session's kendex data folder, `<Pi root>/kendex/sessions/<session>/prompt-stash/`, written atomically on every change; deleting the session through `pi-session-manager` removes it.
 
-Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across kendex Pi extensions while leaving tool/model/user content unchanged.
+## Customise
 
-Open `/extensions:settings`; settings appear under the **Prompt Stash** tab.
+Open `/extensions:settings`; settings appear under the **Prompt Stash** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted. `glyphStyle` picks `unicode` or `ascii` chrome, and `@vanillagreen/pi-tool-renderer`'s `globalGlyphStyleOverride` wins when set.
 
-Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted; before trust, kendex Pi extensions read user/global settings only.
-
-| Setting | What it does |
-| --- | --- |
-| Stash shortcut | Configurable. |
-| Store file | File name inside the per-session stash directory. |
-| Deduplicate prompts | Remove older entries with identical text when stashing. |
-| Popup width | Preferred popup width. |
-| Popup max height | Maximum overlay height. |
-| Visible stash rows | Rows shown before scrolling. |
+- `enabled`: master toggle.
+- `shortcut`: the stash-or-open shortcut.
+- `storeFile`: the file name inside the session's stash folder.
+- `deduplicate`: drop older entries with identical text.
+- `popupWidth`, `popupMaxHeight`, `listRows`: popup size.

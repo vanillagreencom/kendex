@@ -1,17 +1,23 @@
-# pi-extension-manager
+# @vanillagreen/pi-extension-manager
+
+A package manager and settings editor for the Pi packages kendex, npm, git or a local path installed. Every kendex Pi extension puts its settings in the editor this package provides, so install it first.
 
 ![Extension Manager browser and settings editor](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-extension-manager/assets/extension-manager.gif)
 
-Package manager and settings editor for Pi packages installed by kendex, npm, git, or local path.
-
-## Highlights
-
-- Browse, enable, disable, update, and uninstall packages from one popup.
-- Separate settings editor with one tab per package that exposes kendex settings from user/global and project scopes.
-- Diagnostics view shows status, source, install method, versions, and update state.
-- Optional notification at session start when newer versions are available.
-
 ## Install
+
+Declare the package in the scope's kendex manifest, then let `kendex update-pi` install it and register it in Pi's `settings.json`. For a project, in its `kendex.toml`:
+
+```toml
+[pi-extensions."@vanillagreen/pi-extension-manager"]
+source = "kendex"
+```
+
+```bash
+kendex update-pi
+```
+
+The same declaration in `~/.config/kendex/kendex.toml` installs it for every project. `kendex update-pi --check` prints the plan and changes nothing.
 
 Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-extension-manager):
 
@@ -19,45 +25,29 @@ Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-extension-manager):
 pi install npm:@vanillagreen/pi-extension-manager
 ```
 
-Via [kendex](https://github.com/vanillagreencom/kendex):
-
-```bash
-cargo install --git https://github.com/vanillagreencom/kendex.git kendex
-kendex add vanillagreencom/kendex --pi-extension pi-extension-manager --harness pi -y
-```
-
 Restart Pi after installation.
 
-## Commands
+## What it does
 
-| Command | Action |
-| --- | --- |
-| `/extensions` | Open the package manager. |
-| `/extensions:settings` | Open the settings editor. |
-| `/extensions:enable` | Recovery command when the manager is disabled. |
+- `/extensions` browses every installed package with its status, source, install method, versions and update state, and enables, disables, updates or uninstalls it.
+- `/extensions:settings` edits each package's kendex settings on one tab per package, at project or user scope.
+- `/extensions:enable` brings the manager back when its own UI has been disabled.
+- Notifies once at session start when installed packages have newer versions.
+- Shows a value a package takes from a config file of its own with the file that supplies it, so the row reads what the package resolves rather than the schema default.
 
-Each popup documents its own keys in the footer.
+Each popup lists its keys in its footer. Enabling, disabling and updating a package take effect after `/reload` or a restart, because Pi cannot unload a loaded extension. Project-scope packages and settings appear only once Pi reports the workspace trusted.
 
-Status icons: `●` active, `○` inactive, `×` broken. Packages with newer versions show `Update Needed`.
+## How it works
 
-## Settings
+The manager reads Pi's `settings.json` at user and project scope and the `package.json` of every package they name, under Pi's own package roots. A package declares its settings schema under `kendex.extensionManager` in its manifest, and the editor writes values under `kendex.extensionManager.config[<package>]` in the chosen scope's `settings.json`, where the package reads them. npm actions run in the scope's own npm directory; git packages are read only under Pi's managed clone root, and an entry pointing outside it shows as broken.
+
+## Customise
 
 Open `/extensions:settings`; settings appear under the **Extension Manager** tab.
 
-Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted; before trust, kendex Pi extensions read user/global settings only.
+- `enabled`: expose `/extensions` and the manager UI; `/extensions:enable` always works.
+- `defaultSaveScope`: where an edit is written when the scope is ambiguous.
+- `notifyOnUpdates`: the session-start notification.
+- `glyphStyle`: unicode or ASCII chrome for this package; `globalGlyphStyleOverride` on the Tool Renderer tab forces one style across every kendex Pi extension.
 
-Some packages also keep a config file of their own. A row whose value comes from one of those files shows the value the package actually resolves, and names the file under the setting. Editing the row writes Pi settings, which override that file; `delete` reports the file instead of resetting, because the value is not stored in Pi settings.
-
-| Setting | What it does |
-| --- | --- |
-| Enable manager UI | Expose `/extensions` and the manager UI. `/extensions:enable` is always available as recovery. |
-| Default save scope | Where setting edits are written when scope is ambiguous (`project` or `user`). |
-| Notify on extension updates | Post a one-line notification at session start listing extensions with newer versions. |
-
-Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across kendex Pi extensions while leaving tool/model/user content unchanged.
-
-## Notes
-
-Package enable/disable and updates take effect after `/reload` or restart — Pi doesn't currently support unloading already-loaded extensions. Project-scope settings and packages are shown only when Pi reports the current project as trusted; untrusted projects use user/global settings only. npm update/uninstall actions run inside Pi's scope-local npm directory (`<scope>/npm`), matching Pi 0.75+ user package installs under `~/.pi/agent/npm/`. Command execution resolves Windows npm-family shims without requiring external runtime dependencies.
-
-Git package entries are inspected only under Pi's managed clone root (`<scope>/git/<host>/<repo>`). Entries with unsafe host or path components are shown as broken instead of reading package metadata from outside that root.
+Editing a row whose value comes from a package's own config file writes Pi settings, which override that file; deleting such a row names the file instead, because nothing is stored in Pi settings to reset. Maintainer notes, including the contract a package implements to report such values, are in [DEVELOPMENT.md](DEVELOPMENT.md).

@@ -1,20 +1,23 @@
-# pi-skills-manager
+# @vanillagreen/pi-skills-manager
+
+A skills manager for Pi. One `/skill` view browses, previews, creates, edits, renames, deletes and toggles skills, while Pi's native `/skill:<name>` invocation stays as it is.
 
 ![Skills Manager overlay](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-skills-manager/assets/skills-manager.png)
 
-Dedicated skills manager. Browse, preview, create, edit, rename, delete, and toggle skills from one `/skill` view while keeping Pi's native `/skill:<name>` invocation.
-
-## Highlights
-
-- Project, global, and package skills shown separately.
-- Search by name, description, source, scope, and path.
-- enter inserts the enabled skill as a native `/skill:<name>` command into the editor.
-- tab previews frontmatter and rendered content.
-- Create new project or global skills using the current model, including providers authenticated through headers or ambient environment settings. Falls back to a deterministic template when the model is unavailable.
-- Edit, rename, and delete your own top-level skills. Package skills stay preview/toggle/insert only.
-- Hides Pi's startup `[Skills]` block so skill discovery lives in the manager.
-
 ## Install
+
+Declare the package in the scope's kendex manifest, then let `kendex update-pi` install it and register it in Pi's `settings.json`. For a project, in its `kendex.toml`:
+
+```toml
+[pi-extensions."@vanillagreen/pi-skills-manager"]
+source = "kendex"
+```
+
+```bash
+kendex update-pi
+```
+
+The same declaration in `~/.config/kendex/kendex.toml` installs it for every project. `kendex update-pi --check` prints the plan and changes nothing.
 
 Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-skills-manager):
 
@@ -22,49 +25,30 @@ Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-skills-manager):
 pi install npm:@vanillagreen/pi-skills-manager
 ```
 
-Via [kendex](https://github.com/vanillagreencom/kendex):
-
-```bash
-cargo install --git https://github.com/vanillagreencom/kendex.git kendex
-kendex add vanillagreencom/kendex --pi-extension pi-skills-manager --harness pi -y
-```
-
 Restart Pi after installation.
 
-## Commands
+## What it does
 
-| Command | Action |
-| --- | --- |
-| `/skill` | Open the manager. |
-| `/skill disable` | Disable the feature toggle. Run `/reload` to unload. |
-| `/skill:enable` | Recovery command when disabled. |
-| `/skill:<name>` | Native Pi skill invocation (handled by Pi). |
+- `/skill` opens the manager, with project, global and package skills listed separately and searchable by name, description, source, scope and path.
+- Enter inserts an enabled skill into the editor as its native `/skill:<name>` command; tab previews the frontmatter and rendered body.
+- Create a project or global skill from a name, a trigger-focused description and a location; the current model drafts the `SKILL.md`, and a deterministic template stands in when the model is unavailable or fails.
+- Edit, rename and delete your own top-level skills. Package skills are preview, toggle and insert only.
+- Toggling a skill writes Pi's own package filter patterns, so the change holds outside the manager too.
+- Hides Pi's startup `[Skills]` block so discovery lives in the manager.
+- `/skill disable` turns the feature off; `/skill:enable` turns it back on and reloads.
+- Native `/skill:<name>` registration is Pi's `enableSkillCommands` setting and is left alone.
 
-Each view (browse, preview, edit) documents its own keys in the footer.
+## How it works
 
-Create: name (normalized to a lowercase slug), trigger-focused description, visibility (project `.pi/skills/<name>/SKILL.md` or global `~/.pi/agent/skills/<name>/SKILL.md`).
+The manager reads the skills Pi's resource loader already discovered, renders them in a popup that documents its keys in the footer, and writes through Pi's settings manager for toggles and through the filesystem for create, edit, rename and delete.
 
-## Settings
+## Customise
 
-Open `/extensions:settings`; settings appear under the **Skills Manager** tab.
+Open `/extensions:settings`; settings appear under the **Skills Manager** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted. `glyphStyle` picks `unicode` or `ascii` chrome, and `@vanillagreen/pi-tool-renderer`'s `globalGlyphStyleOverride` wins when set.
 
-Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted; before trust, kendex Pi extensions read user/global settings only.
+- `enabled`: master toggle.
+- `hideStartupSkillsBlock`: hide Pi's startup `[Skills]` list.
+- `aiGenerationEnabled`, `defaultCreateLocation`: how and where a created skill is drafted.
+- `popupWidth`, `popupMaxHeight`, `listRows`: overlay size; short terminals shrink the list so the controls stay visible.
 
-| Setting | What it does |
-| --- | --- |
-| Hide startup skills block | Hide Pi's built-in startup `[Skills]` list. |
-| AI skill generation | Use the current model to draft new `SKILL.md` files with Pi-standard transient retries when available. Provider or validation failures show a warning before saving the deterministic fallback template. |
-| Default create location | `project` or `global`. |
-| Popup width | Number of columns or `82%`-style percentage. |
-| Popup max height | Number of rows or percentage. |
-| Visible list rows | Maximum rows shown before scrolling; short terminals shrink this so controls remain visible. |
-
-Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across kendex Pi extensions while leaving tool/model/user content unchanged.
-
-## Notes
-
-Native `/skill:<name>` registration is controlled by Pi's `enableSkillCommands` setting (`/settings` → **Skill commands**). This manager doesn't change it.
-
-## Attribution
-
-Locally owned by kendex, based on ideas from the MIT-licensed [`@kmiyh/pi-skills-menu`](https://github.com/Kmiyh/pi-skills-menu). See `THIRD_PARTY_NOTICES.md`.
+Based on ideas from the MIT-licensed [`@kmiyh/pi-skills-menu`](https://github.com/Kmiyh/pi-skills-menu); see `THIRD_PARTY_NOTICES.md`. Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).

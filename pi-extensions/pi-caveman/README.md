@@ -1,22 +1,23 @@
-# pi-caveman
+# @vanillagreen/pi-caveman
+
+Caveman communication mode for Pi: fewer output tokens, the same technical accuracy. A mode is a system-prompt directive the model holds across turns; the extension steers style and never rewrites output.
 
 ![/caveman command autocomplete](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-caveman/assets/command-autocomplete.png)
 
-Native Pi caveman communication mode: fewer output tokens, same technical accuracy.
-
-## Highlights
-
-- Each mode has a clear personality the model actually picks up and holds across multiple turns.
-- Lite gives you tight professional sentences instead of telegraph-style fragments.
-- Replies stay as flowing chat — no markdown headers turning every answer into a doc page.
-- Plain-English safety mode triggers only for genuinely destructive commands, not whenever you say "I'm confused" or ask about security.
-- No leftover marker lines or odd `Caveman ask:` prefixes showing up in your answers.
-- Commit messages, PR descriptions, reviews, and anything you're sending to others stay normal English.
-- Warns you when your Claude-bridge setup would silently drop caveman before it reaches the model.
-- Per-session sidecar state preserves session overrides across `pi -r`, including slash-command changes made before the next model turn.
-- Tested across multiple providers and real back-and-forth conversations, not just one-shot prompts.
-
 ## Install
+
+Declare the package in the scope's kendex manifest, then let `kendex update-pi` install it and register it in Pi's `settings.json`. For a project, in its `kendex.toml`:
+
+```toml
+[pi-extensions."@vanillagreen/pi-caveman"]
+source = "kendex"
+```
+
+```bash
+kendex update-pi
+```
+
+The same declaration in `~/.config/kendex/kendex.toml` installs it for every project. `kendex update-pi --check` prints the plan and changes nothing.
 
 Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-caveman):
 
@@ -24,68 +25,32 @@ Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-caveman):
 pi install npm:@vanillagreen/pi-caveman
 ```
 
-Via [kendex](https://github.com/vanillagreencom/kendex):
-
-```bash
-cargo install --git https://github.com/vanillagreencom/kendex.git kendex
-kendex add vanillagreencom/kendex --pi-extension pi-caveman --harness pi -y
-```
-
 Restart Pi after installation.
 
-## Commands
+## What it does
 
-| Command | Action |
-| --- | --- |
-| `/caveman` | Toggle the current session between off and the last active mode. |
-| `/caveman:lite\|full\|ultra\|micro` | Set a session override mode. |
-| `/caveman:toggle` | Toggle the session override between off and the last active mode. |
-| `/caveman off` | Disable caveman mode for the current session. |
-| `/caveman status` | Show current mode and whether it comes from settings or a session override. |
-| `/caveman debug` | Show resolved mode, settings paths, and the rendered prompt block. |
+- Four modes: `lite` (tight professional sentences, no filler or hedging), `full` (terse, fragments allowed), `ultra` (maximum compression with abbreviations and arrows), `micro` (the shortest directive, for token-sensitive sessions).
+- `/caveman` toggles the session between off and the last active mode; `/caveman:lite`, `:full`, `:ultra`, `:micro` set a session override; `/caveman off`, `/caveman status` and `/caveman debug` clear it, show where the mode comes from, and print the rendered directive. Arguments autocomplete.
+- Replies stay flowing chat with no markdown headers, and no marker lines or `Caveman` prefixes leak into answers.
+- When a prompt names an irreversible destructive operation (force-push, hard reset, drop table, `rm -rf`, branch delete) the model answers that one reply in plain English and resumes caveman on the next turn.
+- Code blocks, quoted errors, commit messages, PR descriptions, formal reviews and anything sent to other systems stay normal English, each boundary its own toggle.
+- A session keeps the mode it started with across `pi -r`, including slash-command changes made before the next model turn, even when the default changes later; changing the default in the settings editor replaces the session override.
+- `pi-qol` shows a Caveman badge in its statusline and cycles modes on alt+c.
 
-Arguments support autocomplete.
+## How it works
 
-## Modes
+Before every model turn the extension reads the configured mode and the session override, renders one directive block for the effective mode, and appends it to Pi's system prompt. Session state lives in a small sidecar file under the session's kendex data folder, so a resumed session restores its override without replaying the conversation.
 
-| Mode | Style |
-| --- | --- |
-| `lite` | Professional full sentences, but no filler or hedging. |
-| `full` | Classic terse caveman; fragments are OK. |
-| `ultra` | Maximum English compression with abbreviations and arrows. |
-| `micro` | Shortest prompt injection for token-sensitive sessions. |
+## Customise
 
-## Behavior
+Open `/extensions:settings`; settings appear under the **Caveman** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted.
 
-- Mode is stored in your Pi settings and applied at the start of every model turn. The extension steers style; it doesn't rewrite the model's output.
-- `/caveman` slash commands set a per-session override. Active non-off defaults are snapshotted into new sessions, so resuming with `pi -r` keeps the mode that session started with even if your global default changes later. Changing the default in the extension manager replaces any active override in the current session.
-- When you type a destructive command (force-push, hard reset, drop table, rm -rf, etc.), caveman steps aside for that one reply and the model writes plain English. Caveman resumes automatically on the next turn.
-- Caveman applies to chat replies only. Commit messages, PR descriptions, formal reviews, and anything you send to other systems (issue bodies, PR comments, chat, email) stay normal English.
-- pi-qol uses this extension to show a Caveman badge in the status line and bind a configurable shortcut to cycle modes.
+- `mode`: the default mode for new sessions.
+- `showStatusBadge`, `sessionOverrideAllowed`: the statusline badge and whether `/caveman` commands may override the default.
+- `autoClarityEscape`, `resumeAfterClarityEscape`: the plain-English reply for destructive operations and the return to caveman afterwards.
+- `boundaryNormalForCode`, `boundaryNormalForCommits`, `boundaryNormalForReviews`, `boundaryNormalForExternalWrites`: which outputs stay normal English.
+- `customPromptSuffix`: project-specific guidance appended to the directive.
 
-## Settings
+With `pi-claude-bridge` as the provider the directive reaches Claude only when the bridge's `includeCavemanHook` setting is on; it is off by default, and caveman warns once at session start while it is off. Native Pi providers need nothing.
 
-All settings are toggled in the extension manager (or written directly to Pi/kendex `settings.json`).
-
-Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted; before trust, kendex Pi extensions read user/global settings only.
-
-| Setting | Default | What it does |
-| --- | --- | --- |
-| `mode` | `off` | Default caveman mode for new sessions. |
-| `showStatusBadge` | `true` | Show the caveman badge in the status line while active. |
-| `sessionOverrideAllowed` | `true` | Allow `/caveman` commands to override the default within a session. |
-| `autoClarityEscape` | `true` | Switch to plain English for one reply when the user prompt names a destructive operation. |
-| `resumeAfterClarityEscape` | `true` | Resume caveman automatically on the next turn after a safety override. |
-| `boundaryNormalForCode` | `true` | Keep code blocks and quoted errors normal English. |
-| `boundaryNormalForCommits` | `true` | Keep commit messages and PR descriptions normal English. |
-| `boundaryNormalForReviews` | `true` | Keep formal reviews normal English. |
-| `boundaryNormalForExternalWrites` | `true` | Keep issue bodies, PR comments, code review messages, and chat/email normal English. |
-| `customPromptSuffix` | `""` | Extra project-specific guidance appended to the caveman directive. |
-
-## Claude-bridge users
-
-pi-caveman injects its directive into Pi's `systemPrompt`. When you use `claude-bridge` as your provider, claude-bridge builds its own `systemPrompt` from Claude Code's preset and only forwards pi-side hooks that you explicitly enable. The caveman directive is one of those hooks.
-
-- Set `@vanillagreen/pi-claude-bridge` → `includeCavemanHook: true` in the extension manager. The default is **off**.
-- If caveman is active and the bridge is installed with this flag off, pi-caveman warns once at session start. Run `/caveman debug` to confirm the resolved bridge setting.
-- Non-bridge providers (native Pi providers) receive the caveman block as part of Pi's regular `systemPrompt` and do not need this flag.
+Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).

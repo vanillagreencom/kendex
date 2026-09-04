@@ -1,225 +1,43 @@
-# pi-agents-tmux — development notes
+# pi-agents-tmux development
 
-Implementation surface for contributors and AI callers. End-user setup, commands, customization, and settings live in [`README.md`](./README.md).
+For maintainers. What the package does for a consumer is [README.md](README.md); the calling rules an agent follows are `instructions.md`; the mechanics of each subsystem are doc comments on the functions named below. This file holds the vocabulary and the invariants that span modules.
 
-## Nomenclature
+## Vocabulary
 
-Three layers, used consistently across tool output, mini dashboard widget, full `/agents` popup, and the persisted record:
+- An **agent** is the static profile from an agent file (`extensions/subagent/agents.ts::discoverAgents`).
+- A **session** is one Pi runtime carrying an agent, with a `sessionId` and a JSONL transcript. A pane agent has one persistent session per pane; a background agent gets a fresh session per task unless the call names a `sessionKey` lane.
+- A **task** is one `subagent` invocation: a `taskId`, the prompt, a status (`queued`, `running`, `completed`, `blocked`, `failed`, `needs_completion`), a summary, a transcript path and usage (`extensions/subagent/types.ts::PaneTaskRecord`). It is what the person observes; prefer these names over "run" or "invocation" in code and UI.
+- A record's `sessionMode` is `fresh`, `resumed` or `new` (`types.ts::SessionMode`); a pane's runtime-only `paneSessionMode` is `live`, `resumed` or `new`, and both `live` and `resumed` normalise to `resumed`.
+- The dashboard's `bg` or `pane` lane badge renders from `SingleResult.kind`, stamped at dispatch from the agent's `pane` frontmatter, never from `taskId`, which records only whether a task was queued and is absent on a pane dispatch refused before queueing. A dispatch declined before anything ran also sets `refused: true` so the row reads `refused`, not `failed`, and shows no usage.
 
-- **Agent** — the static profile (name, model, kind, deny-tools, description). Sources are `~/.claude/agents`, `~/.pi/agent/agents`, nearest project `.claude/agents`, and nearest project `.pi/agents`; `$HOME` harness dirs stay user-scoped when Pi runs under home. Reusable across many invocations.
-- **Session** — the underlying Pi runtime carrying an agent. Has a `sessionId` and a session file (JSONL transcript) that survives across turns. Pane agents have ONE persistent session per pane; bg agents default to ONE-SHOT (fresh session per task) but can reuse a session via `sessionKey`.
-- **Task** — a single `subagent` tool invocation. Has a `taskId`, the input prompt, status (`queued` → `working` → `completed | failed | needs_completion`), summary, transcript path, and usage. The unit of work the user observes.
+## Invariants
 
-Relationships:
+- Child identity and pane ownership are separate environment markers. `PI_SUBAGENT_CHILD_AGENT` is exported for pane children and background one-shot children alike and authorises `delegate_subagent`; `PI_SUBAGENT_CHILD_PANE=1` is exported only by the persistent pane launcher and is the only marker that lets session-start code set the pane title or poll the pane inbox. The background runner deletes inherited `PI_SUBAGENT_CHILD_PANE`, `PI_SUBAGENT_PARENT_SESSION_ID` and `PI_BRIDGE_*` because it runs inside the parent's process tree.
+- `delegate_subagent` stays narrow: single mode, background targets only, the allowlist read from the caller agent's `allowed-subagents:` frontmatter (`agents.ts::AgentConfig.allowedSubagents`), no `tasks`, `chain`, `agentScope`, `sessionKey`, `forceSpawn` or `resumeSession` in its schema (`extensions/subagent/tools.ts::DelegateSubagentParams`). Growing the schema or short-circuiting the allowlist defeats the dev-agent-without-orchestration design; `tests/allowed-subagents.test.ts` and `tests/delegate-subagent-runtime.test.ts` hold it.
+- Child spawning resolves the Pi entry through `extensions/subagent/pane.ts::getPiInvocation`, which self-re-invokes `argv[1]` only when the nearest `package.json` proves it is Pi, and every spawned child carries `PI_SUBAGENT_DEPTH`; `pane.ts::assertSubagentSpawnDepth` refuses a spawn past the depth cap so a mis-resolved entry dies loudly instead of fork-bombing. `PI_SUBAGENT_ENTRY` pins the entry for direct-import callers; `tests/pi-invocation.test.ts` holds the resolution rules.
+- Background one-shot children complete through their final assistant output. `complete_subagent` is filtered out of their inherited tools, and only pane and follow-up tasks instruct a child to call it.
+- Returned output is artifact-first: `resultMaxBytes` and `resultMaxLines` are base budgets that parallel dispatch divides across returned agents with per-agent floors, and `preserveFullOutput` writes the rest under the session runtime. Tool results are replayed into later model requests, so this path stays compact.
+- Registry writes go through `extensions/subagent/file-lock.ts::withCrossProcessFileLock`, and the default lock timeout stays longer than the stale-lock window so a killed process's lock is reaped before callers give up. Dashboard and Monitor refreshes that meet contention keep the last record and retry on the next poll; completion collection persists the terminal record before it archives the outbox, and leaves the outbox as the retry source when persistence fails.
+- Session-state snapshots are bounded (`extensions/subagent/session-persistence.ts::appendBoundedSnapshot`, `BOUNDED_SNAPSHOT_DEFAULT_MAX_BYTES`): an unchanged fingerprint is skipped and an oversized payload becomes a small manifest, while the sidecar registries under `paths.ts::taskRegistryPath` and `paths.ts::registryPath` stay canonical and are read first on restore. Registries mirror into session custom entries only when the session file's on-disk leaf still matches the in-memory leaf, so an orphaned Pi process cannot advance an older branch.
+- Activity broker publication (`extensions/subagent/activity.ts`) is fail-open: a publish error never affects dispatch, steering, completion or result retrieval. The `subagents:*` to `agent.*` mapping lives in `activity.ts::buildSubagentActivity`; a new event type updates that table and the README's feature line together.
+- No module in the static import closure of `index.ts` through `rate-limit-watchdog.ts`, `rate-limit-decision.ts`, `rate-limit-reset.ts` and `rate-limit-quota-normalize.ts` may take a `node:*` import; Pi's binary TS loader resolves transpiled modules through `data:` URLs and a large module with such imports trips `NameTooLong`. The provider fetch in `rate-limit-quota.ts` stays behind a dynamic import for that reason. The constraint is stated on each module and not enforced by a check.
+- `cwdSnapshot` reads for `needs_completion` records write nothing: every git call runs with optional locks off, fsmonitor and untracked cache disabled, and `GIT_CONFIG_GLOBAL=/dev/null`. A repository-local clean filter is reached, which is accepted because `.git/config` is never cloned; an LFS repository can read dirty where the worker's own status reads clean, which is the safe direction. `tests/cwd-snapshot-dirty-status.test.ts` holds it.
+- Pane support tools are registered from `index.ts` through explicit dependency injection into `extensions/subagent/pane-support-tools.ts::registerPaneSupportTools`; steer-path helpers such as `pane.ts::ensurePaneBridgeMetadata` are passed in, never imported by that module, which keeps it out of the pane and task import graph.
+- Completed records keep their durable summary in `PaneTaskRecord.summary`; every surface (dashboard, Monitor, chat completion rows, `get_subagent_result`) reads that field and shows `format.ts::COMPLETION_SUMMARY_UNAVAILABLE` rather than echoing the prompt when it is empty.
 
-- 1 agent → N sessions (over a project's lifetime). 1 session → M tasks. For pane agents `M >> 1`; for bg one-shot agents `M = 1` per session; for bg agents reusing a `sessionKey` lane `M >= 1`.
-- A **prompt** is the input text of a task. A task is not just a prompt — it's the whole invocation record including lifecycle and result. The Monitor tab's `Task` subtab specifically shows the input prompt of a completed task.
-- `taskId` is globally unique. `sessionId` is per-runtime. `agent.name` is the static identifier.
+## Lifecycle edges
 
-Session-mode fields on task records use normalized user-facing values:
+- Live pane reuse on Linux runs a cwd preflight against `/proc/<pid>/cwd` and refuses with `pane-cwd-stale` when the directory is gone or differs from the task's `cwd`; no task record is written because nothing was queued.
+- A background attempt that throws a provider context overflow is retried once in a fresh lane; only error envelopes and stderr are trusted, never tool output that mentions overflow wording. A `session_compact` followed by an empty `agent_end` on the post-compact slice is classified `compact-then-empty` and reported `needs_completion`; the two paths are mutually exclusive, retry first.
+- Pi's `agent_settled` event is the lifecycle boundary for background children and for the missing-completion watchdog (`extensions/subagent/agent-end-watchdog.ts::createAgentEndWatchdog`, `settled-handler.ts`), because unlike `agent_end` it waits out retries, compaction retries and queued continuations. The watchdog writes a synthetic `needs_completion` outbox with `O_EXCL` after `KENDEX_AGENT_END_WATCHDOG_GRACE_SEC` so a real `complete_subagent` always wins; `KENDEX_AGENT_END_WATCHDOG=0` disables it.
+- A settled background child gets a short grace for print-mode shutdown; activity in that window cancels the shutdown and restores the original timeout deadline, and once `SIGTERM` is delivered the shutdown is irreversible. `tests/settled-handler.test.ts` and the runner cases in `tests/session-lanes.test.ts` enumerate the orderings.
+- The rate-limit watchdog classifies only assistant messages with `stopReason: "error"`; the retry schedule prefers a structured quota snapshot, then an SDK reset field, then prose parsing, then a plain backoff ladder, and records which source it used on the activity payload.
+- One-shot transcripts drop successful `message_update` events and rebuild a partial assistant message from accumulated deltas only when the process fails after an unfinalised update (`extensions/subagent/__tests__/partial-assistant-message.test.ts`). `PI_AGENTS_TMUX_TRANSCRIPT_FULL=1` in the parent environment keeps the whole stream.
 
-- `sessionMode: "new"` — pane task that launched the first task on a fresh pane session.
-- `sessionMode: "resumed"` — task continuing prior context: live/reopened pane, restored archived pane, or explicit bg `sessionKey` lane.
-- `sessionMode: "fresh"` — independent bg one-shot with no user-supplied `sessionKey`.
-- `sessionKey` is stored only for explicit bg memory lanes. Row chips render `lane:<key>` truncated to about 14 characters; Inspector Summary renders the full key.
+## Tests
 
-Do not confuse normalized record `sessionMode` (`fresh|resumed|new`) with runtime-only pane `paneSessionMode` (`live|resumed|new`); `live` and `resumed` both normalize to `resumed`.
-
-Where the UI surfaces each layer:
-
-- **Mini dashboard widget** — one row per dispatched task (current state + usage rollup). Resumed pane work can share a row when transcript identity matches; task-centric detail surfaces expose individual `taskId`s. When a pane row is collapsed this way, registry sync keeps the newest task for that pane session so historical records from completion polling cannot temporarily rewind the row and reshuffle the completed list.
-- **`/agents` popup → Agents tab** — agent profiles only: static frontmatter/config, source path, and system prompt. No task children, task ids, transcripts, completion summaries, or latest-message surfaces. The Inspector is intentionally static; execution data lives on Monitor.
-- **`/agents` popup → Monitor tab** — session-grouped tree of active + completed tasks. Session is the primary grouping: pane, bg-lane (`sessionKey`), or bg-one-shot. Repeated same-agent sessions get session numbers; task numbers reset inside each session. Selecting a session shows aggregate metadata/usage/status counts; selecting a task shows Summary, Completion, and Task detail.
-- **Tool output rendering** — per-task status rows (`● Agent <name> <status> · bg|pane · ctrl+o to expand`) with a `Task: <prompt>` body line when echoing the prompt and a JSON/markdown-aware preview when showing the result. The lane badge renders from `SingleResult.kind`, stamped at dispatch from the agent's `pane` frontmatter — never from `taskId`, which records only whether a task was queued and is absent on a pane dispatch that ends before queueing.
-
-When reading code, prefer the layer names above over ambiguous terms like "run" or "invocation". `PaneTaskRecord` is per-task; `PaneSession*` types refer to the session runtime; `discoveredAgent` / `agentConfig` refer to the static profile.
-
-## Subagent tool surface
-
-The `subagent` Pi tool accepts single, parallel, and chain forms.
-
-```json
-// Single
-{ "agent": "rust", "task": "Inspect error handling and summarize findings." }
-
-// Parallel
-{ "tasks": [
-  { "agent": "iced", "task": "Review the widget layout." },
-  { "agent": "reviewer-test", "task": "Check test coverage gaps." }
-] }
-
-// Chain (with {previous} placeholder)
-{ "chain": [
-  { "agent": "scout", "task": "Map the relevant files." },
-  { "agent": "planner", "task": "Turn this into a plan: {previous}" }
-] }
+```bash
+bun test ./tests ./extensions/subagent/__tests__
 ```
 
-Options:
-
-- `agentScope`: `project` (default), `user`, or `both`.
-- `cwd`: per-task working directory.
-- `confirmProjectAgents`: prompt before running project agents.
-- `sessionKey`: opt-in named memory lane (bg agents). Pane agents persist via their own session file and ignore `sessionKey`. Parallel and chain items that omit `sessionKey` automatically get distinct one-shot lanes. Reused lanes run a preflight context-budget heuristic — see Settings → Execution.
-
-Unknown agent names fail with a structured error listing missing and available agents. No similar-name redirect is attempted.
-
-Live pane reuse runs a Linux cwd preflight before returning an existing pane or writing a new inbox task. The parent resolves the pane process pid from tmux, reads `/proc/<pid>/cwd`, and refuses reuse with `stopReason: "pane-cwd-stale"` if the cwd is deleted, missing, or different from the requested task `cwd`. Queue failures emit `subagents:failed` with `reason: "pane-cwd-stale"`, cwd details, and no task record because no task was queued; callers should `stop_subagent` and retry with `forceSpawn: true`.
-
-A dispatch the extension declines before anything runs — unknown agent, `resumeSession` with `forceSpawn`, `forceSpawn` over a live pane, a reused-session budget refusal, or the pane cwd preflight — sets `refused: true` on the result. Those rows render as `refused` in warning tone rather than `failed`, and their expanded view omits the tools/final-response/usage sections, because no child process ran and the zeroed usage would otherwise read as a run that produced nothing. The refusal message and its recovery hint are shown verbatim. `exitCode` stays `1` so callers that branch on it keep treating a refusal as unsuccessful.
-
-Parallel dispatch runs through a flat worker pool capped by `maxConcurrency` (default 4); the whole task array shares one queue. The limit applies to concurrent one-shot/background executions. Persistent pane agents occupy a worker only until launch/enqueue, then completion tracking moves out of the pool. The earlier `maxParallelTasks` setting is a deprecated no-op kept for setting-file compatibility and is intentionally absent from the settings manager metadata.
-
-Returned bg output is intentionally artifact-first. `resultMaxBytes` / `resultMaxLines` are base inline budgets (defaults 32 KiB / 1200 lines); parallel dispatch divides those budgets across returned agents with 1 KiB / 40-line per-agent floors, and `preserveFullOutput` writes oversized results under the session runtime when enabled. Keep this path compact because tool results are replayed into later model requests, while transcripts/artifacts remain available for deep inspection.
-
-Bg one-shot children complete through their final assistant output, which the runner captures from the JSON stream and publishes as the `subagents:completed` summary. They do not have a durable pane task outbox, so the runner filters `complete_subagent` out of inherited active tools, passes `--exclude-tools complete_subagent`, and falls back to `--no-tools` if that was the only inherited tool. Persistent pane and follow-up tasks remain the only paths that instruct children to call `complete_subagent`.
-
-Child process environment is split by identity vs visible pane ownership. `PI_SUBAGENT_CHILD_AGENT` exists for both persistent pane children and bg one-shot children so statusline context and `delegate_subagent` authorization work everywhere. `PI_SUBAGENT_CHILD_PANE=1` is exported only by the persistent pane launcher; only that marker allows session-start code to set the tmux pane title (`agent:<name>`) or poll the pane inbox. Background one-shot children keep the same agent identity for authorization but do not update the inherited parent pane title or poll pane inbox files. The bg runner must delete inherited `PI_SUBAGENT_CHILD_PANE`, `PI_SUBAGENT_PARENT_SESSION_ID`, and `PI_BRIDGE_*` vars because bg children run inside the parent process tree and often inherit `TMUX_PANE` from the master pane.
-
-Child spawning resolves the pi entry through `pane.ts::getPiInvocation` (kendex#192). `argv[1]` is self-re-invoked only when its basename looks like a pi entry (`pi`, `pi.js`, `pi.mjs`, `pi.ts`, `cli.js`, `cli.mjs`, `cli.ts`) AND the nearest `package.json` above the realpathed script proves pi package identity: name `@earendil-works/pi-coding-agent`, or a `pi` bin entry (object form, or string form on a package named `pi`) that resolves to the realpathed script itself — a foreign package declaring `bin.pi` pointing elsewhere does not qualify. A missing manifest continues the walk; any other read failure fails closed. A process that merely imported these modules — a standalone harness or test calling `runSingleAgent`, even one named `cli.ts` — falls back to `pi` on PATH instead of forking itself. Direct-import callers can set `PI_SUBAGENT_ENTRY` to pin the entry explicitly; script overrides and separator-bearing executable forms (`./bin/pi`) are resolved to absolute paths against the parent cwd because children spawn from the delegated agent cwd (and a command with a separator is never PATH-resolved), separator-free names stay verbatim for PATH lookup, and the resolved form is what children inherit (bg runner child env + pane launcher export via `PiInvocation.childEntryOverride`). Independently of entry resolution, every spawned child (bg one-shot env and pane launcher script) carries `PI_SUBAGENT_DEPTH`, and `assertSubagentSpawnDepth` refuses any spawn past depth 3 so a mis-resolved entry dies loudly instead of fork-bombing the machine.
-
-## Restricted delegation (`delegate_subagent`) — issue #228
-
-`delegate_subagent` is a single-mode wrapper around the same dispatch helpers `subagent` uses (`runSingleDispatch` → `runSingleAgent`). Differences from `subagent`:
-
-```json
-// Only shape accepted. `cwd` is the sole optional field.
-{ "agent": "scout", "task": "Map the cwd-snapshot module.", "cwd": "/optional/working/dir" }
-```
-
-`cwd` defaults to the caller's cwd when omitted; when present it is threaded to `runSingleDispatch` as `cwdOverride`, identical to the single-mode path of full `subagent`.
-
-- **Authorization.** `PI_SUBAGENT_CHILD_AGENT` must be set in the calling Pi process. Pane launchers and the bg one-shot runner both export it for issue #228. Do not use it as proof that the process owns a tmux pane; use `PI_SUBAGENT_CHILD_PANE=1` for visible pane-only behavior. Without the agent identity var the tool refuses immediately. The caller agent's discovered `AgentConfig.allowedSubagents` (parsed from `allowed-subagents:` frontmatter and aliases `allowedSubagents` / `subagent-agents` / `subagent_agents`) is the canonical allowlist. Unlisted targets, undiscovered targets, and pane targets are all rejected before launch.
-- **No orchestration knobs.** No `tasks`, `chain`, `agentScope`, `sessionKey`, `forceSpawn`, `resumeSession`, or `confirmProjectAgents`. The schema literally does not expose them; the resolver defaults `agentScope` to `"project"` and `sessionKey`/`forceSpawn`/`resumeSession` to undefined.
-- **Tool inheritance.** Child tools start from the parent active tools then drop the target agent's `deny-tools`. kendex-generated agents of every role but `engineer` already deny `delegate_subagent` so a chain like `rust → scout → researcher` is impossible by default — scout's `allowed-subagents` is empty, and `delegate_subagent` is in scout's `deny-tools`. Both layers fail closed.
-- **Bg-only.** Pane targets reject with a clear error; engineer-style delegation is intentionally disposable. The child receives its own append-system prompt, skills, and a fresh one-shot session; parent conversation is not shared.
-- **System prompt.** When the only active subagent surface is `delegate_subagent`, `before_agent_start` emits a short "Restricted Subagent Delegation" section listing the caller's allowlist (with model / pane warning) instead of the full Project Agents list. When `subagent` is also active (parent orchestrator), the full list is emitted unchanged.
-
-kendex CLI defaults: engineer-role agents emit `allowed-subagents: scout` and omit `delegate_subagent` from `deny-tools`. Every other role, and an agent declaring none, omits `allowed-subagents` and adds `delegate_subagent` to `deny-tools` so the child LLM never sees it. An explicit `allowed-subagents = []` in `kendex.toml` overrides the engineer default and re-denies the tool.
-
-## One-shot transcript capture
-
-Bg one-shot transcripts keep enough history to inspect results without creating oversized session files. Bg one-shot agents run Pi in JSON stream mode and write a sidecar transcript under `transcripts/<agent>/<taskId>.jsonl`. The writer records `start`, `exit`, `message_start`, `message_end`, tool execution events, stderr, parse errors, and diagnostics. It drops successful `message_update` events by default because their content is duplicated by the final `message_end`. If the process exits nonzero or emits a process error after an unfinalized update, the latest filtered update is flushed as a `buffered: true` diagnostic record. Pi 0.84.0 made the JSON/RPC `message_update` delta-only — `toJsonEvent()` strips the cumulative top-level `message` and `assistantMessageEvent.partial` snapshots — so the newest event alone carries a single delta. The writer therefore accumulates `text_*`/`thinking_*` deltas per `contentIndex` since the last message boundary and restores the rebuilt message onto the flushed event's `message` field — where the summary backfill, dashboard activity, and transcript display already read it — and repeats it in a record-level `partialMessage` field (both omitted when the event still carries its own snapshot). `*_end` content supersedes accumulated deltas; tool calls are not rebuilt because `tool_execution_*` events already record them. Set `PI_AGENTS_TMUX_TRANSCRIPT_FULL=1` in the parent environment before launching Pi to keep the full stream for debugging.
-
-The writer also normalizes Pi event shapes used by current and older bridge streams (`{type:"event", event, data}`, `{event:{type}}`, and top-level `{type}`) before processing. `agent_start` transcript entries are enriched with the static agent name, selected model, and spawned Pi args (omitting the final task prompt arg) so transcript-only telemetry can attribute cost and model selection without reading the synthetic `start` row.
-
-## Result retrieval and steering
-
-```json
-// Recovery fallback (pass wait: true to block the turn — use sparingly).
-get_subagent_result { "taskId": "iced-..." }
-
-// Idle wait without shell polling.
-wait_for_subagent_idle { "agent": "iced", "timeoutMs": 30000 }
-// or
-get_subagent_result { "taskId": "iced-...", "waitFor": "idle" }
-
-// Mid-run correction. Targets pi-session-bridge; falls back to queued steering note.
-steer_subagent { "taskId": "iced-...", "message": "...", "deliverAs": "steer" }
-
-// Kill the pane (preserves the session file; next launch resumes).
-stop_subagent { "agent": "iced" }
-```
-
-`wait_for_subagent_idle` reports `idle-after-busy` only after observing the pane leave idle first; if it never becomes busy it returns `never-busy`.
-
-Steering and follow-up delivery mode is shown in expanded rows and trace metadata. When `pi-session-bridge` provides compact input events, trace views humanize `steer` vs `followUp` input records instead of showing raw JSON only.
-
-Pane support tools are registered from `extensions/subagent/index.ts` through explicit dependency injection into `registerPaneSupportTools()`. Keep steer-path helpers such as `ensurePaneBridgeMetadata` wired in that registration object instead of importing pane helpers from `pane-support-tools.ts`; this keeps the support-tool module out of the pane/task import graph and prevents missing-helper regressions like `ensurePaneBridgeMetadata is not a function`.
-
-## Needs-completion cwd snapshots
-
-All `needs_completion` records try to include a `cwdSnapshot` when the worker cwd is known. Pane-mode marks use the pane registry cwd; bg compact-then-empty detection uses the bg worker cwd. Snapshot fields are `head` (validated 40-hex), `dirty` (from `git status --porcelain`), and `lastCommit.subject`. Pane `markTaskNeedsCompletion` persists and returns the `needs_completion` record before kicking off cwd snapshot patching, so best-effort git timeouts cannot delay caller notification of the original failure. `cwdSnapshot` reads write nothing: each git call uses `GIT_OPTIONAL_LOCKS=0`, `--no-optional-locks`, `-c core.fsmonitor=false`, `-c core.untrackedCache=false`, `-c log.showSignature=false`, and a minimal Git env, so no snapshot creates `.git/index.lock`, refreshes the index on disk, or runs a repository fsmonitor or signature helper. It does run the worker repo's own `filter.<driver>.clean` or process filter, because dirty state is one `git status --porcelain -z --untracked-files=all` read. That is accepted: a clean driver is defined in `.git/config`, which `git clone` never copies, so a hostile repository cannot ship one. A cloned `.gitattributes` naming a driver that does not exist is a no-op to git. The snapshot also runs with `GIT_CONFIG_GLOBAL=/dev/null`, so a driver installed globally is not reached either, `git lfs install` included. What is reached is a driver in the repository's own `.git/config`: `git lfs install --local`, or one the user put there. The same nulling cuts the other way on an LFS repository: with `filter.lfs` invisible, a tracked file whose stat changed but whose content did not is compared raw against its pointer blob and reads modified, so the snapshot can report dirty where the worker's own `git status` reports clean. That direction is the safe one, a worker flagged as having uncommitted work when it does not, so it is left as is. Each call has a 5s timeout, and the status read gets a larger bounded buffer than the other git probes.
-
-## Compact-then-empty needs-completion detector
-
-For kendex#38, bg subagent runs detect `session_compact → agent_end{content:[]}` or content with no `type:"text"` parts on the post-compact bridge-stream slice only. This emits `subagents:needs_completion` with `reason: "compact-then-empty"`. The detector is mutually exclusive with the context-overflow throw-path retry from PR #35: retry logic handles thrown overflows first, and compact-then-empty only classifies attempts that did not trigger that retry path. Retry detection only trusts error envelopes/stderr; normal tool output or assistant text that mentions overflow strings must not trigger a retry. The text matcher follows Pi core overflow wording for OpenAI/Codex-style errors, including `context_length_exceeded`, `exceeds the context window`, and parenthesized `maximum context length (N)` messages.
-
-## Bg one-shot timeout watchdog
-
-For kendex#336, bg one-shot child processes have a hard deadline from `bgTaskTimeoutMs` (default 30 minutes; `0` disables). This covers the case where the child process wedges mid tool-use loop and never emits `agent_end` or exits, so pane/outbox watchdogs cannot run. When the deadline fires, `runner.ts` records `stopReason: "unresponsive_timeout"`, appends timeout diagnostics to the transcript/result, emits the normal `subagents:failed` lifecycle event, resolves the parent worker with a failed `SingleResult`, and sends `SIGTERM` followed by `SIGKILL` to the child process group. This lets the parallel worker pool continue and prevents orphaned bg children from lingering indefinitely.
-
-## Bg one-shot settled shutdown
-
-Pi JSON/print-mode children can emit `agent_settled` while their process remains alive on an idle HTTP connection. Pi emits one settlement after the latest low-level run in a retry, compaction, or queued-continuation chain, so the bg runner accepts settlement only when the latest observed `agent_end` matches the current generation and no agent is active. An accepted settlement takes ownership from the task timeout and waits 250ms for normal print-mode shutdown. Activity during that grace period cancels shutdown and restores the original timeout deadline. After `SIGTERM` delivery succeeds, shutdown is irreversible because Pi disposes its runtime and exits 143; disposal-time lifecycle activity cannot cancel escalation or semantic shutdown classification. Unconfirmed shutdown is bounded after `SIGKILL`; a forced exit receives logical exit code 0 only when its close signal or 137/143 exit status matches a signal delivered by the settled path. Normal zero exits, assistant `stopReason: "error"`, context-overflow retry, and compact-then-empty classification still apply normally. Older Pi versions without `agent_settled` keep the process-exit and timeout behavior.
-
-## Settled-run missing-completion watchdog (kendex#66)
-
-Fallback for the silent-abandonment case where a child agent fully settles but no `complete_subagent` outbox JSON was written. Pi 0.80.4's `agent_settled` event is the lifecycle boundary: unlike `agent_end`, it waits until automatic retries, compaction retries, and queued continuations are exhausted. This avoids marking a task incomplete during a run Pi still intends to continue.
-
-Implementation: `extensions/subagent/agent-end-watchdog.ts` exposes `createAgentEndWatchdog(deps)`, and `settled-handler.ts` registers the Pi 0.80.4+ `agent_settled` lifecycle event. On that event, the child handles inbox-delivered tasks directly and scans the task registry for active (`queued`/`running`/`unknown`) bridge-delivered records belonging to its agent. After `KENDEX_AGENT_END_WATCHDOG_GRACE_SEC` (default 10s) the registry watchdog confirms the outbox is still missing, the task record is still active, and the pane is idle before writing a synthetic outbox via `O_EXCL` open at `completionPath(runtimeRoot, agent, taskId)` with `status: "needs_completion"`, `reason: "turn-ended-without-complete-subagent"`, and `synthetic: true`. Successful synthesis also calls `markTaskNeedsCompletion`, so the parent's existing wake/poll path picks the outbox up unchanged. The file name and env names remain for compatibility.
-
-Race safety: the default writer uses `fs.open(path, "wx")` so a real `complete_subagent` that races the watchdog always wins. Successive settled checks for the same task are deduped by an in-process `fired` set; pending grace timers are deduped by a `pending` map. Failures are warn-logged, never thrown. Disable entirely with `KENDEX_AGENT_END_WATCHDOG=0`.
-
-## Rate-limit watchdog (kendex#108 / #285)
-
-Persistent pane children run `extensions/subagent/rate-limit-watchdog.ts` on assistant `message_end` events. Classification is deliberately narrow: the event must be an assistant message with `stopReason: "error"`, and only assistant `errorMessage` / text blocks are scanned. Accepted prose includes transient provider messages (`temporarily limiting requests`, `rate limited`, `429`, `too many requests`) and Claude Code session/usage caps (`You've hit your session limit`, `You've hit your usage limit`, `session limit`, `usage limit`, `· resets ...`). Non-assistant tool/user echoes and assistant success turns still emit `subagents:rate_limit_skipped` rather than scheduling recovery.
-
-Retry timing is the transitive static closure of `index.ts` -> `rate-limit-watchdog.ts` plus one lazy provider seam. `rate-limit-decision.ts` is the decision only; it imports the event readers from `rate-limit-reset.ts` and snapshot selection from `rate-limit-quota-normalize.ts`, and the watchdog imports the decision, so all of them load at extension startup. Only the provider fetch in `rate-limit-quota.ts` stays behind the watchdog's dynamic import, after a rate-limit event. Pi 0.80.3's binary TS loader resolves transpiled TS through `data:` URLs and a large module with `node:*` imports can trip Bun/JITI `NameTooLong` there, so no module in that closure may take a `node:*` import. The constraint is documented on each of those modules, not enforced by a check. Assistant prose is only the classifier/trigger. The schedule source order is: structured quota snapshot (`resetSource="usage-endpoint"`; Claude OAuth/web usage responses and Codex/OpenAI `wham/usage` shapes normalize into `QuotaSnapshot`), SDK `resetAt`/`resetsAt` or `retry_after*` (`resetSource="sdk-rate-limit-event"`), degraded localized prose reset parsing (`resetSource="prose-fallback"`), then plain ladder (`resetSource="backoff-only"`). Usage snapshots are fail-closed: transient or negated `not your usage limit` events only use saturated/limit-reached windows, malformed/unknown quota shapes fall back, and endpoint/schema failures warn with sanitized `quota-source-error` metadata. Activity payloads persist `reset_source`, `reset_at_ms`, and `degraded_reset_source` so stale wake-time decisions are debuggable. Codex CLI RPC is represented as a `cli-rpc` source seam but not spawned yet; implement it with bounded startup/per-method timeouts and token redaction before enabling.
-
-## Dashboard widget internals
-
-`alt+a` cycles the widget hidden → compact → expanded. `alt+shift+a` / `f3` opens the full `/agents` popup.
-
-Each row shows agent name, kind (`pane`/`bg`), turn count, input/output tokens, cost, and (for working agents) a live tail of the latest tool/message truncated to card width.
-
-Usage refresh streams each retained task transcript and fingerprints it by task. Running and terminal rows are refreshed when their transcript changes so completion cannot freeze a partial final usage total, while fingerprints for dashboard-pruned tasks are evicted during the same poll. The poll loop claims a fingerprint on the ATTEMPT (`claimTranscriptParse`), so a transcript is streamed once per byte change whether or not the parse yields usage or the registry write lands; the summary backfill claims through the same guard with its own map, keyed on the task. Session shutdown drains completion-triggered usage writes before dashboard state is cleared.
-
-Rows are bucketed for stability: queued/running/waiting agents stay above attention states; attention stays above completed. Newest invocations lead each bucket, and within a bucket rows preserve start-time order so activity updates, token/usage updates, or completion polling do not reshuffle the list. The header always shows completed and working counts even when one side is zero. Missing pane artifacts render as `stale`; stale bg-only records are dropped (bg agents do not use pane handoff files).
-
-The popup has two top-level tabs: **Agents** (scoped project/user agent profiles, static Inspector only) and **Monitor** (session-grouped execution tree). Monitor groups task records by pane session, explicit bg lane, or bg one-shot under expandable Active and Completed sections, with active sessions first and newest invocations first inside each section. Session rows show parent metadata (agent, session type/number/mode, model, effort, aggregate usage, session artifacts); task rows keep Summary/Completion detail: Summary holds task-local metadata, task artifacts, and task text; Completion holds returned result summary, files changed, validation, notes, and optional completion JSON. Repeated same-agent sessions show `session #N` in session detail, and task rows show `Task #N` within that session only. `#1` is always suppressed across mini widget, chat attribution, Monitor task rows, and trace Summary; numbers only appear from the second task per agent/session onward, so a lone task reads as plain `<agent>` / `Task <time>` instead of `<agent> #1` / `Task #1 · <time>`. Agents rows are flat and do not expose task children, transcripts, or task-scoped summaries; they may show a live-pane dot only as a pointer that execution state exists on Monitor.
-
-Compaction events are not rendered in the Monitor popup. The transcript parser still recognizes the same `session_compact` bridge-stream shape used by the compact-then-empty detector (PR #46 / issue #38), plus compatibility variants like `{ event: "compact" }` and `message.customType: "session-compact"`, for callers that open raw trace views.
-
-Popup browser internals are split by concern:
-
-- `browser.ts` owns modal lifecycle, input dispatch, top-level tab layout, and re-exports the public surface used by tests and sibling modules.
-- `browser/shared.ts` holds popup frame, key, modal-lock, tab strip, layout, and the cancel-input fallback.
-- `browser/agents-tab.ts` builds agent rows and renders the static Inspector pane (including the system-prompt viewport).
-- `browser/monitor-tree.ts` derives Monitor session groups, session/task tree rows, selection clamping, and the left tree renderer.
-- `browser/monitor-session-detail.ts` renders the right-pane Detail when a session row is selected (aggregate metadata, usage, task list).
-- `browser/monitor-task-detail.ts` renders the right-pane Detail when a task row is selected, plus the shared trace tab bar, line highlighter, and `traceViewerItems` builder.
-- `browser/frontmatter-editor.ts` owns YAML/TOML parse + upsert for agent overrides, the modal editor flow, and the post-edit confirmation popup.
-- `browser/dashboard-integration.ts` bridges task records into dashboard labels and synthesizes bg chat delegation/completion rows.
-- `browser/trace-viewer.ts` owns the standalone trace popup invoked from `/agents` slash commands.
-- `task-records.ts` provides neutral task numbering, session-key derivation, active/terminal status checks, usage roll-up, and a sync registry reader. Dashboard and Monitor share this without going through `browser.ts`.
-
-`highlightInlinePreview` in `format.ts` is the shared inline JSON / status-token highlighter used by dashboard previews and tool output. After the round-2 fix it tokenizes in two passes: highlight JSON keys (`"name":`) first, replace each colored span with a placeholder sentinel before running the status-value passes (`approve` / `failed` / etc), and restore the key spans afterwards. This prevents malformed or truncated JSON from re-coloring inside an already-styled key span, which otherwise produced nested ANSI escapes and wrong-color output. Empty message content renders an `(empty)` placeholder rather than a blank row, and an empty leading user prompt does not consume the task-text fallback.
-
-Completed task records store the durable result summary in `PaneTaskRecord.summary`. On restore, completed records with a transcript but no summary backfill from the last assistant text in the transcript. Dashboard rows, Monitor Summary, Chat completion rows, and `get_subagent_result` all read that same field; if no real summary exists they show `completion summary unavailable; see transcript` instead of echoing the original task prompt.
-
-## Activity broker publication
-
-When `pi-session-bridge` has installed `globalThis[Symbol.for("kendex.pi.activity")]`, subagent lifecycle notifications publish best-effort `agent.*` broker events. Internal `subagents:created`, `queued`, `started`, `steered`, `needs_completion`, `completed`, and `failed` signals map to `agent.spawned`, `agent.task_queued`, `agent.task_started`, `agent.steered`, `agent.needs_completion`, `agent.empty_after_compact`, `agent.task_completed`, `agent.task_blocked`, `agent.task_failed`, and `agent.pane_cwd_stale`. Refs carry `task_id` and `agent`; details include session mode/key, pane id, transcript/completion paths, model/effort, reason/status, pane-cwd-stale cwd fields, and `cwdSnapshot` when present.
-
-Broker publication is isolated in `extensions/subagent/activity.ts` and must stay fail-open: activity publisher errors do not affect task dispatch, completion, steering, or result retrieval.
-
-## Transcript timeline
-
-The task-detail Transcript tab renders an event timeline: one row per event with elapsed stamp, kind, and a capped one-line detail. Tool calls collapse into a single row (name, primary argument, status, duration, result size), failures are `✖`-marked, and a budget-cut tail states how many earlier events are not shown. `e` in the trace viewer opens the raw transcript file in `$VISUAL`/`$EDITOR` (own tmux window).
-
-## Browser keys
-
-- `tab` / `shift+tab` switches between **Agents** and **Monitor**.
-- `↑/↓`, `-/=`, `home/end` navigate. `←/→` switches tree/detail focus and cycles task-detail subtabs. `enter` expands/collapses Monitor Active/Completed/session rows or opens task detail.
-- `enter` inserts `Use agent <name> to:` into the editor.
-- `alt+g` edits the selected agent's frontmatter.
-- Pane agents: `alt+p`/`ctrl+p` start or reuse, `alt+o`/`ctrl+o` attach, `alt+x`/`ctrl+x` stop.
-- `esc` closes.
-
-Status legend per row: live pane, startable, stale, background. Dashboard rows: queued, working, completed, needs completion, failed/blocked.
-
-## Pane registry mechanics
-
-Pane registries and task records are stored in sidecar files and mirrored into session custom entries only when the snapshot changes AND the session file's on-disk leaf still matches the active in-memory leaf. This prevents duplicate / orphaned Pi processes from advancing an older branch and making `/resume` land before the latest visible turns.
-
-Idle pane checks are quiet by default and write diagnostics only when something needs attention.
-
-Registry writes use `withCrossProcessFileLock()` so parent sessions and child panes do not interleave JSON writes. The default lock timeout must stay longer than the stale-lock window so a killed process's lock can be reaped before callers give up. Dashboard and Monitor refreshes are best-effort: if task diagnostics cannot update a record because another process holds the registry lock, they keep rendering the last known record and retry on the next poll instead of terminating Pi. Completion collection persists the terminal task record before archiving or deduping the outbox file; when terminal or archive-path persistence hits lock contention, the outbox stays in place or is restored as the retry source.
-
-### Bounded session-state snapshots (kendex#177)
-
-`persistRuntimeSnapshot()` enforces two guards on the `kendex-subagents:runtime-state` JSONL entry:
-
-1. **Fingerprint dedup.** A stable hash of `{ panes, tasks }` (excluding `updatedAt`) per Pi session id; identical successive snapshots short-circuit before touching the session file.
-2. **Size cap.** Default 64 KiB (`BOUNDED_SNAPSHOT_DEFAULT_MAX_BYTES`). Oversized payloads are replaced by a tiny manifest (`version: 2, fullSnapshot: false, reason: "payload-too-large", byteSize, fingerprint, counts, updatedAt`). The full registry stays on disk in `taskRegistryPath` and `paneRegistryPath`; restore continues to read those sidecars first and ignores manifest entries via `isPersistedSubagentRuntimeState`. Without this guard, a long-lived session with ~200 completed tasks accumulated ~1 GB of `kendex-subagents:runtime-state` JSONL entries and crashed `/resume` with a V8 OOM.
+`tests/settings-manifest.test.ts` holds the settings defaults in `package.json` to the runtime defaults the code applies. A behaviour that depends on process orderings (timeouts, settled shutdown, lock contention) gets a test that drives the orderings explicitly rather than a sleep.

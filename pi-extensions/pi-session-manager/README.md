@@ -1,21 +1,23 @@
-# pi-session-manager
+# @vanillagreen/pi-session-manager
+
+A session manager overlay for Pi. It complements the built-in `/resume` with search, a lineage view, rename, and delete that can go to the trash.
 
 ![Session Manager overlay and model-change confirmation](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-session-manager/assets/session-manager.gif)
 
-Polished session manager overlay. Complements Pi's built-in `/resume` with search, lineage view, rename, and safe delete.
-
-## Highlights
-
-- Browse current-project sessions or all sessions.
-- Search by tokens, quoted phrases, or `re:<regex>`.
-- Reads session prompt snippets line-by-line, so very large session JSONL files do not have to be materialized just to browse or search.
-- Threaded lineage view follows Pi `parentSession` relationships and ranks branches by newest activity anywhere in each subtree.
-- Detail pane shows each session CWD plus its saved model.
-- Resume preserves the session's saved model. If your active model differs, a confirmation lets you pick either.
-- Inline rename and delete with confirmation. Optional `trash` CLI fallback so deletes are recoverable.
-- Deleting a session also clears its per-extension data.
-
 ## Install
+
+Declare the package in the scope's kendex manifest, then let `kendex update-pi` install it and register it in Pi's `settings.json`. For a project, in its `kendex.toml`:
+
+```toml
+[pi-extensions."@vanillagreen/pi-session-manager"]
+source = "kendex"
+```
+
+```bash
+kendex update-pi
+```
+
+The same declaration in `~/.config/kendex/kendex.toml` installs it for every project. `kendex update-pi --check` prints the plan and changes nothing.
 
 Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-session-manager):
 
@@ -23,42 +25,30 @@ Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-session-manager):
 pi install npm:@vanillagreen/pi-session-manager
 ```
 
-Via [kendex](https://github.com/vanillagreencom/kendex):
-
-```bash
-cargo install --git https://github.com/vanillagreencom/kendex.git kendex
-kendex add vanillagreencom/kendex --pi-extension pi-session-manager --harness pi -y
-```
-
 Restart Pi after installation.
 
-## Commands
+## What it does
 
-| Command | Action |
-| --- | --- |
-| `/sessions` | Open the manager. Switch Current/All with the tabs. |
+- `/sessions`, or the configured shortcut, opens the manager; tabs switch between the current project's sessions and all of them.
+- Search by tokens, quoted phrases, or `re:<regex>`; the list filters as you type, and delete-all acts only on the sessions shown.
+- A threaded view follows Pi's parent-session links and ranks branches by the newest activity anywhere in the subtree; `recent` and `relevance` sorts are one key away.
+- The detail pane shows each session's working directory and saved model. Resuming keeps the saved model, and when your active model differs a confirmation lets you pick either.
+- Inline rename, and delete with confirmation. Deleting a session also removes the per-session data every kendex extension keeps for it.
+- Session titles match `/resume`: the explicit name, else the first user message, else the file name. Session files are read line by line, so a large session never loads whole to be listed or searched.
+- Pi's own `/resume`, `/tree`, `/fork`, `/clone` and `/name` stay available; the overlay's footer documents its keys.
 
-The manager popup documents its own keys in the footer. Selection, rename, delete, scope toggle, sort cycle, and named-only filter are all available; bindings are configurable via `/extensions:settings`.
+## How it works
 
-Session titles match Pi `/resume`: explicit session name, otherwise first user message, otherwise filename. Search filters the shown list; delete-all acts only on the currently shown sessions.
+The overlay lists Pi's session files, reads only the header and user-message lines it needs, and hands a chosen action back to Pi: a resume switches the session through Pi's own session API, a delete tries the `trash` command first and unlinks only when that is unavailable.
 
-## Settings
+## Customise
 
-Open `/extensions:settings`; settings appear under the **Session Manager** tab.
+Open `/extensions:settings`; settings appear under the **Session Manager** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted. `glyphStyle` picks `unicode` or `ascii` chrome, and `@vanillagreen/pi-tool-renderer`'s `globalGlyphStyleOverride` wins when set.
 
-Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted; before trust, kendex Pi extensions read user/global settings only.
+- `enabled`: master toggle.
+- `shortcutKey`: the opening shortcut; `none` disables it.
+- `defaultScope`, `defaultSort`: the tab and sort the overlay opens with.
+- `visibleRows`, `overlayWidth`: overlay size.
+- `deleteUsesTrash`: try `trash` before a permanent unlink.
 
-| Setting | What it does |
-| --- | --- |
-| Manager shortcut | Default `f1`. Set `none` to disable. |
-| Default scope | Initial Current/All tab. |
-| Default sort | `threaded`, `recent`, or `relevance`. |
-| Visible rows | Rows shown before scrolling. |
-| Overlay width | Preferred width in terminal columns. |
-| Use trash for delete | Try `trash` before permanent unlink. |
-
-Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for terminal-safe chrome). `@vanillagreen/pi-tool-renderer.globalGlyphStyleOverride=ascii` forces ASCII chrome across kendex Pi extensions while leaving tool/model/user content unchanged.
-
-## Notes
-
-Pi's built-in `/resume`, `/tree`, `/fork`, `/clone`, and `/name` remain available.
+Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
