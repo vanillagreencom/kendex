@@ -120,11 +120,19 @@ new_repo scope
 put SKILL.md 'clean'
 for f in SKILL.md AGENTS.md CLAUDE.md skills/dev/SKILL.md skills/dev/AGENTS.md skills/dev/CLAUDE.md workflows/ship.md skills/dev/workflows/ship.md agents/rust.md .claude/agents/rust.md docs/architecture/overview.md docs/architecture/topic.md; do
   put "$f" 'Seeded 2026-08-12.'
-  run_prose
+  GROWTH_GUARDS_MD_SCOPE=all run_prose
   [ "$RC" -eq 1 ] && case "$OUT" in *"history reference: $f:1:"*) true ;; *) false ;; esac \
     && ok "$f is in the default scope" || bad "$f is in the default scope" "rc=$RC out=$OUT"
   put "$f" 'clean'
 done
+put docs/architecture/overview.md 'Seeded 2026-08-12.'
+run_prose
+[ "$RC" -eq 0 ] && ok "under GROWTH_GUARDS_MD_SCOPE=touched the architecture docs are not yet in scope" \
+  || bad "architecture docs wait for scope all" "rc=$RC out=$OUT"
+GROWTH_GUARDS_MD_SCOPE=all run_prose
+[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: docs/architecture/overview.md:1:"*) true ;; *) false ;; esac \
+  && ok "control: under scope all the same file fails" || bad "control: scope all scans architecture docs" "rc=$RC out=$OUT"
+put docs/architecture/overview.md 'clean'
 run_prose
 [ "$RC" -eq 0 ] && ok "control: with every scoped file clean, the scan passes" \
   || bad "control: scoped files clean" "rc=$RC out=$OUT"
@@ -134,8 +142,8 @@ done
 run_prose
 # The count is asserted with the status: a scan that matched NOTHING also
 # exits 0, and would satisfy a bare rc check while proving nothing.
-[ "$RC" -eq 0 ] && case "$OUT" in *"prose: OK — no history references in 12 scanned file(s)"*) true ;; *) false ;; esac \
-  && ok "README, CHECKS, docs, CHANGELOG, references and a workflows-named file keep their history, with the twelve scoped files still read" \
+[ "$RC" -eq 0 ] && case "$OUT" in *"prose: OK — no history references in 10 scanned file(s)"*) true ;; *) false ;; esac \
+  && ok "README, CHECKS, docs, CHANGELOG, references and a workflows-named file keep their history, with the ten scoped files still read" \
   || bad "out-of-scope files keep their history" "rc=$RC out=$OUT"
 
 echo "=== GROWTH_GUARDS_PROSE_PATHS REPLACES the list (and that is provable) ==="
