@@ -44,7 +44,10 @@ case_verdict "deeply nested render output" true \
   .agents/skills/review-gate/scripts/lib/settings.sh
 
 case_verdict "Pi runtime config is generated" true .pi/settings.json
-case_verdict "a Pi package without declared tests stays generated" true \
+case_verdict "writer output outside harness folders" true runtime/agent.conf
+case_verdict "Gemini, Copilot, and instruction shims are writer output" true .gemini/settings.json .github/agents/rust.agent.md CLAUDE.md
+case_verdict "unrecorded code in a harness folder runs product checks" false .claude/source.ts
+case_verdict "a carrier package remains source" false \
   .pi/packages/example/package.json
 
 git -C "$repo" checkout -q -B "case" "$base"

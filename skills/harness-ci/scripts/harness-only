@@ -2,11 +2,9 @@
 # harness-only — is this diff nothing but kendex render output?
 #
 # One reader of a diff's changed-file set, answering the one question CI asks
-# about it: may the heavy lanes stand down? A diff whose every path is
-# `kendex refresh` output — .agents/, .claude/, .codex/, .opencode/, .cursor/,
-# .pi/, opencode.json{,c} — carries nothing this repository builds, lints,
-# typechecks or tests. Those trees are upstream's and are tested in
-# vanillagreencom/kendex.
+# about it: may the heavy lanes stand down? The engine records its rendered
+# files in .kendex-generated.json. Carrier packages and in-place sources stay
+# outside that inventory and always run product checks.
 #
 # Usage:
 #   harness-only --event EVENT [--base REF] [--head REF]
@@ -155,160 +153,31 @@ fi
 
 printf '%s\n' "$changed" | sed -e 's/^/harness-only: changed: /' >&2
 
-# A repo that adopts skills in place keeps project source at
-# .agents/skills/<name> — kendex.toml declares them `source = "in-place"` —
-# and its adopted hook scripts under .agents/hooks: bytes kendex reads,
-# never writes. The checkout's manifests speak for the head. A missing
-# manifest yields no carve-outs; one that exists but cannot be read or
-# classified carves every skill path — false, the safe answer.
-in_place_skills=""
-manifest_carves() { # IN-TREE PATH -> carve lines for one manifest, "*" on a failed read or an unaccounted mention
-  # The diff is between commits, so the manifests are read from the
-  # selected head tree, never from whatever the checkout happens to hold.
-  # One that exists there but cannot be read proves nothing and carves.
-  local manifest_content manifest_entry
-  # ls-tree answers existence from the tree object alone, so absence and a
-  # failed lookup stay distinct: no entry means no manifest, while a listing
-  # that fails, a symlink entry (git show hands back its target text), or a
-  # blob that will not read are all unclassifiable and carve.
-  manifest_entry="$(git_repo ls-tree "$head" -- "$1" 2>/dev/null)" || { echo "*"; return 0; }
-  [ -n "$manifest_entry" ] || return 0
-  case "$manifest_entry" in 120000*) echo "*"; return 0 ;; esac
-  manifest_content="$(git_repo show "$head:$1" 2>/dev/null)" || { echo "*"; return 0; }
-  # kendex writes one manifest shape — a `[skills.<name>]` header holding a
-  # bare key or a plain double-quoted one, exactly as the TOML serializer
-  # spells it, then `source = "in-place"` — and that is the shape read here.
-  # The reader does not parse the other spellings TOML allows. It counts
-  # every line that could take part in spelling the value — a bare
-  # `in-place`, a \u/\U/\x escape, a multiline `source` string — and carves
-  # every skill path when one goes unaccounted. So an apostrophe-quoted
-  # key, a dotted key, an inline table, a nested table, a name wearing
-  # whitespace, an escaped name and an escaped value all answer false.
-  # Over-matching is the safe direction: no legal TOML spelling of the
-  # value can answer harness_only=true wrongly, and the exotic ones cost
-  # lanes that run.
-  printf '%s\n' "$manifest_content" | awk -v q="'" '
-    BEGIN { mlsrc = "[\"" q "]?source[\"" q "]?[ \t]*=[ \t]*(\"\"\"|" q q q ")" }
-    {
-      line = $0
-      sub(/\r$/, "", line)
-      sub(/^[ \t]+/, "", line)
-      if (line ~ /in-place/ || line ~ /\\[uUx]/ || line ~ mlsrc) mentions += 1
-    }
-    line ~ /^\[skills\.[A-Za-z0-9_-]+\]$/ || line ~ /^\[skills\."[^"\\]*"\]$/ {
-      name = line
-      sub(/^\[skills\./, "", name)
-      sub(/\]$/, "", name)
-      if (name ~ /^"/) { name = substr(name, 2, length(name) - 2) }
-      next
-    }
-    line ~ /^\[/ { name = ""; next }
-    name != "" && line ~ /^source[ \t]*=[ \t]*"in-place"[ \t]*(#.*)?$/ {
-      accounted += 1
-      print name
-    }
-    END { if (mentions > accounted) print "*" }
-  ' 2>/dev/null || echo "*"
-}
-# A source-catalog project keeps its install state in kendex-local.toml
-# (kendex.toml stays the catalog definition), and adoption declares in
-# place through whichever manifest is active — so both are read, unioned.
-in_place_skills="$(
-  manifest_carves kendex.toml
-  manifest_carves kendex-local.toml
-)"
-NL=$(printf "\nx")
-NL="${NL%x}"
-in_place_path() { # PATH -> 0 when the path is the repo's own in-place content
-  local rest skill
-  case "$1" in
-    .agents/hooks/*) return 0 ;;
-    .agents/skills/*/*) ;;
-    *) return 1 ;;
-  esac
-  [ -n "$in_place_skills" ] || return 1
-  # The coarse carve: an in-place mention the extraction could not account
-  # for makes every skill path project source rather than guessing names.
-  case "$in_place_skills" in
-    "*" | "*"$NL* | *$NL"*" | *$NL"*"$NL*) return 0 ;;
-  esac
-  # A declared name matches as a path prefix, so a namespaced declaration
-  # (skills."plugin/item") covers its whole tree like a plain one.
-  rest="${1#.agents/skills/}"
-  skill="$rest"
-  while :; do
-    case "$in_place_skills" in
-      "$skill" | "$skill"$'\n'* | *$'\n'"$skill" | *$'\n'"$skill"$'\n'*) return 0 ;;
-    esac
-    case "$skill" in
-      */*) skill="${skill%/*}" ;;
-      *) return 1 ;;
-    esac
-  done
-}
-
-# A Pi carrier package with its own test command is product source even though
-# the carrier installs it under a harness directory. Read package metadata
-# from both diff endpoints, so deleting a package cannot erase the evidence
-# that makes its removal a product change. A package record that cannot be
-# read is source in the safe direction: every lane runs.
-pi_package_source_at() { # REF PACKAGE.JSON -> 0 when it declares Pi code and tests
-  local ref="$1" manifest="$2" entry content
-  entry="$(git_repo ls-tree "$ref" -- "$manifest" 2>/dev/null)" || return 0
-  [ -n "$entry" ] || return 1
-  case "$entry" in 100644* | 100755*) ;; *) return 0 ;; esac
-  content="$(git_repo show "$ref:$manifest" 2>/dev/null)" || return 0
-  grep -Eq '"pi"[[:space:]]*:' <<<"$content" || return 1
-  grep -Eq '"extensions"[[:space:]]*:' <<<"$content" || return 1
-  grep -Eq '"test"[[:space:]]*:' <<<"$content"
-}
-
-pi_package_source() { # PATH -> 0 when an ancestor package marks it as source
-  local path="$1" dir manifest
-  case "$path" in .pi/*) ;; *) return 1 ;; esac
-  dir="${path%/*}"
-  while [ "$dir" != ".pi" ] && [ "$dir" != "." ]; do
-    manifest="$dir/package.json"
-    if pi_package_source_at "$head" "$manifest" || pi_package_source_at "$base" "$manifest"; then
-      return 0
-    fi
-    dir="${dir%/*}"
-  done
-  return 1
-}
-
-# --no-renames, and it is load-bearing. With rename detection on,
-# `git diff --name-only` emits only the POST-image path, so moving a product
-# file INTO a render tree lists one harness path and nothing else — the diff
-# classifies harness-only and the lanes that would have judged the deletion
-# never run.
-#
-# Matched with bash's own `case` rather than by piping into grep. Every
-# external matcher here has a failure mode whose signature is empty output,
-# and empty output is indistinguishable from "every path was a harness path".
-harness_only=true
+# Read the writer's exact output paths at both selected endpoints. A missing
+# inventory runs product checks, including the commit that first installs it.
+if [ "$range_style" = merge_base ]; then
+  base="$(git_repo merge-base "$base" "$head")" || verdict false "merge base is unreadable"
+fi
+base_inventory="$(git_repo show "$base:.kendex-generated.json" 2>/dev/null)" || verdict false "base generated paths are absent or unreadable"
+head_inventory="$(git_repo show "$head:.kendex-generated.json" 2>/dev/null)" || verdict false "head generated paths are absent or unreadable"
+# The array contains files, never folder prefixes. A file must be generated
+# at each endpoint where it exists, so adopting a render as source runs checks.
+for inventory in "$base_inventory" "$head_inventory"; do
+  jq -e 'type == "array" and all(.[]; type == "string")' <<<"$inventory" >/dev/null 2>&1 \
+    || verdict false "generated paths are invalid"
+done
 while IFS= read -r path; do
   [ -n "$path" ] || continue
-  if pi_package_source "$path"; then
-    harness_only=false
-    break
-  fi
-  case "$path" in
-    .agents/*)
-      # In-place content under the render tree is project source.
-      if in_place_path "$path"; then
-        harness_only=false
-        break
-      fi
-      continue
-      ;;
-    .claude/* | .codex/* | .opencode/* | .cursor/* | .pi/*) continue ;;
-    # Both spellings of the one OpenCode config: kendex writes the .jsonc file
-    # when a project carries that one instead, and it is the same artifact.
-    opencode.json | opencode.jsonc) continue ;;
-  esac
-  harness_only=false
-  break
+  seen=false
+  for endpoint in "$base" "$head"; do
+    entry="$(git_repo ls-tree "$endpoint" -- "$path")" || verdict false "file lookup failed"
+    [ -n "$entry" ] || continue
+    seen=true
+    inventory="$base_inventory"
+    [ "$endpoint" != "$head" ] || inventory="$head_inventory"
+    jq -e --arg path "$path" 'index($path) != null' <<<"$inventory" >/dev/null 2>&1 \
+      || verdict false "a changed file is product source or its ownership is unreadable"
+  done
+  [ "$seen" = true ] || verdict false "a changed path could not be read"
 done <<<"$changed"
-
-verdict "$harness_only"
+verdict true

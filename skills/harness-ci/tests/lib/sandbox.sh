@@ -30,6 +30,8 @@ new_repo() { # NAME -> prints the repo path
   git -C "$repo" init -q -b main
   git -C "$repo" config user.email harness-ci@example.invalid
   git -C "$repo" config user.name "harness-ci tests"
+  # Fixture writer output. Product paths remain absent even inside a harness.
+  printf '%s\n' '[".kendex-generated.json",".agents/skills/orch/SKILL.md",".agents/skills/orch/app.ts",".agents/skills/orch/renamed.ts",".agents/skills/review-gate/scripts/lib/settings.sh",".claude/agents/rust.md",".codex/agents/rust.md",".opencode/agent/rust.md",".cursor/rules/rust.mdc",".pi/kendex/hooks/guard.ts",".pi/settings.json","opencode.json","opencode.jsonc",".gemini/settings.json",".github/agents/rust.agent.md","CLAUDE.md","runtime/agent.conf"]' >"$repo/.kendex-generated.json"
   printf '%s' "$repo"
 }
 
