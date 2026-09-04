@@ -27,6 +27,7 @@ What changed, what you verified it against, and anything you deliberately left f
 ## Required Skills
 
 Read each before acting:
+
 - code-quality: .agents/skills/code-quality/SKILL.md
 - decider: .agents/skills/decider/SKILL.md
 - dep-radar: .agents/skills/dep-radar/SKILL.md
