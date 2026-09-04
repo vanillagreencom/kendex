@@ -12,7 +12,7 @@
 #                          changes_requested | threads | ci_failed |
 #                          ci_pending | computing | merged | closed | none.
 #                          An issue prefix outside that vocabulary becomes
-#                          the cause word itself, so a new pr-merge prefix
+#                          the cause word itself, so an additional pr-merge prefix
 #                          names itself instead of reading as all-clear
 #   issue: <raw>           every refusal issue, verbatim
 #   head-run: <ids>        (ci_failed/ci_pending only) run ids the CI
@@ -112,7 +112,7 @@ fi
 # Primary cause by priority: an unreadable GitHub answer taints every other
 # signal, then the permanent blockers, then the ones that clear on their own.
 # `none` is reserved for an empty issues[] — an issue whose prefix is not in
-# this table names itself, so a new pr-merge prefix routes as "report it",
+# this table names itself, so an unlisted pr-merge prefix routes as "report it",
 # never as a false all-clear.
 cause=$(jq -r '
     def matched(re): any(.issues[]?; test(re));
@@ -149,7 +149,7 @@ fi
 # snapshot governs the whole classification: the rollup pr-merge --check
 # fetched and classified rides in its JSON as `checks`, and the scoping
 # re-derives here through the same sourced scope_current_run — a rerun
-# starting between two fetches can no longer make cause:/issue: and the
+# starting between two fetches cannot make cause:/issue: and the
 # fail:/superseded: detail describe different states.
 check_head_run_line <<<"$check_json"
 

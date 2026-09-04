@@ -194,8 +194,8 @@ export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 			if (!agentName) return { content: [{ type: "text", text: "Provide either agent or taskId." }], details: {}, isError: true };
 			if (params.taskId && record) {
 				const steerKind = inferTaskRecordKind(runtimeRoot, record);
-				// Dashboard status lookup is metadata-only; never let a missing helper
-				// (regression kendex#62) block the actual steer delivery.
+				// Dashboard status lookup is metadata-only. A missing helper must not
+				// block the actual steer delivery.
 				let steerDashboardStatus: any = record.status;
 				try {
 					if (typeof dashboardStatusFor === "function") {

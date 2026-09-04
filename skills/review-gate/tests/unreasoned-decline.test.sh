@@ -21,8 +21,8 @@
 # untracked-claim.
 #
 # The fixtures are tests/corpus/, not literals in here, and adding a label
-# starts there — see the sweep below. The declines that shipped KEN-884..
-# KEN-889 head that file. Each label is paired with the real reason that must
+# starts there — see the sweep below. The declines that shipped..
+#  head that file. Each label is paired with the real reason that must
 # NOT be counted, because the test is subtraction: a label BESIDE a mechanism
 # is untouched, and a check rejecting both would fail every honest decline.
 #
@@ -91,7 +91,7 @@ bot()   { printf '{"body":%s,"author":{"__typename":"Bot"}}'  "$(jq -Rn --arg b 
 # unreasoned is the THIRD field. The helpers split the line and read that
 # field, rather than globbing for the digit anywhere in it: a glob is right
 # only while every count is one digit, and it would keep passing if a field
-# were added or reordered in the page shape. Read by position, that reddens
+# were included or reordered in the page shape. Read by position, that reddens
 # here instead of being silently satisfied by another term's count.
 unreasoned() { local _unresolved _untracked f _rest; read -r _unresolved _untracked f _rest <<<"$1"; printf '%s' "$f"; }
 counted()     { [ "$(unreasoned "$1")" = 1 ]; }
@@ -111,7 +111,7 @@ CORPUS="$SCRIPT_DIR/corpus"
 
 # THE CORPUS IS THE CONTRACT. Every fixture below is a line in one of three
 # files, not a literal in this script, because the subtraction is a word list
-# and a word list maintained by review rounds is always one label behind.
+# and a hand-maintained word list is always one label behind.
 # Three rounds of this issue each landed one missing label. Adding the next
 # one starts by writing the reply in tests/corpus/declines-unreasoned.txt the
 # way a person types it; this suite goes red until the list in
@@ -263,7 +263,7 @@ case "$out" in malformed) ok "a 50+-comment thread fails closed as malformed";; 
 echo "=== the verdict reaches its consumers ==="
 # The writer's mapping is RUN, not grepped: review-writer.test.sh w8/w8b
 # drive this verdict through the writer and assert the failure post and the
-# remedy text. A presence grep stood here until KEN-890's second review
+# remedy text. A presence grep stood here until 's second review
 # round and passed on a branch nothing executed.
 #
 # pr-watch's arm is the one consumer still checked by presence. Its
@@ -342,7 +342,7 @@ fi
 echo
 echo "--- must-fail probe: the tracker-id strip, removed ---"
 # Same jq with the tracker-id strip dropped. Without it the punctuation pass
-# splits KEN-881 and the number pass takes only the digits, so "ken" survives
+# splits  and the number pass takes only the digits, so "ken" survives
 # as a stated reason. The bare reference must stop being counted here while a
 # label keeps counting, so the count is this strip's rather than the term's.
 UNSTRIPPED="$(sed '/gsub("\[A-Z\]\[A-Z0-9\]+-\[0-9\]+|#\[0-9\]+"; " ")/d' <<<"$prog")"
@@ -364,7 +364,7 @@ fi
 echo
 echo "--- must-fail probe: both name strips, removed ---"
 # Same jq with the count phrase and the path left standing, which is the
-# state the term shipped in. Every #1851 reply must stop being counted here —
+# state the term in question. Every matching reply must stop being counted here —
 # "lifecycle", "merge", "tools guard" survive again — while every counted
 # reply that names a mechanism stays uncounted in both states. A probe where
 # both halves moved would prove the fixtures, not the strips.
@@ -424,7 +424,7 @@ echo
 echo "--- must-fail probe: the strips moved back in front of the label pass ---"
 # The order is the rule. A strip eats a whole token, so in front of the label
 # pass it eats the TAIL of a multi-word entry and strands the head: "out of
-# scope 3/3" leaves "out", and the reply clears a gate it used to red. That
+# scope 3/3" leaves "out", and the reply clears a gate it would red. That
 # shipped once. Every line of the label-phrase section must flip here, and
 # the counted mechanisms must stay uncounted, or the probe is proving the
 # fixtures rather than the order.
@@ -492,7 +492,7 @@ echo
 echo "--- the ordering section covers every entry the derivation names ---"
 # The two probes above iterate a hand-written corpus section, so they prove
 # the entries someone already wrote down. What they cannot see is a label
-# entry ADDED to reason_left with no fixture beside it — the lists are the
+# entry included to reason_left with no fixture beside it — the lists are the
 # half of this term that changes most, and a new multi-word entry is exactly
 # the shape the ordering fix exists to hold. So the set is derived HERE from
 # the program, the same way the pass sweep derives its lines, and the section

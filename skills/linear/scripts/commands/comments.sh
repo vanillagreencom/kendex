@@ -222,7 +222,7 @@ create_comment() {
         _issue_ts=$(echo "$created_comment" | jq -r '.issue.updatedAt // empty')
         [[ -n "$_issue_ts" ]] && cache_touch_issue "$issue_id" "$_issue_ts" 2>/dev/null || true
     fi
-    # Download any attachments in the new comment
+# Download attachments in the submitted comment
     if [[ -n "$created_comment" && "$created_comment" != "null" ]]; then
         local _body
         _body=$(echo "$created_comment" | jq -r '.body // empty')

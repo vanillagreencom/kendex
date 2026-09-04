@@ -692,7 +692,7 @@ export default function outputPolicy(pi: ExtensionAPI): void {
 	guard[INSTALL_SYMBOL] = true;
 	// Pi 0.84.1 invokes the extension factory once per loaded session runtime.
 	// Session replacement emits shutdown, invalidates the old runner, and loads a
-	// new ExtensionAPI/factory closure, so this state cannot cross session runtimes.
+	// replacement ExtensionAPI/factory closure, so this state cannot cross session runtimes.
 	let modelOutputState = createModelOutputGuardState();
 	let modelOutputConfig: ModelOutputGuardConfigSnapshot | undefined;
 

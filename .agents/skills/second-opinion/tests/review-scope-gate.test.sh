@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for second-opinion review scope gating (kendex#652).
+# Tests for second-opinion review scope gating.
 #
 # A review invoked with no usable diff scope could still produce a schema-valid
 # `verdict: "pass"` artifact while the external model admitted it reviewed
@@ -28,7 +28,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # --- Deterministic harness-free session -------------------------------------
 # A positively detected single-model harness now beats any contradicting
-# declaration, whatever its source — so a suite can no longer neutralize the
+# declaration, whatever its source — so a suite can cannot neutralize the
 # harness that runs it by exporting an identity. It has to actually not have
 # one. This `ps` stand-in reports the first parent as init, so the ancestor walk
 # finds nothing and the declared identity below is what the script uses. It also

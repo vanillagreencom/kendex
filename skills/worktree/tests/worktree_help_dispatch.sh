@@ -11,7 +11,7 @@
 #
 # The same boundary from the other side: a command that is not help does
 # reach the repository lookup, and outside a repository it refuses with a
-# diagnostic naming the cwd rather than dying at git's bare 128 (KEN-1166).
+# diagnostic naming the cwd rather than dying at git's bare 128.
 set -euo pipefail
 
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git

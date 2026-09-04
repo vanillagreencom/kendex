@@ -131,13 +131,12 @@ export const LOST_TOOL_RESULT_TEXT =
  * IN PLACE, before cc-session-io's repairToolPairing runs.
  *
  * repairToolPairing backfills with a bare "[no tool result recorded]" — a
- * placeholder the model reads as tool OUTPUT and keeps reasoning on (observed:
- * two bash calls in the 2026-07-28 token test, silently treated as if they had
- * returned). An is_error result that says what happened and what to do turns a
+ * placeholder the model reads as tool OUTPUT and continues to reason from.
+ * An is_error result that says what happened and what to do turns a
  * silent correctness hazard into a recoverable failure.
  *
  * Results are prepended to the immediately following user message (tool_result
- * blocks must lead a user message), or a new user message is inserted when none
+ * blocks must lead a user message), or a synthetic user message is inserted when none
  * follows. `missing` must come from findUnpairedToolUses on the same array.
  */
 export function insertLostToolResultPlaceholders(
@@ -151,8 +150,8 @@ export function insertLostToolResultPlaceholders(
 		group.push(item);
 		byAssistant.set(item.assistantIndex, group);
 	}
-	// Descending order so inserting a new user message never shifts an index a
-	// later (earlier-in-array) group still needs.
+	// Descending order ensures that inserting a user message does not shift an index
+	// for a group that is earlier in the array.
 	for (const assistantIndex of [...byAssistant.keys()].sort((a, b) => b - a)) {
 		const group = byAssistant.get(assistantIndex)!;
 		const blocks = group.map((item) => block(item.id));

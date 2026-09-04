@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for the orch-env effective-setting reader (kendex#543).
+# Tests for the orch-env effective-setting reader.
 #
 # orch-env VAR_NAME DEFAULT prints the effective value of a kendex [env]
 # setting with the standard precedence (process env > kendex.settings.toml

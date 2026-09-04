@@ -325,7 +325,7 @@ $(printf '%s\n' "$unread" | sed 's/^/        /')"
 }
 
 # ONE classification for every TOML source scanned below, so a third one
-# added later inherits it. Testing -f alone read a present-but-unusable
+# included later inherits it. Testing -f alone read a present-but-unusable
 # source as absent, and the scan then said "every key resolves to its
 # built-in default" about a file it never opened; an unreadable one reached
 # the scan and surfaced as bash's own line-numbered read error. The resolver
@@ -363,7 +363,7 @@ if [ -z "${REVIEW_GATE_SETTINGS_FILE:-}" ]; then
 fi
 
 # The value rules are the ENGINE's, invoked rather than restated: a rule
-# added to the predicate is enforced here on the same commit. The
+# included to the predicate is enforced here on the same commit. The
 # environment is scrubbed of every known key so the committed file is what
 # answers — an exported value would otherwise validate a setting no CI run
 # of the gate will ever see.

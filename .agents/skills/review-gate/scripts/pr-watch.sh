@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # pr-watch — reduce every open PR to normalized needs-attention lines
-# (kendex#1117), the long-horizon third piece beside the predicate (one
+# the long-horizon third piece beside the predicate (one
 # head's verdict) and the writer (converge the gate). Those two keep the
 # GATE correct; this one tells the AGENT when a PR needs a hand — a PR
 # sitting steadily at "pending because review threads are open"
@@ -286,7 +286,7 @@ read_gate_state() { # pr, head — sets gate_state; returns 1 after emitting an 
 # reduction time. A snapshot row would be a TOCTOU hazard: a push between
 # the listing and this PR's reduction would leave the loop evaluating an
 # old head (and old auto-merge state) while the queue/thread reads observe
-# the new one — an approved green OLD head reading as healthy right after
+# the replacement — an approved green OLD head reading as healthy right after
 # an unreviewed push. Same fail-loud page discipline as the writer: a
 # zero-byte or non-array page is a broken read, never an empty repo.
 if [ -n "$PR_ARGS" ]; then
@@ -595,7 +595,7 @@ for number in $pr_numbers; do
     # null|object (a missing field is null in jq and would silently coerce
     # to unarmed — a false disarmed from a broken envelope), and the row
     # must still describe THE SAME HEAD (a push mid-reduction cleared
-    # auto-merge on a NEW head; recommending re-arm against stale verdict
+    # auto-merge on a replacement head; recommending re-arm against stale verdict
     # and gate reads would arm an unreviewed head).
     if ! jq -e --argjson n "$number" 'type == "object" and .number == $n
         and (has("auto_merge"))
@@ -763,7 +763,7 @@ for number in $pr_numbers; do
           # at a re-review request (the exact action the awaiting-stale
           # line recommends — without this floor the next poll would nudge
           # again immediately, forever) — each marks "the review wait
-          # started over" without a new head.
+          # started over" without a replacement head.
           # A matching event whose created_at is not a string is malformed
           # data, not an ignorable row (fail loud, never a stale alert
           # from untrustworthy input).
@@ -798,7 +798,7 @@ for number in $pr_numbers; do
           if [ "$age" -gt "$AWAITING_AFTER" ]; then
             # Head-bind the stale claim: a push after the initial fetch
             # would make every timestamp above describe the OLD head while
-            # the NEW head's quiet period just began. The recheck runs
+            # the replacement head's quiet period just began. The recheck runs
             # here (the emission below would skip the end-of-loop one).
             stale_row="$(gh api "repos/$GH_REPO/pulls/$number" 2>/dev/null)" || {
               emit "$number" "$head" error "reviewability recheck failed while confirming staleness (broken read)"
@@ -813,7 +813,7 @@ for number in $pr_numbers; do
               errored=1
               continue
             fi
-            # Closed or drafted mid-reduction: no longer awaiting review —
+            # Closed or drafted mid-reduction: does not awaiting review —
             # silence, per the same rules as the initial reduction.
             if [ "$(jq -r '.state' <<<"$stale_row")" != "open" ] || [ "$(jq -r '.draft' <<<"$stale_row")" = "true" ]; then
               continue
@@ -839,7 +839,7 @@ for number in $pr_numbers; do
 
   # Final head recheck — only when this PR would otherwise report healthy:
   # a push DURING the reduction leaves every read above describing the old
-  # head, and silence would claim the new, unreviewed head needs nothing.
+# head, and silence would claim the unreviewed replacement head needs nothing.
   # A moved head is attention (re-run), never silence.
   if [ "$emitted_this_pr" = "0" ]; then
     head_now="$(gh api "repos/$GH_REPO/pulls/$number" --jq '.head.sha' 2>/dev/null)" || {

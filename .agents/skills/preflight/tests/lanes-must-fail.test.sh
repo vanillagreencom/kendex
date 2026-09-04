@@ -27,7 +27,7 @@ skipped() { printf '  skip  %s (%s)\n' "$1" "$2"; }
 seed() { # NAME — fixture in $R: committed baseline, origin/main, feature branch
   R="$TMP/$1"
   # Migrations sit one directory down and more than one is committed, so a
-  # deleted one is a path the glob no longer finds on disk while its siblings
+  # deleted one is a path the glob does not finds on disk while its siblings
   # still match: the shape that catches a setting read with globbing on.
   mkdir -p "$R/docs" "$R/scripts" "$R/data" "$R/store/migrations" \
     "$R/src/main/resources/db/migration"
@@ -170,8 +170,8 @@ case "$OUT" in
   *) ok "the suite the workflow names is not a finding" ;;
 esac
 
-# A suite that arrived by `git mv` is a new file at its new path: rename
-# detection must not hide it from the new-file lanes.
+# A suite that arrived by `git mv` is a untracked file at its destination path: rename
+# detection must not hide it from the untracked-file lanes.
 seed renamed
 mkdir -p "$R/tests" "$R/.github/workflows"
 cat >"$R/.github/workflows/ci.yml" <<'YML'

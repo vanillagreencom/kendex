@@ -59,7 +59,7 @@ test("toolIsolationForQuery(true) exposes connectors: drops empty tools, allows 
 	for (const b of ["Read", "Write", "Bash", "WebFetch"]) assert.ok(iso.disallowedTools.includes(b), `still block ${b}`);
 });
 
-// --- kendex#990: connectors mode must not load repo-controlled settings ---
+// ---: connectors mode must not load repo-controlled settings ---
 
 test("CONTRACT: connectors mode loads USER setting sources only", () => {
 	// Settings files carry `env` and `apiKeyHelper`; "project"/"local" would let
@@ -129,7 +129,7 @@ test("allowlist hook permits bridged custom tools, connector tools, and discover
 	}
 });
 
-// --- kendex#1011: hooks see the CLI's canonical (aliased) tool names ---
+// ---: hooks see the CLI's canonical (aliased) tool names ---
 
 test("allowlist hook permits the discovery built-ins under BOTH spellings (kendex#1011)", async () => {
 	// Literal names, deliberately NOT derived from CONNECTOR_DISCOVERY_TOOLS: a
@@ -216,7 +216,7 @@ test("connectorQueryOptions wires the allowlist hook in BOTH write modes", async
 	assert.equal(connectorQueryOptions(true, "allow").hooks.PreToolUse[0].hooks.length, 1);
 });
 
-// --- kendex#892: the deny reason is shared source shown verbatim to a model ---
+// ---: the deny reason is shared source shown verbatim to a model ---
 
 test("CONTRACT: the connector write-deny reason names no host product", async () => {
 	const hook = connectorWriteDenyHook();
@@ -244,11 +244,11 @@ test("CONTRACT: the connector write-deny reason names no host product", async ()
 	}
 });
 
-// --- kendex#892: CONNECTOR_WRITE_TOOLS is a public contract, not an internal ---
+// ---: CONNECTOR_WRITE_TOOLS is a public contract, not an internal ---
 
 // memsira routes connector writes through its own gated approval flow; drovr
 // keeps its chat sidecar permanently write-`deny` and runs an approved write as
-// a one-shot `claude -p` scoped to exactly one tool (drovr#288). Both pin the
+// a one-shot `claude -p` scoped to exactly one tool. Both pin the
 // actions they expose against this classification, because "the sidecar
 // structurally cannot do this itself" is THIS module's claim, not theirs.
 //

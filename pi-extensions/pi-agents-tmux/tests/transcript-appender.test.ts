@@ -3,7 +3,7 @@ import { test } from "bun:test";
 import { createTranscriptAppender } from "../extensions/subagent/runner.js";
 
 // Concurrent appendFile calls on one path land in any order; the appender must
-// write records strictly in call order even when an earlier write is slow.
+// write records strictly in call order even when the first write is slow.
 test("transcript records land in call order when an earlier write finishes late", async () => {
 	let landed = "";
 	let call = 0;

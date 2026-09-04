@@ -4,7 +4,7 @@
 // servers, and is deliberately never mirrored into the Pi stream (see
 // isChildExecutedTool). That is the honest behaviour — mirroring wrote
 // `Tool <name> not found` into the transcript for calls that had SUCCEEDED
-// (drovr#311 / memsira#320) — but it leaves the Pi session with no record that
+//  — but it leaves the Pi session with no record that
 // the call happened at all, so "did it really look that up?" could only be
 // answered from the child's own transcript.
 //
@@ -91,17 +91,15 @@ let auditSink: ConnectorCallAuditSink | undefined;
  * Install (or clear, with `undefined`) a host sink for connector-call records.
  *
  * **The sink ADDS a destination, it never replaces `appendEntry`.** A host that
- * drives real `AgentSession`s gets the transcript-local entries for free, and a
- * replacing sink would take those away and reopen the very audit gap this
- * feature closes (memsira, 2026-07-28 — their `apps/sidecar/src/runtime.ts` is
- * session-backed, and 122 of their app-chat session files carry the bridge's
- * `claude-bridge-session` markers). A host with both a session and a sink has
+ * drives real `AgentSession`s gets transcript-local entries automatically. A
+ * replacing sink would remove those entries and make the session record
+ * incomplete. A host with both a session and a sink has
  * asked for both and gets both.
  *
  * It exists because the OTHER embedding shape gets nothing at all: drovr loads
  * the bundle through a throwaway resource loader over
  * `createAgentSessionServices` with no session, so `extensionApi` is undefined
- * and every record it appended went nowhere (drovr #317, measured live). The
+ * and every record it appended went nowhere (measured live). The
  * sink is the seam such a host can reach without one.
  *
  * A callback rather than another `Symbol.for` global on purpose: the bundle

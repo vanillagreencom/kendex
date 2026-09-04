@@ -1,9 +1,9 @@
 /**
  * Tests for isolated mode (CLAUDE_BRIDGE_ISOLATED=1) and the piUserDir routing
- * of paths that previously hardcoded ~/.pi/agent.
+ * for paths that must follow the configured Pi directory.
  *
  * Isolated mode is the contract for host apps that embed the bridge and own
- * every config dir explicitly (PI_CODING_AGENT_DIR + CLAUDE_CONFIG_DIR): no
+ * every config dir explicitly (PI_CODING_AGENT_DIR + CLAUDE_CONFIG_DIR) : no
  * cwd-ancestor discovery, no $PATH executable fallback, nothing read from the
  * real home directory. Default (unset) behavior must be byte-identical to the
  * pre-isolation bridge.

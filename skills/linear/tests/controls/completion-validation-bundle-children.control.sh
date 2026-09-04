@@ -1,4 +1,4 @@
-# Drop completed children from the bundle expansion, the #634 regression. The
+# Drop completed children from the bundle expansion. The
 # children that validate as Done disappear from the results, so a bundle whose
 # work is finished reports on the root alone.
 control_expect "A: three results (root + 2 completed children)"

@@ -1,4 +1,4 @@
-// diagDump is gated on CLAUDE_BRIDGE_DEBUG, same as debug() (VST-15). Test
+// diagDump is gated on CLAUDE_BRIDGE_DEBUG, same as debug(). Test
 // files that assert on diag entries import this module BEFORE any bridge
 // module, so the flag is already set when src/debug.ts captures it at module
 // load. The debug log itself is routed to a scratch dir so enabling the flag

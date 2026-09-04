@@ -55,7 +55,7 @@ artifact() {
 
 # The reasons that mean "accepted". Exit status is the other half of the
 # contract — review-pr.md and submit-pr.md branch on it and orch's waiters use
-# it directly — so a regression that exits 0 while reporting a rejection, or
+# it directly — so a failure that exits 0 while reporting a rejection, or
 # non-zero on an acceptance, has to fail here and not just look odd.
 is_accepting_reason() {
   [[ "$1" == "valid" || "$1" == "valid_undermeasured" ]]
@@ -130,7 +130,7 @@ if [[ ! -d "$ORCH_DIR" ]]; then
 elif [[ ! -x "$CHECK" ]]; then
   fail "skills/orch is installed but review-artifact-check is missing or not executable at $CHECK"
 else
-  # A zero SAMPLE COUNT is the incident shape: a selection or quoting fault runs
+  # A zero SAMPLE COUNT is the failure shape: a selection or quoting fault runs
   # nothing, the pipeline still exits 0, and the citation reads as evidence.
   expect_reason \
     "$(artifact zero-mutants '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0; stability: 10/10 at 16 threads"}')" \

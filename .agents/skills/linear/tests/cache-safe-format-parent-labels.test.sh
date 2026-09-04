@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test (#625, bug 2): the safe formatter must not silently drop
+# the safe formatter must not silently drop
 # parent_id (and every other field) when a cached issue record's `labels` is
 # null/absent.
 #
@@ -18,7 +18,7 @@
 # (labels present, parent present) the safe formatter already resolves parent_id
 # correctly, so the field reported there was most consistent with a stale cache
 # (the record predating the parent assignment). This test locks in the general
-# safe-format robustness that a null/absent `labels` no longer nukes parent_id.
+# safe-format robustness that null or absent `labels` does not remove parent_id.
 #
 # Fully offline — pure cache read, no curl needed.
 set -euo pipefail
@@ -120,4 +120,3 @@ assert_jq "a labels:null member does not drop records from the safe list" \
   "$list_out" '(map(.id) | index("CC-803")) and (map(.id) | index("CC-802"))'
 assert_jq "the safe list keeps parent_id for a labels:null member" \
   "$list_out" '.[] | select(.id == "CC-803") | .parent_id == "CC-811"' 
-

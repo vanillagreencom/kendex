@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for `lanes context` (KEN-837) and lib/lane-context.sh.
+# Tests for `lanes context` and lib/lane-context.sh.
 #
 # The overseer compacts a lane before it runs out of context, so it needs one
 # number per live lane. That number comes from the lane's own pane status
@@ -23,21 +23,21 @@
 #           row — dies the moment the claude reading is taken by position
 #           too, or any bottom window narrower than the footer is taken off
 #   case 14 a session with no percentage yet, under prose that names a model
-#           and one — dies if the claude shape is loosened back to accepting
+#           and one — dies if the claude shape is loosened to accept
 #           words between the model name and the percentage
 #   case 18 prose naming a model and a percentage BELOW a real status line —
 #           dies if a reading is a FRAGMENT of the status line rather than
 #           the whole line, because bottom-most then hands the sentence the
 #           verdict over the real line above it
 #   case 22 a codex screen whose final line is not a status line, with a real
-#           one above it — dies the moment the codex reading goes back to
-#           searching the screen instead of reading the line it ends on
+#           one above it — dies the moment the codex reading searches the
+#           screen instead of reading the line it ends on
 #   case 24 a configured status item that is not a working directory — dies
 #           the moment the codex shape judges what follows the separator,
 #           because no shape separates a configured item from a sentence
 #   case 26 a codex pane on a dialog with a claude status line in its
 #           transcript — dies the moment a codex pane can reach the claude
-#           shape, which is the one way the fail-closed rule was bypassed
+#           shape, which is the one way past the fail-closed rule
 #   case 27 a claude pane quoting a codex status line on its final row —
 #           dies the moment the harness is inferred from the screen instead
 #           of taken from the pane
@@ -222,7 +222,7 @@ echo "=== lanes context ==="
   for n in 2 6 7 8 19 20 22 23 24 25; do printf '%s %%%s codex\n' "$LIVE_PID" "$n"; done
   # 6, both-shapes arm. `pi` is a harness this reader measures and has no
   # shape rule for, so both are offered and the fall-through guard is
-  # reachable — the only place it still is.
+  # reachable — the only place it is.
   printf '%s %%27 pi\n' "$LIVE_PID"
   # 28. agent-confine is the launcher BOTH harnesses exec through, so its
   # pane command names neither and both shapes are offered. %28 is a wrapped
@@ -270,7 +270,7 @@ write_claim twentynine  "%28" "$H/.codex"  "ken-129"
 write_claim thirty      "%29" "$H/.claude" "ken-130"
 write_claim thirtyone   "%30" "$H/.codex"  "ken-131"
 # The foreign lane's pane NUMBER exists here too, on a screen that parses
-# cleanly: %1 is ken-101's, reading 35.
+# cleanly: %1 is the first lane's, reading 35.
 write_claim_on "$FOREIGN_PID" foreign "%1" "$H/.claude" "ken-110"
 
 # 1. An ORCHESTRATING lane, captured live rather than written from memory.
@@ -337,7 +337,7 @@ screen 12 '  kendex (🌳 ken-113) Opus 5 55% (brad@drovr.dev)     /rc
 $ '
 # 17. What Claude puts between the model name and the percentage. The window
 # size rides in a parenthetical, and a point-release model puts a dotted
-# version in the version slot; both spellings run on this fleet right now.
+# version in the version slot; both spellings run on this fleet.
 # Without either allowance the line matches nothing and the lane drops out of
 # the report unmeasured, which is the failure the whole `context` verb exists
 # to prevent.
@@ -375,7 +375,7 @@ screen 20 '● Documentation: Context 60% used means compact now'
 # status-shaped PREFIX matches while the sentence it sits in never has to.
 # The claude reading is the bottom-most match, so this screen puts that line
 # below a real status line, which is where bottom-most would hand it the
-# verdict. There is no codex sibling any more: a codex screen is read at the
+# verdict. There is no codex sibling: a codex screen is read at the
 # line it ends on, so what a sentence there is shaped like never comes up.
 screen 21 '  kendex (🌳 ken-122) Opus 5 41% (brad@drovr.dev)     /rc
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
@@ -457,13 +457,13 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-102") | .harness' <<<"$OUT")" "code
   "the codex shape names the codex harness"
 
 # 3. A pane keeps the render it repainted over: the status line is the
-# bottom-most reading, and an earlier one is the same lane before it
+# bottom-most reading, and one above it is the same lane before it
 # compacted.
 assert_eq "$(jq -r '.[] | select(.lane=="ken-103") | .context_used_pct' <<<"$OUT")" "18" \
   "the bottom-most reading wins over one repainted past"
 
 # 11. Codex's status item is user-configured and the binary ships both
-# spellings; a lane running the `used` one was measured by neither branch.
+# spellings; a lane running the `used` one is measured too.
 assert_eq "$(jq -r '.[] | select(.lane=="ken-106") | .context_used_pct' <<<"$OUT")" "40" \
   "the codex used shape is taken as it stands, not converted"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-106") | .harness' <<<"$OUT")" "codex" \
@@ -536,9 +536,9 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-111") | .context_used_pct' <<<"$OUT
   "a session with no percentage yet carries no number, not the prose's"
 
 # 18 and 19. Prose carries the model, the version and the percentage in the
-# order the status line does — the fragment, not the line. ken-116 puts that
+# order the status line does — the fragment, not the line. one fixture puts that
 # sentence under a real status line, where the bottom-most rule hands it the
-# verdict and the lane reports 92 for a lane that is at 35; ken-117 has
+# verdict and the lane reports 92 for a lane that is at 35; another fixture has
 # nothing else on its screen at all.
 assert_eq "$(jq -r '.[] | select(.lane=="ken-116") | .context_used_pct' <<<"$OUT")" "35" \
   "prose below a status line does not outrank the status line above it"
@@ -569,8 +569,8 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-119") | .status' <<<"$OUT")" "ok" \
 # carries a real one above it: the reading is refused rather than searched
 # out, because a screen that does not end in its status line is one the reader
 # cannot vouch for. %20 is the same line with nothing above it. Both are
-# no_status_line, and the moment the codex reading goes back to searching the
-# screen, %19 reports 14 from a line the screen has moved past.
+# no_status_line, and the moment the codex reading searches the screen, %19
+# reports 14 from a line the screen has moved past.
 assert_eq "$(jq -r '.[] | select(.lane=="ken-120") | .status' <<<"$OUT")" "no_status_line" \
   "a codex screen not ending in a status line carries no reading"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-120") | .context_used_pct' <<<"$OUT")" "null" \
@@ -600,11 +600,11 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-124") | .context_used_pct' <<<"$OUT
 assert_eq "$(jq -r '.[] | select(.lane=="ken-124") | .status' <<<"$OUT")" "ok" \
   "several items behind the separator are not a reason to refuse the lane"
 
-# 26. THE fail-closed rule, held shut against the one thing that bypassed it:
+# 26. THE fail-closed rule, held shut against the one thing that gets past it:
 # a claude-shaped line in a codex pane's transcript. The claude shape is not
 # offered on a codex pane at all, so both screens refuse — the one whose
-# status line the dialog covers and the one that has none. Bottom-most
-# recovered the covered line and answered 14; the claude fallback answered
+# status line the dialog covers and the one that has none. Bottom-most would
+# recover the covered line and answer 14; the claude fallback would answer
 # claude 35. Neither is what the lane is showing.
 assert_eq "$(jq -r '.[] | select(.lane=="ken-125") | .status' <<<"$OUT")" "no_status_line" \
   "a dialog over a codex footer is could-not-tell, not the status line it covers"
@@ -646,7 +646,7 @@ assert_contains "$(jq -r '.[] | select(.lane=="ken-131") | .detail' <<<"$OUT")" 
   "a wrapped pane showing neither shape is refused for both, not for claude alone"
 
 # 25. Every committed codex capture, parsed as it stands. These are real
-# `tmux capture-pane` output from Codex 0.151.0 (KEN-863), and they are the
+# `tmux capture-pane` output from Codex 0.151.0, and they are the
 # evidence the position rule rests on: in all four that carry a status line
 # it is the last non-empty row, blank rows below it and nothing else. The
 # other two end in a dialog drawn over the footer, and a reader that searched
@@ -673,7 +673,7 @@ assert_eq "$(parse_fixture codex-dialog-trust.txt)" "none" \
   "the trust-dialog capture carries no reading either"
 
 # 10. `capture-pane -t %N` answers from THIS server only, and pane ids restart
-# at %0 on each one. ken-110 claims %1 on another server; %1 here is ken-101's
+# at %0 on each one. a lane on another server claims %1 on another server; %1 here is the first lane's
 # pane, reading 35. Measured against it, the foreign lane reports 35 as its
 # own.
 assert_eq "$(jq -r '.[] | select(.lane=="ken-110") | .status' <<<"$OUT")" "unreadable" \

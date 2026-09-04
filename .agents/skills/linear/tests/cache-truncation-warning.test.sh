@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A truncated cache listing says so (kendex #1390 / VST-320).
+# A truncated cache listing says so.
 #
 # `cache issues list` slices to 75 rows by default; a bare array of exactly 75
 # is indistinguishable from a complete result, so the slice must announce
@@ -43,7 +43,7 @@ cd "$TMP_ROOT"
 # list_ids VARPREFIX WANT_RC ARGS... — run the listing, leaving <prefix>_out
 # and <prefix>_err holding stdout and stderr. WANT_RC is asserted rather than
 # swallowed: a listing that printed the right rows and then exited nonzero is a
-# regression this suite would otherwise report as green.
+# failure this suite would otherwise report as green.
 list_ids() {
   local prefix="$1" want_rc="$2" out rc=0
   shift 2

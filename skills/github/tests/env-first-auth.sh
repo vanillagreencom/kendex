@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for env-first GitHub token loading.
+# Tests for env-first GitHub token loading.
 set -euo pipefail
 
 # The invoking shell's real auth env must not reach the cases below — every
@@ -349,7 +349,7 @@ rm -f "$TMP_ROOT/repo/kendex.settings.toml" "$TMP_ROOT/repo/.env.local"
 # The prologue sanitizer runs ahead of every subcommand, and its checks are
 # bounded. A bound the runner cannot read answers 125 having invoked nothing —
 # not the 124 the timeout arm reads — and the keyring probe under the same
-# bound answers 125 too, so the function used to reach its unconditional
+# bound answers 125 too, so the function could reach its unconditional
 # `return 0` with gh never called: an auth guard reporting a token sound
 # having looked at nothing, and a bad token surviving into every later call.
 sanitize_run() { # env-assignment... — writes sanitize.calls and sanitize.err

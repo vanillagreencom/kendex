@@ -1,4 +1,4 @@
-// kendex#97: every terminal-state transition stamps a terminationReason
+// every terminal-state transition stamps a terminationReason
 // so callers can tell self-exit from extension-stop, session-shutdown,
 // external kill, reconcile-on-restart, and orphan-watcher finalize.
 // `bg_status list` and the wake-event payload both surface the value.

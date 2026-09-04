@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # spawn-adapter — turn a canonical kendex agent name into the exact spawn
 # parameters the Codex collaboration runtime accepts, and report the runtime's
-# concurrent-thread budget (kendex#900).
+# concurrent-thread budget.
 #
 # Both halves existed only as agent-facing prose in orch/SKILL.md: two
 # >1,500-character paragraphs encoding workarounds for external constraints.
@@ -39,7 +39,7 @@ usage() { sed -n '/^# Usage:/,/^# THE IDENTITY RULE/p' "$0" | sed 's/^# \{0,1\}/
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
 # The spawn API's task_name schema accepts only [a-z0-9_] and rejects a
-# hyphenated name BEFORE launch (kendex#751). Translating is therefore not a
+# hyphenated name BEFORE launch. Translating is therefore not a
 # fallback — a schema rejection is a naming mismatch, never a missing agent
 # type, and must not be mistaken for one.
 translate_task_name() {
@@ -112,7 +112,7 @@ cmd_spawn() {
 # primary session. MultiAgentV2 reads
 # `features.multi_agent_v2.max_concurrent_threads_per_session`; the legacy
 # `agents.max_threads` is SILENTLY IGNORED by it, so raising only that key
-# changes nothing (openai/codex#33447, openai/codex#33039). A running session
+# changes nothing (openai/codex7, openai/codex9). A running session
 # also keeps its old cap until restarted. Reporting the discrepancy is the whole
 # point — it is the trap that costs a wasted config edit and a confusing
 # `agent thread limit reached` at spawn time.

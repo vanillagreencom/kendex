@@ -1,16 +1,12 @@
 // Liveness watcher for orphan-running tasks rehydrated by
 // restoredTaskFromSnapshot when the recorded child pid is still alive.
 //
-// kendex#15 (reviewer-error BLOCK): the previous fix skipped replay for
-// alive-pid restored tasks but never re-armed the close listener — when
-// the orphan eventually died, no exit event fired and the silent stall
-// returned. This module polls `kill -0` per orphan; when the pid
+// This module polls `kill -0` per orphan. When the pid
 // disappears, it routes through finalizeTaskLifecycle so the same
 // canonical exit wake (and pi-bg-task-exit daemon path) fires that
 // would have fired if Pi had stayed alive.
 //
-// kendex#97 hardening (H2 — snapshot reconciliation kill): this module
-// is METADATA-ONLY. It MUST NOT call process.kill() / child.kill() on
+// This module is METADATA-ONLY. It MUST NOT call process.kill() or child.kill() on
 // the tracked pid under any reconcile or polling path. The only
 // observation it makes is the identity probe (defaultReadProcessIdentity
 // reads /proc or shells out to `ps`, neither of which signals); the
@@ -35,7 +31,7 @@ export interface OrphanWatcherDeps {
 	// (orphan exited cleanly) and a ProcessIdentity when it is alive.
 	// The watcher compares against task.procIdent so a recycled PID
 	// hitting an unrelated process is detected as a mismatch and treated
-	// like the pid is gone (reviewer-error MAJOR, kendex#15 round 4).
+	// like the pid is gone.
 	identityProbe?: (pid: number) => ProcessIdentity | null;
 	// For resource-controlled systemd units, the wrapper pid can be less
 	// authoritative than the transient unit. true = still running, false =
@@ -100,7 +96,7 @@ export function createOrphanWatcher(deps: OrphanWatcherDeps): OrphanWatcher {
 			// event fires here, and the subscriber/daemon routes the
 			// resulting pi-bg-task-exit wake to master.
 			//
-			// kendex#97: stamp terminationReason so callers can distinguish
+			// stamp terminationReason so callers can distinguish
 			// an orphan-watcher finalize from an explicit extension-stop or
 			// reconcile-on-restart.
 			finalizeTaskLifecycle(

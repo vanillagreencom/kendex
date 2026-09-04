@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pins for reconcile-work-items (kendex #1388 / VST-318): the read-only sweep
+# Pins for reconcile-work-items: the read-only sweep
 # reports the three write-without-read-back shapes and stays quiet on their
 # healthy twins. Fully offline: fixture cache + stubbed PR probe.
 set -euo pipefail

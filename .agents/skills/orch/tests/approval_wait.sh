@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Regression tests for orch/scripts/approval-wait (kendex#538, kendex#642).
+# Tests for orch/scripts/approval-wait.
 #
-# approval-wait is the GitHub-native reviewer-gate poller that replaced
-# bot-review-wait: it reads ONLY formal review verdicts
+# approval-wait is the GitHub-native reviewer-gate poller: it reads ONLY
+# formal review verdicts
 # (`gh pr view --json reviewDecision,latestReviews`, and in --mode review the
 # REST pulls/reviews listing pinned to the current head) plus the unresolved
 # review-thread count — never emoji reactions, sticky comments, or checklist
@@ -20,7 +20,7 @@
 #   9. verdict arriving on a later poll       -> approved after polling
 #  10. auth failure with --json               -> parseable error object, exit 3
 #  11. text mode always prints a result line; approval-mode lines for
-#      changes-requested, comments, and error pinned verbatim (kendex#649)
+#      changes-requested, comments, and error pinned verbatim
 #  12. review mode: COMMENTED at head, 0 threads -> reviewed, exit 0
 #  13. review mode: review at head + threads     -> comments early return
 #  14. review mode: review at stale commit only  -> timeout (head pinning)
@@ -32,8 +32,7 @@
 #  20. review mode: review arriving on a later poll -> reviewed after polling
 #  21. review mode text output names the review gate for reviewed,
 #      changes-requested, comments, timeout, and error — never "Approval"
-#      (kendex#649)
-#  check1-8: PR_REVIEW_CHECK check-run evidence (kendex#654) — a "success"
+#  check1-8: PR_REVIEW_CHECK check-run evidence — a "success"
 #      conclusion of the configured check name on the CURRENT head opens the
 #      review gate (newest run of that name wins; review_evidence "check",
 #      review_evidence_surface "check_run"); stale-sha and failure
@@ -42,7 +41,7 @@
 #      check-runs entirely; the review-object path still works with the
 #      feature on (review_evidence "review"); text mode names the check-run
 #      and its app slug
-#  status1-8: PR_REVIEW_CHECK commit-status evidence (kendex#681) — with no
+#  status1-8: PR_REVIEW_CHECK commit-status evidence — with no
 #      matching check-run, a "success" commit status with the configured
 #      context on the CURRENT head opens the gate (newest of the context
 #      wins; review_evidence "check", review_evidence_surface "status"); a
@@ -51,10 +50,10 @@
 #      never count; empty PR_REVIEW_CHECK ignores both surfaces; a review
 #      object still takes precedence (no surface field); unresolved threads
 #      still block; text mode names the status context and its creator
-#  22+ --resolve-mode precedence: PR_REVIEW_GATE beats legacy PR_APPROVAL_GATE
+#  22+ --resolve-mode precedence: PR_REVIEW_GATE beats PR_APPROVAL_GATE
 #      (on -> approval, off -> off), default approval, settings-file source,
 #      invalid value falls back to approval
-#  transient1-4: transient GitHub API failures (kendex#748) — an HTTP 503
+#  transient1-4: transient GitHub API failures — an HTTP 503
 #      from the reviews listing (or approval-mode pr view) is absorbed with
 #      backoff inside the wait budget and reported as transient_api_errors
 #      on the eventual success; a persistent 503 becomes terminal only when
@@ -67,16 +66,14 @@
 #      still return "comments", a standing CHANGES_REQUESTED still blocks, an
 #      active COMMENTED review in approval mode still times out (not silence), a
 #      head change during the wait falls back to timeout (no fair window on the
-#      new commit), a present-but-not-success trusted check/status (failed or
+#      moved head), a present-but-not-success trusted check/status (failed or
 #      pending) in review mode still times out (engagement, not silence), a head
 #      that moved in the final last-poll->emit confirm window falls back to
 #      timeout (no proceed on a superseded head), the
 #      default is "proceed"; an unrecognized value falls back to block with a warning
 #   marker1: a proceed posts NO commit status and emits no outage_marker JSON
-#      field — the reviewer-outage attestation was removed (owner decision
-#      2026-08-08: orch never manufactures review evidence); the legacy
-#      PR_REVIEW_OUTAGE_CONTEXT key is exported in the test to prove it is
-#      inert
+#      field (orch never manufactures review evidence); PR_REVIEW_OUTAGE_CONTEXT
+#      is exported in the test to prove it is inert
 # Same always-emit-JSON discipline and exit-code contract as ci-wait.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -573,8 +570,8 @@ set -e
 assert_eq "$rc" "0" "case11b: text-mode approval exits 0" "$stderr"
 assert_contains "$output" "Approval: approved" "case11b: text-mode approval prints result on stdout"
 
-# Cases 11c-11e: approval-mode text lines are pinned verbatim — the
-# review-mode labeling fix (kendex#649) must not touch them.
+# Cases 11c-11e: approval-mode text lines are pinned verbatim; review-mode
+# labeling never touches them.
 stderr="$TMP_ROOT/case11c.err"
 set +e
 output=$(run_wait_text_short STUB_APPROVAL_MODE=changes 2>"$stderr")
@@ -668,7 +665,7 @@ assert_eq "$rc" "1" "case17: standing CHANGES_REQUESTED exits 1" "$stderr"
 assert_eq "$(json_field "$output" '.status')" "changes_requested" "case17: status changes_requested" "$stderr"
 assert_eq "$(json_field "$output" '.changes_requested')" "1" "case17: changes_requested count reported" "$stderr"
 
-# Case 18: a later review by the same reviewer supersedes their earlier
+# Case 18: a later review by the same reviewer supersedes their prior
 # CHANGES_REQUESTED — latest-per-reviewer, same as GitHub's standing verdict.
 stderr="$TMP_ROOT/case18.err"
 set +e
@@ -711,7 +708,7 @@ assert_eq "$rc" "0" "case21: text-mode reviewed exits 0" "$stderr"
 assert_contains "$output" "Review: reviewed" "case21: text-mode reviewed prints result on stdout"
 
 # Cases 21b-21e: every review-mode text line names the review gate, never the
-# approval gate (kendex#649).
+# approval gate.
 stderr="$TMP_ROOT/case21b.err"
 set +e
 output=$(run_review_text STUB_REVIEWS_MODE=changes_standing 2>"$stderr")
@@ -830,9 +827,9 @@ assert_contains "$(cat "$stderr")" "unrecognized PR_REVIEW_ON_TIMEOUT value" "pr
 
 # proceed9: approval mode with an active COMMENTED review is NOT reviewer
 # silence — a reviewer engaged but did not approve. proceed must NOT convert it
-# (that would bypass a live approval gate), so it still times out (Copilot #795
-# review of PR #795). Guards the "zero reviewer evidence" boundary in approval
-# mode, where reaching the deadline does not by itself imply no review.
+# (that would bypass a live approval gate), so it still times out. Guards the
+# "zero reviewer evidence" boundary in approval mode, where reaching the
+# deadline does not by itself imply no review.
 stderr="$TMP_ROOT/proceed9.err"
 set +e
 output=$(run_wait_json_short STUB_APPROVAL_MODE=commented_only PR_REVIEW_ON_TIMEOUT=proceed 2>"$stderr")
@@ -843,9 +840,8 @@ assert_eq "$(json_field "$output" '.status')" "timeout" "proceed9: status timeou
 
 # proceed10: a head change DURING the wait (force-push near the deadline)
 # disqualifies proceed — elapsed is measured from START_TIME, so proceed must
-# not fire seconds after a new commit before the reviewer could re-review it.
-# Falls back to timeout so the caller re-waits on the now-stable head (Copilot
-# #795 review of PR #795, approval-wait:846).
+# not fire seconds after a push before the reviewer could re-review it. Falls
+# back to timeout so the caller re-waits on the stable head.
 stderr="$TMP_ROOT/proceed10.err"
 head_count="$TMP_ROOT/proceed10-head-count"
 set +e
@@ -861,7 +857,7 @@ assert_eq "$(json_field "$output" '.status')" "timeout" "proceed10: status timeo
 
 # proceed11: review mode with a FAILED trusted check-run at head is a real
 # reviewer signal, not silence — the reviewer ran and did not pass. proceed
-# must not fire (Copilot #795 review, approval-wait:874); it times out.
+# must not fire; it times out.
 stderr="$TMP_ROOT/proceed11.err"
 set +e
 output=$(run_review_json_short STUB_REVIEWS_MODE=none STUB_CHECKS_MODE=failure_at_head \
@@ -885,9 +881,9 @@ assert_eq "$(json_field "$output" '.status')" "timeout" "proceed12: status timeo
 
 # proceed13: a push in the final last-poll -> emit window (head confirmed
 # different at the decision) falls back to timeout, preserving the head-unchanged
-# guarantee — no proceed on a superseded commit (Copilot #796
-# review, approval-wait:669). The head is stable across polls (so
-# head_changed_during_wait stays false), only the emit-time confirm differs.
+# guarantee — no proceed on a superseded commit. The head is stable across
+# polls (so head_changed_during_wait stays false), only the emit-time confirm
+# differs.
 stderr="$TMP_ROOT/proceed13.err"
 set +e
 output=$(run_review_json_short STUB_REVIEWS_MODE=none PR_REVIEW_ON_TIMEOUT=proceed \
@@ -900,10 +896,9 @@ assert_eq "$(json_field "$output" '.status')" "timeout" "proceed13: status timeo
 echo "=== approval-wait never posts review evidence ==="
 
 # marker1: a proceed posts NO commit status and its JSON carries no
-# outage_marker field — the reviewer-outage attestation was removed (owner
-# decision 2026-08-08: orch never manufactures review evidence). The legacy
-# PR_REVIEW_OUTAGE_CONTEXT key is deliberately exported to prove it is inert:
-# on the pre-removal code this test fails (a status POST lands in the log).
+# outage_marker field: orch never manufactures review evidence.
+# PR_REVIEW_OUTAGE_CONTEXT is deliberately exported to prove it is inert; the
+# must-fail control is a status POST landing in the log.
 stderr="$TMP_ROOT/marker1.err"
 marker_log="$TMP_ROOT/marker1.log"; : > "$marker_log"
 set +e
@@ -1154,7 +1149,7 @@ assert_eq "$(json_field "$output" '.transient_api_errors')" "2" "transient1: tra
 assert_eq "$(cat "$count_file")" "3" "transient1: reviews endpoint retried until it recovered" "$stderr"
 assert_contains "$(cat "$stderr")" "transient GitHub error" "transient1: each transient failure is logged to stderr"
 
-# Transient 1b (kendex#752): HTTP 429 rate limits are transient too — twice
+# Transient 1b: HTTP 429 rate limits are transient too — twice
 # then success recovers exactly like a 5xx.
 stderr="$TMP_ROOT/transient1b.err"
 count_file="$TMP_ROOT/transient1b-count"
@@ -1167,7 +1162,7 @@ assert_eq "$(json_field "$output" '.status')" "reviewed" "transient1b: status re
 assert_eq "$(json_field "$output" '.transient_api_errors')" "2" "transient1b: transient_api_errors counts the absorbed 429s" "$stderr"
 
 # Transient 2: a persistent 503 becomes terminal only when the wait budget
-# expires — the pre-#748 error message is preserved, plus the count.
+# expires — the listing's own error message is preserved, plus the count.
 stderr="$TMP_ROOT/transient2.err"
 set +e
 output=$(run_review_json_short STUB_REVIEWS_MODE=http_503 2>"$stderr")
@@ -1179,8 +1174,8 @@ assert_contains "$(json_field "$output" '.error')" "review listing failed" "tran
 assert_eq "$(json_field "$output" '.transient_api_errors >= 1')" "true" "transient2: transient_api_errors reported at the deadline" "$stderr"
 assert_eq "$(json_field "$output" '.elapsed_seconds >= 3')" "true" "transient2: the full wait budget was spent retrying" "$stderr"
 
-# Transient 3: an HTTP 404 is NOT transient — immediately terminal, exactly
-# the pre-#748 behavior, with no transient_api_errors field.
+# Transient 3: an HTTP 404 is NOT transient — immediately terminal, with no
+# transient_api_errors field.
 stderr="$TMP_ROOT/transient3.err"
 set +e
 output=$(run_review_json STUB_REVIEWS_MODE=http_404 2>"$stderr")

@@ -2,7 +2,7 @@ import { filterClippyErrors, findCargoWorkspaceRoot, runWorkspaceClippy } from "
 
 /**
  * What the end-of-turn clippy run established. `unavailable` is the state an
- * empty error list used to collapse into a clean tree: the workspace lookup
+ * empty error list must not collapse into a clean tree: the workspace lookup
  * failed, the run was abandoned, or clippy failed printing nothing a filter
  * recognises. Nothing was proven about the tree in any of those, so the caller
  * says so rather than reporting a clean turn.

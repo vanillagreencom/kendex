@@ -27,7 +27,7 @@ set -f
 
 GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
 GG_BOOT="${GG_BOOT%x}"
-# The one newline `pwd` added; anything before it is the path.
+# The one newline `pwd` appended; anything before it is the path.
 SCRIPT_DIR="${GG_BOOT%$'\n'}"
 GG_CHECK="commit-msg"
 # shellcheck source=lib/common.sh
@@ -199,7 +199,7 @@ if [ -n "$REQUIRED" ]; then
   gg_changelog_scopes || exit 2
 
   # --raw, the spelling todo-ban and byte-ceiling already use: a raw record
-  # carries the old and new MODE and the old and new BLOB for every path, so
+  # carries the old and additional MODE and the old and replacement blob for every path, so
   # what a commit did to a file is read off the record rather than inferred
   # from a letter. --name-status collapses each record into one letter, which
   # hides a rename from its source, a copy from a rename, and a chmod from a
@@ -342,7 +342,7 @@ if [ -n "$REQUIRED" ]; then
       *"[no-changelog]"*) echo "commit-msg: OK — [no-changelog] in the header waives the entry for $(gg_shown "$touched")" ;;
       *)
         # The record is deliberately not offered here: changelog-entries runs
-        # earlier in the same commit chain and refuses a line added under
+        # prior in the same commit chain and refuses a line appended under
         # [Unreleased] by hand, so pointing a writer at it would send them
         # into the next lane's refusal.
         violation "$(gg_shown "$touched") changed without a changelog entry" \

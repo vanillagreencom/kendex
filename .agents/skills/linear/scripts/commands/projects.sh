@@ -521,7 +521,7 @@ create_project() {
 
     local result
     result=$(graphql_query "$mutation" "{\"input\": $input_json}")
-    # Write-through: upsert new project into cache
+# Write-through: upsert the created project into the cache
     local created_project
     created_project=$(echo "$result" | jq '.projectCreate.project // empty')
     [[ -n "$created_project" && "$created_project" != "null" ]] && cache_upsert_project "$created_project" 2>/dev/null || true

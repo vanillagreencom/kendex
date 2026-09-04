@@ -4,7 +4,7 @@
 # The hook gates task completion on `cargo clippy` whenever the working tree
 # carries a changed Rust file. Two halves are pinned here: what counts as
 # changed — worktree, index, and untracked non-ignored paths, so a task whose
-# only work is a new file still reaches the gate — and the verdict, which is
+# only work is an untracked file reaches the gate — and the verdict, which is
 # clippy's exit status alone, so a run that dies without printing a
 # diagnostic blocks rather than passes.
 #
@@ -178,7 +178,7 @@ echo "task-completed-check: a changed set larger than the pipe buffer"
 REPO="$(new_repo bigset)"
 printf 'pub fn added() {}\n' >"$REPO/src/added.rs"
 # Sorts after src/, and long enough that the filter cannot have read it all
-# before an early-exiting reader would have quit on src/added.rs.
+# before an early-exiting reader would have quit on the .rs file.
 mkdir -p "$REPO/zpad"
 i=0
 while [ "$i" -lt 1200 ]; do

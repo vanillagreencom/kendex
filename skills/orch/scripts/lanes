@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # lanes — enumerate the harness auth "lanes" on this machine and measure each
 # one's live usage, so a fleet launch can pick the account with real headroom
-# instead of relying on supervisor memory (kendex#894).
+# instead of relying on supervisor memory.
 #
 # The failure this exists for: when one account hits its limit mid-fleet, every
-# session on that account stalls at once. Observed 2026-07-26 on hyprtrade — an
+# session on that account stalls at once. Observed live test on hyprtrade — an
 # account-level limit froze 5 of 7 workers simultaneously and each had to be
 # migrated by hand.
 #

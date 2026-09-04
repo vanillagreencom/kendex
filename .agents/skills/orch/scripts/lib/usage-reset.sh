@@ -101,7 +101,7 @@ usage_reset_key() {
     return 0
   fi
   # A run of digits carrying neither minutes nor a meridiem is a number that
-  # follows the word, not a clock: `resets 2026-09-03` would otherwise put the
+  # follows the word, not a clock: `resets reset date` would otherwise put the
   # `20` of the year on the event as an hour. Every shape above carries one or
   # the other, so nothing attested is lost.
   [[ -n "$min" || -n "$meridiem" ]] || return 0
@@ -141,7 +141,7 @@ usage_reset_key() {
 
 # The UTC instants a wall clock names on one day in ZONE, ascending. Normally
 # one. In a fall-back hour a local clock names TWO, and `date` resolves the
-# string to a single fold — the earlier, on GNU — so the second is reachable
+# string to a single fold — the prior, on GNU — so the second is reachable
 # only by asking whether an hour later reads back as the same wall clock. In a
 # spring-forward gap the clock names none and `date` shifts it forward; that
 # answer is kept, since a banner cannot name a time its own harness could not
@@ -167,7 +167,7 @@ local_instants() {
 # banner still there tomorrow is still tonight's, spent.
 #
 # Days are enumerated calendrically off local NOON, never by adding 86400 to an
-# epoch: a DST shift moves local midnight, so a day added that way can skip the
+# epoch: a DST shift moves local midnight, so a day included that way can skip the
 # next calendar day altogether or repeat the current one.
 usage_reset_epoch() {
   local key="$1" since="$2" kind mon day year stamp zone dow anchor cand d last
@@ -180,7 +180,7 @@ usage_reset_epoch() {
   if [[ "$kind" == dated ]]; then
     # The year the banner printed, or the three around the sighting when it
     # printed none: a banner omits its year only when that year is the current
-    # one WHERE IT WAS DRAWN, which is not the year of the sighting once a New
+    # one WHERE IT WAS DRAWN, which is not the year of the sighting once an America/New_York
     # Year has been crossed, and `resets Jan 2` seen on Dec 28 is next year's.
     # Candidates a year apart make the one nearest the sighting the only
     # reading, unambiguous in a way a bare clock's never was; with the year

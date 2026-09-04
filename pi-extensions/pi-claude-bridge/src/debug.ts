@@ -50,7 +50,7 @@ export function debug(...args: unknown[]) {
 		if (a instanceof Error) return `${a.name}: ${a.message}${a.stack ? "\n" + a.stack : ""}`;
 		// A function argument is a lazy payload: hot-path call sites (per-token
 		// stream events) pass a thunk so the expensive formatting only runs when
-		// DEBUG is on — fmt is only reached past the early return (VST-15).
+		// DEBUG is on — fmt is only reached past the early return.
 		if (typeof a === "function") return fmt((a as () => unknown)());
 		return JSON.stringify(a);
 	};
@@ -119,9 +119,9 @@ export function makeCliDebugOptions(tag: string): { debug?: boolean; debugFile?:
 }
 
 /** Diagnostic dump — for "should never happen" paths. Gated on the same
- *  CLAUDE_BRIDGE_DEBUG flag as debug(): the entries carry session metadata
+ *  CLAUDE_BRIDGE_DEBUG flag as debug() : the entries carry session metadata
  *  and land in a log outside any host app's retention/cleanup boundary, so
- *  a host that has not opted into debugging must get no disk write (VST-15). */
+ *  a host that has not opted into debugging must get no disk write. */
 export function diagDump(label: string, data: Record<string, unknown>) {
 	if (!DEBUG) return;
 	try {

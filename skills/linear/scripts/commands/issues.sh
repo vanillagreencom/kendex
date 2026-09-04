@@ -410,7 +410,7 @@ list_issues() {
 
     local query
     # Both queries now include full fields for cache compatibility
-    # Added: project.id, projectMilestone, cycle, parent, archivedAt, trashed
+# Includes project.id, projectMilestone, cycle, parent, archivedAt, and trashed
     query='
     query ListIssues($filter: IssueFilter, $first: Int, $includeArchived: Boolean, $after: String) {
         issues(filter: $filter, first: $first, includeArchived: $includeArchived, after: $after) {
@@ -933,7 +933,7 @@ get_issue() {
     esac
 }
 
-# Agent-routing guard (VST-147). A create with no agent:* label lands
+# Agent-routing guard. A create with no agent:* label lands
 # invisible to agent routing — no labels, project, or routing — while the CLI
 # prints a URL that looks like success. When the project declares its
 # agent-label set (LINEAR_AGENT_LABELS in kendex.settings.toml [env],
@@ -1383,7 +1383,7 @@ create_issue() {
         echo "$result" | jq -c '{error: "issueCreate was rejected (success != true) - no issue was created; uploaded files (if any) were not attached", data: (.issueCreate // {})}' >&2
         return 1
     fi
-    # Write-through: upsert new issue into cache
+# Write-through: upsert the created issue into the cache
     local created_issue
     created_issue=$(echo "$result" | jq '.issueCreate.issue // empty')
     if [[ -n "$requested_parent_id" ]]; then
@@ -1439,7 +1439,7 @@ create_issue() {
     fi
     [[ -n "$created_issue" && "$created_issue" != "null" ]] && cache_upsert_issue "$created_issue" 2>/dev/null || true
     [[ -n "$created_issue" && "$created_issue" != "null" ]] && cache_patch_relation_snapshots "$created_issue" 2>/dev/null || true
-    # Download any attachments in the new issue description
+# Download attachments in the created issue description
     if [[ -n "$created_issue" && "$created_issue" != "null" ]]; then
         local _id _desc
         _id=$(echo "$created_issue" | jq -r '.identifier // empty')
@@ -1758,7 +1758,7 @@ update_issue() {
 
     # Handle estimate. Real estimates are 1-5; Linear represents "no estimate" as
     # null. Clear the estimate via --clear-estimate or the --estimate 0 alias
-    # (used to bring coordination-only parents into the estimate-0 format).
+# (this keeps coordination-only parents out of the estimate-0 format).
     if [ "$clear_estimate" = "true" ] && [ -n "$estimate" ] && [ "$estimate" != "0" ]; then
         echo '{"error": "Use either --estimate <1-5> or --clear-estimate, not both"}' >&2
         return 1
@@ -1999,7 +1999,7 @@ update_issue() {
 
 # IssueArchivePayload.success reports the request was processed, not that the
 # entity mutated — Linear answers success=true even when the archive/trash
-# no-ops server-side (#930). Trust only the returned entity: require the
+# no-ops server-side. Trust only the returned entity: require the
 # marker field on it, touch the cache only after confirmation, and fail with
 # a nonzero exit otherwise so a silent no-op can never look like success.
 confirm_archive_mutation() {

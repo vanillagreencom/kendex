@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Regression tests for pr-create.sh safety-check ahead count (kendex#537).
+# Tests for pr-create.sh safety-check ahead count.
 #
 # The "commits ahead of base" check must count against the REMOTE base
-# (origin/$base) that the PR actually targets. Previously it counted against
+# (origin/$base) that the PR actually targets. Counting against
 # local $base, so a stale local main reported already-merged commits as
 # "ahead" — a 1-commit feature branch showed as "3 commit(s) ahead of main".
 # When origin is unreachable and no remote-tracking ref exists, the check
@@ -95,7 +95,7 @@ assert_not_contains "$out" "3 commit(s)" \
 assert_not_contains "$out" "may be stale" \
   "stale local main: no stale-count warning when origin is reachable"
 
-# 2. Branch pointing at the origin/main tip has NO new commits. Against the
+# 2. Branch pointing at the origin/main tip has NO commits to submit. Against the
 #    stale local main it would look 2 ahead and wrongly pass; the hard
 #    failure must use the same remote base OID as the count.
 git -C "$CLONE" checkout -qb noop origin/main

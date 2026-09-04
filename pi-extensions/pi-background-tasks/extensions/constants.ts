@@ -25,7 +25,7 @@ export const DEFAULT_OUTPUT_BUFFER_MAX_CHARS = 1_000_000;
 // custom steer messages (pi.sendMessage), which bypass pi-output-policy, so
 // the cap directly bounds how much of the transcript a single output wake
 // adds. 2KB keeps a wake payload comfortably under 4KB total even with task
-// metadata and matched pattern (kendex#210). Users with high-signal monitors
+// metadata and matched pattern. Users with high-signal monitors
 // can raise outputAlertMaxChars for verbose inline tails.
 export const DEFAULT_OUTPUT_ALERT_MAX_CHARS = 2_000;
 // Dashboard / log-action tail. The full log is always available on disk and

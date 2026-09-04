@@ -1,7 +1,7 @@
-// kendex#60 workaround regression test: a child Pi pane spawned by
+// A child Pi pane spawned by
 // pi-agents-tmux should advertise a UNIQUE session id derived from
 // PI_BRIDGE_PARENT_SESSION_ID + PI_BRIDGE_CHILD_ROLE so pi-bridge state
-// --session <id> no longer matches multiple instances.
+// --session <id> matches only one instance.
 
 import { describe, expect, test } from "bun:test";
 

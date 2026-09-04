@@ -1,8 +1,8 @@
 // The claude.ai connector namespace belongs to the CHILD's own MCP servers.
-// Two places used to hand the model a SECOND name for the same capability, and
-// a second name is a name that can be wrong: the model imitated the alias and
+// The model must receive only one name for each capability because it can
+// imitate an alias that the dispatcher does not accept and
 // got a real `Tool ... not found` from the MCP dispatcher before retrying the
-// canonical one — one wasted round-trip per affected call (memsira#320).
+// canonical one — one wasted round-trip per affected call.
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { mapPiToolNameToSdk } from "../src/convert.ts";

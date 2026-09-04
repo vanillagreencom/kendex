@@ -181,16 +181,10 @@ function suiteCounts() {
 	return packages().map(({ dir }) => [dir, suiteFiles(join(root, dir)).length]);
 }
 
-// A package carrying no file `suiteFiles` matches used to drop out of the
-// wiring gate before any of its assertions ran: no suite means no entry point
-// to demand and nothing for a CI step to invoke, so shipping a package untested
-// looked exactly like shipping one covered. Naming them here is what turns that
-// state into a declaration a reviewer reads rather than an absence nothing
-// reports. That reader takes a `tests/`, `test/` or `__tests__/` directory at
-// any depth, so pi-extension-manager's `test/` and pi-questions' and
-// pi-tool-renderer's `extensions/__tests__/` all count. What is counted is
-// those files, not cases in them: a package whose test directory holds only
-// fixtures reads as covered.
+// Every package without a matching test file must be declared here because the
+// wiring gate has no test entry point to inspect. The reader accepts `tests/`,
+// `test/`, or `__tests__/` at any depth. It counts files, not test cases, so a
+// directory that contains only fixtures counts as covered.
 //
 // pi-prompt-stash: the stash behaviour — filterItems, previewText, loadItems,
 // saveItems, stashPrompt, safeFileName — sits unexported inside
@@ -200,17 +194,17 @@ function suiteCounts() {
 // `extensions/settings.ts` is byte-identical to the copies pi-questions and
 // pi-task-panel vendor, and no suite in this tree imports any of the three —
 // pi-codex-minimal-tools/tests/settings.test.ts covers its own `src/settings.ts`,
-// a different file that happens to export a same-named recordProjectTrust
-// (KEN-1016). Nothing reds when that reason expires: direction three below
+// a different file that happens to export a same-named recordProjectTrust.
+// The gate cannot determine when this reason expires: direction three below
 // fires only once the package gains tests, not when it becomes testable, so
 // exporting one of those functions tomorrow leaves the entry standing. It is
 // reviewed on this comment, not held by the gate.
 const NO_SUITE = ["pi-prompt-stash"];
 
-// Every direction the declaration can drift from the tree, kept separate
+// Each direction the declaration can drift from the tree stays separate
 // because the remedies differ: add a suite, drop a stale entry, or correct a
-// name the tree no longer has. Collapsing the last two — as this reader first
-// did — makes a renamed or deleted package report as one that gained tests, a
+// name absent from the tree. Collapsing the last two makes a renamed or deleted
+// package report as one that gained tests, a
 // claim about a directory that is not there; `crates/core/src/pi_ext/renames.rs`
 // records prompt-stash -> pi-prompt-stash, so this repo has walked that path.
 // Taking the per-package suite counts as an argument is what lets the control

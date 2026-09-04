@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for the pane side of orch/scripts/oversee-watch: what the
+# Tests for the pane side of orch/scripts/oversee-watch: what the
 # watch reads off a lane's tmux window. Spent-account banners and their reset
 # clauses are oversee_watch_usage_limit.sh; the GitHub side — pr-watch,
 # merged, the heartbeat and the process-wide failures — is oversee_watch.sh.
@@ -205,7 +205,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
 
 # Codex on a dialog. It marks the row it has selected with `›`, not `❯`, and
 # words its key hints its own way, so nothing Claude Code draws reaches these
-# two screens: before KEN-863 both fell through every predicate and the pass
+# two screens: before  both fell through every predicate and the pass
 # said nothing about the lane. The marker is the whole signature — these two
 # cases are what proves a Codex enter hint would be redundant.
 new_case question_codex_dialog_trust
@@ -297,7 +297,7 @@ assert_contains "$out" "the PR is merged" "the pane tail follows the idle event"
 # the state this event is named for: a lane that finished its turn and is
 # waiting. Codex draws no submit hint at its composer — only the marker and
 # either the placeholder or an unsent draft — so the marker carries idleness,
-# and the hint this case used to assert on renders on none of these screens.
+# and the hint this case would assert on renders on none of these screens.
 new_case idle_after_return_codex
 printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
 cat "$CODEX_PANES/codex-idle-after-turn.txt" > "$STUB_DIR/pane-gh-2.txt"

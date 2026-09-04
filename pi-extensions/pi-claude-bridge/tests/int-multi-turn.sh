@@ -90,7 +90,7 @@ run_json "single-turn: 3+ parallel tool calls" \
   --mode json \
   -p "Read package.json, README.md, and tsconfig.json at the same time, then tell me the package name, the first heading in the README, and the TypeScript target."
 
-# Regression: final text after multi-round tool calls was lost when the bridge
+# failure: final text after multi-round tool calls was lost when the bridge
 # entered the DEFERRED path and set up a callback that never fired, yielding an
 # empty assistant message back to pi.
 run_json "regression: final text survives multi-round tool calls" \
@@ -102,7 +102,7 @@ run_json "regression: final text survives multi-round tool calls" \
   --mode json \
   -p "Read package.json and README.md, then summarize what you found in one sentence."
 
-# Regression: extractAllToolResults traversed past assistant messages, feeding
+# failure: extractAllToolResults traversed past assistant messages, feeding
 # stale tool results from turn 1 into turn 2.  Turn 1 reads package.json (has
 # "pi-claude-bridge"), turn 2 reads LICENSE (has "MIT License").  If stale
 # results leak, turn 2 would see package.json content instead of LICENSE content.

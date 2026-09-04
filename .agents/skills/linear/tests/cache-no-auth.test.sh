@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test: local cache queries must not resolve LINEAR_API_KEY/op://.
+# local cache queries must not resolve LINEAR_API_KEY/op://.
 # Cache reads are documented as no-API operations, so they must work even when
 # 1Password auth is unavailable. Live/API commands must still attempt auth.
 set -euo pipefail

@@ -7,7 +7,7 @@
 # claims — the directory oversee-watch keeps its own state in.
 #
 # A claim is live while its tmux pane is. The liveness key is
-# `<server pid> <pane id>`: pane ids restart at %0 on a new tmux server, so the
+# `<server pid> <pane id>`: pane ids restart at %0 on a separate tmux server, so the
 # pid keeps a claim that outlived its server from matching an unrelated pane.
 #
 # `tmux list-panes -a` sees ONE server — the current client's. It is authority

@@ -85,7 +85,7 @@ function handleQolEditorInput(editor: CustomEditor, ctx: ExtensionContext, data:
 /// Push the latest attachment-count status only when it actually changes.
 /// Called from render() so we follow the rainbow-editor pattern (pull from
 /// render, don't push from every keystroke) and avoid the per-keystroke
-/// setStatus side effect that previously contributed to resize/input races.
+/// setStatus side effect that can cause resize and input races.
 function syncQolEditorStatus(
 	ctx: ExtensionContext,
 	text: string,

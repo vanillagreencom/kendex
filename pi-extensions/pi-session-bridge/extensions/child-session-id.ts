@@ -1,4 +1,4 @@
-// kendex#60 workaround: synthesize a unique session id for spawned
+// Synthesize a unique session id for spawned
 // subagent Pi panes.
 //
 // Upstream pi-coding-agent has a bug where a child Pi process spawned

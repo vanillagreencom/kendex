@@ -189,7 +189,7 @@ cmd_update() {
 }
 
 # Atomic read-modify-write-report: the expression must evaluate to
-# {state: <new full state>, report: <any>}. The write of .state and the
+# {state: <resulting full state>, report: <any>}. The write of.state and the
 # capture of .report happen under the same lock, so the printed report is
 # the evidence of exactly the transition this call performed — a follow-up
 # `get` could instead observe another writer's interleaved change.
@@ -263,7 +263,7 @@ cmd_head_budget() {
     [[ -n "$action" && -n "$issue_id" && -n "$kind" ]] || { echo "Error: head-budget needs an action, issue_id, and kind" >&2; return 2; }
     # review-wait resets on a changed head; ci-fix must not, which is what the
     # flag exists for. Every ci-fix cycle pushes its fix, so the next take
-    # always sees a new head, and resetting there would give each retry a fresh
+    # always sees a replacement head, and resetting there would give each retry a fresh
     # count with CI_FIX_MAX_CYCLES bounding nothing. A passing CI run clears it.
     local field setting head_keyed
     case "$kind" in
@@ -343,7 +343,7 @@ cmd_append_file() {
 # The round caps, spelled once: setting name, the workflow-state field its
 # count is read from (empty when the caller keeps its own count), and its
 # default. `cap`, the rereview_panel guard below, every refusal's roster and
-# the help text derive from this table, so a cap added or renamed here needs no
+# the help text derive from this table, so a cap included or renamed here needs no
 # second edit kept in step, and `cap_limit` is the one place a cap resolves.
 cap_table() {
     printf 'REVIEW_MAX_CYCLES\trereview_cycles\t4\n'
@@ -487,10 +487,10 @@ cmd_set_now() {
 
 # Generate a unique per-delegation round token, store it at <field>, and print
 # it. The token binds a dev completion artifact to exactly the delegation that
-# produced it (kendex#776): the writer names its file dev-return-<issue>-<RID>.json
+# produced it: the writer names its file dev-return-<issue>-<RID>.json
 # and embeds "round_id": RID, and dev-artifact-check resolves that exact path and
 # rejects any receipt whose internal round_id differs. This deterministic identity
-# replaces the earlier mtime>=dev_delegated_at freshness heuristic, which proved
+# replaces the prior mtime>=dev_delegated_at freshness heuristic, which proved
 # only WHEN bytes were written, not WHICH delegation wrote them.
 #
 # The token is a nanosecond-resolution timestamp (`date +%s%N`) plus a random

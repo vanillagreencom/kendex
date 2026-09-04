@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Regression tests for approval-wait's pre-poll CLI layer, split from
+# Tests for approval-wait's pre-poll CLI layer, split from
 # approval_wait.sh at this seam (the wait-loop suites live there; nothing
 # here polls — every case terminates before the first gh call):
-#   - --resolve-mode precedence: PR_REVIEW_GATE / legacy PR_APPROVAL_GATE /
+#   - --resolve-mode precedence: PR_REVIEW_GATE / PR_APPROVAL_GATE /
 #     REVIEW_GATE_MODE, settings-file resolution, and the engine-only
-#     dotenv boundary (PR #1615)
-#   - -h/--help and unknown-flag argument parsing (kendex#981, KEN-556)
+#     dotenv boundary
+#   - -h/--help and unknown-flag argument parsing
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -87,13 +87,14 @@ run_resolve_mode() {
 
 echo "=== approval-wait --resolve-mode precedence ==="
 
-# PR_REVIEW_GATE wins outright, including over a conflicting legacy value.
+# PR_REVIEW_GATE wins outright, including over a conflicting PR_APPROVAL_GATE.
 assert_eq "$(run_resolve_mode PR_REVIEW_GATE=review)" "review" "resolve: PR_REVIEW_GATE=review"
 assert_eq "$(run_resolve_mode PR_REVIEW_GATE=off)" "off" "resolve: PR_REVIEW_GATE=off"
 assert_eq "$(run_resolve_mode PR_REVIEW_GATE=approval)" "approval" "resolve: PR_REVIEW_GATE=approval"
 assert_eq "$(run_resolve_mode PR_REVIEW_GATE=review PR_APPROVAL_GATE=off)" "review" "resolve: PR_REVIEW_GATE beats legacy PR_APPROVAL_GATE"
 
-# Legacy derivation when PR_REVIEW_GATE is unset: on -> approval, off -> off.
+# PR_APPROVAL_GATE derivation when PR_REVIEW_GATE is unset: on -> approval,
+# off -> off.
 assert_eq "$(run_resolve_mode PR_APPROVAL_GATE=on)" "approval" "resolve: legacy on maps to approval"
 assert_eq "$(run_resolve_mode PR_APPROVAL_GATE=off)" "off" "resolve: legacy off maps to off"
 
@@ -128,7 +129,7 @@ EOF
 assert_eq "$(run_resolve_mode)" "off" "resolve: settings-file REVIEW_GATE_MODE=off applies"
 rm -f "$TMP_ROOT/repo/kendex.settings.toml"
 
-# The engine boundary (PR #1615): REVIEW_GATE_MODE resolves from process env
+# The engine boundary: REVIEW_GATE_MODE resolves from process env
 # and the settings files ONLY — the engine skips dotenv for this key by
 # per-key exception, and a .env file is read by nothing at all, so neither
 # shape may turn the waiter off while the gate stays enforcing. The
@@ -235,10 +236,9 @@ assert_contains "$(cat "$stderr")" "assigned more than once" "resolve: the fallb
 
 echo "=== -h/--help answer in the arg parser (KEN-556) ==="
 
-# Usage must terminate before auth or any gh call — --help was once consumed
-# as the PR number (same shape as ci-wait's kendex#981). The recording stub
-# proves gh was never reached, and the token pins guard the heredoc: it is
-# the contract's sole home (KEN-555: tokens, never sentences).
+# Usage must terminate before auth or any gh call, never consumed as the PR
+# number. The recording stub proves gh was never reached, and the token pins
+# guard the heredoc: it is the contract's sole home (tokens, never sentences).
 run_help() {
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/argbin:$PATH" \
@@ -270,7 +270,7 @@ assert_eq "$rc" "0" "-h exits 0" "$stderr"
 assert_contains "$output" "Usage: approval-wait" "-h prints usage"
 
 # An unknown flag is rejected in the parser, never absorbed into a positional
-# slot (kendex#981, same shape as ci-wait case 33 and queue-wait 17b).
+# slot (same shape as ci-wait case 33 and queue-wait 17b).
 stderr="$TMP_ROOT/badflag.err"
 set +e
 output=$(run_help --bogus-flag 2>"$stderr")

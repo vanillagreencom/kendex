@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run every orch regression test in tests/*.sh.
+# Run every orch failure test in tests/*.sh.
 #
 # Each individual *.sh test is self-contained: builds its own sandbox,
 # exercises the target script, prints `pass: N   fail: M`, exits 0 iff

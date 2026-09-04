@@ -172,18 +172,15 @@ export function normalizeActiveMode(input: string | undefined): ActiveMode | und
 
 // Trigger the hard clarity-escape (plain-prose reply for this turn) ONLY for
 // explicit irreversible destructive operations the user is about to confirm
-// or run. Soft signals (security/clarify/confused/ambiguous) used to live
-// here and produced false escapes on routine technical turns; they belong in
+// or run. Soft signals (security/clarify/confused/ambiguous) produce false
+// escapes on routine technical turns, so they belong in
 // the model's inline judgment, not in a hard prompt swap.
 export function shouldClarityEscape(prompt: string): boolean {
 	return /(drop\s+table|rm\s+-rf|force[- ]?push|git\s+reset\s+--hard|git\s+push\s+(?:[^\n]*\s)?--force|\bdestructive\b|\birreversible\b)/i.test(prompt);
 }
 
-// Compact boundary clause. Each setting toggles one short label; previously
-// each was a full sentence ("Do NOT caveman-transform commit messages and PR
-// descriptions unless...") which took ~40% of the block. Live testing
-// confirmed the short-label form still keeps commit messages, PRs, and
-// external writes out of caveman style. Per-setting opt-out preserved.
+// Each setting toggles one short label. The compact form keeps commit messages,
+// PRs, and external writes out of caveman style without expanding the block.
 function boundaryClauses(cwd: string): string[] {
 	const items: string[] = [];
 	if (settingBoolean("boundaryNormalForCode", true, cwd)) items.push("code");

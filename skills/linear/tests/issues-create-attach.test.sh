@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# VST-126: `issues create --attach <PATH>` uploads local files through
+# `issues create --attach <PATH>` uploads local files through
 # Linear's fileUpload flow (mutation -> PUT to uploadUrl with EXACTLY the
 # returned headers) and references them from the created issue: images embed
 # as ![name](assetUrl) in the description, other files become Linear

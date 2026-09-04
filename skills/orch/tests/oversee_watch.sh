@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for the GitHub side of orch/scripts/oversee-watch, and for
+# Tests for the GitHub side of orch/scripts/oversee-watch, and for
 # the failures that take the whole process down. The pane side is in the three
 # lane suites: window-gone, lane-exited, lane-asking and idle-after-return in
 # oversee_watch_lanes.sh, prompt state across runs in
@@ -13,7 +13,7 @@
 #   1.  pr-watch: on the fleet's first run attention present at start is a
 #       baseline (no event, one stderr note, context on the next event); that
 #       baseline persists, so a line appearing between two runs is the next
-#       run's first-pass event and a standing line is not; a NEW `<pr> <kind>`
+#       run's first-pass event and a standing line is not; a unseen `<pr> <kind>`
 #       line mid-run is the event; a head-only change is not; GH_REPO reaches
 #       pr-watch and its argv is exactly --heal, for every repo; a
 #       heal-dispatched line is never a key — alone, re-attributed to another
@@ -74,7 +74,7 @@ assert_eq "$(cat "$STUB_DIR/prwatch.repo")" "owner/repo" "GH_REPO is exported to
 # green.
 assert_eq "$(cat "$STUB_DIR/prwatch.args")" "--heal" "pr-watch is invoked with --heal" "$err"
 
-# 1b. a NEW <pr> <kind> line mid-run is the event
+# 1b. a unseen <pr> <kind> line mid-run is the event
 new_case prwatch_new
 printf '0' > "$STUB_DIR/prwatch.rc.1"
 printf '12\tabcdef01\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out.2"
@@ -85,7 +85,7 @@ assert_eq "$rc" "0" "new pr-watch line exits 0" "$err"
 assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "a new attention line mid-run is the event" "$err"
 assert_contains "$out" "threads-open" "pr-watch output follows the event line" "$err"
 
-# 1c. the same <pr> <kind> under a new head is not new (a lane pushed)
+# 1c. the same <pr> <kind> under a replacement head is not unseen (a lane pushed)
 new_case prwatch_head_moved
 printf '12\taaaa0000\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out.1"
 printf '12\tbbbb0000\tthreads-open\t1 unresolved\n' > "$STUB_DIR/prwatch.out.2"
@@ -95,7 +95,7 @@ out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "same pr+kind under a new head is not an event" "$err"
 assert_contains "$out" "bbbb0000" "context carries the LATEST pr-watch output" "$err"
 
-# 1d. a new kind on an already-baselined PR is new
+# 1d. a unseen kind on an already-baselined PR is unseen
 new_case prwatch_new_kind
 printf '12\taaaa0000\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out.1"
 printf '12\taaaa0000\tthreads-open\t2 unresolved\n12\taaaa0000\tdisarmed\tauto-merge off\n' > "$STUB_DIR/prwatch.out.2"
@@ -373,7 +373,7 @@ assert_eq "$([[ -f "$STATE_DIR/owner_repo__none" ]] && echo yes || echo no)" "ye
   "and its baseline is keyed on that same spelling" "$err"
 
 # 1m. the pass advances no baseline until every repo has been reduced: a later
-# repo's global failure must not consume an earlier repo's undelivered event
+# repo's global failure must not consume a prior repo's undelivered event
 new_case prwatch_multi_repo_transactional
 printf '0' > "$STUB_DIR/prwatch.rc.owner_repo"
 printf '0' > "$STUB_DIR/prwatch.rc.other_repo"
@@ -468,7 +468,7 @@ assert_contains "$out" "pr-watch rc=1" \
 assert_contains "$out" "$(printf 'owner/repo\t12\taaaa0000\tthreads-open')" \
   "and the attention line still reaches the context" "$err"
 
-# 1p. every repo is reduced even once an earlier one has news
+# 1p. every repo is reduced even once a prior one has news
 new_case prwatch_every_repo_reduced
 printf '0' > "$STUB_DIR/prwatch.rc.owner_repo.1"
 printf '12\taaaa0000\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out.owner_repo.2"
@@ -483,7 +483,7 @@ assert_contains "$out" "$(printf 'other/repo\t7\tbbbb0000\tthreads-open')" \
 assert_eq "$(cat "$STATE_DIR/other_repo__none")" "$(printf '7\tthreads-open')" \
   "and the same pass writes its baseline" "$err"
 
-# 1q. a fleet that names a NEW repo on a later run baselines that repo's
+# 1q. a fleet that names a additional repo on a later run baselines that repo's
 # standing attention rather than letting it preempt the lane checks
 new_case prwatch_new_repo_baseline
 printf '12\taaaa0000\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out.owner_repo"
@@ -506,7 +506,7 @@ assert_contains "$(cat "$err")" "attention present at start for other/repo" \
 assert_eq "$(ls -1 "$STATE_DIR" 2>/dev/null | wc -l | tr -d '[:space:]')" "2" \
   "the newly named repo gets its own baseline file" "$err"
 
-# 1r. the mirror ordering: a baselined repo's genuinely new line is still an
+# 1r. the mirror ordering: a baselined repo's genuinely unseen line is still an
 # event when a repo with no baseline is named ahead of it
 new_case prwatch_new_repo_first
 printf '12\taaaa0000\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out.owner_repo"

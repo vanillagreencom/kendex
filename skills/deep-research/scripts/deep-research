@@ -134,7 +134,7 @@ function resolvePath(path) { return resolve(cleanPath(path)); }
 
 // A report may reference a path as Markdown inline code (`path`) or a link
 // ([text](path)); strip those delimiters before resolving so a valid path is
-// not reported missing (kendex#628).
+// not reported missing.
 function stripMarkdownPathDelimiters(ref) {
   let value = ref.trim();
   const link = value.match(/^\[[^\]]*\]\(([^)\s]+)\)$/);

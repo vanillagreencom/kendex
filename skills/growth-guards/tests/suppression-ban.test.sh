@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pins for scripts/suppression-ban: every blanket lane fires with its legal
 # per-line counterpart proven to pass, the bare-allow ratchet fails in all
-# directions (new, grow, loose, stale), --update tightens only, and baseline
+# directions (additional, grow, loose, stale), --update tightens only, and baseline
 # hygiene is enforced. The index readers this family of checks shares — the
 # per-carrier count among them — are pinned once, in index-reads.test.sh,
 # which drives them through this check.
@@ -295,7 +295,7 @@ git -C "$R" add -A
 git -C "$R" commit -q -m seed
 # An unstaged row for a file that IS still counted: --update rewrites the
 # worktree file, so it has to read the worktree file, or the row vanishes and
-# its file becomes a new violation.
+# its file becomes a separate violation.
 printf 'also.rs\t1\nok.rs\t2\n' >"$R/tools/suppression-baseline.tsv"
 run_sb --update
 [ "$RC" -eq 0 ] && ok "--update preserves an unstaged row for a still-counted file" \

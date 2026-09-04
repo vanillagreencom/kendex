@@ -7,7 +7,6 @@
 # checkout, so `git add <tracked file under it>` started refusing with "The
 # following paths are ignored by one of your .gitignore files" while `git
 # status` still listed the file as modified. It also outlived the worktree
-# (kendex#878).
 #
 # Fix: when the path holds tracked content, follow the bare entry with
 # `!<path>/`. A trailing-slash pattern matches a real directory but NOT a
@@ -95,7 +94,7 @@ assert_eq "$(git -C "$R/main" diff --cached --name-only)" "harness/skills/tool.m
 git -C "$R/main" reset -q
 
 # The worktree side must be unaffected: the tracked-content entry is a real
-# directory with per-child links (VST-37), all invisible to status.
+# directory with per-child links, all invisible to status.
 assert_eq "$(git -C "$WT" status --porcelain)" "" "worktree stays clean (links still ignored)"
 if [[ -d "$WT/harness" && ! -L "$WT/harness" && -L "$WT/harness/state.json" ]]; then
   pass "worktree path is a real dir with per-child links"
@@ -140,7 +139,7 @@ assert_eq "$(git -C "$C/main" status --porcelain)" "" "main stays clean — runt
 echo "=== the shape self-heals when a path gains tracked content ==="
 ############################################################
 
-# Same repo: commit a file under the previously runtime-only path, then
+# Same repo: commit a file under the beforehand runtime-only path, then
 # re-materialize the links. The negation must appear without a manual edit.
 printf 'now-tracked\n' >"$C/main/runtime/sub/keep.md"
 git -C "$C/main" add -f runtime/sub/keep.md

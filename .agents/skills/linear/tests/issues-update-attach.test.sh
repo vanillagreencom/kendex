@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# VST-126: `issues update <ID> --attach <PATH>`. Image embeds append to the
+# `issues update <ID> --attach <PATH>`. Image embeds append to the
 # description being written — and, when the update carries no
 # --description/--description-file, to the issue's EXISTING description
 # (append, never wipe). Non-image files become Linear attachments via

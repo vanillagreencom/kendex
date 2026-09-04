@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# KEN-464: `fix-links` printed "Restored symlinks" and exited 0 for paths it had
+# `fix-links` printed "Restored symlinks" and exited 0 for paths it had
 # not restored. The sync errors that name fix-links as their remediation are
 # re-triggered by exactly those paths, so the operator looped on a command that
 # reported success and changed nothing.
@@ -65,7 +65,7 @@ git -C "$MAIN" remote add origin "$ROOT/origin.git"
 git -C "$MAIN" push -q -u origin main
 
 # harness/ mixes untracked kendex-installed content with a tracked file, so it
-# is provisioned as a real directory with per-child links (VST-37); runtime/ is
+# is provisioned as a real directory with per-child links; runtime/ is
 # untracked-only, a plain parent symlink. absent-here is configured further
 # down but never created in the main checkout.
 mkdir -p "$MAIN/harness/skills" "$MAIN/runtime"

@@ -72,7 +72,7 @@ gg_path_matches() { # PATH PATTERN... — 0 when some pattern matches
 # A root is what lets a lane say "everything else under here is refused". It
 # says nothing about depth — that is the pattern's own, in
 # gg_path_glob_section below. Deriving the two independently and reconciling
-# them by a count is what makes each new pattern shape a new defect.
+# them by a count is what makes each additional pattern shape a additional defect.
 GG_PATH_GLOBS=""
 GG_PATH_GLOBS_SHOWN=""
 GG_PATH_ROOTS=""
@@ -141,7 +141,7 @@ gg_path_segments() { # PATH — how many `/`-separated segments it has
 # root. A two-glob pattern places a path at its own depth and not one a
 # directory deeper; a pattern whose section segment is literal narrows the
 # same tree to that one section and still places entries in it; a pattern
-# with a glob in the middle places whatever reaches ITS depth. A new pattern
+# with a glob in the middle places whatever reaches ITS depth. A additional pattern
 # shape is answered by the pattern, not by another rule beside this one.
 gg_path_glob_section() { # PATH — sets GG_PATH_SECTION, empty when nothing places it
   local path="$1" pat want have dir

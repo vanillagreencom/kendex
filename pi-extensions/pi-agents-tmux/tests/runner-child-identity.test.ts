@@ -137,11 +137,9 @@ describe("bg one-shot runner exports child identity env (issue #228)", () => {
 	});
 
 	test("pane-only env vars are stripped even when set in parent", async () => {
-		// Issue #228 post-verification: bridge workaround is pane-oriented; bg
-		// children must not bleed bridge session/role or pane ownership. Regression
-		// guard against the pre-PR review round-1 finding — the earlier test
-		// pre-cleared these vars, so a `{...process.env, PI_SUBAGENT_CHILD_AGENT: ...}`
-		// spread that *didn't* delete them was still passing.
+		// Bridge state is pane-oriented. Background children must not inherit
+		// bridge session, role, or pane ownership. The parent environment must
+		// contain these variables so this test proves that the child deletes them.
 		const envs = captureSpawnedEnv([{ code: 0 }]);
 		const previousParent = process.env.PI_BRIDGE_PARENT_SESSION_ID;
 		const previousChild = process.env.PI_BRIDGE_CHILD_ROLE;

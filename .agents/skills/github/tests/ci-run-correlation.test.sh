@@ -2,10 +2,9 @@
 # `scope_current_run` lived in TWO places — orch `ci-wait` and github
 # `pr-merge.sh` — each carrying a comment that it must stay aligned with the
 # other "byte-for-byte". Nothing enforced that, and they drifted: `ci-wait` grew
-# substantive-run selection and stale-status rewriting (kendex#607) while
-# `pr-merge.sh` kept the original max-run-id version (kendex#492). A merge gate
+# substantive-run selection and stale-status rewriting  while
+# `pr-merge.sh` kept the original max-run-id version. A merge gate
 # and the waiter feeding it were then scoping the same rollup by different rules
-# (kendex#876).
 #
 # These tests (a) pin the shared implementation's behaviour and (b) fail if
 # either script grows a local copy again, so the drift cannot silently return.
@@ -45,7 +44,7 @@ done
 # The bucket taxonomy and run-id capture are exported as CI_RUN_JQ_DEFS; a
 # consumer inlining its own `def bucket`/`def runid` copy is the same drift one
 # layer down. Covers orch `ci-wait` as well as the GitHub commands: its local
-# copies predated CI_RUN_JQ_DEFS and were exempted here until KEN-571 removed
+# copies predated CI_RUN_JQ_DEFS and were exempted here until  removed
 # them. The contract is these files as they are written — the scan reads the
 # spelling they use, not every spelling jq would accept.
 for script in "$REPO_ROOT/skills/orch/scripts/ci-wait" \
@@ -101,16 +100,16 @@ OUT="$(run_scope "$TWO")"
 echo "=== kendex#876 reported shape ==="
 
 # The reported rollup, with the run ids and job `startedAt` values taken from
-# the real head (vanillagreencom/hyprtrade#419 @ 1d9b5e7):
+# the real head:
 #
 #   run 30201902682  pull_request_review, attempt 1, CANCELLED by concurrency
 #                    jobs 12:21:43-12:21:56 — the "zero-second failures"
 #   run 30201726860  pull_request, attempt 2 (a RERUN), SUCCESS
 #                    jobs 12:22:07-12:23:31, `CI Required` published 12:28:48
 #
-# The rerun carries the LOWER run id because a new attempt reuses the original
+# The rerun carries the LOWER run id because another attempt reuses the original
 # run's id, so max-run-id picked the cancelled run and leaked its artifacts into
-# `pr-merge --check` while `ci-wait` — already rerun-aware via kendex#699 —
+# `pr-merge --check` while `ci-wait` — already rerun-aware via  —
 # reported pass. Ranking on when the checks actually ran resolves that: the
 # rerun's jobs start after the cancelled run's.
 DUP='[
@@ -154,7 +153,7 @@ else
 fi
 
 # A genuinely later run that failed is still a failure — time ordering must not
-# become a way for an older green run to mask a real regression.
+# become a way for an older green run to mask a real failure.
 LATERFAIL='[
  {"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"https://x/actions/runs/100/job/1"},
  {"name":"build","state":"FAILURE","bucket":"fail","workflow":"CI","startedAt":"2026-07-26T10:30:00Z","link":"https://x/actions/runs/200/job/2"}

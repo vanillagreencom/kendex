@@ -11,8 +11,8 @@ import { isForeignMcpTool, isPiDispatchable, mapToolArgs, mapToolName } from "./
 
 function updateUsage(output: AssistantMessage, usage: Record<string, number | undefined>, model: Model<any>, c: QueryContext): void {
 	// Anthropic reports per-message counters and RE-reports them as the message
-	// grows, so the in-flight message's figures are replaced, not added. What is
-	// added is every child message already finished in this Pi turn — see
+	// grows, so the in-flight message's figures replace, never accumulate. What
+	// accumulates is every child message already finished in this Pi turn — see
 	// `turnUsageCarry` in query-state.ts for why a turn can span several.
 	const current = c.currentMessageUsage;
 	const carry = c.turnUsageCarry;
@@ -70,25 +70,24 @@ export function finalizeCurrentStream(stopReason?: string, c: QueryContext = ctx
 //
 // The Claude Code CLI dispatches MCP tool calls (and the SDK yields the
 // completed assistant message) BEFORE the stream's message_delta arrives — and
-// message_delta is what carries the message's REAL output-token count (measured:
-// handler invoked ~45ms before message_delta on every tool-use turn). Ending
-// the pi stream at either of those early signals therefore froze usage at the
-// message_start placeholder values, which is why pi sessions recorded 1–7
-// output tokens per tool-use turn while the final text turn recorded hundreds
-// (2026-07-28 token test, both bridge panes).
+// message_delta is what carries the message's REAL output-token count (the
+// handler fires tens of milliseconds ahead of it on every tool-use turn).
+// Ending the pi stream at either of those early signals freezes usage at the
+// message_start placeholder values: a handful of output tokens per tool-use
+// turn while the final text turn records hundreds.
 //
-// So the turn now ends at message_stop, exactly like the streamed-text case,
-// and the early signals only ARM a grace timer. The timer is the deadlock
-// backstop for the one observed case where the terminal events never arrive
-// (pi 0.80 steer draining): pi cannot execute tools before the stream ends, and
-// the MCP handler cannot resolve before pi executes, so a stream that has gone
-// silent must be ended by force — just 1.5s later instead of immediately.
+// So the turn ends at message_stop, exactly like the streamed-text case, and
+// the early signals only ARM a grace timer. The timer is the deadlock backstop
+// for a stream whose terminal events never arrive (pi's steer draining
+// produces one): pi cannot execute tools before the stream ends, and the MCP
+// handler cannot resolve before pi executes, so a stream that has gone silent
+// must be ended by force — TOOL_USE_END_GRACE_MS later instead of immediately.
 
 const TOOL_USE_END_GRACE_MS = 1500;
 
 /** End the current pi stream as a tool_use turn boundary. Safe to call when the
  *  turn already ended (no-op). Every end path funnels here, so this is where
- *  two invariants are enforced by construction (kendex#1469): a block still
+ *  two invariants are enforced by construction: a block still
  *  carrying partialJson never ships — Pi executes the done message's content,
  *  and truncated arguments must never execute — and every call that DOES ship
  *  is stamped forwarded so no lagging replay can dispatch it again. */
@@ -105,7 +104,7 @@ export function endToolUseTurn(c: QueryContext): void {
 	}
 	// Every tool call Pi is about to execute from this turn is owed a result and
 	// must never be dispatched again: a lagging stream replays the same tool_use
-	// into the NEXT turn, whose per-message dedup cannot see it (kendex#1469).
+	// into the NEXT turn, whose per-message dedup cannot see it.
 	for (const block of c.turnOutput.content as Array<{ type?: string; id?: unknown }>) {
 		if (block?.type === "toolCall" && typeof block.id === "string") c.forwardedToolCallIds.add(block.id);
 	}
@@ -146,12 +145,11 @@ export function scheduleToolUseTurnEnd(c: QueryContext, action: () => void, sour
  * Park queued tool results whose handler has not fired by a child message
  * boundary, and say so everywhere it matters. The boundary is where stale
  * entries would start poisoning mismatch reports — but it does NOT prove the
- * handler gave up: the SDK staggers handler invocations, and in the 2026-08-17
- * deadlock session three of five parallel handlers fired after this point
- * (kendex#1469). Parked results stay consumable through
- * takeQueuedOrParkedResult; one that is never consumed belongs to a call the
- * SDK abandoned client-side (permission denial), which is exactly what the
- * notice describes.
+ * handler gave up: the SDK staggers handler invocations, and handlers in a
+ * parallel batch routinely fire after this point. Parked results stay
+ * consumable through takeQueuedOrParkedResult; one that is never consumed
+ * belongs to a call the SDK abandoned client-side (permission denial), which
+ * is exactly what the notice describes.
  */
 export function reapStaleQueuedResults(c: QueryContext): void {
 	const stale = c.takeStaleQueuedResults();
@@ -180,14 +178,14 @@ export const FINALIZE_MAX_REARMS = 3;
  *  stream events never arrived (the grace-timer action armed by an MCP handler
  *  invocation — see scheduleToolUseTurnEnd).
  *
- *  Observed with Claude Code under pi 0.80's steer draining (tool result and
- *  drained steer arrive in one provider call): the NEXT tool turn's tool_use
- *  streams in, the SDK invokes the MCP handler — and neither terminal event
- *  ever arrives. The invocation itself proves the assistant turn is committed,
- *  so end the pi stream like the `message_stop` path — with this handler's
- *  schema-validated arguments, never a partial parse — after settling every
- *  sibling whose handler has fired and giving a merely-lagging stream up to
- *  FINALIZE_MAX_REARMS extra grace periods for the rest (kendex#1469).
+ *  The producer is pi's steer draining (tool result and drained steer arrive
+ *  in one provider call) : the NEXT tool turn's tool_use streams in, the SDK
+ *  invokes the MCP handler — and neither terminal event ever arrives. The
+ *  invocation itself proves the assistant turn is committed, so end the pi
+ *  stream like the `message_stop` path — with this handler's schema-validated
+ *  arguments, never a partial parse — after settling every sibling whose
+ *  handler has fired and giving a merely-lagging stream up to
+ *  FINALIZE_MAX_REARMS extra grace periods for the rest.
  *
  *  The dead-stream guard is a backstop: the grace timer's own stream-identity
  *  check means this normally never runs after the turn ended. The primary
@@ -204,8 +202,8 @@ export function finalizeToolUseTurnFromMcpInvocation(
 		// The turn ended without this call. An unforwarded handler here can never
 		// be answered — the yield that could have replayed its call was consumed
 		// against a null stream, and the dead-mark below suppresses any replay
-		// that has not happened yet. Failing it now is what turns the observed
-		// multi-hour session deadlock into one retryable error (kendex#1469).
+		// that has not happened yet. Failing it here turns what would be a
+		// session-long deadlock into one retryable error.
 		if (failStrandedToolCall(queryCtx, toolCallId)) {
 			debug(`mcp handler: ${toolName} [${toolCallId}] stranded — turn ended before its call reached Pi; resolved with error`);
 			diagDump("tool_handler_stranded", { toolCallId, toolName, site: "finalize-no-stream" });
@@ -220,9 +218,9 @@ export function finalizeToolUseTurnFromMcpInvocation(
 			// Stream ended before content_block_stop. The SDK invoked this handler
 			// with the COMPLETE schema-validated input, so the handler's copy is
 			// authoritative — the streamed partial JSON is by definition behind it.
-			// Settling from the partial is what forwarded `{}`-argument calls that
-			// Pi then executed and errored (kendex#1469), exactly the divergence
-			// the synthesize branch below never had.
+			// Settling from the partial forwards `{}`-argument calls that Pi then
+			// executes and errors on, a divergence the synthesize branch below
+			// cannot have.
 			block.arguments = mappedArgs;
 			queryCtx.updateToolCallArgs(block.id, block.arguments);
 			delete block.partialJson;
@@ -230,13 +228,13 @@ export function finalizeToolUseTurnFromMcpInvocation(
 			queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
 		}
 	} else if (queryCtx.forwardedToolCallIds.has(toolCallId) || queryCtx.deadToolCallIds.has(toolCallId)) {
-		// Pi already executed this call in an earlier turn (its result arrives or
-		// sits parked), or the handler was already failed — either way a second
-		// dispatch is the one outcome worse than waiting. Do NOT return: this
-		// firing consumed the stream's only grace timer, so the current turn's own
-		// blocks must still be settled and the turn still ended below, or a turn
-		// that loses its terminal events afterwards has no backstop left and Pi
-		// sits busy until manual abort.
+		// Pi already executed this call in a turn that has ended (its result
+		// arrives or sits parked), or the handler was already failed — either
+		// way a second dispatch is the one outcome worse than waiting. Do NOT
+		// return: this firing consumed the stream's only grace timer, so the
+		// current turn's own blocks must still be settled and the turn still
+		// ended below, or a turn that loses its terminal events afterwards has
+		// no backstop left and Pi sits busy until manual abort.
 		debug(`mcp handler: ${toolName} [${toolCallId}] already ${queryCtx.forwardedToolCallIds.has(toolCallId) ? "forwarded" : "dead"} — not re-emitting`);
 	} else {
 		// The invocation can arrive before the tool_use is streamed at all
@@ -314,13 +312,14 @@ export function processStreamEvent(
 	}
 
 	if (event?.type === "message_start") {
-		// The child moving to a new message proves every result for the previous
-		// one reached it; anything still queued can never be consumed.
+		// The child moving on to another message is where a still-queued result
+		// would start poisoning mismatch reports: park it, consumable by a late
+		// handler (see reapStaleQueuedResults).
 		reapStaleQueuedResults(c);
 		c.resetToolTracking();
-		// A new child message begins: bank what the previous one billed before its
-		// counters are replaced. No-op on the turn's first, and no-op if this same
-		// message was already declared (see beginChildMessage).
+		// Another child message begins: bank what the previous one billed before
+		// its counters are replaced. No-op on the turn's first, and no-op if this
+		// same message was already declared (see beginChildMessage).
 		c.beginChildMessage(event.message?.id);
 		updateTurnOutputModel(event.message?.model, c);
 		if (event.message?.usage) updateUsage(c.turnOutput, event.message.usage, model, c);
@@ -330,7 +329,7 @@ export function processStreamEvent(
 	if (event?.type === "content_block_start") {
 		c.turnSawStreamEvent = true;
 		ensureTurnStarted(c);
-		// A new block owns this index from here on, so release any child-executed
+		// This block owns its index from here on, so release any child-executed
 		// or suppressed claim on it. Belt-and-braces against a missed
 		// message_start: without this a stale index could silently swallow a later
 		// text block's deltas.
@@ -361,7 +360,7 @@ export function processStreamEvent(
 			if (typeof streamedId === "string" && (c.forwardedToolCallIds.has(streamedId) || c.deadToolCallIds.has(streamedId))) {
 				// A lagging stream replaying a call Pi already executed — or one whose
 				// handler was already failed as stranded — into a later turn. Mirroring
-				// it would make Pi dispatch it a second time (kendex#1469).
+				// it would make Pi dispatch it a second time.
 				c.suppressedStreamIndexes.add(event.index);
 				debug(`processStreamEvent: tool_use ${streamedId} already ${c.forwardedToolCallIds.has(streamedId) ? "forwarded" : "dead"} — suppressing duplicate stream block`);
 				return;
@@ -370,7 +369,7 @@ export function processStreamEvent(
 				// Same turn, same id: the completed-message yield beat the stream (its
 				// block is already recorded with complete arguments). A second
 				// partialJson copy would ship the id twice in one done message — and
-				// if its stop never arrives, ship it truncated (kendex#1469).
+				// if its stop never arrives, ship it truncated.
 				c.suppressedStreamIndexes.add(event.index);
 				debug(`processStreamEvent: tool_use ${streamedId} already recorded in this turn — suppressing duplicate stream block`);
 				return;
@@ -500,7 +499,7 @@ function appendMissingToolUsesFromAssistant(
 	// array of a turnOutput that endToolUseTurn already handed Pi BY REFERENCE
 	// in its done event, so a push here appends calls into a delivered message
 	// behind Pi's back — whether Pi's dispatch enumerates before or after the
-	// push is a microtask race (kendex#1469).
+	// push is a microtask race.
 	const streamLive = Boolean(c.currentPiStream && c.turnOutput);
 	let sawToolUse = false;
 	for (const block of assistantMsg.content) {
@@ -520,9 +519,9 @@ function appendMissingToolUsesFromAssistant(
 		}
 		const existingIdx = c.turnBlocks.findIndex((b: any) => b.type === "toolCall" && b.id === block.id);
 		if (existingIdx < 0 && (c.forwardedToolCallIds.has(block.id) || c.deadToolCallIds.has(block.id))) {
-			// Completed-message replay of a call Pi already executed in an earlier
-			// turn (or one already failed as stranded). Not a live Pi turn boundary:
-			// sawToolUse stays false for it, and no block is emitted (kendex#1469).
+			// Completed-message replay of a call Pi already executed in a turn that
+			// has ended (or one already failed as stranded). Not a live Pi turn
+			// boundary: sawToolUse stays false for it, and no block is emitted.
 			debug(`assistant message: tool_use ${block.id} already ${c.forwardedToolCallIds.has(block.id) ? "forwarded" : "dead"} — skipping duplicate`);
 			continue;
 		}
@@ -556,9 +555,9 @@ function appendMissingToolUsesFromAssistant(
 		c.currentPiStream?.push({ type: "toolcall_end", contentIndex: idx, toolCall: toolBlock as any, partial: c.turnOutput });
 	}
 	// Only while the stream is still live: the SDK's assistant yields carry the
-	// message_start placeholder usage (output ≈ 1–7), and once the done event has
-	// delivered turnOutput to pi, overwriting its usage with those placeholders
-	// would corrupt the very figure message_delta got right.
+	// message_start placeholder usage, and once the done event has delivered
+	// turnOutput to pi, overwriting its usage with those placeholders would
+	// corrupt the very figure message_delta got right.
 	if (assistantMsg.usage && c.turnOutput && c.currentPiStream) updateUsage(c.turnOutput, assistantMsg.usage, model, c);
 	return sawToolUse;
 }
@@ -603,14 +602,14 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 	updateTurnOutputModel(assistantMsg.model, c);
 	if (c.turnSawStreamEvent) {
 		// The SDK yields the completed assistant message BEFORE the stream's
-		// message_delta/message_stop on every tool-use turn (measured — this is
-		// the norm, not a fallback). Record any tool_use blocks the stream hasn't
-		// delivered yet, but do NOT end the pi stream here: message_delta, which
-		// arrives tens of ms later, carries the message's real output-token count,
-		// and message_stop is the normal turn end. Ending here froze usage at the
-		// message_start placeholders (1–7 output tokens per tool turn). The grace
-		// timer force-ends the turn if the terminal events never arrive, so pi
-		// still gets to execute the tools and unblock the MCP handlers.
+		// message_delta/message_stop on every tool-use turn (the norm, not a
+		// fallback). Record any tool_use blocks the stream hasn't delivered yet,
+		// but do NOT end the pi stream here: message_delta, which arrives tens of
+		// ms later, carries the message's real output-token count, and
+		// message_stop is the normal turn end. Ending here freezes usage at the
+		// message_start placeholders. The grace timer force-ends the turn if the
+		// terminal events never arrive, so pi still gets to execute the tools and
+		// unblock the MCP handlers.
 		if (appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameToPi, c)) {
 			c.turnSawToolCall = true;
 			scheduleToolUseTurnEnd(c, () => endToolUseTurn(c), "assistant-boundary");
@@ -620,11 +619,11 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 	// The SDK yields the SAME assistant message more than once (per-block
 	// partial copies and the completed message share one id). With stream
 	// events, the streamed path already renders content and the duplicates are
-	// naturally ignored; on this no-stream-events path each yield used to be
-	// re-rendered wholesale — a rate-limited turn printed "You've hit your
-	// weekly limit" twice. Same-message yields keep the turn's tracking (a
-	// reset mid-message would wipe live tool-claim state) and render only
-	// blocks not already rendered.
+	// naturally ignored; on this no-stream-events path, re-rendering each
+	// yield wholesale prints a rate-limited turn's "You've hit your weekly
+	// limit" twice. Same-message yields keep the turn's tracking (a reset
+	// mid-message would wipe live tool-claim state) and render only blocks not
+	// already rendered.
 	const sameMessage = typeof assistantMsg.id === "string" && assistantMsg.id.length > 0 && assistantMsg.id === c.currentMessageId;
 	if (!sameMessage) {
 		reapStaleQueuedResults(c);
@@ -638,9 +637,9 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 	debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b: any) => b.type).join(",")}${sameMessage ? " (same message re-yield)" : ""}`);
 	// Deduped against the WHOLE current turn, not just same-id re-yields: a
 	// rejected turn's synthesized error message ("You've hit your weekly limit")
-	// arrives as multiple assistant yields whose ids DIFFER or are absent
-	// (measured 2026-07-28: one pi message, two byte-identical text blocks), so
-	// an id-keyed guard alone still rendered it twice. A model legitimately
+	// arrives as multiple assistant yields whose ids DIFFER or are absent (one
+	// pi message, two byte-identical text blocks), so an id-keyed guard alone
+	// still renders it twice. A model legitimately
 	// producing two byte-identical full blocks in one turn is vanishingly rare;
 	// rendering such a duplicate once is the better failure mode.
 	const alreadyRendered = (type: string, content: string): boolean =>
@@ -678,11 +677,11 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 			if (!c.turnBlocks.some((b: any) => b.type === "toolCall" && b.id === block.id)
 				&& (c.forwardedToolCallIds.has(block.id) || c.deadToolCallIds.has(block.id))) {
 				// A cross-turn replay of a call Pi already executed (or one whose
-				// handler was already failed as stranded). This exact path produced
-				// the observed duplicate dispatches: the completed-message yield lands
-				// in the callback AFTER a grace finalize already ended the call's
-				// turn, and per-message dedup cannot see across turns (kendex#1469).
-				// Not recorded either — a forwarded call must not be claimable again.
+				// handler was already failed as stranded). This is the path a
+				// duplicate dispatch takes: the completed-message yield lands in the
+				// callback AFTER a grace finalize already ended the call's turn, and
+				// per-message dedup cannot see across turns. Not recorded either — a
+				// forwarded call must not be claimable again.
 				debug(`processAssistantMessage fallback: tool_use ${block.id} already ${c.forwardedToolCallIds.has(block.id) ? "forwarded" : "dead"} — skipping duplicate`);
 				continue;
 			}

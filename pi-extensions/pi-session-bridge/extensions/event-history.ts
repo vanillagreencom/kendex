@@ -11,7 +11,7 @@
  *   - Slots track `{ ref, offset, length }` so rehydration is one O(1)
  *     pread per envelope, not a full sidecar scan.
  *   - When a raw retention budget is configured the sidecar is rewritten
- *     in-place to drop slots whose envelopes already evicted; if the new
+ *     in-place to drop slots whose envelopes are already evicted; if the incoming
  *     payload still does not fit it is refused and the envelope keeps
  *     compact-only data plus an explicit `rawError` marker.
  */

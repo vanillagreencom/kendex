@@ -4,7 +4,7 @@
 # status to the predicate's verdict. Stubbed GitHub API, every leg driven
 # offline.
 #
-# The writer no longer polices CI (that is branch protection's job — see the
+# The writer does not polices CI (that is branch protection's job — see the
 # script header's adoption precondition), so there is no proof chain here to
 # test: no rerun, no provenance marker, no attempt floor, no evidence
 # ordering, no stall recovery. What remains is the decision table, the write
@@ -29,7 +29,7 @@
 #                                               description
 #   w9b. untracked-claim over a NEWER        -> posts failure directly
 #        success entry
-# Write discipline (VST-65 ordering guard, success posts only):
+# Write discipline  ordering guard, success posts only):
 #   w10. guard re-read shows a non-success   -> defers (exit 0, no POST)
 #        entry at/after evaluated_at
 #   w10b. same-second non-success write      -> still defers (>=, not >)
@@ -158,7 +158,7 @@ case "$args" in
     echo "post:$args" >> "${STUB_POST_LOG:?}"
     ;;
   *"/commits/"*"/statuses?per_page=100"*)
-    # The VST-65 guard's re-read — distinguishable from the projection read
+    # The  guard's re-read — distinguishable from the projection read
     # by its explicit per_page, so the two can fail independently.
     # STUB_GUARD_HISTORY_PAGE2 emits a second page (gh --paginate emits one
     # array per page, concatenated) so first-page-only merges are catchable.
@@ -249,12 +249,12 @@ UNTRACKED_DETAIL="1 tracking claim(s) name no issue — write Declined: <reason>
 UNTRACKED="verdict=untracked-claim detail=$UNTRACKED_DETAIL"
 
 # created_at anchors: OLD predates every stub run's start (RUN_START =
-# 2020-06-01) and every evaluation instant; LATE lands after RUN_START but
+# OLD and every evaluation instant; LATE lands after RUN_START but
 # before now; FUTURE postdates every evaluation instant.
 OLD="2020-01-01T00:00:00Z"
 # RECENT is five minutes ago: inside the stall bound (so markers dated with
 # it exercise the WAITING path) but strictly BEFORE this run's evaluation
-# instant, so it does not also trip the VST-65 ordering guard. Markers dated
+# instant, so it does not also trip the ordering guard. Markers dated
 # OLD are past the bound and exercise the self-heal path.
 RECENT="$(date -u -d '5 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
   || date -u -v-5M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
@@ -507,7 +507,7 @@ assert_contains "$out" "zero bytes" "w22c: names the broken read"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w22c: posts nothing on a broken listing"
 
 # The two adjacent shapes the -z guard cannot see: whitespace-only slurps to
-# [] and an error-object page to {} — both used to read as "zero open PRs"
+# [] and an error-object page to {} — both would read as "zero open PRs"
 # and exit green.
 rc=0; out=$(run_writer_all workflow_run STUB_VERDICT_LINE="$APPROVED" STUB_OPEN_PRS=whitespace 2>&1) || rc=$?
 assert_eq "$rc" "1" "w22d: whitespace-only open-PR listing exits 1"

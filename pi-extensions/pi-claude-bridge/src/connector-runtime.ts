@@ -1,5 +1,5 @@
 // Connector prime/snapshot host: the per-credential-scope inventory cache the
-// query path reads synchronously (kendex#832/#870). Extracted from index.ts —
+// query path reads synchronously. Extracted from index.ts —
 // this is process-lifetime runtime state, not provider streaming logic.
 //
 // Connector declarations for the query path, cached per credential scope. The
@@ -32,15 +32,15 @@ export function readCredentialFile(path: string): string | undefined {
 const connectorServerCache = new Map<string, Record<string, unknown>>();
 const connectorServerPending = new Set<string>();
 // Epoch ms of the last FAILED inventory attempt per scope, so a persistently
-// failing account cools down instead of issuing one new HTTPS request per turn
-// (VST-14). Missing credentials are exempt: that check is a local file read
+// failing account cools down instead of issuing one HTTPS request per turn
+//  Missing credentials are exempt: that check is a local file read
 // with no request to bound, and a just-completed `claude login` must take
 // effect on the next turn.
 const connectorServerFailureAt = new Map<string, number>();
 
 // Deadline on the inventory round trip. Without one, a hung claude.ai request
 // held the pending flag forever — same budget as the account-host probe's
-// ACCOUNT_PROBE_DEADLINE_MS (VST-14).
+// ACCOUNT_PROBE_DEADLINE_MS.
 const CONNECTOR_PRIME_TIMEOUT_MS = 10_000;
 const CONNECTOR_PRIME_FAILURE_COOLDOWN_MS = 60_000;
 
@@ -81,12 +81,12 @@ export function connectorCredentialEnv(claudeConfigDir: string | undefined = pro
 //
 // FAILS OPEN throughout: no credentials, a failed inventory, or a thrown call
 // all resolve to "declare nothing" rather than breaking the turn. Failures are
-// NOT cached — a transient blip at registration used to pin `{}` for the
+// NOT cached. Caching a transient registration failure would pin `{}` for the
 // process lifetime, keeping every later turn undeclared and the disk-cache
 // fallback unreachable. Leaving the key unset makes the next snapshot retry;
 // the pending set dedupes concurrent fetches, and a failed inventory attempt
 // stamps a per-scope cooldown so a persistently failing account backs off
-// instead of re-priming on every turn (VST-14).
+// instead of re-priming on every turn.
 export function primeConnectorServers(claudeConfigDir?: string, overrides: PrimeConnectorOverrides = {}): void {
 	const key = connectorScopeKey(claudeConfigDir);
 	if (connectorServerCache.has(key) || connectorServerPending.has(key)) return;
@@ -124,7 +124,7 @@ export function primeConnectorServers(claudeConfigDir?: string, overrides: Prime
 			connectorServerFailureAt.delete(key);
 			// Persist so the NEXT cold process has this synchronously. Priming always
 			// loses the race against turn 1 in its own process; a cache written by an
-			// earlier run is the only thing turn 1 can read in time (kendex#870).
+			// earlier run is the only thing turn 1 can read in time.
 			if (writeCachedConnectors(inventory.connectors, key)) {
 				debug(`connectors: cached ${inventory.connectors.length} entries`);
 			}
@@ -148,7 +148,7 @@ export function connectorServersSnapshot(claudeConfigDir?: string): Record<strin
 	primeConnectorServers(claudeConfigDir);
 	// Fall back to the previous run's inventory, read synchronously. This is the
 	// only thing that can populate turn 1 of a cold process, because priming
-	// cannot finish before the first query is built (kendex#870).
+	// cannot finish before the first query is built.
 	const cached = readCachedConnectors(key);
 	if (!cached) return {};
 	const servers = connectorMcpServers({ ok: true, complete: true, connectors: cached });

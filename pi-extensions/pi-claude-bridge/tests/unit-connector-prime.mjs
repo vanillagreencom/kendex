@@ -1,9 +1,9 @@
-// C6: a failed connector prime must NOT be cached for the process lifetime.
-// A transient failure at provider registration used to pin `{}` for the scope,
-// so every later turn stayed undeclared and the disk-cache fallback was
+// A failed connector prime must NOT be cached for the process lifetime.
+// A transient failure at provider registration must not pin `{}` for the scope,
+// leave later turns undeclared, or make the disk-cache fallback
 // unreachable until restart. Failures now leave the key unset and the next
-// prime retries — but only after a per-scope cooldown (VST-14): removing the
-// lifetime pin had left NOTHING between "cached forever" and "one new HTTPS
+// prime retries — but only after a per-scope cooldown: removing the
+// the cooldown there is NOTHING between "cached forever" and "one HTTPS
 // request per turn", so a persistently failing account re-primed every turn.
 // The inventory call also now carries an abort deadline, so a hung request
 // cannot hold the pending flag open indefinitely.
@@ -99,7 +99,7 @@ describe("primeConnectorServers failure caching (C6)", () => {
 		await new Promise((resolve) => setTimeout(resolve, 20));
 
 		// Inside the 60s cooldown window: the per-turn snapshot path calls prime
-		// again, but no new inventory request may go out.
+		// again, but no inventory request may go out.
 		primeConnectorServers(configDir, { now: () => t0 + 30_000 });
 		primeConnectorServers(configDir, { now: () => t0 + 59_999 });
 		await new Promise((resolve) => setTimeout(resolve, 20));
@@ -135,7 +135,7 @@ describe("primeConnectorServers failure caching (C6)", () => {
 		assert.ok(abortedAt - startedAt >= 40, "the abort waits for the deadline");
 
 		// The abort is a failure: the pending flag is released AND the cooldown is
-		// armed, so an immediate re-prime issues no new request.
+		// armed, so an immediate re-prime issues no request.
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		primeConnectorServers(configDir, { timeoutMs: 50 });
 		await new Promise((resolve) => setTimeout(resolve, 20));

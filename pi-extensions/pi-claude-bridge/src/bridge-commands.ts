@@ -35,7 +35,7 @@ function showBridgeStatus(ctx: { ui: ExtensionUIContext; cwd?: string }): void {
 	].join("\n"), "info");
 }
 
-// Deterministic connector enumeration for the host app (kendex#838). Reports the
+// Deterministic connector enumeration for the host app. Reports the
 // failure reason rather than an empty list, so "no connectors" and "could not
 // check" stay distinguishable.
 async function reportConnectorInventory(ctx: {

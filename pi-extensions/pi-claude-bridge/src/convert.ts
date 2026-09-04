@@ -28,7 +28,7 @@ export function mapPiToolNameToSdk(name: string, customToolNameToSdk?: Map<strin
 	// `McpClaudeAiSlackSlackSearchChannels`) that appeared in the child's
 	// projected history, so the model imitated it on the next turn and got a
 	// real `Tool ... not found` from the MCP dispatcher before retrying the
-	// canonical name — one wasted round-trip per affected call (memsira#320).
+	// canonical name — one wasted round-trip per affected call.
 	//
 	// Connector names stopped reaching this function at all once they stopped
 	// being mirrored as Pi tool calls (isChildExecutedTool), so this is the

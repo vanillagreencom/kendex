@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Regression tests for open-terminal issue-id validation and case normalization.
+# Tests for open-terminal issue-id validation and case normalization.
 #
-# Bug 1 (kendex#507): open-terminal force-uppercased the item before matching
-# GH_ISSUE_PATTERN, so lowercase-convention projects (e.g. cc-[0-9]+) rejected
-# every id. It must now validate case-insensitively and normalize to whichever
-# case the configured pattern accepts.
+# open-terminal validates the item against GH_ISSUE_PATTERN case-insensitively
+# and normalizes to whichever case the configured pattern accepts:
+# force-uppercasing before the match rejects every id in a lowercase-convention
+# project (e.g. cc-[0-9]+).
 #
 # The test runs a byte-identical copy of open-terminal inside a temp git repo so
 # `git rev-parse --show-toplevel` resolves to a hermetic PROJECT_ROOT, and stubs
@@ -116,9 +116,8 @@ assert_eq "$c1b_code" "0" "default pattern: uppercase input accepted"
 assert_contains "$c1b_out" "Opened terminal 'CC-737'" "default pattern: CC-737 stays CC-737"
 
 # Repo B: project settings force an UNRELATED uppercase pattern. A parent-env
-# GH_ISSUE_PATTERN of cc-[0-9]+ must win (Bug 2) and drive lowercase
-# normalization (Bug 1); without the Bug 2 fix the settings pattern would win
-# and both ids would be rejected.
+# GH_ISSUE_PATTERN of cc-[0-9]+ must win over it and drive lowercase
+# normalization; a settings pattern that won would reject both ids.
 REPO_B="$TMP_ROOT/repo-b"
 OT_B="$(make_ot_repo "$REPO_B" '[env]
 GH_ISSUE_PATTERN = "ZZ-[0-9]+"')"

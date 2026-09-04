@@ -2,7 +2,7 @@
 // using the extracted lifecycle helpers. Drives the exact same functions
 // the extension uses; only the I/O surfaces (sendTaskEvent, persist,
 // rememberSnapshot, refreshUi, clearTaskTimers) are stubbed so the test
-// runs without a Pi runtime. Required by reviewer-test #11 and #12.
+// runs without a Pi runtime.
 
 import { describe, expect, test } from "bun:test";
 import { finalizeTaskLifecycle, replayMissedExitsLifecycle, type LifecycleHooks } from "../extensions/lifecycle.js";
@@ -172,17 +172,15 @@ describe("finalizeTaskLifecycle", () => {
 		finalizeTaskLifecycle(task, 0, hooks);
 		const before = { ...hooks.record };
 		finalizeTaskLifecycle(task, 99, hooks);
-		// No new events / persists / remembers / refreshes after the first close.
+		// No further events, persistence, memory writes, or refreshes after close.
 		expect(hooks.record.events.length).toBe(before.events.length);
 		expect(hooks.record.persists).toBe(before.persists);
 		expect(task.exitCode).toBe(0);
 	});
 
 	test("partial output is preserved through finalize", () => {
-		// CC-503 incident: bg-3 had 89 bytes of stderr ('Warning: GH_TOKEN
-		// failed gh auth') but never produced an exit event. After
-		// finalize the output is still on the task so the dashboard /
-		// log inspection can show it.
+		// Finalize must retain partial output so the dashboard and log inspection
+		// can show it even when no exit event arrives.
 		const hooks = recordingHooks();
 		const task = fakeTask({
 			outputBytes: 89,

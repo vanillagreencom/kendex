@@ -77,8 +77,8 @@ gg_md_select() { # NOUN — what the lane calls its content, for the skip lines
       GG_WALK_SKIPPED=0
       : >"$GG_TMP/skipped.z"
       gg_require_merged_index
-      # A, M and T, renames at exact content: a pure move carries no new
-      # bytes, a file that moved and changed is read whole at its new path.
+      # A, M and T, renames at exact content: a pure move carries no additional
+      # bytes, a file that moved and changed is read whole at its destination path.
       git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT >"$GG_TMP/raw.z" \
         || gg_collection_error "could not collect the staged changes (git diff --cached --raw failed)"
       while IFS= read -r -d '' meta && IFS= read -r -d '' f; do

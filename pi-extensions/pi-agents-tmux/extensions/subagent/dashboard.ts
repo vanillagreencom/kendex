@@ -302,8 +302,8 @@ export function dashboardTranscriptLabel(items: SubagentDashboardItem[], cwd: st
 	return `${refs.length} transcripts · ${refs[0]} +${refs.length - 1}`;
 }
 
-// Disambiguate repeat bg launches: the 2nd "reviewer-arch" of the session
-// renders as "reviewer-arch 2" so two rows with the same agent name aren't
+// Disambiguate repeat bg launches: the 2nd "" of the session
+// renders as " 2" so two rows with the same agent name aren't
 // indistinguishable. Uses taskId for identity and start-time for occurrence
 // order; mirrors browser.ts dashboardDisplayLabels.
 function dashboardLabelsForItems(items: SubagentDashboardItem[], persistentTaskNumbers?: Map<string, number>): Map<string, string> {

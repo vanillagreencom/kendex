@@ -1,4 +1,4 @@
-// kendex#63 workaround: polling watchdog detects subagent tasks that
+// The polling watchdog detects subagent tasks that
 // stall after pi-core auto-compaction (no agent_end ever fires) and
 // writes a synthetic needs_completion outbox so the parent's existing
 // wake path takes over.

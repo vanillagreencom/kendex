@@ -21,7 +21,7 @@
 #
 # WHAT THIS FILE DOES NOT DO is pin the workflow's prose or its command lines.
 # A suite asserting that a sentence or an invocation still reads a certain way
-# is the shape KEN-1090 removed from md.sh, and it does not return here behind
+# is the shape  removed from md.sh, and it does not return here behind
 # a local helper. The routing table is data — a set of verdict names — and that
 # set is the whole of what is checked.
 #

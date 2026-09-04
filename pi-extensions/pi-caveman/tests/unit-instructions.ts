@@ -243,8 +243,8 @@ describe("configurationSource() and bridgeCavemanHookEnabled()", () => {
 describe("shouldClarityEscape() — narrowed to irreversible destructive ops only", () => {
 	// Hard escape fires only for explicit destructive shell/SQL/git patterns +
 	// the literal words `destructive` / `irreversible`. Soft signals
-	// (security/confused/clarify/ambiguous) used to live here and produced
-	// false escapes on routine technical turns; they are now handled by the
+	// (security/confused/clarify/ambiguous) produce false escapes on routine
+	// technical turns, so the
 	// inline auto-clarity rule (model judgment), not by hard prompt injection.
 	const shouldMatch = [
 		"this would force-push and rewrite history",
@@ -255,8 +255,7 @@ describe("shouldClarityEscape() — narrowed to irreversible destructive ops onl
 		"that's a destructive operation",
 		"this is an irreversible migration",
 	];
-	// Verbatim user prompts from the live session that previously tripped the
-	// regex; regression-tested so they stay quiet.
+	// User prompts that contain soft signals must stay quiet.
 	const shouldNotMatch = [
 		"refactor the parser to use the new API",
 		"add a unit test for the queue",

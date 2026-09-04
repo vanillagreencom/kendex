@@ -256,7 +256,7 @@ rep() { # CHAR N
   done
   printf '%s' "$out"
 }
-# "fix(KEN-1): " is twelve characters, so the subject is 12 + N.
+# "fix: " is twelve characters, so the subject is 12 + N.
 expect_pass "fix(KEN-1): $(rep x 60)" "a 72-character header passes"
 run_stdin "fix(KEN-1): $(rep x 61)"
 [ "$RC" -eq 1 ] && case "$OUT" in *"header is 73 characters (max 72)"*) true ;; *) false ;; esac \
@@ -421,8 +421,8 @@ run_rc 'fix(KEN-1): change a crate'
   || bad "a staged crates/ change with no entry fails, naming the path" "rc=$RC out=$OUT"
 case "$OUT" in *"write one of: changelog.d/*/*.md"*) ok "the diagnostic names the fragment globs, unescaped, as they have to be typed" ;;
   *) bad "the diagnostic names the fragment globs unescaped" "$OUT" ;; esac
-# The record is NOT offered as a remedy: changelog-entries runs earlier in the
-# same chain and refuses a hand-added [Unreleased] line, so a writer who took
+# The record is NOT offered as a remedy: changelog-entries runs prior in the
+# same chain and refuses a hand-appended [Unreleased] line, so a writer who took
 # that advice would be refused by the next lane.
 printf '%s\n' "$OUT" | grep -F 'write one of:' | grep -qF 'CHANGELOG.md' \
   && bad "the remedy does not send a writer at the record" "$OUT" \

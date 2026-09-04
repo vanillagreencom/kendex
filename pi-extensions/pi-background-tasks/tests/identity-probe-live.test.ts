@@ -1,5 +1,4 @@
-// Live integration test for defaultReadProcessIdentity (kendex#15
-// round 5 reviewer-error BLOCK reproducer).
+// Live integration test for defaultReadProcessIdentity.
 //
 // Spawn `/bin/bash -c "exec sleep 5"`: bash execve(2)s the sleep binary
 // in place with no fork, so pid + starttime stay identical across the
@@ -34,9 +33,8 @@ describe("defaultReadProcessIdentity live (bash exec drift)", () => {
 	test("bash -c 'exec sleep N': pid + startToken stable across the exec, identityMatches stays true whether or not comm rotated", async () => {
 		// `exec sleep N` replaces the bash process image in place
 		// (execve(2) with no fork), so the kernel reports the same pid
-		// + same start time but a new /proc/<pid>/comm. This is the
-		// canonical reproducer from the reviewer; without the BLOCK
-		// fix, identityMatches would treat post-exec as PID reuse.
+		// and start time but a different /proc/<pid>/comm. identityMatches must
+		// not treat this post-exec state as PID reuse.
 		const child = spawn("/bin/bash", ["-c", "exec sleep 5"], { stdio: "ignore", detached: true });
 		const pid = child.pid;
 		if (typeof pid !== "number" || pid <= 0) {
@@ -49,7 +47,7 @@ describe("defaultReadProcessIdentity live (bash exec drift)", () => {
 			// A null is "the probe failed", not "this host cannot probe":
 			// defaultReadProcessIdentity also returns null on a malformed
 			// /proc/<pid>/stat, an absent starttime field, or a non-zero `ps`
-			// exit — regressions in the reader this case exists to gate. On
+			// exit, which indicates a defect in the reader. On
 			// Linux with the process still in /proc, the probe path is there,
 			// so a null is that defect and must fail rather than pass quietly.
 			if (process.platform === "linux" && existsSync(`/proc/${pid}`)) {

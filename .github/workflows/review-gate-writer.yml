@@ -3,20 +3,17 @@
 # because this repo IS the catalog and those files are the originals. A
 # consumer keeps the template's .agents/ vendored path.
 #
-# SCAFFOLD from the kendex review-gate skill (templates/review-gate-writer.yml)
-# — the v2 SINGLE WRITER (review-gate v2 single-writer plan, Change 1/1b;
-# vanillagreencom/vstack#1099). Copy once into .github/workflows/ in the adoption PR; the file is
-# REPO-OWNED after the copy — `kendex refresh` does not sync workflow YAML.
-# Copy it VERBATIM — it carries no per-repo values. This one workflow replaces the old
-# four-workflow mesh (the PR-side gate pair, approval-rerun, approval-sweep,
-# review-gate-queue): exactly one writer, default-branch-defined, which
+# SCAFFOLD from the kendex review-gate skill (templates/review-gate-writer.yml).
+# Copy it once into.github/workflows/ during adoption. The copy is repo-owned
+# because `kendex refresh` does not sync workflow YAML. Copy it verbatim because
+# it carries no per-repo values. This workflow is the only writer and
 # posts the gate commit status on every leg that reaches it
 # (workflow_dispatch, schedule, merge_group), evaluating
 # review-predicate.sh on the two converge legs — the merge_group leg posts
 # unconditional green without reading the predicate (see below). The
 # PR-attached legs relay into it — see SHAPE.
 #
-# SHAPE — relay / converge (VST-210). Three jobs, and which one runs is
+# SHAPE — relay / converge. Three jobs, and which one runs is
 # decided purely by event leg:
 #
 #   PR-attached legs        request-converge  no concurrency group, no
@@ -114,7 +111,7 @@ name: Review gate writer
   # state converges (no state filter anywhere — under newest-row evidence
   # semantics a success→pending/failure transition is a withdrawal and
   # must close the gate event-fast); NO context-name filter either, by
-  # design (#1039): trusted context names are settings, not
+  # design: trusted context names are settings, not
   # workflow-expression inputs, and a name list that misses a reviewer's
   # context silently strands that reviewer's clean path.
   status: {}
@@ -213,7 +210,7 @@ jobs:
           fi
           exec skills/review-gate/scripts/review-writer.sh
 
-  # The RELAY (VST-210). Every PR-ATTACHED leg lands here, and this job
+  # The RELAY. Every PR-ATTACHED leg lands here, and this job
   # deliberately holds NO concurrency group: it can never be evicted, so it
   # can never leave a CANCELLED check run pinning its PR at
   # mergeStateStatus UNSTABLE. It requests a converge pass and exits —
@@ -312,7 +309,7 @@ jobs:
               ;;
           esac
           # THIRD breaker, for the check_run opt-in only. The relay's if: is
-          # a NEGATIVE list, so once check_run is added this workflow's OWN
+          # a NEGATIVE list, so with check_run enabled this workflow's OWN
           # job completions are relayable events — and the relay holds no
           # concurrency group to throttle the amplification. A consumer's
           # reviewer check name is repo config, but these three names are
@@ -333,7 +330,7 @@ jobs:
           # THE INVARIANT: this step NEVER exits non-zero. It runs on the
           # PR-attached legs, so a red — or a hang long enough to be
           # CANCELLED — is a failed check on the PR head and pins
-          # mergeStateStatus at UNSTABLE, which is the entire defect VST-210
+          # mergeStateStatus at UNSTABLE, which is the entire defect
           # exists to remove. The relay holds no statuses scope, so no
           # failure of it can make the gate look converged; the worst it can
           # do is leave the gate STALE, and the 15-minute cron floor already
@@ -496,7 +493,7 @@ jobs:
           # and re-POST in lockstep — worst on the exhausted-window path,
           # where every run reads one shared reset epoch. The spread is
           # bounded so the timeout budget above still reconciles, and it is
-          # added after the clamp so it can only ever lengthen a wait.
+          # applied after the clamp so it can only lengthen a wait.
           jitter_s=$(( RANDOM % jitter_max ))
           echo "::warning::could not request a converge pass ($workflow_file on $dispatch_ref): $(why "$rc"); retrying once in ${wait_s}s + ${jitter_s}s jitter"
           sleep "$(( wait_s + jitter_s ))"
@@ -512,10 +509,9 @@ jobs:
           # an oversight. See THE INVARIANT above for why a red here would
           # cost more than the fault it reports.
           #
-          # HOW A SUSTAINED OUTAGE IS SEEN, since it is deliberately not a
-          # red check and this job carries no VST-36 escalation (the rolling
-          # incident stays on the write job, which holds issues:write for
-          # it): through GATE STALENESS, not through this run. Every event
+          # A sustained outage appears as GATE STALENESS because this job is
+          # deliberately not a red check. The write job owns escalation because
+          # it holds issues:write. Every event
           # then falls to the cron floor, so gates sit unconverged longer
           # than the floor's period — which is precisely what
           # `pr-watch.sh --heal` reduces on (gate-stale -> one writer
@@ -528,7 +524,7 @@ jobs:
     # ONE job-level writer group, cancel-in-progress: false. This is a
     # WASTE reducer, not the correctness mechanism: single-writer runs can
     # still interleave on one head (GitHub keeps one pending run per group
-    # and replaces it), and the VST-65 write-ordering guard inside
+    # and replaces it), and the write-ordering guard inside
     # review-writer.sh — stamp evaluated_at before reading; re-read before
     # any success post and defer to a newer non-success entry; downward
     # posts never defer — does the correctness work. Eviction of a PENDING
@@ -538,10 +534,9 @@ jobs:
     # too. Job level, not workflow level, so a run the if: below skips
     # never claims the slot.
     #
-    # VST-210: the group is reachable ONLY from the two legs whose runs
-    # attach to the default-branch head, so an eviction mark can no longer
-    # land in an open PR's check rollup. Widening this if: back toward the
-    # PR-attached legs re-introduces that defect — those legs relay.
+    # The group is reachable ONLY from the two legs whose runs attach to the
+    # default-branch head. A PR-attached leg would put an eviction mark in an
+    # open PR's check rollup, so those legs relay.
     concurrency:
       group: review-gate-writer
       cancel-in-progress: false
@@ -551,7 +546,7 @@ jobs:
     # a WITHDRAWAL, and it must close the gate event-fast rather than wait
     # for the cron floor — event-fast now means the relay above dispatches
     # this leg within seconds. No context-name term, and no state term at
-    # all — see the status trigger comment (#1039).
+    # all. See the status trigger comment.
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -559,7 +554,7 @@ jobs:
       # the gate predicate reads (reviews, PR author)
       pull-requests: read
       # READ for predicate evidence; WRITE only for the sustained-failure
-      # escalation step's rolling incident issue (VST-36)
+      # escalation step's rolling issue
       issues: write
       # clean-analysis evidence reads
       checks: read
@@ -619,14 +614,13 @@ jobs:
           fi
           exec skills/review-gate/scripts/review-writer.sh
 
-      # Sustained-failure escalation (VST-36, ported from the old sweep):
-      # the writer is now the only arm that reaches every transition, so
+      # The writer is the only arm that reaches every transition, so
       # its own sustained failure must not be silent — and the schedule
       # trigger auto-disabling after repo inactivity makes this the only
       # visibility for a dead cron. `failure() || cancelled()` — cancelled()
       # because a job killed by its own timeout-minutes is cancelled, and
       # the converge step above is bounded under the job budget so this
-      # step still runs. The incident is a ROLLING issue: one open issue
+      # step still runs. Escalation uses one rolling issue
       # found by exact title (label-free — labels may not exist on a
       # consumer repo), appended per failure, closed by a human when the
       # fault is fixed. Escalation failure itself only warns: it must never
@@ -639,8 +633,8 @@ jobs:
           set -u
           title="review-gate writer is failing (rolling incident)"
           body="Writer run failed or was cancelled: $RUN_URL"
-          # A FAILED lookup must not fall through to "no open incident" — a
-          # transient read failure would then mint a duplicate rolling issue
+          # A FAILED lookup must not fall through to "no open issue" because a
+          # transient read failure would then create a duplicate rolling issue
           # per failing run. Warn and stop; the next failing run retries.
           # Author-constrained: an exact-title match alone is squattable —
           # anyone who can open an issue could pre-create this title and

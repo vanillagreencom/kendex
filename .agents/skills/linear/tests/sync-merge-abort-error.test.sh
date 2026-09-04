@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Regression test (#930, secondary): when cache_merge refuses a merge whose
+# when cache_merge refuses a merge whose
 # result is smaller than the existing cache (the signature of a transient
-# query failure returning fewer/empty results), `sync` used to carry on and
+# query failure returning fewer or empty results), `sync` must not continue and
 # finish as success. The refusal itself is correct — the sync must now fail
 # loudly: nonzero exit, an error naming the aborted merge and the likely
 # transient query failure, and the cache and meta.json left unchanged.
@@ -171,4 +171,3 @@ run_sync_if_stale "$OK_ROOT" >/dev/null 2>"$TMP_BASE/stale-old" || stale_rc=$?
 assert_eq "--if-stale on a stale cache exits zero" "$stale_rc" 0
 assert_not "--if-stale re-syncs a cache older than the window" \
   grep -q "Cache fresh" "$TMP_BASE/stale-old"
-

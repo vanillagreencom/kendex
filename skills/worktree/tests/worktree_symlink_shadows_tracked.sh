@@ -2,7 +2,7 @@
 # A WORKTREE_SYMLINKS directory entry that contains tracked files must not be
 # linked wholesale: that shadowed the tracked files behind assume-unchanged, so
 # git could not write them (cherry-pick/checkout/merge failed while status
-# looked clean). Setup now ACTS on its detection (VST-37): the entry stays a
+# looked clean). Setup now ACTS on its detection: the entry stays a
 # real directory, tracked paths stay real files git owns, and only the
 # UNTRACKED children are symlinked — recursing through children that mix
 # tracked and untracked content. A fully untracked entry keeps the plain
@@ -132,7 +132,7 @@ assert_eq "$(git -C "$WT" status --porcelain)" "" "git status is clean"
 
 # The proof of the fix: git can WRITE the tracked subtree in this worktree.
 # Advance the vendored file on main and merge it into the worktree branch —
-# exactly the flow assume-unchanged used to break.
+# exactly the flow assume-unchanged would break.
 printf 'engine v2\n' >"$SHADOW_ROOT/main/.agents/skills/review-gate/engine.md"
 git -C "$SHADOW_ROOT/main" add -f .agents/skills/review-gate/engine.md
 git -C "$SHADOW_ROOT/main" commit -q -m 'refresh vendored engine'
@@ -163,7 +163,7 @@ assert_eq "$(git -C "$WT" status --porcelain)" "" "git status is clean after fix
 
 echo "=== a legacy parent link over tracked files heals to the per-child layout ==="
 
-# Model a worktree provisioned by the OLD behavior: parent symlink over the
+# Model a worktree provisioned with a parent symlink over the
 # entry, tracked files assume-unchanged and unwritable.
 rm -rf "$WT/.agents"
 ln -s "$SHADOW_ROOT/main/.agents" "$WT/.agents"
@@ -246,7 +246,7 @@ predate_status=$?
 set -e
 assert_eq "$predate_status" "0" "create succeeds before the new child is tracked"
 
-# Advance MAIN only: a new file lands under the shadowed entry and becomes
+# Advance MAIN only: a file lands under the shadowed entry and becomes
 # tracked there, but the worktree branch does not have it yet.
 printf 'late\n' >"$PREDATE_ROOT/main/.agents/skills/late.md"
 git -C "$PREDATE_ROOT/main" add .agents/skills/late.md

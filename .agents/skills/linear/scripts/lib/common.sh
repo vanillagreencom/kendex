@@ -47,7 +47,7 @@ linear_key_fingerprint() {
 #   3. Plain inherited LINEAR_API_KEY — only when no file provides a key.
 # Per-repo workspaces make a box-global export actively wrong for every other
 # repo, so unlike LINEAR_TEAM the inherited key must never shadow the project's
-# own (#1002). kendex_load_project_env re-asserts parent env over project files,
+# own. kendex_load_project_env re-asserts parent env over project files,
 # so the inherited value is snapshotted and unset before the files load.
 _CALLER_LINEAR_API_KEY="${LINEAR_API_KEY:-}"
 unset LINEAR_API_KEY
@@ -640,12 +640,12 @@ linear_guard_write_action() {
 }
 
 # Resolve project name or UUID to UUID
-# Usage: resolve_project_id "Phase 1" or resolve_project_id "uuid-here"
+# Usage: resolve_project_id "Project name" or resolve_project_id "uuid-here"
 #
 # Linear keeps a canceled project under the name a live one reuses, and the
 # name query returns both in no fixed order, so nodes[0] handed writes the
 # canceled one at random and `issues create --project` reported success on an
-# issue nobody could find (KEN-1022). A canceled match loses to every live one;
+# issue nobody could find. A canceled match loses to every live one;
 # an all-canceled match set is refused, naming its UUIDs so a deliberate read
 # can pass one.
 resolve_project_id() {

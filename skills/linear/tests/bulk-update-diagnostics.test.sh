@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test: bulk-update must emit an aggregate diagnostic even when an
+# bulk-update must emit an aggregate diagnostic even when an
 # individual issue update exits nonzero under set -e.
 
 set -euo pipefail

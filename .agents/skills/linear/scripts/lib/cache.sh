@@ -22,7 +22,7 @@ linear_cache_canonical_existing_dir() {
 # from `git rev-parse` on every source, so a caller's value never survives to
 # be read here. It also means something else — several orch scripts export it
 # as "the repository the orchestrator is driving" — and reading that as a cache
-# location would move a real cache underneath them (kendex#799).
+# location would move a real cache underneath them.
 #
 # A set value naming no directory is refused, not ignored, and an empty string
 # names no directory: falling back to the git root is exactly the failure the
@@ -56,7 +56,7 @@ CACHE_DIR="$CACHE_PROJECT_ROOT/.cache/linear"
 # unlinking it while another process holds it open lets a third lock a fresh
 # inode and two writers then each hold "the" lock. So a per-issue lock left a
 # permanent .lock beside every issue whose comments were ever written, hundreds
-# of them (kendex#799). One lock file cannot accumulate, and comment writes are
+# of them. One lock file cannot accumulate, and comment writes are
 # far too rare for serializing them across issues to cost anything.
 #
 # The bulk writers do NOT take it and never did: cache_store_comments and
@@ -65,7 +65,7 @@ CACHE_DIR="$CACHE_PROJECT_ROOT/.cache/linear"
 CACHE_COMMENTS_LOCK="$CACHE_DIR/.comments.lock"
 
 # =============================================================================
-# WORKTREE CLOBBER GUARD (kendex#1032)
+# WORKTREE CLOBBER GUARD
 # =============================================================================
 # A git operation can re-materialize a WORKTREE_SYMLINKS-managed `.cache`
 # symlink in a linked worktree as a real, near-empty directory. The resolved
@@ -434,7 +434,7 @@ cache_upsert_project() {
     [[ -n "$id" && "$id" != "null" ]] || return 0
     (
         flock 201
-        # Merge: $old + $new preserves relations/inverseRelations from sync
+# Merge inputs while preserving relations and inverseRelations from sync
         # when mutation response (which lacks them) overwrites base fields
         jq --argjson new "$project_json" \
             '([.[] | select(.id == $new.id)] | first // {}) as $old |

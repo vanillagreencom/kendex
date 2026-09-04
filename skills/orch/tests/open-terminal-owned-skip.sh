@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for open-terminal's per-item worktree-create handling.
+# Tests for open-terminal's per-item worktree-create handling.
 #
 # The worktree create is the ownership claim for a fleet launch: exit 75 means
 # another session holds the item. Under `set -euo pipefail` an unguarded

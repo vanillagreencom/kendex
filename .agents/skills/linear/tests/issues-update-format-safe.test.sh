@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Regression test (#625, bug 1): `issues update <ID> ... --format=safe` must be
+# `issues update <ID>... --format=safe` must be
 # accepted by the parser and emit the documented safe output for the updated
 # issue. The README documents `safe` as the default/global output format, yet
-# `update` used to reject any `--format` flag via its `-*` "Unknown option"
-# catch-all (mirroring the #615 `create --format=ids` rejection). Workflows that
+# `update` must accept supported `--format` flags before its `-*` catch-all
+# catch-all. Workflows that
 # uniformly append `--format=safe` to every call failed on the update path.
 #
 # Runs fully offline against a mocked curl — the bug is a pre-mutation parse
@@ -20,7 +20,7 @@ mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 # Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this
 # throwaway root — without this, cache writes from `issues update` land in
-# the real project's `.cache/linear` (kendex#43).
+# the real project's `.cache/linear`.
 git -C "$TMP_ROOT" init -q -b main
 
 # Mocked curl: routes by GraphQL operation. The updated issue carries a real
@@ -86,7 +86,7 @@ default_out="$(run_update PROJ-42 --priority 2)"
 assert "the default update output is still the mutation summary" \
   jq -e '.success == true and .identifier == "PROJ-42" and (.data != null)' >/dev/null <<<"$default_out"
 
-# --- parser no longer rejects --format (the #625 bug) ---------------------------
+# --- parser accepts --format -------------------------------------------------
 parser_rc=0
 err_out="$(run_update PROJ-42 --priority 2 --format=safe 2>&1 >/dev/null)" || parser_rc=$?
 assert_eq "the parser accepts --format and the update exits zero" "$parser_rc" 0
@@ -99,4 +99,3 @@ bogus_out="$(run_update PROJ-42 --bogus x 2>&1)" || bogus_rc=$?
 assert_ne "an unknown flag fails the update" "$bogus_rc" 0
 assert "update still rejects a genuinely unknown flag" \
   grep -q "Unknown option" <<<"$bogus_out"
-

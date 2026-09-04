@@ -42,7 +42,7 @@ case "$OUT" in
 esac
 
 echo "=== core.hooksPath set at all is a stand-down ==="
-# Whether the configured directory is in fact this repository's own used to
+# Whether the configured directory is in fact this repository's own would
 # be worked out here — resolved on disk, `..` folded on paper, a relative
 # value absolutized against the work tree. Every one of those was another
 # way to be subtly wrong, and two of them were. Set is set: the installer
@@ -61,7 +61,7 @@ for spelling in default-relative default-absolute elsewhere empty; do
   [ -e "$R70/.git/hooks/kendex-guards" ] \
     && bad "installed under core.hooksPath ($spelling)" "out=$OUT" \
     || ok "core.hooksPath set stands the install down ($spelling)"
-  # One remedy, and it is the one that arms. The recipe this used to print —
+  # One remedy, and it is the one that arms. The recipe this would print —
   # wire that directory's hooks to these scripts yourself — prescribed a
   # shape `--check` has no way to verify, so following it left a repository
   # permanently unable to say whether it was gated.
@@ -129,7 +129,7 @@ case "$OUT" in
   *) bad "no stand-down statement" "$OUT" ;;
 esac
 # Recovery output is data, never a command line to paste
-# (docs/architecture/overview.md § Decisions). Every earlier shape of this remedy was a command
+# (docs/architecture/overview.md § Decisions). Every prior shape of this remedy was a command
 # this file composed, and every one of them was wrong about somebody's
 # configuration.
 case "$OUT" in
@@ -189,7 +189,7 @@ check_in "$R80"
 
 echo "=== the stand-down is a statement, git's report, and one sentence ==="
 # docs/architecture/overview.md § Decisions: recovery output presents its parameters as data,
-# never a command line to paste. Three earlier shapes of this remedy each
+# never a command line to paste. Three prior shapes of this remedy each
 # composed a command and each was wrong about a configuration nobody here
 # can see. What is printed now is git's own report, unedited, and a sentence
 # naming no path and no command.

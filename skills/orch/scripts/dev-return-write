@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # dev-return-write — deterministically write a dev agent's on-disk completion
 # artifact that orch reads to accept a dev/QA completion without depending on the
-# live return message (kendex#770, kendex#776).
+# live return message,.
 #
 # The dev agent runs THIS one command instead of hand-authoring the JSON, so the
 # receipt is always well-formed and complete — it eliminates the truncated /
@@ -14,7 +14,7 @@
 # [WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json AND carries "round_id":
 # ROUND_ID inside. dev-artifact-check resolves that exact path and rejects any
 # receipt whose internal round_id differs — deterministic identity that replaces
-# the earlier mtime>=delegation freshness heuristic (which proved only WHEN bytes
+# the prior mtime>=delegation freshness heuristic (which proved only WHEN bytes
 # were written, not WHICH delegation wrote them).
 #
 # Usage:
@@ -26,7 +26,7 @@
 # --validate stays strictly enumerated ("pass" or "FAILING:…") so it remains
 # machine-checkable. --validate-note is the additive channel for a QUALIFIED
 # result the enumeration cannot express — a lane that passed only on re-run, a
-# flake that had to be investigated, a caveat worth carrying (kendex#884).
+# flake that had to be investigated, a caveat worth carrying.
 # Without it the caveat is lost from the record orch treats as authoritative,
 # surviving only if the agent happens to mention it conversationally.
 #
@@ -104,7 +104,7 @@ Exit 0 on success; every usage/validation error exits 2.
 EOF
 }
 
-# This script's own flag vocabulary. Used to distinguish a forgotten value
+# This script's own flag vocabulary. would distinguish a forgotten value
 # (the next token is one of OUR flags — "--summary --no-summary" would record
 # the literal string "--no-summary" as the deliverable) from legitimate prose
 # that merely begins with '--' ("--foo", an em-dash-style aside), which stays

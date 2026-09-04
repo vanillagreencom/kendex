@@ -112,7 +112,7 @@ fires() { # LABEL EXPECTED-SUBSTRING
 
 echo "=== benign patterns across every lane stay clean ==="
 seed benign
-# mktemp is fine under errexit; a new script that declares strict mode is fine.
+# mktemp is fine under errexit; an additional script that declares strict mode is fine.
 printf '#!/usr/bin/env bash\nset -euo pipefail\nTMP="$(mktemp -d)"\ntrap %s EXIT\necho "$TMP"\n' "'rm -rf \"\$TMP\"'" >"$R/scripts/strict.sh"
 # A test-tree script sets its own rules — including the fixture path it cites.
 printf '#!/usr/bin/env bash\n# fixture: docs/gone.md\necho helper\n' >"$R/tests/helper.sh"

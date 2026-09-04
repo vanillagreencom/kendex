@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression coverage for active-work ownership guards (kendex#571).
+# failure coverage for active-work ownership guards.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -267,7 +267,7 @@ assert_eq "$(git -C "$IN_REPO_ROOT/main" config --get extensions.worktreeConfig 
 assert_eq "$(cat "$IN_REPO_ROOT/main/trees/issue-incomplete/owner-marker")" "$in_repo_pre_marker" "incomplete-target reuse preserves target bytes"
 assert_path_absent "$IN_REPO_ROOT/main/trees/issue-incomplete/.git" "incomplete-target reuse does not register the target"
 
-# --from is a new-branch mode, not an inspection escape hatch. Existing target
+# --from creates a branch; it is not an inspection escape hatch. Existing target
 # ownership on the remote must stop it before a divergent checkout is created.
 export GH_STATE="$ROOT/gh-state"
 git -C "$ROOT/main" branch issue-from-remote main
@@ -401,7 +401,7 @@ assert_eq "$(git -C "$RACE_ROOT/main" config --get extensions.worktreeConfig)" "
 echo "=== worktree create option/help parsing (#621) ==="
 
 # --help / -h print create-specific usage, exit 0, and create nothing. This is
-# the sibling of the remove --help fix (#619) at both create parse sites.
+# the sibling of the remove --help fix  at both create parse sites.
 CREATE_HELP_ROOT="$TMP_ROOT/create-help"
 make_repo "$CREATE_HELP_ROOT"
 export GH_STATE="$CREATE_HELP_ROOT/gh-state"
@@ -460,7 +460,7 @@ BASE1034_ROOT="$TMP_ROOT/base-1034"
 make_repo "$BASE1034_ROOT"
 export GH_STATE="$BASE1034_ROOT/gh-state"
 
-# (a) The exact regression: --base <default> with no prior work must succeed
+# (a) The exact failure: --base <default> with no prior work must succeed
 # and check out a fresh issue branch based on the default branch.
 base_default_out="$(cd "$BASE1034_ROOT/main" && "$WORKTREE_SCRIPT" create issue-base-default --base main 2>"$BASE1034_ROOT/base-default.err")"
 assert_eq "$base_default_out" "$BASE1034_ROOT/trees/issue-base-default" "--base <default> with no prior work returns the new worktree path"

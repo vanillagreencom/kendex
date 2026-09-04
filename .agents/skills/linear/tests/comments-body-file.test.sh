@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for comments --body-file parsing without invoking the real API.
+# Tests for comments --body-file parsing without invoking the real API.
 
 set -euo pipefail
 

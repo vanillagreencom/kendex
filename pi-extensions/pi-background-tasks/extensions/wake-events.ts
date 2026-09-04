@@ -71,7 +71,7 @@ export function normalizeNotifyMode(value: unknown): NotifyMode {
 
 /**
  * Pick a default `notifyMode` for tasks where the caller didn't set one
- * (kendex#210). When a pattern is supplied, default to "first-match-only" so
+ * When a pattern is supplied, default to "first-match-only" so
  * a single pattern hit wakes the agent and subsequent matches stay quiet.
  * Otherwise default to "transition" so chatty pollers that print the same
  * state line repeatedly only wake the agent on state changes. Callers that
@@ -345,7 +345,7 @@ export interface SendTaskWakeOptions {
 	 * Newly observed (already-bounded) output tail. For output wakes this is
 	 * preferred over the full-output tail: it carries just the unseen excerpt
 	 * the agent needs to react. The interface intentionally exposes one inline
-	 * tail in `details` (kendex#210), so providing this displaces the
+	 * tail in `details`, so providing this displaces the
 	 * full-output tail in the emitted payload.
 	 */
 	newOutputTail?: string;
@@ -368,7 +368,7 @@ function pickOutputTail(deps: SendTaskWakeDeps, task: ManagedTask, options: Send
 }
 
 // Maximum per-field characters retained in a wake / log-action tool-result
-// manifest (kendex#210). The reviewer-security concern: an agent could spawn
+// manifest. An agent could spawn
 // a task with a 100KB heredoc command and grow the transcript through every
 // subsequent wake or log inspection because each one carried the full
 // snapshot. Bounding text fields means a malicious / verbose command is
@@ -384,7 +384,7 @@ export const WAKE_MANIFEST_FIELD_MAX_CHARS = 192;
 export const WAKE_CONTENT_COMMAND_MAX_CHARS = 160;
 
 /**
- * Shared transcript-bounded text helper (kendex#210). Returns `value` when it
+ * Shared transcript-bounded text helper. Returns `value` when it
  * is `undefined` or already within `maxChars`, otherwise the head sliced and
  * suffixed with an ellipsis. Used by the compact wake manifest and by every
  * transcript-facing content string (spawn/log/stop tool results, auto-
@@ -510,7 +510,7 @@ export function sendTaskWake(
 		eventAt: pending.eventAt,
 		eventType,
 		// matchedPattern flows from task.notifyPattern and could be a multi-KB
-		// regex bomb (kendex#210 review round 2). Bound it with the same
+		// regex bomb. Bound it with the same
 		// manifest cap as the compact task fields.
 		matchedPattern: truncateForTranscript(options.matchedPattern, WAKE_MANIFEST_FIELD_MAX_CHARS),
 		outputTail: tail,
@@ -537,7 +537,7 @@ export function sendTaskWake(
 }
 
 /**
- * Build the concise "wake budget exhausted" notice (kendex#210). Emitted once
+ * Build the concise "wake budget exhausted" notice. Emitted once
  * per task when the budget guard trips, instead of further inline-tail wakes.
  * The notice points at the on-disk log so callers can recover full output.
  */

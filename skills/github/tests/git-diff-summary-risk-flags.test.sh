@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# kendex#328: git-diff-summary Rust-specific risk flags must only scan
+# git-diff-summary Rust-specific risk flags must only scan
 # Rust diffs. Non-Rust docs/scripts that mention unsafe/repr(C)/extern C/Atomic
 # are descriptive text, not Rust code risk.
 #
-# kendex#944: panic patterns whose enclosing context is a test surface
+# panic patterns whose enclosing context is a test surface
 # (#[cfg(test)] modules, tests/ dirs, *_tests.rs) classify as the distinct
 # informational `test_panic_path_added` flag, never `panic_path_added` — a
 # test assertion is not a production panic path. Production panic paths keep
@@ -123,7 +123,7 @@ git -C "$large_repo" add tests/large.rs
 large_json="$($SUMMARY -C "$large_repo" --staged)"
 assert_eq "large diff keeps every early-line risk flag" '["unsafe_code_added","repr_c_struct_changed","extern_c_changed","atomics_modified","test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$large_json")"
 
-# kendex#944: panic patterns in #[cfg(test)] modules inside production files
+# panic patterns in #[cfg(test)] modules inside production files
 cfg_test_repo="$SANDBOX/cfg-test"
 init_repo "$cfg_test_repo"
 mkdir -p "$cfg_test_repo/src"

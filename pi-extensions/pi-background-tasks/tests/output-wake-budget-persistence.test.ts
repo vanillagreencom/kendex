@@ -1,6 +1,6 @@
 // Round-trip persistence of outputWakeBudget across snapshot + restore.
 // The budget must survive a session restart so a chatty task cannot get a
-// fresh budget by reloading Pi (kendex#210).
+// fresh budget by reloading Pi.
 
 import { describe, expect, test } from "bun:test";
 

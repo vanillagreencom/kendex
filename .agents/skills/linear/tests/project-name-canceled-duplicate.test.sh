@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Regression test: a project name that matches both a canceled and a live
-# project must resolve to the live one (KEN-1022).
+# a project name that matches both a canceled and a live
+# project must resolve to the live one.
 #
 # Linear keeps a canceled project under the name a live one reuses, and the
 # name query returns both in no fixed order. resolve_project_id took nodes[0],
@@ -29,7 +29,7 @@ mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/.cache/linear"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 # Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this
 # throwaway root so cache writes from `issues create` stay out of the real
-# project's `.cache/linear` (kendex#43).
+# project's `.cache/linear`.
 git -C "$TMP_ROOT" init -q -b main
 # Proof the isolation held. Without the unset the line above re-inits the
 # ambient repository and leaves no fixture repo behind, and a run that goes on

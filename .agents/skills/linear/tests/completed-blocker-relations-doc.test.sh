@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Doc-contract test for the completed-blocker relation rule (#745).
+# Doc-contract test for the completed-blocker relation rule.
 # SKILL.md's "Blocked Label vs Issue Relations" section states that a blocking
 # relation pointing at a Done/Canceled issue is satisfied history, that the
 # relation stays for provenance, that audits must never classify it as stale

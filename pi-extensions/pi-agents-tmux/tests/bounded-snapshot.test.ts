@@ -101,9 +101,8 @@ test("appendBoundedSnapshot can suppress manifests with manifestOnOverflow=false
 test("appendBoundedSnapshot emits a bounded manifest under the cap even when the payload is many MB (kendex#183)", () => {
 	const { appender, calls } = recorder();
 	const cache = new Map<string, string>();
-	// Build a registry well above 64 KiB — ~1 MB of task records. Pre-fix
-	// the manifest body would have embedded the full JSON as `fingerprint`
-	// and reproduced the cap blow-up.
+	// Build a registry well above the cap. The manifest must store a bounded
+	// fingerprint instead of embedding the full JSON.
 	const tasks: Record<string, { summary: string }> = {};
 	for (let i = 0; i < 1000; i += 1) tasks[`task-${i}`] = { summary: "a".repeat(1024) };
 	const payload = { version: 1 as const, panes: {}, tasks, updatedAt: "2026-05-20T05:00:00.000Z" };

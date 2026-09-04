@@ -3,11 +3,9 @@
  * context.
  *
  * The retained context drives UI delivery (mini-dashboard widget, notify) and
- * project-scoped settings lookups keyed on `activeCtx?.cwd`. Pi 0.83.0 routed
- * direct RPC bash commands through extension `user_bash` handlers
- * (earendil-works/pi#7214). Before that, `user_bash` only fired for interactive
- * `!`/`!!` input, so every context this extension saw carried the interactive
- * session's UI and cwd.
+ * project-scoped settings lookups keyed on `activeCtx?.cwd`. Direct RPC bash
+ * commands also reach extension `user_bash` handlers, but their context does
+ * not carry the interactive session's UI and cwd.
  *
  * An RPC context has no UI and may carry an unrelated cwd. Adopting one
  * downgrades `activeCtx`, and the next refreshUi() then evaluates

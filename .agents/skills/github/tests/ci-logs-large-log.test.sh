@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for ci-logs against a log past the pipe buffer (KEN-1143).
+# Tests for ci-logs against a log past the pipe buffer.
 #
 # Three sites in ci-logs.sh changed behaviour once the log outgrew a kernel
 # bound, and `--lines` cannot hold a log under either: it caps lines, not bytes.
@@ -18,7 +18,7 @@
 #                        report the fetch failure: exit 141, no JSON, no message.
 #
 # One staged log clears both bounds, at the default `--lines`. Each site
-# reverted to its old form reddens this suite.
+# uses an early-closing reader, this suite turns red.
 #
 # Run: bash skills/github/tests/ci-logs-large-log.test.sh
 set -euo pipefail

@@ -289,7 +289,7 @@ TRIAGE_ENABLED=0
 # skipped, named once, and the watch runs on --since for the merged check.
 # With a team, triage fails CLOSED: oversee.md § 4 owes a verdict to every
 # emitted team item, so a broken install that silently dropped triage would
-# drop every new item with it, and each missing dependency names its remedy.
+# drop every unseen item with it, and each missing dependency names its remedy.
 if [[ -n "$SINCE" ]]; then
   if [[ -n "${LINEAR_TEAM:-}" ]]; then
     [[ -x "$TRACKER" ]] \
@@ -543,7 +543,7 @@ pane_turn_identity() { pane_turn_slice "$1" before | cksum; }
 # A slice with no banner is empty, and so is one on a lane with a turn in
 # flight: limit-shaped text a lane prints mid-turn is its own output, not its
 # account's. ONE answer for every consumer of the banner — the row that records
-# a sighting and the event that reports one — because a guard added at one of
+# a sighting and the event that reports one — because a guard included at one of
 # them and missed at the other is how this reopened twice.
 lane_limit_banner() {
   local slice="$1" banner rc=0

@@ -44,7 +44,7 @@ export interface Config {
 		modelEffortOverrides?: Record<string, BridgeEffortLevel>;
 		/**
 		 * Verbatim override for the child's filesystem setting sources.
-		 * Defaults (see settingSourcesForQuery in connectors.ts): connectors
+		 * Defaults (see settingSourcesForQuery in connectors.ts) : connectors
 		 * mode uses ["user"] only, so repo-controlled `.claude/settings.json`
 		 * (project/local scope) cannot inject `env`/`apiKeyHelper` into the
 		 * child. Listing "project"/"local" here reopens that surface — only do
@@ -103,8 +103,8 @@ function rootAnchored(path: string, windows: boolean): boolean { return windows 
 
 /**
  * The Pi agent config dir: `PI_CODING_AGENT_DIR` when it names a root-anchored
- * path, else `~/.pi/agent`. Every bridge default that used to hardcode
- * `~/.pi/agent` routes through this so a host app that owns the agent dir owns
+ * path, else `~/.pi/agent`. Every bridge default routes through this function
+ * so a host app that owns the agent dir owns
  * those paths too.
  */
 export function piUserDir(): string {
@@ -113,7 +113,7 @@ export function piUserDir(): string {
 }
 
 /**
- * Isolated mode (`CLAUDE_BRIDGE_ISOLATED=1`): a host app embedding the bridge
+ * Isolated mode (`CLAUDE_BRIDGE_ISOLATED=1`) : a host app embedding the bridge
  * declares that nothing outside its explicitly configured dirs may be read.
  * Disables every cwd/home discovery fallback — all AGENTS.md discovery,
  * extension-manager settings, project `.pi/` settings + claude-bridge.json,

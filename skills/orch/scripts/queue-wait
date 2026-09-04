@@ -238,7 +238,7 @@ while [[ $# -gt 0 ]]; do
     -*)
       # An unrecognized flag must never fall through into a positional slot:
       # it would be consumed as a PR#/interval and die later with a diagnostic
-      # naming an argument the caller never typed (kendex#981, same as ci-wait).
+      # naming an argument the caller never typed, same as ci-wait).
       echo "queue-wait: unknown option '$1'" >&2
       print_usage >&2
       exit 2
@@ -323,7 +323,7 @@ last_auto_merge="false"
 last_cause=""
 last_pr_node_id=""
 last_unresolved_count=""
-# The cross-poll memory that makes this script necessary (kendex#819).
+# The cross-poll memory that makes this script necessary.
 #   was_queued     - ANY poll observed the PR queued OR armed; the routing
 #                    table's WAS_QUEUED.
 #   was_in_queue   - ANY poll observed actual merge-queue membership. Splits
@@ -335,7 +335,7 @@ was_in_queue="false"
 # probe after the loop, so initialize before any poll runs.
 in_queue_now=false
 armed_now=false
-# Progress signal (VST-249). The entry tuple and completed check-run count of
+# Progress signal. The entry tuple and completed check-run count of
 # the previous successful poll, the not-completed (running/queued) check-run
 # count from the last successful read ("" when never read), the poll number
 # of the last observed change ("" when none), and whether progress was ever
@@ -353,7 +353,7 @@ progress_evidence=false
 checkrun_fetch_failures=0
 CHECKRUN_FETCH_WARN_POLLS=3
 
-# Transient-failure bookkeeping, mirroring approval-wait (kendex#748): every
+# Transient-failure bookkeeping, mirroring approval-wait: every
 # gh call in the poll loop writes stderr to GH_ERR_FILE so a failure can be
 # classified before it terminates the wait. retry_interval doubles per
 # consecutive transient failure (capped) and resets after a successful poll.
@@ -559,7 +559,7 @@ REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
 if [ -z "$REPO" ]; then
   origin_url=$(git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null || true)
   # Capture owner/repo greedily, then strip a trailing ".git" explicitly — the
-  # same portable form ci-wait uses (kendex#476).
+  # same portable form ci-wait uses.
   REPO=$(echo "$origin_url" | sed -nE 's#^.*github\.com[:/]+([^/]+/[^/]+)$#\1#p')
   REPO="${REPO%.git}"
 fi
@@ -582,7 +582,7 @@ fi
 QUEUE_QUERY='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id isInMergeQueue mergeQueueEntry { state position headCommit { oid } } autoMergeRequest { enabledAt } } } }'
 
 # Classify a failed gh call whose stderr sits in GH_ERR_FILE — identical
-# policy to approval-wait (kendex#748). Transient means the service or
+# policy to approval-wait. Transient means the service or
 # transport hiccuped and the wait budget should absorb it; anything else
 # (HTTP 404, 401/403, malformed arguments) stays terminal.
 gh_failure_is_transient() {
@@ -635,7 +635,7 @@ probe_failed_check() {
   [[ "$verdict" == "fail" ]]
 }
 
-# --- Late-findings guard (kendex#1289) --------------------------------------
+# --- Late-findings guard  --------------------------------------
 # The reviewThreads walk is lib/review-threads.sh's, shared with approval-wait
 # so the waiter and this guard cannot disagree about what an open thread is.
 # It is fail-closed throughout (the review-predicate posture: anything
@@ -726,7 +726,7 @@ guard_probe() {
   [ "$count" -eq 0 ] || guard_fire "$count"
 }
 
-# --- Progress signal (VST-249) ---------------------------------------------
+# --- Progress signal  ---------------------------------------------
 # Check-run counts on the merge-queue head commit from ONE paginated read:
 # prints "<completed> <running>" — running being every not-completed status
 # (in_progress, queued, waiting, requested, pending) — and returns 0 only
@@ -756,7 +756,7 @@ read_check_run_counts() {
 # progress was measurable at all.
 observe_progress() {
   local tuple="$1" head_oid="$2" counts count="" running="" changed=false
-  # Both counts are per commit: a new merge-group head (or no entry)
+  # Both counts are per commit: a replacement merge-group head (or no entry)
   # invalidates the previous read until this head is read successfully, so a
   # cross-commit count comparison can never register as movement.
   [ "$head_oid" = "$prev_head_oid" ] || { last_running_count=""; prev_check_count=""; }
@@ -829,7 +829,7 @@ clear_candidate() {
 # Bounded twice over: never past the deadline, and at most CONFIRM_POLLS - 1
 # shortened gaps per candidate verdict — the polls that verdict owes — so a
 # flapping candidate cannot spin the poll loop, while a transition arriving
-# after an earlier one still has the squeezes that one spent. A shortened gap
+# after a prior one still has the squeezes that one spent. A shortened gap
 # is a weaker blip filter than a full interval, and still two reads.
 poll_gap="$POLL_INTERVAL"
 confirm_squeezes=0
@@ -996,7 +996,7 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
   fi
 
   if [[ "$armed_now" == true ]]; then
-    # Late-findings guard first: a new unresolved thread outranks a CI probe,
+    # Late-findings guard first: a unseen unresolved thread outranks a CI probe,
     # because the queue merges past it on its own. Same rate limit as the
     # ci-wait probe, on its own clock.
     if $GUARD; then

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # `exclusion-consistency`: the clauses about the repo's actual render set.
 #
-# The silent failure: a harness refresh renders a new skill into the repo, the
-# exclusion lists name the skills that existed when someone last wrote them,
-# and the new tree is reviewed as if it were this repo's code. Findings arrive
+# The silent failure: a harness refresh renders another skill into the repo,
+# the exclusion lists name the skills that existed when someone last wrote
+# them, and that tree is reviewed as if it were this repo's code. Findings arrive
 # on files nobody here can fix, and the only signal is reviewer noise.
 
 . "$(dirname "$0")/lib/harness.sh"

@@ -83,7 +83,7 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 	const connectorWriteMode = connectorWriteModeFor(bridgeConfig);
 	// Declare the account's connected connectors explicitly so `alwaysLoad` can
 	// hold startup until they attach — otherwise the turn-1 manifest is built
-	// before the CLI has fetched them (kendex#832).
+	// before the CLI has fetched them.
 	const connectorServers = enableCloudMcp ? connectorServersSnapshot(accountScope.claudeConfigDir) : {};
 	const appendSystemPrompt = providerSettings.appendSystemPrompt !== false;
 	const agentsAppend = appendSystemPrompt ? extractAgentsAppend() : undefined;
@@ -98,7 +98,7 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 	// ignores auto-discovered filesystem MCP servers while Pi owns tool execution.
 	// Connectors mode needs settings resolution ON but restricted to USER scope
 	// only — project/local settings files can smuggle `env`/`apiKeyHelper` from
-	// a hostile checkout (kendex#990). Full rationale on settingSourcesForQuery.
+	// a hostile checkout. Full rationale on settingSourcesForQuery.
 	const settingSources: SettingSource[] | undefined = settingSourcesForQuery(
 		enableCloudMcp, appendSystemPrompt, providerSettings.settingSources);
 	const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
@@ -113,7 +113,7 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 
 	const extraArgs: Record<string, string | null> = {};
 	// Opus 4.7 defaults thinking.display to "omitted" (empty thinking text in stream).
-	// Force summarized so thinking_delta events arrive. See anthropics/claude-agent-sdk-python#830.
+	// Force summarized so thinking_delta events arrive.
 	// Deliberately the raw flag, NOT the typed `thinking` option: every non-disabled
 	// ThinkingConfig also emits `--thinking adaptive` or `--max-thinking-tokens`
 	// (verified in sdk.mjs flag mapping), so the typed form cannot set display
@@ -136,7 +136,7 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 	// DISABLE_AUTO_COMPACT=1: pi owns context-management and propagates its own
 	// /compact via session_compact (see handler in the extension entry). Letting CC
 	// also autocompact would double-flush the prompt cache and races pi's
-	// threshold with CC's, including CC's anti-thrashing guard (issue #8).
+	// threshold with CC's, including CC's anti-thrashing guard ().
 	// Manual /compact in CC still works (we never invoke it).
 	// When connectors are enabled, allow claude.ai cloud MCP servers so the
 	// authenticated account's Gmail/Calendar/Drive tools load. Default stays "0".

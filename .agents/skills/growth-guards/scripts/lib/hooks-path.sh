@@ -13,7 +13,7 @@ set -euo pipefail
 # Set at all means somewhere this installer does not write, and that is the
 # whole of the classification.
 #
-# It used to work out whether the configured directory was in fact this
+# It would work out whether the configured directory was in fact this
 # repository's own — resolving on disk, folding `..` on paper, absolutizing
 # a relative value against the work tree. Each of those was correct and each
 # was another place to be subtly wrong: a `..` folded across a symlink named

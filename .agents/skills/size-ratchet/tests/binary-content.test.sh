@@ -2,7 +2,7 @@
 # Pins the refusal on a tracked blob git reads as binary. A raw NUL typed in
 # place of its escape makes git call the file binary — no textual diff, a
 # `git grep -I` that drops the path — while `wc -l` still returns a number, so
-# the gate used to measure content nobody could read. It now refuses by name
+# the gate would measure content nobody could read. It now refuses by name
 # and byte offset.
 #
 # Pinned here: the refusal fires in both scopes (index and worktree), and in
@@ -184,7 +184,7 @@ fi
 echo "=== and git's own diff attribute is what exempts it ==="
 # The authority is the record git already keeps: a path declared binary (or
 # -diff) is out of every textual diff, so its bytes were never reviewable
-# text. Same fixture, same exclusion list, one .gitattributes line added.
+# text. Same fixture, same exclusion list, one.gitattributes line inserted.
 printf 'assets/* binary\n' >"$R/.gitattributes"
 run_in SIZE_RATCHET_THRESHOLD=400 -- --staged
 if [ "$RC" -eq 2 ] && has 'assets/icon.png: a NUL byte at offset 12'; then

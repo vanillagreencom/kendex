@@ -1,5 +1,5 @@
 // A connector call runs inside the `claude` child and is never mirrored into the
-// Pi stream (drovr#311 / memsira#320), which left the Pi session with no record
+// Pi stream, which left the Pi session with no record
 // that it happened. These tests pin the record that closes that gap: a session
 // CustomEntry per call, never a content block, never the payload.
 import { describe, it, beforeEach, afterEach } from "node:test";
@@ -150,7 +150,7 @@ describe("connector call audit entries", () => {
 	});
 
 	it("audits a call against the child session that made it", () => {
-		// A continuation query reuses this context with a NEW child session id. A
+		// A continuation query reuses this context with a different child session id. A
 		// call issued before that must not be attributed to the later session.
 		const entries = installFakeExtensionApi();
 		const c = ctx();
@@ -264,7 +264,7 @@ describe("connector calls whose result never came back", () => {
 
 	it("still knows about a call whose child message boundary has passed", () => {
 		// resetToolTracking runs at every child message_start. The audit map is
-		// query-scoped precisely so a call abandoned in an earlier child message is
+		// query-scoped precisely so a call abandoned in a prior child message is
 		// still recordable at teardown.
 		const entries = installFakeExtensionApi();
 		const c = ctx();
@@ -318,7 +318,7 @@ describe("the host audit sink", () => {
 	it("ADDS a destination rather than replacing appendEntry", () => {
 		// The whole contract. A host that is session-backed AND installs a sink has
 		// asked for both; a replacing sink would silently take away the
-		// transcript-local record such a host gets for free (memsira, 2026-07-28).
+		// transcript-local record produced by a session-backed host.
 		const entries = installFakeExtensionApi();
 		const sink = installSink();
 

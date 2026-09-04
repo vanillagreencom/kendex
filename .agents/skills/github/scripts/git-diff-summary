@@ -71,7 +71,7 @@ resolve_default_base() {
 #     #[path = "scan_fixtures.rs"]
 #     mod scan_fixtures;
 # File-local heuristics cannot see that, so classification also reads the
-# modules that could declare the file on the diff's new side: a file whose
+# modules that could declare the file after the diff: a file whose
 # every found declaration is #[cfg(test)]-gated is test scope; any ungated
 # declaration, or none found, keeps the file-local classification. Any read
 # failure during scanning also keeps it (fail closed: an unreadable declaring
@@ -95,7 +95,7 @@ resolve_default_base() {
 # moves a panic line between panic_path_added and the informational
 # test_panic_path_added, and the reviewer still reads the diff.
 
-# Mode of a path's new-side entry, empty when it has none. Reads main()'s
+# Mode of a path's post-change entry, empty when it has none. Reads main()'s
 # diff_ref.
 new_side_mode() {
     case "$diff_ref" in
@@ -104,10 +104,10 @@ new_side_mode() {
     esac | awk 'NR == 1 { print $1 }'
 }
 
-# Emits the new-side content of a file: HEAD for a base...HEAD diff, the
+# Emits the post-change content of a file: HEAD for a base...HEAD diff, the
 # index for --staged, the worktree for --head. Reads main()'s diff_ref.
 # Exit 0 with content when readable, 2 when the file does not exist on the
-# new side, 1 on a read failure — callers must fail closed on 1.
+# post-change side, 1 on a read failure — callers must fail closed on 1.
 new_side_content() {
     # A symlink entry (mode 120000) stores its TARGET PATH as the blob, so
     # reading it yields link text instead of Rust — an empty parse that
@@ -139,7 +139,7 @@ new_side_content() {
     esac
 }
 
-# New-side tracked .rs files directly inside a directory (no recursion).
+# Post-change tracked.rs files directly inside a directory (no recursion).
 # --head reads the index too: git diff HEAD never surfaces untracked files,
 # and an untracked declaration must not reclassify a tracked change.
 new_side_rs_siblings() {
@@ -238,7 +238,7 @@ scan_declaring_file() {
     esac
     rc=0
     content=$(new_side_content "$1") || rc=$?
-    # Absent on the new side: nothing to record. Unreadable: an ERR record —
+    # Absent after the change: nothing to record. Unreadable: an ERR record —
     # every candidate consulting this file must fail closed.
     if [ "$rc" -eq 2 ]; then return 0; fi
     if [ "$rc" -ne 0 ]; then
@@ -437,7 +437,7 @@ main() {
         [ -n "$p" ] && prod_path_args+=("$p")
     done <<<"$prod_paths"
     if [ ${#prod_path_args[@]} -gt 0 ]; then
-        # path<TAB>new-side line number of each added panic-pattern line
+        # path<TAB>post-change line number of each inserted panic-pattern line
         local prod_diff="" panic_lines
         scan_diff prod_diff "panic paths" "$diff_ref" -- "${prod_path_args[@]}"
         panic_lines=$(printf '%s\n' "$prod_diff" | awk '
@@ -459,7 +459,7 @@ main() {
         while IFS= read -r panic_file; do
             [ -n "$panic_file" ] || continue
             file_lines=$(echo "$panic_lines" | awk -F'\t' -v f="$panic_file" '$1 == f {print $2}' | paste -sd, -)
-            # New-side content of the file: HEAD for a base...HEAD diff, the
+            # Post-change content of the file: HEAD for a base...HEAD diff, the
             # index for --staged, the worktree for --head.
             case "$diff_ref" in
                 --staged) file_content=$(git show ":$panic_file" 2>/dev/null || true) ;;

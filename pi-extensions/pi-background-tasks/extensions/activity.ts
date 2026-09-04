@@ -30,7 +30,7 @@ const ACTIVITY_BROKER_SYMBOL = Symbol.for("kendex.pi.activity");
 const COMMAND_DETAIL_MAX_CHARS = 200;
 // Activity broker payloads are sidecar (not transcript), but a 10-20KB tail
 // per match still bloats the JSONL stream
-// (kendex#210). Keep the broker preview compact; full output stays on disk.
+//  Keep the broker preview compact; full output stays on disk.
 const ACTIVITY_OUTPUT_TAIL_MAX_CHARS = 512;
 
 export function publishBackgroundTaskStarted(task: ManagedTask): void {
@@ -60,7 +60,7 @@ export function buildBackgroundTaskActivity(eventType: TaskEventType | "start", 
 			output_bytes: task.outputBytes,
 			sequence,
 			status: task.status,
-			// kendex#97: carry the termination annotation on the broker event
+			// carry the termination annotation on the broker event
 			// so dashboards / loggers can distinguish self-exit, extension-stop,
 			// reconcile-on-restart, and orphan-watcher finalizes.
 			termination_reason: task.terminationReason,

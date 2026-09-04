@@ -32,7 +32,7 @@ reset() {
 # One pair. `$1` names the input; `$2` is a shell snippet that makes the input
 # one that the committed outputs are stale against. `$3` is the rest of the
 # fired set where the SAME edit breaches a second clause — a schema whose
-# default moved is one the committed render no longer satisfies.
+# default moved is one the committed render does not satisfy.
 pair() {
   local label mutate also
   label="$1"

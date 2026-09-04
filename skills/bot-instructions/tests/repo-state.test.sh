@@ -20,7 +20,7 @@ expect_red agents-section 'a nested AGENTS.md carrying a Code Review Rules secti
 printf 'schema = 1\n[repo]\nname = "fixture"\nsummary = "A fixture repository."\n' \
   > "$repo/bot-instructions.toml"
 # `orphan` too, and genuinely: with every flag false the marked AGENTS.md
-# region is a path the current TOML no longer produces.
+# region is a path the current TOML does not produce.
 expect_red 'agents-section orphan' 'the nested clause reds with every flag false' \
   render --dry-run --repo "$repo"
 rm -f "$repo/crates/core/AGENTS.md"

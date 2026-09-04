@@ -9,7 +9,6 @@ let npmCheckInFlight = false;
 // `npm root [args]` is slow (Node + npm config bootstrap, typically 40-500ms each). The
 // answer is invariant for the process lifetime, so memoize. Without this, opening the
 // extension manager popup spawned 2-5 `npm root` invocations per npm-sourced package
-// (kendex#74).
 const npmRootMemo = new Map<string, string | undefined>();
 
 function npmRootCacheKey(args: string[], cwd?: string): string {

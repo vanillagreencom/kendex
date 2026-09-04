@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for the one thing that authorizes a fix round: the round
+# Tests for the one thing that authorizes a fix round: the round
 # record dev-round-write stamps at delegation time. dev-artifact-check reads it
 # for both the delegated item set and the protected additions the round may
 # make, so anything that lets a check run WITHOUT that record, or lets a record
@@ -59,7 +59,7 @@ git -C "$wt" config commit.gpgsign false
 git -C "$wt" commit -q --allow-empty -m base
 init_growth_state "$STATE" "$wt" issue-826 seed 1000000
 
-# A round that added a protected file it was never authorized to add. Every
+# A round whose diff adds a protected file it was never authorized to add. Every
 # case below asks whether some other spelling of the check lets it through.
 "$ROUND_WRITE" --worktree "$wt" --issue issue-826 --round-id 1-1 --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
 mkdir -p "$wt/tools"
@@ -95,8 +95,8 @@ assert_eq "$(env ORCH_STATE_DIR="$wt/tmp" "$CHECK" --worktree "$wt" --issue issu
 # --- the record's base_sha is a git revision, not a free string -------------
 # It reaches `git diff` as an argument. A value git parses as an OPTION never
 # reaches revision parsing: git exits 0 over an empty probe, the additions list
-# comes back empty, and the gate reports valid over a round that added anything
-# it liked. A `--` separator cannot stand in for the grammar: git does stop
+# comes back empty, and the gate reports valid over a round that adds anything
+# it likes. A `--` separator cannot stand in for the grammar: git does stop
 # option parsing there, but everything after it is a pathspec, so the revision
 # pair could not be passed at all.
 record="$wt/tmp/dev-round-issue-826-1-1.json"
@@ -126,10 +126,10 @@ assert_eq "$(reason --worktree "$wt" --issue issue-826 --round-id 1-1 --expect-i
   "comparison_failed" "a base_sha naming no object refuses rather than skipping the gate"
 cp "$TMP_ROOT/record-honest.json" "$record"
 
-# A trailing newline is the other half of the same bug, in the opposite
-# direction: Oniguruma's `$` matches before a string-final newline, so the
-# unanchored form accepted a path the writer cannot produce. `$'...'` holds
-# the newline that a command substitution would strip.
+# A trailing newline is the same anchoring in the opposite direction:
+# Oniguruma's `$` matches before a string-final newline, so an unanchored form
+# accepts a path the writer cannot produce. `$'...'` holds the newline that a
+# command substitution would strip.
 jq --arg add $'tools/a\n' '.adds = [$add]' "$TMP_ROOT/record-honest.json" > "$TMP_ROOT/adds.json"
 cp "$TMP_ROOT/adds.json" "$record"
 set +e
@@ -137,7 +137,7 @@ set +e
 assert_eq "$?" "2" "a record whose adds path ends in a newline fails closed"
 set -e
 
-# The same anchoring bug on base_sha: 40 hex plus a trailing newline.
+# The same anchoring on base_sha: 40 hex plus a trailing newline.
 jq --arg base $'0123456789abcdef0123456789abcdef01234567\n' '.base_sha = $base' \
   "$TMP_ROOT/record-honest.json" > "$TMP_ROOT/base.json"
 cp "$TMP_ROOT/base.json" "$record"
@@ -166,10 +166,10 @@ set +e
 assert_eq "$?" "2" "a symlinked round record fails closed"
 set -e
 
-# --- the cut round: the size check moves, it is not dropped (KEN-1165) ------
+# --- the cut round: the size check moves, it is not dropped -----------------
 # A branch over its size tripwire can only be brought back by a round that runs
-# while it is oversized, and dev-round-write refused to record exactly that
-# round. --cut lets the record be written; what stops --cut from becoming a way
+# while it is oversized, and dev-round-write's tripwire refuses to record
+# exactly that round. --cut lets the record be written; what stops --cut from becoming a way
 # around the tripwire is that acceptance re-measures the branch.
 cut_wt="$TMP_ROOT/cut-wt"
 mkdir -p "$cut_wt"

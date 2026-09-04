@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Behavioral tests for the SHIPPED skills/review-gate/scripts/pr-watch.sh —
-# the needs-attention reducer (kendex#1117). Stubbed gh + stubbed predicate,
+# the needs-attention reducer. Stubbed gh + stubbed predicate,
 # every reduction arm driven offline.
 #
 # Reduction table:

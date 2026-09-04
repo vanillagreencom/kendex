@@ -377,7 +377,7 @@ expect_finding exclusion-consistency '[skills.z[y-a]w]' \
 
 # § Cross-file sets: the content-refusal table is the single statement, and
 # three structures encode it. Held against them here, so a row or a marked
-# cell added on one side without the other reds.
+# cell present on one side and absent from the other reds.
 if python3 - "$BI_ROOT/skills/bot-instructions" <<'PROBE'; then
 import os, re, sys
 PKG = sys.argv[1]

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# `cleanup` and `remove` against squash-merged branches (#697).
+# `cleanup` and `remove` against squash-merged branches.
 #
 # Every PR in this fleet lands by squash through the merge queue, so the merged
-# branch is rewritten into a new commit and is an ancestor of nothing. Ancestry
+# branch is rewritten into a separate commit and is an ancestor of nothing. Ancestry
 # alone therefore reports every merged worktree as pending, and the old cleanup
 # loop said nothing at all about the ones it declined to collect. What is under
 # test:
@@ -22,13 +22,13 @@
 #   * a branch whose tip is NOT the head the pull request merged is kept, with
 #     its follow-up commits and uncommitted files intact. One branch name serves
 #     every worktree an issue ever had, so matching on the name alone handed an
-#     old merged record to new work and force-deleted it;
+#     stale merged record to unrelated work and force-deleted it;
 #   * a pull request merged into some other base is not a merge into the
 #     default branch, so it collects nothing; nor is a fork's pull request,
 #     nor an answer from whatever repository a GH_REPO redirect points at;
 #   * `remove` deletes a squash-merged branch and still keeps an unmerged one,
 #     a moved-on one, and one merged only into its own tracking upstream —
-#     `git branch -d` accepted that last case and no longer decides anything.
+#     `git branch -d` accepted that last case and does not decides anything.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -196,7 +196,7 @@ add_branch_tree() {
   git -C "$root/trees/$name" commit -q -m "$name: work"
 }
 
-# Land the branch's content on main as a NEW commit, exactly as a squash merge
+# Land the branch's content on main as a separate commit, exactly as a squash merge
 # does: the branch tip stays outside main's history forever.
 squash_onto_main() {
   local root="$1" name="$2"
@@ -400,7 +400,7 @@ fi
 echo "=== a branch past its merged pull request is kept ==="
 
 # The data-loss case the name-only match allowed. One branch name serves every
-# worktree an issue ever had, so a merged record from an earlier PR would match
+# worktree an issue ever had, so a merged record from a prior PR would match
 # a branch whose tip is newer work: cleanup force-removed the tree and ran
 # branch -D, leaving the follow-up commit reachable from no ref.
 MOVED_ROOT="$TMP_ROOT/moved"
@@ -609,7 +609,7 @@ unset GH_REDIRECT_OID
 echo "=== a failed enumeration is not a clean sweep ==="
 
 # Process substitution discards the command's exit status, so a failing
-# `worktree list` used to leave the candidate set empty and cleanup reported
+# `worktree list` would leave the candidate set empty and cleanup reported
 # success having inspected nothing.
 ENUM_ROOT="$TMP_ROOT/enum"
 make_repo "$ENUM_ROOT"

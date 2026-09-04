@@ -4,8 +4,8 @@
 // versioned symbol below to supply a subscription profile for each fresh
 // Claude request. The bridge passes only an opaque profile id, a display
 // label, and an optional CLAUDE_CONFIG_DIR; credentials remain owned by the
-// official Claude CLI. Incompatible future shapes must use a new
-// symbol/version instead of mutating this contract in place.
+// official Claude CLI. An incompatible shape must use a separate
+// symbol or version instead of mutating this contract in place.
 
 import type { AssistantMessageEvent, AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { homedir } from "node:os";
@@ -48,7 +48,7 @@ export interface ClaudeAccountRouterV1 {
 	recordFailure(profileId: string, kind: ClaudeAccountFailureKind, modelId: string): void;
 	recordSuccess(profileId: string, sessionId?: string): void;
 	current(modelId: string, sessionId?: string): ClaudeAccountRoute | undefined;
-	/** Resolve a previously issued profile id back to its route. The bridge
+	/** Resolve an issued profile id back to its route. The bridge
 	 *  persists ONLY the opaque profile id into Pi session entries (config-dir
 	 *  paths are account-identifying and travel with shared session archives),
 	 *  so restoring a session re-derives the config dir here. A missing router

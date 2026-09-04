@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test (VST-188): `issues list --search` must filter, and must fail
+# `issues list --search` must filter, and must fail
 # closed. The old parser dropped the bare `--search` flag in its first pass, so
 # the pattern never reached any filter and every search returned the full
 # newest-first list — silently passing the dedupe preflight it exists for.

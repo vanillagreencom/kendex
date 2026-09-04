@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test: projects list must not forward --limit > 50 straight to the
+# projects list must not forward --limit > 50 straight to the
 # API (Linear's projects connection 400s on large `first`). Instead it caps the
 # per-request page size at 50 and paginates with the endCursor to satisfy
 # larger --limit values, returning exactly up to --limit projects.

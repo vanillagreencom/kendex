@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for issues create/update --description-file parsing without the real API.
+# Tests for issues create/update --description-file parsing without the real API.
 
 set -euo pipefail
 
@@ -13,7 +13,7 @@ mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 # Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this
 # throwaway root — without this, cache writes land in the real project's
-# `.cache/linear` (kendex#43).
+# `.cache/linear`.
 git -C "$TMP_ROOT" init -q -b main
 
 # Mocked curl: routes by GraphQL operation, logs each request payload for assertions.

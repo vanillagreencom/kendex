@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cache date comparisons are UTC, and cycle selection anchors on a date (KEN-1175).
+# Cache date comparisons are UTC, and cycle selection anchors on a date.
 #
 # sync stores `startsAt` and `updatedAt` as Linear returns them — UTC, a `Z`
 # suffix — and every filter over the cache compares those strings lexically. The

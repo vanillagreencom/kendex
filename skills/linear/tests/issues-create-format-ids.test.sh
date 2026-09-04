@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Regression test: `issues create --format=ids` must be accepted by the parser and
+# `issues create --format=ids` must be accepted by the parser and
 # print ONLY the created issue identifier (one line, nothing else). The merge /
-# start-new / plan-issues workflows capture that identifier deterministically, so a
-# parser rejection (the #615 "Unknown option: --format=ids" bug) silently breaks them.
+# Creation workflows capture that identifier deterministically, so a
+# parser rejection silently breaks them.
 # Runs fully offline against a mocked curl — the bug is a pre-mutation parse rejection.
 
 set -euo pipefail
@@ -17,7 +17,7 @@ mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 # Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this
 # throwaway root — without this, cache writes land in the real project's
-# `.cache/linear` (kendex#43).
+# `.cache/linear`.
 git -C "$TMP_ROOT" init -q -b main
 
 # Mocked curl: routes by GraphQL operation. issueCreate returns a fixed issue.
@@ -69,7 +69,7 @@ assert_eq "a create with no --format exits zero" "$default_rc" 0
 assert_jq "the default create output is still the full JSON response" \
   "$default_out" '.success == true and .identifier == "PROJ-1"'
 
-# --- parser no longer rejects --format=ids (the #615 bug) ------------------------
+# --- parser accepts --format=ids ---------------------------------------------
 parser_rc=0
 err_out="$(run_create --title "New task" --team Claude --format=ids 2>&1 >/dev/null)" || parser_rc=$?
 assert_eq "the parser accepts --format=ids and the create exits zero" "$parser_rc" 0

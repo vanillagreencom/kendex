@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for the unsupported `ci-wait` command hint (kendex#662).
+# Tests for the unsupported `ci-wait` command hint.
 #
 # During a managed orchestration handoff, generated guidance told an agent to
 # run `github.sh ci-wait 296 --json`. The github router has no `ci-wait`

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for the `lanes` helper and open-terminal's --lane wiring (kendex#894).
+# Tests for the `lanes` helper and open-terminal's --lane wiring.
 #
 # The network layer is the ONLY impure part of `lanes`, and it is injected via
 # ORCH_LANES_FETCH_CMD, so every assertion here runs offline against fixed
@@ -136,7 +136,7 @@ assert_eq "$(jq -r '.[] | select(.alias=="work") | .headroom_pct' <<<"$ALIASED")
 echo "=== headroom is the binding bucket, not an average ==="
 
 # nclaude: 5% session but 95% weekly. Averaging would call that ~50% free and
-# send a fleet straight into the wall the issue describes.
+# send a fleet straight into the wall.
 assert_eq "$(jq -r '.[] | select(.alias=="nclaude") | .headroom_pct' <<<"$OUT")" "5" \
   "a low session but high weekly yields low headroom"
 assert_eq "$(jq -r '.[] | select(.alias=="eclaude") | .headroom_pct' <<<"$OUT")" "20" \
@@ -314,7 +314,7 @@ assert_eq "$([[ -f "$CLAIM_STATE/claims/one.claim" ]] && echo yes || echo no)" "
 assert_eq "$([[ -f "$CLAIM_STATE/claims/two.claim" ]] && echo yes || echo no)" "yes" \
   "a live claim survives the prune"
 
-# Pane ids restart at %0 on a new tmux server, so the server pid is half the
+# Pane ids restart at %0 on every tmux server, so the server pid is half the
 # liveness key: without it a claim outliving its server matches a stranger.
 rm -f "$CLAIM_STATE"/claims/*.claim
 write_claim stale "$DEAD_PID" "%2" "$H/.eclaude" "vst-2"
@@ -541,9 +541,9 @@ OT_TMUX_PANES="$TMP_ROOT/ot-panes"
 run_ot() { TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" "$@"; }
 
 # Assert against what a user actually sees, not against a parse of the source.
-# --help must work with no git repository in sight. It used to die with git's
-# exit 128 and no output at all, because the PROJECT_ROOT command substitution
-# failed under `set -e` before argument parsing ever ran.
+# --help must work with no git repository in sight: a PROJECT_ROOT command
+# substitution that runs under `set -e` before argument parsing dies with
+# git's exit 128 and no output at all.
 NOREPO="$TMP_ROOT/norepo"; mkdir -p "$NOREPO"
 help_rc=0
 HELP_OUT="$( (cd "$NOREPO" && PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
@@ -605,9 +605,9 @@ assert_eq "$unknown_rc" "1" "an unknown --lane alias is refused"
 assert_contains "$unknown_out" "known lane alias" "the alias refusal names what it looked for"
 
 # Collision: the caller's cwd holds a directory with the same name as a lane
-# alias. Resolving the filesystem first made that directory win, so the fleet
-# launched under a config dir nobody configured — silently, since a directory
-# that exists raises no error. The alias owns the bare word.
+# alias. Resolving the filesystem first would make that directory win and
+# launch the fleet under a config dir nobody configured — silently, since a
+# directory that exists raises no error. The alias owns the bare word.
 COLLIDE="$TMP_ROOT/collide"; mkdir -p "$COLLIDE/work"
 git -C "$COLLIDE" init -q -b main
 set +e
@@ -702,7 +702,7 @@ set -e
 assert_contains "$three_out" "across 2 lanes" \
   "a third item returning to a used lane still reports two distinct lanes"
 
-# A claim that could not be written is a batch that can no longer be spread:
+# A claim that could not be written is a batch that cannot be spread further:
 # the launch stands, the next item does not go out blind.
 rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
 mkdir -p "$OT_STATE/claims"

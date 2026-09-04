@@ -1,13 +1,12 @@
-// Cross-PROCESS cache of the connector inventory (kendex#870).
+// Cross-PROCESS cache of the connector inventory.
 //
-// #868 primes the inventory at provider registration, but the fetch takes ~1.5s
+//  primes the inventory at provider registration, but the fetch takes ~1.5s
 // while the first query is built at ~0.5-0.8s, so turn 1 of a cold sidecar goes
-// out with no declarations and gets exactly the #832 bug it was meant to fix.
+// out with no declarations and preserves the failure this cache prevents.
 //
 // An in-process cache cannot help the consumer that needs it most. drovr builds
 // a sidecar lazily on the first bridge round and, since their sidecars are
-// per-SESSION, that is a fresh process for every new chat — so their exposure is
-// once per chat, indefinitely, and every one of those is a cold process. The
+// per-SESSION, each chat starts a separate cold process. The
 // cache therefore has to survive process boundaries.
 //
 // Keyed by credential scope, because that is what selects the account: the org
@@ -18,7 +17,7 @@
 // wrong-version cache returns undefined and the caller falls back to today's
 // behaviour — the same fail-open contract as the inventory call itself.
 //
-// The ON-DISK FORMAT HAS AN EXTERNAL READER (kendex#892). drovr quarantines this
+// The ON-DISK FORMAT HAS AN EXTERNAL READER. drovr quarantines this
 // bundle to its sidecar process, so rather than calling `listAccountConnectors`
 // in-process it re-implements the reader half — path
 // `<piUserDir()>/connector-cache/<sha256(CLAUDE_CONFIG_DIR).hex[0..16]>.json`,
@@ -43,7 +42,7 @@ import type { ConnectorEntry } from "./connector-inventory.js";
 const CACHE_VERSION = 2;
 /** Long enough to be useful across a machine's lifetime, short enough that a
  *  removed connector stops being declared without needing a manual purge. A
- *  stale entry is not dangerous — a connector that no longer resolves simply
+ *  stale entry is not dangerous — a connector that does not resolve simply
  *  fails to connect, which is the fail-open path — so this is hygiene, not a
  *  correctness boundary. */
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;

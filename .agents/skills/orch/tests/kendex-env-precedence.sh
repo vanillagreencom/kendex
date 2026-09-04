@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for kendex-env.sh project-config precedence.
+# Tests for kendex-env.sh project-config precedence.
 #
 # Contract (highest to lowest priority):
 #   parent-process env > .env.local > .kendex/settings.toml >
@@ -9,9 +9,8 @@
 # (single-line double-quoted, no `"`, no `\`), or a `[`-leading line that
 # is not a lone [name] header, fails the load.
 #
-# Bug 2 (kendex#507): the settings loader clobbered caller-provided env. Parent
-# values must now win over every project file, while the settings < .env.local
-# order is preserved for keys the parent did not set.
+# Parent values win over every project file, while the settings <.env.local
+# order holds for keys the parent did not set.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -80,8 +79,8 @@ set -e
 assert_eq "$s2_code" "0" "scenario 2 loads without error"
 assert_eq "$s2_out" "from-parent|bar-nested" "scenario 2: parent env wins over project files; other settings keys still applied"
 
-# Scenario 3: the issue's exact case. Parent GH_ISSUE_PATTERN must survive a
-# conflicting lowercase pattern in project settings.
+# Scenario 3: parent GH_ISSUE_PATTERN must survive a conflicting lowercase
+# pattern in project settings.
 PROJ3="$TMP_ROOT/proj3"
 mkdir -p "$PROJ3"
 cat > "$PROJ3/kendex.settings.toml" <<'TOML'
@@ -251,7 +250,7 @@ fi
 # out of the fork, so each call appends its depth relative to the loader's
 # own frame to a file; every recorded depth is 0 or a call ran inside a
 # subshell, wherever in the loop the fork was introduced. The call count is
-# the second: it is exact, so ONE call site reverted to a command
+# the second: it is exact, so ONE call site rewritten as a command
 # substitution is caught by the increment lost with its subshell. Seven for
 # a three-line file — every line trimmed, plus the key trim and the
 # kendex_decode_value trim for each of the two assignments.

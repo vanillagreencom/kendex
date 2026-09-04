@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for VST-147: issues created outside the TPM pipeline land
+# issues created outside the TPM pipeline land
 # with no agent:* label and are invisible to agent routing, while the CLI
 # prints a URL that looks like success.
 #

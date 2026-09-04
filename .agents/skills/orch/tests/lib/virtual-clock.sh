@@ -13,9 +13,8 @@
 # running a few-second budget has no margin worth the name, and once a poll
 # costs a large fraction of a second the deadline arrives before the poll that
 # was meant to land inside it — a contended CI runner and a busy developer box
-# both produce that, and it is what made the confirmation suite eject merge
-# groups (KEN-879). And no poll budget is spent in real time, which is the
-# minutes these suites used to cost the shard.
+# both produce that. And no poll budget is spent in real time, so these suites
+# cost the shard no minutes of waiting.
 #
 # The clock is seeded once, at install, and runs forward for the whole suite.
 # Every waiter takes its own start time at process start and derives its budget

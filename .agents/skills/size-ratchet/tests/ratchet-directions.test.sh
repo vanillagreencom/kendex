@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pins for every check direction of scripts/size-ratchet. Both failure
-# directions (new offender, baselined growth) AND the looser-than-reality
+# directions (unrecorded offender, baselined growth) AND the looser-than-reality
 # direction must fire, with a passing control first so a green run is
 # evidence, not a check that cannot fail.
 set -euo pipefail
@@ -166,7 +166,7 @@ run_sr
 
 echo "=== a tracked-but-absent exclusion list still applies, from the index ==="
 # Same sparse-checkout shape as the baseline case above, for the OTHER tracked
-# policy file. A worktree missing the list used to mean zero exclusions, so a
+# policy file. A worktree missing the list would mean zero exclusions, so a
 # fresh or partial tree reported violations against the vendored and generated
 # files the tracked list excludes — the opposite direction from the baseline
 # fallback (noise, not a smuggled offender), but equally a broken scope
@@ -303,7 +303,7 @@ run_sr
 # A carve cannot pull the baseline into its own gate: the baseline is policy
 # input, and measuring it would make every row it gains a violation. Both runs
 # below share one baseline whose own 11 rows put it over this suite's
-# threshold of 10, so a baseline that reached the gate would fail as a new
+# threshold of 10, so a baseline that reached the gate would fail as an unrecorded
 # offender — a shorter one would pass whether the exemption held or not. Every
 # row names a measured file over the threshold, so none reads as stale.
 for i in 1 2 3 4 5 6 7 8 9; do mkfile ".agents/skills/in-place/part$i.txt" 11; done
@@ -402,7 +402,7 @@ run_frozen
 # The remedy on THIS verdict must name the declaration, because the
 # declaration is what carries it — even here, in a frozen class.
 case "$OUT" in *"remedy: split at a concept seam, or declare the row with RATCHET_RAISE=1"*) ok "and its remedy names the declaration a bootstrap row needs" ;; *) bad "the added-row remedy names RATCHET_RAISE=1" "$OUT" ;; esac
-# A new path still gets its bootstrap row: the frozen list refuses raises, not
+# A untracked path still gets its bootstrap row: the frozen list refuses raises, not
 # first rows.
 RAISE=1 run_frozen
 [ "$RC" -eq 0 ] && ok "a declared bootstrap row passes even in a frozen class" \
@@ -468,7 +468,7 @@ run_sr
   || bad "control: the newline-terminated baseline gives the same verdict" "rc=$RC out=$OUT"
 
 echo "=== a run with no HEAD reference says so on the verdict line ==="
-# "No reference" passes, but it is not "checked and clean": the added and
+# "No reference" passes, but it is not "checked and clean": the present and
 # raised checks had nothing to judge against. A bare OK reads as clean, so the
 # verdict discloses which of the two it is.
 DISCLOSURE="HEAD carries no baseline rows, so added and raised rows were not judged"

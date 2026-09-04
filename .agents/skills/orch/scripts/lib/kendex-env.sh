@@ -178,7 +178,7 @@ kendex_load_project_env() {
   # over project files). compgen -e lists only exported names (the environment),
   # excluding this function's locals, and is captured before any file loads so
   # it holds parent env only — not values set by the project files below. The
-  # stored value is used to re-assert parent precedence after loading. Assigning
+  # stored value re-asserts parent precedence after loading. Assigning
   # without `local` makes the snapshot arrays global from inside this function.
   _KENDEX_PARENT_ENV_NAMES=()
   _KENDEX_PARENT_ENV_VALUES=()

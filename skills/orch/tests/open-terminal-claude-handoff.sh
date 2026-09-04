@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Regression tests for the claude handoff lane emitted by open-terminal.
+# Tests for the claude handoff lane emitted by open-terminal.
 #
-# Bug (kendex#1173), two composing defects observed on a real fleet launch:
+# Two constraints the claude arms hold:
 #
-# 1. The claude arms rendered no permission-mode argument, so handoff sessions
-#    booted in default (prompting) mode and stalled on their FIRST tool call
-#    with nobody attached — launch-only autonomy was structurally impossible.
-#    Model, effort, and permission posture now arrive as --launch-flags, chosen
-#    per task at launch time rather than stored anywhere, and a lane whose
-#    flags carry no permission bypass must warn that handoff autonomy is void.
+# 1. A handoff session that boots in default (prompting) mode stalls on its
+#    FIRST tool call with nobody attached, so launch-only autonomy needs a
+#    permission-mode argument. Model, effort, and permission posture arrive as
+#    --launch-flags, chosen per task at launch time rather than stored
+#    anywhere, and a lane whose flags carry no permission bypass must warn
+#    that handoff autonomy is void.
 #
 # 2. The brief (initial '/orch start …' prompt) rides as a CLI arg; first-run
 #    dialogs (theme/trust/browser-integration) consume it, leaving a healthy
-#    TUI at an EMPTY composer while open-terminal reported success. The tmux
-#    path must now verify delivery by re-capturing the pane (the brief visible
-#    on a line other than the echoed launch command), re-send the brief once
-#    if absent, and emit a per-lane failure + nonzero exit if still absent.
+#    TUI at an EMPTY composer. The tmux path must verify delivery by
+#    re-capturing the pane (the brief visible on a line other than the echoed
+#    launch command), re-send the brief once if absent, and emit a per-lane
+#    failure + nonzero exit if still absent.
 #
 # The test runs a byte-identical copy of open-terminal inside a temp git repo
 # so `git rev-parse --show-toplevel` resolves to a hermetic PROJECT_ROOT, and
@@ -416,7 +416,7 @@ assert_eq "$c8b_resends" "0" "no duplicate brief is sent into a running session"
 echo
 echo "=== open-terminal claude handoff: tmux failure detection ==="
 
-# Case 9: new-window fails — the lane must fail instead of verifying (and
+# Case 9: window creation fails — the lane must fail instead of verifying (and
 # counting) a pane that was never created.
 new_tmux_state c9
 printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
@@ -473,8 +473,8 @@ assert_eq "$c11b_code" "0" "a bracketed model id is accepted"
 
 # Case 11c: the rendered line is executed by a shell in the launch directory,
 # so a bracketed model id is glob syntax there. With the tokens unquoted, a
-# single same-named file in the worktree rewrote `opus[1m]` to `opus1` and the
-# lane started on a model nobody chose. Run the captured command for real, with
+# single same-named file in the worktree rewrites `opus[1m]` to `opus1` and the
+# lane starts on a model nobody chose. Run the captured command for real, with
 # the decoy planted, and read back the argv claude actually receives.
 if wait_capture "$CAP11B"; then
   c11c_cmd="$(cat "$CAP11B")"
@@ -523,8 +523,8 @@ assert_eq "$c13_code" "1" "zero verify secs exits nonzero"
 assert_contains "$(cat "$TMP_ROOT/c13.err")" "ORCH_TMUX_VERIFY_SECS" \
   "zero rejection names the setting"
 
-# Case 13b: leading-zero values are base-10, not octal — '08' errored the
-# arithmetic ("value too great for base") and failed a healthy lane.
+# Case 13b: leading-zero values are base-10, not octal — '08' read as octal
+# errors the arithmetic ("value too great for base") and fails a healthy lane.
 new_tmux_state c13b
 printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
 set +e

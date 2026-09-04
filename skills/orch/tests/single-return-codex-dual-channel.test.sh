@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Regression tests for orch's Single Return Message invariant under Codex
-# collaboration agents (kendex#532).
+# Tests for orch's Single Return Message invariant under Codex
+# collaboration agents.
 #
 # A compliant Codex sub-agent delivers its single completion over two channels:
 # a `send_input` MESSAGE followed by a FINAL_ANSWER that echoes the same
 # commit/scope/findings. The invariant must recognize that pair as ONE
 # completion (deduplicated, not a violation) while STILL flagging a genuine
-# second return that introduces a new commit or extra changes. dev/SKILL.md
+# second return that introduces a replacement commit or extra changes. dev/SKILL.md
 # must state that the send_input MESSAGE is the return and the FINAL_ANSWER
 # echo is expected, not a separate return.
 #
@@ -64,7 +64,7 @@ assert_section_contains() {
 
 echo "=== Single Return Message: Codex dual-channel completion (kendex#532) ==="
 
-# KEN-1121 moved Single Return Message out of SKILL.md into references/skill-rules.md.
+#  moved Single Return Message out of SKILL.md into references/skill-rules.md.
 orch_skill="$REPO_ROOT/skills/orch/references/skill-rules.md"
 dev_skill="$REPO_ROOT/skills/dev/SKILL.md"
 
@@ -85,7 +85,7 @@ assert_section_contains "$orch_skill" "$sec" "deduplicate" \
 assert_section_contains "$orch_skill" "$sec" "Codex runtime" \
   "orch section attributes the duplication to the Codex runtime"
 
-# --- orch: the existing genuine-second-return protection is retained: a NEW
+# --- orch: the existing genuine-second-return protection is retained: a unseen
 #     commit / extra changes / different scope is still a real second return.
 assert_section_contains "$orch_skill" "$sec" "new commit" \
   "orch section still flags a genuine second return with a new commit"

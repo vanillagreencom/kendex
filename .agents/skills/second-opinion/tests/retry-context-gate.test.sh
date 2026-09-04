@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for second-opinion retry context + qa_metadata gate (kendex#672).
+# Tests for second-opinion retry context + qa_metadata gate.
 #
 # The JSON-extraction retry ran in a fresh session but resent only the raw
 # first response plus the schema — NOT the original request. With the scope
@@ -31,7 +31,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # --- Deterministic harness-free session -------------------------------------
 # A positively detected single-model harness now beats any contradicting
-# declaration, whatever its source — so a suite can no longer neutralize the
+# declaration, whatever its source — so a suite can cannot neutralize the
 # harness that runs it by exporting an identity. It has to actually not have
 # one. This `ps` stand-in reports the first parent as init, so the ancestor walk
 # finds nothing and the declared identity below is what the script uses. It also
@@ -141,7 +141,7 @@ git -C "$WORK" add file.txt
 git -C "$WORK" -c commit.gpgsign=false commit -q -m init
 git -C "$WORK" checkout -q -b scope-branch
 # Uncommitted change so `--range HEAD` yields a non-empty diff — the scope
-# gate (kendex#652) refuses to run a review over an empty diff.
+# gate  refuses to run a review over an empty diff.
 printf 'world\n' >> "$WORK/file.txt"
 
 COUNTER="$TMP_ROOT/counter"

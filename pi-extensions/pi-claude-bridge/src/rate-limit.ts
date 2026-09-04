@@ -79,7 +79,7 @@ export function normalizeRateLimitUtilization(value: unknown): number | undefine
 	// (100%) because that is the fail-closed direction — under the fraction
 	// convention 1 is the fully-consumed case the warning exists to surface,
 	// while under the percent convention 1% sits below the threshold anyway,
-	// so nothing is lost by warning (VST-16).
+	// so nothing is lost by warning.
 	if (value > 0 && value <= 1) return value * 100;
 	if (value > 1 && value <= 100) return value;
 	return undefined;

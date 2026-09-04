@@ -250,7 +250,7 @@ export default function caveman(pi: ExtensionAPI): void {
 		if (activeCtx) {
 			const sessionKey = sessionIdForContext(activeCtx);
 			// Fingerprint excludes updatedAt so identical mode toggles don't append another full snapshot
-			// to the JSONL session log (kendex#177).
+			// to the JSONL session log.
 			const { updatedAt: _ignored, ...rest } = snapshot;
 			const fingerprint = JSON.stringify(rest);
 			if (lastFingerprintBySession.get(sessionKey) !== fingerprint) {

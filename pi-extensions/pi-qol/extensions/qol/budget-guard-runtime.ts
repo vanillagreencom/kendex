@@ -116,7 +116,7 @@ export class BudgetGuardDriver {
 		return true;
 	}
 
-	/** Dispatch a trigger previously staged by agent_end. */
+	/** Dispatch a trigger staged by agent_end. */
 	dispatchPending(input: GuardPendingDispatchInput): GuardDispatchResult {
 		const completed = (outcome: DispatchOutcome): GuardDispatchResult => ({ completion: Promise.resolve(), outcome });
 		const generation = input.generation ?? this.generation;

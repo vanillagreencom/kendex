@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Regression tests for orch/scripts/ci-wait auth ladder.
+# Tests for orch/scripts/ci-wait auth ladder.
 #
-# Covers kendex#19 plus the follow-up review:
+# Covers:
 #   1. stale GH_TOKEN + working keyring  -> sanitizer unsets, ci-wait passes
 #   2. no env tokens + working keyring   -> no warning, ci-wait passes
 #   3. stale GH_TOKEN + broken keyring + no .env.local bot token
@@ -15,22 +15,22 @@
 #   7. no env token + hanging keyring auth
 #                                        -> bounded failure, not hang
 #
-# Plus the deterministic-output contract (kendex#454): ci-wait must always
+# Plus the deterministic-output contract: ci-wait must always
 # emit a parseable result on stdout — pass/fail/timeout/error — and must
 # report still-pending checks at the deadline as a timeout, never as
 # success or silence (cases 10-14).
 #
-# Plus the no-checks registration grace (kendex#541): CI_WAIT_NO_CHECKS_GRACE
+# Plus the no-checks registration grace: CI_WAIT_NO_CHECKS_GRACE
 # (default 180s) bounds how long ci-wait polls before failing when no checks
 # have registered. Inside the window the verdict stays pending; past it, the
 # explicit "no CI checks" error fires (cases 12, 12b, 12c).
 #
-# Plus approval-gated run/status correlation (kendex#607): a later all-skipped
+# Plus approval-gated run/status correlation: a later all-skipped
 # COMMENTED run cannot hide the active substantive APPROVED run, and the old
 # pre-approval CI Required failure remains pending until the approved run
 # publishes its replacement status (cases 20-24).
 #
-# Plus superseded-run failure correlation (kendex#650): GitHub's check-suite
+# Plus superseded-run failure correlation: GitHub's check-suite
 # rollup can omit a newer same-head run entirely (observed for a
 # pull_request_review_comment dispatch whose same-second pull_request_review
 # sibling was cancelled by concurrency), leaving only the cancelled run's
@@ -40,16 +40,14 @@
 # pending, a successful one discards the stale failures, and a failed newest
 # run — or no newer run at all — stays terminal (cases 25-28).
 #
-# Plus rerun-attempt correlation (kendex#699): a rerun executes as a new
-# attempt under the ORIGINAL run id and creation time, so an in-flight
-# attempt 2 of an OLDER pull_request run is replacement current-head work even
-# though no run with a newer id exists (observed on hyprtrade#324, head
-# e99849b1: review run 29662812172 cancelled while attempt 2 of run
-# 29662588017 was live). Any in-flight same-head substantive run keeps the
+# Plus rerun-attempt correlation: a rerun executes as another attempt under
+# the ORIGINAL run id and creation time, so an in-flight attempt 2 of an
+# OLDER pull_request run is replacement current-head work even though no run
+# with a newer id exists. Any in-flight same-head substantive run keeps the
 # wait pending; the attempt's completed success supersedes via its fresher
 # updated_at, and its failure stays terminal (cases 29-31).
 #
-# Plus argument validation (kendex#981): -h/--help answers with usage and
+# Plus argument validation: -h/--help answers with usage and
 # exit 0, an unknown flag or non-integer positional gets usage on stderr and
 # exit 2 before any gh call — never a `set -u` unbound-variable abort or a jq
 # crash on a flag consumed as the PR number (cases 32-35).
@@ -114,7 +112,7 @@ case "${1:-}" in
     fi
     ;;
   api)
-    # kendex#650: superseded-failure correlation queries the head's Actions
+    # superseded-failure correlation queries the head's Actions
     # runs. Record the query when asked so tests can prove head-sha scoping.
     if [[ "${2:-}" == repos/*/actions/runs* ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
@@ -146,7 +144,7 @@ case "${1:-}" in
     if [[ "${2:-}" == "view" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
       # Simulate `gh repo view --json nameWithOwner` returning empty so ci-wait
-      # falls back to deriving owner/repo from the origin URL (kendex#476).
+      # falls back to deriving owner/repo from the origin URL.
       [[ "${STUB_GH_REPO_VIEW_EMPTY:-0}" == "1" ]] && exit 0
       echo "owner/repo"
       exit 0
@@ -170,7 +168,7 @@ case "${1:-}" in
     fi
     if [[ "${2:-}" == "view" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
-      # kendex#650: `--json headRefOid` asks for the head sha the superseded-
+      # `--json headRefOid` asks for the head sha the superseded-
       # failure correlation scopes its Actions-runs query to.
       for _a in "$@"; do
         if [[ "$_a" == "headRefOid" ]]; then
@@ -219,7 +217,7 @@ case "${1:-}" in
         echo '[]'
         exit 0
       fi
-      # kendex#492: an OLD superseded run (RUN_ID 29098545030) left several
+      # an OLD superseded run (RUN_ID 29098545030) left several
       # CANCELLED named jobs; the NEW authoritative run (RUN_ID 29099680623) on
       # the current head has only its classifier job IN_PROGRESS and has NOT yet
       # created Lint/Integration/etc. Scoping to the latest run per workflow must
@@ -239,7 +237,7 @@ case "${1:-}" in
 JSON
         exit 8
       fi
-      # kendex#492 (part 2): once the NEW run recreates a named job (Lint on
+      #  (part 2): once the NEW run recreates a named job (Lint on
       # RUN_ID 29099680623, SUCCESS), that current-head instance must replace the
       # OLD run's CANCELLED "Lint" (RUN_ID 29098545030) by context name, leaving
       # no stale CANCELLED entry in failed_checks.
@@ -263,7 +261,7 @@ JSON
     ;;
   run)
     _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
-    # KEN-1143: the staged failed-job log is replayed a line at a time so this
+    # the staged failed-job log is replayed a line at a time so this
     # stub is a writer that BLOCKS on a full pipe, the way gh streams a log —
     # a reader closing early then kills it with SIGPIPE at the 64KB pipe
     # capacity. `cat` would not: reading a file it pushes several hundred KB
@@ -472,7 +470,7 @@ assert_eq "$(json_field "$output" '.verdict')" "pass" "case10: json verdict is p
 assert_eq "$(json_field "$output" '.passed_checks | length')" "1" "case10: json lists passed checks" "$stderr"
 
 # Case 11: checks still IN_PROGRESS at the deadline must report a timeout,
-# never exit 0 or stay silent (the kendex#454 defect).
+# never exit 0 or stay silent.
 stderr="$TMP_ROOT/case11.err"
 set +e
 output=$(run_wait_json_short STUB_PR_CHECKS_MODE=pending_always 2>"$stderr")
@@ -556,9 +554,9 @@ echo "=== ci-wait repo-slug fallback (kendex#476) ==="
 
 # When `gh repo view --json nameWithOwner` returns empty (e.g. the transient
 # unknown-merge-state path), ci-wait derives owner/repo from the origin URL.
-# GNU sed / POSIX ERE has no non-greedy quantifier, so the old
-# `[^/]+?(\.git)?$` pattern greedily kept the trailing ".git" and every
-# subsequent `gh --repo owner/repo.git` call failed. The stub records the
+# GNU sed / POSIX ERE has no non-greedy quantifier: a `[^/]+?(\.git)?$`
+# pattern greedily keeps the trailing ".git", and every subsequent
+# `gh --repo owner/repo.git` call fails. The stub records the
 # --repo slug and rejects any `*.git` value like real gh, so a clean pass
 # proves the suffix was stripped. Covers SSH and HTTPS origins, with and
 # without ".git".
@@ -601,11 +599,11 @@ assert_eq "$(cat "$repo_arg_file")" "owner/repo" "case17: --repo slug preserved 
 
 echo "=== ci-wait superseded-run scoping (kendex#492) ==="
 
-# Case 18: an OLD canceled run's CANCELLED jobs must NOT be reported as current
-# failures when the NEW authoritative run has only its classifier job pending and
-# has not yet recreated those jobs. Scoping to the latest run per workflow drops
-# the superseded run's checks, so the verdict is pending (waiting on "Changes"),
-# never a false fail on the stale CANCELLED Lint/Integration/etc.
+# Case 18: an older canceled run's CANCELLED jobs must NOT be reported as
+# current failures when the newer authoritative run has only its classifier job
+# pending and has not yet recreated those jobs. Scoping to the latest run per
+# workflow drops the superseded run's checks, so the verdict is pending (waiting
+# on "Changes"), never a false fail on the stale CANCELLED Lint/Integration/etc.
 stderr="$TMP_ROOT/case18.err"
 set +e
 output=$(run_wait_json_short STUB_PR_CHECKS_MODE=superseded_pending 2>"$stderr")
@@ -619,9 +617,9 @@ assert_contains "$output" '"Changes"' "case18: current classifier job reported a
 assert_not_contains "$output" '"Lint"' "case18: superseded run's Lint dropped from output" "$stderr"
 assert_not_contains "$output" '"Linux Integration"' "case18: superseded run's Integration dropped" "$stderr"
 
-# Case 19: once the NEW run recreates a named job (Lint SUCCESS on the newest
-# RUN_ID), that current-head instance replaces the OLD run's CANCELLED "Lint" by
-# context name — no stale CANCELLED entry survives, verdict passes.
+# Case 19: once the newer run recreates a named job (Lint SUCCESS on the newest
+# RUN_ID), that current-head instance replaces the older run's CANCELLED "Lint"
+# by context name — no stale CANCELLED entry survives, verdict passes.
 stderr="$TMP_ROOT/case19.err"
 set +e
 output=$(run_wait_json STUB_PR_CHECKS_MODE=superseded_replaced 2>"$stderr")
@@ -750,8 +748,8 @@ assert_eq "$(json_field "$output" '.status')" "complete" "case27: failed sibling
 assert_eq "$(json_field "$output" '.verdict')" "fail" "case27: failed sibling fails closed" "$stderr"
 assert_eq "$(json_field "$output" '[.failed_checks[] | select(.name == "CI Required")][0].state')" "FAILURE" "case27: aggregate failure is reported" "$stderr"
 
-# Case 28: a cancelled run with NO newer same-head run keeps today's behavior:
-# the cancellation is a terminal failure (fail closed, nothing to wait for).
+# Case 28: a cancelled run with NO newer same-head run: the cancellation is a
+# terminal failure (fail closed, nothing to wait for).
 stderr="$TMP_ROOT/case28.err"
 set +e
 output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/cancelled-review-run-checks.json" STUB_PR_CHECKS_EXIT=1 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-cancelled-alone.json" 2>"$stderr")
@@ -764,10 +762,10 @@ assert_eq "$(json_field "$output" '[.failed_checks[] | select(.name == "CI Gate 
 
 echo "=== ci-wait rerun-attempt correlation (kendex#699) ==="
 
-# Case 29: the incident shape from hyprtrade#324 — the rollup shows only the
-# concurrency-cancelled pull_request_review run 29662812172 (cancelled jobs,
-# CI Gate Publisher failure, stale CI Required status) while attempt 2 of the
-# OLDER pull_request run 29662588017 is in progress on the same head. The
+# Case 29: the rollup shows only the concurrency-cancelled pull_request_review
+# run 29662812172 (cancelled jobs, CI Gate Publisher failure, stale CI Required
+# status) while attempt 2 of the OLDER pull_request run 29662588017 is in
+# progress on the same head. The
 # rerun keeps its original (lower) run id and creation time, so no run with
 # `.id >` the failing run's exists; the in-flight attempt alone must keep the
 # wait pending instead of terminal-failing.
@@ -816,11 +814,12 @@ assert_eq "$(json_field "$output" '[.failed_checks[] | select(.name == "CI Requi
 echo "=== ci-wait transient retry on a large log (KEN-1143) ==="
 
 # Case 36: the retry path is reached with a failed-job log far past the 64KB
-# pipe buffer, its transient marker on the first line. `gh ... | head -200`
-# killed gh with SIGPIPE once head had its 200 lines, and pipefail promoted the
-# 141 to the pipeline status, so `|| return 1` reported "not transient" without
-# reading a single pattern — the retry was dead for every log big enough to
-# need it. Reverting is_transient_failure to the piped form reddens this case.
+# pipe buffer, its transient marker on the first line. Under `gh... | head
+# -200`, head closing after its 200 lines kills gh with SIGPIPE, pipefail
+# promotes the 141 to the pipeline status, and `|| return 1` reports "not
+# transient" without reading a single pattern — the retry is dead for every
+# log big enough to need it. That piped form of is_transient_failure is this
+# case's must-fail control.
 # Two sizes carry the case, and both are asserted rather than assumed. The
 # 200-line WINDOW must clear two 64KB pipe buffers, so that `echo "$logs" |
 # grep -qi` blocks after the first-line match and dies; the log BEYOND that

@@ -20,9 +20,9 @@ export function normalizePiStreamEvent(event: any): NormalizedTranscriptEvent {
 	return { event, name, payload: event };
 }
 
-// Pi 0.84.0 made the JSON/RPC `message_update` wire event delta-only: `toJsonEvent()`
-// drops the cumulative top-level `message` and `assistantMessageEvent.partial` snapshots
-// that used to carry the whole message-so-far. Keeping only the newest event therefore
+// The JSON/RPC `message_update` wire event is delta-only: `toJsonEvent()` drops
+// the cumulative top-level `message` and `assistantMessageEvent.partial` snapshots.
+// Keeping only the latest event therefore
 // preserves a single token, so the failure-path transcript flush has to rebuild the
 // partial assistant message from the deltas it saw since the last message boundary.
 //

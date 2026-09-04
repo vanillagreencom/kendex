@@ -136,7 +136,7 @@ find_comment() {
     fi
 
     # Author and pattern cross the boundary as jq values, never as program text:
-    # interpolating them builds a new program, so a `"` or a regex escape such as
+# interpolating them builds a separate program, so a `"` or a regex escape such as
     # `5\.00` is a jq syntax error rather than a match.
     jq -c --arg author "$author" --arg pattern "$pattern" '
         [ .[]

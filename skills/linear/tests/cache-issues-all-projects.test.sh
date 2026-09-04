@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Batch all-project cache enumeration (kendex #676).
+# Batch all-project cache enumeration.
 #
 # Audit workflows load a cross-project comparison set from the cache. The
 # natural per-project shell loop is rejected by restricted harness approval

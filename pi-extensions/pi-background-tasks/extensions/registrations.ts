@@ -1,7 +1,6 @@
 // Pi tool / command / shortcut registrations for pi-background-tasks.
 //
-// Extracted from background-tasks.ts (kendex#15 reviewer-structure
-// BLOCKER #2 size target). The host closure builds a RegistrationDeps
+// The host closure builds a RegistrationDeps
 // object from its private state and calls registerAll(pi, deps). Each
 // registration handler captures `deps` via closure, so the extracted
 // module stays free of cross-module mutable state.

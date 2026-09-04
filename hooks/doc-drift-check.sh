@@ -90,9 +90,9 @@ fi
 # `-z` asks for the paths themselves. Line-oriented git output C-quotes a
 # non-ASCII path, and a quoted path ends in a quote rather than in its own
 # suffix. Against a base, one diff covers the worktree and the index both;
-# without one, the two are read separately. Untracked paths are added in
-# either case: without them a stop whose only work is a new file presents
-# an empty changed set and skips the gate entirely.
+# without one, the two are read separately. Untracked paths are read in
+# either case: without them a stop whose only work is an untracked file
+# presents an empty changed set and skips the gate entirely.
 if [ -n "$BASE" ]; then
   CHANGED=$(git diff --name-only -z "$BASE" 2>&1 | tr '\0' '\n') || git_failed 'diff' "$CHANGED"
   STAGED=""

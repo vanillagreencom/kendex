@@ -34,7 +34,7 @@
 # footer grows with the fleet — and the deepest footers belong to the
 # orchestrating lanes, the ones this measurement exists for. Its status line
 # is never the final row, so the claude reading is the BOTTOM-MOST whole-line
-# match instead: anything above it is an earlier render of the same lane,
+# match instead: anything above it is a prior render of the same lane,
 # from before it compacted. Bottom-most is safe only because a reading is a
 # whole STATUS LINE and never a fragment prose can carry too: otherwise the
 # lowest sentence naming a model and a percentage beats the real status line
@@ -93,7 +93,7 @@ lane_context_emit() {
 # name for a pane that has left the enumeration, and `agent-confine`, which is
 # the launcher BOTH harnesses exec through and so names neither. Reading the
 # screen and refusing it both select on this answer, so a wrapper spelling
-# added to one list and not the other cannot read one harness's screen and
+# included to one list and not the other cannot read one harness's screen and
 # name the other's in its refusal.
 lane_context_shape() {
   case "${1:-}" in

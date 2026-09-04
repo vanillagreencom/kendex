@@ -186,7 +186,7 @@ else
   done
 fi
 
-# A generated file this package owns that no longer decodes is refused by both
+# A generated file this package owns that does not decode is refused by both
 # verbs, with the validator naming itself and the remedy. `check` reds and
 # `render` stops before it writes: the read that feeds the marker test is the
 # one strict decode, so nothing substitutes a byte the repo holds.

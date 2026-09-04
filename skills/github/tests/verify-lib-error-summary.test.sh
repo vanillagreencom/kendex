@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for verify-lib's run_stack failure summaries (KEN-1143).
+# Tests for verify-lib's run_stack failure summaries.
 #
 # Both failure branches built their summary as
 # `echo "$output" | grep -E ... | head -5 | tr`. head closes the pipe on its
@@ -11,7 +11,7 @@
 # the whole call.
 #
 # So each case runs run_stack with errexit LIVE and reads RESULTS_JSON out of an
-# EXIT trap, which is what the summary must survive. Either branch reverted to
+# EXIT trap, which is what the summary must survive. If either branch moves to
 # its piped form reddens this suite.
 #
 # Run: bash skills/github/tests/verify-lib-error-summary.test.sh

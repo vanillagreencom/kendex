@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Regression tests for post-reply.sh numeric-comment-ID --pr enforcement (kendex#528).
+# Tests for post-reply.sh numeric-comment-ID --pr enforcement.
 #
 # Numeric comment IDs use the legacy REST reply path and require an explicit
-# --pr <N>. Previously the numeric path called resolve_pr_number("") ->
+# --pr <N>. Without the guard, the numeric path calls resolve_pr_number("") ->
 # get_current_pr, silently auto-resolving the PR from the current branch and
 # hitting a REST path that collided with the bot's pending review. These tests
 # assert the local usage error fires before any gh/API call, that thread IDs

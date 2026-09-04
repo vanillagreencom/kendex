@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# `cache projects get` returns ONE project (KEN-1153).
+# `cache projects get` returns ONE project.
 #
-# Linear keeps a canceled project under the name a live one reuses (KEN-1022).
+# Linear keeps a canceled project under the name a live one reuses.
 # cache_get_project selected with `.[] | select(.id == $ref or .name == $ref)`
 # and printed every match, so a duplicated name emitted two concatenated
 # top-level JSON objects at rc 0 — in --format=safe and --format=raw alike —
-# and `cache projects get "<name>" | jq -r '.id'` read two ids. KEN-1022 fixed
-# the live path in resolve_project_id and never touched this one.
+# and `cache projects get "<name>" | jq -r '.id'` read two ids. The cache
+# command must prefer the live project when the name also matches a canceled one.
 #
 # This locks in the cache spelling of the rule SKILL.md § Option Behavior
 # states for a name that selects one project:
@@ -86,7 +86,7 @@ assert_eq "A: the raw object carries the live project" \
 
 # An unambiguous name is unaffected. Guarded like the reads above: an
 # unguarded command substitution aborts the whole suite under errexit, so a
-# regression here would report as a missing verdict rather than a failure.
+# failure here would report as a missing verdict rather than a failure.
 solo_rc=0
 solo="$(run_get "Trading Panels" 2>/dev/null)" || solo_rc=$?
 assert_eq "A: an unduplicated name exits 0" "$solo_rc" 0

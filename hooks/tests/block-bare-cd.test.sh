@@ -14,7 +14,7 @@
 # refused rather than skipped.
 #
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
-# (the pre-fix hook, a no-op hook) run against these same assertions.
+# (the unguarded hook, a no-op hook) run against these same assertions.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

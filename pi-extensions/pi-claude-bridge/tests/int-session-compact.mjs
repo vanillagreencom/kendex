@@ -5,7 +5,7 @@
 // `priorMessages.slice(sharedSession.cursor)`. After /compact, pi shrinks
 // its messages array — slice(N) on a shorter array returns []. Without an
 // explicit signal, REUSE wins and CC keeps `--resume`ing the pre-compact
-// session, which then thrashes its own autocompact (issue #8).
+// session, which then thrashes its own autocompact ().
 //
 // Fix: subscribe to pi's `session_compact` event and set
 // sharedSession.needsRebuild = true so the next syncSharedSession call

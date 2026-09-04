@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test (#930): `issues archive` / `issues trash` returned
+# `issues archive` / `issues trash` returned
 # {"success": true, "identifier": null, "url": null} while the issue stayed
 # active. The mutations requested only IssueArchivePayload.success — Linear's
 # "request processed" flag — never the entity, and normalize_mutation_response
@@ -51,7 +51,7 @@ JSON
 
 # Mocked curl: logs every payload, and serves the archive/delete mutation
 # response shape selected via the mode file. "no_entity" is the exact live
-# response observed in #930.
+# response observed in.
 cat >"$TMP_ROOT/bin/curl" <<SH
 #!/usr/bin/env bash
 config="\$(cat)"
@@ -128,7 +128,7 @@ assert_eq "the trash mutation posts the resolved UUID" \
 assert_not "a confirmed trash removes PROJ-42 from the cache" \
   jq -e '.[] | select(.identifier == "PROJ-42")' "$TMP_ROOT/.cache/linear/issues.json"
 
-# --- the #930 shape: success=true, no entity → hard failure, cache untouched -----
+# --- success=true, no entity: hard failure, cache untouched ------------------
 seed_cache
 echo "no_entity" > "$TMP_ROOT/mode"
 rc=0

@@ -50,9 +50,8 @@ const PROBE_ARG = "--pi-hooks-reachability-probe";
  * Prove the fake is the cargo a spawn from this process resolves, then hand the
  * body an empty log. Without this an empty log means nothing: it reads the same
  * whether no check ran or the substitution broke. Bun's spawnSync inherits an
- * environment snapshot rather than the live `process.env`, so the fake sat
- * unreachable and every assertion below was vacuous until runCargo started
- * passing an explicit env (KEN-843).
+ * environment snapshot rather than the live `process.env`, so the fake is
+ * unreachable unless runCargo passes an explicit environment.
  */
 function expectFakeCargoReachable(cwd: string, log: string): void {
 	runCargo([PROBE_ARG], cwd, 5000);
@@ -618,7 +617,7 @@ describe("pi-hooks end-of-turn clippy", () => {
 		return hooks.sent;
 	}
 
-	// `triggerTurn: true` is the whole delivery: since pi#8022 a `triggerTurn:
+	// `triggerTurn: true` is the whole delivery: a `triggerTurn:
 	// false` message is recorded without steering the active run, so a headless
 	// run that is ending never reads it.
 	function expectSteered(call: SentCall): void {
@@ -749,8 +748,7 @@ describe("pi-hooks end-of-turn clippy", () => {
 		}
 	});
 
-	// The behaviour a repeat guard used to suppress, asserted rather than left
-	// as an absence. An agent that cannot fix an error hears the same advisory
+	// An agent that cannot fix an error must hear the same advisory
 	// each turn: noisy and self-correcting, where withholding it can leave a
 	// headless turn told nothing when there was something to say.
 	test("a second identical failing turn steers again", async () => {

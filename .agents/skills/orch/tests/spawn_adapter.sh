@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for `spawn-adapter` (kendex#900).
+# Tests for `spawn-adapter`.
 #
 # These replace two >1,500-character prose blocks in orch/SKILL.md that every
 # orchestrator had to re-read and re-derive. The assertions below are the

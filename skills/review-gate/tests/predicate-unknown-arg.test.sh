@@ -84,7 +84,7 @@ config_reject "an out-of-range sha floor" REVIEW_GATE_SHA_PREFIX_FLOOR 2
 config_reject "a zero retry budget" REVIEW_GATE_API_ATTEMPTS 0
 config_reject "an unknown carry class" REVIEW_GATE_CARRY_FORWARD prose
 config_reject "an empty gate context" REVIEW_GATE_CONTEXT ""
-# The grammar rule this flag used to exit before: a malformed pair reported a
+# The grammar rule this flag would exit before: a malformed pair reported a
 # legal configuration and then failed the next live evaluation.
 config_reject "a malformed comment-reviewer pair" REVIEW_GATE_COMMENT_REVIEWERS "missing-colon"
 config_reject "a comment-reviewer pair with an empty login" REVIEW_GATE_COMMENT_REVIEWERS ":pattern"

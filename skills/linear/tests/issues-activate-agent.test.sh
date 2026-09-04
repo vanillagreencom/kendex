@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for #552: issues activate --agent must apply the exclusive
+# issues activate --agent must apply the exclusive
 # agent:<name> label (same issueUpdate as the state change) or fail loudly
 # before any state change when the label does not exist.
 
@@ -15,7 +15,7 @@ mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 # Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this
 # throwaway root — without this, cache writes land in the real project's
-# `.cache/linear` (kendex#43).
+# `.cache/linear`.
 git -C "$TMP_ROOT" init -q -b main
 
 cat >"$TMP_ROOT/bin/curl" <<'SH'

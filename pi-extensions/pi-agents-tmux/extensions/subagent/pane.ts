@@ -17,7 +17,7 @@ import {
 	paneSessionPath,
 } from "./paths.js";
 
-// kendex#60 workaround: env var names the pi-session-bridge child reads
+// Environment variable names that the pi-session-bridge child reads
 // on startup. The canonical home is
 // pi-extensions/pi-session-bridge/extensions/child-session-id.ts
 // (PARENT_SESSION_ENV + CHILD_ROLE_ENV). Mirrored here as constants so
@@ -411,7 +411,7 @@ export function createCachedPiBridgeResolver(
 	resolve: () => Promise<string | undefined> = resolvePiBridgeBin,
 	logDiagnostic?: DiagnosticLogger,
 ): () => Promise<string | undefined> {
-	// kendex#122: interval probes must not re-run path discovery on every tick.
+	// interval probes must not re-run path discovery on every tick.
 	// Resolve once for the extension lifetime; if the initial lookup fails,
 	// emit one structured diagnostic before caching the missing result so later
 	// probes can short-circuit without spamming terminal warnings.
@@ -486,11 +486,11 @@ export async function ensurePaneBridgeMetadata(runtimeRoot: string, entry: PaneR
 	return metadata;
 }
 
-// kendex#192: explicit override for harnesses/tests that import these modules
+// explicit override for harnesses/tests that import these modules
 // directly. Points at the pi entry to spawn children with — either a script
 // run under the current runtime or an executable resolved as-is.
 export const PI_SUBAGENT_ENTRY_ENV = "PI_SUBAGENT_ENTRY";
-// kendex#192: recursion guard independent of entry resolution. Each spawned
+// recursion guard independent of entry resolution. Each spawned
 // child carries its generation in this env var; spawning refuses past the cap
 // so a mis-resolved entry (e.g. a harness script re-running itself) dies at
 // depth 3 instead of fork-bombing the machine.
@@ -506,8 +506,8 @@ const PI_ENTRY_BASENAMES = new Set(["pi", "pi.js", "pi.mjs", "pi.ts", "cli.js", 
 
 export const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 
-// PR #1178 finding 1 (tightened in round 3): verify the entry belongs to the
-// pi PACKAGE, not just that its basename looks right. Walk up from the
+// Verify that the entry belongs to the Pi PACKAGE, not only that its basename
+// looks right. Walk up from the
 // realpathed script to the NEAREST package.json and accept only when that
 // manifest identifies pi: name === PI_PACKAGE_NAME, or its `pi` bin entry
 // (object form, or string form on a package literally named `pi`) resolves to
@@ -571,7 +571,7 @@ export interface PiInvocation {
 	 * script-form overrides this is the RESOLVED absolute path: a relative
 	 * override resolved for THIS spawn would otherwise reach the child
 	 * verbatim through process.env and re-resolve from the child's delegated
-	 * cwd (PR #1178 round 3). Bare commands propagate unchanged (PATH or an
+	 * cwd (). Bare commands propagate unchanged (PATH or an
 	 * absolute executable — cwd-independent, but tmux pane children do not
 	 * reliably inherit the parent's env, so the launcher must export it).
 	 * Unset when no override is active.
@@ -617,7 +617,7 @@ export function getPiInvocation(args: string[], runtime: PiInvocationRuntime = d
 	const entryOverride = runtime.env[PI_SUBAGENT_ENTRY_ENV]?.trim();
 	if (entryOverride) {
 		if (/\.(ts|js|mjs|cjs)$/i.test(entryOverride)) {
-			// PR #1178 findings 2+3: resolve against the PARENT's cwd now — the
+			// resolve against the PARENT's cwd now — the
 			// child later spawns from the delegated agent cwd, where a relative
 			// override would ENOENT. Bare commands stay as-is (PATH resolves them).
 			const resolvedEntry = path.resolve(entryOverride);
@@ -625,7 +625,7 @@ export function getPiInvocation(args: string[], runtime: PiInvocationRuntime = d
 				return { command: runtime.execPath, args: [resolvedEntry, ...args], childDepth, childEntryOverride: resolvedEntry };
 			}
 		}
-		// PR #1178 round 4: a command containing a path separator is never
+		// a command containing a path separator is never
 		// PATH-resolved by the OS, so a relative form like ./bin/pi would ENOENT
 		// when the child spawns from the delegated agent cwd. Resolve it against
 		// the parent cwd now and propagate the resolved form; separator-free
@@ -642,7 +642,7 @@ export function getPiInvocation(args: string[], runtime: PiInvocationRuntime = d
 	// Dev-mode pi (`bun src/cli.ts`, `node dist/cli.js`, or the `pi` bin shim):
 	// re-run the same script under the same runtime. Only entries verifiably
 	// belonging to the pi package qualify — argv[1] of a process that merely
-	// imported these modules (kendex#192: a `bun harness.mjs` calling
+	// imported these modules: a `bun harness.mjs` calling
 	// runSingleAgent) is the harness itself, and re-invoking it forks the
 	// harness unboundedly, even when the harness borrows a pi-like basename.
 	if (currentScript && !isBunVirtualScript && isPiEntryScript(currentScript) && fs.existsSync(currentScript) && entryBelongsToPiPackage(currentScript)) {
@@ -742,9 +742,9 @@ export PI_SUBAGENT_CHILD_AGENT=${shellQuote(agent.name)}
 ${agent.color ? `export PI_SUBAGENT_CHILD_COLOR=${shellQuote(agent.color)}` : "unset PI_SUBAGENT_CHILD_COLOR"}
 export ${PI_SUBAGENT_CHILD_PANE_ENV}=1
 export PI_SUBAGENT_PARENT_SESSION_ID=${shellQuote(parentSessionId)}
-# kendex#60 workaround: pi-session-bridge reads these on startup and
+#  mechanism: pi-session-bridge reads these on startup and
 # synthesizes a unique <parent>:c<pid> session id so 'pi-bridge state
-# --session <id>' no longer matches the parent's bridge too.
+# --session <id>' does not match the parent's bridge too.
 export ${PI_BRIDGE_PARENT_SESSION_ENV}=${shellQuote(parentSessionId)}
 export ${PI_BRIDGE_CHILD_ROLE_ENV}=${shellQuote(PI_BRIDGE_SUBAGENT_ROLE)}
 # Inherit cached 1Password service-account token if available so the child

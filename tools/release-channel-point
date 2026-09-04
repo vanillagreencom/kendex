@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Points the pre-release channel at the tag being published: one fixed
-# `prerelease` release whose latest.json and feed.json each new candidate
+# `prerelease` release whose latest.json and feed.json each candidate
 # overwrites, which is the URL `update_channel::feed_url_for` sends a
 # candidate to. Uploads dist/latest.json, dist/feed.json and the release's
 # per-target digests documents with the signatures published beside them,
@@ -30,7 +30,7 @@ set -euo pipefail
 # updater to latest.json and `feed_url_for` sends `kendex update` and the
 # app's own discovery read to feed.json, so publishing one without the other
 # leaves the app on the version the stale one names while `kendex update`
-# follows the other to a new one, with nothing on the channel reporting the
+# follows the other to a different one, with nothing on the channel reporting the
 # two as disagreeing.
 MANIFESTS="dist/latest.json dist/feed.json"
 

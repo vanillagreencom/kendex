@@ -4,7 +4,7 @@
 # so both the subdirectory and the .bash name keep this file out of every run.
 #
 # Mirroring the caller's own PATH rather than listing what to keep is what
-# makes the fixture rot-proof: a script that grows a new dependency still
+# makes the fixture rot-proof: a script that grows an additional dependency still
 # finds it here, and only what was named is missing.
 
 # One `ln` per source directory, not one per file — /usr/bin alone is a few

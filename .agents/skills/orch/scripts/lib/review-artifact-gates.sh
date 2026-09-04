@@ -22,7 +22,7 @@ set -euo pipefail
 # Last-resort emitter: no jq, no substitution, nothing that can fail. It lives
 # here rather than in review-artifact-check because the error channel below is
 # created at SOURCE time, before any of the script's own helpers are guaranteed
-# to be reachable — a failure there used to exit empty with status 1, which is
+# to be reachable — a failure there would exit empty with status 1, which is
 # the status a legitimate rejection uses, so a caller reading .ok got an empty
 # parse and a caller reading the status read "artifact rejected".
 emit_unavailable() {
@@ -65,7 +65,7 @@ review_artifact_detail=""
 #
 # THE RULE, stated once here instead of as a list of reason names elsewhere: a
 # rejection that is the artifact's SELF-REPORT ABOUT THIS RUN is terminal — no
-# earlier file answers "did this review happen, did it measure anything, are
+# prior file answers "did this review happen, did it measure anything, are
 # these findings routable", and the reviewer's own self-check is prescribed with
 # boundary 0, which makes every prior artifact fresh by construction. Only a
 # rejection that could be an artifact of a TORN OR TRUNCATED WRITE justifies
@@ -76,7 +76,7 @@ review_artifact_detail=""
 # a truncated write) and finding_item_detail (items using wrong field names —
 # this run's output shape) both reject as `incomplete` and fall on opposite
 # sides of the rule. The disposition is therefore a property of the GATE, chosen
-# at the rejection site through the two helpers below, and a gate added later
+# at the rejection site through the two helpers below, and a gate included later
 # has to state it rather than inheriting a list edit somebody forgot.
 review_artifact_disposition=""
 
@@ -142,7 +142,7 @@ gate_failure_detail() {
 
 # disposition_allows_fallback
 # True only for an explicit torn_write. An unset or unrecognised disposition is
-# terminal: a gate added later that forgets to classify itself must fail closed,
+# terminal: a gate included later that forgets to classify itself must fail closed,
 # never hand an older artifact back as this run's answer.
 disposition_allows_fallback() {
   [[ "${review_artifact_disposition:-}" == "torn_write" ]]
@@ -151,7 +151,7 @@ disposition_allows_fallback() {
 # shellcheck source=review-artifact-measurement.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review-artifact-measurement.sh"
 
-# kendex#652: a schema-valid artifact can carry verdict "pass" while its
+# a schema-valid artifact can carry verdict "pass" while its
 # qa_metadata admits no review happened (external second-opinion invoked with
 # no scope). Such a self-reported no-review is rejected regardless of verdict.
 # Artifacts without qa_metadata (internal reviewers) are unaffected.
@@ -169,7 +169,7 @@ self_reports_no_review() {
   '
 }
 
-# kendex#678: a truncated write can produce an artifact whose verdict/summary
+# a truncated write can produce an artifact whose verdict/summary
 # survived while the finding arrays were silently lost — schema-valid on the
 # `.verdict` gate, but the actual blockers/suggestions are gone. Artifacts
 # that DECLARE the qa/second-opinion shape (a qa_metadata object — the
@@ -199,7 +199,7 @@ qa_shaped_incomplete() {
   '
 }
 
-# kendex#810: qa_shaped_incomplete only catches arrays that were lost wholesale.
+# qa_shaped_incomplete only catches arrays that were lost wholesale.
 # An artifact can instead carry present, non-empty blockers[]/suggestions[]
 # whose ITEMS omit the required review-finding fields — e.g. {title, location,
 # detail, severity} instead of the schema's {id, title, location, description,
@@ -258,7 +258,7 @@ finding_item_detail() {
                 as $blankimpact
               # priority in 1..4, estimate in 1..5 per review-finding.md — a present
               # but non-numeric or out-of-range value is unusable, not just the
-              # null case $missing already covers (kendex#810). Only checked when
+              # null case $missing already covers. Only checked when
               # the field is present (a null value already falls under $missing)
               # and the item is an object (a non-object is fully flagged there too).
               | ( if (($item | type) == "object")
@@ -275,7 +275,7 @@ finding_item_detail() {
               # a bare "missing id, description, estimate, category" does not
               # tell it that `detail` should have been `description` or that
               # priority stops at 4 — so the same agent reaches for `priority: 5`
-              # or a plausible-but-wrong field name again (kendex#885).
+              # or a plausible-but-wrong field name again.
               | if ($problems | length) > 0
                 then "\($arr)[\($i)]: missing/invalid \($problems | join(", "))"
                      + " — every blockers[]/suggestions[] item requires:"
@@ -344,7 +344,7 @@ artifact_content_gates() {
 
   # Same reason word, opposite disposition: a truncated write does not rename
   # fields. Items carrying `detail`/`severity` instead of the schema's names are
-  # what this run produced, and no earlier artifact answers for them.
+  # what this run produced, and no prior artifact answers for them.
   rc=0; out="$(finding_item_detail "$file")" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     reject_torn_write "invalid" "$(gate_failure_detail "$rc")"

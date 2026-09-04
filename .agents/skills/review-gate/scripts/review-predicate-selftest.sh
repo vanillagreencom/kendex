@@ -22,7 +22,7 @@
 #      the settings files > defaults), so a repo trusting a different bot
 #      tests its OWN trust list, not someone else's defaults.
 #
-# Mechanism: a `gh` shim earlier on PATH answers from fixtures and applies any
+# Mechanism: a `gh` shim prior on PATH answers from fixtures and applies any
 # `--jq` filter with real jq, so the predicate runs unmodified. Run:
 #
 #   .agents/skills/review-gate/scripts/review-predicate-selftest.sh
@@ -253,7 +253,7 @@ comment_battery() { # login, pattern, floor
   comment "$AUTHOR" "$pattern \`$prefix\`" >"$fixtures/comments.json"
   run "[$login] same body, posted by the PR AUTHOR" awaiting
 
-  # The body binds the evidence to a commit, so a comment about an earlier
+  # The body binds the evidence to a commit, so a comment about a prior
   # push must not vouch for what was pushed after it.
   reset
   CFG_REVIEWERS="$login:$pattern"; CFG_FLOOR="$floor"
@@ -332,7 +332,7 @@ context_battery() { # context
   # the first accepted row, because created_at ties at one-second
   # precision and a sort would be stable the wrong way): an older success
   # must never outlive a newer non-success on the same context (a reviewer
-  # opening a fresh round posts pending over its own earlier success), and
+  # opening a fresh round posts pending over its own prior success), and
   # the reverse order must still count.
   reset
   jq -n --arg ctx "$ctx" '[
@@ -418,7 +418,7 @@ unset GH_SHIM_FAIL
 # Check-run names are not reserved: any PR workflow with checks:write can
 # publish under ANY name through the shared github-actions app, while real
 # reviewer bots publish under their own app slug. A github-actions-published
-# name-match must stay not-evidence (VST-19) — the paired trusted-app case
+# name-match must stay not-evidence  — the paired trusted-app case
 # proves the rejection is what separates them.
 reset
 CFG_CONTEXTS="mech-ctx"
@@ -437,7 +437,7 @@ CFG_CONTEXTS="mech-ctx"
 jq -n '{check_runs:[{id:1,name:"mech-ctx",conclusion:"success",output:{title:null,summary:"analysis complete"}}]}' >"$fixtures/checkruns.json"
 run "check-run with no app slug (unprovable provenance) is not evidence" awaiting
 
-# NEWEST RUN DECIDES per name (kendex#1110), ordered by run id — the
+# NEWEST RUN DECIDES per name, ordered by run id — the
 # check-run mirror of the status surface's newest-row projection. A
 # reviewer starting a fresh analysis round must withdraw its own older
 # clean success on the same head; counting "any clean success" would open
@@ -539,7 +539,7 @@ run "slugless anomaly as the newest run masks toward closed (never revives the o
 # LIST endpoint, where every real publisher carries a login, so a missing one
 # is an anomaly and trusting anomalies is the fail-open direction. (The
 # COMBINED endpoint nulls every App-posted creator, which made this filter
-# inert — kendex#1099, caught live by sandbox scenario 6.) The shipped
+# inert —, caught live by sandbox scenario 6.) The shipped
 # default (empty list) must change nothing.
 reset
 CFG_CONTEXTS="mech-ctx"; CFG_PUBLISHER_REJECT="github-actions[bot]"
@@ -680,7 +680,7 @@ jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:true
   >"$fixtures/graphql.json"
 run "cursor outside the fixture-key namespace is a loud read failure" "" 2
 
-# Zero bytes from the thread read is a BROKEN READ (VST-46 family), never an
+# Zero bytes from the thread read is a BROKEN READ  family), never an
 # authoritative verdict in either direction — pr-watch parity.
 reset
 CFG_CONTEXTS="mech-ctx"; CFG_THREADS="enforce"
@@ -772,7 +772,7 @@ reviews_set "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "
             "$(review "reviewer" CHANGES_REQUESTED "2026-08-02T19:00:00Z")"
 run "errored auto-review does not mask a genuine changes-requested" changes-requested
 
-# Regression guards on the marker itself: a genuine approval (empty body)
+# failure guards on the marker itself: a genuine approval (empty body)
 # still approves, and a genuine review BODY is not error-filtered — the
 # marker must recognize the attestation sentence, not review prose.
 reset
@@ -788,7 +788,7 @@ run "a genuine body mentioning errors is NOT the attestation (no over-match)" ap
 # The marker list is the repo's to own (REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS,
 # same shape as the check-run skip patterns): a configured value REPLACES
 # the default list — the custom attestation withdraws, the default-shaped
-# body no longer does — and empty disables the filter entirely.
+# body does not does — and empty disables the filter entirely.
 reset
 CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
 CFG_ERROR_PATTERNS="analysis could not be completed"
@@ -806,7 +806,7 @@ CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"; CFG_ERROR_PATTERNS=""
 reviews_set "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$ERRORED_BODY")"
 run "empty error-pattern list disables the filter (explicit opt-out)" approved
 
-# Start-of-body scoping (KEN-456): a pattern is an attestation only on the
+# Start-of-body scoping: a pattern is an attestation only on the
 # FIRST line of the body, after trimming leading whitespace and markdown
 # quote markers. Whole-body substring matching dropped any genuine review
 # that QUOTED a pattern in later text — e.g. the review of a PR editing
@@ -828,7 +828,7 @@ reviews_set "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "
 run "leading blank line and quote marker are trimmed before matching" awaiting
 
 # NON-SUPERSESSION: a trailing COMMENTED from the same reviewer at the same
-# head must not mask its earlier APPROVED (observed live: APPROVED at
+# head must not mask its prior APPROVED (observed live: APPROVED at
 # :47, COMMENTED at :50 on the same commit — a latest-review-per-reviewer
 # reduction reads that as "no approval").
 reset
@@ -871,7 +871,7 @@ reviews_set "$(review "reviewer" APPROVED "2026-08-02T19:00:00Z")" \
 run "cleared CR fed in reversed array order stays cleared" approved
 
 # An objection persists ACROSS PUSHES: GitHub does not clear a
-# changes-requested when the author pushes a new head, so evidence on the
+# changes-requested when the author pushes a replacement head, so evidence on the
 # fresh head must not open the gate past it...
 reset
 CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
@@ -879,7 +879,7 @@ reviews_set "$(review "objector" CHANGES_REQUESTED "2026-08-02T18:00:00Z" "$OTHE
             "$(review "reviewer" APPROVED "2026-08-02T19:00:00Z")"
 run "CR on a previous commit still blocks a freshly-approved head" changes-requested
 
-# ...and a later APPROVED from the same reviewer (at the new head) clears it.
+# ...and a later APPROVED from the same reviewer (at the replacement head) clears it.
 reset
 CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
 reviews_set "$(review "objector" CHANGES_REQUESTED "2026-08-02T18:00:00Z" "$OTHER")" \
@@ -980,7 +980,7 @@ CFG_OUTAGE="mech-outage"
 status_ctx "mech-outage" pending "attempting"
 run "non-success outage status is not evidence" awaiting
 
-# Withdrawal must work: an operator posting pending over their own earlier
+# Withdrawal must work: an operator posting pending over their own prior
 # override retracts it — the newest row (listed first; API order) decides.
 reset
 CFG_OUTAGE="mech-outage"
@@ -1062,7 +1062,7 @@ reset
 CFG_GATE_CONTEXT=""
 run "explicitly empty gate context is a config error" "" 2
 
-# DISMISSED rows, both directions (VST-35): a dismissed review at head must
+# DISMISSED rows, both directions: a dismissed review at head must
 # not count as evidence, and a dismissed CHANGES_REQUESTED must not stand —
 # GitHub rewrites a dismissed row's state to DISMISSED, and both filters
 # must actually be able to fail.
@@ -1077,7 +1077,7 @@ reviews_set "$(review "objector" DISMISSED "2026-08-02T18:00:00Z")" \
             "$(review "reviewer" APPROVED "2026-08-02T19:00:00Z")"
 run "a dismissed CHANGES_REQUESTED does not stand (reduction skips DISMISSED)" approved
 
-# Thread-term configurability (REVIEW_GATE_THREADS, VST-35): `off` never
+# Thread-term configurability (REVIEW_GATE_THREADS,: `off` never
 # emits threads-open AND skips the GraphQL read entirely — proven by making
 # the endpoint fail, which must not matter when the read is skipped.
 reset
@@ -1094,7 +1094,7 @@ run "threads=off: the reviewThreads read is skipped entirely (failing endpoint c
 unset GH_SHIM_FAIL
 cases=$((cases + 1))
 # Fail-closed on the instrument itself: a missing/empty url log proves
-# nothing about the read being skipped (kendex#1097) — the run above made
+# nothing about the read being skipped  — the run above made
 # other API reads, so the log must exist and be non-empty.
 if [ ! -s "$fixtures/.urls.log" ]; then
   echo "FAIL  threads=off url log missing or empty - cannot prove the read was skipped" >&2
@@ -1117,7 +1117,7 @@ CFG_THREADS="sometimes"
 run "unknown REVIEW_GATE_THREADS value is a config error" "" 2
 
 # Bounded evidence-read retries (REVIEW_GATE_API_ATTEMPTS /
-# REVIEW_GATE_API_RETRY_DELAY_SECONDS, VST-35): a transient failure within
+# REVIEW_GATE_API_RETRY_DELAY_SECONDS,: a transient failure within
 # the budget still reaches a verdict; the default single attempt does not
 # retry; failing through every attempt keeps the exit-2 contract.
 reset
@@ -1163,7 +1163,7 @@ reset
 CFG_API_DELAY="$ACTIVE_API_DELAY"
 run "committed REVIEW_GATE_API_RETRY_DELAY_SECONDS ('$ACTIVE_API_DELAY') is a value the predicate accepts" awaiting
 
-# Multi-page pagination merges (VST-35): the shim serves <name>.page2.json
+# Multi-page pagination merges: the shim serves <name>.page2.json
 # concatenated after page 1 under --paginate, so the `jq -s` page merges are
 # driven with real multi-page shapes — evidence beyond page 1 must count and
 # a standing CR beyond page 1 must still block.
@@ -1196,7 +1196,7 @@ CFG_CONTEXTS="mech-ctx"
 jq -n '{check_runs:[{id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}]}' >"$fixtures/checkruns.page2.json"
 run "pagination: trusted check-run on page 2 counts" approved
 
-# PR_AUTHOR resolution (VST-35): every other case passes PR_AUTHOR
+# PR_AUTHOR resolution: every other case passes PR_AUTHOR
 # explicitly; an EMPTY PR_AUTHOR must resolve from pulls/N (.user.login) —
 # and the resolved author is excluded like an explicit one; a failed
 # resolution read is exit 2.
@@ -1216,7 +1216,7 @@ export GH_SHIM_FAIL=pull
 run "empty PR_AUTHOR: author-resolution read failure is exit 2" "" 2
 unset GH_SHIM_FAIL
 
-# Zero-byte producers (VST-46): a paginated read whose producer exits 0 with
+# Zero-byte producers: a paginated read whose producer exits 0 with
 # ZERO output bytes is a broken read, never an empty page set — the reviews
 # case is the dangerous one (an erased standing CR while other evidence
 # satisfies the positive side would be a false approved). A real empty page
@@ -1264,7 +1264,7 @@ run "whitespace-only check-runs response is exit 2, not silence" "" 2
 # OBJECT without check_runs, deliberately: an array fixture failed under
 # the OLD merger too (`.check_runs` on an array is a jq error), proving
 # nothing. `{}` collapsed through the old `map(.check_runs) | add // []`
-# to an EMPTY run set — silence built from a broken read; only the new
+# to an EMPTY run set — silence built from a broken read; only the replacement
 # shape guard turns it into exit 2.
 reset
 CFG_CONTEXTS="mech-ctx"
@@ -1276,12 +1276,12 @@ CFG_REVIEWERS="mech-bot[bot]:Reviewed commit:"
 printf '\n   \n' >"$fixtures/comments.json"
 run "whitespace-only comments response is exit 2, not absent evidence" "" 2
 
-# Status-snapshot seam (VST-35): a caller that already holds the head's
+# Status-snapshot seam: a caller that already holds the head's
 # LIST-endpoint status rows hands them in (wrapped {sha, statuses}); the
 # predicate must evaluate against them WITHOUT its own statuses read
 # (proven by failing that endpoint), and an unreadable or malformed
 # snapshot gets the read contract: exit 2. The snapshot must be BOUND to
-# this head (top-level sha == HEAD_SHA, VST-71): a snapshot for another
+# this head (top-level sha == HEAD_SHA,: a snapshot for another
 # head passing shape validation would evaluate stale evidence.
 reset
 CFG_CONTEXTS="mech-ctx"
@@ -1322,8 +1322,8 @@ jq -n '{statuses:[{context:"mech-ctx",state:"success",description:"analysis comp
 CFG_SNAPSHOT="$fixtures/unbound-snapshot.json"
 run "snapshot seam: snapshot with NO top-level sha is exit 2 (binding required)" "" 2
 
-# Multi-value snapshots (kendex#1086): a caller that concatenates page
-# responses instead of merging their statuses used to yield one normalized
+# Multi-value snapshots: a caller that concatenates page
+# responses instead of merging their statuses would yield one normalized
 # object per value; downstream per-value jq reads then emitted multi-line
 # counts ("0\n0") that dodge every string comparison — with no trusted
 # contexts that fell through to verdict=approved on zero evidence. The
@@ -1343,7 +1343,7 @@ printf '{"sha":"%s","statuses":[]}\n{"sha":"%s","statuses":[]}\n' "$HEAD" "$HEAD
 CFG_SNAPSHOT="$fixtures/multi-snapshot.json"
 run "snapshot seam: multi-value snapshot with NO trusted contexts is exit 2 (was approved on zero evidence)" "" 2
 
-# Statuses-page validation (VST-71): a nonempty NON-ARRAY page (`{}`, an
+# Statuses-page validation: a nonempty NON-ARRAY page (`{}`, an
 # error object) survives the zero-byte guard, and a lax merge would collapse
 # it into an empty list — a verdict from broken evidence. Every page must be
 # a JSON array; anything else is a broken read: exit 2, never an
@@ -1396,7 +1396,7 @@ status_ctx "mech-ctx" success "analysis complete"
 printf '{}\n' >"$fixtures/statuses.page2.json"
 run "malformed statuses page 2 poisons the merge: exit 2" "" 2
 
-# Read shapes (VST-35): the reviews and comments endpoints must request
+# Read shapes: the reviews and comments endpoints must request
 # per_page=100 — the 30-item default paginates long PRs into pure overhead.
 reset
 CFG_REVIEWERS="mech-bot[bot]:Reviewed commit:"; CFG_FLOOR=7
@@ -1411,7 +1411,7 @@ else
   failures=$((failures + 1))
 fi
 
-# REVIEW_GATE_MODE (the one-switch gate disable, owner decision 2026-08-08):
+# REVIEW_GATE_MODE (the one-switch gate disable, owner-controlled):
 # "off" answers approved before ANY evidence read — the urls.log pin proves
 # zero API traffic, so a disabled gate can never leak reads or block on a
 # broken API. The detail is an attestation ("disabled by settings"), never
@@ -1459,7 +1459,7 @@ jq -n '{check_runs:[
 ]}' >"$fixtures/checkruns.json"
 run "newest run decides with the OLDER row listed first (the sort is real)" approved
 
-# Evidence carry-forward across carry-safe deltas (VST-57): evidence at an
+# Evidence carry-forward across carry-safe deltas: evidence at an
 # ancestor N extends to head ONLY when carry-forward is enabled AND the
 # N→head delta classifies entirely into the enabled classes (or the trees
 # are identical). Never a waiver: code deltas refuse, changes-requested and
@@ -1548,7 +1548,7 @@ compare_fix ahead "[$(delta_file "src/new.sh" added '@@ -0,0 +1 @@
 +# new file of comments')]"
 run "carry: an ADDED file refuses under 'comments' (modified-only)" awaiting
 
-# kendex#1097 negative controls: shebang lines, renames into .md, and
+#  negative controls: shebang lines, renames into.md, and
 # malformed later compare pages must all refuse or fail loud.
 reset
 carry_candidate
@@ -1585,7 +1585,7 @@ run "carry: a non-object later compare page is exit 2, never a partial classific
 # paginates commits, never files), so a files array on a later page is
 # deliberately ignored, not merged: this pins that a later-page "files"
 # entry cannot smuggle rows into the classification. The fixture plants a
-# CODE file there — if a regression ever merged later pages, the docs-only
+# CODE file there — if a failure ever merged later pages, the docs-only
 # carry below would flip to awaiting and this case would catch it.
 reset
 carry_candidate
@@ -1612,7 +1612,7 @@ CFG_CARRY="docs"
 compare_fix diverged "[$DOCS_DELTA]"
 run "carry: a non-ancestor candidate (diverged) never carries" awaiting
 
-# Path exclusions (kendex#1115): policy-bearing markdown classifies "docs"
+# Path exclusions: policy-bearing markdown classifies "docs"
 # by extension, so REVIEW_GATE_CARRY_FORWARD_EXCLUDE globs disqualify any
 # carry whose delta touches an excluded path — surgical (non-matching deltas
 # still carry), '*' crosses '/', and inert for identical trees (no delta).
@@ -1732,9 +1732,9 @@ compare_fix ahead "[$DOCS_DELTA]"
 run "carry: an errored ancestor auto-review is not a carry candidate" awaiting
 
 # The carry-candidate filter shares the head path's first-line scoping
-# (KEN-456): an ancestor review that QUOTES a marker in later text is a
+# an ancestor review that QUOTES a marker in later text is a
 # genuine review and stays a carry seed. Whole-body matching at this site
-# would reproduce the KEN-456 symptom on the carry route alone.
+# would reproduce the symptom on the carry route alone.
 reset
 CFG_CARRY="docs"; CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"; CFG_ERROR_PATTERNS="$ERRORED_MARK"
 reviews_set "$(review "reviewer" COMMENTED "2026-01-01T00:00:00Z" "$OTHER" "$(printf 'Reviewed 2 of 2 changed files.\n\nThe doc edit quotes the marker "encountered an error and was unable to review" verbatim; the wording matches the shipped default.')")"
@@ -1783,7 +1783,7 @@ reset
 CFG_CARRY="everything"
 run "carry: an unknown carry class is a config error" "" 2
 
-# The vendored class (KEN-666): a delta file under a path the repository
+# The vendored class: a delta file under a path the repository
 # committed in REVIEW_GATE_VENDORED_PATHS is kendex's own render and carries
 # whatever its extension. The approve and its near-miss live here; the
 # class's full table, each refusal pinned by reason, is
@@ -1843,7 +1843,7 @@ else
   run "configured: unresolved thread fails closed (threads=enforce)" threads-open
 fi
 
-# Carry-exclude probes (kendex#1174). Both use the predicate's matcher shape
+# Carry-exclude probes. Both use the predicate's matcher shape
 # — an unquoted pattern in a bash `case` — so the probes pin the real glob
 # semantics ('*' crosses '/', whole-path anchoring, ';' separators) against
 # the repo's COMMITTED exclude list, not a hardcoded example.
@@ -1952,7 +1952,7 @@ load_exclude_tracked() {
   esac
   # A genuine NON-REPOSITORY is the only hermetic ticket. The probe's
   # verdict is read from its output, not its bare exit status: a broken
-  # git failing this probe inside a real checkout used to read as "not a
+  # git failing this probe inside a real checkout would read as "not a
   # repository" and silently demoted the run to hermetic synthetic
   # probing — the same fail-open every other branch here refuses. LC_ALL=C
   # pins the diagnostic to git's untranslated text (a localized git would
@@ -2164,7 +2164,7 @@ if [ -n "$ACTIVE_CARRY" ]; then
   compare_fix ahead "[$CODE_DELTA]"
   run "configured: carry-forward — a code delta still refuses" awaiting
 
-  # The repo's exclude list must be shown to MATCH (kendex#1174): a typo'd
+  # The repo's exclude list must be shown to MATCH: a typo'd
   # or wrongly-anchored committed glob leaves the exclusion dead while every
   # case above stays green in both directions. So: a carry-class path a
   # committed glob matches must refuse the carry, and a sibling path outside
@@ -2181,7 +2181,7 @@ if [ -n "$ACTIVE_CARRY" ]; then
       failures=$((failures + 1))
     fi
     # The evidence MODE is printed, not inferred: a degraded run and a full
-    # one used to be distinguishable only by the case total, which moves on
+    # one would be distinguishable only by the case total, which moves on
     # every re-vendor for unrelated reasons. One line makes it readable.
     if [ "$EXCLUDE_TRACKED_MODE" = "tracked" ]; then
       echo "info  carry-exclude evidence mode: tracked (root: $EXCLUDE_TRACKED_ROOT, $(printf '%s\n' "$EXCLUDE_TRACKED" | grep -c .) tracked paths)"
@@ -2240,7 +2240,7 @@ if [ -n "$ACTIVE_CARRY" ]; then
 
     # EVERY committed glob is exercised, not just the first usable one: a
     # later typo'd or wrongly-anchored addition must not hide behind an
-    # earlier glob's green. Compare filenames are repository-relative, so a
+    # prior glob's green. Compare filenames are repository-relative, so a
     # leading-'/' glob can never match any real delta — structurally dead,
     # and a FAIL rather than a skip.
     while IFS= read -r probe_pat; do
@@ -2264,7 +2264,7 @@ if [ -n "$ACTIVE_CARRY" ]; then
         run "configured: carry-exclude — '$probe_pat' matches '$probe_match', refusing the carry" awaiting
       elif [ "$probe_rc" -eq 2 ]; then
         # A no-match glob is dead in the same way a leading-'/' anchor is —
-        # and used to exit 0 with a note textually identical to a
+        # and would exit 0 with a note textually identical to a
         # deliberate prophylactic entry's, training operators to scroll
         # past real typos. Posture symmetry: an UNDECLARED no-match glob
         # FAILs; a glob listed in

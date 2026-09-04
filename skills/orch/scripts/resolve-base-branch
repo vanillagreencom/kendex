@@ -8,7 +8,7 @@ remote_head=""
 
 # Fail closed on an unusable path BEFORE any resolution: with the old
 # `|| true` swallow, a nonexistent path fell through to the main fallback
-# with exit 0, handing callers an unverified base (kendex#1225). Both arms
+# with exit 0, handing callers an unverified base. Both arms
 # require an existing directory.
 if [[ ! -d "$worktree" ]]; then
     echo "resolve-base-branch: worktree path does not exist or is not a directory: $worktree" >&2

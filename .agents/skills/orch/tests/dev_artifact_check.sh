@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Regression tests for dev-artifact-check: deterministic on-disk acceptance of a
+# Tests for dev-artifact-check: deterministic on-disk acceptance of a
 # dev agent's completion JSON artifact in the orch dev-start / dev-fix /
-# review-pr-comments workflows. Identity is by per-delegation ROUND ID, not mtime
-# (kendex#776): the check resolves WT/tmp/dev-return-ISSUE-RID.json and requires
-# the internal .round_id to match. The mtime freshness gate is gone.
+# review-pr-comments workflows. Identity is by per-delegation ROUND ID, not
+# mtime: the check resolves WT/tmp/dev-return-ISSUE-RID.json and requires the
+# internal.round_id to match.
 
 #
 # The markdown checks pin COMMAND and delegation-line shapes. review-bots.md:
@@ -212,9 +212,8 @@ set -e
 assert_eq "$rc" "1" "--file missing exits 1"
 assert_eq "$(jq -r '.reason' <<<"$out")" "missing" "--file missing reports reason=missing"
 
-# --- legacy positional mode REMOVED: a bare positional call is a usage error ---
-# There is one identity model (round id); the pre-round positional stale-guard
-# mode (and its only caller, ci-fix) is gone.
+# --- a bare positional call is a usage error ---
+# There is one identity model: the round id.
 set +e
 "$CHECK" "$worktree" "$issue" 1750000000 >/dev/null 2>&1
 assert_eq "$?" "2" "removed legacy positional mode now exits 2 (usage error)"
@@ -267,7 +266,7 @@ assert_eq "$("$STATE" --state-dir "$rt_wt/tmp" get issue-9 .pr.baseline_lines)" 
 "$WRITE" --worktree "$rt_wt" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit c --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
 assert_eq "$(reason --file "$rt_wt/tmp/dev-return-issue-9-7-8.json" --expect-items 1,2)" "valid" "writer fix output round-trips through file-mode --expect-items"
 
-# --- kendex#1230: --expect-items-from-round reads the persisted round record ---
+# --- --expect-items-from-round reads the persisted round record ---
 # The delegated item set is persisted at delegation time (dev-round-write →
 # tmp/dev-round-ISSUE-RID.json), so the exact-set gate has an on-disk source of
 # truth instead of a number list typed from the orchestrator's context.
@@ -352,7 +351,7 @@ assert_eq "$?" "2" "round mode rejects --expect-items authorization bypass"
 assert_eq "$?" "2" "--file mode rejects --expect-items-from-round"
 set -e
 
-# --- KEN-826: a fix round cannot add unlisted machinery ---
+# --- a fix round cannot add unlisted machinery ---
 adds_wt="$TMP_ROOT/adds"
 mkdir -p "$adds_wt"
 git -C "$adds_wt" init -q -b main
@@ -461,7 +460,7 @@ set -e
 assert_eq "$(jq -r '.reason' <<<"$routing_mutant_out")" "unapproved_additions" \
   "routing control detects a comparison-failure misroute"
 
-# --- kendex#944: a rebase stops the gate rather than misattributing to it ---
+# --- a rebase stops the gate rather than misattributing to it ---
 # base_sha still resolves after a restack, so comparing against it would read
 # the base branch's whole advance as this round's own additions.
 rebase_wt="$TMP_ROOT/rebase"
@@ -497,7 +496,7 @@ assert_eq "$(grep -cF 'no comparison can attribute an addition to this round' "$
   "and says on stderr why it could not compare"
 
 # Must-fail control: without the stop, the round is billed the file main merged,
-# which also proves the fixture still orphans that base. Pristine copy first.
+# which also proves the fixture orphans that base. Pristine copy first.
 stop_mutant="$mutant_scripts/scripts/dev-artifact-check"
 cp "$CHECK" "$stop_mutant"
 assert_eq "$(grep -cF 'if ! git -C "$repo" merge-base --is-ancestor "$base_sha" HEAD >/dev/null 2>&1; then' "$stop_mutant")" "1" \
@@ -526,7 +525,7 @@ set -e
 assert_eq "$(jq -c '[.reason, .files]' <<<"$rebase_bites")" '["unapproved_additions",["tools/round-tool"]]' \
   "a round whose base survived the restack is still gated, and named its addition alone"
 
-# --- kendex#994: the recorded commit must name a real object in the worktree's repo ---
+# --- the recorded commit must name a real object in the worktree's repo ---
 gitwt="$TMP_ROOT/gitwt"
 mkdir -p "$gitwt/tmp"
 git -C "$gitwt" init -q -b main
@@ -536,7 +535,7 @@ git -C "$gitwt" config commit.gpgsign false
 git -C "$gitwt" commit -q --allow-empty -m base
 git -C "$gitwt" commit -q --allow-empty -m orphan-me
 orphan_sha="$(git -C "$gitwt" rev-parse HEAD)"
-git -C "$gitwt" reset -q --hard HEAD~1   # orphan_sha still resolves, now unreachable
+git -C "$gitwt" reset -q --hard HEAD~1   # orphan_sha resolves but is unreachable
 head_sha="$(git -C "$gitwt" rev-parse HEAD)"
 fake_sha="${head_sha:0:8}00000000000000000000000000000000"
 gartifact="$gitwt/tmp/dev-return-$issue-$R.json"
@@ -576,7 +575,7 @@ assert_eq "$(reason --worktree "$gitwt" --issue "$issue" --round-id "$R")" "inva
 printf '%s' "$valid_impl" | jq -c --arg c "$fake_sha" '.commit=$c | .bundled=true | .items=[]' > "$gartifact"
 assert_eq "$(reason --worktree "$gitwt" --issue "$issue" --round-id "$R")" "commit_unresolvable" "commit_unresolvable beats bundled-item incompleteness"
 
-# non-repo worktree keeps today's behavior: commit gates skipped, still valid
+# non-repo worktree: commit gates skipped, valid
 printf '%s' "$valid_impl" > "$artifact"
 out="$("$CHECK" --worktree "$worktree" --issue "$issue" --round-id "$R")"
 assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "non-git worktree skips the commit gates (reason=valid)"
@@ -590,14 +589,14 @@ assert_eq "$(reason --file "$gext")" "valid" "--file mode skips the commit gates
 # --- doc wiring: ALL FOUR dev/QA paths mint a fresh round id + accept via round mode ---
 # dev-start / orch dev-fix / review-pr-comments / ci-fix each mint dev_round_id
 # before delegating and accept via dev-artifact-check round mode — one identity
-# model, no legacy carve-out. dev-start/dev-fix/review-pr-comments also embed the
-# token in the delegation; ci-fix's agent writes no artifact so it does not.
+# model. dev-start/dev-fix/review-pr-comments also embed the token in the
+# delegation; ci-fix's agent writes no artifact so it does not.
 ROUND_STAMP="workflow-state new-round-id [ISSUE_ID] dev_round_id"
 ROUND_CHECK="dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND]"
-# Fix rounds must carry the exact-set gate as ONE contiguous command (a regression
+# Fix rounds must carry the exact-set gate as ONE contiguous command (a failure
 # that drops the flag from the command while leaving it in prose would still pass
-# two independent substring checks — so assert the full string). Since kendex#1230
-# the expected set comes from the persisted round record, not a typed number list.
+# two independent substring checks — so assert the full string). The expected
+# set comes from the persisted round record, not a typed number list.
 ROUND_CHECK_EXPECT="$ROUND_CHECK --expect-items-from-round"
 ROUND_ITEMS_PERSIST="dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID]"
 WATCHDOG_STAMP="workflow-state set-now [ISSUE_ID] dev_delegated_at"
@@ -640,8 +639,7 @@ assert_file_contains "$review_pr_comments" "$ROUND_ITEMS_PERSIST" "review-pr-com
 assert_file_contains "$review_pr_comments" "Round ID: [DEV_ROUND_ID]" "review-pr-comments delegation carries the Round ID line"
 assert_file_contains "$review_pr_comments" "$ARTIFACT_KEY_LINE" "review-pr-comments delegation carries the Artifact Key line"
 
-# ci-fix: now compliant with the round-id invariant — mints a fresh dev_round_id
-# and accepts via round mode; the legacy positional call is gone.
+# ci-fix: mints a fresh dev_round_id and accepts via round mode.
 ci_fix="$REPO_ROOT/skills/orch/workflows/ci-fix.md"
 assert_file_contains "$ci_fix" "$WATCHDOG_STAMP" "ci-fix § 3.2 re-stamps dev_delegated_at (watchdog deadline)"
 assert_file_contains "$ci_fix" "$ROUND_STAMP" "ci-fix § 3.2 mints a fresh dev_round_id before delegating (round-id invariant)"
@@ -650,25 +648,24 @@ assert_file_contains "$ci_fix" "$ROUND_STAMP" "ci-fix § 3.2 mints a fresh dev_r
 # carries the previous token and can never be mistaken for this round's.
 assert_file_not_contains "$ci_fix" "$LEGACY_CHECK" "ci-fix § 3.2 no longer uses the legacy positional dev-artifact-check call"
 
-# kendex#944: the restack cycle asks the owner of the live-round predicate.
+# The restack cycle asks the owner of the live-round predicate.
 # The pin is the call site; the arms are worktree_push.sh's to prove.
 restack="$REPO_ROOT/skills/orch/workflows/merge-pr-restack.md"
 assert_file_contains "$restack" "worktree-push --check-live-round --worktree [WT_PATH] --issue [ISSUE]" \
   "merge-pr-restack § 2 asks worktree-push before the restack"
 
-# The removed legacy positional call must not survive in any orch workflow.
+# No orch workflow carries a bare positional dev-artifact-check call.
 for wf in dev-start dev-fix review-pr-comments ci-fix; do
   assert_file_not_contains "$REPO_ROOT/skills/orch/workflows/$wf.md" "$LEGACY_CHECK" "$wf.md carries no legacy positional dev-artifact-check call"
 done
 
-# --- kendex#803: mechanical per-wake A/B check + single-shot wall-clock watchdog ---
-# The stall was an orchestrator that read a `finished` wake's wording and idled
-# without running A/B, plus a wait loop with no wall-clock re-entry when wakes
-# stopped. SKILL must mandate both, and every delegation point that stamps
-# dev_delegated_at must arm the watchdog. kendex#818 re-homed both mandates into
-# the numbered "orchestrator owns round closure" list (same requirements, new
-# wording) and made that list the primary path rather than a recovery fallback.
-# The two bolded list items are the anchors, now in references/skill-rules.md.
+# --- mechanical per-wake A/B check + single-shot wall-clock watchdog ---
+# An orchestrator that reads a `finished` wake's wording and idles without
+# running A/B stalls, and so does a wait loop with no wall-clock re-entry when
+# wakes stop. The rules must mandate both, and every delegation point that
+# stamps dev_delegated_at must arm the watchdog. The two bolded items of the
+# "orchestrator owns round closure" list in references/skill-rules.md are the
+# anchors.
 orch_rules="$REPO_ROOT/skills/orch/references/skill-rules.md"
 assert_file_contains "$orch_rules" "Run the check on every wake and at the deadline" "skill-rules mandates the per-wake and deadline check"; assert_file_contains "$orch_rules" '`verdict`' "skill-rules names the one-word verdict acceptance reads"
 assert_file_contains "$orch_rules" "Arm a single-shot wall-clock watchdog" "skill-rules mandates a wall-clock watchdog independent of sub-agent wakes (kendex#803)"
@@ -686,7 +683,7 @@ dev_implement="$REPO_ROOT/skills/dev/workflows/dev-implement.md"
 assert_file_contains "$dev_implement" "dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID]" "dev-implement § 10 keys the artifact to [ARTIFACT_KEY]"
 dev_fix="$REPO_ROOT/skills/dev/workflows/dev-fix.md"
 assert_file_contains "$dev_fix" "dev-return-write --worktree [WORKTREE_PATH] --kind fix --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID]" "dev-fix § 6 keys the artifact to [ARTIFACT_KEY]"
-# kendex#1230: a respawned agent recovers its delegated item set from the
+# A respawned agent recovers its delegated item set from the
 # persisted round record instead of guessing (or depending on the orchestrator's
 # context surviving).
 assert_file_contains "$dev_fix" "dev-round-[ARTIFACT_KEY]-[DEV_ROUND_ID].json" "dev-fix § 6 points a respawned agent at the persisted round record"
@@ -697,7 +694,7 @@ assert_file_contains "$dev_return_schema" "dev-return-write" "dev-return schema 
 assert_file_contains "$dev_return_schema" "round_id" "dev-return schema documents round_id identity"
 assert_file_contains "$dev_return_schema" "schema_version" "dev-return schema documents schema_version"
 # Validation gates have ONE canonical home — dev-artifact-check --help —
-# and the artifact-checks reference only routes to it (KEN-556). Pin the
+# and the artifact-checks reference only routes to it. Pin the
 # gate-ordering and reason vocabulary in the canonical copy.
 check_help="$("$CHECK" --help)"
 assert_contains_str() {
@@ -724,7 +721,7 @@ state_schema="$REPO_ROOT/skills/orch/schemas/workflow-state.md"
 assert_file_contains "$state_schema" "dev_delegated_at" "workflow-state schema documents dev_delegated_at"
 assert_file_contains "$state_schema" "dev_round_id" "workflow-state schema documents dev_round_id"
 
-# --- kendex#1230 schema doc: the round record has its own contract ---
+# --- schema doc: the round record has its own contract ---
 dev_round_schema="$REPO_ROOT/skills/orch/schemas/dev-round.md"
 assert_file_contains "$dev_round_schema" "dev-round-write" "dev-round schema references the writer"
 assert_file_contains "$dev_round_schema" "round_id" "dev-round schema documents round_id identity"
@@ -735,7 +732,7 @@ assert_file_not_contains "$dev_round_schema" "git-common-dir" "dev-round schema 
 assert_file_contains "$dev_round_schema" "never fall back" "dev-round schema forbids post-delegation recovery bypass"
 assert_file_contains "$dev_round_schema" "--expect-items-from-round" "dev-round schema documents the check-side reader"
 
-# --- kendex#884: the note has to reach the orchestrator, not just the file ---
+# --- the note has to reach the orchestrator, not just the file ---
 # This output IS what orch accepts a completion on, so a caveat stored in the
 # artifact but never echoed would be as lost as one never recorded.
 noted_file="$worktree/tmp/noted.json"
@@ -748,7 +745,7 @@ assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "an artifact carrying a validat
 assert_eq "$(jq -r '.validate' <<<"$out")" "pass" "the check echoes the enumerated verdict"
 assert_eq "$(jq -r '.validate_note' <<<"$out")" "$NOTE" "the check echoes the qualifier to the orchestrator"
 
-# The validation note remains optional beside the required baseline measurement.
+# The validation note is optional beside the required baseline measurement.
 legacy_file="$worktree/tmp/legacy.json"
 jq -n '{schema_version:1,round_id:"1-1",kind:"implement",issue:"i",branch:"b",commit:"c",
   baseline_lines:1,validate:"pass",qa_labels:[],summary_posted:true,summary:null,bundled:false,items:[]}' > "$legacy_file"

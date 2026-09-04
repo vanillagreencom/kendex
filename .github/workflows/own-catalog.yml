@@ -61,7 +61,7 @@ jobs:
         # that cannot resolve does not fail an install — and then refuses to
         # run, which surfaced as a panic inside a Rust test with a stack
         # trace that pointed nowhere near the cause. Here it fails on the
-        # line that caused it (KEN-675).
+        # failing CLI, instead of surfacing later as an unrelated Rust panic.
         run: |
           npm install -g \
             opencode-ai \

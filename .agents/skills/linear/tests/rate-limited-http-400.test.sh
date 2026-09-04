@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test (#1018): Linear emits rate-limit rejections with an OUTER
+# Linear emits rate-limit rejections with an OUTER
 # HTTP 400 whose body carries extensions.code RATELIMITED. These must route
 # to the rate-limit path ("Rate limited. Try again later."), never surface as
 # the generic "HTTP error: 400" — and a failed team lookup must propagate the

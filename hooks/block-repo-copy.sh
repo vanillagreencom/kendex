@@ -61,7 +61,7 @@ fi
 # not part of a path answers it — the pipe ENDERS leaves out on purpose, a
 # subshell's closing parenthesis, the newline that is still whitespace here —
 # so it is stated as the negation of PATH_CHAR, what a path may hold. That way
-# a separator nobody has named yet ends the word without being added to a list.
+# a separator nobody has named yet ends the word without being listed.
 #
 # Both edges of the marker component are tested and both carry a case: the
 # `/?` and quote-or-GAP after it are what keep it last, so `target/debug/kendex`
@@ -107,7 +107,7 @@ QUOTE="[${QUOTES}]"
 VERB="(cp|rsync|tar|git${GAP}+clone)"
 LEFT_EDGE="[/${QUOTES}${BLANK}]"
 RIGHT_EDGE="[${QUOTES}${BLANK}]"
-# Every character ADDED here is one that stops ending the word, so this guard
+# Every character in this class is one that stops ending the word, so this guard
 # fails closed by holding only what a row can bind: the alnum run that makes
 # `/tmpfoo` a different directory, and the slash a path continues with. Only
 # the FIRST character after the temp root is ever consulted, so a member is

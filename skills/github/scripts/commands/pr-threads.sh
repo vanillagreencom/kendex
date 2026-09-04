@@ -78,7 +78,7 @@ get_pr_threads() {
                 shift 2
                 ;;
             -*)
-                # Unknown flags used to fall through to the positional branch and
+# Unknown flags must not fall through to the positional branch and
                 # be resolved as a PR ref, turning a typo into a confusing
                 # "No PR found for: --typo".
                 echo "{\"error\": \"Unknown option: $1\"}" >&2

@@ -1,10 +1,10 @@
-// bg_task / bg_status log tool-result transcript bounds (kendex#210).
+// bg_task / bg_status log tool-result transcript bounds.
 //
 // `bg_task log` and `bg_status log` add `details.tasks[i].outputTail` to the
 // transcript; their text content is bounded by `logTailMaxChars` (default
 // 10000) and the `details.task` snapshot is bounded by the wake manifest.
-// The reviewer-test concern: the issue specifically calls out log
-// tool-result transcript growth and the new default needed direct coverage.
+// The test exercises the bound through the tool-result path that writes the
+// transcript.
 
 import { describe, expect, test } from "bun:test";
 
@@ -145,7 +145,7 @@ describe("transcript-facing content strings (kendex#210 round 2)", () => {
 	test("truncateForTranscript produces a bounded `Stopped …` message shape (kendex#210 round 3 unit check)", () => {
 		// Unit-level companion to `stop-content-e2e.test.ts`: documents the
 		// bounded format `requestStop` uses for stop tool-result content so
-		// the helper layer is independently regression-checkable. The
+		// the helper layer can be checked independently. The
 		// end-to-end test exercises the production call path; this one
 		// verifies the shared helper still produces a payload that fits the
 		// template under multi-KB input.
@@ -198,7 +198,7 @@ describe("log tool-result details bound the task snapshot (kendex#210)", () => {
 
 	test("a log tool-result-shaped payload stays under the byte cap with huge output and metadata", () => {
 		const huge = "z".repeat(DEFAULT_LOG_TAIL_MAX_CHARS * 4);
-		// Realistic log path (~60 chars). The reviewer-security concern targets
+		// A realistic log path. The test targets
 		// command/title/cwd bombs, which the compact manifest bounds.
 		const realisticLogFile = "/tmp/kendex-pi-bg/bg-log-1-1700000000000.log";
 		const task = logTask({

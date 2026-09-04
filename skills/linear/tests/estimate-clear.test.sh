@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Coverage for clearing issue estimates (kendex#461):
+# Coverage for clearing issue estimates:
 #   - `--clear-estimate` builds an `estimate: null` mutation input
 #   - `--estimate 0` is a compatibility alias for clearing (maps 0 -> null)
 #   - real estimates 1-5 still pass through; 6+/negative/non-int are rejected
@@ -19,7 +19,7 @@ export TMP
 # Isolate CACHE_DIR resolution (git rev-parse --show-toplevel, from CWD — the
 # common.sh PROJECT_ROOT recompute overrides any inherited PROJECT_ROOT env
 # var) to this throwaway root. Without this, update_issue's cache
-# write-through lands in the real project's `.cache/linear` (kendex#43).
+# write-through lands in the real project's `.cache/linear`.
 git -C "$TMP" init -q -b main
 
 # Run update_issue with a fully mocked API. The mocked graphql_query captures

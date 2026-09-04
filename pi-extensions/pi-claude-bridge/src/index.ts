@@ -239,18 +239,18 @@ export interface DeferredUserReplayPlan {
 	// with no image blocks).
 	prompt: string | null;
 	// Present when the run carries image blocks — the replay must send these
-	// (via wrapPromptStream) or the images are silently lost (kendex#993).
+	// (via wrapPromptStream) or the images are silently lost.
 	blocks: ContentBlockParam[] | null;
 }
 
 /** Plan replay of user messages pi injected mid-query (steer drain, followUp).
  *  Captures the ENTIRE trailing consecutive user run, not just the last
- *  message — dropping the earlier ones was silent input loss (kendex#967) —
- *  but never walks below `capturedThrough`, the position an earlier callback
+ *  message — dropping the earlier ones was silent input loss  —
+ *  but never walks below `capturedThrough`, the position a prior callback
  *  of the SAME query already captured (or deliberately held at, for an
  *  all-empty run). Without that lower bound a second mid-query steer re-planned
  *  the whole run from scratch and the first steer was queued — and delivered to
- *  Claude — twice (kendex#1009). */
+ *  Claude — twice. */
 export function planDeferredUserReplay(messages: Context["messages"], capturedThrough = 0): DeferredUserReplayPlan {
 	let runStart = messages.length;
 	while (runStart > capturedThrough && messages[runStart - 1]?.role === "user") runStart--;
@@ -299,7 +299,7 @@ export function resolveMcpTools(context: Context, excludeToolName?: string): {
 		// namespace belongs to the child's own MCP servers, so a Pi tool sitting
 		// on it would be advertised a SECOND time under our prefix — two names
 		// for one capability, and the model picking the wrong one gets a real
-		// `Tool ... not found` from the dispatcher (memsira#320). It would also
+		// `Tool... not found` from the dispatcher. It would also
 		// be uncallable in any case: a `tool_use` under that namespace is treated
 		// as child-executed and never handed to Pi (isChildExecutedTool), so
 		// filtering here is what makes the two halves agree end to end.
@@ -418,8 +418,8 @@ function buildMcpServers(tools: Tool[], queryCtx: QueryContext): Record<string, 
 // 2. consumeQuery() iterates the SDK generator, pushing events to currentPiStream
 // 3. On tool_use: ends the current pi stream, nulls it out. The MCP handler
 //    blocks the generator naturally — no events arrive until resolved.
-// 4. Pi executes the tool, calls streamSimple again. We swap in the new stream,
-//    resolve the MCP handler, and the generator unblocks — events flow to new stream.
+// 4. Pi executes the tool and calls streamSimple again. We swap in the replacement
+//    stream, resolve the MCP handler, and the generator unblocks into that stream.
 //
 // Note: resetTurnState clears turnSawStreamEvent while the generator may still
 // have queued messages from the previous turn. This is safe because step 3 nulls
@@ -502,7 +502,7 @@ function applyProviderRegistration(trigger: string): void {
 	debug(`${trigger}: native registration upsert, credentialed=${credentialed} (module=${moduleInstanceId})`);
 	// Start the connector inventory now, not on the first turn: the query path
 	// can only read a synchronous snapshot, so priming here is what gets the
-	// declarations in place before turn 1 (kendex#832). Fire and forget —
+	// declarations in place before turn 1. Fire and forget —
 	// registration must not wait on the network. Primes the DEFAULT credential
 	// scope only; managed profiles are primed per request in their own scope.
 	if (hasClaudeCredentials() && connectorsEnabledFor(loadConfig(process.cwd()))) primeConnectorServers();
@@ -529,7 +529,7 @@ function applyProviderRegistration(trigger: string): void {
 	}
 }
 
-/** Provider entry point. Pi calls this for each new prompt and each tool result.
+/** Provider entry point. Pi calls this for each prompt and each tool result.
  *  Two cases: tool result delivery (active query) or fresh query. Exported for
  *  the rotation-stream unit tests, which drive it with a fake SDK factory. */
 export function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream {
@@ -619,7 +619,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		if (queryCtx.pendingToolCalls.size > 0) {
 			// A waiting handler whose call never reached Pi can never be answered —
 			// fail it now with a retryable error instead of letting the SDK await it
-			// forever (the 2026-08-17 five-and-a-half-hour deadlock, kendex#1469).
+			// indefinitely.
 			// Forwarded-but-unanswered handlers stay: steer-split batches legitimately
 			// deliver their results in a later callback.
 			const stranded = drainStrandedToolCalls(queryCtx);
@@ -646,7 +646,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		// so we save them for replay as continuation queries after consumeQuery ends.
 		// The cursor may only advance over messages actually captured for replay:
 		// claiming Claude owns a user message that was never deferred is permanent
-		// silent input loss (kendex#967 — only the LAST of several trailing user
+		// silent input loss ( — only the LAST of several trailing user
 		// messages was captured while the cursor skipped them all).
 		let capturedThrough = context.messages.length;
 		if (lastMsgRole === "user") {
@@ -654,13 +654,13 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			// Math.max-advances with every callback's capturedThrough below), so a
 			// second steer callback only queues messages BEYOND what the first one
 			// already owns — re-planning the whole trailing run queued the earlier
-			// steer twice (kendex#1009). latestCursor, not the shared record's
+			// steer twice. latestCursor, not the shared record's
 			// cursor, deliberately: it lives on this QueryContext, so it is correct
 			// for reentrant and detached foreign queries too, whose contexts the
-			// shared cursor does not index (kendex#1001).
+			// shared cursor does not index.
 			const replay = planDeferredUserReplay(context.messages, queryCtx.latestCursor);
 			// Image-only runs have no usable text but must still replay — capture
-			// whenever EITHER form has content (kendex#993).
+			// whenever EITHER form has content.
 			if (replay.prompt || replay.blocks) {
 				ctx().deferredUserMessages.push({ text: replay.prompt ?? "", blocks: replay.blocks ?? undefined });
 				debug(`provider: deferred ${replay.userMessageCount} user message(s) for replay after query${replay.blocks ? ` (${replay.blocks.length} blocks incl. images)` : ""}: ${(replay.prompt ?? "[image-only]").slice(0, 60)}`);
@@ -678,12 +678,12 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		// Cursor may only ADVANCE, and only for a query that holds the record's
 		// claim. A reentrant subagent call routed through this instance arrives
 		// here with a SHORT foreign context (its own [user…] conversation, not
-		// the one the cursor indexes) — writing its length used to shrink the
+		// the one the cursor indexes). Writing its length would shrink the
 		// parent cursor and make the next REUSE replay already-owned history.
 		// The stackDepth guard covers a pushed subagent context; the detached
 		// flag covers a foreign one-shot on the top-level ctx, whose GROWN
 		// mid-query context could otherwise out-length the parent's cursor and
-		// advance it past history Claude never saw (kendex#1001); Math.max
+		// advance it past history Claude never saw; Math.max
 		// remains the backstop for a legacy-record foreign context the
 		// fingerprint guard could not classify.
 		const activeSession = getSharedSession();
@@ -702,7 +702,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		debug(`provider: orphaned tool result after abort, emitting end_turn`);
 		// The detached flag deliberately survives query end: an orphaned result
 		// from a foreign one-shot indexes ITS conversation, and writing that
-		// length here would move (even shrink) the parent's cursor (kendex#1001).
+		// length here would move (even shrink) the parent's cursor.
 		const activeSession = getSharedSession();
 		if (activeSession && stackDepth() === 0 && !ctx().detachedFromSharedSession) setSharedSession({ ...activeSession, cursor: context.messages.length });
 		const c = ctx();  // capture current context for the microtask
@@ -883,7 +883,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	const { sessionId: resumeSessionId, promptStart } = syncResult;
 	// A FOREIGN-conversation query (conversation-fingerprint mismatch against
 	// the shared record — a subagent-shaped request arriving while the parent
-	// is IDLE, kendex#1001) also runs as a clean one-shot and gets the same
+	// is IDLE,) also runs as a clean one-shot and gets the same
 	// hands-off treatment as a reentrant one below: never persist over the
 	// module-level record, never mark it for rebuild. The flag also rides the
 	// QueryContext so the mismatch/abort/teardown paths that mutate the record
@@ -962,12 +962,12 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	// 4. Capture context for abort handling (must be AFTER pushContext)
 	const abortCtx = ctx();
 	// Failure metadata consumeQuery observed, surviving an iterator THROW (the
-	// .catch below reuses it instead of re-classifying — see C5 note there).
+	// The catch below reuses it instead of re-classifying it. See the C5 note.
 	const attemptFailure: { failure?: ClaudeAttemptFailure } = {};
 	// A reentrant (subagent) query must never write the module-level shared
 	// session: its completion/failure handlers would overwrite the PARENT's
 	// record with the child's session id and cursor. A foreign-conversation
-	// one-shot (kendex#1001) has exactly the same non-claim on the record.
+	// one-shot  has exactly the same non-claim on the record.
 	const persistSession = (next: SessionState | null): void => {
 		if (isReentrant || foreignContext) return;
 		setSharedSession(next && conversationFp ? { conversationFingerprint: conversationFp, ...next } : next);
@@ -976,7 +976,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		if (isReentrant || foreignContext) return;
 		markSessionForRebuild(opts);
 	};
-	// #967 invariant: a deferred (mid-query) user message may be dropped only
+	//  invariant: a deferred (mid-query) user message may be dropped only
 	// LOUDLY — the cursor already advanced over it on the promise of replay.
 	// Callers that keep a session record after a non-empty drop must persist it
 	// with needsRebuild so the next turn re-imports the steers from Pi history.
@@ -1185,7 +1185,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 				// execute. Deferred user input is dropped LOUDLY, and when steers
 				// were dropped the record is marked needsRebuild: the cursor already
 				// advanced over them on the promise of replay, so a plain REUSE next
-				// turn would silently lose them forever (#967).
+				// turn would silently lose them forever ().
 				if (!abortCtx.handledTerminalError) surfaceFailure(failure);
 				const droppedSteers = dropDeferredUserMessages("terminal-failure");
 				const activeSession = getSharedSession();
@@ -1235,7 +1235,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 
 					const contOptions = { ...queryOptions, resume: resumeId, ...makeCliDebugOptions("continuation") };
 					// Runs carrying image blocks replay as blocks (wrapPromptStream) so
-					// the images survive; text-only runs stay plain strings (kendex#993).
+					// the images survive; text-only runs stay plain strings.
 					const contQuery = sdkQueryFactory({ prompt: steer.blocks ? wrapPromptStream(steer.blocks) : steer.text, options: contOptions });
 					abortCtx.activeQuery = contQuery;
 
@@ -1250,7 +1250,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 							if (!abortCtx.handledTerminalError) surfaceFailure(continuation.failure);
 							// The shifted steer may never have reached the child, and any
 							// remaining ones certainly did not — the record must rebuild so
-							// they re-import from Pi history (#967).
+							// they re-import from Pi history ().
 							if (dropDeferredUserMessages("continuation-failure", steer).length > 0) {
 								markRebuildForThisQuery();
 							}
@@ -1269,7 +1269,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 						};
 						recordAttemptFailure(continuationFailure);
 						if (!abortCtx.handledTerminalError) surfaceFailure(continuationFailure);
-						// Same #967 posture as the failure branch above.
+						// Same  posture as the failure branch above.
 						if (dropDeferredUserMessages("continuation-error", steer).length > 0) {
 							markRebuildForThisQuery();
 						}
@@ -1291,7 +1291,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			if (wasAborted || options?.signal?.aborted) {
 				markRebuildForThisQuery({ forceRotate: true });
 			}
-			// #967: a record kept past this error with steers behind its cursor
+			// a record kept past this error with steers behind its cursor
 			// must rebuild so they re-import from Pi history. (The non-abort
 			// surface path below replaces the record with null, which rebuilds too.)
 			if (dropDeferredUserMessages("query-error").length > 0) {
@@ -1351,7 +1351,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 				...(options ?? {}),
 				[ROTATION_STATE_KEY]: rotationState,
 			} as BridgeStreamOptions);
-			// End exactly once per outcome (VST-53). Ending in a `finally` ran on
+			// End exactly once per outcome. Ending in a `finally` ran on
 			// the throw path too, BEFORE the .catch below could push its error
 			// event — and EventStream.push is a silent no-op after end, so a failed
 			// rotation ended the turn with no error event at all. Success ends
@@ -1445,8 +1445,8 @@ export default function (pi: ExtensionAPI) {
 	// branch switch) both mutate pi's messages array out from under the
 	// bridge. syncSharedSession's REUSE check would otherwise see
 	// slice(cursor) === [] (or skip entries) and keep --resume'ing a CC
-	// session that no longer matches pi's history. /compact in particular
-	// triggers CC's autocompact-thrashing guard (issue #8). Force the next
+	// session that does not match pi's history. /compact in particular
+	// triggers CC's autocompact-thrashing guard (). Force the next
 	// call down the REBUILD path so CC sees the current history.
 	const markRebuild = (event: string) => {
 		const activeSession = getSharedSession();

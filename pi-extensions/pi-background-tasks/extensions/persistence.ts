@@ -1,9 +1,9 @@
 // Snapshot persistence helpers for pi-background-tasks.
 //
-// Extracted from background-tasks.ts (reviewer-structure #2). Responsibilities:
+// Responsibilities:
 //   - Resolve the per-session sidecar state path.
 //   - Atomic temp+rename writes so a crash mid-write can't shred the
-//     replay record (reviewer-error #2).
+//     replay record.
 //   - Surface failures on both channels (Pi appendEntry + sidecar)
 //     instead of silently swallowing them.
 //
@@ -31,7 +31,7 @@ import type { BackgroundTaskSnapshot } from "./types.js";
 // entry appended to a Pi session JSONL file. Sessions are append-only, so
 // repeatedly writing full task lists with multi-KB heredoc commands
 // accumulates 10s-100s of MB of session history that crashes `/resume`
-// (kendex#177). Sidecar state remains canonical at this size and is read
+//  Sidecar state remains canonical at this size and is read
 // first on restore; oversized session payloads degrade to a tiny manifest.
 export const BG_TASKS_SNAPSHOT_MAX_BYTES = 64 * 1024;
 
@@ -51,7 +51,7 @@ export function isBgTasksBoundedManifest(value: unknown): value is BgTasksBounde
 	return candidate.version === 2 && candidate.fullSnapshot === false;
 }
 
-// kendex#184: extracted from background-tasks.ts so the barrier semantics
+// extracted from background-tasks.ts so the barrier semantics
 // can be unit tested without dragging the full @earendil-works/pi-coding-agent
 // dependency chain into the test runtime. Handles a single session-branch
 // custom entry of type BG_STATE_TYPE.
@@ -91,7 +91,7 @@ function stableValue(value: unknown): unknown {
 	return sorted;
 }
 
-// kendex#183: fingerprints are persisted inside the overflow manifest;
+// fingerprints are persisted inside the overflow manifest;
 // returning the full canonical JSON defeats the byte cap. Hash to a
 // fixed-size hex digest so an oversized task list yields a small
 // manifest even when the underlying payload is many MB.
@@ -222,7 +222,7 @@ export function createPersistence(deps: PersistenceDeps): {
 
 		if (ctx) {
 			const sessionKey = sessionIdForContext(ctx);
-			// Fingerprint excludes updatedAt — only structural changes warrant a new session entry.
+			// Fingerprint excludes updatedAt because only structural changes warrant another session entry.
 			const fingerprint = stableSnapshotFingerprint({ tasks: payload.tasks });
 			if (lastFingerprintBySession.get(sessionKey) === fingerprint) {
 				appendEntryOk = true;
@@ -246,7 +246,7 @@ export function createPersistence(deps: PersistenceDeps): {
 							counts: { tasks: payload.tasks.length },
 							updatedAt: payload.updatedAt,
 						};
-						// kendex#183 defensive: the manifest must stay under the cap.
+						//  defensive: the manifest must stay under the cap.
 						const manifestBytes = Buffer.byteLength(JSON.stringify(manifest), "utf8");
 						if (manifestBytes > maxBytes) {
 							appendReason = "manifest-oversize-skipped";

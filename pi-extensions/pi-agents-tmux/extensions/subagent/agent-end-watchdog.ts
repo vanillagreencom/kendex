@@ -1,11 +1,11 @@
 /**
- * Settled-run missing-completion watchdog (kendex#66).
+ * Settled-run missing-completion watchdog.
  *
  * Detects the silent-abandonment case where a subagent's turn ends — pane goes
  * idle, transcript settles — but no complete_subagent outbox JSON was written.
  * The parent's existing wake/poll mechanism only notices via completion files,
  * so without this watchdog the parent waits indefinitely while the child sits
- * idle. Pi 0.80.4 added `agent_settled`, which fires only after retry,
+ * idle. Pi's `agent_settled` event fires only after retry,
  * compaction retry, and queued continuations are exhausted. The child invokes
  * this watchdog from that safe lifecycle point, waits a grace period, and then
  * — if no outbox JSON has appeared and the child pane is confirmed idle —

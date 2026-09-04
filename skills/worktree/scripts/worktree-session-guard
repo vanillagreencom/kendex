@@ -46,7 +46,7 @@ canonical_dir() {
 	(cd -P -- "$1" && pwd -P)
 }
 
-# Normalises . and .. textually, for paths that no longer exist and so have no
+# Normalises. and.. textually, for paths that does not exist and so have no
 # symlink left to resolve.
 lexical_path() {
 	local path="$1" segment rest out=''
@@ -167,7 +167,7 @@ resolve_common_dir() {
 # relative to the registration directory itself — never to the caller's cwd.
 #
 # The whole file, not its first line: a worktree path may contain a newline
-# (kendex#911). Command substitution strips the trailing newline git writes —
+#. Command substitution strips the trailing newline git writes —
 # and only that one, since the recorded value always ends in "/.git", so no
 # trailing newline can be part of the path itself.
 registered_gitdir() {
@@ -207,7 +207,7 @@ release_guard_mutex() {
 
 # Serializes the whole read-decide-write of every mutating command. Without it
 # two owners racing `claim` both read "no lease", both write, and both exit 0
-# believing they hold the worktree — the incident this guard exists to stop.
+# believing they hold the worktree — the failure this guard exists to stop.
 # The lock lives in the shared common dir, so one acquisition covers every
 # worktree of the repository and `sweep` takes it ONCE around its loop rather
 # than dropping it between iterations.

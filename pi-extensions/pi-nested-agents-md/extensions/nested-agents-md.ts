@@ -118,7 +118,7 @@ export default function nestedAgentsMd(pi: ExtensionAPI): void {
 	guard[INSTALL_SYMBOL] = true;
 
 	// The session's record of what the model has already been handed. A
-	// session start of any kind begins it again: the context is new, or is
+	// session start of any kind begins it again: the context is empty, or is
 	// being rebuilt, and what was attached before is not in it.
 	let attached = new Set<string>();
 

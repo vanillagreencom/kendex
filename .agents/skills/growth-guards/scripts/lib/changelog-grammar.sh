@@ -83,7 +83,7 @@ line !~ UTF8 { print NR; exit }
 # land in $GG_TMP/blob having been proven to be text this family can measure:
 # git calls a blob binary when a NUL falls in its leading bytes, and text that
 # is not valid UTF-8 has no character count to take. Two scopes reading a blob
-# their own way is two places for the next rule to be added to one of.
+# their own way is two places for the next rule to be appended to one of.
 #
 # Binary is the caller's to phrase — a fragment is refused, a record cannot be
 # compared at all — so it comes back as status 1 rather than a verdict here.
@@ -143,8 +143,8 @@ END {
 # A space-joined list is a set only when the value looked up cannot hold the
 # separator. These values can. A section name reaches this off a tracked PATH
 # segment or out of a level-3 heading's text, and both may carry spaces, so a
-# containment test finds ` added changed ` inside the joined list and reads
-# `changelog.d/added changed/x.md` as a section — the judge accepts a fragment
+# containment test finds ` appended changed ` inside the joined list and reads
+# `changelog.d/appended changed/x.md` as a section — the judge accepts a fragment
 # the collator then has no heading for, and the release stops on it. Compared
 # token by token it cannot, whatever the value holds.
 #
@@ -171,7 +171,7 @@ gg_is_section() { # NAME — 0 when NAME is exactly one of the sections
 # inside a four-backtick block does not end it. Nothing inside a fence is a
 # heading; a level-1 or level-2 ATX heading switches the section on or off,
 # and every other line inside it is content — the fence lines included, so an
-# added example counts as much as an added bullet. A code span or a fenced
+# appended example counts as much as an appended bullet. A code span or a fenced
 # example naming `## [Unreleased]` therefore moves nothing.
 #
 # The heading matches on EQUALITY, case-folded, once its leading spaces,

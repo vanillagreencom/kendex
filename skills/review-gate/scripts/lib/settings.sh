@@ -298,7 +298,7 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     # whitespace-tolerant everywhere (presence, ambiguity guard, extraction)
     # — anchoring at column one made an indented duplicate bypass the
     # fail-loud guard and an indented sole assignment collapse silently to
-    # the built-in default (kendex#1059).
+    # the built-in default.
     status=0
     matches="$(printf '%s\n' "$table" | grep -E -- "^[[:space:]]*${name}[[:space:]]*=")" || status=$?
     [ "$status" -le 1 ] || return 1

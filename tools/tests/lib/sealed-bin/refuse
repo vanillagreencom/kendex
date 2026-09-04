@@ -5,8 +5,8 @@
 # Shell fixtures shadow side-effecting binaries with stubs written inside the
 # suite's own `mktemp -d`. A process that outlives its suite outlives that
 # directory too, and its next PATH lookup falls through to the REAL binary:
-# leaked merge-queue fixtures resolved the real `ghostty` and opened terminal
-# windows on the operator's desktop (KEN-995). This directory is committed, so
+# an escaped fixture could resolve the real binary and cause an external side
+# effect. This directory is committed, so
 # it survives the temp tree it sits behind on PATH, and the fallthrough lands
 # here instead — loud, and with nothing executed.
 #

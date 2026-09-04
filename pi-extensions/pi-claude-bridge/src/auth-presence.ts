@@ -85,7 +85,7 @@ function hasApiKeyHelper(configDir: string): boolean {
  * Keychain, NOT in `.credentials.json`, so file-absence is NOT evidence of
  * logged-out and we cannot cheaply/safely probe the Keychain here. On darwin,
  * when no other signal is present, we default to credentialed=true — preserving
- * the pre-fix "always available" behavior for Mac subscription users. Honesty
+ * an "always available" result for Mac subscription users. Honesty
  * enforcement therefore applies on Linux/Windows, where `.credentials.json`
  * existence is an observable, truthful proxy (empirically, `claude auth logout`
  * unlinks it).
@@ -111,4 +111,3 @@ export function hasClaudeCredentials(
 
 	return false;
 }
-

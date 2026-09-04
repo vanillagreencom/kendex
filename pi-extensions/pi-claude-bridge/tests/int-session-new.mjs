@@ -1,9 +1,5 @@
 #!/usr/bin/env node
-// Verifies the bridge clears its sharedSession after a pi-side /new.
-//
-// This already works today (the bridge subscribes to `session_start` with
-// reason="new" and clears sharedSession). This is a regression test so the
-// behavior stays wired up.
+// The bridge must clear sharedSession when Pi starts a replacement session.
 
 console.log("=== int-session-new.mjs ===");
 
@@ -53,13 +49,12 @@ try {
 	const fullLog = readFileSync(DEBUG_LOG, "utf8");
 	const postNewLog = fullLog.slice(NEW_MARKER_LOG);
 
-	// The bridge logs `session_start:new: clearing session ...` when it
-	// observes the event. Make sure we saw it.
+	// The bridge must log that it observed the session-start event.
 	if (!/session_start:new: clearing session/.test(postNewLog)) {
 		finish(1, "FAIL: no `session_start:new: clearing session` marker — bridge didn't observe /new");
 	}
 
-	// First syncResult after /new must be clean-start (sharedSession=null,
+	// The first syncResult must be a clean start (sharedSession=null,
 	// no prior messages on the fresh agent state).
 	const syncResults = [...postNewLog.matchAll(/syncResult: path=(reuse|rebuild|clean-start)/g)].map((m) => m[1]);
 	console.log(`  Post-/new syncResults: ${JSON.stringify(syncResults)}`);

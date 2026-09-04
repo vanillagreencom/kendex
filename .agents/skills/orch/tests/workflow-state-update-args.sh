@@ -6,7 +6,7 @@
 # review-pr § 4's capped-item write carries a finding's location and
 # description into state. Splicing those into the jq expression breaks on an
 # apostrophe or a quote — jq fails, nothing is written, and § 8 re-derives the
-# live blocker as a decline, which is the defect KEN-518 fixed. The control at
+# live blocker as a decline. The control at
 # the end runs the interpolated form on the same text and shows it failing.
 
 set -euo pipefail
@@ -246,7 +246,7 @@ cycles="$("$WS" --state-dir "$sd" get KEN-1 .cycles)"
 echo
 echo "--- planted control ---"
 
-# The pre-fix validation: `jq -e .` reads the value, so false and null are
+# The unguarded validation: `jq -e.` reads the value, so false and null are
 # refused. A copy of the script carrying it must reject both.
 CTRL_SCRIPTS="$TMP_ROOT/scripts"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$CTRL_SCRIPTS"

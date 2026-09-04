@@ -5,7 +5,7 @@
 # back, because that text is relayed verbatim to the agent that must redo the
 # work.
 #
-# kendex#885: four artifacts were rejected in one session by agents that
+# four artifacts were rejected in one session by agents that
 # followed the workflow text without opening the schema. Two reached for
 # `priority: 5`; two used plausible-but-wrong field names (`detail`,
 # `remediation`, `file`+`line`). Every case here drives the shipped script and

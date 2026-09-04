@@ -705,7 +705,7 @@ export async function processResponsesStream<TApi extends Api>(
 				// Null-tolerant like the reasoning branch above: OpenAI-compatible streams
 				// (e.g. vLLM) can emit an empty message item with content: null before a
 				// function_call. Without the guard, item.content.map throws and the stream
-				// aborts, silently dropping the tool call (earendil-works/pi#5819).
+				// aborts and silently drops the tool call.
 				state.block.text = (item.content ?? []).map((content: { type?: string; text?: string; refusal?: string }) => (content.type === "output_text" ? content.text ?? "" : content.refusal ?? "")).join("");
 				state.block.textSignature = encodeTextSignatureV1(item.id, item.phase ?? undefined);
 				stream.push({ type: "text_end", contentIndex: state.blockIndex, content: state.block.text, partial: output });
