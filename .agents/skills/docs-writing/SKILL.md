@@ -101,8 +101,9 @@ Read on demand for one subsystem. The `doc-drift-check` hook names it when cover
 Read by an agent or maintainer looking up one value. Any lookup document: `references/`, `schemas/`, `patterns/`, a named file such as `CHECKS.md`, or one under `docs/`.
 
 - Tables and lists. One row per item.
-- The value, its meaning, and its default.
-- Excluded: narrative, worked examples, and rationale.
+- The value or the shape the contract fixes, its meaning, and its default.
+- The semantics a reader needs to produce or consume that shape, and no more.
+- Excluded: rationale, and narrative that defines nothing.
 - A file under `references/` exists only where a named workflow loads it on demand.
 
 ### `SKILL.md`, `workflows/*.md`, `agents/*.md`
