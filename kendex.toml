@@ -168,8 +168,3 @@ analyst = ["linear", "github"]
 engineer = ["dev", "github", "decider", "linear", "preflight", "code-quality"]
 manager = ["dev", "github", "project-management", "linear", "decider"]
 reviewer = ["reviewer"]
-
-# Per-harness frontmatter defaults beneath any project-level overrides.
-# tpm plans rather than builds, so on Codex it runs on the lighter model.
-[agent-frontmatter.codex]
-tpm = { model = "gpt-5.6-sol" }
