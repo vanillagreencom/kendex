@@ -16,4 +16,4 @@
 
 ## Settings
 
-<Where the user changes settings, with a link to their definitions.>
+<Name each setting the reader sets, what it changes, and the file it lives in. Link to the full definitions where needed.>

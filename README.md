@@ -58,12 +58,12 @@ The full per-tool facts are in [docs/adapters](docs/adapters/README.md).
 
 ## How it works
 
-The desktop app and CLI share the core code that manages your setup. kendex reads the customizations in each coding tool's folders. You declare the setup you want in a `kendex.toml` file for each project. kendex compares that file with the installed setup and shows a preview. After you apply the changes, a lock file records what kendex installed. To undo an installation, remove the package.
+The desktop app and CLI share the core code that manages your setup. kendex reads the customizations in each coding tool's folders. A global `kendex.toml` declares your personal setup, and each project can have its own `kendex.toml`. kendex compares that file with the installed setup and shows a preview. After you apply the changes, a lock file records what kendex installed. To undo an installation, remove the package.
 
 ## Settings
 
 - Use `kendex.toml` to declare a project setup and add instructions or options for each tool.
-- Change package settings in a package's Customize tab or `kendex.settings.toml`.
+- Package settings apply per project only; change them in the package's Customize tab or that project's `kendex.settings.toml`.
 - Keep private settings and secrets in `.env.local`.
 
 ## Documentation
