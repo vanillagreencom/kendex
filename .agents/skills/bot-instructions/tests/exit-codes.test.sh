@@ -44,6 +44,27 @@ printf -- '---\nmetadata:\n  version: "x"\n---\n\n# no doctrine here\n' > "$spec
 cp "$BI_ROOT/skills/bot-instructions/schemas/renders.md" "$spec/schemas/renders.md"
 expect_status 2 'a spec copy with no doctrine source exits 2' check --repo "$repo" --spec "$spec"
 
+# A crash is 2 as well: the tool failed, nothing in the tree is wrong, and
+# Python's own exit for an uncaught exception is 1. A dispatched dependency
+# raising something outside the package's error family reaches the last
+# handler, and the traceback still prints.
+crash_out="$(cd "$BI_ROOT/skills/bot-instructions/scripts" && PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" <<'PY' 2>&1
+import sys
+sys.path.insert(0, ".")
+from lib import cli, tree
+def boom(*args, **kwargs):
+    raise RuntimeError("dispatched dependency failed")
+tree.open_tree = boom
+sys.exit(cli.main(["check", "--repo", sys.argv[1]]))
+PY
+)" && crash_status=0 || crash_status=$?
+if [ "$crash_status" -eq 2 ] && printf '%s\n' "$crash_out" | grep -q 'RuntimeError: dispatched dependency failed'; then
+  ok 'a crash outside the package error family exits 2 with its traceback'
+else
+  bad 'a crash outside the package error family exits 2 with its traceback' \
+      "exit $crash_status: $(printf '%s' "$crash_out" | tail -2 | tr '\n' ' ')"
+fi
+
 # Flag misuse stays 2, as argparse already had it.
 expect_status 2 'flag misuse exits 2' render --staged --repo "$repo"
 
