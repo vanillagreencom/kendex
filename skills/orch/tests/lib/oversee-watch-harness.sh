@@ -140,7 +140,9 @@ printf 'unexpected gh call: %s\n' "$*" >&2
 exit 1
 EOF
 
-# tmux stub: windows.txt lists window names; pane-<lane>.txt is a lane's screen;
+# tmux stub: windows.txt lists the caller's window names and
+# windows-<session>.txt another session's (`list-windows -t <session>`, absent
+# meaning no such session); pane-<lane>.txt is a lane's screen;
 # cmd-<lane>.txt is the pane's foreground command (#{pane_current_command}) and
 # panepid-<lane>.txt its #{pane_pid} (default 9000), returned together as the
 # lane's one liveness read; panes.txt is `list-panes -a` (`<server pid> <pane
@@ -155,7 +157,12 @@ cat > "$TMP_ROOT/bin/tmux" <<'EOF'
 set -uo pipefail
 prev=""
 case "${1:-}" in
-  list-windows) cat "$STUB_DIR/windows.txt"; exit 0 ;;
+  list-windows)
+    s=""
+    while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && s="$2"; shift; done
+    [[ -n "$s" ]] || { cat "$STUB_DIR/windows.txt"; exit 0; }
+    [[ -f "$STUB_DIR/windows-$s.txt" ]] || { echo "can't find session: $s" >&2; exit 1; }
+    cat "$STUB_DIR/windows-$s.txt"; exit 0 ;;
   list-panes)
     [[ -f "$STUB_DIR/panes.txt" ]] && cat "$STUB_DIR/panes.txt"
     exit 0 ;;
