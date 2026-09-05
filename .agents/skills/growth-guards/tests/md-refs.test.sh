@@ -179,6 +179,17 @@ cite "a numbered section route resolves" 0 $'[guide](guide.md) § 1 describes se
 cite "a nested numbered section route resolves" 0 $'[guide](guide.md) § 1.1.1 describes the path.\n'
 cite "a missing numbered section cannot match its parent" 1 $'[guide](guide.md) § 1.1.2 describes the path.\n' 1 "has no heading at the start"
 
+echo "=== section-route regression controls ==="
+new_repo section-regressions
+put guide.md $'# Guide\n\n## 1\n\n## Install\n'
+put 'guide(foo).md' $'# Guide\n\n## Install\n'
+cite "numeric routes cannot fall through to a bare parent prefix" 1 $'[guide](guide.md) § 1.1.2 details.\n' 1 "has no heading at the start"
+cite "balanced destination parentheses do not hide a missing section" 1 $'[guide](guide(foo).md) § Missing.\n' 1 "has no heading at the start"
+cite "underscore emphasis resolves like the other emphasis markers" 0 $'[guide](guide.md) § _Install_ explains setup.\n'
+cite "escaped destination parentheses do not hide a missing section" 1 $'[guide](guide\\(foo\\).md) § Missing.\n' 1 "has no heading at the start"
+cite "parentheses in a link title do not hide a missing section" 1 $'[guide](guide(foo).md "A ) title") § Missing.\n' 1 "has no heading at the start"
+cite "an angle destination and title retain a valid section route" 0 $'[guide](<guide(foo).md> "A ) title") § Install.\n'
+
 echo "=== scopes: touched, --staged, --all ==="
 new_repo scopes
 put ok.md $'# OK\n'
