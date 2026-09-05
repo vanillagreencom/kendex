@@ -100,10 +100,8 @@ usage_reset_key() {
   else
     return 0
   fi
-  # A run of digits carrying neither minutes nor a meridiem is a number that
-  # follows the word, not a clock: `resets 2026-09-03` would otherwise put the
-  # `20` of the year on the event as an hour. Every shape above carries one or
-  # the other, so nothing attested is lost.
+  # Minutes or a meridiem distinguish a clock from the start of a calendar
+  # year. Every supported clock shape carries one or the other.
   [[ -n "$min" || -n "$meridiem" ]] || return 0
   # 12-hour to 24-hour; a clock with no meridiem is already a 24-hour one, as
   # it is for the sibling parser. Nothing range-checks the result: every clock

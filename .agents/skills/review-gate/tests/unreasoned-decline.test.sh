@@ -393,7 +393,7 @@ fi
 
 echo
 echo "--- must-fail probe: each name strip alone ---"
-# The two strips divide the #1851 replies between them, so each is proven on
+# The two strips divide the fixture replies between them, so each is proven on
 # the reply only it reaches. "pr-merge 103/103" needs the count strip: nothing
 # else takes a name the vocabulary has never heard of. "workflow 16/16" does
 # not — the word list already carries `workflows?` — so that one is the path

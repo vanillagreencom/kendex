@@ -1,24 +1,7 @@
 #!/usr/bin/env bash
-# the safe formatter must not silently drop
-# parent_id (and every other field) when a cached issue record's `labels` is
-# null/absent.
-#
-# Root cause: in the safe/compact/table jq programs the `agent`/`platform`
-# fields iterated `.labels.nodes[]` UNGUARDED, while the sibling `labels:` field
-# guarded it with `(.labels.nodes // [])`. A cached record with `labels: null`
-# therefore aborted the ENTIRE safe jq ("Cannot iterate over null"), so
-# `cache issues get <child> --format=safe` produced no usable object — parent_id
-# read back as null/empty even though the record genuinely carried its parent —
-# while `--format=raw` (which just echoes the record) still showed the parent.
-# That is exactly the "safe drops parent_id despite real linkage / raw shows it"
-# symptom class from the report. Guarding the iteration restores the documented
-# null-safe contract.
-#
-# NOTE on the reported CC-803 case specifically: with a WELL-FORMED cached record
-# (labels present, parent present) the safe formatter already resolves parent_id
-# correctly, so the field reported there was most consistent with a stale cache
-# (the record predating the parent assignment). This test locks in the general
-# safe-format robustness that null or absent `labels` does not remove parent_id.
+# The safe formatter must retain parent_id when a cached issue record has
+# null or absent labels. The list and bundle formats must retain the same
+# parent relationship.
 #
 # Fully offline — pure cache read, no curl needed.
 set -euo pipefail
