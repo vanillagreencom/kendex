@@ -22,7 +22,7 @@ Run the classifier to decide whether CI can skip product checks. Commit `.kendex
   --event pull_request --base "$BASE_SHA" --head "$HEAD_SHA"
 ```
 
-Flags and exit codes: `harness-only --help`. Contract and semantics: [README.md](README.md). Workflow shapes to copy: [references/wiring.md](references/wiring.md).
+Flags and exit codes: `harness-only --help`. Consumer setup: [README.md](README.md). Workflow shapes to copy: [references/wiring.md](references/wiring.md).
 
 ## This package never edits a workflow
 
@@ -40,8 +40,8 @@ Nothing here writes `.github/`. Wire the one step yourself, once, from [referenc
 
 ## Reading a verdict
 
-`stdout` is the verdict line alone; changed paths and reasons go to `stderr`; exit `2` is a wiring error that prints no verdict. [README.md](README.md) § Semantics.
+`stdout` is the verdict line alone; changed paths and reasons go to `stderr`; exit `2` is a wiring error that prints no verdict.
 
 ## Fail-closed
 
-Every unprovable case answers `false`, which runs every lane ([README.md](README.md) § Fail-closed). `--no-renames` is fixed.
+Every unprovable case answers `false`, which runs every lane ([DEVELOPMENT.md](DEVELOPMENT.md) § Invariants). `--no-renames` is fixed.

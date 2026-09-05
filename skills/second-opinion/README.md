@@ -1,6 +1,6 @@
 # Second Opinion
 
-Cross-model code review and consultation through an external AI CLI. The model your session runs is never asked to review its own work: Claude Code gets Codex, Codex gets Claude, and the run refuses, stating why, when nothing else is eligible. For a project that wants a second model's findings on a diff or a plan before the PR opens.
+Code review and consultation through another AI CLI. It lets a project request an independent model's analysis of a change, design or question.
 
 ## Install
 
@@ -8,35 +8,20 @@ Cross-model code review and consultation through an external AI CLI. The model y
 kendex add vanillagreencom/kendex --skill second-opinion
 ```
 
-Needs `jq` and at least one external CLI, `claude` or `codex`, logged in.
+Requires jq and a logged-in external CLI, claude or codex.
 
-## What it does
+## Features
 
-- `review`: code review of a diff range, returned as review-finding JSON in the same schema the internal review agents use.
-- `challenge`: adversarial analysis of an approach, returned as text.
-- `audit`: examination of existing code, returned as review-finding JSON.
-- `quick`: a question to the other model, returned as text.
-- `detect`: prints which target a review would run.
-- Reviews with several models at once when `SECOND_OPINION_COUNT` is raised, unioning the findings.
+- Review a branch diff or audit selected code.
+- Challenge a proposed approach.
+- Ask a focused technical question.
+- Collect reviews from multiple configured models.
 
 ## How it works
 
-```
-/second-opinion review                     # the branch diff
-/second-opinion review last 3 commits
-/second-opinion challenge my refactor plan
-/second-opinion audit src/auth/
-/second-opinion quick is this pattern safe?
-```
+You select a review, audit, challenge or question. The script identifies the current session model and chooses an eligible external CLI. That CLI reads the requested context and returns its analysis. Reviews and audits are saved in the shared finding format; other modes return text.
 
-```bash
-./scripts/second-opinion review --cwd .
-./scripts/second-opinion review --target claude --range HEAD~3..HEAD --cwd .
-```
-
-Modes, target selection, flags, exit codes, and the artifact contract: `second-opinion --help`.
-
-## Customise
+## Settings
 
 Set shared values in `kendex.settings.toml` under `[env]` and personal overrides in `.env.local`; nothing is marked required, so an install writes no settings. Every key, its default and the built-in `claude` and `codex` command lines: `second-opinion --help`. The ones most projects touch:
 

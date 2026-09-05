@@ -1,6 +1,6 @@
 # harness-ci
 
-One function for a repository that commits its kendex render: changed paths in, `harness_only=true|false` out, so CI can stand its expensive lanes down on a diff that touches nothing it builds, lints, typechecks or tests. Opt-in: a repository that wants CI over its harness directories does not install it.
+A changed-file check for repositories that commit kendex-generated files. It lets CI skip product checks when a change contains only recorded generated files.
 
 ## Install
 
@@ -8,37 +8,21 @@ One function for a repository that commits its kendex render: changed paths in, 
 kendex add vanillagreencom/kendex --skill harness-ci
 ```
 
-Install with the default symlink delivery, which writes the shared `.agents/skills/harness-ci/` tree every wiring example names. Copy delivery writes a tree per harness and no `.agents` tree, so a repository on it points its step at whichever tree it committed.
+Commit the installed skill and generated-file inventory. The CI runner needs `jq`. Follow [references/wiring.md](references/wiring.md) for workflow setup.
 
-## What it does
+## Features
 
-- Classifies a diff between two commits as render-only or not.
-- Reads the generated-file inventory written by kendex. In-place skills and carrier packages remain product source.
-- Answers `false` for anything it cannot prove, which runs every lane.
-- Ships workflow shapes to copy, and the tests that pin the semantics, run in kendex CI.
+- Compare changed files with kendex's generated-file inventory.
+- Run product checks for unrecorded files and uncertain results.
+- Support pull requests, pushes and merge-queue events.
 
 ## How it works
 
-```bash
-.agents/skills/harness-ci/scripts/harness-only \
-  --event pull_request --base "$BASE_SHA" --head "$HEAD_SHA"
-```
+kendex writes a generated-file inventory beside the installed files. Your CI step gives the checker the event and the base and head commits. The checker reads both inventories and compares them with the changed files. It returns a value your workflow uses to run or skip product checks.
 
-The consumer owns one thin step calling the rendered script, written by hand once from [references/wiring.md](references/wiring.md); the package never touches `.github/`, because a workflow installed into a stranger's CI renames jobs, drops required contexts and wedges merge queues. Install `jq` on the runner. Commit the inventory with the renders. Checkout with `fetch-depth: 0`: the classifier diffs two real commits. Flags and exit codes: `harness-only --help`. The rules a wiring must hold: [SKILL.md](SKILL.md) § The rules to hold when wiring it.
+## Settings
 
-## Semantics
+The checker has no project settings. The CI call supplies the event and commit identifiers. Use `harness-only --help` for its arguments.
 
-- Runs product checks when the inventory gains paths; a head cannot grant itself generated ownership.
-- Reads `.kendex-generated.json` at both diff endpoints. Every changed file must be recorded as generated at each endpoint where the file exists. An unrecorded file runs product checks, regardless of its directory.
-- `pull_request` diffs from the merge base (`base...head`); `push` and `merge_group` diff the two endpoints (`base head`), because a force-push leaves the `before` sha off the head's history.
-- Rename detection is off, so both sides of a `git mv` into a render tree are listed and the diff answers `false`.
-- `stdout` carries the verdict line and nothing else; changed paths and reasons go to `stderr`.
-- Exit `0` with every verdict; `2` on a wiring error, which prints no verdict.
 
-## Fail-closed
-
-Every unprovable case answers `false`: an unclassified event; a missing, empty or unresolvable endpoint, the all-zero sha of a first push included; a diff git cannot read; an empty changed-file set; a path git had to quote; an absent or invalid generated-file inventory. No flag turns any of these into a `true`.
-
-## Customise
-
-Nothing to configure. The script is upstream's: `kendex refresh` rewrites the render tree, so a local edit under `.agents/skills/harness-ci/` is drift. Send changes to [vanillagreencom/kendex](https://github.com/vanillagreencom/kendex); maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
+Workflow setup: [references/wiring.md](references/wiring.md). Maintainer rules and tests: [DEVELOPMENT.md](DEVELOPMENT.md).

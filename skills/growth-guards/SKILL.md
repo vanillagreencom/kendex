@@ -65,7 +65,7 @@ Run `scripts/install-git-hooks [--repo PATH]` to arm the shims.
 
 Pre-commit order: `size-ratchet --staged` when installed -> `preflight --staged` when installed -> `growth-guards all --staged` -> `GROWTH_GUARDS_PRE_COMMIT_LOCAL` when configured. `commit-msg` runs the message gate.
 
-Arming and disarming apply to the whole repository. Disarm before removing the skill. Ownership and layering: [README.md § Who gates a commit](README.md#who-gates-a-commit); install mechanics: [DEVELOPMENT.md § Git hook install contract](DEVELOPMENT.md#git-hook-install-contract).
+Arming and disarming apply to the whole repository. Disarm before removing the skill. Ownership and layering: [README.md § Git hooks](README.md#git-hooks); install mechanics: [DEVELOPMENT.md § Git hook install contract](DEVELOPMENT.md#git-hook-install-contract).
 
 ## Configuration
 
@@ -97,6 +97,6 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 | `GROWTH_GUARDS_SUBJECT_MAX` | `72` | Characters allowed in a hand-written commit header. |
 | `GROWTH_GUARDS_PRE_COMMIT_LOCAL` | *(empty)* | Repo-root-relative executable the pre-commit shim runs last. |
 
-Settings follow [README.md § Configuration](README.md#configuration). `GROWTH_GUARDS_SETTINGS_FILE=/dev/null` skips file sources; `GROWTH_GUARDS_CHANGELOG_COLLATE=1` is environment-only and lets `commit-msg` count a record change as the release changelog entry.
+Settings follow [README.md § Settings](README.md#settings). `GROWTH_GUARDS_SETTINGS_FILE=/dev/null` skips file sources; `GROWTH_GUARDS_CHANGELOG_COLLATE=1` is environment-only and lets `commit-msg` count a record change as the release changelog entry.
 
 **Excludes format.** `pattern<TAB>reason` per line (shell glob against the full repo-relative path; `*` crosses `/`); a pattern without a reason is a config error. A pattern opening with `!` carves its matches back into the scanned set, and wins over every exclusion row whatever the order. That is how hand-written source inside an otherwise excluded render tree (`.agents/**` plus `!.agents/skills/my-skill/**`) stays governed. To exclude a path that literally begins with `!`, escape it: `\!foo`. **Baseline format.** `path<TAB>count`, `LC_ALL=C` sorted, unique paths, positive counts. Seeding a first baseline and CI wiring: [README.md](README.md). Hook install and removal details: [DEVELOPMENT.md](DEVELOPMENT.md).

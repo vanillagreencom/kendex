@@ -1,6 +1,6 @@
 # Orchestration
 
-Primary-agent orchestration for one Linear or GitHub work item at a time: it picks up an issue, delegates the implementation to a specialist agent, runs a reviewer fan-out, routes the fixes back, opens the PR, and shepherds it through the review gate and CI to merge. It never writes code itself. For a project that wants issues taken from tracker to merged PR by agents, with a person deciding only product questions and merges.
+A workflow for taking Linear or GitHub issues through implementation, review and merge. A primary agent assigns work to coding and review agents and tracks their results.
 
 ## Install
 
@@ -8,25 +8,21 @@ Primary-agent orchestration for one Linear or GitHub work item at a time: it pic
 kendex add vanillagreencom/kendex --skill orch
 ```
 
-Needs the `github`, `worktree`, `dev`, `reviewer`, `decider` and `project-management` skills, plus `linear` for Linear workflows; `second-opinion` (a local pre-PR review) and `review-gate` (multi-PR watching) are optional and detected. System dependencies: `jq`, Bash 3.2, and `flock`.
+Requires jq, Bash 3.2 and flock. kendex installs the required workflow skills. Add linear for Linear issues. Second-opinion and review-gate are optional.
 
-## What it does
+## Features
 
-- Runs one cycle per session: get the issue, dev implements, review, dev fixes blockers, re-review the fix diff, push the PR, review gate, merge.
-- Bounds every loop: minor suggestions never trigger another review round, and a finding that cannot affect real usage is declined rather than fixed or filed.
-- Accepts progress from on-disk artifacts plus git and tracker state, never from an agent's chat message, so a session survives compaction and an agent going quiet.
-- Asks you about product and experience decisions, merge, scope beyond the issue, and revisiting a recorded decision; settles technical choices by rule or by the specialist who owns them.
-- `oversee` runs one session per unblocked item and shepherds every PR to merge.
-
-Every command and its workflow: [SKILL.md](SKILL.md) § Commands. Invoke through your harness (`/orch <command>`).
+- Assign implementation to a specialist in an isolated worktree.
+- Collect review findings and route required fixes to the implementer.
+- Open PRs and monitor CI and review requirements.
+- Resume work from saved workflow records.
+- Coordinate separate sessions for ready issues.
 
 ## How it works
 
-A parent issue with children is a container: it is never orchestrated or merged as one PR. Each child is its own PR unit, and the container closes when its last child merges. To keep a bundle as a single session and PR, add `(one PR)` to the parent's title; that marker wins over the `agent:multi` label.
+The primary agent reads the selected issue and prepares a worktree. It assigns implementation to a coding agent. Review agents inspect the completed change and return findings. The primary agent routes required fixes, opens the PR and checks CI and review results. It follows your configured merge policy when the PR is ready.
 
-Waiting on CI, approvals and the merge queue goes through the skill's own waiters (`ci-wait`, `approval-wait`, `queue-wait`), each with a bounded budget and one verdict. Launch lanes spread a fleet across the harness accounts on a machine by headroom.
-
-## Customise
+## Settings
 
 Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secrets in `.env.local`. Nothing is marked required, so installing writes nothing into your settings file; [kendex.settings.toml.example](kendex.settings.toml.example) comments the keys worth changing first.
 

@@ -1,6 +1,6 @@
 # Reviewer
 
-The shared contract for every review specialist in an orchestrated cycle: the reviewer ethos, the code-review classification, the finding JSON schema, and the QA-label lifecycle. Each review agent's domain and probes live in its own agent file; this skill is what they all load. For a project that runs the `orch` skill and its reviewer agents.
+Review workflows and finding formats for AI review agents. Projects using orch can collect specialist reviews in a shared format.
 
 ## Install
 
@@ -8,19 +8,19 @@ The shared contract for every review specialist in an orchestrated cycle: the re
 kendex add vanillagreencom/kendex --skill reviewer
 ```
 
-Needs `orch`, whose scripts the workflows run, and `code-quality` and `docs-writing`, the standards a finding is judged against; `linear` is optional. The kendex catalog's `code-review` bundle installs it beside the review agents.
+kendex also installs orch, code-quality and docs-writing. Add linear for Linear review work.
 
-## What it does
+## Features
 
-- A code-review workflow: diff, findings, JSON artifact, verdict.
-- A whole-codebase audit workflow with no diff.
-- A QA workflow triggered by a label on one PR.
-- The rules a finding is judged by: verify before reporting, report the class not the instance, a claim needs the line that makes it true, plausible by default.
+- Review a change or audit existing code.
+- Run additional review work selected by QA labels.
+- Record verified findings with their causes and effects.
+- Return a structured report to the primary agent.
 
 ## How it works
 
-The orchestrator delegates a review to each specialist agent; the agent loads this skill and its own agent file, reviews, writes a finding artifact in the shape of [schemas/review-finding.md](schemas/review-finding.md), and returns. The orchestrator accepts the artifact, never the chat message. Every workflow here runs orch scripts and does not stand alone.
+The primary agent assigns a review to a specialist. The specialist reads the change and verifies possible defects against the code. It writes findings using [schemas/review-finding.md](schemas/review-finding.md). The primary agent reads that report and routes required fixes.
 
-## Customise
+## Settings
 
-Nothing to configure. Project-specific review rules go in `[skill-instructions]` in `kendex.toml`; the agents' domains are the agent files, edited through `[agent-additional-instructions]`.
+Set project review instructions in `kendex.toml` under `[skill-instructions]`. Add instructions for a review agent under `[agent-additional-instructions]` in the same file.

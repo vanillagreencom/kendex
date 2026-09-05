@@ -33,8 +33,8 @@ kendex.settings.toml [env] > default):
   SIZE_RATCHET_BASELINE    baseline path            (default tools/size-ratchet-baseline.tsv)
   SIZE_RATCHET_EXCLUDES    exclusion-list path      (default tools/size-ratchet-excludes)
 Flags override both for the path settings.
-Reference, raise, repoint, and unit-change rules: README.md, "Trusted HEAD baseline"; declarations use RATCHET_RAISE=1.
-Seed behavior and safety: README.md, "Seeding a first baseline".
+Reference, raise, repoint, and unit-change rules: references/policy.md, "Trusted HEAD baseline"; declarations use RATCHET_RAISE=1.
+Seed behavior and safety: references/policy.md, "Seeding a first baseline".
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF
 }
@@ -346,7 +346,7 @@ if [ -f "$EXCLUDES_SOURCE" ]; then
     fi
     # A `!` pattern CARVES its matches back into the measured set, the only
     # way to govern hand-written source living inside an excluded render tree
-    # (README.md § Exclusion list). A row naming a path that begins with `!`
+    # (references/policy.md § Exclusion list). A row naming a path that begins with `!`
     # escapes it as `\!foo`, which stays an exclusion.
     case "$pat" in
       "!"*)

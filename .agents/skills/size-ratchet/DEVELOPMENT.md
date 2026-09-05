@@ -8,7 +8,7 @@ Internals and maintenance for the size-ratchet gate. Consumer docs and the behav
 
 A class threshold carries its unit: a bare number counts lines, a `k` suffix counts kibibytes. Markdown is measured in bytes because a re-wrap moves a line count on prose and leaves the byte count alone; code keeps lines, which is what every linter caps.
 
-The unit rides beside the threshold through class resolution (`PU`), through collection (one pending batch per unit, so an interleaved tree still batches rather than degrading to a call per file), into the counts rows, and out again as a baseline row's `b` suffix. Nothing compares across units. A row whose unit differs from its class's is reported as one to re-measure, and `--update` writes the current quantity in the new unit. `rows_raised` checks the unit tag before comparing numbers, and where the tag changed on a frozen row it measures `HEAD:<path>` in the new unit, once per crossing row, so the admission has a like quantity to bound it. The policy is [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
+The unit rides beside the threshold through class resolution (`PU`), through collection (one pending batch per unit, so an interleaved tree still batches rather than degrading to a call per file), into the counts rows, and out again as a baseline row's `b` suffix. Nothing compares across units. A row whose unit differs from its class's is reported as one to re-measure, and `--update` writes the current quantity in the new unit. `rows_raised` checks the unit tag before comparing numbers, and where the tag changed on a frozen row it measures `HEAD:<path>` in the new unit, once per crossing row, so the admission has a like quantity to bound it. The policy is [policy.md § Trusted HEAD baseline](references/policy.md#trusted-head-baseline).
 
 ## Collection
 
@@ -30,7 +30,7 @@ Growth staged then undone in the worktree is invisible to the default mode, so `
 
 `resolve_head_baseline_file` picks the reference path. With `--baseline` or a process `SIZE_RATCHET_BASELINE` it is the candidate's own path, read from HEAD. Otherwise it sets the settings library's HEAD mode and calls `sr_setting`: `sr_settings_resolve` owns source names, precedence, historical materialization, and tracked-symlink traversal; `sr_settings_source` is the memo front over it, recording each answer beside the snapshot it came from. A HEAD symlink at the source path itself is followed only while its target stays in the repository; one at a parent component refuses, because `git ls-tree` answers for a complete path only and a lookup that could not be performed is not an absent source. `sr_settings_head_absence_real` therefore classifies each ancestor before the absent sentinel may be returned: absent ends the walk, a tree continues it, and anything else refuses. An absolute, escaping, or candidate-only explicit source contributes nothing to the historical lookup; if it assigns this key, the run refuses because that value has no historical form. The same rule applies to an untracked `.env.local`.
 
-Materialized copies are named `settings.file.<encoded path>` and the memos `settings.resolved.<encoded path>`, two namespaces the `settings.absent` sentinel cannot occupy, so no source name can materialize onto the path that means "not there". A memo is only a cache, so one whose name will not fit as a single filesystem component is not written and that source resolves uncached. The main script handles only the flag and process-key overrides, then reads the baseline at the returned path. `rows_raised` consumes only those rows. The behavioural rule is [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
+Materialized copies are named `settings.file.<encoded path>` and the memos `settings.resolved.<encoded path>`, two namespaces the `settings.absent` sentinel cannot occupy, so no source name can materialize onto the path that means "not there". A memo is only a cache, so one whose name will not fit as a single filesystem component is not written and that source resolves uncached. The main script handles only the flag and process-key overrides, then reads the baseline at the returned path. `rows_raised` consumes only those rows. The behavioural rule is [policy.md § Trusted HEAD baseline](references/policy.md#trusted-head-baseline).
 
 ## The tighten-only rewrite
 
@@ -50,7 +50,7 @@ In a sparse checkout that omits the baseline file, checks still run against the 
 
 ## Path-class evaluation
 
-First match wins except on a frozen path, where the class inversion applies. [README.md § Path classes](README.md#path-classes) is the only statement of that rule; `path_threshold` implements it, one branch per exit. Nothing here restates it.
+First match wins except on a frozen path, where the class inversion applies. [policy.md § Path classes](references/policy.md#path-classes) is the only statement of that rule; `path_threshold` implements it, one branch per exit. Nothing here restates it.
 
 Both lists are parsed into one indexed array, the repo's entries first, and `REPO_CLASS_COUNT` divides them; a repo entry whose pattern the shipped list also carries is marked in `CLASS_RESTATED` once, after both parses. `path_threshold` stamps every repo entry it passes over or lets decide, so the verdict line is assembled after the classification pass and reports what each entry actually governed. An entry that decided some paths and was passed over on frozen ones reads `(yielded on frozen paths)`; one that decided none reads `(governed nothing: decided no counted path)`. It reports the state, not the cause: a pattern matching nothing and a pattern a preceding entry already claimed cannot be told apart, and a run printing an inert entry as the mapping in force would be a clean run advertising a threshold no file was judged against.
 
@@ -72,12 +72,12 @@ Only an absent source is skipped: a source that exists but is unusable (unreadab
 
 A consumer already running a size ratchet with this baseline format (`path<TAB>size`, `LC_ALL=C` sorted) can swap this script in drop-in: keep the existing baseline file where it is and point `SIZE_RATCHET_BASELINE` (or `--baseline`) at it. Rows written before the units existed carry no suffix and read as line counts, which is what they were.
 
-A unit migration re-measures the row in `--update`, then applies the HEAD comparison from [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
+A unit migration re-measures the row in `--update`, then applies the HEAD comparison from [policy.md § Trusted HEAD baseline](references/policy.md#trusted-head-baseline).
 
 A repo adopting the `400` default over a looser one gains offenders in the range between the two thresholds. Declare `SIZE_RATCHET_CLASSES` first, then freeze: freezing first baselines 401–800-line test files that the test class then puts back under their threshold, and a row for a file under its threshold is a stale row, so the migration fails immediately.
 
-`--update` never adds rows, so the freeze is one hand-edit: with the classes declared, run the check and turn each reported `new offender` line into a `path<TAB>size` row (see [Seeding a first baseline](README.md#seeding-a-first-baseline)), then commit that baseline together with the settings change. Declaring `SIZE_RATCHET_THRESHOLD` explicitly keeps the previous number instead.
+`--update` never adds rows, so the freeze is one hand-edit: with the classes declared, run the check and turn each reported `new offender` line into a `path<TAB>size` row (see [Seeding a first baseline](references/policy.md#seeding-a-first-baseline)), then commit that baseline together with the settings change. Declaring `SIZE_RATCHET_THRESHOLD` explicitly keeps the previous number instead.
 
 ## Added and raised rows
 
-`rows_raised` stamps candidate rows with frozen membership, joins them to the trusted reference snapshot, and emits `ADDED`, `RAISED`, `FROZEN`, or the unit variants. The rule behind those verdicts is stated once in [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
+`rows_raised` stamps candidate rows with frozen membership, joins them to the trusted reference snapshot, and emits `ADDED`, `RAISED`, `FROZEN`, or the unit variants. The rule behind those verdicts is stated once in [policy.md § Trusted HEAD baseline](references/policy.md#trusted-head-baseline).

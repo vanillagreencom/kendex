@@ -1,6 +1,6 @@
 # GitHub Queries
 
-A CLI over the GitHub API for pull-request work: PR data, threads and reviews; comments and replies; labels; CI failure logs; gated merges; and cross-checks of several PRs before a batch merge. Every command prints JSON, so output pipes straight into `jq`.
+A CLI for GitHub pull requests, reviews and CI results. Coding agents can read PR state, reply to findings and submit permitted changes from the shell.
 
 ## Install
 
@@ -8,31 +8,22 @@ A CLI over the GitHub API for pull-request work: PR data, threads and reviews; c
 kendex add vanillagreencom/kendex --skill github
 ```
 
-Needs `gh` (authenticated with `gh auth login`) and `jq`. `op` is needed only when a token is a 1Password reference.
+Requires authenticated `gh` and `jq`. The `op` CLI is required only for credentials stored as 1Password references.
 
-## What it does
+## Features
 
-- Reads a PR with its threads, comments and files, in a null-safe shape or the raw GraphQL nesting.
-- Posts, finds and edits comments; resolves review threads the GitHub UI cannot render.
-- Adds and removes labels; fetches the logs of failing CI runs and names the cause of a merge refusal.
-- Merges through a gate that refuses while a live review thread is unresolved.
-- Compares several PRs for conflicts and dependencies, with an optional build-and-test verification of the merged result.
-- `git-https-auth` runs one git command over HTTPS through `gh` auth when an SSH remote fails.
+- Read PR files, comments and review threads.
+- Post replies and resolve review threads.
+- Manage labels and inspect failed CI jobs.
+- Check merge requirements and merge eligible PRs.
+- Compare PR branches for conflicts and dependencies.
+- Run Git over HTTPS with the caller's GitHub authentication.
 
 ## How it works
 
-```bash
-./scripts/github.sh pr-view 123 --json number,title,state
-./scripts/github.sh pr-threads 123 --unresolved
-./scripts/github.sh pr-merge 123 --check
-./scripts/git-https-auth -C . fetch --prune origin
-```
+You run a command through `scripts/github.sh`. The CLI reads your project settings and selects the configured GitHub credentials. It calls GitHub and returns the requested result. Write commands report the outcome of the requested action.
 
-`./scripts/github.sh --help` lists every command; `./scripts/github.sh <command> --help` is one command's full contract. Bot-account operations use `GH_BOT_TOKEN` when set and fall back to the caller's `gh` login.
-
-The merge gate in `pr-merge` is policy, not mechanism: it binds only merges routed through `pr-merge`, so a raw `gh pr merge` or the GitHub UI still bypasses it. It is narrower than GitHub's `required_conversation_resolution`, which counts outdated threads too.
-
-## Customise
+## Settings
 
 Set non-secret defaults in `kendex.settings.toml` under `[env]`; keep tokens in `.env.local`. A value set in the parent process wins over project files.
 

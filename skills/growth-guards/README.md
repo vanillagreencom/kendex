@@ -1,50 +1,28 @@
 # growth-guards
 
-Checks that stop quiet repository decay, one family beside `size-ratchet`, armed as git hooks so every committer is gated: a person at a terminal, an AI harness, a script, an editor's commit button. For a repository that wants its markers, sizes, suppressions, changelog, markdown and commit messages held to one shape.
+Repository checks installed as Git hooks. Maintainers use them to check source files, markdown and commit messages before a commit completes.
 
 ## Install
 
 ```bash
 kendex add vanillagreencom/kendex --skill growth-guards
-kendex guard install
 ```
 
-Needs `git`, `awk` and the usual POSIX userland; Bash 3.2 is enough. `kendex guard install` runs `scripts/install-git-hooks`, which arms `.git/hooks`; what it writes and leaves alone is [DEVELOPMENT.md](DEVELOPMENT.md) § Git hook install contract. Git never clones hooks, so every fresh clone runs it once. `kendex guard check` or `install-git-hooks --check` says whether the hooks are armed, and never passes silently.
+Requires Git, awk and standard POSIX tools. Bash 3.2 is supported. Run `kendex guard install` in each fresh clone, then `kendex guard check` to check the hooks.
 
-## What it does
+## Features
 
-- Refuses work markers, new oversized files, growth in existing oversized files, blanket lint suppression and conflict markers.
-- Checks changelog fragment structure and length. The release command combines accepted fragments into the record.
-- Checks paragraph layout, relative references, dates, and issue numbers in markdown agents load.
-- Optionally checks dates and issue references in source comments.
-- Holds commit messages to `type(scope): subject`, a length cap, and the changelog entry a change under a named path owes.
-- `md-reflow` rewrites markdown into the format the `md-format` lane judges.
-
-What each check bans and how it is scoped: [CHECKS.md](CHECKS.md).
+- Check conflict markers, work markers, file growth and lint suppressions.
+- Check changelog fragments and required change entries.
+- Check markdown layout and references.
+- Optionally check dates and issue references in source comments.
+- Reflow markdown paragraphs with md-reflow.
 
 ## How it works
 
-```bash
-scripts/growth-guards [all]           # every enabled check
-scripts/growth-guards [all] --staged  # the same batch at commit scope
-scripts/growth-guards CHECK [ARGS]    # one check, flags passed through
-```
+You select checks in the project settings and install the Git hooks. When you commit, the pre-commit hook runs the enabled checks on the staged files. The commit-msg hook checks the commit message. A failed check stops the commit and prints the problem.
 
-Every check is a standalone executable with one exit contract: `0` clean, `1` violations, `2` usage, config or collection error. Nothing fails open: a check that could not complete is `2`, never a pass. Scans read index content and skip binaries.
-
-The `pre-commit` hook judges one commit snapshot and `commit-msg` runs the message gate; the chain and its order are [DEVELOPMENT.md](DEVELOPMENT.md) § The pre-commit chain. Both block on any failure; `git commit --no-verify` is the only bypass.
-
-`md-format` starts with changed documents. `md-refs` checks all configured documents when any change is staged, so it also finds broken references from unchanged callers. Reflow the tree with `scripts/md-reflow --all`, then set `GROWTH_GUARDS_MD_SCOPE = "all"` for unconditional checks. Put vendored or generated markdown in `tools/md-excludes` with a reason.
-
-In CI, run the batch without `--staged`: the index-wide `todo-ban` scan is the only lane that sees a marker no commit ever diffed. `byte-ceiling --base origin/main` gates a PR's additions and file-size growth.
-
-## Who gates a commit
-
-The git hooks are the gate. They need no kendex binary: the shim execs this skill's committed scripts, so a machine that never installed kendex is gated by committed shell and git alone. kendex only arms and reports: `kendex guard install` and `kendex guard uninstall` invoke the installer, and `kendex check` relays the installer's `--check` verdict where `.git/hooks/kendex-guards` exists rather than forming a second opinion.
-
-The `pre-commit-check` harness hook never stands in for the git hooks. Where both hooks are armed it steps aside; where nothing is armed it refuses the commit and names `kendex guard install`. It refuses only what a git hook cannot: a `--no-verify` flag, a short cluster holding its letter, or a `core.hooksPath` key. Half-armed is not armed: with `commit-msg` missing, git takes any message.
-
-## Configuration
+## Settings
 
 Every key, its default and its meaning: [SKILL.md](SKILL.md) § Configuration. Each resolves environment > `.env.local` > `.kendex/settings.toml` > committed `kendex.settings.toml` (flat `KEY = "value"` under `[env]`) > default; a `.env` file is never read. Per-check flags (`--excludes`, `--baseline`) override every source; relative paths are repo-root-relative.
 
@@ -53,3 +31,9 @@ Every key, its default and its meaning: [SKILL.md](SKILL.md) § Configuration. E
 GROWTH_GUARDS_BYTE_CEILING_KB = "500"
 GROWTH_GUARDS_CHECKS = "todo-ban suppression-ban"
 ```
+
+## Git hooks
+
+The Git hooks run the committed skill scripts. Install them in each fresh clone with `kendex guard install`. Use `kendex guard check` to inspect the installation. The harness pre-commit hook requires these Git hooks before it allows a commit.
+
+Check definitions: [CHECKS.md](CHECKS.md). Hook setup and execution: [DEVELOPMENT.md](DEVELOPMENT.md).

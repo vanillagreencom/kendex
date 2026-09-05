@@ -1,54 +1,40 @@
 # @vanillagreen/pi-background-tasks
 
-Runs shell commands in the background of a Pi session without blocking the conversation, and wakes the agent when they finish or print something that matters. For anyone whose agent runs dev servers, watchers, log tails or long builds.
+A Pi extension for shell commands that run while the conversation continues. It supports builds, development servers and log monitors.
 
 ![Spawning background tasks](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-background-tasks/assets/spawn-tasks.png) ![Inline mini-dashboard](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-background-tasks/assets/inline-dashboard.png)
 
 ## Install
 
-Declare the package in the scope's kendex manifest, then let `kendex update-pi` install it and register it in Pi's `settings.json`. For a project, in its `kendex.toml`:
+- npm: `pi install npm:@vanillagreen/pi-background-tasks`.
+- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-background-tasks"]
 source = "kendex"
 ```
 
-```bash
-kendex update-pi
-```
+Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
 
-The same declaration in `~/.config/kendex/kendex.toml` installs it for every project. `kendex update-pi --check` prints the plan and changes nothing.
+## Features
 
-Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-background-tasks):
-
-```bash
-pi install npm:@vanillagreen/pi-background-tasks
-```
-
-Restart Pi after installation.
-
-## What it does
-
-- Gives the agent a `bg_task` tool that spawns, lists, tails, stops and clears background commands, and a read-only `bg_status` tool for inspecting and stopping them.
-- Diverts blocking monitors (`watch`, `tail -f`, `journalctl -f`, polling loops with `sleep`) into a background task before they freeze the turn; `/bg:next` or a shortcut forces the next bash command into the background.
-- Wakes the agent on exit, and optionally on new output or on output matching a pattern, with a bounded inline tail and the path of the full log.
-- Keeps the full log on disk for every task, and restores task history across reloads and resumes.
-- Replays a missed exit wake after a restart, and keeps watching a task that outlived Pi until it really ends.
-- Shows a mini-dashboard beside the editor and a full `/bg` dashboard with logs, details and controls.
-- Optionally runs tasks at lower CPU and I/O priority through `systemd-run` or `nice` and `ionice`.
-- Publishes task lifecycle events to `pi-session-bridge` clients when that package is loaded, without adding chat messages.
-
-`/bg` opens the dashboard; `/bg:run`, `/bg:list`, `/bg:stop`, `/bg:clear` and `/bg:next` do one thing each, and `/bg log <id>` and `/bg watch <id>` take a task id or pid with autocomplete. Tasks inherit Pi's environment and working directory and are stopped when the session shuts down.
+- Start, inspect and stop background commands.
+- Move configured blocking commands into background tasks.
+- Notify the agent when a task exits or produces selected output.
+- Read full logs and task history in the dashboard.
+- Optionally reduce task CPU and disk priority.
 
 ## How it works
 
-A spawned command runs in its own process group with stdout and stderr captured to a log file. The extension keeps a bounded in-memory tail per task, debounces output, and delivers wakes to the agent as custom messages that steer the current turn or follow it up. Task snapshots persist in the session file and in a sidecar, so a resumed session sees the same tasks. The agent-facing rules ship in `instructions.md`, appended to the system prompt at install.
+The agent starts a command with the background task tool. The extension runs the command separately and saves its output to a log. It shows task status beside the editor. When the command exits or matches a notification rule, it sends the agent a message with recent output and the log path.
 
-## Customise
+## Settings
+
+The settings editor writes user values to `~/.pi/agent/settings.json` and project values to `.pi/settings.json`. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-background-tasks"]`.
 
 Open `/extensions:settings`; settings appear under the **Background Tasks** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted.
 
-- `enabled`: master toggle; `glyphStyle` picks Unicode or ASCII chrome, and `pi-tool-renderer`'s global override wins when set.
+- `enabled`: package toggle; `glyphStyle` picks Unicode or ASCII symbols, and `pi-tool-renderer`'s global override wins when set.
 - Auto-backgrounding: `autoBackgroundBash`, `autoBackgroundPatterns`, `forcedBackgroundWindowSeconds`, `forcedBackgroundNotifyOnOutput`.
 - Execution: `defaultTimeoutSeconds`, `forceKillGraceMs`, and the `resourceControl*` group (`resourceControlEnabled` turns it on, `resourceControlMode` picks the mechanism, the rest set weights, niceness and where controls apply).
 - Wakes and output: `outputSettleMs`, `outputAlertMaxChars`, `outputWakeBudgetMaxWakes`, `outputWakeBudgetMaxBytes`, `outputBufferMaxChars`, `logTailMaxChars`.
