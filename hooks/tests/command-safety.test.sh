@@ -48,6 +48,18 @@ jq -nc --arg cwd "$repo" '{tool_input:{cmd:"qs -c vshell"},cwd:$cwd}' | bash "$h
 status=0
 jq -nc --arg cwd "$repo" '{tool_input:{command:["qs","-c","vshell"]},cwd:$cwd}' | bash "$hook" >/dev/null 2>&1 || status=$?
 [ "$status" -eq 2 ] || { printf 'FAIL argument-array input\n'; failed=$((failed + 1)); }
+status=0
+jq -nc --arg cwd "$repo" '{toolName:"bash",toolArgs:{command:"qs -c vshell"},cwd:$cwd}' | bash "$hook" >/dev/null 2>&1 || status=$?
+[ "$status" -eq 2 ] || { printf 'FAIL Copilot object input\n'; failed=$((failed + 1)); }
+status=0
+jq -nc --arg cwd "$repo" '{toolName:"bash",toolArgs:{command:"git status"},cwd:$cwd}' | bash "$hook" >/dev/null 2>&1 || status=$?
+[ "$status" -eq 0 ] || { printf 'FAIL allowed Copilot object input\n'; failed=$((failed + 1)); }
+status=0
+jq -nc --arg cwd "$repo" '{toolName:"bash",toolArgs:"{\"command\":\"qs -c vshell\"}",cwd:$cwd}' | bash "$hook" >/dev/null 2>&1 || status=$?
+[ "$status" -eq 2 ] || { printf 'FAIL Copilot string input\n'; failed=$((failed + 1)); }
+status=0
+jq -nc --arg cwd "$repo" '{toolName:"bash",toolArgs:"{\"command\":\"git status\"}",cwd:$cwd}' | bash "$hook" >/dev/null 2>&1 || status=$?
+[ "$status" -eq 0 ] || { printf 'FAIL allowed Copilot string input\n'; failed=$((failed + 1)); }
 
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "^other-command$"\n' >"$repo/kendex.settings.toml"
 check 0 'qs -c vshell' 'policy is configured, not tied to Quickshell'
@@ -59,7 +71,7 @@ printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "["\n' >"$repo/kendex.settings.toml
 check 2 'scripts/validate qml' 'invalid pattern refuses'
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = ""\n' >"$repo/kendex.settings.toml"
 check 2 'scripts/validate qml' 'empty pattern refuses'
-for payload in 'not JSON' '{"tool_input":{"command":false}}'; do
+for payload in 'not JSON' '{"tool_input":{"command":false}}' '{"tool_input":{}}'; do
   status=0
   printf '%s' "$payload" | bash "$hook" >/dev/null 2>&1 || status=$?
   [ "$status" -eq 2 ] || { printf 'FAIL invalid input\n'; failed=$((failed + 1)); }

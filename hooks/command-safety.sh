@@ -17,9 +17,15 @@ for dependency in jq git grep cat; do
 done
 input="$(cat)" || refuse "could not read the hook input"
 command_text="$(jq -r '
-  [.tool_input.command, .tool_input.cmd, .command, .cmd]
+  def command_arg:
+    if type == "object" then (.command // .cmd)
+    elif type == "string" then
+      (try fromjson catch null)
+      | if type == "object" then (.command // .cmd) else null end
+    else null end;
+  [.tool_input.command, .tool_input.cmd, (.toolArgs | command_arg), .command, .cmd]
   | map(select(. != null))
-  | if length == 0 then "" else .[0] end
+  | if length == 0 then error("missing command") else .[0] end
   | if type == "string" then .
     elif type == "array" and all(.[]; type == "string") then join(" ")
     else error("invalid command") end
