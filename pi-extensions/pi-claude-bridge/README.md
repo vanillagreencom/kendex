@@ -26,7 +26,7 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 
 ## How it works
 
-You select a pi-claude model in Pi. The bridge starts or resumes Claude Code through the Agent SDK. It sends the prompt and makes Pi's tools available to Claude Code. Tool calls return to Pi for execution, then their results return to Claude Code. Pi displays the response and saves the Claude session identifier.
+You select a pi-claude model in Pi. Select **Claude Fable 5.1** (`pi-claude/claude-fable-5-1`) for Fable. The bridge starts or resumes Claude Code through the Agent SDK. It sends the prompt and makes Pi's tools available to Claude Code. Tool calls return to Pi for execution, then their results return to Claude Code. Pi displays the response and saves the Claude session identifier.
 
 ## Settings
 

@@ -34,7 +34,7 @@ describe("MODELS projection", () => {
 		assert.deepEqual(models.map((m) => m.id), MODEL_IDS_IN_ORDER);
 	});
 
-	it("lists Fable 5 first, then Opus 5 ahead of older Opus models", () => {
+	it("lists Fable 5.1 first, then Opus 5 ahead of older Opus models", () => {
 		const models = buildModels(MODEL_IDS_IN_ORDER.map(mockPiAiModel));
 		assert.equal(models[0]?.id, FABLE_MODEL_ID);
 		assert.equal(models[1]?.id, OPUS_5_MODEL_ID);
@@ -43,9 +43,9 @@ describe("MODELS projection", () => {
 
 	it("fills bridge-owned future IDs missing from pi-ai and drops unknown missing IDs", () => {
 		const models = buildModels([mockPiAiModel("claude-haiku-4-5")]);
-		assert.deepEqual(models.map((m) => m.id), ["claude-fable-5", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"]);
-		assert.equal(models.find((m) => m.id === "claude-fable-5")?.name, "Claude Fable 5");
-		assert.equal(models.find((m) => m.id === "claude-fable-5")?.contextWindow, 1000000);
+		assert.deepEqual(models.map((m) => m.id), ["claude-fable-5-1", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"]);
+		assert.equal(models.find((m) => m.id === "claude-fable-5-1")?.name, "Claude Fable 5.1");
+		assert.equal(models.find((m) => m.id === "claude-fable-5-1")?.contextWindow, 1000000);
 		assert.equal(models.find((m) => m.id === "claude-opus-4-8")?.maxTokens, 128000);
 		assert.equal(models.find((m) => m.id === "claude-sonnet-5")?.name, "Claude Sonnet 5");
 		assert.equal(models.find((m) => m.id === "claude-sonnet-5")?.contextWindow, 1000000);
@@ -53,19 +53,19 @@ describe("MODELS projection", () => {
 		assert.equal(models.find((m) => m.id === "claude-opus-5")?.contextWindow, 1000000);
 		assert.equal(models.find((m) => m.id === "claude-opus-5")?.maxTokens, 128000);
 		assert.deepEqual(models.find((m) => m.id === "claude-opus-5")?.thinkingLevelMap, { xhigh: "xhigh", max: "max" });
-		assert.deepEqual(models.find((m) => m.id === "claude-fable-5")?.thinkingLevelMap, { xhigh: "xhigh", max: "max" });
+		assert.deepEqual(models.find((m) => m.id === "claude-fable-5-1")?.thinkingLevelMap, { xhigh: "xhigh", max: "max" });
 		assert.deepEqual(models.find((m) => m.id === "claude-sonnet-5")?.thinkingLevelMap, { xhigh: "xhigh", max: "max" });
 	});
 
 	it("prefers pi-ai metadata over bridge fallback metadata", () => {
 		const models = buildModels([{
-			...mockPiAiModel("claude-fable-5"),
+			...mockPiAiModel("claude-fable-5-1"),
 			name: "Registry Fable",
 			contextWindow: 123,
 			maxTokens: 456,
 			thinkingLevelMap: { xhigh: "max" },
 		}]);
-		const fable = models.find((m) => m.id === "claude-fable-5");
+		const fable = models.find((m) => m.id === "claude-fable-5-1");
 		assert.equal(fable?.name, "Registry Fable");
 		assert.equal(fable?.contextWindow, 123);
 		assert.equal(fable?.maxTokens, 456);

@@ -28028,7 +28028,7 @@ function convertPiMessages(messages, customToolNameToSdk) {
 }
 
 // src/models.ts
-var FABLE_MODEL_ID = "claude-fable-5";
+var FABLE_MODEL_ID = "claude-fable-5-1";
 var FABLE_FALLBACK_MODEL_ID = "claude-opus-4-8";
 var OPUS_5_MODEL_ID = "claude-opus-5";
 var SONNET_5_MODEL_ID = "claude-sonnet-5";
@@ -28048,7 +28048,7 @@ var MODEL_IDS_IN_ORDER = [
 var FALLBACK_MODELS = {
   [FABLE_MODEL_ID]: {
     id: FABLE_MODEL_ID,
-    name: "Claude Fable 5",
+    name: "Claude Fable 5.1",
     reasoning: true,
     thinkingLevelMap: { xhigh: "xhigh", max: "max" },
     input: ["text", "image"],
