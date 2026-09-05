@@ -33,8 +33,9 @@ impl HarnessAdapter for Codex {
                 path: root.join("hooks.json"),
                 reader: Reader::HooksObject,
             }],
-            // Deprecated-but-loading prompt surface: observed, never written.
-            ItemKind::Command => vec![Surface::files(root.join("prompts"), &["md"])],
+            // Codex removed custom prompts in 0.118, so `~/.codex/prompts`
+            // is read by nothing and a command is a skill (see caps).
+            ItemKind::Command => vec![],
             ItemKind::McpServer => vec![Surface::Structured {
                 path: root.join("config.toml"),
                 reader: Reader::McpServersToml,

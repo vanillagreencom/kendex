@@ -296,12 +296,12 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
         // Native for the events `hook.rs` maps onto codex's own; anything
         // outside that map renders as prose the model may ignore.
         (Codex, Hook) => enforced(managed(BOTH)),
-        // Codex deprecated `~/.codex/prompts` in favor of skills, so a
-        // command installs as a skill and is read back from the skill
-        // surface. The prompts dir still loads, so it is still scanned —
-        // and never written, which is why adopt stays off.
+        // Codex removed custom prompts in 0.118 (2026-03) in favor of
+        // skills, so a command installs as a skill and is read back from the
+        // skill surface; `~/.codex/prompts` is read by nothing and is not
+        // scanned, which is also why adopt stays off.
         (Codex, Command) => KindCaps {
-            observe: GLOBAL,
+            observe: NONE,
             install: BOTH,
             toggle: BOTH,
             remove: BOTH,
@@ -389,8 +389,9 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
         // a repository cannot lift, and the audit says so per item rather
         // than the table claiming kendex's switch is one-way (matrix §R7).
         (Copilot, Agent | Skill | McpServer) => managed(BOTH),
-        // No file-backed slash-command surface exists in any Copilot product
-        // — prompt files are IDE-only (matrix §D8).
+        // Copilot CLI reads no command surface of its own: prompt files are
+        // IDE-only (matrix §D8), and the one command directory it does read,
+        // Claude Code's `.claude/commands`, is the Claude adapter's.
         (Copilot, Command) => unsupported(),
         // Copilot runs hooks from `.github/hooks/*.json` and
         // `~/.copilot/hooks/*.json` at 14 events, honoring the exit code

@@ -1,0 +1,1 @@
+- kendex no longer lists `~/.codex/prompts`, a directory Codex stopped reading in 0.118; a Codex command is a skill.
