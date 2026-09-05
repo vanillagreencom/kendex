@@ -32,7 +32,7 @@ The extension checks the selected model and enables supported tools. An image re
 
 ## Settings
 
-The settings editor writes user values to `~/.pi/agent/settings.json` and project values to `.pi/settings.json`. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-codex-minimal-tools"]`.
+The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-codex-minimal-tools"]`.
 
 Open `/extensions:settings`; settings appear under the **Codex Minimal Tools** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted.
 
