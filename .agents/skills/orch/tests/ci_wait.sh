@@ -866,6 +866,119 @@ assert_eq "$rc" "1" "case36b: unreadable log exits 1" "$stderr"
 assert_eq "$(json_field "$output" '.verdict')" "fail" "case36b: unreadable log fails closed" "$stderr"
 assert_eq "$(cat "$rerun_calls")" "" "case36b: a gh failure triggers no rerun" "$stderr"
 
+# Call-recording gh stub: every case here terminates in the parser or the
+# config resolver, so ANY gh invocation is a failure the log makes visible.
+mkdir -p "$TMP_ROOT/argbin"
+cat > "$TMP_ROOT/argbin/gh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$TMP_ROOT/argval-gh.calls"
+exit 1
+EOF
+chmod +x "$TMP_ROOT/argbin/gh"
+
+echo "=== ci-wait argument validation ==="
+
+# Usage errors must terminate in the arg parser, before auth or any gh call:
+# an unknown flag that falls through into a positional slot dies under
+# `set -u` as "timeout: unbound variable", and `--help` taken as the PR number
+# crashes in jq. This gh stub records every invocation so a clean pass proves
+# gh was never reached.
+run_wait_args() {
+  (cd "$TMP_ROOT/repo" \
+    && PATH="$TMP_ROOT/argbin:$PATH" \
+       .agents/skills/orch/scripts/ci-wait "$@")
+}
+
+assert_no_gh_calls() {
+  local name="$1"
+  if [[ -e "$TMP_ROOT/argval-gh.calls" ]]; then
+    assert_eq "$(cat "$TMP_ROOT/argval-gh.calls")" "" "$name"
+  else
+    assert_eq "no-calls" "no-calls" "$name"
+  fi
+  rm -f "$TMP_ROOT/argval-gh.calls"
+}
+
+# Case 32: --help answers with usage and exit 0 instead of being consumed as
+# the PR number.
+stderr="$TMP_ROOT/case32.err"
+set +e
+output=$(run_wait_args --help 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "case32: --help exits 0" "$stderr"
+assert_contains "$output" "Usage: ci-wait" "case32: --help prints usage"
+# The heredoc is the contract's sole home: pin tokens whose semantics live
+# nowhere else (tokens, never sentences).
+assert_contains "$output" "Exit codes:" "case32: --help carries the exit-code table"
+assert_contains "$output" "no-CI route" "case32: --help carries the verdict=none contract"
+assert_contains "$output" "CI_WAIT_NO_CHECKS_GRACE" "case32: --help carries the grace knob"
+assert_no_gh_calls "case32: --help never invokes gh"
+
+# Case 32b: -h behaves like --help.
+stderr="$TMP_ROOT/case32b.err"
+set +e
+output=$(run_wait_args -h 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "case32b: -h exits 0" "$stderr"
+assert_contains "$output" "Usage: ci-wait" "case32b: -h prints usage"
+assert_no_gh_calls "case32b: -h never invokes gh"
+
+# Case 33: an unknown flag is rejected with usage on stderr, never absorbed
+# into a positional slot (the "timeout: unbound variable" abort).
+stderr="$TMP_ROOT/case33.err"
+set +e
+output=$(run_wait_args 492 --timeout 2400 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "2" "case33: unknown flag exits 2" "$stderr"
+assert_contains "$(cat "$stderr")" "unknown option '--timeout'" "case33: unknown flag named on stderr"
+assert_contains "$(cat "$stderr")" "Usage: ci-wait" "case33: unknown flag prints usage on stderr"
+assert_not_contains "$(cat "$stderr")" "unbound variable" "case33: no set -u abort"
+assert_no_gh_calls "case33: unknown flag never invokes gh"
+
+# Case 34: a non-integer PR number is rejected before any gh call instead of
+# crashing later in jq.
+stderr="$TMP_ROOT/case34.err"
+set +e
+output=$(run_wait_args abc 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "2" "case34: non-integer PR exits 2" "$stderr"
+assert_contains "$(cat "$stderr")" "positive integer" "case34: non-integer PR error is explicit"
+assert_no_gh_calls "case34: non-integer PR never invokes gh"
+
+# Case 34b: non-integer poll_interval / max_wait are rejected the same way.
+stderr="$TMP_ROOT/case34b.err"
+set +e
+output=$(run_wait_args 1 abc 30 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "2" "case34b: non-integer poll_interval exits 2" "$stderr"
+assert_contains "$(cat "$stderr")" "positive integer" "case34b: non-integer poll_interval error is explicit"
+
+stderr="$TMP_ROOT/case34c.err"
+set +e
+output=$(run_wait_args 1 15 abc 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "2" "case34c: non-integer max_wait exits 2" "$stderr"
+assert_contains "$(cat "$stderr")" "positive integer" "case34c: non-integer max_wait error is explicit"
+
+# Case 35: no arguments at all gets usage, not an unbound-variable abort.
+stderr="$TMP_ROOT/case35.err"
+set +e
+output=$(run_wait_args 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "2" "case35: missing PR argument exits 2" "$stderr"
+assert_contains "$(cat "$stderr")" "Usage: ci-wait" "case35: missing PR argument prints usage on stderr"
+assert_no_gh_calls "case35: missing PR argument never invokes gh"
+
+# `--json` remaining accepted with valid positionals is covered by the output
+# contract above (cases 10-14 run `ci-wait 1 1 30 --json` end to end).
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

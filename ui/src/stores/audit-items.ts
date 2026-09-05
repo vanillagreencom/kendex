@@ -9,9 +9,19 @@ import {
 import { adoptedToastLabel } from "@/lib/copy";
 import { replacedToastLabel } from "@/lib/copy-in-the-way";
 import { writingRepo } from "@/lib/rescan";
+import { sameScope } from "@/lib/scope";
 import { sayUndone } from "@/lib/undone";
-import { replaceView } from "./audit-fold";
 import { type ErrorAction, useProblemsStore } from "./problems";
+
+/** One scope's view, swapped for the fresh one a command handed back.
+ *  This is the whole of what "a fresh audit arrived" means, and it is
+ *  decided per scope: the machine-wide answer says only that the command
+ *  ran. */
+function replaceView(views: AuditView[], fresh: AuditView): AuditView[] {
+  return views.map((view) =>
+    sameScope(view.scope, fresh.scope) ? fresh : view,
+  );
+}
 
 /** Every action here answers whether it worked. Most callers only need the
  *  state update that comes with it; the ones running several in a row need

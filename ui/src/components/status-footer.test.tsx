@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { scanFailedStatusLabel, scanStatusLabel } from "@/lib/copy-footer";
+import { scanFailedStatusLabel, scanStatusLabel } from "@/lib/copy";
 import { StatusFooter } from "./status-footer";
 
 // Static markup escapes apostrophes, so a pinned copy token must be

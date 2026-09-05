@@ -5,7 +5,7 @@ import {
   SCANNING_LABEL,
   scanFailedStatusLabel,
   scanStatusLabel,
-} from "@/lib/copy-footer";
+} from "@/lib/copy";
 import { problemsFooterLabel } from "@/lib/error-copy";
 import { exactTime, relativeTime } from "@/lib/relative-time";
 import { useNowTick } from "@/lib/use-now-tick";

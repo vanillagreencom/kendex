@@ -236,3 +236,13 @@ export const appUpdateCommandDownloadNote = (path: string): string =>
 // it. Said wherever a change is one field and the retry is to press again.
 export const SETTINGS_MOVED_MESSAGE =
   "Your settings changed in another window. Try again.";
+
+// The status footer: the always-mounted strip's scan status.
+export const SCANNING_LABEL = "Scanning…";
+export const scanStatusLabel = (scannedAgo: string | null): string =>
+  scannedAgo ? `Up to date · scanned ${scannedAgo}` : "Up to date";
+// "Up to date" beside a scan that failed would have the footer and Home
+// answering the same question oppositely: a failed first scan is a failed
+// status, and a kept result is last-known, not current.
+export const scanFailedStatusLabel = (scannedAgo: string | null): string =>
+  scannedAgo ? `Couldn't scan · last scanned ${scannedAgo}` : "Couldn't scan";
