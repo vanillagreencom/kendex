@@ -34,9 +34,7 @@ Needs `jq` and at least one external CLI, `claude` or `codex`, logged in.
 ./scripts/second-opinion review --target claude --range HEAD~3..HEAD --cwd .
 ```
 
-Every mode picks roster entries that are available and run a different model from the session: one, or up to `SECOND_OPINION_COUNT` of them in `review`. The review prompt reviews through fixed lenses (correctness, security and fail-open, adversarial inputs, portability, repo-rule adherence, docs-versus-code drift, test adequacy) and appends the repository's own instruction files, the same inputs the GitHub review bots read. The orch skill runs `review` as a local pre-PR review during `submit-pr` and can offer one during `review-pr`.
-
-Flags, exit codes and the artifact contract: `second-opinion --help`.
+Modes, target selection, flags, exit codes, and the artifact contract: `second-opinion --help`.
 
 ## Customise
 
