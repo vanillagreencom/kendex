@@ -8,7 +8,7 @@ The shared contract for every review specialist in an orchestrated cycle: the re
 kendex add vanillagreencom/kendex --skill reviewer
 ```
 
-Needs `orch`, whose scripts the workflows run; `linear` is optional. The kendex catalog's `code-review` bundle installs it beside the review agents.
+Needs `orch`, whose scripts the workflows run, and `code-quality` and `docs-writing`, the standards a finding is judged against; `linear` is optional. The kendex catalog's `code-review` bundle installs it beside the review agents.
 
 ## What it does
 

@@ -8,6 +8,8 @@ Code-authoring standards for dev agents, kept in one upstream copy. For a reposi
 kendex add vanillagreencom/kendex --skill code-quality
 ```
 
+Installs `docs-writing` beside it, which owns the markdown standard this skill points at.
+
 ## What it does
 
 - Correctness rules: handle every error, never fail open, name the actual cause.

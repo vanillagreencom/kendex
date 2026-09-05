@@ -45,7 +45,7 @@ Restart Pi after installation.
 
 ## How it works
 
-Every feature is a Pi event handler or a registered command in `extensions/qol.ts`, gated by its own setting, so a disabled feature registers nothing. Sibling kendex extensions are reached through shared global symbols rather than imports, so each works alone. The budget guard compacts in bounded chunks only when nothing else has compacted the session, so each summarization call stays under the provider's limits.
+Every feature is a Pi event handler or a registered command in `extensions/qol.ts`, gated by its own setting, so a disabled feature registers nothing. Sibling kendex extensions are reached through shared global symbols rather than imports, so each works alone. The budget guard runs only when nothing else has compacted the session, so it never duplicates Pi's own compaction.
 
 ## Customise
 
