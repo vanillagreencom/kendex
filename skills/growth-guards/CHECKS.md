@@ -17,10 +17,10 @@ Comment leaders: `//`, `#`, `;`, `/*`, `<!--`. A marker immediately preceded by 
 
 ## byte-ceiling
 
-A tracked file a change puts over `GROWTH_GUARDS_BYTE_CEILING_KB` (KB = 1024 bytes) fails; size is the blob's object size. Exempt by exact basename: `Cargo.lock`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, `bun.lockb`, `flake.lock`, `poetry.lock`, `uv.lock`, `Pipfile.lock`, `Gemfile.lock`, `composer.lock`, `go.sum`, `gradle.lockfile`, `packages.lock.json`, `Package.resolved`. Asset trees go in `GROWTH_GUARDS_BYTE_EXCLUDES`, overridden by `--excludes FILE`.
+A tracked file a change puts over `GROWTH_GUARDS_BYTE_CEILING_KB` (KB = 1024 bytes) fails; size is the blob's object size. An existing file already over the ceiling may stay the same size or shrink, but may not grow. Exempt by exact basename: `Cargo.lock`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, `bun.lockb`, `flake.lock`, `poetry.lock`, `uv.lock`, `Pipfile.lock`, `Gemfile.lock`, `composer.lock`, `go.sum`, `gradle.lockfile`, `packages.lock.json`, `Package.resolved`. Asset trees go in `GROWTH_GUARDS_BYTE_EXCLUDES`, overridden by `--excludes FILE`.
 
 - `--staged` (default): files added, modified or type-changed in the staged diff, renames held to exact content.
-- `--base REF`: files added since the merge-base with REF.
+- `--base REF`: files added, modified or type-changed since the merge-base with REF.
 - `--all`: every tracked file.
 
 A copy is an addition; symlinks and gitlinks are not sized.

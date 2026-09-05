@@ -12,8 +12,8 @@
 GROWTH_GUARDS_CHECKS = "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs"
 
 # Kilobytes a single tracked file may reach before byte-ceiling refuses it.
-# Declared asset trees are exempted through GROWTH_GUARDS_BYTE_EXCLUDES
-# rather than by raising this.
+# Existing files already above it may hold or shrink, but may not grow.
+# Declared asset trees are exempted through GROWTH_GUARDS_BYTE_EXCLUDES.
 GROWTH_GUARDS_BYTE_CEILING_KB = "200"
 
 # The changelog-entries fragment tree: a space-separated list of shell globs

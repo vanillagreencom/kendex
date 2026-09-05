@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Pins for scripts/byte-ceiling: additions over the ceiling fail in every
-# mode, diff-scoping really is addition-only (modifications and renames
-# pass), lockfiles and excluded trees are exempt (each with a control
-# proving the exemption is what passed it), configuration resolves, and a
-# broken measurement is a collection error — never a pass.
+# Pins for scripts/byte-ceiling: additions and growth over the ceiling fail,
+# an existing oversized file may hold or shrink, renames pass, lockfiles and
+# excluded trees are exempt, configuration resolves, and a broken measurement
+# is a collection error — never a pass.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -97,6 +96,29 @@ git -C "$R" commit -qm "grow it past the ceiling"
 run_bc
 [ "$RC" -eq 0 ] && ok "a committed oversized file is not re-judged while nothing stages it" \
   || bad "a committed oversized file is not re-judged while nothing stages it" "rc=$RC out=$OUT"
+mkbytes seed.bin 4
+git -C "$R" add -A
+run_bc
+[ "$RC" -eq 0 ] && ok "a staged oversized file may shrink toward the ceiling" \
+  || bad "a staged oversized file may shrink toward the ceiling" "rc=$RC out=$OUT"
+run_bc
+[ "$RC" -eq 0 ] && ok "the same staged shrink gives a stable clean verdict" \
+  || bad "the same staged shrink gives a stable clean verdict" "rc=$RC out=$OUT"
+mkbytes seed.bin 5
+printf 'x' >>"$R/seed.bin"
+git -C "$R" add -A
+run_bc
+[ "$RC" -eq 1 ] && case "$OUT" in *"oversized file grew: seed.bin"*"5120 -> 5121 bytes"*) true ;; *) false ;; esac \
+  && ok "an existing oversized file may not grow" \
+  || bad "an existing oversized file may not grow" "rc=$RC out=$OUT"
+mkbytes seed.bin 5
+printf 'y' | dd of="$R/seed.bin" bs=1 seek=0 conv=notrunc 2>/dev/null
+git -C "$R" add -A
+run_bc
+[ "$RC" -eq 0 ] && ok "an existing oversized file may change without increasing its size" \
+  || bad "an existing oversized file may hold its size" "rc=$RC out=$OUT"
+mkbytes seed.bin 5
+git -C "$R" add -A
 git -C "$R" mv seed.bin moved.bin
 run_bc
 [ "$RC" -eq 0 ] && ok "renaming an existing large file is not an addition (rename detection pinned on)" \
@@ -168,13 +190,27 @@ run_bc --all
 [ "$RC" -eq 1 ] && case "$OUT" in *"old.bin"*"full sweep"*) true ;; *) false ;; esac \
   && ok "--all fails on the legacy oversized file" || bad "--all fails on legacy" "rc=$RC out=$OUT"
 
-echo "=== --base REF: additions since the merge-base ==="
+echo "=== --base REF: additions and changes since the merge-base ==="
 git -C "$R" checkout -qb feature
+mkbytes old.bin 3
+git -C "$R" add -A
+git -C "$R" commit -qm "feature shrinks the legacy file"
+run_bc --base main
+[ "$RC" -eq 0 ] && case "$OUT" in *"added or changed since main"*) true ;; *) false ;; esac \
+  && ok "--base main permits a legacy oversized file to shrink" \
+  || bad "--base permits a legacy oversized file to shrink" "rc=$RC out=$OUT"
+mkbytes old.bin 5
+git -C "$R" add -A
+git -C "$R" commit -qm "feature grows the legacy file"
+run_bc --base main
+[ "$RC" -eq 1 ] && case "$OUT" in *"oversized file grew: old.bin"*"4096 -> 5120 bytes"*) true ;; *) false ;; esac \
+  && ok "--base main rejects growth from the merge-base size" \
+  || bad "--base rejects growth from the merge-base size" "rc=$RC out=$OUT"
 mkbytes feat.bin 2
 git -C "$R" add -A
 git -C "$R" commit -qm "feature adds an oversized file"
 run_bc --base main
-[ "$RC" -eq 1 ] && case "$OUT" in *"feat.bin"*"added since main"*) true ;; *) false ;; esac \
+[ "$RC" -eq 1 ] && case "$OUT" in *"feat.bin"*"added or changed since main"*) true ;; *) false ;; esac \
   && ok "--base main fails on the branch's added file" || bad "--base fails on the added file" "rc=$RC out=$OUT"
 git -C "$R" checkout -q main
 run_bc --base main

@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 # byte-ceiling — tracked files a change puts over the byte ceiling fail
-# (default 200 KB). Growth-oriented like size-ratchet: what a change TOUCHES
-# is gated by the default modes, so adoption needs no cleanup first.
+# (default 200 KB). A touched file already over the ceiling may stay the
+# same size or shrink, so adoption does not freeze the work that reduces it.
 #
 # Modes (mutually exclusive):
 #   --staged (default)  files added, changed, or type-changed in the staged
 #                       diff (the pre-commit shim). A committed file edited
 #                       past the ceiling arrives the same way a new one does,
 #                       so the staged lane judges both.
-#   --base REF          files added since merge-base with REF (CI on a PR)
+#   --base REF          files added, changed, or type-changed since the
+#                       merge-base with REF (CI on a PR)
 #   --all               every tracked file (full sweep)
 #
-# Sizes are OBJECT sizes (`git cat-file -s` of the added blob): the bytes that
-# enter history, filters applied, independent of worktree state. Renames are
-# detected, so moving an existing large file is not an addition; a copy is
-# one. Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
+# Sizes are OBJECT sizes (`git cat-file -s` of each diff blob): the bytes that
+# enter history, filters applied, independent of worktree state. The source
+# blob is the tighten-only baseline for an existing oversized file. Renames
+# are detected, so moving an existing large file is not an addition; a copy
+# is one. Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 set -euo pipefail
 
 GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
@@ -31,10 +33,12 @@ usage() {
   cat <<'EOF'
 usage: byte-ceiling [--staged | --base REF | --all] [--excludes FILE]
 
-Tracked files a change puts over the byte ceiling fail. --staged (default)
-checks the staged additions and changes; --base REF checks files added since
-the merge-base with REF; --all sweeps every tracked file. Lockfiles are
-exempt built-in; declared asset trees live in the excludes list.
+Tracked files a change puts over the byte ceiling fail. An existing file
+already over the ceiling may stay the same size or shrink, but may not grow.
+--staged (default) checks the staged additions and changes; --base REF checks
+additions and changes since the merge-base with REF; --all sweeps every
+tracked file. Lockfiles are exempt built-in; declared asset trees live in the
+excludes list.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -100,13 +104,13 @@ is_lockfile() { # PATH
 
 gg_tmpdir
 
-# Alternating NUL-terminated fields, sha NUL path NUL: no single-record
-# separator survives arbitrary paths. The SHA is the added blob itself, so
-# measuring needs no path re-quoting.
+# Alternating NUL-terminated fields, destination SHA NUL source SHA NUL source
+# mode NUL path NUL: no single-record separator survives arbitrary paths. The
+# SHAs are the diff blobs themselves, so measuring needs no path re-quoting.
 : >"$GG_TMP/candidates.z"
 
-emit_candidate() { # SHA PATH
-  printf '%s\0%s\0' "$1" "$2" >>"$GG_TMP/candidates.z"
+emit_candidate() { # DEST-SHA SOURCE-SHA SOURCE-MODE PATH
+  printf '%s\0%s\0%s\0%s\0' "$1" "$2" "$3" "$4" >>"$GG_TMP/candidates.z"
 }
 
 case "$MODE" in
@@ -128,7 +132,7 @@ case "$MODE" in
     ;;
   base)
     git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null || gg_config_error "--base ref '$BASE_REF' does not name a commit"
-    git -c diff.renames=true diff --raw --no-abbrev -z --diff-filter=A "$BASE_REF...HEAD" >"$GG_TMP/raw.z" || gg_collection_error "git diff $BASE_REF...HEAD failed collecting added files (no merge base?)"
+    git -c diff.renames=true diff --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT "$BASE_REF...HEAD" >"$GG_TMP/raw.z" || gg_collection_error "git diff $BASE_REF...HEAD failed collecting additions and changes (no merge base?)"
     ;;
   all)
     # ls-files -s emits one record per STAGE for an unmerged path, so the
@@ -144,7 +148,7 @@ case "$MODE" in
       case "$mode" in
         120000 | 160000) continue ;; # symlink / submodule gitlink — not sized content
       esac
-      emit_candidate "$sha" "$f"
+      emit_candidate "$sha" "" "" "$f"
     done <"$GG_TMP/files.z"
     ;;
 esac
@@ -155,7 +159,9 @@ if [ "$MODE" != "all" ]; then
   # diff-filter, none of which renames a path, so each record carries one.
   while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
     set -- $meta
+    srcmode="${1#:}"
     dstmode="$2"
+    srcsha="$3"
     dstsha="$4"
     case "$dstmode" in
       120000 | 160000) continue ;; # symlink / submodule gitlink
@@ -164,20 +170,34 @@ if [ "$MODE" != "all" ]; then
       *[!0]*) ;;
       *) gg_collection_error "'$f' has no destination blob in the diff record — cannot measure it" ;;
     esac
-    emit_candidate "$dstsha" "$f"
+    emit_candidate "$dstsha" "$srcsha" "$srcmode" "$f"
   done <"$GG_TMP/raw.z"
 fi
 
 checked=0
 violations=0
-while IFS= read -r -d '' sha && IFS= read -r -d '' f; do
+while IFS= read -r -d '' sha \
+  && IFS= read -r -d '' srcsha \
+  && IFS= read -r -d '' srcmode \
+  && IFS= read -r -d '' f; do
   is_lockfile "$f" && continue
   gg_is_excluded "$f" && continue
   size="$(git cat-file -s "$sha")" || gg_collection_error "cannot read blob $sha for '$f' — its size is unmeasurable, refusing to skip it"
   checked=$((checked + 1))
   if [ "$size" -gt "$CEILING_BYTES" ]; then
+    prior_size=""
+    if gg_mode_is_regular "$srcmode"; then
+      prior_size="$(git cat-file -s "$srcsha")" || gg_collection_error "cannot read prior blob $srcsha for '$f' — its size is unmeasurable, refusing to skip it"
+    fi
+    if [ -n "$prior_size" ] && [ "$prior_size" -gt "$CEILING_BYTES" ] && [ "$size" -le "$prior_size" ]; then
+      continue
+    fi
     kb=$(((size + 1023) / 1024))
-    echo "byte-ceiling FAIL oversized file: $f — $size bytes (~$kb KB) > ceiling $CEILING_KB KB"
+    if [ -n "$prior_size" ] && [ "$prior_size" -gt "$CEILING_BYTES" ]; then
+      echo "byte-ceiling FAIL oversized file grew: $f — $prior_size -> $size bytes (~$kb KB), ceiling $CEILING_KB KB"
+    else
+      echo "byte-ceiling FAIL oversized file: $f — $size bytes (~$kb KB) > ceiling $CEILING_KB KB"
+    fi
     echo "  remedies: keep big artifacts out of the repo (asset store, Git LFS, build-time generation); a file that genuinely belongs gets a row in $EXCLUDES_FILE with its reason"
     violations=$((violations + 1))
   fi
@@ -185,7 +205,7 @@ done <"$GG_TMP/candidates.z"
 
 case "$MODE" in
   staged) SCOPE_DESC="staged file(s)" ;;
-  base) SCOPE_DESC="file(s) added since $BASE_REF" ;;
+  base) SCOPE_DESC="file(s) added or changed since $BASE_REF" ;;
   all) SCOPE_DESC="tracked file(s) (full sweep)" ;;
 esac
 

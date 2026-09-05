@@ -70,7 +70,7 @@ Stated once, in CHECKS.md § todo-ban. At `--staged` the change set is collected
 
 ## byte-ceiling sizing
 
-Sizes are `git cat-file -s` of the recorded blob. Rename detection is pinned on, held to exact content in the staged lane; `--base` reads additions alone.
+Sizes are `git cat-file -s` of the diff's source and destination blobs. The source size is the tighten-only baseline when it already exceeds the ceiling. Rename detection is pinned on and held to exact content in the staged and base lanes.
 
 ## suppression-ban patterns
 

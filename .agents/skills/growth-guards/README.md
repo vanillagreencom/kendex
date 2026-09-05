@@ -13,7 +13,7 @@ Needs `git`, `awk` and the usual POSIX userland; Bash 3.2 is enough. `kendex gua
 
 ## What it does
 
-- Refuses work markers, oversized additions, blanket lint suppression and conflict markers.
+- Refuses work markers, new oversized files, growth in existing oversized files, blanket lint suppression and conflict markers.
 - Holds changelog fragments to shape and length, and refuses hand edits to the collated record.
 - Holds the markdown agents load to one paragraph per line, with no dead references and no history prose.
 - Optionally holds source comments to the same no-history rule.
@@ -36,7 +36,7 @@ The `pre-commit` hook judges one commit snapshot and `commit-msg` runs the messa
 
 The markdown lanes start narrow: `md-format` and `md-refs` judge the files a commit touches. Reflow the tree once with `scripts/md-reflow --all`, commit, then set `GROWTH_GUARDS_MD_SCOPE = "all"` so CI judges every tracked markdown file. Vendored or generated markdown goes in `tools/md-excludes` with a reason.
 
-In CI, run the batch without `--staged`: the index-wide `todo-ban` scan is the only lane that sees a marker no commit ever diffed. `byte-ceiling --base origin/main` gates a PR's additions.
+In CI, run the batch without `--staged`: the index-wide `todo-ban` scan is the only lane that sees a marker no commit ever diffed. `byte-ceiling --base origin/main` gates a PR's additions and file-size growth.
 
 ## Who gates a commit
 
