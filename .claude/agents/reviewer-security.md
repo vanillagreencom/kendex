@@ -2,7 +2,7 @@
 name: reviewer-security
 description: "Application security reviewer. Auth logic, input handling, trust/ownership gating, path containment, and secret exposure."
 tags: review, security
-model: inherit
+model: opus
 effort: xhigh
 background: true
 disallowedTools: Agent, AskUserQuestion

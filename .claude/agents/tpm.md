@@ -2,7 +2,7 @@
 name: tpm
 description: "Technical Program Manager for analyzing roadmaps, project lifecycle, and progress. Returns recommendations only. Does not modify project management tools."
 tags: planning
-model: inherit
+model: opus
 effort: high
 background: true
 disallowedTools: Agent, AskUserQuestion

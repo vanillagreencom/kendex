@@ -2,7 +2,7 @@
 name: reviewer-quality
 description: "Code quality reviewer for maintainability, simplification, abstraction value, type boundaries, helper reuse, decomposition, and god objects."
 tags: review
-model: inherit
+model: opus
 effort: xhigh
 background: true
 disallowedTools: Agent, AskUserQuestion
