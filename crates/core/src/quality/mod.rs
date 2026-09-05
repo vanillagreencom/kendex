@@ -187,10 +187,24 @@ impl McpEntry {
                 .unwrap_or_default()
         };
         let string = |key: &str| value.get(key).and_then(|v| v.as_str()).map(str::to_owned);
+        // OpenCode keys the executable and its arguments as one `command`
+        // array and the environment as `environment`; read either shape,
+        // so a server kendex wrote there is scored like every other.
+        let (command, args) = match value.get("command").and_then(|v| v.as_array()) {
+            Some(argv) => {
+                let mut argv = argv
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_owned));
+                (argv.next(), argv.collect())
+            }
+            None => (string("command"), strings("args")),
+        };
+        let mut env = map("env");
+        env.extend(map("environment"));
         McpEntry {
-            command: string("command"),
-            args: strings("args"),
-            env: map("env"),
+            command,
+            args,
+            env,
             headers: map("headers"),
             url: string("url"),
         }

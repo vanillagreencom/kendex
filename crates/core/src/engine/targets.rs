@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::configedit::ConfigEdit;
 use crate::env::Env;
 use crate::harness::{Enforcement, adapter};
 use crate::model::{HarnessId, ItemKind, Scope};
@@ -321,6 +322,9 @@ pub(super) fn mcp_registry(env: &Env, scope: &Scope, harness: HarnessId) -> Opti
             Scope::Project { root } => root.join(".mcp.json"),
         }),
         HarnessId::Gemini => Some(crate::harness::gemini::settings::settings_file(env, scope)),
+        // OpenCode keeps its servers in the scope's one config file, under
+        // `mcp` (opencode.ai/docs/mcp-servers).
+        HarnessId::Opencode => Some(crate::harness::opencode::config_file(env, scope)),
         // Copilot reads a repository's servers from `.github/mcp.json` and a
         // machine's from its own config root (matrix §2). A `.mcp.json` at
         // the repo root is Claude Code's file, which Copilot also reads —
@@ -332,6 +336,25 @@ pub(super) fn mcp_registry(env: &Env, scope: &Scope, harness: HarnessId) -> Opti
             Scope::Project { root } => root.join(".github/mcp.json"),
         }),
         _ => None,
+    }
+}
+
+/// The edit that puts one server into a harness's registry, in the key that
+/// harness reads it under.
+pub(super) fn mcp_upsert(harness: HarnessId, name: &str, value: serde_json::Value) -> ConfigEdit {
+    let name = name.to_owned();
+    match harness {
+        HarnessId::Opencode => ConfigEdit::UpsertOpencodeMcpServer { name, value },
+        _ => ConfigEdit::UpsertMcpServer { name, value },
+    }
+}
+
+/// The edit that takes one server out of a harness's registry.
+pub(super) fn mcp_remove(harness: HarnessId, name: &str) -> ConfigEdit {
+    let name = name.to_owned();
+    match harness {
+        HarnessId::Opencode => ConfigEdit::RemoveOpencodeMcpServer { name },
+        _ => ConfigEdit::RemoveMcpServer { name },
     }
 }
 

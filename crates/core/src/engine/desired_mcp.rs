@@ -6,8 +6,7 @@ use serde_json::{Map, Value, json};
 
 use super::desired::{Artifact, DesiredState, ItemCtx};
 use super::desired_kinds::{declared, registration_edits};
-use super::targets::mcp_registry;
-use crate::configedit::ConfigEdit;
+use super::targets::{mcp_registry, mcp_remove, mcp_upsert};
 use crate::error::Result;
 use crate::model::{HarnessId, ItemKind};
 
@@ -39,22 +38,37 @@ pub(super) fn desired_mcp(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()>
             if harness == HarnessId::Copilot {
                 super::copilot::switched_off_elsewhere(ctx, ItemKind::McpServer, state);
             }
-            let edit = if ctx.decl.enabled {
-                ConfigEdit::UpsertMcpServer {
+            if let Some(reason) = transport_refusal(harness, &value) {
+                state.refused.push(super::desired::Refused {
+                    kind: ItemKind::McpServer,
                     name: ctx.name.to_owned(),
-                    // Copilot names the transport on the entry itself, so a
-                    // server written in another tool's shape would not load.
-                    value: match harness {
-                        HarnessId::Copilot => super::copilot::server(&value),
-                        _ => value.clone(),
-                    },
+                    harness,
+                    reason,
+                });
+                continue;
+            }
+            // Each harness keys the entry its own way, so a server written in
+            // another tool's shape would not load: Copilot names the
+            // transport on the entry, OpenCode takes one argv, its own key
+            // names and the switch on the entry itself, so its declaration
+            // stays in the file either way; everywhere else the entry comes
+            // out when switched off.
+            let edit = match (ctx.decl.enabled, harness) {
+                (_, HarnessId::Opencode) => mcp_upsert(
+                    harness,
+                    ctx.name,
+                    super::opencode::server(&value, ctx.decl.enabled),
+                ),
+                (true, HarnessId::Copilot) => {
+                    mcp_upsert(harness, ctx.name, super::copilot::server(&value))
                 }
-            } else {
-                ConfigEdit::RemoveMcpServer {
-                    name: ctx.name.to_owned(),
-                }
+                (true, _) => mcp_upsert(harness, ctx.name, value.clone()),
+                (false, _) => mcp_remove(harness, ctx.name),
             };
-            registration_edits(&registry, edit, ctx.decl.enabled)
+            // A switched-off OpenCode entry is still a write, so it is
+            // planned whether or not the file exists yet.
+            let writes = ctx.decl.enabled || harness == HarnessId::Opencode;
+            registration_edits(&registry, edit, writes)
         };
         let artifact = Artifact::Registration {
             script: None,
@@ -65,6 +79,34 @@ pub(super) fn desired_mcp(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()>
             .push(declared(ctx, ItemKind::McpServer, harness, artifact)?);
     }
     Ok(())
+}
+
+/// Why this harness cannot take the server as declared: a transport its
+/// client does not speak, read off the capability table so the list lives
+/// in one place (`format_caps`, `crates/core/src/harness/caps.rs`).
+fn transport_refusal(harness: HarnessId, value: &Value) -> Option<String> {
+    use crate::harness::McpTransport;
+    let transport = match value.get("type").and_then(Value::as_str) {
+        Some("http") => McpTransport::Http,
+        Some("sse") => McpTransport::Sse,
+        _ => McpTransport::Stdio,
+    };
+    let spoken = crate::harness::format_caps(harness).mcp_transports;
+    if spoken.contains(&transport) {
+        return None;
+    }
+    let names = |t: &McpTransport| match t {
+        McpTransport::Stdio => "stdio",
+        McpTransport::Http => "streamable HTTP",
+        McpTransport::Sse => "SSE",
+    };
+    Some(format!(
+        "{} speaks {} and not {}, so this server would never connect — declare it over a transport it speaks, or drop {} from its harnesses",
+        harness.display_name(),
+        spoken.iter().map(names).collect::<Vec<_>>().join(" and "),
+        names(&transport),
+        harness.display_name(),
+    ))
 }
 
 /// `mcp/<name>.toml` → the JSON value claude stores under `mcpServers`.
