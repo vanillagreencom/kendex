@@ -1,7 +1,7 @@
 ---
 name: code-quality
 description: "Load before writing or modifying code."
-summary: "Code-authoring standards for dev agents: correctness over convenience, no fail-open branches, comment rules, over-engineering limits, prove-your-guards."
+summary: "Code-authoring standards for dev agents: correctness over convenience, no fail-open branches, comment rules, over-engineering limits, prove-your-guards, test shape."
 license: MIT
 user-invocable: true
 dependencies:
@@ -52,6 +52,17 @@ A new or modified check, guard, assertion, or test ships with a must-fail contro
 - **A check narrower than the claim can only confirm it, never establish it.** Match the instrument's reach to the assertion's reach before running it, and prefer one that fails visibly on a planted counterexample. A grep over one directory supports no claim about the tree.
 - **Behaviour measured at an interactive prompt is not what scripts get.** `type <cmd>` names the shadow, which differs per shell. Resolve the command in the script's own shell and PATH, and name the shell and implementation it resolves to.
 - **A guard's failure message is an instrument.** It is what an author acts on. Unescaped backticks inside a double-quoted diagnostic execute their contents, so the intended text is altered or gone while the surrounding command still succeeds.
+
+## Tests
+
+- One control per behaviour surface, a public function, command, rule or contract, plus its inverse: the must-fail control § Prove Your Guards demands.
+- N planted defects means N asserted rows. A fixture that plants several defects under one verdict passes while any one of them is caught, and is never allowed.
+- Shaped input (positions, settings keys, tamper classes) is one table-driven case: one loop, one assertion per row, the row list visible in the file.
+- Assert the code, the enum or the exit status. Pin a human-readable message only inside a contract a consumer parses.
+- No test of the test harness: a pin on a manifest script string or a runner configuration proves nothing about behaviour.
+- A shared fixture is a neutral world (a seeded repository, a fake SDK). A fixture that carries a planted defect is private to its case.
+- One file per surface, beside the code, named for the surface.
+- A file past about 64 KB or about 60 cases holds more than one surface. Split it at a surface seam and move cases whole. The seam is the author's judgement; no check measures it.
 
 ## Language Discipline
 
