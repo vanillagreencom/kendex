@@ -100,11 +100,9 @@ fi
 # expression carries no order, so the set below is the set named above.
 ENDERS='&;'$'\n'
 CROSSABLE="[^${ENDERS}]"
-# BLANK and SPACE_ANY are the class names as they are spelled INSIDE a bracket
-# expression, so the same two definitions serve a class of their own and a
-# member of a larger one.
+# BLANK is the class name as it is spelled INSIDE a bracket expression, so the
+# one definition serves a class of its own and a member of a larger one.
 BLANK='[:blank:]'
-SPACE_ANY='[:space:]'
 GAP="[${BLANK}]"
 # The backslash is doubled twice over: once for the double quotes, once for the
 # regex, so this alternative is a literal backslash or a literal pipe followed

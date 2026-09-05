@@ -3,8 +3,8 @@
 # name: block-bare-cd
 # event: PreToolUse
 # matcher: Bash
-# description: Block bare cd commands that permanently change the working directory. Suggests using subshells instead.
-# safety: Prevents accidental working directory pollution across tool calls.
+# description: Refuse a command with a line that is only a `cd`. Where the shell persists across tool calls (Claude Code) a bare cd re-roots every later command and every hook that judges the working directory, while instruction files and hook paths stay with the launch directory; a cd into a worktree inside the repository, Claude Code's default `.claude/worktrees/<name>/`, also loads that tree's instruction files a second time as files there are read. Names the scoped form, `(cd /path && command)`, and, where the harness has one (Claude Code's EnterWorktree), its worktree tool for a move.
+# safety: Reads the command text only. On a harness that runs each command in a fresh shell (Codex, the Pi carrier) a bare cd changes nothing and the refusal costs one rewrite; the scoped form is right on every harness.
 # ---
 
 set -euo pipefail
@@ -51,8 +51,8 @@ fi
 # Simple heuristic: if the command is just "cd /path" with nothing else meaningful
 STRIPPED=$(echo "$COMMAND" | sed 's/^[[:space:]]*//')
 if echo "$STRIPPED" | grep -qE '^cd([[:space:]]+[^&|;]*)?$'; then
-  echo "Bare 'cd' changes working directory permanently across tool calls." >&2
-  echo "Use a subshell instead: (cd /path && command)" >&2
+  echo "block-bare-cd: refusing a bare 'cd'. Where the shell persists across tool calls it re-roots every later command and every hook judging the working directory, while instruction files and hook paths stay with the launch directory." >&2
+  echo "  Use a subshell instead: (cd /path && command). To work in a worktree, enter it with the harness's worktree tool where it has one (Claude Code's EnterWorktree) rather than cd." >&2
   exit 2
 fi
 

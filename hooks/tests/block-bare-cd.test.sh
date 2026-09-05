@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Tests for the block-bare-cd hook.
 #
-# The hook refuses a top-level `cd` that would move the working directory for
-# every later tool call, and passes anything that scopes the move — a
-# subshell, an &&-chain doing the real work — or that only mentions cd. The
-# argument is optional on both sides of the check: a bare `cd` goes to $HOME,
-# which is the same permanent move as `cd /tmp`.
+# The hook refuses a line that is only a `cd`, the move that re-roots every
+# later tool call where the shell persists (Claude Code) and changes nothing
+# where each command runs fresh (Codex, the Pi carrier), and passes anything
+# that scopes the move — a subshell, an &&-chain doing the real work — or that
+# only mentions cd. The argument is optional on both sides of the check: a
+# bare `cd` goes to $HOME, which is the same move as `cd /tmp`.
 #
 # The command reaches the hook JSON-encoded, and jq is the only thing that
 # reads it: a quoted operand carries \" escapes, and the parser this replaced
