@@ -6,7 +6,30 @@ use std::path::PathBuf;
 use crate::error::Result;
 use crate::model::Scope;
 
-use super::{Op, landing};
+use super::{Op, Pre, landing};
+
+/// Read-only evidence a record write must still match at execution.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ReadCheck {
+    File { path: PathBuf, pre: Pre },
+    PiPackage { path: PathBuf, hash: String },
+}
+
+impl ReadCheck {
+    pub(super) fn check(&self) -> Result<()> {
+        match self {
+            Self::File { path, pre } => pre.check(path),
+            Self::PiPackage { path, hash } => {
+                if matches!(crate::pi_ext::package_hash(path), Ok(Some(actual)) if &actual == hash)
+                {
+                    Ok(())
+                } else {
+                    Err(crate::error::CoreError::PlanStale { path: path.clone() })
+                }
+            }
+        }
+    }
+}
 
 /// What one op does, said for a preview.
 ///
@@ -92,6 +115,7 @@ pub struct Plan {
     /// against wherever the link went.
     root: Option<PathBuf>,
     pub ops: Vec<PlannedOp>,
+    pub(crate) reads: Vec<ReadCheck>,
 }
 
 impl Plan {
@@ -106,7 +130,12 @@ impl Plan {
             Scope::Global => None,
         };
         landing::land(root.as_deref(), &mut ops)?;
-        Ok(Plan { scope, root, ops })
+        Ok(Plan {
+            scope,
+            root,
+            ops,
+            reads: Vec::new(),
+        })
     }
 
     /// Take on one more op at `index`, landed against the root this plan

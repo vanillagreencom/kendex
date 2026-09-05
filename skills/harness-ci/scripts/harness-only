@@ -166,6 +166,9 @@ for inventory in "$base_inventory" "$head_inventory"; do
   jq -e 'type == "array" and all(.[]; type == "string")' <<<"$inventory" >/dev/null 2>&1 \
     || verdict false "generated paths are invalid"
 done
+printf '%s\n%s\n' "$base_inventory" "$head_inventory" | jq -es '
+  .[0] as $base | .[1] | all(.[]; . as $path | ($base | index($path)) != null)
+' >/dev/null 2>&1 || verdict false "generated ownership gains paths and requires product checks"
 while IFS= read -r path; do
   [ -n "$path" ] || continue
   seen=false

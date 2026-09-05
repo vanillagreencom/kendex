@@ -1,17 +1,5 @@
-//! Which items are installed because another item requires them.
-//!
-//! Dependencies are declared in an item's own frontmatter: a `dependencies`
-//! map holding `required` and `optional`
-//! lists of bare names. Bare names are why the relation stays inside one
-//! catalog and one kind — a catalog author cannot know what a consumer
-//! calls their sources, so a name from somewhere else has no stable
-//! identity to point at. Curation across catalogs and kinds is what bundles
-//! are for.
-//!
-//! Nothing here is written to the manifest. The manifest records choices —
-//! what was asked for, which optional dependencies were taken, what stays
-//! removed — and this module derives the closure again on every plan, so an
-//! item that arrived as a dependency never reads as one the user asked for.
+//! Required and selected optional skill dependencies stay within one catalog.
+//! Derived install reasons preserve the manifest as a record of user choices.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -151,6 +139,9 @@ pub(super) fn expand(
                 queue.push_back(dep);
             }
         }
+    }
+    if findings.values().any(|warnings| !warnings.is_empty()) {
+        state.mark_incomplete();
     }
     state.warnings.extend(findings.into_values().flatten());
     for members in cycles(&edges) {

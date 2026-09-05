@@ -9,7 +9,7 @@ Maintainer notes. Consumer docs: [README.md](README.md); the wiring rules: [SKIL
 - An empty changed-file set answers `false`, because it is also what a diff that read nothing looks like.
 - The engine derives `.kendex-generated.json` from rendered artifact files, shared registration files, and instruction shims. It excludes in-place declarations. Pi carrier payloads do not enter the render model and remain source.
 - Inventory membership is exact, never a folder prefix. A generated file adopted as source must be absent from the head inventory, which causes product checks to run. Deletions use the base inventory.
-- A missing or invalid inventory runs every lane, including the commit that first installs the inventory.
+- A missing or invalid inventory runs every lane, including the commit that first installs the inventory. Inventory additions also run every lane before the new paths become trusted base data.
 
 ## Tests
 

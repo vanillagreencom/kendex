@@ -1,9 +1,8 @@
 //! Report routing: which repo an issue about an installed item belongs to.
-//! The lock is the one judge, and it records where every kind of asset came
-//! from, skills included. An item whose every lock entry was recorded from
-//! the upstream files there; everything else files against the user's own
-//! repo, the safe default. A name whose entries disagree about their origin
-//! is ambiguous, and an ambiguous name stays local.
+//! A current lock is the first judge. When it has no answer, current manifest
+//! declarations and installed skill or Pi-package metadata can prove the same
+//! provenance without hiding a lock read failure. Everything unresolved files
+//! against the user's own repo. A name whose candidates disagree stays local.
 //!
 //! A lock entry keeps the manifest's repo declaration verbatim, so the same
 //! repository arrives here spelled as a shorthand, an https URL or an scp
@@ -13,8 +12,8 @@
 //! `gh issue create --repo` and a GitHub issue-creation URL each
 //! take `owner/repo`, never the URL a subscription may be spelled with.
 
-use crate::lock::{Lock, LockEntry};
-use crate::model::ItemKind;
+use crate::lock::Lock;
+use crate::model::{ItemKind, Scope};
 use crate::source_ref::{owner_repo, repo_identity};
 
 pub const DEFAULT_UPSTREAM: &str = crate::manifest::DEFAULT_SOURCE_REPO;
@@ -40,6 +39,35 @@ pub struct Route {
     pub rendered: Option<String>,
 }
 
+/// One routing decision and the failed reads the caller must show.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedRoute {
+    pub route: Route,
+    pub warnings: Vec<String>,
+}
+
+/// Report routing uses the shared read-only ownership resolver.
+pub fn resolve(
+    env: &crate::env::Env,
+    scope: &Scope,
+    name: &str,
+    kind: Option<ItemKind>,
+    upstream: &str,
+) -> ResolvedRoute {
+    let mut records = crate::ownership::read(env, scope);
+    let evidence = crate::ownership::find(
+        env,
+        scope,
+        &mut records,
+        crate::ownership::Subject::Named { name, kind },
+    );
+    let route = from_evidence(evidence, name, kind, upstream);
+    ResolvedRoute {
+        route,
+        warnings: records.warnings,
+    }
+}
+
 /// The routing label for a kendex-owned asset, by what it is.
 pub fn derive_label(name: &str, kind: Option<ItemKind>) -> &'static str {
     if name.contains("review-gate") {
@@ -53,38 +81,39 @@ pub fn derive_label(name: &str, kind: Option<ItemKind>) -> &'static str {
 }
 
 pub fn route(lock: &Lock, name: &str, kind: Option<ItemKind>, upstream: &str) -> Route {
-    let matching: Vec<&LockEntry> = lock
-        .entries
-        .values()
-        .filter(|entry| entry.name == name && kind.is_none_or(|k| k == entry.kind))
-        .collect();
-    // Provenance, not delivery. One entry recorded from anywhere else — a
-    // second marketplace, a path, `local` — means the name does not name a
-    // kendex asset on its own, and the report stays with the user's repo
-    // rather than going to a stranger's.
+    let evidence = match crate::ownership::locked(lock, name, kind, None) {
+        crate::ownership::Recorded::Found(evidence) => Some(evidence),
+        crate::ownership::Recorded::Absent | crate::ownership::Recorded::Ambiguous => None,
+    };
+    from_evidence(evidence, name, kind, upstream)
+}
+
+fn from_evidence(
+    evidence: Option<crate::ownership::Evidence>,
+    name: &str,
+    kind: Option<ItemKind>,
+    upstream: &str,
+) -> Route {
     let wanted = repo_identity(upstream);
-    let owned = !matching.is_empty()
-        && matching
-            .iter()
-            .all(|e| repo_identity(&e.source_repo) == wanted);
-    let kind = kind.or_else(|| agreed_kind(&matching));
-    let recorded = matching.first();
+    let owned = evidence
+        .as_ref()
+        .is_some_and(|evidence| repo_identity(&evidence.repo) == wanted);
+    let kind = kind.or_else(|| evidence.as_ref().and_then(|evidence| evidence.kind));
     Route {
         kendex_owned: owned,
         repo: owned.then(|| filing_target(upstream)),
         label: (owned && wanted == repo_identity(DEFAULT_UPSTREAM))
             .then(|| derive_label(name, kind).to_owned()),
         kind,
-        source: recorded.and_then(|entry| {
-            let commit = entry.source_commit.as_deref()?;
-            Some(format!(
-                "{}@{}",
-                filing_target(&entry.source_repo),
-                short(commit)
-            ))
+        source: evidence.as_ref().and_then(|evidence| {
+            evidence
+                .source_commit
+                .as_deref()
+                .map(|commit| format!("{}@{}", filing_target(&evidence.repo), short(commit)))
         }),
-        rendered: recorded
-            .and_then(|entry| entry.rendered_hash.as_deref())
+        rendered: evidence
+            .as_ref()
+            .and_then(|evidence| evidence.rendered_hash.as_deref())
             .map(short),
     }
 }
@@ -102,15 +131,68 @@ fn filing_target(upstream: &str) -> String {
     owner_repo(upstream).unwrap_or_else(|| upstream.to_owned())
 }
 
-/// The one kind the matching entries are, when they are all one kind.
-fn agreed_kind(matching: &[&LockEntry]) -> Option<ItemKind> {
-    let first = matching.first()?.kind;
-    matching.iter().all(|e| e.kind == first).then_some(first)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lock::LockEntry;
+
+    #[test]
+    fn scoped_pi_names_keep_recorded_markers_when_reported_by_short_name() {
+        let mut lock = Lock::default();
+        let mut recorded = entry("@scope/pi-helper", ItemKind::PiExtension, DEFAULT_UPSTREAM);
+        recorded.harness = crate::model::HarnessId::Pi;
+        recorded.source_commit = Some("abcdefghi".to_owned());
+        recorded.rendered_hash = Some("123456789".to_owned());
+        lock.entries.insert("pi".to_owned(), recorded);
+        let result = route(&lock, "pi-helper", None, DEFAULT_UPSTREAM);
+        assert!(result.kendex_owned);
+        assert_eq!(
+            result.source.as_deref(),
+            Some("vanillagreencom/kendex@abcdefg")
+        );
+        assert_eq!(result.rendered.as_deref(), Some("1234567"));
+    }
+
+    #[test]
+    fn conflicting_render_origins_do_not_depend_on_scan_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::test_util::rooted(&tmp);
+        let project = root.join("project");
+        let write = |directory: &str, repo: &str| {
+            let directory = project.join(directory).join("shared");
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join("SKILL.md"), format!("---\nname: shared\ndescription: fixture\nmetadata:\n  repository: {repo}\n---\nBody.\n")).unwrap();
+        };
+        write(".claude/skills", DEFAULT_UPSTREAM);
+        write(".agents/skills", "other/repo");
+        let env = crate::env::Env::fake(&root, crate::env::FakeOs::Linux);
+        let scope = Scope::Project {
+            root: project.clone(),
+        };
+        assert!(
+            !resolve(
+                &env,
+                &scope,
+                "shared",
+                Some(ItemKind::Skill),
+                DEFAULT_UPSTREAM
+            )
+            .route
+            .kendex_owned
+        );
+        std::fs::remove_dir_all(project.join(".agents/skills/shared")).unwrap();
+        assert!(
+            resolve(
+                &env,
+                &scope,
+                "shared",
+                Some(ItemKind::Skill),
+                DEFAULT_UPSTREAM
+            )
+            .route
+            .kendex_owned
+        );
+    }
 
     fn entry(name: &str, kind: ItemKind, source_repo: &str) -> LockEntry {
         LockEntry {
@@ -277,5 +359,27 @@ mod tests {
         let unresolved = route(&two_kinds, "dev", None, DEFAULT_UPSTREAM);
         assert_eq!(unresolved.kind, None);
         assert_eq!(unresolved.label.as_deref(), Some("cli"));
+    }
+
+    #[test]
+    fn a_committed_skill_render_routes_when_manifest_and_lock_cannot_answer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("project");
+        std::fs::create_dir_all(root.join(".agents/skills/guard")).unwrap();
+        std::fs::write(
+            root.join(".agents/skills/guard/SKILL.md"),
+            "---\nname: guard\nmetadata:\n  repository: https://github.com/vanillagreencom/kendex\n---\n",
+        )
+        .unwrap();
+        let env = crate::env::Env::fake(tmp.path(), crate::env::FakeOs::Linux);
+        let resolved = resolve(
+            &env,
+            &crate::model::Scope::Project { root },
+            "guard",
+            Some(ItemKind::Skill),
+            DEFAULT_UPSTREAM,
+        );
+        assert!(resolved.route.kendex_owned);
+        assert_eq!(resolved.route.repo.as_deref(), Some(DEFAULT_UPSTREAM));
     }
 }

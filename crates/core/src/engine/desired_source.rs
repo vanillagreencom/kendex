@@ -53,6 +53,9 @@ pub(super) fn resolve_source(
             }
         },
     };
+    if !matches!(&resolution, SourceState::Ready(_)) {
+        state.mark_incomplete();
+    }
     let notes = &mut state.notes;
     match resolution {
         SourceState::Ready(ready) => Ok(Some((ready.root, ready.provenance, ready.commit))),
@@ -99,6 +102,7 @@ pub(super) fn read_catalog(
     let sealed = match SealedSource::open(root) {
         Ok(sealed) => sealed,
         Err(problem) => {
+            state.mark_incomplete();
             state.notes.push(crate::names::shown(&format!(
                 "{name}: source '{source}' unreadable ({problem}) — skipped"
             )));
@@ -108,6 +112,7 @@ pub(super) fn read_catalog(
     match source_config_for(&sealed, provenance) {
         Ok(config) => Ok(Some((sealed, config))),
         Err(CoreError::SourceEscape { path, reason }) => {
+            state.mark_incomplete();
             state.notes.push(crate::names::shown(&format!(
                 "{name}: unreadable — refused catalog read: {reason} ({})",
                 path.display()

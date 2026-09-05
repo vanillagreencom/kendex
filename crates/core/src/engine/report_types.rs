@@ -155,8 +155,31 @@ pub struct ItemWarning {
     pub remediation: Option<String>,
 }
 
+/// Whether the pass could account for the full declared installation set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DeclarationStatus {
+    #[default]
+    Complete,
+    Incomplete,
+}
+
+impl DeclarationStatus {
+    pub(super) fn of(state: &super::desired::DesiredState) -> Self {
+        if state.declaration_status == Self::Complete
+            && state.refused.is_empty()
+            && state.unreadable_catalogs.is_empty()
+            && state.rev_conflicts.is_empty()
+        {
+            Self::Complete
+        } else {
+            Self::Incomplete
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct EngineReport {
+    pub declaration_status: DeclarationStatus,
     pub drift: Vec<DriftRow>,
     pub plan: Plan,
     pub notes: Vec<String>,

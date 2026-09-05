@@ -146,7 +146,7 @@ done
 [ "$CHECK_HASH" -eq 1 ] || HASH_ERE='a^'
 [ "$CHECK_DATE" -eq 1 ] || DATE_ERE='a^'
 [ -n "$REVISION_WORDS" ] || WORD_ERE='a^'
-[ -n "$REFERENCE_TYPES" ] || [ -n "$REVISION_WORDS" ] \
+[ "$((CHECK_ISSUE + CHECK_HASH + CHECK_DATE))" -gt 0 ] || [ -n "$REVISION_WORDS" ] \
   || gg_config_error "GROWTH_GUARDS_COMMENT_REFERENCE_TYPES and GROWTH_GUARDS_COMMENT_REVISION_WORDS cannot both be empty"
 # What the index pre-filter lists carriers by: a file whose whole content
 # matches no shape has no comment that does either.

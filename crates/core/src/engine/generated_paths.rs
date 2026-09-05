@@ -14,6 +14,7 @@ pub(super) fn plan(
     scope: &Scope,
     state: &DesiredState,
     shims: &[ShimStanding],
+    drift: &[super::DriftRow],
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
     let Scope::Project { root } = scope else {
@@ -24,7 +25,17 @@ pub(super) fn plan(
     }
     let mut paths = BTreeSet::new();
     for item in &state.items {
-        if item.source_name == crate::manifest::INPLACE_SOURCE_NAME {
+        if item.source_name == crate::manifest::INPLACE_SOURCE_NAME
+            || drift.iter().any(|row| {
+                row.kind == item.kind
+                    && row.name == item.name
+                    && row.harness == item.harness
+                    && matches!(
+                        row.state,
+                        super::DriftState::Conflict | super::DriftState::Unmanaged
+                    )
+            })
+        {
             continue;
         }
         match &item.artifact {
@@ -56,18 +67,14 @@ pub(super) fn plan(
             })
             .map(|shim| shim.path.clone()),
     );
-    if paths.is_empty() {
+    let path = root.join(".kendex-generated.json");
+    if paths.is_empty() && !path.exists() {
         return Ok(());
     }
-    let path = root.join(".kendex-generated.json");
     paths.insert(path.clone());
     let relative: BTreeSet<String> = paths
         .iter()
-        .filter_map(|path| {
-            path.strip_prefix(root)
-                .ok()
-                .map(|path| path.to_string_lossy().replace('\\', "/"))
-        })
+        .filter_map(|path| path.strip_prefix(root).ok().map(crate::paths::slashed))
         .collect();
     let mut text =
         serde_json::to_string(&relative).map_err(|error| crate::error::CoreError::JsonParse {

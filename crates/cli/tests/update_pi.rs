@@ -107,6 +107,163 @@ fn update_reinstalls_from_the_declared_source() {
 }
 
 #[test]
+fn verification_and_record_recovery_compare_pi_bytes() {
+    let tmp = fixture();
+    let project = tmp.path().join("dev/app");
+    assert!(
+        kendex(tmp.path(), &project, &["update-pi"])
+            .status
+            .success()
+    );
+    assert!(
+        kendex(tmp.path(), &project, &["verify", "--scope", "project"])
+            .status
+            .success()
+    );
+    let installed = project.join(".pi/packages/pi-widgets/index.js");
+    fs::write(&installed, "export const version = 9;\n").unwrap();
+    assert!(
+        !kendex(tmp.path(), &project, &["verify", "--scope", "project"])
+            .status
+            .success()
+    );
+    fs::remove_file(project.join(".kendex-lock.json")).unwrap();
+    assert!(
+        !kendex(
+            tmp.path(),
+            &project,
+            &["apply", "--record-existing", "--yes"]
+        )
+        .status
+        .success()
+    );
+    fs::remove_dir_all(project.join(".pi/packages/pi-widgets")).unwrap();
+    assert!(
+        !kendex(
+            tmp.path(),
+            &project,
+            &["apply", "--record-existing", "--yes"]
+        )
+        .status
+        .success()
+    );
+    assert!(!project.join(".kendex-lock.json").exists());
+}
+
+#[test]
+fn a_busy_scope_refuses_pi_mutation() {
+    let tmp = fixture();
+    let project = tmp.path().join("dev/app");
+    let env = kendex_core::env::Env::host_rooted(tmp.path());
+    let scope = kendex_core::model::Scope::Project {
+        root: project.clone(),
+    };
+    let guard = kendex_core::apply::lock_scope(&env, &scope).unwrap();
+    let output = kendex(tmp.path(), &project, &["update-pi"]);
+    assert!(!output.status.success(), "{output:?}");
+    assert_eq!(
+        fs::read_to_string(project.join(".pi/packages/pi-widgets/index.js")).unwrap(),
+        "export const version = 1;\n"
+    );
+    drop(guard);
+    assert!(
+        kendex(tmp.path(), &project, &["update-pi"])
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn changing_pi_source_refuses_before_package_mutation() {
+    let tmp = fixture();
+    let project = tmp.path().join("dev/app");
+    assert!(
+        kendex(tmp.path(), &project, &["update-pi"])
+            .status
+            .success()
+    );
+    let lock = fs::read(project.join(".kendex-lock.json")).unwrap();
+    fs::rename(project.join("catalog"), project.join("other-catalog")).unwrap();
+    let manifest = project.join("kendex.toml");
+    fs::write(
+        &manifest,
+        fs::read_to_string(&manifest)
+            .unwrap()
+            .replace("\"catalog\"", "\"other-catalog\""),
+    )
+    .unwrap();
+    fs::write(
+        project.join("other-catalog/pi-extensions/pi-widgets/index.js"),
+        "export const version = 3;\n",
+    )
+    .unwrap();
+    let preview = kendex(tmp.path(), &project, &["update-pi", "--check"]);
+    assert!(!preview.status.success(), "{preview:?}");
+    assert!(!String::from_utf8_lossy(&preview.stderr).contains("run without --check"));
+    assert!(
+        !kendex(tmp.path(), &project, &["update-pi"])
+            .status
+            .success()
+    );
+    assert_eq!(fs::read(project.join(".kendex-lock.json")).unwrap(), lock);
+    assert_eq!(
+        fs::read_to_string(project.join(".pi/packages/pi-widgets/index.js")).unwrap(),
+        "export const version = 2;\n"
+    );
+}
+
+#[test]
+fn generic_orphan_cleanup_keeps_pi_payload_and_registration_together() {
+    let tmp = fixture();
+    let project = tmp.path().join("dev/app");
+    assert!(
+        kendex(tmp.path(), &project, &["update-pi"])
+            .status
+            .success()
+    );
+    let settings = fs::read(project.join(".pi/settings.json")).unwrap();
+    fs::write(project.join("kendex.toml"), "schema = 6\n").unwrap();
+    let env = kendex_core::env::Env::host_rooted(tmp.path());
+    let scope = kendex_core::model::Scope::Project {
+        root: project.clone(),
+    };
+    let options = kendex_core::engine::PlanOptions {
+        remove_orphans: true,
+        ..Default::default()
+    };
+    let report = kendex_core::engine::plan_apply(&env, &scope, &options).unwrap();
+    kendex_core::apply::execute(&env, &report.plan).unwrap();
+    assert!(project.join(".pi/packages/pi-widgets/index.js").is_file());
+    assert_eq!(
+        fs::read(project.join(".pi/settings.json")).unwrap(),
+        settings
+    );
+    let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
+    assert!(
+        lock.entries
+            .values()
+            .any(|entry| entry.name == "pi-widgets")
+    );
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unreadable_lock_refuses_before_a_package_changes() {
+    let tmp = fixture();
+    let project = tmp.path().join("dev/app");
+    let installed = project.join(".pi/packages/pi-widgets/index.js");
+    fs::write(project.join(".kendex-lock.json"), "{\"version\":5}\n").unwrap();
+
+    let output = kendex(tmp.path(), &project, &["update-pi"]);
+
+    assert!(!output.status.success());
+    assert_eq!(
+        fs::read_to_string(installed).unwrap(),
+        "export const version = 1;\n"
+    );
+}
+
+#[test]
 #[allow(clippy::unwrap_used)]
 fn a_declared_package_not_yet_installed_installs_fresh() {
     let tmp = fixture();

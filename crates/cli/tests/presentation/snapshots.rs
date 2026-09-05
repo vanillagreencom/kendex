@@ -108,10 +108,9 @@ fn add() {
 /// manages stands above it rather than after it.
 ///
 /// A scope whose manifest asks for items and whose install record is not
-/// there closes the run non-zero. There is nothing to weigh a declaration
-/// against, so the run says which scope and where the record should be,
-/// and the count below it is of the lock entries this run read, which
-/// were none.
+/// there closes the run non-zero. The current manifest and render bytes are
+/// still measured, so the output names each declaration with no matching
+/// installation.
 #[test]
 fn verify() {
     expect(
@@ -128,8 +127,11 @@ fn verify() {
     expect(
         shape(&[], &["verify", "--scope", "project"]),
         vec![
-            "! <project>: no install record at <project>/.kendex-lock.json — this scope was not checked",
-            "nothing installed",
+            "! <project>: no install record at <project>/.kendex-lock.json — checking current manifest and render bytes",
+            "<project>: 2 items declared and not in the install record",
+            "  - skill growth-guards — kendex apply records it",
+            "  - skill tidy — kendex apply records it",
+            "nothing checked",
         ],
     );
 }

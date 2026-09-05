@@ -137,3 +137,90 @@ fn a_truncated_current_lock_fails_the_library_read() {
         "Library must surface a truncated lock"
     );
 }
+
+#[test]
+fn report_and_library_recover_the_same_origin_without_a_readable_record() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = crate::test_util::rooted(&tmp);
+    let env = Env::fake(&root, FakeOs::Linux);
+    let project = root.join("app");
+    fs::create_dir_all(project.join(".agents/skills/guard")).unwrap();
+    fs::write(
+        project.join(".agents/skills/guard/SKILL.md"),
+        "---\nname: guard\ndescription: fixture\nmetadata:\n  repository: owner/repo\n---\nBody.\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 6\n[install]\nharnesses = [\"codex\"]\n[sources.cat]\nrepo = \"owner/repo\"\n[skills.guard]\nsource = \"cat\"\n",
+    )
+    .unwrap();
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    for record in [None, Some("{\"version\":5}")] {
+        if let Some(record) = record {
+            fs::write(project.join(".kendex-lock.json"), record).unwrap();
+        }
+        let rows = provenance(&env, std::slice::from_ref(&scope)).unwrap();
+        let found = rows
+            .iter()
+            .find(|row| row.name == "guard" && row.harness == HarnessId::Codex)
+            .unwrap();
+        assert_eq!(
+            found.origin,
+            Origin::Marketplace {
+                source: "cat".to_owned(),
+                repo: "owner/repo".to_owned()
+            }
+        );
+        let report =
+            crate::report::resolve(&env, &scope, "guard", Some(ItemKind::Skill), "owner/repo");
+        assert!(report.route.kendex_owned);
+        assert_eq!(report.route.repo.as_deref(), Some("owner/repo"));
+        assert_eq!(!report.warnings.is_empty(), record.is_some());
+    }
+}
+
+#[test]
+fn an_origin_does_not_cross_into_an_unmanaged_harness() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = crate::test_util::rooted(&tmp);
+    let project = root.join("app");
+    let env = Env::fake(&root, FakeOs::Linux);
+    fs::create_dir_all(project.join("catalog/agents")).unwrap();
+    fs::write(
+        project.join("catalog/agents/shared.md"),
+        "---\nname: shared\ndescription: fixture\n---\nInstructions.\n",
+    )
+    .unwrap();
+    let manifest = "schema = 6\n[sources.cat]\npath = \"catalog\"\n[install]\nharnesses = [\"claude\", \"codex\"]\n[agents.shared]\nsource = \"cat\"\n";
+    fs::write(project.join("kendex.toml"), manifest).unwrap();
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let report =
+        crate::engine::plan_apply(&env, &scope, &crate::engine::PlanOptions::default()).unwrap();
+    crate::apply::execute(&env, &report.plan).unwrap();
+    let lock_path = crate::lock::lock_path(&env, &scope);
+    let mut lock = crate::lock::load(&lock_path).unwrap();
+    lock.entries
+        .retain(|_, entry| entry.harness != HarnessId::Codex);
+    crate::lock::save(&lock_path, &lock).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        manifest.replace("[\"claude\", \"codex\"]", "[\"claude\"]"),
+    )
+    .unwrap();
+    for absent in [false, true] {
+        if absent {
+            fs::remove_file(&lock_path).unwrap();
+        }
+        let rows = provenance(&env, std::slice::from_ref(&scope)).unwrap();
+        let codex = rows
+            .iter()
+            .find(|row| row.name == "shared" && row.harness == HarnessId::Codex)
+            .unwrap();
+        assert_eq!(codex.origin, Origin::Unmanaged);
+    }
+}

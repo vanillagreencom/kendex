@@ -185,6 +185,7 @@ fn installable(
     state: &mut DesiredState,
 ) -> Vec<(ItemKind, String, ItemDecl, Vec<HarnessId>)> {
     let Some((sealed, config, _)) = catalogs.get(&decl.source, decl.rev.as_deref(), state) else {
+        state.mark_incomplete();
         return Vec::new();
     };
     // What the catalog says is wrong with itself, on this path too: a set is
@@ -199,6 +200,7 @@ fn installable(
         // so. Either way the removal pass keeps what this could not account
         // for.
         Err(problem) => {
+            state.mark_incomplete();
             state.notes.push(match &problem {
                 crate::error::CoreError::UnreadableBundle { .. } => {
                     format!("bundle {name}: {problem}")
@@ -212,6 +214,7 @@ fn installable(
         }
     };
     let Some(bundle) = offered else {
+        state.mark_incomplete();
         state.notes.push(format!(
             "bundle {name}: the catalog '{}' offers no set by that name",
             decl.source
@@ -230,6 +233,7 @@ fn installable(
             continue;
         }
         if find_item(sealed, config, member.kind, &member.name).is_none() {
+            state.mark_incomplete();
             state.warnings.push(ItemWarning {
                 kind: member.kind,
                 name: member.name.clone(),
@@ -256,6 +260,7 @@ fn installable(
         );
         let harnesses = target_harnesses(&member_decl, manifest, member.kind, scope);
         if harnesses.is_empty() {
+            state.mark_incomplete();
             state.notes.push(format!(
                 "bundle {name}: no tool here holds a {}, so {} was not installed",
                 member.kind.name(),

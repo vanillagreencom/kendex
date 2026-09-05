@@ -288,6 +288,7 @@ pub(super) fn desired_plugins(
             Scope::Project { .. } => toggle.project,
         };
         let Some(settings) = plugin_settings(env, scope, harness).filter(|_| supported) else {
+            state.mark_incomplete();
             state.notes.push(format!(
                 "plugin {key}: {} has no plugin switch at this scope",
                 harness.display_name()
@@ -297,6 +298,7 @@ pub(super) fn desired_plugins(
         if harness == HarnessId::Copilot
             && let Some(reason) = super::copilot::plugin_refusal(env, scope)
         {
+            state.mark_incomplete();
             state
                 .notes
                 .push(format!("plugin {key}: {reason} — nothing was switched"));

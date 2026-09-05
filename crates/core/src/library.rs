@@ -1,12 +1,6 @@
-//! Where each installation came from — one lock+manifest join the Library
-//! table reads for its From column.
-//!
-//! The lock is the durable provenance record (invariant 4), so it decides:
-//! an entry from a reserved source — `local`, or `in-place` for a project
-//! skill adopted where it sits — is the user's own content, forked when
-//! `[forks]` says what it replaced, and any other entry names the
-//! subscription it installed from. What the scanner observes and the
-//! lock cannot account for is unmanaged, reported and never touched.
+//! The Library origin column uses the shared read-only ownership resolver.
+//! Durable records outrank declarations and installed metadata. Recovered
+//! origin identifies a source; it never grants permission to overwrite files.
 
 use std::collections::BTreeMap;
 
@@ -15,7 +9,6 @@ use specta::Type;
 
 use crate::env::Env;
 use crate::error::Result;
-use crate::lock::LockFile;
 use crate::manifest::{INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME, Manifest};
 use crate::model::{HarnessId, ItemKind, Scope};
 
@@ -57,19 +50,24 @@ pub struct ProvenanceRow {
 pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
     let scopes: Vec<Scope> = scopes.iter().map(Scope::canonical).collect();
     let mut rows: BTreeMap<(Scope, ItemKind, String, HarnessId), Origin> = BTreeMap::new();
+    let mut records_by_scope = BTreeMap::new();
     for scope in &scopes {
-        let manifest = crate::manifest::load_current(&crate::manifest::manifest_path(env, scope))?
-            .unwrap_or_default();
-        let LockFile::Current(lock) = crate::lock::load_file(&crate::lock::lock_path(env, scope))?
-        else {
-            continue;
-        };
-        for entry in lock.entries.values() {
+        let records = crate::ownership::read(env, scope);
+        let empty = Manifest::default();
+        let manifest = records.manifest.as_deref().unwrap_or(&empty);
+        for entry in records.lock.entries.values() {
             rows.insert(
                 (scope.clone(), entry.kind, entry.name.clone(), entry.harness),
-                origin_of(&manifest, entry),
+                origin_of(
+                    manifest,
+                    entry.kind,
+                    &entry.name,
+                    &entry.source,
+                    &entry.source_repo,
+                ),
             );
         }
+        records_by_scope.insert(scope.clone(), records);
     }
     let settings = crate::settings::load(env)?;
     let observed = crate::scan::scan_scopes(env, &settings.harness_roots, &scopes);
@@ -80,8 +78,40 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
         if item.vendor.is_some() {
             continue;
         }
+        let Some(records) = records_by_scope.get_mut(&item.scope) else {
+            unreachable!("every observed scope was requested");
+        };
+        let origin = crate::ownership::find(
+            env,
+            &item.scope,
+            records,
+            crate::ownership::Subject::Observed(&item),
+        )
+        .map_or(Origin::Unmanaged, |evidence| {
+            let empty = Manifest::default();
+            origin_of(
+                records.manifest.as_deref().unwrap_or(&empty),
+                item.kind,
+                &item.name,
+                &evidence.source,
+                &evidence.repo,
+            )
+        });
         rows.entry((item.scope, item.kind, item.name, item.harness))
-            .or_insert(Origin::Unmanaged);
+            .or_insert(origin);
+    }
+    for (scope, records) in &records_by_scope {
+        if let Some(problem) = &records.record_problem {
+            let recovered = rows.iter().any(|((row_scope, ..), origin)| {
+                row_scope == scope && *origin != Origin::Unmanaged
+            });
+            if !recovered {
+                return Err(crate::error::CoreError::LockCorrupt {
+                    path: crate::lock::lock_path(env, scope),
+                    message: problem.clone(),
+                });
+            }
+        }
     }
     Ok(rows
         .into_iter()
@@ -95,20 +125,20 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
         .collect())
 }
 
-fn origin_of(manifest: &Manifest, entry: &crate::lock::LockEntry) -> Origin {
-    if entry.source == LOCAL_SOURCE_NAME || entry.source == INPLACE_SOURCE_NAME {
+fn origin_of(manifest: &Manifest, kind: ItemKind, name: &str, source: &str, repo: &str) -> Origin {
+    if source == LOCAL_SOURCE_NAME || source == INPLACE_SOURCE_NAME {
         return Origin::Own {
-            source: entry.source.clone(),
+            source: source.to_owned(),
             forked_from: manifest
                 .forks
-                .get(&entry.kind)
-                .and_then(|forks| forks.get(&entry.name))
+                .get(&kind)
+                .and_then(|forks| forks.get(name))
                 .map(|fork| fork.repo.clone().unwrap_or_else(|| fork.source.clone())),
         };
     }
     Origin::Marketplace {
-        source: entry.source.clone(),
-        repo: entry.source_repo.clone(),
+        source: source.to_owned(),
+        repo: repo.to_owned(),
     }
 }
 

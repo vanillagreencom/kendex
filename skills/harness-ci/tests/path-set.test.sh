@@ -85,4 +85,11 @@ git -C "$repo" commit -q -m "delete the product file"
 assert_verdict "a product deletion answers false" false \
   --repo "$repo" --event push --base "$base" --head HEAD
 
+git -C "$repo" checkout -q -B "case" "$base"
+git -C "$repo" clean -qfd
+jq '. + ["src/claimed.rs"]' "$repo/.kendex-generated.json" >"$repo/inventory.tmp"
+mv "$repo/inventory.tmp" "$repo/.kendex-generated.json"
+commit_paths "$repo" "product claims generated ownership" src/claimed.rs
+assert_verdict "head-only generated claims run product checks" false --repo "$repo" --event push --base "$base" --head HEAD
+
 report path-set

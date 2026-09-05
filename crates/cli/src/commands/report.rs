@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use kendex_core::env::Env;
-use kendex_core::lock::{load as load_lock, lock_path};
 use kendex_core::model::ItemKind;
 use kendex_core::process::Hardened;
 use kendex_core::report::DEFAULT_UPSTREAM;
@@ -90,6 +89,33 @@ fn parse_inputs(args: &ReportArgs) -> Result<Inputs, Box<dyn std::error::Error>>
     })
 }
 
+fn resolve_route(
+    env: &Env,
+    scope: &kendex_core::model::Scope,
+    selector: &Option<(String, Option<ItemKind>)>,
+    upstream: &str,
+) -> Option<kendex_core::report::ResolvedRoute> {
+    let resolved = selector
+        .as_ref()
+        .map(|(name, kind)| kendex_core::report::resolve(env, scope, name, *kind, upstream));
+    if let Some(resolved) = &resolved {
+        for warning in &resolved.warnings {
+            say(&format!("warning: {warning}"));
+        }
+    }
+    resolved
+}
+
+fn append_routing_warnings(body: &mut String, resolved: &kendex_core::report::ResolvedRoute) {
+    if resolved.warnings.is_empty() {
+        return;
+    }
+    body.push_str("\n\nkendex routing warnings:\n");
+    for warning in &resolved.warnings {
+        body.push_str(&format!("- {warning}\n"));
+    }
+}
+
 pub fn run(env: &Env, args: ReportArgs) -> CliResult {
     let Inputs {
         selector,
@@ -100,14 +126,11 @@ pub fn run(env: &Env, args: ReportArgs) -> CliResult {
     } = parse_inputs(&args)?;
 
     let scope = resolve_scopes(env, filter)?.remove(0);
-    let lock = load_lock(&lock_path(env, &scope))?;
-
     if selector.is_none() {
         say("warning: no asset selector — routing to this project's own repo");
     }
-    let route = selector
-        .as_ref()
-        .map(|(name, kind)| kendex_core::report::route(&lock, name, *kind, &upstream));
+    let resolved = resolve_route(env, &scope, &selector, &upstream);
+    let route = resolved.as_ref().map(|resolved| &resolved.route);
     // The judge names the destination as well as the decision: `gh --repo`
     // takes `owner/repo`, not the URL `--upstream` may be spelled with.
     let target = route
@@ -119,6 +142,9 @@ pub fn run(env: &Env, args: ReportArgs) -> CliResult {
     let mut gh_args = vec!["issue".to_owned(), "create".to_owned()];
     let mut sent_body = body.clone();
     let mut area = None;
+    if let Some(resolved) = &resolved {
+        append_routing_warnings(&mut sent_body, resolved);
+    }
     if let Some(target) = &target {
         let name = selector.as_ref().map_or("unknown", |(n, _)| n.as_str());
         // The kind the route resolved, so `--asset` on a skill stamps the

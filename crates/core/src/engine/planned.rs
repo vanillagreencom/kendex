@@ -13,6 +13,7 @@ use super::{desired, expansion};
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlannedDeclaration {
     pub kind: ItemKind,
+    pub harnesses: Vec<crate::model::HarnessId>,
     pub name: String,
     /// The declaration the item effectively reads — a rev propagated from a
     /// pinned bundle or a pinned dependency parent lands here, not only one
@@ -79,8 +80,7 @@ fn held_by_requirer(
 /// is a hold on the member, and reading only the item's own `rev` would
 /// report a held package as unpinned drift.
 ///
-/// Plugins are not in it, though [`recorded_by_the_plan`] says one is
-/// recorded. Every row here carries an `ItemDecl` naming the source it
+/// Plugins are not in it. Every row here carries an `ItemDecl` naming the source it
 /// came from, and a plugin has no source: it is a switch in a settings
 /// file, declared with an enabled flag and a harness. A caller that wants
 /// the declarations rather than the packages reads the plugin table
@@ -99,6 +99,7 @@ pub fn planned_declarations(
             let derived = !manifest.declared(kind).contains_key(name);
             out.push(PlannedDeclaration {
                 kind,
+                harnesses: planned.harnesses.clone(),
                 // A package the person declared is here because they asked
                 // for it, whatever else requires it, so it names no parent.
                 required_by: match derived {
@@ -117,6 +118,7 @@ pub fn planned_declarations(
     for (name, decl) in manifest.declared(ItemKind::PiExtension) {
         out.push(PlannedDeclaration {
             kind: ItemKind::PiExtension,
+            harnesses: vec![crate::model::HarnessId::Pi],
             name: name.clone(),
             decl: decl.clone(),
             derived: false,
@@ -125,30 +127,4 @@ pub fn planned_declarations(
         });
     }
     out
-}
-
-/// Whether a scope plan derives a lock entry for this kind, and so whether
-/// the record can ever hold one.
-///
-/// [`expansion::plans_per_package`] plus `Plugin`: a plugin toggle is
-/// derived and recorded like any other install, and is still not something
-/// one package of can be brought current on its own. A Pi extension is the
-/// kind that answers no here — `kendex update-pi` compares installed bytes
-/// against the source and writes the package itself, so no pass derives an
-/// entry for one however many the manifest declares.
-///
-/// Exhaustive on purpose. `PLANNED_KINDS` is an array, so a match is the
-/// only thing that makes a kind joining the enum fail to compile until it
-/// is classified, and a kind whose plan participation moves is one whose
-/// scope would otherwise lose its record.
-pub fn recorded_by_the_plan(kind: ItemKind) -> bool {
-    match kind {
-        ItemKind::PiExtension => false,
-        ItemKind::Skill
-        | ItemKind::Agent
-        | ItemKind::Hook
-        | ItemKind::Command
-        | ItemKind::McpServer
-        | ItemKind::Plugin => true,
-    }
 }

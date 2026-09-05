@@ -7,7 +7,7 @@ use kendex_core::harness::pi::Pi;
 use kendex_core::manifest::ManifestFile;
 use kendex_core::model::Scope;
 use kendex_core::process::Hardened;
-use kendex_core::{manifest, pi_ext, settings, source};
+use kendex_core::{manifest, pi_ext, settings};
 
 use super::{CliResult, out, resolve_scopes, say};
 use crate::scope::ScopeFilter;
@@ -44,6 +44,7 @@ struct Row {
 }
 
 struct ScopePlan {
+    scope: Scope,
     label: String,
     root: PathBuf,
     rows: Vec<Row>,
@@ -59,8 +60,17 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
         .get(Pi.id().name())
         .cloned()
         .unwrap_or_else(|| Pi.default_global_root(env));
+    let scopes = resolve_scopes(env, filter)?;
+    let mut guards = Vec::new();
+    if !check {
+        for scope in &scopes {
+            guards.push(kendex_core::apply::lock_scope(env, scope)?);
+            kendex_core::apply::recover(env, scope)?;
+            kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))?;
+        }
+    }
     let mut plans = Vec::new();
-    for scope in resolve_scopes(env, filter)? {
+    for scope in scopes {
         let root = match &scope {
             Scope::Global => global_root.clone(),
             Scope::Project { root } => root.join(".pi"),
@@ -80,6 +90,18 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
     if plans.is_empty() {
         say("no pi scope on this machine");
         return Ok(());
+    }
+    for plan in &plans {
+        let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, &plan.scope))?;
+        let mut notes = Vec::new();
+        for (name, package) in declared_sources(env, &plan.scope, &mut notes) {
+            let key = kendex_core::lock::entry_key(
+                kendex_core::model::ItemKind::PiExtension,
+                &name,
+                kendex_core::model::HarnessId::Pi,
+            );
+            pi_ext::check_origin(&name, &package, lock.entries.get(&key))?;
+        }
     }
     for plan in &plans {
         print_plan(plan);
@@ -135,9 +157,9 @@ fn plan_scope(
             // One unreadable package (a symlink in its source, a blown
             // budget) must not empty the whole listing — it gets its own
             // note and the healthy rows still print.
-            Some(source_dir) => match (
+            Some(package) => match (
                 pi_ext::installed_hash(&root, name),
-                pi_ext::package_hash(source_dir),
+                pi_ext::package_hash(&package.source_dir),
             ) {
                 (Ok(installed), Ok(source)) if installed.is_some() && installed == source => {
                     Status::Current
@@ -145,7 +167,7 @@ fn plan_scope(
                 (Ok(_), Ok(_)) => guard(
                     name,
                     Status::Stale {
-                        source_dir: source_dir.clone(),
+                        source_dir: package.source_dir.clone(),
                     },
                 ),
                 (Err(error), _) | (_, Err(error)) => {
@@ -162,7 +184,7 @@ fn plan_scope(
         });
     }
 
-    for (name, source_dir) in &sources {
+    for (name, package) in &sources {
         if installed_names.contains(name) {
             continue;
         }
@@ -172,7 +194,7 @@ fn plan_scope(
             status: guard(
                 name,
                 Status::Missing {
-                    source_dir: source_dir.clone(),
+                    source_dir: package.source_dir.clone(),
                 },
             ),
         });
@@ -189,6 +211,7 @@ fn plan_scope(
     }
 
     Ok(ScopePlan {
+        scope: scope.clone(),
         label: scope.label(),
         root,
         rows,
@@ -203,7 +226,7 @@ fn declared_sources(
     env: &Env,
     scope: &Scope,
     notes: &mut Vec<String>,
-) -> BTreeMap<String, PathBuf> {
+) -> BTreeMap<String, pi_ext::DeclaredPackage> {
     let mut found = BTreeMap::new();
     let path = manifest::manifest_path(env, scope);
     let manifest = match manifest::load(&path) {
@@ -215,30 +238,9 @@ fn declared_sources(
         }
     };
     for (name, decl) in &manifest.pi_extensions {
-        match source::require_ready(env, scope, &decl.source, &manifest) {
-            Ok(ready) => {
-                let sealed = match kendex_core::source_read::SealedSource::open(&ready.root) {
-                    Ok(sealed) => sealed,
-                    Err(error) => {
-                        notes.push(format!("{name}: {error}"));
-                        continue;
-                    }
-                };
-                let dir = sealed.root().join("pi-extensions").join(name);
-                if sealed.is_file(&dir.join("package.json")) {
-                    found.insert(name.clone(), dir);
-                } else {
-                    match pi_ext::find_by_package_name(&sealed, name) {
-                        Ok(Some(dir)) => {
-                            found.insert(name.clone(), dir);
-                        }
-                        Ok(None) => notes.push(format!(
-                            "{name}: source '{}' no longer ships pi-extensions/{name}",
-                            decl.source
-                        )),
-                        Err(error) => notes.push(format!("{name}: {error}")),
-                    }
-                }
+        match pi_ext::resolve_declared(env, scope, &manifest, name, decl) {
+            Ok(package) => {
+                found.insert(name.clone(), package);
             }
             Err(error) => notes.push(format!("{name}: {error}")),
         }
@@ -365,6 +367,7 @@ fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
         }
     }
     if failures.is_empty() {
+        record_pi_installs(env, plans)?;
         say(&match updated {
             0 => "all pi packages up to date".to_owned(),
             count => format!("updated {count} package(s)"),
@@ -372,4 +375,24 @@ fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
         return Ok(());
     }
     Err(format!("update failed for: {}", failures.join(", ")).into())
+}
+
+fn record_pi_installs(env: &Env, plans: &[ScopePlan]) -> CliResult {
+    for plan in plans {
+        let Some(manifest) = manifest::load_current(&manifest::manifest_path(env, &plan.scope))?
+        else {
+            continue;
+        };
+        let path = kendex_core::lock::lock_path(env, &plan.scope);
+        let mut lock = kendex_core::lock::load(&path)?;
+        let before = lock.clone();
+        let drift = pi_ext::record_matching_manifest(env, &plan.scope, &manifest, &mut lock)?;
+        if lock != before {
+            kendex_core::lock::save(&path, &lock)?;
+        }
+        for row in drift {
+            say(&format!("  ! {}: {}", row.name, row.detail));
+        }
+    }
+    Ok(())
 }

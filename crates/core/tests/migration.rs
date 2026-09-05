@@ -12,7 +12,7 @@ use test_util::source_path;
 use std::fs;
 
 use kendex_core::apply;
-use kendex_core::engine::{audit, ops};
+use kendex_core::engine::{PlanOptions, audit, ops, plan_apply, plan_record_existing};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::error::CoreError;
 use kendex_core::lock::{load as load_lock, lock_path};
@@ -201,6 +201,140 @@ fn an_interrupted_apply_rolls_the_whole_scope_back() {
     let lock = load_lock(&lock_path(&f.env, &f.scope)).unwrap();
     assert_eq!(lock.version, kendex_core::lock::LOCK_VERSION);
     assert!(lock.entries.contains_key("skill:gh:claude"));
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn matching_renders_are_recorded_without_being_rewritten() {
+    let f = fixture(&MANIFEST_SCHEMA.to_string());
+    let initialized = kendex_core::process::Hardened::git(&["init", "-q"], Some(f.project()))
+        .run()
+        .unwrap();
+    assert!(initialized.status.success());
+    let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+    apply::execute(&f.env, &install.plan).unwrap();
+    let rendered = f.project().join(".agents/skills/gh/SKILL.md");
+    let before = fs::read(&rendered).unwrap();
+    let lock_path = f.scope_lock();
+    fs::remove_file(&lock_path).unwrap();
+    fs::remove_file(f.project().join(".kendex-generated.json")).unwrap();
+
+    let recovery = plan_record_existing(&f.env, &f.scope).unwrap();
+    assert_eq!(recovery.plan.ops.len(), 1, "only the record may change");
+    assert!(matches!(
+        recovery.plan.ops[0].op,
+        apply::Op::WriteLock { .. }
+    ));
+    apply::execute(&f.env, &recovery.plan).unwrap();
+
+    assert_eq!(fs::read(&rendered).unwrap(), before);
+    let recovered = load_lock(&lock_path).unwrap();
+    assert_eq!(recovered.version, kendex_core::lock::LOCK_VERSION);
+    assert!(recovered.entries.contains_key("skill:gh:claude"));
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn recording_existing_refuses_a_render_that_does_not_match() {
+    let f = fixture(&MANIFEST_SCHEMA.to_string());
+    let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+    apply::execute(&f.env, &install.plan).unwrap();
+    let rendered = f.project().join(".agents/skills/gh/SKILL.md");
+    fs::write(&rendered, "person's edit\n").unwrap();
+    let lock_path = f.scope_lock();
+    fs::remove_file(&lock_path).unwrap();
+
+    let error = plan_record_existing(&f.env, &f.scope).unwrap_err();
+    assert!(
+        matches!(error, CoreError::RecordExistingRefused { .. }),
+        "{error}"
+    );
+    assert_eq!(fs::read_to_string(&rendered).unwrap(), "person's edit\n");
+    assert!(!lock_path.exists());
+}
+
+#[test]
+fn recovery_requires_the_whole_declared_set() {
+    for extra in [
+        "\n[bundles.missing]\nsource = \"cat\"\n",
+        "\n[plugins.\"fmt@main\"]\nenabled = true\nharness = \"codex\"\n",
+    ] {
+        let f = fixture(&MANIFEST_SCHEMA.to_string());
+        let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+        apply::execute(&f.env, &install.plan).unwrap();
+        fs::remove_file(f.scope_lock()).unwrap();
+        fs::write(&f.manifest_path, format!("{}{extra}", f.original)).unwrap();
+        assert!(
+            plan_record_existing(&f.env, &f.scope).is_err(),
+            "incomplete declaration accepted: {extra}"
+        );
+        assert!(!f.scope_lock().exists());
+    }
+}
+
+#[test]
+fn recovery_rechecks_render_bytes_before_recording() {
+    let f = fixture(&MANIFEST_SCHEMA.to_string());
+    let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+    apply::execute(&f.env, &install.plan).unwrap();
+    fs::remove_file(f.scope_lock()).unwrap();
+    let recovery = plan_record_existing(&f.env, &f.scope).unwrap();
+    let rendered = f.project().join(".agents/skills/gh/SKILL.md");
+    fs::write(&rendered, "edited during confirmation\n").unwrap();
+    assert!(apply::execute(&f.env, &recovery.plan).is_err());
+    assert!(!f.scope_lock().exists());
+    assert_eq!(
+        fs::read_to_string(rendered).unwrap(),
+        "edited during confirmation\n"
+    );
+}
+
+#[test]
+fn recovery_accepts_informational_dependency_notes() {
+    let f = fixture(&MANIFEST_SCHEMA.to_string());
+    let skills = f._tmp.path().join("catalog/skills");
+    fs::write(
+        skills.join("gh/SKILL.md"),
+        "---\nname: gh\ndescription: fixture\ndependencies:\n  required: [peer]\n---\nBody.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(skills.join("peer")).unwrap();
+    fs::write(
+        skills.join("peer/SKILL.md"),
+        "---\nname: peer\ndescription: fixture\ndependencies:\n  required: [gh]\n---\nBody.\n",
+    )
+    .unwrap();
+    let adapter = kendex_core::harness::adapter(kendex_core::model::HarnessId::Codex);
+    fs::create_dir_all(adapter.default_global_root(&f.env)).unwrap();
+    let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+    assert!(
+        install
+            .notes
+            .iter()
+            .any(|note| note.contains("also installs"))
+    );
+    apply::execute(&f.env, &install.plan).unwrap();
+    fs::remove_file(f.scope_lock()).unwrap();
+    let recovery = plan_record_existing(&f.env, &f.scope).unwrap();
+    apply::execute(&f.env, &recovery.plan).unwrap();
+    let lock = load_lock(&f.scope_lock()).unwrap();
+    assert!(lock.entries.values().any(|entry| entry.name == "peer"));
+}
+
+#[test]
+fn recovery_refuses_an_unresolved_required_dependency() {
+    let f = fixture(&MANIFEST_SCHEMA.to_string());
+    fs::write(
+        f._tmp.path().join("catalog/skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: fixture\ndependencies:\n  required: [missing]\n---\nBody.\n",
+    )
+    .unwrap();
+    let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+    apply::execute(&f.env, &install.plan).unwrap();
+    assert!(f.project().join(".agents/skills/gh/SKILL.md").is_file());
+    fs::remove_file(f.scope_lock()).unwrap();
+    assert!(plan_record_existing(&f.env, &f.scope).is_err());
+    assert!(!f.scope_lock().exists());
 }
 
 impl Fixture {

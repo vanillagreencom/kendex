@@ -1,0 +1,1 @@
+- Ownership stays within each observed harness. Record-only recovery rejects unresolved declarations and post-preview edits while accepting ordinary notices.

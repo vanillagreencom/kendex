@@ -568,4 +568,48 @@ fn generated_inventory_tracks_renders_and_excludes_source() {
             .iter()
             .any(|path| path == ".agents/skills/generated/helper.sh")
     );
+    fs::write(f.project.join("kendex.toml"), "schema = 6\n[install]\nharnesses = [\"codex\"]\n[skills.authored]\nsource = \"in-place\"\n").unwrap();
+    apply_now(&f);
+    assert_eq!(read_paths(), vec![".kendex-generated.json".to_owned()]);
+}
+
+#[test]
+fn refused_outputs_do_not_enter_generated_inventory() {
+    let f = fixture("\"claude\"", true);
+    let catalog = f.project.join("catalog");
+    fs::create_dir_all(catalog.join("agents")).unwrap();
+    fs::write(
+        catalog.join("agents/work.md"),
+        "---\nname: work\ndescription: fixture\n---\nGenerated.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(f.project.join(".claude/agents")).unwrap();
+    let occupied = f.project.join(".claude/agents/work.md");
+    fs::write(&occupied, "User-written instructions.\n").unwrap();
+    let manifest = f.project.join("kendex.toml");
+    fs::write(
+        &manifest,
+        format!(
+            "{}\n[sources.cat]\n{}\n[agents.work]\nsource = \"cat\"\n",
+            fs::read_to_string(&manifest).unwrap(),
+            test_util::source_path(&catalog)
+        ),
+    )
+    .unwrap();
+    let report = apply_now(&f);
+    assert!(
+        report
+            .drift
+            .iter()
+            .any(|row| row.name == "work" && row.state == DriftState::Conflict)
+    );
+    let paths: Vec<String> = serde_json::from_str(
+        &fs::read_to_string(f.project.join(".kendex-generated.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(!paths.iter().any(|path| path == ".claude/agents/work.md"));
+    assert_eq!(
+        fs::read_to_string(occupied).unwrap(),
+        "User-written instructions.\n"
+    );
 }

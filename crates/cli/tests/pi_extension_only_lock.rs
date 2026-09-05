@@ -1,8 +1,8 @@
 //! The install record a scope keeps when the plan derives no entry for what
 //! it declares, and what `verify` says about the gap.
 //!
-//! A Pi extension derives no lock entry, so a scope declaring only those
-//! derives none at all. The record still has to land: without it the verb
+//! Apply derives no Pi-extension entry, so a scope declaring only those
+//! starts with none. The record still has to land: without it the verb
 //! reports the scope up to date, nothing marks the project root for the
 //! walk-up that prefers it, and nothing on disk states which build wrote the
 //! record. The version floor's remedy for an older lock is to move the file
@@ -111,8 +111,8 @@ fn assert_record_landed(lock: &Path) {
 /// restraint in `plan_lock_write` is the only thing between a scope
 /// declaring a Pi extension and an "Update the install record" on every run
 /// it ever gets, and a case that only ever drives a virgin fixture cannot
-/// tell the two apart. `verify` closes it — the record is there, so the run
-/// does not refuse, and the declaration is named as one no record holds.
+/// tell the two apart. `update-pi` then records matching package bytes and
+/// `verify` checks the resulting entry.
 ///
 /// The global scope is a second path through the write, its record sitting
 /// under the app's own directory and naming no root, so it is driven here
@@ -132,18 +132,17 @@ fn apply_writes_the_record_once_for_a_pi_extension_only_scope() {
     assert!(second.contains("up to date"), "{second}");
     assert!(!second.contains("Update the install record"), "{second}");
 
+    let recorded = kendex(&home, &project, &["update-pi", "--scope", "project"]);
+    assert!(recorded.status.success(), "{recorded:?}");
+    let reapplied = kendex(&home, &project, &["apply", "--yes"]);
+    assert!(reapplied.status.success(), "{reapplied:?}");
     let checked = kendex(&home, &project, &["verify", "--scope", "project"]);
     assert!(checked.status.success(), "{checked:?}");
     assert_eq!(
         said(&checked).lines().collect::<Vec<_>>(),
         vec![
-            format!(
-                "{}: 1 item declared and not in the install record",
-                kendex_core::paths::slashed(&project)
-            )
-            .as_str(),
-            "  - pi-extension pi-widgets — no record ever holds one; kendex update-pi checks it",
-            "nothing checked",
+            "✓ pi-extension pi-widgets [pi]",
+            "1 checked, 1 OK, 0 failed",
         ]
     );
 
@@ -165,7 +164,7 @@ fn apply_writes_the_record_once_for_a_pi_extension_only_scope() {
 /// settings in `config.json`. The Pi declaration beside it still writes the
 /// record, so the file lands holding nothing while the scope asks for both:
 /// a package no record ever holds, and one `apply` will record once that
-/// machine migrates. The headline is true of the pair and each name says
+/// machine changes its settings. The headline is true of the pair and each name says
 /// which it is.
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -199,12 +198,15 @@ fn verify_names_what_the_record_does_not_hold() {
 
     let checked = kendex(&home, &home, &["verify", "-g"]);
 
-    assert!(checked.status.success(), "{checked:?}");
+    assert!(
+        !checked.status.success(),
+        "unrecorded declarations must fail: {checked:?}"
+    );
     assert_eq!(
         said(&checked).lines().collect::<Vec<_>>(),
         vec![
             "global: 2 items declared and not in the install record",
-            "  - pi-extension pi-widgets — no record ever holds one; kendex update-pi checks it",
+            "  - pi-extension pi-widgets — kendex update-pi records it",
             "  - plugin fmt@main — kendex apply records it",
             "nothing checked",
         ]
@@ -215,10 +217,10 @@ fn verify_names_what_the_record_does_not_hold() {
 /// and nothing else, so it reaches the gate through neither
 /// `Manifest::declared` nor the expanded plan. It is still a scope asking
 /// for something, and a scope asking for something with no record is the
-/// state this verb refuses.
+/// state this verb measures without reporting success.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn verify_refuses_a_plugin_only_scope_with_no_install_record() {
+fn verify_checks_a_plugin_only_scope_without_an_install_record() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let project = home.join("dev/app");
@@ -236,11 +238,35 @@ fn verify_refuses_a_plugin_only_scope_with_no_install_record() {
         said(&output).lines().next(),
         Some(
             format!(
-                "! {}: no install record at {} — this scope was not checked",
+                "! {}: no install record at {} — checking current manifest and render bytes",
                 kendex_core::paths::slashed(&project),
                 project.join(".kendex-lock.json").display()
             )
             .as_str()
         )
     );
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn verify_measures_matching_renders_when_the_lock_is_unreadable() {
+    let (_tmp, home) = fixture();
+    let project = home.join("dev/app");
+    let lock = project.join(".kendex-lock.json");
+    fs::write(&lock, "{\"version\":5}\n").unwrap();
+
+    let output = kendex(&home, &project, &["verify", "--scope", "project"]);
+    let text = said(&output);
+
+    assert!(
+        !output.status.success(),
+        "the unreadable record still needs recovery"
+    );
+    assert!(text.contains("install record unreadable"), "{text}");
+    assert!(
+        text.contains("checking current manifest and render bytes"),
+        "{text}"
+    );
+    assert!(text.contains("✓ pi-extension pi-widgets [pi]"), "{text}");
+    assert_eq!(fs::read_to_string(lock).unwrap(), "{\"version\":5}\n");
 }

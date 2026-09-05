@@ -1,8 +1,4 @@
-//! Pi extensions are npm-shaped packages: a source ships
-//! `pi-extensions/<name>/`, kendex copies it into a scope's `packages/` dir,
-//! resolves its production dependencies, links its `bin` entries, registers
-//! it in `settings.json`, and mirrors its `pi.appendSystem` file into the
-//! scope's `APPEND_SYSTEM.md`.
+//! Pi package installation, runtime registration, and ownership records.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -19,6 +15,11 @@ use crate::fs::{atomic_write, read_if_exists};
 use crate::process::Hardened;
 
 pub mod carrier;
+mod record;
+pub use record::{
+    DeclaredPackage, check_origin, matching_lock_entry, record_matching_manifest, resolve_declared,
+    scope_root,
+};
 mod files;
 mod renames;
 mod settings;

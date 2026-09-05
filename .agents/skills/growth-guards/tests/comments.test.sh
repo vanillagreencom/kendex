@@ -178,6 +178,13 @@ OUT="$(cd "$R" && GH_ISSUE_PATTERN='(' "$CM" 2>&1)" && RC=0 || RC=$?
   && ok "a pattern no engine can compile is exit 2, never a silent no-match" \
   || bad "uncompilable pattern is exit 2" "rc=$RC out=$OUT"
 
+for mode in index staged; do
+  args=()
+  [ "$mode" != staged ] || args=(--staged)
+  OUT="$(cd "$R" && GROWTH_GUARDS_COMMENT_REFERENCE_TYPES=' ' GROWTH_GUARDS_COMMENT_REVISION_WORDS= "$CM" ${args[@]+"${args[@]}"} 2>&1)" && RC=0 || RC=$?
+  [ "$RC" -eq 2 ] && ok "a whitespace-only disabled configuration refuses in $mode scope" || bad "empty effective checks" "rc=$RC out=$OUT"
+done
+
 echo "=== only comment text is judged: strings and code never fire ==="
 new_repo extract
 solo a.rs "let s = \"http://x/#228 $W ABC-123 2026-08-12\";"

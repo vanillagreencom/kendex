@@ -12,6 +12,7 @@ mod pre;
 mod transaction;
 
 pub use op::{Op, Pre, read_git_config};
+pub(crate) use plan::ReadCheck;
 pub use plan::{Description, Plan, PlannedOp};
 use transaction::run_journaled;
 
@@ -35,11 +36,12 @@ pub fn scope_key(scope: &Scope) -> String {
 /// Exclusive writer lock over one scope journal key (invariant 8). Held for
 /// the whole journal → mutate → clear window; recovery runs under the same
 /// lock.
-struct ScopeGuard {
+pub struct ScopeGuard {
     _file: crate::fs::LockedFile,
 }
 
-fn lock_scope(env: &Env, scope: &Scope) -> Result<ScopeGuard> {
+/// Hold the scope writer lock across a carrier update and its record write.
+pub fn lock_scope(env: &Env, scope: &Scope) -> Result<ScopeGuard> {
     lock_key(env, &scope_key(scope))
 }
 
@@ -91,7 +93,7 @@ pub struct ApplyOutcome {
 pub fn execute(env: &Env, plan: &Plan) -> Result<ApplyOutcome> {
     let _guard = lock_scope(env, &plan.scope)?;
     let recovered_first = recover(env, &plan.scope)?;
-    let applied = run_journaled(env, &plan.ops, &scope_key(&plan.scope))?;
+    let applied = run_journaled(env, &plan.ops, &scope_key(&plan.scope), &plan.reads)?;
     // The scope just changed; a drift snapshot describing the old state
     // would send the next session chasing drift that is not there.
     // Invalidation is the cheap honest move: the check reads "not yet

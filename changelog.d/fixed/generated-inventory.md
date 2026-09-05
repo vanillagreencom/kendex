@@ -1,0 +1,1 @@
+- CI stops treating a file as generated when the last rendered package becomes in-place source.
