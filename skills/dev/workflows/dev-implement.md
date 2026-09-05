@@ -1,5 +1,7 @@
 # Issue Lifecycle
 
+Read [code-quality](../../code-quality/SKILL.md) before writing or modifying code, including for ad-hoc requests.
+
 The workflow for a dev or QA agent receiving a work-item delegation. Skip every tracker update for ad-hoc requests (no issue reference).
 
 Run `pwd -P` before the first repo-relative command; it must print the delegation's `Worktree:` path. On any other path, stop and report where the shell started.
