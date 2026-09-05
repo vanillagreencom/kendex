@@ -59,7 +59,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 | **changelog-entries** | Each `GROWTH_GUARDS_CHANGELOG_PATHS` fragment is one Markdown list item in a Keep a Changelog section and at most `GROWTH_GUARDS_CHANGELOG_CAP` characters. |
 | **prose** | A history reference in Markdown named by `GROWTH_GUARDS_PROSE_PATHS` fails; `GROWTH_GUARDS_CHECKS` controls whether the lane runs. |
 | **md-format** | A hard-wrapped paragraph or list item, a missing blank line around a heading, fence or list, or a trailing-double-space break in Markdown named by `GROWTH_GUARDS_MD_PATHS` fails; `md-reflow` is the remedy. |
-| **md-refs** | A relative link, a `<path>.md § Heading` or `<path>.md#anchor` code-span citation, or a decision ID in Markdown named by `GROWTH_GUARDS_MD_REFS_PATHS` that lands on no tracked file, heading or decision fails. |
+| **md-refs** | A relative link, a link followed by `§` and a heading prefix, a `<path>.md § Heading` or `<path>.md#anchor` code-span citation, or a decision ID in Markdown named by `GROWTH_GUARDS_MD_REFS_PATHS` that lands on no tracked file, heading or decision fails. |
 | **comments** | A history reference in the comment text of a source file named by `GROWTH_GUARDS_COMMENT_PATHS` fails: an issue id (`GH_ISSUE_PATTERN`), `#NNN`, or a date. Opt-in: name it in `GROWTH_GUARDS_CHECKS`. |
 | **commit-msg** | The header must be `type(scope)!: subject` within `GROWTH_GUARDS_SUBJECT_MAX`; a commit touching `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS` also owes a changelog entry or `[no-changelog]`. |
 
@@ -96,7 +96,7 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 | `GROWTH_GUARDS_MD_PATHS` | `*.md` | Globs naming the markdown md-format and md-reflow take under `--all`. |
 | `GROWTH_GUARDS_MD_REFS_PATHS` | the `GROWTH_GUARDS_PROSE_PATHS` default | Globs naming the markdown md-refs judges under `--all`. |
 | `GROWTH_GUARDS_MD_EXCLUDES` | `tools/md-excludes` | Exclusion list both markdown lanes honour in every scope, and md-reflow under `--staged` and `--all`. |
-| `GROWTH_GUARDS_MD_SCOPE` | `touched` | What the markdown lanes judge with neither `--staged` nor `--all`: `touched` is the staged files, and nothing when nothing is staged; `all` is every tracked matching file. |
+| `GROWTH_GUARDS_MD_SCOPE` | `touched` | With neither flag, `touched` runs md-format on staged files and md-refs on all configured documents when anything is staged; `all` checks every matching file. |
 | `DECISIONS_DIR`, `DECISION_ID_PREFIX`, `DECISION_ID_WIDTH` | `docs/decisions`, `D`, `3` | The decider skill's scheme, read by md-refs to judge decision IDs; IDs are not judged where the directory is not tracked. |
 | `GROWTH_GUARDS_COMMENT_PATHS` | the extensions in [CHECKS.md § comments](CHECKS.md#comments) | Space-separated globs naming the source files the comments lane scans, matched against the full repo-relative path (`*` crosses `/`); replaces the default. |
 | `GROWTH_GUARDS_COMMENT_EXCLUDES` | `tools/comments-excludes` | comments exclusion list (generated, vendored, and immutable first-party files). `GH_ISSUE_PATTERN` (the github skill's key) is the issue-id shape; empty keeps `[A-Z]+-[0-9]+`. |

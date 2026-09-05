@@ -25,7 +25,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 The gate answers ONE question: **has this exact PR head been reviewed?** It posts that answer as a commit status the repo's branch rules require. It does not check CI, re-run anything, or reason about jobs.
 
-Two greens do NOT mean a review happened. Under `REVIEW_GATE_MODE = "off"` the predicate evaluates no evidence and attests only that the repo disabled the gate; and merge-group statuses never read the mode, posting green as "merge-queue entry: post-approval by construction". Both: [references/settings.md](references/settings.md) § `REVIEW_GATE_MODE`.
+Two greens do NOT mean a review happened. Under `REVIEW_GATE_MODE = "off"` the predicate evaluates no evidence and attests only that the repo disabled the gate; and merge-group statuses never read the mode, posting green as "merge-queue entry: post-approval by construction". Both: [`REVIEW_GATE_MODE` in the settings table](references/settings.md).
 
 ## Decision table
 
@@ -102,7 +102,7 @@ Keys a repo decides: [references/adoption.md](references/adoption.md) § Keys a 
 
 ## 4. Operations
 
-**Watching one or many PRs without stalling.** Never key a hand-rolled monitor on gate-state transitions. Run `.agents/skills/review-gate/scripts/pr-watch.sh` (optionally `--heal`) on the harness's wake-up mechanism: silence + exit 0 means nothing needs you; attention lines name exactly what does. See [references/adoption.md](references/adoption.md) § Watching PRs as an agent.
+**Watching one or many PRs without stalling.** Never key a hand-rolled monitor on gate-state transitions. Run `.agents/skills/review-gate/scripts/pr-watch.sh` (optionally `--heal`) on the harness's wake-up mechanism: silence + exit 0 means nothing needs you; attention lines name exactly what does. See [Watching PRs as an agent](references/adoption.md#watching-prs-as-an-agent-pr-watch).
 
 **Reviewers are down / nothing is reviewing.** Run the internal review loop: fix findings, resolve every thread, then post the override status with a real reason. It cannot bypass an objection or an open thread.
 

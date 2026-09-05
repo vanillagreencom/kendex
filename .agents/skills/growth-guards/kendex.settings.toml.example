@@ -34,11 +34,9 @@ GROWTH_GUARDS_CHANGELOG_RECORD = "CHANGELOG.md"
 # Empty = rule off.
 GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = ""
 
-# What md-format and md-refs judge with neither --staged nor --all: "touched"
-# is the markdown files a commit touches, and nothing when nothing is staged;
-# "all" is every tracked file the path globs name. Set "all" once the
-# repository's markdown is reflowed (scripts/md-reflow --all), so CI judges
-# the whole tree.
+# Without flags, touched runs md-format on changed documents. It runs md-refs
+# on all configured documents when any change is staged. All runs both checks
+# unconditionally. Explicit --staged retains each lane's own scope.
 GROWTH_GUARDS_MD_SCOPE = "touched"
 
 # The markdown md-format and md-reflow take under --all, and the markdown

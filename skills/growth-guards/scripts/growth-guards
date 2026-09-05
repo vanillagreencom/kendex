@@ -24,9 +24,9 @@ KNOWN_CHECKS="todo-ban byte-ceiling suppression-ban conflict-markers changelog-e
 BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs"
 # The checks the batch hands --staged when it is asked for commit scope.
 # todo-ban and comments default to the whole index, which is a CI subject:
-# at commit each judges what the commit adds. md-format and md-refs judge
-# the markdown files a commit touches, in full, until GROWTH_GUARDS_MD_SCOPE
-# widens them. byte-ceiling is already staged by default, and the rest read
+# at commit each judges what the commit adds. md-format judges touched
+# documents; md-refs checks every configured document for broken incoming
+# references. byte-ceiling is already staged by default, and the rest read
 # the index by design.
 STAGED_SCOPED_CHECKS="todo-ban md-format md-refs comments"
 
@@ -38,8 +38,9 @@ Checks: $KNOWN_CHECKS
 
 With no argument (or 'all'), runs every check named by
 GROWTH_GUARDS_CHECKS (default: $BATCH_DEFAULT).
---staged puts the batch at commit scope: the checks that take it
-($STAGED_SCOPED_CHECKS) judge the staged diff instead of the whole index.
+--staged is passed to: $STAGED_SCOPED_CHECKS.
+Those checks apply their own commit scope. md-refs checks all configured
+documents for broken references, including unchanged callers.
 commit-msg reads a message file/stdin and only runs by name.
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error, or

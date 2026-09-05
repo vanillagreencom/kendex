@@ -124,15 +124,16 @@ An unterminated fence, front matter, HTML comment or prompt-section block is exi
 
 ## md-refs
 
-A dead reference in a scanned markdown file fails. Fenced code, indented code and front matter are never read. Three forms:
+A dead reference in a scanned markdown file fails. Fenced code, indented code and front matter are never read. Forms:
 
 - A link or reference definition whose destination is relative (no scheme, no leading `/`, not `mailto:`) must name a tracked file or directory, resolved against the citing file's directory; `..` above the repository root is dead. With `#anchor`, the target must be markdown and the anchor one of its heading slugs or an explicit `<a id="...">` or `<a name="...">`; a bare `#anchor` resolves in the citing file. A definition is read only where the line begins with its `[label]:`.
 - A code span holding `<path>.md § Heading` must name a tracked file with a heading equal to `Heading` case-insensitively after trimming; one holding `<path>.md#anchor` a tracked file with that slug or explicit anchor. The path resolves against the citing file's directory, then the repository root. A path alone in a code span is not judged.
+- A relative markdown link followed by `§` must start with an existing heading name from that target. Matching ignores case, backticks, and emphasis markers. The heading name ends at a word boundary; prose can follow it. A section number also resolves to a heading with that number. Text routes check a heading prefix. Use an anchor link or an exact code-span citation where heading names share a prefix.
 - A decision ID, `DECISION_ID_PREFIX` plus at least `DECISION_ID_WIDTH` digits bounded by non-alphanumerics, must have a tracked file `DECISIONS_DIR/<ID>-*.md`; where that directory is not tracked, IDs are not judged and the verdict says so.
 
 The slug is GitHub's: link syntax, code-span backticks and HTML tags reduce to their text; ASCII letters lower-case (a non-ASCII letter keeps its case); every character not a letter, digit, space, `-` or `_` is dropped; each space becomes a hyphen; a repeat takes the first free `-1`, `-2` suffix.
 
-Scopes are md-format's over `GROWTH_GUARDS_MD_REFS_PATHS` minus `GROWTH_GUARDS_MD_EXCLUDES`, with the same `GROWTH_GUARDS_MD_SCOPE`. Targets resolve against the index whatever the scope, so a link into a file the commit deletes is dead; a tracked path holding a newline is no link target.
+`--staged` and `--all` check every tracked file named by `GROWTH_GUARDS_MD_REFS_PATHS` minus `GROWTH_GUARDS_MD_EXCLUDES`. With neither flag, `GROWTH_GUARDS_MD_SCOPE=touched` checks that set when any change is staged, including deletions; `all` checks it unconditionally. This includes references in unchanged documents. Callers and targets resolve against the index; a tracked path holding a newline is no link target.
 
 ## comments
 

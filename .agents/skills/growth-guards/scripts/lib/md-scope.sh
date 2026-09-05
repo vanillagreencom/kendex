@@ -13,6 +13,9 @@
 #              --staged, and with nothing staged the lane judges nothing
 #              and says so; `all` is --all
 #
+# md-refs widens a triggered check to all configured documents so target edits
+# recheck unchanged callers.
+#
 # Both scopes take the lane's path globs and GROWTH_GUARDS_MD_EXCLUDES, the
 # family's `pattern<TAB>reason` list with `!` carve-ins. A symlink, a gitlink
 # and a binary blob at a selected path are named as unmeasured, never folded
