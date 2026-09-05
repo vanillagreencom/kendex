@@ -44,7 +44,7 @@ Note anything a fix revealed about deeper problems, and cite the decision ID or 
 
 ## 3. Validate And Commit
 
-Run the project's validation command — the one `.agents/skills/orch/scripts/orch-env DEV_VALIDATE_CMD ""` prints (empty → the project's documented build/test/lint command) — from the worktree root; failure handling and the rule for a run that outlasts your turn are in [dev SKILL.md § Validation](../SKILL.md#validation).
+Follow [dev-implement.md § 5. Validate](./dev-implement.md#5-validate) from the worktree root. Use the Visual QA rule below.
 
 **Visual QA** — **skip if** the issue has no `design` label or the fix touches no UI code. Otherwise confirm what the fix changes renders correctly, not the full checklist.
 
