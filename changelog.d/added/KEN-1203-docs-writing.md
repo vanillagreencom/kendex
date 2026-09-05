@@ -1,0 +1,1 @@
+- `docs-writing` skill: one writing standard for every markdown file a repo owns, a directive list and a template per file type, and the blank-page rewrite workflow.

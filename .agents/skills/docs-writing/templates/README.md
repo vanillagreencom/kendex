@@ -5,7 +5,7 @@
 ## Install
 
 ```bash
-<the one command, or the manifest lines, where an install step exists>
+<the one command, where an install step exists>
 ```
 
 ## What it does
@@ -14,8 +14,8 @@
 
 ## How it works
 
-<Three to five lines: the flow or the shape, no mechanics.>
+<Three to five lines: the flow or the shape.>
 
 ## Customise
 
-- `<SETTING>`: <what it changes and where it is set>.
+- `<SETTING>`: <what it changes, and the file it is set in>.

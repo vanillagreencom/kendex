@@ -346,7 +346,7 @@ harnesses = [
 ]
 enabled = true
 
-[skills.arch-docs]
+[skills.docs-writing]
 source = "."
 harnesses = [
     "claude",

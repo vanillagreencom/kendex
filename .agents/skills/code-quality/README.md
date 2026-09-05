@@ -13,7 +13,7 @@ kendex add vanillagreencom/kendex --skill code-quality
 - Correctness rules: handle every error, never fail open, name the actual cause.
 - Prove-your-guards: a new check ships with the defect it catches planted and seen red.
 - Language discipline for Rust, Bash and TypeScript.
-- Comment and markdown placement rules, over-engineering limits, and cleanup rules.
+- Comment rules, over-engineering limits, and cleanup rules. Markdown is the `docs-writing` skill's.
 
 ## How it works
 
