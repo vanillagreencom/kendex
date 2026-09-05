@@ -71,7 +71,8 @@ SEGMENTS=${SEGMENTS//&/$NL}
 SEGMENTS=${SEGMENTS//\|/$NL}
 SEGMENTS=${SEGMENTS//\(/$NL}
 SEGMENTS=${SEGMENTS//\)/$NL}
-WRITE_RE='(^|[^[:alnum:]_.-])kendex[[:space:]]+(refresh|apply|add|remove|update-pi|updates)([[:space:]]|$)'
+# A quote may close the command word, as in `"/path/kendex" refresh`.
+WRITE_RE='(^|[^[:alnum:]_.-])kendex["'"'"']?[[:space:]]+(refresh|apply|add|remove|update-pi|updates)([[:space:]]|$)'
 GLOBAL_RE='(^|[[:space:]])(-g|--global|--scope([[:space:]]+|=)global)([[:space:]]|$)'
 PROJECT_RE='(^|[[:space:]])--scope([[:space:]]+|=)(project|all)([[:space:]]|$)'
 APPLY_RE='(^|[[:space:]])--apply([[:space:]]|$)'

@@ -93,6 +93,7 @@ assert_contains "$ERR_FILE" '--scope global' 'the refusal names the global scope
 run_in "$WT" 'cd sub && kendex refresh';          assert_eq "$rc" 2 'the verb is found after a chained command'
 run_in "$WT" "$(printf 'echo x\nkendex apply')";  assert_eq "$rc" 2 'the verb is found on the second line'
 run_in "$WT" '/home/u/.cargo/bin/kendex refresh'; assert_eq "$rc" 2 'an absolute path in front of kendex is still kendex'
+run_in "$WT" '"/home/u/.cargo/bin/kendex" refresh'; assert_eq "$rc" 2 'a quoted path in front of kendex is still kendex'
 run_in "$WT" 'kendex refresh --scope project';    assert_eq "$rc" 2 'the project scope spelled out is still the project scope'
 run_from "$WT" 'kendex refresh';                  assert_eq "$rc" 2 'without a cwd in the payload the hook judges the directory it runs in'
 
