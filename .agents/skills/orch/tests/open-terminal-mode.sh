@@ -10,8 +10,8 @@
 # tools in it act on the controller's tmux server.
 #
 # Everything external is stubbed: the GUI terminal (argv and the tmux identity
-# it inherited, logged), tmux (argv logged, then a failure so no lane goes
-# further), gh, and the worktree CLI.
+# it inherited, logged) in each of open_gui's three arms, tmux (argv logged,
+# then a failure so no lane goes further), gh, and the worktree CLI.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -36,18 +36,29 @@ assert_not_contains() {
         in: $1" || ok "$3"
 }
 
-# Stub bin. The GUI terminal logs its argv and the tmux identity it was handed
-# (`<unset>` when the variable is absent, which is what a scrub must produce and
-# what an empty value would fake). Every run names this stub in $TERMINAL, which
-# open_gui reaches for first, so no case resolves the developer's own terminal.
+# Stub bin. A GUI terminal stub logs its own name, its argv and the tmux
+# identity it was handed (`<unset>` when the variable is absent, which is what a
+# scrub must produce and what an empty value would fake). The $TERMINAL stub
+# `term` is on every run's PATH and named in $TERMINAL unless a row says
+# otherwise, so no case resolves the developer's own terminal; the
+# xdg-terminal-exec and ghostty stubs sit in bins of their own, on PATH only for
+# the row that exercises that arm.
 BIN="$TMP_ROOT/bin"
-mkdir -p "$BIN"
-cat > "$BIN/term" <<'STUB'
+XDG_BIN="$TMP_ROOT/bin-xdg"
+GHOSTTY_BIN="$TMP_ROOT/bin-ghostty"
+mkdir -p "$BIN" "$XDG_BIN" "$GHOSTTY_BIN"
+gui_stub() {
+  cat > "$1" <<'STUB'
 #!/usr/bin/env bash
-printf 'term %s\n' "$*" >> "$OT_TERM_LOG"
+printf '%s %s\n' "${0##*/}" "$*" >> "$OT_TERM_LOG"
 printf 'env TMUX=%s TMUX_PANE=%s\n' "${TMUX-<unset>}" "${TMUX_PANE-<unset>}" >> "$OT_TERM_LOG"
 exit 0
 STUB
+  chmod +x "$1"
+}
+gui_stub "$BIN/term"
+gui_stub "$XDG_BIN/xdg-terminal-exec"
+gui_stub "$GHOSTTY_BIN/ghostty"
 cat > "$BIN/tmux" <<'STUB'
 #!/usr/bin/env bash
 printf 'tmux %s\n' "$*" >> "$OT_TMUX_LOG"
@@ -57,7 +68,27 @@ cat > "$BIN/gh" <<'STUB'
 #!/usr/bin/env bash
 exit 1
 STUB
-chmod +x "$BIN/term" "$BIN/tmux" "$BIN/gh"
+chmod +x "$BIN/tmux" "$BIN/gh"
+
+# The ghostty arm sits below `command -v xdg-terminal-exec`, so on a machine
+# that has xdg-terminal-exec installed it is unreachable through PATH order
+# alone. This PATH is a farm of symlinks to every executable on the suite's own
+# PATH except xdg-terminal-exec, so that probe fails there and the arm is
+# reached hermetically.
+NO_XDG_PATH="$TMP_ROOT/path-without-xdg"
+mkdir -p "$NO_XDG_PATH"
+(
+  IFS=:
+  for d in $PATH; do
+    [[ -d "$d" ]] || continue
+    ln -s "$d"/* "$NO_XDG_PATH"/ 2>/dev/null || true
+  done
+)
+rm -f -- "$NO_XDG_PATH/xdg-terminal-exec"
+if command -v xdg-terminal-exec >/dev/null 2>&1 && PATH="$NO_XDG_PATH" command -v xdg-terminal-exec >/dev/null 2>&1; then
+  echo "fixture: xdg-terminal-exec still resolves on the farm PATH" >&2
+  exit 2
+fi
 
 # Stub worktree CLI: `create <item>` makes and prints a directory, so the
 # launch reaches the terminal instead of the missing-directory refusal.
@@ -87,22 +118,29 @@ stage "$REPO" "$SRC_OT"
 
 # run NAME OT WHERE ARGS... — WHERE is `in` (a tmux controller: TMUX and
 # TMUX_PANE set) or `out` (neither present, whatever this suite itself runs
-# under). Sets RC, ERR, TERM_LOG_TEXT and TMUX_LOG_TEXT.
+# under). $RUN_PATH is the launch PATH and $RUN_TERMINAL the $TERMINAL value
+# (empty: unset), both defaulting to the `term` arm. Sets RC, ERR,
+# TERM_LOG_TEXT and TMUX_LOG_TEXT.
+RUN_PATH=""
+RUN_TERMINAL="term"
 run() {
   local name="$1" ot="$2" where="$3"
   shift 3
   local term_log="$TMP_ROOT/$name.term" tmux_log="$TMP_ROOT/$name.tmux"
   : > "$term_log"
   : > "$tmux_log"
-  local -a tmux_env
+  # env reads its -u options only ahead of the first assignment.
+  local -a launch_env=(env)
+  [[ -n "$RUN_TERMINAL" ]] || launch_env+=(-u TERMINAL)
   case "$where" in
-    in)  tmux_env=(env TMUX=stub,1,0 TMUX_PANE=%7) ;;
-    out) tmux_env=(env -u TMUX -u TMUX_PANE) ;;
+    in)  launch_env+=(TMUX=stub,1,0 TMUX_PANE=%7) ;;
+    out) launch_env+=(-u TMUX -u TMUX_PANE) ;;
     *) echo "run: WHERE must be in or out, got '$where'" >&2; exit 2 ;;
   esac
+  [[ -z "$RUN_TERMINAL" ]] || launch_env+=("TERMINAL=$RUN_TERMINAL")
   set +e
-  "${tmux_env[@]}" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" \
-    OT_TERM_LOG="$term_log" OT_TMUX_LOG="$tmux_log" TERMINAL=term \
+  "${launch_env[@]}" PATH="${RUN_PATH:-$BIN:$PATH}" WORKTREE_CLI="$STUB" \
+    OT_TERM_LOG="$term_log" OT_TMUX_LOG="$tmux_log" \
     "$ot" --cmd 'echo {item}' "$@" >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err"
   RC=$?
   set -e
@@ -177,13 +215,6 @@ echo "=== open-terminal: mode is auto-detected from \$TMUX and a flag overrides 
 check_mode_rows main "$REPO/scripts/open-terminal"
 
 echo
-echo "=== a GUI terminal opened from inside tmux inherits no tmux identity ==="
-run scrub "$REPO/scripts/open-terminal" in --ghostty CC-1
-assert_eq "$RC" "0" "the override launch succeeds"
-assert_contains "$TERM_LOG_TEXT" "env TMUX=<unset> TMUX_PANE=<unset>" \
-  "the GUI terminal receives neither TMUX nor TMUX_PANE"
-
-echo
 echo "=== each rule can fail ==="
 
 # mutate NAME SED_EXPR — a copy of open-terminal with SED_EXPR applied, staged
@@ -217,12 +248,37 @@ run mut_warn "$MUTANT_OT" in --ghostty CC-1
 assert_eq "$RC" "0" "control: without the warning the override still launches"
 assert_not_contains "$ERR" "$WARNING" "control: and says nothing about overriding tmux"
 
-# The scrub gone: the GUI terminal inherits the controller's tmux identity.
-mutate scrub 's/ -u TMUX -u TMUX_PANE//'
-run mut_scrub "$MUTANT_OT" in --ghostty CC-1
-assert_eq "$RC" "0" "control: without the scrub the launch still succeeds"
-assert_contains "$TERM_LOG_TEXT" "env TMUX=stub,1,0 TMUX_PANE=%7" \
-  "control: and the GUI terminal really does inherit TMUX and TMUX_PANE"
+echo
+echo "=== a GUI terminal opened from inside tmux inherits no tmux identity, on every launcher arm ==="
+
+# One row per open_gui arm: the PATH and $TERMINAL that reach it, the argv the
+# stub must log, and the arm's own launcher token. Each row runs green against
+# open-terminal and red against a mutant whose arm launches without the scrub
+# array (the token kept, `env -u CLAUDECODE` alone in front of it), so a scrub
+# dropped from one arm reds that arm's row and no other.
+ARM_ROWS="terminal|$BIN:$PATH|term|term -e bash -lc|\"\$TERMINAL\"
+xdg|$XDG_BIN:$BIN:$PATH|-|xdg-terminal-exec bash -lc|xdg-terminal-exec
+ghostty|$GHOSTTY_BIN:$BIN:$NO_XDG_PATH|-|ghostty --working-directory=|ghostty"
+SCRUB_RE='"\${scrub\[@]}"'
+while IFS='|' read -r arm path terminal argv tok; do
+  [[ -n "$arm" ]] || continue
+  RUN_PATH="$path"
+  RUN_TERMINAL="${terminal#-}"
+  run "scrub-$arm" "$REPO/scripts/open-terminal" in --ghostty CC-1
+  assert_eq "$RC" "0" "$arm arm: the override launch succeeds"
+  assert_contains "$TERM_LOG_TEXT" "$argv" "$arm arm: the launch went through this arm"
+  assert_contains "$TERM_LOG_TEXT" "env TMUX=<unset> TMUX_PANE=<unset>" \
+    "$arm arm: the GUI terminal receives neither TMUX nor TMUX_PANE"
+  tok_re="$(printf '%s' "$tok" | sed 's/[][\\.*^$]/\\&/g')"
+  mutate "scrub-$arm" "s#launcher=(${SCRUB_RE} ${tok_re}#launcher=(env -u CLAUDECODE ${tok}#"
+  run "mut-scrub-$arm" "$MUTANT_OT" in --ghostty CC-1
+  assert_eq "$RC" "0" "control: $arm arm without the scrub still launches"
+  assert_contains "$TERM_LOG_TEXT" "$argv" "control: $arm arm is still the arm taken"
+  assert_contains "$TERM_LOG_TEXT" "env TMUX=stub,1,0 TMUX_PANE=%7" \
+    "control: and the $arm arm's terminal really does inherit TMUX and TMUX_PANE"
+done <<<"$ARM_ROWS"
+RUN_PATH=""
+RUN_TERMINAL="term"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
