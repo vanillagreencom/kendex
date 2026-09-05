@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 4.0.1
 
 - Fable selection now uses `claude-fable-5-1`, displayed as Claude Fable 5.1. Update saved model selections and model-effort override keys to the new ID.
 
