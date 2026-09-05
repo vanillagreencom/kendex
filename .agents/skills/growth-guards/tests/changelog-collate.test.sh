@@ -3,10 +3,10 @@
 # fragments this run accepted into the record's [Unreleased] section, under
 # the heading each fragment's own section names, in Keep a Changelog order and
 # filename order within a section; it splits the record at the line numbers
-# the STAGED copy was accepted with, collapses two headings for one section
+# the committed copy was accepted with, collapses two headings for one section
 # into one, deletes the fragments and the section directory each leaves empty,
-# and refuses without writing when the judgement refuses or when git and the
-# working tree disagree about the record or any fragment. The refusing
+# and refuses without writing when the judgement refuses, the index or working
+# tree has pending changes, or the release flag is absent. The refusing
 # direction runs first in every pair, and each refusal is checked to have left
 # the record and the fragments as they were — a fold that half-writes or
 # half-deletes is the failure this guards.
@@ -20,6 +20,8 @@ CE="$(cd "$TEST_DIR/.." && pwd)/scripts/changelog-entries"
 unset GROWTH_GUARDS_CHANGELOG_CAP GROWTH_GUARDS_CHANGELOG_PATHS \
   GROWTH_GUARDS_CHANGELOG_RECORD GROWTH_GUARDS_CHANGELOG_COLLATE \
   GROWTH_GUARDS_SETTINGS_FILE 2>/dev/null || true
+
+export GROWTH_GUARDS_CHANGELOG_COLLATE=1
 
 PASS=0
 FAIL=0
@@ -35,6 +37,7 @@ git -C "$R" config user.name test
 reset() { # RECORD on stdin — the fixture record and an empty tree, committed
   rm -rf -- "${R:?}/changelog.d"
   cat >"$R/CHANGELOG.md"
+  printf 'Release input.\n' >"$R/release-input.txt"
   git -C "$R" add -A
   # Each case starts from a committed fixture with a clean index.
   git -C "$R" commit -q --allow-empty -m "chore: reset the fixture"
@@ -47,10 +50,11 @@ stage_record() { # RECORD on stdin — staged over the committed one, not commit
   cp "$R/CHANGELOG.md" "$TMP/before"
 }
 
-frag() { # SECTION NAME — content on stdin, written and staged
+frag() { # SECTION NAME: content on stdin, written and committed
   mkdir -p "$R/changelog.d/$1"
   cat >"$R/changelog.d/$1/$2"
   git -C "$R" add -A -- changelog.d
+  git -C "$R" commit -qm "chore: prepare release input"
 }
 
 run_collate() { OUT=""; RC=0; OUT="$(cd "$R" && "$CE" --collate 2>&1)" || RC=$?; }
@@ -77,6 +81,71 @@ RECORD='# Changelog
 
 - A released entry.
 '
+
+echo "=== the release write requires authorization and committed inputs ==="
+for refusal in missing-flag disabled-flag staged unstaged untracked; do
+  printf '%s' "$RECORD" | reset
+  printf -- '- Folded in.\n' | frag fixed pending.md
+  cp "$R/changelog.d/fixed/pending.md" "$TMP/fragment-before"
+  case "$refusal" in
+    missing-flag) unset GROWTH_GUARDS_CHANGELOG_COLLATE ;;
+    disabled-flag) export GROWTH_GUARDS_CHANGELOG_COLLATE=0 ;;
+    untracked) printf 'Pending release file.\n' >"$R/pending-release.txt" ;;
+    staged|unstaged)
+      printf 'Pending version edit.\n' >"$R/release-input.txt"
+      if [ "$refusal" = staged ]; then
+        git -C "$R" add -- release-input.txt
+      fi
+      ;;
+  esac
+  index_before="$(git -C "$R" ls-files -s)"
+  run_collate
+  case "$refusal" in
+    missing-flag|disabled-flag) expected='requires GROWTH_GUARDS_CHANGELOG_COLLATE=1' ;;
+    staged|unstaged|untracked) expected='requires a clean index and working tree' ;;
+  esac
+  [ "$RC" -eq 2 ] && case "$OUT" in *"$expected"*) true ;; *) false ;; esac \
+    && ok "$refusal refuses with its cause" || bad "$refusal refusal" "rc=$RC out=$OUT"
+  untouched && cmp -s "$R/changelog.d/fixed/pending.md" "$TMP/fragment-before" \
+    && [ "$(git -C "$R" ls-files -s)" = "$index_before" ] \
+    && ok "$refusal preserves exact record, fragment and index" || bad "$refusal preservation" "$OUT"
+  export GROWTH_GUARDS_CHANGELOG_COLLATE=1
+  git -C "$R" reset --hard -q HEAD
+  rm -f -- "$R/pending-release.txt"
+  run_collate
+  [ "$RC" -eq 0 ] && [ ! -e "$R/changelog.d/fixed/pending.md" ] \
+    && grep -Fxq -- '- Folded in.' "$R/CHANGELOG.md" \
+    && ok "$refusal passes after its cause is removed" || bad "$refusal repair" "rc=$RC out=$OUT"
+done
+
+echo "=== ignored scratch does not block a release ==="
+printf '%s' "$RECORD" | reset
+printf -- '- Folded in.\n' | frag fixed pending.md
+printf 'scratch/\n' >"$R/.git/info/exclude"
+mkdir -p "$R/scratch"
+printf 'Release scratch.\n' >"$R/scratch/note"
+run_collate
+[ "$RC" -eq 0 ] && [ ! -e "$R/changelog.d/fixed/pending.md" ] \
+  && grep -Fxq -- '- Folded in.' "$R/CHANGELOG.md" \
+  && ok "ignored scratch permits collation" || bad "ignored scratch" "rc=$RC out=$OUT"
+
+echo "=== a failed Git status cannot authorize a release write ==="
+printf '%s' "$RECORD" | reset
+printf -- '- Folded in.\n' | frag fixed pending.md
+cp "$R/changelog.d/fixed/pending.md" "$TMP/fragment-before"
+index_before="$(git -C "$R" ls-files -s)"
+STATUS_STUB="$TMP/status-stub"
+mkdir -p "$STATUS_STUB"
+REAL_GIT="$(command -v git)"
+printf '#!/usr/bin/env bash\nif [ "$1" = status ]; then exit 1; fi\nexec %q "$@"\n' "$REAL_GIT" >"$STATUS_STUB/git"
+chmod +x "$STATUS_STUB/git"
+RC=0
+OUT="$(cd "$R" && PATH="$STATUS_STUB:$PATH" "$CE" --collate 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not read repository status"*) true ;; *) false ;; esac \
+  && ok "Git status failure refuses with its cause" || bad "Git status failure" "rc=$RC out=$OUT"
+untouched && cmp -s "$R/changelog.d/fixed/pending.md" "$TMP/fragment-before" \
+  && [ "$(git -C "$R" ls-files -s)" = "$index_before" ] \
+  && ok "Git status failure preserves exact record, fragment and index" || bad "Git status preservation" "$OUT"
 
 echo "=== a record naming a section this family cannot write is refused, and nothing is written ==="
 printf '%s' "$RECORD" | sed 's/^### Added$/### Add/' | reset
@@ -199,9 +268,7 @@ LEFT="$(find "$R/changelog.d" -mindepth 1 | sort | tr '\n' ' ')"
 no_staging && ok "the install leaves no staging file beside the record" \
   || bad "the install leaves no staging file beside the record" "$STAGING"
 
-echo "=== the record is split at the STAGED copy's line numbers, not HEAD's ==="
-# Moving the staged heading must move the split point. Using HEAD would put
-# fragments at the wrong place in the edited document.
+echo "=== moving the heading moves the split point ==="
 printf '%s' "$RECORD" | reset
 printf '%s' '# Changelog
 
@@ -247,15 +314,15 @@ More preamble.
 - A released entry.
 '
 [ "$(cat "$R/CHANGELOG.md")" = "$(printf '%s' "$MOVED")" ] \
-  && ok "and it is split where the staged copy puts the section, losing no preamble" \
-  || bad "and it is split where the staged copy puts the section, losing no preamble" "$(diff <(printf '%s' "$MOVED") "$R/CHANGELOG.md" || true)"
+  && ok "and it is split at the moved section, losing no preamble" \
+  || bad "and it is split at the moved section, losing no preamble" "$(diff <(printf '%s' "$MOVED") "$R/CHANGELOG.md" || true)"
 
 echo "=== an unstaged edit stops the write, on either side of the fold ==="
 printf '%s' "$RECORD" | reset
 printf -- '- Folded in.\n' | frag fixed ken-1.md
 printf -- '- Edited only on disk.\n' >"$R/changelog.d/fixed/ken-1.md"
 run_collate
-[ "$RC" -eq 2 ] && case "$OUT" in *"differs between git and the working tree"*"changelog.d/fixed/ken-1.md"*) true ;; *) false ;; esac \
+[ "$RC" -eq 2 ] && case "$OUT" in *"requires a clean index and working tree"*"changelog.d/fixed/ken-1.md"*) true ;; *) false ;; esac \
   && ok "a fragment git and the disk disagree about refuses the fold" \
   || bad "a fragment git and the disk disagree about refuses the fold" "rc=$RC out=$OUT"
 untouched && ok "the record is untouched by that refusal too" || bad "the record is untouched by that refusal too" "$(cat "$R/CHANGELOG.md")"
@@ -268,7 +335,7 @@ printf '%s' "$RECORD" | reset
 printf -- '- Folded in.\n' | frag fixed ken-1.md
 printf -- '\n- An entry only the disk carries.\n' >>"$R/CHANGELOG.md"
 run_collate
-[ "$RC" -eq 2 ] && case "$OUT" in *"differs between git and the working tree"*"CHANGELOG.md"*) true ;; *) false ;; esac \
+[ "$RC" -eq 2 ] && case "$OUT" in *"requires a clean index and working tree"*"CHANGELOG.md"*) true ;; *) false ;; esac \
   && ok "a record git and the disk disagree about refuses the fold" \
   || bad "a record git and the disk disagree about refuses the fold" "rc=$RC out=$OUT"
 [ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "and the fragment survives that refusal" \

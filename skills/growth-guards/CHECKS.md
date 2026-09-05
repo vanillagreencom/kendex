@@ -60,7 +60,7 @@ Every tracked path `GROWTH_GUARDS_CHANGELOG_PATHS` matches must be:
 
 A pattern's root is its leading run of glob-free directories (`changelog.d/*/*.md` roots at `changelog.d`); a glob-free pattern names one file and roots nowhere. Every tracked path under a root that no pattern matches is a violation, except a `README.md` directly under a root and the configured record. No matching file is a clean pass; switch the check off by dropping it from `GROWTH_GUARDS_CHECKS`.
 
-`--collate` judges, then on a clean verdict folds each fragment into the record's `[Unreleased]` section under its section's heading, in Keep a Changelog order and filename order within a section, and deletes the fragment files and each section directory left empty. It refuses, writing nothing, when the index and the working tree disagree about a judged path; the record is replaced whole. The release commit is its only caller.
+`--collate` judges, then on a clean verdict folds each fragment into the record's `[Unreleased]` section under its section's heading, in Keep a Changelog order and filename order within a section, and deletes the fragment files and each section directory left empty. It requires `GROWTH_GUARDS_CHANGELOG_COLLATE=1` and refuses, writing nothing, when the index or working tree has staged, unstaged or non-ignored untracked changes. The record is replaced whole. The release commit is its only caller.
 
 ### The record
 
@@ -68,7 +68,7 @@ A pattern's root is its leading run of glob-free directories (`changelog.d/*/*.m
 
 - `--collate` with accepted fragments requires a tracked, regular text destination with one `## [Unreleased]` section. Section headings use the Keep a Changelog names so each fragment has a destination.
 - Missing or duplicate pending sections, unclosed fences, and unknown section names refuse collation before any write.
-- `GROWTH_GUARDS_CHANGELOG_COLLATE=1` lets `commit-msg` count a record change as the release changelog entry. It does not change fragment validation.
+- `GROWTH_GUARDS_CHANGELOG_COLLATE=1` authorizes `--collate` and lets `commit-msg` count a record change as the release changelog entry. It does not change fragment validation.
 
 ### Measuring one entry
 

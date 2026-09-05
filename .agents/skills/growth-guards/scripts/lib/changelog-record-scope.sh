@@ -91,7 +91,7 @@ gg_record_structure() { # 0 when the staged record's shape is one a release can 
 
 gg_changelog_record_scope() {
   [ -n "$RECORD" ] || gg_config_error "no collation destination: GROWTH_GUARDS_CHANGELOG_RECORD is empty"
-  [ -n "$RECORD_SHA" ] || gg_config_error "$(gg_shown "$RECORD") is not tracked; stage the collation destination first"
+  [ -n "$RECORD_SHA" ] || gg_config_error "$(gg_shown "$RECORD") is not tracked; commit the collation destination first"
   gg_mode_is_regular "$RECORD_MODE" || gg_collection_error "$(gg_shown "$RECORD") is not a regular collation destination"
   gg_changelog_blob "$RECORD_SHA" "$RECORD" \
     || gg_collection_error "$(gg_shown "$RECORD") holds binary content; collation needs text"
