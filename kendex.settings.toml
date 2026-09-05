@@ -215,16 +215,14 @@ BOT_REMOTE_NAME = ""
 # Where the decider skill keeps architecture decision records.
 DECISIONS_DIR = "docs/decisions"
 
-# The repo's own validation command, over the working tree: the lane of the
-# commit chain that judges uncommitted work. The package lanes read the index
-# instead, so they answer at `git commit`, not here.
-DEV_VALIDATE_CMD = "tools/guard"
+# Full validation runs at development completion. Submit reuses that result
+# for the same commit; CI runs the full suites independently.
+DEV_VALIDATE_CMD = "tools/guard --full"
 
 # The repo-root executable the guard chain runs last, after size-ratchet,
 # preflight and the growth-guards batch. tools/guard holds this repository's
-# own rules — the CHANGELOG rules, the repo-specific scans, fmt, clippy, the
-# test run — and no OTHER lane of the chain runs them, so without this key a
-# fresh clone arms hooks that gate none of them.
+# own scans and compile checks for changed crates or UI files. Expensive
+# tests, documentation builds and cross-target checks run through DEV_VALIDATE_CMD.
 GROWTH_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"
 
 # The fragment scope of the changelog-entries lane. The two-segment glob

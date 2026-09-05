@@ -1,9 +1,6 @@
 # shellcheck shell=bash
-# Which parent a commit will HAVE, for the lane that judges a commit rather
-# than an index — `commit-msg`, its one caller: HEAD for an ordinary commit,
-# and HEAD's own parent for an amend, which replaces HEAD rather than following
-# it. Sourced, never executed; needs lib/common.sh sourced first and the caller
-# cd'd to the repository root.
+# Commit parent selection for lib/commit-changes.sh. Needs lib/common.sh
+# and the repository root as the working directory.
 set -euo pipefail
 
 # git tells a commit-msg hook the message and nothing else: no flag, no

@@ -160,7 +160,7 @@ Deterministic gates first — every finding is fixed here, never carried into re
 .agents/skills/size-ratchet/scripts/size-ratchet
 ```
 
-Then the project's validation command — the one `.agents/skills/orch/scripts/orch-env DEV_VALIDATE_CMD ""` prints (empty → the project's documented build/test/lint command), run from the worktree root — plus the delegation's required verification commands in their § 2.4 normalized form. Failure handling and long-running runs: [dev SKILL.md § Validation](../SKILL.md#validation).
+Run the project's full validation once before completion. Its successful result is recorded in the completion artifact for submit to reuse on the same commit. Use the project's validation command — the one `.agents/skills/orch/scripts/orch-env DEV_VALIDATE_CMD ""` prints (empty → the project's documented build/test/lint command), run from the worktree root — plus the delegation's required verification commands in their § 2.4 normalized form. Failure handling and long-running runs: [dev SKILL.md § Validation](../SKILL.md#validation).
 
 A script written only to produce a number for the issue is not committed; put its result in the PR body. Every check, guard, assertion, or test this change adds or modifies must have a must-fail control that runs red once ([code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards)); an uncommitted measurement is not a check the change adds or modifies.
 

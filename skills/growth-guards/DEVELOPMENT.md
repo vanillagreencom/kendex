@@ -94,3 +94,7 @@ A headless suite cannot reach a branch that exists only at a tty (`mv` prompts b
 - Pair every negative with positive evidence the code was entered: echo a marker before the call and require it back.
 - Check the premise inside the session: mode `0444` is not enforced at euid 0.
 - Every path written into the session goes through `%q`; the session exports `LC_ALL=C`.
+
+## Commit change collection
+
+`scripts/lib/commit-changes.sh::gg_commit_changes` owns the changed, written and product path sets. The changelog message gate and kendex's compile scheduling share these sets. Product paths use `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS`. Rename sources and destinations both count as changed paths. The written set retains the changelog gate's content and file-mode rules.

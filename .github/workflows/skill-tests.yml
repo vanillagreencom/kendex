@@ -383,12 +383,7 @@ jobs:
         working-directory: pi-extensions/pi-claude-bridge
         run: git diff --exit-code -- bundle/
 
-  # The `ui/` suites, which until now ran only in the tools/guard pre-commit
-  # hook — a lane `git commit --no-verify` skips. Its own job rather than a
-  # sixth shard: `npm ci` against ui/package-lock.json is the whole cost, and
-  # the shards install nothing it shares. It reaches the ruleset through the
-  # aggregator below rather than as a required context of its own, which would
-  # gate nothing until an admin ruleset edit landed.
+  # Full UI validation reaches the required aggregator on every event.
   ui-tests:
     name: UI (vitest, tsc, biome)
     runs-on: ubuntu-latest
@@ -409,7 +404,7 @@ jobs:
       # One step per ui/package.json script, because a script that short-
       # circuits another hides its findings: `check` runs `check:types` before
       # `check:lint`, so a type error would report no lint failure at all.
-      # tools/guard runs these same three scripts, which is what keeps the two
+      # tools/guard --full runs these same three scripts, which is what keeps the two
       # callers from drifting — the commands live in package.json, not here.
       # always(): a red step above must not hide the ones after it.
       - name: check:types
@@ -546,13 +541,8 @@ jobs:
           RUSTFLAGS: -C debuginfo=0
           CARGO_INCREMENTAL: '0'
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      # Same reasoning as clippy above, for the two lanes tools/guard was the
-      # only runner of. Before this, --no-verify or a clone tools/setup never
-      # armed could land a format failure or a broken rustdoc link with
-      # every required check green. Reach is narrower than clippy's above.
-      # --document-private-items takes the rustdoc deny to a citation of a
-      # private item, but cargo doc builds lib and bin targets and offers no
-      # test-target flag, so the ones under crates/*/tests/ stay unchecked.
+      # Private rustdoc links are checked on lib and bin targets. Rustdoc
+      # offers no test-target flag for integration-test documentation.
       - name: cargo fmt
         if: always()
         run: cargo fmt --check
@@ -563,8 +553,8 @@ jobs:
           CARGO_INCREMENTAL: '0'
         run: cargo doc --no-deps --document-private-items --workspace --locked
 
-  # The app ships on macOS. tools/guard checks the core and CLI Apple targets
-  # at commit time; this runner executes the tests on the platform.
+  # The app ships on macOS. tools/guard --full checks the core and CLI Apple targets
+  # at development completion; this runner executes the tests on the platform.
   cargo-tests-macos:
     name: macOS cargo (workspace tests)
     runs-on: macos-latest
@@ -585,7 +575,7 @@ jobs:
   # without one, and it answers in a minute where the executing lane below
   # takes the workspace build first — a `std::os::unix` reach in test code
   # fails here before that one has finished linking. Scope matches
-  # tools/guard's cross-target lane: app needs the platform's C toolchain,
+  # tools/guard --full's cross-target lane: app needs the platform's C toolchain,
   # core and CLI are portable.
   cargo-check-windows:
     name: Windows cargo (core and CLI targets compile)
