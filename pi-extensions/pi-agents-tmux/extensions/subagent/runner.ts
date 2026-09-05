@@ -599,7 +599,10 @@ async function runSingleAgentAttempt(
 ): Promise<SingleResult> {
 	const args: string[] = ["--mode", "json", "-p", "--name", agent.name, "--session", session.path];
 	if (selectedModel) args.push("--model", selectedModel);
-	if (selectedThinking && selectedThinking !== "off") args.push("--thinking", selectedThinking);
+	// The effort is the parent's level, the model id's `:level` suffix, or the
+	// agent's own `effort` key, in that order; an inherited model has no suffix
+	// to carry the key, so it reaches the child as `--thinking` or not at all.
+	if (selectedEffort && selectedEffort !== "off") args.push("--thinking", selectedEffort);
 	args.push("--exclude-tools", BG_EXCLUDED_TOOLS.join(","));
 	const inheritedActiveTools = pi.getActiveTools?.() ?? [];
 	const selectedTools = selectedToolsForAgent(agent, defaultCwd, [], activeToolsForBgAgent(inheritedActiveTools));

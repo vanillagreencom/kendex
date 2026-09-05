@@ -337,6 +337,63 @@ function promptTempDirs(): string[] {
 	return readdirSync(tmpdir()).filter((name) => name.startsWith("pi-subagent-"));
 }
 
+function captureSpawnedArgs(): string[][] {
+	const calls: string[][] = [];
+	setSingleAgentSpawnForTests(((command: string, args: string[]) => {
+		void command;
+		calls.push(args);
+		const proc = new EventEmitter() as any;
+		proc.stdout = new EventEmitter();
+		proc.stderr = new EventEmitter();
+		proc.killed = false;
+		proc.kill = () => { proc.killed = true; return true; };
+		queueMicrotask(() => proc.emit("close", 0, null));
+		return proc;
+	}) as any);
+	return calls;
+}
+
+function thinkingFlag(args: string[]): string | undefined {
+	const at = args.indexOf("--thinking");
+	return at < 0 ? undefined : args[at + 1];
+}
+
+describe("bg one-shot runner effort wiring (KEN-1233)", () => {
+	const noPi = { getActiveTools: () => [], events: { emit: () => undefined } } as any;
+	const previousDepth = process.env[PI_SUBAGENT_DEPTH_ENV];
+
+	async function spawnedArgs(config: AgentConfig, parentModel: string | undefined): Promise<string[]> {
+		const calls = captureSpawnedArgs();
+		try {
+			delete process.env[PI_SUBAGENT_DEPTH_ENV];
+			const root = tempDir("pi-agents-effort-");
+			await runSingleAgent(root, root, [config], config.name, "recon", undefined, parentModel, undefined, undefined, noPi, undefined, undefined, makeDetails);
+			expect(calls).toHaveLength(1);
+			return calls[0]!;
+		} finally {
+			setSingleAgentSpawnForTests();
+			if (previousDepth === undefined) delete process.env[PI_SUBAGENT_DEPTH_ENV];
+			else process.env[PI_SUBAGENT_DEPTH_ENV] = previousDepth;
+		}
+	}
+
+	test("an inherited model runs at the frontmatter effort", async () => {
+		const args = await spawnedArgs({ ...agent("scout"), effort: "high" }, "anthropic/claude-opus-5");
+		expect(args).toContain("anthropic/claude-opus-5");
+		expect(thinkingFlag(args)).toBe("high");
+	});
+
+	test("a model suffix wins over the effort key", async () => {
+		const args = await spawnedArgs({ ...agent("scout"), model: "openai-codex/gpt-6-astra:low", effort: "high" }, undefined);
+		expect(thinkingFlag(args)).toBe("low");
+	});
+
+	test("no effort anywhere passes no --thinking", async () => {
+		const args = await spawnedArgs(agent("scout"), "anthropic/claude-opus-5");
+		expect(thinkingFlag(args)).toBeUndefined();
+	});
+});
+
 describe("bg one-shot runner depth guard wiring (kendex#192)", () => {
 	test("spawned child env carries the incremented PI_SUBAGENT_DEPTH", async () => {
 		const envs = captureSpawnedEnv();
@@ -402,6 +459,26 @@ describe("bg one-shot runner depth guard wiring (kendex#192)", () => {
 			if (previous === undefined) delete process.env[PI_SUBAGENT_DEPTH_ENV];
 			else process.env[PI_SUBAGENT_DEPTH_ENV] = previous;
 		}
+	});
+});
+
+describe("persistent pane launcher effort wiring (KEN-1233)", () => {
+	test("an inherited model runs at the frontmatter effort", async () => {
+		const root = tempDir("pi-agents-launcher-effort-");
+		const cwd = tempDir("pi-agents-launcher-effort-cwd-");
+		const paths = await writeLauncher(root, "parent-session-id", cwd, { ...agent("iced", "You are iced.", true), effort: "high" }, "anthropic/claude-opus-5", undefined);
+		const script = readFileSync(paths.launcherFile, "utf-8");
+		expect(script).toContain("'--thinking' 'high'");
+		expect(script).toContain("anthropic/claude-opus-5");
+	});
+
+	test("a model suffix wins over the effort key, and no effort passes no flag", async () => {
+		const root = tempDir("pi-agents-launcher-effort-");
+		const cwd = tempDir("pi-agents-launcher-effort-cwd-");
+		const suffixed = await writeLauncher(root, "parent-session-id", cwd, { ...agent("iced", "You are iced.", true), effort: "high" }, "openai-codex/gpt-6-astra:low", undefined);
+		expect(readFileSync(suffixed.launcherFile, "utf-8")).toContain("'--thinking' 'low'");
+		const bare = await writeLauncher(root, "parent-session-id", cwd, agent("iced", "You are iced.", true), "anthropic/claude-opus-5", undefined);
+		expect(readFileSync(bare.launcherFile, "utf-8")).not.toContain("'--thinking'");
 	});
 });
 

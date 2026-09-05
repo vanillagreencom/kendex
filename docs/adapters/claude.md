@@ -32,7 +32,7 @@ A project skill lives in the shared `.agents/skills/<name>` tree, and `.claude/s
 - Name rule `Any`; namespace separator `__`.
 - MCP transports: stdio, streamable HTTP, SSE.
 - Agent file: YAML frontmatter and a markdown body, `<name>.md`. Fields written: `name`, `description`, `model`, `effort`, `background`, `isolation`, `memory`, `tools` (allowlist, comma-joined), `disallowedTools` always, `color`, `skills`, and a nested `hooks:` block for per-agent custom hooks (`crates/core/src/render/agent/claude.rs`).
-- Model dialect: `fable` and `opus` resolve to the literal `inherit`; `sonnet` and `haiku` pin their own alias; explicit vendor ids pass through (`crates/core/src/harness/models.rs`).
+- Model dialect: every tier pins its own alias (`fable`, `opus`, `sonnet`, `haiku`); `inherit` is the literal `inherit`; explicit vendor ids pass through (`crates/core/src/harness/models.rs`). `effort` is written as given: `low`, `medium`, `high`, `xhigh` or `max`, and an absent key inherits the session's level.
 - Tool vocabulary: Claude's PascalCase names are the fleet's authoring vocabulary; bodies pass through unrewritten, and manifest tool names are case-normalized by `claude_tool_name` (`crates/core/src/render/vocab/mod.rs`).
 - Rendered agents are refused before the plan is shown when the frontmatter is missing or names another agent (`crates/core/src/render/validate/agent.rs`).
 

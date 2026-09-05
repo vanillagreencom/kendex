@@ -188,9 +188,9 @@ export function subagentThinkingSource(cwd?: string): "frontmatter" | "parent" {
 	return settingString("subagentThinkingSource", "frontmatter", cwd) === "parent" ? "parent" : "frontmatter";
 }
 
-// When source is "frontmatter" the agent's model `:effort` suffix governs the
-// child's thinking level, so we omit `--thinking` and let pi-core read the
-// suffix. Passing `--thinking` would override the suffix unconditionally.
+// When source is "frontmatter" the parent's level is not consulted: the
+// agent's model `:effort` suffix or its `effort` key governs the child's
+// thinking level (`selectedEffortForAgent`).
 export function selectedThinkingLevelForAgent(parentThinkingLevel: string | undefined, cwd?: string): string | undefined {
 	return subagentThinkingSource(cwd) === "parent" ? parentThinkingLevel : undefined;
 }

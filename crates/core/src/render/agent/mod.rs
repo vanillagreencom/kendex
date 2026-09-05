@@ -308,6 +308,57 @@ mod tests {
         assert!(solo.contains(SHARED_START) && !solo.contains("rust rule"));
     }
 
+    /// One control per harness: a custom effort reaches the rendered file
+    /// under that harness's own key, and a harness with no per-agent effort
+    /// carries nothing rather than a key its loader will not read.
+    #[test]
+    fn a_custom_effort_round_trips_under_each_harness_key() {
+        use crate::model::{HarnessId, Scope};
+        let source = parse_source_agent(
+            "---\nname: rust\ndescription: Rust engineer\nmodel: inherit\nrole: engineer\neffort: high\n---\nBody.\n",
+        )
+        .unwrap();
+        let scope = Scope::Global;
+        let overrides = FrontmatterOverrides {
+            effort: Some("low".into()),
+            ..FrontmatterOverrides::default()
+        };
+        let spelled = |harness: HarnessId| -> String {
+            let agent = EffectiveAgent {
+                source: &source,
+                harness,
+                scope: &scope,
+                skills: vec![],
+                permissions: EffectiveAgent::intent(&source, &overrides),
+                overrides: overrides.clone(),
+                launch_instructions: None,
+                additional_instructions: None,
+                custom_hooks: vec![],
+            };
+            generate(&agent).unwrap().text
+        };
+        let keyed = [
+            (HarnessId::Claude, "effort: low\n"),
+            (HarnessId::Codex, "model_reasoning_effort = \"low\"\n"),
+            (HarnessId::Opencode, "reasoningEffort: low\n"),
+            (HarnessId::Pi, "effort: low\n"),
+        ];
+        for (harness, line) in keyed {
+            let text = spelled(harness);
+            assert!(text.contains(line), "{}: {text}", harness.name());
+            let source_line = line.replace("low", "high");
+            assert!(!text.contains(&source_line), "{}: {text}", harness.name());
+        }
+        for harness in [HarnessId::Cursor, HarnessId::Gemini, HarnessId::Copilot] {
+            let text = spelled(harness);
+            assert!(
+                !text.to_lowercase().contains("effort"),
+                "{}: {text}",
+                harness.name()
+            );
+        }
+    }
+
     #[test]
     fn deny_tools_merge_while_other_fields_prefer_project() {
         let source = FrontmatterOverrides {

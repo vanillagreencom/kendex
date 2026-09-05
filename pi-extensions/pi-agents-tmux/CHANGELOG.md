@@ -4,6 +4,7 @@
 
 ### Unreleased
 
+- A child, one-shot or pane, runs at the agent's frontmatter `effort` level when its model id carries no `:effort` suffix: the runner and the pane launcher pass it as `--thinking`. Before, an agent that inherited the parent's model ran at Pi's default thinking level whatever its `effort` key said. A live pane picks the level up on its next launch.
 - The extension uses `PI_CODING_AGENT_DIR` only when root-anchored — a drive or UNC share on Windows, a leading `/` on POSIX. Anything else uses `~/.pi/agent`. The install helper is unchanged.
 
 ### 3.0.0

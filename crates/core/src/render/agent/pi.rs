@@ -35,12 +35,16 @@ pub fn generate(agent: &EffectiveAgent) -> Result<RenderedAgent, String> {
         ));
     }
     let mut warnings = Vec::new();
-    let (model, model_warning) = model(agent);
+    let effort = effort(agent);
+    let (model, model_warning) = model(agent, effort);
     warnings.extend(model_warning.map(|w| {
         crate::render::RenderWarning::with_fix(w, "use a provider/model id or a tier alias")
     }));
     if let Some(model) = model {
         out.push_str(&format!("model: {}\n", yaml_scalar(&model)));
+    }
+    if let Some(effort) = effort {
+        out.push_str(&format!("effort: {}\n", yaml_scalar(effort)));
     }
     if let Some(color) = o.color.as_deref().or(source.color.as_deref()) {
         out.push_str(&format!("color: {}\n", yaml_scalar(color)));
@@ -56,17 +60,24 @@ pub fn generate(agent: &EffectiveAgent) -> Result<RenderedAgent, String> {
     })
 }
 
-/// Heavy tiers omit `model` so the child inherits the parent session;
-/// everything else resolves through the shared alias table and carries the
-/// `:effort` suffix.
-fn model(agent: &EffectiveAgent) -> (Option<String>, Option<String>) {
-    let effort = agent
+/// The effort the child runs at, under either spelling of the override.
+/// It is written as its own `effort:` key — the key the subagent extension
+/// reads and turns into `--thinking` — because a suffix on the model id
+/// has nowhere to sit when the model inherits.
+fn effort<'b>(agent: &'b EffectiveAgent<'_>) -> Option<&'b str> {
+    agent
         .overrides
         .model_reasoning_effort
         .as_deref()
         .or(agent.overrides.effort.as_deref())
         .or(agent.source.effort.as_deref())
-        .filter(|effort| !is_none_value(effort));
+        .filter(|effort| !is_none_value(effort))
+}
+
+/// Heavy tiers omit `model` so the child inherits the parent session;
+/// everything else resolves through the shared alias table and also
+/// carries the `:effort` suffix Pi reads on a model id.
+fn model(agent: &EffectiveAgent, effort: Option<&str>) -> (Option<String>, Option<String>) {
     let model = agent
         .overrides
         .model
@@ -226,13 +237,17 @@ mod tests {
 
     #[test]
     fn engineer_keeps_scout_delegation_and_inherits_the_opus_model() {
-        let source = source("rust", "engineer", "opus");
+        let mut source = source("rust", "engineer", "opus");
+        source.effort = Some("high".into());
         let scope = Scope::Global;
         let text = generate(&effective(&source, &scope)).unwrap().text;
         assert!(text.contains("allowed-subagents: scout\n"));
         assert!(text.contains("pane: true\n"));
         assert!(text.contains("color: green\n"));
         assert!(!text.lines().any(|line| line.starts_with("model:")));
+        // An inherited model has no id to carry a suffix, so the effort
+        // stands on its own key or it reaches nothing.
+        assert!(text.contains("effort: high\n"));
         assert_eq!(
             deny_line(&text),
             "deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, question"
@@ -246,6 +261,7 @@ mod tests {
         let scope = Scope::Global;
         let text = generate(&effective(&source, &scope)).unwrap().text;
         assert!(text.contains("model: openai-codex/gpt-6-astra:high\n"));
+        assert!(text.contains("effort: high\n"));
         assert!(!text.contains("allowed-subagents:"));
         assert!(!text.contains("pane: true"));
         assert_eq!(

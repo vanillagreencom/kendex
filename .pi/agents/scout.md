@@ -4,6 +4,7 @@ description: "Fast reconnaissance agent for exploring codebases, finding files b
 tags: research
 deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, delegate_subagent, question
 model: openai-codex/gpt-5.5:medium
+effort: medium
 color: cyan
 ---
 
