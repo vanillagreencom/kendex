@@ -318,7 +318,12 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
         // artifacts are observable — opencode has no native hook surface, so
         // nothing here runs.
         (Opencode, Hook) => advisory(managed(BOTH)),
-        (Opencode, Command) => observe_only(BOTH),
+        // A command is one `commands/<name>.md` at either scope, read with
+        // the same frontmatter keys and `$ARGUMENTS`, `$1`, !`…` and `@file`
+        // expansions a Claude command carries, unknown keys dropped; only
+        // `.md` loads, so the author's file installs as is and the rename
+        // toggle is safe (opencode.ai/docs/commands, checked on 1.18.29).
+        (Opencode, Command) => managed(BOTH),
         (Opencode, McpServer) => observe_only(BOTH),
         (Opencode, Plugin) => observe_only(BOTH),
         (Opencode, PiExtension) => unsupported(),
