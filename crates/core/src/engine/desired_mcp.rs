@@ -7,6 +7,7 @@ use serde_json::{Map, Value, json};
 use super::desired::{Artifact, DesiredState, ItemCtx};
 use super::desired_kinds::{declared, registration_edits};
 use super::targets::{mcp_registry, mcp_remove, mcp_upsert};
+use crate::configedit::ConfigEdit;
 use crate::error::Result;
 use crate::model::{HarnessId, ItemKind};
 
@@ -38,30 +39,12 @@ pub(super) fn desired_mcp(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()>
             if harness == HarnessId::Copilot {
                 super::copilot::switched_off_elsewhere(ctx, ItemKind::McpServer, state);
             }
-            if let Some(reason) = transport_refusal(harness, &value) {
+            if let Some(reason) = refusal(harness, &value) {
                 state.refused.push(super::desired::Refused {
                     kind: ItemKind::McpServer,
                     name: ctx.name.to_owned(),
                     harness,
                     reason,
-                });
-                continue;
-            }
-            // Antigravity's documentation says nothing about substituting a
-            // reference in an `env` value, and kendex writes only
-            // references, so a server carrying one is refused rather than
-            // handed a literal `$NAME` to run with.
-            if harness == HarnessId::Antigravity
-                && value
-                    .get("env")
-                    .and_then(Value::as_object)
-                    .is_some_and(|env| !env.is_empty())
-            {
-                state.refused.push(super::desired::Refused {
-                    kind: ItemKind::McpServer,
-                    name: ctx.name.to_owned(),
-                    harness,
-                    reason: "Antigravity documents no substitution for an environment value, so a $NAME reference would reach the server as text — declare the server without env, or drop Antigravity from its harnesses".to_owned(),
                 });
                 continue;
             }
@@ -72,6 +55,13 @@ pub(super) fn desired_mcp(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()>
             // stays in the file either way; everywhere else the entry comes
             // out when switched off.
             let edit = match (ctx.decl.enabled, harness) {
+                // Codex keeps a server as its own TOML table and switches it
+                // off on the table itself, so the edit carries the switch.
+                (_, HarnessId::Codex) => ConfigEdit::UpsertCodexMcpServer {
+                    name: ctx.name.to_owned(),
+                    value: value.clone(),
+                    enabled: ctx.decl.enabled,
+                },
                 (_, HarnessId::Opencode) => mcp_upsert(
                     harness,
                     ctx.name,
@@ -97,10 +87,13 @@ pub(super) fn desired_mcp(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()>
                 (true, _) => mcp_upsert(harness, ctx.name, value.clone()),
                 (false, _) => mcp_remove(harness, ctx.name),
             };
-            // A switched-off OpenCode or Antigravity entry is still a write,
+            // A switched-off OpenCode, Antigravity or Codex entry is still a write,
             // so it is planned whether or not the file exists yet.
-            let writes =
-                ctx.decl.enabled || matches!(harness, HarnessId::Opencode | HarnessId::Antigravity);
+            let writes = ctx.decl.enabled
+                || matches!(
+                    harness,
+                    HarnessId::Opencode | HarnessId::Antigravity | HarnessId::Codex
+                );
             registration_edits(&registry, edit, writes)
         };
         let artifact = Artifact::Registration {
@@ -112,6 +105,31 @@ pub(super) fn desired_mcp(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()>
             .push(declared(ctx, ItemKind::McpServer, harness, artifact)?);
     }
     Ok(())
+}
+
+/// Why this harness cannot take the server as declared, or `None`: a
+/// transport its client does not speak, or an `env` table it has no
+/// spelling for. Antigravity's documentation says nothing about substituting
+/// a reference in an `env` value, and kendex writes only references, so a
+/// server carrying one is refused rather than handed a literal `$NAME`;
+/// Codex passes a variable through by its own name only, so a reference
+/// under another key is refused with the fix.
+fn refusal(harness: HarnessId, value: &Value) -> Option<String> {
+    if let Some(reason) = transport_refusal(harness, value) {
+        return Some(reason);
+    }
+    let env = value.get("env");
+    match harness {
+        HarnessId::Antigravity
+            if env
+                .and_then(Value::as_object)
+                .is_some_and(|env| !env.is_empty()) =>
+        {
+            Some("Antigravity documents no substitution for an environment value, so a $NAME reference would reach the server as text — declare the server without env, or drop Antigravity from its harnesses".to_owned())
+        }
+        HarnessId::Codex => env.and_then(|env| crate::configedit::codex_env_vars(env).err()),
+        _ => None,
+    }
 }
 
 /// Why this harness cannot take the server as declared: a transport its

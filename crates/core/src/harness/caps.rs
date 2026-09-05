@@ -306,7 +306,11 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
             installs_as: Some(Skill),
             ..unsupported()
         },
-        (Codex, McpServer) => observe_only(BOTH),
+        // `[mcp_servers.<name>]` in `config.toml` at either scope, written
+        // through a comment-preserving TOML edit the way Codex's own
+        // `mcp add` writes it, `enabled = false` the switch
+        // (learn.chatgpt.com/docs/extend/mcp).
+        (Codex, McpServer) => managed(BOTH),
         (Codex, Plugin) => observe_only(GLOBAL),
         (Codex, PiExtension) => unsupported(),
 

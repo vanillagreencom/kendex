@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 mod antigravity;
+mod codex_mcp;
 mod copilot;
 mod nested;
 mod text;
@@ -10,6 +11,11 @@ use antigravity::{remove_antigravity_hook, upsert_antigravity_hook};
 use copilot::{remove_copilot_hook, upsert_copilot_hook};
 use nested::{remove_hook, upsert_hook};
 use text::codex_enable_hooks;
+
+/// The `env_vars` Codex takes for a catalog `env` table, or why it cannot.
+pub(crate) fn codex_env_vars(env: &Value) -> Result<Vec<String>, String> {
+    codex_mcp::env_vars(env)
+}
 pub use text::{remove_marker_block, upsert_marker_block};
 
 /// A deterministic, idempotent structured edit. Applied to the file's
@@ -91,6 +97,17 @@ pub enum ConfigEdit {
     RemoveOpencodeMcpServer {
         name: String,
     },
+    /// codex `config.toml` `[mcp_servers.<name>]` written from the declared
+    /// value through a comment-preserving TOML edit, `enabled = false` when
+    /// the declaration is switched off.
+    UpsertCodexMcpServer {
+        name: String,
+        value: Value,
+        enabled: bool,
+    },
+    RemoveCodexMcpServer {
+        name: String,
+    },
     /// `enabledPlugins.<key>` set/remove.
     SetPluginEnabled {
         key: String,
@@ -145,6 +162,12 @@ impl ConfigEdit {
     pub fn apply(&self, current: &str) -> Result<String, String> {
         match self {
             ConfigEdit::CodexEnableHooksFeature => Ok(codex_enable_hooks(current)),
+            ConfigEdit::UpsertCodexMcpServer {
+                name,
+                value,
+                enabled,
+            } => codex_mcp::upsert(current, name, value, *enabled),
+            ConfigEdit::RemoveCodexMcpServer { name } => codex_mcp::remove(current, name),
             ConfigEdit::UpsertMarkerBlock { name, block } => {
                 Ok(upsert_marker_block(current, name, block))
             }

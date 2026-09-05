@@ -122,7 +122,8 @@ fn mcp_entry(edits: &[(std::path::PathBuf, ConfigEdit)]) -> Option<McpEntry> {
         .iter()
         .find_map(|(_, edit)| match edit {
             ConfigEdit::UpsertMcpServer { value, .. }
-            | ConfigEdit::UpsertOpencodeMcpServer { value, .. } => Some(value),
+            | ConfigEdit::UpsertOpencodeMcpServer { value, .. }
+            | ConfigEdit::UpsertCodexMcpServer { value, .. } => Some(value),
             _ => None,
         })
         .map(McpEntry::from_json)

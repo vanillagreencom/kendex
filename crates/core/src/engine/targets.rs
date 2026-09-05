@@ -340,6 +340,15 @@ pub(super) fn mcp_registry(env: &Env, scope: &Scope, harness: HarnessId) -> Opti
                 .join("mcp_config.json"),
             Scope::Project { root } => root.join(".agents/mcp_config.json"),
         }),
+        // Codex reads `[mcp_servers.<name>]` from `config.toml` under
+        // `CODEX_HOME` and, in a trusted project, from `.codex/config.toml`
+        // (learn.chatgpt.com/docs/extend/mcp).
+        HarnessId::Codex => Some(match scope {
+            Scope::Global => adapter(harness)
+                .default_global_root(env)
+                .join("config.toml"),
+            Scope::Project { root } => root.join(".codex/config.toml"),
+        }),
         // Copilot reads a repository's servers from `.github/mcp.json` and a
         // machine's from its own config root (matrix §2). A `.mcp.json` at
         // the repo root is Claude Code's file, which Copilot also reads —
@@ -369,6 +378,7 @@ pub(super) fn mcp_remove(harness: HarnessId, name: &str) -> ConfigEdit {
     let name = name.to_owned();
     match harness {
         HarnessId::Opencode => ConfigEdit::RemoveOpencodeMcpServer { name },
+        HarnessId::Codex => ConfigEdit::RemoveCodexMcpServer { name },
         _ => ConfigEdit::RemoveMcpServer { name },
     }
 }
