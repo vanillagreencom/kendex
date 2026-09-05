@@ -34,6 +34,6 @@ GROWTH_GUARDS_CHECKS = "todo-ban suppression-ban"
 
 ## Git hooks
 
-The Git hooks run the committed skill scripts. Install them in each fresh clone with `kendex guard install`. Use `kendex guard check` to inspect the installation. The harness pre-commit hook requires these Git hooks before it allows a commit.
+The Git hooks run the committed skill scripts. The harness pre-commit hook requires these Git hooks before it allows a commit.
 
 Check definitions: [CHECKS.md](CHECKS.md). Hook setup and execution: [DEVELOPMENT.md](DEVELOPMENT.md).

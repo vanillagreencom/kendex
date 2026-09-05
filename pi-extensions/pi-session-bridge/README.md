@@ -41,5 +41,3 @@ Open `/extensions:settings`; settings appear under the **Session Bridge** tab. P
 The socket triggers real agent work in the owning Pi process. Keep `PI_BRIDGE_DIR` private to your user, and never expose it to other users or untrusted containers.
 
 Protocol and broker details for client authors and maintainers are in [DEVELOPMENT.md](DEVELOPMENT.md).
-
-Keep `PI_BRIDGE_DIR` private to your user. Access to its socket can start agent work in the owning Pi process.
