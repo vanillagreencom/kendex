@@ -8,6 +8,14 @@ CONTENT decides which lines a lane may read, never an attribute. The diff is tak
 
 The default and `--base` scopes include every non-ignored untracked file as a new file; `--staged` sees only the index.
 
+## `data-syntax` JSONC paths
+
+The `.jsonc` suffix declares JSON with comments. Some producers keep `.json` instead. `PREFLIGHT_JSONC_GLOBS` replaces the path set for those files. The default keeps tsconfig, jsconfig, `.vscode`, `.devcontainer`, and VS Code's `*-color-theme.json` convention. A leading `**/` matches at any depth. A `*` does not cross a path component.
+
+The lane has no JSONC parser. It leaves these files to the producer that declares the dialect. Strict `.json` files still pass through `jq`.
+
+During `--staged`, shared settings come from the index. A new untracked shared settings file cannot change the commit verdict. The personal `.env.local` file remains a runtime input.
+
 ## `unwired-suite` wiring grammar
 
 Runners are `.github/workflows/*.yml`, `tools/validate*`, `scripts/validate*`, `package.json`, `Makefile`, `justfile`, and any `run-all.sh`.

@@ -19,7 +19,7 @@ compare_copies() { # ROOT
       return 1
     }
   done
-  [[ $count -eq 6 ]] || { echo "expected six kendex-env.sh copies, found $count" >&2; return 1; }
+  [[ $count -eq 7 ]] || { echo "expected seven kendex-env.sh copies, found $count" >&2; return 1; }
 }
 
 compare_copies "$ROOT"
@@ -34,4 +34,4 @@ if compare_copies "$SCRATCH" >/dev/null 2>&1; then
   echo "vendored-settings-libs: planted divergence passed" >&2
   exit 1
 fi
-echo "vendored-settings-libs: six copies and renders match"
+echo "vendored-settings-libs: seven copies and renders match"

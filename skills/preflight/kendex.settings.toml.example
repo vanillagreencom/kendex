@@ -1,0 +1,8 @@
+[env]
+# Space-separated path globs for .json files that use JSON with comments.
+# The value replaces the defaults. A leading **/ matches at any depth.
+PREFLIGHT_JSONC_GLOBS = "**/tsconfig*.json **/jsconfig*.json **/.vscode/*.json **/.devcontainer/*.json **/*-color-theme.json"
+
+# Space-separated paths for versioned migrations that must not change.
+# The value replaces the refinery and Flyway defaults shown here.
+PREFLIGHT_MIGRATION_GLOBS = "**/migrations/V*__*.sql **/db/migration/V*__*.sql"

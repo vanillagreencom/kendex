@@ -703,6 +703,29 @@ else
   bad "--all reads every line as added, so the lane cannot decide and stays quiet" "out=$OUT"
 fi
 
+echo "=== JSONC is classified by file kind and configured path ==="
+seed jsoncdefaults
+mkdir -p "$R/themes" "$R/config" "$R/project/.vscode" "$R/project/.devcontainer"
+printf '{\n  // VS Code documents this color-theme file convention.\n  "name": "default",\n}\n' >"$R/themes/default-color-theme.json"
+printf '{\n  // The file kind declares this dialect.\n  "name": "kind",\n}\n' >"$R/config/theme.jsonc"
+printf '{\n  // Existing editor-folder convention.\n  "name": "editor",\n}\n' >"$R/project/.vscode/settings.json"
+printf '{\n  // Existing container-folder convention.\n  "name": "container",\n}\n' >"$R/project/.devcontainer/devcontainer.json"
+git -C "$R" add -A
+run_pf
+clean "the .jsonc kind and every shipped JSONC path convention accept comments and trailing commas"
+
+seed jsoncsetting
+mkdir -p "$R/themes/white/apps" "$R/config"
+printf '{\n  // The producer declares this .json file as JSONC.\n  "name": "white",\n}\n' >"$R/themes/white/apps/vscode-theme.json"
+printf '[env]\nPREFLIGHT_JSONC_GLOBS = "**/themes/*/apps/vscode-theme.json"\n' >"$R/kendex.settings.toml"
+git -C "$R" add -A
+run_pf
+clean "a project setting accepts the reported VS Code theme path"
+printf '{\n  "broken":\n}\n' >"$R/config/strict.json"
+git -C "$R" add -A
+run_pf
+fires "a malformed strict JSON file beside the configured JSONC file still fails" "config/strict.json:3: [data-syntax] invalid JSON"
+
 echo "=== a migration this branch added is not one a database has run ==="
 seed migrationsbranch
 printf 'CREATE TABLE w (id INTEGER);\n' >"$R/store/migrations/V2__later.sql"
