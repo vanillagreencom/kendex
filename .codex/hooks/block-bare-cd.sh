@@ -43,7 +43,7 @@ fi
 STRIPPED=$(echo "$COMMAND" | sed 's/^[[:space:]]*//')
 if echo "$STRIPPED" | grep -qE '^cd([[:space:]]+[^&|;]*)?$'; then
   echo "block-bare-cd: refusing a bare 'cd'. Where the shell persists across tool calls it re-roots every later command and every hook judging the working directory, while instruction files and hook paths stay with the launch directory." >&2
-  echo "  Scope the move instead: (cd /path && command). To work in a worktree, enter it with the harness's worktree tool where it has one (Claude Code's EnterWorktree) rather than cd." >&2
+  echo "  Use a subshell instead: (cd /path && command). To work in a worktree, enter it with the harness's worktree tool where it has one (Claude Code's EnterWorktree) rather than cd." >&2
   exit 2
 fi
 

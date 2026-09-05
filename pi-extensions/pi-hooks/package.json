@@ -35,7 +35,7 @@
         {
           "key": "blockBareCd",
           "label": "Block bare cd",
-          "description": "Run the rendered hooks/block-bare-cd.sh on every bash tool call. It blocks a command consisting of a bare `cd /path` or a bare `cd` (no subshell, no `&&` chain), which permanently changes the agent's working directory across tool calls and leaks state between unrelated tools. Use `(cd /path && command)` instead.",
+          "description": "Run the rendered hooks/block-bare-cd.sh on every bash tool call. It refuses a command with a line that is only a bare `cd /path` or `cd` (no subshell, no `&&` chain). Pi runs each command in a fresh shell, so the cd changes nothing here; the refusal keeps the one form that is right on every harness, `(cd /path && command)`.",
           "type": "boolean",
           "default": true,
           "category": "Bash",
