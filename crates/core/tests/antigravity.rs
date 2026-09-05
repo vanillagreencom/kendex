@@ -19,7 +19,11 @@ use serde_json::Value;
 
 const AGENT: &str = "---\nname: rust\ndescription: Rust engineer\nmodel: opus\nrole: engineer\n---\nUse the Grep tool.\n";
 
-const AUDIT_HOOK: &str = "#!/usr/bin/env bash\n# ---\n# name: audit\n# event: PreToolUse\n# matcher: Bash\n# description: log shell commands\n# timeout: 10\n# ---\nexit 0\n";
+const AUDIT_HOOK: &str = "#!/usr/bin/env bash\n# ---\n# name: audit\n# event: PreToolUse\n# matcher: Bash\n# description: log shell commands\n# timeout: 10\n# harnesses: [antigravity]\n# ---\nexit 0\n";
+
+/// The same hook with no `harnesses` line: written for the payload every
+/// other tool sends, which Antigravity does not.
+const UNNAMED_HOOK: &str = "#!/usr/bin/env bash\n# ---\n# name: audit\n# event: PreToolUse\n# matcher: Bash\n# description: log shell commands\n# timeout: 10\n# ---\nexit 0\n";
 
 const COMMAND: &str = "---\ndescription: Ship the branch\n---\n\nRun the checklist.\n";
 
@@ -225,6 +229,28 @@ fn a_hook_registers_under_its_name_in_the_roots_hooks_json() {
     let after = json(&registry);
     assert!(after.get("audit").is_none(), "{after}");
     assert_eq!(after["lint"]["PostToolUse"][0]["matcher"], "run_command");
+}
+
+/// A hook that names no harness is written for the `tool_input` payload;
+/// Antigravity sends `toolCall.args`, so the hook would run and read
+/// nothing. It installs nowhere on Antigravity and the plan says why.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hook_naming_no_harness_stays_out_of_antigravity() {
+    let f = fixture("[hooks.audit]\nsource = \"cat\"\n");
+    fs::write(f.env.home.join("catalog/hooks/audit.sh"), UNNAMED_HOOK).unwrap();
+    let report = apply_now(&f);
+
+    assert!(!f.project.join(".agents/hooks.json").exists());
+    assert!(!f.project.join(".agents/hooks/audit.sh").exists());
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|note| note.starts_with("hook audit: skips antigravity")),
+        "{:?}",
+        report.notes
+    );
 }
 
 /// What kendex writes is what kendex reads back: the scan finds the entry

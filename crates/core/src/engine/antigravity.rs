@@ -10,6 +10,13 @@ use crate::model::{HarnessId, ItemKind};
 /// The hook as Antigravity would register it, or `None` with the note
 /// saying why nothing is registered: an event it has no counterpart for.
 pub(super) fn hook(name: &str, hook: &HookSpec, state: &mut DesiredState) -> Option<HookSpec> {
+    if hook.harnesses.is_none() {
+        state.notes.push(format!(
+            "hook {name}: skips antigravity — {}",
+            crate::hook::by_name_only(HarnessId::Antigravity)
+        ));
+        return None;
+    }
     let Some(registered) = crate::harness::antigravity::hook_for(hook) else {
         state.notes.push(format!(
             "hook {name}: event {} has no Antigravity counterpart, and hanging it on a near-miss would run it at the wrong moment",
