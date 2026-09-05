@@ -109,6 +109,11 @@ export class HostAdapter {
 
 	extensionBase(file: SettingsFile, cwd: string): string { return this.omp ? cwd : file.baseDir; }
 
+	/** Bootstrap enablement belongs to the global layer, independent of package installation scope. */
+	configScope(packageName: string, key: string): "user" | undefined {
+		return packageName === MANAGER_ID && key === "enabled" ? "user" : undefined;
+	}
+
 	settingsSupported(packageName: string): boolean { return !this.omp || packageName === MANAGER_ID; }
 
 	assertSettingsSupported(packageName: string): void {

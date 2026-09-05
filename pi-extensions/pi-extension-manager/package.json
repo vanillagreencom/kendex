@@ -23,7 +23,7 @@
         {
           "key": "enabled",
           "label": "Enable manager UI",
-          "description": "Expose the manager UI: /extensions on Pi, /kendex:extensions on oh-my-pi. The command's :enable recovery action remains available when disabled.",
+          "description": "Global-only, regardless of package scope: expose /extensions on Pi or /kendex:extensions on oh-my-pi. Project values are ignored. The command's :enable recovery action remains available when disabled.",
           "type": "boolean",
           "default": true,
           "category": "General",

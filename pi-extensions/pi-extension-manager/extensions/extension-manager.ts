@@ -34,7 +34,7 @@ export default async function extensionManager(pi: ExtensionAPI): Promise<void> 
 	if (loadConfig.config[MANAGER_ID]?.enabled === false) {
 		const enableRecovery = async (ctx: ExtensionCommandContext) => {
 			const files = loadSettingsFiles(ctx as ExtensionContext);
-			const file = findSettingsFile(files, "user");
+			const file = findSettingsFile(files, host.configScope(MANAGER_ID, "enabled")!);
 			updateManagerState(file, (state) => {
 				state.config[MANAGER_ID] = { ...(state.config[MANAGER_ID] ?? {}), enabled: true };
 			});

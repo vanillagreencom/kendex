@@ -36,7 +36,7 @@ Open `/extensions:settings` on Pi or `/kendex:extensions:settings` on OMP. Value
 
 Pi uses user and project `settings.json` files. OMP uses the active agent directory's `config.yml`, retaining `config.yaml` when that is the existing file. OMP project settings come from the current directory's `.omp/settings.json` and `.omp/config.yml`; YAML overrides JSON when both exist. Host directory resolvers determine the active user paths, including OMP profiles and XDG storage. Settings writes preserve unknown fields, but YAML formatting and comments are not retained.
 
-- `enabled`: expose the manager UI. If disabled, the host-specific manager command's `:enable` action restores the global setting; restart or reload afterward.
+- `enabled`: a global-only setting, even for a project-installed manager. Display, edits and resets use the global value; project values are ignored. If disabled, the host-specific manager command's `:enable` action restores it; restart or reload afterward.
 - `defaultSaveScope`: where an edit is written when the scope is ambiguous.
 - `notifyOnUpdates`: Pi's session-start update notification; unavailable on OMP.
 - `glyphStyle`: Unicode or ASCII symbols. On Pi, the Tool Renderer tab's `globalGlyphStyleOverride` can override this setting.

@@ -73,6 +73,12 @@ function deepMergeConfig(
 function scopedManagerState(files: SettingsFile[], scope: Scope): ManagerState {
 	return files.filter((file) => file.scope === scope).reduce<ManagerState>((merged, file) => {
 		const state = managerStateFrom(file.json);
+		for (const [extensionId, config] of Object.entries(state.config)) {
+			for (const key of Object.keys(config)) {
+				const owner = host.configScope(extensionId, key);
+				if (owner !== undefined && owner !== scope) delete config[key];
+			}
+		}
 		return { disabledItems: [...new Set([...merged.disabledItems, ...state.disabledItems])], config: deepMergeConfig(merged.config, state.config) };
 	}, { disabledItems: [], config: {} });
 }
@@ -169,7 +175,7 @@ export function getConfigValue(inventory: Inventory, extensionId: string, schema
 	}
 	// Manager config outranks the extension's own files, matching how extensions
 	// layer the two, so this runs only when neither manager scope holds the key.
-	const external = cachedExternalConfigValue(inventory, extensionId, schema.key);
+	const external = host.configScope(extensionId, schema.key) === undefined ? cachedExternalConfigValue(inventory, extensionId, schema.key) : undefined;
 	if (external) return { explicit: true, scope: "external", value: external.value, source: external.source };
 	return { explicit: false, scope: "default", value: schema.default };
 }
@@ -177,7 +183,7 @@ export function getConfigValue(inventory: Inventory, extensionId: string, schema
 export function setConfigValue(inventory: Inventory, item: InventoryItem, schema: SettingsSchema, value: unknown): void {
 	const extensionId = item.packageName ?? item.displayName;
 	host.assertSettingsSupported(extensionId);
-	const scope = defaultWriteScope(item, inventory.settingsFiles, inventory.managerState);
+	const scope = host.configScope(extensionId, schema.key) ?? defaultWriteScope(item, inventory.settingsFiles, inventory.managerState);
 	const file = findSettingsFile(inventory.settingsFiles, scope);
 	updateManagerState(file, (state) => {
 		state.config[extensionId] = { ...(state.config[extensionId] ?? {}), [schema.key]: value };
@@ -209,7 +215,11 @@ export function resetConfigKeys(inventory: Inventory, extensionId: string, keys:
 	if (keySet.size === 0) return 0;
 	let deleted = 0;
 	for (const file of inventory.settingsFiles.filter((candidate) => candidate.scope === "user" || candidate.scope === "project")) {
-		deleted += deleteConfigKeysFromFile(file, extensionId, keySet);
+		const ownedKeys = new Set([...keySet].filter((key) => {
+			const owner = host.configScope(extensionId, key);
+			return owner === undefined || owner === file.scope;
+		}));
+		deleted += deleteConfigKeysFromFile(file, extensionId, ownedKeys);
 	}
 	return deleted;
 }

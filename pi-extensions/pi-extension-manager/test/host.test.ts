@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { host, selectHost, type OmpRuntime } from "../extensions/manager/host.ts";
 import { buildInventory, npmCandidatesFromInventory } from "../extensions/manager/inventory.ts";
 import { planUninstall, planUpdate, runUninstall, runUpdate, toggleItem } from "../extensions/manager/actions.ts";
-import { setConfigValue, resetConfigKeys, updateManagerState, getConfigValue } from "../extensions/manager/settings.ts";
+import { setConfigValue, resetConfigKeys, updateManagerState, getConfigValue, mergedManagerState } from "../extensions/manager/settings.ts";
 import { glyphStyle } from "../extensions/manager/glyphs.ts";
 import { userPiDir } from "../extensions/manager/paths.ts";
 import { MANAGER_ID } from "../extensions/manager/types.ts";
@@ -170,16 +170,48 @@ test("project JSON and YAML layers retain raw ownership and YAML manager overrid
 	nativePackage(projectRoot, MANAGER_ID);
 	const jsonPath = join(cwd, ".omp", "settings.json");
 	const yamlPath = join(cwd, ".omp", "config.yml");
-	json(jsonPath, { unknown: "json", kendex: { extensionManager: { config: { [MANAGER_ID]: { glyphStyle: "unicode", enabled: false } } } } });
+	json(jsonPath, { unknown: "json", kendex: { extensionManager: { config: { [MANAGER_ID]: { glyphStyle: "unicode", defaultSaveScope: "user" } } } } });
 	write(yamlPath, `unknown: yaml\nkendex:\n  extensionManager:\n    config:\n      '${MANAGER_ID}':\n        glyphStyle: ascii\n`);
 	const inv = inventory();
 	expect(getConfigValue(inv, MANAGER_ID, { key: "glyphStyle" } as never).value).toBe("ascii");
-	expect(getConfigValue(inv, MANAGER_ID, { key: "enabled" } as never).value).toBe(false);
+	expect(getConfigValue(inv, MANAGER_ID, { key: "defaultSaveScope" } as never).value).toBe("user");
 	const before = readFileSync(jsonPath, "utf8");
 	setConfigValue(inv, inv.packages[0]!, { key: "glyphStyle" } as never, "unicode");
 	expect(readFileSync(jsonPath, "utf8")).toBe(before);
 	expect(YAML.parse(readFileSync(yamlPath, "utf8"))).toMatchObject({ unknown: "yaml" });
 	expect(getConfigValue(inventory(), MANAGER_ID, { key: "glyphStyle" } as never).value).toBe("unicode");
+});
+
+test("project-native manager enabled uses global display, save and reset ownership", () => {
+	nativePackage(projectRoot, MANAGER_ID);
+	const manifest = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8"));
+	json(join(projectRoot, "node_modules", MANAGER_ID, "package.json"), manifest);
+	const userPath = join(agent, "config.yaml");
+	const projectPath = join(cwd, ".omp", "config.yml");
+	const config = (values: Record<string, unknown>) => ({ unknown: "keep", kendex: { extensionManager: { config: { [MANAGER_ID]: values } } } });
+	write(userPath, YAML.stringify(config({ enabled: true })));
+	write(projectPath, YAML.stringify(config({ glyphStyle: "ascii" })));
+	const projectBefore = readFileSync(projectPath, "utf8");
+	const item = inventory().packages.find((pkg) => pkg.packageName === MANAGER_ID)!;
+	expect(item.scope).toBe("project");
+	const schema = item.settingsSchema!.find((setting) => setting.key === "enabled")!;
+	const bootstrapEnabled = () => mergedManagerState(host.settings({ cwd })).config[MANAGER_ID]?.enabled !== false;
+	for (const enabled of [false, true]) {
+		setConfigValue(inventory(), item, schema, enabled);
+		expect(host.read(userPath)).toMatchObject(config({ enabled }));
+		expect(getConfigValue(inventory(), MANAGER_ID, schema)).toMatchObject({ scope: "user", value: enabled });
+		expect(bootstrapEnabled()).toBe(enabled);
+		expect(readFileSync(projectPath, "utf8")).toBe(projectBefore);
+	}
+	write(projectPath, YAML.stringify(config({ enabled: false, glyphStyle: "ascii" })));
+	expect(getConfigValue(inventory(), MANAGER_ID, schema).value).toBe(true);
+	expect(inventory().managerState.config[MANAGER_ID]?.enabled).toBe(true);
+	expect(resetConfigKeys(inventory(), MANAGER_ID, ["enabled", "glyphStyle"])).toBe(2);
+	expect(host.read(projectPath)).toMatchObject(config({ enabled: false }));
+	expect(inventory().managerState.config[MANAGER_ID]?.glyphStyle).toBeUndefined();
+	expect(getConfigValue(inventory(), MANAGER_ID, schema)).toMatchObject({ scope: "default", value: true });
+	expect(inventory().managerState.config[MANAGER_ID]?.enabled).toBeUndefined();
+	expect(bootstrapEnabled()).toBe(true);
 });
 
 test("native module suppression shows basename collisions without offering package-specific toggles", () => {

@@ -36,7 +36,7 @@ type ExternalConfigResolver = (key: string, cwd: string) => { explicit: boolean;
 - npm actions use the scope-local npm directory. Git entries are inspected only under Pi's managed clone root; unsafe host or path components produce broken inventory items.
 - The manager delegates append-system changes to the package's vendored `scripts/append-system.mjs`, with a bounded timeout and `SIGKILL`. Uninstall removes the block before npm deletes that script (`test/actions.test.ts`).
 - Inventory spawns npm only when cheap package roots miss and memoizes the root across packages. `test/popup-perf.test.ts` enforces the existing popup budget.
-- Bootstrap reads the manager's global enable setting, so recovery writes that same global layer even when project settings exist.
+- `HostAdapter.configScope` owns the manager's global-only `enabled` key. Value resolution, merged manager state, saves, resets and recovery honor that owner regardless of package scope; bootstrap never consumes project enable flags. Other keys retain project layering (`test/host.test.ts`, `test/bootstrap.test.ts`).
 
 ## Tests
 

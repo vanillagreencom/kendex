@@ -1,7 +1,7 @@
 import { mock } from "bun:test";
 import { YAML } from "bun";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const [root, kind, mode] = process.argv.slice(2);
@@ -9,6 +9,7 @@ assert(root && kind && mode);
 const agent = join(root, "agent");
 const cwd = join(root, "project");
 const project = join(cwd, kind === "omp" ? ".omp" : ".pi");
+const plugins = join(project, "plugins");
 mkdirSync(agent, { recursive: true });
 mkdirSync(project, { recursive: true });
 const config = (enabled: boolean) => ({ unknown: { keep: true }, kendex: { extensionManager: { config: { "@vanillagreen/pi-extension-manager": { enabled } } } } });
@@ -16,7 +17,7 @@ const userPath = join(agent, kind === "omp" ? "config.yaml" : "settings.json");
 const projectPath = join(project, kind === "omp" ? "config.yml" : "settings.json");
 const serialize = kind === "omp" ? YAML.stringify : JSON.stringify;
 writeFileSync(userPath, serialize(config(mode === "enabled")));
-writeFileSync(projectPath, serialize({ projectOnly: true }));
+writeFileSync(projectPath, serialize({ ...config(mode !== "enabled"), projectOnly: true }));
 const projectBefore = readFileSync(projectPath, "utf8");
 
 mock.module("@earendil-works/pi-coding-agent", () => ({ getAgentDir: () => agent, ...(kind === "omp" ? { Settings: class {} } : { SettingsManager: class {} }) }));
@@ -24,7 +25,7 @@ mock.module("@oh-my-pi/pi-utils", () => ({
 	getAgentDir: () => agent, getPluginsDir: () => join(root, "plugins"), getProjectAgentDir: () => project,
 	getProjectPluginOverridesPath: () => join(project, "plugin-overrides.json"),
 }));
-mock.module("@oh-my-pi/pi-coding-agent/discovery/helpers", () => ({ resolveActiveProjectRegistryPath: async () => null }));
+mock.module("@oh-my-pi/pi-coding-agent/discovery/helpers", () => ({ resolveActiveProjectRegistryPath: async () => join(plugins, "installed_plugins.json") }));
 const unused = () => { throw new Error("Bootstrap must not render a popup"); };
 mock.module("@earendil-works/pi-tui", () => ({ matchesKey: unused, truncateToWidth: unused, visibleWidth: unused, wrapTextWithAnsi: unused }));
 const { default: extensionManager } = await import("../../extensions/extension-manager.ts");
@@ -38,6 +39,33 @@ if (mode === "disabled") {
 	const parsed = (kind === "omp" ? YAML.parse : JSON.parse)(readFileSync(userPath, "utf8")) as ReturnType<typeof config>;
 	assert.equal(parsed.kendex.extensionManager.config["@vanillagreen/pi-extension-manager"].enabled, true);
 	assert.deepEqual(parsed.unknown, { keep: true });
+	assert.equal(readFileSync(projectPath, "utf8"), projectBefore);
+}
+if (kind === "omp" && mode === "enabled") {
+	const hostModule = await import("../../extensions/manager/host.ts");
+	const { buildInventory } = await import("../../extensions/manager/inventory.ts");
+	const { getConfigValue, setConfigValue, resetConfigKeys } = await import("../../extensions/manager/settings.ts");
+	const name = "@vanillagreen/pi-extension-manager";
+	mkdirSync(join(plugins, "node_modules", "@vanillagreen"), { recursive: true });
+	symlinkSync(join(import.meta.dir, "..", ".."), join(plugins, "node_modules", name), "dir");
+	writeFileSync(join(plugins, "package.json"), JSON.stringify({ dependencies: { [name]: "2.0.0" } }));
+	writeFileSync(join(plugins, "omp-plugins.lock.json"), JSON.stringify({ plugins: { [name]: { version: "2.0.0", enabled: true, enabledFeatures: null } } }));
+	const ctx = { cwd, isProjectTrusted: () => true };
+	const inventory = async () => { await hostModule.host.prepare(cwd); return buildInventory(api as never, ctx as never); };
+	const inv = await inventory();
+	const item = inv.packages.find((pkg) => pkg.packageName === name)!;
+	assert.equal(item.scope, "project");
+	const schema = item.settingsSchema!.find((setting) => setting.key === "enabled")!;
+	setConfigValue(inv, item, schema, false);
+	assert.equal(getConfigValue(await inventory(), name, schema).value, false);
+	commands.clear();
+	await extensionManager({ registerCommand: api.registerCommand, registerShortcut() {}, on() {} } as never);
+	assert.deepEqual([...commands.keys()], [manager, `${manager}:enable`]);
+	assert.equal(resetConfigKeys(await inventory(), name, ["enabled"]), 1);
+	assert.equal(getConfigValue(await inventory(), name, schema).value, true);
+	commands.clear();
+	await extensionManager({ registerCommand: api.registerCommand, registerShortcut() {}, on() {} } as never);
+	assert.deepEqual([...commands.keys()], [manager, `${manager}:settings`]);
 	assert.equal(readFileSync(projectPath, "utf8"), projectBefore);
 }
 if (kind === "omp") assert.equal(existsSync(join(agent, "settings.json")), false);
