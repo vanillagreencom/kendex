@@ -10,6 +10,9 @@ use test_util::rooted;
 use std::path::Path;
 use std::process::{Command, Output};
 
+#[path = "catalog_check/render_lint.rs"]
+mod render_lint;
+
 #[allow(clippy::expect_used)]
 fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_kendex"))

@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# kendex#478: MouseArea (Iced 0.14) has NO `on_press_maybe` method — only `button`
-# does. The skill previously recommended `mouse_area(x).on_press_maybe(...)`, which
-# does not compile. This guard fails if that misuse is ever reintroduced into the
-# guidance sources (SKILL.md + references/), so a future reference refresh cannot
-# silently restore the bug.
+# MouseArea has no `on_press_maybe` method. The guidance must use a
+# conditional `on_press` call and retain the valid Button method.
 #
 # Run: bash skills/iced-rs/tests/mouse-area-no-on-press-maybe.test.sh
 set -euo pipefail

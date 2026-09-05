@@ -1,7 +1,7 @@
 # SCAFFOLD from the kendex review-gate skill (templates/review-gate-writer.yml).
-# Copy it once into `.github/workflows/` during adoption. The copy is repo-owned
-# because `kendex refresh` does not sync workflow YAML. Copy it verbatim because
-# it carries no per-repo values. This workflow is the only writer and
+# Copy verbatim into `.github/workflows/`; `kendex refresh` does not sync it.
+# `validate-workflow.sh` allows YAML comment edits outside block scalars only.
+# Comments inside `run: |` remain executable input. This is the only writer and
 # posts the gate commit status on every leg that reaches it
 # (workflow_dispatch, schedule, merge_group), evaluating
 # review-predicate.sh on the two converge legs — the merge_group leg posts
@@ -44,7 +44,7 @@
 # minutes (a 60s-bounded attempt, a wait capped at 120s plus up to 14s of
 # jitter, a second 60s-bounded attempt), inside the 5-minute job budget.
 # Event-fast latency grows by a whole run lifecycle (the relay's own queue
-# and runner allocation, then the converge run's, which now starts only
+# and runner allocation, then the converge run's, which starts only
 # after the relay finishes) — dominated by runner allocation, which GitHub
 # does not bound. Typically that is seconds, well inside the cron floor's
 # period; when allocation exceeds the period, the scheduled pass converges
@@ -71,8 +71,7 @@
 # SECURITY (the pull_request_target posture): a write-capable token is only
 # safe while the job NEVER executes PR-controlled code. Every checkout below
 # pins the DEFAULT branch with credentials dropped, and PR data is read only
-# through the API — stricter than the old TRUST_PR_WORKFLOWS="true" posture,
-# in which PR-editable workflow definitions held the pen.
+# through the API.
 #
 # Anti-loop: the writer's own status posts are GITHUB_TOKEN-authored, and
 # GitHub suppresses workflow runs for token-authored events, so the status
