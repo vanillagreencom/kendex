@@ -64,10 +64,13 @@ export function createBackgroundWidgetExpiryScheduler(
 			clear();
 			const delay = nextBackgroundWidgetExpiryDelay(tasks, retentionMs, now);
 			if (delay === null) return;
+			// Node/Bun turn overflowing waits (including Infinity from seconds-to-ms
+			// conversion) into 1ms. Bound the wait, not retention: refresh rechecks
+			// the remaining lifetime and schedules again if the task is still visible.
 			timer = scheduleTimer(() => {
 				timer = null;
 				refresh();
-			}, delay);
+			}, Math.min(delay, 2_147_483_647));
 			timer.unref?.();
 		},
 	};
