@@ -91,7 +91,7 @@ def overrides(model):
         # has been observed to skip pull requests targeting it, and the
         # wildcard also covers stacked pull requests.
         "reviews.auto_review.base_branches": [".*"],
-        "knowledge_base.opt_out": False,
+        "knowledge_base.opt_out": not model.config.retention["coderabbit"],
         "knowledge_base.code_guidelines.filePatterns": ["AGENTS.md"],
         "knowledge_base.learnings.scope": "local",
         "knowledge_base.issues.scope": "local",

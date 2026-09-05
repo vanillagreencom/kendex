@@ -206,7 +206,7 @@ The last two are here for the same reason as the rest. `code_generation` gets no
 
 A final entry with `path: "**"` carries `render-out-of-scope` when the exclusion set is non-empty. The path filters already remove those trees; the instruction is what stops a finding arriving through a file that references them.
 
-**`knowledge_base`.** `opt_out` false, every learning scope local, and `code_guidelines.filePatterns` naming `AGENTS.md`. Pointing CodeRabbit at `AGENTS.md` is the only way it reads that file.
+**`knowledge_base`.** `opt_out` is the inverse of `[bot-instructions.retention] coderabbit`, so `false` by default; every learning scope local; `code_guidelines.filePatterns` naming `AGENTS.md`. Pointing CodeRabbit at `AGENTS.md` is the only way it reads that file. Opting out removes CodeRabbit's stored learnings and its issue and pull request context. Code guidelines and web search are stateless and keep working, so the `AGENTS.md` route survives an opt-out.
 
 **Escaping.** Every string is emitted as a block or folded scalar with explicit indentation, never a quoted one-line scalar. Repo text is passed through with no escaping, which block scalars make safe for everything a YAML scalar can hold. A repo string containing a line that would terminate the block is refused, and so is one carrying a control character, by the same refusal `.pr_agent.toml` relies on: a block scalar cannot carry one either, and one predicate covers both targets because the values reaching them are the same set.
 

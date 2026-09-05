@@ -40,6 +40,11 @@ KEYS = {
         "qodo_push_trigger": (bool, False, False, None),
     },
     "tone": {"coderabbit": (str, False, None, "[bot-instructions.tone] coderabbit")},
+    # What a bot keeps between pull requests. `false` renders CodeRabbit's
+    # `knowledge_base.opt_out = true`: no stored learnings, issue or pull
+    # request context. Code guidelines and web search are stateless and stay
+    # on, so the `AGENTS.md` route survives an opt-out.
+    "retention": {"coderabbit": (bool, False, True, None)},
     "budgets": {
         "copilot_chars": (int, False, DEFAULT_COPILOT_CHARS, None),
         "qodo_best_practices_lines": (int, False, DEFAULT_QODO_LINES, None),
@@ -71,6 +76,7 @@ class Config:
         self.bots = data["bots"]
         self.cadence = data["cadence"]
         self.tone = data["tone"]
+        self.retention = data["retention"]
         self.budgets = data["budgets"]
         self.exclusions = data["exclusions"]
         self.surfaces = data["surface"]

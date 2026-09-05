@@ -242,4 +242,25 @@ expect_red drift \
   'a line separator in the rendered .coderabbit.yaml' check --repo "$repo"
 git -C "$repo" checkout -- .coderabbit.yaml
 
+# --- `[bot-instructions.retention] coderabbit` -------------------------------
+# The render is full state, so a hand-kept `opt_out: true` has nowhere to go
+# on adoption unless the manifest can say it. Default true renders `false`;
+# false renders `true` and leaves the rest of the block alone.
+repo="$(bi_rendered_repo coderabbit-retention)" || exit 1
+if grep -q '^  opt_out: false$' "$repo/.coderabbit.yaml"; then
+  ok 'retention defaults to true, rendered as opt_out false'
+else
+  bad 'retention defaults to true, rendered as opt_out false' \
+      "$(grep -n opt_out "$repo/.coderabbit.yaml")"
+fi
+printf '\n[bot-instructions.retention]\ncoderabbit = false\n' >> "$repo/kendex.toml"
+if bi_must render --repo "$repo" \
+   && grep -q '^  opt_out: true$' "$repo/.coderabbit.yaml" \
+   && grep -q 'filePatterns' "$repo/.coderabbit.yaml"; then
+  ok 'retention false renders opt_out true and keeps code_guidelines'
+else
+  bad 'retention false renders opt_out true and keeps code_guidelines' \
+      "$(grep -n 'opt_out\|filePatterns' "$repo/.coderabbit.yaml")"
+fi
+
 bi_summary

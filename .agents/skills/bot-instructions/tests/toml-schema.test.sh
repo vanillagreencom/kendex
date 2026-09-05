@@ -271,6 +271,15 @@ glob = "a/**"
 reason = "two, and the second reason is the one a reader believes"
 EOF
 
+c 'an unknown retention key' <<'EOF'
+[bot-instructions.retention]
+learnings = false
+EOF
+c 'a retention flag that is not a boolean' <<'EOF'
+[bot-instructions.retention]
+coderabbit = "no"
+EOF
+
 # --- the cross-flag set -----------------------------------------------------
 c 'qodo_best_practices true with qodo false' <<'EOF'
 [bot-instructions.bots]
