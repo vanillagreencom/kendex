@@ -1,6 +1,7 @@
 //! The chain judging commits: what an armed repository does when someone
 //! commits to it, and which copy of the package answers.
 
+use crate::test_util;
 use crate::{
     armed_repo, git, git_ok, install_package, path_with_binary, path_without_binary, repo, run,
     run_with, said,
@@ -211,8 +212,7 @@ fn the_message_lane_reads_a_piped_message() {
         .args(["guard", "run", "commit-msg"])
         .current_dir(&root)
         .env_clear()
-        .env("HOME", home)
-        .env("KENDEX_REAL_HOME", "1")
+        .envs(test_util::fixture_env(home))
         .env("PATH", path_with_binary())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

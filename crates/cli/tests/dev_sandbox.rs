@@ -10,6 +10,9 @@
 //! guarantee asserted there fails a build that is behaving correctly.
 #![cfg(all(not(windows), debug_assertions))]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -32,12 +35,9 @@ fn find(dir: &Path, name: &str) -> Option<PathBuf> {
 /// there too so `dirs` cannot reach the real machine.
 fn kendex(home: &Path) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_kendex"));
-    cmd.env("HOME", home)
+    cmd.envs(test_util::fixture_env(home))
         // Empty is not an opt-in — these tests are the sandboxed case.
         .env("KENDEX_REAL_HOME", "")
-        .env("XDG_DATA_HOME", home.join(".local/share"))
-        .env("XDG_CONFIG_HOME", home.join(".config"))
-        .env("XDG_CACHE_HOME", home.join(".cache"))
         .env("PATH", std::env::var("PATH").unwrap_or_default());
     cmd
 }

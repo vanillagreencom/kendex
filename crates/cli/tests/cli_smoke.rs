@@ -20,6 +20,9 @@
 //! worse than no gate at all.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -309,8 +312,7 @@ fn run(bin: &str, home: &Path, cwd: &Path, args: &[&str]) -> Output {
         .args(args)
         .current_dir(cwd)
         .env_clear()
-        .env("HOME", home)
-        .env("KENDEX_REAL_HOME", "1")
+        .envs(test_util::fixture_env(home))
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("NO_COLOR", "1")
         .output()

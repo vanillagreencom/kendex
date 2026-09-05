@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 /// Derives the canonical root once, before fixture paths reach code that may
@@ -11,6 +12,31 @@ use std::path::{Path, PathBuf};
 )]
 pub fn rooted(tmp: &tempfile::TempDir) -> PathBuf {
     kendex_core::paths::canonical(tmp.path()).expect("fixture root canonicalizes")
+}
+
+/// Child-process roots from one fixture home, with the debug sandbox disabled.
+/// Apply explicit test overrides after these defaults.
+#[allow(
+    dead_code,
+    clippy::expect_used,
+    reason = "test binaries share this module; Env app paths have both app and base directory parents"
+)]
+pub fn fixture_env(home: &Path) -> [(&'static str, OsString); 5] {
+    let env = kendex_core::env::Env::host_rooted(home);
+    let base = |path: PathBuf| {
+        path.parent()
+            .and_then(Path::parent)
+            .expect("Env app path has a platform base directory")
+            .as_os_str()
+            .to_owned()
+    };
+    [
+        ("HOME", env.home.clone().into_os_string()),
+        ("KENDEX_REAL_HOME", OsString::from("1")),
+        ("XDG_CONFIG_HOME", base(env.settings_file())),
+        ("XDG_CACHE_HOME", base(env.app_update_cache_file())),
+        ("XDG_DATA_HOME", base(env.installed_command_file())),
+    ]
 }
 
 /// The `path = …` line of a source declaration, written by the TOML
