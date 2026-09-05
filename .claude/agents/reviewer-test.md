@@ -2,7 +2,7 @@
 name: reviewer-test
 description: "Test coverage and quality reviewer. Verifies coverage, detects vacuous tests and missing must-fail controls, audits assertion tightness and test wiring."
 tags: review, testing
-model: inherit
+model: opus
 effort: xhigh
 background: true
 disallowedTools: Agent, AskUserQuestion

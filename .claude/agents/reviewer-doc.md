@@ -2,7 +2,7 @@
 name: reviewer-doc
 description: "Documentation accuracy reviewer. Verifies changed doc claims against implementation, re-derives transcribed values, checks citations resolve, audits drift."
 tags: review, docs
-model: inherit
+model: opus
 effort: xhigh
 background: true
 disallowedTools: Agent, AskUserQuestion

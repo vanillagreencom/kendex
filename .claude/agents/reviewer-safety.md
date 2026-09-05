@@ -2,7 +2,7 @@
 name: reviewer-safety
 description: "Memory, thread, and process safety auditor. Unsafe code, data races, lock-free correctness, and file/process races (TOCTOU, PID reuse, shared mutable state)."
 tags: review, security
-model: inherit
+model: opus
 effort: xhigh
 background: true
 disallowedTools: Agent, AskUserQuestion

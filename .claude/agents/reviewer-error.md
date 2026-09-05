@@ -2,7 +2,7 @@
 name: reviewer-error
 description: "Silent failure and error handling reviewer. Detects fail-open paths, swallowed errors, wrong-cause diagnostics, and inadequate error propagation."
 tags: review, debugging
-model: inherit
+model: opus
 effort: xhigh
 background: true
 disallowedTools: Agent, AskUserQuestion

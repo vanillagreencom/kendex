@@ -2,7 +2,7 @@
 name: planner
 description: "Planning specialist that explores requirements and code context, weighs architecture trade-offs, and produces ordered implementation plans or plan files. May write planning artifacts; does not edit production code."
 tags: planning, research
-model: inherit
+model: opus
 effort: max
 background: false
 disallowedTools: Agent
