@@ -150,54 +150,40 @@ fn plan_scope(
         None => status,
     };
 
-    let installed_names = pi_ext::list_installed(&root)?;
-    for name in &installed_names {
-        let status = match sources.get(name) {
-            None => Status::Unsourced,
-            // One unreadable package (a symlink in its source, a blown
-            // budget) must not empty the whole listing — it gets its own
-            // note and the healthy rows still print.
-            Some(package) => match (
-                pi_ext::installed_hash(&root, name),
-                pi_ext::package_hash(&package.source_dir),
-            ) {
-                (Ok(installed), Ok(source)) if installed.is_some() && installed == source => {
-                    Status::Current
-                }
-                (Ok(_), Ok(_)) => guard(
-                    name,
-                    Status::Stale {
-                        source_dir: package.source_dir.clone(),
-                    },
-                ),
-                (Err(error), _) | (_, Err(error)) => {
-                    notes.push(format!("{name}: unreadable — {error}"));
-                    continue;
-                }
-            },
-        };
-        let version = installed_version(&root, name);
-        rows.push(Row {
-            name: name.clone(),
-            version,
-            status,
-        });
-    }
-
     for (name, package) in &sources {
-        if installed_names.contains(name) {
-            continue;
-        }
-        rows.push(Row {
-            name: name.clone(),
-            version: None,
-            status: guard(
+        let status = match pi_ext::declared_state(&root, name, package) {
+            Ok(pi_ext::PackageState::Current { .. }) => Status::Current,
+            Ok(pi_ext::PackageState::Different) => guard(
+                name,
+                Status::Stale {
+                    source_dir: package.source_dir.clone(),
+                },
+            ),
+            Ok(pi_ext::PackageState::Missing) => guard(
                 name,
                 Status::Missing {
                     source_dir: package.source_dir.clone(),
                 },
             ),
+            Err(error) => {
+                notes.push(format!("{name}: unreadable — {error}"));
+                continue;
+            }
+        };
+        rows.push(Row {
+            name: name.clone(),
+            version: installed_version(&root, name),
+            status,
         });
+    }
+    for name in pi_ext::list_installed(&root)? {
+        if !sources.contains_key(&name) {
+            rows.push(Row {
+                version: installed_version(&root, &name),
+                name,
+                status: Status::Unsourced,
+            });
+        }
     }
 
     for name in pi_ext::list_npm_entries(&root)? {
@@ -365,11 +351,12 @@ fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
                 }
             }
         }
+        if failures.is_empty() {
+            record_pi_installs(env, plan, None)?;
+        }
+        kendex_core::drift::snapshot::record(env, &plan.scope)?;
     }
     if failures.is_empty() {
-        plans
-            .iter()
-            .try_for_each(|plan| record_pi_installs(env, plan, None))?;
         say(&match updated {
             0 => "all pi packages up to date".to_owned(),
             count => format!("updated {count} package(s)"),

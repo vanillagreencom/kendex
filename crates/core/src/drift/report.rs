@@ -68,6 +68,10 @@ pub enum Remedy {
     Apply {
         global: bool,
     },
+    /// Install or replace Pi packages through their carrier installer.
+    UpdatePi {
+        global: bool,
+    },
     Refresh {
         global: bool,
     },
@@ -115,6 +119,10 @@ impl Remedy {
         }
         Some(match self {
             Remedy::Apply { global } => format!("kendex apply{}", flag(global)),
+            Remedy::UpdatePi { global } => format!(
+                "kendex update-pi --scope {}",
+                if *global { "global" } else { "project" }
+            ),
             Remedy::Refresh { global } => format!("kendex refresh{}", flag(global)),
             Remedy::Remove { name, global } => format!("kendex remove {name}{}", flag(global)),
             Remedy::Add { kind, name, global } => {

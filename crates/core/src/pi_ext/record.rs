@@ -6,7 +6,7 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 
 use super::files::package_path;
-use super::{find_by_package_name, installed_hash, package_hash};
+use super::{PackageState, declared_state, find_by_package_name};
 
 /// One declared Pi package resolved to the catalog bytes and provenance that
 /// installation, verification, recovery, and report routing share.
@@ -57,15 +57,11 @@ pub fn matching_lock_entry(
     existing: Option<&crate::lock::LockEntry>,
 ) -> Result<Option<crate::lock::LockEntry>> {
     check_origin(name, package, existing)?;
-    let Some(source_hash) = package_hash(&package.source_dir)? else {
+    let PackageState::Current { hash: source_hash } = declared_state(scope_root, name, package)?
+    else {
         return Ok(None);
     };
-    let Some(rendered_hash) = installed_hash(scope_root, name)? else {
-        return Ok(None);
-    };
-    if source_hash != rendered_hash {
-        return Ok(None);
-    }
+    let rendered_hash = source_hash.clone();
     let installed_at = existing
         .filter(|entry| {
             entry.kind == crate::model::ItemKind::PiExtension

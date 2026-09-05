@@ -185,5 +185,12 @@ pub fn refresh_failures(report: &EngineReport) -> Vec<String> {
                 || n.contains("refused catalog read")
         })
         .cloned()
+        .chain(
+            report
+                .drift
+                .iter()
+                .filter(|row| row.kind == kendex_core::model::ItemKind::PiExtension)
+                .map(|row| format!("{}: {}", row.name, row.detail)),
+        )
         .collect()
 }

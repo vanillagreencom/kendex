@@ -180,13 +180,13 @@ pub fn run(
             false => print_conflicts(env, &report),
         };
         let lock = load_lock(&lock_path(env, &scope))?;
+        failures.extend(refresh_failures(&report));
         // A run that refused every install is not "nothing installed": a
         // scope carrying a refusal is never passed over.
         if lock.entries.is_empty() && report.plan.is_empty() && blocked.is_empty() {
             continue;
         }
         refreshed_anything = true;
-        failures.extend(refresh_failures(&report));
         if report.plan.is_empty() {
             closing.push(Closing {
                 scope: scope.clone(),

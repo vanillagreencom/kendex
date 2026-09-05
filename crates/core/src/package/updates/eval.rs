@@ -58,10 +58,76 @@ impl Eval<'_> {
         } else {
             None
         };
-        match crate::package::package_ref_for(self.env, self.scope, self.manifest, kind, name, decl)
-        {
-            Ok(package) => self.evaluated(planned, &package, hold_owner, forked, report),
-            Err(error) => self.unevaluated(planned, &error, hold_owner, forked, report),
+        let package =
+            crate::package::package_ref_for(self.env, self.scope, self.manifest, kind, name, decl);
+        match &package {
+            Ok(package) => self.evaluated(planned, package, hold_owner, forked, report),
+            Err(error) => self.unevaluated(planned, error, hold_owner, forked, report),
+        }
+        if kind == ItemKind::PiExtension {
+            self.pi_standing(
+                planned,
+                package.as_ref().ok().map(|package| package.tip.as_str()),
+                report,
+            );
+        }
+    }
+
+    fn pi_standing(
+        &self,
+        planned: &crate::engine::PlannedDeclaration,
+        tip: Option<&str>,
+        report: &mut UpdatesReport,
+    ) {
+        let name = &planned.name;
+        // Updates shows what the source offers beyond an item's pin. The
+        // held flag prevents the session report from treating that as drift.
+        let declaration = crate::manifest::ItemDecl {
+            rev: tip.map(str::to_owned).or_else(|| planned.decl.rev.clone()),
+            ..planned.decl.clone()
+        };
+        let compared = (|| {
+            let root = crate::pi_ext::scope_root(self.env, self.scope)?;
+            let package = crate::pi_ext::resolve_declared(
+                self.env,
+                self.scope,
+                self.manifest,
+                name,
+                &declaration,
+            )?;
+            let key = crate::lock::entry_key(ItemKind::PiExtension, name, HarnessId::Pi);
+            crate::pi_ext::check_origin(name, &package, self.lock.entries.get(&key))?;
+            crate::pi_ext::declared_state(&root, name, &package)
+        })();
+        match compared {
+            Ok(state) => {
+                let at = report
+                    .rows
+                    .iter()
+                    .position(|row| row.kind == ItemKind::PiExtension && row.name == *name);
+                let at = at.unwrap_or_else(|| {
+                    let at = report.rows.len();
+                    report.rows.push(unversioned_row(
+                        self.scope,
+                        planned.kind,
+                        name,
+                        &planned.decl,
+                        false,
+                    ));
+                    at
+                });
+                let row = &mut report.rows[at];
+                row.ignored = self.is_ignored(planned.kind, name, &row.repo);
+                row.update_available =
+                    !matches!(state, crate::pi_ext::PackageState::Current { .. });
+            }
+            Err(error) => report.warnings.push(ItemWarning {
+                kind: ItemKind::PiExtension,
+                name: name.clone(),
+                harness: Some(HarnessId::Pi),
+                message: format!("carrier package could not be compared: {error}"),
+                remediation: None,
+            }),
         }
     }
 
@@ -91,7 +157,9 @@ impl Eval<'_> {
         match error {
             CoreError::ItemRevUnsupported { .. } => {
                 if forked {
-                    report.rows.push(fork_row(self.scope, kind, name, decl));
+                    report
+                        .rows
+                        .push(unversioned_row(self.scope, kind, name, decl, true));
                 }
             }
             CoreError::SourcePending { .. } => report.warnings.push(warn(

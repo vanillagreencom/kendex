@@ -1,0 +1,1 @@
+- Pi package reports share byte comparisons. Check names update-pi for missing or stale packages, refresh reports packages it cannot repair, and update-pi clears the saved finding after repair.

@@ -25,6 +25,7 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
         .current_dir(cwd)
         .env_clear()
         .envs(test_util::fixture_env(home))
+        .env("KENDEX_BACKGROUND_REFRESH", "off")
         .env(
             "KENDEX_GIT_BASE",
             format!("file://{}", home.join("git").display()),
@@ -236,7 +237,7 @@ fn a_pinned_pi_extension_installs_and_verifies_against_its_revision() {
     fs::create_dir_all(project.join(".pi")).unwrap();
     let refresh = kendex(&root, &project, &["refresh", "--scope", "project", "--yes"]);
     assert!(
-        refresh.status.success(),
+        !refresh.status.success(),
         "{}",
         String::from_utf8_lossy(&refresh.stderr)
     );
@@ -264,6 +265,29 @@ fn a_pinned_pi_extension_installs_and_verifies_against_its_revision() {
         "{}",
         String::from_utf8_lossy(&verify.stderr)
     );
+    let updates = kendex(&root, &project, &["updates"]);
+    assert!(updates.status.success());
+    let text = String::from_utf8_lossy(&updates.stderr);
+    assert!(
+        text.contains("pi-extension pi-widgets") && text.contains("[held]"),
+        "{text}"
+    );
+    let preview = kendex(
+        &root,
+        &project,
+        &["update-pi", "--check", "--scope", "project"],
+    );
+    let text = String::from_utf8_lossy(&preview.stdout);
+    assert!(
+        preview.status.success() && text.contains("up to date"),
+        "{preview:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(project.join(".pi/packages/pi-widgets/index.js")).unwrap(),
+        "export const version = 1;\n"
+    );
+    let checked = kendex(&root, &project, &["check", "--scope", "project"]);
+    assert_eq!(checked.status.code(), Some(0), "{checked:?}");
 }
 
 #[test]
