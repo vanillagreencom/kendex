@@ -102,6 +102,12 @@ fn hook_edit(
             matcher,
             command,
             ..
+        }
+        | ConfigEdit::UpsertAntigravityHook {
+            event,
+            matcher,
+            command,
+            ..
         } => Some((event, matcher, command)),
         _ => None,
     })

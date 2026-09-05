@@ -8,6 +8,7 @@ use crate::harness::{HarnessAdapter, Surface, all_adapters};
 use crate::model::{DetectedHarness, FileState, ItemKind, ObservedItem, Scope};
 use crate::settings::AppSettings;
 
+pub(crate) mod antigravity;
 pub(crate) mod copilot;
 mod files;
 pub(crate) mod hooks;

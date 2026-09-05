@@ -142,6 +142,34 @@ fn a_copilot_hook_gets_a_document_of_its_own_beside_its_script() {
     assert_eq!(registry, PathBuf::from("/h/.copilot/hooks/audit.json"));
 }
 
+/// Antigravity keys its one registry by hook name, so the script sits in
+/// a directory its loader never scans and the entry under the name.
+#[test]
+fn an_antigravity_hook_registers_by_name_in_the_roots_hooks_json() {
+    let env = Env::fake("/h", FakeOs::Linux);
+    let scope = Scope::Project {
+        root: PathBuf::from("/p"),
+    };
+    assert_eq!(
+        hook_target(&env, &scope, HarnessId::Antigravity, "audit"),
+        Some(HookTarget::Script {
+            path: PathBuf::from("/p/.agents/hooks/audit.sh"),
+            command: "bash \"$(git rev-parse --show-toplevel)/.agents/hooks/audit.sh\"".into(),
+            registry: PathBuf::from("/p/.agents/hooks.json"),
+            format: HookFormat::Antigravity,
+            feature: None,
+        })
+    );
+    let Some(HookTarget::Script {
+        command, registry, ..
+    }) = hook_target(&env, &Scope::Global, HarnessId::Antigravity, "audit")
+    else {
+        panic!("antigravity hooks are script targets");
+    };
+    assert_eq!(command, "bash \"/h/.gemini/config/hooks/audit.sh\"");
+    assert_eq!(registry, PathBuf::from("/h/.gemini/config/hooks.json"));
+}
+
 /// The reserved name is one kendex never writes at either scope: pi warns
 /// about a `hooks/` beside a root it loads whatever the directory holds.
 #[test]

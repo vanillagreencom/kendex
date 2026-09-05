@@ -97,7 +97,8 @@ impl Artifact {
         };
         edits.iter().find_map(|(_, edit)| match edit {
             crate::configedit::ConfigEdit::UpsertHook { command, .. }
-            | crate::configedit::ConfigEdit::UpsertCopilotHook { command, .. } => {
+            | crate::configedit::ConfigEdit::UpsertCopilotHook { command, .. }
+            | crate::configedit::ConfigEdit::UpsertAntigravityHook { command, .. } => {
                 Some(command.clone())
             }
             _ => None,

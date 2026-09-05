@@ -1,10 +1,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+mod antigravity;
 mod copilot;
 mod nested;
 mod text;
 
+use antigravity::{remove_antigravity_hook, upsert_antigravity_hook};
 use copilot::{remove_copilot_hook, upsert_copilot_hook};
 use nested::{remove_hook, upsert_hook};
 use text::codex_enable_hooks;
@@ -47,6 +49,25 @@ pub enum ConfigEdit {
         timeout: Option<u32>,
     },
     RemoveCopilotHook {
+        event: Option<String>,
+        #[serde(default)]
+        matcher: Option<String>,
+        command: String,
+    },
+    /// antigravity `hooks.json`: upsert our handler under `<name>.<event>`,
+    /// grouped by matcher for the tool events and flat for the rest, the
+    /// way its loader reads them (the CLI's embedded hooks guide).
+    UpsertAntigravityHook {
+        name: String,
+        event: String,
+        matcher: Option<String>,
+        command: String,
+        timeout: Option<u32>,
+    },
+    /// Remove our handler from under `name`, or from under every name when
+    /// none is given; a name left holding no event is pruned with it.
+    RemoveAntigravityHook {
+        name: Option<String>,
         event: Option<String>,
         #[serde(default)]
         matcher: Option<String>,
@@ -136,45 +157,10 @@ impl ConfigEdit {
         let object = root
             .as_object_mut()
             .ok_or("config root is not a JSON object")?;
+        if let Some(applied) = self.apply_hook_edit(object) {
+            return applied;
+        }
         match self {
-            ConfigEdit::UpsertHook {
-                event,
-                matcher,
-                command,
-                timeout,
-            } => upsert_hook(object, event, matcher.as_deref(), command, *timeout),
-            ConfigEdit::RemoveHook {
-                event,
-                matcher,
-                command,
-            } => {
-                let events: Vec<String> = match event {
-                    Some(event) => vec![event.clone()],
-                    None => object
-                        .get("hooks")
-                        .and_then(Value::as_object)
-                        .map(|e| e.keys().cloned().collect())
-                        .unwrap_or_default(),
-                };
-                for event in events {
-                    remove_hook(object, &event, matcher.as_deref(), command);
-                }
-                Ok(())
-            }
-            ConfigEdit::UpsertCopilotHook {
-                event,
-                matcher,
-                command,
-                timeout,
-            } => upsert_copilot_hook(object, event, matcher.as_deref(), command, *timeout),
-            ConfigEdit::RemoveCopilotHook {
-                event,
-                matcher,
-                command,
-            } => {
-                remove_copilot_hook(object, event.as_deref(), matcher.as_deref(), command);
-                Ok(())
-            }
             ConfigEdit::UpsertMcpServer { name, value } => {
                 let servers = ensure_object(object, "mcpServers")?;
                 servers.insert(name.clone(), value.clone());
@@ -226,6 +212,66 @@ impl ConfigEdit {
             }
             _ => Ok(()),
         }
+    }
+
+    /// The hook-registry edits, one shape per registry format, or `None`
+    /// for an edit that touches no hook entry.
+    fn apply_hook_edit(&self, object: &mut Map<String, Value>) -> Option<Result<(), String>> {
+        Some(match self {
+            ConfigEdit::UpsertHook {
+                event,
+                matcher,
+                command,
+                timeout,
+            } => upsert_hook(object, event, matcher.as_deref(), command, *timeout),
+            ConfigEdit::RemoveHook {
+                event,
+                matcher,
+                command,
+            } => {
+                remove_hook(object, event.as_deref(), matcher.as_deref(), command);
+                Ok(())
+            }
+            ConfigEdit::UpsertCopilotHook {
+                event,
+                matcher,
+                command,
+                timeout,
+            } => upsert_copilot_hook(object, event, matcher.as_deref(), command, *timeout),
+            ConfigEdit::RemoveCopilotHook {
+                event,
+                matcher,
+                command,
+            } => {
+                remove_copilot_hook(object, event.as_deref(), matcher.as_deref(), command);
+                Ok(())
+            }
+            ConfigEdit::UpsertAntigravityHook {
+                name,
+                event,
+                matcher,
+                command,
+                timeout,
+            } => {
+                upsert_antigravity_hook(object, name, event, matcher.as_deref(), command, *timeout)
+            }
+            ConfigEdit::RemoveAntigravityHook {
+                name,
+                event,
+                matcher,
+                command,
+            } => {
+                remove_antigravity_hook(
+                    object,
+                    name.as_deref(),
+                    event.as_deref(),
+                    matcher.as_deref(),
+                    command,
+                );
+                Ok(())
+            }
+            _ => return None,
+        })
     }
 }
 

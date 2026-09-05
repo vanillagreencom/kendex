@@ -398,11 +398,12 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
         (Copilot, PiExtension) => unsupported(),
 
         // Agents load from `agents/*.md` and skills from the shared tree at
-        // either scope. Hooks run from `hooks.json`, a registry kendex
-        // neither reads nor writes yet, so the row is honestly unsupported;
-        // MCP servers and plugins are read and never written.
+        // either scope. Hooks run from `hooks.json` at either scope, the
+        // loader honouring the `decision` a command writes; MCP servers and
+        // plugins are read and never written.
         (Antigravity, Agent | Skill) => managed(BOTH),
-        (Antigravity, Command | Hook) => unsupported(),
+        (Antigravity, Hook) => enforced(managed(BOTH)),
+        (Antigravity, Command) => unsupported(),
         (Antigravity, McpServer) => observe_only(BOTH),
         (Antigravity, Plugin) => observe_only(BOTH),
         (Antigravity, PiExtension) => unsupported(),

@@ -8,6 +8,7 @@ use crate::model::Scope;
 pub mod adopt;
 mod agent_carry;
 mod agent_skills;
+mod antigravity;
 pub(crate) mod bundles;
 mod catalog;
 mod config_edits;

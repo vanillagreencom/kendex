@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use super::{HarnessAdapter, ProjectMarker, Reader, Surface};
 use crate::env::Env;
+use crate::hook::{HookSpec, Registration};
 use crate::model::{HarnessId, ItemKind};
 
 /// Antigravity CLI (`agy`). Customizations live under one root per scope,
@@ -12,6 +13,31 @@ use crate::model::{HarnessId, ItemKind};
 /// <https://antigravity.google/docs/cli/subagents/>). Settings sit apart
 /// under `~/.gemini/antigravity-cli/`.
 pub struct Antigravity;
+
+/// Antigravity's own hook events, and the fleet event each one answers to
+/// (the CLI's embedded hooks guide, <https://antigravity.google/docs/hooks>).
+/// The three it shares with the fleet are spelled the same way;
+/// `PreInvocation` and `PostInvocation` wrap a model call, which no fleet
+/// event means, so they stay unmapped rather than hung on a near-miss.
+pub(crate) fn event(fleet: &str) -> Option<&'static str> {
+    match fleet {
+        "PreToolUse" => Some("PreToolUse"),
+        "PostToolUse" => Some("PostToolUse"),
+        "Stop" => Some("Stop"),
+        _ => None,
+    }
+}
+
+/// The same hook said in Antigravity's words: its own event name and its
+/// matcher in its own tool names. `None` when it has no event that means
+/// what this one means.
+pub fn hook_for(hook: &HookSpec) -> Option<Registration> {
+    Some(Registration::new(
+        hook,
+        HarnessId::Antigravity,
+        event(&hook.event)?,
+    ))
+}
 
 fn surfaces(kind: ItemKind, root: &Path, shared: Option<&Path>) -> Vec<Surface> {
     match kind {
@@ -29,9 +55,14 @@ fn surfaces(kind: ItemKind, root: &Path, shared: Option<&Path>) -> Vec<Surface> 
             dir: root.join("plugins"),
             marker: "plugin.json",
         }],
-        // Skills are the slash commands; hooks run from `hooks.json`, a
-        // registry kendex neither reads nor writes yet.
-        ItemKind::Command | ItemKind::Hook | ItemKind::PiExtension => vec![],
+        // One registry per scope, keyed by hook name; the scripts kendex
+        // writes sit in a `hooks/` beside it that the loader never scans.
+        ItemKind::Hook => vec![Surface::Structured {
+            path: root.join("hooks.json"),
+            reader: Reader::AntigravityHooks,
+        }],
+        // Skills are the slash commands.
+        ItemKind::Command | ItemKind::PiExtension => vec![],
     }
 }
 
@@ -113,7 +144,17 @@ mod tests {
         );
         assert_eq!(
             Antigravity.project_surfaces(ItemKind::Hook, Path::new("/p"), &env),
-            []
+            [Surface::Structured {
+                path: PathBuf::from("/p/.agents/hooks.json"),
+                reader: Reader::AntigravityHooks,
+            }]
         );
+    }
+
+    #[test]
+    fn only_the_events_antigravity_documents_are_registered() {
+        assert_eq!(event("PreToolUse"), Some("PreToolUse"));
+        assert_eq!(event("Stop"), Some("Stop"));
+        assert_eq!(event("SessionStart"), None);
     }
 }

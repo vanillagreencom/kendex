@@ -134,6 +134,13 @@ pub fn hook_matcher(matcher: &str, harness: HarnessId) -> (String, bool) {
     let name = match harness {
         HarnessId::Gemini => gemini_tool_name,
         HarnessId::Copilot => copilot_tool_name,
+        // A matcher is a regex, and an alternative it cannot say leaves
+        // the pattern narrower, never wider, so here the name stands.
+        HarnessId::Antigravity => |tool: &str| {
+            antigravity_tool(tool)
+                .map(str::to_owned)
+                .unwrap_or_else(|| tool.trim().to_owned())
+        },
         // Claude's own names are what a matcher is authored in; codex and
         // cursor read the same spelling, and the rest register no matcher.
         _ => return (matcher.to_owned(), true),

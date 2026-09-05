@@ -29,7 +29,7 @@ pub(super) fn advisory_notice(
                 "this protection is advisory on {tool} — it installs as text the model may ignore, not a check the tool runs"
             ),
             format!(
-                "keep it for the tools that run hooks — Claude Code, Codex, Gemini CLI, GitHub Copilot — or accept it as guidance on {tool}"
+                "keep it for the tools that run hooks — Claude Code, Codex, Gemini CLI, GitHub Copilot, Antigravity — or accept it as guidance on {tool}"
             ),
         ),
     };
@@ -44,11 +44,13 @@ pub(super) fn advisory_notice(
 
 /// Which shape a registry file speaks. Claude, codex, cursor and Gemini all
 /// take the same matcher-with-handlers object; Copilot's hook files are a
-/// `{version, hooks}` document whose entries carry the command themselves.
+/// `{version, hooks}` document whose entries carry the command themselves;
+/// Antigravity's `hooks.json` keys that same nested shape by hook name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HookFormat {
     Nested,
     Copilot,
+    Antigravity,
 }
 
 /// Where one hook's artifacts live for a harness at a scope. Install and
@@ -186,8 +188,35 @@ pub(crate) fn hook_target(
         // own roots (`crate::harness::pi::HOOK_HOME`).
         HarnessId::Pi => Some(pi_hook(env, scope, name)),
         HarnessId::Copilot => Some(copilot_hook(env, scope, name)),
-        // `hooks.json` is a registry kendex does not yet write.
-        HarnessId::Antigravity => None,
+        // Antigravity runs `hooks.json` from the customization root at
+        // either scope, the entries keyed by hook name. The loader reads
+        // nothing else from a `hooks/` directory beside it, so the script
+        // sits there. Its documented project variable is none, so the
+        // project command resolves through the repo root itself.
+        HarnessId::Antigravity => Some(antigravity_hook(env, scope, name)),
+    }
+}
+
+/// Antigravity's shape: a script under the customization root, registered
+/// in the `hooks.json` beside it under the hook's own name.
+fn antigravity_hook(env: &Env, scope: &Scope, name: &str) -> HookTarget {
+    let root = match scope {
+        Scope::Global => adapter(HarnessId::Antigravity).default_global_root(env),
+        Scope::Project { root } => root.join(".agents"),
+    };
+    let path = root.join("hooks").join(format!("{name}.sh"));
+    let command = match scope {
+        Scope::Global => format!("bash \"{}\"", crate::paths::slashed(&path)),
+        Scope::Project { .. } => {
+            format!("bash \"$(git rev-parse --show-toplevel)/.agents/hooks/{name}.sh\"")
+        }
+    };
+    HookTarget::Script {
+        path,
+        command,
+        registry: root.join("hooks.json"),
+        format: HookFormat::Antigravity,
+        feature: None,
     }
 }
 

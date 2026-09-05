@@ -16,12 +16,36 @@ pub(super) fn upsert_hook(
     command: &str,
     timeout: Option<u32>,
 ) -> Result<(), String> {
+    upsert_in(
+        ensure_object(root, "hooks")?,
+        event,
+        matcher,
+        command,
+        timeout,
+    )
+}
+
+/// One handler as every nested registry spells it.
+pub(super) fn handler(command: &str, timeout: Option<u32>) -> Value {
     let mut handler = json!({"type": "command", "command": command});
     if let Some(timeout) = timeout {
         handler["timeout"] = json!(timeout);
     }
+    handler
+}
+
+/// The upsert against the map of event name to groups itself, for a
+/// registry that keeps that map somewhere other than under `hooks`.
+pub(super) fn upsert_in(
+    events: &mut Map<String, Value>,
+    event: &str,
+    matcher: Option<&str>,
+    command: &str,
+    timeout: Option<u32>,
+) -> Result<(), String> {
+    let handler = handler(command, timeout);
     let ours = |h: &Value| h.get("command").and_then(Value::as_str) == Some(command);
-    let groups = ensure_object(root, "hooks")?
+    let groups = events
         .entry(event)
         .or_insert_with(|| json!([]))
         .as_array_mut()
@@ -77,15 +101,36 @@ pub(super) fn upsert_hook(
     Ok(())
 }
 
+/// Takes our handler out, from every event when none is named.
 pub(super) fn remove_hook(
     root: &mut Map<String, Value>,
-    event: &str,
+    event: Option<&str>,
     matcher: Option<&str>,
     command: &str,
 ) {
     let Some(events) = root.get_mut("hooks").and_then(Value::as_object_mut) else {
         return;
     };
+    let named: Vec<String> = match event {
+        Some(event) => vec![event.to_owned()],
+        None => events.keys().cloned().collect(),
+    };
+    for event in named {
+        remove_in(events, &event, matcher, command);
+    }
+    if events.is_empty() {
+        root.shift_remove("hooks");
+    }
+}
+
+/// The removal against the map of event name to groups itself; an event
+/// left holding no groups is pruned, the map is the caller's to prune.
+pub(super) fn remove_in(
+    events: &mut Map<String, Value>,
+    event: &str,
+    matcher: Option<&str>,
+    command: &str,
+) {
     if let Some(groups) = events.get_mut(event).and_then(Value::as_array_mut) {
         for group in groups.iter_mut() {
             // A matcher names one group. Without one every group in the
@@ -107,8 +152,5 @@ pub(super) fn remove_hook(
         if groups.is_empty() {
             events.shift_remove(event);
         }
-    }
-    if events.is_empty() {
-        root.shift_remove("hooks");
     }
 }

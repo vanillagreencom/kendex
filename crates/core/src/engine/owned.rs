@@ -133,6 +133,12 @@ fn hook_owned(
             matcher,
             command,
         },
+        HookFormat::Antigravity => ConfigEdit::RemoveAntigravityHook {
+            name: Some(entry.name.clone()),
+            event,
+            matcher,
+            command,
+        },
     };
     match hook_target(env, scope, entry.harness, &entry.name) {
         Some(HookTarget::Script {

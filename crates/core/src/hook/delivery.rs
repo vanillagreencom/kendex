@@ -56,8 +56,9 @@ fn event_fires(harness: HarnessId, event: &str) -> bool {
         HarnessId::Pi => crate::harness::pi_listener(event).is_some(),
         HarnessId::Gemini => crate::harness::gemini::event(event).is_some(),
         HarnessId::Copilot => crate::harness::copilot::event(event).is_some(),
+        HarnessId::Antigravity => crate::harness::antigravity::event(event).is_some(),
         // Advisory harnesses never fire anything; enforcement answers first.
-        HarnessId::Opencode | HarnessId::Cursor | HarnessId::Antigravity => true,
+        HarnessId::Opencode | HarnessId::Cursor => true,
     }
 }
 
@@ -161,6 +162,12 @@ mod tests {
                 command("PreToolUse", "all"),
                 Registered,
             ),
+            (
+                "antigravity",
+                &project,
+                command("PreToolUse", "all"),
+                Registered,
+            ),
             ("claude", &global, command("PreToolUse", "all"), Registered),
             // Advisory harnesses stay advisory whatever the spec asks.
             ("opencode", &project, command("PreToolUse", "all"), Advisory),
@@ -182,6 +189,12 @@ mod tests {
                 &project,
                 script("SubagentStop"),
                 NotInstallable("Codex never fires SubagentStop".to_owned()),
+            ),
+            (
+                "antigravity",
+                &project,
+                script("SessionStart"),
+                NotInstallable("Antigravity never fires SessionStart".to_owned()),
             ),
             // Scoped agents: enforced in Claude's own agent file, honest
             // prose everywhere nothing identifies the agent at runtime.

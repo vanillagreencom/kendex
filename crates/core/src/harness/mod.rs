@@ -134,6 +134,12 @@ pub enum Reader {
     /// themselves, so reading them as `HooksObject` would name every one of
     /// them after nothing (matrix §2, §7).
     CopilotHooks,
+    /// `{"<hook-name>": {enabled?, "<Event>": [group | handler]}}` —
+    /// antigravity's `hooks.json`, one named hook per top-level key with
+    /// its own switch, tool events grouped under a matcher and the rest
+    /// flat. Read as `HooksObject` the file would hold no `hooks` key and
+    /// nothing would be found.
+    AntigravityHooks,
     /// copilot settings `enabledPlugins` — `{"<plugin>@<marketplace>": bool}`
     CopilotPlugins,
     /// `~/.claude/plugins/installed_plugins.json` joined with settings
