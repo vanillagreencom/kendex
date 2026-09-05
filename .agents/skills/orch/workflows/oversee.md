@@ -88,6 +88,17 @@ The overseer owns fleet judgement, not just liveness; every § 4 event is handle
   - `error` → many producers, and each line's own detail carries its remedy: follow that. One exception, whose remedy the detail does not carry: `writer dispatch failed for …` means fixing the dispatch path, never re-running, since a re-run re-attempts the same failing dispatch. An unevaluated PR is never healthy.
 - `heartbeat` → the triage pass: `.agents/skills/linear/scripts/linear.sh issues list --team [TEAM] --created-since [Nd covering the fleet start] --max` (or the tracker's equivalent), drop IDs already recorded in the fleet state's `triaged`, and judge only issues a fleet lane filed — the candidate set is each lane item's created-issue records in workflow state (`audit_issues_created`, `pr_comment_review.issues_created`) plus each lane PR body's Created Issues section; the created-since listing backstops trackers without that state. Anything outside the set is left alone. Record each verdict with `workflow-state append oversee triaged '{"issue": "[ID]", "verdict": "[kept|canceled]", "reason": "[ONE_LINE]"}'`, then re-run.
 
+### Talking to a lane
+
+How the overseer reaches a running lane from outside its session, by harness; the Pi commands are the pi-session-bridge CLI, documented in its [README](https://github.com/vanillagreencom/kendex/blob/main/pi-extensions/pi-session-bridge/README.md).
+
+| Harness | Launch | Send a message | Read state | Answer a question |
+|---------|--------|----------------|------------|-------------------|
+| Claude Code | `open-terminal` into a tmux pane (§ 3). | `tmux send-keys -l` the text, then `Enter` in a separate call, only at the idle prompt; sent mid-turn it queues. | Read the lane's status file, never its transcript. | Move the dialog with the arrow keys and press `Enter` in the pane; the recorded choice line confirms it. |
+| Codex | `open-terminal` into a tmux pane (§ 3). | Send at the idle prompt only; its queue does not deliver. | Read the lane's status file, never its transcript. | Type the number the dialog shows, at the idle prompt. |
+| Pi | `open-terminal` into a tmux pane (§ 3). | `pi-bridge send`. | `pi-bridge state`, `history` or `stream`; `pi-bridge questions` lists a pending dialog. | `pi-bridge answer` by option label after `pi-bridge questions`, never the pane: a typed number lands on the default option. |
+| App or other | The session or thread launcher the harness or an app-specific skill exposes (§ 1). | The API or tooling that surface exposes. | The API or tooling that surface exposes. | The API or tooling that surface exposes; a pane at its idle prompt only when nothing else exists. |
+
 ## 5. Stop
 
 Queue empty, or the user stops it. Report one line per lane: merged SHAs, still-open PRs, items skipped as owned or blocked.
