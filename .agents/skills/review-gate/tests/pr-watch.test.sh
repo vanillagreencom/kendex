@@ -1,41 +1,14 @@
 #!/usr/bin/env bash
-# Behavioral tests for the SHIPPED skills/review-gate/scripts/pr-watch.sh —
-# the needs-attention reducer. Stubbed gh + stubbed predicate,
-# every reduction arm driven offline.
+# Behavioural tests for the shipped skills/review-gate/scripts/pr-watch.sh,
+# the needs-attention reducer: stubbed gh and stubbed predicate, every
+# reduction arm driven offline. The output contract is the tab-separated
+# finding line --help states, `<pr> <head-8> <kind> <detail>`, so the kind
+# column and the exit status are what rows pin; a detail word is pinned only
+# where it alone tells one error shape from another.
 #
-# Reduction table:
-#   pw1.  approved + gate success + armed        -> silence, exit 0
-#   pw2.  threads-open                           -> line + exit 1
-#   pw3.  threads-open on a QUEUED PR            -> carries the dequeue note
-#   pw4.  changes-requested                      -> line + exit 1
-#   pw5.  approved + gate pending                -> gate-stale + exit 1
-#   pw6.  gate-stale + --heal                    -> exactly ONE writer
-#         (two stale PRs)                           dispatch per invocation
-#   pw7.  approved + success + NOT armed         -> disarmed + exit 1
-#   pw8.  approved + success + queued (unarmed)  -> silence (queue owns it)
-#   pw9.  awaiting, head younger than threshold  -> silence, exit 0
-#   pw10. awaiting, head older than threshold    -> awaiting-stale + exit 1
-#   pw11. predicate failure                      -> error line + exit 2
-#   pw12. zero-byte PR listing                   -> exit 2 (broken read,
-#                                                   never "zero PRs")
-#   pw13. --no-evaluate                          -> threads via direct read,
-#                                                   no predicate consulted
-#   pw14. explicit PR arg, closed PR             -> skipped silently
-#   pw15. draft + approved + success + unarmed   -> no disarmed line
-#   pw16. approved verdict + open threads        -> threads-open anyway
-#         (the REVIEW_GATE_THREADS=off shape)       (direct read, both modes)
-#   pw17. over 100 threads                       -> fail-closed attention
-#   pw18. queue-membership read failure          -> error, exit 2 (never a
-#                                                   silent "not queued")
-#   pw19. cheap mode, unarmed success gate       -> disarmed still emitted
-#   pw20. zero-exit predicate, garbage output    -> error, exit 2
-#   pw21. old commit in a fresh PR               -> not stale (created_at
-#                                                   floors the silence clock)
-#   pw22. explicit PR arg answering junk         -> that PR's error line,
-#                                                   remaining args processed
-#   pw23. zero-byte gate-status read             -> error (broken read)
-#   pw71. --help with no environment          -> usage, exit 0, before
-#                                                   the GH_REPO requirement
+# One case per behaviour surface; shaped input is one table per case, one
+# asserted row per shape. A row's `expect` names the fields it pins and
+# `observe` reads exactly those, so a row fails on the field it names.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -280,903 +253,260 @@ pr_row() { # number, [state], [armed], [draft], [created_at] -> one pulls-list r
       auto_merge: (if $armed=="armed" then {merge_method:"merge"} else null end)}'
 }
 
-run_watch() { # env-tokens... [-- flags...]
-  local envs=() flags=()
-  local seen_sep=0
-  for a in "$@"; do
-    if [[ "$a" == "--" ]]; then seen_sep=1; continue; fi
-    if [[ "$seen_sep" == "1" ]]; then flags+=("$a"); else envs+=("$a"); fi
-  done
-  (cd "$TMP_ROOT/cwd" \
-    && PATH="$TMP_ROOT/bin:$PATH" \
-       env GH_REPO=acme/widgets STUB_DISPATCH_LOG="$TMP_ROOT/dispatch.log" "${envs[@]}" \
-       "$TMP_ROOT/scripts/pr-watch.sh" ${flags[@]+"${flags[@]}"} 2>&1)
+# --- fixtures ----------------------------------------------------------------
+# Open-PR listings: number 7 armed, unarmed, unarmed draft, armed draft, two
+# armed PRs, one created now, a ghost author, an unparsable creation time.
+NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+OLD='2026-01-01T00:00:00Z'
+P7="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"
+P7U="$(jq -cn --argjson r "$(pr_row 7 open unarmed)" '[$r]')"
+P7UD="$(jq -cn --argjson r "$(pr_row 7 open unarmed true)" '[$r]')"
+P7AD="$(jq -cn --argjson r "$(pr_row 7 open armed true)" '[$r]')"
+P78="$(jq -cn --argjson a "$(pr_row 7)" --argjson b "$(pr_row 8)" '[$a,$b]')"
+P7NEW="$(jq -cn --argjson r "$(pr_row 7 open armed false "$NOW")" '[$r]')"
+P7GHOST="$(jq -cn --arg head "$HEAD_A" '[{number:7, state:"open", draft:false, head:{sha:$head}, user:null, created_at:"2026-01-01T00:00:00Z", auto_merge:{merge_method:"merge"}}]')"
+P7BADTIMES="$(jq -cn --arg head "$HEAD_A" '[{number:7, state:"open", draft:false, head:{sha:$head}, user:{login:"author"}, created_at:"garbage", auto_merge:{merge_method:"merge"}}]')"
+P7BADCREATED="$(jq -cn --argjson r "$(pr_row 7 open armed false garbage)" '[$r]')"
+# Explicit-argument fetches.
+PR9CLOSED="$(pr_row 9 closed | jq -c .)"
+PR9BOGUS="$(pr_row 9 bogus | jq -c .)"
+PR9PARTIAL="$(jq -cn --arg head "$HEAD_A" '{number:9, state:"open", head:{sha:$head}, user:{login:"author"}}')"
+PR9NONSHA="$(jq -cn '{number:9, state:"open", draft:false, head:{sha:"main"}, user:{login:"author"}, created_at:"2026-01-01T00:00:00Z", auto_merge:null}')"
+PR9EMPTYARM="$(jq -cn --arg head "$HEAD_A" '{number:9, state:"open", draft:false, head:{sha:$head}, user:{login:"author"}, created_at:"2026-01-01T00:00:00Z", auto_merge:{}}')"
+# Gate-status histories and predicate verdict lines.
+G_OK='[{"context":"Review gate","state":"success"}]'
+G_PENDING='[{"context":"Review gate","state":"pending"}]'
+G_NULL='[{"context":"Review gate","state":null}]'
+G_BOGUS='[{"context":"Review gate","state":"bogus"}]'
+V_APPROVED='verdict=approved detail=review evidence at head'
+V_THREADS1='verdict=threads-open detail=1 unresolved review threads'
+V_THREADS2='verdict=threads-open detail=2 unresolved review threads'
+V_CHANGES='verdict=changes-requested detail=reviewer objects'
+V_AWAITING='verdict=awaiting detail=no evidence'
+V_OFF='verdict=approved detail=review gate disabled by settings (REVIEW_GATE_MODE=off)'
+V_GARBAGE='garbage output with no verdict'
+# Raw reviewThreads bodies: a cursor that never advances, page one of two
+# (both resolved), page two with one open or one resolved thread, and the
+# malformed shapes.
+T_STUCK='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"CUR1"},"nodes":[{"isResolved":false}]}}}}}'
+T_PAGE1='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"CUR1"},"nodes":[{"isResolved":true},{"isResolved":true}]}}}}}'
+T_PAGE2_OPEN='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":false}]}}}}}'
+T_PAGE2_RESOLVED='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":true}]}}}}}'
+T_NULLNODE='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":null}]}}}}}'
+T_BADPAGEINFO='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":null},"nodes":[]}}}}}'
+T_NONARRAY='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":{"item":{"isResolved":true}}}}}}}'
+
+# --- harness -----------------------------------------------------------------
+
+# run_watch ENV FLAGS... — runs the sandboxed pr-watch with the stub PATH and
+# GH_REPO set; ENV is a semicolon-separated list of `env` arguments (JSON
+# values carry commas). Every run gets its own dispatch log, per-number fetch
+# counter and predicate-call log under $RUN. OUT is stdout and stderr
+# together, the way the scheduler sees it; RC the exit status.
+RUN_SEQ=0
+run_watch() {
+  local env_list="$1" env_args=()
+  shift
+  [[ -z "$env_list" ]] || IFS=';' read -ra env_args <<<"$env_list"
+  RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
+  mkdir -p "$RUN/prcalls"
+  : > "$RUN/dispatch.log"
+  : > "$RUN/predicate-calls"
+  set +e
+  OUT=$(cd "$TMP_ROOT/cwd" && PATH="$TMP_ROOT/bin:$PATH" \
+    env GH_REPO=acme/widgets STUB_DISPATCH_LOG="$RUN/dispatch.log" \
+        STUB_PR_CALLS_DIR="$RUN/prcalls" STUB_PREDICATE_CALLS="$RUN/predicate-calls" \
+        ${env_args[@]+"${env_args[@]}"} "$TMP_ROOT/scripts/pr-watch.sh" "$@" 2>&1)
+  RC=$?
+  set -e
 }
 
-echo "=== pr-watch reduction table ==="
-
-# pw1: healthy armed PR — silence.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
-rc=$?
-set -e
-assert_eq "$rc" "0" "pw1: healthy armed PR exits 0"
-assert_eq "$out" "" "pw1: and prints nothing"
-
-# pw2: threads-open.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=threads-open detail=2 unresolved review threads")
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw2: threads-open exits 1"
-assert_contains "$out" "threads-open" "pw2: kind emitted"
-assert_contains "$out" "2 unresolved review threads" "pw2: predicate detail carried"
-
-# pw3: threads on a queued PR carry the dequeue note.
-set +e
-out=$(run_watch STUB_QUEUED=yes STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=threads-open detail=1 unresolved review thread")
-set -e
-assert_contains "$out" "QUEUED: dequeue before pushing" "pw3: queued annotation present"
-
-# pw4: changes-requested.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=changes-requested detail=reviewer objects")
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw4: changes-requested exits 1"
-assert_contains "$out" "changes-requested" "pw4: kind emitted"
-
-# pw5: approved but the gate has not converged.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending"}]')
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw5: gate-stale exits 1"
-assert_contains "$out" "gate-stale" "pw5: kind emitted"
-assert_contains "$out" "pending" "pw5: observed gate state named"
-
-# pw6: --heal dispatches the writer exactly once across two stale PRs.
-: > "$TMP_ROOT/dispatch.log"
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson a "$(pr_row 7)" --argjson b "$(pr_row 8)" '[$a,$b]')" \
-  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending"}]' -- --heal)
-set -e
-assert_contains "$out" "heal-dispatched" "pw6: heal reported"
-assert_eq "$(wc -l < "$TMP_ROOT/dispatch.log" | tr -d ' ')" "1" "pw6: exactly one writer dispatch"
-
-# pw7: gate open, auto-merge not armed, not queued -> disarmed.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7 open unarmed)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw7: disarmed exits 1"
-assert_contains "$out" "disarmed" "pw7: kind emitted"
-
-# pw8: same shape but QUEUED -> the queue owns the merge; silence.
-set +e
-out=$(run_watch STUB_QUEUED=yes STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7 open unarmed)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
-rc=$?
-set -e
-assert_eq "$rc" "0" "pw8: queued unarmed success PR is healthy (exit 0)"
-assert_not_contains "$out" "disarmed" "pw8: no disarmed line"
-
-# pw9/pw10: awaiting inside vs past the quiet period.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
-  STUB_HEAD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -- --awaiting-after 3600)
-rc=$?
-set -e
-assert_eq "$rc" "0" "pw9: fresh awaiting head is healthy"
-assert_eq "$out" "" "pw9: and silent"
-
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
-  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 60)
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw10: stale awaiting head exits 1"
-assert_contains "$out" "awaiting-stale" "pw10: kind emitted"
-
-# pw10b/pw10c: the settings path resolves PR_REVIEW_WAIT_SECS — a valid
-# value drives the same quiet-period logic as --awaiting-after, and an
-# invalid one is a loud config error (exit 2), never a silent 900 fallback
-# that changes the review-silence policy behind the operator's back.
-set +e
-out=$(run_watch PR_REVIEW_WAIT_SECS=60 STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"   STUB_VERDICT_LINE="verdict=awaiting detail=no evidence"   STUB_HEAD_DATE="2026-01-01T00:00:00Z")
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw10b: settings-path quiet period drives awaiting-stale"
-assert_contains "$out" "awaiting-stale" "pw10b: kind emitted"
-
-set +e
-out=$(run_watch PR_REVIEW_WAIT_SECS=90s STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"   STUB_VERDICT_LINE="verdict=awaiting detail=no evidence"   STUB_HEAD_DATE="2026-01-01T00:00:00Z" 2>&1)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw10c: nonnumeric PR_REVIEW_WAIT_SECS is a loud config error"
-assert_contains "$out" "PR_REVIEW_WAIT_SECS" "pw10c: names the key"
-
-# pw11: predicate failure is a loud error, exit 2.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_PREDICATE_RC=2 STUB_VERDICT_LINE="unused")
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw11: predicate failure exits 2"
-assert_contains "$out" "error" "pw11: error line emitted"
-
-# pw12: a zero-byte listing is a broken read, never zero PRs.
-set +e
-out=$(run_watch STUB_OPEN_PRS="emptybytes" STUB_VERDICT_LINE="unused")
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw12: zero-byte PR listing exits 2"
-assert_contains "$out" "broken read" "pw12: named as a broken read"
-
-# pw13: --no-evaluate reads threads directly and never consults the predicate.
-: > "$TMP_ROOT/predicate-calls"
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_UNRESOLVED=3 STUB_PREDICATE_CALLS="$TMP_ROOT/predicate-calls" \
-  STUB_VERDICT_LINE="unused" -- --no-evaluate)
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw13: cheap mode reports threads"
-assert_contains "$out" "3 unresolved review thread" "pw13: direct count carried"
-assert_eq "$(wc -l < "$TMP_ROOT/predicate-calls" | tr -d ' ')" "0" "pw13: predicate never consulted"
-
-# pw14: an explicitly named CLOSED PR is skipped silently.
-set +e
-out=$(run_watch STUB_PR_9="$(pr_row 9 closed)" STUB_VERDICT_LINE="unused" -- 9)
-rc=$?
-set -e
-assert_eq "$rc" "0" "pw14: closed PR arg exits 0"
-assert_eq "$out" "" "pw14: and prints nothing"
-
-# pw15: drafts never get the disarmed nag (auto-merge cannot arm on drafts).
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7 open unarmed true)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
-rc=$?
-set -e
-assert_eq "$rc" "0" "pw15: draft exits 0"
-assert_not_contains "$out" "disarmed" "pw15: no disarmed line for drafts"
-
-# pw16: threads are read DIRECTLY even in evaluate mode — a
-# REVIEW_GATE_THREADS=off repo's predicate returns approved with threads
-# open, and the watcher must still see them.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_UNRESOLVED=2 \
-  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw16: threads-off repo shape still reports threads"
-assert_contains "$out" "threads-open" "pw16: kind emitted despite approved verdict"
-
-# pw17: over 100 threads fails CLOSED as attention.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_UNRESOLVED=100 STUB_THREADS_NEXTPAGE=true \
-  STUB_VERDICT_LINE="verdict=approved detail=unused")
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw17: thread overflow exits 1"
-assert_contains "$out" "overflow" "pw17: named as overflow (fail closed)"
-
-# pw17b: a pageable response that never advances (same page, same cursor,
-# hasNextPage=true every time) must terminate at the pagination bound as
-# overflow — proves the paging loop is bounded and cannot hang the watcher.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_THREADS_RAW='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"CUR1"},"nodes":[{"isResolved":false}]}}}}}' \
-  STUB_VERDICT_LINE="verdict=approved detail=unused")
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw17b: bounded pagination exits 1"
-assert_contains "$out" "overflow" "pw17b: bound reached reads as overflow (fail closed)"
-
-# pw17c: an unresolved thread on page TWO is counted — the walk advances by
-# cursor and sums across pages instead of trusting page one.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_THREADS_RAW='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"CUR1"},"nodes":[{"isResolved":true},{"isResolved":true}]}}}}}' \
-  STUB_THREADS_PAGE2='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":false}]}}}}}' \
-  STUB_VERDICT_LINE="verdict=approved detail=unused")
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw17c: later-page unresolved thread exits 1"
-assert_contains "$out" "1 unresolved review thread(s)" "pw17c: page-two thread counted"
-
-# pw17d: resolved history spanning pages is HEALTHY — over-one-page totals
-# must not read as overflow when every thread is resolved.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_THREADS_RAW='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"CUR1"},"nodes":[{"isResolved":true},{"isResolved":true}]}}}}}' \
-  STUB_THREADS_PAGE2='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":true}]}}}}}' \
-  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
-rc=$?
-set -e
-assert_eq "$rc" "0" "pw17d: resolved multi-page history exits 0"
-assert_eq "$out" "" "pw17d: and prints nothing"
-
-# pw17e: the 20-page budget itself, red-first — 25 distinct ADVANCING pages
-# (every node resolved) must stop at the bound and fail closed as overflow.
-# Every page past the bound is deliberately resolved+terminal: were the
-# `t_pages > 20` guard removed, the walk would finish cleanly and report
-# healthy, so this case can actually fail. pw17b cannot prove this arm — its
-# non-advancing cursor trips the other overflow path on page two.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_THREADS_PAGES=25 \
-  STUB_VERDICT_LINE="verdict=approved detail=unused")
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw17e: advancing walk past 20 pages exits 1"
-assert_contains "$out" "overflow" "pw17e: page-budget breach reads as overflow (fail closed)"
-
-# pw17f: the budget's inclusive edge — EXACTLY 20 advancing resolved pages
-# terminate healthy. Pins the bound as >20 so an off-by-one tightening
-# (rejecting a legal 20-page history) fails here while pw17e catches the
-# loosening direction.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_THREADS_PAGES=20 \
-  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
-rc=$?
-set -e
-assert_eq "$rc" "0" "pw17f: exactly 20 advancing resolved pages exit 0"
-assert_eq "$out" "" "pw17f: and print nothing"
-
-# pw18: a failed queue-membership read is a loud error, never "not queued".
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_QUEUE_FAIL=yes STUB_VERDICT_LINE="verdict=approved detail=unused")
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw18: queue read failure exits 2"
-assert_contains "$out" "merge-queue membership read failed" "pw18: error line names the read"
-
-# pw19: cheap mode still emits disarmed (its documented second finding).
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7 open unarmed)" '[$r]')" \
-  STUB_VERDICT_LINE="unused" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]' -- --no-evaluate)
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw19: cheap mode reports disarmed"
-assert_contains "$out" "disarmed" "pw19: kind emitted"
-assert_contains "$out" "UNCONFIRMED in cheap mode" "pw19: and never recommends arming unconfirmed"
-
-# pw20: a zero-exit predicate with unrecognizable output is an error, never
-# a healthy PR.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="garbage output with no verdict")
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw20: malformed predicate output exits 2"
-assert_contains "$out" "no recognizable verdict" "pw20: named as broken output"
-
-# pw21: the awaiting clock floors at PR creation — a cherry-picked
-# days-old commit in a freshly opened PR is NOT instantly stale.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7 open armed false "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
-  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 3600)
-rc=$?
-set -e
-assert_eq "$rc" "0" "pw21: fresh PR with an old commit is not stale (created_at floor)"
-
-# pw22: an explicitly named PR whose fetch returns junk is that PR's error
-# line — the remaining arguments still process.
-set +e
-out=$(run_watch STUB_PR_5="not json at all" STUB_PR_6="$(pr_row 6 closed)" STUB_VERDICT_LINE="unused" -- 5 6)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw22: junk PR response exits 2"
-assert_contains "$out" "not a well-formed PR object" "pw22: error names the broken read"
-
-# pw23: a zero-byte gate-status read is a broken read, never an empty set.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
-  STUB_GATE_HISTORY="emptybytes")
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw23: zero-byte gate read exits 2"
-assert_contains "$out" "zero bytes" "pw23: named as a broken read"
-
-# pw24: the INVERSE mismatch — awaiting verdict over a still-green gate
-# (withdrawn evidence, merge-enabling) — is gate-stale and heals.
-: > "$TMP_ROOT/dispatch.log"
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]' \
-  STUB_HEAD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -- --heal --awaiting-after 3600)
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw24: stale-green over awaiting exits 1"
-assert_contains "$out" "merge-enabling" "pw24: named as the dangerous direction"
-assert_eq "$(wc -l < "$TMP_ROOT/dispatch.log" | tr -d ' ')" "1" "pw24: and it heals"
-
-# pw25: ghost author (user: null) must not shift TSV columns — the PR still
-# processes and its findings still emit.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --arg head "$HEAD_A" '[{number:7, state:"open", draft:false, head:{sha:$head}, user:null, created_at:"2026-01-01T00:00:00Z", auto_merge:{merge_method:"merge"}}]')" \
-  STUB_UNRESOLVED=1 STUB_VERDICT_LINE="verdict=approved detail=unused")
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw25: ghost-author PR reduces threads AND names the ghost (exit 2)"
-assert_contains "$out" "threads-open" "pw25: its findings still emit"
-assert_contains "$out" "deleted account" "pw25: alongside the named ghost error"
-
-# pw26: a green gate over a standing objection reports both the objection
-# and the stale gate.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=changes-requested detail=reviewer objects" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw26: objection over green gate exits 1"
-assert_contains "$out" "changes-requested" "pw26: objection emitted"
-assert_contains "$out" "gate-stale" "pw26: stale green emitted too"
-
-# pw27: a future-dated committer timestamp (author-controlled) is a loud
-# error, never indefinite healthy silence.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
-  STUB_HEAD_DATE="2030-01-01T00:00:00Z" -- --awaiting-after 60)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw27: future-dated head exits 2"
-assert_contains "$out" "unprovable" "pw27: named as unprovable silence age"
-
-# pw28: queued gate-stale lines carry the dequeue note.
-set +e
-out=$(run_watch STUB_QUEUED=yes STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=changes-requested detail=reviewer objects" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
-set -e
-assert_eq "$(grep -c "QUEUED: dequeue" <<<"$out")" "2" "pw28: both lines carry the dequeue note"
-
-# pw29: unparsable timestamps are a loud error, never silent health.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --arg head "$HEAD_A" '[{number:7, state:"open", draft:false, head:{sha:$head}, user:{login:"author"}, created_at:"garbage", auto_merge:{merge_method:"merge"}}]')" \
-  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
-  STUB_HEAD_DATE="also-garbage" -- --awaiting-after 60)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw29: unparsable timestamps exit 2"
-assert_contains "$out" "unparsable" "pw29: named as unparsable (broken read)"
-
-# pw30: under REVIEW_GATE_THREADS=off, a green gate over open threads is
-# the DESIGNED state — threads still report (triage is the agent's job)
-# but no gate-stale, no heal dispatch.
-: > "$TMP_ROOT/dispatch.log"
-set +e
-out=$(run_watch REVIEW_GATE_THREADS=off STUB_QUEUED=no STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_UNRESOLVED=2 STUB_VERDICT_LINE="verdict=approved detail=unused" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]' -- --heal)
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw30: threads still report under THREADS=off"
-assert_contains "$out" "threads-open" "pw30: threads-open emitted"
-assert_not_contains "$out" "gate-stale" "pw30: no false gate-stale"
-assert_eq "$(wc -l < "$TMP_ROOT/dispatch.log" | tr -d ' ')" "0" "pw30: no writer dispatch"
-
-# pw30b: under REVIEW_GATE_MODE=off the gate is green BY DESIGN — threads
-# still report (a server-side thread ruleset can still block the merge)
-# but a green gate over them is never gate-stale and never heals.
-: > "$TMP_ROOT/dispatch.log"
-set +e
-out=$(run_watch REVIEW_GATE_MODE=off STUB_QUEUED=no STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"   STUB_UNRESOLVED=2 STUB_VERDICT_LINE="verdict=approved detail=review gate disabled by settings (REVIEW_GATE_MODE=off)"   STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]' -- --heal)
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw30b: threads still report under MODE=off"
-assert_contains "$out" "threads-open" "pw30b: threads-open emitted"
-assert_not_contains "$out" "gate-stale" "pw30b: no false gate-stale on a disabled gate"
-assert_eq "$(wc -l < "$TMP_ROOT/dispatch.log" | tr -d ' ')" "0" "pw30b: no writer dispatch"
-
-# pw31b: an invalid REVIEW_GATE_MODE refuses to reduce (config error,
-# exit 2) — parity with the predicate's own validation.
-set +e
-out=$(run_watch REVIEW_GATE_MODE=offf STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"   STUB_VERDICT_LINE="unused")
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw31b: invalid gate mode exits 2"
-assert_contains "$out" "invalid REVIEW_GATE_MODE" "pw31b: named as config error"
-
-# pw10d: a digit-only value beyond Bash's integer range must be a loud
-# config error — unbounded, it would error inside the later [ -gt ]
-# comparisons, get swallowed by the if, and silently disable the
-# awaiting-stale alert (fail-open silence).
-set +e
-out=$(run_watch PR_REVIEW_WAIT_SECS=99999999999999999999 STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"   STUB_VERDICT_LINE="verdict=awaiting detail=no evidence"   STUB_HEAD_DATE="2026-01-01T00:00:00Z" 2>&1)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw10d: out-of-range wait value exits 2"
-assert_contains "$out" "out of range" "pw10d: named as out of range"
-
-# pw10e/pw10f: the --awaiting-after CLI arm carries the same magnitude
-# bound and zero-padding normalization as the settings path — each parsing
-# path gets its own red-first control.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"   STUB_VERDICT_LINE="verdict=awaiting detail=no evidence"   STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 99999999999999999999 2>&1)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw10e: oversized --awaiting-after exits 2"
-assert_contains "$out" "out of range" "pw10e: named as out of range"
-
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"   STUB_VERDICT_LINE="verdict=awaiting detail=no evidence"   STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 0000000000060)
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw10f: long zero-padded --awaiting-after is judged by magnitude (60s quiet period drives awaiting-stale)"
-assert_contains "$out" "awaiting-stale" "pw10f: kind emitted"
-
-# pw31: an invalid REVIEW_GATE_THREADS value refuses to reduce (config
-# error, exit 2) instead of silently reading as enforced.
-set +e
-out=$(run_watch REVIEW_GATE_THREADS=of STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="unused")
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw31: invalid thread mode exits 2"
-assert_contains "$out" "invalid REVIEW_GATE_THREADS" "pw31: named as config error"
-
-# pw32: a FAILED dispatch still consumes the one heal attempt — no
-# per-stale-PR retry storm during an outage.
-: > "$TMP_ROOT/dispatch.log"
-set +e
-out=$(run_watch STUB_DISPATCH_FAIL=yes STUB_OPEN_PRS="$(jq -cn --argjson a "$(pr_row 7)" --argjson b "$(pr_row 8)" '[$a,$b]')" \
-  STUB_VERDICT_LINE="verdict=approved detail=unused" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending"}]' -- --heal)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw32: failed dispatch exits 2"
-assert_eq "$(wc -l < "$TMP_ROOT/dispatch.log" | tr -d ' ')" "1" "pw32: exactly one dispatch ATTEMPT"
-
-# pw33: under THREADS=off, open threads do not eat the disarmed finding —
-# one line per finding, both emit.
-set +e
-out=$(run_watch REVIEW_GATE_THREADS=off STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7 open unarmed)" '[$r]')" \
-  STUB_UNRESOLVED=2 STUB_VERDICT_LINE="verdict=approved detail=unused" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw33: exits 1"
-assert_contains "$out" "threads-open" "pw33: threads reported"
-assert_contains "$out" "disarmed" "pw33: disarmed also reported"
-
-# pw34: drafts get no reviewer-silence alerts (mismatch checks still run).
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7 open armed true)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
-  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 60)
-rc=$?
-set -e
-assert_eq "$rc" "0" "pw34: old draft is not awaiting-stale"
-assert_eq "$out" "" "pw34: and silent"
-
-# pw35: open threads do not suppress a standing objection — both lines.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_UNRESOLVED=1 STUB_VERDICT_LINE="verdict=changes-requested detail=reviewer objects")
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw35: exits 1"
-assert_contains "$out" "threads-open" "pw35: threads reported"
-assert_contains "$out" "changes-requested" "pw35: objection reported too"
-
-# pw35b: the predicate's duplicate threads-open verdict dedupes.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_UNRESOLVED=1 STUB_VERDICT_LINE="verdict=threads-open detail=1 unresolved review threads")
-set -e
-assert_eq "$(grep -c "threads-open" <<<"$out")" "1" "pw35b: one threads-open line, not two"
-
-# pw36: the predicate paging-race threads path heals a green gate too.
-: > "$TMP_ROOT/dispatch.log"
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_UNRESOLVED=0 STUB_VERDICT_LINE="verdict=threads-open detail=1 unresolved review threads" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]' -- --heal)
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw36: race-path threads exit 1"
-assert_contains "$out" "gate-stale" "pw36: stale green reported"
-assert_eq "$(wc -l < "$TMP_ROOT/dispatch.log" | tr -d ' ')" "1" "pw36: and heals"
-
-# pw37: a null isResolved node is malformed, never counted as resolved.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_THREADS_RAW='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":null}]}}}}}' \
-  STUB_VERDICT_LINE="unused")
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw37: malformed thread node exits 2"
-assert_contains "$out" "malformed" "pw37: named as malformed"
-
-# pw38: a malformed listing element fails the row projection loudly.
-set +e
-out=$(run_watch STUB_OPEN_PRS='[42]' STUB_VERDICT_LINE="unused")
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw38: malformed listing element exits 2"
-assert_contains "$out" "malformed" "pw38: named as a malformed listing"
-
-# pw39: an object-shaped malformed element (missing required fields) fails
-# the projection deterministically instead of misparsing the TSV loop.
-set +e
-out=$(run_watch STUB_OPEN_PRS='[{}]' STUB_VERDICT_LINE="unused")
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw39: empty-object element exits 2"
-assert_contains "$out" "malformed" "pw39: named as a malformed listing"
-
-# pw40: malformed pagination metadata is an error, never overflow attention.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_THREADS_RAW='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":null},"nodes":[]}}}}}' \
-  STUB_VERDICT_LINE="unused")
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw40: malformed pageInfo exits 2"
-assert_contains "$out" "pagination metadata malformed" "pw40: named precisely"
-
-# pw41: a malformed queue envelope is an error, never silently unqueued.
-set +e
-out=$(run_watch STUB_QUEUE_NULL_ENVELOPE=yes STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="unused")
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw41: malformed queue envelope exits 2"
-assert_contains "$out" "merge-queue membership" "pw41: named"
-
-# pw42: a non-array nodes container is malformed, never zero threads.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_THREADS_RAW='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":{"item":{"isResolved":true}}}}}}}' \
-  STUB_VERDICT_LINE="unused")
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw42: non-array nodes container exits 2"
-assert_contains "$out" "malformed" "pw42: named as malformed"
-
-# pw43: a zero-byte thread response is a broken read, never zero threads.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_THREADS_RAW="emptybytes" STUB_VERDICT_LINE="unused")
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw43: zero-byte thread read exits 2"
-assert_contains "$out" "zero bytes" "pw43: named as a broken read"
-
-# pw44: an explicitly empty gate context is a config error in every mode.
-set +e
-out=$(run_watch REVIEW_GATE_CONTEXT= STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="unused" -- --no-evaluate)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw44: empty gate context exits 2"
-assert_contains "$out" "REVIEW_GATE_CONTEXT is explicitly empty" "pw44: named as config error"
-
-# pw45: a matching gate row without a state is malformed, never absent.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=approved detail=unused" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":null}]')
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw45: null-state gate row exits 2"
-assert_contains "$out" "malformed" "pw45: named as malformed"
-
-# pw46: a ghost-author PR with nothing else to report names the cause
-# precisely (the predicate cannot evaluate it) instead of a generic error.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --arg head "$HEAD_A" '[{number:7, state:"open", draft:false, head:{sha:$head}, user:null, created_at:"2026-01-01T00:00:00Z", auto_merge:{merge_method:"merge"}}]')" \
-  STUB_VERDICT_LINE="unused")
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw46: ghost author exits 2"
-assert_contains "$out" "deleted account" "pw46: cause named"
-
-# pw47: a head that moves during the reduction is attention, not silence.
-set +e
-out=$(run_watch STUB_HEAD_AFTER="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
-  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw47: moved head exits 1"
-assert_contains "$out" "head-moved" "pw47: kind emitted"
-
-# pw48: GraphQL errors beside partial queue data are a loud error.
-set +e
-out=$(run_watch STUB_QUEUE_ERRORS=yes STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="unused")
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw48: queue errors envelope exits 2"
-
-# pw49: a response describing a DIFFERENT PR fails the binding check.
-set +e
-out=$(run_watch STUB_PR_9="$(pr_row 7)" STUB_VERDICT_LINE="unused" -- 9)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw49: mismatched PR number exits 2"
-assert_contains "$out" "not a well-formed PR object" "pw49: fails the binding check"
-
-# pw50: zero-padded explicit args normalize (09 -> 9).
-set +e
-out=$(run_watch STUB_PR_9="$(pr_row 9 closed)" STUB_VERDICT_LINE="unused" -- 09)
-rc=$?
-set -e
-assert_eq "$rc" "0" "pw50: zero-padded arg fetches and reduces (closed = silent 0)"
-
-# pw51: a recheck returning no usable sha is a loud error.
-set +e
-out=$(run_watch STUB_HEAD_AFTER="null" \
-  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw51: null recheck sha exits 2"
-assert_contains "$out" "no usable sha" "pw51: named"
-
-# pw52: a fresh ready_for_review event restarts the quiet period for a
-# just-readied long-lived draft.
-set +e
-out=$(run_watch STUB_READY_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
-  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 3600)
-rc=$?
-set -e
-assert_eq "$rc" "0" "pw52: fresh readiness restarts the quiet period"
-assert_not_contains "$out" "awaiting-stale" "pw52: no stale alert"
-
-# pw53: a timeline failure while confirming staleness fails loud, never a
-# stale alert on unconfirmed data.
-set +e
-out=$(run_watch STUB_TIMELINE_FAIL=yes \
-  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
-  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 60)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw53: timeline failure exits 2"
-assert_not_contains "$out" "awaiting-stale" "pw53: no stale alert on unconfirmed data"
-
-# pw54: a non-sha recheck value is a broken read, never head-moved.
-set +e
-out=$(run_watch STUB_HEAD_AFTER="42" \
-  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw54: non-sha recheck exits 2"
-assert_contains "$out" "non-sha value" "pw54: named"
-assert_not_contains "$out" "head-moved" "pw54: never head-moved"
-
-# pw55: a zero-byte timeline response is a broken read.
-set +e
-out=$(run_watch STUB_TIMELINE_EMPTYBYTES=yes \
-  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
-  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 60)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw55: zero-byte timeline exits 2"
-assert_contains "$out" "zero bytes" "pw55: named"
-
-# pw56: a fresh reopen restarts the quiet period like readiness does.
-set +e
-out=$(run_watch STUB_REOPENED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
-  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 3600)
-rc=$?
-set -e
-assert_eq "$rc" "0" "pw56: fresh reopen restarts the quiet period"
-
-# pw57: an unparsable readiness timestamp fails loud, never a stale alert.
-set +e
-out=$(run_watch STUB_READY_AT="garbage-timestamp" \
-  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
-  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 60)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw57: unparsable readiness timestamp exits 2"
-assert_not_contains "$out" "awaiting-stale" "pw57: no stale alert"
-
-# pw58: a fresh re-review request restarts the quiet period (no nudge loop).
-set +e
-out=$(run_watch STUB_REREQUEST_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
-  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 3600)
-rc=$?
-set -e
-assert_eq "$rc" "0" "pw58: fresh re-review request restarts the quiet period"
-
-# pw59: a future-dated timeline event is unprovable, never silent health.
-set +e
-out=$(run_watch STUB_READY_AT="2030-01-01T00:00:00Z" \
-  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
-  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 60)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw59: future-dated timeline event exits 2"
-assert_contains "$out" "unprovable" "pw59: named"
-
-# pw60: a state outside the open|closed enum is malformed, never a skip.
-set +e
-out=$(run_watch STUB_PR_9="$(pr_row 9 bogus)" STUB_VERDICT_LINE="unused" -- 9)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw60: bogus state exits 2"
-assert_contains "$out" "outside the open|closed enum" "pw60: named"
-
-# pw61: a PR response missing reducer-load-bearing fields (draft /
-# auto_merge / created_at) fails the well-formed check.
-set +e
-out=$(run_watch STUB_PR_9="$(jq -cn --arg head "$HEAD_A" '{number:9, state:"open", head:{sha:$head}, user:{login:"author"}}')" STUB_VERDICT_LINE="unused" -- 9)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw61: partial PR object exits 2"
-assert_contains "$out" "not a well-formed PR object" "pw61: named"
-
-# pw62: an initial head that is not a 40-hex sha fails the schema boundary.
-set +e
-out=$(run_watch STUB_PR_9="$(jq -cn '{number:9, state:"open", draft:false, head:{sha:"main"}, user:{login:"author"}, created_at:"2026-01-01T00:00:00Z", auto_merge:null}')" STUB_VERDICT_LINE="unused" -- 9)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw62: non-sha initial head exits 2"
-assert_contains "$out" "not a well-formed PR object" "pw62: named"
-
-# pw63: a head commit without a committer date is a broken read.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
-  STUB_HEAD_DATE="null" -- --awaiting-after 60)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw63: missing committer date exits 2"
-assert_contains "$out" "no usable committer date" "pw63: named"
-
-# pw64: a mid-reduction disarm (queue ejection shape) is caught by the
-# just-in-time ownership recheck — never a healthy exit 0.
-mkdir -p "$TMP_ROOT/prcalls"; rm -f "$TMP_ROOT/prcalls"/*
-set +e
-out=$(run_watch STUB_ARMED_AFTER=false STUB_PR_CALLS_DIR="$TMP_ROOT/prcalls" \
-  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw64: mid-reduction disarm exits 1"
-assert_contains "$out" "disarmed" "pw64: kind emitted"
-
-# pw65: a PR that closed mid-reduction gets no re-arm nudge — silence.
-# (Shim: STUB_ARMED_AFTER machinery reuses the per-number counter; here we
-# hand-serve a closed row on the second fetch via STUB_CLOSED_AFTER.)
-mkdir -p "$TMP_ROOT/prcalls"; rm -f "$TMP_ROOT/prcalls"/*
-set +e
-out=$(run_watch STUB_CLOSED_AFTER=yes STUB_PR_CALLS_DIR="$TMP_ROOT/prcalls" \
-  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7 open unarmed)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
-rc=$?
-set -e
-assert_eq "$rc" "0" "pw65: mid-reduction close exits 0"
-assert_not_contains "$out" "disarmed" "pw65: no re-arm nudge for a completed PR"
-
-# pw66: a bogus commit-status state is malformed, never absent or stale.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=approved detail=unused" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"bogus"}]')
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw66: bogus status state exits 2"
-assert_contains "$out" "valid error|failure|pending|success state" "pw66: named"
-
-# pw67: a to-draft conversion mid-reduction skips only the re-arm nudge —
-# verdict reductions still run (the stale-green mismatch still heals).
-mkdir -p "$TMP_ROOT/prcalls"; rm -f "$TMP_ROOT/prcalls"/*
-: > "$TMP_ROOT/dispatch.log"
-set +e
-out=$(run_watch STUB_DRAFT_AFTER=yes STUB_PR_CALLS_DIR="$TMP_ROOT/prcalls" \
-  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7 open unarmed)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]' \
-  STUB_HEAD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -- --heal --awaiting-after 3600)
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw67: to-draft conversion still reduces the verdict"
-assert_contains "$out" "gate-stale" "pw67: stale green still reported"
-assert_not_contains "$out" "disarmed" "pw67: but no re-arm nudge"
-
-# pw68: an unparsable creation timestamp is a broken read, never a skipped
-# floor that false-alerts staleness.
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7 open armed false garbage)" '[$r]')" \
-  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
-  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 60)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw68: unparsable created_at exits 2"
-assert_contains "$out" "creation timestamp unparsable" "pw68: named"
-
-# pw69: an empty auto_merge object is malformed, never silently armed.
-set +e
-out=$(run_watch STUB_PR_9="$(jq -cn --arg head "$HEAD_A" '{number:9, state:"open", draft:false, head:{sha:$head}, user:{login:"author"}, created_at:"2026-01-01T00:00:00Z", auto_merge:{}}')" STUB_VERDICT_LINE="unused" -- 9)
-rc=$?
-set -e
-assert_eq "$rc" "2" "pw69: empty auto_merge object exits 2"
-assert_contains "$out" "not a well-formed PR object" "pw69: named"
-
-# pw70: cheap mode fires the threads-driven gate-stale (documented form).
-: > "$TMP_ROOT/dispatch.log"
-set +e
-out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
-  STUB_UNRESOLVED=1 STUB_VERDICT_LINE="unused" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]' -- --no-evaluate --heal)
-rc=$?
-set -e
-assert_eq "$rc" "1" "pw70: cheap-mode threads over green gate exits 1"
-assert_contains "$out" "gate-stale" "pw70: threads-driven gate-stale fires"
-assert_eq "$(wc -l < "$TMP_ROOT/dispatch.log" | tr -d ' ')" "1" "pw70: and heals"
-
-echo "=== pw71: --help answers before the GH_REPO requirement ==="
-
-# The -h/--help pre-scan runs BEFORE the GH_REPO check: the contract must be
-# readable with no environment at all, against the shipped script, with no
-# gh and no predicate behind it. Token pins guard the heredoc, the contract's
-# sole home.
-set +e
-out=$(cd "$TMP_ROOT" && env -u GH_REPO "$SKILL_ROOT/scripts/pr-watch.sh" --help 2>"$TMP_ROOT/help.err")
-rc=$?
-set -e
-assert_eq "$rc" "0" "pw71: --help exits 0 with GH_REPO unset"
-assert_contains "$out" "Usage: pr-watch.sh" "pw71: --help prints usage"
-assert_contains "$out" "untracked-claim" "pw71: --help lists the untracked-claim kind"
-assert_contains "$out" "unreasoned-decline" "pw71: --help lists the unreasoned-decline kind"
-assert_contains "$out" "GLOBAL failures" "pw71: --help carries the exit-2 shapes"
-
-set +e
-out=$(cd "$TMP_ROOT" && env -u GH_REPO "$SKILL_ROOT/scripts/pr-watch.sh" -h 2>/dev/null)
-rc=$?
-set -e
-assert_eq "$rc" "0" "pw71b: -h exits 0"
-assert_contains "$out" "Usage: pr-watch.sh" "pw71b: -h prints usage"
+# observe EXPECT — prints the run's value of every `name=` field EXPECT names,
+# in EXPECT's order:
+#   rc               exit status
+#   kinds            the kind column of every finding line, in order, or none
+#                    (the tab-separated output is the contract --help states)
+#   threads          the count a threads-open line reports, or `overflow`
+#   queued_notes     finding lines carrying the queued dequeue note
+#   dispatches       writer dispatch attempts the stub received
+#   predicate_calls  predicate invocations
+#   detail~<word>    whether any output names <word>: the one word that
+#                    tells two error shapes apart when kind and exit agree
+#   help_sections    the --help sections present, of usage, kinds (the
+#                    untracked-claim and unreasoned-decline kinds) and exits
+observe() {
+  local got="" token name value
+  for token in $1; do
+    name="${token%%=*}"
+    case "$name" in
+      rc) value="$RC" ;;
+      kinds) value="$(awk -F'\t' 'NF >= 3 {print $3}' <<<"$OUT" | paste -sd, - || true)"; value="${value:-none}" ;;
+      threads)
+        if grep -q 'threads-open.*overflow' <<<"$OUT"; then value=overflow
+        else value="$(grep -o '[0-9]* unresolved review thread' <<<"$OUT" | head -1 | grep -o '^[0-9]*' || true)"; value="${value:-none}"; fi
+        ;;
+      queued_notes) value="$(grep -c 'QUEUED: dequeue' <<<"$OUT" || true)" ;;
+      dispatches) value="$(wc -l <"$RUN/dispatch.log" | tr -d ' ')" ;;
+      predicate_calls) value="$(wc -l <"$RUN/predicate-calls" | tr -d ' ')" ;;
+      detail~*) value="$(grep -qF -- "${name#detail~}" <<<"$OUT" && echo true || echo false)" ;;
+      help_sections)
+        value=""
+        grep -q '^Usage: pr-watch.sh' <<<"$OUT" && value="$value,usage"
+        grep -q 'untracked-claim' <<<"$OUT" && grep -q 'unreasoned-decline' <<<"$OUT" && value="$value,kinds"
+        grep -q 'GLOBAL failures' <<<"$OUT" && value="$value,exits"
+        value="${value#,}"; value="${value:-none}"
+        ;;
+      *) value=UNKNOWN_FIELD ;;
+    esac
+    got="$got $name=$value"
+  done
+  printf '%s' "${got# }"
+}
+
+# table ROW... — one run and one assertion per row: `label|flags|env|expect`.
+table() {
+  local row label flags env expect
+  for row in "$@"; do
+    IFS='|' read -r label flags env expect <<<"$row"
+    [[ -n "$expect" ]] || { printf 'table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+    # shellcheck disable=SC2086
+    run_watch "$env" $flags
+    assert_eq "$(observe "$expect")" "$expect" "$label"
+  done
+}
+
+echo "=== the reduction over verdict, gate state, arming and queue membership ==="
+# A healthy PR is silence. Threads are read directly in both modes, so a
+# repo whose predicate ignores them still reports them; a verdict and a gate
+# state that disagree are gate-stale in either direction and --heal
+# dispatches the writer once per invocation, a failed dispatch included.
+# Every finding is its own line, none eats another, and duplicates dedupe.
+table \
+  "approved, gate success, armed: silence||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=0 kinds=none" \
+  "threads-open carries the count||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_THREADS2|rc=1 kinds=threads-open threads=2" \
+  "threads-open on a queued PR carries the dequeue note||STUB_QUEUED=yes;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_THREADS1|rc=1 kinds=threads-open queued_notes=1" \
+  "changes-requested||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_CHANGES|rc=1 kinds=changes-requested" \
+  "approved over a pending gate is gate-stale||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_PENDING|rc=1 kinds=gate-stale" \
+  "--heal dispatches the writer once across two stale PRs|--heal|STUB_OPEN_PRS=$P78;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_PENDING|rc=1 kinds=gate-stale,heal-dispatched,gate-stale dispatches=1" \
+  "a failed dispatch still consumes the one attempt|--heal|STUB_DISPATCH_FAIL=yes;STUB_OPEN_PRS=$P78;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_PENDING|rc=2 kinds=gate-stale,error,gate-stale dispatches=1" \
+  "awaiting over a green gate is gate-stale and heals|--heal --awaiting-after 3600|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_GATE_HISTORY=$G_OK;STUB_HEAD_DATE=$NOW|rc=1 kinds=gate-stale,heal-dispatched dispatches=1" \
+  "an objection over a green gate reports both||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_CHANGES;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=changes-requested,gate-stale" \
+  "queued lines all carry the dequeue note||STUB_QUEUED=yes;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_CHANGES;STUB_GATE_HISTORY=$G_OK|rc=1 queued_notes=2" \
+  "approved, gate success, not armed, not queued: disarmed||STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed" \
+  "the same shape queued: the queue owns the merge||STUB_QUEUED=yes;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=0 kinds=none" \
+  "a draft never gets the disarmed nag||STUB_OPEN_PRS=$P7UD;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=0 kinds=none" \
+  "threads are read directly even under an approved verdict||STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=2;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=threads-open,gate-stale threads=2" \
+  "open threads do not suppress a standing objection||STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=1;STUB_VERDICT_LINE=$V_CHANGES|rc=1 kinds=threads-open,changes-requested" \
+  "the predicate's duplicate threads-open verdict dedupes||STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=1;STUB_VERDICT_LINE=$V_THREADS1|rc=1 kinds=threads-open" \
+  "the predicate's paging-race threads verdict heals a green gate|--heal|STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=0;STUB_VERDICT_LINE=$V_THREADS1;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=threads-open,gate-stale,heal-dispatched dispatches=1" \
+  "cheap mode reports threads by direct read and never consults the predicate|--no-evaluate|STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=3;STUB_VERDICT_LINE=unused|rc=1 kinds=threads-open threads=3 predicate_calls=0" \
+  "cheap mode still emits disarmed|--no-evaluate|STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=unused;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed" \
+  "cheap mode fires the threads-driven gate-stale and heals|--no-evaluate --heal|STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=1;STUB_VERDICT_LINE=unused;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=threads-open,gate-stale,heal-dispatched dispatches=1" \
+  "REVIEW_GATE_THREADS=off: threads report, a green gate over them is designed|--heal|REVIEW_GATE_THREADS=off;STUB_QUEUED=no;STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=2;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=threads-open dispatches=0" \
+  "REVIEW_GATE_MODE=off: the same|--heal|REVIEW_GATE_MODE=off;STUB_QUEUED=no;STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=2;STUB_VERDICT_LINE=$V_OFF;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=threads-open dispatches=0" \
+  "REVIEW_GATE_THREADS=off: open threads do not eat the disarmed finding||REVIEW_GATE_THREADS=off;STUB_OPEN_PRS=$P7U;STUB_UNRESOLVED=2;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=threads-open,disarmed"
+
+echo "=== the thread walk is paged, summed and bounded ==="
+# Over 100 threads, a cursor that never advances, or more than 20 advancing
+# pages fail closed as overflow attention; a thread on page two is counted;
+# resolved history across pages, 20 pages included, is healthy. Open threads
+# under an approved verdict also make the (absent or green) gate stale.
+table \
+  "over 100 threads is overflow||STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=100;STUB_THREADS_NEXTPAGE=true;STUB_VERDICT_LINE=$V_APPROVED|rc=1 kinds=threads-open,gate-stale threads=overflow" \
+  "a cursor that never advances is overflow at the bound||STUB_OPEN_PRS=$P7;STUB_THREADS_RAW=$T_STUCK;STUB_VERDICT_LINE=$V_APPROVED|rc=1 kinds=threads-open,gate-stale threads=overflow" \
+  "an unresolved thread on page two is counted||STUB_OPEN_PRS=$P7;STUB_THREADS_RAW=$T_PAGE1;STUB_THREADS_PAGE2=$T_PAGE2_OPEN;STUB_VERDICT_LINE=$V_APPROVED|rc=1 kinds=threads-open,gate-stale threads=1" \
+  "resolved history across pages is healthy||STUB_OPEN_PRS=$P7;STUB_THREADS_RAW=$T_PAGE1;STUB_THREADS_PAGE2=$T_PAGE2_RESOLVED;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=0 kinds=none" \
+  "25 advancing resolved pages breach the budget: overflow||STUB_OPEN_PRS=$P7;STUB_THREADS_PAGES=25;STUB_VERDICT_LINE=$V_APPROVED|rc=1 kinds=threads-open,gate-stale threads=overflow" \
+  "exactly 20 advancing resolved pages are healthy||STUB_OPEN_PRS=$P7;STUB_THREADS_PAGES=20;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=0 kinds=none"
+
+echo "=== the reviewer-silence clock ==="
+# Awaiting is stale only past the quiet period, measured from the newest of
+# the head commit, the PR's creation, and a readiness, reopen or re-review
+# event; drafts are never nagged. PR_REVIEW_WAIT_SECS drives the same clock
+# as --awaiting-after, and a zero-padded value is judged by magnitude.
+table \
+  "a head younger than the threshold is silent|--awaiting-after 3600|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$NOW|rc=0 kinds=none" \
+  "a head older than the threshold is awaiting-stale|--awaiting-after 60|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=1 kinds=awaiting-stale" \
+  "PR_REVIEW_WAIT_SECS drives the same clock||PR_REVIEW_WAIT_SECS=60;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=1 kinds=awaiting-stale" \
+  "a zero-padded --awaiting-after is judged by magnitude|--awaiting-after 0000000000060|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=1 kinds=awaiting-stale" \
+  "an old commit in a fresh PR is not stale: creation floors the clock|--awaiting-after 3600|STUB_OPEN_PRS=$P7NEW;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=0 kinds=none" \
+  "an old draft is not awaiting-stale|--awaiting-after 60|STUB_OPEN_PRS=$P7AD;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=0 kinds=none" \
+  "a fresh ready_for_review restarts the quiet period|--awaiting-after 3600|STUB_READY_AT=$NOW;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=0 kinds=none" \
+  "a fresh reopen restarts the quiet period|--awaiting-after 3600|STUB_REOPENED_AT=$NOW;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=0 kinds=none" \
+  "a fresh re-review request restarts the quiet period|--awaiting-after 3600|STUB_REREQUEST_AT=$NOW;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=0 kinds=none"
+
+echo "=== a head that moves or a PR that changes mid-reduction ==="
+# The just-in-time recheck: a moved head is attention, a disarm is caught, a
+# close silences the re-arm nudge, a draft conversion skips only the nudge.
+table \
+  "a head that moved during the reduction is head-moved||STUB_HEAD_AFTER=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=head-moved" \
+  "a mid-reduction disarm is caught||STUB_ARMED_AFTER=false;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed" \
+  "a mid-reduction close gets no re-arm nudge||STUB_CLOSED_AFTER=yes;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=0 kinds=none" \
+  "a mid-reduction draft conversion skips only the nudge|--heal --awaiting-after 3600|STUB_DRAFT_AFTER=yes;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_AWAITING;STUB_GATE_HISTORY=$G_OK;STUB_HEAD_DATE=$NOW|rc=1 kinds=gate-stale,heal-dispatched"
+
+echo "=== explicit PR arguments ==="
+table \
+  "a closed PR is skipped silently|9|STUB_PR_9=$PR9CLOSED;STUB_VERDICT_LINE=unused|rc=0 kinds=none" \
+  "a zero-padded argument normalizes|09|STUB_PR_9=$PR9CLOSED;STUB_VERDICT_LINE=unused|rc=0 kinds=none" \
+  "a junk response is that PR's error line and the rest still process|5 6|STUB_PR_5=not json at all;STUB_PR_6=$(pr_row 6 closed | jq -c .);STUB_VERDICT_LINE=unused|rc=2 kinds=error" \
+  "a response describing a different PR fails the binding check|9|STUB_PR_9=$(pr_row 7 | jq -c .);STUB_VERDICT_LINE=unused|rc=2 kinds=error" \
+  "a state outside the open or closed enum is malformed, never a skip|9|STUB_PR_9=$PR9BOGUS;STUB_VERDICT_LINE=unused|rc=2 kinds=error detail~enum=true" \
+  "a PR object missing reducer fields is malformed|9|STUB_PR_9=$PR9PARTIAL;STUB_VERDICT_LINE=unused|rc=2 kinds=error" \
+  "a non-sha initial head is malformed|9|STUB_PR_9=$PR9NONSHA;STUB_VERDICT_LINE=unused|rc=2 kinds=error" \
+  "an empty auto_merge object is malformed, never silently armed|9|STUB_PR_9=$PR9EMPTYARM;STUB_VERDICT_LINE=unused|rc=2 kinds=error"
+
+echo "=== a broken read is an error, never health ==="
+# Exit 2 with an error line; the word pinned is the one that tells the shape
+# apart from its neighbours with the same kind and exit.
+table \
+  "predicate failure||STUB_OPEN_PRS=$P7;STUB_PREDICATE_RC=2;STUB_VERDICT_LINE=unused|rc=2 kinds=error detail~predicate=true" \
+  "a zero-exit predicate with no recognizable verdict||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_GARBAGE|rc=2 kinds=error detail~verdict=true" \
+  "a zero-byte PR listing||STUB_OPEN_PRS=emptybytes;STUB_VERDICT_LINE=unused|rc=2 detail~zero=true" \
+  "a non-object listing element||STUB_OPEN_PRS=[42];STUB_VERDICT_LINE=unused|rc=2 detail~malformed=true" \
+  "an empty-object listing element||STUB_OPEN_PRS=[{}];STUB_VERDICT_LINE=unused|rc=2 detail~malformed=true" \
+  "a ghost author reduces threads and names the ghost||STUB_OPEN_PRS=$P7GHOST;STUB_UNRESOLVED=1;STUB_VERDICT_LINE=$V_APPROVED|rc=2 kinds=threads-open,error detail~deleted=true" \
+  "a ghost author with nothing else to report names the cause||STUB_OPEN_PRS=$P7GHOST;STUB_VERDICT_LINE=unused|rc=2 kinds=error detail~deleted=true" \
+  "a failed queue-membership read||STUB_OPEN_PRS=$P7;STUB_QUEUE_FAIL=yes;STUB_VERDICT_LINE=$V_APPROVED|rc=2 kinds=error detail~merge-queue=true" \
+  "a malformed queue envelope||STUB_QUEUE_NULL_ENVELOPE=yes;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=unused|rc=2 kinds=error detail~merge-queue=true" \
+  "GraphQL errors beside partial queue data||STUB_QUEUE_ERRORS=yes;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=unused|rc=2 kinds=error" \
+  "a zero-byte gate-status read||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=emptybytes|rc=2 kinds=error detail~zero=true" \
+  "a matching gate row without a state||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_NULL|rc=2 kinds=error detail~malformed=true" \
+  "a gate row with a state outside the enum||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_BOGUS|rc=2 kinds=error detail~malformed=true" \
+  "a null isResolved node||STUB_OPEN_PRS=$P7;STUB_THREADS_RAW=$T_NULLNODE;STUB_VERDICT_LINE=unused|rc=2 kinds=error detail~malformed=true" \
+  "malformed pagination metadata is an error, never overflow||STUB_OPEN_PRS=$P7;STUB_THREADS_RAW=$T_BADPAGEINFO;STUB_VERDICT_LINE=unused|rc=2 kinds=error detail~pagination=true" \
+  "a non-array nodes container||STUB_OPEN_PRS=$P7;STUB_THREADS_RAW=$T_NONARRAY;STUB_VERDICT_LINE=unused|rc=2 kinds=error detail~malformed=true" \
+  "a zero-byte thread read||STUB_OPEN_PRS=$P7;STUB_THREADS_RAW=emptybytes;STUB_VERDICT_LINE=unused|rc=2 kinds=error detail~zero=true" \
+  "a future-dated committer timestamp is unprovable silence|--awaiting-after 60|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=2030-01-01T00:00:00Z|rc=2 kinds=error detail~unprovable=true" \
+  "unparsable timestamps|--awaiting-after 60|STUB_OPEN_PRS=$P7BADTIMES;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=also-garbage|rc=2 kinds=error detail~unparsable=true" \
+  "an unparsable creation timestamp|--awaiting-after 60|STUB_OPEN_PRS=$P7BADCREATED;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 kinds=error detail~unparsable=true" \
+  "a head commit without a committer date|--awaiting-after 60|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=null|rc=2 kinds=error detail~committer=true" \
+  "a timeline failure while confirming staleness|--awaiting-after 60|STUB_TIMELINE_FAIL=yes;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 kinds=error" \
+  "a zero-byte timeline response|--awaiting-after 60|STUB_TIMELINE_EMPTYBYTES=yes;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 kinds=error detail~zero=true" \
+  "an unparsable readiness timestamp|--awaiting-after 60|STUB_READY_AT=garbage-timestamp;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 kinds=error" \
+  "a future-dated timeline event|--awaiting-after 60|STUB_READY_AT=2030-01-01T00:00:00Z;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 kinds=error detail~unprovable=true" \
+  "a recheck returning no usable sha||STUB_HEAD_AFTER=null;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=2 kinds=error detail~sha=true" \
+  "a non-sha recheck value is a broken read, never head-moved||STUB_HEAD_AFTER=42;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=2 kinds=error"
+
+echo "=== configuration errors refuse to reduce ==="
+table \
+  "a non-numeric PR_REVIEW_WAIT_SECS||PR_REVIEW_WAIT_SECS=90s;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 detail~PR_REVIEW_WAIT_SECS=true" \
+  "a PR_REVIEW_WAIT_SECS past the integer range||PR_REVIEW_WAIT_SECS=99999999999999999999;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 detail~range=true" \
+  "an --awaiting-after past the integer range|--awaiting-after 99999999999999999999|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 detail~range=true" \
+  "an invalid REVIEW_GATE_THREADS||REVIEW_GATE_THREADS=of;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=unused|rc=2 detail~REVIEW_GATE_THREADS=true" \
+  "an invalid REVIEW_GATE_MODE||REVIEW_GATE_MODE=offf;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=unused|rc=2 detail~REVIEW_GATE_MODE=true" \
+  "an explicitly empty REVIEW_GATE_CONTEXT, in cheap mode too|--no-evaluate|REVIEW_GATE_CONTEXT=;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=unused|rc=2 detail~REVIEW_GATE_CONTEXT=true"
+
+echo "=== --help answers before the GH_REPO requirement ==="
+# The contract callers route to: readable with no environment at all, against
+# the shipped script, with no gh and no predicate behind it.
+set +e
+OUT=$(cd "$TMP_ROOT" && env -u GH_REPO "$SKILL_ROOT/scripts/pr-watch.sh" --help 2>&1); RC=$?
+set -e
+assert_eq "$(observe "rc=0 help_sections=usage,kinds,exits")" "rc=0 help_sections=usage,kinds,exits" "--help exits 0 with GH_REPO unset and carries the routed sections"
+set +e
+OUT=$(cd "$TMP_ROOT" && env -u GH_REPO "$SKILL_ROOT/scripts/pr-watch.sh" -h 2>&1); RC=$?
+set -e
+assert_eq "$(observe "rc=0 help_sections=usage,kinds,exits")" "rc=0 help_sections=usage,kinds,exits" "-h is the same"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
