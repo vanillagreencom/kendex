@@ -13,4 +13,6 @@ Each mark was taken from the vendor's own site or brand kit on 2026-08-16, for n
 | copilot.svg | github.com/primer/octicons — icons/copilot-24.svg (GitHub's own icon set) |
 | antigravity.svg | placeholder drawn for kendex (a letter A); replace with Google's Antigravity mark once its brand kit publishes one |
 
+The README's harness chips (`docs/img/harness-<id>.png`, 60 px tall, the mark and the product name in the harness hue on a 12% tint of it) are rendered from these marks and carry the same attribution.
+
 Brand-terms notes seen at fetch time: GitHub's octicons licence carves the GitHub logos out of MIT and points at brand.github.com (integration use in secondary placement is permitted); Anthropic and OpenAI publish no fetchable terms page; Cursor's brand page only prescribes the name "Cursor"; OpenCode is MIT; Google's mark is governed by the Google Brand Resource Center.

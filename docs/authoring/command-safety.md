@@ -4,7 +4,7 @@ The `command-safety` bundle provides a shell command policy hook. It includes th
 
 Configure `COMMAND_SAFETY_DENY_PATTERN` in `kendex.settings.toml` under `[env]`, then install the `command-safety` bundle. The value is a nonempty POSIX extended regular expression. The shared settings grammar and precedence are documented in [the growth-guards skill](../../skills/growth-guards/SKILL.md#configuration).
 
-Claude Code, Codex, Gemini CLI, and GitHub Copilot execute the hook. Pi executes it while the `pi-hooks` carrier is registered. Cursor and OpenCode install advisory instructions instead of an executable check.
+Claude Code, Codex, Gemini CLI, and GitHub Copilot execute the hook. Pi executes it while the `pi-hooks` carrier is registered. Cursor and OpenCode install advisory instructions instead of an executable check. Antigravity executes hooks but does not receive this one: it sends the command as `toolCall.args.CommandLine`, not the `tool_input` this hook reads, and a hook reaches Antigravity only by naming it in its `harnesses` line.
 
 An absent setting leaves the hook inactive. This lets a global installation run in repositories with no command policy and outside Git worktrees. An explicitly empty value, invalid pattern, unreadable setting, or unreadable tool input refuses the command.
 
