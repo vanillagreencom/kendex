@@ -358,7 +358,8 @@ if [ "$FULL" -eq 1 ]; then
     { branch_touched=""; say "the touched-file set for the suite lane could not be read (branch diff)"; }
   tree_touched=$(git -c core.quotePath=false status --porcelain --untracked-files=all | cut -c4- | sed 's/^.* -> //') ||
     { tree_touched=""; say "the touched-file set for the suite lane could not be read (working tree)"; }
-  touched=$(printf '%s\n%s\n' "$branch_touched" "$tree_touched" | sort -u)
+  touched=$(printf '%s\n%s\n' "$branch_touched" "$tree_touched" | sort -u) ||
+    { touched=""; say "the touched-file set for the suite lane could not be read (merge)"; }
   suite_dirs=""
   while IFS= read -r f; do
     [ -n "$f" ] || continue

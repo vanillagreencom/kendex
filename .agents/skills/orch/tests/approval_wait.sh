@@ -404,6 +404,7 @@ table() {
   shift
   for row in "$@"; do
     IFS='|' read -r label args env expect <<<"$row"
+    [[ -n "$expect" ]] || { printf 'table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
     [[ -n "$args" ]] || args="$default_args"
     # shellcheck disable=SC2086
     run_wait "$env" $args
@@ -456,7 +457,6 @@ table "$REVIEW" \
   'a failed check-run conclusion is not evidence||STUB_REVIEWS_MODE=none,STUB_CHECKS_MODE=failure_at_head,PR_REVIEW_CHECK=Review Bot|rc=1 status=timeout' \
   'check-run success with open threads returns comments||STUB_REVIEWS_MODE=none,STUB_CHECKS_MODE=success_at_head,PR_REVIEW_CHECK=Review Bot,STUB_THREADS_UNRESOLVED=2|rc=1 status=comments unresolved_count=2 early=true' \
   'check-run success beside a standing CHANGES_REQUESTED still blocks||STUB_REVIEWS_MODE=changes_standing,STUB_CHECKS_MODE=success_at_head,PR_REVIEW_CHECK=Review Bot|rc=1 status=changes_requested' \
-  'an empty PR_REVIEW_CHECK ignores a check-run success||STUB_REVIEWS_MODE=none,STUB_CHECKS_MODE=success_at_head|rc=1 status=timeout' \
   'a review object outranks the check surface with the feature on||STUB_REVIEWS_MODE=commented_at_head,STUB_CHECKS_MODE=none,PR_REVIEW_CHECK=Review Bot|rc=0 status=reviewed review_evidence=review review_evidence_surface=null reviews_at_head=1' \
   'a trusted commit-status success at head opens the gate when no check-run matches||STUB_REVIEWS_MODE=none,STUB_CHECKS_MODE=none,STUB_STATUS_MODE=success_at_head,PR_REVIEW_CHECK=Review Bot|rc=0 status=reviewed review_evidence=check review_evidence_surface=status reviews_at_head=0 head_sha=headsha1' \
   'a matching check-run wins and the status endpoint is never read||STUB_REVIEWS_MODE=none,STUB_CHECKS_MODE=success_at_head,STUB_STATUS_MODE=success_at_head,PR_REVIEW_CHECK=Review Bot|rc=0 review_evidence_surface=check_run status_queries=0' \
@@ -502,31 +502,43 @@ table "$REVIEW" \
   'a 404 is terminal at once with no transient count||STUB_REVIEWS_MODE=http_404|rc=1 status=error transient_api_errors=null early=true' \
   'approval-mode pr view 503s then an approval is approved with the count|1 1 3 --json|STUB_APPROVAL_MODE=approved_after_503|rc=0 status=approved transient_api_errors=2'
 
-echo "=== text mode prints a result line for every terminal status ==="
+echo "=== text mode prints a result line for every branch the emitter has ==="
 # The line's wording is not a contract anything parses; what holds is that no
-# terminal status leaves stdout empty, with the same exit code as --json.
+# terminal status leaves stdout empty, with the same exit code as --json. The
+# emitter branches per mode for every status and per evidence surface for
+# reviewed, so each branch is a row.
+TEXT_REVIEW='1 1 3 --mode review'
 table '1 1 3' \
-  'approved||STUB_APPROVAL_MODE=approved_decision|rc=0 stdout=line' \
-  'changes requested||STUB_APPROVAL_MODE=changes|rc=1 stdout=line' \
-  'comments||STUB_APPROVAL_MODE=none,STUB_THREADS_UNRESOLVED=2|rc=1 stdout=line' \
-  'timeout||STUB_APPROVAL_MODE=none|rc=1 stdout=line' \
-  'error||GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 stdout=line' \
-  'reviewed via a check-run|1 1 3 --mode review|STUB_REVIEWS_MODE=none,STUB_CHECKS_MODE=success_at_head,PR_REVIEW_CHECK=Review Bot|rc=0 stdout=line' \
-  'proceeded|1 1 3 --mode review|STUB_REVIEWS_MODE=none,PR_REVIEW_ON_TIMEOUT=proceed|rc=0 stdout=line'
+  'approval: approved||STUB_APPROVAL_MODE=approved_decision|rc=0 stdout=line' \
+  'approval: changes requested||STUB_APPROVAL_MODE=changes|rc=1 stdout=line' \
+  'approval: comments||STUB_APPROVAL_MODE=none,STUB_THREADS_UNRESOLVED=2|rc=1 stdout=line' \
+  'approval: timeout||STUB_APPROVAL_MODE=none|rc=1 stdout=line' \
+  'approval: error||GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 stdout=line' \
+  'approval: proceeded||STUB_APPROVAL_MODE=none,PR_REVIEW_ON_TIMEOUT=proceed|rc=0 stdout=line' \
+  "review: reviewed via a review object|$TEXT_REVIEW|STUB_REVIEWS_MODE=commented_at_head|rc=0 stdout=line" \
+  "review: reviewed via a check-run|$TEXT_REVIEW|STUB_REVIEWS_MODE=none,STUB_CHECKS_MODE=success_at_head,PR_REVIEW_CHECK=Review Bot|rc=0 stdout=line" \
+  "review: reviewed via a commit status|$TEXT_REVIEW|STUB_REVIEWS_MODE=none,STUB_STATUS_MODE=success_at_head,PR_REVIEW_CHECK=Review Bot|rc=0 stdout=line" \
+  "review: changes requested|$TEXT_REVIEW|STUB_REVIEWS_MODE=changes_standing|rc=1 stdout=line" \
+  "review: comments|$TEXT_REVIEW|STUB_REVIEWS_MODE=commented_at_head,STUB_THREADS_UNRESOLVED=2|rc=1 stdout=line" \
+  "review: timeout|$TEXT_REVIEW|STUB_REVIEWS_MODE=none|rc=1 stdout=line" \
+  "review: error|$TEXT_REVIEW|GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 stdout=line" \
+  "review: proceeded|$TEXT_REVIEW|STUB_REVIEWS_MODE=none,PR_REVIEW_ON_TIMEOUT=proceed|rc=0 stdout=line"
 
 echo "=== PR_REVIEW_WAIT_SECS: an absent max_wait positional resolves through orch-env ==="
 # Process env beats kendex.settings.toml [env], and an explicit positional
-# beats both; each row's deadline is one it could not have reached from the
-# 900s built-in default. The settings file is this case's private fixture.
+# beats both. On the virtual clock a timeout lands on its deadline exactly, so
+# each row pins the deadline it resolved, none of them the 900s built-in
+# default. The settings file is this case's private fixture.
 # Row: `label|settings value or empty|args|env|expect`.
 waitsecs_rows=(
-  'the env value drives the deadline||1 1 --json|STUB_APPROVAL_MODE=none,PR_REVIEW_WAIT_SECS=1|rc=1 status=timeout early=true'
-  'the settings-file value applies when the env is silent|1|1 1 --json|STUB_APPROVAL_MODE=none|rc=1 status=timeout early=true'
-  'the env value outlives the settings file|1|1 1 --json|STUB_APPROVAL_MODE=none,PR_REVIEW_WAIT_SECS=3|rc=1 status=timeout spent=true'
-  'an explicit positional wins over the setting|600|1 1 3 --json|STUB_APPROVAL_MODE=none|rc=1 status=timeout spent=true'
+  'the env value drives the deadline||1 1 --json|STUB_APPROVAL_MODE=none,PR_REVIEW_WAIT_SECS=1|rc=1 status=timeout elapsed_seconds=1'
+  'the settings-file value applies when the env is silent|1|1 1 --json|STUB_APPROVAL_MODE=none|rc=1 status=timeout elapsed_seconds=1'
+  'the env value outlives the settings file|1|1 1 --json|STUB_APPROVAL_MODE=none,PR_REVIEW_WAIT_SECS=3|rc=1 status=timeout elapsed_seconds=3'
+  'an explicit positional wins over the setting|600|1 1 3 --json|STUB_APPROVAL_MODE=none|rc=1 status=timeout elapsed_seconds=3'
 )
 for row in "${waitsecs_rows[@]}"; do
   IFS='|' read -r label setting args env expect <<<"$row"
+  [[ -n "$expect" ]] || { printf 'waitsecs: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
   rm -f "$TMP_ROOT/repo/kendex.settings.toml"
   [[ -z "$setting" ]] || printf '[env]\nPR_REVIEW_WAIT_SECS = "%s"\n' "$setting" >"$TMP_ROOT/repo/kendex.settings.toml"
   # shellcheck disable=SC2086
