@@ -1,7 +1,7 @@
 {
   "name": "@vanillagreen/pi-extension-manager",
   "version": "2.0.0",
-  "description": "Pi package manager with update/uninstall actions plus a separate schema-driven settings editor for kendex packages.",
+  "description": "Pi package manager and settings editor with native oh-my-pi plugin inventory and enable controls.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -23,7 +23,7 @@
         {
           "key": "enabled",
           "label": "Enable manager UI",
-          "description": "Expose /extensions and the manager UI. If disabled, /extensions enable remains available as a recovery command.",
+          "description": "Expose the manager UI: /extensions on Pi, /kendex:extensions on oh-my-pi. The command's :enable recovery action remains available when disabled.",
           "type": "boolean",
           "default": true,
           "category": "General",
@@ -33,7 +33,7 @@
         {
           "key": "glyphStyle",
           "label": "Glyph style",
-          "description": "Glyphs for kendex-owned UI chrome. Unicode is the default; ASCII uses plain box/status/separator characters for terminal compatibility. pi-tool-renderer's global override wins when set.",
+          "description": "Glyphs for kendex-owned UI chrome. Unicode is the default; ASCII uses plain box/status/separator characters for terminal compatibility. On Pi, pi-tool-renderer's global override wins when set.",
           "type": "enum",
           "enumValues": [
             "unicode",
@@ -59,7 +59,7 @@
         {
           "key": "notifyOnUpdates",
           "label": "Notify on extension updates",
-          "description": "At session start, post a one-line notification listing extensions with newer versions available from their kendex source repo or npm registry.",
+          "description": "Pi only: at session start, notify about newer versions from kendex sources or npm. Package updates are not supported on oh-my-pi.",
           "type": "boolean",
           "default": true,
           "category": "Updates",
@@ -73,7 +73,9 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*"
+    "@earendil-works/pi-tui": "*",
+    "@oh-my-pi/pi-coding-agent": ">=18.1.11",
+    "@oh-my-pi/pi-utils": ">=18.1.11"
   },
   "files": [
     "assets/",
@@ -102,6 +104,12 @@
       "optional": true
     },
     "@earendil-works/pi-tui": {
+      "optional": true
+    },
+    "@oh-my-pi/pi-coding-agent": {
+      "optional": true
+    },
+    "@oh-my-pi/pi-utils": {
       "optional": true
     }
   }

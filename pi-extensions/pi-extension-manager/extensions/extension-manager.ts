@@ -8,63 +8,57 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { host, initializeHost } from "./manager/host.js";
 import { buildInventory, npmCandidatesFromInventory } from "./manager/inventory.js";
 export { npmCandidatesFromInventory };
 import { recordProjectTrust } from "./manager/glyphs.js";
 import { openManager } from "./manager/manager-ui.js";
 import { openQuickSettings, quickSettingsCompletions } from "./manager/quick-settings-ui.js";
-import { userPiDir } from "./manager/paths.js";
 import {
-	defaultWriteScope,
 	findSettingsFile,
 	loadSettingsFiles,
 	mergedManagerState,
-	readJsonObject,
 	updateManagerState,
 } from "./manager/settings.js";
 import { kickNpmUpdateCheck } from "./manager/versions.js";
 import { INSTALL_SYMBOL, MANAGER_ID, KENDEX_OPEN_QUICK_SETTINGS_SYMBOL } from "./manager/types.js";
 
-export default function extensionManager(pi: ExtensionAPI): void {
+export default async function extensionManager(pi: ExtensionAPI): Promise<void> {
 	const guard = pi as unknown as Record<PropertyKey, unknown>;
 	if (guard[INSTALL_SYMBOL]) return;
+	await initializeHost();
 	guard[INSTALL_SYMBOL] = true;
 
-	const loadConfig = mergedManagerState([
-		{ baseDir: userPiDir(), exists: existsSync(join(userPiDir(), "settings.json")), json: readJsonObject(join(userPiDir(), "settings.json")).json, path: join(userPiDir(), "settings.json"), scope: "user" },
-	]);
+	const loadConfig = mergedManagerState(host.settings({ cwd: process.cwd() }));
 
 	if (loadConfig.config[MANAGER_ID]?.enabled === false) {
 		const enableRecovery = async (ctx: ExtensionCommandContext) => {
 			const files = loadSettingsFiles(ctx as ExtensionContext);
-			const scope = defaultWriteScope(undefined, files, mergedManagerState(files));
-			const file = findSettingsFile(files, scope);
+			const file = findSettingsFile(files, "user");
 			updateManagerState(file, (state) => {
 				state.config[MANAGER_ID] = { ...(state.config[MANAGER_ID] ?? {}), enabled: true };
 			});
 			ctx.ui.notify("Extension manager enabled. Run /reload to restore the full UI.", "info");
 		};
-		pi.registerCommand("extensions", {
+		pi.registerCommand(host.commands.manager, {
 			description: "Extension manager recovery command.",
 			handler: async (args, ctx) => {
 				if (args.trim().toLowerCase() !== "enable") {
-					ctx.ui.notify("Extension manager UI is disabled. Run /extensions:enable, then /reload, to restore it.", "warning");
+					ctx.ui.notify(`Extension manager UI is disabled. Run /${host.commands.recover}, then /reload, to restore it.`, "warning");
 					return;
 				}
 				await enableRecovery(ctx);
 			},
 		});
-		pi.registerCommand("extensions:enable", {
+		pi.registerCommand(host.commands.recover, {
 			description: "Re-enable the extension manager UI",
 			handler: async (_args, ctx) => enableRecovery(ctx),
 		});
 		return;
 	}
 
-	pi.registerCommand("extensions", {
-		description: "Browse, update, toggle, and inspect Pi extension packages.",
+	pi.registerCommand(host.commands.manager, {
+		description: "Browse and inspect installed extension packages and supported actions.",
 		handler: async (args, ctx) => {
 			const trimmed = args.trim();
 			const lower = trimmed.toLowerCase();
@@ -81,7 +75,7 @@ export default function extensionManager(pi: ExtensionAPI): void {
 	});
 
 	let activeCtx: ExtensionContext | undefined;
-	pi.registerCommand("extensions:settings", {
+	pi.registerCommand(host.commands.settings, {
 		description: "Open the quick extension settings editor (optional package name jumps to that tab)",
 		getArgumentCompletions: (prefix: string) => activeCtx ? quickSettingsCompletions(pi, activeCtx, prefix) : null,
 		handler: async (args, ctx) => openQuickSettings(pi, ctx, args),
@@ -116,7 +110,8 @@ export default function extensionManager(pi: ExtensionAPI): void {
 		handler: async (ctx) => openSettingsPopup(ctx as ExtensionContext),
 	});
 
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
+		await host.prepare(ctx.cwd);
 		recordProjectTrust(ctx);
 		activeCtx = ctx;
 		const inventory = buildInventory(pi, ctx);
@@ -142,7 +137,7 @@ export default function extensionManager(pi: ExtensionAPI): void {
 				} else {
 					const names = withUpdates.slice(0, 3).map((p) => `${p.packageName} → ${p.latestVersion}`).join(", ");
 					const suffix = withUpdates.length > 3 ? `, +${withUpdates.length - 3} more` : "";
-					message = `${withUpdates.length} extension updates available: ${names}${suffix}. Run /extensions for update commands.`;
+					message = `${withUpdates.length} extension updates available: ${names}${suffix}. Run /${host.commands.manager} for update commands.`;
 				}
 				(ctx as ExtensionContext).ui?.notify(message, "warning");
 			}

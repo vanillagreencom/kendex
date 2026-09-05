@@ -1,6 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { expandHome } from "./paths.js";
+import { host } from "./host.js";
 
 export type GlyphStyle = "unicode" | "ascii";
 export type GlobalGlyphStyleOverride = "inherit" | GlyphStyle;
@@ -9,15 +7,7 @@ const LOCAL_CONFIG_ID = "@vanillagreen/pi-extension-manager";
 const GLOBAL_CONFIG_ID = "@vanillagreen/pi-tool-renderer";
 
 function projectSettingsPath(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		const candidate = join(current, ".pi", "settings.json");
-		if (existsSync(candidate)) return candidate;
-		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
-		const parent = dirname(current);
-		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
+	return host.settingsPath("project", cwd);
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -52,31 +42,17 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 	return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
 }
 
-/** Root-anchored as `crates/core/src/harness/pi.rs::pi_root_is_absolute_for`
- * means it, which `isAbsolute` is not: it calls a driveless `\root` absolute
- * where the renderer does not, putting the two on different roots. Hoisted, so
- * a circular import cannot reach it inside a temporal dead zone. */
-function rootAnchored(path: string, windows: boolean): boolean { return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith("/"); }
-
-function piSettingsPaths(cwd = process.cwd()): string[] {
-	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
-	const userDir = resolve(rootAnchored(override, process.platform === "win32") ? override : expandHome("~/.pi/agent"));
-	const user = join(userDir, "settings.json");
-	const project = projectSettingsPath(cwd);
-	return projectSettingsTrusted(project) ? [user, project] : [user];
-}
-
-function readPackageConfig(packageId: string, cwd?: string): Record<string, unknown> {
+function readPackageConfig(packageId: string, cwd = process.cwd()): Record<string, unknown> {
 	const merged: Record<string, unknown> = {};
-	for (const settingsPath of piSettingsPaths(cwd)) {
-		if (!existsSync(settingsPath)) continue;
-		try {
-			const parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
-			const config = parsed?.kendex?.extensionManager?.config?.[packageId];
+	try {
+		const files = host.settings({ cwd, isProjectTrusted: () => projectSettingsTrusted(projectSettingsPath(cwd)) });
+		for (const file of files) {
+			const parsed = file.json as { kendex?: { extensionManager?: { config?: Record<string, unknown> } } };
+			const config = parsed.kendex?.extensionManager?.config?.[packageId];
 			if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
-		} catch {
-			// Ignore malformed optional manager config.
 		}
+	} catch {
+		// Optional glyph settings cannot prevent a diagnostic from rendering.
 	}
 	return merged;
 }
@@ -86,7 +62,7 @@ function asGlyphStyle(value: unknown): GlyphStyle | undefined {
 }
 
 export function glyphStyle(cwd?: string): GlyphStyle {
-	const globalOverride = readPackageConfig(GLOBAL_CONFIG_ID, cwd).globalGlyphStyleOverride;
+	const globalOverride = host.settingsSupported(GLOBAL_CONFIG_ID) ? readPackageConfig(GLOBAL_CONFIG_ID, cwd).globalGlyphStyleOverride : undefined;
 	const forced = asGlyphStyle(globalOverride);
 	if (forced) return forced;
 	const local = readPackageConfig(LOCAL_CONFIG_ID, cwd);

@@ -6,6 +6,7 @@ import { ansiGreen, ansiRed, ansiYellow, isPlainSearchInput, kindLabel, scopeFil
 import { applyUpdateMetadata, buildInventory, npmCandidatesFromInventory } from "./inventory.js";
 import { compactPath } from "./paths.js";
 import { glyphs } from "./glyphs.js";
+import { host } from "./host.js";
 import {
 	countBy,
 	divider,
@@ -78,14 +79,14 @@ function renderDiagnostics(inventory: Inventory, width: number, theme: Theme): s
 	];
 	for (const file of inventory.settingsFiles) lines.push(`${file.scope}: ${compactPath(file.path)}${file.exists ? "" : " (not created yet)"}`);
 	lines.push("", managerSectionTitle(theme, "Package manifests"));
-	if (inventory.auditLines.length === 0) lines.push(theme.fg("dim", "No package manifests found in current Pi settings."));
+	if (inventory.auditLines.length === 0) lines.push(theme.fg("dim", "No package manifest diagnostics available."));
 	for (const block of inventory.auditLines) {
 		const [head, ...rest] = block.split("\n");
 		lines.push(managerSectionTitle(theme, head ?? "package"));
 		for (const line of rest.slice(0, 3)) lines.push(theme.fg("dim", line));
 	}
 	lines.push("", theme.fg("warning", "Runtime note"));
-	lines.push("Pi cannot unload already-loaded extension modules live. Package and extension toggles apply after /reload or restart.");
+	lines.push("Restart the host after toggles to apply all plugin contributions.");
 	return lines.flatMap((line) => wrapLine(line, width));
 }
 
@@ -106,7 +107,7 @@ function renderDiagnosticsViewport(inventory: Inventory, ui: ManagerUiState, wid
 }
 
 function itemToggleHintLabel(item: InventoryItem | undefined): string | undefined {
-	if (!item || item.state === "broken" || item.state === "shadowed") return undefined;
+	if (!item || item.state === "broken" || item.state === "shadowed" || host.toggleUnavailable(item)) return undefined;
 	const verb = item.state === "disabled" ? "enable" : "disable";
 	if (item.kind === "package") return verb;
 	if (item.kind === "extension module") return `${verb} extension`;
@@ -186,7 +187,7 @@ function renderInspector(inventory: Inventory, item: InventoryItem | undefined, 
 		`${theme.fg("muted", "Source")}: ${compactPath(item.sourcePath)}`,
 		`${theme.fg("muted", "State")}: ${item.stateReason}`,
 		`${theme.fg("muted", "Version")}: ${item.installedVersion ?? "unknown"}`,
-		`${theme.fg("muted", "Update")}: ${updateText}`,
+		`${theme.fg("muted", "Update")}: ${host.packageActions ? updateText : "unsupported; use the native plugin manager"}`,
 	];
 	if (item.updateAvailable && item.updateCommand) {
 		detailLines.push(`${theme.fg("muted", "Action")}: ${ansiYellow(`alt+u update via ${item.updateSource ?? "source"}`)}`);
@@ -214,7 +215,8 @@ function renderExtensions(inventory: Inventory, ui: ManagerUiState, width: numbe
 	const toggleLabel = itemToggleHintLabel(selected);
 	if (toggleLabel) hintParts.push(`${ansiYellow("alt+x")} ${theme.fg("dim", toggleLabel)}`);
 	if (selected?.updateAvailable) hintParts.push(`${ansiYellow("alt+u")} ${theme.fg("dim", `update via ${selected.updateSource ?? "source"}`)}`);
-	if (selected?.kind === "package") hintParts.push(`${ansiYellow("alt+d")} ${theme.fg("dim", "uninstall")}`);
+	if (selected?.kind === "package") hintParts.push(host.packageActions ? `${ansiYellow("alt+d")} ${theme.fg("dim", "uninstall")}` : theme.fg("dim", "update/uninstall unavailable"));
+	if (selected && host.toggleUnavailable(selected)) hintParts.push(theme.fg("dim", "toggle unavailable"));
 	const hintLine = hintParts.join(theme.fg("dim", " · "));
 	const lines = [searchLine, ...wrapLine(filterLine, width), "", ...wrapLine(hintLine, width), divider(width, theme)];
 	const tableRows = Math.max(1, rows - Math.max(0, lines.length - 5) - footerRows);
@@ -398,6 +400,7 @@ export async function openManager(pi: ExtensionAPI, ctx: ExtensionCommandContext
 	try {
 		let ui = makeInitialUiState();
 		while (true) {
+			await host.prepare(ctx.cwd);
 			const inventory = buildInventory(pi, ctx as ExtensionContext);
 			const action = await ctx.ui.custom<ManagerAction>(
 				(tui, theme, _keybindings, done) => createManagerComponent(ctx, inventory, ui, theme, () => tui.requestRender(), () => managerLayout(tui.terminal.rows), done),
@@ -415,7 +418,7 @@ export async function openManager(pi: ExtensionAPI, ctx: ExtensionCommandContext
 				if (!item) continue;
 				const plan = planUpdate(item, inventory, ctx);
 				if (!plan) {
-					ctx.ui.notify(`${item.displayName} does not have an available update.`, "info");
+					ctx.ui.notify(host.packageActions ? `${item.displayName} does not have an available update.` : "Package updates are unsupported here; use the host's native plugin manager.", "info");
 					continue;
 				}
 				const body = [
@@ -444,7 +447,7 @@ export async function openManager(pi: ExtensionAPI, ctx: ExtensionCommandContext
 				}
 				const plan = planUninstall(item, inventory, ctx);
 				if (!plan) {
-					ctx.ui.notify(`${item.displayName} is not an uninstallable package.`, "warning");
+					ctx.ui.notify(host.packageActions ? `${item.displayName} is not an uninstallable package.` : "Package uninstall is unsupported here; use the host's native plugin manager.", "warning");
 					continue;
 				}
 				const body = [

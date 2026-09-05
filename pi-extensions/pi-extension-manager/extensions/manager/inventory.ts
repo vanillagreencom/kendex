@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { stringifyError } from "./format.js";
+import { host } from "./host.js";
 import { expandHome } from "./paths.js";
 import { asRecord, loadSettingsFiles, mergedManagerState } from "./settings.js";
 import {
@@ -131,13 +132,13 @@ function makeResourceItem(
 	};
 }
 
-function collectConfiguredExtensions(file: SettingsFile): InventoryItem[] {
+function collectConfiguredExtensions(file: SettingsFile, cwd: string): InventoryItem[] {
 	const entries = Array.isArray(file.json.extensions) ? file.json.extensions : [];
 	const items: InventoryItem[] = [];
 	for (const entry of entries) {
 		if (typeof entry !== "string" || entry.startsWith("!")) continue;
-		const resolved = resolveSource(entry, file.baseDir);
-		items.push(makeResourceItem(`extension-setting:${file.scope}:${entry}`, entry, "extension setting", file.scope, resolved, `${file.scope}:extensions`, entry, "Configured in settings.json extensions[]"));
+		const resolved = resolveSource(entry, host.extensionBase(file, cwd));
+		items.push(makeResourceItem(`extension-setting:${file.scope}:${entry}`, entry, "extension setting", file.scope, resolved, `${file.scope}:extensions`, entry, `Configured in ${file.path} extensions[]`));
 	}
 	return items;
 }
@@ -224,6 +225,7 @@ function npmUpdateCommand(item: InventoryItem, npmName: string): string {
 }
 
 export function applyUpdateMetadata(items: InventoryItem[], settingsFiles: SettingsFile[], cwd: string): void {
+	if (!host.packageActions) return;
 	const sourceIndex = loadSourceIndex(settingsFiles);
 	const npmCache = loadNpmCache();
 	for (const item of items) {
@@ -268,10 +270,12 @@ export function buildInventory(_pi: ExtensionAPI, ctx: ExtensionContext): Invent
 	const items: InventoryItem[] = [];
 	const auditLines: string[] = [];
 	const seenPackages = new Map<string, InventoryItem>();
+	const installed = host.installedItems(ctx.cwd);
+	if (installed) items.push(...installed);
 
 	// Project scope wins over user scope, mirroring Pi settings override behavior.
 	for (const file of [...settingsFiles].sort((a, b) => (a.scope === "project" ? -1 : b.scope === "project" ? 1 : 0))) {
-		const packages = Array.isArray(file.json.packages) ? file.json.packages : [];
+		const packages = installed === undefined && Array.isArray(file.json.packages) ? file.json.packages : [];
 		for (const rawEntry of packages) {
 			const normalized = normalizePackageEntry(rawEntry, file.baseDir);
 			if (!normalized) continue;
@@ -352,7 +356,12 @@ export function buildInventory(_pi: ExtensionAPI, ctx: ExtensionContext): Invent
 				}
 			}
 		}
-		items.push(...collectConfiguredExtensions(file));
+	}
+	for (const file of host.configuredExtensionFiles(settingsFiles)) items.push(...collectConfiguredExtensions(file, ctx.cwd));
+	const scanned = new Set<string>();
+	for (const file of settingsFiles) {
+		if (scanned.has(file.baseDir)) continue;
+		scanned.add(file.baseDir);
 		items.push(...collectAutoExtensions(file.baseDir, file.scope));
 	}
 
@@ -365,12 +374,14 @@ export function buildInventory(_pi: ExtensionAPI, ctx: ExtensionContext): Invent
 	}
 	applyUpdateMetadata(items, settingsFiles, ctx.cwd);
 
-	applyDisableState(items, managerState);
+	if (installed === undefined) applyDisableState(items, managerState);
+	host.decorateItems(items, settingsFiles);
 	items.sort(compareInventoryItems);
 	return { auditLines, cwd: ctx.cwd ?? process.cwd(), items, managerState, packages: items.filter((item) => item.kind === "package"), settingsFiles };
 }
 
 export function npmCandidatesFromInventory(inventory: Inventory): { name: string; npmName: string }[] {
+	if (!host.packageActions) return [];
 	const out: { name: string; npmName: string }[] = [];
 	for (const item of inventory.items) {
 		if (item.kind !== "package" || !item.packageName) continue;
