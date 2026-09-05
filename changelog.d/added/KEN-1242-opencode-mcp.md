@@ -1,0 +1,1 @@
+- MCP servers install on OpenCode under `mcp.<name>` in the scope's config file at both scopes, switch off on the entry's `enabled`, and an SSE declaration is refused for OpenCode with the reason.

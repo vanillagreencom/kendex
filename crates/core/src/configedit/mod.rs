@@ -81,6 +81,16 @@ pub enum ConfigEdit {
     RemoveMcpServer {
         name: String,
     },
+    /// opencode config `mcp.<name>` upsert with a full value — OpenCode keys
+    /// its servers under `mcp`, not `mcpServers`, and switches one off with
+    /// `enabled: false` on the entry rather than by taking it out.
+    UpsertOpencodeMcpServer {
+        name: String,
+        value: Value,
+    },
+    RemoveOpencodeMcpServer {
+        name: String,
+    },
     /// `enabledPlugins.<key>` set/remove.
     SetPluginEnabled {
         key: String,
@@ -168,6 +178,16 @@ impl ConfigEdit {
             }
             ConfigEdit::RemoveMcpServer { name } => {
                 remove_from_map(object, "mcpServers", name);
+                Ok(())
+            }
+            ConfigEdit::UpsertOpencodeMcpServer { name, value } => {
+                opencode_schema(object);
+                let servers = ensure_object(object, "mcp")?;
+                servers.insert(name.clone(), value.clone());
+                Ok(())
+            }
+            ConfigEdit::RemoveOpencodeMcpServer { name } => {
+                remove_from_map(object, "mcp", name);
                 Ok(())
             }
             ConfigEdit::SetPluginEnabled { key, enabled } => {
@@ -291,12 +311,7 @@ fn opencode_add_instruction(
     reference: &str,
     bash_permission: bool,
 ) -> Result<(), String> {
-    if object.is_empty() {
-        object.insert(
-            "$schema".into(),
-            Value::String("https://opencode.ai/config.json".into()),
-        );
-    }
+    opencode_schema(object);
     let list = object
         .entry("instructions")
         .or_insert_with(|| json!([]))
@@ -312,6 +327,17 @@ fn opencode_add_instruction(
             .or_insert_with(|| json!({"*": "ask"}));
     }
     Ok(())
+}
+
+/// A config file kendex creates carries the `$schema` line OpenCode would
+/// otherwise write into it on its next start.
+fn opencode_schema(object: &mut Map<String, Value>) {
+    if object.is_empty() {
+        object.insert(
+            "$schema".into(),
+            Value::String("https://opencode.ai/config.json".into()),
+        );
+    }
 }
 
 fn ensure_object<'a>(

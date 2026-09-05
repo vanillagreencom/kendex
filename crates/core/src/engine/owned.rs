@@ -5,7 +5,9 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use super::desired::native_dir;
-use super::targets::{HookFormat, HookTarget, hook_target, mcp_registry, plugin_settings};
+use super::targets::{
+    HookFormat, HookTarget, hook_target, mcp_registry, mcp_remove, plugin_settings,
+};
 use crate::configedit::ConfigEdit;
 use crate::env::Env;
 use crate::lock::{Lock, LockEntry};
@@ -61,12 +63,7 @@ pub(super) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
         (None, ItemKind::Hook) => hook_owned(env, scope, entry, &mut files, &mut edits),
         (None, ItemKind::McpServer) => {
             if let Some(registry) = mcp_registry(env, scope, entry.harness) {
-                edits.push((
-                    registry,
-                    ConfigEdit::RemoveMcpServer {
-                        name: entry.name.clone(),
-                    },
-                ));
+                edits.push((registry, mcp_remove(entry.harness, &entry.name)));
             }
             // Gemini's record of whether a server is on lives in a file of
             // its own and would outlive the declaration it describes. That

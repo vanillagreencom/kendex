@@ -42,6 +42,7 @@ mod item_plan;
 mod item_record;
 mod item_source;
 mod observed;
+mod opencode;
 pub mod ops;
 mod owned;
 mod plan_pass;

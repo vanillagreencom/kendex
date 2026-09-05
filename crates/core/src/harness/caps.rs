@@ -324,7 +324,10 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
         // `.md` loads, so the author's file installs as is and the rename
         // toggle is safe (opencode.ai/docs/commands, checked on 1.18.29).
         (Opencode, Command) => managed(BOTH),
-        (Opencode, McpServer) => observe_only(BOTH),
+        // Servers live under `mcp` in the scope's one config file, the file
+        // kendex already edits for hook instructions, each entry carrying
+        // its own `enabled` switch (opencode.ai/docs/mcp-servers).
+        (Opencode, McpServer) => managed(BOTH),
         (Opencode, Plugin) => observe_only(BOTH),
         (Opencode, PiExtension) => unsupported(),
 
