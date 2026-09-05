@@ -307,12 +307,13 @@ fn bun_on_path() -> Option<std::path::PathBuf> {
     })
 }
 
-/// The lane that has to prove the case below rather than skip it: CI on
-/// Linux, where `.github/workflows/skill-tests.yml`'s `cargo-tests` job
-/// installs bun. Without bun, the end-to-end case skips and cargo swallows
-/// the `eprintln!` of a passing test. macOS and Windows install no bun and skip.
+/// The lanes that have to prove the case below rather than skip it: CI on
+/// Linux and macOS, where the kendex-core leg of `.github/workflows/
+/// skill-tests.yml`'s cargo shards installs bun. Without bun, the end-to-end
+/// case skips and cargo swallows the `eprintln!` of a passing test. Windows
+/// installs no bun and skips.
 fn bun_is_required() -> bool {
-    cfg!(target_os = "linux")
+    cfg!(any(target_os = "linux", target_os = "macos"))
         && (std::env::var_os("GITHUB_ACTIONS").is_some() || std::env::var_os("CI").is_some())
 }
 
@@ -329,7 +330,7 @@ fn a_declared_custom_hook_fires_through_the_carrier() {
     let Some(bun) = bun_on_path() else {
         assert!(
             !bun_is_required(),
-            "bun is not on PATH: restore the oven-sh/setup-bun step in the cargo-tests job of .github/workflows/skill-tests.yml, or this case proves nothing"
+            "bun is not on PATH: restore the oven-sh/setup-bun step on the kendex-core leg of the cargo-linux and cargo-macos jobs in .github/workflows/skill-tests.yml, or this case proves nothing"
         );
         eprintln!("skipped: bun is not on PATH, so the carrier cannot be run");
         return;

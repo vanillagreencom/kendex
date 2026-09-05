@@ -5,11 +5,15 @@ name: Skill Tests
 # gating here is what lets consuming repos drop tracked vendoring: quality is
 # proven at the source, not re-proven per consumer.
 #
-# THE FULL BATTERY RUNS ON EVERY EVENT: every shard, the aggregator over them,
-# the ui lane and every cargo lane run on pull_request as well as in the merge
-# queue and on the push to main, so a green PR has proven what the queue
-# re-proves and an ejection — dequeue, fix, requeue, pay the merge latency
-# again — is rare instead of routine. Whatever does NOT run on every event
+# THE FULL BATTERY RUNS ON pull_request AND merge_group: every shard, the
+# aggregators over them, the ui lane and every cargo lane, so a green PR has
+# proven what the queue re-proves and an ejection — dequeue, fix, requeue,
+# pay the merge latency again — is rare instead of routine. The push to main
+# carries a tree one of those two runs already proved (the queue's group sha
+# has main's tree; an admin squash of a restacked branch has the PR head's),
+# so it runs only the compile steps: each cargo lane builds its targets with
+# `--no-run` and saves the compile cache under the merged lockfile, and every
+# test step is conditioned off. Whatever else does NOT run on every event
 # carries its own `if:` saying why. The review gate never conditions CI (it
 # answers review-only; see the review-gate skill) — no gate job reads the
 # predicate.
@@ -17,6 +21,12 @@ name: Skill Tests
 # Every job names its GitHub-hosted runner in `runs-on:`, the same label on
 # every event. The repository is public, so those runners are free, and shard
 # durations compare across events.
+#
+# SHARD BUDGET: a shard whose measured wall time passes five minutes is split,
+# not widened. Each test step carries a `timeout-minutes` set from the last
+# ten runs' maximum with headroom, so a hang fails inside the budget instead
+# of running to the job ceiling; the compile steps carry their own for a cold
+# cache. The per-shard figures behind each budget are in the comment above it.
 
 "on":
   pull_request:
@@ -42,6 +52,7 @@ jobs:
   # checker, and the review gate holds every policy path.
   bot-instructions:
     name: Bot instructions
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -52,29 +63,28 @@ jobs:
       - id: bot-instructions-check
         run: candidate/skills/bot-instructions/scripts/bot-instructions check --repo candidate --spec candidate/skills/bot-instructions
 
-  # SHARDED: five shards bound wall time at the slowest shard and give suite
+  # SHARDED: seven shards bound wall time at the slowest shard and give suite
   # growth per-shard headroom instead of a shared cliff. `orch` and `rest`
   # were one `shell` shard whose halves ran serially and bounded every queue
-  # run; `pi-claude-bridge` was the node shard's hottest step. The ruleset's
-  # required context is the AGGREGATOR below — shard names are not, so shards
-  # can be rebalanced or extended without touching repo settings.
+  # run; `pi-claude-bridge` was the node shard's hottest step; `guards` and
+  # `linear` were the halves of a `rest` that had grown past ten minutes
+  # (growth-guards 165s and linear 151s of its 582s). The ruleset's required
+  # context is the AGGREGATOR below — shard names are not, so shards can be
+  # rebalanced or extended without touching repo settings. Measured over the
+  # ten runs before the split: review-gate 58s, orch 250s, node 101s,
+  # pi-claude-bridge 45s; after it the shell shards are guards ~230s, linear
+  # ~205s, rest ~170s.
   skill-suites-shard:
     name: Skill suites shard (${{ matrix.shard }})
+    if: github.event_name != 'push'
     strategy:
       fail-fast: false
       matrix:
-        shard: [review-gate, orch, rest, node, pi-claude-bridge]
+        shard: [review-gate, orch, guards, linear, rest, node, pi-claude-bridge]
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
-      # THE load-bearing shard guard, and the only check in this job with no
-      # `if:`: a check that carries one can be switched off by the very drift
-      # it reports, so the rule lives here rather than in a suite. A step
-      # naming a shard the matrix dropped is skipped on every run and reads as
-      # one that passed; a shard no step names runs this guard and nothing
-      # else, green and empty.
       - name: shard names agree with the matrix
         env:
           SHARD: ${{ matrix.shard }}
@@ -116,10 +126,15 @@ jobs:
         if: matrix.shard == 'orch'
         run: bash skills/orch/tests/run-all.sh
 
-      # ---- shard: rest — the lints, and every shell suite no other shard
-      # runs: the loop below skips orch's and review-gate's ----------------
+
+      # A failure is announced twice: inline where it happened, and in a
+      # FAILED SUITES block at the end — the tail of a red job must name the
+      # culprits instead of showing only the later suites passing. Every shell
+      # shard below runs its suites through this one loop.
+      # ---- shard: guards — the lints, the executable-bit rule, and the
+      # suites of the guard packages: growth-guards, tools/ and hooks/ ------
       - name: executable bits on skill tests and scripts
-        if: matrix.shard == 'rest'
+        if: matrix.shard == 'guards'
         run: |
           set -u
           fail=0
@@ -135,38 +150,87 @@ jobs:
           done < <(git ls-files -- 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' | grep -vE '/(scripts|tests)/lib/|/tests/controls/')
           exit "$fail"
 
-      # Document byte ceilings run on every event. A failure in an earlier
-      # step must not suppress this check.
+      # Document byte ceilings run on every PR and queue event. A failure in
+      # an earlier step must not suppress this check.
       - name: size-ratchet (document byte ceilings)
-        if: always() && matrix.shard == 'rest'
+        if: always() && matrix.shard == 'guards'
         run: skills/size-ratchet/scripts/size-ratchet
 
       # Same posture, same reasons. The commit lane runs todo-ban --staged
       # and judges what a commit adds; this scan takes the rest, in every
       # blob git reads as text.
       - name: todo-ban (index-wide work-marker scan)
-        if: always() && matrix.shard == 'rest'
+        if: always() && matrix.shard == 'guards'
         run: skills/growth-guards/scripts/todo-ban
 
       # One scan for Bash 4+ syntax over the roster `tools/bash32-lint --list`
       # prints. bash32-lint.test.sh proves its teeth.
       - name: bash32-lint (Bash 3.2 portability across the roster)
-        if: matrix.shard == 'rest'
+        if: matrix.shard == 'guards'
         run: tools/bash32-lint
 
-      # A failure is announced twice: inline where it happened, and in a
-      # FAILED SUITES block at the end — the tail of a red job must name the
-      # culprits instead of showing only the later suites passing.
-      - name: all other skill suites
-        if: matrix.shard == 'rest'
+      - name: growth-guards, tools and hook suites
+        if: matrix.shard == 'guards'
         run: |
           set -u
           fail=0
           failed=""
+          for t in skills/growth-guards/tests/*.sh tools/tests/*.test.sh hooks/tests/*.sh; do
+            echo "=== $t"
+            if ! bash "$t"; then
+              echo "FAILED: $t"
+              fail=1
+              failed="$failed $t"
+            fi
+          done
+          if [ "$fail" != 0 ]; then
+            echo "FAILED SUITES:$failed"
+          fi
+          exit "$fail"
+
+      # ---- shard: linear — the linear suites, and the two mid-sized
+      # packages that balance the shard against `guards` ------------------
+      - name: linear, bot-instructions and preflight suites
+        if: matrix.shard == 'linear'
+        run: |
+          set -u
+          fail=0
+          failed=""
+          for t in skills/linear/tests/*.sh skills/bot-instructions/tests/*.sh skills/preflight/tests/*.sh; do
+            echo "=== $t"
+            if ! bash "$t"; then
+              echo "FAILED: $t"
+              fail=1
+              failed="$failed $t"
+            fi
+          done
+          if [ "$fail" != 0 ]; then
+            echo "FAILED SUITES:$failed"
+          fi
+          exit "$fail"
+
+      # ---- shard: rest — every shell suite no other shard runs. The skip
+      # list below names the skills the shards above claim; a name here that
+      # no other step spells as a path would send that skill's suites to no
+      # shard at all, so each skip first proves the claim in this file and
+      # runs the suite here when the claim is missing. ----------------------
+      - name: all other skill suites
+        if: matrix.shard == 'rest'
+        run: |
+          set -u
+          wf=.github/workflows/skill-tests.yml
+          fail=0
+          failed=""
           for t in skills/*/tests/*.sh; do
-            case "$t" in
-              skills/orch/tests/*) continue ;;
-              skills/review-gate/tests/*) continue ;; # its own shard
+            x="${t#skills/}"
+            x="${x%%/*}"
+            case "$x" in
+              orch | review-gate | growth-guards | linear | bot-instructions | preflight)
+                if grep -qF "skills/$x/tests/" "$wf"; then
+                  continue
+                fi
+                echo "no other shard names skills/$x/tests/ — running it here"
+                ;;
             esac
             echo "=== $t"
             if ! bash "$t"; then
@@ -175,26 +239,7 @@ jobs:
               failed="$failed $t"
             fi
           done
-          if [ "$fail" -ne 0 ]; then
-            echo "FAILED SUITES:$failed"
-          fi
-          exit "$fail"
-
-      - name: tools and hook suites
-        if: matrix.shard == 'rest'
-        run: |
-          set -u
-          fail=0
-          failed=""
-          for t in tools/tests/*.test.sh hooks/tests/*.sh; do
-            echo "=== $t"
-            if ! bash "$t"; then
-              echo "FAILED: $t"
-              fail=1
-              failed="$failed $t"
-            fi
-          done
-          if [ "$fail" -ne 0 ]; then
+          if [ "$fail" != 0 ]; then
             echo "FAILED SUITES:$failed"
           fi
           exit "$fail"
@@ -401,9 +446,11 @@ jobs:
         working-directory: pi-extensions/pi-claude-bridge
         run: git diff --exit-code -- bundle/
 
-  # Full UI validation reaches the required aggregator on every event.
+  # Full UI validation reaches the required aggregator on every PR and
+  # queue event.
   ui-tests:
     name: UI (vitest, tsc, biome)
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -454,7 +501,7 @@ jobs:
   skill-suites:
     name: Skill suites (shell + node)
     needs: [skill-suites-shard, ui-tests, bot-instructions]
-    if: always()
+    if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -472,6 +519,7 @@ jobs:
     # root so the configured layer regenerates its approve/near-miss
     # battery from THIS repo's committed kendex.settings.toml trust values.
     name: Pin the review-gate decision table
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -510,83 +558,225 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: skills/preflight/scripts/preflight --base "origin/$BASE_REF"
 
-  cargo-tests:
-    name: Cargo (workspace tests)
+  # CARGO, SHARDED BY PACKAGE on the two platforms whose workspace job had
+  # passed five minutes: Linux at 329s and macOS at 631s, means of the last
+  # ten runs. Windows, at 230s, stays one job below. Every lane compiles in a
+  # step of its own (`--no-run`) so a compile failure reads as one, and on the
+  # push to main that step is the whole job (see the header). The aggregators
+  # after the shards carry the ruleset's required contexts, `Cargo (workspace
+  # tests)` and `macOS cargo (workspace tests)`: frozen names, for the reason
+  # the Skill suites aggregator gives.
+  #
+  # One compile cache per shard, keyed by the action on the lockfile, the
+  # toolchain and RUSTFLAGS, plus the crate through `key:` so parallel shards
+  # never race one entry. Saved by the queue and push runs only: a key per PR
+  # push would evict the entries every run restores from, and a PR that
+  # changes the lockfile restores the nearest older entry.
+  cargo-linux:
+    name: Cargo ${{ matrix.crate }} (Linux)
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [kendex-core, kendex-cli, kendex-app]
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-      # PR runs restore main's entry without saving their own: a ~795 MB key
-      # per push would evict the entries the queue and push runs restore from.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.event_name != 'pull_request' }}
-      - name: System dependencies for the keychain store and the app shell
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libwebkit2gtk-4.1-dev libgtk-3-dev
-      # pi_carrier.rs runs the `pi-hooks` carrier for its end-to-end case — a
-      # hook declared in kendex.toml firing under Pi — and skips without bun,
-      # as the macOS and Windows cargo lanes below do. This lane proves it.
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
+    timeout-minutes: 35
+    env:
       # Full debuginfo across the Tauri workspace out-links the runner's
       # memory — three group runs died with the cargo step "cancelled" and
       # no step output, the OOM-kill signature. Tests don't read debuginfo.
       # Incremental artifacts are dead weight on a fresh runner and
       # double what cargo writes.
-      - name: cargo test
+      RUSTFLAGS: -C debuginfo=0
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # THE load-bearing crate guard, the cargo twin of the shard guard above:
+      # a workspace member the matrix does not name compiles under the lint
+      # job's --workspace and is tested nowhere, while both required contexts
+      # stay green. Every `crate:` line in this file must spell the member set
+      # cargo reports, so a new member fails here until it is sharded.
+      - name: crate matrix agrees with the workspace members
+        run: |
+          set -u
+          wf=.github/workflows/skill-tests.yml
+          members="$(cargo metadata --format-version 1 --no-deps --locked | jq -r '.packages[].name' | sort -u)"
+          [ -n "$members" ] || { echo "no workspace member read from cargo metadata"; exit 1; }
+          lines="$(sed -n 's/^ \{8\}crate: \[\(.*\)\]$/\1/p' "$wf")"
+          [ -n "$lines" ] || { echo "no crate matrix read from $wf"; exit 1; }
+          while IFS= read -r line; do
+            declared="$(printf '%s\n' "$line" | tr -d ' ' | tr ',' '\n' | sort -u)"
+            diff <(printf '%s\n' "$members") <(printf '%s\n' "$declared") || { echo "crate matrix [$line] disagrees with the workspace: '<' a member no shard tests; '>' a name that is not a member"; exit 1; }
+          done <<<"$lines"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.crate }}
+          save-if: ${{ github.event_name != 'pull_request' }}
+      # The keychain store links dbus in every crate; the app shell links
+      # webkit and gtk in its own.
+      - name: System dependencies
         env:
-          RUSTFLAGS: -C debuginfo=0
-          CARGO_INCREMENTAL: '0'
-        run: cargo test --workspace --locked
-      # Rides this job rather than taking one of its own: the name above is
-      # already a required context, so clippy gates a merge here with no admin
-      # ruleset edit. `--all-targets` is the point — without it the workspace
-      # denials in Cargo.toml never reach test targets, which is most of the
-      # code in this repo. What they then catch is helper code in the
-      # integration tests under `crates/*/tests/`: clippy.toml's allows
-      # (`unwrap_used`, `expect_used`, `print_stdout`, `print_stderr`) cover a
-      # whole `#[cfg(test)]` module, helpers included, but outside one they
-      # reach only a `#[test]` body. `dbg_macro`, `todo`, `unimplemented` and
-      # `too_many_lines` are denied in test code either way. always(): a
-      # failing test above must not swallow it.
-      - name: cargo clippy
-        if: always()
-        env:
-          RUSTFLAGS: -C debuginfo=0
-          CARGO_INCREMENTAL: '0'
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      # Private rustdoc links are checked on lib and bin targets. Rustdoc
-      # offers no test-target flag for integration-test documentation.
-      - name: cargo fmt
-        if: always()
-        run: cargo fmt --check
-      - name: cargo doc
-        if: always()
-        env:
-          RUSTFLAGS: -C debuginfo=0
-          CARGO_INCREMENTAL: '0'
-        run: cargo doc --no-deps --document-private-items --workspace --locked
+          CRATE: ${{ matrix.crate }}
+        run: |
+          set -u
+          pkgs=(libdbus-1-dev)
+          [ "$CRATE" != kendex-app ] || pkgs+=(libwebkit2gtk-4.1-dev libgtk-3-dev)
+          sudo apt-get update && sudo apt-get install -y "${pkgs[@]}"
+      # pi_carrier.rs runs the `pi-hooks` carrier for its end-to-end case — a
+      # hook declared in kendex.toml firing under Pi — and skips without bun.
+      - uses: oven-sh/setup-bun@v2
+        if: matrix.crate == 'kendex-core'
+        with:
+          bun-version: 1.3.14
+      - name: compile
+        timeout-minutes: 20
+        run: cargo test -p ${{ matrix.crate }} --locked --no-run
+      # Tests alone on a warm cache, last ten runs: kendex-cli ~150s
+      # (catalog_check 103s and guard_hooks 25s of it), kendex-core ~20s,
+      # kendex-app ~10s.
+      - name: test
+        if: github.event_name != 'push'
+        timeout-minutes: 10
+        run: cargo test -p ${{ matrix.crate }} --locked --no-fail-fast
 
-  # The app ships on macOS. tools/guard --full checks the core and CLI Apple targets
-  # at development completion; this runner executes the tests on the platform.
-  cargo-tests-macos:
-    name: macOS cargo (workspace tests)
+  # The app ships on macOS. tools/guard --full checks the core and CLI Apple
+  # targets at development completion; these shards execute the tests on the
+  # platform.
+  cargo-macos:
+    name: macOS cargo ${{ matrix.crate }}
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [kendex-core, kendex-cli, kendex-app]
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # The same guard as the Linux shard's, on this file's own crate lines.
+      - name: crate matrix agrees with the workspace members
+        run: |
+          set -u
+          wf=.github/workflows/skill-tests.yml
+          members="$(cargo metadata --format-version 1 --no-deps --locked | jq -r '.packages[].name' | sort -u)"
+          [ -n "$members" ] || { echo "no workspace member read from cargo metadata"; exit 1; }
+          lines="$(sed -n 's/^ \{8\}crate: \[\(.*\)\]$/\1/p' "$wf")"
+          [ -n "$lines" ] || { echo "no crate matrix read from $wf"; exit 1; }
+          while IFS= read -r line; do
+            declared="$(printf '%s\n' "$line" | tr -d ' ' | tr ',' '\n' | sort -u)"
+            diff <(printf '%s\n' "$members") <(printf '%s\n' "$declared") || { echo "crate matrix [$line] disagrees with the workspace: '<' a member no shard tests; '>' a name that is not a member"; exit 1; }
+          done <<<"$lines"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.crate }}
+          save-if: ${{ github.event_name != 'pull_request' }}
+      # pi_carrier.rs is a unix test, so with bun installed it runs here too
+      # instead of skipping on the platform the app ships on.
+      - uses: oven-sh/setup-bun@v2
+        if: matrix.crate == 'kendex-core'
+        with:
+          bun-version: 1.3.14
+      - name: compile
+        timeout-minutes: 20
+        run: cargo test -p ${{ matrix.crate }} --locked --no-run
+      # Tests alone on a warm cache, last ten runs: kendex-cli ~470s, of
+      # which catalog_check's render_lint case is 293s (it installs the whole
+      # catalog into every harness and runs the prose and comments lanes over
+      # it) and guard_hooks 95s; kendex-core ~40s, kendex-app ~30s. The cli
+      # shard is over the five-minute mark on that one case, not on its
+      # shape; the tests audit owns the case.
+      # --no-fail-fast: one run reports every platform-specific failure
+      # instead of one per queue attempt.
+      - name: test
+        if: github.event_name != 'push'
+        timeout-minutes: 12
+        run: cargo test -p ${{ matrix.crate }} --locked --no-fail-fast
+      # Nothing platform-gated is skipped in silence: the files whose
+      # whole-body cfg gate excludes this platform are listed, with a warning
+      # that names the count, so the coverage this lane does not give is on
+      # the run that did not give it.
+      - name: files under crates/*/tests this platform never runs
+        run: |
+          set -u
+          gated="$(grep -rlE '^#!\[cfg\(target_os = "linux"' --include='*.rs' crates/*/tests | sort)" || true
+          n="$(printf '%s\n' "$gated" | grep -c . || true)"
+          [ "$n" != 0 ] || { echo "no test file under crates/*/tests is gated off macOS"; exit 0; }
+          printf '%s\n' "$gated"
+          echo "::warning title=platform-gated tests::$n files under crates/*/tests carry a whole-file cfg gate that excludes macOS; the list is in this step"
+
+  # Rides beside the Linux shards rather than inside one: the workspace
+  # lints compile every target once under clippy, and a test shard that
+  # carried them would pay that on top of its own compile. `--all-targets` is
+  # the point — without it the workspace denials in Cargo.toml never reach
+  # test targets, which is most of the code in this repo. What they then
+  # catch is helper code in the integration tests under `crates/*/tests/`:
+  # clippy.toml's allows (`unwrap_used`, `expect_used`, `print_stdout`,
+  # `print_stderr`) cover a whole `#[cfg(test)]` module, helpers included,
+  # but outside one they reach only a `#[test]` body. `dbg_macro`, `todo`,
+  # `unimplemented` and `too_many_lines` are denied in test code either way.
+  cargo-lint:
+    name: Cargo lints (clippy, fmt, doc)
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      RUSTFLAGS: -C debuginfo=0
+      CARGO_INCREMENTAL: '0'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      # --no-fail-fast: one run reports every platform-specific failure
-      # instead of one per queue attempt.
-      - name: cargo test
-        run: cargo test --workspace --locked --no-fail-fast
+        with:
+          key: lint
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - name: System dependencies for the keychain store and the app shell
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libwebkit2gtk-4.1-dev libgtk-3-dev
+      - name: cargo clippy
+        timeout-minutes: 20
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # always(): a red step above must not swallow the ones after it.
+      - name: cargo fmt
+        if: always()
+        run: cargo fmt --check
+      # Private rustdoc links are checked on lib and bin targets. Rustdoc
+      # offers no test-target flag for integration-test documentation.
+      - name: cargo doc
+        if: always()
+        timeout-minutes: 10
+        run: cargo doc --no-deps --document-private-items --workspace --locked
+
+  # AGGREGATORS for the two required cargo contexts; the shape and the
+  # reasons are the Skill suites aggregator's. Not on push: the shards ran
+  # compile-only there and nothing requires a context on that event.
+  cargo-tests:
+    name: Cargo (workspace tests)
+    needs: [cargo-linux, cargo-lint]
+    if: always() && github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every needed job succeeded
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS"
+          jq -e 'length > 0 and all(.[]; .result == "success")' <<<"$RESULTS" >/dev/null
+
+  cargo-tests-macos:
+    name: macOS cargo (workspace tests)
+    needs: [cargo-macos]
+    if: always() && github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every needed job succeeded
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS"
+          jq -e 'length > 0 and all(.[]; .result == "success")' <<<"$RESULTS" >/dev/null
 
   # The app ships on Windows and release.yml builds it there. `cargo check`
   # does not link, so the Linux runner proves the Windows targets compile
@@ -603,6 +793,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       # rust-toolchain.toml overrides the toolchain the action installed, so
       # the target belongs on the pinned one — an action `targets:` input
       # lands on the other and surfaces as E0463 at compile time. `rustc
@@ -613,8 +805,12 @@ jobs:
           rustc --version
           rustup target add x86_64-pc-windows-msvc
       - name: cargo check
+        timeout-minutes: 15
         run: cargo check -p kendex-core -p kendex-cli --all-targets --locked --target x86_64-pc-windows-msvc
 
+  # One job, under five minutes (230s mean, 161s of it the cargo step on a
+  # warm cache): 935 unit tests and the handful of integration files with no
+  # unix gate. What it does not run is listed by the last step.
   cargo-tests-windows:
     name: Windows cargo (workspace tests)
     runs-on: windows-latest
@@ -622,8 +818,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      - name: cargo test
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - name: compile
+        timeout-minutes: 25
+        run: cargo test --workspace --locked --no-run
+      - name: test
+        if: github.event_name != 'push'
+        timeout-minutes: 10
         run: cargo test --workspace --locked --no-fail-fast
+      # Same posture as the macOS step of that name: Windows is where most of
+      # the integration tree is gated off, so the count here is the finding.
+      - name: files under crates/*/tests this platform never runs
+        shell: bash
+        run: |
+          set -u
+          gated="$(grep -rlE '^#!\[cfg\((unix|all\(not\(windows\)|target_os = "linux")' --include='*.rs' crates/*/tests | sort)" || true
+          n="$(printf '%s\n' "$gated" | grep -c . || true)"
+          [ "$n" != 0 ] || { echo "no test file under crates/*/tests is gated off Windows"; exit 0; }
+          printf '%s\n' "$gated"
+          echo "::warning title=platform-gated tests::$n files under crates/*/tests carry a whole-file cfg gate that excludes Windows; the list is in this step"
