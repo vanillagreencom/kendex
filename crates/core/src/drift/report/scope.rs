@@ -119,8 +119,16 @@ impl ScopeCheck<'_> {
                                 entry.kind.name(),
                                 shown(&entry.name)
                             ),
-                            Some(Remedy::Refresh {
-                                global: self.global,
+                            Some(if entry.kind == ItemKind::PiExtension {
+                                Remedy::Refresh {
+                                    global: self.global,
+                                }
+                            } else {
+                                // The record can outlive its declaration. Apply
+                                // restores wanted files and clears unwanted records.
+                                Remedy::Apply {
+                                    global: self.global,
+                                }
                             }),
                         ));
                     }
