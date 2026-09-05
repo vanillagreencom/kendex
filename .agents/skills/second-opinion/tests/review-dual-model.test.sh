@@ -705,9 +705,9 @@ run_multi "$TMP_ROOT/out24.json" SECOND_OPINION_CURRENT_MODEL=claude-opus-5 SECO
 assert_eq "$(count lane-claude)" "0" "claude-opus-5 normalizes to claude and is excluded"
 assert_eq "$(count lane-codex)" "1" "claude-opus-5 session gets codex"
 reset_counts
-run_multi "$TMP_ROOT/out24.json" SECOND_OPINION_CURRENT_MODEL=gpt-5.6-sol SECOND_OPINION_COUNT=1 || true
-assert_eq "$(count lane-codex)" "0" "gpt-5.6-sol normalizes to codex and is excluded"
-assert_eq "$(count lane-claude)" "1" "gpt-5.6-sol session gets claude"
+run_multi "$TMP_ROOT/out24.json" SECOND_OPINION_CURRENT_MODEL=gpt-6-astra SECOND_OPINION_COUNT=1 || true
+assert_eq "$(count lane-codex)" "0" "gpt-6-astra normalizes to codex and is excluded"
+assert_eq "$(count lane-claude)" "1" "gpt-6-astra session gets claude"
 reset_counts
 run_multi "$TMP_ROOT/out24.json" SECOND_OPINION_CURRENT_MODEL=Opus SECOND_OPINION_COUNT=1 || true
 assert_eq "$(count lane-claude)" "0" "Opus normalizes to claude and is excluded"
@@ -850,10 +850,10 @@ else
 fi
 
 echo "=== scenario 29d: provider-qualified model ids canonicalize ==="
-# Pi and OpenCode show an operator ids like openai-codex/gpt-5.6-sol, and those
+# Pi and OpenCode show an operator ids like openai-codex/gpt-6-astra, and those
 # are exactly the operators required to declare an identity. Each must resolve
 # to the same identity as its bare form.
-for pair in "anthropic/claude-opus-4:claude" "openai/gpt-5.6-sol:codex" "openai-codex/gpt-5.6-sol:codex"; do
+for pair in "anthropic/claude-opus-4:claude" "openai/gpt-6-astra:codex" "openai-codex/gpt-6-astra:codex"; do
   qualified="${pair%%:*}"; expect="${pair##*:}"
   other=codex; [[ "$expect" == "codex" ]] && other=claude
   reset_counts

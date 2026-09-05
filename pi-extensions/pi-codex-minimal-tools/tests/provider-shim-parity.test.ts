@@ -14,8 +14,8 @@ import {
 import { convertResponsesMessages } from "../src/providers/openai-responses-shared.js";
 
 const model = {
-	id: "gpt-5.6-sol",
-	name: "GPT-5.6 Sol",
+	id: "gpt-6-astra",
+	name: "GPT-6 Astra",
 	api: "openai-codex-responses",
 	provider: "openai-codex",
 	baseUrl: "https://chatgpt.com/backend-api",
@@ -201,7 +201,7 @@ test("Codex detects missing cached continuations by code or message", () => {
 });
 
 test("Codex SSE request bodies use reversible zstd compression", () => {
-	const source = JSON.stringify({ model: "gpt-5.6-sol", input: [{ role: "user", content: "hello" }] });
+	const source = JSON.stringify({ model: "gpt-6-astra", input: [{ role: "user", content: "hello" }] });
 	const compressed = compressRequestBodyZstd(source);
 	assert.ok(compressed, "Node runtime must expose zstd compression");
 	assert.equal(zstdDecompressSync(compressed).toString("utf8"), source);

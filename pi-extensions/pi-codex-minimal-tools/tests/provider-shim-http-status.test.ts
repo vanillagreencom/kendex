@@ -67,7 +67,7 @@ async function runCodexProvider(
 		{
 			provider: "openai-codex",
 			api: "openai-codex-responses",
-			id: "gpt-5.6-sol",
+			id: "gpt-6-astra",
 			baseUrl: "https://example.test/backend-api",
 			headers: {},
 			input: ["text"],

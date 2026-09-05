@@ -251,7 +251,7 @@ mod tests {
         let manager = generate(&effective(&manager, &scope)).text;
         assert!(engineer.contains("sandbox_mode = \"danger-full-access\""));
         assert!(manager.contains("sandbox_mode = \"workspace-write\""));
-        assert!(engineer.contains("model = \"gpt-5.6-sol\""));
+        assert!(engineer.contains("model = \"gpt-6-astra\""));
         assert!(!engineer.contains("model_reasoning_effort"));
         assert!(engineer.contains("- dev: .agents/skills/dev/SKILL.md"));
     }

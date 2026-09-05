@@ -22,7 +22,7 @@ const PANEL_TITLE_COLOR = "customMessageLabel";
 const PANEL_RULE_COLOR = "muted";
 const PANEL_CARD_PADDING_X = 1;
 const OPENAI_CODEX_PROVIDER = "openai-codex";
-const OPENAI_CODEX_MODEL_PROBE_IDS = ["gpt-5.6-sol", "gpt-5.4", "gpt-5.3-codex", "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-4.1", "o4-mini"];
+const OPENAI_CODEX_MODEL_PROBE_IDS = ["gpt-6-astra", "gpt-5.4", "gpt-5.3-codex", "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-4.1", "o4-mini"];
 
 interface ActiveImageJob {
 	id: string;

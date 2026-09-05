@@ -387,8 +387,8 @@ screen 21 '  kendex (🌳 ken-122) Opus 5 41% (brad@drovr.dev)     /rc
 # codex version — because the key takes a list. A shape that judges what
 # follows the separator refuses one or both of these, and a refused lane is
 # an unmeasured lane, which the overseer never compacts.
-screen 22 '  Context 100% left · gpt-5.6-sol default'
-screen 23 '  Context 78% left · gpt-5.6-sol default · ken-885 · kendex · 0.151.0'
+screen 22 '  Context 100% left · gpt-6-astra default'
+screen 23 '  Context 78% left · gpt-6-astra default · ken-885 · kendex · 0.151.0'
 # 26. A codex pane with a dialog over its footer, and a claude status line in
 # the transcript above — this fleet pastes both harnesses' screens into both
 # harnesses' terminals, so that line is ordinary here. %24 has a real codex
@@ -586,7 +586,7 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-121") | .context_used_pct' <<<"$OUT
 assert_eq "$(jq -r '.[] | select(.lane=="ken-122") | .context_used_pct' <<<"$OUT")" "41" \
   "claude prose after a status-shaped prefix does not outrank the status line above it"
 
-# 24. The configured status items. `gpt-5.6-sol default` is two bare words
+# 24. The configured status items. `gpt-6-astra default` is two bare words
 # and so is `compact now`, so no shape tells them apart — and a shape that
 # refuses the one it has not seen leaves that lane unmeasured, which is the
 # lane the overseer then never compacts. Position is what refuses prose, so

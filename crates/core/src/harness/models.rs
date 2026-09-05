@@ -42,10 +42,10 @@ pub fn resolve_model(harness: HarnessId, model: &str) -> ResolvedModel {
             // possibly-smaller default; light tiers pin their alias.
             (HarnessId::Claude, "fable" | "opus") => resolved(None),
             (HarnessId::Claude, other) => resolved(Some(other)),
-            (HarnessId::Codex, _) => resolved(Some("gpt-5.6-sol")),
-            (HarnessId::Opencode, _) => resolved(Some("openai/gpt-5.6-sol")),
+            (HarnessId::Codex, _) => resolved(Some("gpt-6-astra")),
+            (HarnessId::Opencode, _) => resolved(Some("openai/gpt-6-astra")),
             (HarnessId::Pi, "fable" | "opus") => resolved(None),
-            (HarnessId::Pi, _) => resolved(Some("openai-codex/gpt-5.6-sol")),
+            (HarnessId::Pi, _) => resolved(Some("openai-codex/gpt-6-astra")),
             // Cursor rules carry no model field; the renderer drops it.
             (HarnessId::Cursor, _) => resolved(None),
             // Gemini's current tiers are the 3.x preview ids; the 2.5 GA
@@ -103,16 +103,16 @@ mod tests {
         );
         assert_eq!(
             resolve_model(HarnessId::Codex, "haiku").id.as_deref(),
-            Some("gpt-5.6-sol")
+            Some("gpt-6-astra")
         );
         assert_eq!(
             resolve_model(HarnessId::Opencode, "sonnet").id.as_deref(),
-            Some("openai/gpt-5.6-sol")
+            Some("openai/gpt-6-astra")
         );
         assert_eq!(resolve_model(HarnessId::Pi, "opus").id, None);
         assert_eq!(
             resolve_model(HarnessId::Pi, "haiku").id.as_deref(),
-            Some("openai-codex/gpt-5.6-sol")
+            Some("openai-codex/gpt-6-astra")
         );
 
         assert_eq!(
@@ -147,8 +147,8 @@ mod tests {
 
     #[test]
     fn bare_ids_gain_opencodes_default_provider_and_warn_on_pi() {
-        let opencode = resolve_model(HarnessId::Opencode, "gpt-5.6-sol");
-        assert_eq!(opencode.id.as_deref(), Some("openai/gpt-5.6-sol"));
+        let opencode = resolve_model(HarnessId::Opencode, "gpt-6-astra");
+        assert_eq!(opencode.id.as_deref(), Some("openai/gpt-6-astra"));
         assert_eq!(opencode.warning, None);
         let pi = resolve_model(HarnessId::Pi, "mystery-model");
         assert_eq!(pi.id.as_deref(), Some("mystery-model"));

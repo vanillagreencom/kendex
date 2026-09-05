@@ -31,7 +31,7 @@ The prompts directory is scanned because Codex still loads it, and never written
 - Name rule `Any`; namespace separator `__`.
 - MCP transports: stdio and streamable HTTP, never SSE.
 - Agent file: TOML, `<name>.toml`. Fields written: `name`, `nickname_candidates`, `description`, `model`, `model_reasoning_effort`, `sandbox_mode`, and `developer_instructions` as a triple-quoted string carrying the whole prompt (`crates/core/src/render/agent/codex.rs`).
-- Model dialect: every tier resolves to `gpt-5.6-sol`; an omitted key is Codex's spelling of inherit (`crates/core/src/harness/models.rs`).
+- Model dialect: every tier resolves to `gpt-6-astra`; an omitted key is Codex's spelling of inherit (`crates/core/src/harness/models.rs`).
 - Permissions: Codex has no tool allowlist. A read-only allowlist caps `sandbox_mode` at `read-only`, any other allowlist at `workspace-write`, and only an explicit Engineer role with no allowlist earns `danger-full-access`; an allowlist always warns that the list itself is not enforced.
 - Tool vocabulary: prose is rewritten to phrases, `Read` to "open the file", `Bash` to "run a shell command" (`crates/core/src/render/vocab/mod.rs`).
 

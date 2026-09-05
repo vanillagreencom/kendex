@@ -9,7 +9,7 @@ function settings(overrides: Partial<WebToolsSettings> = {}): WebToolsSettings {
 }
 
 test("auto provider resolution prefers keyed providers then no-key providers then OpenAI native", () => {
-	const model = { provider: "openai-codex", id: "gpt-5.6-sol" };
+	const model = { provider: "openai-codex", id: "gpt-6-astra" };
 	assert.deepEqual(resolveWebProviderCandidates("auto", settings({ apiKeys: { exa: "key" } }), model).slice(0, 3), ["exa", "exa-mcp", "duckduckgo"]);
 	assert.deepEqual(resolveWebProviderCandidates("auto", settings({ apiKeys: { perplexity: "key" } }), model).slice(0, 4), ["perplexity", "exa-mcp", "duckduckgo", "openai-native"]);
 	assert.deepEqual(resolveWebProviderCandidates("auto", settings(), model), ["exa-mcp", "duckduckgo", "openai-native"]);
@@ -23,7 +23,7 @@ test("auto provider resolution prefers keyed providers then no-key providers the
 
 test("active tool sync preserves native tools and keeps web_search available for no-key fallbacks", () => {
 	const current = ["read", "bash", "image_generation", "web_search"];
-	const next = computeNextActiveTools(current, { provider: "openai-codex", id: "gpt-5.6-sol" }, settings());
+	const next = computeNextActiveTools(current, { provider: "openai-codex", id: "gpt-6-astra" }, settings());
 	assert.ok(next.includes("read"));
 	assert.ok(next.includes("bash"));
 	assert.ok(next.includes("image_generation"));
@@ -31,7 +31,7 @@ test("active tool sync preserves native tools and keeps web_search available for
 });
 
 test("web_fetch stays available without an Exa key while Exa-only tools remain gated", () => {
-	const model = { provider: "openai-codex", id: "gpt-5.6-sol" };
+	const model = { provider: "openai-codex", id: "gpt-6-astra" };
 	const noKey = desiredWebTools(model, settings());
 	assert.ok(noKey.includes("web_fetch"), "web_fetch works via direct HTTP/GitHub/PDF/YouTube without a key");
 	assert.ok(noKey.includes("get_web_content"));

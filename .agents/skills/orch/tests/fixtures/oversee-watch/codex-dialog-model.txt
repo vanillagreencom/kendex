@@ -1,7 +1,7 @@
 ╭────────────────────────────────────────────────────╮
 │ >_ OpenAI Codex (v0.151.0)                         │
 │                                                    │
-│ model:       gpt-5.6-sol high   /model to change   │
+│ model:       gpt-6-astra high   /model to change   │
 │ directory:   /var/tmp/claude/…/scratchpad/codexcap │
 │ permissions: YOLO mode                             │
 ╰────────────────────────────────────────────────────╯
@@ -14,7 +14,7 @@
   Select Model and Effort
   Access legacy models by running codex -m <model_name> or in your config.toml
 
-› 1. gpt-5.6-sol (current)  Latest frontier agentic coding model.
+› 1. gpt-6-astra (current)  Our most capable model for complex, demanding work.
   2. gpt-5.6-terra          Balanced agentic coding model for everyday work.
   3. gpt-5.6-luna           Fast and affordable agentic coding model.
   4. gpt-5.5                Frontier model for complex coding, research, and real-world work.
@@ -23,7 +23,6 @@
   7. gpt-5.3-codex-spark    Ultra-fast coding model.
 
   Press enter to confirm or esc to go back
-
 
 
 

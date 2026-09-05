@@ -30,7 +30,7 @@ Project markers: a `.pi/` or `.agents/` directory.
 - Name rule `Any`; namespace separator `__`.
 - MCP transports: none; Pi reads no MCP servers.
 - Agent file: YAML frontmatter and a markdown body, `<name>.md`. Fields written: `name`, `description`, `deny-tools`, `allowed-subagents`, `model`, `color`, `pane` (`crates/core/src/render/agent/pi.rs`). No frontmatter schema is enforced beyond the name rule.
-- Model dialect: `fable` and `opus` omit the key (inherit); other tiers resolve to `openai-codex/gpt-5.6-sol`; a bare id with no `/` passes through with a warning; an effort setting rides as a `:<effort>` suffix on the model id (`crates/core/src/harness/models.rs`).
+- Model dialect: `fable` and `opus` omit the key (inherit); other tiers resolve to `openai-codex/gpt-6-astra`; a bare id with no `/` passes through with a warning; an effort setting rides as a `:<effort>` suffix on the model id (`crates/core/src/harness/models.rs`).
 - Permissions: deny-only. `allowed-subagents` and `deny-tools` are resolved together: engineers delegate to `scout` by default and every other role is a leaf; `subagent`, `get_subagent_result`, `steer_subagent` and `stop_subagent` are always denied; `delegate_subagent` is denied unless delegation was declared; every agent but a `role: planner` denies `question`, and a `role: reviewer` agent also denies `tasks_write`. An `AllowOnly` intent is a hard refusal naming both fixes: an explicit `deny-tools` override for Pi, or dropping Pi from the agent's harnesses.
 
 ## Hooks

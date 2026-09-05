@@ -3,14 +3,14 @@ import test from "node:test";
 import { computeNextActiveTools, computeToolCapabilities } from "../src/capabilities.js";
 import { DEFAULT_SETTINGS } from "../src/settings.js";
 
-const codex56Sol = { provider: "openai-codex", id: "gpt-5.6-sol", input: ["text", "image"] };
+const codex6Astra = { provider: "openai-codex", id: "gpt-6-astra", input: ["text", "image"] };
 const textOnlyCodex = { provider: "openai-codex", id: "text-only-codex", input: ["text"] };
-const openai = { provider: "openai", id: "gpt-5.6-sol", input: ["text", "image"] };
+const openai = { provider: "openai", id: "gpt-6-astra", input: ["text", "image"] };
 
 test("capability gating follows provider and image support", () => {
 	const withViewImage = { ...DEFAULT_SETTINGS, viewImage: true };
 
-	const codex = computeToolCapabilities(codex56Sol, withViewImage);
+	const codex = computeToolCapabilities(codex6Astra, withViewImage);
 	assert.equal(codex.image_generation.enabled, true);
 	assert.equal(codex.view_image.enabled, true);
 	assert.equal(codex.apply_patch.enabled, true);
@@ -30,13 +30,13 @@ test("capability gating follows provider and image support", () => {
 	assert.equal(nonOpenAiVision.view_image.enabled, false);
 	assert.equal(nonOpenAiVision.apply_patch.enabled, false);
 
-	const defaults = computeToolCapabilities(codex56Sol, DEFAULT_SETTINGS);
+	const defaults = computeToolCapabilities(codex6Astra, DEFAULT_SETTINGS);
 	assert.equal(defaults.view_image.enabled, false, "view_image is gated off by default");
 });
 
 test("active tool sync preserves native tools and only manages package tools", () => {
 	const current = ["read", "grep", "find", "ls", "bash", "edit", "write", "old_custom"];
-	const next = computeNextActiveTools(current, codex56Sol, { ...DEFAULT_SETTINGS, viewImage: true });
+	const next = computeNextActiveTools(current, codex6Astra, { ...DEFAULT_SETTINGS, viewImage: true });
 	for (const nativeTool of ["read", "grep", "find", "ls", "bash", "edit", "write"]) assert.ok(next.activeTools.includes(nativeTool));
 	assert.ok(next.activeTools.includes("old_custom"));
 	assert.ok(next.activeTools.includes("image_generation"));

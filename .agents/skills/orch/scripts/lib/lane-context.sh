@@ -23,7 +23,7 @@
 # up the transcript for something shaped like one. POSITION carries that
 # refusal because shape cannot: codex's status items are user-configured
 # (`[tui].status_line` — model with reasoning, git branch, project name,
-# codex version, tokens used, working directory), and `gpt-5.6-sol default`
+# codex version, tokens used, working directory), and `gpt-6-astra default`
 # is a configured item while `compact now` is a sentence about compaction,
 # and the two are the same shape. A reader that refuses what it does not
 # recognise leaves the lane unmeasured, and an unmeasured lane is never
@@ -139,7 +139,7 @@ lane_context_shape() {
 # means compact now` is not one, and `Context 60% used means compact now`
 # needs the separator its configured items are drawn behind. Past that
 # separator the line is read no further. Every candidate for the job — a path
-# (`/var/tmp/…`), a model with its reasoning effort (`gpt-5.6-sol default`), a
+# (`/var/tmp/…`), a model with its reasoning effort (`gpt-6-astra default`), a
 # git branch, a project name, a version, a token count — is one to three bare
 # words, and so is a sentence's opening; a shape that admits the ones this
 # reader has seen and refuses the rest refuses configured status lines it has

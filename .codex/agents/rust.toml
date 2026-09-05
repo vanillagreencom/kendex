@@ -1,7 +1,7 @@
 name = "rust"
 nickname_candidates = ["Rust-Atlas", "Rust-Delta", "Rust-Echo", "Rust-Nova", "Rust-Orion", "Rust-Vector"]
 description = "Rust engineer for performance-critical systems. Use for zero-allocation hot paths, lock-free algorithms, SIMD optimization, and systems programming."
-model = "gpt-5.6-sol"
+model = "gpt-6-astra"
 model_reasoning_effort = "high"
 sandbox_mode = "danger-full-access"
 developer_instructions = '''

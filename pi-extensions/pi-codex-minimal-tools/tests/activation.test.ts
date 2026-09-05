@@ -28,8 +28,8 @@ async function emit(pi: ReturnType<typeof fakePi>, event: string, ctx: any): Pro
 test("hasOpenAiModelsLoaded detects active or registry OpenAI models", () => {
 	assert.equal(hasOpenAiModelsLoaded({ model: { provider: "anthropic", id: "claude" }, modelRegistry: { getAll: () => [] } }), false);
 	assert.equal(hasOpenAiModelsLoaded({ model: { provider: "notopenai", id: "claude" }, modelRegistry: { getAll: () => [] } }), false);
-	assert.equal(hasOpenAiModelsLoaded({ model: { provider: "openai-codex", id: "gpt-5.6-sol" }, modelRegistry: { getAll: () => [] } }), true);
-	assert.equal(hasOpenAiModelsLoaded({ modelRegistry: { getAll: () => [{ provider: "openai", id: "gpt-5.6-sol" }] } }), true);
+	assert.equal(hasOpenAiModelsLoaded({ model: { provider: "openai-codex", id: "gpt-6-astra" }, modelRegistry: { getAll: () => [] } }), true);
+	assert.equal(hasOpenAiModelsLoaded({ modelRegistry: { getAll: () => [{ provider: "openai", id: "gpt-6-astra" }] } }), true);
 	assert.equal(hasOpenAiModelsLoaded({ modelRegistry: { find: (provider, id) => provider === "openai" && id === "gpt-5.2" ? { provider, id } : undefined } }), true);
 });
 
@@ -48,8 +48,8 @@ test("extension does not register tools until OpenAI models are loaded", async (
 
 	await emit(pi, "model_select", {
 		cwd: process.cwd(),
-		model: { provider: "openai-codex", id: "gpt-5.6-sol", input: ["text", "image"] },
-		modelRegistry: { getAll: () => [{ provider: "openai-codex", id: "gpt-5.6-sol" }] },
+		model: { provider: "openai-codex", id: "gpt-6-astra", input: ["text", "image"] },
+		modelRegistry: { getAll: () => [{ provider: "openai-codex", id: "gpt-6-astra" }] },
 	});
 	assert.equal(pi.tools.length, 3);
 	assert.deepEqual(pi.tools.map((tool) => tool.name).sort(), ["apply_patch", "image_generation", "view_image"].sort());
@@ -66,7 +66,7 @@ test("active non-OpenAI models remove package tools even when OpenAI models exis
 	await emit(pi, "model_select", {
 		cwd: process.cwd(),
 		model: { provider: "claude-bridge", id: "claude-opus-4-7", input: ["text", "image"] },
-		modelRegistry: { getAll: () => [{ provider: "openai-codex", id: "gpt-5.6-sol", input: ["text", "image"] }] },
+		modelRegistry: { getAll: () => [{ provider: "openai-codex", id: "gpt-6-astra", input: ["text", "image"] }] },
 	});
 
 	assert.deepEqual(pi.activeTools, ["read"]);
