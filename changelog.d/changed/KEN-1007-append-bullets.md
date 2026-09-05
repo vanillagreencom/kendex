@@ -1,0 +1,1 @@
+- Multi-paragraph review-rule additions render as nested bullets in AGENTS.md. Other bot files retain their paragraph format.

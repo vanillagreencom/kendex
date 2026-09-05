@@ -42,20 +42,14 @@ class RenderModel:
         return self._blocks[bid]
 
     def repo_authored(self, bid):
-        """Did `[bot-instructions]` write any of this block's text?
-
-        `renders.md` § Common rules asks two things that read as a
-        contradiction until the block's ORIGIN is in hand. Doctrine from the
-        spec copy is this package's own prose, hard-wrapped for that file's
-        sake, so joining its paragraphs loses nothing. `[bot-instructions.doctrine.replace]`
-        and `[bot-instructions.doctrine.append]` put a repo author's bytes into the same block,
-        and repo text is what the no-reflow rule is about.
-
-        Whole-block, because `append` mixes the two: telling the halves apart
-        would need per-paragraph origin, and keeping a package hard-wrap is
-        harmless where losing an author's line break is not.
-        """
+        """Whether a repository append or replacement supplies any block text."""
         return bid in self._repo_authored
+
+    def appended_text(self, bid):
+        """The repository append, or empty text for other block origins."""
+        if self._repo_authored.get(bid) == "append":
+            return self.config.doctrine_append[bid]
+        return ""
 
     @property
     def exclusion_globs(self):
@@ -75,7 +69,7 @@ class RenderModel:
 
 
 def _assemble(config, doctrine):
-    """`({id: text}, {ids a repo wrote into})`, with the overrides applied.
+    """Return block text and repository override kinds by block ID.
 
     The second half is the origin `repo_authored` answers from, recorded here
     because here is the only place both inputs are still distinguishable.
@@ -90,14 +84,14 @@ def _assemble(config, doctrine):
                 )
     tracker = config.repo["tracker"]
     out = {}
-    from_repo = set()
+    from_repo = {}
     for bid, text in doctrine.blocks.items():
         if bid in config.doctrine_replace:
             text = config.doctrine_replace[bid].strip("\n")
-            from_repo.add(bid)
+            from_repo[bid] = "replace"
         elif bid in config.doctrine_append:
             text = text + "\n\n" + config.doctrine_append[bid].strip("\n")
-            from_repo.add(bid)
+            from_repo[bid] = "append"
         if bid == "reply-contract":
             text = text.replace("<issue>", f"<{tracker}-n>" if tracker else "<issue>")
         out[bid] = text

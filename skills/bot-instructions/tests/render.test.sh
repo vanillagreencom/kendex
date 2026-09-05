@@ -13,6 +13,36 @@ expect_green "a fresh repo adopts its hand-written region" adopt --repo "$repo"
 expect_green "the canonical TOML renders" render --repo "$repo"
 expect_green "and checks clean" check --repo "$repo"
 
+appended="$(bi_new_repo nested-append)" || exit 1
+cat >>"$appended/kendex.toml" <<'TOML'
+
+[bot-instructions.doctrine.append]
+declined = """
+First repository rule.
+
+Second repository rule.
+"""
+TOML
+bi_must adopt --repo "$appended" || exit 1
+bi_must render --repo "$appended" || exit 1
+if python3 -B - "$BI_ROOT/skills/bot-instructions" "$appended" <<'PY'; then
+from pathlib import Path
+import sys
+sys.path.insert(0, sys.argv[1] + "/scripts")
+from lib import spec, tree
+doctrine = spec.load(tree.Worktree(sys.argv[1]), "SKILL.md", "schemas/renders.md")
+lines = (Path(sys.argv[2]) / "AGENTS.md").read_text().splitlines()
+nested = [line for line in lines if line.startswith("  - ")]
+assert nested == ["  - First repository rule.", "  - Second repository rule."], nested
+parent = "- " + " ".join(doctrine.blocks["declined"].split())
+at = lines.index(nested[0])
+assert lines[at - 1:at + 2] == [parent, *nested]
+PY
+  ok "a two-paragraph append becomes two nested AGENTS bullets under its block"
+else
+  bad "a two-paragraph append becomes two nested AGENTS bullets under its block"
+fi
+
 # Reproducible from its inputs: no timestamps and no input hashes, so an
 # unrelated re-render is not a diff.
 before="$(cat "$repo/.coderabbit.yaml" "$repo/.pr_agent.toml" "$repo/AGENTS.md")"
@@ -68,8 +98,7 @@ grep -q '\.claude/settings\.json' "$repo/AGENTS.md" \
   && bad "a merged harness file was derived as an exclusion" \
   || ok "a harness root's own files are not derived: the repo owns .claude/settings.json"
 
-# One block renders as exactly one bullet, no blank line inside: a repo guard
-# pinning the reply contract reads it as a single bullet.
+# A block without an append remains one bullet with no blank line inside.
 grep -q '^- Author replies are .* a label it knows\.$' "$repo/AGENTS.md" \
   && ok "the reply-contract block is one bullet on one line, paragraphs joined" \
   || bad "the reply-contract block is one bullet on one line, paragraphs joined"

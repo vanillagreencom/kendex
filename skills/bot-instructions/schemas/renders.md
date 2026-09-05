@@ -6,7 +6,7 @@ Doctrine block ids are the `###` headings of the doctrine source, whose parse ru
 
 ## Common rules
 
-**Block assembly.** A block's text is its heading's slice with the heading line dropped and surrounding blank lines trimmed. `[bot-instructions.doctrine.replace]` substitutes the slice; `[bot-instructions.doctrine.append]` adds its text as a final paragraph. The `reply-contract` block's `<issue>` placeholder becomes `<PREFIX>-<n>` when `[bot-instructions.repo] tracker` is set.
+**Block assembly.** A block's text is its heading's slice with the heading line dropped and surrounding blank lines trimmed. `[bot-instructions.doctrine.replace]` substitutes the slice; `[bot-instructions.doctrine.append]` adds its text after the shared block. A replacement takes precedence when both tables name a block. The `reply-contract` block's `<issue>` placeholder becomes `<PREFIX>-<n>` when `[bot-instructions.repo] tracker` is set.
 
 **Marker.** Every file the generator owns whole, and the one region it owns inside `AGENTS.md`, carries a marker: the file's **first comment**, preceded only by a prologue the format requires. There are exactly two such prologues, and no output has any other: YAML frontmatter in a markdown output that carries it — a `.instructions.md` file and a `.macroscope/correctness/<surface>.md` — which is frontmatter only at byte 0, and the `yaml-language-server` schema line at the top of `.coderabbit.yaml`.
 
@@ -42,7 +42,7 @@ That read decodes strictly, and so does every other read in this package. **Text
 
 **Ordering is fixed, never sorted at render time.** Doctrine blocks appear in the order each section below states. `[[bot-instructions.surface]]` entries appear in TOML declaration order. Exclusion entries appear with the derived render trees first, in lexicographic order, then `[[bot-instructions.exclusions.path]]` entries in declaration order. Stable ordering is what makes a re-render diff readable.
 
-**Repo text is never reflowed.** Line breaks in a TOML multi-line string are preserved except where a target forbids them, and two do: `tone_instructions`, which CodeRabbit reads as one scalar, and the `AGENTS.md` owned region, where § `AGENTS.md` requires one block to be exactly one bullet with no blank line inside.
+**Repo text keeps its line breaks** except in CodeRabbit's `tone_instructions` scalar and the `AGENTS.md` owned region. The AGENTS rules below define its bullet format.
 
 **Doctrine text is reflowed by its origin, not by its destination.** A block as the spec copy wrote it is this package's own prose, hard-wrapped for that file, and its paragraphs are joined on every destination that carries them — those breaks belong to the spec copy rather than to the meaning. A block a repo overrode through `[bot-instructions.doctrine.append]` or `[bot-instructions.doctrine.replace]` is repo text, so the rule above governs it and its line breaks reach every destination. The two read as a contradiction only while the origin is out of hand: joining both is how a fenced example in an override arrived as one line on every surface that carries paragraphs.
 
@@ -113,9 +113,9 @@ Where the opening predicates differ, the stricter one is the contract: a repo wh
 
 **Body.** The marker as an HTML comment, then a line naming the audience and pointing working agents elsewhere, then the blocks the `AGENTS.md` column of the routing table carries, as bullets in its order. That this file is also read by working agents is a reason to keep doctrine short, not a reason to route part of it away from the one bot that reads nothing else.
 
-One block renders as exactly one bullet, its paragraphs joined by a space and no blank line inside. A repo guard that pins the reply contract reads it as a single bullet, and a blank line ends that read.
+Each block has one outer bullet. An append with multiple paragraphs becomes one nested bullet per appended paragraph. The outer bullet holds the shared doctrine. A single-paragraph append stays in the outer bullet. Replacement text stays in one outer bullet. Join line breaks within each bullet with spaces. Other outputs keep the append's paragraph form.
 
-The `render-out-of-scope` bullet is the one that carries data as well as doctrine: the exclusion set follows its text in the same bullet, comma-joined in the set's fixed order. It stays inside the owned region like everything else the generator writes there, so the region's rules are unchanged — one bullet, no blank line, no line a heading predicate would catch — and a path is not a heading, so nothing about the region's boundaries moves. This is the only place Codex can receive those paths, since it reads no second file.
+The exclusion set follows the `render-out-of-scope` text in its outer bullet, before any nested append bullets. Keep the set's fixed order and join paths with commas. The paths stay inside the owned region.
 
 A repo whose guard pins the tracked reply form needs `[bot-instructions.repo] tracker` set. Such a guard matches the repo's own `Tracked: <PREFIX>-<n>` shape literally inside the `- Author replies are` bullet, and an absent tracker leaves the generic `<issue>` placeholder the render substitutes into, which that guard reads as the form being gone.
 

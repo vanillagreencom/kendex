@@ -259,6 +259,6 @@ Write `instructions` as claims about this repo that a competent reviewer would o
 
 ### `[bot-instructions.doctrine.append]` and `[bot-instructions.doctrine.replace]`
 
-Both are tables keyed by doctrine block id. `append` adds a paragraph to a block for this repo; `replace` substitutes the block's whole text. An unknown block id is an error, so a doctrine rename cannot leave a repo silently carrying an override that reaches nothing. Their values carry the refusals their own row in § The content refusals marks, which is a wider set than `instructions` has and is stated only there. They are repo text, so their line breaks are preserved wherever the block lands — a fenced example survives as one — with the `AGENTS.md` owned region the one exception, since a block renders there as a single bullet whatever wrote it.
+Both tables use doctrine block IDs as keys. `append` adds text to a block; `replace` substitutes the whole block. Unknown block IDs fail validation. Values follow their row in § The content refusals. Line breaks are preserved except in the AGENTS region, whose bullet format follows [the render contract](renders.md).
 
 Prefer `append`. A `replace` means this repo disagrees with doctrine, which is worth arguing at the doctrine source rather than in one repo's TOML. A `replace` on `trust-model` or `render-out-of-scope` also weakens what every bot is told about evidence and scope, so a repo whose gate reads bot output should treat one as the policy change it is.

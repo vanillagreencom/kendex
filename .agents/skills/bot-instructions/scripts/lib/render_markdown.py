@@ -65,13 +65,7 @@ def block_paragraphs(model, bid, text):
 
 
 def as_bullet(text):
-    """One block, exactly one bullet, no blank line inside.
-
-    A repo guard that pins the reply contract reads it as a single bullet, and
-    a blank line ends that read. So this joins whatever the block's origin:
-    the owned region is the second place a target forbids line breaks, and
-    § Common rules names it beside `tone_instructions`.
-    """
+    """Join text into one bullet without blank lines."""
     return "- " + " ".join(paragraphs(text))
 
 
@@ -80,10 +74,17 @@ def agents_region_body(model):
     lines = [model.marker("html"), "", AUDIENCE, ""]
     excl = model.exclusion_globs
     for bid, text in model.blocks_for("AGENTS.md"):
+        nested = []
+        append_count = len(paragraphs(model.appended_text(bid)))
+        if append_count > 1:
+            parts = paragraphs(text)
+            text = " ".join(parts[:-append_count])
+            nested = parts[-append_count:]
         bullet = as_bullet(text)
         if bid == "render-out-of-scope" and excl:
             bullet = bullet + " Those paths here: " + ", ".join(excl) + "."
         lines.append(bullet)
+        lines.extend("  " + as_bullet(para) for para in nested)
     lines.append("")
     return "\n".join(lines)
 
