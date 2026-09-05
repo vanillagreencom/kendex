@@ -72,11 +72,12 @@ SEGMENTS=${SEGMENTS//\|/$NL}
 SEGMENTS=${SEGMENTS//\(/$NL}
 SEGMENTS=${SEGMENTS//\)/$NL}
 # A quote may close the command word or wrap the verb, as in
-# `"/path/kendex" refresh` and `kendex 'refresh'`, and option words may stand
-# between them, as in `kendex --global refresh`. Those root options are
-# dropped by the CLI once a subcommand follows, so only the words AFTER the
-# verb are read for the scope; a `--global` before it exempts nothing.
-WRITE_RE='(^|[^[:alnum:]_.-])kendex["'"'"']?([[:space:]]+-[^[:space:]]*)*[[:space:]]+["'"'"']?(refresh|apply|add|remove|update-pi|updates)["'"'"']?([[:space:]]|$)'
+# `"/path/kendex" refresh` and `kendex 'refresh'`, and any words may stand
+# between them, as in `kendex --global refresh` or `kendex --harness claude
+# refresh`. Those root options and their values are dropped by the CLI once a
+# subcommand follows, so only the words AFTER the verb are read for the scope;
+# a `--global` before it exempts nothing.
+WRITE_RE='(^|[^[:alnum:]_.-])kendex["'"'"']?([[:space:]]+[^[:space:]]+)*[[:space:]]+["'"'"']?(refresh|apply|add|remove|update-pi|updates)["'"'"']?([[:space:]]|$)'
 GLOBAL_RE='(^|[[:space:]])(-g|--global|--scope([[:space:]]+|=)global)([[:space:]]|$)'
 # Any `--scope` after the verb that is not the plain word `global` names the
 # project scope or one this hook cannot read (a quoted value included), and

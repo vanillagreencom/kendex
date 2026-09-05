@@ -129,6 +129,8 @@ run_in "$WT" 'kendex refresh --global --scope "project"'; assert_eq "$rc" 2 'a -
 run_in "$WT" 'kendex --global refresh';            assert_eq "$rc" 2 'a root option before the verb is dropped by the CLI and exempts nothing'
 run_in "$WT" 'kendex -g refresh -g';               assert_eq "$rc" 0 'the -g after the verb is the one the CLI reads'
 run_in "$WT" 'kendex --verbose refresh';           assert_eq "$rc" 2 'an option word between kendex and the verb does not hide the verb'
+run_in "$WT" 'kendex --harness claude-code refresh'; assert_eq "$rc" 2 'an option with a value between kendex and the verb does not hide the verb'
+run_in "$WT" 'kendex --method copy add orch';      assert_eq "$rc" 2 'the same before add'
 run_in "$WT" 'kendex refresh # -g';                assert_eq "$rc" 2 'a -g behind a comment marker is not an option'
 run_in "$WT" 'kendex refresh $(echo -g)';          assert_eq "$rc" 2 'a -g inside a nested command is not this command'"'"'s'
 run_in "$WT" '# kendex refresh';                   assert_eq "$rc" 0 'a commented-out write is not a write'
