@@ -133,6 +133,7 @@ pub fn plan_scope(
         scope,
         &manifest,
         &mut new_lock,
+        crate::pi_ext::RecordBasis::Recorded,
     )?);
     let mut written = written::Written::default();
     let mut config_edits = config_edits::ConfigEditPlan::default();

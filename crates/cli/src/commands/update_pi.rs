@@ -15,7 +15,7 @@ use crate::scope::ScopeFilter;
 /// What update-pi found for one declared or installed package.
 enum Status {
     Current,
-    /// The declared source ships different bytes than the installed copy.
+    /// The package files or completed record differ from the declaration.
     Stale {
         source_dir: PathBuf,
     },
@@ -92,18 +92,6 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
         return Ok(());
     }
     for plan in &plans {
-        let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, &plan.scope))?;
-        let mut notes = Vec::new();
-        for (name, package) in declared_sources(env, &plan.scope, &mut notes) {
-            let key = kendex_core::lock::entry_key(
-                kendex_core::model::ItemKind::PiExtension,
-                &name,
-                kendex_core::model::HarnessId::Pi,
-            );
-            pi_ext::check_origin(&name, &package, lock.entries.get(&key))?;
-        }
-    }
-    for plan in &plans {
         print_plan(plan);
     }
 
@@ -138,6 +126,7 @@ fn plan_scope(
 ) -> Result<ScopePlan, Box<dyn std::error::Error>> {
     let mut notes = Vec::new();
     let sources = declared_sources(env, scope, &mut notes);
+    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))?;
     let mut rows = Vec::new();
 
     let guard = |name: &str, status: Status| match pi_ext::duplicate_elsewhere(name, other_roots) {
@@ -151,7 +140,20 @@ fn plan_scope(
     };
 
     for (name, package) in &sources {
-        let status = match pi_ext::declared_state(&root, name, package) {
+        let key = kendex_core::lock::entry_key(
+            kendex_core::model::ItemKind::PiExtension,
+            name,
+            kendex_core::model::HarnessId::Pi,
+        );
+        let existing = lock.entries.get(&key);
+        pi_ext::check_origin(name, package, existing)?;
+        let status = match pi_ext::declared_state(
+            &root,
+            name,
+            package,
+            existing,
+            pi_ext::RecordBasis::Recorded,
+        ) {
             Ok(pi_ext::PackageState::Current { .. }) => Status::Current,
             Ok(pi_ext::PackageState::Different) => guard(
                 name,
@@ -302,7 +304,7 @@ fn versions(row: &Row) -> String {
 fn describe(row: &Row) -> String {
     match &row.status {
         Status::Current => "up to date".to_owned(),
-        Status::Stale { .. } => "stale (source changed)".to_owned(),
+        Status::Stale { .. } => "stale (package or install record differs)".to_owned(),
         Status::Missing { .. } => "not installed yet".to_owned(),
         Status::Blocked { reason } => reason.clone(),
         Status::Unsourced => "no declared source".to_owned(),
@@ -329,6 +331,7 @@ fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
                 Status::Missing { source_dir } => (source_dir, "installed"),
                 _ => continue,
             };
+            pi_ext::clear_install_completion(env, &plan.scope, &row.name)?;
             match pi_ext::install(env, &plan.root, source_dir) {
                 Ok(outcome) => {
                     record_pi_installs(env, plan, Some(&row.name))?;
@@ -375,7 +378,13 @@ fn record_pi_installs(env: &Env, plan: &ScopePlan, completed: Option<&str>) -> C
     let before = lock.clone();
     let drift = match completed {
         Some(name) => pi_ext::record_matching_name(env, &plan.scope, &manifest, &mut lock, name)?,
-        None => pi_ext::record_matching_manifest(env, &plan.scope, &manifest, &mut lock)?,
+        None => pi_ext::record_matching_manifest(
+            env,
+            &plan.scope,
+            &manifest,
+            &mut lock,
+            pi_ext::RecordBasis::Recorded,
+        )?,
     };
     if lock != before {
         kendex_core::lock::save(&path, &lock)?;

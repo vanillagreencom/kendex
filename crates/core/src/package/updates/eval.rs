@@ -97,7 +97,13 @@ impl Eval<'_> {
             )?;
             let key = crate::lock::entry_key(ItemKind::PiExtension, name, HarnessId::Pi);
             crate::pi_ext::check_origin(name, &package, self.lock.entries.get(&key))?;
-            crate::pi_ext::declared_state(&root, name, &package)
+            crate::pi_ext::declared_state(
+                &root,
+                name,
+                &package,
+                self.lock.entries.get(&key),
+                crate::pi_ext::RecordBasis::Recorded,
+            )
         })();
         match compared {
             Ok(state) => {

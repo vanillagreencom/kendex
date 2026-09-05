@@ -17,14 +17,14 @@ use crate::process::Hardened;
 pub mod carrier;
 mod record;
 pub use record::{
-    DeclaredPackage, check_origin, matching_lock_entry, record_matching_manifest,
-    record_matching_name, resolve_declared, scope_root,
+    DeclaredPackage, check_origin, clear_install_completion, matching_lock_entry,
+    record_matching_manifest, record_matching_name, resolve_declared, scope_root,
 };
 mod files;
 mod renames;
 mod settings;
 mod state;
-pub use state::{PackageState, declared_state, installed_state};
+pub use state::{PackageState, RecordBasis, declared_state, installed_state};
 
 pub use files::package_hash;
 use files::{copy_package, inside, package_path, read_dir, trash};

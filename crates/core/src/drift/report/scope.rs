@@ -123,7 +123,7 @@ impl ScopeCheck<'_> {
                     if entry.kind == ItemKind::PiExtension {
                         self.pi_installation_line(
                             &entry.name,
-                            Some(entry.rendered_hash.as_deref().unwrap_or(&entry.source_hash)),
+                            entry.rendered_hash.as_deref(),
                             manifest.is_some_and(|manifest| {
                                 manifest.pi_extensions.contains_key(&entry.name)
                             }),
@@ -175,7 +175,7 @@ impl ScopeCheck<'_> {
             Ok(crate::pi_ext::PackageState::Current { .. }) => return,
             Ok(crate::pi_ext::PackageState::Missing) => "has no files on disk",
             Ok(crate::pi_ext::PackageState::Different) if expected.is_none() => {
-                "has no install record"
+                "has no completed install record"
             }
             Ok(crate::pi_ext::PackageState::Different) => {
                 "has files that differ from its install record"
@@ -346,7 +346,7 @@ impl ScopeCheck<'_> {
         } else if package.update_available {
             sections.stale.push(drift(
                 if package.kind == ItemKind::PiExtension {
-                    format!("{prefix}{kind} '{name}' does not match its declared source")
+                    format!("{prefix}{kind} '{name}' needs installation from its declared source")
                 } else {
                     format!("{prefix}{kind} '{name}' has a newer version on its source")
                 },

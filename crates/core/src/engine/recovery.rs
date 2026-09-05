@@ -21,10 +21,17 @@ pub fn audit_without_record(
     scope: &Scope,
     manifest: &Manifest,
 ) -> Result<RecordlessAudit> {
-    let seed = Lock {
+    let mut seed = Lock {
         version: crate::lock::LOCK_VERSION,
         ..Lock::default()
     };
+    crate::pi_ext::record_matching_manifest(
+        env,
+        scope,
+        manifest,
+        &mut seed,
+        crate::pi_ext::RecordBasis::MatchedBytes,
+    )?;
     let mut report = plan_scope(env, scope, manifest, &seed, &PlanOptions::default())?;
     let mut matching = report
         .plan
