@@ -90,15 +90,18 @@ def agents_region_body(model):
 
 
 def copilot_instructions(model):
+    """One level-one heading, the repo name. Calibration is a level-two
+    section with the blocks at level three: a second `#` line is a second
+    title, and a consumer linting every tracked markdown file rejects it."""
     out = [model.marker("html"), ""]
     out.append(f"# {model.repo_name}")
     out.append("")
     out.append(summary_block(model))
     out.append("")
-    out.append("# Code review calibration")
+    out.append("## Code review calibration")
     out.append("")
     for bid, text in model.blocks_for("copilot-instructions"):
-        out.append(f"## {bid}")
+        out.append(f"### {bid}")
         out.append("")
         for para in block_paragraphs(model, bid, text):
             out.append(para)

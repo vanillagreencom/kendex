@@ -131,7 +131,7 @@ Read by Copilot code review, repo-wide, from the pull request's head branch.
 
 1. The marker comment.
 2. `# <repo name>` followed by `[bot-instructions.repo] summary`, which the routing table's placement note names as this destination's opening rather than its close.
-3. `# Code review calibration`, then the blocks the `copilot-instructions` column of the routing table carries, in its order, as `##` subsections.
+3. `## Code review calibration`, then the blocks the `copilot-instructions` column of the routing table carries, in its order, as `###` subsections. The repo name is the file's only level-one heading.
 4. `## Reply contract`, one sentence pointing at `AGENTS.md` § Code Review Rules, spelled with that exact file name and section name, emitted on one line and never wrapped: a reader looking for the file name and the section name together reads one line, and a wrap splits the pointer in two.
 5. `## Path rules`, one sentence naming `.github/instructions/` as where per-path rules live, emitted only when at least one `[[bot-instructions.surface]]` exists.
 
