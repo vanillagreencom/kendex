@@ -1,4 +1,4 @@
-//! Antigravity as a managed tool: an agent, a skill and a hook each install
+//! Antigravity as a managed tool: an agent, a skill, a hook and an MCP server each install
 //! in the shape its loader reads, switch on and off without losing
 //! anything, and come off disk on request — leaving the keys around ours in
 //! its registry untouched.
@@ -27,6 +27,12 @@ const UNNAMED_HOOK: &str = "#!/usr/bin/env bash\n# ---\n# name: audit\n# event: 
 
 const COMMAND: &str = "---\ndescription: Ship the branch\n---\n\nRun the checklist.\n";
 
+const GH_MCP: &str = "command = \"gh-mcp\"\nargs = [\"--stdio\"]\n";
+
+const DOCS_MCP: &str = "transport = \"http\"\nurl = \"https://mcp.example/docs\"\n";
+
+const ENV_MCP: &str = "command = \"gh-mcp\"\n[env]\nGH_TOKEN = \"$GH_TOKEN\"\n";
+
 struct Fixture {
     _tmp: tempfile::TempDir,
     env: Env,
@@ -46,7 +52,7 @@ fn fixture(declarations: &str) -> Fixture {
     fs::create_dir_all(home.join(".gemini/config")).unwrap();
 
     let source = home.join("catalog");
-    for dir in ["agents", "hooks", "commands", "skills/deploy"] {
+    for dir in ["agents", "hooks", "commands", "mcp", "skills/deploy"] {
         fs::create_dir_all(source.join(dir)).unwrap();
     }
     fs::write(
@@ -57,6 +63,9 @@ fn fixture(declarations: &str) -> Fixture {
     fs::write(source.join("agents/rust.md"), AGENT).unwrap();
     fs::write(source.join("hooks/audit.sh"), AUDIT_HOOK).unwrap();
     fs::write(source.join("commands/ship.md"), COMMAND).unwrap();
+    fs::write(source.join("mcp/gh.toml"), GH_MCP).unwrap();
+    fs::write(source.join("mcp/docs.toml"), DOCS_MCP).unwrap();
+    fs::write(source.join("mcp/tokened.toml"), ENV_MCP).unwrap();
     fs::write(source.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
 
     fs::write(
@@ -290,33 +299,137 @@ fn a_command_declared_for_antigravity_writes_nothing() {
     assert!(is_clean(&f));
 }
 
-/// A remote server in `mcp_config.json` names its endpoint `serverUrl`, and
-/// the read-only list shows that endpoint rather than a bare name.
+/// A command server is written as declared and a url server under
+/// `serverUrl`, beside the entry somebody else keeps in the file. Off writes
+/// `disabled: true` on the entry and on takes the key away, so the
+/// declaration stays until removal; the scan lists each by its endpoint.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_remote_server_is_listed_by_its_endpoint() {
-    let f = fixture("");
+fn a_server_is_declared_in_mcp_config_json_and_toggles_on_the_entry() {
+    let f = fixture("[mcp-servers.gh]\nsource = \"cat\"\n\n[mcp-servers.docs]\nsource = \"cat\"\n");
+    let config = f.project.join(".agents/mcp_config.json");
     fs::write(
-        f.project.join(".agents/mcp_config.json"),
-        r#"{"mcpServers": {"docs": {"serverUrl": "https://docs.example/sse"}, "gh": {"command": "gh-mcp"}}}"#,
+        &config,
+        r#"{"mcpServers": {"other": {"serverUrl": "https://docs.example/sse", "disabled": true}}}"#,
     )
     .unwrap();
+    let report = apply_now(&f);
+    assert_eq!(report.warnings, Vec::new());
+
+    let installed = json(&config);
+    assert_eq!(
+        installed["mcpServers"]["other"],
+        serde_json::json!({"serverUrl": "https://docs.example/sse", "disabled": true})
+    );
+    assert_eq!(
+        installed["mcpServers"]["gh"],
+        serde_json::json!({"command": "gh-mcp", "args": ["--stdio"]})
+    );
+    assert_eq!(
+        installed["mcpServers"]["docs"],
+        serde_json::json!({"serverUrl": "https://mcp.example/docs"})
+    );
+    assert!(is_clean(&f));
+
     let scanned = kendex_core::scan::scan_scopes(
         &f.env,
         &std::collections::BTreeMap::new(),
         std::slice::from_ref(&f.scope),
     );
-    let servers: Vec<_> = scanned
+    let mut servers: Vec<_> = scanned
         .items
         .iter()
         .filter(|item| item.kind == kendex_core::model::ItemKind::McpServer)
         .map(|item| (item.name.as_str(), item.description.as_deref()))
         .collect();
+    servers.sort();
     assert_eq!(
         servers,
         [
-            ("docs", Some("https://docs.example/sse")),
+            ("docs", Some("https://mcp.example/docs")),
             ("gh", Some("gh-mcp")),
+            ("other", Some("https://docs.example/sse")),
         ]
     );
+
+    toggle(&f, "gh", false);
+    let off = json(&config);
+    assert_eq!(off["mcpServers"]["gh"]["disabled"], true);
+    assert_eq!(off["mcpServers"]["gh"]["command"], "gh-mcp");
+    assert_eq!(off["mcpServers"]["other"]["disabled"], true);
+    assert!(is_clean(&f));
+    let scanned = kendex_core::scan::scan_scopes(
+        &f.env,
+        &std::collections::BTreeMap::new(),
+        std::slice::from_ref(&f.scope),
+    );
+    let mut switches: Vec<_> = scanned
+        .items
+        .iter()
+        .filter(|item| item.kind == kendex_core::model::ItemKind::McpServer)
+        .map(|item| (item.name.as_str(), item.enabled))
+        .collect();
+    switches.sort();
+    assert_eq!(
+        switches,
+        [("docs", None), ("gh", Some(false)), ("other", Some(false)),]
+    );
+
+    toggle(&f, "gh", true);
+    assert_eq!(json(&config), installed);
+
+    remove(&f, "gh");
+    let after = json(&config);
+    assert!(after["mcpServers"].get("gh").is_none(), "{after}");
+    assert_eq!(
+        after["mcpServers"]["docs"]["serverUrl"],
+        "https://mcp.example/docs"
+    );
+    assert_eq!(after["mcpServers"]["other"]["disabled"], true);
+    assert!(is_clean(&f));
+}
+
+/// The global scope writes `mcp_config.json` under the customization root
+/// Antigravity shares with its IDE, the file `agy mcp list` reads.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_global_server_lands_under_the_customization_root() {
+    let f = fixture("");
+    let manifest = f.env.global_manifest_file();
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    let source = f.env.home.join("catalog");
+    fs::write(
+        &manifest,
+        format!(
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"antigravity\"]\nmethod = \"symlink\"\n\n[mcp-servers.gh]\nsource = \"cat\"\n",
+            source_path(&source)
+        ),
+    )
+    .unwrap();
+
+    let report = audit(&f.env, &Scope::Global).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
+
+    let config = f.env.home.join(".gemini/config/mcp_config.json");
+    assert_eq!(json(&config)["mcpServers"]["gh"]["command"], "gh-mcp");
+    assert!(audit(&f.env, &Scope::Global).unwrap().drift.is_empty());
+}
+
+/// Nothing in Antigravity's documentation substitutes a reference in an
+/// `env` value, so a server carrying one is refused with the reason rather
+/// than handed a literal to run with.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_server_with_env_references_is_refused_with_the_reason() {
+    let f = fixture("[mcp-servers.tokened]\nsource = \"cat\"\n");
+    let report = apply_now(&f);
+    assert!(
+        report
+            .drift
+            .iter()
+            .any(|row| row.name == "tokened" && row.detail.contains("documents no substitution")),
+        "{:?}",
+        report.drift
+    );
+    assert!(!f.project.join(".agents/mcp_config.json").exists());
 }

@@ -195,12 +195,9 @@ pub const fn format_caps(harness: HarnessId) -> FormatCaps {
             ..format_defaults()
         },
         // Antigravity's `mcp_config.json` carries `command` or a
-        // `serverUrl` it reads over SSE, and is read, never written; its
-        // names are unconstrained.
-        HarnessId::Antigravity => FormatCaps {
-            mcp_transports: &[Stdio, Sse],
-            ..format_defaults()
-        },
+        // `serverUrl` it reaches over SSE or streamable HTTP
+        // (antigravity.google/docs/mcp); its names are unconstrained.
+        HarnessId::Antigravity => format_defaults(),
     }
 }
 
@@ -416,12 +413,15 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
 
         // Agents load from `agents/*.md` and skills from the shared tree at
         // either scope. Hooks run from `hooks.json` at either scope, the
-        // loader honouring the `decision` a command writes; MCP servers and
-        // plugins are read and never written.
+        // loader honouring the `decision` a command writes; plugins are read
+        // and never written.
         (Antigravity, Agent | Skill) => managed(BOTH),
         (Antigravity, Hook) => enforced(managed(BOTH)),
         (Antigravity, Command) => unsupported(),
-        (Antigravity, McpServer) => observe_only(BOTH),
+        // `mcp_config.json` under either root, `mcpServers.<name>` with a
+        // remote endpoint keyed `serverUrl` and a `disabled` switch on the
+        // entry (antigravity.google/docs/mcp).
+        (Antigravity, McpServer) => managed(BOTH),
         (Antigravity, Plugin) => observe_only(BOTH),
         (Antigravity, PiExtension) => unsupported(),
     }

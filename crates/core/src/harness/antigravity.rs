@@ -44,8 +44,7 @@ fn surfaces(kind: ItemKind, root: &Path, shared: Option<&Path>) -> Vec<Surface> 
         ItemKind::Agent => vec![Surface::files(root.join("agents"), &["md"])],
         ItemKind::Skill => super::shared_first(shared, root.join("skills")),
         // `mcp_config.json` carries the `mcpServers` map every other tool
-        // reads; a remote server is keyed `serverUrl`, so it is read here
-        // and never written.
+        // reads, a remote server keyed `serverUrl`.
         ItemKind::McpServer => vec![Surface::Structured {
             path: root.join("mcp_config.json"),
             reader: Reader::McpServersJson,

@@ -332,6 +332,14 @@ pub(super) fn mcp_registry(env: &Env, scope: &Scope, harness: HarnessId) -> Opti
             Scope::Global => adapter(harness).default_global_root(env).join("mcp.json"),
             Scope::Project { root } => root.join(".cursor/mcp.json"),
         }),
+        // Antigravity reads `mcp_config.json` under the customization root
+        // of either scope (antigravity.google/docs/mcp).
+        HarnessId::Antigravity => Some(match scope {
+            Scope::Global => adapter(harness)
+                .default_global_root(env)
+                .join("mcp_config.json"),
+            Scope::Project { root } => root.join(".agents/mcp_config.json"),
+        }),
         // Copilot reads a repository's servers from `.github/mcp.json` and a
         // machine's from its own config root (matrix §2). A `.mcp.json` at
         // the repo root is Claude Code's file, which Copilot also reads —

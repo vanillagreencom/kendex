@@ -47,6 +47,24 @@ pub(super) fn desired_mcp(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()>
                 });
                 continue;
             }
+            // Antigravity's documentation says nothing about substituting a
+            // reference in an `env` value, and kendex writes only
+            // references, so a server carrying one is refused rather than
+            // handed a literal `$NAME` to run with.
+            if harness == HarnessId::Antigravity
+                && value
+                    .get("env")
+                    .and_then(Value::as_object)
+                    .is_some_and(|env| !env.is_empty())
+            {
+                state.refused.push(super::desired::Refused {
+                    kind: ItemKind::McpServer,
+                    name: ctx.name.to_owned(),
+                    harness,
+                    reason: "Antigravity documents no substitution for an environment value, so a $NAME reference would reach the server as text — declare the server without env, or drop Antigravity from its harnesses".to_owned(),
+                });
+                continue;
+            }
             // Each harness keys the entry its own way, so a server written in
             // another tool's shape would not load: Copilot names the
             // transport on the entry, OpenCode takes one argv, its own key
@@ -63,12 +81,26 @@ pub(super) fn desired_mcp(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()>
                     mcp_upsert(harness, ctx.name, super::copilot::server(&value))
                 }
                 (true, HarnessId::Cursor) => mcp_upsert(harness, ctx.name, cursor_server(&value)),
+                // Antigravity names a remote endpoint `serverUrl` and switches
+                // a server off with `disabled: true` on the entry, so its
+                // declaration stays in the file either way.
+                (true, HarnessId::Antigravity) => {
+                    mcp_upsert(harness, ctx.name, super::antigravity::server(&value))
+                }
+                (false, HarnessId::Antigravity) => {
+                    let mut off = super::antigravity::server(&value);
+                    if let Some(object) = off.as_object_mut() {
+                        object.insert("disabled".into(), Value::Bool(true));
+                    }
+                    mcp_upsert(harness, ctx.name, off)
+                }
                 (true, _) => mcp_upsert(harness, ctx.name, value.clone()),
                 (false, _) => mcp_remove(harness, ctx.name),
             };
-            // A switched-off OpenCode entry is still a write, so it is
-            // planned whether or not the file exists yet.
-            let writes = ctx.decl.enabled || harness == HarnessId::Opencode;
+            // A switched-off OpenCode or Antigravity entry is still a write,
+            // so it is planned whether or not the file exists yet.
+            let writes =
+                ctx.decl.enabled || matches!(harness, HarnessId::Opencode | HarnessId::Antigravity);
             registration_edits(&registry, edit, writes)
         };
         let artifact = Artifact::Registration {
