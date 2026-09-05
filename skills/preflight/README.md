@@ -8,7 +8,7 @@ A checker for changed files in a repository. It detects script errors, broken do
 kendex add vanillagreencom/kendex --skill preflight
 ```
 
-Requires Git, awk and standard POSIX tools. Bash 3.2 is supported. Install shellcheck for its shell checks, jq for JSON checks, and taplo or Python with tomllib for TOML checks. A check with a missing tool is skipped.
+Requires Git, awk and standard POSIX tools. Bash 3.2 is supported. Install shellcheck for its shell checks, jq for JSON checks, and taplo or Python with tomllib for TOML checks. A needed check with a missing tool is named as not run. The final result lists skipped checks without changing the exit status.
 
 ## Features
 

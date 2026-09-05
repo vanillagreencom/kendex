@@ -23,7 +23,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 # Preflight
 
-Every lane is diff-scoped and fail-only, with no warnings tier: a finding lands only on a line this change ADDED, and a lane that cannot decide reports nothing. What a lane may read: [references/lanes.md](references/lanes.md).
+Every lane is diff-scoped and fail-only, with no warnings tier: a finding lands only on a line this change ADDED, and a lane that cannot decide reports no finding. What a lane may read: [references/lanes.md](references/lanes.md).
 
 ```bash
 .agents/skills/preflight/scripts/preflight              # vs the default branch's merge base
@@ -50,7 +50,7 @@ Every lane is diff-scoped and fail-only, with no warnings tier: a finding lands 
 
 Shell files are `*.sh`, `*.bash`, or anything with a `sh`/`bash` shebang. Deleted files, and files under `tests/` or `fixtures/`, are out of scope for the lanes that judge whole files; `unwired-suite` is the exception.
 
-Installed-artifact subtrees (`.agents/` and the harness dirs' skills/agents/hooks/rules/instructions/packages/kendex trees) are out of scope for `masked-returns`, `fail-open`, `unwired-suite`, `mktemp-trap`, `docs-cited-paths`. `shell-syntax`, `shellcheck-errors`, `hardcoded-temp-path`, `applied-migration-edited`, `data-syntax` stay on there. A `prompts/` or `commands/` tree under a harness dir keeps every lane. A lane whose tool is missing skips silently. It neither fails nor passes the run.
+Installed-artifact subtrees (`.agents/` and the harness dirs' skills/agents/hooks/rules/instructions/packages/kendex trees) are out of scope for `masked-returns`, `fail-open`, `unwired-suite`, `mktemp-trap`, `docs-cited-paths`. `shell-syntax`, `shellcheck-errors`, `hardcoded-temp-path`, `applied-migration-edited`, `data-syntax` stay on there. A `prompts/` or `commands/` tree under a harness dir keeps every lane. When a relevant file needs an unavailable tool, the output names the lane as not run and lists it in the final result. Data-syntax details identify JSON or TOML. Other applicable checks still run, and missing optional tools do not change the exit status.
 
 Exit codes: `0` clean, `1` findings, `2` usage/environment error (bad flag, not a git repository, unresolvable base). Findings print as `path:line: [lane] message`, line `0` for a whole-file finding.
 
