@@ -22,8 +22,8 @@ settings
 passed=0
 failed=0
 check() { # EXPECTED COMMAND LABEL
-  local expected="$1" command="$2" label="$3" payload status=0 output
-  payload="$(jq -nc --arg command "$command" --arg cwd "$repo" '{tool_input:{command:$command},cwd:$cwd}')"
+  local expected="$1" command="$2" label="$3" payload_cwd="${4:-$repo}" payload status=0 output
+  payload="$(jq -nc --arg command "$command" --arg cwd "$payload_cwd" '{tool_input:{command:$command},cwd:$cwd}')"
   output="$(printf '%s' "$payload" | bash "$hook" 2>&1)" || status=$?
   if [ "$status" -eq "$expected" ]; then
     printf 'PASS %s\n' "$label"
@@ -41,6 +41,17 @@ check 2 'git status && qs -c vshell' 'launch in a compound command'
 check 0 'scripts/validate qml' 'isolated validation'
 check 0 'git status' 'unrelated shell command'
 check 0 'qs -c test-fixture' 'a different configured shell'
+
+printf '[env]\n' >"$repo/kendex.settings.toml"
+check 0 'git status' 'an unconfigured project leaves the hook inactive'
+check 0 'git status' 'a global hook outside Git leaves the hook inactive' /
+mkdir -p "$scratch/outside"
+printf 'gitdir: /missing\n' >"$scratch/outside/.git"
+check 2 'git status' 'an unresolved Git worktree refuses' "$scratch/outside"
+mv "$scratch/outside/.git" "$scratch/unresolved-git-marker"
+printf '[env\n' >"$repo/kendex.settings.toml"
+check 2 'git status' 'malformed project settings refuse'
+settings
 
 status=0
 jq -nc --arg cwd "$repo" '{tool_input:{cmd:"qs -c vshell"},cwd:$cwd}' | bash "$hook" >/dev/null 2>&1 || status=$?

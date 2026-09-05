@@ -3,8 +3,8 @@
 # name: command-safety
 # event: PreToolUse
 # matcher: Bash
-# description: Refuse shell tool command text matching COMMAND_SAFETY_DENY_PATTERN from project settings. Install the command-safety bundle and configure a nonempty POSIX ERE before using the hook. Matching is textual, including quoted text, and does not inspect the desktop or running processes.
-# safety: Blocks configured command patterns before the shell tool runs. Unreadable input, missing settings support, and invalid or empty patterns refuse execution.
+# description: On harnesses that execute hooks, refuse shell tool command text matching COMMAND_SAFETY_DENY_PATTERN from project settings. An absent policy is inactive. Matching is textual, including quoted text, and does not inspect the desktop or running processes.
+# safety: When executed with a configured policy, blocks matching command text before the shell tool runs. Unreadable input, missing settings support, and invalid or explicitly empty patterns refuse execution.
 # timeout: 10
 # ---
 
@@ -33,7 +33,20 @@ command_text="$(jq -r '
 [ -n "$command_text" ] || exit 0
 cwd="$(jq -r 'if .cwd == null then "" elif .cwd | type == "string" then .cwd else error("invalid cwd") end' <<<"$input" 2>/dev/null)" || refuse "invalid working directory"
 [ -n "$cwd" ] || cwd="$PWD"
-root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" || refuse "project settings require a Git working directory"
+cwd="$(cd -- "$cwd" && pwd -P)" || refuse "invalid working directory"
+root_status=0
+root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" || root_status=$?
+if [ "$root_status" -ne 0 ]; then
+  at="$cwd"
+  while [ "$at" != / ]; do
+    if [ -e "$at/.git" ] || [ -L "$at/.git" ]; then
+      refuse "could not resolve the Git working directory"
+    fi
+    at="${at%/*}"
+    [ -n "$at" ] || at=/
+  done
+  exit 0
+fi
 
 lib="$root/.agents/skills/growth-guards/scripts/lib"
 if [ ! -f "$lib/settings.sh" ]; then
@@ -55,8 +68,9 @@ source "$lib/common.sh"
 # shellcheck source=../skills/growth-guards/scripts/lib/settings.sh
 source "$lib/settings.sh"
 cd -- "$root" || refuse "could not read project settings"
-pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "")" || refuse "could not read COMMAND_SAFETY_DENY_PATTERN"
+pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "^$")" || refuse "could not read COMMAND_SAFETY_DENY_PATTERN"
 [ -n "$pattern" ] || refuse "COMMAND_SAFETY_DENY_PATTERN must be configured"
+[ "$pattern" != '^$' ] || exit 0
 status=0
 printf '%s\n' "$command_text" | LC_ALL=C grep -E -- "$pattern" >/dev/null || status=$?
 case "$status" in
