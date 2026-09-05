@@ -349,7 +349,7 @@ if [ "$FULL" -eq 1 ]; then
   if git rev-parse --verify -q origin/main >/dev/null; then
     suites_base=$(git merge-base HEAD origin/main) || suites_base=HEAD
   fi
-  touched=$({ git diff --name-only "$suites_base" --; git status --porcelain --untracked-files=all | cut -c4- | sed 's/^.* -> //'; } | sort -u) ||
+  touched=$({ git -c core.quotePath=false diff --name-only "$suites_base" --; git -c core.quotePath=false status --porcelain --untracked-files=all | cut -c4- | sed 's/^.* -> //'; } | sort -u) ||
     say "the touched-file set for the suite lane could not be read"
   suite_dirs=""
   while IFS= read -r f; do
@@ -372,10 +372,19 @@ if [ "$FULL" -eq 1 ]; then
     case "$d" in
       pi-extensions/*)
         [ -f "$d/package.json" ] || continue
-        if jq -e '.scripts["test:ci"]' "$d/package.json" >/dev/null 2>&1; then
-          (cd "$d" && npm run test:ci) || say "$d suite failed (npm run test:ci)"
-        elif jq -e '.scripts.test' "$d/package.json" >/dev/null 2>&1; then
-          (cd "$d" && npm test) || say "$d suite failed (npm test)"
+        if ! command -v jq >/dev/null 2>&1; then
+          say "jq is required to read $d/package.json for its test script"
+          continue
+        fi
+        # A package whose suite value-imports Pi has no lockfile for those
+        # peers; CI installs them in the step before its suite, and a checkout
+        # without that install fails here naming the cause, not the suite.
+        remedy=""
+        [ -d "$d/node_modules" ] || remedy=" — $d has no node_modules; install its peers as its step in .github/workflows/skill-tests.yml does"
+        if jq -e '.scripts["test:ci"]' "$d/package.json" >/dev/null; then
+          (cd "$d" && npm run test:ci) || say "$d suite failed (npm run test:ci)$remedy"
+        elif jq -e '.scripts.test' "$d/package.json" >/dev/null; then
+          (cd "$d" && npm test) || say "$d suite failed (npm test)$remedy"
         fi
         ;;
       *)

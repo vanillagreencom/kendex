@@ -150,8 +150,8 @@ jobs:
           done < <(git ls-files -- 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' | grep -vE '/(scripts|tests)/lib/|/tests/controls/')
           exit "$fail"
 
-      # Document byte ceilings run on every event. A failure in an earlier
-      # step must not suppress this check.
+      # Document byte ceilings run on every PR and queue event. A failure in
+      # an earlier step must not suppress this check.
       - name: size-ratchet (document byte ceilings)
         if: always() && matrix.shard == 'guards'
         run: skills/size-ratchet/scripts/size-ratchet
@@ -591,6 +591,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # THE load-bearing crate guard, the cargo twin of the shard guard above:
+      # a workspace member the matrix does not name compiles under the lint
+      # job's --workspace and is tested nowhere, while both required contexts
+      # stay green. Every `crate:` line in this file must spell the member set
+      # cargo reports, so a new member fails here until it is sharded.
+      - name: crate matrix agrees with the workspace members
+        run: |
+          set -u
+          wf=.github/workflows/skill-tests.yml
+          members="$(cargo metadata --format-version 1 --no-deps --locked | jq -r '.packages[].name' | sort -u)"
+          [ -n "$members" ] || { echo "no workspace member read from cargo metadata"; exit 1; }
+          lines="$(sed -n 's/^ \{8\}crate: \[\(.*\)\]$/\1/p' "$wf")"
+          [ -n "$lines" ] || { echo "no crate matrix read from $wf"; exit 1; }
+          while IFS= read -r line; do
+            declared="$(printf '%s\n' "$line" | tr -d ' ' | tr ',' '\n' | sort -u)"
+            diff <(printf '%s\n' "$members") <(printf '%s\n' "$declared") || { echo "crate matrix [$line] disagrees with the workspace: '<' a member no shard tests; '>' a name that is not a member"; exit 1; }
+          done <<<"$lines"
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.crate }}
@@ -636,6 +653,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # The same guard as the Linux shard's, on this file's own crate lines.
+      - name: crate matrix agrees with the workspace members
+        run: |
+          set -u
+          wf=.github/workflows/skill-tests.yml
+          members="$(cargo metadata --format-version 1 --no-deps --locked | jq -r '.packages[].name' | sort -u)"
+          [ -n "$members" ] || { echo "no workspace member read from cargo metadata"; exit 1; }
+          lines="$(sed -n 's/^ \{8\}crate: \[\(.*\)\]$/\1/p' "$wf")"
+          [ -n "$lines" ] || { echo "no crate matrix read from $wf"; exit 1; }
+          while IFS= read -r line; do
+            declared="$(printf '%s\n' "$line" | tr -d ' ' | tr ',' '\n' | sort -u)"
+            diff <(printf '%s\n' "$members") <(printf '%s\n' "$declared") || { echo "crate matrix [$line] disagrees with the workspace: '<' a member no shard tests; '>' a name that is not a member"; exit 1; }
+          done <<<"$lines"
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.crate }}
