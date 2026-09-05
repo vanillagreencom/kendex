@@ -119,31 +119,6 @@ sr_settings_normalize_path() { # PATH — normalized path on stdout ("" when it 
   done
   printf '%s' "$out"
 }
-# ls-tree answers for a COMPLETE path only, so a settings source reached
-# through a symlinked parent has no entry — indistinguishable from a source
-# HEAD does not carry. Every ancestor is classified before the absent
-# sentinel may be returned; the rule is DEVELOPMENT.md, Trusted reference
-# snapshot. Detection only: nothing here reads a target or follows a link.
-sr_settings_head_absence_real() { # NORMALIZED-PATH — 0 = the sentinel is earned; 1 + ::error
-  local rest="$1" prefix="" entry="" status=0 mode=""
-  while :; do
-    case "$rest" in */*) ;; *) return 0 ;; esac
-    prefix="${prefix:+$prefix/}${rest%%/*}"
-    rest="${rest#*/}"
-    status=0
-    entry="$(git ls-tree HEAD -- ":(literal)$prefix" 2>/dev/null)" || status=$?
-    if [ "$status" -ne 0 ]; then
-      echo "::error::$prefix: could not query HEAD while resolving a setting (git ls-tree exit $status)" >&2
-      return 1
-    fi
-    [ -n "$entry" ] || return 0
-    mode="${entry%% *}"
-    [ "$mode" != 040000 ] || continue
-    case "$mode" in 120000) mode="a symlink" ;; *) mode="mode $mode" ;; esac
-    echo "::error::$prefix: HEAD carries this path component as $mode, not a directory; HEAD settings cannot be resolved through it" >&2
-    return 1
-  done
-}
 # A flat, reversible name for a repo-relative path, so a snapshot directory
 # holds one entry per source. Parameter expansion rather than sed: this runs
 # for every source of every key read, and a fork here is most of what a small
@@ -167,9 +142,7 @@ SR_SETTINGS_NL='
 # substitution, and a shell variable would not survive that subshell.
 sr_settings_source() { # FILE — the path to actually read; nonzero + ::error on failure
   local dir="" memo="" resolved=""
-  if [ "${SR_SETTINGS_FROM_HEAD:-0}" = "1" ]; then
-    dir="${SR_SETTINGS_HEAD_DIR:-}"
-  elif [ "${SR_SETTINGS_FROM_INDEX:-0}" = "1" ]; then
+  if [ "${SR_SETTINGS_FROM_INDEX:-0}" = "1" ]; then
     dir="${SR_SETTINGS_INDEX_DIR:-}"
   fi
   # No snapshot: nothing to memoize, and nowhere to put it.
@@ -204,79 +177,7 @@ sr_settings_source() { # FILE — the path to actually read; nonzero + ::error o
 }
 
 sr_settings_resolve() { # FILE — the path to actually read; nonzero + ::error on failure
-  local file="$1" copy="" status=0 entry="" norm="" head_status=0 tree_status=0 target="" base="" depth=0
-  if [ "${SR_SETTINGS_FROM_HEAD:-0}" = "1" ]; then
-    if [ -z "${SR_SETTINGS_HEAD_DIR:-}" ]; then
-      echo "::error::$file: SR_SETTINGS_HEAD_DIR is required for HEAD settings resolution" >&2
-      return 1
-    fi
-    case "$file" in
-      /*)
-        printf '%s' "$SR_SETTINGS_HEAD_DIR/settings.absent"
-        return 0
-        ;;
-    esac
-    norm="$(sr_settings_normalize_path "$file")"
-    case "$norm" in
-      "" | ".." | "../"*)
-        printf '%s' "$SR_SETTINGS_HEAD_DIR/settings.absent"
-        return 0
-        ;;
-    esac
-    file="$norm"
-    while :; do
-      status=0
-      entry="$(git ls-tree HEAD -- ":(literal)$file" 2>/dev/null)" || status=$?
-      if [ "$status" -ne 0 ]; then
-        echo "::error::$file: could not query HEAD while resolving a setting (git ls-tree exit $status)" >&2
-        return 1
-      fi
-      if [ -z "$entry" ]; then
-        sr_settings_head_absence_real "$file" || return 1
-        printf '%s' "$SR_SETTINGS_HEAD_DIR/settings.absent"
-        return 0
-      fi
-      case "${entry%% *}" in
-        100*) break ;;
-        120000)
-          target="$(git show "HEAD:$file" 2>/dev/null)" || {
-            echo "::error::$file: could not read its HEAD symlink target" >&2
-            return 1
-          }
-          case "$target" in
-            "" | /* | *$'\n'*)
-              echo "::error::$file: HEAD symlink target has no historical repository form" >&2
-              return 1
-              ;;
-          esac
-          case "$file" in */*) base="${file%/*}/" ;; *) base="" ;; esac
-          norm="$(sr_settings_normalize_path "$base$target")"
-          case "$norm" in
-            "" | ".." | "../"*)
-              echo "::error::$file: HEAD symlink target leaves the repository" >&2
-              return 1
-              ;;
-          esac
-          file="$norm"
-          depth=$((depth + 1))
-          [ "$depth" -lt 40 ] || { echo "::error::$1: HEAD settings symlink chain does not resolve" >&2; return 1; }
-          ;;
-        *)
-          echo "::error::$file: HEAD settings source is not a regular file or symlink" >&2
-          return 1
-          ;;
-      esac
-    done
-    sr_settings_slug "$file"
-    copy="$SR_SETTINGS_HEAD_DIR/settings.file.$SR_SETTINGS_SLUG"
-    if [ ! -f "$copy" ] && ! git show "HEAD:$file" >"$copy" 2>/dev/null; then
-      rm -f -- "$copy"
-      echo "::error::$file: could not read its HEAD settings content" >&2
-      return 1
-    fi
-    printf '%s' "$copy"
-    return 0
-  fi
+  local file="$1" copy="" status=0 entry="" norm="" head_status=0 tree_status=0
   if [ "${SR_SETTINGS_FROM_INDEX:-0}" != "1" ] || [ -z "${SR_SETTINGS_INDEX_DIR:-}" ]; then
     printf '%s' "$file"
     return 0
@@ -440,7 +341,7 @@ sr_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
 }
 
 sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
-  local name="$1" default="$2" line val file table status matches source_name
+  local name="$1" default="$2" line val file table status matches
   case "$name" in
     "" | [0-9]* | *[!A-Za-z0-9_]*)
       echo "::error::sr_setting: invalid key name '$name' (shell identifier shape required: [A-Za-z_][A-Za-z0-9_]*)" >&2
@@ -454,20 +355,7 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       set -- ".kendex/settings.toml" "kendex.settings.toml"
     fi
     for file in "$@"; do
-      source_name="$file"
       file="$(sr_settings_source "$file")" || return 1
-      if [ "${SR_SETTINGS_FROM_HEAD:-0}" = "1" ] && [ -n "${SIZE_RATCHET_SETTINGS_FILE:-}" ] \
-        && [ "${SIZE_RATCHET_SETTINGS_FILE:-}" != "/dev/null" ] && [ ! -f "$file" ] \
-        && { [ -e "$source_name" ] || [ -L "$source_name" ]; }; then
-        table="$(sr_env_table "$source_name")" || return 1
-        status=0
-        matches="$(printf '%s\n' "$table" | grep -E -- "^[[:space:]]*${name}[[:space:]]*=")" || status=$?
-        [ "$status" -le 1 ] || return 1
-        if [ "$status" -eq 0 ]; then
-          echo "::error::$source_name: $name has no historical form in HEAD" >&2
-          return 1
-        fi
-      fi
       sr_settings_usable "$file" || return 1
       if [ -f "$file" ]; then
         sr_env_table "$file" >/dev/null || return 1
@@ -494,15 +382,6 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   local local_env=""
   local_env="$(sr_settings_source ".env.local")" || return 1
   sr_settings_usable "$local_env" || return 1
-  if [ "${SR_SETTINGS_FROM_HEAD:-0}" = "1" ] && [ ! -f "$local_env" ] && [ -f .env.local ]; then
-    status=0
-    matches="$(sr_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" .env.local)" || status=$?
-    [ "$status" -le 1 ] || return 1
-    if [ "$status" -eq 0 ]; then
-      echo "::error::.env.local: $name has no historical form in HEAD" >&2
-      return 1
-    fi
-  fi
   if [ -f "$local_env" ]; then
     sr_bom_guard "$local_env" || return 1
     status=0

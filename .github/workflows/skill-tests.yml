@@ -117,11 +117,9 @@ jobs:
           done < <(git ls-files -- 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' | grep -vE '/(scripts|tests)/lib/|/tests/controls/')
           exit "$fail"
 
-      # Tighten-only file-size gate against the baseline and excludes under
-      # tools/; reads tracked files at HEAD only. The only run of it in CI,
-      # on every event, and the one that can block a PR — a guard that cannot
-      # block is advice. always(): a failing step above must not swallow it.
-      - name: size-ratchet (tighten-only file-size gate)
+      # Document byte ceilings run on every event. A failure in an earlier
+      # step must not suppress this check.
+      - name: size-ratchet (document byte ceilings)
         if: always() && matrix.shard == 'rest'
         run: skills/size-ratchet/scripts/size-ratchet
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # kendex guardrails — the repo-specific rules, run as the last lane of the
 # growth-guards pre-commit chain (GROWTH_GUARDS_PRE_COMMIT_LOCAL). Every rule
-# a shipped package already judges is that package's: size-ratchet caps file
-# size and gates its own baseline rows, byte-ceiling caps bytes,
+# a shipped package already judges is that package's: size-ratchet caps document
+# bytes, byte-ceiling protects against large files,
 # changelog-entries judges changelog fragments, todo-ban catches work markers, suppression-ban catches blanket
 # allows, conflict-markers catches merge markers, prose keeps history out of
 # the markdown agents load, md-format and md-refs hold that markdown to one

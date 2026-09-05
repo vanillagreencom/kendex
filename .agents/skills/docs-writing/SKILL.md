@@ -151,7 +151,7 @@ The `changelog-entries` lane owns the shape. Follow the repository's `changelog.
 - One paragraph per line, one list item per line, no hard wraps inside either. Blank lines separate paragraphs, list blocks, headings, and fences. Tables and fenced code stay as written. The growth-guards `md-format` lane enforces it and `md-reflow` converts a file once.
 - Every relative link, `<path>.md § Heading` or `<path>.md#anchor` citation, and decision ID resolves. The `md-refs` lane checks them.
 - Agent-loaded markdown carries no history. The `prose` lane checks it.
-- Size is a size-ratchet byte class per file kind. A file over its class is frozen in the baseline and only shrinks. A repo overrides a class through its settings, never by stating a number in prose.
+- Document byte limits and exceptions follow [size-ratchet policy](../size-ratchet/references/policy.md).
 - A rule a shipped kendex package states is never restated in the repo's own markdown. The repo installs the package and customises through `kendex.toml`.
 
 ## Writing

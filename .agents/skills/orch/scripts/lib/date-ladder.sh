@@ -3,11 +3,7 @@
 # a repository checkout runs on. GNU and BSD spell every conversion here
 # differently, and the fallback is the whole point of the file.
 #
-# Sourced, never run. It has a caller outside the reset parser — the `--since`
-# floor `oversee-watch` parses — so it is a peer of usage-reset.sh rather than
-# a part of it: a date shim named for one feature would be a lie to the other
-# caller, and having usage-reset.sh reach back into oversee-watch for three
-# names would be the seam this repository's size ratchet calls a failed one.
+# Shared by the reset parser and oversee-watch's --since filter.
 
 # `date` under an explicit zone. An empty ZONE leaves TZ alone, which is the
 # runner's own zone — the zone a harness banner naming none was drawn in, since

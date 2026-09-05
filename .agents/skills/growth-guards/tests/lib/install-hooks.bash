@@ -15,7 +15,7 @@ INSTALL="$SKILL_DIR/scripts/install-git-hooks"
 GG_SKILL_TEMPLATE="$TMP/.templates/growth-guards"
 
 unset GROWTH_GUARDS_CHECKS GROWTH_GUARDS_PRE_COMMIT_LOCAL GROWTH_GUARDS_SETTINGS_FILE \
-  GROWTH_GUARDS_COMMIT_TYPES SIZE_RATCHET_THRESHOLD 2>/dev/null || true
+  GROWTH_GUARDS_COMMIT_TYPES SIZE_RATCHET_CLASSES SIZE_RATCHET_DEFAULT_CLASSES SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE 2>/dev/null || true
 
 # Marker words are assembled from split tokens so this file never contains a
 # marker shape itself — the kendex repo runs todo-ban over its own tree.

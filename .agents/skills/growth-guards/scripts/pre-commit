@@ -141,7 +141,7 @@ if SIZE_RATCHET_SKILL="$(resolve_sibling size-ratchet)"; then
   # deterministic signal is the run itself: an argument parser that rejects
   # --staged says so in its own first line. No help-prose inference — two
   # reviewers proved usage-shape detection cannot converge.
-  echo "=== pre-commit: size-ratchet"
+  echo "=== pre-commit: size-ratchet (document byte ceilings)"
   sr_run_status=0
   sr_run_out="$("$SIZE_RATCHET" --staged 2>&1)" || sr_run_status=$?
   [ -n "$sr_run_out" ] && printf '%s\n' "$sr_run_out"

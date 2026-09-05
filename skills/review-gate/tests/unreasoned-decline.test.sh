@@ -262,14 +262,10 @@ echo "=== the verdict reaches its consumers ==="
 # drive this verdict through the writer and assert the failure post and the
 # remedy text. A presence grep would pass on a branch nothing executed.
 #
-# pr-watch's arm is the one consumer still checked by presence. Its
-# behavioural rows belong in pr-watch.test.sh beside every other verdict,
-# but that file sits on a frozen size-ratchet row (class */tests/*, which
-# never rises) and the guard's remedy is to split the suite first. The rows
-# are written and their breaks proven; they land with that split.
+# pr-watch's mapping is checked by presence here.
 grep -q 'unreasoned-decline)' "$WATCH" \
-  && ok "STOPGAP: pr-watch carries the arm (behavioural rows blocked on a suite split)" \
-  || bad "STOPGAP: pr-watch carries the arm (behavioural rows blocked on a suite split)" "not referenced"
+  && ok "pr-watch carries the unreasoned-decline arm" \
+  || bad "pr-watch carries the unreasoned-decline arm" "not referenced"
 
 echo
 echo "--- must-fail probe: the term, reverted ---"

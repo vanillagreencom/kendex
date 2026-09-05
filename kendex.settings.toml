@@ -255,17 +255,6 @@ GH_ISSUE_PATTERN = "ken-[0-9]+"
 LINEAR_FORMAT = "safe"
 ORCH_STATE_DIR = "tmp"
 
-# File-size ratchet classes this repo sets for itself. ui/ TypeScript is held
-# to 250 lines — tighter than the 400-line base threshold it would otherwise
-# fall through to, the shipped list naming no TypeScript class — because a
-# component that long has stopped being one component.
-#
-# These globs cross `/`, so `ui/*.ts` also matches ui/ test files and any
-# other frozen path under ui/. The engine hands those back to the class the
-# package ships for them (size-ratchet README.md, "Path classes"), so these
-# two entries are policy and nothing else needs restating.
-SIZE_RATCHET_CLASSES = "ui/*.ts=250;ui/*.tsx=250"
-
 # ── Worktrees ────────────────────────────────────────────────────────────
 # What a fresh issue worktree gets from this checkout: only paths git does
 # not carry. An entry does nothing when git carries every path under it, and
