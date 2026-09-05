@@ -1,11 +1,61 @@
 use super::{Finding, frontmatter_map};
 use crate::frontmatter::Value;
+use crate::harness::models::{ModelShape, effort_levels, model_shape};
+use crate::model::HarnessId;
 
 const SANDBOX_MODES: [&str; 3] = ["read-only", "workspace-write", "danger-full-access"];
 const MODES: [&str; 3] = ["primary", "subagent", "all"];
 const PERMISSION_VALUES: [&str; 3] = ["allow", "ask", "deny"];
 /// Every key Cursor's rule loader reads. The rest are folklore.
 const CURSOR_KEYS: [&str; 3] = ["description", "globs", "alwaysApply"];
+
+/// A model id of a shape this harness's loader cannot use: a provider-
+/// qualified id where the harness is bound to one vendor, or a bare id
+/// where the loader needs the provider named. A tier alias never reaches
+/// here — the renderer resolved it — so what is left is the author's own
+/// id, and the wrong shape means the harness picks some other model or
+/// none, never the one asked for.
+fn model_finding(harness: HarnessId, model: &str) -> Option<Finding> {
+    let model = model.trim();
+    // An AWS Bedrock inference-profile ARN carries a `/` and is a bare id
+    // to Claude Code, so it passes as one.
+    if model.is_empty() || model == "inherit" || model.starts_with("arn:") {
+        return None;
+    }
+    let tool = harness.display_name();
+    let qualified = model
+        .split_once('/')
+        .is_some_and(|(provider, id)| !provider.is_empty() && !id.is_empty());
+    match (model_shape(harness), model.contains('/'), qualified) {
+        (ModelShape::Bare, true, _) => Some(Finding::breakage(
+            format!("`model: {model}` names a provider, and {tool} reaches one vendor only"),
+            "name a bare model id this tool lists, a tier alias, or `inherit`",
+        )),
+        (ModelShape::ProviderQualified, _, false) => Some(Finding::breakage(
+            format!("`model: {model}` is not `provider/model`, which is how {tool} loads a model"),
+            "write the model as `provider/model`, or `inherit` to follow the session",
+        )),
+        _ => None,
+    }
+}
+
+/// An effort level outside what this harness's loader accepts under its
+/// own key. The key is the harness's spelling; the levels are one table
+/// (`crate::harness::models::effort_levels`).
+fn effort_finding(harness: HarnessId, key: &str, value: &str) -> Option<Finding> {
+    let levels = effort_levels(harness)?;
+    let value = value.trim();
+    if value.is_empty() || levels.contains(&value) {
+        return None;
+    }
+    Some(Finding::breakage(
+        format!(
+            "`{key}: {value}` is not an effort level {} accepts",
+            harness.display_name()
+        ),
+        format!("use one of {}", levels.join(", ")),
+    ))
+}
 
 /// Codex agents are TOML. A file that does not parse is skipped in silence,
 /// and a missing required key is an agent Codex never offers.
@@ -48,6 +98,18 @@ pub(super) fn codex(text: &str) -> Vec<Finding> {
             ));
         }
     }
+    let text_at = |key: &str| {
+        table
+            .get(key)
+            .and_then(toml::Value::as_str)
+            .unwrap_or_default()
+    };
+    findings.extend(model_finding(HarnessId::Codex, text_at("model")));
+    findings.extend(effort_finding(
+        HarnessId::Codex,
+        "model_reasoning_effort",
+        text_at("model_reasoning_effort"),
+    ));
     findings
 }
 
@@ -67,12 +129,19 @@ pub(super) fn opencode(text: &str) -> Vec<Finding> {
             format!("set the agent's mode to one of {}", MODES.join(", ")),
         ));
     }
-    if let Some(model) = map.get("model").and_then(Value::as_str)
-        && !model.contains('/')
-    {
-        findings.push(Finding::advisory(
-            format!("`model: {model}` names no provider, so OpenCode falls back to its default"),
-            "write the model as `provider/model`, or leave it out to inherit OpenCode's default",
+    findings.extend(model_finding(
+        HarnessId::Opencode,
+        map.get("model").and_then(Value::as_str).unwrap_or_default(),
+    ));
+    if let Some(Value::Map(options)) = map.get("options") {
+        let effort = options
+            .get("reasoningEffort")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        findings.extend(effort_finding(
+            HarnessId::Opencode,
+            "reasoningEffort",
+            effort,
         ));
     }
     match map.get("permission") {
@@ -124,7 +193,39 @@ pub(super) fn claude(name: &str, text: &str) -> Vec<Finding> {
             format!("rename it to `{name}` in the catalog, or declare the agent as `{declared}`"),
         )];
     }
-    Vec::new()
+    let text_at = |key: &str| map.get(key).and_then(Value::as_str).unwrap_or_default();
+    let mut findings = Vec::new();
+    findings.extend(model_finding(HarnessId::Claude, text_at("model")));
+    findings.extend(effort_finding(
+        HarnessId::Claude,
+        "effort",
+        text_at("effort"),
+    ));
+    findings
+}
+
+/// Pi's subagent loader reads `model` as `provider/model`, with an
+/// optional `:level` suffix, and `effort` as one of Pi's thinking levels;
+/// a bare id loads no model and an unknown level is ignored.
+pub(super) fn pi(text: &str) -> Vec<Finding> {
+    let map = match frontmatter_map(text, "Pi") {
+        Ok(map) => map,
+        Err(finding) => return vec![finding],
+    };
+    let text_at = |key: &str| map.get(key).and_then(Value::as_str).unwrap_or_default();
+    let mut findings = Vec::new();
+    let model = text_at("model");
+    // A pinned id may carry the level as a `:suffix`; the suffix is an
+    // effort level under Pi's own vocabulary, checked as one.
+    let (model, suffix) = model
+        .rsplit_once(':')
+        .map_or((model, None), |(id, level)| (id, Some(level)));
+    findings.extend(model_finding(HarnessId::Pi, model));
+    if let Some(level) = suffix {
+        findings.extend(effort_finding(HarnessId::Pi, "model :suffix", level));
+    }
+    findings.extend(effort_finding(HarnessId::Pi, "effort", text_at("effort")));
+    findings
 }
 
 /// Gemini requires `name` and `description` and registers the agent under
@@ -163,7 +264,9 @@ pub(super) fn gemini(name: &str, text: &str) -> Vec<Finding> {
         ));
     }
     let model = text_at("model");
-    if !model.is_empty() && model != "inherit" && !model.starts_with("gemini-") {
+    if let Some(finding) = model_finding(HarnessId::Gemini, model) {
+        findings.push(finding);
+    } else if !model.is_empty() && model != "inherit" && !model.starts_with("gemini-") {
         findings.push(Finding::advisory(
             format!("`model: {model}` is not a Gemini model id, so Gemini falls back to its own"),
             "name a `gemini-*` model, or use a tier alias so kendex picks one",
@@ -203,6 +306,7 @@ pub(super) fn copilot(name: &str, text: &str) -> Vec<Finding> {
             format!("rename it to `{name}` in the catalog, or declare the agent as `{declared}`"),
         ));
     }
+    findings.extend(model_finding(HarnessId::Copilot, text_at("model")));
     findings
 }
 

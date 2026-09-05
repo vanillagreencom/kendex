@@ -78,6 +78,41 @@ fn only_the_current_schema_validates() {
     assert_eq!(located(body), ["schema"]);
 }
 
+/// A known override key under a harness that never renders it is a
+/// setting the author believes is in force and is not.
+#[test]
+fn an_override_a_harness_never_renders_is_a_finding() {
+    let table = parse(
+        r#"schema = 6
+[agent-frontmatter.gemini.rust]
+effort = "high"
+model = "inherit"
+[agent-frontmatter.claude.rust]
+effort = "high"
+[agent-frontmatter.cursor.rust]
+color = "red"
+"#,
+    );
+    let findings = validate(&table);
+    let locations: Vec<_> = findings.iter().map(|f| f.location.as_str()).collect();
+    assert!(
+        locations.contains(&"agent-frontmatter.gemini.rust.effort"),
+        "{locations:?}"
+    );
+    assert!(
+        locations.contains(&"agent-frontmatter.cursor.rust.color"),
+        "{locations:?}"
+    );
+    assert!(
+        !locations.contains(&"agent-frontmatter.gemini.rust.model"),
+        "{locations:?}"
+    );
+    assert!(
+        !locations.contains(&"agent-frontmatter.claude.rust.effort"),
+        "{locations:?}"
+    );
+}
+
 #[test]
 fn a_clean_manifest_validates_empty() {
     let table = parse(

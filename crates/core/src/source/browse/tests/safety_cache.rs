@@ -200,7 +200,7 @@ fn a_preview_says_what_this_projects_own_settings_add() {
     };
     let manifest = root.join("kendex.toml");
     let text = fs::read_to_string(&manifest).unwrap()
-        + "\n[agent-frontmatter.claude.helper]\nnickname-candidates = [\"Scout\"]\n";
+        + "\n[agent-frontmatter.claude.helper]\ncolor = \"blue\"\n";
     fs::write(&manifest, text).unwrap();
 
     let loud = agent_safety(&env, &scope);

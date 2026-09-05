@@ -35,6 +35,48 @@ fn is_inherit(value: &str) -> bool {
     matches!(value, "inherit" | "current" | "parent")
 }
 
+/// How a harness's agent file names a model. One table, read by the
+/// renderers' validation so a value the loader cannot use is refused
+/// before it reaches disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelShape {
+    /// A bare id from the harness's own catalogue, a tier alias, or
+    /// `inherit`. A `provider/model` id names a provider the harness has
+    /// no way to reach.
+    Bare,
+    /// A `provider/model` id, or `inherit` for the session's own. The
+    /// provider is the session's; kendex names no fallback.
+    ProviderQualified,
+    /// The file carries no model.
+    Absent,
+}
+
+pub fn model_shape(harness: HarnessId) -> ModelShape {
+    match harness {
+        HarnessId::Claude | HarnessId::Codex | HarnessId::Gemini | HarnessId::Copilot => {
+            ModelShape::Bare
+        }
+        HarnessId::Opencode | HarnessId::Pi => ModelShape::ProviderQualified,
+        HarnessId::Cursor => ModelShape::Absent,
+    }
+}
+
+/// The effort levels a harness's agent file accepts under its own key,
+/// lowest first; `None` where the file has no effort key at all and an
+/// effort setting renders nothing.
+pub fn effort_levels(harness: HarnessId) -> Option<&'static [&'static str]> {
+    match harness {
+        HarnessId::Claude => Some(&["low", "medium", "high", "xhigh", "max"]),
+        // Codex and OpenCode's OpenAI provider share the reasoning-effort
+        // vocabulary.
+        HarnessId::Codex | HarnessId::Opencode => {
+            Some(&["minimal", "low", "medium", "high", "xhigh"])
+        }
+        HarnessId::Pi => Some(&["minimal", "low", "medium", "high", "xhigh", "max"]),
+        HarnessId::Cursor | HarnessId::Gemini | HarnessId::Copilot => None,
+    }
+}
+
 pub fn resolve_model(harness: HarnessId, model: &str) -> ResolvedModel {
     let bare = model.trim().to_lowercase();
     if is_inherit(&bare) {
@@ -61,15 +103,12 @@ pub fn resolve_model(harness: HarnessId, model: &str) -> ResolvedModel {
             (HarnessId::Copilot, _) => resolved(Some("auto")),
         };
     }
-    // Explicit ids pass through. OpenCode's loader requires the
-    // `provider/model` form and its historical default provider is openai,
-    // so a bare vendor id keeps working by gaining that prefix; Pi has no
-    // such default, so a bare unknown passes through with a warning.
+    // Explicit ids pass through as written. OpenCode and Pi load a model
+    // as `provider/model` and kendex names no provider on the author's
+    // behalf, so a bare id passes through with a warning and render
+    // validation refuses it.
     let bare = !model.contains('/');
-    if harness == HarnessId::Opencode && bare {
-        return resolved(Some(&format!("openai/{}", model.trim())));
-    }
-    let warning = (harness == HarnessId::Pi && bare).then(|| {
+    let warning = (matches!(harness, HarnessId::Pi | HarnessId::Opencode) && bare).then(|| {
         format!(
             "model '{model}' is neither a known alias nor a provider/model id — {} may not load it",
             harness.display_name()
@@ -149,10 +188,10 @@ mod tests {
     }
 
     #[test]
-    fn bare_ids_gain_opencodes_default_provider_and_warn_on_pi() {
+    fn bare_ids_pass_through_and_warn_on_the_provider_harnesses() {
         let opencode = resolve_model(HarnessId::Opencode, "gpt-6-astra");
-        assert_eq!(opencode.id.as_deref(), Some("openai/gpt-6-astra"));
-        assert_eq!(opencode.warning, None);
+        assert_eq!(opencode.id.as_deref(), Some("gpt-6-astra"));
+        assert!(opencode.warning.is_some());
         let pi = resolve_model(HarnessId::Pi, "mystery-model");
         assert_eq!(pi.id.as_deref(), Some("mystery-model"));
         assert!(pi.warning.is_some());

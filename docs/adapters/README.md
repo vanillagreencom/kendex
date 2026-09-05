@@ -23,6 +23,22 @@ What kendex may do on a harness is one table, `crates/core/src/harness/caps.rs`,
 - `enforcement` is carried by Hook rows alone: `Enforced` where the tool runs the registered command and honours its result, `Advisory` where the hook installs as text.
 - A hold a harness's own configuration places on an item (Copilot's `disabledSkills`) is not a column; the switch kendex owns works both ways because it is a rename, and the hold is reported per item where it is read.
 
+## Model and effort
+
+An agent's `model` and `effort` reach each harness under that harness's own key and vocabulary. The alias table and the two shape tables are `crates/core/src/harness/models.rs`; render validation (`crates/core/src/render/validate/agent.rs`) refuses a value the loader cannot use, and manifest validation (`crates/core/src/manifest/validate.rs`) refuses an `[agent-frontmatter.<harness>.<agent>]` key the harness never renders.
+
+| Harness | Model shape | Effort key | Effort levels | Absent effort |
+|---|---|---|---|---|
+| Claude Code | bare: a tier alias as written, a `claude-*` id, or `inherit` | `effort` | `low`, `medium`, `high`, `xhigh`, `max` | the session's level |
+| Codex | bare: every tier is `gpt-6-astra`; an omitted key inherits | `model_reasoning_effort` | `minimal`, `low`, `medium`, `high`, `xhigh` | the model's default |
+| OpenCode | `provider/model`; every tier is `openai/gpt-6-astra`; an omitted key inherits | `options.reasoningEffort` | `minimal`, `low`, `medium`, `high`, `xhigh` | the provider's default |
+| Pi | `provider/model`, optionally `:level`; `fable` and `opus` inherit, other tiers `openai-codex/gpt-6-astra` | `effort` | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | Pi's `defaultThinkingLevel` |
+| Gemini CLI | bare `gemini-*` id or `inherit`; tiers map to the 3.x previews | none | — | — |
+| GitHub Copilot | bare id from Copilot's own list; every tier is `auto`; an omitted key inherits | none | — | — |
+| Cursor | none | none | — | — |
+
+A tier alias is a pin, never a synonym for `inherit`; `inherit` is the default that follows the session on every harness. A `provider/model` id is refused on a harness bound to one vendor, and a bare id is refused where the loader needs the provider named (both halves non-empty, and on Pi an optional `:level` from Pi's own set); kendex names no fallback provider because a subagent cannot run on a provider the session is not signed in to.
+
 ## Surface shapes
 
 A surface is one of four shapes, declared per kind and scope by each adapter (`Surface`, `crates/core/src/harness/mod.rs`):

@@ -126,7 +126,10 @@ fn deny_list(agent: &EffectiveAgent) -> Vec<String> {
 }
 
 fn effort_is_real(effort: &str) -> bool {
-    !matches!(effort, "" | "none" | "false" | "off" | "no")
+    !matches!(
+        effort.trim().to_lowercase().as_str(),
+        "" | "none" | "false" | "off" | "no"
+    )
 }
 
 #[cfg(test)]
