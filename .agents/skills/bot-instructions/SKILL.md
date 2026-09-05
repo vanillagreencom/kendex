@@ -92,7 +92,7 @@ Keep one `## Doctrine` section in the spec copy. `--spec` selects that copy; the
 
 ### scope
 
-Raise a defect only in changed lines or code those lines directly break. Report correctness defects, security defects, data loss, and fail-open paths in gates, guards, or CI. Do not report unrelated defects. Do not question the inclusion of a file that the PR body explicitly includes in its scope.
+Raise a defect only in changed lines or code those lines directly break. Report correctness defects, security defects, data loss, and fail-open paths in gates, guards, or CI. Do not report unrelated defects. Do not question the inclusion of a file that the PR body explicitly includes in its scope. Report an input only after establishing that a shipped producer emits it in normal use; a full disk or a value past 2^53 is not one.
 
 ### rounds
 
@@ -100,7 +100,7 @@ Report all findings about the current diff in one round. Write one comment per r
 
 ### severity
 
-Mark a finding as blocking only if it must stop the merge. Mark other findings as suggestions. Group suggestions together. Omit suggestions when a repeat review covers a one-line fix. Match severity and confidence to the evidence.
+Mark a finding as blocking only if it must stop the merge. Mark other findings as suggestions. Group suggestions together. Omit suggestions when a repeat review covers a one-line fix. Match severity and confidence to the evidence. Name the user-visible consequence in every finding.
 
 ### no-preferences
 
@@ -108,7 +108,7 @@ Do not report style, wording, naming, or comment preferences. Do not request spe
 
 ### declined
 
-Read the PR's decline replies and the repo's instruction files before reporting a finding. Do not repeat a finding class that a stated decline or a documented accepted trade-off already answers. Reopen it only when the relevant code has changed.
+Read the PR's decline replies and the repo's instruction files before reporting a finding. Do not repeat a finding class that a stated decline or a documented accepted trade-off already answers. Reopen it only when the relevant code has changed. Report a gap only after establishing that nothing already covers it: a required CI context, a shipped hook, the file's own stated contract, or the platform's documentation.
 
 ### reply-contract
 
