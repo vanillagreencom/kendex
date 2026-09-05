@@ -3,7 +3,7 @@
 # name: block-worktree-refresh
 # event: PreToolUse
 # matcher: Bash
-# description: Refuse a `kendex` command that writes the project scope (`refresh`, `apply`, `add`, `remove`, `update-pi`, `updates --apply`) when the working directory is a linked git worktree and the command does not name the global scope, and whenever a `cd` or `pushd` stands before the verb in the same command, since the directory the write lands in cannot then be read from the command. A project's kendex install is registered to the main checkout, so a project-scope write from a linked worktree renders into that checkout and removes what it does not expect there. Names the two forms that are right: the same command from the main checkout, or the verb's global form (`--global` for add, `--scope global` for update-pi, either for the rest).
+# description: Refuse a `kendex` command that writes the project scope (`refresh`, `apply`, `add`, `remove`, `update-pi`, `updates --apply`, `pin`, `fork`, `adopt`, `drift-hook`, `source add|remove|enable|disable`, `marketplace subscribe|unsubscribe`) when the working directory is a linked git worktree and the command does not name the global scope, and whenever a `cd` or `pushd` stands before the verb in the same command, since the directory the write lands in cannot then be read from the command. A project's kendex install is registered to the main checkout, so a project-scope write from a linked worktree renders into that checkout and removes what it does not expect there. Names the two forms that are right: the same command from the main checkout, or the verb's global form (`--global` for add, `--scope global` for update-pi, either for the rest).
 # safety: Reads the command text and asks git whether the working directory's git dir differs from its common dir, which is what makes a worktree linked; writes nothing. A git that cannot answer refuses. The verb is read as a word after a `kendex` word, wherever in the command it stands, so a command that merely spells the pair in prose is refused, and that is the accepted cost; the bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. `kendex verify`, `check`, `list`, `report` and every other verb pass; a command carrying `-g`, `--global` or `--scope global` in the verb's own segment, with no `--scope project` or `--scope all` beside it, passes because it names the scope this hook does not guard. A payload that cannot be read, an empty one included, is refused, never skipped.
 # timeout: 10
 # ---
@@ -77,7 +77,10 @@ SEGMENTS=${SEGMENTS//\)/$NL}
 # refresh`. Those root options and their values are dropped by the CLI once a
 # subcommand follows, so only the words AFTER the verb are read for the scope;
 # a `--global` before it exempts nothing.
-WRITE_RE='(^|[^[:alnum:]_.-])kendex["'"'"']?([[:space:]]+[^[:space:]]+)*[[:space:]]+["'"'"']?(refresh|apply|add|remove|update-pi|updates)["'"'"']?([[:space:]]|$)'
+# The verbs are every shipped command that writes a scope: the item verbs,
+# `updates --apply`, `pin`, `fork`, `adopt`, `drift-hook`, and the writing
+# subcommands of `source` and `marketplace`.
+WRITE_RE='(^|[^[:alnum:]_.-])kendex["'"'"']?([[:space:]]+[^[:space:]]+)*[[:space:]]+["'"'"']?(refresh|apply|add|remove|update-pi|updates|pin|fork|adopt|drift-hook|source[[:space:]]+(add|remove|enable|disable)|marketplace[[:space:]]+(subscribe|unsubscribe))["'"'"']?([[:space:]]|$)'
 GLOBAL_RE='(^|[[:space:]])(-g|--global|--scope([[:space:]]+|=)global)([[:space:]]|$)'
 # Any `--scope` after the verb that is not the plain word `global` names the
 # project scope or one this hook cannot read (a quoted value included), and

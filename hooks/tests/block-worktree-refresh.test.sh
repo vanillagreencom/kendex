@@ -88,11 +88,13 @@ run_payload() { # raw-json [PATH] -> rc, stderr in ERR_FILE, run in the worktree
 }
 
 echo "=== block-worktree-refresh: a project-scope write from a linked worktree is refused ==="
-for verb in refresh apply 'add orch' 'remove orch' update-pi; do
+for verb in refresh apply 'add orch' 'remove orch' update-pi 'pin orch' 'fork orch' adopt drift-hook 'source add x' 'source remove x' 'source enable x' 'source disable x' 'marketplace subscribe x' 'marketplace unsubscribe x'; do
   run_in "$WT" "kendex $verb"; assert_eq "$rc" 2 "kendex $verb from the worktree is refused"
 done
 assert_contains "$ERR_FILE" 'git worktree list' 'the refusal names how to find the main checkout'
 assert_contains "$ERR_FILE" '--scope global' 'the refusal names the global scope'
+run_in "$WT" 'kendex source list';                assert_eq "$rc" 0 'source list is a read'
+run_in "$WT" 'kendex marketplace list';           assert_eq "$rc" 0 'marketplace list is a read'
 run_in "$WT" 'true && kendex refresh';            assert_eq "$rc" 2 'the verb is found after a chained command'
 run_in "$MAIN" "cd $WT && kendex refresh";        assert_eq "$rc" 2 'a cd before the verb moves the write out of the directory git is asked about'
 assert_contains "$ERR_FILE" 'after a cd or pushd' 'the refusal names the move'
