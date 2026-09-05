@@ -1,8 +1,9 @@
 # shellcheck shell=bash
 # Shared commit changes for the changelog gate and repository compile checks.
 # Call after common.sh and settings.sh, from the repository root.
+gg_path GG_COMMIT_LIB dirname -- "${BASH_SOURCE[0]}"
 # shellcheck source=commit-parent.sh
-source "$(dirname -- "${BASH_SOURCE[0]}")/commit-parent.sh"
+source "$GG_COMMIT_LIB/commit-parent.sh"
 
 gg_commit_changes() { # sets GG_TMP/staged.z, written.z and product.z
   local meta src dest srcmode dstmode srcsha dstsha status f required_raw required
