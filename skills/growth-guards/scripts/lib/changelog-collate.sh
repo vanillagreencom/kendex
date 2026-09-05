@@ -32,7 +32,7 @@
 #
 # Needs lib/common.sh and lib/changelog-grammar.sh sourced first, and runs on
 # the state the walk and the record scope filled in: GG_TMP/frags.z, RECORD,
-# RECORD_SHA, RECORD_NOTE and the GG_RECORD_* bounds. gg_install_file comes
+# RECORD_SHA and the GG_RECORD_* bounds. gg_install_file comes
 # from lib/atomic-install.sh, and resolution is at call time, so that one has
 # only to be sourced before gg_changelog_collate runs.
 #
@@ -72,15 +72,8 @@ gg_changelog_collate() { # folds this run's accepted fragments into the record
   nl="
 "
 
-  # RECORD_NOTE rides every line this function reports on. It is the record
-  # scope saying which way it stood down — HEAD carries no record yet, HEAD's
-  # copy is not one this can be compared against and why, or the declaration
-  # bypassed the comparison — and the release operator is the reader who most
-  # needs it, because this run is the one writing the record. The fold's line
-  # stands in for the cap verdict below, so a note dropped here is dropped
-  # from the release entirely.
   if [ "$checked" -eq 0 ]; then
-    echo "changelog-entries: no fragments — nothing to collate$RECORD_NOTE"
+    echo "changelog-entries: no fragments — nothing to collate"
     return 0
   fi
   # A collation with nowhere to fold into refuses rather than writing some
@@ -214,5 +207,5 @@ ${survivors%"$nl"}"
   done <"$GG_TMP/collate.dirs"
 
   if [ "$count" -eq 1 ]; then noun=entry; else noun=entries; fi
-  echo "changelog-entries: folded $count $noun into $(gg_shown "$RECORD")'s [Unreleased] section$RECORD_NOTE"
+  echo "changelog-entries: folded $count $noun into $(gg_shown "$RECORD")'s [Unreleased] section"
 }

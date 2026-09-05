@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# changelog-entries — the one judge of a repository's changelog, over two
-# scopes.
+# changelog-entries — validates changelog fragments and combines them at release.
 #
 # FRAGMENTS (GROWTH_GUARDS_CHANGELOG_PATHS, default changelog.d/*/*.md). One
 # entry per file, so two branches never write the same line. Each matched
@@ -11,16 +10,8 @@
 # rule: no line counting, so an entry that states its outcome passes however
 # it is wrapped.
 #
-# THE RECORD (GROWTH_GUARDS_CHANGELOG_RECORD, default CHANGELOG.md). The
-# released record is collated, never hand-written: a line under its
-# `## [Unreleased]` heading that HEAD does not already carry is refused, so
-# two branches cannot both insert at the same place and eject each other from
-# the merge queue. The heading is found by ATX structure outside fenced code,
-# never by substring, so text mentioning `[Unreleased]` decides nothing.
-# GROWTH_GUARDS_CHANGELOG_COLLATE=1 in the environment declares the
-# collator's own write, the way RATCHET_RAISE=1 declares a baseline. It
-# bypasses that comparison and nothing else: what the record IS — a real file
-# holding measurable text — is judged whether or not a collation is running.
+# Ordinary checks judge the fragments. The combined record is read only by
+# --collate, which validates its destination before writing.
 #
 # --collate is that write, and the release commit is its only caller: on a
 # clean verdict it folds the fragments this run just accepted into the
@@ -77,7 +68,7 @@ usage() {
   cat <<'EOF'
 usage: changelog-entries [--collate]
 
-Two scopes, one judge.
+Checks changelog fragments. --collate also validates its destination.
 
 Fragments (GROWTH_GUARDS_CHANGELOG_PATHS): every matched tracked path must
 be a real text file, sit directly under a section directory (added, changed,
@@ -88,10 +79,7 @@ submodule gitlink or a binary blob at a configured path is refused. The
 measurement joins the fragment's lines with CR stripped and whitespace runs
 collapsed to one space, counted in characters.
 
-The record (GROWTH_GUARDS_CHANGELOG_RECORD): a line the index carries under
-its `## [Unreleased]` heading that HEAD does not is refused — entries are
-written as fragments and collated at release. The heading is found by ATX
-structure outside fenced code, never by substring.
+Ordinary runs do not judge the combined record or its wording.
 
 A tracked path under a fragment root that the globs do not cover is refused
 too — it is a fragment nothing would ever fold in. A root is a pattern's
@@ -122,8 +110,8 @@ kendex.settings.toml [env] > default):
                                   (default CHANGELOG.md; empty = no record
                                   scope)
 
-GROWTH_GUARDS_CHANGELOG_COLLATE=1 in the environment declares the collator's
-own write under [Unreleased].
+GROWTH_GUARDS_CHANGELOG_COLLATE=1 lets commit-msg count the release record
+as its required changelog change. It does not change this check.
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF
@@ -284,13 +272,13 @@ while IFS= read -r -d '' rec; do
   done <"$GG_TMP/report"
 done <"$GG_TMP/files.z"
 
-# --- the record scope --------------------------------------------------------
-# lib/changelog-record-scope.sh: one tracked file judged against HEAD, which
-# shares nothing with the walk above but the verdict it reports into.
-gg_changelog_record_scope
+# The release operation reads the destination only when it has entries to fold.
+if [ "$COLLATE" -eq 1 ] && [ "$checked" -gt 0 ]; then
+  gg_changelog_record_scope
+fi
 
 if [ "$violations" -gt 0 ]; then
-  echo "changelog-entries: $violations violation(s) — cap $CAP characters, $checked fragment(s) measured$RECORD_NOTE"
+  echo "changelog-entries: $violations violation(s) — cap $CAP characters, $checked fragment(s) measured"
   exit 1
 fi
 # Only past the verdict: the fold must never publish a set this run was still
@@ -302,7 +290,7 @@ if [ "$COLLATE" -eq 1 ]; then
   exit 0
 fi
 if [ "$checked" -eq 0 ]; then
-  echo "changelog-entries: OK — no tracked file matches GROWTH_GUARDS_CHANGELOG_PATHS ($PATTERNS_SHOWN)$RECORD_NOTE"
+  echo "changelog-entries: OK — no tracked file matches GROWTH_GUARDS_CHANGELOG_PATHS ($PATTERNS_SHOWN)"
   exit 0
 fi
-echo "changelog-entries: OK — $checked fragment(s) within the cap ($CAP characters)$RECORD_NOTE"
+echo "changelog-entries: OK — $checked fragment(s) within the cap ($CAP characters)"

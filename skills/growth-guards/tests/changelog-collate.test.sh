@@ -36,8 +36,7 @@ reset() { # RECORD on stdin — the fixture record and an empty tree, committed
   rm -rf -- "${R:?}/changelog.d"
   cat >"$R/CHANGELOG.md"
   git -C "$R" add -A
-  # Committed, not merely staged: the record scope compares the staged copy
-  # against HEAD, so a fixture that only stages one reads as a hand edit.
+  # Each case starts from a committed fixture with a clean index.
   git -C "$R" commit -q --allow-empty -m "chore: reset the fixture"
   cp "$R/CHANGELOG.md" "$TMP/before"
 }
@@ -148,10 +147,6 @@ printf -- '- Tightened something.' | frag security ken-7.md
 run_collate
 [ "$RC" -eq 0 ] && case "$OUT" in *"folded 7 entries into CHANGELOG.md's [Unreleased] section"*) true ;; *) false ;; esac \
   && ok "the fold reports what it folded" || bad "the fold reports what it folded" "rc=$RC out=$OUT"
-# The record scope's note rides the fold's line: this run is the one writing
-# the record, so which way that scope stood down has no other reader.
-case "$OUT" in *"CHANGELOG.md unchanged under [Unreleased]"*) ok "and carries the record scope's note with it" ;;
-  *) bad "and carries the record scope's note with it" "$OUT" ;; esac
 EXPECTED='# Changelog
 
 Preamble.
@@ -205,13 +200,8 @@ no_staging && ok "the install leaves no staging file beside the record" \
   || bad "the install leaves no staging file beside the record" "$STAGING"
 
 echo "=== the record is split at the STAGED copy's line numbers, not HEAD's ==="
-# The record scope keeps those numbers for the staged copy alone, so HEAD's
-# parse — which runs after it — cannot overwrite them. A fixture whose two
-# copies agree cannot tell the two apart, so this one moves the section: the
-# staged copy adds preamble ABOVE the heading and gains no line under it, so
-# the record scope still passes and the only difference between the copies is
-# where the section sits. Split at HEAD's numbers instead, the fold drops
-# preamble and writes a section heading above '## [Unreleased]' — and exits 0.
+# Moving the staged heading must move the split point. Using HEAD would put
+# fragments at the wrong place in the edited document.
 printf '%s' "$RECORD" | reset
 printf '%s' '# Changelog
 
@@ -322,12 +312,7 @@ printf '%s' "$RECORD" | reset
 run_collate
 [ "$RC" -eq 0 ] && case "$OUT" in *"no fragments — nothing to collate"*) true ;; *) false ;; esac \
   && ok "an empty tree folds nothing and says so" || bad "an empty tree folds nothing and says so" "rc=$RC out=$OUT"
-# That line is the whole report on a run with nothing else to say, so the
-# record scope's note has to reach the operator through it too.
-case "$OUT" in
-  *"CHANGELOG.md unchanged under [Unreleased]"*) ok "and carries the record scope's note even with nothing to fold" ;;
-  *) bad "and carries the record scope's note even with nothing to fold" "$OUT" ;;
-esac
+
 untouched && ok "the record is untouched with nothing to fold" || bad "the record is untouched with nothing to fold" "$(cat "$R/CHANGELOG.md")"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

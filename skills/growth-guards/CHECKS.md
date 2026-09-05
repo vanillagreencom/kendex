@@ -47,7 +47,7 @@ Seven `<`, seven `|`, or seven `>` at column 0, followed by a space or end of li
 
 ## changelog-entries
 
-One judge over two scopes: the fragments a branch writes and the record a release folds them into. A path in both scopes is a config error. Text that is not valid UTF-8 is a collection error naming the line.
+Ordinary runs check fragments. `--collate` also validates the destination record before writing. A path in both roles is a config error. Text that is not valid UTF-8 is a collection error naming the line.
 
 ### Fragments
 
@@ -64,15 +64,11 @@ A pattern's root is its leading run of glob-free directories (`changelog.d/*/*.m
 
 ### The record
 
-`GROWTH_GUARDS_CHANGELOG_RECORD` is the collated file; empty switches this scope off. A line the index carries under `## [Unreleased]` that HEAD does not is a violation.
+`GROWTH_GUARDS_CHANGELOG_RECORD` names the collation destination. Ordinary checks permit edits to its wording and headings. They do not compare it against HEAD.
 
-The heading is found by structure: a fence opens on three or more backticks or tildes and closes only on a run at least as long of the same character alone on its line; nothing inside a fence is a heading; a level-1 or level-2 ATX heading switches the section on or off; the text matches on equality, case-folded, after its leading spaces and hashes.
-
-- Exit 2: an unterminated fence; a second `## [Unreleased]` heading.
-- Violations: the heading staged away where HEAD carries one; no `## [Unreleased]` heading; a level-3 heading inside the section naming no Keep a Changelog section; a record tracked in HEAD and absent from the index (retire the scope by emptying the key).
-- A record HEAD carries that this guard would not accept skips the comparison, naming the reason; shape rules judge the staged copy.
-
-The comparison runs only where HEAD already carries the record. `GROWTH_GUARDS_CHANGELOG_COLLATE=1` in the environment declares the collator's own write and bypasses that comparison and nothing else. Each stand-down names itself in the verdict.
+- `--collate` with accepted fragments requires a tracked, regular text destination with one `## [Unreleased]` section. Section headings use the Keep a Changelog names so each fragment has a destination.
+- Missing or duplicate pending sections, unclosed fences, and unknown section names refuse collation before any write.
+- `GROWTH_GUARDS_CHANGELOG_COLLATE=1` lets `commit-msg` count a record change as the release changelog entry. It does not change fragment validation.
 
 ### Measuring one entry
 
