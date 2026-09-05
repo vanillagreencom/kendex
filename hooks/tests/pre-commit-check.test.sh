@@ -239,6 +239,19 @@ assert_eq "$rc" "2" "a command that is not a string is refused"
 assert_contains "$err" "not valid JSON, or names a command that is not a string" "the refusal names the payload"
 assert_eq "$log" "" "nothing ran for the unreadable payload"
 
+echo
+echo "Copilot carries the command under toolArgs, as an object or as one JSON-encoded string"
+
+run_hook "$ARMED" '{"sessionId":"s","timestamp":1,"cwd":"/w","toolName":"bash","toolArgs":{"command":"git commit '"$NV"' -m x"}}'
+assert_eq "$rc" "2" "a Copilot toolArgs object is read"
+assert_contains "$err" "would skip this repository's armed git hooks" "the bypass under toolArgs is named"
+run_hook "$ARMED" '{"toolName":"bash","toolArgs":"{\"command\":\"git commit '"$NV"' -m x\"}"}'
+assert_eq "$rc" "2" "a Copilot toolArgs JSON string is read"
+run_hook "$ARMED" '{"toolName":"bash","toolArgs":{"command":"git commit -m x"}}'
+assert_eq "$rc" "0" "a plain commit under toolArgs passes, so the shape is read rather than refused"
+run_hook "$ARMED" '{"toolName":"bash","toolArgs":"not json"}'
+assert_eq "$rc" "2" "a toolArgs string that is not JSON refuses rather than skipping the guard"
+
 run_hook "$UNARMED" '{"tool_input":{"command":"git commit -m x'
 assert_eq "$rc" "2" "a command string that never ends is refused"
 

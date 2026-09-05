@@ -22,11 +22,20 @@ INPUT=$(cat)
 
 # A payload that does not parse, or that names a command which is not a
 # string, is refused rather than skipped. An absent command is the empty
-# string and passes. The null tests are spelled out because jq's `//` reads
-# `false` as absent, and `false` is not a command either.
+# string and passes. The command is read where each harness carries it:
+# `tool_input.command` (Claude Code, Codex, Gemini CLI and the Pi carrier), a
+# bare `command`, or Copilot's `toolArgs.command`, whose `toolArgs` arrives as
+# an object or as one JSON-encoded string. The null tests are spelled out
+# because jq's `//` reads `false` as absent, and `false` is not a command
+# either.
 if ! COMMAND=$(printf '%s' "$INPUT" \
-  | jq -r 'if .tool_input.command == null then (if .command == null then "" else .command end)
-           else .tool_input.command end
+  | jq -r 'def copilot: .toolArgs
+             | if . == null then null elif type == "string" then fromjson else . end
+             | if . == null then null elif type == "object" then .command else error end;
+           if .tool_input.command != null then .tool_input.command
+           elif .command != null then .command
+           elif copilot != null then copilot
+           else "" end
            | if type == "string" then . else error end' 2>/dev/null); then
   echo "block-bare-cd: hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
   exit 2
