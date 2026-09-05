@@ -73,7 +73,9 @@ git -C "$R" commit -q -m fixture
 run_guard() { # [VAR=VALUE...] — sets OUT and RC
   OUT=""
   RC=0
-  OUT="$(cd "$R" && env "$@" "$GUARD" 2>&1)" || RC=$?
+  args=()
+  [ "${FULL_GUARD:-0}" -eq 0 ] || args+=(--full)
+  OUT="$(cd "$R" && env "$@" "$GUARD" ${args[@]+"${args[@]}"} 2>&1)" || RC=$?
 }
 
 echo "=== new temporary fixtures derive their canonical root at creation ==="
@@ -163,7 +165,8 @@ rm -f "$R/fake-bin/git" "$R/fake-bin/awk"
 git -C "$R" reset -q HEAD -- crates/core/tests/temp_path.rs
 rm -f "$R/crates/core/tests/temp_path.rs"
 
-echo "=== every cross target's test targets compile before the host suite ==="
+FULL_GUARD=1
+echo "=== full validation compiles every cross target ==="
 mkdir -p "$R/fake-bin"
 cat >"$R/fake-bin/rustup" <<'SH'
 #!/usr/bin/env bash
@@ -234,6 +237,7 @@ run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTA
   [ "$(grep -cFx "$(check_call "$WINDOWS")" "$CARGO_CALL_LOG")" -eq 1 ] \
   && ok "guard asks cargo once for every cross target's core and CLI tests" \
   || bad "guard asks cargo once for every cross target's core and CLI tests" "$(cat "$CARGO_CALL_LOG")"
+FULL_GUARD=0
 git -C "$R" reset -q HEAD -- Cargo.toml
 rm -f "$R/Cargo.toml"
 
@@ -283,6 +287,7 @@ run_guard
 # the defect to pass, proving the red above it came from that check and not
 # from a neighbour. The copy sits beside a copy of bash32-lint because guard
 # resolves its sibling tools next to itself.
+ln -s "$REPO/.agents" "$TMP/.agents"
 MUTANT_TOOLS="$TMP/mutant-tools"
 mkdir -p "$MUTANT_TOOLS"
 cp "$REPO/tools/bash32-lint" "$MUTANT_TOOLS/bash32-lint"
@@ -565,6 +570,76 @@ run_guard
   && ok "an agent edit with no pi render tracked anywhere passes without one" \
   || bad "an agent edit with no pi render tracked anywhere passes without one" "rc=$RC out=$OUT"
 git -C "$R" reset -q --hard HEAD~1
+
+echo "=== commit compile scheduling follows product changes ==="
+mkdir -p "$R/crates/core/src" "$R/crates/cli/src" "$R/ui" "$R/fake-bin"
+printf '[workspace]\n' >"$R/Cargo.toml"
+printf '[lints]\nworkspace = true\n' >"$R/crates/core/Cargo.toml"
+printf '[lints]\nworkspace = true\n' >"$R/crates/cli/Cargo.toml"
+printf 'fn first() {}\n' >"$R/crates/core/src/lib.rs"
+printf 'fn first() {}\n' >"$R/crates/cli/src/lib.rs"
+printf '{}\n' >"$R/ui/package.json"
+printf '[env]\nGROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = "crates/* ui/*"\n' >"$R/kendex.settings.toml"
+cat >"$R/fake-bin/cargo" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'cargo %s\n' "$*" >>"$COMPILE_LOG"
+[ "$*" != "${FAIL_COMPILE:-}" ]
+SH
+cat >"$R/fake-bin/npm" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'npm %s\n' "$*" >>"$COMPILE_LOG"
+[ "$*" != "${FAIL_COMPILE:-}" ]
+SH
+chmod +x "$R/fake-bin/cargo" "$R/fake-bin/npm"
+git -C "$R" add -A
+git -C "$R" commit -qm 'test: compiler fixture'
+COMPILE_LOG="$TMP/compile.log"
+printf '# docs\n' >"$R/README.md"
+git -C "$R" add README.md
+: >"$COMPILE_LOG"
+run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
+[ "$RC" -eq 0 ] && [ ! -s "$COMPILE_LOG" ] \
+  && ok "a docs-only commit runs no compiler or test runner" \
+  || bad "docs-only scheduling" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
+printf 'fn second() {}\n' >>"$R/crates/core/src/lib.rs"
+git -C "$R" add crates/core/src/lib.rs
+: >"$COMPILE_LOG"
+run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
+[ "$RC" -eq 0 ] && grep -Fxq 'cargo check --manifest-path crates/core/Cargo.toml --all-targets' "$COMPILE_LOG" \
+  && grep -Fxq 'cargo clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet -- -D warnings' "$COMPILE_LOG" \
+  && ! grep -Eq 'crates/cli|cargo (test|doc)|npm|--workspace|--target ' "$COMPILE_LOG" \
+  && ok "Rust checks select the touched crate and omit full suites" \
+  || bad "Rust scoped checks" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
+for command in 'check --manifest-path crates/core/Cargo.toml --all-targets' 'clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet -- -D warnings'; do
+  run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG" FAIL_COMPILE="$command"
+  [ "$RC" -eq 1 ] && ok "the $command failure blocks" || bad "compiler failure blocks" "$OUT"
+done
+git -C "$R" reset -q HEAD -- crates/core/src/lib.rs
+git -C "$R" checkout -q -- crates/core/src/lib.rs
+printf 'export const value = 1;\n' >"$R/ui/test.ts"
+git -C "$R" add ui/test.ts
+: >"$COMPILE_LOG"
+run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
+[ "$RC" -eq 0 ] && grep -Fxq 'npm run --prefix ui check:types' "$COMPILE_LOG" \
+  && grep -Fxq 'npm run --prefix ui check:lint' "$COMPILE_LOG" \
+  && ! grep -Eq 'cargo|npm.* test' "$COMPILE_LOG" \
+  && ok "UI changes run types and lint without tests or Rust" \
+  || bad "UI scoped checks" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
+for command in 'run --prefix ui check:types' 'run --prefix ui check:lint'; do
+  run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG" FAIL_COMPILE="$command"
+  [ "$RC" -eq 1 ] && ok "the $command failure blocks" || bad "UI check failure blocks" "$OUT"
+done
+git -C "$R" reset -q HEAD -- ui/test.ts
+printf '# workspace changed\n' >>"$R/Cargo.toml"
+git -C "$R" add Cargo.toml
+: >"$COMPILE_LOG"
+run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
+[ "$RC" -eq 0 ] && grep -Fxq 'cargo check --workspace --all-targets' "$COMPILE_LOG" \
+  && ! grep -Eq 'cargo (test|doc)' "$COMPILE_LOG" \
+  && ok "shared Rust inputs compile the workspace without running tests" \
+  || bad "shared Rust input scheduling" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -32,9 +32,9 @@ CLI and installer tests use `fixture_env` from `crates/test_util.rs` to set HOME
 
 ## The commit chain
 
-`tools/setup`, once per clone, arms the growth-guards hooks. The chain and its order are `skills/growth-guards/DEVELOPMENT.md` § The pre-commit chain; its last lane is `tools/guard`, named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL` in `kendex.settings.toml`. Read `tools/guard`: it is the list of repo-specific rules and of what it runs, and every rule a shipped package already judges is left to that package. Every commit is slow because the guard runs the whole test surface; batch work into few commits. The commit-msg line holds every commit-message rule.
+`tools/setup`, once per clone, arms the growth-guards hooks. The chain and its order are `skills/growth-guards/DEVELOPMENT.md` § The pre-commit chain; its last lane is `tools/guard`, named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL` in `kendex.settings.toml`. Read `tools/guard`: it is the list of repo-specific rules and of what it runs, and every rule a shipped package already judges is left to that package. Commit checks compile the changed Rust crates and check changed UI code. They do not run the test suites or documentation builds. The commit-msg line holds every commit-message rule.
 
-`tools/guard` by hand judges the working tree, not the index. A skill's suite lives under `skills/<name>/tests/`, a Pi package's under its own `test` script, and `.github/workflows/skill-tests.yml` runs them on every pull request and in the merge queue.
+`tools/guard` selects compilation from staged changes and checks worktree content. `tools/guard --full` runs the full Rust and UI checks, including tests, documentation builds and cross-target compilation. `DEV_VALIDATE_CMD` selects this full run at development completion. Submit reuses the successful completion result for the same commit. CI independently runs the full checks. A skill's suite lives under `skills/<name>/tests/`, a Pi package's under its own `test` script, and `.github/workflows/skill-tests.yml` runs them on every pull request and in the merge queue.
 
 ## The self-install
 

@@ -14,6 +14,17 @@ set -uo pipefail
 # Resolved before the cd below: the sibling tools this script runs live
 # beside it, not necessarily in the repository it judges.
 TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)" || exit 1
+FULL=0
+case "${1:-}" in
+  --full) FULL=1; shift ;;
+  --help | -h)
+    printf '%s\n' 'usage: tools/guard [--full]' \
+      'Default: repository rules and compile checks for staged product changes.' \
+      '--full: full Rust and UI validation for development completion and submit.'
+    exit 0
+    ;;
+esac
+[ "$#" -eq 0 ] || { printf 'guard: unknown argument: %s\n' "$1" >&2; exit 2; }
 cd "$(git rev-parse --show-toplevel)"
 fail=0
 say() {
@@ -25,8 +36,7 @@ say() {
 # carry an ESC or another C0 control as legitimate content. Printed raw they
 # reach a terminal as control codes rather than as the line that broke a rule,
 # so every hit goes through here: one line each, every C0 control except tab
-# and DEL replaced. The growth-guards library spells this gg_scrubbed; this
-# script does not load it, and the rule is small enough to carry itself.
+# and DEL replaced. These scans run before the package collection setup.
 show() { # HITS — the same lines, safe to print
   printf '%s\n' "$1" | LC_ALL=C awk '{ gsub(/[\001-\010\013-\037\177]/, "?"); print }'
 }
@@ -243,22 +253,85 @@ done <<<"$render_changed"
   say "a render source changed without its tracked render — land the render in the same change"
 }
 
-# Structural invariants.
-if [ -f Cargo.toml ] && cargo tree -p kendex-core -e normal 2>/dev/null | grep -qE '\btauri v'; then
-  say "crates/core must not depend on tauri"
+# The changelog gate owns commit change collection and product-path matching.
+# Shared compiler inputs outside those product paths still affect all crates.
+rust_all="$FULL"
+rust_manifests=()
+ui_changed="$FULL"
+if [ "$FULL" -eq 0 ]; then
+  GG_CHECK=guard
+  GUARDS="$TOOLS_DIR/../.agents/skills/growth-guards/scripts"
+  source "$GUARDS/lib/common.sh"
+  gg_tmpdir
+  GUARD_TMP="$GG_TMP"
+  set +e
+  (
+    set -euo pipefail
+    source "$GUARDS/lib/settings.sh"
+    source "$GUARDS/lib/commit-changes.sh"
+    gg_settings_index_mode
+    gg_commit_changes
+    cat "$GG_TMP/product.z"
+    while IFS= read -r -d '' f; do
+      case "$f" in
+        Cargo.toml | Cargo.lock | rust-toolchain.toml | .cargo/*) printf '%s\0' "$f" ;;
+      esac
+    done <"$GG_TMP/staged.z"
+  ) >"$GUARD_TMP/product.z"
+  classification_status=$?
+  if [ "$classification_status" -ne 0 ]; then
+    say "product changes could not be classified"
+    exit "$fail"
+  fi
+  while IFS= read -r -d '' f; do
+    case "$f" in
+      *.md) continue ;;
+      Cargo.toml | Cargo.lock | rust-toolchain.toml | .cargo/* | crates/*.rs)
+        case "$f" in
+          crates/*/*) ;;
+          *) rust_all=1; continue ;;
+        esac
+        ;;
+    esac
+    case "$f" in
+      crates/*/*.rs | crates/*/Cargo.toml)
+        crate="${f#crates/}"
+        manifest="crates/${crate%%/*}/Cargo.toml"
+        if [ ! -f "$manifest" ]; then rust_all=1; continue; fi
+        seen=0
+        for existing in "${rust_manifests[@]}"; do
+          [ "$existing" != "$manifest" ] || seen=1
+        done
+        [ "$seen" -eq 1 ] || rust_manifests+=("$manifest")
+        ;;
+      ui/*) ui_changed=1 ;;
+    esac
+  done <"$GUARD_TMP/product.z"
 fi
 
-# Compiler-backed checks, once code exists.
-if [ -f Cargo.toml ]; then
+if [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt 0 ]; }; then
+  if cargo tree -p kendex-core -e normal 2>/dev/null | grep -qE '\btauri v'; then
+    say "crates/core must not depend on tauri"
+  fi
   for m in crates/*/Cargo.toml; do
     [ -f "$m" ] || continue
     grep -A1 '^\[lints\]' "$m" | grep -q 'workspace *= *true' ||
       say "$m: missing [lints] workspace = true — workspace lints are not inherited"
   done
-  # Platforms the release builds that this host does not run. The app crate
-  # needs each platform's own C toolchain to build at all; core and CLI are
-  # portable Rust, so their tests are what a cross check can reach. A third
-  # platform is another entry here.
+  if [ "$rust_all" -eq 1 ]; then
+    cargo check --workspace --all-targets || say "cargo check failed"
+    cargo clippy --workspace --all-targets --quiet -- -D warnings || say "clippy failed"
+  else
+    for manifest in "${rust_manifests[@]}"; do
+      cargo check --manifest-path "$manifest" --all-targets || say "$manifest failed to compile"
+      cargo clippy --manifest-path "$manifest" --all-targets --quiet -- -D warnings || say "$manifest clippy failed"
+    done
+  fi
+  cargo fmt --check || say "cargo fmt --check failed"
+fi
+
+if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
+  # The app needs each platform's C toolchain; core and CLI can cross-check.
   cross_targets="aarch64-apple-darwin x86_64-pc-windows-msvc"
   if ! installed_targets=$(rustup target list --installed); then
     say "rustup could not list installed targets: the cross-target checks could not run"
@@ -272,15 +345,15 @@ if [ -f Cargo.toml ]; then
       fi
     done
   fi
-  cargo fmt --check || say "cargo fmt --check failed"
-  cargo clippy --workspace --all-targets --quiet -- -D warnings || say "clippy failed"
   cargo doc --no-deps --document-private-items --workspace --quiet || say "cargo doc failed"
   cargo test --workspace --quiet || say "tests failed"
 fi
-if [ -f ui/package.json ]; then
+if [ "$ui_changed" -eq 1 ] && [ -f ui/package.json ]; then
   npm run --prefix ui check:types || say "tsc failed"
   npm run --prefix ui check:lint || say "biome failed"
-  npm run --prefix ui test -- --silent || say "vitest failed"
+  if [ "$FULL" -eq 1 ]; then
+    npm run --prefix ui test -- --silent || say "vitest failed"
+  fi
 fi
 
 exit $fail
