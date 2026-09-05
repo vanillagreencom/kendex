@@ -125,7 +125,7 @@ Copy the second and third as entries rather than expecting the generator to know
 
 - [ ] Every path in SKILL.md § The render inputs (the "Policy set:" list) is a policy path in the repo's gate: a push touching one invalidates review evidence gathered before it. Work from that list rather than from a copy of it — it is longer than the obvious four, and a copy here would drift from it. In this repo it is what feeds `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`, which the gate reads from the default branch and so cannot be widened by the pull request under judgment.
 - [ ] A pull request touching a policy path needs a trusted human approval. Bot evidence gathered under head-branch policy that same pull request wrote is not evidence.
-- [ ] The CI lane running `check` uses this package's copy from the default branch, not the pull request's checkout.
+- [ ] The CI lane running `check` uses this package's copy from the default branch when it is byte-identical to the pull request's, and the pull request's copy with a warning when the pull request upgrades the package; the policy path in the gate, not the checker's provenance, is what judges the upgrade.
 
 ## After the checklist
 

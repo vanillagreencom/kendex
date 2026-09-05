@@ -65,7 +65,7 @@ A repo enables `[bot-instructions.exclusions] derive_render` or lists every rend
 
 - Treat every policy path below as invalidating prior review evidence.
 - Require trusted human approval on a pull request that touches a policy path.
-- Run `check` in CI from the default branch copy, with `--spec` naming the pull request tree's package copy. The package's own source repository runs the pull request's checker instead: a renderer change judged by the default-branch copy drifts by construction.
+- Run `check` in CI from the default branch's package copy when the two copies are byte-identical, with `--spec` naming the pull request tree's copy; when they differ, the pull request upgrades the package and the default-branch checker cannot reproduce the candidate's render, so run the candidate's copy and print a warning naming both versions. The review gate's policy path (`REVIEW_GATE_CARRY_FORWARD_EXCLUDE` naming `.agents/skills/bot-instructions/*`) is what holds the upgrade honest: a push touching the package invalidates earlier review evidence. The package's own source repository runs the pull request's checker always.
 
 ## The render inputs
 
