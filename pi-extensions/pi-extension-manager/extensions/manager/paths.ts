@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
+import { host } from "./host.js";
 
 export function expandHome(input: string): string {
 	if (input === "~") return homedir();
@@ -12,7 +13,7 @@ export function expandHome(input: string): string {
  * means it, which `isAbsolute` is not: it calls a driveless `\root` absolute
  * where the renderer does not, putting the two on different roots. Hoisted, so
  * a circular import cannot reach it inside a temporal dead zone. */
-function rootAnchored(path: string, windows: boolean): boolean { return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith("/"); }
+export function rootAnchored(path: string, windows: boolean): boolean { return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith("/"); }
 
 export function userPiDir(): string {
 	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
@@ -38,5 +39,5 @@ export function compactPath(path: string): string {
 }
 
 export function npmCachePath(): string {
-	return join(homedir(), ".pi", "agent", ".kendex-update-cache.json");
+	return join(host.agentDir(), ".kendex-update-cache.json");
 }

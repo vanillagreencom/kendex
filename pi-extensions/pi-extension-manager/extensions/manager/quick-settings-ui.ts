@@ -16,6 +16,7 @@ import {
 } from "./format.js";
 import { handleInlineEditInput, renderInlineEditValue } from "./inline-edit.js";
 import { buildInventory } from "./inventory.js";
+import { host } from "./host.js";
 import { selectedPackageForSetting } from "./filters.js";
 import {
 	divider,
@@ -418,6 +419,7 @@ export function quickSettingsCompletions(pi: ExtensionAPI, ctx: ExtensionCommand
 }
 
 export async function openQuickSettings(pi: ExtensionAPI, ctx: ExtensionCommandContext | ExtensionContext, initialTabHint?: string): Promise<void> {
+	await host.prepare(ctx.cwd);
 	const inventory = buildInventory(pi, ctx as ExtensionContext);
 	if (settingPackages(inventory).length === 0) {
 		ctx.ui.notify("No kendex extension settings are declared by installed packages.", "info");

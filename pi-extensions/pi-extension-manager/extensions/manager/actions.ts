@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join, sep } from "node:path";
 import { removeAppendSystemBlockForUninstall, syncAppendSystemForPackage } from "./append-system.js";
 import { stringifyError } from "./format.js";
+import { host } from "./host.js";
 import { normalizePackageEntry } from "./inventory.js";
 import { runCommand } from "./process.js";
 import { asRecord, defaultWriteScope, findSettingsFile, updateManagerState, writeSettingsFile } from "./settings.js";
@@ -57,6 +58,7 @@ function ensureWorkingDir(cwd: string): { ok: true } | { ok: false; message: str
 }
 
 export function planUninstall(item: InventoryItem, inventory: Inventory, ctx: ExtensionCommandContext | ExtensionContext): UninstallPlan | undefined {
+	if (!host.packageActions) return undefined;
 	if (item.kind !== "package" || !item.packageName) return undefined;
 	const sourceIndex = loadSourceIndex(inventory.settingsFiles);
 	const scopeFlag = item.scope === "user" ? " --global" : "";
@@ -111,6 +113,7 @@ function packageEntryMatches(item: InventoryItem, normalized: { source: string; 
 }
 
 export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: boolean; message: string } {
+	if (!host.packageActions) return { ok: false, message: "Package uninstall is unsupported on this host; use its native plugin manager." };
 	if (plan.method.kind === "kendex") {
 		const args = ["remove", plan.method.packageName];
 		if (plan.method.scope === "user") args.push("--global");
@@ -150,6 +153,7 @@ export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: b
 }
 
 export function planUpdate(item: InventoryItem, inventory: Inventory, ctx: ExtensionCommandContext | ExtensionContext): UpdatePlan | undefined {
+	if (!host.packageActions) return undefined;
 	if (item.kind !== "package" || !item.packageName || !item.updateAvailable) return undefined;
 	if (item.updateSource === "kendex" && item.sourceRepo) {
 		const scopeFlag = item.scope === "user" ? " --global" : "";
@@ -174,6 +178,7 @@ export function planUpdate(item: InventoryItem, inventory: Inventory, ctx: Exten
 }
 
 export function runUpdate(plan: UpdatePlan): { ok: boolean; message: string } {
+	if (!host.packageActions) return { ok: false, message: "Package update is unsupported on this host; use its native plugin manager." };
 	if (plan.method.kind === "kendex") {
 		const args = ["add", plan.method.sourceRepo];
 		if (plan.method.scope === "user") args.push("--global");
@@ -258,7 +263,16 @@ function setPackageExtensionFiltered(item: InventoryItem, files: SettingsFile[],
 
 export function toggleItem(_pi: ExtensionAPI, ctx: ExtensionCommandContext | ExtensionContext, inventory: Inventory, item: InventoryItem): void {
 	if ((item.id === `package:${MANAGER_ID}` || item.packageName === MANAGER_ID) && item.state !== "disabled") {
-		ctx.ui.notify("Refusing to disable pi-extension-manager from inside itself. Edit settings.json manually if needed.", "warning");
+		ctx.ui.notify("Refusing to disable pi-extension-manager from inside itself. Use the host's controls outside this manager if needed.", "warning");
+		return;
+	}
+	try {
+		if (host.toggle(item)) {
+			ctx.ui.notify("Native plugin state updated. Restart the host to apply all plugin contributions.", "warning");
+			return;
+		}
+	} catch (error) {
+		ctx.ui.notify(stringifyError(error), "error");
 		return;
 	}
 	const scope = defaultWriteScope(item, inventory.settingsFiles, inventory.managerState);

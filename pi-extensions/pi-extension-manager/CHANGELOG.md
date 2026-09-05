@@ -4,6 +4,9 @@
 
 ### Unreleased
 
+- Detect native oh-my-pi npm/link plugins, including disabled installations, through host-resolved configuration and plugin roots. Open `/kendex:extensions` or `/kendex:extensions:settings` on OMP 18.1.11 or later; Pi keeps `/extensions`. Native package toggles update plugin lock records. OMP updates, uninstall, individual module toggles, project suppression edits and other extensions' settings remain unsupported. Manager settings preserve existing YAML filenames and unknown fields, and malformed settings refuse writes.
+- Keep native user/project entrypoints separate in search, filters and inspectors, and show settings only for the active manager installation. Trusted OMP project edits can create project settings without changing global values.
+- Manager enable display, edits, resets and recovery use the global setting even for a project-installed manager. Project enable flags are ignored; other manager settings retain project layering.
 - `PI_CODING_AGENT_DIR` is used only when it names a root-anchored path — a drive or UNC share on Windows, a leading `/` on POSIX. Anything else uses `~/.pi/agent`.
 
 ### 2.0.0
