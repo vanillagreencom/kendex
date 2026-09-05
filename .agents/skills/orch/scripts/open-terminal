@@ -18,6 +18,11 @@ Options:
   --harness <name>  claude, codex, opencode, pi
   --tmux            Open tmux windows in the current session
   --ghostty         Open GUI terminals ($TERMINAL, xdg-terminal-exec, ghostty)
+                    With neither mode flag the mode is auto-detected: tmux
+                    when $TMUX is set, otherwise a GUI terminal. Both flags
+                    are overrides; --ghostty inside tmux warns that the flag
+                    overrides the auto-detected tmux mode and still opens GUI
+                    terminals, which receive no TMUX or TMUX_PANE.
   --cmd "..."       Custom command; {issue}, {item}, and {repo} are replaced
   --lane <spec>     Launch under a chosen harness account. `auto` picks the
                     qualifying account with the fewest launches in flight for
@@ -179,6 +184,11 @@ LANE_MAX_PCT="${LANE_MAX_PCT:-${ORCH_LANE_MAX_PCT:-90}}"
 # implicit tmux launch validates instead of silently taking the default.
 if [[ -z "$TERMINAL_MODE" ]]; then
   if [[ -n "${TMUX:-}" ]]; then TERMINAL_MODE="tmux"; else TERMINAL_MODE="gui"; fi
+elif [[ "$TERMINAL_MODE" == "ghostty" && -n "${TMUX:-}" ]]; then
+  # The override stands (an intentional GUI launch from a tmux controller), but
+  # a caller who inferred the flag from the visible terminal gets told where the
+  # lane went and how to keep the next one in the workspace.
+  echo "Warning: --ghostty overrides tmux auto-detection; \$TMUX is set, so omitting the flag opens tmux windows instead" >&2
 fi
 # Only Claude tmux lanes run brief verification (other harnesses and
 # custom --cmd launches pass an empty brief and never read the timeout),
@@ -517,8 +527,13 @@ open_tmux() {
 # Outside tmux the user's own terminal opens the lane: $TERMINAL is the
 # explicit choice, xdg-terminal-exec the desktop's, and ghostty only where a
 # desktop names neither. Nothing is hardcoded ahead of what the user set.
+# Every launcher arm starts from the same scrubbed environment: a GUI window
+# opened from inside tmux (--ghostty as an override) otherwise inherits TMUX
+# and TMUX_PANE, so the child reads as a GUI terminal and a tmux pane at once
+# and pane-aware tools in it act on the controller's server.
 open_gui() {
   local dir="$1" title="$2" cmd="$3" chosen=""
+  local -a scrub=(env -u CLAUDECODE -u TMUX -u TMUX_PANE)
   # The title is written from inside the launched shell, so it survives whichever
   # launcher runs: only the ghostty arm carries --title, and it is tried last.
   # The title is the item id, validated against GH_ISSUE_PATTERN before it
@@ -528,13 +543,13 @@ open_gui() {
   local -a launcher=()
   if [[ -n "${TERMINAL:-}" ]] && command -v "$TERMINAL" >/dev/null 2>&1; then
     chosen="$TERMINAL"
-    launcher=(env -u CLAUDECODE "$TERMINAL" -e bash -lc "$shell_cmd")
+    launcher=("${scrub[@]}" "$TERMINAL" -e bash -lc "$shell_cmd")
   elif command -v xdg-terminal-exec >/dev/null 2>&1; then
     chosen="xdg-terminal-exec"
-    launcher=(env -u CLAUDECODE xdg-terminal-exec bash -lc "$shell_cmd")
+    launcher=("${scrub[@]}" xdg-terminal-exec bash -lc "$shell_cmd")
   elif command -v ghostty >/dev/null 2>&1; then
     chosen="ghostty"
-    launcher=(env -u CLAUDECODE ghostty --working-directory="$dir" --title="$title" -e bash -lc "$shell_cmd")
+    launcher=("${scrub[@]}" ghostty --working-directory="$dir" --title="$title" -e bash -lc "$shell_cmd")
   else
     echo "Error: no GUI terminal found; set \$TERMINAL to one, or install xdg-terminal-exec" >&2
     return 1
