@@ -2,8 +2,9 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 2.0.1
 
+- Finished tasks disappear from the inline widget after `widgetFinishedRetentionSeconds` without waiting for another task event. Long retention periods use bounded timer waits, and hiding the widget or ending the session clears the timer.
 - The extension uses `PI_CODING_AGENT_DIR` only when root-anchored — a drive or UNC share on Windows, a leading `/` on POSIX. Anything else uses `~/.pi/agent`. The install helper is unchanged.
 
 ### 2.0.0
