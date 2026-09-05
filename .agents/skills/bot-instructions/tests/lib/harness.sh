@@ -58,6 +58,10 @@ bi_new_repo() {
   printf 'prose\n' > "$repo/docs/generated/api.md"
   printf '# fixture\n' > "$repo/README.md"
   printf 'x\n' > "$repo/src/tests/t.rs"
+  # kendex's writer inventory, which the skill half of `derive_render` reads:
+  # the one skill tree and the harness files kendex would have written.
+  printf '%s\n' '[".agents/skills/dev/SKILL.md",".claude/agents/a.md",".claude/settings.json",".kendex-generated.json"]' \
+    > "$repo/.kendex-generated.json"
   cat > "$repo/AGENTS.md" <<'EOF'
 # fixture
 
@@ -103,6 +107,21 @@ bi_must() {
     return 1
   fi
   return 0
+}
+
+# Record paths in the fixture's writer inventory, as a kendex refresh that
+# rendered them would.
+bi_inventory_add() {
+  local repo
+  repo="$1"; shift
+  python3 - "$repo/.kendex-generated.json" "$@" <<'PY'
+import json, sys
+p = sys.argv[1]
+paths = json.load(open(p))
+paths.extend(sys.argv[2:])
+json.dump(sorted(set(paths)), open(p, "w"))
+open(p, "a").write("\n")
+PY
 }
 
 # A commit, so a suite can put a fixture back with `git reset --hard`.

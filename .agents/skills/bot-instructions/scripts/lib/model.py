@@ -100,7 +100,13 @@ def _assemble(config, doctrine):
 
 def build(tree, config, doctrine, spec_paths, resolved):
     """Resolve the exclusion set and the input list for one render."""
-    inputs = list(resolved.paths) + list(spec_paths)
+    inputs = list(resolved.paths)
+    if config.exclusions["derive_render"]:
+        # The record the skill half of the derivation reads, named where the
+        # manifests are: a marker that omits it says the render read less
+        # than it did.
+        inputs.append(manifest.INVENTORY)
+    inputs += list(spec_paths)
     for path in resolved.paths:
         try:
             spec.check_marker_path(path)

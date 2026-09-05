@@ -9,7 +9,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "2.0.0"
+  version: "2.1.0"
 tags: [review]
 ---
 
@@ -62,6 +62,7 @@ A repo enables `[bot-instructions.exclusions] derive_render` or lists every rend
 ## The render inputs
 
 - `kendex.toml`, plus `kendex-local.toml` when the root declares `is_source_catalog = true`.
+- `.kendex-generated.json` when `[bot-instructions.exclusions] derive_render` is on.
 - The spec copy's doctrine source and routing table.
 - `.bot-instructions/coderabbit-schema.json` when CodeRabbit is on.
 - The existing `AGENTS.md` when Codex is on.

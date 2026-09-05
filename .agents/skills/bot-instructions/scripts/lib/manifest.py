@@ -1,9 +1,18 @@
-"""`[bot-instructions.exclusions] derive_render`: the install manifest, and what it derives.
+"""`[bot-instructions.exclusions] derive_render`: the install record, and what it derives.
+
+**Skill trees come from the writer inventory, never from the declaration.**
+`.kendex-generated.json` is the record kendex tracks of every path it wrote
+into this repo. The manifest's `[skills.*]` rows are the request: a skill
+kendex installs as another skill's dependency has no row, and deriving from
+the rows left such a tree in review scope with both verbs exiting 0. A skill
+installed in place is this repo's own file, and kendex lists none of its
+paths, so it stays in review scope with no rule of its own here.
 
 **The manifest is the one kendex resolves, never a hardcoded filename.** That
 is `kendex.toml`, except where it declares `is_source_catalog = true` and
 install state routes to the sibling `kendex-local.toml`. Opening `kendex.toml`
 by name in such a repo parses a present, valid file and derives an empty set.
+It decides which harness roots the repo installs.
 
 **What a harness root contributes.** Each immediate subdirectory of a declared
 render root that holds a tracked path, and never an entry at its root, whether
@@ -16,6 +25,7 @@ that from the index alone, identically in both modes.
 draws the same line for the review gate's own set.
 """
 
+import json
 import tomllib
 
 from .constants import DERIVED_REASON
@@ -24,6 +34,8 @@ from . import globs
 
 ROOT_MANIFEST = "kendex.toml"
 LOCAL_MANIFEST = "kendex-local.toml"
+INVENTORY = ".kendex-generated.json"
+SKILLS_ROOT = ".agents/skills"
 
 # harness -> (render root, the subtrees under it, or None for "every
 # immediate subdirectory"). Copilot is the one harness whose root the repo
@@ -77,6 +89,39 @@ def resolve(tree):
     return Resolved(paths, data)
 
 
+def rendered_skill_trees(tree):
+    """The `.agents/skills/<name>` trees the inventory lists a path under.
+
+    Absent or unreadable is refused, never an empty set: a repo kendex has not
+    rendered into has no record to derive from, and an empty derivation there
+    reads exactly like a repo with nothing to exclude.
+    """
+    text = tree.read(INVENTORY)
+    if text is None:
+        raise ManifestError(
+            f"{INVENTORY}: absent. kendex writes it on apply and refresh in a project "
+            "it renders into, and it is the record of which trees kendex wrote — the "
+            "manifest's [skills.*] rows say what was asked for, and a skill installed "
+            "as another's dependency has no row. Run `kendex refresh` and track the file"
+        )
+    try:
+        paths = json.loads(text)
+    except ValueError as exc:
+        raise ManifestError(f"{INVENTORY}: not valid JSON ({exc})") from exc
+    if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+        raise ManifestError(
+            f"{INVENTORY}: expected a JSON array of repo-relative paths. A record this "
+            "cannot read is refused rather than read as empty"
+        )
+    names = set()
+    prefix = SKILLS_ROOT + "/"
+    for path in paths:
+        rest = path[len(prefix):] if path.startswith(prefix) else ""
+        if "/" in rest:
+            names.add(rest.split("/", 1)[0])
+    return sorted(names)
+
+
 def derive(tree, resolved):
     """The derived exclusion globs, lexicographic, each with the fixed reason."""
     harnesses = resolved.data.get("install", {}).get("harnesses", [])
@@ -89,23 +134,8 @@ def derive(tree, resolved):
             "finding rather than an empty derivation"
         )
     trees = set()
-    for name, entry in skills.items():
-        if not isinstance(entry, dict):
-            # Loud, like every neighbour here. Skipping the row would leave a
-            # vendored tree in review scope with both verbs exiting 0 —
-            # "nothing found" standing in for "I could not tell".
-            raise ManifestError(
-                f"[skills.{name}]: expected a table, got {type(entry).__name__}. The row "
-                "decides whether that tree is excluded from review, and a row this cannot "
-                "read is refused rather than skipped"
-            )
-        if entry.get("enabled") is False:
-            continue
-        if entry.get("source") == "in-place":
-            # This repo's own file: its content of record is edited here, so
-            # it stays in review scope.
-            continue
-        trees.add(_checked(f".agents/skills/{name}/**", f"[skills.{name}]"))
+    for name in rendered_skill_trees(tree):
+        trees.add(_checked(f"{SKILLS_ROOT}/{name}/**", f"{INVENTORY} {SKILLS_ROOT}/{name}"))
     for harness in harnesses:
         row = HARNESS_ROOTS.get(harness)
         if row is None:
@@ -126,10 +156,10 @@ def derive(tree, resolved):
 def _checked(glob, source):
     """A derived glob, held to the same dialect every declared one meets.
 
-    A manifest key and an on-disk directory name become pattern bytes without
-    an author writing them as a glob, and they render as prose on two surfaces
-    where nothing reads them as globs at all. Refusing at the source names
-    which manifest row produced it.
+    An inventory path component and an on-disk directory name become pattern
+    bytes without an author writing them as a glob, and they render as prose
+    on two surfaces where nothing reads them as globs at all. Refusing at the
+    source names which inventory entry or manifest row produced it.
     """
     try:
         globs.check(glob, source)
