@@ -68,6 +68,8 @@ A description is never guessed: an empty one stays empty and is a check finding.
 
 Only a skill seeds settings into a project, through its `kendex.settings.toml.example`: [settings.md](settings.md).
 
+For project-defined shell command restrictions, configure the [command-safety hook](command-safety.md).
+
 ## The check
 
 ```sh

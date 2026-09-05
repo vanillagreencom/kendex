@@ -133,6 +133,11 @@ skills = [
   "preflight",
 ]
 
+[bundles.command-safety]
+description = "Project-defined shell command restrictions"
+hooks = ["command-safety"]
+skills = ["growth-guards"]
+
 # Skill mappings per agent — always loaded into context.
 [agent-skills]
 rust = ["github", "linear"]
