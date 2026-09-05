@@ -25,6 +25,7 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
         .current_dir(cwd)
         .env_clear()
         .envs(test_util::fixture_env(home))
+        .env("KENDEX_BACKGROUND_REFRESH", "off")
         .env(
             "KENDEX_GIT_BASE",
             format!("file://{}", home.join("git").display()),
@@ -152,53 +153,117 @@ fn update_reinstalls_from_the_declared_source() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_npm_failure_records_only_the_sibling_whose_install_completed() {
-    let tmp = tempfile::tempdir().unwrap();
-    let root = rooted(&tmp);
-    let project = root.join("dev/app");
-    write(
-        &project.join("kendex.toml"),
-        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.bad]\nsource = \"cat\"\n\n[pi-extensions.good]\nsource = \"cat\"\n",
-    );
-    write(
-        &project.join("catalog/pi-extensions/good/package.json"),
-        "{\"name\":\"good\",\"version\":\"1.0.0\"}\n",
-    );
-    write(
-        &project.join("catalog/pi-extensions/good/index.js"),
-        "export const good = true;\n",
-    );
-    write(
-        &project.join("catalog/pi-extensions/bad/package.json"),
-        "{\"name\":\"bad\",\"version\":\"1.0.0\",\"dependencies\":{\"dep\":\"1.0.0\"}}\n",
-    );
-    write(
-        &project.join("catalog/pi-extensions/bad/index.js"),
-        "export const copiedBeforeNpm = true;\n",
-    );
-    let npm = root.join("bin/npm");
-    write(&npm, "#!/bin/sh\nexit 1\n");
-    fs::set_permissions(&npm, fs::Permissions::from_mode(0o755)).unwrap();
-    fs::create_dir_all(project.join(".pi")).unwrap();
+    for failure in ["first", "upgrade", "missing"] {
+        let upgrade = failure != "first";
+        let tmp = tempfile::tempdir().unwrap();
+        let root = rooted(&tmp);
+        let project = root.join("dev/app");
+        write(
+            &project.join("kendex.toml"),
+            "schema = 6\n[sources.cat]\npath = \"catalog\"\n[pi-extensions.bad]\nsource = \"cat\"\n[pi-extensions.good]\nsource = \"cat\"\n",
+        );
+        write(
+            &project.join("catalog/pi-extensions/good/package.json"),
+            r#"{"name":"good","version":"1.0.0"}"#,
+        );
+        write(
+            &project.join("catalog/pi-extensions/good/index.js"),
+            "export const good = true;\n",
+        );
+        write(
+            &project.join("catalog/pi-extensions/bad/package.json"),
+            r#"{"name":"bad","version":"1.0.0","dependencies":{"dep":"1.0.0"}}"#,
+        );
+        let source = project.join("catalog/pi-extensions/bad/index.js");
+        write(&source, "export const version = 1;\n");
+        let npm = root.join("bin/npm");
+        write(&npm, "#!/bin/sh\nexit 0\n");
+        fs::set_permissions(&npm, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::create_dir_all(project.join(".pi")).unwrap();
+        let lock_path = project.join(".kendex-lock.json");
+        let key = kendex_core::lock::entry_key(
+            kendex_core::model::ItemKind::PiExtension,
+            "bad",
+            kendex_core::model::HarnessId::Pi,
+        );
+        let mut completed = if upgrade {
+            assert!(
+                kendex(&root, &project, &["update-pi", "--scope", "project"])
+                    .status
+                    .success()
+            );
+            kendex_core::lock::load(&lock_path)
+                .unwrap()
+                .entries
+                .get(&key)
+                .cloned()
+        } else {
+            None
+        };
+        if failure == "missing" {
+            fs::remove_dir_all(project.join(".pi/packages/bad")).unwrap();
+        } else {
+            write(&source, "export const version = 2;\n");
+        }
+        if let Some(entry) = &mut completed {
+            entry.rendered_hash = None;
+        }
+        write(&npm, "#!/bin/sh\nexit 1\n");
+        for _ in 0..2 {
+            let output = kendex(&root, &project, &["update-pi", "--scope", "project"]);
+            assert!(!output.status.success(), "upgrade={upgrade}: {output:?}");
+            assert_eq!(
+                fs::read(project.join(".pi/packages/bad/index.js")).unwrap(),
+                fs::read(&source).unwrap(),
+                "npm fails after source files are copied"
+            );
+            let check = kendex(&root, &project, &["check", "--scope", "project"]);
+            assert_eq!(check.status.code(), Some(1), "{check:?}");
+            assert!(
+                String::from_utf8_lossy(&check.stdout).contains("kendex update-pi --scope project"),
+                "{check:?}"
+            );
+            let updates = kendex(&root, &project, &["updates"]);
+            assert!(
+                String::from_utf8_lossy(&updates.stderr).contains("pi-extension bad"),
+                "{updates:?}"
+            );
+            let refresh = kendex(&root, &project, &["refresh", "--scope", "project", "--yes"]);
+            assert!(!refresh.status.success(), "{refresh:?}");
+            assert_eq!(
+                kendex_core::lock::load(&lock_path)
+                    .unwrap()
+                    .entries
+                    .get(&key),
+                completed.as_ref(),
+                "failed installs preserve provenance without completion"
+            );
+            let check = kendex(&root, &project, &["check", "--scope", "project"]);
+            assert_eq!(check.status.code(), Some(1), "{check:?}");
+            let verify = kendex(&root, &project, &["verify", "--scope", "project"]);
+            assert!(!verify.status.success(), "{verify:?}");
+        }
+        let settings = fs::read_to_string(project.join(".pi/settings.json")).unwrap();
+        assert!(settings.contains("./packages/good"), "{settings}");
+        assert_eq!(settings.contains("./packages/bad"), upgrade, "{settings}");
+        write(&npm, "#!/bin/sh\nexit 0\n");
+        let repaired = kendex(&root, &project, &["update-pi", "--scope", "project"]);
+        assert!(repaired.status.success(), "{repaired:?}");
+        assert_npm_repaired(&root, &project);
+    }
+}
 
-    let output = kendex(&root, &project, &["update-pi"]);
-
-    assert!(!output.status.success(), "{output:?}");
-    assert!(project.join(".pi/packages/good/index.js").is_file());
+#[allow(clippy::unwrap_used)]
+fn assert_npm_repaired(home: &Path, project: &Path) {
+    let check = kendex(home, project, &["check", "--scope", "project"]);
+    assert_eq!(check.status.code(), Some(0), "{check:?}");
     assert!(
-        project.join(".pi/packages/bad/index.js").is_file(),
-        "npm fails after the source package is copied"
+        fs::read_to_string(project.join(".pi/settings.json"))
+            .unwrap()
+            .contains("./packages/bad")
     );
-    let settings = fs::read_to_string(project.join(".pi/settings.json")).unwrap();
-    assert!(settings.contains("./packages/good"), "{settings}");
-    assert!(!settings.contains("./packages/bad"), "{settings}");
-    let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
-    let verify = kendex(&root, &project, &["verify", "--scope", "project"]);
-    assert!(
-        !verify.status.success(),
-        "an unregistered failed package must not verify as installed"
-    );
-    assert!(lock.entries.values().any(|entry| entry.name == "good"));
-    assert!(!lock.entries.values().any(|entry| entry.name == "bad"));
+    let verify = kendex(home, project, &["verify", "--scope", "project"]);
+    assert!(verify.status.success(), "{verify:?}");
 }
 
 #[test]
@@ -236,7 +301,7 @@ fn a_pinned_pi_extension_installs_and_verifies_against_its_revision() {
     fs::create_dir_all(project.join(".pi")).unwrap();
     let refresh = kendex(&root, &project, &["refresh", "--scope", "project", "--yes"]);
     assert!(
-        refresh.status.success(),
+        !refresh.status.success(),
         "{}",
         String::from_utf8_lossy(&refresh.stderr)
     );
@@ -264,6 +329,29 @@ fn a_pinned_pi_extension_installs_and_verifies_against_its_revision() {
         "{}",
         String::from_utf8_lossy(&verify.stderr)
     );
+    let updates = kendex(&root, &project, &["updates"]);
+    assert!(updates.status.success());
+    let text = String::from_utf8_lossy(&updates.stderr);
+    assert!(
+        text.contains("pi-extension pi-widgets") && text.contains("[held]"),
+        "{text}"
+    );
+    let preview = kendex(
+        &root,
+        &project,
+        &["update-pi", "--check", "--scope", "project"],
+    );
+    let text = String::from_utf8_lossy(&preview.stdout);
+    assert!(
+        preview.status.success() && text.contains("up to date"),
+        "{preview:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(project.join(".pi/packages/pi-widgets/index.js")).unwrap(),
+        "export const version = 1;\n"
+    );
+    let checked = kendex(&root, &project, &["check", "--scope", "project"]);
+    assert_eq!(checked.status.code(), Some(0), "{checked:?}");
 }
 
 #[test]
@@ -275,6 +363,18 @@ fn verification_and_record_recovery_compare_pi_bytes() {
             .status
             .success()
     );
+    assert!(
+        kendex(tmp.path(), &project, &["verify", "--scope", "project"])
+            .status
+            .success()
+    );
+    fs::remove_file(project.join(".kendex-lock.json")).unwrap();
+    let recovered = kendex(
+        tmp.path(),
+        &project,
+        &["apply", "--record-existing", "--yes"],
+    );
+    assert!(recovered.status.success(), "{recovered:?}");
     assert!(
         kendex(tmp.path(), &project, &["verify", "--scope", "project"])
             .status

@@ -24,7 +24,21 @@ pub(super) fn check_scope(
     // Read once, read by two checks: what the lock says is on disk, and
     // what it says nothing about.
     let lock = crate::lock::load_file(&crate::lock::lock_path(env, scope));
-    ctx.lock_lines(&lock, sections);
+    ctx.lock_lines(manifest.as_ref(), &lock, sections);
+    if let Some(manifest) = &manifest {
+        for name in manifest.pi_extensions.keys() {
+            let key =
+                crate::lock::entry_key(ItemKind::PiExtension, name, crate::model::HarnessId::Pi);
+            let unrecorded = match &lock {
+                Ok(crate::lock::LockFile::Current(lock)) => !lock.entries.contains_key(&key),
+                Ok(crate::lock::LockFile::Absent) => true,
+                Err(_) => false,
+            };
+            if unrecorded {
+                ctx.pi_installation_line(name, None, true, sections);
+            }
+        }
+    }
     ctx.blocked_lines(manifest.as_ref(), &lock, sections);
     ctx.snapshot_lines(manifest.as_ref(), sections, oldest_age);
     ctx.stamp_lines(manifest.as_ref(), sections);
@@ -95,6 +109,7 @@ impl ScopeCheck<'_> {
     /// installation wrote, absent under both its names, is missing.
     fn lock_lines(
         &self,
+        manifest: Option<&crate::manifest::Manifest>,
         lock: &crate::error::Result<crate::lock::LockFile>,
         sections: &mut Sections,
     ) {
@@ -103,6 +118,17 @@ impl ScopeCheck<'_> {
             Ok(crate::lock::LockFile::Current(lock)) => {
                 for entry in lock.entries.values() {
                     if !entry.enabled {
+                        continue;
+                    }
+                    if entry.kind == ItemKind::PiExtension {
+                        self.pi_installation_line(
+                            &entry.name,
+                            entry.rendered_hash.as_deref(),
+                            manifest.is_some_and(|manifest| {
+                                manifest.pi_extensions.contains_key(&entry.name)
+                            }),
+                            sections,
+                        );
                         continue;
                     }
                     let paths = crate::engine::installed_paths(self.env, self.scope, entry);
@@ -119,16 +145,10 @@ impl ScopeCheck<'_> {
                                 entry.kind.name(),
                                 shown(&entry.name)
                             ),
-                            Some(if entry.kind == ItemKind::PiExtension {
-                                Remedy::Refresh {
-                                    global: self.global,
-                                }
-                            } else {
-                                // The record can outlive its declaration. Apply
-                                // restores wanted files and clears unwanted records.
-                                Remedy::Apply {
-                                    global: self.global,
-                                }
+                            // The record can outlive its declaration. Apply
+                            // restores wanted files and clears unwanted records.
+                            Some(Remedy::Apply {
+                                global: self.global,
                             }),
                         ));
                     }
@@ -140,6 +160,42 @@ impl ScopeCheck<'_> {
                 shown(&error.to_string())
             ))),
         }
+    }
+
+    fn pi_installation_line(
+        &self,
+        name: &str,
+        expected: Option<&str>,
+        declared: bool,
+        sections: &mut Sections,
+    ) {
+        let state = crate::pi_ext::scope_root(self.env, self.scope)
+            .and_then(|root| crate::pi_ext::installed_state(&root, name, expected));
+        let detail = match state {
+            Ok(crate::pi_ext::PackageState::Current { .. }) => return,
+            Ok(crate::pi_ext::PackageState::Missing) => "has no files on disk",
+            Ok(crate::pi_ext::PackageState::Different) if expected.is_none() => {
+                "has no completed install record"
+            }
+            Ok(crate::pi_ext::PackageState::Different) => {
+                "has files that differ from its install record"
+            }
+            Err(error) => {
+                sections.unknown.push(unknown(format!(
+                    "{}pi-extension '{}': {}",
+                    self.prefix,
+                    shown(name),
+                    shown(&error.to_string())
+                )));
+                return;
+            }
+        };
+        sections.missing.push(drift(
+            format!("{}pi-extension '{}' {detail}", self.prefix, shown(name)),
+            declared.then_some(Remedy::UpdatePi {
+                global: self.global,
+            }),
+        ));
     }
 
     /// Asked for, no record of installing it for this tool, and files
@@ -289,9 +345,19 @@ impl ScopeCheck<'_> {
             ));
         } else if package.update_available {
             sections.stale.push(drift(
-                format!("{prefix}{kind} '{name}' has a newer version on its source"),
-                Some(Remedy::Refresh {
-                    global: self.global,
+                if package.kind == ItemKind::PiExtension {
+                    format!("{prefix}{kind} '{name}' needs installation from its declared source")
+                } else {
+                    format!("{prefix}{kind} '{name}' has a newer version on its source")
+                },
+                Some(if package.kind == ItemKind::PiExtension {
+                    Remedy::UpdatePi {
+                        global: self.global,
+                    }
+                } else {
+                    Remedy::Refresh {
+                        global: self.global,
+                    }
                 }),
             ));
         }

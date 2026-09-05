@@ -17,12 +17,14 @@ use crate::process::Hardened;
 pub mod carrier;
 mod record;
 pub use record::{
-    DeclaredPackage, check_origin, matching_lock_entry, record_matching_manifest,
-    record_matching_name, resolve_declared, scope_root,
+    DeclaredPackage, check_origin, clear_install_completion, matching_lock_entry,
+    record_matching_manifest, record_matching_name, resolve_declared, scope_root,
 };
 mod files;
 mod renames;
 mod settings;
+mod state;
+pub use state::{PackageState, RecordBasis, declared_state, installed_state};
 
 pub use files::package_hash;
 use files::{copy_package, inside, package_path, read_dir, trash};
@@ -196,8 +198,7 @@ pub struct InstallOutcome {
     pub unbuilt_bins: Vec<String>,
 }
 
-/// Copy a source package into the scope and register it with Pi. Re-running
-/// replaces the installed copy, keeping its position in Pi's load order.
+/// Replace a package and register it without changing Pi's package order.
 pub fn install(env: &Env, scope_root: &Path, source_pkg_dir: &Path) -> Result<InstallOutcome> {
     let package = read(source_pkg_dir)?;
     let dest = package_path(scope_root, &package.name)?;

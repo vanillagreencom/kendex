@@ -300,13 +300,13 @@ fn same_artifact(
     matches!((resolved(a), resolved(b)), (Some(x), Some(y)) if x == y)
 }
 
-/// A fork's row: no versions, no update — the Library still needs to
-/// know it is a fork.
-fn fork_row(
+/// A package without repository history still has an installation standing.
+fn unversioned_row(
     scope: &Scope,
     kind: ItemKind,
     name: &str,
     decl: &crate::manifest::ItemDecl,
+    forked: bool,
 ) -> UpdateRow {
     UpdateRow {
         scope: scope.clone(),
@@ -328,7 +328,7 @@ fn fork_row(
         can_take_latest: false,
         derived: false,
         required_by: Vec::new(),
-        forked: true,
+        forked,
         mixed: false,
         removed_upstream: false,
         no_per_package_update: no_per_package_update(kind),

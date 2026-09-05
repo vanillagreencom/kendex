@@ -6,7 +6,7 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 
 use super::files::package_path;
-use super::{find_by_package_name, installed_hash, package_hash};
+use super::{PackageState, RecordBasis, declared_state, find_by_package_name};
 
 /// One declared Pi package resolved to the catalog bytes and provenance that
 /// installation, verification, recovery, and report routing share.
@@ -16,6 +16,24 @@ pub struct DeclaredPackage {
     pub source: String,
     pub source_repo: String,
     pub source_commit: Option<String>,
+}
+
+/// Preserve provenance but clear completion before replacement destroys the
+/// installed package. The caller holds the scope lock until installation ends.
+pub fn clear_install_completion(env: &Env, scope: &crate::model::Scope, name: &str) -> Result<()> {
+    let path = crate::lock::lock_path(env, scope);
+    let mut lock = crate::lock::load(&path)?;
+    let key = crate::lock::entry_key(
+        crate::model::ItemKind::PiExtension,
+        name,
+        crate::model::HarnessId::Pi,
+    );
+    if let Some(entry) = lock.entries.get_mut(&key)
+        && entry.rendered_hash.take().is_some()
+    {
+        crate::lock::save(&path, &lock)?;
+    }
+    Ok(())
 }
 
 pub fn resolve_declared(
@@ -55,24 +73,17 @@ pub fn matching_lock_entry(
     name: &str,
     package: &DeclaredPackage,
     existing: Option<&crate::lock::LockEntry>,
+    basis: RecordBasis,
 ) -> Result<Option<crate::lock::LockEntry>> {
     check_origin(name, package, existing)?;
-    let Some(source_hash) = package_hash(&package.source_dir)? else {
+    let PackageState::Current { hash: source_hash } =
+        declared_state(scope_root, name, package, existing, basis)?
+    else {
         return Ok(None);
     };
-    let Some(rendered_hash) = installed_hash(scope_root, name)? else {
-        return Ok(None);
-    };
-    if source_hash != rendered_hash {
-        return Ok(None);
-    }
+    let rendered_hash = source_hash.clone();
     let installed_at = existing
-        .filter(|entry| {
-            entry.kind == crate::model::ItemKind::PiExtension
-                && entry.name == name
-                && entry.source_hash == source_hash
-                && entry.rendered_hash.as_deref() == Some(rendered_hash.as_str())
-        })
+        .filter(|entry| super::state::matches_record(entry, name, &source_hash))
         .map(|entry| entry.installed_at.clone())
         .unwrap_or_else(crate::clock::timestamp);
     let dest = package_path(scope_root, name)?;
@@ -106,8 +117,16 @@ pub fn record_matching_manifest(
     scope: &crate::model::Scope,
     manifest: &crate::manifest::Manifest,
     lock: &mut crate::lock::Lock,
+    basis: RecordBasis,
 ) -> Result<Vec<crate::engine::DriftRow>> {
-    record_matching(env, scope, manifest, lock, manifest.pi_extensions.iter())
+    record_matching(
+        env,
+        scope,
+        manifest,
+        lock,
+        manifest.pi_extensions.iter(),
+        basis,
+    )
 }
 
 /// Compare one declaration after its carrier install completed.
@@ -124,6 +143,7 @@ pub fn record_matching_name(
         manifest,
         lock,
         manifest.pi_extensions.get_key_value(name).into_iter(),
+        RecordBasis::MatchedBytes,
     )
 }
 
@@ -133,6 +153,7 @@ fn record_matching<'a>(
     manifest: &crate::manifest::Manifest,
     lock: &mut crate::lock::Lock,
     declarations: impl Iterator<Item = (&'a String, &'a crate::manifest::ItemDecl)>,
+    basis: RecordBasis,
 ) -> Result<Vec<crate::engine::DriftRow>> {
     use crate::engine::{DriftRow, DriftState};
     use crate::model::{HarnessId, ItemKind};
@@ -140,15 +161,16 @@ fn record_matching<'a>(
     let mut drift = Vec::new();
     for (name, decl) in declarations {
         let key = crate::lock::entry_key(ItemKind::PiExtension, name, HarnessId::Pi);
-        let result = resolve_declared(env, scope, manifest, name, decl)
-            .and_then(|package| matching_lock_entry(&root, name, &package, lock.entries.get(&key)));
+        let result = resolve_declared(env, scope, manifest, name, decl).and_then(|package| {
+            matching_lock_entry(&root, name, &package, lock.entries.get(&key), basis)
+        });
         let detail = match result {
             Ok(Some(entry)) => {
                 lock.entries.insert(key, entry);
                 continue;
             }
             Ok(None) => {
-                "carrier package does not match its declared source; update-pi must settle it"
+                "carrier package or completed install record does not match; update-pi must settle it"
                     .to_owned()
             }
             Err(error) => format!("carrier package could not be compared: {error}"),
