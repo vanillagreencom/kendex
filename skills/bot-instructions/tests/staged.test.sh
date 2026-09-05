@@ -78,10 +78,10 @@ d[\"properties\"][\"language\"][\"default\"] = \"en-GB\"
 json.dump(d, open(p, \"w\"), indent=2)
 " "$repo/.bot-instructions/coderabbit-schema.json"' coderabbit-schema
 
-pair 'the resolved install manifest' \
+pair 'the writer inventory' \
   'mkdir -p "$repo/.agents/skills/newly-rendered"
    printf "x\n" > "$repo/.agents/skills/newly-rendered/SKILL.md"
-   printf "\n[skills.newly-rendered]\nsource = \".\"\nenabled = true\n" >> "$repo/kendex.toml"'
+   bi_inventory_add "$repo" .agents/skills/newly-rendered/SKILL.md'
 
 pair 'the existing AGENTS.md' \
   'python3 -c "

@@ -374,15 +374,15 @@ expect_finding toml-schema "glob 'src/**/**/[z-a].rs'" \
   'and quotes the glob as written, not the collapsed pattern' \
   check --repo "$repo"
 
-# The derived side: a manifest row is the one glob source no author wrote as a
-# glob, and the refusal has to name the row that produced it.
+# The derived side: an inventory entry is the one glob source no author wrote
+# as a glob, and the refusal has to name the entry that produced it.
 repo="$(bi_new_repo reversed-class-derived)"
 mkdir -p "$repo/.agents/skills/zw"
 printf 'x\n' > "$repo/.agents/skills/zw/SKILL.md"
-printf '\n[skills."z[y-a]w"]\nsource = "."\nenabled = true\n' >> "$repo/kendex.toml"
+bi_inventory_add "$repo" '.agents/skills/z[y-a]w/SKILL.md'
 git -C "$repo" add -A >/dev/null 2>&1
-expect_finding exclusion-consistency '[skills.z[y-a]w]' \
-  'a derived glob that compiles nowhere names the manifest row' \
+expect_finding exclusion-consistency '.kendex-generated.json .agents/skills/z[y-a]w' \
+  'a derived glob that compiles nowhere names the inventory entry' \
   check --repo "$repo"
 
 # § Cross-file sets: the content-refusal table is the single statement, and
