@@ -4,6 +4,8 @@ description: "Load before writing or modifying code."
 summary: "Code-authoring standards for dev agents: correctness over convenience, no fail-open branches, comment rules, over-engineering limits, prove-your-guards."
 license: MIT
 user-invocable: true
+dependencies:
+  required: [docs-writing]
 metadata:
   author: vanillagreen
   source: kendex

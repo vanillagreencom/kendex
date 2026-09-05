@@ -5,7 +5,7 @@ summary: "Strict review and QA workflows: reviewer ethos, code-review classifica
 license: MIT
 user-invocable: true
 dependencies:
-  required: [orch]
+  required: [orch, code-quality, docs-writing]
   optional: [linear]
 metadata:
   author: vanillagreen

@@ -4,6 +4,8 @@ description: "Load to write, rewrite, or review any markdown file a repository o
 summary: "One writing standard for every markdown file a repo owns, a directive list and a template per file type, and the blank-page rewrite workflow."
 license: MIT
 user-invocable: true
+dependencies:
+  required: [decider]
 metadata:
   author: vanillagreen
   source: kendex
@@ -96,7 +98,7 @@ Read on demand for one subsystem. The `doc-drift-check` hook names it when cover
 
 ### Reference docs
 
-Read by an agent or maintainer looking up one value. Held in `references/` or `docs/`.
+Read by an agent or maintainer looking up one value. Any lookup document: `references/`, `schemas/`, `patterns/`, a named file such as `CHECKS.md`, or one under `docs/`.
 
 - Tables and lists. One row per item.
 - The value, its meaning, and its default.

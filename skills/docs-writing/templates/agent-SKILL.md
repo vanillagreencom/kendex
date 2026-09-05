@@ -2,14 +2,14 @@
 name: <skill-name>
 description: "Load to <the condition that sends an agent here>."
 summary: "<What the skill states, in one sentence.>"
-license: MIT
-user-invocable: true
+license: <SPDX id>
+user-invocable: <true|false>
 metadata:
   author: <author>
   source: <catalog>
   repository: "<url>"
   bugs: "<url>"
-  version: "1.0.0"
+  version: "<version>"
 tags: [<tag>]
 ---
 

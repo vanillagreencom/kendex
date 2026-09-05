@@ -8,12 +8,14 @@ The convention for every markdown file a repository owns: the root and nested `A
 kendex add vanillagreencom/kendex --skill docs-writing
 ```
 
+Installs `decider` beside it, which owns the decision-record format this skill points at.
+
 ## What it does
 
 - States one writing standard for every markdown file, with pairs showing what to write instead.
 - States per file type who reads it, what it holds, and what it excludes.
 - Splits a package's docs three ways: `README.md` for people, `DEVELOPMENT.md` for maintainers, `SKILL.md` for agents.
-- Ships a template per file type.
+- Ships a template for each file type that takes one.
 - Ships a blank-page rewrite workflow for a repository whose docs predate the convention.
 - Points at the `decider` skill for decision records rather than shipping a second format.
 

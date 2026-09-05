@@ -69,7 +69,7 @@ Merge-mode exit codes:
 
 Exit 75 is volatile:
   A queue ejection can disarm merge state. Block on .agents/skills/orch/scripts/queue-wait <N> <poll> <budget> --json before returning; it produces the verdict for the head just armed. Size the poll and budget as orch merge-pr.md § 5 step 1 does: the default budget outlives any foreground call an agent harness holds, so a call without them is killed before the verdict.
-  Route verdicts through README.md "Exit 75 recovery"; the review-gate reducer still reports fleet attention.
+  Route verdicts through queue-wait --help Verdicts, named by SKILL.md § PR Merge Outcomes; the review-gate reducer still reports fleet attention.
   Re-arm only through github.sh pr-merge <N> --auto after that route.
   await-mergeable is not the lifecycle watcher; it stops when GitHub computes state.
 

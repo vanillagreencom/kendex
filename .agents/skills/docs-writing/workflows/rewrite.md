@@ -1,14 +1,14 @@
 # Rewrite a repository's markdown onto the convention
 
-Rewrite, do not patch. Read the old files for facts and the code for truth, then write each new file from a blank page against [../SKILL.md](../SKILL.md). Delete old content that is neither an invariant, a boundary, a decision, a non-default convention, nor a pointer. The code, the tests, and git history hold it.
+Rewrite, do not patch. Read the old files for facts and the code for truth, then write each new file from a blank page against its own list in [../SKILL.md](../SKILL.md) § Per file type. Delete old content that list does not admit. The code, the tests, and git history hold it.
 
 ## Steps
 
 1. Inventory every markdown file the repository owns, with its size and the kind of content it holds: the root `AGENTS.md`, every nested `AGENTS.md` or `CLAUDE.md`, every harness-specific instruction file, every file under `docs/architecture/` or a legacy `docs/ARCHITECTURE.md`, every `README.md`, `DEVELOPMENT.md`, `SKILL.md`, `workflows/*.md`, `agents/*.md`, and every reference doc.
-2. Classify each claim: invariant, boundary, decision, non-default convention, pointer, or excluded. Verify every kept claim against the code and name the test or check that enforces it. A claim with no enforcer is either given one or dropped.
+2. Classify each claim against the list for the file type it is in: kept or excluded. Verify every kept claim against the code. A claim that states an invariant, or that says a checker enforces something, also names the test or check; one with no enforcer is either given one or dropped.
 3. Write `docs/architecture/overview.md` from [../templates/overview.md](../templates/overview.md). Write a topic file from [../templates/topic.md](../templates/topic.md) for each subsystem [../SKILL.md](../SKILL.md) § Per file type admits one for.
 4. Write the root `AGENTS.md` from [../templates/root-AGENTS.md](../templates/root-AGENTS.md). Keep the `## Code Review Rules` section the bot-instructions package renders.
-5. Write a nested `AGENTS.md` from [../templates/nested-AGENTS.md](../templates/nested-AGENTS.md) in each directory with local rules. Delete hand-written `CLAUDE.md`, `.claude/rules`, and every other harness-specific instruction file.
+5. Write a nested `AGENTS.md` from [../templates/nested-AGENTS.md](../templates/nested-AGENTS.md) in each directory with local rules. Delete a hand-written `CLAUDE.md`, a `.claude/rules` file, and every other harness-specific instruction file a kendex shim replaces. A file a package renders and keeps current, such as the bot-instructions package's `.github/copilot-instructions.md` and `.github/instructions/*.instructions.md`, is that package's and stays.
 6. Write each `README.md` from [../templates/README.md](../templates/README.md) and each `DEVELOPMENT.md` from [../templates/DEVELOPMENT.md](../templates/DEVELOPMENT.md). Move mechanics out of a README into its `DEVELOPMENT.md`.
 7. Write each `SKILL.md` from [../templates/agent-SKILL.md](../templates/agent-SKILL.md) and each reference doc from [../templates/reference.md](../templates/reference.md). Move rationale out of a `SKILL.md` into `DEVELOPMENT.md` or a decision record.
 8. Run `kendex refresh` so the shims are written, then `kendex verify`.
