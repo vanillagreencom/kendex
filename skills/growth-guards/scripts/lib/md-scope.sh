@@ -66,7 +66,7 @@ gg_md_load_paths() { # LANE KEY DEFAULT
 # $GG_TMP/md-files.z, every one a text blob the lane may read. Sets
 # GG_MD_COUNT; the skips are counted in GG_WALK_SKIPPED.
 gg_md_select() { # NOUN — what the lane calls its content, for the skip lines
-  local noun="$1" meta f dstmode dstsha
+  local noun="$1"
   GG_MD_COUNT=0
   : >"$GG_TMP/md-files.z"
   case "$GG_MD_MODE" in
@@ -74,37 +74,7 @@ gg_md_select() { # NOUN — what the lane calls its content, for the skip lines
       gg_walk_configured_paths "$noun" file gg_md_take
       ;;
     staged)
-      GG_WALK_SKIPPED=0
-      : >"$GG_TMP/skipped.z"
-      gg_require_merged_index
-      # A, M and T, renames at exact content: a pure move carries no new
-      # bytes, a file that moved and changed is read whole at its new path.
-      git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT >"$GG_TMP/raw.z" \
-        || gg_collection_error "could not collect the staged changes (git diff --cached --raw failed)"
-      while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
-        gg_matches_path_glob "$f" || continue
-        gg_is_excluded "$f" && continue
-        # Record shape: ":srcmode dstmode srcsha dstsha status".
-        set -- $meta
-        dstmode="$2"
-        dstsha="$4"
-        case "$dstmode" in
-          120000)
-            gg_note_skip "$f" "tracked as a symlink, not $noun"
-            continue
-            ;;
-          160000)
-            gg_note_skip "$f" "tracked as a submodule gitlink, not $noun"
-            continue
-            ;;
-        esac
-        gg_read_blob "$dstsha" "$f" file
-        if gg_blob_is_binary "$GG_TMP/blob" "$f"; then
-          gg_note_skip "$f" "binary content, not $noun"
-          continue
-        fi
-        gg_md_take "$f" "$GG_TMP/blob" "$dstsha"
-      done <"$GG_TMP/raw.z"
+      gg_walk_staged_paths "$noun" gg_md_take
       ;;
     *) gg_config_error "gg_md_select: no scope resolved (GG_MD_MODE='$GG_MD_MODE')" ;;
   esac

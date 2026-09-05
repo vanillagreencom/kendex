@@ -197,6 +197,18 @@ run_refs --staged
 [ "$RC" -eq 1 ] && case "$OUT" in *"no tracked file or directory at ok.md"*) true ;; *) false ;; esac \
   && ok "a link to a file the commit deletes is dead" || bad "deleted target is dead" "rc=$RC out=$OUT"
 
+echo "=== staged references honor exclusions ==="
+new_repo staged-exclusion
+put AGENTS.md $'[dead](missing.md)\n'
+put tools/md-excludes $'AGENTS.md\tvendored instructions\n'
+run_refs --staged
+[ "$RC" -eq 0 ] && case "$OUT" in *"no staged markdown file(s) to judge"*) true ;; *) false ;; esac \
+  && ok "the staged scan excludes the declared document" || bad "staged exclusion" "rc=$RC out=$OUT"
+git -C "$R" rm -qf tools/md-excludes
+run_refs --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"no tracked file or directory at missing.md"*) true ;; *) false ;; esac \
+  && ok "the same staged reference fails without its exclusion" || bad "staged exclusion control" "rc=$RC out=$OUT"
+
 echo "=== refusals and unmeasured paths ==="
 new_repo refuse
 put AGENTS.md $'Para\n\n```\nopen\n'

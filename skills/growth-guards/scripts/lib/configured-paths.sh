@@ -1,40 +1,9 @@
 # shellcheck shell=bash
-# How a lane scoped by a glob list over repo-relative paths finds its content
-# and decides what it may measure: the glob list, the walk over the index
-# records, and the classification of every shape at a configured path that is
-# not the content the lane reads.
-#
-# TWO glob lists, one matcher. A lane names the paths it is FOR with a
-# configured list, and names the paths it is NOT for with an excludes file
-# read out of the index. Both are shell globs over the full repo-relative
-# path and both go through gg_path_matches, so the two answers cannot come
-# from two spellings; the excludes half sits at the foot of this file.
-#
-# Sourced by lib/common.sh, never executed; the family contract and every
-# helper it leans on (gg_config_error, gg_config_path, gg_require_merged_index,
-# gg_shown) live there.
-#
-# Bash 3.2-safe throughout, like its parent.
+# Shared configured paths, exclusions, policy reads, and text walks.
+# Callers disable pathname expansion with set -f. Patterns match the full
+# repository-relative path; includes and exclusions use gg_path_matches.
+# common.sh loads this file and supplies its diagnostics and path checks.
 
-# --- configured path globs: one setting naming a space-separated list -------
-# The lanes scoped by a PATH LIST rather than by an excludes file share this.
-# Each pattern goes through the family's path discipline — absolute, escaping
-# and '-'-leading values are configuration errors, never a glob that quietly
-# matches nothing — and an empty list is one too: a check that measures
-# nowhere while reporting OK is the silent pass this family refuses, and
-# dropping the check from GROWTH_GUARDS_CHECKS is how it is turned off.
-#
-# The caller runs under `set -f`. The list is word-split, and pathname
-# expansion would resolve each pattern against the WORK TREE — matching
-# whatever happens to be checked out instead of the tracked paths the scan
-# judges, and matching nothing at all in a sparse or bare checkout.
-
-# A setting holding a LIST of path globs, validated the way one path is. The
-# caller word-splits the result, so every check that reads a glob list applies
-# the same path discipline: absolute, escaping and '-'-leading entries are
-# configuration errors rather than globs that quietly match nothing. An empty
-# result means the setting named nothing — the caller decides whether that is
-# a switched-off check or an error.
 gg_config_path_list() { # RAW LABEL — normalized globs, space-separated, on stdout
   local raw="$1" label="$2" entry norm out=""
   # Callers run under `set -f`, so this splits on whitespace without the shell
@@ -269,6 +238,40 @@ gg_walk_configured_paths() { # NOUN UNREAD-NOUN ON_FILE
     fi
     "$on_file" "$f" "$GG_TMP/blob" "$sha"
   done <"$GG_TMP/files.z"
+}
+
+# The staged text walk shares selection and blob classification across lanes.
+# A pure rename adds no content. A rename with changed bytes is an addition.
+gg_walk_staged_paths() { # NOUN ON_FILE — callback receives PATH BLOBFILE SHA
+  local noun="$1" on_file="$2" meta f dstmode dstsha
+  GG_WALK_SKIPPED=0
+  : >"$GG_TMP/skipped.z"
+  gg_require_merged_index
+  git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT >"$GG_TMP/raw.z" \
+    || gg_collection_error "could not collect the staged changes (git diff --cached --raw failed)"
+  while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
+    gg_matches_path_glob "$f" || continue
+    gg_is_excluded "$f" && continue
+    set -- $meta
+    dstmode="$2"
+    dstsha="$4"
+    case "$dstmode" in
+      120000)
+        gg_note_skip "$f" "tracked as a symlink, not $noun"
+        continue
+        ;;
+      160000)
+        gg_note_skip "$f" "tracked as a submodule gitlink, not $noun"
+        continue
+        ;;
+    esac
+    gg_read_blob "$dstsha" "$f" "$noun file"
+    if gg_blob_is_binary "$GG_TMP/blob" "$f"; then
+      gg_note_skip "$f" "binary content, not $noun"
+      continue
+    fi
+    "$on_file" "$f" "$GG_TMP/blob" "$dstsha"
+  done <"$GG_TMP/raw.z"
 }
 
 # --- exclusion list: pattern<TAB>reason, reason mandatory --------------------
