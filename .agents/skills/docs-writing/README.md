@@ -1,6 +1,6 @@
 # Docs Writing
 
-The convention for every markdown file a repository owns: the root and nested `AGENTS.md`, `docs/architecture/overview.md` and its topic files, `README.md`, `DEVELOPMENT.md`, `SKILL.md`, agent and workflow files, and reference docs. For a repository that wants its documentation to stay small, true, and free of what the code already says.
+Writing rules and templates for repository markdown. Authors and reviewers use the same requirements for each kind of document.
 
 ## Install
 
@@ -8,22 +8,21 @@ The convention for every markdown file a repository owns: the root and nested `A
 kendex add vanillagreencom/kendex --skill docs-writing
 ```
 
-Installs `decider` beside it, which owns the decision-record format this skill points at.
+kendex also installs decider, which supplies the decision-record format.
 
-## What it does
+## Features
 
-- States one writing standard for every markdown file, with pairs showing what to write instead.
-- States per file type who reads it, what it holds, and what it excludes.
-- Splits a package's docs three ways: `README.md` for people, `DEVELOPMENT.md` for maintainers, `SKILL.md` for agents.
-- Ships a template for each file type that takes one.
-- Ships a blank-page rewrite workflow for a repository whose docs predate the convention.
-- Points at the `decider` skill for decision records rather than shipping a second format.
+- Supply a plain writing standard with examples.
+- Define the purpose and contents of each document type.
+- Provide templates for package, developer, agent and reference documents.
+- Guide a rewrite from a blank page.
+- Link decision-record work to the decider skill.
 
 ## How it works
 
-An agent loads `SKILL.md` when it writes or reviews a markdown file and follows the convention there. Sibling packages enforce the mechanical half: `growth-guards` (the `md-format`, `md-refs` and `prose` lanes), `size-ratchet` (a byte class per file kind), the `doc-drift-check` hook (docs move with the code they cover), and kendex itself (the per-harness shims that make nested `AGENTS.md` files reachable). Install those beside this skill.
+The author identifies the document type and reads its rules in [SKILL.md](SKILL.md). The author checks existing claims against the code. The matching template provides the structure for the rewrite. Installed markdown guards check formatting and references after the rewrite.
 
-## Customise
+## Settings
 
-- Size classes: a repository overrides one through size-ratchet's settings, never by stating a number in prose.
-- Repository-specific instructions: `[skill-instructions]` in `kendex.toml`, rendered into the installed copy.
+- Add repository writing instructions in `kendex.toml` under `[skill-instructions]`. kendex includes them in the installed skill.
+- Set `SIZE_RATCHET_CLASSES` in `kendex.settings.toml` under `[env]` when the project needs different file limits. [../size-ratchet/README.md](../size-ratchet/README.md) § Path classes defines the format.

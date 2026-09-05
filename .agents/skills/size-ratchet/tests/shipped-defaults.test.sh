@@ -262,7 +262,7 @@ has "skills/x/SKILL.md" && bad "control: SKILL.md passes under the shipped class
 echo "=== a repo class scoped to a directory does not shadow a frozen class ==="
 # `*` crosses `/`, so `ui/*.ts` reaches the test files under ui/ too, and an
 # entry written for components would retitle the class the package ships for
-# them. The rule these arms pin: README.md "Path classes".
+# them. The rule these arms pin: references/policy.md "Path classes".
 new_repo shadow
 mklines ui/src/App.ts 300
 mklines ui/src/App.test.ts 500

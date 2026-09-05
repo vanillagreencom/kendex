@@ -1,66 +1,36 @@
 # @vanillagreen/pi-claude-bridge
 
-A Pi provider that runs Claude Code through the Claude Agent SDK. Pi keeps its tools and its TUI; Claude Code does the reasoning on your Claude subscription, with no API key. The `pi-claude/*` models appear in `/model` while a Claude account is connected.
+A Pi provider that uses a logged-in Claude Code account through the Claude Agent SDK. You keep Pi's terminal interface and tools while Claude Code handles model requests.
 
 ![Claude bridge demo response](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-claude-bridge/assets/bridge-demo.png) ![Pi Claude settings panel](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-claude-bridge/assets/settings-panel.png)
 
-Forked from [elidickinson/pi-claude-bridge](https://github.com/elidickinson/pi-claude-bridge).
-
 ## Install
 
-Requires Pi 0.81 or newer and a Claude Code login (`claude` on `PATH`, or the executable path set below). Declare the package in the scope's kendex manifest, then let `kendex update-pi` install it and register it in Pi's `settings.json`. For a project, in its `kendex.toml`:
+- npm: `pi install npm:@vanillagreen/pi-claude-bridge`.
+- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-claude-bridge"]
 source = "kendex"
 ```
 
-```bash
-kendex update-pi
-```
+Restart Pi after installation. Use `kendex update-pi --check` to preview the installation. A Claude Code login is required. Make `claude` available on `PATH` or set its executable path below.
 
-The same declaration in `~/.config/kendex/kendex.toml` installs it for every project. `kendex update-pi --check` prints the plan and changes nothing.
+## Features
 
-Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-claude-bridge):
-
-```bash
-pi install npm:@vanillagreen/pi-claude-bridge
-```
-
-Restart Pi after installation.
-
-## What it does
-
-- Registers Fable 5, Opus 5, Opus 4.8 and older Opus releases, Sonnet 5, Sonnet 4.6 and Haiku as `pi-claude/*` models; `/model opus` selects Opus 5 and older releases stay selectable by full id.
-- Runs every Pi tool call on Pi, including persistent subagent panes, and blocks the Claude turn until the result is back.
-- Keeps parallel conversations and subagents on independent request, abort and Claude-session state.
-- Keeps the Claude session across turns, `/compact`, tree navigation, abort recovery and account changes.
-- Forwards Pi's thinking level, with summarized thinking shown for Opus, and lets you pin a Claude effort per model.
-- Isolates Claude Code from filesystem MCP servers and suppresses its cloud MCP servers so tokens stay lean.
-- Optionally exposes your Claude account's connectors (Gmail, Calendar, Drive, Slack, Jira, Confluence and whatever else the account has), read-only unless you allow writes.
-- Optionally forwards `APPEND_SYSTEM.md` and the prompt blocks other kendex Pi extensions add.
-- Works with a companion account router that rotates subscription profiles on a rate limit, without duplicating tool side effects.
-- Shows one `[rate-limit]` warning with the reset time and emits it for `pi-qol` to resume on, and turns a silent Claude turn into a retryable error instead of a hang.
-
-Fable 5 and Opus 5 run classifiers that can decline a turn; the bridge asks Claude Code to fall back to Opus 4.8 for those and labels the rerouted turn. That needs Claude Code's own support for the model; when routing provider-specific ids through Bedrock, Vertex or Foundry set `ANTHROPIC_DEFAULT_FABLE_MODEL` and `ANTHROPIC_DEFAULT_OPUS_MODEL` yourself.
+- Select Claude models from Pi's model menu.
+- Run Pi tool calls during Claude conversations.
+- Resume the Claude conversation across Pi turns.
+- Configure model effort and forwarded prompt context.
+- Optionally use the Claude account's connectors.
 
 ## How it works
 
-Each Pi request spawns or resumes a Claude Code subprocess through the Agent SDK. Pi's tools are offered to that subprocess over an in-process MCP server, so a tool call the model makes comes back to Pi, runs there, and its result is fed to the subprocess before the turn ends. The Claude session id is stored in the Pi session, so a later turn resumes it, and a session that does not match Pi's history is rebuilt from that history. Connector tools run inside the subprocess against the account, so Pi shows the answer and a payload-free audit entry, never a tool card.
+You select a pi-claude model in Pi. The bridge starts or resumes Claude Code through the Agent SDK. It sends the prompt and makes Pi's tools available to Claude Code. Tool calls return to Pi for execution, then their results return to Claude Code. Pi displays the response and saves the Claude session identifier.
 
-## Prompt context
+## Settings
 
-By default the bridge appends the nearest context file walking up from the working directory (`AGENTS.override.md`, then `AGENTS.md`, then `AGENTS.MD` in each directory, falling back to the global Pi agent directory) plus Pi's skills block to Claude Code's preset prompt. `CLAUDE.md` is not forwarded, because Claude Code loads it itself. Forwarding anything else Pi adds to the prompt is off by default and switched on per item in the settings.
-
-## Connectors
-
-Connectors are off by default and enabled only from user scope: the `enableConnectors` and `connectorWriteMode` keys are read from `~/.pi/agent/settings.json`, `~/.pi/agent/claude-bridge.json` and the environment (`CLAUDE_BRIDGE_ENABLE_CONNECTORS`, `CLAUDE_BRIDGE_CONNECTOR_WRITE`), never from a project's checked-in `.pi/` files, so a cloned repository cannot switch on access to your mail or calendar. The environment wins over the files.
-
-Sessions are read-only until `connectorWriteMode` is exactly `allow`; any other value denies every write tool on every connector. Set `allow` only in the environment of a dedicated one-shot process that runs a single approved write, never in persistent settings. `/pi-claude:connectors` lists the account's installed connectors by asking the account, so the answer is complete.
-
-With connectors on, the Claude Code subprocess also loads its user-scope settings (`~/.claude`), and only those; a checkout's `.claude/settings.json` is never loaded. A `provider.settingSources` list in `claude-bridge.json` overrides that verbatim, and naming `project` or `local` there reopens the surface.
-
-## Customise
+The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-claude-bridge"]`.
 
 Open `/extensions:settings`; settings appear under the **Pi Claude** tab, and `/pi-claude` opens the same tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted. The bridge also reads `claude-bridge.json` in `~/.pi/agent` and in a trusted project's `.pi/`; a value taken from one of those files is shown with the file that supplies it, and editing it in the panel writes Pi settings, which win.
 
@@ -79,3 +49,15 @@ Environment variables:
 Tool-result integrity problems always surface as a Pi error notification plus a metadata-only `claude-bridge-integrity` entry in the Pi session file, so a lost tool result can be analysed from the session alone.
 
 Maintainer notes, the embedding and account-router contracts, and the test suites are in [DEVELOPMENT.md](DEVELOPMENT.md).
+
+## Prompt context
+
+The bridge sends the nearest context file and Pi's skills list with the prompt. It checks `AGENTS.override.md`, `AGENTS.md` and `AGENTS.MD` while walking up from the working directory. Claude Code loads its own CLAUDE.md files. Use the prompt settings above to forward other Pi extension instructions.
+
+## Connectors
+
+Connectors are disabled by default. Set `enableConnectors` in user settings, user `claude-bridge.json`, or the `CLAUDE_BRIDGE_ENABLE_CONNECTORS` environment variable. Project settings cannot enable them.
+
+Connector access is read-only unless `connectorWriteMode` is exactly `allow`. Set `CLAUDE_BRIDGE_CONNECTOR_WRITE=allow` only for a dedicated process running an approved write. Keep it out of persistent settings. Use `/pi-claude:connectors` to list the account's connectors.
+
+With connectors enabled, Claude Code loads user settings. An explicit `provider.settingSources` list in `claude-bridge.json` changes that selection. Including project or local settings lets those files affect the subprocess.

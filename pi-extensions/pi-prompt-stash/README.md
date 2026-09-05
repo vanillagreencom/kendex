@@ -1,48 +1,39 @@
 # @vanillagreen/pi-prompt-stash
 
-A per-session prompt stash for Pi. Save a draft, write something else, restore the draft later.
+A Pi extension for saving prompt drafts. You can save unfinished text, write another prompt and restore the draft later.
 
 ![Prompt Stash popup](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-prompt-stash/assets/stash-popup.png)
 
 ## Install
 
-Declare the package in the scope's kendex manifest, then let `kendex update-pi` install it and register it in Pi's `settings.json`. For a project, in its `kendex.toml`:
+- npm: `pi install npm:@vanillagreen/pi-prompt-stash`.
+- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-prompt-stash"]
 source = "kendex"
 ```
 
-```bash
-kendex update-pi
-```
+Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
 
-The same declaration in `~/.config/kendex/kendex.toml` installs it for every project. `kendex update-pi --check` prints the plan and changes nothing.
+## Features
 
-Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-prompt-stash):
-
-```bash
-pi install npm:@vanillagreen/pi-prompt-stash
-```
-
-Restart Pi after installation.
-
-## What it does
-
-- One shortcut does both: with text in the editor it stashes the draft, with an empty editor it opens the popup. `/prompt-stash` opens the popup too.
-- The popup searches, restores, deletes and clears stashes, and documents its keys in the footer.
-- Stashes belong to the session and survive Pi restarts within it.
-- Optional deduplication drops older entries with the same text.
+- Save editor text with a shortcut.
+- Search, restore and delete saved drafts in a popup.
+- Keep drafts when the session resumes.
+- Optionally remove duplicate drafts.
 
 ## How it works
 
-Stashes are a JSON file under the session's kendex data folder, `<Pi root>/kendex/sessions/<session>/prompt-stash/`, written atomically on every change; deleting the session through `pi-session-manager` removes it.
+The shortcut saves the current editor text in the session's draft file. With an empty editor, the shortcut opens the saved drafts. You select a draft to restore its text to the editor. The session keeps its draft file across restarts.
 
-## Customise
+## Settings
 
-Open `/extensions:settings`; settings appear under the **Prompt Stash** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted. `glyphStyle` picks `unicode` or `ascii` chrome, and `@vanillagreen/pi-tool-renderer`'s `globalGlyphStyleOverride` wins when set.
+The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-prompt-stash"]`.
 
-- `enabled`: master toggle.
+Open `/extensions:settings`; settings appear under the **Prompt Stash** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted. `glyphStyle` picks `unicode` or `ascii` symbols, and `@vanillagreen/pi-tool-renderer`'s `globalGlyphStyleOverride` wins when set.
+
+- `enabled`: package toggle.
 - `shortcut`: the stash-or-open shortcut.
 - `storeFile`: the file name inside the session's stash folder.
 - `deduplicate`: drop older entries with identical text.

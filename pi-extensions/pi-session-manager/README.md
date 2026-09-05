@@ -1,51 +1,40 @@
 # @vanillagreen/pi-session-manager
 
-A session manager overlay for Pi. It complements the built-in `/resume` with search, a lineage view, rename, and delete that can go to the trash.
+A session browser for Pi. You can search saved conversations, resume them, rename them or delete them.
 
 ![Session Manager overlay and model-change confirmation](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-session-manager/assets/session-manager.gif)
 
 ## Install
 
-Declare the package in the scope's kendex manifest, then let `kendex update-pi` install it and register it in Pi's `settings.json`. For a project, in its `kendex.toml`:
+- npm: `pi install npm:@vanillagreen/pi-session-manager`.
+- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-session-manager"]
 source = "kendex"
 ```
 
-```bash
-kendex update-pi
-```
+Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
 
-The same declaration in `~/.config/kendex/kendex.toml` installs it for every project. `kendex update-pi --check` prints the plan and changes nothing.
+## Features
 
-Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-session-manager):
-
-```bash
-pi install npm:@vanillagreen/pi-session-manager
-```
-
-Restart Pi after installation.
-
-## What it does
-
-- `/sessions`, or the configured shortcut, opens the manager; tabs switch between the current project's sessions and all of them.
-- Search by tokens, quoted phrases, or `re:<regex>`; the list filters as you type, and delete-all acts only on the sessions shown.
-- A threaded view follows Pi's parent-session links and ranks branches by the newest activity anywhere in the subtree; `recent` and `relevance` sorts are one key away.
-- The detail pane shows each session's working directory and saved model. Resuming keeps the saved model, and when your active model differs a confirmation lets you pick either.
-- Inline rename, and delete with confirmation. Deleting a session also removes the per-session data every kendex extension keeps for it.
-- Session titles match `/resume`: the explicit name, else the first user message, else the file name. Session files are read line by line, so a large session never loads whole to be listed or searched.
-- Pi's own `/resume`, `/tree`, `/fork`, `/clone` and `/name` stay available; the overlay's footer documents its keys.
+- Browse sessions for the current project or all projects.
+- Search by words, quoted phrases or regular expressions.
+- View related sessions as a tree.
+- Choose the saved or current model when resuming.
+- Delete with confirmation and optional trash support.
 
 ## How it works
 
-The overlay lists Pi's session files, reads only the header and user-message lines it needs, and hands a chosen action back to Pi: a resume switches the session through Pi's own session API, a delete tries the `trash` command first and unlinks only when that is unavailable.
+The browser reads Pi's saved session files and displays their names and details. You search or select a session. Resume opens that session through Pi. Delete tries the trash command when configured, then uses permanent deletion if trash is unavailable.
 
-## Customise
+## Settings
 
-Open `/extensions:settings`; settings appear under the **Session Manager** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted. `glyphStyle` picks `unicode` or `ascii` chrome, and `@vanillagreen/pi-tool-renderer`'s `globalGlyphStyleOverride` wins when set.
+The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-session-manager"]`.
 
-- `enabled`: master toggle.
+Open `/extensions:settings`; settings appear under the **Session Manager** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted. `glyphStyle` picks `unicode` or `ascii` symbols, and `@vanillagreen/pi-tool-renderer`'s `globalGlyphStyleOverride` wins when set.
+
+- `enabled`: package toggle.
 - `shortcutKey`: the opening shortcut; `none` disables it.
 - `defaultScope`, `defaultSort`: the tab and sort the overlay opens with.
 - `visibleRows`, `overlayWidth`: overlay size.

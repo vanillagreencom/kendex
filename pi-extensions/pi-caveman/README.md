@@ -1,47 +1,35 @@
 # @vanillagreen/pi-caveman
 
-Caveman communication mode for Pi: fewer output tokens, the same technical accuracy. A mode is a system-prompt directive the model holds across turns; the extension steers style and never rewrites output.
+A Pi extension that asks the model to use shorter replies. Users can choose a response style for the session or set a default.
 
 ![/caveman command autocomplete](https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-caveman/assets/command-autocomplete.png)
 
 ## Install
 
-Declare the package in the scope's kendex manifest, then let `kendex update-pi` install it and register it in Pi's `settings.json`. For a project, in its `kendex.toml`:
+- npm: `pi install npm:@vanillagreen/pi-caveman`.
+- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-caveman"]
 source = "kendex"
 ```
 
-```bash
-kendex update-pi
-```
+Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
 
-The same declaration in `~/.config/kendex/kendex.toml` installs it for every project. `kendex update-pi --check` prints the plan and changes nothing.
+## Features
 
-Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-caveman):
-
-```bash
-pi install npm:@vanillagreen/pi-caveman
-```
-
-Restart Pi after installation.
-
-## What it does
-
-- Four modes: `lite` (tight professional sentences, no filler or hedging), `full` (terse, fragments allowed), `ultra` (maximum compression with abbreviations and arrows), `micro` (the shortest directive, for token-sensitive sessions).
-- `/caveman` toggles the session between off and the last active mode; `/caveman:lite`, `:full`, `:ultra`, `:micro` set a session override; `/caveman off`, `/caveman status` and `/caveman debug` clear it, show where the mode comes from, and print the rendered directive. Arguments autocomplete.
-- Replies stay flowing chat with no markdown headers, and no marker lines or `Caveman` prefixes leak into answers.
-- When a prompt names an irreversible destructive operation (force-push, hard reset, drop table, `rm -rf`, branch delete) the model answers that one reply in plain English and resumes caveman on the next turn.
-- Code blocks, quoted errors, commit messages, PR descriptions, formal reviews and anything sent to other systems stay normal English, each boundary its own toggle.
-- A session keeps the mode it started with across `pi -r`, including slash-command changes made before the next model turn, even when the default changes later; changing the default in the settings editor replaces the session override.
-- `pi-qol` shows a Caveman badge in its statusline and cycles modes on alt+c.
+- Select lite, full, ultra or micro response styles.
+- Toggle the style with the caveman command.
+- Keep a session's selected style when it resumes.
+- Configure which kinds of output use normal English.
 
 ## How it works
 
-Before every model turn the extension reads the configured mode and the session override, renders one directive block for the effective mode, and appends it to Pi's system prompt. Session state lives in a small sidecar file under the session's kendex data folder, so a resumed session restores its override without replaying the conversation.
+You select a style in the settings or with a session command. Before the next model turn, the extension adds that style's instructions to the system prompt. The model uses those instructions when it writes a reply. The extension saves the session choice for later resumes.
 
-## Customise
+## Settings
+
+The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-caveman"]`.
 
 Open `/extensions:settings`; settings appear under the **Caveman** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted.
 

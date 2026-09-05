@@ -1,6 +1,6 @@
 # Dep Radar
 
-A dependency sweep for a repository: it inventories every pinned SDK, binary, package, fork, model weight and GitHub Action, checks upstream for releases, applies the safe bumps, and reports the rest. For a project owner who wants pins kept current without reading every changelog.
+A dependency review workflow for repository maintainers. It checks pinned packages and tools for updates, applies permitted changes and reports changes that need your decision.
 
 ## Install
 
@@ -8,20 +8,19 @@ A dependency sweep for a repository: it inventories every pinned SDK, binary, pa
 kendex add vanillagreencom/kendex --skill dep-radar
 ```
 
-Needs the `github` skill for the PR flow. Add `worktree` when several bumps land in one run, one working copy per surface. Invoke it from your harness (`/dep-radar`), on demand or from a schedule.
+kendex also installs the github skill. Add worktree when a run needs separate working copies for several updates. Invoke `/dep-radar` in your coding tool.
 
-## What it does
+## Features
 
-- Writes and maintains `docs/dep-radar/inventory.md`: every pinned surface with its pin location, upstream check, refresh procedure, verify command and risk tier.
-- Compares upstream against `docs/dep-radar/last-seen.json`, so a run where nothing moved costs a few registry calls.
-- Reads the real changelog for each surface that moved and classifies the change.
-- Opens one PR per surface for the automatic tier, carrying the bump plus the fixes its fallout needs, verified locally first.
-- Writes a dated report every run, with the bumps that need an owner decision.
+- Maintain an inventory of pinned dependencies and update procedures.
+- Check upstream releases and read their release notes.
+- Create a separate PR for each dependency update and its required fixes.
+- Write a report of applied updates and unresolved decisions.
 
 ## How it works
 
-Nothing in the skill is project-specific. Everything about your repository lives in the inventory, which the skill writes on the first run and keeps in sync afterwards. Review the risk tiers in that first inventory; they decide what gets bumped without asking.
+The agent reads the dependency inventory and checks for upstream releases. It compares the results with the last recorded check. For each update, it applies the inventory's approval rule. It tests permitted updates and opens their PRs. It records the results in a dated report.
 
-## Customise
+## Settings
 
 - The inventory is the configuration: risk tiers, refresh procedures and owner rules are rows in `docs/dep-radar/inventory.md`. No settings keys.

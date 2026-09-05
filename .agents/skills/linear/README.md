@@ -1,6 +1,6 @@
 # Linear CLI
 
-A Bash CLI over Linear's GraphQL API with a local JSON cache: reads are served from the cache, writes hit the API and write through to it. For a project whose agents plan, track and close work in Linear from the shell.
+A shell CLI for Linear issues, projects and planning data. It includes a local cache for reads and sends changes to the Linear API.
 
 ## Install
 
@@ -8,30 +8,20 @@ A Bash CLI over Linear's GraphQL API with a local JSON cache: reads are served f
 kendex add vanillagreencom/kendex --skill linear
 ```
 
-Needs Bash 4.0 or newer, `curl` and `jq`; macOS system Bash 3.2 is unsupported, so invoke `linear.sh` with the newer Bash. Then:
+Requires Bash 4.0 or newer, curl and jq. Put `LINEAR_API_KEY` in `.env.local` and `LINEAR_TEAM` in `kendex.settings.toml` under `[env]`. Run the installed `scripts/linear.sh auth-check --strict`, then `scripts/linear.sh sync --reconcile`.
 
-1. Put `LINEAR_API_KEY` in `.env.local`.
-2. Set `LINEAR_TEAM` in committed `kendex.settings.toml` under `[env]`; the install writes the key with an empty value, and writes refuse until it is set.
-3. Run `./scripts/linear.sh auth-check --strict`, then `./scripts/linear.sh sync --reconcile`.
+## Features
 
-## What it does
-
-- Issues, comments, projects, initiatives, milestones, labels, teams, users, cycles, workflow states and documents: list, get, create, update, and the relations between them.
-- A local cache for reads that need no API key, refreshed by `sync`.
-- Attachment upload and download.
-- Issue rules applied at create and transition time: a required agent-routing label, a required `Reached by:` line, completion validation.
+- Read and change issues, projects, comments and planning data.
+- Refresh a local cache for repeated reads.
+- Upload and download attachments.
+- Check configured issue requirements during creation and completion.
 
 ## How it works
 
-```bash
-./scripts/linear.sh cache issues list --project "Phase 2" --state "Todo,In Progress"
-./scripts/linear.sh issues update ABC-100 --state Done
-./scripts/linear.sh sync --reconcile
-```
+You configure the API key and target team. A sync downloads Linear data into the project's local cache. Cache commands read that saved data. Write commands send changes to Linear and update the cache.
 
-`./scripts/linear.sh --help` lists the resources; `./scripts/linear.sh <resource> --help` is one resource's options. The cache lives at `.cache/linear` under the physical git worktree root, so symlinked checkout spellings share one copy.
-
-## Customise
+## Settings
 
 Set non-secret keys in committed `kendex.settings.toml` under `[env]`; the key list with each default and what leaving it unset means is [kendex.settings.toml.example](kendex.settings.toml.example).
 

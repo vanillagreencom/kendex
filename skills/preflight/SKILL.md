@@ -48,4 +48,4 @@ Exit codes: `0` clean, `1` findings, `2` usage/environment error (bad flag, not 
 
 ## Wiring
 
-Dev agents run `preflight` in the validate step, **before** the project's own validation command. The growth-guards pre-commit chain runs `preflight --staged` itself, and CI runs `preflight --base origin/<default>` on a COMMITTED install. Hook and CI wiring: [README.md](README.md) § Wiring it.
+Dev agents run `preflight` in the validate step, **before** the project's own validation command. The growth-guards pre-commit chain runs `preflight --staged` itself, and CI runs `preflight --base origin/<default>` on a COMMITTED install. Hook and CI wiring: [README.md](README.md) § Wiring.

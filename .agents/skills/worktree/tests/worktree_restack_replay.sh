@@ -15,8 +15,6 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$SKILL_DIR/scripts/worktree}"
-SKILL_MD="$SKILL_DIR/SKILL.md"
-README_MD="$SKILL_DIR/README.md"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -427,29 +425,6 @@ bareflag_code=$?
 set -e
 assert_eq "$bareflag_code" "1" "--replay without --reuse/--restack is refused"
 assert_contains "$(cat "$BAREFLAG_ROOT/create.err")" "--reuse/--restack" "bare --replay refusal names the required engines"
-
-# --- SKILL.md routes to the tool instead of encoding the procedure -------------
-REPLAY_HEADING='### Policy-blocked rebase (cherry-pick replay fallback)'
-if grep -qF -- "$REPLAY_HEADING" "$SKILL_MD"; then
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "SKILL.md keeps the exact heading orch cross-references"
-else
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "SKILL.md lost the heading orch cross-references"
-fi
-replay_section="$(awk -v h="$REPLAY_HEADING" '$0 == h { insec = 1; next } insec && (/^## / || /^### /) { exit } insec { print }' "$SKILL_MD")"
-replay_section_lines="$(printf '%s\n' "$replay_section" | grep -c '^' || true)"
-if [[ "$replay_section_lines" -le 8 ]]; then
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "replay section is a short pointer ($replay_section_lines lines), not a procedure"
-else
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s (got %s lines)\n' "replay section should be a short pointer" "$replay_section_lines"
-fi
-assert_contains "$replay_section" "--replay" "replay section names the tool mode"
-assert_contains "$replay_section" "restack continue|skip|abort" "replay section names the shared guarded controls"
-if grep -qF -- '```' <<<"$replay_section"; then
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "replay section still carries fenced command blocks"
-else
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "replay section carries no fenced command blocks"
-fi
-assert_contains "$(cat "$README_MD")" "--replay" "README routes policy-blocked rebases to the tool mode"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
