@@ -38,7 +38,7 @@ GG_TMP=""
 GG_SETTINGS_INDEX_OWNED=0
 # In-flight staging file for gg_install_file, so an interrupt between its
 # creation and its rename leaves nothing beside the destination. The helper
-# that sets it lives in lib/atomic-install.sh, which only the two writing
+# that sets it lives in lib/atomic-install.sh, which the writing
 # lanes source; the declaration and the removal below stay here on purpose,
 # because the reset has to reach every guard and one process arms one trap.
 GG_INSTALL_TMP=""

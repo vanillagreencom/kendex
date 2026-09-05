@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # atomic-install.sh — how this family REPLACES a file it owns: a policy
-# baseline, a collated changelog record. One helper does the write, and the
+# baseline, a collated changelog record, or reflowed markdown. One helper does the write, and the
 # two it leans on are what it needs to do that safely — the destination's
 # mode, and what a failing step said.
 #
