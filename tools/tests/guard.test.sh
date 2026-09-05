@@ -4,7 +4,7 @@
 # nearly all of it.
 # It also pins the absence — a size cap, an undeclared size-ratchet row, a
 # work marker, a blanket allow, an oversized file, a malformed fragment, an
-# over-long changelog entry and a hand edit under [Unreleased] all pass here;
+# over-long changelog entry all pass here;
 # size-ratchet, todo-ban, suppression-ban, byte-ceiling and changelog-entries
 # are the judges of those, and each delegation carries the control that proves
 # its judge still refuses what guard let by. The failing direction runs first
@@ -280,20 +280,13 @@ mkdir -p "$R/changelog.d/fixed"
 LONG="$(head -c 260 /dev/zero | tr '\0' 'e')"
 printf -- '- %s\n' "$LONG" >"$R/changelog.d/fixed/ken-long.md"
 printf -- '- One entry.\n- A second entry.\n' >"$R/changelog.d/fixed/ken-two.md"
-# The record rule compares the index against HEAD, so HEAD has to carry it —
-# and this commit lands before the baseline row below, whose own verdict is
-# "added since HEAD" and would read as carried if HEAD already had it.
-printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- One line.\n' >"$R/CHANGELOG.md"
-git -C "$R" add -A
-git -C "$R" commit -q -m "chore: land the changelog"
-printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- One line.\n- A hand-written line.\n' >"$R/CHANGELOG.md"
 mkfile crates/rowed.rs 401
 baseline "crates/existing.rs${TAB}401" "crates/rowed.rs${TAB}401"
 git -C "$R" add -A
 run_guard
 [ "$RC" -eq 0 ] \
-  && ok "an over-cap file, an undeclared baseline row, a work marker, a blanket allow, a 300 KB file, a malformed and an over-long fragment and a hand edit under [Unreleased] all pass — the packages judge those" \
-  || bad "an over-cap file, an undeclared baseline row, a work marker, a blanket allow, a 300 KB file, a malformed and an over-long fragment and a hand edit under [Unreleased] all pass — the packages judge those" "rc=$RC out=$OUT"
+  && ok "an over-cap file, an undeclared baseline row, a work marker, a blanket allow, a 300 KB file, a malformed and an over-long fragment all pass — the packages judge those" \
+  || bad "an over-cap file, an undeclared baseline row, a work marker, a blanket allow, a 300 KB file, a malformed and an over-long fragment all pass — the packages judge those" "rc=$RC out=$OUT"
 case "$OUT" in *Unreleased* | *changelog* | *fragment*) bad "guard names neither changelog scope" "$OUT" ;; *) ok "guard names neither changelog scope" ;; esac
 # The control for the row: size-ratchet itself refuses the same undeclared
 # row, so guard's silence about baseline rows is a delegation and not a gap.
@@ -303,19 +296,17 @@ SR_OUT="$(cd "$R" && "$RATCHET" 2>&1)" || SR_RC=$?
 [ "$SR_RC" -eq 1 ] && case "$SR_OUT" in *"baseline row added: crates/rowed.rs"*) true ;; *) false ;; esac \
   && ok "control: size-ratchet refuses the undeclared row guard passed" \
   || bad "control: size-ratchet refuses the undeclared row guard passed" "rc=$SR_RC out=$SR_OUT"
-# The control for the changelog: the package lane that owns both scopes
-# refuses all three of those, so that silence is a delegation too.
+# The control for the changelog: the package lane that owns fragments
+# refuses both defects, so that silence is a delegation too.
 CE_OUT=""
 CE_RC=0
 CE_OUT="$(cd "$R" && "$CHANGELOG_ENTRIES" 2>&1)" || CE_RC=$?
 [ "$CE_RC" -eq 1 ] \
   && case "$CE_OUT" in *ken-long.md*) true ;; *) false ;; esac \
   && case "$CE_OUT" in *ken-two.md*) true ;; *) false ;; esac \
-  && case "$CE_OUT" in *"gained lines under [Unreleased]"*) true ;; *) false ;; esac \
-  && ok "control: changelog-entries refuses the long entry, the two-entry fragment and the hand edit guard passed" \
-  || bad "control: changelog-entries refuses the long entry, the two-entry fragment and the hand edit guard passed" "rc=$CE_RC out=$CE_OUT"
+  && ok "control: changelog-entries refuses the long entry and two-entry fragment guard passed" \
+  || bad "control: changelog-entries refuses the long entry and two-entry fragment guard passed" "rc=$CE_RC out=$CE_OUT"
 rm -f "$R/crates/uncapped.rs" "$R/ui/uncapped.ts" "$R/crates/marker.rs" "$R/crates/blanket.rs" "$R/crates/huge.bin" "$R/changelog.d/fixed/ken-long.md" "$R/changelog.d/fixed/ken-two.md"
-git -C "$R" checkout -q -- CHANGELOG.md
 git -C "$R" add -A
 
 echo "=== this suite isolates every RATCHET_ key the gate reads ==="

@@ -85,23 +85,15 @@ line !~ UTF8 { print NR; exit }
 # is not valid UTF-8 has no character count to take. Two scopes reading a blob
 # their own way would create two places for one rule.
 #
-# Binary is the caller's to phrase — a fragment is refused, a record cannot be
-# compared at all — so it comes back as status 1 rather than a verdict here.
-# A third argument, `soft`, makes bytes that are not changelog text a RETURN
-# rather than an exit. One caller wants it: the record's copy in HEAD, which
-# is history the committer cannot change, so it must not block the commit
-# replacing it. Everywhere else a blob that cannot be measured is a
-# measurement that failed, which this family exits on. Reading the blob at
-# all stays loud in both: bytes git could not produce are not the same as
-# bytes that are not text.
-gg_changelog_blob() { # SHA LABEL [soft] — fills $GG_TMP/blob; 1 = not changelog text
-  local sha="$1" label="$2" soft="${3:-}" bad
+# Binary content returns status 1. The caller reports a fragment violation
+# or an unusable collation destination.
+gg_changelog_blob() { # SHA LABEL — fills $GG_TMP/blob; 1 = not changelog text
+  local sha="$1" label="$2" bad
   gg_read_blob "$sha" "$label" changelog
   ! gg_blob_is_binary "$GG_TMP/blob" "$label" || return 1
   bad="$(LC_ALL=C awk "$GG_UTF8_AWK" <"$GG_TMP/blob")" \
     || gg_collection_error "could not read $(gg_shown "$label") to check its encoding"
   if [ -n "$bad" ]; then
-    [ "$soft" != "soft" ] || return 1
     gg_collection_error "$(gg_shown "$label") line $bad is not valid UTF-8 — text with no character count cannot be measured"
   fi
 }
@@ -182,36 +174,9 @@ gg_is_section() { # NAME — 0 when NAME is exactly one of the sections
 # recover them from. A record with no `## [Unreleased]` heading has no
 # section at all, which is what its readers refuse.
 #
-# Two readers, one grammar. The default emits the section's CONTENT, which is
-# what a commit's lines are compared against. `-v emit=bounds` emits where the
-# section BEGINS and ENDS instead, as NUL-free records:
-#
-#   unreleased<TAB>LINE          the heading's own line
-#   section<TAB>LINE<TAB>TEXT    a level-3 heading inside it, with its text
-#   end<TAB>LINE                 the first line past the section
-#
-# so a collator splits the file at those numbers rather than searching it for
-# a heading again — a second search is a second grammar, and it is the one
-# that puts entries under a fenced example.
-#
-# Two refusals, one reason: the parser exits nonzero rather than answer a
-# question it cannot answer, because every reader here treats "no content"
-# and "no section" alike and would report a document it never read as clean.
-#
-#   3  a fence never closed, so where the section starts or stops is unknown.
-#      A stray ``` above the heading would otherwise make every side parse to
-#      nothing and every hand-written line read as unchanged.
-#   4  a SECOND `## [Unreleased]` heading, so WHICH heading is the section is
-#      unknown. In content mode the duplicate emits nothing of its own, so an
-#      empty one reads as a clean record; in bounds mode both are emitted and
-#      a collator keeping the last one folds fragments under the wrong
-#      heading and then deletes the files they came from.
-#   5  NO canonical heading, so there is no section here. This is the one
-#      status a caller may go on to treat as ordinary: a document that never
-#      had a section is not the same as one staging its section away, and
-#      only the caller knows which of those it is holding. It is a status
-#      rather than empty output because an EMPTY section parses to nothing
-#      too, and the two must not read alike.
+# The parser emits the pending heading line, section heading lines, and end
+# line for collation. A missing section, duplicate section, or unclosed fence
+# is a refusal. The collator uses these boundaries without another search.
 GG_UNRELEASED_AWK='
 function lead(l,   i) { i = 0; while (i < 3 && substr(l, i + 1, 1) == " ") i++; return i }
 function heading_level(l,   i, n, c) {
@@ -228,7 +193,6 @@ function heading_text(l,   i, n, t) {
   sub(/^[ \t]+/, "", t); sub(/[ \t]+#+[ \t]*$/, "", t); sub(/[ \t]+$/, "", t)
   return t
 }
-function content(l) { if (inside && emit != "bounds") print l }
 {
   line = $0; sub(/\r$/, "", line)
   i = lead(line)
@@ -238,27 +202,22 @@ function content(l) { if (inside && emit != "bounds") print l }
   if (fence != "") {
     # A closing fence: same character, at least as long, and nothing after it.
     if (c == fence && run >= flen && substr(line, i + run + 1) ~ /^[ \t]*$/) fence = ""
-    content(line)
     next
   }
-  if (run >= 3) { fence = c; flen = run; content(line); next }
+  if (run >= 3) { fence = c; flen = run; next }
   lvl = heading_level(line)
   if (lvl == 1 || lvl == 2) {
-    if (inside && emit == "bounds") printf "end\t%d\n", NR
+    if (inside) printf "end\t%d\n", NR
     inside = (lvl == 2 && tolower(heading_text(line)) == "[unreleased]")
     if (inside) {
       if (seen) { rc = 4; exit rc }
       seen = 1
-      if (emit == "bounds") printf "unreleased\t%d\n", NR
+      printf "unreleased\t%d\n", NR
     }
     next
   }
   if (!inside) next
-  if (emit == "bounds") {
-    if (lvl == 3) printf "section\t%d\t%s\n", NR, heading_text(line)
-    next
-  }
-  if (line ~ /[^ \t]/) print line
+  if (lvl == 3) printf "section\t%d\t%s\n", NR, heading_text(line)
 }
 END {
   # A body that bailed lands here too, and its status is the one to keep: an
@@ -267,7 +226,7 @@ END {
   # The fence first: it is why the heading below it was never seen, and
   # reporting the missing heading would name the symptom over the cause.
   if (fence != "") exit 3
-  if (inside && emit == "bounds") printf "end\t%d\n", NR + 1
+  if (inside) printf "end\t%d\n", NR + 1
   if (!seen) exit 5
 }
 '

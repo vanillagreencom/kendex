@@ -82,7 +82,7 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 | `GROWTH_GUARDS_CONFLICT_EXCLUDES` | `tools/conflict-markers-excludes` | conflict-markers exclusion list. |
 | `GROWTH_GUARDS_CHANGELOG_CAP` | `200` | Characters per changelog entry. |
 | `GROWTH_GUARDS_CHANGELOG_PATHS` | `changelog.d/*/*.md` | Space-separated globs naming the changelog fragments, matched against the full repo-relative path (`*` crosses `/`). |
-| `GROWTH_GUARDS_CHANGELOG_RECORD` | `CHANGELOG.md` | The collated record file; empty switches that scope off. |
+| `GROWTH_GUARDS_CHANGELOG_RECORD` | `CHANGELOG.md` | The collation destination; empty disables collation. |
 | `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS` | *(empty)* | Globs whose change obliges a changelog entry, judged by `commit-msg`; empty switches the rule off. |
 | `GROWTH_GUARDS_PROSE_PATHS` | `SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md` | Space-separated globs naming the markdown the prose lane scans, matched against the full repo-relative path (`*` crosses `/`). |
 | `GROWTH_GUARDS_MD_PATHS` | `*.md` | Globs naming the markdown md-format and md-reflow take under `--all`. |
@@ -97,6 +97,6 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 | `GROWTH_GUARDS_SUBJECT_MAX` | `72` | Characters allowed in a hand-written commit header. |
 | `GROWTH_GUARDS_PRE_COMMIT_LOCAL` | *(empty)* | Repo-root-relative executable the pre-commit shim runs last. |
 
-Settings follow [README.md § Configuration](README.md#configuration). `GROWTH_GUARDS_SETTINGS_FILE=/dev/null` skips file sources; `GROWTH_GUARDS_CHANGELOG_COLLATE=1` is environment-only and bypasses only the record comparison.
+Settings follow [README.md § Configuration](README.md#configuration). `GROWTH_GUARDS_SETTINGS_FILE=/dev/null` skips file sources; `GROWTH_GUARDS_CHANGELOG_COLLATE=1` is environment-only and lets `commit-msg` count a record change as the release changelog entry.
 
 **Excludes format.** `pattern<TAB>reason` per line (shell glob against the full repo-relative path; `*` crosses `/`); a pattern without a reason is a config error. A pattern opening with `!` carves its matches back into the scanned set, and wins over every exclusion row whatever the order. That is how hand-written source inside an otherwise excluded render tree (`.agents/**` plus `!.agents/skills/my-skill/**`) stays governed. To exclude a path that literally begins with `!`, escape it: `\!foo`. **Baseline format.** `path<TAB>count`, `LC_ALL=C` sorted, unique paths, positive counts. Seeding a first baseline and CI wiring: [README.md](README.md). Hook install and removal details: [DEVELOPMENT.md](DEVELOPMENT.md).

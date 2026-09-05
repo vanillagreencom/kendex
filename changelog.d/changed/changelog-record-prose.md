@@ -1,0 +1,1 @@
+- Changelog checks accept edits to combined release notes. Fragment validation remains; collation checks its destination before writing.

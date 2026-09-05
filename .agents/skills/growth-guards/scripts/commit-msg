@@ -311,11 +311,8 @@ if [ -n "$REQUIRED" ]; then
     fi
   done <"$GG_TMP/staged.z"
 
-  # The record counts as the entry only for the release commit that collates,
-  # and the declaration it already reads is the evidence. Without that, any
-  # edit to it counts — a typo fixed in a section released years ago — and
-  # nothing else would catch it: changelog-entries judges only the lines a
-  # commit GAINS under [Unreleased], and a released section is not that.
+  # A record change counts only when the release declaration is set.
+  # An ordinary correction to published notes does not replace a new fragment.
   record_counts=0
   if [ -n "$GG_CHANGELOG_RECORD" ] && [ "${GROWTH_GUARDS_CHANGELOG_COLLATE:-}" = "1" ]; then
     record_counts=1
@@ -341,10 +338,7 @@ if [ -n "$REQUIRED" ]; then
     case "$HEADER" in
       *"[no-changelog]"*) echo "commit-msg: OK — [no-changelog] in the header waives the entry for $(gg_shown "$touched")" ;;
       *)
-        # The record is deliberately not offered here: changelog-entries runs
-        # first in the same commit chain and refuses a hand-written line under
-        # [Unreleased] by hand, so pointing a writer at it would send them
-        # into the next lane's refusal.
+        # The record does not satisfy this rule without the release declaration.
         violation "$(gg_shown "$touched") changed without a changelog entry" \
           "write one of: $GG_CHANGELOG_SHOWN" \
           "or put [no-changelog] in the header when the commit changes nothing a consumer sees"

@@ -14,7 +14,7 @@ Needs `git`, `awk` and the usual POSIX userland; Bash 3.2 is enough. `kendex gua
 ## What it does
 
 - Refuses work markers, new oversized files, growth in existing oversized files, blanket lint suppression and conflict markers.
-- Holds changelog fragments to shape and length, and refuses hand edits to the collated record.
+- Checks changelog fragment structure and length. The release command combines accepted fragments into the record.
 - Checks paragraph layout, relative references, dates, and issue numbers in markdown agents load.
 - Optionally checks dates and issue references in source comments.
 - Holds commit messages to `type(scope): subject`, a length cap, and the changelog entry a change under a named path owes.

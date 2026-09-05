@@ -23,9 +23,8 @@ GROWTH_GUARDS_BYTE_CEILING_KB = "200"
 # a clean pass, so a project with no fragments needs no change here.
 GROWTH_GUARDS_CHANGELOG_PATHS = "changelog.d/*/*.md"
 
-# The collated record the same check's other scope judges: a line this commit
-# adds under its `## [Unreleased]` heading is refused, because entries are
-# written as fragments and folded in at release. Empty = no record scope.
+# The collation destination. Ordinary checks permit edits to this document.
+# Empty disables collation.
 GROWTH_GUARDS_CHANGELOG_RECORD = "CHANGELOG.md"
 
 # Paths whose change obliges a changelog entry, checked by the commit-msg

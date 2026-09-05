@@ -422,9 +422,7 @@ run_rc 'fix(KEN-1): change a crate'
   || bad "a staged crates/ change with no entry fails, naming the path" "rc=$RC out=$OUT"
 case "$OUT" in *"write one of: changelog.d/*/*.md"*) ok "the diagnostic names the fragment globs, unescaped, as they have to be typed" ;;
   *) bad "the diagnostic names the fragment globs unescaped" "$OUT" ;; esac
-# The record is NOT offered as a remedy: changelog-entries runs first in the
-# same chain and refuses a hand-written [Unreleased] line, so a writer who took
-# that advice would be refused by the next lane.
+# The ordinary remedy is a fragment; record changes need a release declaration.
 printf '%s\n' "$OUT" | grep -F 'write one of:' | grep -qF 'CHANGELOG.md' \
   && bad "the remedy does not send a writer at the record" "$OUT" \
   || ok "the remedy does not send a writer at the record"
@@ -464,9 +462,7 @@ run_rc 'fix(KEN-2): change a crate again'
 [ "$RC" -eq 1 ] && case "$OUT" in *"changed without a changelog entry"*) true ;; *) false ;; esac \
   && ok "deleting a fragment is not writing one" \
   || bad "deleting a fragment is not writing one" "rc=$RC out=$OUT"
-# The record counts for the release commit that collates, and only there: an
-# edit to a section released long ago is not an entry, and changelog-entries
-# judges only the lines a commit GAINS under [Unreleased].
+# A record change counts only under the release declaration.
 printf '# Changelog\n\n## [Unreleased]\n\n- A fix consumers see.\n\n## [1.0.0] - 2026-01-01\n\n- A released entry.\n' >"$RC_REPO/CHANGELOG.md"
 git -C "$RC_REPO" add -A
 run_rc 'chore(release): collate the changelog'
@@ -477,9 +473,7 @@ OUT=""; RC=0
 OUT="$(cd "$RC_REPO" && printf 'chore(release): collate the changelog\n' | GROWTH_GUARDS_CHANGELOG_COLLATE=1 "$CM" 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && ok "GROWTH_GUARDS_CHANGELOG_COLLATE=1 makes the collated record the entry" \
   || bad "GROWTH_GUARDS_CHANGELOG_COLLATE=1 makes the collated record the entry" "rc=$RC out=$OUT"
-# A correction in an ALREADY-RELEASED section is what the declaration keeps
-# out: no fragment, no [no-changelog], and no line gained under [Unreleased]
-# for the sibling lane to catch.
+# A correction to published notes cannot satisfy a new change without a declaration.
 git -C "$RC_REPO" commit -qm "chore(release): collate the changelog [no-changelog]"
 printf 'fn corrected() {}\n' >>"$RC_REPO/crates/core/lib.rs"
 printf '# Changelog\n\n## [Unreleased]\n\n- A fix consumers see.\n\n## [1.0.0] - 2026-01-01\n\n- A released entry, spelled right.\n' >"$RC_REPO/CHANGELOG.md"
