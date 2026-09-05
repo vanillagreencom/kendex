@@ -1,1 +1,0 @@
-- **Breaking:** markdown counts in bytes; existing markdown rows fail until `size-ratchet --update` rewrites them.

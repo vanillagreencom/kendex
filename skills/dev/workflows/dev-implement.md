@@ -150,7 +150,7 @@ Update docs when the implementation changes a documented API or architecture.
 
 Before deterministic validation, run `git grep -n -F --untracked --exclude-standard -e <callee> --` for every callee whose call the change deletes, then apply [code-quality § Cleanup](../../code-quality/SKILL.md#cleanup); the build and tests below validate every deletion.
 
-Deterministic gates first — every finding is fixed here, never carried into review. Preflight runs when installed (`test -x .agents/skills/preflight/scripts/preflight`); the size-ratchet gate runs in a repo where a baseline exists:
+Deterministic gates first — every finding is fixed here, never carried into review. Preflight runs when installed (`test -x .agents/skills/preflight/scripts/preflight`); the size-ratchet gate runs when installed (`test -x .agents/skills/size-ratchet/scripts/size-ratchet`):
 
 ```bash
 .agents/skills/preflight/scripts/preflight --repo [WORKTREE_PATH]

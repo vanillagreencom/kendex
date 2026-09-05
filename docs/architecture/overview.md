@@ -1,10 +1,8 @@
 # kendex architecture
 
-kendex is a desktop app (Rust + Tauri + React) and a thin CLI over one Rust core, managing AI coding-harness customizations across a global scope and per-project scopes. Claude Code is first-class; codex, opencode, cursor, pi, gemini and copilot sit behind the same adapter seam. There is no server: manifests, locks and the harnesses' own directories are the whole state.
-
 ## The one idea
 
-Four verbs over one model: scan, declare, diff, apply. Scan reads harness-native directories in place, read-only, across every scope. Declare is the per-scope `kendex.toml`, the only durable home of user intent. Diff is drift, declared against observed, and every audit the app or the CLI shows is that diff. Apply makes disk match the declaration, plan shown first; adopt is the reverse arrow, recording an observed item into the manifest. Every page and every CLI verb is a projection of these four and none owns logic of its own.
+The desktop app and CLI project one Rust model: scan, declare, diff and apply. The per-scope manifest stores user intent. Drift compares that intent with observed harness state. Apply makes disk match the declaration; adopt records observed state as intent. App pages and CLI commands own no separate domain logic. Manifests, locks and harness directories hold all state; kendex has no server.
 
 ## Vocabulary
 

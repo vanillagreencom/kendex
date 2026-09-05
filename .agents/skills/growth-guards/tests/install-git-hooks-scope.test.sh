@@ -146,7 +146,7 @@ cat >"$R31/.agents/skills/size-ratchet/scripts/size-ratchet" <<'FORK'
 #!/usr/bin/env bash
 # A consumer's own gate: usage text names size-ratchet, no --staged mode.
 case "${1:-}" in
-  --help) echo "size-ratchet — repo-local gate. Usage: size-ratchet [--update]"; exit 0 ;;
+  --help) echo "size-ratchet — repo-local gate. Usage: size-ratchet"; exit 0 ;;
   --staged) echo "::error::size-ratchet: unknown argument '--staged' (see --help)" >&2; exit 2 ;;
 esac
 exit 0
@@ -166,7 +166,7 @@ echo "=== a fork whose --help NAMES --staged but rejects it still skips ==="
 cat >"$R31/.agents/skills/size-ratchet/scripts/size-ratchet" <<'NEGHELP'
 #!/usr/bin/env bash
 case "${1:-}" in
-  --help) echo "size-ratchet — repo-local gate. Usage: size-ratchet [--update]. This build does not support --staged."; exit 0 ;;
+  --help) echo "size-ratchet — repo-local gate. Usage: size-ratchet. This build does not support --staged."; exit 0 ;;
   --staged) echo "::error::size-ratchet: unknown argument '--staged' (see --help)" >&2; exit 2 ;;
 esac
 exit 0
@@ -185,9 +185,9 @@ echo "=== a config-error diagnostic that mentions --staged is not a rejection ==
 cat >"$R31/.agents/skills/size-ratchet/scripts/size-ratchet" <<'CFGERR'
 #!/usr/bin/env bash
 case "${1:-}" in
-  --help) echo "size-ratchet — gate. Usage: size-ratchet [--staged] [--update]"; exit 0 ;;
+  --help) echo "size-ratchet — gate. Usage: size-ratchet [--staged]"; exit 0 ;;
 esac
-echo "::error::size-ratchet: SIZE_RATCHET_THRESHOLD must be a positive integer (see --help; applies to --staged runs too)" >&2
+echo "::error::size-ratchet: SIZE_RATCHET_CLASSES has an invalid byte limit (see --help; applies to --staged runs too)" >&2
 exit 2
 CFGERR
 chmod 0755 "$R31/.agents/skills/size-ratchet/scripts/size-ratchet"
@@ -205,9 +205,9 @@ echo "=== an echoed rejection phrase inside a config diagnostic is not a rejecti
 cat >"$R31/.agents/skills/size-ratchet/scripts/size-ratchet" <<'ECHOED'
 #!/usr/bin/env bash
 case "${1:-}" in
-  --help) echo "size-ratchet — gate. Usage: size-ratchet [--staged] [--update]"; exit 0 ;;
+  --help) echo "size-ratchet — gate. Usage: size-ratchet [--staged]"; exit 0 ;;
 esac
-echo "::error::size-ratchet: SIZE_RATCHET_THRESHOLD must be a positive integer, got 'unknown argument '--staged''" >&2
+echo "::error::size-ratchet: SIZE_RATCHET_CLASSES has an invalid byte limit, got 'unknown argument '--staged''" >&2
 exit 2
 ECHOED
 chmod 0755 "$R31/.agents/skills/size-ratchet/scripts/size-ratchet"

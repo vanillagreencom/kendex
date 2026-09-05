@@ -1,20 +1,9 @@
 #!/usr/bin/env bash
-# Pins what tools/guard still judges once the shipped packages judge the
-# rest: test fixtures take their canonical root at creation, and that is
-# nearly all of it.
-# It also pins the absence — a size cap, an undeclared size-ratchet row, a
-# work marker, a blanket allow, an oversized file, a malformed fragment, an
-# over-long changelog entry all pass here;
-# size-ratchet, todo-ban, suppression-ban, byte-ceiling and changelog-entries
-# are the judges of those, and each delegation carries the control that proves
-# its judge still refuses what guard let by. The failing direction runs first
-# so a green pass is evidence, not a check that cannot fail.
+# The repo guard delegates document sizes and changelog entries to their
+# shipped checks. The controls below run those checks on the same defects.
 set -euo pipefail
-
-# Hermetic: the size-ratchet lane and the bare ratchet control below both read
-# RATCHET_RAISE from the environment, and an exported one turns the undeclared
-# row this suite refuses into a declared row it accepts.
-unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_DEFAULT_CLASSES SIZE_RATCHET_FROZEN_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE RATCHET_RAISE 2>/dev/null || true
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+unset SIZE_RATCHET_CLASSES SIZE_RATCHET_DEFAULT_CLASSES SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARD="$(cd "$TEST_DIR/.." && pwd)/guard"
@@ -41,7 +30,6 @@ git -C "$R" config user.email test@example.com
 git -C "$R" config user.name test
 git -C "$R" config core.hooksPath "$TMP/nohooks"
 printf '# fixture\n' >"$R/AGENTS.md"
-: >"$R/tools/size-ratchet-baseline.tsv"
 printf '%s\n' \
   'fn existing_fixture() {' \
   '    let tmp = tempfile::tempdir().unwrap();' \
@@ -82,22 +70,11 @@ printf '#!/usr/bin/env bash\necho other\n' >"$R/.pi/kendex/hooks/other.sh"
 git -C "$R" add -A
 git -C "$R" commit -q -m fixture
 
-mkfile() { # PATH LINES
-  mkdir -p "$R/$(dirname "$1")"
-  awk -v n="$2" 'BEGIN { for (i = 1; i <= n; i++) print "// line " i }' >"$R/$1"
-}
-
-baseline() { # ROW...
-  printf '%s\n' "$@" >"$R/tools/size-ratchet-baseline.tsv"
-}
-
 run_guard() { # [VAR=VALUE...] — sets OUT and RC
   OUT=""
   RC=0
   OUT="$(cd "$R" && env "$@" "$GUARD" 2>&1)" || RC=$?
 }
-
-TAB="$(printf '\t')"
 
 echo "=== new temporary fixtures derive their canonical root at creation ==="
 mkdir -p "$R/crates/core/tests"
@@ -261,18 +238,7 @@ git -C "$R" reset -q HEAD -- Cargo.toml
 rm -f "$R/Cargo.toml"
 
 echo "=== the shipped packages' verdicts are not twinned here ==="
-# HEAD has to carry a row set for the ratchet's added-row verdict to have
-# anything to compare against: against an empty baseline every row reads as a
-# bootstrap one, and the control below would pass without judging anything.
-mkfile crates/existing.rs 401
-baseline "crates/existing.rs${TAB}401"
-git -C "$R" add -A
-git -C "$R" commit -q -m "chore: a baseline with a row in it"
-mkfile crates/uncapped.rs 401
-# Both over the deciding threshold, in both of the repo's languages: the
-# shipped list carries no ui entry, so a TypeScript file is judged by the 400
-# default like any other unclassed path.
-mkfile ui/uncapped.ts 401
+head -c 16385 /dev/zero | tr '\0' x >"$R/AGENTS.md"
 printf '// %s: unfinished\n' "TO""DO" >"$R/crates/marker.rs" # split, or todo-ban fails this file
 printf '#![allow(dead_code)]\n' >"$R/crates/blanket.rs"
 head -c 300000 /dev/zero | tr '\0' 'x' >"$R/crates/huge.bin"
@@ -280,22 +246,18 @@ mkdir -p "$R/changelog.d/fixed"
 LONG="$(head -c 260 /dev/zero | tr '\0' 'e')"
 printf -- '- %s\n' "$LONG" >"$R/changelog.d/fixed/ken-long.md"
 printf -- '- One entry.\n- A second entry.\n' >"$R/changelog.d/fixed/ken-two.md"
-mkfile crates/rowed.rs 401
-baseline "crates/existing.rs${TAB}401" "crates/rowed.rs${TAB}401"
 git -C "$R" add -A
 run_guard
 [ "$RC" -eq 0 ] \
-  && ok "an over-cap file, an undeclared baseline row, a work marker, a blanket allow, a 300 KB file, a malformed and an over-long fragment all pass — the packages judge those" \
-  || bad "an over-cap file, an undeclared baseline row, a work marker, a blanket allow, a 300 KB file, a malformed and an over-long fragment all pass — the packages judge those" "rc=$RC out=$OUT"
+  && ok "an over-limit document, a work marker, a blanket allow, a 300 KB file, a malformed and an over-long fragment all pass — the packages judge those" \
+  || bad "an over-limit document, a work marker, a blanket allow, a 300 KB file, a malformed and an over-long fragment all pass — the packages judge those" "rc=$RC out=$OUT"
 case "$OUT" in *Unreleased* | *changelog* | *fragment*) bad "guard names neither changelog scope" "$OUT" ;; *) ok "guard names neither changelog scope" ;; esac
-# The control for the row: size-ratchet itself refuses the same undeclared
-# row, so guard's silence about baseline rows is a delegation and not a gap.
 SR_OUT=""
 SR_RC=0
 SR_OUT="$(cd "$R" && "$RATCHET" 2>&1)" || SR_RC=$?
-[ "$SR_RC" -eq 1 ] && case "$SR_OUT" in *"baseline row added: crates/rowed.rs"*) true ;; *) false ;; esac \
-  && ok "control: size-ratchet refuses the undeclared row guard passed" \
-  || bad "control: size-ratchet refuses the undeclared row guard passed" "rc=$SR_RC out=$SR_OUT"
+[ "$SR_RC" -eq 1 ] && case "$SR_OUT" in *"AGENTS.md: 16385 bytes > 16384 bytes"*) true ;; *) false ;; esac \
+  && ok "control: size-ratchet refuses the oversized document guard passed" \
+  || bad "control: size-ratchet refuses the oversized document guard passed" "rc=$SR_RC out=$SR_OUT"
 # The control for the changelog: the package lane that owns fragments
 # refuses both defects, so that silence is a delegation too.
 CE_OUT=""
@@ -306,29 +268,8 @@ CE_OUT="$(cd "$R" && "$CHANGELOG_ENTRIES" 2>&1)" || CE_RC=$?
   && case "$CE_OUT" in *ken-two.md*) true ;; *) false ;; esac \
   && ok "control: changelog-entries refuses the long entry and two-entry fragment guard passed" \
   || bad "control: changelog-entries refuses the long entry and two-entry fragment guard passed" "rc=$CE_RC out=$CE_OUT"
-rm -f "$R/crates/uncapped.rs" "$R/ui/uncapped.ts" "$R/crates/marker.rs" "$R/crates/blanket.rs" "$R/crates/huge.bin" "$R/changelog.d/fixed/ken-long.md" "$R/changelog.d/fixed/ken-two.md"
+rm -f "$R/crates/marker.rs" "$R/crates/blanket.rs" "$R/crates/huge.bin" "$R/changelog.d/fixed/ken-long.md" "$R/changelog.d/fixed/ken-two.md"
 git -C "$R" add -A
-
-echo "=== this suite isolates every RATCHET_ key the gate reads ==="
-# The shipped package sweeps its OWN tests directory for this, and cannot
-# reach a file outside it — so the one suite here that runs the gate (through
-# guard's size-ratchet lane, and again as the control above) asserts it where
-# it lives. The keys are derived from the script this suite actually runs, so
-# every key there is covered without a second list.
-ratchet_keys="$(grep -rhoE '[A-Z_]*RATCHET_[A-Z][A-Z_]*' "$(dirname "$RATCHET")" | LC_ALL=C sort -u)"
-missing_keys=""
-for key in $ratchet_keys; do
-  grep -q "^unset .*$key" "${BASH_SOURCE[0]}" || missing_keys="$missing_keys $key"
-done
-[ -n "$ratchet_keys" ] && [ -z "$missing_keys" ] \
-  && ok "this file's unset line names every RATCHET_ key the gate reads" \
-  || bad "this file isolates the whole key set" "missing:$missing_keys derived:$ratchet_keys"
-# Anti-vacuous: a derivation that found nothing, or one that missed the key
-# outside the SIZE_RATCHET_ prefix, would pass the check above silently.
-case "$ratchet_keys" in
-  *RATCHET_RAISE*) ok "control: the derivation reaches RATCHET_RAISE, the key with no SIZE_ prefix" ;;
-  *) bad "the derivation reaches RATCHET_RAISE" "derived:$ratchet_keys" ;;
-esac
 
 echo "=== the skill tree is 3.2-clean and renders land with their sources ==="
 git -C "$R" checkout -q -- .

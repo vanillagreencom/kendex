@@ -15,4 +15,4 @@ Rewrite, do not patch. Read the old files for facts and the code for truth, then
 9. Reflow every tracked markdown file with the growth-guards `md-reflow` script, set `GROWTH_GUARDS_MD_SCOPE = "all"` in `kendex.settings.toml`, and run the `md-format`, `md-refs` and `prose` lanes over the whole tree. Put test fixtures whose bytes a suite pins and published release notes whose recorded layout must stay fixed in `tools/md-excludes` with their reason.
 10. Supersede any decision record the rewrite shows to be obsolete through the [`decider`](../../decider/SKILL.md) skill. Never delete one.
 11. Remove every instruction the installed packages now enforce from the prose, and report anything portable the packages lack upstream through `kendex report`.
-12. Run the repository's own validation and the size ratchet. A file over its class shrinks or freezes; it is never raised.
+12. Run the repository's own validation and the size ratchet. Bring each document within its class limit before enabling the check.

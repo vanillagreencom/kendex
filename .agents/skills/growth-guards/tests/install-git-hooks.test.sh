@@ -78,20 +78,20 @@ commit_in "$R" "feat: add c"
   || bad "control: conventional message commits" "rc=$RC out=$OUT"
 
 echo "=== size-ratchet is in the chain ==="
-printf '[env]\nSIZE_RATCHET_THRESHOLD = "5"\n' >"$R/kendex.settings.toml"
+printf '[env]\nSIZE_RATCHET_CLASSES = "*.md=1k"\n' >"$R/kendex.settings.toml"
 git -C "$R" add kendex.settings.toml
 commit_in "$R" "chore: settings"
 [ "$RC" -eq 0 ] && ok "control: a small file passes under the lowered threshold" || bad "control: small file passes" "rc=$RC out=$OUT"
-seq 1 20 >"$R/big.txt"
-git -C "$R" add big.txt
+head -c 1025 /dev/zero | tr '\0' x >"$R/big.md"
+git -C "$R" add big.md
 commit_in "$R" "feat: add big"
-[ "$RC" -ne 0 ] && ok "an unbaselined over-threshold file blocks" || bad "size-ratchet blocks" "rc=$RC out=$OUT"
+[ "$RC" -ne 0 ] && ok "an over-limit document blocks" || bad "size-ratchet blocks" "rc=$RC out=$OUT"
 case "$OUT" in
   *size-ratchet*) ok "size-ratchet names itself in the blocked output" ;;
   *) bad "size-ratchet names itself" "out=$OUT" ;;
 esac
-git -C "$R" rm -q --cached big.txt
-rm -f "$R/big.txt" "$R/kendex.settings.toml"
+git -C "$R" rm -q --cached big.md
+rm -f "$R/big.md" "$R/kendex.settings.toml"
 git -C "$R" rm -q --cached kendex.settings.toml
 commit_in "$R" "chore: drop settings"
 [ "$RC" -eq 0 ] && ok "control: the repo commits again once the offender is gone" || bad "control: repo commits again" "rc=$RC out=$OUT"
@@ -159,20 +159,20 @@ commit_in "$R27B" "hack: sneak a type in"
 echo "=== the size gate judges the staged blob, not the worktree copy ==="
 R23="$(new_repo stagedsize)"
 printf '.agents/\n' >"$R23/.gitignore"
-printf '[env]\nSIZE_RATCHET_THRESHOLD = "5"\n' >"$R23/kendex.settings.toml"
-seq 1 4 >"$R23/f.txt"
+printf '[env]\nSIZE_RATCHET_CLASSES = "*.md=1k"\n' >"$R23/kendex.settings.toml"
+head -c 1024 /dev/zero | tr '\0' x >"$R23/f.md"
 git -C "$R23" add -A
 install_in "$R23"
 commit_in "$R23" "feat: seed"
 [ "$RC" -eq 0 ] && ok "control: the seed commit lands" || bad "staged-size seed commits" "rc=$RC out=$OUT"
-seq 1 20 >"$R23/f.txt"
-git -C "$R23" add f.txt
-seq 1 4 >"$R23/f.txt"
+head -c 1025 /dev/zero | tr '\0' x >"$R23/f.md"
+git -C "$R23" add f.md
+head -c 1024 /dev/zero | tr '\0' x >"$R23/f.md"
 commit_in "$R23" "feat: staged growth"
 [ "$RC" -ne 0 ] && ok "staged growth hidden by a reverted worktree copy still blocks" \
   || bad "hidden staged growth blocks" "rc=$RC out=$OUT"
 case "$OUT" in
-  *"new offender: f.txt"*) ok "the blocked commit names the staged blob" ;;
+  *"f.md: 1025 bytes > 1024 bytes"*) ok "the blocked commit names the staged blob" ;;
   *) bad "blocked commit names the blob" "out=$OUT" ;;
 esac
 

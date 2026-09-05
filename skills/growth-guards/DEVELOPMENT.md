@@ -49,7 +49,7 @@ The installer writes into `.git/hooks`, never `core.hooksPath`:
 
 `scripts/pre-commit` judges one commit snapshot: staged content, with tracked configuration read from the index. Order:
 
-1. `size-ratchet --staged`, from the committing work tree's copy first, then this install's; a stated skip where neither exists or the repo-local one rejects `--staged` in its first-line parser diagnostic.
+1. `size-ratchet --staged` for document byte ceilings, from the committing work tree's copy first, then this install's; a stated skip where neither exists or the repo-local one rejects `--staged` in its first-line parser diagnostic.
 2. `preflight --staged`, resolved the same way; a first commit skips it with a note.
 3. `growth-guards all --staged`.
 4. The repo-root-relative executable `GROWTH_GUARDS_PRE_COMMIT_LOCAL` names, when set.
