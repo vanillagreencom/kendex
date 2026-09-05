@@ -232,12 +232,14 @@ function load_headings(   line, f) {
 # Exact code-span citations and anchor links keep their exact-match rules.
 function has_section_prefix(target, value,   key, prefix, name, tail, number) {
   prefix = target "#"
-  value = tolower(section_text(value))
+  value = tolower(value)
+  gsub(/[`*_]/, "", value)
   number = ""
   if (match(value, /^[0-9]+(\.[0-9]+)*/) && substr(value, RLENGTH + 1) ~ /^([ \t.,;:!?)]|$)/) number = substr(value, 1, RLENGTH)
   for (key in texts) {
     if (index(key, prefix) != 1) continue
-    name = section_text(substr(key, length(prefix) + 1))
+    name = substr(key, length(prefix) + 1)
+    gsub(/[`*_]/, "", name)
     if (number != "") {
       if (match(name, /^[0-9]+(\.[0-9]+)*/) && substr(name, 1, RLENGTH) == number && substr(name, RLENGTH + 1) ~ /^[.)]?([ \t]|$)/) return 1
       continue

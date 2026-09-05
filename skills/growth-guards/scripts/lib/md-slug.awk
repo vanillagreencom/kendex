@@ -94,40 +94,6 @@ function strip_tags(s,   out, i, j) {
   }
 }
 
-# Section routes compare displayed text. Paired delimiters disappear; literal
-# markers and intraword underscores stay, including all code-span content.
-function section_text(s,   out, i, j, n, m, c, before, after, inner) {
-  out = ""
-  for (i = 1; i <= length(s); i++) {
-    c = substr(s, i, 1)
-    if (c !~ /[`*_]/) { out = out c; continue }
-    n = 1
-    while (substr(s, i + n, 1) == c) n++
-    before = (i == 1) ? "" : substr(s, i - 1, 1)
-    after = substr(s, i + n, 1)
-    if (before != "\\" && (c == "`" || (after !~ /^[ \t]$/ && after != "" && (c != "_" || before !~ /^[[:alnum:]]$/)))) {
-      for (j = i + n; j <= length(s); j += m) {
-        m = 1
-        if (substr(s, j, 1) != c) continue
-        while (substr(s, j + m, 1) == c) m++
-        if (m != n) continue
-        before = substr(s, j - 1, 1)
-        after = substr(s, j + m, 1)
-        if (c != "`" && (before ~ /^[ \t\\]$/ || (c == "_" && after ~ /^[[:alnum:]]$/))) continue
-        inner = substr(s, i + n, j - i - n)
-        if (inner == "") continue
-        out = out ((c == "`") ? inner : section_text(inner))
-        i = j + m - 1
-        break
-      }
-      if (j <= length(s)) continue
-    }
-    out = out substr(s, i, n)
-    i += n - 1
-  }
-  return out
-}
-
 function drop_punct(s) {
   gsub(/—/, "", s); gsub(/–/, "", s); gsub(/―/, "", s)
   gsub(/→/, "", s); gsub(/←/, "", s); gsub(/↳/, "", s); gsub(/§/, "", s)

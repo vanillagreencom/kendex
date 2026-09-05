@@ -190,16 +190,12 @@ cite "escaped destination parentheses do not hide a missing section" 1 $'[guide]
 cite "parentheses in a link title do not hide a missing section" 1 $'[guide](guide(foo).md "A ) title") § Missing.\n' 1 "has no heading at the start"
 cite "an angle destination and title retain a valid section route" 0 $'[guide](<guide(foo).md> "A ) title") § Install.\n'
 
-echo "=== paired formatting, punctuation and anchored section routes ==="
+echo "=== symmetric normalization, punctuation and anchored section routes ==="
 new_repo section-text
-put guide.md $'# Guide\n\n## snake_case\n\n## snake_case_name\n\n## Install\n\n## 2.\n\n## 3)\n\n## 4.1.\n\n## Use *tools*\n\n## Literal*\n\n## Literal`\n'
-cite "literal underscores do not collapse to another heading" 1 $'[guide](guide.md) § snakecase.\n' 1 "has no heading at the start"
-cite "multiple literal underscores stay in an identifier" 1 $'[guide](guide.md) § snakecasename.\n' 1 "has no heading at the start"
-cite "paired emphasis preserves underscores in its content" 0 $'[guide](guide.md) § **snake_case** describes naming.\n'
-cite "underscore emphasis preserves internal underscores" 0 $'[guide](guide.md) § _snake_case_name_ describes naming.\n'
-cite "emphasis inside a heading and route resolves" 0 $'[guide](guide.md) § Use tools.\n'
-cite "literal asterisks stay in heading text" 1 $'[guide](guide.md) § Literal.\n' 1 "has no heading at the start"
-cite "literal backticks stay in heading text" 1 $'[guide](guide.md) § Literal explains usage.\n' 1 "has no heading at the start"
+put guide.md $'# Guide\n\n## snake_case\n\n## Install\n\n## 2.\n\n## 3)\n\n## 4.1.\n\n## Use *tools*\n'
+cite "snake_case resolves with symmetric normalization" 0 $'[guide](guide.md) § snake_case.\n'
+cite "formatted snake_case resolves with symmetric normalization" 0 $'[guide](guide.md) § **snake_case** describes naming.\n'
+cite "emphasis inside a heading resolves" 0 $'[guide](guide.md) § Use tools.\n'
 cite "a question mark ends a section prefix" 0 $'[guide](guide.md) § Install?\n'
 cite "an exclamation mark ends a section prefix" 0 $'[guide](guide.md) § Install!\n'
 cite "punctuation does not accept an incomplete heading" 1 $'[guide](guide.md) § Instal!\n' 1 "has no heading at the start"
@@ -212,9 +208,8 @@ cite "a terminal period in a nested numbered heading resolves" 0 $'[guide](guide
 cite "a question mark ends a numbered section prefix" 0 $'[guide](guide.md) § 2?\n'
 cite "an exclamation mark ends a numbered section prefix" 0 $'[guide](guide.md) § 3!\n'
 cite "a missing child cannot resolve to a punctuated number" 1 $'[guide](guide.md) § 4.1.2 describes setup.\n' 1 "has no heading at the start"
-put guide.md $'# Guide\n\n## `snake_case`\n\n## `Literal*`\n'
-cite "code spans preserve identifier characters" 0 $'[guide](guide.md) § `snake_case`.\n'
-cite "code spans cannot erase literal asterisks" 1 $'[guide](guide.md) § Literal.\n' 1 "has no heading at the start"
+put guide.md $'# Guide\n\n## `snake_case`\n'
+cite "code spans resolve with symmetric normalization" 0 $'[guide](guide.md) § `snake_case`.\n'
 
 echo "=== scopes: touched, --staged, --all ==="
 new_repo scopes

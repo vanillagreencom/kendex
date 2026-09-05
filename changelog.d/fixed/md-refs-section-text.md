@@ -1,1 +1,1 @@
-- Markdown section references preserve literal characters, accept sentence punctuation and bare numbered headings, and check section suffixes after anchored links.
+- Markdown section references accept sentence punctuation and bare numbered headings, and check section suffixes after anchored links.
