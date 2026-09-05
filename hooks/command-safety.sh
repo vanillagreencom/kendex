@@ -8,10 +8,15 @@
 # timeout: 10
 # ---
 
-set -Eeuo pipefail
+set -euo pipefail
 
 refuse() { printf 'command-safety: %s\n' "$1" >&2; exit 2; }
-trap 'refuse "the command safety check could not complete"' ERR
+# An exit that is neither a verdict (0) nor a refusal (2) is a check that did
+# not complete, and it leaves as a refusal. The EXIT trap is what reaches every
+# such exit on Bash 3.2 too: an ERR trap inherited through `set -E` fires there
+# inside a command substitution even when the substitution stands on the left
+# of `||`, which reads the settings loader's guarded probes as failures.
+trap 'rc=$?; case $rc in 0 | 2) ;; *) printf "command-safety: the command safety check could not complete (exit %s)\n" "$rc" >&2 || :; exit 2 ;; esac' EXIT
 for dependency in jq git grep cat; do
   command -v "$dependency" >/dev/null 2>&1 || refuse "$dependency is required"
 done
