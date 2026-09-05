@@ -13,7 +13,7 @@
 //! | OpenCode agent frontmatter parses | breakage |
 //! | OpenCode `mode` is primary, subagent or all | breakage |
 //! | OpenCode permission values are allow, ask or deny | breakage |
-//! | OpenCode `model` names its provider | advisory |
+//! | OpenCode `model` names its provider | breakage |
 //! | model shape fits the harness: `provider/model` only on OpenCode and Pi, bare elsewhere | breakage |
 //! | effort level is one the harness accepts under its own key (Claude, Codex, OpenCode, Pi) | breakage |
 //! | Claude agent has frontmatter naming the installed agent | breakage |

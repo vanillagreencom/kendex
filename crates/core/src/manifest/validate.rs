@@ -130,6 +130,7 @@ fn frontmatter_keys_for(harness: &str) -> &'static [&'static str] {
             "nickname-candidates",
         ],
         "opencode" => &[
+            "color",
             "model",
             "deny-tools",
             "allow-tools",
@@ -141,6 +142,7 @@ fn frontmatter_keys_for(harness: &str) -> &'static [&'static str] {
             "color",
             "model",
             "deny-tools",
+            "allow-tools",
             "allowed-subagents",
             "pane",
             "effort",

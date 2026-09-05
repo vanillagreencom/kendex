@@ -17,19 +17,22 @@ const CURSOR_KEYS: [&str; 3] = ["description", "globs", "alwaysApply"];
 /// none, never the one asked for.
 fn model_finding(harness: HarnessId, model: &str) -> Option<Finding> {
     let model = model.trim();
-    if model.is_empty() || model == "inherit" {
+    // An AWS Bedrock inference-profile ARN carries a `/` and is a bare id
+    // to Claude Code, so it passes as one.
+    if model.is_empty() || model == "inherit" || model.starts_with("arn:") {
         return None;
     }
     let tool = harness.display_name();
-    match (model_shape(harness), model.contains('/')) {
-        (ModelShape::Bare, true) => Some(Finding::breakage(
+    let qualified = model
+        .split_once('/')
+        .is_some_and(|(provider, id)| !provider.is_empty() && !id.is_empty());
+    match (model_shape(harness), model.contains('/'), qualified) {
+        (ModelShape::Bare, true, _) => Some(Finding::breakage(
             format!("`model: {model}` names a provider, and {tool} reaches one vendor only"),
             "name a bare model id this tool lists, a tier alias, or `inherit`",
         )),
-        (ModelShape::ProviderQualified, false) => Some(Finding::breakage(
-            format!(
-                "`model: {model}` names no provider, and {tool} loads models as `provider/model`"
-            ),
+        (ModelShape::ProviderQualified, _, false) => Some(Finding::breakage(
+            format!("`model: {model}` is not `provider/model`, which is how {tool} loads a model"),
             "write the model as `provider/model`, or `inherit` to follow the session",
         )),
         _ => None,
@@ -126,14 +129,10 @@ pub(super) fn opencode(text: &str) -> Vec<Finding> {
             format!("set the agent's mode to one of {}", MODES.join(", ")),
         ));
     }
-    if let Some(model) = map.get("model").and_then(Value::as_str)
-        && !model.contains('/')
-    {
-        findings.push(Finding::advisory(
-            format!("`model: {model}` names no provider, so OpenCode falls back to its default"),
-            "write the model as `provider/model`, or leave it out to inherit OpenCode's default",
-        ));
-    }
+    findings.extend(model_finding(
+        HarnessId::Opencode,
+        map.get("model").and_then(Value::as_str).unwrap_or_default(),
+    ));
     if let Some(Value::Map(options)) = map.get("options") {
         let effort = options
             .get("reasoningEffort")
@@ -214,10 +213,17 @@ pub(super) fn pi(text: &str) -> Vec<Finding> {
         Err(finding) => return vec![finding],
     };
     let text_at = |key: &str| map.get(key).and_then(Value::as_str).unwrap_or_default();
-    let model = text_at("model");
-    let model = model.rsplit_once(':').map_or(model, |(id, _)| id);
     let mut findings = Vec::new();
+    let model = text_at("model");
+    // A pinned id may carry the level as a `:suffix`; the suffix is an
+    // effort level under Pi's own vocabulary, checked as one.
+    let (model, suffix) = model
+        .rsplit_once(':')
+        .map_or((model, None), |(id, level)| (id, Some(level)));
     findings.extend(model_finding(HarnessId::Pi, model));
+    if let Some(level) = suffix {
+        findings.extend(effort_finding(HarnessId::Pi, "model :suffix", level));
+    }
     findings.extend(effort_finding(HarnessId::Pi, "effort", text_at("effort")));
     findings
 }

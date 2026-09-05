@@ -115,13 +115,11 @@ fn opencode_agents_must_declare_a_mode_and_permissions_it_can_read() {
 }
 
 #[test]
-fn a_bare_opencode_model_alias_is_said_out_loud_but_still_installs() {
+fn a_bare_opencode_model_is_refused_with_the_shape_named() {
     let text = OPENCODE_AGENT.replace("anthropic/claude", "opus");
     let findings = validate_agent(HarnessId::Opencode, "rust", &text);
-    assert!(blocking(&findings).is_empty(), "{findings:?}");
-    let said = spoken(&findings);
-    assert!(said.contains("names no provider"), "{said}");
-    assert!(said.contains("provider/model"), "{said}");
+    assert_eq!(blocking(&findings).len(), 1, "{findings:?}");
+    assert!(spoken(&findings).contains("provider/model"), "{findings:?}");
 }
 
 /// One control per harness with an effort key: a level outside the
@@ -195,6 +193,10 @@ fn a_model_of_the_wrong_shape_for_the_harness_is_refused() {
         (HarnessId::Copilot, md("anthropic/claude-sonnet-4.6")),
         (HarnessId::Pi, md("claude-opus-5")),
         (HarnessId::Pi, md("claude-opus-5:high")),
+        (HarnessId::Pi, md("/claude-opus-5")),
+        (HarnessId::Pi, md("anthropic/")),
+        (HarnessId::Pi, md("anthropic/claude-opus-5:ultra")),
+        (HarnessId::Opencode, opencode("openai/")),
     ] {
         let findings = validate_agent(harness, "rust", &text);
         assert_eq!(
