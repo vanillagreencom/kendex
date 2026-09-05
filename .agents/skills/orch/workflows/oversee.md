@@ -90,13 +90,13 @@ The overseer owns fleet judgement, not just liveness; every § 4 event is handle
 
 ### Talking to a lane
 
-How the overseer reaches a running lane from outside its session, by harness; the Pi commands are the pi-session-bridge CLI, documented in its [README](https://github.com/vanillagreencom/kendex/blob/main/pi-extensions/pi-session-bridge/README.md).
+How the overseer reaches a running lane from outside its session, by harness; the Pi commands are the pi-session-bridge CLI, documented in its [README](https://github.com/vanillagreencom/kendex/blob/main/pi-extensions/pi-session-bridge/README.md) and `pi-bridge --help`, and every Pi call selects the lane by `--name` or `--cwd`.
 
 | Harness | Launch | Send a message | Read state | Answer a question |
 |---------|--------|----------------|------------|-------------------|
-| Claude Code | `open-terminal` into a tmux pane (§ 3). | `tmux send-keys -l` the text, then `Enter` in a separate call, only at the idle prompt; sent mid-turn it queues. | Read the lane's status file, never its transcript. | Move the dialog with the arrow keys and press `Enter` in the pane; the recorded choice line confirms it. |
-| Codex | `open-terminal` into a tmux pane (§ 3). | Send at the idle prompt only; its queue does not deliver. | Read the lane's status file, never its transcript. | Type the number the dialog shows, at the idle prompt. |
-| Pi | `open-terminal` into a tmux pane (§ 3). | `pi-bridge send`. | `pi-bridge state`, `history` or `stream`; `pi-bridge questions` lists a pending dialog. | `pi-bridge answer` by option label after `pi-bridge questions`, never the pane: a typed number lands on the default option. |
+| Claude Code | `open-terminal` into a tmux pane (§ 3). | `tmux send-keys -t` the lane's window `-l` the text, then `Enter` in a separate call, only at the idle prompt; sent mid-turn it queues. | Read the status file the lane's brief names, or the pane tail when it names none; never the transcript. | Move the dialog with the arrow keys and press `Enter` in the lane's pane; the recorded choice line confirms it. |
+| Codex | `open-terminal` into a tmux pane (§ 3). | `tmux send-keys -t` the lane's window, at the idle prompt only; its queue does not deliver. | Read the status file the lane's brief names, or the pane tail when it names none; never the transcript. | Type the number the dialog shows into the lane's pane, at the idle prompt. |
+| Pi | `open-terminal` into a tmux pane (§ 3). | `pi-bridge send` on the selected lane. | `pi-bridge state`, `history` or `stream` on the selected lane; `pi-bridge questions` lists a pending dialog with its request id. | `pi-bridge answer` on the selected lane with that request id and the option label, never the pane: a typed number lands on the default option. |
 | App or other | The session or thread launcher the harness or an app-specific skill exposes (§ 1). | The API or tooling that surface exposes. | The API or tooling that surface exposes. | The API or tooling that surface exposes; a pane at its idle prompt only when nothing else exists. |
 
 ## 5. Stop
