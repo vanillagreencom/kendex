@@ -356,4 +356,28 @@ else
   bad 'an overridden block keeps its line breaks, and a package one is still joined'
 fi
 
+# --- the sweep rules reach Codex --------------------------------------------
+# Root rules from a declined-finding sweep. `AGENTS.md` is the one surface
+# Codex reads, so each sentence has to land in the owned region as written.
+repo="$(bi_rendered_repo doctrine-sweep)" || exit 1
+region="$(python3 - "$repo/AGENTS.md" <<'PY'
+import sys
+lines = open(sys.argv[1]).read().split("\n")
+start = lines.index("## Code Review Rules")
+end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+print("\n".join(lines[start:end]))
+PY
+)"
+while IFS= read -r sentence; do
+  if printf '%s\n' "$region" | grep -qF -- "$sentence"; then
+    ok "AGENTS.md § Code Review Rules carries: $sentence"
+  else
+    bad "AGENTS.md § Code Review Rules carries: $sentence"
+  fi
+done <<'EOF'
+Report an input only after establishing that a shipped producer emits it in normal use; a full disk or a value past 2^53 is not one.
+Name the user-visible consequence in every finding.
+Report a gap only after establishing that nothing already covers it: a required CI context, a shipped hook, the file's own stated contract, or the platform's documentation.
+EOF
+
 bi_summary
