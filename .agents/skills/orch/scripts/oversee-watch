@@ -72,7 +72,9 @@ Options:
   --item ISSUE_ID     live item; repeatable. No values skips merged with a note
   --repo OWNER/REPO   repository; repeatable and case-normalized. The reducer
                       covers all; merged and heartbeat read the first
-  LANE_WINDOW...      tmux window names to watch; requires $TMUX
+  LANE_WINDOW...      tmux window names to watch; requires $TMUX. A bare name
+                      is a window in the caller's session; `session:window`,
+                      tmux's own target form, names one in another session
 
 Exit codes:
   0  an EVENT line was printed
@@ -581,6 +583,25 @@ lane_field() { awk -F'\t' -v i="$2" -v field="$3" '$1 == i { print $field }' <<<
 lane_state() { lane_field "$1" "$2" 2; }
 lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$1"; }
 
+# The windows of the session a lane names: `session:window` lists that
+# session, a bare name the caller's. Every other tmux read passes the lane
+# through as its -t target, which tmux resolves in the same two shapes.
+# The session is matched exactly (`=`): tmux otherwise falls back to a
+# prefix match, and a lane whose session died would silently watch a
+# sibling's. A session tmux destroyed with its last window has no windows,
+# so it lists as none and the lane reads gone; any other failure is fatal.
+lane_session_windows() {
+  local out
+  case "$1" in
+    *:*)
+      out="$(tmux list-windows -t "=${1%%:*}" -F '#W' 2>&1)" && { printf '%s\n' "$out"; return 0; }
+      [[ "$out" == "can't find session: "* ]] && return 0
+      printf '%s\n' "$out"
+      return 1 ;;
+    *) tmux list-windows -F '#W' 2>&1 ;;
+  esac
+}
+
 # Build one immutable lane snapshot for the pass. The final capture path is
 # the success marker; a failed redirect leaves only a removed scratch file.
 observe_lanes() {
@@ -588,12 +609,12 @@ observe_lanes() {
   [[ ${#LANES[@]} -gt 0 ]] || return 0
   local existing lane pane below key prefix prior obs pid cmd capture errf i=0 state="${PW_SEEN[0]}"
   local reset_key
-  existing="$(tmux list-windows -F '#W' 2>&1)" || die "tmux list-windows failed: $existing"
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
     capture="$(lane_pane_file "$i")"
     rm -f "$capture" "$capture.$$.tmp"
-    if ! grep -qxF -- "$lane" <<<"$existing"; then
+    existing="$(lane_session_windows "$lane")" || die "tmux list-windows failed for '$lane': $existing"
+    if ! grep -qxF -- "${lane#*:}" <<<"$existing"; then
       LANE_OBS+="$i"$'\t'"gone"$'\t\t\t\n'
       state="$(lane_row_clear lane-asking "$state" "$lane")"
       state="$(lane_row_clear usage-limit "$state" "$lane")"

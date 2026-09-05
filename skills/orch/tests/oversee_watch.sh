@@ -740,6 +740,7 @@ err="$TMP_ROOT/e9"
 out="$(run_watch -- --help 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "--help exits 0" "$err"
 assert_contains "$out" "EVENT lane-asking" "--help documents the event kinds" "$err"
+assert_contains "$out" "session:window" "--help names the lane form for a window in another session" "$err"
 assert_contains "$out" "reports no" \
   "--help states the probe that keeps a wrapped lane out of lane-exited" "$err"
 assert_contains "$out" "pgrep -P" \

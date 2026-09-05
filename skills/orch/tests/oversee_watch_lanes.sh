@@ -24,6 +24,33 @@ out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "window-gone exits 0" "$err"
 assert_eq "$out" "EVENT window-gone gh-2" "missing lane window is the event" "$err"
 
+# --- 3a. a lane in another tmux session ------------------------------------
+# An overseer watching from its own session names a fleet window as
+# `session:window`, tmux's target form: the window is looked up in that
+# session and reported under the name given.
+new_case lane_in_other_session
+printf 'gh-1\n' > "$STUB_DIR/windows.txt"
+printf 'gh-2\n' > "$STUB_DIR/windows-arch.txt"
+printf 'bash\n' > "$STUB_DIR/cmd-arch:gh-2.txt"
+printf '$ \n' > "$STUB_DIR/pane-arch:gh-2.txt"
+err="$TMP_ROOT/e3a"
+out="$(run_watch -- gh-1 arch:gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "a session-qualified lane exits 0" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-exited arch:gh-2" \
+  "a window in another session is watched under the name given" "$err"
+# the must-fail control: the same window name unqualified is looked up in
+# the caller's session, where it does not exist
+err="$TMP_ROOT/e3a2"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$out" "EVENT window-gone gh-2" "the bare name still means the caller's session" "$err"
+# tmux destroys a session with its last window, which is how a lane's own
+# session ends: that is the window gone, not a failure of the pass
+rm -f "$STUB_DIR/windows-arch.txt"
+err="$TMP_ROOT/e3a3"
+out="$(run_watch -- gh-1 arch:gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "a destroyed session exits 0" "$err"
+assert_eq "$out" "EVENT window-gone arch:gh-2" "a lane whose session is gone is reported gone" "$err"
+
 # --- 3b. lane-exited: window alive, harness gone ----------------------------
 # open-terminal runs the harness inside a shell, so a session that hit its
 # limit or crashed leaves a live window whose pane matches no question prompt.
@@ -232,13 +259,13 @@ assert_contains "$out" "Select Model and Effort" \
 # outside a filename-safe set. Their pane snapshots must stay separate or each
 # lane is classified on the other's screen.
 new_case pane_snapshot_per_lane
-printf 'a+b\na:b\n' > "$STUB_DIR/windows.txt"
+printf 'a+b\na@b\n' > "$STUB_DIR/windows.txt"
 printf 'claude\n' > "$STUB_DIR/cmd-a+b.txt"
-printf 'claude\n' > "$STUB_DIR/cmd-a:b.txt"
+printf 'claude\n' > "$STUB_DIR/cmd-a@b.txt"
 printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-a+b.txt"
-printf '⏺ working on it\n' > "$STUB_DIR/pane-a:b.txt"
+printf '⏺ working on it\n' > "$STUB_DIR/pane-a@b.txt"
 err="$TMP_ROOT/e4a2"
-out="$(run_watch -- --max-loops 1 'a+b' 'a:b' 2>"$err")" && rc=0 || rc=$?
+out="$(run_watch -- --max-loops 1 'a+b' 'a@b' 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "colliding lane names exit 0" "$err"
 assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking a+b" \
   "lanes whose names flatten to one slug keep separate pane snapshots" "$err"
