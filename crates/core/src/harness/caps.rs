@@ -349,7 +349,12 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
         // `pi_ext::carrier::enforcement`, which downgrades to advisory
         // wherever no settings layer Pi loads registers the carrier.
         (Pi, Hook) => enforced(managed(BOTH)),
-        (Pi, Command) => observe_only(BOTH),
+        // A prompt template is one `prompts/<name>.md` per command at either
+        // scope, read with the same `description` and `argument-hint` keys
+        // and `$1`/`$ARGUMENTS` placeholders the author wrote, and only
+        // `.md` loads, so the author's file installs as is and the rename
+        // toggle is safe (Pi docs, prompt-templates.md).
+        (Pi, Command) => managed(BOTH),
         (Pi, McpServer) => unsupported(),
         (Pi, Plugin) => unsupported(),
         (Pi, PiExtension) => managed(BOTH),

@@ -26,6 +26,7 @@
 //! | Gemini command parses as TOML | breakage |
 //! | Gemini command carries a prompt | breakage |
 //! | Gemini command carries a description | advisory |
+//! | Pi command carries no `!`…`` shell inline | advisory |
 //! | SKILL.md present, with frontmatter | breakage |
 //! | SKILL.md `name` matches the installed directory | breakage |
 //! | SKILL.md fits the harness's body cap | breakage |
@@ -103,6 +104,7 @@ pub fn validate_agent(harness: HarnessId, name: &str, text: &str) -> Vec<Finding
 pub fn validate_command(harness: HarnessId, text: &str) -> Vec<Finding> {
     match harness {
         HarnessId::Gemini => command::gemini(text),
+        HarnessId::Pi => command::pi(text),
         _ => Vec::new(),
     }
 }
