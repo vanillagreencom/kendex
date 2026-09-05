@@ -141,7 +141,7 @@ A selected reference in the comment text of a scanned source file fails. `GROWTH
 
 Applied migrations are immutable first-party content; the exclusion policy is in [SKILL.md](SKILL.md) § Configuration.
 
-Opt-in: name `comments` in `GROWTH_GUARDS_CHECKS`. Scopes are `todo-ban`'s: `--staged` judges only the lines the staged diff adds, comment state read from the whole staged blob; the default reads every tracked file `GROWTH_GUARDS_COMMENT_PATHS` names minus `GROWTH_GUARDS_COMMENT_EXCLUDES`, overridden by `--excludes FILE`. A matched path the table below gives no grammar is named as unmeasured.
+Optional audit lane: run `growth-guards comments` directly when an audit is needed. Keep `comments` out of `GROWTH_GUARDS_CHECKS` so it does not block commits. Scopes are `todo-ban`'s: `--staged` judges only the lines the staged diff adds, comment state read from the whole staged blob; the default reads every tracked file `GROWTH_GUARDS_COMMENT_PATHS` names minus `GROWTH_GUARDS_COMMENT_EXCLUDES`, overridden by `--excludes FILE`. A matched path the table below gives no grammar is named as unmeasured.
 
 Comment text is extracted per family, by extension or, for a path with none, by the interpreter its `#!` line names. The default path list is exactly these extensions, with `Makefile` and `Dockerfile` by basename at the root and below:
 
