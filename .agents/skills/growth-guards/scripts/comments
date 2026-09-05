@@ -2,7 +2,7 @@
 # comments — a code comment states the constraint that holds now. A history
 # reference in the COMMENT TEXT of a tracked source file fails: an issue id
 # (GH_ISSUE_PATTERN), a three- or four-digit issue number after '#', a
-# calendar date, or a word narrating a revision rather than a rule. String
+# calendar date. String
 # literals and code are never judged, and markdown belongs to the prose lane.
 #
 # Comment text is extracted per language family, decided by the path's
@@ -34,8 +34,6 @@ GG_CHECK="comments"
 source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/settings.sh
 source "$SCRIPT_DIR/lib/settings.sh"
-# shellcheck source=lib/revision-words.sh
-source "$SCRIPT_DIR/lib/revision-words.sh"
 # shellcheck source=lib/staged-lines.sh
 source "$SCRIPT_DIR/lib/staged-lines.sh"
 # shellcheck source=lib/comment-text.sh
@@ -48,7 +46,6 @@ PATHS_DEFAULT="*.rs *.go *.c *.h *.cc *.cpp *.hpp *.java *.kt *.kts *.swift *.wg
 ISSUE_DEFAULT='[A-Z]+-[0-9]+'
 EXCLUDES_DEFAULT="tools/comments-excludes"
 REFERENCE_TYPES_DEFAULT="issue-id issue-number date"
-REVISION_WORDS_DEFAULT='previously|used to|no longer|reverted|an earlier|earlier round|incident|historically|originally|at the time|existing code'
 
 usage() {
   cat <<EOF
@@ -56,10 +53,9 @@ usage: comments [--staged] [--excludes FILE]
 
 A history reference in the comment text of a tracked source file fails: an
 issue id matching GH_ISSUE_PATTERN, a three- or four-digit issue number
-after '#', a calendar date (20YY-MM-DD), or a configured word narrating a
-revision. Reference types and revision words are separate settings, so either
-class can run alone. Words are matched case-insensitively and whole-word; the issue id
-as written, lowered and uppered (write the pattern in one case). String
+after '#', or a calendar date (20YY-MM-DD). Reference types are selectable.
+Ordinary words do not trigger this check. The issue id matches as written,
+lowered and uppered (write the pattern in one case). String
 literals and code are never judged; markdown is the prose lane's.
 
   (default)   every tracked file the configured globs name, from the index
@@ -76,9 +72,6 @@ kendex.settings.toml [env] > default):
                                    space-separated subset of: issue-id,
                                    issue-number, date
                                    (default $REFERENCE_TYPES_DEFAULT)
-  GROWTH_GUARDS_COMMENT_REVISION_WORDS
-                                   POSIX ERE alternatives; empty disables
-                                   revision narration
   GH_ISSUE_PATTERN                 POSIX ERE for an issue id; empty keeps
                                    the default ($ISSUE_DEFAULT)
 Flag --excludes overrides the path setting.
@@ -119,7 +112,6 @@ ISSUE_ERE="$(gg_setting GH_ISSUE_PATTERN "")" || exit 2
 [ -n "$ISSUE_ERE" ] || ISSUE_ERE="$ISSUE_DEFAULT"
 REFERENCE_TYPES="$(gg_setting GROWTH_GUARDS_COMMENT_REFERENCE_TYPES "$REFERENCE_TYPES_DEFAULT")" || exit 2
 gg_tmpdir
-gg_load_revision_words GROWTH_GUARDS_COMMENT_REVISION_WORDS "$REVISION_WORDS_DEFAULT" || exit 2
 
 # The shapes. Word boundaries are non-word characters rather than \< and \>,
 # which not every awk carries, and the digit runs are spelled out because
@@ -145,12 +137,11 @@ done
 [ "$CHECK_ISSUE" -eq 1 ] || ISSUE_BOUNDED='a^'
 [ "$CHECK_HASH" -eq 1 ] || HASH_ERE='a^'
 [ "$CHECK_DATE" -eq 1 ] || DATE_ERE='a^'
-[ -n "$REVISION_WORDS" ] || WORD_ERE='a^'
-[ "$((CHECK_ISSUE + CHECK_HASH + CHECK_DATE))" -gt 0 ] || [ -n "$REVISION_WORDS" ] \
-  || gg_config_error "GROWTH_GUARDS_COMMENT_REFERENCE_TYPES and GROWTH_GUARDS_COMMENT_REVISION_WORDS cannot both be empty"
+[ "$((CHECK_ISSUE + CHECK_HASH + CHECK_DATE))" -gt 0 ] \
+  || gg_config_error "GROWTH_GUARDS_COMMENT_REFERENCE_TYPES must name at least one reference type"
 # What the index pre-filter lists carriers by: a file whose whole content
 # matches no shape has no comment that does either.
-UNION_ERE="$DATE_ERE|$HASH_ERE|$WORD_ERE|$ISSUE_BOUNDED"
+UNION_ERE="$DATE_ERE|$HASH_ERE|$ISSUE_BOUNDED"
 REMEDY="state the constraint that holds now and delete the story; the issue id, the number and the date belong in the commit that made the change; a generated, vendored, or immutable file belongs in $EXCLUDES_FILE with a reason"
 
 # A pattern this lane cannot compile is a configuration error, never a
@@ -158,7 +149,7 @@ REMEDY="state the constraint that holds now and delete the story; the issue id, 
 # The patterns travel through the environment, never `-v`: awk decodes
 # backslash escapes in a -v value, so a pattern carrying one would arrive
 # changed.
-export DATE_ERE HASH_ERE WORD_ERE ISSUE_BOUNDED CHECK_ISSUE CHECK_HASH CHECK_DATE
+export DATE_ERE HASH_ERE ISSUE_BOUNDED CHECK_ISSUE CHECK_HASH CHECK_DATE
 probe_ere() { # VALUE KEY — require both engines to accept one configured ERE
   local value="$1" key="$2" status=0
   GG_PROBE_ERE="$value"
@@ -192,7 +183,6 @@ classify() { # IN — records on stdout
     }
   ' "$1" || status=$?
   [ "$status" -eq 0 ] || gg_collection_error "could not classify the comment text (awk exit $status)"
-  gg_revision_records "$1"
 }
 
 # The grammar a matched path takes, or the path named as unmeasured: a file

@@ -60,7 +60,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 | **prose** | A history reference in Markdown named by `GROWTH_GUARDS_PROSE_PATHS` fails; `GROWTH_GUARDS_CHECKS` controls whether the lane runs. |
 | **md-format** | A hard-wrapped paragraph or list item, a missing blank line around a heading, fence or list, or a trailing-double-space break in Markdown named by `GROWTH_GUARDS_MD_PATHS` fails; `md-reflow` is the remedy. |
 | **md-refs** | A relative link, a `<path>.md § Heading` or `<path>.md#anchor` code-span citation, or a decision ID in Markdown named by `GROWTH_GUARDS_MD_REFS_PATHS` that lands on no tracked file, heading or decision fails. |
-| **comments** | A history reference in the comment text of a source file named by `GROWTH_GUARDS_COMMENT_PATHS` fails: an issue id (`GH_ISSUE_PATTERN`), `#NNN`, a date, or revision narration. Opt-in: name it in `GROWTH_GUARDS_CHECKS`. |
+| **comments** | A history reference in the comment text of a source file named by `GROWTH_GUARDS_COMMENT_PATHS` fails: an issue id (`GH_ISSUE_PATTERN`), `#NNN`, or a date. Opt-in: name it in `GROWTH_GUARDS_CHECKS`. |
 | **commit-msg** | The header must be `type(scope)!: subject` within `GROWTH_GUARDS_SUBJECT_MAX`; a commit touching `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS` also owes a changelog entry or `[no-changelog]`. |
 
 Full check shapes and scopes: [CHECKS.md](CHECKS.md).
@@ -93,7 +93,6 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 | `GROWTH_GUARDS_CHANGELOG_RECORD` | `CHANGELOG.md` | The collated record file; empty switches that scope off. |
 | `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS` | *(empty)* | Globs whose change obliges a changelog entry, judged by `commit-msg`; empty switches the rule off. |
 | `GROWTH_GUARDS_PROSE_PATHS` | `SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md` | Space-separated globs naming the markdown the prose lane scans, matched against the full repo-relative path (`*` crosses `/`). |
-| `GROWTH_GUARDS_PROSE_REVISION_WORDS` | [CHECKS.md § prose](CHECKS.md#prose) | POSIX ERE alternatives for prose past-state words; empty disables the word class. |
 | `GROWTH_GUARDS_MD_PATHS` | `*.md` | Globs naming the markdown md-format and md-reflow take under `--all`. |
 | `GROWTH_GUARDS_MD_REFS_PATHS` | the `GROWTH_GUARDS_PROSE_PATHS` default | Globs naming the markdown md-refs judges under `--all`. |
 | `GROWTH_GUARDS_MD_EXCLUDES` | `tools/md-excludes` | Exclusion list both markdown lanes honour in every scope, and md-reflow under `--staged` and `--all`. |
@@ -101,8 +100,7 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 | `DECISIONS_DIR`, `DECISION_ID_PREFIX`, `DECISION_ID_WIDTH` | `docs/decisions`, `D`, `3` | The decider skill's scheme, read by md-refs to judge decision IDs; IDs are not judged where the directory is not tracked. |
 | `GROWTH_GUARDS_COMMENT_PATHS` | the extensions in [CHECKS.md § comments](CHECKS.md#comments) | Space-separated globs naming the source files the comments lane scans, matched against the full repo-relative path (`*` crosses `/`); replaces the default. |
 | `GROWTH_GUARDS_COMMENT_EXCLUDES` | `tools/comments-excludes` | comments exclusion list (generated, vendored, and immutable first-party files). `GH_ISSUE_PATTERN` (the github skill's key) is the issue-id shape; empty keeps `[A-Z]+-[0-9]+`. |
-| `GROWTH_GUARDS_COMMENT_REFERENCE_TYPES` | `issue-id issue-number date` | Reference classes the comments lane checks; empty disables this half. |
-| `GROWTH_GUARDS_COMMENT_REVISION_WORDS` | [CHECKS.md § comments](CHECKS.md#comments) | POSIX ERE alternatives for revision narration; empty disables this half. |
+| `GROWTH_GUARDS_COMMENT_REFERENCE_TYPES` | `issue-id issue-number date` | Reference classes the comments lane checks; name at least one type. |
 | `GROWTH_GUARDS_COMMIT_TYPES` | `build chore ci docs feat fix perf refactor revert style test` | Accepted commit types. |
 | `GROWTH_GUARDS_SUBJECT_MAX` | `72` | Characters allowed in a hand-written commit header. |
 | `GROWTH_GUARDS_PRE_COMMIT_LOCAL` | *(empty)* | Repo-root-relative executable the pre-commit shim runs last. |

@@ -16,7 +16,7 @@ GG="$SKILL_DIR/scripts/growth-guards"
 
 # Hermetic: a leaked setting would mask every case below.
 unset GROWTH_GUARDS_COMMENT_PATHS GROWTH_GUARDS_COMMENT_EXCLUDES \
-  GROWTH_GUARDS_COMMENT_REFERENCE_TYPES GROWTH_GUARDS_COMMENT_REVISION_WORDS GH_ISSUE_PATTERN \
+  GROWTH_GUARDS_COMMENT_REFERENCE_TYPES GH_ISSUE_PATTERN \
   GROWTH_GUARDS_CHECKS GROWTH_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
@@ -51,9 +51,9 @@ solo() { # PATH LINE... — the same, as the only tracked file
   put "$@"
 }
 
-# The word planted in every case: one whole-word member of the list. The
-# test's own comments never carry it, so this file passes the lane it pins.
-W="previously"
+# The issue reference planted in extraction controls stays in fixture data.
+# The suite itself must pass the comments lane.
+W="ABC-123"
 
 fails_at() { # DESC PATH LINE — the last run failed naming PATH:LINE
   [ "$RC" -eq 1 ] && case "$OUT" in *"history reference"*": $2:$3: "*) true ;; *) false ;; esac \
@@ -79,7 +79,7 @@ run_cm
 fails_at "an issue id in a comment fails, naming file:line" a.rs 1
 case "$OUT" in *"(issue id)"*) ok "the diagnostic names the shape" ;; *) bad "diagnostic names the shape" "$OUT" ;; esac
 case "$OUT" in *"state the constraint that holds now and delete the story"*) ok "the diagnostic carries the remedy" ;; *) bad "diagnostic carries the remedy" "$OUT" ;; esac
-case "$OUT" in *"comments: 2 history reference(s) in the comments of 1 scanned file(s)"*) ok "the summary counts every (line, shape) hit and the files read" ;; *) bad "summary counts hits and files" "$OUT" ;; esac
+case "$OUT" in *"comments: 1 history reference(s) in the comments of 1 scanned file(s)"*) ok "the summary counts every (line, shape) hit and the files read" ;; *) bad "summary counts hits and files" "$OUT" ;; esac
 put a.rs '// abc-123 in lowercase is the same id'
 run_cm
 fails_at "the issue id is matched case-insensitively" a.rs 1
@@ -100,55 +100,29 @@ case "$OUT" in *"(calendar date)"*) ok "named as a calendar date" ;; *) bad "nam
 put a.rs '// 2026-8-1 is not the shape'
 run_cm
 passes "an unpadded date is not the shape"
-for w in previously "used to" "no longer" reverted "an earlier" "earlier round" incident historically originally "at the time" "existing code"; do
-  put a.rs "// the flag $w applied to the batch"
-  run_cm
-  fails_at "the word '$w' fails" a.rs 1
-done
-case "$OUT" in *"(revision narration)"*) ok "named as revision narration" ;; *) bad "named as revision narration" "$OUT" ;; esac
-put a.rs '// Previously the batch took the flag'
-run_cm
-fails_at "a sentence-initial capital is the same word" a.rs 1
-put a.rs '// NO LONGER is shouted the same way'
-run_cm
-fails_at "an all-caps history word fails too" a.rs 1
-put a.rs '// an incidental unreverted renewed originality is unadded and existing'
-run_cm
-passes "a word glued inside a longer word never fires, and 'existing' alone is not the phrase"
-put a.rs '// phase without a number, and a phrase with existing code'
-run_cm
-fails_at "control: the phrase 'existing code' fires while a bare 'phase' does not" a.rs 1
-[ "$(printf '%s\n' "$OUT" | grep -c 'FAIL history reference')" -eq 1 ] && ok "and it is the one hit" || bad "one hit" "$OUT"
-put a.rs '// Append a new row during phase 3 after a field was added.'
-run_cm
-passes "new, added and phase N are not revision narration by default"
-
-echo "=== reference and revision classes can run alone ==="
-put a.rs '// tracked as ABC-123 previously'
-OUT="$(cd "$R" && GROWTH_GUARDS_COMMENT_REFERENCE_TYPES= GROWTH_GUARDS_COMMENT_REVISION_WORDS=previously "$CM" 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 1 ] && [ "$(printf '%s\n' "$OUT" | grep -c 'history reference (revision narration)')" -eq 1 ] && case "$OUT" in *"history reference (issue id)"*) false ;; *) true ;; esac \
-  && ok "revision narration runs without issue and date references" \
-  || bad "revision-only configuration" "rc=$RC out=$OUT"
-OUT="$(cd "$R" && GROWTH_GUARDS_COMMENT_REFERENCE_TYPES=issue-id GROWTH_GUARDS_COMMENT_REVISION_WORDS= "$CM" 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 1 ] && [ "$(printf '%s\n' "$OUT" | grep -c 'history reference (issue id)')" -eq 1 ] && case "$OUT" in *"history reference (revision narration)"*) false ;; *) true ;; esac \
-  && ok "issue references run without revision narration" \
-  || bad "reference-only configuration" "rc=$RC out=$OUT"
+echo "=== ordinary wording passes in both scopes ==="
 for mode in index staged; do
-  put a.rs '// Legacy behavior'
   args=()
   [ "$mode" != staged ] || args=(--staged)
-  OUT="$(cd "$R" && GROWTH_GUARDS_COMMENT_REFERENCE_TYPES= GROWTH_GUARDS_COMMENT_REVISION_WORDS=LeGaCy "$CM" ${args[@]+"${args[@]}"} 2>&1)" && RC=0 || RC=$?
-  fails_at "a mixed-case configured word matches in $mode scope" a.rs 1
-  put a.rs '// LegacyValue behavior'
-  OUT="$(cd "$R" && GROWTH_GUARDS_COMMENT_REFERENCE_TYPES= GROWTH_GUARDS_COMMENT_REVISION_WORDS=LeGaCy "$CM" ${args[@]+"${args[@]}"} 2>&1)" && RC=0 || RC=$?
-  [ "$RC" -eq 0 ] && ok "word boundaries still hold in $mode scope" || bad "configured word boundary" "rc=$RC out=$OUT"
+  for line in 'The previously saved value stays available.' 'The lock is no longer held after return.' 'The incident handler writes a report.' 'The existing code handles a reverted transaction.' 'The timestamp records the value at the time of the read.'; do
+    put a.rs "// $line"
+    run_cm ${args[@]+"${args[@]}"}
+    [ "$RC" -eq 0 ] && case "$OUT" in *"1 scanned file(s)"*|*"1 file(s) read"*) true ;; *) false ;; esac \
+      && ok "ordinary wording passes in $mode: $line" || bad "ordinary wording" "rc=$RC out=$OUT"
+  done
 done
+
+echo "=== reference classes can run alone ==="
+put a.rs '// tracked as ABC-123 on 2026-08-12'
+OUT="$(cd "$R" && GROWTH_GUARDS_COMMENT_REFERENCE_TYPES=issue-id "$CM" 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 1 ] && [ "$(printf '%s\n' "$OUT" | grep -c 'FAIL history reference')" -eq 1 ] && case "$OUT" in *"history reference (issue id)"*) true ;; *) false ;; esac \
+  && ok "the selected reference class runs alone" || bad "reference selection" "rc=$RC out=$OUT"
 put a.rs '// encoded as UTF-8'
 run_cm
 fails_at "the default key shape is any letter run, a hyphen and a digit run, so UTF-8 matches it (set GH_ISSUE_PATTERN to narrow)" a.rs 1
 
-echo "=== a word the pattern matches inside a quoted example still counts ==="
-put a.rs '// the string "previously" is banned, and so is `no longer`'
+echo "=== a reference inside a quoted example still counts ==="
+put a.rs '// the string "ABC-123" is a reference, and so is `#228`'
 run_cm
 fails_at "quotes and backticks inside a comment exempt nothing (the prose lane makes the same choice)" a.rs 1
 
@@ -181,7 +155,7 @@ OUT="$(cd "$R" && GH_ISSUE_PATTERN='(' "$CM" 2>&1)" && RC=0 || RC=$?
 for mode in index staged; do
   args=()
   [ "$mode" != staged ] || args=(--staged)
-  OUT="$(cd "$R" && GROWTH_GUARDS_COMMENT_REFERENCE_TYPES=' ' GROWTH_GUARDS_COMMENT_REVISION_WORDS= "$CM" ${args[@]+"${args[@]}"} 2>&1)" && RC=0 || RC=$?
+  OUT="$(cd "$R" && GROWTH_GUARDS_COMMENT_REFERENCE_TYPES=' ' "$CM" ${args[@]+"${args[@]}"} 2>&1)" && RC=0 || RC=$?
   [ "$RC" -eq 2 ] && ok "a whitespace-only disabled configuration refuses in $mode scope" || bad "empty effective checks" "rc=$RC out=$OUT"
 done
 
@@ -211,7 +185,7 @@ run_cm
   && ok "doc-comment forms are judged like any other comment" || bad "doc comments judged" "rc=$RC out=$OUT"
 solo a.rs "let p = previously_seen(); let n = new_value; // clean"
 run_cm
-passes "a word in code, even one the list holds, is never judged"
+passes "code with a name that contains an ordinary word passes"
 
 echo "=== Rust: lifetimes, char literals, raw and multi-line strings ==="
 solo a.rs "fn f<'a>(x: &'a str) -> &'a str { x } // $W"
