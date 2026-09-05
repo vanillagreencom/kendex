@@ -61,19 +61,13 @@ Do:
 Don't:
 
 - Comments that repeat the code.
-- History: a temporal marker, a date, an issue id, a review round or a conversation. The growth-guards `comments` lane (named in `GROWTH_GUARDS_CHECKS`) and `prose` lane hold the shapes.
+- History: a temporal marker, a date, an issue id, a review round or a conversation. The growth-guards `comments` lane (named in `GROWTH_GUARDS_CHECKS`) holds the shapes.
 - Claims broader than what the adjacent code or assertion actually enforces.
 - A numeral counting things outside the sentence. State the property and the command that enumerates it. A numeral bound to something adjacent stays: a list in the same paragraph, a constant a check compares against, one a ratchet owns.
 
-Markdown placement rules:
+Markdown is [`../docs-writing/SKILL.md`](../docs-writing/SKILL.md): the writing standard, and what each file type holds and excludes.
 
-- Never state a rule twice within or across package files; make later statements point to the first.
-- Never write `SKILL.md` or agent Markdown for anyone but agents; keep rules and commands there, not mechanics, rationale, or history.
-- Never put internal explanations, rationale, invariant details, or test mechanics outside `DEVELOPMENT.md`; keep actionable rules and commands loaded.
-- Never put anything but purpose, high-level behavior, features, user settings, and installation in a package `README.md`.
-- Never keep content in `references/*.md` unless a named workflow loads it on demand.
-
-Write the shortest unambiguous rule and delete sentences nothing acts on. Use plain words over jargon. Commit bodies explain intent, never narrate the diff.
+Commit bodies explain intent, never narrate the diff.
 
 ## Over-Engineering
 

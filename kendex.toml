@@ -46,7 +46,7 @@ skills = [
   "review-gate",
   "second-opinion",
   "code-quality",
-  "arch-docs",
+  "docs-writing",
   "deep-research",
   "growth-guards",
   "size-ratchet",
@@ -95,7 +95,7 @@ skills = [
   "review-gate",
   "second-opinion",
   "code-quality",
-  "arch-docs",
+  "docs-writing",
 ]
 hooks = [
   "reviewer-read-only",

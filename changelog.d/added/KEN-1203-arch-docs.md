@@ -1,1 +1,0 @@
-- `arch-docs` skill: the convention for root and nested `AGENTS.md` and `docs/architecture/`, with templates and the blank-page rewrite workflow.
