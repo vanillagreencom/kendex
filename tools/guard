@@ -349,8 +349,17 @@ if [ "$FULL" -eq 1 ]; then
   if git rev-parse --verify -q origin/main >/dev/null; then
     suites_base=$(git merge-base HEAD origin/main) || suites_base=HEAD
   fi
-  touched=$({ git -c core.quotePath=false diff --name-only "$suites_base" --; git -c core.quotePath=false status --porcelain --untracked-files=all | cut -c4- | sed 's/^.* -> //'; } | sort -u) ||
-    say "the touched-file set for the suite lane could not be read"
+  # --no-renames: a move between two trees names its source and its
+  # destination, so the tree a file left runs its suite too. Each read checks
+  # its own status; a group's status is its last command's, which would let a
+  # failed diff pass on a good `git status`. The status read adds what the
+  # diff against the working tree cannot see: untracked files.
+  branch_touched=$(git -c core.quotePath=false diff --no-renames --name-only "$suites_base" --) ||
+    { branch_touched=""; say "the touched-file set for the suite lane could not be read (branch diff)"; }
+  tree_touched=$(git -c core.quotePath=false status --porcelain --untracked-files=all | cut -c4- | sed 's/^.* -> //') ||
+    { tree_touched=""; say "the touched-file set for the suite lane could not be read (working tree)"; }
+  touched=$(printf '%s\n%s\n' "$branch_touched" "$tree_touched" | sort -u) ||
+    { touched=""; say "the touched-file set for the suite lane could not be read (merge)"; }
   suite_dirs=""
   while IFS= read -r f; do
     [ -n "$f" ] || continue

@@ -370,6 +370,71 @@ fi
 FULL_GUARD=0
 git -C "$R" checkout -q -- skills .agents
 
+# The touched set is the branch diff against origin/main plus the working
+# tree. A move out of one tree into another, committed past origin/main so the
+# working tree is clean and the branch diff is the only read that sees it,
+# names the tree it left: that tree's suite runs.
+FULL_GUARD=1
+suite_lane_head="$(git -C "$R" rev-parse HEAD)"
+mkdir -p "$R/skills/quiet/scripts"
+printf '#!/usr/bin/env bash\necho quiet\n' >"$R/skills/quiet/scripts/quiet.sh"
+# A second script stays behind so the move leaves no empty roster directory.
+printf '#!/usr/bin/env bash\necho stays\n' >"$R/skills/quiet/scripts/stays.sh"
+git -C "$R" add skills/quiet
+git -C "$R" commit -q -m "chore: a script in the quiet skill"
+git -C "$R" update-ref refs/remotes/origin/main HEAD
+git -C "$R" mv skills/quiet/scripts/quiet.sh hooks/quiet.sh
+git -C "$R" commit -q -m "chore: move the quiet script into hooks"
+run_guard
+[ "$RC" != 0 ] && [[ "$OUT" == *"skills/quiet suite failed"* ]] \
+  && ok "a committed move out of a skill runs the suite of the tree it left" \
+  || bad "a committed move out of a skill runs the suite of the tree it left" "rc=$RC out=$OUT"
+if mutant_guard 's/diff --no-renames --name-only "\$suites_base"/diff --name-only "$suites_base"/'; then
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
+  [ "$RC" -eq 0 ] \
+    && ok "control: with rename detection back on the branch diff the source tree's suite stays silent" \
+    || bad "control: with rename detection back on the branch diff the source tree's suite stays silent" "rc=$RC out=$OUT"
+else
+  bad "control: --no-renames could not be removed from the branch diff in a guard copy"
+fi
+
+# A branch diff that fails must red the lane by itself: the working-tree read
+# beside it succeeds, so only the diff's own status can carry the failure.
+git -C "$R" update-ref refs/remotes/origin/main HEAD
+cat >"$R/fake-bin/git" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+is_suite_diff=0
+last=""
+for arg in "$@"; do last="$arg"; done
+if [[ " $* " == *" diff "* && " $* " == *" --no-renames "* && "$last" == "--" ]]; then
+  is_suite_diff=1
+fi
+[ "${FAIL_SUITE_DIFF:-0}" -eq 1 ] && [ "$is_suite_diff" -eq 1 ] && exit 2
+exec "$REAL_GIT" "$@"
+SH
+chmod +x "$R/fake-bin/git"
+run_guard PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" FAIL_SUITE_DIFF=1
+[ "$RC" != 0 ] && [[ "$OUT" == *"the touched-file set for the suite lane could not be read"* ]] \
+  && ok "a failed branch diff reds the suite lane beside a good working-tree read" \
+  || bad "a failed branch diff reds the suite lane beside a good working-tree read" "rc=$RC out=$OUT"
+if mutant_guard 's/{ branch_touched=""; say "the touched-file set for the suite lane could not be read (branch diff)"; }/branch_touched=""/'; then
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" FAIL_SUITE_DIFF=1 "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the diff's status unchecked the failed diff passes" \
+    || bad "control: with the diff's status unchecked the failed diff passes" "rc=$RC out=$OUT"
+else
+  bad "control: the branch diff's status check could not be removed from a guard copy"
+fi
+rm -f "$R/fake-bin/git"
+git -C "$R" reset -q --hard "$suite_lane_head"
+git -C "$R" update-ref -d refs/remotes/origin/main
+FULL_GUARD=0
+
 BASH4_LINE='mapfile -t demo_lines <"$0"'
 printf '%s\n' "$BASH4_LINE" >>"$R/skills/demo/tests/demo.test.sh"
 printf '%s\n' "$BASH4_LINE" >>"$R/.agents/skills/demo/tests/demo.test.sh"

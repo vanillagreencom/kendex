@@ -484,9 +484,11 @@ jobs:
   # AGGREGATOR — this job's name is the ruleset's required context, so the
   # `(shell + node)` in it is frozen history: renaming it to match today's
   # shards leaves the ruleset waiting on a context nothing creates. It runs on
-  # every event, pull_request included: GitHub counts a SKIPPED required
-  # context as satisfied, so an event-scoped condition here would let a PR with
-  # a red shard enter the queue and be ejected there. `always()` is required
+  # pull_request and merge_group, the two events the ruleset gates; not on
+  # push, where the shards are skipped and nothing requires a context. GitHub
+  # counts a SKIPPED required context as satisfied, so on the gated events no
+  # further condition may skip this job: a PR with a red shard would enter the
+  # queue and be ejected there. `always()` is required
   # because skipped/failed needs would otherwise skip this job too, and a
   # skipped required context would satisfy the ruleset without any suite having
   # run (the fail-open this line exists to close).
