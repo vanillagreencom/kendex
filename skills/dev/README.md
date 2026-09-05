@@ -22,6 +22,6 @@ The primary agent assigns an issue and a worktree. The implementation agent read
 
 ## Settings
 
-Set `DEV_VALIDATE_CMD` in `kendex.settings.toml` under `[env]` to select the project validation command. Without it, the agent uses the documented build, lint and test command.
+Set `DEV_VALIDATE_CMD` in `kendex.settings.toml` under `[env]` to the project's full test, lint and typecheck command. The agent refuses to validate while it is empty and reports the setting to set.
 
 Set project instructions in `kendex.toml` under `[skill-instructions]`. The agent and commit format are described in [SKILL.md](SKILL.md) § Configuration.

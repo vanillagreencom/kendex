@@ -90,4 +90,4 @@ Deterministic gate findings are fixed here, never carried into review. Fix what 
 
 ## Configuration
 
-Agent-type placeholders are project-configurable: `[AGENT_TYPE]` (dev agents receiving implementation delegations), `[REVIEW_AGENT]`, `[QA_AGENT]`. Commit format: `[PREFIX]([ISSUE_ID]): [DESCRIPTION]`. `DEV_VALIDATE_CMD` (`kendex.settings.toml` `[env]`) names the project's validation command for the Validate step; unset → the project's documented build/test/lint command.
+Agent-type placeholders are project-configurable: `[AGENT_TYPE]` (dev agents receiving implementation delegations), `[REVIEW_AGENT]`, `[QA_AGENT]`. Commit format: `[PREFIX]([ISSUE_ID]): [DESCRIPTION]`. `DEV_VALIDATE_CMD` (`kendex.settings.toml` `[env]`) names the project's full validation command for the Validate step; an empty value is the validation failure [dev-implement.md § 5. Validate](workflows/dev-implement.md#5-validate) states, never a fallback.
