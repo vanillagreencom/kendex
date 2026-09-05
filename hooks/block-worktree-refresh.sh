@@ -72,10 +72,17 @@ SEGMENTS=${SEGMENTS//\|/$NL}
 SEGMENTS=${SEGMENTS//\(/$NL}
 SEGMENTS=${SEGMENTS//\)/$NL}
 # A quote may close the command word or wrap the verb, as in
-# `"/path/kendex" refresh` and `kendex 'refresh'`.
-WRITE_RE='(^|[^[:alnum:]_.-])kendex["'"'"']?[[:space:]]+["'"'"']?(refresh|apply|add|remove|update-pi|updates)["'"'"']?([[:space:]]|$)'
+# `"/path/kendex" refresh` and `kendex 'refresh'`, and option words may stand
+# between them, as in `kendex --global refresh`. Those root options are
+# dropped by the CLI once a subcommand follows, so only the words AFTER the
+# verb are read for the scope; a `--global` before it exempts nothing.
+WRITE_RE='(^|[^[:alnum:]_.-])kendex["'"'"']?([[:space:]]+-[^[:space:]]*)*[[:space:]]+["'"'"']?(refresh|apply|add|remove|update-pi|updates)["'"'"']?([[:space:]]|$)'
 GLOBAL_RE='(^|[[:space:]])(-g|--global|--scope([[:space:]]+|=)global)([[:space:]]|$)'
-PROJECT_RE='(^|[[:space:]])--scope([[:space:]]+|=)(project|all)([[:space:]]|$)'
+# Any `--scope` after the verb that is not the plain word `global` names the
+# project scope or one this hook cannot read (a quoted value included), and
+# kendex gives `--scope` precedence over `--global`, so it is the project write.
+SCOPE_RE='(^|[[:space:]])--scope([[:space:]]+|=)'
+SCOPE_GLOBAL_RE='(^|[[:space:]])--scope([[:space:]]+|=)global([[:space:]]|$)'
 APPLY_RE='(^|[[:space:]])--apply([[:space:]]|$)'
 CHECK_RE='(^|[[:space:]])(--check|-c)([[:space:]]|$)'
 # A `cd` or `pushd` word in the verb's segment or an earlier one moves the
@@ -92,16 +99,23 @@ while IFS= read -r SEGMENT; do
   esac
   [[ $SEGMENT =~ $MOVE_RE ]] && MOVED=1
   [[ $SEGMENT =~ $WRITE_RE ]] || continue
-  # The verb is taken before the scope tests, which reset BASH_REMATCH.
-  FOUND=${BASH_REMATCH[2]}
-  if [ "$FOUND" = updates ] && ! [[ $SEGMENT =~ $APPLY_RE ]]; then
+  # The verb and the words after it are taken before the option tests, which
+  # reset BASH_REMATCH. The tail keeps a leading space so a word at its start
+  # still has an edge.
+  FOUND=${BASH_REMATCH[3]}
+  TAIL=" ${SEGMENT#*"${BASH_REMATCH[0]}"}"
+  if [ "$FOUND" = updates ] && ! [[ $TAIL =~ $APPLY_RE ]]; then
     continue
   fi
   # `update-pi --check` previews and writes nothing.
-  if [ "$FOUND" = update-pi ] && [[ $SEGMENT =~ $CHECK_RE ]]; then
+  if [ "$FOUND" = update-pi ] && [[ $TAIL =~ $CHECK_RE ]]; then
     continue
   fi
-  if [[ $SEGMENT =~ $GLOBAL_RE ]] && ! [[ $SEGMENT =~ $PROJECT_RE ]]; then
+  if [[ $TAIL =~ $SCOPE_RE ]] && ! [[ $TAIL =~ $SCOPE_GLOBAL_RE ]]; then
+    VERB=$FOUND
+    break
+  fi
+  if [[ $TAIL =~ $GLOBAL_RE ]]; then
     continue
   fi
   VERB=$FOUND
