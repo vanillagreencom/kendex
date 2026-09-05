@@ -4,7 +4,8 @@
 # event: PreToolUse
 # matcher: Bash
 # description: Refuse a command that kills processes by name or by argv pattern (`pkill`, `killall`), whatever flags follow. On a machine where several agents share one checkout and its worktrees, a pattern that matches a tool's name matches every lane running that tool, the caller's own shell included when its command line holds the pattern. Names the accepted forms: `kill <pid>` on a PID the caller recorded when it launched the process, or one whose `/proc/<pid>/cwd` the caller has read and found inside its own worktree.
-# safety: One regex over the raw command decides: a `pkill` or `killall` word between two word edges, wherever in the command it stands, a path prefix, a quote or a substitution around it included. Reading the word wherever it stands refuses a harmless command that merely spells it, an echo or a heredoc line included, and that is the accepted cost: it fails closed, so it stalls one command rather than ending another lane's run. `kill`, `pgrep` and `ps` are not read, so the same hazard spelled as `kill $(pgrep -f …)` or `pgrep -f … | xargs kill` passes; the rule is the two verbs, and the remedy text is what asks for a PID. A payload that cannot be read is refused, never skipped.
+# safety: One regex over the raw command decides: a `pkill` or `killall` word between two word edges, wherever in the command it stands, a path prefix, a quote or a substitution around it included. Reading the word wherever it stands refuses a harmless command that merely spells it, an echo or a heredoc line included, and that is the accepted cost: it fails closed, so it stalls one command rather than ending another lane's run. A word is seen only where the command already spells it: a spelling the shell assembles from quotes or escapes (`p\kill`, `p'kill'`) is not seen here and reaches the shell, the frozen lexical-scanner class every guard in this directory declares. `kill`, `pgrep` and `ps` are not read, so the same hazard spelled as `kill $(pgrep -f …)` or `pgrep -f … | xargs kill` passes; the rule is the two verbs, and the remedy text is what asks for a PID. A payload that cannot be read, an empty one included, is refused, never skipped.
+# timeout: 10
 # ---
 
 set -euo pipefail
@@ -16,7 +17,19 @@ if ! command -v jq >/dev/null 2>&1 || ! command -v cat >/dev/null 2>&1; then
   exit 2
 fi
 
-INPUT=$(cat)
+INPUT=$(cat) || {
+  echo "block-argv-kill: could not read the hook payload from stdin; refusing rather than skipping the guard" >&2
+  exit 2
+}
+# An empty payload is no payload: jq reads nothing from it and says nothing,
+# which would pass as an absent command.
+case "$INPUT" in
+  *[![:space:]]*) ;;
+  *)
+    echo "block-argv-kill: the hook payload is empty; refusing rather than skipping the guard" >&2
+    exit 2
+    ;;
+esac
 
 # A payload that does not parse, or that names a command which is not a
 # string, is refused rather than skipped. An absent command is the empty

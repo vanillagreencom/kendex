@@ -84,12 +84,27 @@ run_hook 'pkill-wrapper --dry-run';            assert_eq "$rc" 0 'the verb glued
 run_hook 'echo unpkill';                       assert_eq "$rc" 0 'the verb glued to a prefix is another word'
 run_hook 'git status';                         assert_eq "$rc" 0 'a command with neither verb passes'
 
-echo "=== block-argv-kill: the stated limit ==="
-# The word counts wherever it stands, so a command that only spells it is
-# refused as the kill it is not. A row, so nobody grows a tokenizer to close it.
+echo "=== block-argv-kill: the stated limits ==="
+# Reading words rather than shell costs in both directions, and both costs are
+# rows so nobody grows a tokenizer to close either: a command that only spells
+# the verb is refused as the kill it is not, and a spelling the shell assembles
+# from quotes or escapes is not seen.
 run_hook 'echo "never use pkill here"';        assert_eq "$rc" 2 'the verb inside a quoted string is refused'
+run_hook "p'kill' -f x";                       assert_eq "$rc" 0 'a verb the shell assembles from quotes is not seen'
+run_hook 'kill\all x';                         assert_eq "$rc" 0 'a verb the shell assembles from an escape is not seen'
 
 echo "=== block-argv-kill: a payload it cannot read refuses ==="
+run_payload ''
+assert_eq "$rc" 2 'an empty payload refuses rather than passing as an absent command'
+assert_contains "$ERR_FILE" 'payload is empty' 'the empty-payload refusal names the cause'
+run_payload "$(printf ' \n\t')"
+assert_eq "$rc" 2 'a whitespace-only payload refuses the same way'
+set +e
+"$BASH_BIN" "$HOOK" <"$TMP_ROOT" >/dev/null 2>"$ERR_FILE"
+rc=$?
+set -e
+assert_eq "$rc" 2 'a stdin that cannot be read refuses with the refusal status, not the read error'
+assert_contains "$ERR_FILE" 'could not read the hook payload' 'the read refusal names the cause'
 run_payload '{"tool_input":{"command":"pkill x"'
 assert_eq "$rc" 2 'a truncated JSON payload refuses rather than skipping the guard'
 assert_contains "$ERR_FILE" 'not valid JSON' 'the parse refusal names the cause'
