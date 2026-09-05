@@ -3,7 +3,7 @@ name: reviewer-perf
 description: Performance validation specialist. Latency validation, benchmark execution, percentile analysis, hot-path cost review, regression detection.
 model: opus
 role: reviewer
-effort: xhigh
+effort: high
 color: red
 tags: [review, performance]
 ---

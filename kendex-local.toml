@@ -437,6 +437,8 @@ deny-tools = [
 background = false
 
 [agent-frontmatter.claude.iced]
+model = "fable"
+effort = "high"
 color = "cyan"
 deny-tools = [
     "Agent",
@@ -530,6 +532,8 @@ deny-tools = [
 background = true
 
 [agent-frontmatter.claude.rust]
+model = "fable"
+effort = "high"
 color = "orange"
 deny-tools = [
     "Agent",

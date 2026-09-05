@@ -3,7 +3,7 @@ name: reviewer-doc
 description: "Documentation accuracy reviewer. Verifies changed doc claims against implementation, re-derives transcribed values, checks citations resolve, audits drift."
 tags: review, docs
 model: opus
-effort: xhigh
+effort: high
 background: true
 disallowedTools: Agent, AskUserQuestion
 color: yellow

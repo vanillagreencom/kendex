@@ -3,7 +3,7 @@ name: reviewer-perf
 description: "Performance validation specialist. Latency validation, benchmark execution, percentile analysis, hot-path cost review, regression detection."
 tags: review, performance
 deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, delegate_subagent, question, tasks_write
-effort: xhigh
+effort: high
 color: red
 ---
 

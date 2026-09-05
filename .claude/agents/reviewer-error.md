@@ -3,7 +3,7 @@ name: reviewer-error
 description: "Silent failure and error handling reviewer. Detects fail-open paths, swallowed errors, wrong-cause diagnostics, and inadequate error propagation."
 tags: review, debugging
 model: opus
-effort: xhigh
+effort: high
 background: true
 disallowedTools: Agent, AskUserQuestion
 color: orange

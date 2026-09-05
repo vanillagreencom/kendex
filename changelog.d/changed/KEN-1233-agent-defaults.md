@@ -1,0 +1,1 @@
+- Catalog agents default to `high` effort (tpm `medium`) and the `opus` tier (planner `fable`); the published `kendex.toml` ships no `max` effort and puts tpm on `gpt-5.6-sol` for Codex.

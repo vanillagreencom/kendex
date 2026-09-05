@@ -4,7 +4,7 @@ description: "General-purpose agent for documentation, cleanup, stale references
 tags: docs, refactoring
 deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, question
 allowed-subagents: scout
-effort: xhigh
+effort: high
 color: green
 pane: true
 ---

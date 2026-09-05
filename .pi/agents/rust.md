@@ -4,7 +4,7 @@ description: "Rust engineer for performance-critical systems. Use for zero-alloc
 tags: performance
 deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, question
 allowed-subagents: scout
-effort: xhigh
+effort: high
 color: orange
 pane: true
 ---

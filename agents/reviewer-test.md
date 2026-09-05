@@ -3,7 +3,7 @@ name: reviewer-test
 description: Test coverage and quality reviewer. Verifies coverage, detects vacuous tests and missing must-fail controls, audits assertion tightness and test wiring.
 model: opus
 role: reviewer
-effort: xhigh
+effort: high
 color: blue
 tags: [review, testing]
 ---
