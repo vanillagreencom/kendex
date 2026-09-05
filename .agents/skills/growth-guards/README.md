@@ -15,8 +15,8 @@ Needs `git`, `awk` and the usual POSIX userland; Bash 3.2 is enough. `kendex gua
 
 - Refuses work markers, new oversized files, growth in existing oversized files, blanket lint suppression and conflict markers.
 - Holds changelog fragments to shape and length, and refuses hand edits to the collated record.
-- Holds the markdown agents load to one paragraph per line, with no dead references and no history prose.
-- Optionally holds source comments to the same no-history rule.
+- Checks paragraph layout, relative references, dates, and issue numbers in markdown agents load.
+- Optionally checks dates and issue references in source comments.
 - Holds commit messages to `type(scope): subject`, a length cap, and the changelog entry a change under a named path owes.
 - `md-reflow` rewrites markdown into the format the `md-format` lane judges.
 

@@ -42,12 +42,6 @@ GG_SETTINGS_INDEX_OWNED=0
 # lanes source; the declaration and the removal below stay here on purpose,
 # because the reset has to reach every guard and one process arms one trap.
 GG_INSTALL_TMP=""
-# Extra `git grep` flags for the index lanes below, set by a check before it
-# calls one and empty for every check that does not. Case sensitivity is the one
-# thing it carries: a lane banning comment markers or lint pragmas matches
-# their exact spelling, while a lane banning WORDS wants -i, where a
-# sentence-initial capital is the same word.
-GG_GREP_LANE_FLAGS=()
 
 gg_config_error() {
   echo "::error::${GG_CHECK:-growth-guards}: $*" >&2
@@ -273,7 +267,7 @@ gg_content_carriers() { # OUTFILE LABEL ERE PATHSPEC... — measurable carriers,
   local out="$1" label="$2" ere="$3" status=0 f
   shift 3
   gg_require_merged_index "$@"
-  LC_ALL=C git grep --cached -alzE ${GG_GREP_LANE_FLAGS[@]+"${GG_GREP_LANE_FLAGS[@]}"} "$ere" -- "$@" >"$GG_TMP/carriers.z" 2>"$GG_TMP/carriers.err" || status=$?
+  LC_ALL=C git grep --cached -alzE "$ere" -- "$@" >"$GG_TMP/carriers.z" 2>"$GG_TMP/carriers.err" || status=$?
   gg_grep_guard "$status" "$GG_TMP/carriers.err" "scanning tracked files for $label"
   : >"$out"
   while IFS= read -r -d '' f; do
@@ -302,7 +296,7 @@ gg_grep_lane() { # LABEL ERE REMEDY PATHSPEC... — numbered violations on stdou
   gg_content_carriers "$GG_TMP/lane.z" "$label" "$ere" "$@"
   while IFS= read -r -d '' f; do
     hit_status=0
-    LC_ALL=C git grep --cached -anE ${GG_GREP_LANE_FLAGS[@]+"${GG_GREP_LANE_FLAGS[@]}"} "$ere" -- ":(literal)$f" >"$GG_TMP/lane.hits" 2>"$GG_TMP/lane.err" || hit_status=$?
+    LC_ALL=C git grep --cached -anE "$ere" -- ":(literal)$f" >"$GG_TMP/lane.hits" 2>"$GG_TMP/lane.err" || hit_status=$?
     gg_grep_guard "$hit_status" "$GG_TMP/lane.err" "detailing the $label hits in $(gg_shown "$f")"
     # This file just listed as containing hits; anything but a clean re-scan
     # (including "no matches") means the measurement is broken.

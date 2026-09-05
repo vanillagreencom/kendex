@@ -2,7 +2,7 @@
 # prose — instruction markdown states the rule that holds now. A history
 # reference in a file an agent loads (SKILL.md, workflows/*.md, agents/*.md,
 # AGENTS.md, CLAUDE.md) fails: a calendar date, a three- or four-digit issue
-# number, or a word naming a past state. An agent acts on the rule, and a
+# number. An agent acts on the rule, and a
 # rule wrapped in the story of how it got there costs every reader the same
 # paragraph to discard. The story belongs in the commit that made the change.
 #
@@ -33,8 +33,6 @@ GG_CHECK="prose"
 source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/settings.sh
 source "$SCRIPT_DIR/lib/settings.sh"
-# shellcheck source=lib/revision-words.sh
-source "$SCRIPT_DIR/lib/revision-words.sh"
 
 # What an agent harness loads on its own: a skill's entry point and its
 # workflows, an agent definition, and the repo-level instruction files. Each
@@ -49,15 +47,14 @@ source "$SCRIPT_DIR/lib/revision-words.sh"
 PATHS_CORE="SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md"
 PATHS_ARCH="docs/architecture/*.md"
 PATHS_DEFAULT="$PATHS_CORE $PATHS_ARCH"
-REVISION_WORDS_DEFAULT='previously|used to|no longer|reverted|an earlier|earlier round|incident|historically|originally|at the time'
 
 usage() {
   cat <<EOF
 usage: prose
 
 A history reference in agent-loaded markdown fails: a calendar date
-(20YY-MM-DD), a three- or four-digit issue number after '#', or a word
-naming a past state. Matching is case-insensitive and reads index content.
+(20YY-MM-DD) or a three- or four-digit issue number after '#'.
+The scan reads index content. Ordinary words do not trigger this check.
 Only the configured paths are scanned; a reference doc, a changelog and a
 design record are out of scope by not being named. A symlink, a submodule
 gitlink and binary content at a configured path are named as unmeasured.
@@ -71,9 +68,6 @@ kendex.settings.toml [env] > default):
   GROWTH_GUARDS_MD_EXCLUDES   exclusion list, pattern<TAB>reason per line,
                               shared with md-format and md-refs
                               (default tools/md-excludes)
-  GROWTH_GUARDS_PROSE_REVISION_WORDS
-                              POSIX ERE alternatives for past-state words;
-                              empty disables this part of the check
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF
@@ -109,18 +103,10 @@ gg_load_path_globs "$PATHS_RAW" prose GROWTH_GUARDS_PROSE_PATHS || exit 2
 EXCLUDES="$(gg_resolve_path "" GROWTH_GUARDS_MD_EXCLUDES tools/md-excludes excludes)" || exit 2
 gg_load_excludes "$EXCLUDES"
 
-# History, and only history. The word list is the drift this catches in
-# practice: a rule that reaches for one of them is narrating a change rather
-# than stating what holds. Word boundaries are spelled as non-word characters
-# rather than \< and \>, which are a GNU extension the regex engines behind
-# `git grep` do not all carry. The issue-number shape takes no leading
-# boundary because a reference glued to a filename is still a reference. Its
-# trailing class excludes hex digits, so longer numbers and colour values pass.
-# Three- and four-digit shorthand still fires, which is the one collision the
-# shape cannot resolve.
+# The issue-number shape has no leading boundary. Its trailing class excludes
+# hex digits so longer numbers and colour values pass.
 gg_tmpdir
-gg_load_revision_words GROWTH_GUARDS_PROSE_REVISION_WORDS "$REVISION_WORDS_DEFAULT" || exit 2
-PROSE_ERE="20[0-9]{2}-[0-9]{2}-[0-9]{2}|#[0-9]{3,4}([^0-9A-Fa-f]|\$)|$WORD_ERE"
+PROSE_ERE="20[0-9]{2}-[0-9]{2}-[0-9]{2}|#[0-9]{3,4}([^0-9A-Fa-f]|\$)"
 
 # Literal pathspecs, built from a walk rather than handing the configured
 # globs to git: the family's glob contract is the shell's, and git's pathspec
@@ -163,13 +149,8 @@ if [ "$matched" -eq 0 ]; then
   exit 0
 fi
 
-# -i: the banned strings are words, so the same word opening a sentence is
-# the same violation. Nothing else — the lane forces text and judges content
-# itself, and the walk above has already removed every blob this lane
-# considers unreadable, so its own judgement is the only one that governs.
-GG_GREP_LANE_FLAGS=(-i)
 gg_grep_lane "history reference" "$PROSE_ERE" \
-  "state the rule that holds now and delete the story; the date, the issue number and the past state belong in the commit that made the change" \
+  "state the rule that holds now and delete the story; the date and the issue number belong in the commit that made the change" \
   "${MATCHED_SPECS[@]}"
 
 if [ "$GG_VIOLATIONS" -gt 0 ]; then

@@ -66,17 +66,8 @@ GROWTH_GUARDS_MD_REFS_PATHS = "AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL
 # generated and vendored trees whose comments are not this repository's.
 GROWTH_GUARDS_COMMENT_EXCLUDES = "tools/comments-excludes"
 
-# Reference classes the comments lane checks. Empty disables references while
-# GROWTH_GUARDS_COMMENT_REVISION_WORDS can keep revision narration enabled.
+# Reference classes the comments lane checks. Name at least one class.
 GROWTH_GUARDS_COMMENT_REFERENCE_TYPES = "issue-id issue-number date"
-
-# POSIX ERE alternatives for revision narration in comments. Empty disables
-# narration while GROWTH_GUARDS_COMMENT_REFERENCE_TYPES can keep references.
-GROWTH_GUARDS_COMMENT_REVISION_WORDS = "previously|used to|no longer|reverted|an earlier|earlier round|incident|historically|originally|at the time|existing code"
-
-# POSIX ERE alternatives for past-state words in agent-loaded prose. Empty
-# disables the word class while dates and issue numbers stay enabled.
-GROWTH_GUARDS_PROSE_REVISION_WORDS = "previously|used to|no longer|reverted|an earlier|earlier round|incident|historically|originally|at the time"
 
 # Repo-local check the pre-commit shim runs LAST: a repo-root-relative
 # executable following the family exit contract (0 clean, 1 violations,
