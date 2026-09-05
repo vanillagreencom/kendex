@@ -269,15 +269,12 @@ fn removing_a_command_takes_the_generated_skill_with_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn harnesses_that_only_read_commands_get_nothing_written() {
-    let f = fixture(
-        "\"opencode\", \"cursor\"",
-        "[commands.ship]\nsource = \"cat\"\n",
-    );
+    let f = fixture("\"cursor\"", "[commands.ship]\nsource = \"cat\"\n");
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(report.plan.ops.is_empty(), "{:?}", report.plan.ops);
     apply::execute(&f.env, &report.plan).unwrap();
 
-    for dir in [".opencode", ".cursor", ".agents"] {
+    for dir in [".cursor", ".agents"] {
         assert!(!f.project.join(dir).exists(), "{dir} was written to");
     }
 }

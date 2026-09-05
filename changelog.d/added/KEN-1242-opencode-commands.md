@@ -1,0 +1,1 @@
+- Commands install on OpenCode as `commands/<name>.md` at both scopes, with the rename toggle and removal every managed kind has.
