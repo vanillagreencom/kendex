@@ -151,6 +151,16 @@ run_payload '{"command":"rm -rf $X"}'
 assert_eq "$rc" 2 'a top-level command field is read like a nested one'
 run_payload '{"command":false}'
 assert_eq "$rc" 2 'and a top-level false is refused, not read as an absent one'
+# Copilot carries the command under toolArgs, as an object or as one
+# JSON-encoded string.
+run_payload '{"sessionId":"s","timestamp":1,"cwd":"/w","toolName":"bash","toolArgs":{"command":"rm -rf $X/sub"}}'
+assert_eq "$rc" 2 'a Copilot toolArgs object is read'
+run_payload '{"toolName":"bash","toolArgs":"{\"command\":\"rm -rf $X/sub\"}"}'
+assert_eq "$rc" 2 'a Copilot toolArgs JSON string is read'
+run_payload '{"toolName":"bash","toolArgs":{"command":"rm -rf -- \"${X:?}/sub\""}}'
+assert_eq "$rc" 0 'the accepted rewrite under toolArgs passes, so the shape is read rather than refused'
+run_payload '{"toolName":"bash","toolArgs":"not json"}'
+assert_eq "$rc" 2 'a toolArgs string that is not JSON refuses rather than skipping the guard'
 
 NOJQ_BIN="$TMP_ROOT/nojq"
 mkdir -p "$NOJQ_BIN"

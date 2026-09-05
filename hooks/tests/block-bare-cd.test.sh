@@ -100,6 +100,16 @@ assert_eq "$rc" 0 'an empty command is read, not a read failure'
 run_payload '{"tool_name":"Bash","tool_input":{}}'
 assert_eq "$rc" 0 'a payload naming no command passes'
 
+echo "=== block-bare-cd: Copilot carries the command under toolArgs ==="
+run_payload '{"sessionId":"s","timestamp":1,"cwd":"/w","toolName":"bash","toolArgs":{"command":"cd /tmp"}}'
+assert_eq "$rc" 2 'a Copilot toolArgs object is read'
+run_payload '{"toolName":"bash","toolArgs":"{\"command\":\"cd /tmp\"}"}'
+assert_eq "$rc" 2 'a Copilot toolArgs JSON string is read'
+run_payload '{"toolName":"bash","toolArgs":{"command":"(cd /tmp && ls)"}}'
+assert_eq "$rc" 0 'a scoped cd under toolArgs passes, so the shape is read rather than refused'
+run_payload '{"toolName":"bash","toolArgs":"not json"}'
+assert_eq "$rc" 2 'a toolArgs string that is not JSON refuses rather than skipping the guard'
+
 echo "=== block-bare-cd: without the tools that read the payload ==="
 NOJQ_BIN="$TMP_ROOT/nojq"
 mkdir -p "$NOJQ_BIN"
