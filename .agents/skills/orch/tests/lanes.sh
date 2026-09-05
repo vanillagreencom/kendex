@@ -79,7 +79,7 @@ json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 # observe EXPECT — prints the run's value of every `name=` field EXPECT names,
 # in EXPECT's order. Names:
 #   rc                    exit status
-#   out                   stdout, whole
+#   out                   stdout, whole; lines its line count
 #   <alias>.<field>       that field of the listed lane with that alias
 #   first.<field>         that field of the only listed lane
 #   bs.<field>            that field of the backslash-named lane
@@ -92,6 +92,7 @@ observe() {
     case "$name" in
       rc) value="$RC" ;;
       out) value="$OUT" ;;
+      lines) value="$(grep -c . <<<"$OUT" || true)" ;;
       length) value="$(json length)" ;;
       aliases) value="$(json '[.[].alias] | sort | join(",")')" ;;
       files) value="$(ls -1 "$STORE/claims" 2>/dev/null | sed 's/\.claim$//' | paste -sd, - || true)"; [[ -n "$value" ]] || value=none ;;
@@ -126,14 +127,8 @@ echo "=== list: every candidate config dir is measured; headroom is the binding 
 # Averaging nclaude's 5% session and 95% weekly would call it half free and
 # send a fleet into the wall; the largest bucket binds.
 table \
-  "every candidate config dir is listed||$LIST|length=4" \
-  "a dir with no credentials is reported, not silently dropped||$LIST|openclaude.status=no_credentials" \
-  "the plan is read from the credentials file without a network call||$LIST|claude.plan=max" \
-  "a low session but high weekly yields low headroom||$LIST|nclaude.headroom_pct=5" \
-  "a high session bucket binds when it is the largest||$LIST|eclaude.headroom_pct=20" \
-  "headroom is 100 minus the largest bucket||$LIST|claude.headroom_pct=80" \
-  "the model-scoped label comes from the API, not a hard-coded name||$LIST|claude.model_label=Opus" \
-  "a lane with no live claim counts 0||$LIST|claude.claims=0"
+  "every candidate dir is listed, a dir with no credentials reported, the plan read from the file, headroom 100 minus the largest bucket, the model label from the API, no live claim as 0||$LIST|length=4 openclaude.status=no_credentials claude.plan=max nclaude.headroom_pct=5 eclaude.headroom_pct=20 claude.headroom_pct=80 claude.model_label=Opus claude.claims=0" \
+  "the human table renders every discovered lane under its header||list --harness claude|rc=0 lines=5"
 
 echo "=== aliases are an overlay on the discovered inventory ==="
 # Discovery keeps finding every account with no configuration at all; an
@@ -142,9 +137,8 @@ echo "=== aliases are an overlay on the discovered inventory ==="
 table \
   "with no aliases every discovered lane keeps its directory name||$LIST|aliases=claude,eclaude,nclaude,openclaude" \
   "an alias renames the lane it names, whitespace around the pairs tolerated|ORCH_LANE_ALIASES=eclaude=work, nclaude = overflow|$LIST|aliases=claude,openclaude,overflow,work" \
-  "the renamed lane is the directory the alias named|ORCH_LANE_ALIASES=eclaude=work|$LIST|work.config_dir=$H/.eclaude" \
-  "an alias naming no discovered directory is inert|ORCH_LANE_ALIASES=notthere=phantom|$LIST|aliases=claude,eclaude,nclaude,openclaude" \
-  "an alias does not change the lane's measured headroom|ORCH_LANE_ALIASES=eclaude=work|$LIST|work.headroom_pct=20"
+  "the renamed lane is the directory the alias named, its measured headroom unchanged|ORCH_LANE_ALIASES=eclaude=work|$LIST|work.config_dir=$H/.eclaude work.headroom_pct=20" \
+  "an alias naming no discovered directory is inert|ORCH_LANE_ALIASES=notthere=phantom|$LIST|aliases=claude,eclaude,nclaude,openclaude"
 
 echo "=== pick: the most headroom, or a refusal ==="
 # Every lane over the threshold is an error, never a best-effort pick, or the
@@ -233,7 +227,11 @@ stage_panes() {
     [[ -n "$entries" ]] || continue
     IFS=',' read -ra ents <<<"$entries"
     for entry in "${ents[@]}"; do
-      pid="$LIVE_PID"; [[ "${entry%%:*}" == live ]] || pid="$DEAD_PID"
+      case "${entry%%:*}" in
+        live) pid="$LIVE_PID" ;;
+        dead) pid="$DEAD_PID" ;;
+        *) echo "stage_panes: unknown server token in $entry" >&2; exit 1 ;;
+      esac
       pane="${entry#*:}"
       printf '%s %s\n' "$pid" "$pane" >> "$target"
     done
@@ -241,9 +239,10 @@ stage_panes() {
 }
 
 # stage_claims SPEC — the claim files for one run, `name:server:pane:dir` items
-# separated by `;`: server is live or dead, dir a lane name under the home,
+# separated by `;`: server is live or dead, dir one of the home's lane names,
 # `claude/` for a trailing slash, `link` for a symlink to claude, `bs` for the
-# backslash-named lane; `junk` writes a malformed record.
+# backslash-named lane; `junk` writes a malformed record. Any other token is
+# a typo and aborts the suite rather than staging the opposite world.
 stage_claims() {
   local spec="$1" items item name server pane dir pid
   STORE="$RUN/store"
@@ -256,8 +255,13 @@ stage_claims() {
       continue
     fi
     IFS=':' read -r name server pane dir <<<"$item"
-    pid="$LIVE_PID"; [[ "$server" == live ]] || pid="$DEAD_PID"
+    case "$server" in
+      live) pid="$LIVE_PID" ;;
+      dead) pid="$DEAD_PID" ;;
+      *) echo "stage_claims: unknown server token in $item" >&2; exit 1 ;;
+    esac
     case "$dir" in
+      claude | eclaude | nclaude) dir="$H/.$dir" ;;
       claude/) dir="$H/.claude/" ;;
       link) dir="$TMP_ROOT/claude-link" ;;
       bs)
@@ -266,7 +270,7 @@ stage_claims() {
         cp "$H/.claude/.credentials.json" "$BSDIR/.credentials.json"
         claude_usage 10 20 5 Opus > "$FIXTURE_DIR/$(basename "$BSDIR").json"
         ;;
-      *) dir="$H/.$dir" ;;
+      *) echo "stage_claims: unknown dir token in $item" >&2; exit 1 ;;
     esac
     printf '%s\t%s\t%s\t%s\t2026-08-16T00:00:00Z\n' "$pid" "$pane" "$dir" "$name" > "$STORE/claims/$name.claim"
   done

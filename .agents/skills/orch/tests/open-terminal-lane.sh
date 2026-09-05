@@ -121,11 +121,13 @@ standard_home home
 # run_ot ENV ARGS... — runs open-terminal with the stubs, the standard home
 # and a fresh claim store, tmux log, pane counter and worktree log under
 # $RUN. ENV is a semicolon-separated list of `env` arguments that may override
-# the defaults; an item `cwd=DIR` runs from DIR instead of the checkout. OUT is
-# stdout and stderr together, the way a caller sees a launch.
+# the defaults; an item `cwd=DIR` runs from DIR instead of the checkout, and
+# `prep=store_ro` or `prep=claims_file` stages this run's claim store as a
+# read-only directory or as a plain file before the launch. OUT is stdout and
+# stderr together, the way a caller sees a launch.
 RUN_SEQ=0
 run_ot() {
-  local env_list="$1" env_args=() items item cwd="$PWD"
+  local env_list="$1" env_args=() items item cwd="$PWD" prep=""
   shift
   RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
   mkdir -p "$RUN"
@@ -134,16 +136,24 @@ run_ot() {
     for item in "${items[@]}"; do
       case "$item" in
         cwd=*) cwd="${item#cwd=}" ;;
+        prep=*) prep="${item#prep=}" ;;
         *) env_args+=("$item") ;;
       esac
     done
   fi
+  case "$prep" in
+    "") ;;
+    store_ro) mkdir -p "$RUN/state/claims"; chmod 555 "$RUN/state/claims" ;;
+    claims_file) mkdir -p "$RUN/state"; : > "$RUN/state/claims" ;;
+    *) echo "run_ot: unknown prep $prep" >&2; exit 1 ;;
+  esac
   OUT=$(cd "$cwd" && env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     TMUX=stub,1,0 OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" \
     OT_WT_LOG="$RUN/worktree.log" OVERSEE_WATCH_STATE_DIR="$RUN/state" \
     PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
     ${env_args[@]+"${env_args[@]}"} "$OPEN_TERMINAL" "$@" 2>&1)
   RC=$?
+  [[ "$prep" != store_ro ]] || chmod 755 "$RUN/state/claims"
 }
 
 # lane_names TEXT — every distinct CLAUDE_CONFIG_DIR value in TEXT, in first
@@ -157,13 +167,22 @@ lane_names() {
   printf '%s' "${names:-none}"
 }
 
+# counted PATTERN FILE — matching lines, or `nolog` when the stub never wrote
+# the file: a stub that never landed on PATH must not read as zero.
+counted() {
+  [[ -f "$2" ]] || { echo nolog; return; }
+  grep -c -- "$1" "$2" || true
+}
+
 # observe EXPECT — prints the run's value of every `name=` field EXPECT names,
 # in EXPECT's order:
 #   rc            exit status
 #   stdout        `line` when anything was printed, `empty` otherwise
-#   launched      windows the tmux stub created
-#   creates       worktrees the stub was asked to create
-#   claims        claim files recorded
+#   launched      windows the tmux stub created (`nolog`: tmux never ran)
+#   creates       worktrees the stub was asked to create (`nolog` likewise)
+#   claims        claim files recorded (`nolog`: no store directory)
+#   cmd_lane      the lane the launched command's env prefix names, read from
+#                 the tmux log, single-quoted as the launch shell needs it
 #   claim_lanes   the distinct lanes those claims name, sorted
 #   claim_window  the window the single claim names; claim_pane its pane id
 #   out_lanes     the lanes the launch output names, in order
@@ -176,9 +195,10 @@ observe() {
     case "$name" in
       rc) value="$RC" ;;
       stdout) value="$([[ -n "$OUT" ]] && echo line || echo empty)" ;;
-      launched) value="$(grep -c '^new-window' "$RUN/tmux.log" 2>/dev/null || true)"; value="${value:-0}" ;;
-      creates) value="$(grep -c '^create ' "$RUN/worktree.log" 2>/dev/null || true)"; value="${value:-0}" ;;
-      claims) value="$(ls -1 "$RUN/state/claims" 2>/dev/null | wc -l | tr -d '[:space:]')" ;;
+      launched) value="$(counted '^new-window' "$RUN/tmux.log")" ;;
+      creates) value="$(counted '^create ' "$RUN/worktree.log")" ;;
+      claims) value="$([[ -d "$RUN/state/claims" ]] && ls -1 "$RUN/state/claims" | wc -l | tr -d '[:space:]' || echo nolog)" ;;
+      cmd_lane) value="$(grep -oE "env CLAUDE_CONFIG_DIR='[^']*'" "$RUN/tmux.log" 2>/dev/null | sed -E -e "s/^env CLAUDE_CONFIG_DIR='//" -e "s/'\$//" -e "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
       claim_lanes) value="$(cat "$RUN"/state/claims/*.claim 2>/dev/null | cut -f3 | sed "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
       claim_window) value="$(cat "$RUN"/state/claims/*.claim 2>/dev/null | cut -f4 || true)" ;;
       claim_pane) value="$(cat "$RUN"/state/claims/*.claim 2>/dev/null | cut -f2 || true)" ;;
@@ -219,32 +239,32 @@ echo "=== a lane is resolved before anything launches ==="
 # dir; one carrying the claim record's field separator can never be counted.
 table \
   "--help exits 0 outside a git repository|cwd=$NOREPO|--help|rc=0 stdout=line" \
-  'no lane under the threshold: nothing launched, no worktree created||--harness claude --lane auto --lane-max-pct 15 --cmd true CC-1|rc=1 launched=0 creates=0' \
-  'an explicit --lane that is not a directory is refused||--harness claude --lane /nonexistent/lane CC-1|rc=1 launched=0' \
-  'an unknown --lane alias is refused|ORCH_LANE_ALIASES=eclaude=work|--harness claude --lane nosuchlane --cmd true CC-1|rc=1 launched=0'
+  'no lane under the threshold: nothing launched, no worktree created||--harness claude --lane auto --lane-max-pct 15 --cmd true CC-1|rc=1 launched=nolog creates=nolog' \
+  'an explicit --lane that is not a directory is refused||--harness claude --lane /nonexistent/lane CC-1|rc=1 launched=nolog' \
+  'an unknown --lane alias is refused|ORCH_LANE_ALIASES=eclaude=work|--harness claude --lane nosuchlane --cmd true CC-1|rc=1 launched=nolog'
 
 # The separator-bearing path cannot ride through a table row's word split.
 run_ot "" --harness claude --lane "$TABBED" --cmd true CC-21
-assert_eq "$(observe "rc=1 launched=0")" "rc=1 launched=0" "a tab-bearing lane config dir is refused"
+assert_eq "$(observe "rc=1 launched=nolog")" "rc=1 launched=nolog" "a tab-bearing lane config dir is refused"
 
 echo "=== a bare --lane word is an alias first, then a directory ==="
 # The alias owns the bare word: a cwd directory with the same name would
 # otherwise win and launch under a config dir nobody configured, silently. A
 # word no alias claims still resolves as a directory.
 table \
-  '--lane <alias> launches under the aliased lane|ORCH_LANE_ALIASES=eclaude=work|--harness claude --lane work --cmd true CC-1|rc=0 out_lanes=eclaude' \
   "a cwd directory does not shadow the alias it collides with|ORCH_LANE_ALIASES=eclaude=work;cwd=$COLLIDE|--harness claude --lane work --cmd true CC-1|rc=0 out_lanes=eclaude" \
   "a bare word no alias claims falls back to the directory|ORCH_LANE_ALIASES=eclaude=work;cwd=$BARE|--harness claude --lane somelane --cmd true CC-1|rc=0 out_lanes=somelane"
 
-echo "=== a tmux launch under a lane records its claim ==="
-# The claim names the lane's config dir, the window, and the pane id that
-# keeps it prunable; a launch with no lane has no account to claim; a GUI
+echo "=== a tmux launch under a lane runs under it and records its claim ==="
+# The launched command carries the lane as a single-quoted env prefix; the
+# claim names the lane's config dir, the window, and the pane id that keeps
+# it prunable; a launch with no lane has no account to claim; a GUI
 # launch has no pane to keep a claim alive, so a GUI batch records nothing
 # and stays on the lane resolved up front.
 table \
-  'a tmux launch under a lane records one claim naming lane, window and pane|ORCH_LANE_ALIASES=eclaude=work|--harness claude --lane work --cmd true CC-2|rc=0 claims=1 claim_lanes=eclaude claim_window=CC-2 claim_pane=%1' \
-  'a launch with no --lane still opens its window and records no claim||--harness claude --cmd true CC-3|launched=1 claims=0' \
-  'a GUI batch launches, records no claim, and reports the one lane it resolved|TERMINAL=ghostty|--ghostty --harness claude --lane auto --cmd true CC-10 CC-11|rc=0 claims=0 summary=lane=claude'
+  "--lane <alias> launches under that lane's env prefix and records one claim naming lane, window and pane|ORCH_LANE_ALIASES=eclaude=work|--harness claude --lane work --cmd true CC-2|rc=0 cmd_lane=eclaude claims=1 claim_lanes=eclaude claim_window=CC-2 claim_pane=%1" \
+  'a launch with no --lane still opens its window and records no claim||--harness claude --cmd true CC-3|launched=1 claims=nolog' \
+  'a GUI batch launches, records no claim, and reports the one lane it resolved|TERMINAL=ghostty|--ghostty --harness claude --lane auto --cmd true CC-10 CC-11|rc=0 claims=nolog summary=lane=claude'
 
 echo "=== --lane auto over a batch re-picks off every claimed lane ==="
 # Each recorded claim moves the next item off that lane; a window created and
@@ -264,18 +284,15 @@ table \
 
 # A claims path that is not a directory is a misconfiguration, not an empty
 # store: the pick refuses before anything launches.
-RUN_PREP="$TMP_ROOT/runs/$((RUN_SEQ + 1))"; mkdir -p "$RUN_PREP/state"; : > "$RUN_PREP/state/claims"
 table \
-  'a non-directory claims path refuses the launch||--harness claude --lane auto --cmd true CC-19|rc=1 launched=0'
+  'a non-directory claims path refuses the launch|prep=claims_file|--harness claude --lane auto --cmd true CC-19|rc=1 launched=nolog'
 
 # Root writes into a mode-555 directory, so the row cannot fail a write there.
 if [[ "$(id -u)" -eq 0 ]]; then
   printf '  skip  unwritable claim store (running as root)\n'
 else
-  RUN_PREP="$TMP_ROOT/runs/$((RUN_SEQ + 1))"; mkdir -p "$RUN_PREP/state/claims"; chmod 555 "$RUN_PREP/state/claims"
   table \
-    'a claim that could not be recorded stops the batch after the launch that stands||--harness claude --lane auto --cmd true CC-15 CC-16|rc=1 launched=1'
-  chmod 755 "$RUN_PREP/state/claims"
+    'a claim that could not be recorded stops the batch after the launch that stands|prep=store_ro|--harness claude --lane auto --cmd true CC-15 CC-16|rc=1 launched=1'
 fi
 
 echo "=== the claim store belongs to the caller's checkout ==="
