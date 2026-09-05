@@ -586,9 +586,18 @@ lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$1"; }
 # The windows of the session a lane names: `session:window` lists that
 # session, a bare name the caller's. Every other tmux read passes the lane
 # through as its -t target, which tmux resolves in the same two shapes.
+# The session is matched exactly (`=`): tmux otherwise falls back to a
+# prefix match, and a lane whose session died would silently watch a
+# sibling's. A session tmux destroyed with its last window has no windows,
+# so it lists as none and the lane reads gone; any other failure is fatal.
 lane_session_windows() {
+  local out
   case "$1" in
-    *:*) tmux list-windows -t "${1%%:*}" -F '#W' 2>&1 ;;
+    *:*)
+      out="$(tmux list-windows -t "=${1%%:*}" -F '#W' 2>&1)" && { printf '%s\n' "$out"; return 0; }
+      [[ "$out" == "can't find session: "* ]] && return 0
+      printf '%s\n' "$out"
+      return 1 ;;
     *) tmux list-windows -F '#W' 2>&1 ;;
   esac
 }

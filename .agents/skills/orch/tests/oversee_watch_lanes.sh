@@ -43,6 +43,13 @@ assert_eq "$(head -1 <<<"$out")" "EVENT lane-exited arch:gh-2" \
 err="$TMP_ROOT/e3a2"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$out" "EVENT window-gone gh-2" "the bare name still means the caller's session" "$err"
+# tmux destroys a session with its last window, which is how a lane's own
+# session ends: that is the window gone, not a failure of the pass
+rm -f "$STUB_DIR/windows-arch.txt"
+err="$TMP_ROOT/e3a3"
+out="$(run_watch -- gh-1 arch:gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "a destroyed session exits 0" "$err"
+assert_eq "$out" "EVENT window-gone arch:gh-2" "a lane whose session is gone is reported gone" "$err"
 
 # --- 3b. lane-exited: window alive, harness gone ----------------------------
 # open-terminal runs the harness inside a shell, so a session that hit its

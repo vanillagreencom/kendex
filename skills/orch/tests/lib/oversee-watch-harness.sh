@@ -159,7 +159,7 @@ prev=""
 case "${1:-}" in
   list-windows)
     s=""
-    while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && s="$2"; shift; done
+    while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && s="${2#=}"; shift; done
     [[ -n "$s" ]] || { cat "$STUB_DIR/windows.txt"; exit 0; }
     [[ -f "$STUB_DIR/windows-$s.txt" ]] || { echo "can't find session: $s" >&2; exit 1; }
     cat "$STUB_DIR/windows-$s.txt"; exit 0 ;;
