@@ -16,7 +16,7 @@ The `app-deploy` skill is the procedure and `docs/RELEASING.md` holds what a rel
 ## Steps
 
 1. `git fetch origin && git status --short` — must be clean and at `origin/main`. `gh release list --limit 1` — the last tag.
-2. `git log --oneline <last-tag>..HEAD` — confirm there is something to ship; finalize `CHANGELOG.md`: run `.agents/skills/growth-guards/scripts/changelog-entries --collate` to fold the `changelog.d` fragments into `## [Unreleased]`, rename that heading to `## [X.Y.Z] - YYYY-MM-DD`, and open a fresh empty `## [Unreleased]`. A nonzero exit halts the release: read its message, fix the fragment or `CHANGELOG.md`, run it again.
+2. Run `git log --oneline <last-tag>..HEAD` to confirm there is something to ship. Follow the `app-deploy` skill for collation and release notes.
 3. Bump the three version sites; `cargo build -q`; `tools/guard`.
 4. Commit with exactly `Cargo.toml Cargo.lock crates/app/tauri.conf.json CHANGELOG.md changelog.d`, carrying the collation declaration: `GROWTH_GUARDS_CHANGELOG_COLLATE=1 git commit -m "chore(release): vX.Y.Z"`. That declaration is what makes `CHANGELOG.md` count as this commit's changelog entry — the version bump under `crates/` obliges one and the fragments were just deleted — so the `commit-msg` lane refuses the commit without it. Then push through the normal PR flow if branch protection requires it, else push `main`.
 5. Tag the MERGED commit, never the local branch: after the bump is on `origin/main`, run `git fetch origin`, confirm `git log -1 origin/main` is the bump commit, then `git tag vX.Y.Z origin/main && git push origin vX.Y.Z`. The tag starts `.github/workflows/release.yml`, which builds every target and creates a **draft** release. Do not call `gh release create`.

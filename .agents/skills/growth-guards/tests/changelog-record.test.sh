@@ -79,7 +79,7 @@ run_ce --collate
   && ok "collation retains the edited notes and folds the fragment" || bad "collation control" "rc=$RC out=$OUT"
 
 echo "=== collation destination refusals preserve every input ==="
-for row in 'untracked|is not tracked' 'symlink|not a regular collation destination' 'gitlink|not a regular collation destination' 'binary|holds binary content' 'utf8|not valid UTF-8'; do
+for row in 'untracked|is not tracked; commit the collation destination first' 'symlink|not a regular collation destination' 'gitlink|not a regular collation destination' 'binary|holds binary content' 'utf8|not valid UTF-8'; do
   shape="${row%%|*}"
   expected="${row#*|}"
   new_repo "destination-$shape"
