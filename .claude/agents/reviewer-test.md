@@ -27,6 +27,8 @@ A finding in a class `.agents/skills/orch/references/finding-disposition.md` Ste
 - **Must-fail control**: every NEW test, guard arm, or verdict path must be shown able to fail: a planted-defect fixture, red-first evidence, or a mutation check. A guard nobody has seen fail is unverified. A control that deletes the code under test only proves the assertion runs; for any guard matching source text, the required control is the inverse: keep the matched text, remove the behavior. The guard must still fail. Plant every satisfied-but-inert form the scanned language allows: a comment, a string or template-literal interior, a nested occurrence, alternate quoting, a braceless statement, a dead `&& false` branch, a discarded result, and a textually earlier but unrelated conditional. Authoring copy: `.agents/skills/code-quality/SKILL.md` § Prove Your Guards.
 - **Fixture reaches the bound**: a "20-page cap" test whose fixture exits at page 2 proves nothing. Verify the fixture actually drives the guarded limit, not a prior guard.
 - **Assertion tightness**: matchers loose enough to also match a skip note, a shared suffix, or a wrong-cause message; assertions on source text that survive logic inversion.
+- **Masked union**: one fixture plants several defects and the test asserts one verdict. The guard passes while it catches any one of them, and mutation testing cannot see the rest. Each planted defect needs its own asserted row. Authoring copy: `.agents/skills/code-quality/SKILL.md` § Tests.
+- **Subset case**: a new case whose assertions are a subset of an existing case on the same function. A new input does not rescue it: the existing case takes that input as one more row or gains the assertion, and the new case is deleted. The finding names the existing case. Authoring copy: `.agents/skills/dev/SKILL.md` § Engineering Rules.
 - **Wiring**: a new test file is only real if a runner invokes it. Verify CI/run-all wiring for every added suite.
 - **Environment**: assumptions that break under root, another locale, or elevated parallelism.
 - **Clock**: a test that bounds a duration with `sleep`, `setTimeout`, or `date` proves nothing on a loaded runner; the boundary is staged or the clock is injected.
@@ -34,7 +36,7 @@ A finding in a class `.agents/skills/orch/references/finding-disposition.md` Ste
 
 ## Output
 
-Coverage gaps, vacuous tests, missing must-fail controls, unwired suites → `blockers[]`. Quality improvements, nice-to-have tests → `suggestions[]`.
+Coverage gaps, vacuous tests, missing must-fail controls, masked unions, unwired suites → `blockers[]`. Quality improvements, nice-to-have tests, a subset case to delete → `suggestions[]`.
 
 ## Additional Instructions
 
