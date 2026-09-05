@@ -1,12 +1,11 @@
 [env]
 
 # DEV — the command dev agents run to validate a change (dev skill).
-# Nothing below is marked `# required`, so installing this skill writes
-# nothing into <project>/kendex.settings.toml. What an install writes, and
-# when, is kendex's docs/authoring/settings.md. Full reference: dev
-# README.md.
+# DEV_VALIDATE_CMD below is the one key marked `# required`, so installing
+# this skill writes that key into <project>/kendex.settings.toml and nothing
+# else. What an install writes, and when, is kendex's docs/authoring/settings.md.
+# Full reference: dev README.md.
 
-# The project's validation command, run from the worktree root — point it at
-# a diff-scoped validator where one exists. Empty = the project's documented
-# build/test/lint command.
-DEV_VALIDATE_CMD = ""
+# The project's full test, lint and typecheck command, run from the worktree
+# root. The dev workflow refuses to validate while this is empty.
+DEV_VALIDATE_CMD = "" # required
