@@ -21,8 +21,12 @@ type Presence = Record<string, boolean>;
 type LifecycleOutcome = {
 	exitCode: number;
 	stopReason?: string;
+	/** Processes the run spawned; a retry would show as a second one. */
+	spawns: number;
+	/** Whether the result carries an error message at all; a clean success carries none. */
+	error: boolean;
 	kills: string[];
-	/** Which lifecycle event the run emitted: `completed`, `failed:<reason>` or `none`. */
+	/** Every lifecycle event the run emitted, `completed:<status>` and `failed:<status>:<reason>`, or `none`. */
 	lifecycle?: string;
 	lastContent?: unknown;
 	/** Literal fragments the transcript must (true) or must not (false) carry. */
@@ -66,9 +70,11 @@ const lifecycleRows: LifecycleRow[] = [
 		mock: { stdout: bridgeStdout([shapedStreamEvent("top-level", "message_update", { message: { role: "assistant", content: [{ type: "text", text: "stuck in tool loop" }] } })]) },
 		expect: {
 			exitCode: 1,
+			spawns: 1,
+			error: true,
 			stopReason: "unresponsive_timeout",
 			kills: ["SIGTERM", "SIGKILL"],
-			lifecycle: "failed:unresponsive_timeout",
+			lifecycle: "failed:failed:unresponsive_timeout",
 			transcript: { "stuck in tool loop": true, '"buffered":true': true, '"reason":"timeout"': true, "Timeout termination SIGTERM": true, "Timeout termination SIGKILL": true },
 			errorMessage: { "exceeded bg task timeout": true, "SIGTERM child delivered": true, "SIGKILL child delivered": true, "Timeout termination unconfirmed": true },
 			failedEventError: { "Timeout termination unconfirmed": true },
@@ -81,6 +87,8 @@ const lifecycleRows: LifecycleRow[] = [
 		mock: { kill: () => false },
 		expect: {
 			exitCode: 1,
+			spawns: 1,
+			error: true,
 			stopReason: "unresponsive_timeout",
 			kills: ["SIGTERM", "SIGKILL"],
 			errorMessage: { "SIGTERM child failed: proc.kill returned false": true, "SIGKILL child failed: proc.kill returned false": true },
@@ -94,6 +102,8 @@ const lifecycleRows: LifecycleRow[] = [
 		mock: { closeOnSignal: "SIGTERM" },
 		expect: {
 			exitCode: 1,
+			spawns: 1,
+			error: true,
 			stopReason: "unresponsive_timeout",
 			kills: ["SIGTERM"],
 			errorMessage: { "Timeout termination SIGTERM": true, "Timeout termination SIGKILL": false, "Timeout termination unconfirmed": false },
@@ -108,7 +118,7 @@ const lifecycleRows: LifecycleRow[] = [
 			closeAfterMs: 10,
 			stdout: bridgeStdout([bridgeEvent("message_end", { message: { role: "assistant", content: [{ type: "text", text: "done after delay" }], usage: { input: 1, output: 1, totalTokens: 2 } } })]),
 		},
-		expect: { exitCode: 0, kills: [], lifecycle: "completed" },
+		expect: { exitCode: 0, spawns: 1, error: false, kills: [], lifecycle: "completed:completed" },
 	},
 	{
 		label: "settled: a lingering print process is stopped and the run completes",
@@ -117,9 +127,11 @@ const lifecycleRows: LifecycleRow[] = [
 		mock: { closeOnSignal: "SIGTERM", stdout: settledStdout("done before the print process exits", [bridgeEvent("agent_settled")]) },
 		expect: {
 			exitCode: 0,
+			spawns: 1,
+			error: false,
 			stopReason: "stop",
 			kills: ["SIGTERM"],
-			lifecycle: "completed",
+			lifecycle: "completed:completed",
 			transcript: { '"type":"settled_shutdown"': true, '"semanticCompletion":"agent_settled"': true },
 		},
 	},
@@ -141,6 +153,8 @@ const lifecycleRows: LifecycleRow[] = [
 		},
 		expect: {
 			exitCode: 0,
+			spawns: 1,
+			error: false,
 			kills: [],
 			lastContent: [{ type: "text", text: "extension-started continuation" }],
 			transcript: { '"type":"settled_shutdown"': false },
@@ -161,7 +175,7 @@ const lifecycleRows: LifecycleRow[] = [
 				bridgeEvent("turn_start"),
 			]),
 		},
-		expect: { exitCode: 1, stopReason: "unresponsive_timeout", kills: ["SIGTERM"] },
+		expect: { exitCode: 1, stopReason: "unresponsive_timeout", spawns: 1, error: true, kills: ["SIGTERM"] },
 	},
 	{
 		label: "settled: a stale agent_settled after a continuation started is skipped",
@@ -174,6 +188,8 @@ const lifecycleRows: LifecycleRow[] = [
 		},
 		expect: {
 			exitCode: 0,
+			spawns: 1,
+			error: false,
 			kills: ["SIGTERM"],
 			lastContent: [{ type: "text", text: "continuation response" }],
 			transcript: { '"type":"settled_shutdown_skipped"': true, '"reason":"agent_active"': true },
@@ -198,6 +214,8 @@ const lifecycleRows: LifecycleRow[] = [
 		},
 		expect: {
 			exitCode: 0,
+			spawns: 1,
+			error: false,
 			kills: ["SIGTERM"],
 			lastContent: [{ type: "text", text: "final response" }],
 			transcript: { '"type":"settled_shutdown_skipped"': false },
@@ -211,9 +229,11 @@ const lifecycleRows: LifecycleRow[] = [
 		mock: { closeOnSignal: "SIGKILL", stdout: settledStdout("settled before timeout", [bridgeEvent("agent_settled")]) },
 		expect: {
 			exitCode: 0,
+			spawns: 1,
+			error: false,
 			stopReason: "stop",
 			kills: ["SIGTERM", "SIGKILL"],
-			lifecycle: "completed",
+			lifecycle: "completed:completed",
 			transcript: { '"type":"timeout"': false },
 		},
 	},
@@ -230,8 +250,10 @@ const lifecycleRows: LifecycleRow[] = [
 		},
 		expect: {
 			exitCode: 1,
+			spawns: 1,
+			error: false,
 			kills: ["SIGTERM"],
-			lifecycle: "failed:stop",
+			lifecycle: "failed:failed:stop",
 			transcript: { '"semanticCompletion":"agent_settled"': false },
 		},
 	},
@@ -248,8 +270,10 @@ const lifecycleRows: LifecycleRow[] = [
 		},
 		expect: {
 			exitCode: 1,
+			spawns: 1,
+			error: false,
 			kills: ["SIGTERM"],
-			lifecycle: "failed",
+			lifecycle: "failed:failed:no-reason",
 			transcript: { '"semanticCompletion":"agent_settled"': false },
 		},
 	},
@@ -261,6 +285,8 @@ const lifecycleRows: LifecycleRow[] = [
 		mock: { kill: () => false, stdout: settledAfterEnd("done") },
 		expect: {
 			exitCode: 1,
+			spawns: 1,
+			error: true,
 			kills: ["SIGTERM", "SIGKILL"],
 			errorMessage: { "Settled shutdown failed": true },
 			transcript: { '"type":"settled_shutdown_failed"': true },
@@ -274,6 +300,8 @@ const lifecycleRows: LifecycleRow[] = [
 		mock: { kill: () => true, stdout: settledAfterEnd("done") },
 		expect: {
 			exitCode: 1,
+			spawns: 1,
+			error: true,
 			kills: ["SIGTERM", "SIGKILL"],
 			errorMessage: { "did not emit close within": true, "after SIGKILL": true },
 			transcript: { '"type":"settled_shutdown_failed"': true },
@@ -292,7 +320,7 @@ const lifecycleRows: LifecycleRow[] = [
 			stdout: settledAfterEnd("done"),
 		},
 		observeAfterMs: 10,
-		expect: { exitCode: 1, kills: ["SIGTERM"] },
+		expect: { exitCode: 1, spawns: 1, error: true, kills: ["SIGTERM"] },
 	},
 ];
 
@@ -327,8 +355,12 @@ test("bg one-shot lifecycle: each staged lifecycle reaches its outcome", async (
 			if (row.observeAfterMs !== undefined) await new Promise((resolve) => setTimeout(resolve, row.observeAfterMs));
 			const failed = events.find((event) => event.name === "subagents:failed");
 			const completed = events.find((event) => event.name === "subagents:completed");
-			const lifecycle = completed ? "completed" : failed ? (failed.payload.reason ? `failed:${failed.payload.reason}` : "failed") : "none";
-			const observed: LifecycleOutcome = { exitCode: result.exitCode, kills: calls[0]?.kills ?? [] };
+			const emitted = [
+				...(completed ? [`completed:${completed.payload.status}`] : []),
+				...(failed ? [`failed:${failed.payload.status}:${failed.payload.reason ?? "no-reason"}`] : []),
+			];
+			const lifecycle = emitted.length > 0 ? emitted.join(" ") : "none";
+			const observed: LifecycleOutcome = { exitCode: result.exitCode, spawns: calls.length, error: result.errorMessage !== undefined, kills: calls[0]?.kills ?? [] };
 			if ("stopReason" in row.expect) observed.stopReason = result.stopReason;
 			if ("lifecycle" in row.expect) observed.lifecycle = lifecycle;
 			if ("lastContent" in row.expect) observed.lastContent = result.messages.at(-1)?.content;

@@ -2,10 +2,7 @@
 
 import assert from "node:assert/strict";
 import { mapWithConcurrencyLimit } from "../extensions/subagent/dispatch.js";
-import test, { after } from "node:test";
-import { cleanupTempRuntimes } from "./single-agent-fixture.js";
-
-after(cleanupTempRuntimes);
+import test from "node:test";
 
 test("mapWithConcurrencyLimit returns empty array for empty input without invoking fn", async () => {
 	let invoked = 0;
