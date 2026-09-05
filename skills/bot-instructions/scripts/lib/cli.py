@@ -3,6 +3,7 @@
 import argparse
 import os
 import sys
+import traceback
 
 from .errors import BotInstructionsError, ValidationFailed
 from . import run, tree, verbs
@@ -97,8 +98,18 @@ def main(argv=None):
         print(f"{len(exc.findings)} finding(s)", file=sys.stderr)
         return 1
     except BotInstructionsError as exc:
+        # Could not complete, which is 2 in the exit convention the
+        # growth-guards pre-commit lane reads: 0 clean, 1 findings, 2 the
+        # check could not answer. Everything a validator can attribute to the
+        # repo's own inputs is already a `ValidationFailed` by the time it
+        # reaches here (`run._as_finding`), so what arrives as a bare error is
+        # a source git could not answer for, an unusable spec copy, or a
+        # write that failed — none of them a violation in the tree.
         print(str(exc), file=sys.stderr)
-        return 1
+        return 2
+    except Exception:  # a crash is not a finding either
+        traceback.print_exc()
+        return 2
     for line in lines:
         print(line)
     return 0
