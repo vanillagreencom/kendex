@@ -38,7 +38,7 @@ Two exclusions hold in every file: a list a declaration file or a checker alread
 | Instead of | Write |
 |---|---|
 | A value you set is never overwritten and one you deleted is never put back. | kendex does not overwrite a value you set, and does not restore a value you removed. |
-| ## What you can count on | ## Guarantees |
+| ## What you can count on | ## Features |
 | Simply run the apply command and you are good to go. | Run `kendex apply`. |
 | One place your whole setup finally lives, in harmony across every tool. | kendex installs packages into the directories each tool reads. |
 | It is generally recommended that callers should probably check the result. | Check the result. |
@@ -53,10 +53,10 @@ Read by a person choosing or using the package or repo.
 
 - What it is and who it is for, in two or three sentences.
 - Install: the one command, or a bullet or table row per platform or method where more than one exists.
-- What it does, as a plain feature list, one line each.
-- How it works, in a few lines: the flow or the shape.
+- One section named Features, with one plain feature per bullet. No Guarantees or What you can count on section. Use plain noun headings throughout, such as Install, Features, How it works, Supported tools, and Settings.
+- How it works: three to six plain sentences or bullets naming the parts the user meets and what happens in order. Every sentence must make sense without reading the code.
 - Where to customise: the settings a reader sets, and the file each is set in.
-- Excluded: mechanics, internals, rationale, history, and a command listing `--help` already gives.
+- Excluded: internal vocabulary, coined phrases, metaphors, product voice, invariants, detailed internals, rationale, history, and a command listing `--help` already gives.
 
 ### `DEVELOPMENT.md`
 

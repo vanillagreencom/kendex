@@ -1,10 +1,8 @@
 # kendex
 
-kendex manages AI coding-tool customizations in one place, for you personally and for each project.
+kendex is a desktop app and command-line tool (CLI) for AI coding tools such as Claude Code, Codex and Cursor. It manages agents, skills, hooks and other customizations. You set them up once and use them across your tools and projects.
 
 <p><img src="docs/img/harness-claude.png" alt="Claude Code" height="20"> <img src="docs/img/harness-codex.png" alt="Codex" height="20"> <img src="docs/img/harness-opencode.png" alt="OpenCode" height="20"> <img src="docs/img/harness-cursor.png" alt="Cursor" height="20"> <img src="docs/img/harness-pi.png" alt="Pi" height="20"> <img src="docs/img/harness-gemini.png" alt="Gemini CLI" height="20"> <img src="docs/img/harness-copilot.png" alt="GitHub Copilot" height="20"></p>
-
-kendex installs agents, skills, hooks, commands, MCP servers, plugins and Pi extensions from git repositories of packages into the folders each coding tool reads. A desktop app and the `kendex` CLI share one engine. The community marketplace is at [kendex.ai](https://kendex.ai), and this repository's own `agents/`, `skills/`, `hooks/` and `pi-extensions/` are the [default catalog](https://kendex.ai/m/vanillagreencom/kendex) every install starts with.
 
 ![kendex](docs/img/tour.gif)
 
@@ -23,30 +21,32 @@ curl -fsSL https://kendex.ai/install.sh | sh
 
 Installing a package from a git repository needs git 2.41 or newer; kendex refuses an older one and names the version it found. A package on a local path needs no git. On Windows, `kendex guard` runs the commit guards through the `sh` that Git for Windows ships.
 
-## What it does
+## Features
 
-- Install a skill, agent or hook once; it lands where every tool reads it.
-- Write an agent or skill as one file; kendex renders each tool's own format from it.
-- See every change before it happens, and undo it after.
-- Keep a personal setup and a separate setup per project.
-- Bring the skills, agents, hooks and extensions you already have under management.
-- Subscribe to any git repository of packages and install from it; browse and publish on the marketplace; install a shared collection from one link.
-- See what is out of date across every tool, and update in one step, the app and the CLI included.
-- Set skills per agent, add your own instructions to a package, and override an agent's per-tool settings.
+- Install customizations across your coding tools from one setup.
+- Convert agent and skill files into the formats each tool reads.
+- Preview package changes before applying them.
+- Keep personal settings and a separate setup for each project.
+- Manage customizations you already have.
+- Browse the [community marketplace](https://kendex.ai) and subscribe to package repositories.
+- Find outdated packages and update them.
+- Add your own instructions and tool settings to agents and skills.
+- Enable, disable or remove installed customizations.
+- See where an installed package came from.
 
-## What's supported
+## Supported tools
 
 | | Claude Code | Codex | OpenCode | Cursor | Pi | Gemini CLI | GitHub Copilot |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
 | Agents | ● | ● | ● | ●¹ | ● | ● | ● |
 | Skills | ● | ● | ● | ●¹ | ● | ● | ● |
 | Hooks | ● | ● | ●² | ●¹ ² | ●³ | ● | ● |
-| Commands | ● | ●⁴ | ○ | ○ | ○ | ● | — |
-| MCP servers | ● | ○ | ○ | ○ | — | ●⁵ | ● |
-| Plugins | ◐ | ○ | ○ | ○ | — | ○ | ◐ |
-| Pi extensions | — | — | — | — | ● | — | — |
+| Commands | ● | ●⁴ | ○ | ○ | ○ | ● | - |
+| MCP servers | ● | ○ | ○ | ○ | - | ●⁵ | ● |
+| Plugins | ◐ | ○ | ○ | ○ | - | ○ | ◐ |
+| Pi extensions | - | - | - | - | ● | - | - |
 
-● managed · ◐ enable and disable · ○ shown read-only · — no such surface.
+● managed · ◐ enable and disable · ○ shown read-only · - not supported.
 
 1. Cursor is managed in projects only.
 2. OpenCode has no hook runtime and Cursor takes a rule rather than a registration, so a hook on either is instructions the model may ignore; a `PreToolUse` hook on `Bash` also sets OpenCode's `permission.bash` to ask.
@@ -58,20 +58,16 @@ The full per-tool facts are in [docs/adapters](docs/adapters/README.md).
 
 ## How it works
 
-Four verbs, always in this order: **scan** what every tool has, read-only; **declare** what you want in one `kendex.toml` per place; **diff** wanted against actual, which is the Home page's audit, `kendex apply --plan` and `kendex verify`; **apply** with a preview, transactionally. kendex fetches a package into a local cache, renders it with your own instructions and overrides baked in, writes it once into the project or your home, and links it into every tool that reads it. A lock file records what was installed, from where, and a content fingerprint.
+The desktop app and CLI share the core code that manages your setup. kendex reads the customizations in each coding tool's folders. You declare the setup you want in a `kendex.toml` file for each project. kendex compares that file with the installed setup and shows a preview. After you apply the changes, a lock file records what kendex installed. To undo an installation, remove the package.
 
-## Guarantees
+## Settings
 
-- kendex rebuilds anything it generated on the next apply, so you can delete it. Your `kendex.toml` holds what you asked for, and nothing else does.
-- kendex does not overwrite a value you set, and does not restore a value you removed, in `kendex.toml` and in the keys it does not own in a tool's own config.
-- kendex reports a file it did not create and never deletes it. A link standing where an installed item belongs is a conflict you settle.
-- Every installed item records where it came from. kendex refuses a second source that claims the same name, and names the source that holds it.
-- Switching an item off keeps it whole and leaves every unrelated setting in that file as you set it.
-- kendex edits a tool config you symlinked in from your dotfiles through the link, and keeps the link.
-- Two applies to the same place never interleave.
+- Use `kendex.toml` to declare a project setup and add instructions or options for each tool.
+- Change package settings in a package's Customize tab or `kendex.settings.toml`.
+- Keep private settings and secrets in `.env.local`.
 
-## Customise
+## Documentation
 
-- `kendex.toml`, one per project root and one for your home: every declaration and every tweak. `[skill-instructions]` appends your instructions to a skill, `[agent-additional-instructions]` to an agent; `[agent-frontmatter.<tool>.<agent>]` overrides an agent's per-tool frontmatter; `[agent-skills]` sets skills per agent; `[[custom-hooks]]` declares your own hook commands; `[install] method = "copy"` writes a tree per tool instead of one shared tree, which is the way out on Windows without Developer Mode.
-- `kendex.settings.toml`: the `[env]` keys the packages you install read, edited on the app's Settings page. Secrets go in `.env.local`, never there.
-- Make a marketplace: [docs/authoring](docs/authoring/README.md). Work on kendex itself: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+- [Package authoring](docs/authoring/README.md)
+- [Development guide](docs/DEVELOPMENT.md)
+- [Default catalog](https://kendex.ai/m/vanillagreencom/kendex)
