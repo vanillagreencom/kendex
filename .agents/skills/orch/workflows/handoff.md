@@ -48,6 +48,8 @@ Apply the Ancestor gate ([references/skill-rules.md § Coordination](../referenc
 
 Choose the launch flags for THIS task before launching — model, effort, and permission posture are a per-task judgment, sized to the item's difficulty. A claude lane must include a permission-bypass flag (`open-terminal` warns when the flags omit one).
 
+Omit `--tmux` and `--ghostty` unless the user explicitly requests a terminal-mode override. With neither flag `open-terminal` auto-detects the mode: tmux windows inside tmux, GUI terminals outside it. What the screen looks like is not a request; `--ghostty` inside tmux moves the lane out of the workspace.
+
 ```bash
 .agents/skills/orch/scripts/open-terminal --tracker linear --harness [HARNESS] --launch-flags "[FLAGS]" [ISSUE_IDS]
 ```
