@@ -58,7 +58,7 @@ fn mcp_object(servers: Option<&serde_json::Value>) -> Vec<RawEntry> {
 
 /// The command or URL — how a list view tells servers apart.
 fn mcp_summary(entry: &serde_json::Value) -> Option<String> {
-    for key in ["command", "url"] {
+    for key in ["command", "url", "serverUrl"] {
         if let Some(value) = entry.get(key).and_then(|v| v.as_str()) {
             return Some(value.to_owned());
         }

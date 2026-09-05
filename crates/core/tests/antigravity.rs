@@ -263,3 +263,34 @@ fn a_command_declared_for_antigravity_writes_nothing() {
     assert!(!f.project.join(".agents/commands").exists());
     assert!(is_clean(&f));
 }
+
+/// A remote server in `mcp_config.json` names its endpoint `serverUrl`, and
+/// the read-only list shows that endpoint rather than a bare name.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_remote_server_is_listed_by_its_endpoint() {
+    let f = fixture("");
+    fs::write(
+        f.project.join(".agents/mcp_config.json"),
+        r#"{"mcpServers": {"docs": {"serverUrl": "https://docs.example/sse"}, "gh": {"command": "gh-mcp"}}}"#,
+    )
+    .unwrap();
+    let scanned = kendex_core::scan::scan_scopes(
+        &f.env,
+        &std::collections::BTreeMap::new(),
+        std::slice::from_ref(&f.scope),
+    );
+    let servers: Vec<_> = scanned
+        .items
+        .iter()
+        .filter(|item| item.kind == kendex_core::model::ItemKind::McpServer)
+        .map(|item| (item.name.as_str(), item.description.as_deref()))
+        .collect();
+    assert_eq!(
+        servers,
+        [
+            ("docs", Some("https://docs.example/sse")),
+            ("gh", Some("gh-mcp")),
+        ]
+    );
+}
