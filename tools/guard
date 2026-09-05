@@ -8,8 +8,8 @@
 # the markdown agents load, md-format and md-refs hold that markdown to one
 # paragraph per line with live references, and the opt-in comments lane
 # judges source comments. What is here is what none of them ships.
-# Checks the working tree, not the staged index — accepted trade-off:
-# agents commit whole files; partial staging is out of scope.
+# Repository scans read the working tree. Bot instructions use the index at
+# commit time so their configuration, doctrine and outputs agree.
 set -uo pipefail
 # Resolved before the cd below: the sibling tools this script runs live
 # beside it, not necessarily in the repository it judges.
@@ -31,6 +31,10 @@ say() {
   echo "guard: $1"
   fail=1
 }
+
+bot_args=(check)
+[ "$FULL" -eq 1 ] || bot_args+=(--staged)
+"$TOOLS_DIR/../.agents/skills/bot-instructions/scripts/bot-instructions" "${bot_args[@]}" || say "bot instruction check failed"
 
 # The hit lines below are a tracked file's own bytes, and a source file may
 # carry an ESC or another C0 control as legitimate content. Printed raw they

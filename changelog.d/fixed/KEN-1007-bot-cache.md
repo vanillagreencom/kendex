@@ -1,0 +1,1 @@
+- Bot instruction checks leave installed package files unchanged, so kendex verification does not report Python caches as local edits.

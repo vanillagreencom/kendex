@@ -5,7 +5,7 @@
 # mtime. The check resolves WT/tmp/dev-return-ISSUE-RID.json and requires the
 # internal `.round_id` to match.
 #
-# The markdown checks pin COMMAND and delegation-line shapes. review-bots.md:
+# The markdown checks pin COMMAND and delegation-line shapes:
 # a token pin establishes that a structural element is present, never that a
 # behavioral claim written in prose is true. So ci-fix's two rules have no
 # lint: that its agent writes no dev-return artifact, and that the round is

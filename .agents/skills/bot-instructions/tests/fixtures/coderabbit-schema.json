@@ -1,0 +1,571 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "language": {
+      "default": "en-US",
+      "type": "string",
+      "enum": [
+        "de",
+        "de-DE",
+        "de-AT",
+        "de-CH",
+        "en",
+        "en-US"
+      ]
+    },
+    "tone_instructions": {
+      "default": "",
+      "type": "string",
+      "maxLength": 250
+    },
+    "early_access": {
+      "default": false,
+      "type": "boolean"
+    },
+    "enable_free_tier": {
+      "default": true,
+      "type": "boolean"
+    },
+    "inheritance": {
+      "default": false,
+      "type": "boolean"
+    },
+    "reviews": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "profile": {
+          "default": "chill",
+          "type": "string",
+          "enum": [
+            "quiet",
+            "chill",
+            "assertive"
+          ]
+        },
+        "request_changes_workflow": {
+          "default": false,
+          "type": "boolean"
+        },
+        "high_level_summary": {
+          "default": true,
+          "type": "boolean"
+        },
+        "review_status": {
+          "default": true,
+          "type": "boolean"
+        },
+        "commit_status": {
+          "default": true,
+          "type": "boolean"
+        },
+        "collapse_walkthrough": {
+          "default": true,
+          "type": "boolean"
+        },
+        "poem": {
+          "default": false,
+          "type": "boolean"
+        },
+        "high_level_summary_in_walkthrough": {
+          "type": "boolean"
+        },
+        "review_details": {
+          "type": "boolean"
+        },
+        "review_progress": {
+          "type": "boolean"
+        },
+        "fail_commit_status": {
+          "type": "boolean"
+        },
+        "changed_files_summary": {
+          "type": "boolean"
+        },
+        "sequence_diagrams": {
+          "type": "boolean"
+        },
+        "estimate_code_review_effort": {
+          "type": "boolean"
+        },
+        "assess_linked_issues": {
+          "type": "boolean"
+        },
+        "related_issues": {
+          "type": "boolean"
+        },
+        "related_prs": {
+          "type": "boolean"
+        },
+        "suggested_labels": {
+          "type": "boolean"
+        },
+        "auto_apply_labels": {
+          "type": "boolean"
+        },
+        "suggested_reviewers": {
+          "type": "boolean"
+        },
+        "auto_assign_reviewers": {
+          "type": "boolean"
+        },
+        "in_progress_fortune": {
+          "type": "boolean"
+        },
+        "path_filters": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "path_instructions": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "instructions": {
+                "type": "string",
+                "maxLength": 20000
+              }
+            },
+            "required": [
+              "path",
+              "instructions"
+            ]
+          }
+        },
+        "auto_review": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "auto_incremental_review": {
+              "default": true,
+              "type": "boolean"
+            },
+            "drafts": {
+              "default": false,
+              "type": "boolean"
+            },
+            "base_branches": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "finishing_touches": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "docstrings": {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "default": true,
+                  "type": "boolean"
+                }
+              }
+            },
+            "unit_tests": {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "default": true,
+                  "type": "boolean"
+                }
+              }
+            },
+            "simplify": {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "default": false,
+                  "type": "boolean"
+                }
+              }
+            },
+            "autofix": {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "default": true,
+                  "type": "boolean"
+                }
+              }
+            },
+            "fix_ci": {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "default": true,
+                  "type": "boolean"
+                }
+              }
+            },
+            "resolve_merge_conflict": {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "default": true,
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        },
+        "pre_merge_checks": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "docstrings": {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "default": "warning",
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "warning",
+                    "error"
+                  ]
+                },
+                "threshold": {
+                  "default": 80,
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 100
+                }
+              }
+            },
+            "title": {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "default": "warning",
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "warning",
+                    "error"
+                  ]
+                },
+                "requirements": {
+                  "default": "",
+                  "type": "string"
+                }
+              }
+            },
+            "description": {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "default": "warning",
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "warning",
+                    "error"
+                  ]
+                }
+              }
+            },
+            "issue_assessment": {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "default": "warning",
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "warning",
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "chat": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "art": {
+          "default": true,
+          "type": "boolean"
+        }
+      }
+    },
+    "knowledge_base": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "opt_out": {
+          "default": false,
+          "type": "boolean"
+        },
+        "code_guidelines": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "filePatterns": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "files": {
+                        "type": "string",
+                        "description": "Files | Comma-separated glob patterns for guideline files (e.g., `**/AGENTS.md`). Multiple patterns supported. File names are case-sensitive."
+                      },
+                      "applyTo": {
+                        "type": "string",
+                        "description": "Apply To | Comma-separated glob patterns for files these guidelines applies to (e.g., `**/*.ts`). Multiple patterns supported. File names are case-sensitive."
+                      }
+                    },
+                    "required": [
+                      "files",
+                      "applyTo"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "learnings": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "scope": {
+              "default": "auto",
+              "type": "string",
+              "enum": [
+                "local",
+                "global",
+                "auto"
+              ]
+            },
+            "approval_delay": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 30
+            }
+          }
+        },
+        "issues": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "scope": {
+              "default": "auto",
+              "type": "string",
+              "enum": [
+                "local",
+                "global",
+                "auto"
+              ]
+            }
+          }
+        },
+        "pull_requests": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "scope": {
+              "default": "auto",
+              "type": "string",
+              "enum": [
+                "local",
+                "global",
+                "auto"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "code_generation": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "docstrings": {
+          "default": {
+            "path_instructions": []
+          },
+          "type": "object",
+          "properties": {
+            "language": {
+              "default": "en-US",
+              "type": "string",
+              "enum": [
+                "de",
+                "de-DE",
+                "de-AT",
+                "de-CH",
+                "en",
+                "en-US"
+              ]
+            },
+            "path_instructions": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "instructions": {
+                    "type": "string",
+                    "maxLength": 20000
+                  }
+                },
+                "required": [
+                  "path",
+                  "instructions"
+                ]
+              }
+            }
+          }
+        },
+        "unit_tests": {
+          "default": {
+            "path_instructions": []
+          },
+          "type": "object",
+          "properties": {
+            "path_instructions": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "instructions": {
+                    "type": "string",
+                    "maxLength": 20000
+                  }
+                },
+                "required": [
+                  "path",
+                  "instructions"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "issue_enrichment": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "auto_enrich": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "default": false,
+              "type": "boolean"
+            }
+          }
+        },
+        "planning": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "auto_planning": {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "labels": {
+                  "default": [],
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "labeling": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "labeling_instructions": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "instructions": {
+                    "type": "string",
+                    "maxLength": 3000
+                  }
+                },
+                "required": [
+                  "label",
+                  "instructions"
+                ]
+              }
+            },
+            "auto_apply_labels": {
+              "default": false,
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$comment": "Pinned trim of https://coderabbit.ai/integrations/schema.v2.json, fetched 2026-08-31. It is trimmed so the controls read, and pinned so the fixture cannot move under them: the vendored copy a repo validates against is refreshed, this one is not."
+}

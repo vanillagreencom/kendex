@@ -30,6 +30,14 @@ git -C "$R" config user.email test@example.com
 git -C "$R" config user.name test
 git -C "$R" config core.hooksPath "$TMP/nohooks"
 printf '# fixture\n' >"$R/AGENTS.md"
+cat >"$R/kendex.toml" <<'TOML'
+schema = 6
+[bot-instructions]
+schema = 1
+[bot-instructions.repo]
+name = "fixture"
+summary = "A repository for guard checks."
+TOML
 printf '%s\n' \
   'fn existing_fixture() {' \
   '    let tmp = tempfile::tempdir().unwrap();' \
@@ -77,6 +85,34 @@ run_guard() { # [VAR=VALUE...] — sets OUT and RC
   [ "${FULL_GUARD:-0}" -eq 0 ] || args+=(--full)
   OUT="$(cd "$R" && env "$@" "$GUARD" ${args[@]+"${args[@]}"} 2>&1)" || RC=$?
 }
+
+echo "=== bot instructions use the index at commit and the worktree in full validation ==="
+BOT="$REPO/.agents/skills/bot-instructions/scripts/bot-instructions"
+printf '\n[bot-instructions.bots]\ncodex = true\ncopilot = true\n' >>"$R/kendex.toml"
+printf '\n## Code Review Rules\n\nFixture rules.\n' >>"$R/AGENTS.md"
+git -C "$R" add -A
+"$BOT" adopt --repo "$R" >/dev/null
+"$BOT" render --repo "$R" >/dev/null
+git -C "$R" add -A
+run_guard
+[ "$RC" -eq 0 ] && ok "matching staged bot output passes" || bad "matching staged bot output passes" "$OUT"
+printf '\nStale instructions.\n' >>"$R/.github/copilot-instructions.md"
+run_guard
+[ "$RC" -eq 0 ] && ok "commit checks ignore unstaged bot edits" || bad "commit checks ignore unstaged bot edits" "$OUT"
+FULL_GUARD=1
+run_guard
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"drift:"*".github/copilot-instructions.md"* ]] \
+  && ok "full validation rejects stale worktree bot output" \
+  || bad "full validation rejects stale worktree bot output" "rc=$RC out=$OUT"
+FULL_GUARD=0
+git -C "$R" add .github/copilot-instructions.md
+"$BOT" render --repo "$R" >/dev/null
+run_guard
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"drift:"*".github/copilot-instructions.md"* ]] \
+  && ok "commit checks reject stale staged bot output despite a repaired worktree" \
+  || bad "commit checks reject stale staged bot output despite a repaired worktree" "rc=$RC out=$OUT"
+git -C "$R" reset -q --hard HEAD
+rm -rf -- "$R/.github"
 
 echo "=== new temporary fixtures derive their canonical root at creation ==="
 mkdir -p "$R/crates/core/tests"

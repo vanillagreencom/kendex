@@ -112,7 +112,7 @@ SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
 
 # Repo instruction files appended to the review prompt (repo-rule lens).
 # Empty disables.
-SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
+SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
 
 # Commit-status context the gate posts — the required check name in branch
 # protection. Keep it stable: changing it strands the old required context

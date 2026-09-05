@@ -1,0 +1,54 @@
+schema = 6
+[install]
+harnesses = ["claude"]
+[skills.dev]
+source = "local"
+enabled = true
+
+[bot-instructions]
+schema = 1
+
+[bot-instructions.repo]
+name = "fixture"
+summary = """
+fixture is a small repository the bot-instructions suites render end to end. It
+has one skill render tree, one harness render tree, and one test directory.
+"""
+tracker = "FIX"
+
+[bot-instructions.bots]
+codex = true
+copilot = true
+coderabbit = true
+qodo = true
+qodo_best_practices = true
+qodo_review_md = true
+macroscope = true
+
+[bot-instructions.cadence]
+qodo_commands = ["/agentic_review", "/review"]
+
+[bot-instructions.exclusions]
+derive_render = true
+
+[[bot-instructions.exclusions.path]]
+glob = "src/tests/**"
+reason = "fixtures, not this repo's behavior"
+
+[[bot-instructions.surface]]
+name = "tests"
+globs = ["src/tests/**"]
+reviewer_only = true
+instructions = """
+A scratch directory the test removes in its own EXIT trap is cleaned up. Do not
+report it as a leak.
+"""
+
+[[bot-instructions.surface]]
+name = "docs"
+globs = ["docs/**", "README.md"]
+exclude_globs = ["docs/generated/**"]
+instructions = """
+Prose here is written for operators, not for maintainers. A sentence that
+reads as informal is deliberate.
+"""

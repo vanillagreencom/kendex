@@ -34,6 +34,23 @@ permissions:
   contents: read
 
 jobs:
+  bot-instructions:
+    name: Bot instructions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: candidate
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: bot-checker
+          persist-credentials: false
+      - id: bot-instructions-check
+        run: bot-checker/skills/bot-instructions/scripts/bot-instructions check --repo candidate --spec candidate/skills/bot-instructions
+
   # SHARDED: five shards bound wall time at the slowest shard and give suite
   # growth per-shard headroom instead of a shared cliff. `orch` and `rest`
   # were one `shell` shard whose halves ran serially and bounded every queue
@@ -435,7 +452,7 @@ jobs:
   # object it is vacuously true, so a deleted `needs` list would pass.
   skill-suites:
     name: Skill suites (shell + node)
-    needs: [skill-suites-shard, ui-tests]
+    needs: [skill-suites-shard, ui-tests, bot-instructions]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
