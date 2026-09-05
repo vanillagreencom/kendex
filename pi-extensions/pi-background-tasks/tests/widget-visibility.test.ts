@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+	createBackgroundWidgetExpiryScheduler,
 	createBackgroundWidgetVisibility,
+	nextBackgroundWidgetExpiryDelay,
 	shouldRenderBackgroundWidget,
 	toggleBackgroundWidgetVisibility,
 } from "../extensions/widget-visibility.js";
@@ -28,5 +30,38 @@ describe("background task mini-dashboard visibility", () => {
 		toggleBackgroundWidgetVisibility(visibility);
 		expect(visibility.mode).toBe("expanded");
 		expect(lifecycleRefreshRenders(visibility.mode)).toBe(true);
+	});
+
+	test("refreshes after the earliest finished task expires", () => {
+		const tasks = [
+			{ status: "running", updatedAt: 500 },
+			{ status: "completed", updatedAt: 1_000 },
+			{ status: "failed", updatedAt: 2_000 },
+		];
+		expect(nextBackgroundWidgetExpiryDelay(tasks, 15_000, 10_000)).toBe(6_001);
+		expect(nextBackgroundWidgetExpiryDelay(tasks, 15_000, 16_001)).toBe(1_000);
+		expect(nextBackgroundWidgetExpiryDelay(tasks, 15_000, 17_001)).toBeNull();
+
+		let refreshes = 0;
+		let scheduledDelay = 0;
+		let callback = () => {};
+		let clears = 0;
+		const timer = { unref() {} } as ReturnType<typeof setTimeout>;
+		const expiry = createBackgroundWidgetExpiryScheduler(
+			() => refreshes++,
+			(nextCallback, delay) => {
+				callback = nextCallback;
+				scheduledDelay = delay;
+				return timer;
+			},
+			() => clears++,
+		);
+		expiry.schedule(tasks, 15_000, 10_000);
+		expect(scheduledDelay).toBe(6_001);
+		callback();
+		expect(refreshes).toBe(1);
+		expiry.schedule(tasks, 15_000, 10_000);
+		expiry.clear();
+		expect(clears).toBe(1);
 	});
 });
