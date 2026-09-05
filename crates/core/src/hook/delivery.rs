@@ -62,6 +62,16 @@ fn event_fires(harness: HarnessId, event: &str) -> bool {
     }
 }
 
+/// Why an unnamed hook installs nothing on a harness reached only by name
+/// (`HarnessId::hooks_by_name_only`): the one sentence both the plan and
+/// the customization editor say.
+pub fn by_name_only(harness: HarnessId) -> String {
+    format!(
+        "{} is reached only by a hook that names it in its harnesses line; its payload is not the tool_input shape a hook written for the other tools reads",
+        harness.display_name()
+    )
+}
+
 pub fn delivery(env: &Env, scope: &Scope, harness: HarnessId, spec: &HookSpec) -> Delivery {
     let support = crate::harness::capabilities(harness, ItemKind::Hook).install;
     let here = match scope {
@@ -100,6 +110,12 @@ pub fn delivery(env: &Env, scope: &Scope, harness: HarnessId, spec: &HookSpec) -
             AgentScoping::None => Delivery::Advisory,
         };
     }
+    // Registration is where the payload matters: advisory prose above
+    // reads none. A harness reached only by name takes a hook that names
+    // it, and refuses one written for the payload every other tool sends.
+    if harness.hooks_by_name_only() && spec.harnesses.is_none() {
+        return Delivery::NotInstallable(by_name_only(harness));
+    }
     match crate::engine::hook_target(env, scope, harness, &spec.name) {
         Some(_) => Delivery::Registered,
         None => Delivery::NotInstallable(format!(
@@ -135,6 +151,10 @@ mod tests {
     fn script(event: &str) -> HookSpec {
         spec(event, "all", HookBody::Script("exit 0".to_owned()))
     }
+    fn named(mut spec: HookSpec, harness: &str) -> HookSpec {
+        spec.harnesses = Some(vec![harness.to_owned()]);
+        spec
+    }
 
     /// The single place this design can rot: what each (harness × scope ×
     /// selector × event) combination gets. Pi carries no carrier in this
@@ -162,11 +182,31 @@ mod tests {
                 command("PreToolUse", "all"),
                 Registered,
             ),
+            // Antigravity's payload is its own: a hook reaches it by name.
+            (
+                "antigravity",
+                &project,
+                named(command("PreToolUse", "all"), "antigravity"),
+                Registered,
+            ),
             (
                 "antigravity",
                 &project,
                 command("PreToolUse", "all"),
-                Registered,
+                NotInstallable(by_name_only(HarnessId::Antigravity)),
+            ),
+            (
+                "antigravity",
+                &project,
+                script("PreToolUse"),
+                NotInstallable(by_name_only(HarnessId::Antigravity)),
+            ),
+            // Prose reads no payload, so a scoped unnamed hook keeps it.
+            (
+                "antigravity",
+                &project,
+                command("PreToolUse", "reviewer"),
+                Advisory,
             ),
             ("claude", &global, command("PreToolUse", "all"), Registered),
             // Advisory harnesses stay advisory whatever the spec asks.

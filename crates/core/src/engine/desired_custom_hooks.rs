@@ -61,6 +61,18 @@ pub(super) fn desired_custom_hooks(
                     });
                     continue;
                 }
+                // A harness a hook reaches only by name is the one
+                // refusal said in the plan: the person declared the hook
+                // for every install harness and would otherwise read the
+                // silence as enforcement.
+                Delivery::NotInstallable(reason) if harness.hooks_by_name_only() => {
+                    state.notes.push(format!(
+                        "hook {}: skips {} — {reason}",
+                        name,
+                        harness.name()
+                    ));
+                    continue;
+                }
                 Delivery::InAgentFile | Delivery::Advisory | Delivery::NotInstallable(_) => {
                     continue;
                 }

@@ -1,0 +1,1 @@
+- Gemini CLI is detected by its `~/.gemini/settings.json`, so a machine with only Antigravity installed no longer reads as having Gemini CLI too.

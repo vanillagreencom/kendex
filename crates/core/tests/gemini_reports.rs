@@ -43,8 +43,9 @@ fn fixture(declarations: &str) -> Fixture {
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".gemini")).unwrap();
     // Gemini is installed on this machine, which is what makes it a reader
-    // of the directories other tools own.
+    // of the directories other tools own; its settings file is the marker.
     fs::create_dir_all(home.join(".gemini")).unwrap();
+    fs::write(home.join(".gemini/settings.json"), "{}\n").unwrap();
 
     let source = home.join("catalog");
     for dir in ["agents", "hooks", "mcp", "skills/deploy"] {

@@ -1,0 +1,1 @@
+- A hook that names no harness in its `harnesses` line no longer installs on Antigravity, whose hook payload is not the shape such a hook reads; the plan notes the skip.

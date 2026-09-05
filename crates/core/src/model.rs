@@ -43,6 +43,16 @@ impl HarnessId {
         }
     }
 
+    /// A hook reaches this harness only by naming it in its `harnesses`
+    /// line. Antigravity's hook payload carries the command as
+    /// `toolCall.args.CommandLine`, not the `tool_input.command` the
+    /// catalog's shell guards read, so an unnamed hook there runs and reads
+    /// nothing: the ones that allow on no command let a bad command through,
+    /// and the ones that refuse on no command refuse every command.
+    pub fn hooks_by_name_only(self) -> bool {
+        matches!(self, HarnessId::Antigravity)
+    }
+
     /// The product name people read — plan previews and drift details use
     /// this, never the internal id.
     pub fn display_name(self) -> &'static str {

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use super::{HarnessAdapter, ProjectMarker, Reader, Surface};
 use crate::env::Env;
 use crate::hook::{HookSpec, Registration};
-use crate::model::{HarnessId, ItemKind};
+use crate::model::{DetectedHarness, HarnessId, ItemKind};
 
 pub mod settings;
 
@@ -93,6 +93,21 @@ impl HarnessAdapter for Gemini {
         env.home.join(".gemini")
     }
 
+    /// The directory alone is not Gemini CLI: Antigravity keeps its root
+    /// under it (`~/.gemini/config`) and both tools write the shared
+    /// Google auth files there. The CLI's own settings file, written on
+    /// its first run, is what marks it.
+    fn detect(&self, _env: &Env, global_root: &Path) -> Option<DetectedHarness> {
+        global_root
+            .join("settings.json")
+            .is_file()
+            .then(|| DetectedHarness {
+                harness: HarnessId::Gemini,
+                root: global_root.to_path_buf(),
+                version: None,
+            })
+    }
+
     fn project_markers(&self) -> &'static [ProjectMarker] {
         &[
             ProjectMarker::Dir(".gemini"),
@@ -151,6 +166,28 @@ mod tests {
                 }]
             );
         }
+    }
+
+    /// Antigravity's root sits under this one, so a home that has only
+    /// ever run Antigravity carries `~/.gemini` too; the settings file is
+    /// the difference.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn an_antigravity_only_home_is_not_gemini() {
+        use crate::harness::antigravity::Antigravity;
+        let tmp = tempfile::tempdir().unwrap();
+        let env = Env::fake(tmp.path(), FakeOs::Linux);
+        let root = Gemini.default_global_root(&env);
+        let antigravity = Antigravity.default_global_root(&env);
+        std::fs::create_dir_all(&antigravity).unwrap();
+        assert!(Gemini.detect(&env, &root).is_none());
+        assert!(Antigravity.detect(&env, &antigravity).is_some());
+
+        std::fs::write(root.join("settings.json"), "{}\n").unwrap();
+        assert_eq!(
+            Gemini.detect(&env, &root).map(|found| found.harness),
+            Some(HarnessId::Gemini)
+        );
     }
 
     #[test]

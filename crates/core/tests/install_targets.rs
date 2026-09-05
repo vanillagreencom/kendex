@@ -21,6 +21,8 @@ fn a_fresh_manifest_targets_the_tools_it_can_write_to() {
     for root in [".claude", ".gemini", ".copilot"] {
         fs::create_dir_all(home.join(root)).unwrap();
     }
+    // Gemini CLI is marked by its settings file, not the directory.
+    fs::write(home.join(".gemini/settings.json"), "{}\n").unwrap();
 
     let detected: Vec<_> = scan::scan(&env, &AppSettings::default())
         .harnesses

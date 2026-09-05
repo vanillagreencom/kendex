@@ -3,7 +3,7 @@ use std::path::Path;
 pub mod delivery;
 pub mod spec;
 
-pub use delivery::{AgentScoping, Delivery, agent_scoping, delivery};
+pub use delivery::{AgentScoping, Delivery, agent_scoping, by_name_only, delivery};
 pub use spec::{HookBody, HookSpec, Registration};
 
 /// A hook source: shell script with YAML-in-comments frontmatter between
