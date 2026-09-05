@@ -288,13 +288,18 @@ wrapped_spec="$BI_TMP/wrapped-spec"
 mkdir -p "$wrapped_spec" || exit 1
 cp -R "$PKG/SKILL.md" "$PKG/schemas" "$wrapped_spec/"
 python3 - "$wrapped_spec/SKILL.md" <<'PLANT' || exit 1
-import sys
+import re, sys
 p = sys.argv[1]
 s = open(p).read()
-needle = "in one round. A finding"
-if s.count(needle) != 1:
-    sys.exit(f"the rounds block no longer holds {needle!r}; plant the wrap elsewhere")
-open(p, "w").write(s.replace(needle, "in one round.\nA finding"))
+pattern = r"(?m)(^### rounds\n\n)([^\n]+)"
+matches = list(re.finditer(pattern, s))
+assert len(matches) == 1, "fixture needs one rounds block"
+body = matches[0].group(2)
+assert " " in body, "fixture needs a rounds paragraph to wrap"
+wrapped = body.replace(" ", "\n", 1)
+changed = s[:matches[0].start(2)] + wrapped + s[matches[0].end(2):]
+assert changed != s, "fixture did not plant a wrap"
+open(p, "w").write(changed)
 PLANT
 bi_must adopt --repo "$fenced" --spec "$wrapped_spec" || exit 1
 bi_must render --repo "$fenced" --spec "$wrapped_spec" || exit 1

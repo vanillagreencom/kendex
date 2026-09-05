@@ -9,7 +9,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "1.0.0"
+  version: "1.0.1"
 tags: [review]
 ---
 
@@ -92,39 +92,39 @@ Version and marker semantics: [schemas/renders.md](schemas/renders.md) § Common
 
 ## Doctrine
 
-The generator reads exactly one `## Doctrine` section from the spec copy named by `--spec`, or the running copy by default, ending at the next level-one or level-two heading. Each `###` heading inside it is a frozen block id; a repeated id is an error. A section with no blocks or a block with no text is an error. A block holds no repo, path, issue, or markdown that a YAML or TOML scalar cannot carry verbatim; repo text goes in `bot-instructions.toml`.
+Keep one `## Doctrine` section in the spec copy. `--spec` selects that copy; the default is the running package. End the section at the next level-one or level-two heading. Keep each `###` block ID unchanged and unique. Keep every block non-empty. Write text that YAML and TOML scalars can carry verbatim. Put repo names, paths, issues, and repo-specific rules in `bot-instructions.toml`.
 
 ### scope
 
-Raise a defect in the lines this pull request changed, or one those lines directly break. Correctness, security, data loss, and a fail-open path in gate, guard, or CI code are the classes that matter. Anything outside the diff and its direct blast radius is out of scope, including a scope observation about a file the pull request body already names as deliberate.
+Raise a defect only in changed lines or code those lines directly break. Report correctness defects, security defects, data loss, and fail-open paths in gates, guards, or CI. Do not report unrelated defects. Do not question the inclusion of a file that the PR body explicitly includes in its scope.
 
 ### rounds
 
-Surface everything you have about the current diff in one round. A finding held back for the next round costs a full re-review cycle, and these pull requests are pushed at agent speed. One comment per root cause, naming every affected site in that comment, rather than one comment per site.
+Report all findings about the current diff in one round. Write one comment per root cause. Name every affected site in that comment.
 
 ### severity
 
-Mark a finding blocking only if you would stop a colleague's merge for it. Everything else is a suggestion. Batch suggestions, and omit them on a re-review round whose diff is a one-line fix. Naming a finding's severity honestly is worth more than raising it: a confident wrong finding costs more than a hedged one.
+Mark a finding as blocking only if it must stop the merge. Mark other findings as suggestions. Group suggestions together. Omit suggestions when a repeat review covers a one-line fix. Match severity and confidence to the evidence.
 
 ### no-preferences
 
-Style, wording, naming, and comment phrasing are not findings here. Neither is speculative hardening on a path that already fails closed. Formatting and lint belong to CI. Ask for test coverage only where the diff changes behavior no test exercises, and then say which behavior, in one comment.
+Do not report style, wording, naming, or comment preferences. Do not request speculative changes to a path that already fails closed. Leave formatting and lint to CI. Request a test only when the diff changes behavior that no test exercises. Name that behavior in one comment.
 
 ### declined
 
-A finding class answered on this pull request with a stated decline is settled. Do not raise it again on a later round unless the relevant code changed since. The same holds for a class the repo has recorded as an accepted trade-off in its own instruction files: read those before asserting a rule.
+Read the PR's decline replies and the repo's instruction files before reporting a finding. Do not repeat a finding class that a stated decline or a documented accepted trade-off already answers. Reopen it only when the relevant code has changed.
 
 ### reply-contract
 
-Author replies are `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <issue>`. A decline names the passing state or the false premise it disproves, and a label alone is not a reason. A merge gate reading these replies rejects a tracking claim naming no issue, and a decline whose reason is nothing but a label it knows.
+Author replies are `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <issue>`. A decline names the passing state or the false premise it disproves. A label alone is not a reason. A merge gate that reads these replies rejects a tracking claim without an issue. It rejects a decline whose reason contains only a label it knows.
 
 ### render-out-of-scope
 
-A tracked tree this repo renders from an upstream package is not this repo's code. A review comment on it cannot be acted on here: the fix lands upstream and arrives by re-render, and an in-repo edit is erased. Report nothing on those paths, on any surface, in any round. The paths themselves follow this block wherever a surface has no other way to receive them.
+Do not report findings on tracked files that the repo renders from an upstream package. Apply this exclusion to every bot and every review round. Fix the upstream package and render it again; a local edit is overwritten. Include the excluded paths with this block wherever the bot has no other way to receive them.
 
 ### trust-model
 
-Review evidence is a formal review object from a trusted login, or another evidence form the repo's gate configuration names. Comment text, emoji reactions, and approvals spelled in prose are never approval, by design. Do not recommend parsing them.
+Accept review evidence only from a formal review object by a trusted login or an evidence form the repo's gate configuration names. Never treat comment text, emoji reactions, or prose approvals as approval. Do not recommend parsing them for approval.
 
 ## Adding a repo
 
