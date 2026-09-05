@@ -74,5 +74,41 @@ run_ce --collate
 [ "$RC" -eq 0 ] && [ ! -e "$R/changelog.d/fixed/invalid.md" ] && grep -Fxq -- '- A fixed defect.' "$R/CHANGELOG.md" && grep -Fxq -- '- Reworded note.' "$R/CHANGELOG.md" \
   && ok "collation retains the edited notes and folds the fragment" || bad "collation control" "rc=$RC out=$OUT"
 
+echo "=== collation destination refusals preserve every input ==="
+for row in 'untracked|is not tracked' 'symlink|not a regular collation destination' 'gitlink|not a regular collation destination' 'binary|holds binary content' 'utf8|not valid UTF-8'; do
+  shape="${row%%|*}"
+  expected="${row#*|}"
+  new_repo "destination-$shape"
+  mkdir -p "$R/changelog.d/fixed"
+  printf '# Changelog\n\n## [Unreleased]\n' >"$R/CHANGELOG.md"
+  printf '%s\n' '- A pending change.' >"$R/changelog.d/fixed/pending.md"
+  stage
+  git -C "$R" commit -qm fixture
+  case "$shape" in
+    untracked) git -C "$R" rm -q --cached -- CHANGELOG.md ;;
+    symlink)
+      mv "$R/CHANGELOG.md" "$R/record-target.md"
+      ln -s record-target.md "$R/CHANGELOG.md"
+      stage
+      ;;
+    gitlink)
+      oid="$(git -C "$R" rev-parse HEAD)"
+      git -C "$R" update-index --add --cacheinfo "160000,$oid,CHANGELOG.md"
+      ;;
+    binary) printf '\000' >>"$R/CHANGELOG.md"; stage ;;
+    utf8) printf '\377' >>"$R/CHANGELOG.md"; stage ;;
+  esac
+  cp -L "$R/CHANGELOG.md" "$TMP/record-before"
+  cp "$R/changelog.d/fixed/pending.md" "$TMP/fragment-before"
+  index_before="$(git -C "$R" ls-files -s)"
+  run_ce --collate
+  [ "$RC" -eq 2 ] && case "$OUT" in *"CHANGELOG.md"*"$expected"*) true ;; *) false ;; esac \
+    && ok "$shape refuses collation with its cause" || bad "$shape refusal" "rc=$RC out=$OUT"
+  cmp -s "$R/CHANGELOG.md" "$TMP/record-before" && { [ "$shape" != symlink ] || { [ -L "$R/CHANGELOG.md" ] && [ "$(readlink "$R/CHANGELOG.md")" = record-target.md ]; }; } \
+    && ok "$shape preserves the record" || bad "$shape record preservation" "$OUT"
+  cmp -s "$R/changelog.d/fixed/pending.md" "$TMP/fragment-before" && [ "$(git -C "$R" ls-files -s)" = "$index_before" ] \
+    && ok "$shape preserves fragments and index" || bad "$shape fragment preservation" "$OUT"
+done
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
