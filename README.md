@@ -30,7 +30,7 @@ Installing a package from a git repository needs git 2.41 or newer; kendex refus
 - Manage customizations you already have.
 - Browse the [community marketplace](https://kendex.ai) and subscribe to package repositories.
 - Find outdated packages and update them.
-- Add your own instructions and tool settings to agents and skills.
+- Add your own instructions to agents and skills, and per-tool settings to agents.
 - Enable, disable or remove installed customizations.
 - See where an installed package came from.
 
