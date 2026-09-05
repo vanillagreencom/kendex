@@ -4,7 +4,7 @@
 //!
 //! This report is the one deliberate exception to the no-command-lines
 //! rule: it is written for an agent that can act, so each line may carry a
-//! remedy built from a fixed template set — refresh, remove, add, fork,
+//! remedy built from a fixed template set: apply, refresh, remove, add, fork,
 //! findings, plan — with only validated identifiers in argument positions.
 //! Free text from sources or errors renders in quoted informational
 //! positions, never in a command position. A remedy that changes something
@@ -64,6 +64,10 @@ pub enum Class {
     rename_all_fields = "camelCase"
 )]
 pub enum Remedy {
+    /// Restore declared files and remove records no declaration needs.
+    Apply {
+        global: bool,
+    },
     Refresh {
         global: bool,
     },
@@ -110,6 +114,7 @@ impl Remedy {
             return None;
         }
         Some(match self {
+            Remedy::Apply { global } => format!("kendex apply{}", flag(global)),
             Remedy::Refresh { global } => format!("kendex refresh{}", flag(global)),
             Remedy::Remove { name, global } => format!("kendex remove {name}{}", flag(global)),
             Remedy::Add { kind, name, global } => {
