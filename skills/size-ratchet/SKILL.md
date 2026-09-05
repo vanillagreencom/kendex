@@ -22,4 +22,4 @@ Run the document byte-ceiling check before review and in CI. The growth-guards p
 .agents/skills/size-ratchet/scripts/size-ratchet --staged
 ```
 
-Trim or split an over-limit document. Put an exception in the configured excludes file with a reason. Class selection and the exclusion format are [references/policy.md](references/policy.md). Flags, settings and exit codes are in `size-ratchet --help`.
+Split an over-limit document at a natural seam, move detail to a linked reference, or delete content the code or another document already states. A document that must stay whole gets a row in the configured excludes file with its reason. Class selection and the exclusion format are [references/policy.md](references/policy.md). Flags, settings and exit codes are in `size-ratchet --help`.

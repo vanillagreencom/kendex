@@ -142,8 +142,8 @@ NL='
 git ls-files -z -- '*.rs' >"$GG_TMP/rs.z" || gg_collection_error "git ls-files failed enumerating *.rs"
 while IFS= read -r -d '' f; do
   case "$f" in
-    *"$NL"*) gg_config_error "tracked path contains a newline, unrepresentable in line-oriented records (exclude it to skip the gate): '$f'" ;;
-    *"$GG_TAB"*) gg_config_error "tracked path contains a tab, unrepresentable in the baseline TSV (exclude it to skip the gate): '$f'" ;;
+    *"$NL"*) gg_config_error "tracked path contains a newline, unrepresentable in line-oriented records; rename the file: '$f'" ;;
+    *"$GG_TAB"*) gg_config_error "tracked path contains a tab, unrepresentable in the baseline TSV; rename the file: '$f'" ;;
   esac
 done <"$GG_TMP/rs.z"
 
