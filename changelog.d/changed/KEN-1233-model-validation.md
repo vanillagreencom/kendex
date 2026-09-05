@@ -1,0 +1,1 @@
+- A model of the wrong shape for a harness or an effort level it does not accept is refused at render, and an `[agent-frontmatter]` key a harness never renders is a manifest finding.

@@ -124,6 +124,106 @@ fn a_bare_opencode_model_alias_is_said_out_loud_but_still_installs() {
     assert!(said.contains("provider/model"), "{said}");
 }
 
+/// One control per harness with an effort key: a level outside the
+/// harness's own set is refused under that harness's key, and a level
+/// inside it passes.
+#[test]
+fn an_effort_level_the_harness_does_not_accept_is_refused() {
+    let cases = [
+        (
+            HarnessId::Claude,
+            "---\nname: rust\ndescription: r\neffort: {}\n---\nBody.\n",
+            "max",
+            "ultra",
+        ),
+        (
+            HarnessId::Codex,
+            "name = \"rust\"\ndescription = \"r\"\nmodel_reasoning_effort = \"{}\"\ndeveloper_instructions = '''\nBody.\n'''\n",
+            "xhigh",
+            "max",
+        ),
+        (
+            HarnessId::Opencode,
+            "---\ndescription: r\nmode: subagent\noptions:\n  reasoningEffort: {}\n---\nBody.\n",
+            "high",
+            "ultra",
+        ),
+        (
+            HarnessId::Pi,
+            "---\nname: rust\ndescription: r\neffort: {}\n---\nBody.\n",
+            "max",
+            "ultra",
+        ),
+    ];
+    for (harness, shape, good, bad) in cases {
+        let accepted = validate_agent(harness, "rust", &shape.replace("{}", good));
+        assert!(
+            accepted.is_empty(),
+            "{}: {}",
+            harness.name(),
+            spoken(&accepted)
+        );
+        let refused = validate_agent(harness, "rust", &shape.replace("{}", bad));
+        assert_eq!(
+            blocking(&refused).len(),
+            1,
+            "{}: {}",
+            harness.name(),
+            spoken(&refused)
+        );
+        assert!(spoken(&refused).contains(bad), "{}", harness.name());
+    }
+}
+
+/// A `provider/model` id is refused wherever the harness reaches one
+/// vendor, and a bare id is refused where the loader needs the provider
+/// named; `inherit` and a bare id pass where they belong.
+#[test]
+fn a_model_of_the_wrong_shape_for_the_harness_is_refused() {
+    let md = |model: &str| format!("---\nname: rust\ndescription: r\nmodel: {model}\n---\nBody.\n");
+    let toml = |model: &str| {
+        format!(
+            "name = \"rust\"\ndescription = \"r\"\nmodel = \"{model}\"\ndeveloper_instructions = '''\nBody.\n'''\n"
+        )
+    };
+    let opencode =
+        |model: &str| format!("---\ndescription: r\nmode: subagent\nmodel: {model}\n---\nBody.\n");
+    for (harness, text) in [
+        (HarnessId::Claude, md("anthropic/claude-opus-5")),
+        (HarnessId::Codex, toml("openai/gpt-6-astra")),
+        (HarnessId::Gemini, md("google/gemini-3-pro-preview")),
+        (HarnessId::Copilot, md("anthropic/claude-sonnet-4.6")),
+        (HarnessId::Pi, md("claude-opus-5")),
+        (HarnessId::Pi, md("claude-opus-5:high")),
+    ] {
+        let findings = validate_agent(harness, "rust", &text);
+        assert_eq!(
+            blocking(&findings).len(),
+            1,
+            "{}: {}",
+            harness.name(),
+            spoken(&findings)
+        );
+    }
+    for (harness, text) in [
+        (HarnessId::Claude, md("opus")),
+        (HarnessId::Claude, md("inherit")),
+        (HarnessId::Codex, toml("gpt-6-astra")),
+        (HarnessId::Gemini, md("gemini-3-pro-preview")),
+        (HarnessId::Copilot, md("claude-sonnet-4.6")),
+        (HarnessId::Pi, md("anthropic/claude-opus-5:high")),
+        (HarnessId::Opencode, opencode("anthropic/claude-opus-5")),
+    ] {
+        let findings = validate_agent(harness, "rust", &text);
+        assert!(
+            blocking(&findings).is_empty(),
+            "{}: {}",
+            harness.name(),
+            spoken(&findings)
+        );
+    }
+}
+
 #[test]
 fn claude_agents_must_answer_to_the_name_they_install_under() {
     let findings = validate_agent(HarnessId::Claude, "rust", CLAUDE_AGENT);

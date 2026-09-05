@@ -35,6 +35,48 @@ fn is_inherit(value: &str) -> bool {
     matches!(value, "inherit" | "current" | "parent")
 }
 
+/// How a harness's agent file names a model. One table, read by the
+/// renderers' validation so a value the loader cannot use is refused
+/// before it reaches disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelShape {
+    /// A bare id from the harness's own catalogue, a tier alias, or
+    /// `inherit`. A `provider/model` id names a provider the harness has
+    /// no way to reach.
+    Bare,
+    /// A `provider/model` id, or `inherit` for the session's own. The
+    /// provider is the session's; kendex names no fallback.
+    ProviderQualified,
+    /// The file carries no model.
+    Absent,
+}
+
+pub fn model_shape(harness: HarnessId) -> ModelShape {
+    match harness {
+        HarnessId::Claude | HarnessId::Codex | HarnessId::Gemini | HarnessId::Copilot => {
+            ModelShape::Bare
+        }
+        HarnessId::Opencode | HarnessId::Pi => ModelShape::ProviderQualified,
+        HarnessId::Cursor => ModelShape::Absent,
+    }
+}
+
+/// The effort levels a harness's agent file accepts under its own key,
+/// lowest first; `None` where the file has no effort key at all and an
+/// effort setting renders nothing.
+pub fn effort_levels(harness: HarnessId) -> Option<&'static [&'static str]> {
+    match harness {
+        HarnessId::Claude => Some(&["low", "medium", "high", "xhigh", "max"]),
+        // Codex and OpenCode's OpenAI provider share the reasoning-effort
+        // vocabulary.
+        HarnessId::Codex | HarnessId::Opencode => {
+            Some(&["minimal", "low", "medium", "high", "xhigh"])
+        }
+        HarnessId::Pi => Some(&["minimal", "low", "medium", "high", "xhigh", "max"]),
+        HarnessId::Cursor | HarnessId::Gemini | HarnessId::Copilot => None,
+    }
+}
+
 pub fn resolve_model(harness: HarnessId, model: &str) -> ResolvedModel {
     let bare = model.trim().to_lowercase();
     if is_inherit(&bare) {

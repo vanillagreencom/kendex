@@ -14,6 +14,8 @@
 //! | OpenCode `mode` is primary, subagent or all | breakage |
 //! | OpenCode permission values are allow, ask or deny | breakage |
 //! | OpenCode `model` names its provider | advisory |
+//! | model shape fits the harness: `provider/model` only on OpenCode and Pi, bare elsewhere | breakage |
+//! | effort level is one the harness accepts under its own key (Claude, Codex, OpenCode, Pi) | breakage |
 //! | Claude agent has frontmatter naming the installed agent | breakage |
 //! | Gemini agent has frontmatter naming the installed agent | breakage |
 //! | Gemini agent carries a description | breakage |
@@ -85,9 +87,7 @@ pub fn validate_agent(harness: HarnessId, name: &str, text: &str) -> Vec<Finding
         HarnessId::Opencode => agent::opencode(text),
         HarnessId::Claude => agent::claude(name, text),
         HarnessId::Cursor => agent::cursor(text),
-        // Pi reads plain markdown and enforces no frontmatter schema, so
-        // the name rule above is the whole of what can be checked.
-        HarnessId::Pi => Vec::new(),
+        HarnessId::Pi => agent::pi(text),
         HarnessId::Gemini => agent::gemini(name, text),
         HarnessId::Copilot => agent::copilot(name, text),
     });

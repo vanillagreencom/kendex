@@ -359,6 +359,71 @@ mod tests {
         }
     }
 
+    /// One control per harness: a provider-qualified model override reaches
+    /// the file where the harness loads models by provider, and is refused
+    /// at validation where the harness reaches one vendor.
+    #[test]
+    fn a_provider_qualified_model_lands_only_where_a_provider_is_named() {
+        use crate::model::{HarnessId, Scope};
+        use crate::render::validate::validate_agent;
+        let source = parse_source_agent(
+            "---\nname: rust\ndescription: Rust engineer\nmodel: inherit\nrole: engineer\n---\nBody.\n",
+        )
+        .unwrap();
+        let scope = Scope::Global;
+        let overrides = FrontmatterOverrides {
+            model: Some("anthropic/claude-opus-5".into()),
+            ..FrontmatterOverrides::default()
+        };
+        let rendered = |harness: HarnessId| -> String {
+            let agent = EffectiveAgent {
+                source: &source,
+                harness,
+                scope: &scope,
+                skills: vec![],
+                permissions: EffectiveAgent::intent(&source, &overrides),
+                overrides: overrides.clone(),
+                launch_instructions: None,
+                additional_instructions: None,
+                custom_hooks: vec![],
+            };
+            generate(&agent).unwrap().text
+        };
+        for harness in [HarnessId::Pi, HarnessId::Opencode] {
+            let text = rendered(harness);
+            assert!(
+                text.contains("model: anthropic/claude-opus-5\n"),
+                "{}: {text}",
+                harness.name()
+            );
+            let findings = validate_agent(harness, "rust", &text);
+            assert!(
+                findings.iter().all(|f| !f.is_breakage()),
+                "{}: {findings:?}",
+                harness.name()
+            );
+        }
+        for harness in [
+            HarnessId::Claude,
+            HarnessId::Codex,
+            HarnessId::Gemini,
+            HarnessId::Copilot,
+        ] {
+            let text = rendered(harness);
+            assert!(
+                text.contains("anthropic/claude-opus-5"),
+                "{}: {text}",
+                harness.name()
+            );
+            let findings = validate_agent(harness, "rust", &text);
+            assert!(
+                findings.iter().any(|f| f.is_breakage()),
+                "{}: {text}",
+                harness.name()
+            );
+        }
+    }
+
     #[test]
     fn deny_tools_merge_while_other_fields_prefer_project() {
         let source = FrontmatterOverrides {

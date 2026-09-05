@@ -104,6 +104,53 @@ const FRONTMATTER_KEYS: &[&str] = &[
     "nickname-candidates",
 ];
 
+/// The override keys one harness's renderer reads. A key outside this
+/// list renders nothing there, so an override naming it is a setting the
+/// author believes is in force and is not.
+fn frontmatter_keys_for(harness: &str) -> &'static [&'static str] {
+    match harness {
+        "claude" => &[
+            "color",
+            "model",
+            "deny-tools",
+            "allow-tools",
+            "background",
+            "pane",
+            "effort",
+            "isolation",
+            "memory",
+        ],
+        "codex" => &[
+            "model",
+            "deny-tools",
+            "allow-tools",
+            "effort",
+            "model-reasoning-effort",
+            "sandbox-mode",
+            "nickname-candidates",
+        ],
+        "opencode" => &[
+            "model",
+            "deny-tools",
+            "allow-tools",
+            "effort",
+            "model-reasoning-effort",
+            "mode",
+        ],
+        "pi" => &[
+            "color",
+            "model",
+            "deny-tools",
+            "allowed-subagents",
+            "pane",
+            "effort",
+            "model-reasoning-effort",
+        ],
+        "gemini" | "copilot" => &["model", "deny-tools", "allow-tools"],
+        _ => &[],
+    }
+}
+
 pub fn validate(table: &Table) -> Vec<Finding> {
     let mut findings = Vec::new();
 
@@ -230,6 +277,20 @@ fn validate_frontmatter(table: &Table, findings: &mut Vec<Finding>) {
                         location: format!("agent-frontmatter.{harness}.{agent}.{key}"),
                         problem: "unknown frontmatter override".into(),
                         fix: format!("use one of: {}", FRONTMATTER_KEYS.join(", ")),
+                    });
+                    continue;
+                }
+                let read = frontmatter_keys_for(harness);
+                if !read.contains(&key.as_str()) {
+                    findings.push(Finding {
+                        location: format!("agent-frontmatter.{harness}.{agent}.{key}"),
+                        problem: format!(
+                            "{harness} renders no `{key}`, so this override changes nothing"
+                        ),
+                        fix: match read.is_empty() {
+                            true => format!("remove it: {harness} agent files carry no settings"),
+                            false => format!("remove it, or use one of: {}", read.join(", ")),
+                        },
                     });
                 }
             }
