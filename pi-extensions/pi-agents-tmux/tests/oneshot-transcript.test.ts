@@ -2,10 +2,10 @@
 // bridge can emit, and what a failed run flushes.
 
 import assert from "node:assert/strict";
-import { join } from "node:path";
 import { extractLastAssistantTextFromTranscriptContent } from "../extensions/subagent/format.js";
 import { runSingleAgent, setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
 import test, { after } from "node:test";
+import type { StreamShape } from "./single-agent-fixture.js";
 import { cleanupTempRuntimes, tempRuntime, testAgent, installMockSpawn, bridgeStdout, shapedStreamEvent, transcriptEventName, findAgentStartTranscriptPayload, mockPiEvents, makeDetails, readTranscript } from "./single-agent-fixture.js";
 
 after(cleanupTempRuntimes);
