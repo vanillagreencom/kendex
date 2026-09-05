@@ -3,8 +3,10 @@
 # path takes, and the scanner that walks a file under it. Sourced by
 # scripts/comments; needs gg_collection_error and GG_TMP from lib/common.sh.
 #
-# The scanner is a character walk with four states — code, string, block
-# comment, heredoc body — carried across lines. It emits one
+# The scanner is a character walk with code, string, block-comment and
+# heredoc-body states carried across lines. A quoted shell command
+# substitution saves its outer string while its shell body is scanned. It
+# emits one
 # "line<TAB>text" record per line of comment text and nothing for code or
 # a string literal. A file that ends in any state but code is not
 # extractable: every comment after the opener would otherwise be swallowed
@@ -97,10 +99,10 @@ gg_comment_text() { # FAMILY FILE PATH — records on stdout
     return n > gsub(/\)\)/, "", s)
   }
   BEGIN {
-    st = "code"; d = ""; e = 0; m = 0; pend = ""; hdw = ""; hds = 0; opened = 0
+    st = "code"; d = ""; e = 0; m = 0; pend = ""; hdw = ""; hds = 0; opened = 0; subn = 0
     if (fam == "c") { bo = "/*"; bc = "*/"; lead = "//"; cls = "[\"" sq "/" (tmpl ? "`" : "") "]" }
     else if (fam == "cblock") { bo = "/*"; bc = "*/"; lead = ""; cls = "[\"" sq "/]" }
-    else if (fam == "hash") { bo = ""; bc = ""; lead = "#"; cls = "[\"" sq "#" (shell ? "<" : "") "]" }
+    else if (fam == "hash") { bo = ""; bc = ""; lead = "#"; cls = "[\"" sq "#" (shell ? "<()\\\\" : "") "]" }
     else if (fam == "sql") { bo = "/*"; bc = "*/"; lead = "--"; cls = "[\"" sq "/-]" }
     else if (fam == "lua") { bo = "--[["; bc = "]]"; lead = "--"; cls = "[\"" sq "-]" }
     else if (fam == "xml") { bo = "<!--"; bc = "-->"; lead = ""; cls = "[<]" }
@@ -128,6 +130,16 @@ gg_comment_text() { # FAMILY FILE PATH — records on stdout
         if (!match(rest, scls)) { i = n + 1; break }
         i += RSTART - 1
         c = substr(line, i, 1)
+        # Double quotes around $(...) remain open while the substitution is
+        # scanned for the shell shapes this extractor tracks. Save the outer
+        # literal so quotes and heredocs in that code cannot replace it.
+        if (shell && d == "\"" && c == "$" && substr(line, i, 2) == "$(") {
+          subn++
+          subdepth[subn] = 1; subd[subn] = d; sube[subn] = e; subm[subn] = m
+          subopened[subn] = opened; subscls[subn] = scls; substart[subn] = NR
+          st = "code"; i += 2; continue
+        }
+        if (c == "$") { i++; continue }
         if (e && c == "\\") { i += 2; continue }
         if (substr(line, i, length(d)) == d) { st = "code"; i += length(d); continue }
         i++; continue
@@ -151,6 +163,19 @@ gg_comment_text() { # FAMILY FILE PATH — records on stdout
         if (fam == "c") sub(/^[\/!]/, "", t)
         print NR "\t" t
         i = n + 1; break
+      }
+      if (shell && subn > 0 && c == "(") { subdepth[subn]++; i++; continue }
+      if (shell && subn > 0 && c == "\\") { i += 2; continue }
+      if (shell && subn > 0 && c == ")") {
+        subdepth[subn]--
+        if (subdepth[subn] == 0) {
+          st = "str"; d = subd[subn]; e = sube[subn]; m = subm[subn]
+          opened = subopened[subn]; scls = subscls[subn]
+          delete subdepth[subn]; delete subd[subn]; delete sube[subn]; delete subm[subn]
+          delete subopened[subn]; delete subscls[subn]; delete substart[subn]
+          subn--
+        }
+        i++; continue
       }
       if (c == "<") {
         # A shell heredoc: its body starts on the next line and is neither
@@ -210,7 +235,7 @@ gg_comment_text() { # FAMILY FILE PATH — records on stdout
         if (!esc_single) e = 0
         if (shell && i > 1 && substr(line, i - 1, 1) == "$") e = 1
       }
-      scls = "[" c "\\\\]"
+      scls = "[" c "\\\\" ((shell && c == "\"") ? "$" : "") "]"
       st = "str"; opened = NR; i += length(d)
     }
     if (pend != "") { st = "heredoc"; hdw = pend; pend = ""; opened = NR }
@@ -218,9 +243,10 @@ gg_comment_text() { # FAMILY FILE PATH — records on stdout
   }
   END {
     if (st == "bad") exit 3
-    if (st == "code") exit 0
+    if (st == "code" && subn == 0) exit 0
     if (st == "block") what = "a block comment"
     else if (st == "heredoc") what = "a heredoc (terminator " hdw ")"
+    else if (st == "code" && subn > 0) { what = "a command substitution"; opened = substart[subn] }
     else what = "a string literal"
     print what " opened at line " opened " is never closed" > "/dev/stderr"
     exit 3

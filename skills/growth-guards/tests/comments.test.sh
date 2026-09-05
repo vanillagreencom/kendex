@@ -299,6 +299,27 @@ run_cm
 solo a.sh "read -r x <<<\"y\" # $W"
 run_cm
 fails_at "a here-string is not a heredoc" a.sh 1
+solo a.sh "out=\"\$(printf '\"')\"" "# $W"
+bash -n "$R/a.sh" && ok "a quoted command substitution fixture is valid Bash" \
+  || bad "quoted command substitution fixture" "bash -n refused it"
+run_cm
+fails_at "a quote inside a quoted command substitution does not hide the following comment" a.sh 2
+solo a.sh 'out="$(' "# $W" 'printf ok' ')"'
+bash -n "$R/a.sh" && ok "a multi-line quoted command substitution fixture is valid Bash" \
+  || bad "multi-line quoted command substitution fixture" "bash -n refused it"
+run_cm
+fails_at "a comment inside a quoted command substitution is judged as shell code" a.sh 2
+solo a.sh "out=\"\$(printf '\"$W\"')\""
+run_cm
+passes "a quoted command substitution stays extractable when its comments are clean"
+solo a.sh "out=\"\$(python3 - <<'PY'" "print(\"<<'MANIFEST_EOF'\")" 'PY' ')"' "# $W"
+bash -n "$R/a.sh" && ok "a heredoc in a quoted command substitution fixture is valid Bash" \
+  || bad "heredoc in quoted command substitution fixture" "bash -n refused it"
+run_cm
+fails_at "a heredoc token inside an embedded heredoc does not hide the following comment" a.sh 5
+solo a.sh "out=\"\$(python3 - <<'PY'" "print(\"<<'MANIFEST_EOF' $W\")" 'PY' ')"'
+run_cm
+passes "a heredoc in a quoted command substitution stays extractable when its comments are clean"
 solo a.py '"""' "# $W" '"""' "# $W"
 run_cm
 [ "$RC" -eq 1 ] && case "$OUT" in *": a.py:2: "*) false ;; *": a.py:4: "*) true ;; *) false ;; esac \
