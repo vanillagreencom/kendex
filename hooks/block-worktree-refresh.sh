@@ -3,8 +3,8 @@
 # name: block-worktree-refresh
 # event: PreToolUse
 # matcher: Bash
-# description: Refuse a `kendex` command that writes the project scope (`refresh`, `apply`, `add`, `remove`, `update-pi`) when the working directory is a linked git worktree and the command does not name the global scope. A project's kendex install is registered to the main checkout, so a project-scope write from a linked worktree renders into that checkout and removes what it does not expect there. Names the two forms that are right: the same command from the main checkout, or `--scope global` for a global change.
-# safety: Reads the command text and asks git whether the working directory's git dir differs from its common dir, which is what makes a worktree linked; writes nothing. A git that cannot answer refuses. The verb is read as a word after a `kendex` word, wherever in the command it stands, so a command that merely spells the pair in prose is refused, and that is the accepted cost. `kendex verify`, `check`, `list`, `report` and every other verb pass; a command carrying `-g`, `--global` or `--scope global` in the verb's own segment passes because it names the scope this hook does not guard. A payload that cannot be read, an empty one included, is refused, never skipped.
+# description: Refuse a `kendex` command that writes the project scope (`refresh`, `apply`, `add`, `remove`, `update-pi`, `updates --apply`) when the working directory is a linked git worktree and the command does not name the global scope. A project's kendex install is registered to the main checkout, so a project-scope write from a linked worktree renders into that checkout and removes what it does not expect there. Names the two forms that are right: the same command from the main checkout, or `--scope global` for a global change.
+# safety: Reads the command text and asks git whether the working directory's git dir differs from its common dir, which is what makes a worktree linked; writes nothing. A git that cannot answer refuses. The verb is read as a word after a `kendex` word, wherever in the command it stands, so a command that merely spells the pair in prose is refused, and that is the accepted cost; the bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. `kendex verify`, `check`, `list`, `report` and every other verb pass; a command carrying `-g`, `--global` or `--scope global` in the verb's own segment, with no `--scope project` or `--scope all` beside it, passes because it names the scope this hook does not guard. A payload that cannot be read, an empty one included, is refused, never skipped.
 # timeout: 10
 # ---
 
@@ -53,24 +53,43 @@ if ! COMMAND=$(printf '%s' "$INPUT" \
 fi
 
 # The verb as a word after a `kendex` word, judged one segment at a time: a
-# segment is the text between two of `;`, `&`, `|` and a line end, with a
-# backslash-newline continuing it. The global scope is not this hook's, and
-# `-g`, `--global` or `--scope global` exempts a write only when it stands in
-# the same segment as the verb; read across the whole command it would let
+# segment is the text between two of `;`, `&`, `|`, `(`, `)` and a line end,
+# with a backslash-newline continuing it, and it ends at a `#` that begins a
+# word, since the shell drops the comment behind it. The global scope is not
+# this hook's, and `-g`, `--global` or `--scope global` exempts a write only
+# when it stands in the verb's own segment and no `--scope project` or
+# `--scope all` stands there too, because kendex gives `--scope` precedence
+# over `--global`; read across the whole command the word would let
 # `kendex refresh -g && kendex refresh` through on the first command's word.
+# `kendex updates` is a write only with `--apply`, which delegates to refresh.
+# The bare `kendex <source>` shorthand for add is not read: matching it means
+# matching every `kendex <word>`, reads included, and that is the whole CLI.
 NL=$'\n'
 SEGMENTS=${COMMAND//\\$NL/ }
 SEGMENTS=${SEGMENTS//;/$NL}
 SEGMENTS=${SEGMENTS//&/$NL}
 SEGMENTS=${SEGMENTS//\|/$NL}
-WRITE_RE='(^|[^[:alnum:]_.-])kendex[[:space:]]+(refresh|apply|add|remove|update-pi)([[:space:]]|$)'
+SEGMENTS=${SEGMENTS//\(/$NL}
+SEGMENTS=${SEGMENTS//\)/$NL}
+WRITE_RE='(^|[^[:alnum:]_.-])kendex[[:space:]]+(refresh|apply|add|remove|update-pi|updates)([[:space:]]|$)'
 GLOBAL_RE='(^|[[:space:]])(-g|--global|--scope([[:space:]]+|=)global)([[:space:]]|$)'
+PROJECT_RE='(^|[[:space:]])--scope([[:space:]]+|=)(project|all)([[:space:]]|$)'
+APPLY_RE='(^|[[:space:]])--apply([[:space:]]|$)'
 VERB=""
 while IFS= read -r SEGMENT; do
+  case "$SEGMENT" in
+    \#*) continue ;;
+    *[[:blank:]]\#*) SEGMENT=${SEGMENT%%[[:blank:]]\#*} ;;
+  esac
   [[ $SEGMENT =~ $WRITE_RE ]] || continue
-  # The verb is taken before the scope test, which resets BASH_REMATCH.
+  # The verb is taken before the scope tests, which reset BASH_REMATCH.
   FOUND=${BASH_REMATCH[2]}
-  [[ $SEGMENT =~ $GLOBAL_RE ]] && continue
+  if [ "$FOUND" = updates ] && ! [[ $SEGMENT =~ $APPLY_RE ]]; then
+    continue
+  fi
+  if [[ $SEGMENT =~ $GLOBAL_RE ]] && ! [[ $SEGMENT =~ $PROJECT_RE ]]; then
+    continue
+  fi
   VERB=$FOUND
   break
 done <<EOF
@@ -107,7 +126,21 @@ if ! DIRS=$(git -C "$CWD" rev-parse --git-dir --git-common-dir 2>/dev/null); the
   REASON_STATUS=0
   REASON=$(git -C "$CWD" rev-parse --git-dir --git-common-dir 2>&1 >/dev/null) || REASON_STATUS=$?
   case "$REASON" in
-    *"not a git repository (or any"*) exit 0 ;;
+    *"not a git repository (or any"*)
+      # Git says the same words above a `.git` entry it could not read as
+      # above none at all. A `.git` on the way up is a repository that could
+      # not be read, and the write is refused; none is the absence.
+      AT=$(cd -- "$CWD" 2>/dev/null && pwd -P) || AT=$CWD
+      while :; do
+        if [ -e "$AT/.git" ] || [ -L "$AT/.git" ]; then
+          echo "block-worktree-refresh: $AT/.git exists but git could not read a repository there, so whether $CWD is a linked worktree is unknown and the write is refused" >&2
+          exit 2
+        fi
+        [ "$AT" != / ] || exit 0
+        AT=${AT%/*}
+        [ -n "$AT" ] || AT=/
+      done
+      ;;
   esac
   echo "block-worktree-refresh: git could not say whether $CWD is a linked worktree (exit $REASON_STATUS), so the write is refused:" >&2
   printf '%s\n' "$REASON" >&2
@@ -131,10 +164,12 @@ if [ "$GIT_DIR" = "$COMMON_DIR" ]; then
   exit 0
 fi
 
-MAIN=${COMMON_DIR%/.git}
+# The main checkout is not derived from the common dir, which a repository
+# made with --separate-git-dir keeps outside its checkout; `git worktree list`
+# names the checkout first.
 {
   echo "block-worktree-refresh: refusing 'kendex $VERB' at project scope from the linked worktree $CWD."
-  echo "  The project install is registered to the main checkout, $MAIN; a project-scope write from here renders into that checkout and removes what it does not expect there."
-  echo "  Run the same command from $MAIN, or pass --scope global for a global change. Reads (kendex verify, check, list) are not refused."
+  echo "  The project install is registered to the main checkout (the first line of 'git worktree list'); a project-scope write from here renders into that checkout and removes what it does not expect there."
+  echo "  Run the same command from the main checkout, or pass --scope global for a global change. Reads (kendex verify, check, list) are not refused."
 } >&2
 exit 2
