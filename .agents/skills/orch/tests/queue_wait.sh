@@ -382,8 +382,12 @@ json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 # result fields; the derived names read the sequence directory or stderr:
 #   has_<field>       whether the JSON carries that field at all
 #   error~<text>      whether the JSON error names <text>, where the message
-#                     is the fact's only carrier (which mutation half failed)
+#                     is the fact's only carrier: which read failed, which
+#                     mutation half failed, that the PR may still be queued
 #   stdout            `line` when anything was printed, `empty` otherwise
+#   stdout~<word>     whether the text result names that verdict word
+#   help_sections     the --help sections merge-pr.md and pr-merge route an
+#                     agent to, of exit_codes, environment and arm_grace
 #   mutations         the GraphQL mutations issued, in order: `disable`,
 #                     `dequeue`, or `none`
 #   mutation_ids      the ids those mutations named, or `none`
@@ -400,6 +404,14 @@ observe() {
       has_*) value="$(json "has(\"${name#has_}\")")" ;;
       error~*) value="$(json '.error // ""' | grep -qF -- "${name#error~}" && echo true || echo false)" ;;
       stdout) value="$([[ -n "$OUT" ]] && echo line || echo empty)" ;;
+      stdout~*) value="$(grep -qF -- "${name#stdout~}" <<<"$OUT" && echo true || echo false)" ;;
+      help_sections)
+        value=""
+        grep -q '^Exit codes:' <<<"$OUT" && value="$value,exit_codes"
+        grep -q '^Environment' <<<"$OUT" && value="$value,environment"
+        grep -q 'QUEUE_WAIT_ARM_GRACE' <<<"$OUT" && value="$value,arm_grace"
+        value="${value#,}"; [[ -n "$value" ]] || value=none
+        ;;
       mutations)
         value="$(sed -e 's/^disablePullRequestAutoMerge .*/disable/' -e 's/^dequeuePullRequest .*/dequeue/' "$SEQ_DIR/mutations.log" 2>/dev/null | paste -sd, - || true)"
         [[ -n "$value" ]] || value=none
@@ -428,6 +440,7 @@ table() {
   shift
   for row in "$@"; do
     IFS='|' read -r label spec args env expect <<<"$row"
+    [[ -n "$expect" ]] || { printf 'table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
     [[ -n "$args" ]] || args="$default_args"
     stage "$spec"
     # shellcheck disable=SC2086
@@ -462,11 +475,13 @@ table "$QW" \
   'the last sleep is clamped to the remaining budget|open_queued|1 3 4 --json --no-check-probe||elapsed_seconds=4'
 
 echo "=== an unreadable queue answer is an error, never not_queued ==="
+# merge-pr.md § 5 hands the error to an operator, so each shape names itself:
+# an unreadable body, the GraphQL message GitHub sent, the auth ladder.
 table "$QW" \
-  'an empty object body|state:last=open,queue:last=braces|||rc=1 status=error verdict=unknown' \
-  'an empty body|state:last=open,queue:last=empty|||rc=1 status=error verdict=unknown' \
-  'a GraphQL errors array|state:last=open,queue:last=gql_errors|||rc=1 status=error verdict=unknown' \
-  'no GitHub auth path exits 3 like the other waiters|open_queued||STUB_GH_DENY_KEYRING=1|rc=3 status=error'
+  'an empty object body|state:last=open,queue:last=braces|||rc=1 status=error verdict=unknown error~readable=true' \
+  'an empty body|state:last=open,queue:last=empty|||rc=1 status=error verdict=unknown error~readable=true' \
+  'a GraphQL errors array surfaces its message|state:last=open,queue:last=gql_errors|||rc=1 status=error verdict=unknown error~isInMergeQueue=true' \
+  'no GitHub auth path exits 3 like the other waiters|open_queued||STUB_GH_DENY_KEYRING=1|rc=3 status=error error~auth=true'
 
 echo "=== the late-findings guard: any unresolved thread while queued or armed ==="
 # Disarm first (a bare dequeue can be raced back in by the arming), then
@@ -481,7 +496,7 @@ DQ='dequeue:1=am_ok,dequeue:2=dq_ok'
 table "$QW" \
   "an unresolved thread while queued disarms, then dequeues by node id|open_queued,threads:last=late,$DQ|||rc=1 verdict=dequeued status=complete cause=late_findings unresolved_count=1 mutations=disable,dequeue mutation_ids=PR_node123" \
   "a thread unresolved since before enqueue dequeues; the resolved sibling is not counted|open_queued,threads:last=pre_one_resolved,$DQ|||rc=1 verdict=dequeued unresolved_count=1 mutations=disable,dequeue" \
-  'a fully resolved thread set never triggers|open_queued,threads:last=all_resolved|1 1 3 --json --no-check-probe||verdict=queued unresolved_count=0 mutations=none' \
+  'a fully resolved thread set never triggers|open_queued,threads:last=all_resolved|1 1 3 --json --no-check-probe||verdict=queued unresolved_count=0 mutations=none thread_reads=4' \
   'every thread fetch failing is no evidence and warns|open_queued,threads:last=fail502|1 1 5 --json --no-check-probe||rc=1 verdict=queued mutations=none guard_warned=true' \
   "a null reviewThreads is a failed read|open_queued,threads:last=rt_null,$DQ|1 1 4 --json --no-check-probe||verdict=queued mutations=none guard_warned=true" \
   "a non-boolean isResolved is a failed read|open_queued,threads:last=bad_bool,$DQ|1 1 4 --json --no-check-probe||verdict=queued mutations=none guard_warned=true" \
@@ -491,11 +506,11 @@ table "$QW" \
   "an errors object is a failed read|open_queued,threads:last=object_errors,$DQ|1 1 4 --json --no-check-probe||verdict=queued mutations=none guard_warned=true" \
   "an errors string is a failed read|open_queued,threads:last=string_errors,$DQ|1 1 4 --json --no-check-probe||verdict=queued mutations=none guard_warned=true" \
   "--no-guard reads no threads and mutates nothing|open_queued,threads:last=late,$DQ|1 1 3 --json --no-check-probe --no-guard||verdict=queued thread_reads=0 mutations=none" \
-  'a failed dequeue half is loud and names the half|open_queued,threads:last=late,dequeue:1=am_ok,dequeue:2=dq_err|||rc=1 verdict=dequeued status=error cause=late_findings_dequeue_failed error~dequeuePullRequest=true mutations=disable,dequeue' \
+  'a failed dequeue half is loud and names the half|open_queued,threads:last=late,dequeue:1=am_ok,dequeue:2=dq_err|||rc=1 verdict=dequeued status=error cause=late_findings_dequeue_failed error~dequeuePullRequest=true error~QUEUED=true mutations=disable,dequeue' \
   'an errors array on an HTTP 200 disarm is a failed half; the dequeue is still attempted|open_queued,threads:last=late,dequeue:1=am_errs_on_200,dequeue:2=dq_ok|||rc=1 cause=late_findings_dequeue_failed error~disablePullRequestAutoMerge=true mutations=disable,dequeue' \
   'armed but never enqueued disables auto-merge only|open_armed,threads:last=late,dequeue:1=am_ok|||rc=1 verdict=dequeued cause=late_findings mutations=disable' \
   "the final probe at the deadline catches a late thread|open_queued,threads:1=none,threads:last=late,$DQ|1 1 1 --json --no-check-probe||verdict=dequeued polls=1 mutations=disable,dequeue" \
-  "an overlong pagination walk is a failed read, not a count|open_queued,threads:pages=40,$DQ|1 1 1 --json --no-check-probe||verdict=queued mutations=none"
+  "an overlong pagination walk stops at the bound, a failed read and not a count|open_queued,threads:pages=40,$DQ|1 1 1 --json --no-check-probe||verdict=queued mutations=none thread_reads=40"
 
 echo "=== the progress signal on a budget-exhausted queued verdict ==="
 # When the entry exposes its head commit, movement in the entry tuple or the
@@ -515,14 +530,15 @@ table '1 1 8 --json --no-check-probe' \
   'a failed read between two reads does not erase the movement|open_queued_head,checkruns:1=c1.0,checkruns:2=fail502,checkruns:last=c2.0|1 1 4 --json --no-check-probe||verdict=queued progressing=true cause=still_progressing' \
   'a merged verdict carries progressing and no cause|state:last=merged,queue:last=in_head|1 1 10 --json --no-check-probe||verdict=merged has_progressing=true has_cause=false'
 
-echo "=== text mode prints a result line for every verdict ==="
-# The line's wording is not a contract anything parses; what holds is that no
-# verdict leaves stdout empty, with the same exit code as --json.
+echo "=== text mode names the verdict on stdout ==="
+# The line's wording beyond the verdict word is not a contract anything
+# parses; what holds is that every verdict prints its own line, with the same
+# exit code as --json.
 table '1 1 20 --no-check-probe' \
-  'ejected|state:last=open,queue:1=in,queue:last=out|||rc=1 stdout=line' \
-  "dequeued|open_queued,threads:last=late,$DQ|||rc=1 stdout=line" \
-  'queued after one poll|open_queued|1 1 1 --no-check-probe||rc=1 stdout=line' \
-  'queued and stalled|open_queued_head,checkruns:last=c1.0|1 1 8 --no-check-probe||rc=1 stdout=line'
+  'ejected|state:last=open,queue:1=in,queue:last=out|||rc=1 stdout~ejected=true' \
+  "dequeued|open_queued,threads:last=late,$DQ|||rc=1 stdout~dequeued=true" \
+  'queued after one poll|open_queued|1 1 1 --no-check-probe||rc=1 stdout~queued=true' \
+  'queued and stalled|open_queued_head,checkruns:last=c1.0|1 1 8 --no-check-probe||rc=1 stdout~queued=true'
 
 echo "=== argument validation ends in the parser, before any gh call ==="
 # The recording gh stub fails every call, so a case that reached auth or a
@@ -534,15 +550,20 @@ printf '%s\n' "\$*" >> "$TMP_ROOT/argval-gh.calls"
 exit 1
 EOF
 chmod +x "$TMP_ROOT/argbin/gh"
+# --help is routed: merge-pr.md and the github skill's pr-merge send an agent
+# to its Verdicts, Exit codes and Environment sections, so those sections are
+# pinned; the verdict vocabulary is the routing lint's.
 arg_rows=(
-  'poll_interval past max_wait is a usage error|1 1800 600 --json --no-check-probe|rc=2 gh_calls=0'
-  'a non-numeric poll_interval is a usage error|1 abc 600 --json --no-check-probe|rc=2 gh_calls=0'
-  'an unknown flag is refused in the parser|1 30 600 --bogus-flag|rc=2 gh_calls=0'
-  'a missing PR number is a usage error, not exit 1||rc=2 gh_calls=0'
-  '--help prints usage and exits 0|--help|rc=0 stdout=line gh_calls=0'
+  'poll_interval past max_wait is a usage error|1 1800 600 --json --no-check-probe|rc=2 stdout=empty gh_calls=0'
+  'a non-numeric poll_interval is a usage error|1 abc 600 --json --no-check-probe|rc=2 stdout=empty gh_calls=0'
+  'an unknown flag is refused in the parser|1 30 600 --bogus-flag|rc=2 stdout=empty gh_calls=0'
+  'a missing PR number is a usage error, not exit 1||rc=2 stdout=empty gh_calls=0'
+  '--help prints the routed sections and exits 0|--help|rc=0 help_sections=exit_codes,environment,arm_grace gh_calls=0'
 )
 for row in "${arg_rows[@]}"; do
   IFS='|' read -r label args expect <<<"$row"
+  [[ -n "$expect" ]] || { printf 'args: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+  new_case "arg-$((++STAGE_SEQ))"
   : > "$TMP_ROOT/argval-gh.calls"
   ERR="$TMP_ROOT/argval.err"
   set +e
