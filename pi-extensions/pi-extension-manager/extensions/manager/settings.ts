@@ -107,17 +107,14 @@ export function findSettingsFile(files: SettingsFile[], scope: Scope): SettingsF
 	return files.filter((file) => file.scope === scope).at(-1) ?? files[0]!;
 }
 
-function projectSettingsWritable(files: SettingsFile[]): boolean {
-	return files.some((file) => file.scope === "project" && file.exists && file.projectTrusted !== false);
-}
-
 export function defaultWriteScope(item: InventoryItem | undefined, files: SettingsFile[], managerState: ManagerState): Scope {
-	if (item?.scope === "project" && projectSettingsWritable(files)) return "project";
+	const projectWritable = host.projectSettingsWritable(files);
+	if (item?.scope === "project" && projectWritable) return "project";
 	if (item?.scope === "user") return "user";
 	const configured = managerState.config[MANAGER_ID]?.defaultSaveScope;
 	if (configured === "user") return "user";
-	if (configured === "project" && projectSettingsWritable(files)) return "project";
-	return projectSettingsWritable(files) ? "project" : "user";
+	if (configured === "project" && projectWritable) return "project";
+	return projectWritable ? "project" : "user";
 }
 
 export function externalConfigResolvers(): ExternalConfigResolverRegistry {

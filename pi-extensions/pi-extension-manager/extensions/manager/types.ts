@@ -121,6 +121,8 @@ export interface InventoryItem {
 	sourceName: string;
 	packageName?: string;
 	packageDir?: string;
+	/** Native package and its modules share this identity; Pi retains name-based association. */
+	installationId?: string;
 	packageSourceName?: string;
 	entrypoint?: string;
 	trigger?: string;

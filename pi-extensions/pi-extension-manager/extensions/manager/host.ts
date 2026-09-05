@@ -88,6 +88,11 @@ export class HostAdapter {
 		});
 	}
 
+	/** Native trusted project documents are creatable; Pi retains its existing-file fallback. */
+	projectSettingsWritable(files: SettingsFile[]): boolean {
+		return files.some((file) => file.scope === "project" && file.projectTrusted !== false && (file.exists || (this.omp !== undefined && file.projectTrusted === true)));
+	}
+
 	write(file: SettingsFile): void {
 		if (file.projectTrusted === false) throw new Error(`Project settings are not trusted: ${file.path}`);
 		// Revalidate before writing: malformed persisted input is never replaced with defaults.
@@ -161,8 +166,9 @@ export class HostAdapter {
 				const manifest = record(native, `${name}: manifest`);
 				const state = optionalRecord(plugins[name], `${name}: state`);
 				const suppressed = disabled.includes(name);
+				const installationId = `package:${scope}:${name}`;
 				const item: InventoryItem = {
-					id: `package:${scope}:${name}`, packageName: name, packageDir: dir, kind: "package", scope,
+					id: installationId, installationId, packageName: name, packageDir: dir, kind: "package", scope,
 					displayName: (pkg as PackageManifest).kendex?.extensionManager?.displayName ?? name,
 					description: typeof pkg.description === "string" ? pkg.description : "Installed plugin",
 					sourceName: name, sourcePath: dir, provider: `${scope}:plugins`,
@@ -184,6 +190,7 @@ export class HostAdapter {
 				item.state = "shadowed";
 				item.stateReason = "shadowed by enabled project plugin";
 			}
+			if (item.state !== "active") item.settingsSchema = [];
 		}
 		return items;
 	}

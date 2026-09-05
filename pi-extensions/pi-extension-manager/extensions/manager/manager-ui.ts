@@ -164,7 +164,7 @@ function shortResourceName(item: InventoryItem): string {
 
 function packageExtensionLines(inventory: Inventory, item: InventoryItem, width: number, theme: Theme): string[] {
 	if (item.kind !== "package" || !item.packageName) return [];
-	const extensions = packageExtensions(inventory.items, item.packageName);
+	const extensions = packageExtensions(inventory.items, item);
 	if (extensions.length === 0) return [];
 	const names = extensions.slice(0, 5).map(shortResourceName).join(", ");
 	const suffix = extensions.length > 5 ? `, +${extensions.length - 5} more` : "";

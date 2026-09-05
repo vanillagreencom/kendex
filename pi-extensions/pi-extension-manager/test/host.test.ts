@@ -1,14 +1,24 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { YAML } from "bun";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { host, selectHost, type OmpRuntime } from "../extensions/manager/host.ts";
 import { buildInventory, npmCandidatesFromInventory } from "../extensions/manager/inventory.ts";
 import { planUninstall, planUpdate, runUninstall, runUpdate, toggleItem } from "../extensions/manager/actions.ts";
-import { setConfigValue, resetConfigKeys, updateManagerState, getConfigValue, mergedManagerState } from "../extensions/manager/settings.ts";
+import { setConfigValue, resetConfigKeys, updateManagerState, getConfigValue, mergedManagerState, defaultWriteScope } from "../extensions/manager/settings.ts";
 import { glyphStyle } from "../extensions/manager/glyphs.ts";
 import { userPiDir } from "../extensions/manager/paths.ts";
-import { MANAGER_ID } from "../extensions/manager/types.ts";
+import { MANAGER_ID, type ManagerUiState } from "../extensions/manager/types.ts";
+import { filteredItems } from "../extensions/manager/filters.ts";
+// Neutral terminal primitives; the production components own row construction and grouping.
+mock.module("@earendil-works/pi-tui", () => ({
+	matchesKey: (input: string, key: string) => input === key,
+	truncateToWidth: (text: string) => text,
+	visibleWidth: (text: string) => text.length,
+	wrapTextWithAnsi: (text: string) => [text],
+}));
+const { openManager } = await import("../extensions/manager/manager-ui.ts");
+const { openQuickSettings } = await import("../extensions/manager/quick-settings-ui.ts");
 
 const root = join(process.cwd(), "tmp", "manager-host-tests");
 const agent = join(root, "home", ".omp", "agent");
@@ -32,12 +42,12 @@ function write(path: string, content: string): void {
 	writeFileSync(path, content);
 }
 function json(path: string, value: unknown): void { write(path, JSON.stringify(value)); }
-function nativePackage(rootDir = plugins, packageName = name, enabled = true): void {
+function nativePackage(rootDir = plugins, packageName = name, enabled = true, entrypoint = "./extensions/index.ts"): void {
 	json(join(rootDir, "package.json"), { private: true, dependencies: { [packageName]: "^1.2.3" } });
 	json(join(rootDir, "omp-plugins.lock.json"), { plugins: { [packageName]: { version: "1.2.3", enabled, enabledFeatures: null, custom: "keep" } }, settings: { [packageName]: { color: "blue" } }, unknown: 17 });
 	const dir = join(rootDir, "node_modules", packageName);
-	json(join(dir, "package.json"), { name: packageName, version: "1.2.3", pi: { extensions: ["./extensions/index.ts"] }, kendex: { extensionManager: { settings: [{ key: "glyphStyle", type: "enum", enumValues: ["unicode", "ascii"] }] } } });
-	write(join(dir, "extensions", "index.ts"), "export default function () {}\n");
+	json(join(dir, "package.json"), { name: packageName, version: "1.2.3", pi: { extensions: [entrypoint] }, kendex: { extensionManager: { settings: [{ key: "glyphStyle", type: "enum", enumValues: ["unicode", "ascii"] }] } } });
+	write(join(dir, entrypoint), "export default function () {}\n");
 }
 function inventory() { return buildInventory({} as never, ctx as never); }
 async function selectOmp(): Promise<void> {
@@ -213,6 +223,87 @@ test("project-native manager enabled uses global display, save and reset ownersh
 	expect(inventory().managerState.config[MANAGER_ID]?.enabled).toBeUndefined();
 	expect(bootstrapEnabled()).toBe(true);
 });
+
+const installations = [
+	{ user: true, project: false, active: "user" },
+	{ user: false, project: true, active: "project" },
+	{ user: true, project: true, active: "project" },
+] as const;
+
+type PopupComponent = { handleInput(input: string): void; render(width: number): string[] };
+async function popup(open: typeof openManager, search = ""): Promise<string> {
+	let output = "";
+	const theme = { fg: (_color: string, text: string) => text, bg: (_color: string, text: string) => text, bold: (text: string) => text, inverse: (text: string) => text };
+	await open({} as never, { ...ctx, ui: {
+		custom: async (factory: (...args: unknown[]) => PopupComponent) => {
+			const component = factory({ terminal: { rows: 60 }, requestRender() {} }, theme, {}, () => {});
+			for (const character of search) component.handleInput(character);
+			output = component.render(180).join("\n");
+			return { type: "close" };
+		},
+		notify(message: string) { throw new Error(message); },
+	} } as never);
+	return output;
+}
+
+for (const row of installations) {
+	test(`native installation grouping user=${row.user} project=${row.project}`, async () => {
+		nativePackage(plugins, MANAGER_ID, row.user, "./useronly.ts");
+		nativePackage(projectRoot, MANAGER_ID, row.project, "./projectonly.ts");
+		const inv = inventory();
+		const ui = { search: "", scopeFilter: "all", stateFilter: "active" } as ManagerUiState;
+		expect(filteredItems(inv.items, ui).map((item) => item.scope)).toEqual([row.active]);
+		for (const scope of ["user", "project"] as const) {
+			expect(filteredItems(inv.items, { ...ui, scopeFilter: scope }).map((item) => item.scope)).toEqual(scope === row.active ? [scope] : []);
+			expect(filteredItems(inv.items, { ...ui, stateFilter: "all", search: `${scope}only` }).map((item) => item.scope)).toEqual([scope]);
+			const rendered = await popup(openManager, `${scope}only`);
+			expect(rendered).toContain(`${scope}only.ts`);
+			expect(rendered).not.toContain(`${scope === "user" ? "project" : "user"}only.ts`);
+		}
+	});
+
+	test(`native manager settings belong to active installation user=${row.user} project=${row.project}`, async () => {
+		nativePackage(plugins, MANAGER_ID, row.user);
+		nativePackage(projectRoot, MANAGER_ID, row.project);
+		expect((await popup(openQuickSettings)).match(/glyphStyle/g)).toHaveLength(1);
+		expect(inventory().packages.filter((item) => item.settingsSchema?.length).map((item) => item.scope)).toEqual([row.active]);
+	});
+}
+
+test("trusted native project settings are creatable without redirecting global-only enable", () => {
+	nativePackage(projectRoot, MANAGER_ID);
+	const userPath = join(agent, "config.yml");
+	write(userPath, "unknown: keep\n");
+	const before = readFileSync(userPath, "utf8");
+	const inv = inventory();
+	const file = inv.settingsFiles.find((candidate) => candidate.scope === "project")!;
+	expect(file.exists).toBe(false);
+	const item = inv.packages[0]!;
+	setConfigValue(inv, item, item.settingsSchema![0]!, "ascii");
+	expect(readFileSync(userPath, "utf8")).toBe(before);
+	expect(file.path).toBe(join(cwd, ".omp", "config.yml"));
+	expect(host.read(file.path)).toMatchObject({ kendex: { extensionManager: { config: { [MANAGER_ID]: { glyphStyle: "ascii" } } } } });
+	const projectBefore = readFileSync(file.path, "utf8");
+	setConfigValue(inventory(), item, { key: "enabled", type: "boolean", default: true }, false);
+	expect(readFileSync(file.path, "utf8")).toBe(projectBefore);
+	expect(getConfigValue(inventory(), MANAGER_ID, { key: "enabled", type: "boolean" })).toMatchObject({ scope: "user", value: false });
+});
+
+for (const row of [
+	{ kind: "omp", trusted: true, exists: false, writable: true },
+	{ kind: "omp", trusted: false, exists: false, writable: false },
+	{ kind: "pi", trusted: true, exists: false, writable: false },
+	{ kind: "pi", trusted: true, exists: true, writable: true },
+	{ kind: "pi", trusted: false, exists: true, writable: false },
+]) {
+	test(`project write capability ${JSON.stringify(row)}`, async () => {
+		mkdirSync(join(cwd, ".pi"), { recursive: true });
+		if (row.kind === "pi") await selectHost({ getAgentDir: () => agent, SettingsManager: class {} }, async () => runtime);
+		if (row.exists) write(host.settingsPath("project", cwd), "{}");
+		const files = host.settings({ cwd, isProjectTrusted: () => row.trusted });
+		expect(defaultWriteScope(undefined, files, { config: {}, disabledItems: [] })).toBe(row.writable ? "project" : "user");
+	});
+}
 
 test("native module suppression shows basename collisions without offering package-specific toggles", () => {
 	nativePackage();

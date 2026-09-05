@@ -26,7 +26,7 @@ Restart the host after installation.
 
 ## How it works
 
-Open `/extensions` on Pi or `/kendex:extensions` on OMP. OMP keeps its built-in `/extensions` command. The manager reads Pi's package settings or OMP's installed plugin records, then displays each package's declared extension entrypoints. Restart the host after toggling a package.
+Open `/extensions` on Pi or `/kendex:extensions` on OMP. OMP keeps its built-in `/extensions` command. The manager reads Pi's package settings or OMP's installed plugin records, then displays each package's declared extension entrypoints. OMP keeps user and project entrypoints separate and offers manager settings only for its active installation. Restart the host after toggling a package.
 
 OMP module toggles, updates, uninstall, and other extensions' settings are unavailable in this manager. Use OMP's native controls for those actions, optional plugin features, or project plugin overrides that block enabling a plugin. The manager does not run Pi package commands or Pi append-system scripts on OMP.
 
@@ -34,7 +34,7 @@ OMP module toggles, updates, uninstall, and other extensions' settings are unava
 
 Open `/extensions:settings` on Pi or `/kendex:extensions:settings` on OMP. Values are stored under `kendex.extensionManager.config["@vanillagreen/pi-extension-manager"]`.
 
-Pi uses user and project `settings.json` files. OMP uses the active agent directory's `config.yml`, retaining `config.yaml` when that is the existing file. OMP project settings come from the current directory's `.omp/settings.json` and `.omp/config.yml`; YAML overrides JSON when both exist. Host directory resolvers determine the active user paths, including OMP profiles and XDG storage. Settings writes preserve unknown fields, but YAML formatting and comments are not retained.
+Pi uses user and project `settings.json` files. OMP uses the active agent directory's `config.yml`, retaining `config.yaml` when that is the existing file. OMP project settings come from the current directory's `.omp/settings.json` and `.omp/config.yml`; YAML overrides JSON when both exist. The first project-scoped edit creates `.omp/config.yml` in a trusted OMP project when neither file exists. Host directory resolvers determine the active user paths, including OMP profiles and XDG storage. Settings writes preserve unknown fields, but YAML formatting and comments are not retained.
 
 - `enabled`: a global-only setting, even for a project-installed manager. Display, edits and resets use the global value; project values are ignored. If disabled, the host-specific manager command's `:enable` action restores it; restart or reload afterward.
 - `defaultSaveScope`: where an edit is written when the scope is ambiguous.

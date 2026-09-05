@@ -6,6 +6,7 @@ import { planUninstall, planUpdate, toggleItem } from "../extensions/manager/act
 import { applyUpdateMetadata, buildInventory } from "../extensions/manager/inventory.ts";
 import { npmCachePath } from "../extensions/manager/paths.ts";
 import { gitPackageDirCandidates } from "../extensions/manager/versions.ts";
+import { packageExtensions } from "../extensions/manager/filters.ts";
 
 const rootTmp = join(process.cwd(), "tmp", "pi-extension-manager-inventory-tests");
 const originalEnv = {
@@ -124,6 +125,7 @@ test("project npm package settings override same global npm package", () => {
 	expect(copies.find((pkg) => pkg.scope === "project")?.displayName).toBe("Project Copy");
 	expect(copies.find((pkg) => pkg.scope === "project")?.settingsSchema?.map((schema) => schema.key)).toEqual(["projectFlag"]);
 	expect(copies.find((pkg) => pkg.scope === "user")?.state).toBe("shadowed");
+	for (const pkg of copies) expect(packageExtensions(inv.items, pkg).map((item) => item.scope)).toEqual(["project", "user"]);
 });
 
 test("ignores project settings when Pi reports project untrusted", () => {
