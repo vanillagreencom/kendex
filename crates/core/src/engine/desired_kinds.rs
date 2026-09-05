@@ -146,6 +146,7 @@ pub(super) fn restated_hook_artifact(
     let hook = match harness {
         HarnessId::Gemini => super::gemini::hook(env, scope, name, &hook, state)?,
         HarnessId::Copilot => super::copilot::hook(env, scope, name, &hook, state)?,
+        HarnessId::Antigravity => super::antigravity::hook(name, &hook, state)?,
         _ => hook,
     };
     let target = hook_target(env, scope, harness, name)?;
@@ -153,6 +154,57 @@ pub(super) fn restated_hook_artifact(
         .warnings
         .extend(advisory_notice(env, scope, harness, name));
     Some(hook_artifact(&target, &hook, name, enabled))
+}
+
+/// The registry edit one hook's switch state asks for, in the shape its
+/// registry speaks. Switched off, its own entry comes out and nobody
+/// else's: the matcher it would have gone in under is the matcher it is
+/// taken from, spelled the way a registry spells it, since that is what
+/// it will be looked for by.
+fn registration_edit(
+    format: HookFormat,
+    hook: &HookSpec,
+    name: &str,
+    enabled: bool,
+    registered_command: String,
+) -> ConfigEdit {
+    match (enabled, format) {
+        (true, HookFormat::Nested) => ConfigEdit::UpsertHook {
+            event: hook.event.clone(),
+            matcher: hook.matcher.clone(),
+            command: registered_command,
+            timeout: hook.timeout,
+        },
+        (true, HookFormat::Copilot) => ConfigEdit::UpsertCopilotHook {
+            event: hook.event.clone(),
+            matcher: hook.matcher.clone(),
+            command: registered_command,
+            timeout: hook.timeout,
+        },
+        (true, HookFormat::Antigravity) => ConfigEdit::UpsertAntigravityHook {
+            name: name.to_owned(),
+            event: hook.event.clone(),
+            matcher: hook.matcher.clone(),
+            command: registered_command,
+            timeout: hook.timeout,
+        },
+        (false, HookFormat::Nested) => ConfigEdit::RemoveHook {
+            event: Some(hook.event.clone()),
+            matcher: Some(crate::configedit::spelled(hook.matcher.as_deref()).to_owned()),
+            command: registered_command,
+        },
+        (false, HookFormat::Copilot) => ConfigEdit::RemoveCopilotHook {
+            event: Some(hook.event.clone()),
+            matcher: Some(crate::configedit::spelled(hook.matcher.as_deref()).to_owned()),
+            command: registered_command,
+        },
+        (false, HookFormat::Antigravity) => ConfigEdit::RemoveAntigravityHook {
+            name: Some(name.to_owned()),
+            event: Some(hook.event.clone()),
+            matcher: Some(crate::configedit::spelled(hook.matcher.as_deref()).to_owned()),
+            command: registered_command,
+        },
+    }
 }
 
 /// A disabled hook keeps its file under the `.disabled` name and reverses its
@@ -182,34 +234,7 @@ fn hook_artifact(target: &HookTarget, hook: &HookSpec, name: &str, enabled: bool
                 ),
                 HookBody::Command(command) => (command.clone(), None),
             };
-            let registration = match (enabled, format) {
-                (true, HookFormat::Nested) => ConfigEdit::UpsertHook {
-                    event: hook.event.clone(),
-                    matcher: hook.matcher.clone(),
-                    command: registered_command,
-                    timeout: hook.timeout,
-                },
-                (true, HookFormat::Copilot) => ConfigEdit::UpsertCopilotHook {
-                    event: hook.event.clone(),
-                    matcher: hook.matcher.clone(),
-                    command: registered_command,
-                    timeout: hook.timeout,
-                },
-                // Switched off, its own entry comes out and nobody
-                // else's: the matcher it would have gone in under is the
-                // matcher it is taken from, spelled the way a registry
-                // spells it, since that is what it will be looked for by.
-                (false, HookFormat::Nested) => ConfigEdit::RemoveHook {
-                    event: Some(hook.event.clone()),
-                    matcher: Some(crate::configedit::spelled(hook.matcher.as_deref()).to_owned()),
-                    command: registered_command,
-                },
-                (false, HookFormat::Copilot) => ConfigEdit::RemoveCopilotHook {
-                    event: Some(hook.event.clone()),
-                    matcher: Some(crate::configedit::spelled(hook.matcher.as_deref()).to_owned()),
-                    command: registered_command,
-                },
-            };
+            let registration = registration_edit(*format, hook, name, enabled, registered_command);
             let mut edits = registration_edits(registry, registration, enabled);
             if let Some(feature) = feature
                 && enabled

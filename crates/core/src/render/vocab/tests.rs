@@ -363,6 +363,14 @@ fn a_hook_matcher_is_restated_alternative_by_alternative() {
         ("bash".to_owned(), true)
     );
     assert_eq!(
+        hook_matcher("Bash|Write", HarnessId::Antigravity),
+        ("run_command|write_to_file".to_owned(), true)
+    );
+    assert_eq!(
+        hook_matcher("mcp__gh", HarnessId::Antigravity),
+        ("mcp__gh".to_owned(), true)
+    );
+    assert_eq!(
         hook_matcher("Bash|Write", HarnessId::Gemini),
         ("run_shell_command|write_file".to_owned(), true)
     );

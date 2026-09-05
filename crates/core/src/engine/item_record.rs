@@ -10,6 +10,7 @@ use crate::configedit::ConfigEdit;
 use crate::lock::LockEntry;
 
 use super::desired::{Artifact, Desired};
+use super::targets::HookFormat;
 
 /// What the last pass registered, when that is not what this one names —
 /// the removal a change of identity needs before whatever it renders.
@@ -91,13 +92,19 @@ pub(super) fn retire_previous(item: &Desired, existing: Option<&LockEntry>) -> P
     let event = Some(previous.event);
     let matcher = Some(previous.matcher);
     let command = previous.command;
-    let removal = match named.copilot {
-        true => ConfigEdit::RemoveCopilotHook {
+    let removal = match named.format {
+        HookFormat::Copilot => ConfigEdit::RemoveCopilotHook {
             event,
             matcher,
             command,
         },
-        false => ConfigEdit::RemoveHook {
+        HookFormat::Nested => ConfigEdit::RemoveHook {
+            event,
+            matcher,
+            command,
+        },
+        HookFormat::Antigravity => ConfigEdit::RemoveAntigravityHook {
+            name: named.name.map(str::to_owned),
             event,
             matcher,
             command,
@@ -129,9 +136,10 @@ fn found(named: &Named, event: &str, matcher: Option<&str>, command: &str) -> Fo
     let Ok(Some(text)) = crate::fs::read_if_exists(named.path) else {
         return Found::None;
     };
-    let read = match named.copilot {
-        true => crate::scan::copilot::registrations_text(&text),
-        false => crate::scan::hooks::registrations_text(&text),
+    let read = match named.format {
+        HookFormat::Copilot => crate::scan::copilot::registrations_text(&text),
+        HookFormat::Nested => crate::scan::hooks::registrations_text(&text),
+        HookFormat::Antigravity => crate::scan::antigravity::registrations_text(&text),
     };
     let Ok(entries) = read else {
         return Found::None;
@@ -157,7 +165,10 @@ fn found(named: &Named, event: &str, matcher: Option<&str>, command: &str) -> Fo
 /// The identity one edit names, and where it names it.
 struct Named<'a> {
     path: &'a PathBuf,
-    copilot: bool,
+    format: HookFormat,
+    /// The hook-name key an Antigravity entry sits under; the other
+    /// registries key nothing by name.
+    name: Option<&'a str>,
     event: &'a str,
     /// `None` where the edit names no matcher at all — a removal names an
     /// event and a command and no more. Unknown, never "every operation".
@@ -168,8 +179,8 @@ struct Named<'a> {
 /// The identity this pass names for one item's registration, whichever
 /// way round it names it.
 ///
-/// Four edit shapes carry one: an upsert says where the entry is going, a
-/// removal says where it is being taken from, in each of the two registry
+/// Six edit shapes carry one: an upsert says where the entry is going, a
+/// removal says where it is being taken from, in each of the three registry
 /// formats. Everything else a registration artifact carries names no
 /// entry — a codex feature flag, an opencode instruction reference, an
 /// mcp server, a plugin toggle — so there is nothing about them for a
@@ -184,9 +195,15 @@ fn named(item: &Desired) -> Option<Named<'_>> {
             matcher: named,
             command,
             ..
+        }
+        | ConfigEdit::RemoveHook {
+            event: Some(event),
+            matcher: named,
+            command,
         } => Some(Named {
             path,
-            copilot: false,
+            format: HookFormat::Nested,
+            name: None,
             event,
             matcher: Some(crate::configedit::spelled(named.as_deref())),
             command,
@@ -196,31 +213,42 @@ fn named(item: &Desired) -> Option<Named<'_>> {
             matcher: named,
             command,
             ..
-        } => Some(Named {
-            path,
-            copilot: true,
-            event,
-            matcher: Some(crate::configedit::spelled(named.as_deref())),
-            command,
-        }),
-        ConfigEdit::RemoveHook {
+        }
+        | ConfigEdit::RemoveCopilotHook {
             event: Some(event),
             matcher: named,
             command,
         } => Some(Named {
             path,
-            copilot: false,
+            format: HookFormat::Copilot,
+            name: None,
             event,
             matcher: Some(crate::configedit::spelled(named.as_deref())),
             command,
         }),
-        ConfigEdit::RemoveCopilotHook {
+        ConfigEdit::UpsertAntigravityHook {
+            name,
+            event,
+            matcher: named,
+            command,
+            ..
+        } => Some(Named {
+            path,
+            format: HookFormat::Antigravity,
+            name: Some(name),
+            event,
+            matcher: Some(crate::configedit::spelled(named.as_deref())),
+            command,
+        }),
+        ConfigEdit::RemoveAntigravityHook {
+            name,
             event: Some(event),
             matcher: named,
             command,
         } => Some(Named {
             path,
-            copilot: true,
+            format: HookFormat::Antigravity,
+            name: name.as_deref(),
             event,
             matcher: Some(crate::configedit::spelled(named.as_deref())),
             command,
@@ -274,6 +302,12 @@ pub(super) fn registration(item: &Desired) -> Option<crate::lock::HookRegistrati
             matcher,
             command,
             ..
+        }
+        | ConfigEdit::UpsertAntigravityHook {
+            event,
+            matcher,
+            command,
+            ..
         } => record(event, matcher.as_ref(), command),
         // A disabled hook renders the reversed registration, which names
         // the event and matcher its entry was written under.
@@ -286,6 +320,12 @@ pub(super) fn registration(item: &Desired) -> Option<crate::lock::HookRegistrati
             event: Some(event),
             matcher,
             command,
+        }
+        | ConfigEdit::RemoveAntigravityHook {
+            event: Some(event),
+            matcher,
+            command,
+            ..
         } => record(event, matcher.as_ref(), command),
         _ => None,
     })

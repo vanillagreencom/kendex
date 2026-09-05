@@ -139,7 +139,7 @@ fn timeout_seconds(found: &Found) -> Option<u32> {
         // entry says which unit it is, so it comes from the tool that wrote
         // it — the same table the render used on the way in.
         (HookFormat::Nested, HarnessId::Gemini) => read("timeout").map(|held| held / 1000),
-        (HookFormat::Nested, _) => read("timeout"),
+        (HookFormat::Nested | HookFormat::Antigravity, _) => read("timeout"),
     };
     seconds
         .and_then(|value| u32::try_from(value).ok())
@@ -153,7 +153,7 @@ fn timeout_seconds(found: &Found) -> Option<u32> {
 fn beyond_a_declaration(registration: &Registration, format: HookFormat) -> Option<String> {
     let known: &[&str] = match format {
         HookFormat::Copilot => &["type", "command", "matcher", "timeoutSec"],
-        HookFormat::Nested => &["type", "command", "matcher", "timeout"],
+        HookFormat::Nested | HookFormat::Antigravity => &["type", "command", "matcher", "timeout"],
     };
     let entry = registration.entry.as_object()?;
     if let Some(kind) = entry.get("type").and_then(serde_json::Value::as_str)

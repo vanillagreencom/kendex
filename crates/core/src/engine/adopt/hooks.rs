@@ -132,6 +132,11 @@ fn read(registry: &Path, format: HookFormat) -> Vec<Registration> {
             .and_then(|text| crate::scan::copilot::registrations_text(&text).ok())
             .unwrap_or_default(),
         HookFormat::Nested => crate::scan::hooks::read_registrations(registry).unwrap_or_default(),
+        HookFormat::Antigravity => crate::fs::read_if_exists(registry)
+            .ok()
+            .flatten()
+            .and_then(|text| crate::scan::antigravity::registrations_text(&text).ok())
+            .unwrap_or_default(),
     }
 }
 
@@ -181,6 +186,7 @@ fn format_of(reader: &Reader) -> Option<HookFormat> {
     match reader {
         Reader::HooksObject => Some(HookFormat::Nested),
         Reader::CopilotHooks => Some(HookFormat::Copilot),
+        Reader::AntigravityHooks => Some(HookFormat::Antigravity),
         _ => None,
     }
 }
@@ -322,6 +328,14 @@ fn drop_old_entries(found: &[Found]) -> Result<Vec<PlannedOp>> {
                 command: entry.registration.command.clone(),
             },
             HookFormat::Nested => ConfigEdit::RemoveHook {
+                event: Some(entry.registration.event.clone()),
+                matcher,
+                command: entry.registration.command.clone(),
+            },
+            // The scan names no hook-name key, so the command comes out
+            // from under every name that registered it.
+            HookFormat::Antigravity => ConfigEdit::RemoveAntigravityHook {
+                name: None,
                 event: Some(entry.registration.event.clone()),
                 matcher,
                 command: entry.registration.command.clone(),

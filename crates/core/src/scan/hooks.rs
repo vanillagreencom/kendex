@@ -95,9 +95,17 @@ fn rows(registrations: Vec<Registration>) -> Vec<RawEntry> {
 }
 
 fn registrations(value: serde_json::Value) -> Vec<Registration> {
-    let Some(events) = value.get("hooks").and_then(|h| h.as_object()) else {
-        return Vec::new();
-    };
+    match value.get("hooks").and_then(|h| h.as_object()) {
+        Some(events) => registrations_in(events),
+        None => Vec::new(),
+    }
+}
+
+/// Every registration under one map of event name to its groups — the part
+/// of the shape that Antigravity's named hooks share with the `hooks` key.
+pub(crate) fn registrations_in(
+    events: &serde_json::Map<String, serde_json::Value>,
+) -> Vec<Registration> {
     let mut found = Vec::new();
     for (event, groups) in events {
         let Some(groups) = groups.as_array() else {

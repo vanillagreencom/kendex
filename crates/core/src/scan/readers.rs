@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::{RawEntry, copilot, hooks, jsonc, plugins};
+use super::{RawEntry, antigravity, copilot, hooks, jsonc, plugins};
 use crate::env::Env;
 use crate::fs::read_if_exists;
 use crate::harness::Reader;
@@ -24,6 +24,7 @@ pub fn read_structured(path: &Path, reader: &Reader, env: &Env) -> Result<Vec<Ra
         Reader::OpencodePluginRefs => opencode_plugin_refs(path),
         Reader::HooksObject => hooks::read(path),
         Reader::CopilotHooks => copilot::read(path),
+        Reader::AntigravityHooks => antigravity::read(path),
         Reader::CopilotPlugins => copilot::plugins(path),
         Reader::ClaudePluginRegistry => plugins::claude_registry(path, env),
         Reader::ClaudeSettingsPlugins => plugins::claude_settings(path),
@@ -57,7 +58,7 @@ fn mcp_object(servers: Option<&serde_json::Value>) -> Vec<RawEntry> {
 
 /// The command or URL — how a list view tells servers apart.
 fn mcp_summary(entry: &serde_json::Value) -> Option<String> {
-    for key in ["command", "url"] {
+    for key in ["command", "url", "serverUrl"] {
         if let Some(value) = entry.get(key).and_then(|v| v.as_str()) {
             return Some(value.to_owned());
         }

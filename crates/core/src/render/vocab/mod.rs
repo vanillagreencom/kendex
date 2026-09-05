@@ -91,9 +91,8 @@ pub fn copilot_tool_name(tool: &str) -> String {
         .unwrap_or_else(|| tool.trim().to_owned())
 }
 
-/// Antigravity's own tool names, the step types its loader lowercases
-/// (<https://antigravity.google/docs/subagents>, the CLI's embedded
-/// customization guide). A name of its own passes through unchanged, so an
+/// Antigravity's own tool names, as the CLI's `init` event lists them
+/// (`agy -p --output-format stream-json`; <https://antigravity.google/docs/subagents>). A name of its own passes through unchanged, so an
 /// author may write either vocabulary.
 fn antigravity_tool(tool: &str) -> Option<&'static str> {
     Some(match normalize(tool).as_str() {
@@ -109,8 +108,7 @@ fn antigravity_tool(tool: &str) -> Option<&'static str> {
         "websearch" | "searchweb" => "search_web",
         "task" | "agent" | "subagent" | "spawnagent" | "invokesubagent" => "invoke_subagent",
         "question" | "askuserquestion" | "askquestion" => "ask_question",
-        "notebookread" | "readnotebook" => "read_notebook",
-        "notebookedit" | "editnotebook" => "edit_notebook",
+        "notebookedit" => "notebook_edit",
         _ => return None,
     })
 }
@@ -134,6 +132,13 @@ pub fn hook_matcher(matcher: &str, harness: HarnessId) -> (String, bool) {
     let name = match harness {
         HarnessId::Gemini => gemini_tool_name,
         HarnessId::Copilot => copilot_tool_name,
+        // A matcher is a regex, and an alternative it cannot say leaves
+        // the pattern narrower, never wider, so here the name stands.
+        HarnessId::Antigravity => |tool: &str| {
+            antigravity_tool(tool)
+                .map(str::to_owned)
+                .unwrap_or_else(|| tool.trim().to_owned())
+        },
         // Claude's own names are what a matcher is authored in; codex and
         // cursor read the same spelling, and the rest register no matcher.
         _ => return (matcher.to_owned(), true),
