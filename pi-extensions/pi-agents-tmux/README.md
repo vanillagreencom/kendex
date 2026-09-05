@@ -43,6 +43,6 @@ Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Agent files
 
-An agent is a markdown file whose YAML frontmatter holds `name` and `description`, and optionally `model` (a Pi model id, with `:effort` suffix), `effort` (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; passed to the child as `--thinking` when the model carries no suffix), `deny-tools`, `pane`, `color` and `allowed-subagents`. Everything after the frontmatter is the agent's system prompt. When the same name exists in several sources, project Pi wins over project Claude over user Pi over user Claude.
+An agent is a markdown file whose YAML frontmatter holds `name` and `description`, and optionally `model` (a Pi model id, with `:effort` suffix), `effort` (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`; passed to the child as `--thinking` when the model carries no suffix; `off` passes nothing, so the child runs at Pi's default level), `deny-tools`, `pane`, `color` and `allowed-subagents`. Everything after the frontmatter is the agent's system prompt. When the same name exists in several sources, project Pi wins over project Claude over user Pi over user Claude.
 
 kendex generates `allowed-subagents: scout` for engineer-role agents and denies `delegate_subagent` for every other role; override per agent under `[agent-frontmatter.pi]` in `kendex.toml`, where an explicit empty list turns delegation off.

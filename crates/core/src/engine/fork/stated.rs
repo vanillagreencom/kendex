@@ -228,9 +228,9 @@ fn is_rendering(harness: HarnessId, map: &crate::frontmatter::Map) -> bool {
 /// Whether this harness writes the setting in the person's own word, so
 /// handing the same word back as an `[agent-frontmatter]` override renders
 /// the same file again. Gemini writes neither colour nor effort. Pi writes
-/// no effort key of its own — its renderer appends the effort to the model
-/// as a suffix, so reading that model back would append a second one — and
-/// its `pane` is absent rather than false, so a removal cannot be read.
+/// its effort as an `effort` key, so that carries; its model is not read
+/// back because a pinned id carries the effort as a suffix too, and its
+/// `pane` is absent rather than false, so a removal cannot be read.
 fn carries(harness: HarnessId, key: &str) -> bool {
     matches!(
         (harness, key),
@@ -238,7 +238,7 @@ fn carries(harness: HarnessId, key: &str) -> bool {
             HarnessId::Claude,
             "color" | "effort" | "model" | "isolation" | "memory" | "background"
         ) | (HarnessId::Gemini, "model")
-            | (HarnessId::Pi, "color")
+            | (HarnessId::Pi, "color" | "effort")
     )
 }
 

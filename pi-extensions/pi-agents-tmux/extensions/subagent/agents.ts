@@ -150,8 +150,10 @@ function loadAgentsFromDir(dir: string, source: "user" | "project", blockedSourc
 		}
 
 		const model = normalizeModel(frontmatter.model);
-		// Suffix first, the order the launchers spawn with (`selectedEffortForAgent`).
-		const effort = effortFromModelId(model) ?? normalizeReasoningEffort(frontmatter["model-reasoning-effort"] ?? frontmatter.modelReasoningEffort ?? frontmatter.effort);
+		// The explicit key is kept as written: the launchers prefer the suffix of
+		// the model they actually run (`selectedEffortForAgent`), which may be the
+		// parent's rather than this one.
+		const effort = normalizeReasoningEffort(frontmatter["model-reasoning-effort"] ?? frontmatter.modelReasoningEffort ?? frontmatter.effort) ?? effortFromModelId(model);
 
 		agents.push({
 			name,
