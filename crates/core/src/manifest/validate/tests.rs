@@ -91,6 +91,9 @@ model = "inherit"
 effort = "high"
 [agent-frontmatter.cursor.rust]
 color = "red"
+[agent-frontmatter.antigravity.rust]
+effort = "high"
+model = "opus"
 "#,
     );
     let findings = validate(&table);
@@ -109,6 +112,14 @@ color = "red"
     );
     assert!(
         !locations.contains(&"agent-frontmatter.claude.rust.effort"),
+        "{locations:?}"
+    );
+    assert!(
+        locations.contains(&"agent-frontmatter.antigravity.rust.effort"),
+        "{locations:?}"
+    );
+    assert!(
+        !locations.contains(&"agent-frontmatter.antigravity.rust.model"),
         "{locations:?}"
     );
 }

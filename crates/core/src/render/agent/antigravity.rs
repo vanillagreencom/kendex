@@ -2,14 +2,16 @@ use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, hooks_prose, skills
 use crate::harness::models::resolve_model;
 use crate::model::{HarnessId, Scope};
 use crate::render::permission::PermissionIntent;
-use crate::render::vocab::rewrite_prose;
+use crate::render::vocab::{antigravity_tool_name, rewrite_prose};
 use crate::render::{RenderWarning, yaml_quoted, yaml_scalar};
 
 /// Antigravity custom agent: YAML frontmatter + markdown body, saved as
 /// `<name>.md`. `name` and `description` are required; `model` is a tier
 /// of the loader's own (`inherit`, `flash`, `pro`) and is written only
 /// when a tier was asked for; `subagent: true` lets the primary agent
-/// delegate to it; `tools` is an allowlist of Antigravity's tool names
+/// delegate to it; `tools` is an allowlist of Antigravity's own tool names,
+/// and a name it has no word for is left out rather than written, since
+/// the loader documents that an unknown name there can hang the subagent
 /// (<https://antigravity.google/docs/subagents>). The file carries no
 /// effort key, so an effort setting renders nothing here.
 pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
@@ -31,12 +33,29 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     }
     push("subagent: true".to_owned());
     if let PermissionIntent::AllowOnly { allow, .. } = &agent.permissions {
-        match allow.is_empty() {
+        let (named, unknown): (Vec<&String>, Vec<&String>) = allow
+            .iter()
+            .partition(|tool| antigravity_tool_name(tool).is_some());
+        if !unknown.is_empty() {
+            warnings.push(RenderWarning::with_fix(
+                format!(
+                    "Antigravity has no tool named {}, and an unknown name in its allowlist can hang the subagent, so the agent installs without it",
+                    unknown
+                        .iter()
+                        .map(|tool| format!("`{tool}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                "name the tool as Antigravity does (`view_file`, `run_command`, `grep_search`), or drop it from the allowlist",
+            ));
+        }
+        match named.is_empty() {
             true => push("tools: []".to_owned()),
             false => {
                 push("tools:".to_owned());
-                for tool in allow {
-                    push(format!("  - {}", yaml_scalar(tool)));
+                for tool in named {
+                    let own = antigravity_tool_name(tool).unwrap_or_default();
+                    push(format!("  - {}", yaml_scalar(own)));
                 }
             }
         }
@@ -62,9 +81,9 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     warnings.extend(reworded);
     body.push_str(&prose);
     body.push('\n');
-    // A skill is named in the frontmatter by a path relative to the agent
-    // file, whose rules kendex does not yet follow, so skills and hooks
-    // travel as prose the agent's own instructions carry.
+    // The frontmatter's `skills:` list names paths under the customization
+    // root; kendex does not yet write it, so skills and hooks travel as
+    // prose the agent's own instructions carry.
     let skill_root = match agent.scope {
         Scope::Global => "~/.gemini/config/skills",
         Scope::Project { .. } => ".agents/skills",
@@ -126,17 +145,31 @@ mod tests {
         assert!(flash.contains("model: flash\n"), "{flash}");
     }
 
+    /// The allowlist arrives in Claude's names and leaves in Antigravity's;
+    /// a name Antigravity lacks is left out and said, never written.
     #[test]
-    fn an_allowlist_renders_native_and_a_deny_list_warns() {
+    fn an_allowlist_renders_in_antigravitys_names_and_a_deny_list_warns() {
         let scope = Scope::Global;
         let source = source("inherit");
         let mut agent = effective(&source, &scope);
-        agent.permissions = PermissionIntent::allow_only(vec!["view_file".into()]);
+        agent.permissions =
+            PermissionIntent::allow_only(vec!["Read".into(), "Bash".into(), "mcp__gh".into()]);
         let rendered = generate(&agent);
         assert!(
-            rendered.text.contains("tools:\n  - view_file\n"),
+            rendered
+                .text
+                .contains("tools:\n  - view_file\n  - run_command\n---"),
             "{}",
             rendered.text
+        );
+        assert!(!rendered.text.contains("mcp__gh"), "{}", rendered.text);
+        assert!(
+            rendered
+                .warnings
+                .iter()
+                .any(|w| w.message.contains("`mcp__gh`")),
+            "{:?}",
+            rendered.warnings
         );
         agent.permissions = PermissionIntent::DenyExtra(vec!["run_command".into()]);
         let rendered = generate(&agent);

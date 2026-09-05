@@ -91,6 +91,38 @@ pub fn copilot_tool_name(tool: &str) -> String {
         .unwrap_or_else(|| tool.trim().to_owned())
 }
 
+/// Antigravity's own tool names, the step types its loader lowercases
+/// (<https://antigravity.google/docs/subagents>, the CLI's embedded
+/// customization guide). A name of its own passes through unchanged, so an
+/// author may write either vocabulary.
+fn antigravity_tool(tool: &str) -> Option<&'static str> {
+    Some(match normalize(tool).as_str() {
+        "read" | "viewfile" => "view_file",
+        "grep" | "grepsearch" => "grep_search",
+        "glob" | "find" | "findbyname" => "find_by_name",
+        "ls" | "list" | "listdir" => "list_dir",
+        "bash" | "shell" | "runcommand" => "run_command",
+        "edit" | "replacefilecontent" => "replace_file_content",
+        "multiedit" | "multireplacefilecontent" => "multi_replace_file_content",
+        "write" | "writetofile" => "write_to_file",
+        "webfetch" | "readurlcontent" => "read_url_content",
+        "websearch" | "searchweb" => "search_web",
+        "task" | "agent" | "subagent" | "spawnagent" | "invokesubagent" => "invoke_subagent",
+        "question" | "askuserquestion" | "askquestion" => "ask_question",
+        "notebookread" | "readnotebook" => "read_notebook",
+        "notebookedit" | "editnotebook" => "edit_notebook",
+        _ => return None,
+    })
+}
+
+/// What an agent's `tools:` allowlist may name on Antigravity, or `None`
+/// for a name it has no word for. An unmapped name is not passed through:
+/// the loader documents that an unknown name in the list can hang the
+/// subagent, so the caller drops it and says so.
+pub fn antigravity_tool_name(tool: &str) -> Option<&'static str> {
+    antigravity_tool(tool)
+}
+
 /// A hook matcher said in `harness`'s own tool names, and whether all of it
 /// could be. Matchers are regexes over tool names authored in Claude's
 /// vocabulary, so `Bash` left as written matches nothing on a tool whose
@@ -193,7 +225,8 @@ fn word(tool: &str, harness: HarnessId) -> Option<Word> {
         // Both name a tool the same way in prose as in an allowlist.
         HarnessId::Copilot => Some(Word::Name(copilot_tool(&tool)?)),
         HarnessId::Gemini => Some(Word::Name(gemini_tool(&tool)?)),
-        HarnessId::Codex | HarnessId::Antigravity => Some(Word::Phrase(match tool.as_str() {
+        HarnessId::Antigravity => Some(Word::Name(antigravity_tool(&tool)?)),
+        HarnessId::Codex => Some(Word::Phrase(match tool.as_str() {
             "read" => "open the file",
             "grep" => "search",
             "glob" | "ls" => "list files",

@@ -7,9 +7,10 @@ use crate::model::{HarnessId, ItemKind};
 /// Antigravity CLI (`agy`). Customizations live under one root per scope,
 /// `~/.gemini/config` and the workspace's `.agents/`, in the same layout:
 /// `agents/<name>.md`, `skills/<name>/SKILL.md`, `rules/*.md`,
-/// `hooks.json`, `mcp_config.json` (the CLI's embedded customization
-/// guide and <https://antigravity.google/docs/cli/subagents/>). Settings
-/// and plugins sit apart under `~/.gemini/antigravity-cli/`.
+/// `hooks.json`, `mcp_config.json`, `plugins/<name>/plugin.json` (the
+/// CLI's embedded customization guide and
+/// <https://antigravity.google/docs/cli/subagents/>). Settings sit apart
+/// under `~/.gemini/antigravity-cli/`.
 pub struct Antigravity;
 
 fn surfaces(kind: ItemKind, root: &Path, shared: Option<&Path>) -> Vec<Surface> {
@@ -23,9 +24,14 @@ fn surfaces(kind: ItemKind, root: &Path, shared: Option<&Path>) -> Vec<Surface> 
             path: root.join("mcp_config.json"),
             reader: Reader::McpServersJson,
         }],
+        // A plugin is a directory carrying its manifest under the root.
+        ItemKind::Plugin => vec![Surface::SubdirPerItem {
+            dir: root.join("plugins"),
+            marker: "plugin.json",
+        }],
         // Skills are the slash commands; hooks run from `hooks.json`, a
         // registry kendex neither reads nor writes yet.
-        ItemKind::Command | ItemKind::Hook | ItemKind::Plugin | ItemKind::PiExtension => vec![],
+        ItemKind::Command | ItemKind::Hook | ItemKind::PiExtension => vec![],
     }
 }
 
@@ -50,20 +56,8 @@ impl HarnessAdapter for Antigravity {
         ]
     }
 
-    fn global_surfaces(&self, kind: ItemKind, root: &Path, env: &Env) -> Vec<Surface> {
-        match kind {
-            // An installed plugin is a directory carrying its manifest,
-            // beside the settings rather than under the customization root.
-            ItemKind::Plugin => vec![Surface::SubdirPerItem {
-                dir: env
-                    .home
-                    .join(".gemini")
-                    .join("antigravity-cli")
-                    .join("plugins"),
-                marker: "plugin.json",
-            }],
-            other => surfaces(other, root, None),
-        }
+    fn global_surfaces(&self, kind: ItemKind, root: &Path, _env: &Env) -> Vec<Surface> {
+        surfaces(kind, root, None)
     }
 
     fn project_surfaces(&self, kind: ItemKind, project: &Path, _env: &Env) -> Vec<Surface> {
@@ -106,7 +100,14 @@ mod tests {
         assert_eq!(
             Antigravity.global_surfaces(ItemKind::Plugin, &root, &env),
             [Surface::SubdirPerItem {
-                dir: PathBuf::from("/h/.gemini/antigravity-cli/plugins"),
+                dir: PathBuf::from("/h/.gemini/config/plugins"),
+                marker: "plugin.json",
+            }]
+        );
+        assert_eq!(
+            Antigravity.project_surfaces(ItemKind::Plugin, Path::new("/p"), &env),
+            [Surface::SubdirPerItem {
+                dir: PathBuf::from("/p/.agents/plugins"),
                 marker: "plugin.json",
             }]
         );

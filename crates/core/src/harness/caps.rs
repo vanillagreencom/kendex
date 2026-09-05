@@ -194,9 +194,13 @@ pub const fn format_caps(harness: HarnessId) -> FormatCaps {
             name_rule: NameRule::LowerKebab { max_len: None },
             ..format_defaults()
         },
-        // Antigravity's `mcp_config.json` keys a remote server `serverUrl`
-        // and is read, never written; its names are unconstrained.
-        HarnessId::Antigravity => format_defaults(),
+        // Antigravity's `mcp_config.json` carries `command` or a
+        // `serverUrl` it reads over SSE, and is read, never written; its
+        // names are unconstrained.
+        HarnessId::Antigravity => FormatCaps {
+            mcp_transports: &[Stdio, Sse],
+            ..format_defaults()
+        },
     }
 }
 
@@ -400,7 +404,7 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
         (Antigravity, Agent | Skill) => managed(BOTH),
         (Antigravity, Command | Hook) => unsupported(),
         (Antigravity, McpServer) => observe_only(BOTH),
-        (Antigravity, Plugin) => observe_only(GLOBAL),
+        (Antigravity, Plugin) => observe_only(BOTH),
         (Antigravity, PiExtension) => unsupported(),
     }
 }

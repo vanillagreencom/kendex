@@ -238,7 +238,7 @@ fn carries(harness: HarnessId, key: &str) -> bool {
         (
             HarnessId::Claude,
             "color" | "effort" | "model" | "isolation" | "memory" | "background"
-        ) | (HarnessId::Gemini, "model")
+        ) | (HarnessId::Gemini | HarnessId::Antigravity, "model")
             | (HarnessId::Pi, "color" | "effort")
     )
 }

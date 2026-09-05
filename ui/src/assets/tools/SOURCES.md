@@ -11,6 +11,6 @@ Each mark was taken from the vendor's own site or brand kit on 2026-08-16, for n
 | pi.svg | https://pi.dev/favicon.svg (Earendil Works; plate removed) |
 | gemini.svg | https://www.gstatic.com/lamda/images/gemini_sparkle_v002_d4735304ff6292a690345.svg (Google) |
 | copilot.svg | github.com/primer/octicons — icons/copilot-24.svg (GitHub's own icon set) |
+| antigravity.svg | placeholder drawn for kendex (a letter A); replace with Google's Antigravity mark once its brand kit publishes one |
 
 Brand-terms notes seen at fetch time: GitHub's octicons licence carves the GitHub logos out of MIT and points at brand.github.com (integration use in secondary placement is permitted); Anthropic and OpenAI publish no fetchable terms page; Cursor's brand page only prescribes the name "Cursor"; OpenCode is MIT; Google's mark is governed by the Google Brand Resource Center.
-| antigravity.svg | placeholder drawn for kendex (a letter A); replace with Google's Antigravity mark once its brand kit publishes one |

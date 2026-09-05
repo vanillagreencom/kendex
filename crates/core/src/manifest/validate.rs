@@ -148,7 +148,7 @@ fn frontmatter_keys_for(harness: &str) -> &'static [&'static str] {
             "effort",
             "model-reasoning-effort",
         ],
-        "gemini" | "copilot" => &["model", "deny-tools", "allow-tools"],
+        "gemini" | "copilot" | "antigravity" => &["model", "deny-tools", "allow-tools"],
         _ => &[],
     }
 }
