@@ -338,6 +338,38 @@ run_mutant() { # — sets OUT and RC
   OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" 2>&1)" || RC=$?
 }
 
+echo "=== full validation runs the suites of the trees the branch touched ==="
+FULL_GUARD=1
+# A second skill whose suite fails whenever it runs: the selection is proven
+# by that suite staying silent until its tree is touched.
+mkdir -p "$R/skills/quiet/tests"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$R/skills/quiet/tests/quiet.test.sh"
+git -C "$R" add skills/quiet
+git -C "$R" commit -q -m "chore: a skill whose suite fails"
+printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
+printf 'echo more\n' >>"$R/.agents/skills/demo/scripts/demo.sh"
+run_guard
+[ "$RC" -eq 0 ] && [[ "$OUT" == *"=== skills/demo/tests/demo.test.sh"* ]] && [[ "$OUT" != *"skills/quiet"* ]] \
+  && ok "a touched skill's suite runs in full validation and an untouched skill's does not" \
+  || bad "a touched skill's suite runs in full validation and an untouched skill's does not" "rc=$RC out=$OUT"
+printf 'echo touched\n' >>"$R/skills/quiet/tests/quiet.test.sh"
+run_guard
+[ "$RC" != 0 ] && [[ "$OUT" == *"skills/quiet suite failed"* ]] \
+  && ok "a touched skill's failing suite reds full validation, naming the skill" \
+  || bad "a touched skill's failing suite reds full validation, naming the skill" "rc=$RC out=$OUT"
+if mutant_guard '/suite failed (\$t)/d'; then
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the suite lane deleted the failing suite passes" \
+    || bad "control: with the suite lane deleted the failing suite passes" "rc=$RC out=$OUT"
+else
+  bad "control: the suite lane could not be deleted from a guard copy"
+fi
+FULL_GUARD=0
+git -C "$R" checkout -q -- skills .agents
+
 BASH4_LINE='mapfile -t demo_lines <"$0"'
 printf '%s\n' "$BASH4_LINE" >>"$R/skills/demo/tests/demo.test.sh"
 printf '%s\n' "$BASH4_LINE" >>"$R/.agents/skills/demo/tests/demo.test.sh"

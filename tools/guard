@@ -20,7 +20,8 @@ case "${1:-}" in
   --help | -h)
     printf '%s\n' 'usage: tools/guard [--full]' \
       'Default: repository rules and compile checks for staged product changes.' \
-      '--full: full Rust and UI validation for development completion and submit.'
+      '--full: full Rust and UI validation for development completion and submit,' \
+      '        plus the suites of the skill, hook, tool and Pi-package trees the branch touched.'
     exit 0
     ;;
 esac
@@ -332,6 +333,69 @@ if [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt
     done
   fi
   cargo fmt --check || say "cargo fmt --check failed"
+fi
+
+# Completion validation runs the suites CI runs for the trees this branch
+# touched, beside the whole-workspace cargo and UI runs below: a skill's own
+# tests, hooks/tests for a hook, tools/tests for a tool, and a Pi package's
+# declared script (`test:ci` where it declares one, `test` otherwise, the
+# rule pi-extensions/package-policy.test.mjs holds CI to). Touched is the
+# branch against origin/main where that ref exists, plus everything the
+# working tree and index carry, so a render-only sync counts for its source.
+# An untouched suite is not evidence about this change and is not run here;
+# CI runs every suite on the merged tree.
+if [ "$FULL" -eq 1 ]; then
+  suites_base=HEAD
+  if git rev-parse --verify -q origin/main >/dev/null; then
+    suites_base=$(git merge-base HEAD origin/main) || suites_base=HEAD
+  fi
+  touched=$({ git diff --name-only "$suites_base" --; git status --porcelain --untracked-files=all | cut -c4- | sed 's/^.* -> //'; } | sort -u) ||
+    say "the touched-file set for the suite lane could not be read"
+  suite_dirs=""
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    case "$f" in
+      skills/*/* | .agents/skills/*/*)
+        x="${f#.agents/}"
+        x="${x#skills/}"
+        suite_dirs="$suite_dirs skills/${x%%/*}"
+        ;;
+      hooks/* | .claude/hooks/* | .codex/hooks/* | .pi/kendex/hooks/*) suite_dirs="$suite_dirs hooks" ;;
+      tools/*) suite_dirs="$suite_dirs tools" ;;
+      pi-extensions/*/*)
+        x="${f#pi-extensions/}"
+        suite_dirs="$suite_dirs pi-extensions/${x%%/*}"
+        ;;
+    esac
+  done <<<"$touched"
+  for d in $(printf '%s\n' $suite_dirs | sort -u); do
+    case "$d" in
+      pi-extensions/*)
+        [ -f "$d/package.json" ] || continue
+        if jq -e '.scripts["test:ci"]' "$d/package.json" >/dev/null 2>&1; then
+          (cd "$d" && npm run test:ci) || say "$d suite failed (npm run test:ci)"
+        elif jq -e '.scripts.test' "$d/package.json" >/dev/null 2>&1; then
+          (cd "$d" && npm test) || say "$d suite failed (npm test)"
+        fi
+        ;;
+      *)
+        [ -d "$d/tests" ] || continue
+        if [ -f "$d/tests/run-all.sh" ]; then
+          echo "=== $d/tests/run-all.sh"
+          bash "$d/tests/run-all.sh" || say "$d suite failed"
+          continue
+        fi
+        for t in "$d"/tests/*.sh "$d"/tests/*.test.mjs; do
+          [ -f "$t" ] || continue
+          echo "=== $t"
+          case "$t" in
+            *.mjs) node --test "$t" || say "$d suite failed ($t)" ;;
+            *) bash "$t" || say "$d suite failed ($t)" ;;
+          esac
+        done
+        ;;
+    esac
+  done
 fi
 
 if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
