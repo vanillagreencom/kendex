@@ -5,6 +5,7 @@ mod test_util;
 use test_util::rooted;
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -14,6 +15,11 @@ use kendex_core::process::Hardened;
 // allow-unwrap-in-tests does not reach them.
 #[allow(clippy::expect_used)]
 fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
+    let mut paths = vec![home.join("bin")];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let path = std::env::join_paths(paths).expect("fixture PATH joins");
     Command::new(env!("CARGO_BIN_EXE_kendex"))
         .args(args)
         .current_dir(cwd)
@@ -24,7 +30,7 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
             "KENDEX_GIT_BASE",
             format!("file://{}", home.join("git").display()),
         )
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("PATH", path)
         .output()
         .expect("kendex binary runs")
 }
@@ -146,7 +152,7 @@ fn update_reinstalls_from_the_declared_source() {
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_successful_package_is_recorded_when_another_update_fails() {
+fn an_npm_failure_records_only_the_sibling_whose_install_completed() {
     let tmp = tempfile::tempdir().unwrap();
     let root = rooted(&tmp);
     let project = root.join("dev/app");
@@ -164,15 +170,34 @@ fn a_successful_package_is_recorded_when_another_update_fails() {
     );
     write(
         &project.join("catalog/pi-extensions/bad/package.json"),
-        "{\"name\":\"../bad\",\"version\":\"1.0.0\"}\n",
+        "{\"name\":\"bad\",\"version\":\"1.0.0\",\"dependencies\":{\"dep\":\"1.0.0\"}}\n",
     );
+    write(
+        &project.join("catalog/pi-extensions/bad/index.js"),
+        "export const copiedBeforeNpm = true;\n",
+    );
+    let npm = root.join("bin/npm");
+    write(&npm, "#!/bin/sh\nexit 1\n");
+    fs::set_permissions(&npm, fs::Permissions::from_mode(0o755)).unwrap();
     fs::create_dir_all(project.join(".pi")).unwrap();
 
     let output = kendex(&root, &project, &["update-pi"]);
 
     assert!(!output.status.success(), "{output:?}");
     assert!(project.join(".pi/packages/good/index.js").is_file());
+    assert!(
+        project.join(".pi/packages/bad/index.js").is_file(),
+        "npm fails after the source package is copied"
+    );
+    let settings = fs::read_to_string(project.join(".pi/settings.json")).unwrap();
+    assert!(settings.contains("./packages/good"), "{settings}");
+    assert!(!settings.contains("./packages/bad"), "{settings}");
     let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
+    let verify = kendex(&root, &project, &["verify", "--scope", "project"]);
+    assert!(
+        !verify.status.success(),
+        "an unregistered failed package must not verify as installed"
+    );
     assert!(lock.entries.values().any(|entry| entry.name == "good"));
     assert!(!lock.entries.values().any(|entry| entry.name == "bad"));
 }
