@@ -16,6 +16,16 @@
           {
             "type": "command",
             "command": "bash \"$(git rev-parse --show-toplevel)/.pi/kendex/hooks/block-repo-copy.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.pi/kendex/hooks/block-argv-kill.sh\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.pi/kendex/hooks/block-worktree-refresh.sh\"",
+            "timeout": 10
           }
         ]
       }
