@@ -14,6 +14,8 @@ The `.jsonc` suffix declares JSON with comments. Some producers keep `.json` ins
 
 The lane has no JSONC parser. It leaves these files to the producer that declares the dialect. Strict `.json` files still pass through `jq`.
 
+During `--staged`, shared settings come from the index. A new untracked shared settings file cannot change the commit verdict. The personal `.env.local` file remains a runtime input.
+
 ## `unwired-suite` wiring grammar
 
 Runners are `.github/workflows/*.yml`, `tools/validate*`, `scripts/validate*`, `package.json`, `Makefile`, `justfile`, and any `run-all.sh`.

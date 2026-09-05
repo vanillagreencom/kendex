@@ -26,13 +26,14 @@ bad() {
 
 seed() { # NAME — fixture in $R: committed baseline, origin/main, feature branch
   R="$TMP/$1"
-  mkdir -p "$R/docs"
+  mkdir -p "$R/docs" "$R/store/migrations"
   git -C "$R" -c init.defaultBranch=main init -q
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
   printf '# Staged\n' >"$R/docs/staged.md"
   printf '# Loose\n' >"$R/docs/loose.md"
   printf '# Legacy\n\nSee `docs/gone.md` for background.\n' >"$R/docs/legacy.md"
+  printf 'CREATE TABLE t (id INTEGER);\n' >"$R/store/migrations/V1__init.sql"
   git -C "$R" add -A
   git -C "$R" commit -qm init
   git clone -q --bare "$R" "$R.git"
@@ -125,6 +126,61 @@ if [ "$RC" -eq 1 ] && has "themes/white/apps/vscode-theme.json:2: [data-syntax] 
 else
   bad "a worktree-only JSONC setting cannot widen the staged policy" "rc=$RC out=$OUT"
 fi
+# New shared settings do not exist in the commit. Neither supported shared
+# path may widen JSONC or narrow the migration set during a staged run.
+seed untrackedrootjsonc
+mkdir -p "$R/themes/white/apps"
+printf '{\n  // remains strict without a committed setting\n  "name": "white"\n}\n' >"$R/themes/white/apps/vscode-theme.json"
+git -C "$R" add themes/white/apps/vscode-theme.json
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "themes/white/apps/vscode-theme.json:2: [data-syntax] invalid JSON"; then
+  ok "control: staged JSON stays strict before a shared JSONC setting exists"
+else
+  bad "control: staged JSON stays strict before a shared JSONC setting exists" "rc=$RC out=$OUT"
+fi
+printf '[env]\nPREFLIGHT_JSONC_GLOBS = "**/themes/*/apps/vscode-theme.json"\n' >"$R/kendex.settings.toml"
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "themes/white/apps/vscode-theme.json:2: [data-syntax] invalid JSON"; then
+  ok "an untracked root settings file cannot widen staged JSONC policy"
+else
+  bad "an untracked root settings file cannot widen staged JSONC policy" "rc=$RC out=$OUT"
+fi
+
+seed untrackednestedjsonc
+mkdir -p "$R/themes/white/apps" "$R/.kendex"
+printf '{\n  // remains strict without a committed setting\n  "name": "white"\n}\n' >"$R/themes/white/apps/vscode-theme.json"
+git -C "$R" add themes/white/apps/vscode-theme.json
+printf '[env]\nPREFLIGHT_JSONC_GLOBS = "**/themes/*/apps/vscode-theme.json"\n' >"$R/.kendex/settings.toml"
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "themes/white/apps/vscode-theme.json:2: [data-syntax] invalid JSON"; then
+  ok "an untracked nested settings file cannot widen staged JSONC policy"
+else
+  bad "an untracked nested settings file cannot widen staged JSONC policy" "rc=$RC out=$OUT"
+fi
+
+seed untrackedrootmigration
+printf 'CREATE TABLE t (id INTEGER, name TEXT);\n' >"$R/store/migrations/V1__init.sql"
+git -C "$R" add store/migrations/V1__init.sql
+printf '[env]\nPREFLIGHT_MIGRATION_GLOBS = ""\n' >"$R/kendex.settings.toml"
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "store/migrations/V1__init.sql:0: [applied-migration-edited]"; then
+  ok "an untracked root settings file cannot narrow staged migration policy"
+else
+  bad "an untracked root settings file cannot narrow staged migration policy" "rc=$RC out=$OUT"
+fi
+
+seed untrackednestedmigration
+mkdir -p "$R/.kendex"
+printf 'CREATE TABLE t (id INTEGER, name TEXT);\n' >"$R/store/migrations/V1__init.sql"
+git -C "$R" add store/migrations/V1__init.sql
+printf '[env]\nPREFLIGHT_MIGRATION_GLOBS = ""\n' >"$R/.kendex/settings.toml"
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "store/migrations/V1__init.sql:0: [applied-migration-edited]"; then
+  ok "an untracked nested settings file cannot narrow staged migration policy"
+else
+  bad "an untracked nested settings file cannot narrow staged migration policy" "rc=$RC out=$OUT"
+fi
+
 
 echo "=== untracked files are new files in the default scope, invisible to --staged ==="
 seed untracked

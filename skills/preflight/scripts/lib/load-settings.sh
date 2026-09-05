@@ -2,8 +2,8 @@
 # Staged runs read tracked project settings from the index. Other runs read
 # the working tree. The shared kendex loader remains the only parser.
 
-pf_stage_settings_file() { # SOURCE SNAPSHOT-ROOT
-  local path="$1" snapshot="$2" entry="" status=0 head_entry="" mode=""
+pf_stage_settings_file() { # SOURCE SNAPSHOT-ROOT ALLOW-UNTRACKED
+  local path="$1" snapshot="$2" allow_untracked="$3" entry="" status=0 head_entry="" mode=""
   entry="$(git ls-files -s -- ":(literal)$path" 2>/dev/null)" || status=$?
   if [ "$status" -ne 0 ]; then
     echo "::error::$path: could not query the index while loading preflight settings" >&2
@@ -39,6 +39,7 @@ pf_stage_settings_file() { # SOURCE SNAPSHOT-ROOT
   fi
   # A path HEAD carries but the index does not is staged for deletion.
   [ -z "$head_entry" ] || return 0
+  [ "$allow_untracked" = 1 ] || return 0
   kendex_source_usable "$path" || return 1
   [ -f "$path" ] || return 0
   case "$path" in
@@ -60,8 +61,8 @@ pf_load_project_env() { # MODE ROOT SCRATCH
     return
   fi
   mkdir -p -- "$snapshot/.kendex" || return 1
-  pf_stage_settings_file kendex.settings.toml "$snapshot" || return 1
-  pf_stage_settings_file .kendex/settings.toml "$snapshot" || return 1
-  pf_stage_settings_file .env.local "$snapshot" || return 1
+  pf_stage_settings_file kendex.settings.toml "$snapshot" 0 || return 1
+  pf_stage_settings_file .kendex/settings.toml "$snapshot" 0 || return 1
+  pf_stage_settings_file .env.local "$snapshot" 1 || return 1
   kendex_load_project_env "$snapshot"
 }
