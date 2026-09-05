@@ -63,7 +63,8 @@ GROWTH_GUARDS_MD_REFS_PATHS = "AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL
 # generated and vendored trees whose comments are not this repository's.
 GROWTH_GUARDS_COMMENT_EXCLUDES = "tools/comments-excludes"
 
-# Reference classes the comments lane checks. Name at least one class.
+# Reference classes the comments lane checks. Issue IDs need a configured
+# GH_ISSUE_PATTERN; dates and numeric references work without one.
 GROWTH_GUARDS_COMMENT_REFERENCE_TYPES = "issue-id issue-number date"
 
 # Repo-local check the pre-commit shim runs LAST: a repo-root-relative
