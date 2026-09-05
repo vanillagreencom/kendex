@@ -54,9 +54,9 @@ GROWTH_GUARDS_MD_REFS_PATHS = "AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL
 # globs against the full repo-relative path (`*` crosses `/`), replacing the
 # default extension list in CHECKS.md § comments. Add the shapes an
 # extension cannot name (`hooks/* */scripts/*`): a file with no extension
-# takes the grammar its shebang names. The lane is opt-in: name `comments`
-# in GROWTH_GUARDS_CHECKS to run it, and set GH_ISSUE_PATTERN (the github
-# skill's key) to the tracker's own key shape.
+# takes the grammar its shebang names. Run the optional audit as described
+# in CHECKS.md § comments. Set GH_ISSUE_PATTERN (the github skill's key)
+# to the tracker's own key shape.
 # GROWTH_GUARDS_COMMENT_PATHS = ""
 
 # The comments lane's exclusion list, pattern<TAB>reason rows naming the

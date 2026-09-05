@@ -71,7 +71,7 @@ Do:
 Don't:
 
 - Comments that repeat the code.
-- History: a temporal marker, a date, an issue id, a review round or a conversation. The growth-guards `comments` lane (named in `GROWTH_GUARDS_CHECKS`) holds the shapes.
+- History: a temporal marker, a date, an issue id, a review round or a conversation. For an optional audit, see [growth-guards CHECKS.md § comments](../growth-guards/CHECKS.md#comments).
 - Claims broader than what the adjacent code or assertion actually enforces.
 - A numeral counting things outside the sentence. State the property and the command that enumerates it. A numeral bound to something adjacent stays: a list in the same paragraph, a constant a check compares against, one a ratchet owns.
 

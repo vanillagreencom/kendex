@@ -1,7 +1,7 @@
 ---
 name: growth-guards
 description: "Load to add, tune, or debug a repo growth guard, its git hooks, or GROWTH_GUARDS_* settings."
-summary: "Ten commit-time guards beside size-ratchet (markers, bytes, suppressions, conflicts, changelog, prose, markdown format and references, comments, commit message) and the git hook shims that run them."
+summary: "Commit guards for markers, bytes, suppressions, conflicts, changelog, prose, markdown and commit messages, plus an optional comment audit and git hook shims."
 license: MIT
 user-invocable: true
 metadata:
@@ -60,7 +60,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 | **prose** | A history reference in Markdown named by `GROWTH_GUARDS_PROSE_PATHS` fails; `GROWTH_GUARDS_CHECKS` controls whether the lane runs. |
 | **md-format** | A hard-wrapped paragraph or list item, a missing blank line around a heading, fence or list, or a trailing-double-space break in Markdown named by `GROWTH_GUARDS_MD_PATHS` fails; `md-reflow` is the remedy. |
 | **md-refs** | A relative link, a link followed by `§` and a heading prefix, a `<path>.md § Heading` or `<path>.md#anchor` code-span citation, or a decision ID in Markdown named by `GROWTH_GUARDS_MD_REFS_PATHS` that lands on no tracked file, heading or decision fails. |
-| **comments** | A history reference in the comment text of a source file named by `GROWTH_GUARDS_COMMENT_PATHS` fails: an issue id (`GH_ISSUE_PATTERN`), `#NNN`, or a date. Opt-in: name it in `GROWTH_GUARDS_CHECKS`. |
+| **comments** | A history reference in the comment text of a source file named by `GROWTH_GUARDS_COMMENT_PATHS` fails: an issue id (`GH_ISSUE_PATTERN`), `#NNN`, or a date. Optional audit; see [CHECKS.md § comments](CHECKS.md#comments). |
 | **commit-msg** | The header must be `type(scope)!: subject` within `GROWTH_GUARDS_SUBJECT_MAX`; a commit touching `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS` also owes a changelog entry or `[no-changelog]`. |
 
 Full check shapes and scopes: [CHECKS.md](CHECKS.md).
