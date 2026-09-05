@@ -1,0 +1,1 @@
+- Generated Codex, OpenCode, and Pi agents now use `gpt-6-astra` for model tiers that select the shared Codex default.

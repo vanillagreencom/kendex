@@ -189,7 +189,7 @@ Response handling and stamping (review and audit modes):
 Default commands:
   claude: claude -p --no-session-persistence --model opus --effort max
             --allowedTools Bash(read-only:true),Read,Glob,Grep
-  codex:  codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh
+  codex:  codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh
             --ephemeral
 
 Output clearing and ownership:
@@ -735,7 +735,7 @@ canon_identity() {
   # detected, per-target and roster-derived — so trimming once covers them all.
   kendex_trim id "$1"
   id=$(lower "$id")
-  # Provider-qualified ids — openai-codex/gpt-5.6-sol, openai/gpt-5.6-sol,
+  # Provider-qualified ids — openai-codex/gpt-6-astra, openai/gpt-6-astra,
   # anthropic/claude-opus-4 — are exactly what Pi and OpenCode show an operator,
   # and those are the operators REQUIRED to declare an identity. Canonicalize on
   # the component after the final slash so the value their harness shows them
@@ -883,7 +883,7 @@ target_model() {
 # entry, not code.
 
 DEFAULT_CLAUDE_CMD="claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
-DEFAULT_CODEX_CMD="codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+DEFAULT_CODEX_CMD="codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 
 # Full command line for a target: its env override, else the built-in default.
 # Empty output = unconfigured target.

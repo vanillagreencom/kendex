@@ -1,7 +1,7 @@
 name = "reviewer-perf"
 nickname_candidates = ["Reviewer-Perf-Atlas", "Reviewer-Perf-Delta", "Reviewer-Perf-Echo", "Reviewer-Perf-Nova", "Reviewer-Perf-Orion", "Reviewer-Perf-Vector"]
 description = "Performance validation specialist. Latency validation, benchmark execution, percentile analysis, hot-path cost review, regression detection."
-model = "gpt-5.6-sol"
+model = "gpt-6-astra"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 developer_instructions = '''

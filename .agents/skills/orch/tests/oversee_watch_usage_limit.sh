@@ -151,7 +151,7 @@ printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
   printf '\xe2\x80\xba pick the round back up\n'
   printf '\xe2\x80\xa2 Ran 3 commands\n'
   printf '  Select Model and Effort\n'
-  printf '\xe2\x80\xba 1. gpt-5.6-sol (current)  Latest frontier agentic coding model.\n'
+  printf '\xe2\x80\xba 1. gpt-6-astra (current)  Our most capable model for complex, demanding work.\n'
   printf '  2. gpt-5.6-terra          Balanced agentic coding model for everyday work.\n'
   printf '  Press enter to confirm or esc to go back\n'
 } > "$STUB_DIR/pane-gh-2.txt"
@@ -185,7 +185,7 @@ printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
   printf '\xe2\x80\xa2 Ran 3 commands\n'
   printf 'Usage limit reached. Increase your limits to continue.\n'
   printf '  Select Model and Effort\n'
-  printf '\xe2\x80\xba 1. gpt-5.6-sol (current)  Latest frontier agentic coding model.\n'
+  printf '\xe2\x80\xba 1. gpt-6-astra (current)  Our most capable model for complex, demanding work.\n'
   printf '  2. gpt-5.6-terra          Balanced agentic coding model for everyday work.\n'
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3fe"

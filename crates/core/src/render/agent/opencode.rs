@@ -218,7 +218,7 @@ mod tests {
         let scope = Scope::Global;
         let text = generate(&effective(&source, &scope)).text;
         assert!(text.contains("mode: subagent\n"));
-        assert!(text.contains("model: openai/gpt-5.6-sol\n"));
+        assert!(text.contains("model: openai/gpt-6-astra\n"));
         assert!(text.contains("color: \"#22c55e\"\n"));
         assert!(text.contains("options:\n  reasoningEffort: high\n"));
         assert!(text.contains("permission:\n  task: deny\n  question: deny\n"));

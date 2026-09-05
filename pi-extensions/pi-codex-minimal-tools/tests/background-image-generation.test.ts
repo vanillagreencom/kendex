@@ -26,8 +26,8 @@ test("parseImageGenCommandArgs treats pasted image paths as references", () => {
 });
 
 test("buildBackgroundImageRequest requests generate without reference images", () => {
-	const body = buildBackgroundImageRequest({ prompt: "draw a red apple", referenceImages: [], responsesModel: "gpt-5.6-sol", imageModel: "gpt-image-2" });
-	assert.equal(body.model, "gpt-5.6-sol");
+	const body = buildBackgroundImageRequest({ prompt: "draw a red apple", referenceImages: [], responsesModel: "gpt-6-astra", imageModel: "gpt-image-2" });
+	assert.equal(body.model, "gpt-6-astra");
 	assert.deepEqual(body.tools, [{ type: "image_generation", model: "gpt-image-2", output_format: "png", action: "generate" }]);
 	assert.deepEqual(body.tool_choice, { type: "image_generation" });
 });
@@ -36,7 +36,7 @@ test("buildBackgroundImageRequest requests edit with reference images", () => {
 	const body = buildBackgroundImageRequest({
 		prompt: "change icon to green",
 		referenceImages: [{ path: "/tmp/icon.png", mimeType: "image/png", base64: "abc" }],
-		responsesModel: "gpt-5.6-sol",
+		responsesModel: "gpt-6-astra",
 		imageModel: "gpt-image-2",
 	});
 	assert.deepEqual(body.tools, [{ type: "image_generation", model: "gpt-image-2", output_format: "png", action: "edit" }]);
@@ -49,7 +49,7 @@ test("buildBackgroundImageRequest requests edit with reference images", () => {
 test("selectCodexImageModel prefers current image-capable Codex model and registry fallback", () => {
 	const current = { provider: "openai-codex", id: "gpt-5.4", input: ["text", "image"] };
 	assert.equal(selectCodexImageModel(current, undefined), current);
-	const fallback = { provider: "openai-codex", id: "gpt-5.6-sol", input: ["text", "image"] };
+	const fallback = { provider: "openai-codex", id: "gpt-6-astra", input: ["text", "image"] };
 	assert.equal(selectCodexImageModel({ provider: "anthropic", id: "claude", input: ["text", "image"] }, { getAll: () => [fallback] }), fallback);
 	assert.equal(selectCodexImageModel({ provider: "anthropic", id: "claude", input: ["text", "image"] }, { getAvailable: () => [fallback] }), fallback);
 	assert.equal(selectCodexImageModel({ provider: "openai-codex", id: "text-only", input: ["text"] }, { find: (_provider, _id) => fallback }), fallback);

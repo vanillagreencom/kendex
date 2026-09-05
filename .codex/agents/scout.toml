@@ -1,7 +1,7 @@
 name = "scout"
 nickname_candidates = ["Scout-Atlas", "Scout-Delta", "Scout-Echo", "Scout-Nova", "Scout-Orion", "Scout-Vector"]
 description = "Fast reconnaissance agent for exploring codebases, finding files by pattern, searching keywords, answering architecture questions, and returning compressed cited context or report artifacts. Specify thoroughness: quick, medium, or very thorough."
-model = "gpt-5.6-sol"
+model = "gpt-6-astra"
 model_reasoning_effort = "medium"
 sandbox_mode = "workspace-write"
 developer_instructions = '''

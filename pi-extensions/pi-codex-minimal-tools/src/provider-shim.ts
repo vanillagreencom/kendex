@@ -496,7 +496,7 @@ function getServiceTierCostMultiplier(model: Model<Api>, serviceTier: ServiceTie
 		case "flex":
 			return 0.5;
 		case "priority":
-			return model.id === "gpt-5.6-sol" ? 2.5 : 2;
+			return model.id === "gpt-6-astra" ? 2.5 : 2;
 		default:
 			return 1;
 	}

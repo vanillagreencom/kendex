@@ -482,7 +482,7 @@ test("spinner setting defaults and project override precedence", () => {
 test("Monitor session detail owns agent session model and effort metadata", async () => {
 	const taskRecord = record("reviewer-arch", "reviewer-arch-session", "2026-05-14T05:00:00.000Z", {
 		effort: "xhigh",
-		model: "openai-codex/gpt-5.6-sol:xhigh",
+		model: "openai-codex/gpt-6-astra:xhigh",
 		sessionKey: "feature-x",
 		sessionMode: "resumed",
 	});
@@ -491,7 +491,7 @@ test("Monitor session detail owns agent session model and effort metadata", asyn
 	const taskItems = await traceViewerItems(taskRecord, 1, { agents: [agent("reviewer-arch")] }, group.sessionNumber);
 
 	assert.match(sessionDetail, /^Agent:\s+reviewer-arch$/m);
-	assert.match(sessionDetail, /^Model:\s+openai-codex\/gpt-5\.6-sol$/m);
+	assert.match(sessionDetail, /^Model:\s+openai-codex\/gpt-6-astra$/m);
 	assert.match(sessionDetail, /^Effort:\s+xhigh$/m);
 	assert.match(sessionDetail, /^Session:\s+resumed · lane: feature-x$/m);
 	assert.doesNotMatch(taskItems[0]!.text, /^(Agent|Session #|Model|Effort|Session)\s+/m);
@@ -534,12 +534,12 @@ test("transcript usage captures enriched agent_start model when usage events omi
 	const runtimeRoot = tempRuntime();
 	const transcriptPath = join(runtimeRoot, "agent-start-model.jsonl");
 	writeFileSync(transcriptPath, [
-		JSON.stringify({ ts: "2026-05-14T05:00:00.000Z", event: { type: "agent_start", agent: "reviewer-test", model: "openai-codex/gpt-5.6-sol:xhigh" } }),
+		JSON.stringify({ ts: "2026-05-14T05:00:00.000Z", event: { type: "agent_start", agent: "reviewer-test", model: "openai-codex/gpt-6-astra:xhigh" } }),
 		JSON.stringify({ ts: "2026-05-14T05:01:00.000Z", event: { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Done" }], usage: { input: 2, output: 3, cacheRead: 4, cacheWrite: 5, totalTokens: 14 } } } }),
 	].join("\n"));
 
 	const usage = await parseTranscriptUsage(transcriptPath);
-	assert.equal(usage?.model, "openai-codex/gpt-5.6-sol:xhigh");
+	assert.equal(usage?.model, "openai-codex/gpt-6-astra:xhigh");
 	assert.equal(usage?.usage.input, 2);
 	assert.equal(usage?.usage.output, 3);
 	assert.equal(usage?.usage.cacheRead, 4);
@@ -965,14 +965,14 @@ test("Agents tab rows are flat static catalog entries", () => {
 
 test("Agents tab list shows only kind and scope chips after agent name", () => {
 	const rows = buildAgentRows([
-		agent("planner", true, { model: "openai-codex/gpt-5.6-sol", source: "project" }),
-		agent("scout", false, { model: "openai-codex/gpt-5.6-sol", source: "user" }),
+		agent("planner", true, { model: "openai-codex/gpt-6-astra", source: "project" }),
+		agent("scout", false, { model: "openai-codex/gpt-6-astra", source: "user" }),
 	], new Map());
 	const rendered = stripAnsi(renderAgentList(rows, new Map(), uiState({ selected: 0 }), 160, theme as any, 20).join("\n"));
 
 	assert.match(rendered, /planner · pane · project/);
 	assert.match(rendered, /scout · bg · user/);
-	assert.doesNotMatch(rendered, /gpt-5\.6-sol|openai-codex| xhigh| default| · P| · U/);
+	assert.doesNotMatch(rendered, /gpt-6-astra|openai-codex| xhigh| default| · P| · U/);
 });
 
 test("Agents Inspector shows static config only for agent with active tasks", () => {
@@ -983,7 +983,7 @@ test("Agents Inspector shows static config only for agent with active tasks", ()
 		description: "Plans implementation work.",
 		effort: "xhigh",
 		filePath: ".pi/agents/planner.md",
-		model: "openai-codex/gpt-5.6-sol",
+		model: "openai-codex/gpt-6-astra",
 		systemPrompt: "Planner system prompt body.",
 	});
 	const statuses = new Map<string, AgentPaneStatus>([["planner", livePaneStatus("planner", {
@@ -996,7 +996,7 @@ test("Agents Inspector shows static config only for agent with active tasks", ()
 
 	assert.match(rendered, /planner/);
 	assert.match(rendered, /Plans implementation work\./);
-	assert.match(rendered, /Model: openai-codex\/gpt-5\.6-sol/);
+	assert.match(rendered, /Model: openai-codex\/gpt-6-astra/);
 	assert.match(rendered, /Effort: xhigh/);
 	assert.match(rendered, /Kind: persistent pane/);
 	assert.match(rendered, /Deny tools: subagent, question/);
@@ -1032,7 +1032,7 @@ test("Agents Inspector colors prompt label magenta but markdown tokens accent", 
 test("Monitor tab task rendering still exposes task trace metadata", async () => {
 	const taskId = "planner-1700000120-bbbbbbbb";
 	const taskRecord = record("planner", taskId, "2026-05-14T05:02:00.000Z", {
-		model: "openai-codex/gpt-5.6-sol:xhigh",
+		model: "openai-codex/gpt-6-astra:xhigh",
 		effort: "xhigh",
 		summary: "completed planner summary",
 		completionArchivePath: "/tmp/planner-completion.json",

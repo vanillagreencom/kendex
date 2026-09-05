@@ -277,10 +277,10 @@ test("oneshot transcript filters message_update and enriches agent_start for sup
 			shapedStreamEvent(shape, "agent_start"),
 			shapedStreamEvent(shape, "message_start"),
 			shapedStreamEvent(shape, "message_update", { message: { role: "assistant", content: [{ type: "text", text: `partial ${shape}` }] } }),
-			shapedStreamEvent(shape, "message_end", { message: { role: "assistant", content: [{ type: "text", text: `final ${shape}` }], usage: { input: 3, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 5 }, model: "openai-codex/gpt-5.6-sol:xhigh" } }),
+			shapedStreamEvent(shape, "message_end", { message: { role: "assistant", content: [{ type: "text", text: `final ${shape}` }], usage: { input: 3, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 5 }, model: "openai-codex/gpt-6-astra:xhigh" } }),
 		]) }]);
 		try {
-			const agent = { ...testAgent(), model: "openai-codex/gpt-5.6-sol:xhigh" };
+			const agent = { ...testAgent(), model: "openai-codex/gpt-6-astra:xhigh" };
 			const result = await runSingleAgent(
 				tempRuntime(),
 				tempRuntime(),
@@ -306,10 +306,10 @@ test("oneshot transcript filters message_update and enriches agent_start for sup
 			const records = content.trim().split(/\r?\n/).map((line) => JSON.parse(line));
 			const agentStart = findAgentStartTranscriptPayload(records);
 			assert.equal(agentStart.agent, "reviewer-test", shape);
-			assert.equal(agentStart.model, "openai-codex/gpt-5.6-sol:xhigh", shape);
+			assert.equal(agentStart.model, "openai-codex/gpt-6-astra:xhigh", shape);
 			assert.ok(Array.isArray(agentStart.args), shape);
 			assert.ok(agentStart.args.includes("--model"), shape);
-			assert.ok(agentStart.args.includes("openai-codex/gpt-5.6-sol:xhigh"), shape);
+			assert.ok(agentStart.args.includes("openai-codex/gpt-6-astra:xhigh"), shape);
 			assert.equal(agentStart.args.some((arg: string) => arg.startsWith("Task: ")), false, shape);
 		} finally {
 			setSingleAgentSpawnForTests();

@@ -16,7 +16,7 @@
  *
  * Run with:
  *   FORK_TEST_MODEL=pi-claude/claude-haiku-4-5 node --import tsx --test tests/int-fork.mjs
- *   FORK_TEST_MODEL=openai-codex/gpt-5.6-sol:medium    node --import tsx --test tests/int-fork.mjs
+ *   FORK_TEST_MODEL=openai-codex/gpt-6-astra:medium    node --import tsx --test tests/int-fork.mjs
  */
 
 import { createRpcHarness } from "./lib/rpc-harness.mjs";

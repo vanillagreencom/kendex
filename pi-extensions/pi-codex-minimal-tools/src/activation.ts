@@ -12,7 +12,7 @@ export interface ActivationContextLike {
 }
 
 const OPENAI_PROVIDER_PROBES = ["openai-codex", "openai"];
-const OPENAI_MODEL_PROBE_IDS = ["gpt-5.6-sol", "gpt-5.4", "gpt-5.3-codex", "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-4.1", "o4-mini"];
+const OPENAI_MODEL_PROBE_IDS = ["gpt-6-astra", "gpt-5.4", "gpt-5.3-codex", "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-4.1", "o4-mini"];
 
 export function isOpenAiLoadedModel(model: ModelLike | undefined): boolean {
 	const provider = (model?.provider ?? "").toLowerCase();

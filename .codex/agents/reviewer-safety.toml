@@ -1,7 +1,7 @@
 name = "reviewer-safety"
 nickname_candidates = ["Reviewer-Safety-Atlas", "Reviewer-Safety-Delta", "Reviewer-Safety-Echo", "Reviewer-Safety-Nova", "Reviewer-Safety-Orion", "Reviewer-Safety-Vector"]
 description = "Memory, thread, and process safety auditor. Unsafe code, data races, lock-free correctness, and file/process races (TOCTOU, PID reuse, shared mutable state)."
-model = "gpt-5.6-sol"
+model = "gpt-6-astra"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 developer_instructions = '''

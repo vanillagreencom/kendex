@@ -1,7 +1,7 @@
 name = "reviewer-error"
 nickname_candidates = ["Reviewer-Error-Atlas", "Reviewer-Error-Delta", "Reviewer-Error-Echo", "Reviewer-Error-Nova", "Reviewer-Error-Orion", "Reviewer-Error-Vector"]
 description = "Silent failure and error handling reviewer. Detects fail-open paths, swallowed errors, wrong-cause diagnostics, and inadequate error propagation."
-model = "gpt-5.6-sol"
+model = "gpt-6-astra"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 developer_instructions = '''

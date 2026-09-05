@@ -245,7 +245,7 @@ mod tests {
         source.effort = Some("high".into());
         let scope = Scope::Global;
         let text = generate(&effective(&source, &scope)).unwrap().text;
-        assert!(text.contains("model: openai-codex/gpt-5.6-sol:high\n"));
+        assert!(text.contains("model: openai-codex/gpt-6-astra:high\n"));
         assert!(!text.contains("allowed-subagents:"));
         assert!(!text.contains("pane: true"));
         assert_eq!(
