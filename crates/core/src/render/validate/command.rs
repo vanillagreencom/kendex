@@ -35,3 +35,25 @@ pub(super) fn gemini(text: &str) -> Vec<Finding> {
     }
     findings
 }
+
+/// Pi expands a prompt template's positional placeholders — `$1`, `$@`,
+/// `$ARGUMENTS`, `${1:-default}` — and nothing else (Pi docs,
+/// prompt-templates.md). Claude Code's `!`command`` inline runs the command
+/// before the prompt is sent; Pi has no such rule, so the model reads the
+/// backticked command as text and the author's intent is lost in silence.
+pub(super) fn pi(text: &str) -> Vec<Finding> {
+    let (_, prose) = crate::frontmatter::split(text).unwrap_or(("", text));
+    // Anywhere in a line, not at its edges: Claude's own shipped commands
+    // put the inline at the end of a labelled list item.
+    let inlined = prose.lines().any(|line| {
+        line.find("!`")
+            .is_some_and(|open| line[open + 2..].contains('`'))
+    });
+    if !inlined {
+        return Vec::new();
+    }
+    vec![Finding::advisory(
+        "the command runs a shell inline with !`…`, which Pi does not expand — the model reads the backticked command as text",
+        "state the command's output in the prose, or drop Pi from this command's harnesses",
+    )]
+}

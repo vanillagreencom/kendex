@@ -1,0 +1,1 @@
+- Commands install on Pi as prompt templates (`prompts/<name>.md`) at both scopes, with the rename toggle and removal every managed kind has.
