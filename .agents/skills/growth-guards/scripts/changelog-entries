@@ -91,9 +91,9 @@ than being an entry.
 --collate judges, and on a clean verdict folds every accepted fragment into
 the record's [Unreleased] section under the heading its own section names,
 then deletes the fragment files and the section directory each leaves empty.
-The release commit is its only caller. It refuses, writing nothing, when the
-index and the working tree disagree about the record or any fragment: the fold
-publishes the files on disk and the judgement measured the ones git carries.
+The release caller must set GROWTH_GUARDS_CHANGELOG_COLLATE=1. It refuses,
+writing nothing, when the index or working tree has staged, unstaged or non-ignored untracked changes.
+Collate before changing release files; commit or restore pending edits first.
 The record is replaced whole or not at all.
 
 Tracked content is read from the index; text that is not valid UTF-8 is a
@@ -110,8 +110,9 @@ kendex.settings.toml [env] > default):
                                   (default CHANGELOG.md; empty = no record
                                   scope)
 
-GROWTH_GUARDS_CHANGELOG_COLLATE=1 lets commit-msg count the release record
-as its required changelog change. It does not change this check.
+GROWTH_GUARDS_CHANGELOG_COLLATE=1 authorizes --collate and lets commit-msg
+count the release record as its required changelog change. Ordinary fragment
+validation does not require it.
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF

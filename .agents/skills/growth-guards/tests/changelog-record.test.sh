@@ -13,6 +13,8 @@ unset GROWTH_GUARDS_CHANGELOG_CAP GROWTH_GUARDS_CHANGELOG_PATHS \
   GROWTH_GUARDS_CHANGELOG_RECORD GROWTH_GUARDS_CHANGELOG_COLLATE \
   GROWTH_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
+export GROWTH_GUARDS_CHANGELOG_COLLATE=1
+
 PASS=0
 FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
@@ -64,12 +66,14 @@ for text in '# Release notes' $'# Log\n\n## [Unreleased]\n\n## [Unreleased]' $'#
   printf '%s\n' "$text" >"$R/CHANGELOG.md"
   stage
   cp "$R/CHANGELOG.md" "$TMP/before.md"
+  git -C "$R" commit -qm "prepare destination"
   run_ce --collate
   [ "$RC" -gt 0 ] && cmp -s "$R/CHANGELOG.md" "$TMP/before.md" && [ -f "$R/changelog.d/fixed/invalid.md" ] \
     && ok "collation refuses an unusable destination without writes" || bad "collation destination" "rc=$RC out=$OUT"
 done
 printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Reworded note.\n' >"$R/CHANGELOG.md"
 stage
+git -C "$R" commit -qm "prepare destination"
 run_ce --collate
 [ "$RC" -eq 0 ] && [ ! -e "$R/changelog.d/fixed/invalid.md" ] && grep -Fxq -- '- A fixed defect.' "$R/CHANGELOG.md" && grep -Fxq -- '- Reworded note.' "$R/CHANGELOG.md" \
   && ok "collation retains the edited notes and folds the fragment" || bad "collation control" "rc=$RC out=$OUT"
@@ -98,6 +102,7 @@ for row in 'untracked|is not tracked' 'symlink|not a regular collation destinati
     binary) printf '\000' >>"$R/CHANGELOG.md"; stage ;;
     utf8) printf '\377' >>"$R/CHANGELOG.md"; stage ;;
   esac
+  git -C "$R" commit -qm "prepare destination"
   cp -L "$R/CHANGELOG.md" "$TMP/record-before"
   cp "$R/changelog.d/fixed/pending.md" "$TMP/fragment-before"
   index_before="$(git -C "$R" ls-files -s)"

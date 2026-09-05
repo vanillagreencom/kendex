@@ -16,9 +16,8 @@
 #
 # The fragments are the ones git carries, because the walk reads the index;
 # their content, and the record's, are read from the working tree, so any
-# path the verdict covers that the index and the disk disagree about stops
-# the write. That is what makes the verdict a verdict over the bytes about to
-# be published.
+# staged, unstaged or non-ignored untracked change stops the write. The caller sets
+# GROWTH_GUARDS_CHANGELOG_COLLATE=1 before it changes release files.
 #
 # Every path moves as NUL-terminated bytes from the walk's records to the
 # fold and the delete, so a fragment whose name carries a newline is folded
@@ -68,9 +67,23 @@ gg_collate_assemble() {
 }
 
 gg_changelog_collate() { # folds this run's accepted fragments into the record
-  local sec path rec f d shown dirty survivors noun rc=0 count=0 nl guarded
+  local sec path rec f d shown dirty survivors noun rc=0 count=0 nl
   nl="
 "
+
+  [ "${GROWTH_GUARDS_CHANGELOG_COLLATE:-}" = "1" ] \
+    || gg_config_error "--collate requires GROWTH_GUARDS_CHANGELOG_COLLATE=1 for the release write"
+
+  git status --porcelain=v1 --untracked-files=normal -z >"$GG_TMP/collate.dirty" \
+    || gg_collection_error "could not read repository status; nothing was written"
+  if [ -s "$GG_TMP/collate.dirty" ]; then
+    shown=""
+    while IFS= read -r -d '' dirty; do
+      shown="$shown  $(gg_shown "$dirty")$nl"
+    done <"$GG_TMP/collate.dirty"
+    gg_config_error "--collate requires a clean index and working tree; commit, restore or remove these first:
+${shown%"$nl"}"
+  fi
 
   if [ "$checked" -eq 0 ]; then
     echo "changelog-entries: no fragments — nothing to collate"
@@ -80,12 +93,9 @@ gg_changelog_collate() { # folds this run's accepted fragments into the record
   # other file.
   [ -n "$RECORD" ] \
     || gg_config_error "the record scope is off (GROWTH_GUARDS_CHANGELOG_RECORD is empty), so there is no collated record to fold these fragments into"
-  # git has to carry the record, or the staleness guard below cannot see it:
-  # `git diff` says nothing about an untracked file, so the fold would rewrite
-  # a record nothing measured and then delete the tracked fragments that went
-  # into it. A record staged for the first time satisfies this.
+  # The index validation must cover the destination before the fold writes it.
   [ -n "$RECORD_SHA" ] \
-    || gg_config_error "$(gg_shown "$RECORD") is not tracked, so nothing measured it and nothing would notice it change — stage it first"
+    || gg_config_error "$(gg_shown "$RECORD") is not tracked, so nothing measured it and nothing would notice it change; commit it first"
 
   for sec in $GG_SECTIONS; do
     : >"$GG_TMP/collate.sel.$sec"
@@ -102,7 +112,6 @@ gg_changelog_collate() { # folds this run's accepted fragments into the record
   # section's fragments arrive in the filename order the release notes have
   # always read. The section came off the walk, which refuses a fragment that
   # names none, so there is nothing left to re-decide here.
-  guarded=(":(literal)$RECORD")
   while IFS= read -r -d '' rec; do
     sec="${rec%%"$GG_TAB"*}"
     path="${rec#*"$GG_TAB"}"
@@ -113,27 +122,8 @@ gg_changelog_collate() { # folds this run's accepted fragments into the record
     # The directory each fragment sits in, so an emptied one can go with it
     # without this run spelling the fragment tree a second time.
     printf '%s\0' "${path%/*}" >>"$GG_TMP/collate.dirs"
-    guarded+=(":(literal)$path")
     count=$((count + 1))
   done <"$GG_TMP/frags.z"
-
-  # The write folds in each file on disk and then deletes it, and it replaces
-  # the record with what it read there — so an unstaged edit to any of them
-  # would be published without anything having measured it. The paths checked
-  # are the ones this run judged, so the guard and the thing it guards cannot
-  # drift apart.
-  git diff --name-only -z -- "${guarded[@]}" >"$GG_TMP/collate.dirty" \
-    || gg_collection_error "could not compare the changelog against the index — nothing was written"
-  if [ -s "$GG_TMP/collate.dirty" ]; then
-    # One line per path, each rendered: a name carrying a newline would
-    # otherwise forge lines in this very diagnostic.
-    shown=""
-    while IFS= read -r -d '' dirty; do
-      shown="$shown  $(gg_shown "$dirty")$nl"
-    done <"$GG_TMP/collate.dirty"
-    gg_config_error "the changelog differs between git and the working tree; the collation publishes the files on disk and the judge measures the ones git carries — stage or restore these first:
-${shown%"$nl"}"
-  fi
 
   # awk normalizes a fragment that ends without a newline, which would
   # otherwise glue two entries into one line.
