@@ -226,6 +226,20 @@ run_in "$R" "$MDR" doc.md
 [ "$RC" -eq 0 ] && [ "$(cat "$R/doc.md")" = 'Wrapped text.' ] \
   && ok "the same file reflows when rename succeeds" || bad "successful replacement control" "rc=$RC out=$OUT"
 
+echo "=== staged reflow honors exclusions ==="
+new_repo staged-exclusion
+mkdir -p "$R/tools"
+printf 'Wrapped\ntext.\n' >"$R/doc.md"
+printf 'doc.md\tvendored document\n' >"$R/tools/md-excludes"
+git -C "$R" add -A
+run_in "$R" "$MDR" --staged
+[ "$RC" -eq 0 ] && [ "$(cat "$R/doc.md")" = $'Wrapped\ntext.' ] \
+  && ok "staged reflow leaves the excluded document unchanged" || bad "staged exclusion" "rc=$RC out=$OUT"
+git -C "$R" rm -qf tools/md-excludes
+run_in "$R" "$MDR" --staged
+[ "$RC" -eq 0 ] && [ "$(cat "$R/doc.md")" = 'Wrapped text.' ] \
+  && ok "the same staged document reflows without its exclusion" || bad "staged exclusion control" "rc=$RC out=$OUT"
+
 echo "=== the skill's own shipped markdown is a fixed point ==="
 new_repo self
 mkdir -p "$R/skills/growth-guards"

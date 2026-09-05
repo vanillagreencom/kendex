@@ -256,47 +256,21 @@ index_lane() {
 # text is extracted from the WHOLE staged blob, because a block comment's
 # state comes from lines the commit did not touch, and only hits on the
 # lines the diff adds are reported.
+staged_file() { # PATH BLOBFILE SHA
+  local f="$1" blob="$2" allow rec
+  family_or_skip "$f" "$blob" || return 0
+  # Extract from the whole blob, but report only lines added by the diff.
+  gg_staged_added_lines "$f" >"$GG_TMP/added"
+  allow=$'\n'
+  while IFS= read -r rec; do
+    allow="$allow${rec%%"$GG_TAB"*}"$'\n'
+  done <"$GG_TMP/added"
+  [ "$allow" != $'\n' ] || return 0
+  judge_blob "$FAM" "$f" "$blob" "$allow"
+}
+
 staged_lane() {
-  local meta f dstmode dstsha allow rec
-  gg_require_merged_index
-  git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% \
-    --diff-filter=AMT >"$GG_TMP/raw.z" \
-    || gg_collection_error "could not collect the staged changes (git diff --cached --raw failed)"
-  while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
-    # Record shape: ":srcmode dstmode srcsha dstsha status". Only A, M and T
-    # survive the filter, none of which renames a path, so each carries one.
-    set -- $meta
-    dstmode="$2"
-    dstsha="$4"
-    gg_matches_path_glob "$f" || continue
-    gg_is_excluded "$f" && continue
-    case "$dstmode" in
-      120000)
-        gg_note_skip "$f" "tracked as a symlink, not source"
-        continue
-        ;;
-      160000)
-        gg_note_skip "$f" "tracked as a submodule gitlink, not source"
-        continue
-        ;;
-    esac
-    gg_read_blob "$dstsha" "$f" "source file"
-    if gg_blob_is_binary "$GG_TMP/blob" "$f"; then
-      gg_note_skip "$f" "binary content, not source"
-      continue
-    fi
-    family_or_skip "$f" "$GG_TMP/blob" || continue
-    # The admitted set is one newline-delimited string matched by `case`,
-    # the shape todo-ban's carrier set takes: Bash 3.2 has no associative
-    # array. A blob the diff gives no line to has nothing to judge.
-    gg_staged_added_lines "$f" >"$GG_TMP/added"
-    allow=$'\n'
-    while IFS= read -r rec; do
-      allow="$allow${rec%%"$GG_TAB"*}"$'\n'
-    done <"$GG_TMP/added"
-    [ "$allow" != $'\n' ] || continue
-    judge_blob "$FAM" "$f" "$GG_TMP/blob" "$allow"
-  done <"$GG_TMP/raw.z"
+  gg_walk_staged_paths source staged_file
 }
 
 unmeasured() { # the qualifier for this run, empty when everything matched was read
@@ -304,7 +278,6 @@ unmeasured() { # the qualifier for this run, empty when everything matched was r
 }
 
 if [ "$MODE" = "staged" ]; then
-  : >"$GG_TMP/skipped.z"
   staged_lane
   if [ "$GG_COMMENT_EXTRACT_ERRORS" -gt 0 ]; then
     echo "comments: scan incomplete — $GG_COMMENT_EXTRACT_ERRORS file(s) could not be scanned; $GG_VIOLATIONS history reference(s) found in $MATCHED scanned file(s)$(unmeasured)"
