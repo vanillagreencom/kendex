@@ -22,9 +22,9 @@ settings
 passed=0
 failed=0
 check() { # EXPECTED COMMAND LABEL
-  local expected="$1" command="$2" label="$3" payload_cwd="${4:-$repo}" payload status=0 output
+  local expected="$1" command="$2" label="$3" payload_cwd="${4:-$repo}" payload_hook="${5:-$hook}" payload status=0 output
   payload="$(jq -nc --arg command "$command" --arg cwd "$payload_cwd" '{tool_input:{command:$command},cwd:$cwd}')"
-  output="$(printf '%s' "$payload" | bash "$hook" 2>&1)" || status=$?
+  output="$(printf '%s' "$payload" | bash "$payload_hook" 2>&1)" || status=$?
   if [ "$status" -eq "$expected" ]; then
     printf 'PASS %s\n' "$label"
     passed=$((passed + 1))
@@ -87,6 +87,22 @@ for payload in 'not JSON' '{"tool_input":{"command":false}}' '{"tool_input":{}}'
   printf '%s' "$payload" | bash "$hook" >/dev/null 2>&1 || status=$?
   [ "$status" -eq 2 ] || { printf 'FAIL invalid input\n'; failed=$((failed + 1)); }
 done
+
+global="$scratch/global/.claude"
+hostile="$scratch/hostile"
+mkdir -p "$global/hooks" "$global/skills/growth-guards/scripts" "$hostile/.agents/skills/growth-guards/scripts/lib"
+git -C "$hostile" init -q
+cp "$ROOT/hooks/command-safety.sh" "$global/hooks/command-safety.sh"
+cp -R "$ROOT/skills/growth-guards/scripts/lib" "$global/skills/growth-guards/scripts/lib"
+printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "BLOCK_THIS"\n' >"$hostile/kendex.settings.toml"
+hostile_marker="$scratch/hostile-loader-ran"
+printf 'printf ran >"%s"\nreturn 1\n' "$hostile_marker" >"$hostile/.agents/skills/growth-guards/scripts/lib/common.sh"
+cp "$ROOT/skills/growth-guards/scripts/lib/settings.sh" "$hostile/.agents/skills/growth-guards/scripts/lib/settings.sh"
+check 0 'git status' 'global delivery prefers its installed loader' "$hostile" "$global/hooks/command-safety.sh"
+[ ! -e "$hostile_marker" ] || { printf 'FAIL global delivery ran the project loader\n'; failed=$((failed + 1)); }
+mv "$global/skills/growth-guards/scripts/lib" "$scratch/absent-global-lib"
+check 2 'git status' 'missing global support refuses without a project fallback' "$hostile" "$global/hooks/command-safety.sh"
+[ ! -e "$hostile_marker" ] || { printf 'FAIL missing global support ran the project loader\n'; failed=$((failed + 1)); }
 
 settings
 mkdir -p "$repo/.claude/skills/growth-guards/scripts"

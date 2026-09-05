@@ -48,18 +48,27 @@ if [ "$root_status" -ne 0 ]; then
   exit 0
 fi
 
-lib="$root/.agents/skills/growth-guards/scripts/lib"
-if [ ! -f "$lib/settings.sh" ]; then
-  # Copy delivery keeps the dependency beside the harness's hook directory.
-  at="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)" || refuse "could not locate the hook"
-  while [ "$at" != "$root" ] && [ "$at" != / ]; do
-    if [ -f "$at/skills/growth-guards/scripts/lib/settings.sh" ]; then
-      lib="$at/skills/growth-guards/scripts/lib"
-      break
-    fi
-    at="${at%/*}"
-    [ -n "$at" ] || at=/
-  done
+lib=
+hook_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)" || refuse "could not locate the hook"
+at="$hook_dir"
+levels=0
+# Registered hook layouts keep the scope's skills one or two directories
+# above hooks. A wider walk can reach executable files outside the install.
+while [ "$levels" -lt 3 ] && [ "$at" != "$root" ] && [ "$at" != / ]; do
+  candidate="$at/skills/growth-guards/scripts/lib"
+  if [ -e "$candidate/common.sh" ] || [ -L "$candidate/common.sh" ] \
+    || [ -e "$candidate/settings.sh" ] || [ -L "$candidate/settings.sh" ]; then
+    lib="$candidate"
+    break
+  fi
+  at="${at%/*}"
+  [ -n "$at" ] || at=/
+  levels=$((levels + 1))
+done
+if [ -z "$lib" ]; then
+  case "$hook_dir" in
+    "$root"/*) lib="$root/.agents/skills/growth-guards/scripts/lib" ;;
+  esac
 fi
 [ -f "$lib/common.sh" ] && [ -f "$lib/settings.sh" ] || refuse "the command-safety bundle requires the installed growth-guards settings loader"
 GG_CHECK=command-safety
