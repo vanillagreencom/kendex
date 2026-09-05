@@ -40,7 +40,7 @@ Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/revie
 - Before adding a function, parser, stub or loop, grep the repo for the verb it performs; before stating a rule, grep for the rule.
   - A second copy of that verb, in any language, is a twin and never delegation, and so is a second statement of a rule another file owns, in prose, config or a table.
   - Call or cite the one that exists, or escalate in your return. An issue that orders a twin is escalated, not implemented.
-- Docs move with the code they describe; the `docs-writing` skill states the rule and the `doc-drift-check` hook names docs that may need an update.
+- Docs move with the code they describe; the `docs-writing` skill states the rule and the `doc-drift-check` hook shows the user docs that may need an update.
 - Once a pushed head has been reviewed, later rounds add commits and never amend; before any review has run on a head, the kendex-issues fix cycle may amend only to refresh a required check that cannot be rerun.
 
 Code standards are [`../code-quality/SKILL.md`](../code-quality/SKILL.md): correctness, comments, over-engineering, cleanup.

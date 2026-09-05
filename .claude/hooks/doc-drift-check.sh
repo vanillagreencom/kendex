@@ -3,7 +3,7 @@
 # name: doc-drift-check
 # event: Stop
 # matcher:
-# description: Reports unchanged documents that may need an update after covered code changes. Uses the nearest tracked non-root AGENTS.md and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. Every Stop reports independently. Claude Code only.
+# description: Shows the user a notice through stdout systemMessage JSON when unchanged documents may need an update after covered code changes. Uses the nearest tracked non-root AGENTS.md and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. Every Stop reports independently. Claude Code only.
 # safety: Read-only notice. Always exits 0, including when discovery fails; failures report that the notice is unavailable. Does not parse session payloads or write session state.
 # timeout: 30
 # harnesses: [claude-code]
@@ -211,7 +211,6 @@ if [ -z "$STALE" ]; then
   exit 0
 fi
 
-echo "doc-drift-check: notice: these unchanged documents may need an update:" >&2
-printf '%s' "$STALE" >&2
-echo "doc-drift-check: compared $JUDGED" >&2
+MESSAGE=$(printf 'These unchanged documents may need an update:\n%sCompared %s\n' "$STALE" "$JUDGED")
+jq -n --arg systemMessage "$MESSAGE" '{systemMessage: $systemMessage}'
 exit 0
