@@ -3,7 +3,7 @@ name: reviewer-test
 description: "Test coverage and quality reviewer. Verifies coverage, detects vacuous tests and missing must-fail controls, audits assertion tightness and test wiring."
 tags: review, testing
 deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, delegate_subagent, question, tasks_write
-effort: xhigh
+effort: high
 color: blue
 ---
 

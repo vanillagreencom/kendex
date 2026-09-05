@@ -3,7 +3,7 @@ name: generalist
 description: General-purpose agent for documentation, cleanup, stale references, code organization, and miscellaneous maintenance tasks.
 model: opus
 role: engineer
-effort: xhigh
+effort: high
 color: green
 tags: [docs, refactoring]
 ---

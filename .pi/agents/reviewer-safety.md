@@ -3,7 +3,7 @@ name: reviewer-safety
 description: "Memory, thread, and process safety auditor. Unsafe code, data races, lock-free correctness, and file/process races (TOCTOU, PID reuse, shared mutable state)."
 tags: review, security
 deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, delegate_subagent, question, tasks_write
-effort: xhigh
+effort: high
 color: red
 ---
 

@@ -3,7 +3,7 @@ name: researcher
 description: "Exa-powered research specialist for producing evidence-backed findings reports from project research prompts. Use for research issues, technology investigations, vendor/library comparisons, architectural option analysis, and current-state web research."
 tags: research
 model: opus
-effort: max
+effort: high
 background: true
 disallowedTools: Agent, AskUserQuestion
 color: purple

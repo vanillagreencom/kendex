@@ -3,7 +3,7 @@ name: reviewer-correctness
 description: "Broad correctness and regression reviewer for behavior breakage, boundary/edge-case predicates, API/CLI/devex regressions, feature-gate leaks, migrations, state semantics, and cross-module side effects."
 tags: review
 model: opus
-effort: xhigh
+effort: high
 background: true
 disallowedTools: Agent, AskUserQuestion
 color: red

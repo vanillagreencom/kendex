@@ -3,7 +3,7 @@ name: tpm
 description: "Technical Program Manager for analyzing roadmaps, project lifecycle, and progress. Returns recommendations only. Does not modify project management tools."
 tags: planning
 deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, delegate_subagent, question
-effort: high
+effort: medium
 color: blue
 ---
 

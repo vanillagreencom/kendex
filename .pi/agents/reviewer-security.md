@@ -3,7 +3,7 @@ name: reviewer-security
 description: "Application security reviewer. Auth logic, input handling, trust/ownership gating, path containment, and secret exposure."
 tags: review, security
 deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, delegate_subagent, question, tasks_write
-effort: xhigh
+effort: high
 color: red
 ---
 

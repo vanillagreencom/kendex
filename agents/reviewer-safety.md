@@ -3,7 +3,7 @@ name: reviewer-safety
 description: Memory, thread, and process safety auditor. Unsafe code, data races, lock-free correctness, and file/process races (TOCTOU, PID reuse, shared mutable state).
 model: opus
 role: reviewer
-effort: xhigh
+effort: high
 color: red
 tags: [review, security]
 ---

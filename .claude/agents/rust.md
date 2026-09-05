@@ -2,8 +2,8 @@
 name: rust
 description: "Rust engineer for performance-critical systems. Use for zero-allocation hot paths, lock-free algorithms, SIMD optimization, and systems programming."
 tags: performance
-model: opus
-effort: max
+model: fable
+effort: high
 background: false
 disallowedTools: Agent, AskUserQuestion
 color: orange

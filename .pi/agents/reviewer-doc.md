@@ -3,7 +3,7 @@ name: reviewer-doc
 description: "Documentation accuracy reviewer. Verifies changed doc claims against implementation, re-derives transcribed values, checks citations resolve, audits drift."
 tags: review, docs
 deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, delegate_subagent, question, tasks_write
-effort: xhigh
+effort: high
 color: yellow
 ---
 
