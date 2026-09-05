@@ -21,7 +21,7 @@ use crate::source::{SourceConfig, find_item, list_items, source_config};
 use crate::source_read::SealedSource;
 
 /// The set that is orchestration, code-review and commit-guards plus
-/// deep-research in one install. A partial set leans on dependency
+/// deep-research and bot-instructions in one install. A partial set leans on dependency
 /// expansion to complete itself; this one promises to carry what it
 /// needs.
 const WHOLE: &str = "workflow";
@@ -34,7 +34,10 @@ const DRAWN_FROM: [&str; 3] = ["orchestration", "code-review", "commit-guards"];
 /// containment check runs both ways: a member of `workflow` and of
 /// nothing else has to be a deliberate entry here rather than a quiet
 /// one, or it goes undescribed.
-const BEYOND: [(ItemKind, &str); 1] = [(ItemKind::Skill, "deep-research")];
+const BEYOND: [(ItemKind, &str); 2] = [
+    (ItemKind::Skill, "deep-research"),
+    (ItemKind::Skill, "bot-instructions"),
+];
 
 /// One member per kind these sets carry, each of which has to read back.
 /// [`super::declared`] refuses a body key it does not know, so a `hooks`
@@ -43,7 +46,7 @@ const BEYOND: [(ItemKind, &str); 1] = [(ItemKind::Skill, "deep-research")];
 /// kinds and nothing said. That is what naming one member per kind buys.
 const A_MEMBER: [(&str, ItemKind, &str); 3] = [
     ("workflow", ItemKind::Agent, "reviewer-arch"),
-    ("workflow", ItemKind::Skill, "orch"),
+    ("workflow", ItemKind::Skill, "bot-instructions"),
     ("commit-guards", ItemKind::Hook, "block-bare-cd"),
 ];
 
