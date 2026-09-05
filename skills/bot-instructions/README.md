@@ -19,10 +19,10 @@ Requires Python 3.11 or newer. Follow [references/checklist.md](references/check
 
 ## How it works
 
-You enable the review bots in `bot-instructions.toml`. The renderer reads that file and the shared review rules. It prepares and validates each bot's instruction file before writing it. The check command compares those files with the configured output.
+You enable the review bots in the manifest's `[bot-instructions]` table. The renderer reads that table and the shared review rules. It prepares and validates each bot's instruction file before writing it. The check command compares those files with the configured output.
 
 ## Settings
 
-- `bot-instructions.toml`: every key and the glob dialect, [schemas/repo-toml.md](schemas/repo-toml.md).
+- `[bot-instructions]` in `kendex.toml`, or `kendex-local.toml` for a source catalog: every key and the glob dialect, [schemas/repo-toml.md](schemas/repo-toml.md).
 - Which block lands in which file, and why each omission is deliberate: [schemas/renders.md](schemas/renders.md).
 - Per-repo settings no file can configure: [references/checklist.md](references/checklist.md) § The settings.

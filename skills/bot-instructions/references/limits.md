@@ -42,7 +42,7 @@ Only the first two are reachable from this package's renders. The rest are liste
 |------|-------|------|
 | Character cap on instruction files | none is documented. Third-party writeups still cite a 4,000-character cut-off on `copilot-instructions.md` and `*.instructions.md`; GitHub removed it | — |
 | Size guidance | "Instructions must be no longer than 2 pages" | recommendation |
-| `[budgets] copilot_chars` | 6000 characters, this package's reading of two pages, and the default a repo may raise | package budget |
+| `[bot-instructions.budgets] copilot_chars` | 6000 characters, this package's reading of two pages, and the default a repo may raise | package budget |
 | `excludeAgent` values | `code-review`, `cloud-agent`. The value names the agent the file is hidden **from**, so `cloud-agent` keeps a file from the working agent and leaves code review reading it, and `code-review` does the reverse. They are not interchangeable | — |
 | `applyTo` on an empty or absent value | the file matches nothing and never loads | — |
 | `applyTo` | a single string holding comma-separated globs | — |
@@ -51,7 +51,7 @@ Only the first two are reachable from this package's renders. The rest are liste
 
 `cloud-agent` is the current spelling, quoted from the page above: "Use either `"code-review"` or `"cloud-agent"`." Older material spells the same agent `coding-agent`, from before the rename, and material predating both calls it the coding agent in prose. A change to that value belongs to a re-read of the cited page, not to a recollection.
 
-That AGENTS.md row is worth reading twice. Copilot code review does read it, which is what makes `AGENTS.md` the doctrine root — and it is also why **reviewer-only text belongs in a `[[surface]]` carrying `reviewer_only`**, never in a doctrine block. `excludeAgent` is frontmatter on a `.instructions.md` file, so it cannot protect `AGENTS.md`, and the render puts all eight doctrine blocks there deliberately: they are the review contract this repo's working agents are held to as well, and Codex reads no second surface. What a working agent must not read is repo-specific reviewer guidance, and that is exactly the material `reviewer_only` routes into a file `excludeAgent` can protect.
+That AGENTS.md row is worth reading twice. Copilot code review does read it, which is what makes `AGENTS.md` the doctrine root — and it is also why **reviewer-only text belongs in a `[[bot-instructions.surface]]` carrying `reviewer_only`**, never in a doctrine block. `excludeAgent` is frontmatter on a `.instructions.md` file, so it cannot protect `AGENTS.md`, and the render puts all eight doctrine blocks there deliberately: they are the review contract this repo's working agents are held to as well, and Codex reads no second surface. What a working agent must not read is repo-specific reviewer guidance, and that is exactly the material `reviewer_only` routes into a file `excludeAgent` can protect.
 
 **Read semantics.** "When reviewing a pull request, Copilot reads repository custom instructions, agent instructions, and agent skills from the head branch (the branch with your changes), not the base branch."
 
@@ -83,7 +83,7 @@ Qodo's docs are split by product line, and a row's line decides whether it appli
 | What | Value | Kind | Line |
 |------|-------|------|------|
 | `best_practices.md` per file | "Keep files relatively short (under ~800 lines)" | recommendation | Review, and the same words on the Merge page at `/v1/features/best-practices` |
-| `[budgets] qodo_best_practices_lines` | 800 lines, this package's reading of that recommendation, and the default a repo may raise | package budget | — |
+| `[bot-instructions.budgets] qodo_best_practices_lines` | 800 lines, this package's reading of that recommendation, and the default a repo may raise | package budget | — |
 | Automatic `best_practices.md` loading | a Qodo Merge (commercial) feature, absent from open-source PR-Agent | — | Merge |
 
 **The 800 is a recommendation, and the budget built on it is this package's.** Qodo gives it as writing guidance — long files are processed less effectively and tend to repeat what the model already knows — and states no rejection or truncation at any length. `qodo-best-practices` still fails over it, for the same reason `copilot-budget` fails over a two-page reading: an unbounded generated file is a render nobody reviews, and a budget someone can see beats a length nobody chose. What it must not claim is that Qodo refused the file.

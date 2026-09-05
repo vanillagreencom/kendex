@@ -1,17 +1,20 @@
-# `bot-instructions.toml`
+# `[bot-instructions]`
 
-One file per repo, at the repo root beside `.coderabbit.yaml` and `.pr_agent.toml`. It holds everything about a repo that a bot needs and doctrine cannot know: what the repo is, which bot capabilities are live here, what is not this repo's code to fix, and what a reviewer gets wrong on a given path.
+The `[bot-instructions]` table holds repo context, enabled bots, exclusions, path instructions and doctrine overrides. It belongs in the effective kendex manifest, beside `[skill-instructions]` and `[agent-additional-instructions]`.
 
-The file is hand-written and never generated. It is the one file in the set a person edits.
+The generator reads `kendex.toml`. When that file declares `is_source_catalog = true`, it reads all bot settings from `kendex-local.toml` instead. It does not merge the two tables. This selection also applies when `derive_render` is false. The same resolved manifest supplies derived exclusions. `tests/staged.test.sh` checks that staged configuration, selection and outputs use the same index.
 
-**The schema is closed.** An unknown key, an unknown table, or a value of the wrong type is an error naming the key. A typo like `[bot]`, `derive_renders` or `review_only` would otherwise be ignored while defaults produced plausible output, which is the silent failure this whole package exists to remove.
+The bot schema is closed within this table. Unknown keys, unknown child tables and wrong value types fail `toml-schema`. Other manifest tables are outside this schema. `tests/toml-schema.test.sh` checks this boundary. Rust preserves the TOML values through manifest and app reads and writes; the package owns bot validation.
 
 ## Shape
 
 ```toml
+schema = 6
+
+[bot-instructions]
 schema = 1
 
-[repo]
+[bot-instructions.repo]
 name = "kendex"
 summary = """
 kendex is a distribution of agent-stack assets: skills, agent definitions,
@@ -20,7 +23,7 @@ the skills and re-vendor in deliberate batches.
 """
 tracker = "KEN"
 
-[bots]
+[bot-instructions.bots]
 codex = true
 copilot = true
 coderabbit = true
@@ -29,28 +32,28 @@ qodo_best_practices = true
 qodo_review_md = false
 macroscope = false
 
-[cadence]
+[bot-instructions.cadence]
 coderabbit_incremental = true
 qodo_commands = ["/agentic_review"]
 qodo_push_trigger = false
 
-[tone]
+[bot-instructions.tone]
 coderabbit = """
 Terse and technical. Give the defect, its triggering input, and the
 consequence. No praise, diff restatement, or summary. One finding per thread.
 """
 
-[budgets]
+[bot-instructions.budgets]
 copilot_chars = 6000
 
-[exclusions]
+[bot-instructions.exclusions]
 derive_render = true
 
-[[exclusions.path]]
+[[bot-instructions.exclusions.path]]
 glob = "testdata/golden/**"
 reason = "benchmark-host captured, never compared in CI"
 
-[[surface]]
+[[bot-instructions.surface]]
 name = "tests"
 globs = ["**/tests/**", "**/*.test.sh"]
 reviewer_only = true
@@ -59,10 +62,10 @@ A scratch directory the test removes in its own EXIT trap is cleaned up. Do not
 report it as a leak.
 """
 
-[doctrine.append]
+[bot-instructions.doctrine.append]
 severity = "A performance claim needs a measurement, not an argument."
 
-[doctrine.replace]
+[bot-instructions.doctrine.replace]
 trust-model = "This repo has no gate. Any review object is advisory."
 ```
 
@@ -86,11 +89,11 @@ An empty glob list is an error wherever a glob list is required, which is the li
 
 ## Keys
 
-### `schema`
+### `[bot-instructions] schema`
 
 Integer, required. `1`. The generator refuses a value it does not know rather than rendering a partly understood file.
 
-### `[repo]`
+### `[bot-instructions.repo]`
 
 | Key | Type | Required | Meaning |
 |-----|------|----------|---------|
@@ -98,9 +101,9 @@ Integer, required. `1`. The generator refuses a value it does not know rather th
 | `summary` | string | yes | What this repo is, in two to six sentences. Rendered near the top of the Copilot and Qodo surfaces, which is the only place a bot learns the shape of the codebase |
 | `tracker` | string | no | Issue prefix, e.g. `KEN`. Substituted into the `reply-contract` block's `<issue>` placeholder, so it reaches every destination that block does, `.pr_agent.toml` included. Its character class in the table below is what keeps it safe in all of them. Absent leaves the placeholder generic, which a repo guard pinning the tracked reply form reads as the form being gone |
 
-`summary` is prose about this repo, not doctrine. Anything in it that would be true of another repo belongs in a doctrine block instead. It is under the same content refusals as `[[surface]] instructions`; the table below says which those are, for every string this package renders into a structured file.
+`summary` is prose about this repo, not doctrine. Anything in it that would be true of another repo belongs in a doctrine block instead. It is under the same content refusals as `[[bot-instructions.surface]] instructions`; the table below says which those are, for every string this package renders into a structured file.
 
-### `[bots]`
+### `[bot-instructions.bots]`
 
 Booleans, each defaulting to `false`, one per capability rather than one per vendor. A vendor name covers products with different file support and different portal toggles, and a single flag would render authoritative-looking files that reach nothing.
 
@@ -114,17 +117,17 @@ Booleans, each defaulting to `false`, one per capability rather than one per ven
 | `qodo_review_md` | `REVIEW.md`. Inert until the portal's "REVIEW.md instructions" toggle is on, which is why it is a flag someone sets after doing the checklist line rather than something the generator infers |
 | `macroscope` | the `.macroscope/` tree |
 
-**Every flag false is not an error.** A TOML that enables nothing has nothing to render, and that is a state worth holding: it is how a repo commits its `bot-instructions.toml` in the repo-wide pass of `references/checklist.md` § Adding a repo, before its settings work has enabled anything, and how a fleet stages a rollout one bot at a time. The default being `false` is what makes that the safe direction — a minimal TOML writes no file the repo did not ask for. `render` says it wrote nothing rather than exiting quietly, so an operator who expected files learns the flags are off; rendering nothing in silence would be the thing this package exists to prevent. Having nothing to render is not the same as a render that cannot stop: `agents-section`'s nested-`AGENTS.md` clause is gated by no flag and runs before every write, so an all-off render still fails on a repo holding such a section. `references/checklist.md` § Adding a repo makes clearing one a pass-one step for that reason.
+**Every flag false is not an error.** A TOML that enables nothing has nothing to render, and that is a state worth holding: it is how a repo commits its `[bot-instructions]` in the repo-wide pass of `references/checklist.md` § Adding a repo, before its settings work has enabled anything, and how a fleet stages a rollout one bot at a time. The default being `false` is what makes that the safe direction — a minimal TOML writes no file the repo did not ask for. `render` says it wrote nothing rather than exiting quietly, so an operator who expected files learns the flags are off; rendering nothing in silence would be the thing this package exists to prevent. Having nothing to render is not the same as a render that cannot stop: `agents-section`'s nested-`AGENTS.md` clause is gated by no flag and runs before every write, so an all-off render still fails on a repo holding such a section. `references/checklist.md` § Adding a repo makes clearing one a pass-one step for that reason.
 
 What is an error is a flag combination where something enabled reaches nothing. Three of those, all enforced by `toml-schema`:
 
 - `qodo_best_practices` or `qodo_review_md` true with `qodo` false.
 - `copilot` or `coderabbit` true with `codex` false. Both read the `AGENTS.md` section: CodeRabbit through `knowledge_base.code_guidelines.filePatterns`, Copilot code review directly on GitHub.com. Without it, `.coderabbit.yaml` carries one doctrine block and the Copilot file's reply-contract pointer aims at a section that does not exist, and both render clean.
-- A non-empty `[[surface]]` set with `copilot`, `coderabbit`, `macroscope` and `qodo_best_practices` all false. Those four are every route surface text has, so the surfaces would be instructions nothing reads.
+- A non-empty `[[bot-instructions.surface]]` set with `copilot`, `coderabbit`, `macroscope` and `qodo_best_practices` all false. Those four are every route surface text has, so the surfaces would be instructions nothing reads.
 
 Turning a capability off renders none of its files and deletes none of them, so the files this package wrote stay active until someone removes them. Deleting them is the same commit's work and it comes first: `render` fails on an orphan rather than creating one, so the order is delete, then flip the flag and render. `check` is what catches a retirement that skipped the render. `validators.md` § `orphan` carries the order. A file at one of those paths that this package never wrote is the repo's own and is not judged: `adopt` is how one becomes managed, and it needs the capability on.
 
-### `[cadence]`
+### `[bot-instructions.cadence]`
 
 | Key | Type | Default | Renders to |
 |-----|------|---------|------------|
@@ -149,11 +152,11 @@ No whitespace and no `--` in an entry. A `pr_commands` entry carries inline `--s
 
 First-push-only cadence is `coderabbit_incremental = false` with `qodo_push_trigger = false`: neither bot re-reviews on push, and a reviewer is summoned by comment at a batch boundary. It is the setting that decides how many rounds a pull request costs, so it is a per-repo choice rather than a doctrine constant, and no doctrine block asserts what a push triggers.
 
-### `[tone]`
+### `[bot-instructions.tone]`
 
 `coderabbit`, string, optional. Renders to `tone_instructions`, whose hard cap is 250 characters after the generator strips the newlines a TOML multi-line string introduces. Over the cap, CodeRabbit rejects the entire file. The cap counts Unicode code points, which is what the vendored schema's `maxLength` counts. Absent, the shipped default is used; see `renders.md` for its text.
 
-### `[budgets]`
+### `[bot-instructions.budgets]`
 
 | Key | Type | Default | Bounds |
 |-----|------|---------|--------|
@@ -164,7 +167,7 @@ Both are package budgets rather than vendor caps, and they are the same kind of 
 
 The vendor caps this package can reach — `tone_instructions` at 250 characters and a `path_instructions` entry at 20,000 — take no key. They are the vendored CodeRabbit schema's own `maxLength`, so `coderabbit-schema` is their single enforcer and nothing here carries a second copy of either number.
 
-### `[exclusions]`
+### `[bot-instructions.exclusions]`
 
 `derive_render`, bool, default `false`. When true, the generator reads the repo's install manifest and adds every rendered harness tree to the exclusion set. What it derives is exactly two things: each `.agents/skills/<name>` whose entry does not declare `source = "in-place"`, and each **immediate subdirectory holding a tracked path** of each per-harness render root the repo's install declares. A skill declared `in-place` is this repo's own file and stays in review scope. The tracked-path condition is what keeps a derivation and the dead-exclusion clause from contradicting each other: a subtree the install has not produced, or one git ignores, excludes nothing, and deriving it would name a glob that clause rejects with no edit an author could make to clear it. A render root the index holds as an entry of its own — staged as a symlink, or as a file — is refused naming that root rather than derived as an empty set, because git stores such a root as one entry with the tree under its real name and an empty derivation would leave that tree in review scope silently. A derived glob is held to the glob dialect like a declared one, and a manifest key or directory name outside it fails naming the manifest row that produced it: this is the one glob source no author writes as a glob, and the paths render as prose on the two surfaces that read them as prose, where nothing would judge them as patterns at all.
 
@@ -182,18 +185,18 @@ One harness root is the repo's own directory rather than the harness's: Copilot'
 
 > harness render output, owned upstream — a defect here is fixed at the source and arrives by re-render
 
-Every derived entry carries that exact string, because every derived entry is excluded for that one reason and nothing about the tree distinguishes them. A render rule that wants a reason takes it from here rather than restating it, and the string is a single ASCII line with no `-->` and no `#`, so it satisfies every constraint a rendered comment is under by construction rather than by check. Without it the render rules would demand bytes the schema never supplies: `reason` is a required key on `[[exclusions.path]]` entries alone, and a derived entry has no TOML row to carry one.
+Every derived entry carries that exact string, because every derived entry is excluded for that one reason and nothing about the tree distinguishes them. A render rule that wants a reason takes it from here rather than restating it, and the string is a single ASCII line with no `-->` and no `#`, so it satisfies every constraint a rendered comment is under by construction rather than by check. Without it the render rules would demand bytes the schema never supplies: `reason` is a required key on `[[bot-instructions.exclusions.path]]` entries alone, and a derived entry has no TOML row to carry one.
 
-`[[exclusions.path]]` entries add repo-specific paths.
+`[[bot-instructions.exclusions.path]]` entries add repo-specific paths.
 
 | Key | Type | Required | Meaning |
 |-----|------|----------|---------|
 | `glob` | string | yes | A pattern in the dialect above |
 | `reason` | string | yes | Why this path is not reviewable. Rendered as a comment beside the entry on the surfaces whose render rules say so |
 
-A reason is required because an exclusion with no stated reason is indistinguishable from a mistake at the next read. That argument covers derived entries too, which is why they carry the fixed string above rather than nothing; what they do not have is a TOML row, so the required key stays on `[[exclusions.path]]` and the generator supplies the rest.
+A reason is required because an exclusion with no stated reason is indistinguishable from a mistake at the next read. That argument covers derived entries too, which is why they carry the fixed string above rather than nothing; what they do not have is a TOML row, so the required key stays on `[[bot-instructions.exclusions.path]]` and the generator supplies the rest.
 
-### `[[surface]]`
+### `[[bot-instructions.surface]]`
 
 A path set plus what a reviewer needs to know about it. Zero or more.
 
@@ -215,34 +218,34 @@ A `[...]` class is made of permitted characters and is not itself checked charac
 
 One row per input string, one column per refusal class, and an **Enforced** column saying which side reads that row's value. Every class here is one that would break the STRUCTURE of a file this package emits; a value this package merely dislikes is not refused. Everything that judges these — `toml-schema` and the Escaping paragraphs in `renders.md` — cites this table rather than restating it, so a predicate written here is the only predicate. Three structures encode it, one per kind of cell: `refusals.ROWS` holds the eight rows whose refusals are content classes, `globs.check` holds the glob row, whose character class and path-shape clauses are its own, and `config._cadence` holds the `qodo_commands` row. A reader counting clauses off this table lands on those three, and `tests/toml-schema.test.sh` holds the table against them so a row added on one side without the other reds.
 
-The Enforced column exists because one row is not in `bot-instructions.toml` at all. Doctrine block text lives in the spec copy, so `toml-schema` never sees it and cannot be the clause's owner; the render-side check is. Without the column a reader counting `toml-schema`'s clauses off this table would count three that nothing there implements.
+The Enforced column exists because one row is not in `[bot-instructions]` at all. Doctrine block text lives in the spec copy, so `toml-schema` never sees it and cannot be the clause's owner; the render-side check is. Without the column a reader counting `toml-schema`'s clauses off this table would count three that nothing there implements.
 
 | Input string | heading | marker | comment-close | toml-delimiter | control | character class | Enforced |
 |--------------|---------|--------|---------------|----------------|---------|-----------------|----------|
-| `[repo] name` | – | yes | – | yes | yes | single line | `toml-schema` |
-| `[repo] tracker` | – | yes | – | yes | yes | single line | `toml-schema` |
-| `[repo] summary` | yes | yes | – | yes | yes | – | `toml-schema` |
-| `[[surface]] instructions` | yes | yes | – | – | yes | – | `toml-schema` |
-| `[doctrine.append]` / `[doctrine.replace]` values | yes | yes | – | yes | yes | – | `toml-schema` |
+| `[bot-instructions.repo] name` | – | yes | – | yes | yes | single line | `toml-schema` |
+| `[bot-instructions.repo] tracker` | – | yes | – | yes | yes | single line | `toml-schema` |
+| `[bot-instructions.repo] summary` | yes | yes | – | yes | yes | – | `toml-schema` |
+| `[[bot-instructions.surface]] instructions` | yes | yes | – | – | yes | – | `toml-schema` |
+| `[bot-instructions.doctrine.append]` / `[bot-instructions.doctrine.replace]` values | yes | yes | – | yes | yes | – | `toml-schema` |
 | doctrine block text | yes | yes | – | yes | yes | – | render-side |
-| `[[exclusions.path]] reason` | – | yes | yes | – | yes | single line | `toml-schema` |
-| `[[surface]] globs`, `exclude_globs`, `[[exclusions.path]] glob` | – | – | – | – | – | non-empty, the glob dialect above, and its path-shape rule | `toml-schema` |
-| `[tone] coderabbit` | – | – | – | – | yes | – | `toml-schema` |
-| `[cadence] qodo_commands` entries | – | – | – | – | – | a verb from the set above, no whitespace, no `--` | `toml-schema` |
+| `[[bot-instructions.exclusions.path]] reason` | – | yes | yes | – | yes | single line | `toml-schema` |
+| `[[bot-instructions.surface]] globs`, `exclude_globs`, `[[bot-instructions.exclusions.path]] glob` | – | – | – | – | – | non-empty, the glob dialect above, and its path-shape rule | `toml-schema` |
+| `[bot-instructions.tone] coderabbit` | – | – | – | – | yes | – | `toml-schema` |
+| `[bot-instructions.cadence] qodo_commands` entries | – | – | – | – | – | a verb from the set above, no whitespace, no `--` | `toml-schema` |
 
 The predicates, written once:
 
 - **heading** — a line markdown reads as a heading, in **either** of the two forms `scripts/lib/markdown.py` states. ATX is one to six `#` after three or fewer leading spaces, followed by a space, a tab, or the end of the line. Wide about the indentation, because a line indented two spaces ends the `AGENTS.md` owned region as surely as one in column zero and a narrower input rule would pass a value the render then refuses. Exact about the delimiter, in both directions: `#1917` is a heading to no reader, and refusing it here made a doctrine block carrying a pull request number unrenderable, while `##` before a no-break space is a heading to no reader either and reading it as one ended the owned region early. Setext is a run of `=` or of `-`, indented at most three spaces with only whitespace after it, **under a non-blank line** — `Injected` over `===` is an H1 to every CommonMark reader. This half is wide on purpose: it does not ask whether the line above is a paragraph or the opener of a fenced block, because a refusal that is too wide costs an author a rewrite while one that is too narrow puts a structural heading into a generated file. The section terminators read ATX alone and `markdown.py` says why; what makes that safe is this row, which keeps a setext underline out of every string they parse.
 - **marker** — a line carrying the marker text, which is what decides which files this package owns.
 - **comment-close** — `-->`, which would end the HTML comment a `reason` is rendered inside and put the rest of the value on a line of its own.
-- **toml-delimiter** — `"""`, which would end the TOML multi-line string the value is rendered inside. `.pr_agent.toml` carries every doctrine block and `[repo] summary` as basic multi-line strings, so a value holding the delimiter closes its own string and the rest of it becomes TOML. Marked on exactly the values that reach a TOML string; `[[surface]] instructions` reaches Qodo through `best_practices.md`, which is markdown.
+- **toml-delimiter** — `"""`, which would end the TOML multi-line string the value is rendered inside. `.pr_agent.toml` carries every doctrine block and `[bot-instructions.repo] summary` as basic multi-line strings, so a value holding the delimiter closes its own string and the rest of it becomes TOML. Marked on exactly the values that reach a TOML string; `[[bot-instructions.surface]] instructions` reaches Qodo through `best_practices.md`, which is markdown.
 - **control** — any C0 control character other than tab and newline, DEL (`U+007F`), and the three characters above that range a reader still breaks a line on: `U+0085` NEL, `U+2028` LINE SEPARATOR and `U+2029` PARAGRAPH SEPARATOR. One predicate for both structured targets, because the values reaching them are the same set: a TOML basic multi-line string permits tab and newline and no other control, and so does a YAML scalar. TOML's own escapes are how one arrives — `summary = "\u0000"` parses cleanly and yields a literal NUL — so the value is already decoded by the time this sees it.
 
   The three above C0 are in the class for the same reason the C0 ones are, one layer out: YAML 1.1 lists them as line breaks and every reader CodeRabbit's file reaches acts on them. A value carrying one is emitted as a single line here and read as two there, so a rendered `reason` comment becomes a `path_filters:` key of its own and the entry below it loses its `!` — the state `renders.md` § `reviews.path_filters` names as the one that turns the exclusion list into an allowlist. `scripts/lib/refusals.py` is the one statement of the class, and `coderabbit-schema` runs that same predicate over the document it validates: a default in the vendored schema reaches a rendered file through no row of this table.
 
   A `single line` class does not exempt a row from this mark: it refuses the line breaks and says nothing about the rest of the class — NUL, DEL, the C0 controls that break no line. Read the test against each class rather than counting the rows that have one.
 
-- **character class** — as stated per row above. `single line` on `[repo] name`, `[repo] tracker` and `[[exclusions.path]] reason`; the dialect's own class on the globs; a verb from a closed literal set on `qodo_commands`. Tab and newline stay legal in `[tone] coderabbit`: the documented way to author a tone is a TOML multi-line string, and the render collapses its newlines to single spaces.
+- **character class** — as stated per row above. `single line` on `[bot-instructions.repo] name`, `[bot-instructions.repo] tracker` and `[[bot-instructions.exclusions.path]] reason`; the dialect's own class on the globs; a verb from a closed literal set on `qodo_commands`. Tab and newline stay legal in `[bot-instructions.tone] coderabbit`: the documented way to author a tone is a TOML multi-line string, and the render collapses its newlines to single spaces.
 
 **Refusals, not escapes.** Every class here is refused at input. The render escapes only what a format requires of text already known to be legal — a backslash in a TOML basic string — and rewrites nothing else. An escape for one of these would mean the generator silently altering an author's words to make them fit a file, which is worse than telling the author the words do not fit.
 
@@ -254,7 +257,7 @@ Two surfaces may match the same file. Macroscope stacks both, CodeRabbit may app
 
 Write `instructions` as claims about this repo that a competent reviewer would otherwise get wrong: a convention that looks like a bug, a suggestion that has already been made and is wrong, an invariant a test pins. A sentence that would be true of any repo is doctrine, and belongs in a doctrine block.
 
-### `[doctrine.append]` and `[doctrine.replace]`
+### `[bot-instructions.doctrine.append]` and `[bot-instructions.doctrine.replace]`
 
 Both are tables keyed by doctrine block id. `append` adds a paragraph to a block for this repo; `replace` substitutes the block's whole text. An unknown block id is an error, so a doctrine rename cannot leave a repo silently carrying an override that reaches nothing. Their values carry the refusals their own row in § The content refusals marks, which is a wider set than `instructions` has and is stated only there. They are repo text, so their line breaks are preserved wherever the block lands — a fenced example survives as one — with the `AGENTS.md` owned region the one exception, since a block renders there as a single bullet whatever wrote it.
 

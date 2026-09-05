@@ -11,7 +11,8 @@ rather than counting it as passed.
 
 import contextlib
 
-from .constants import CODERABBIT_SCHEMA_PATH, TOML_PATH
+from .constants import CODERABBIT_SCHEMA_PATH
+from . import manifest
 from .errors import (Finding, InputError, ManifestError, SourceUnavailable,
                      ValidationFailed)
 from . import config as config_mod
@@ -43,9 +44,8 @@ def _as_finding(validator, path, other=None, other_path=None):
         # the wrong file.
         raise
     except ManifestError as exc:
-        # `other_path` passes THROUGH, `None` included. Every manifest message
-        # names its own file or row, so a trailing `[bot-instructions.toml]`
-        # would send the reader to a file that is correct.
+        # Manifest errors already name their source. A config path suffix
+        # would attribute a derivation error to the bot table.
         raise ValidationFailed([Finding(other or validator, str(exc), other_path)]) from exc
     except InputError as exc:
         raise ValidationFailed([Finding(validator, str(exc), path)]) from exc
@@ -65,25 +65,27 @@ class Context:
         self.tree = tree
         self.verb = verb
         self.skipped = []
-        toml_text = tree.read(TOML_PATH)
-        if toml_text is None:
-            raise InputError(f"{TOML_PATH}: absent at the repo root")
-        with _as_finding("toml-schema", TOML_PATH):
-            self.config = config_mod.parse(toml_text, TOML_PATH)
+        with _as_finding("toml-schema", None):
+            resolved = manifest.resolve(tree)
+        config_path = resolved.chosen
+        with _as_finding("toml-schema", config_path):
+            self.config = config_mod.parse(
+                resolved.data.get("bot-instructions"), f"{config_path} [bot-instructions]"
+            )
         self.doctrine = spec_mod.load(spec_tree, *spec_paths)
         self.frozen_ids = spec_mod.frozen_ids()
-        # An unknown `[doctrine.*]` block id is a `toml-schema` clause; a
+        # An unknown `[bot-instructions.doctrine.*]` block id is a `toml-schema` clause; a
         # manifest that declares no install is an `exclusion-consistency` one.
         # Both are raised where the value is first needed, and both are the
         # validator's finding rather than an unattributed failure — a control
         # asserts on the validator's own identity.
-        with _as_finding("toml-schema", TOML_PATH, "exclusion-consistency"):
-            self.model = model_mod.build(tree, self.config, self.doctrine, spec_names)
+        with _as_finding("toml-schema", config_path, "exclusion-consistency"):
+            self.model = model_mod.build(tree, self.config, self.doctrine, spec_names, resolved)
         self.schema = None
         if self.config.bots["coderabbit"]:
             with _as_finding("coderabbit-schema", CODERABBIT_SCHEMA_PATH):
                 self.schema = render_mod.load_schema(tree)
-        with _as_finding("toml-schema", TOML_PATH):
+        with _as_finding("toml-schema", config_path):
             self.build = render_mod.build(self.model, self.schema)
         self._tracked = None
 

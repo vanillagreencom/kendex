@@ -14,7 +14,7 @@ def parser():
     p = argparse.ArgumentParser(
         prog="bot-instructions",
         description="Render every review bot's instruction file from one doctrine "
-                    "source plus bot-instructions.toml.",
+                    "source plus [bot-instructions].",
     )
     p.add_argument("verb", choices=("render", "check", "adopt"))
     p.add_argument("--repo", default=".", help="repo root (default: the working directory)")

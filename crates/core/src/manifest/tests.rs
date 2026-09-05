@@ -3,6 +3,23 @@ use crate::error::CoreError;
 use crate::model::ItemKind;
 
 #[test]
+fn bot_instructions_survive_manifest_and_app_round_trips() {
+    let text = include_str!("../../../../skills/bot-instructions/tests/fixtures/canonical.toml");
+    let tmp = tempfile::tempdir().unwrap();
+    let root = crate::test_util::rooted(&tmp);
+    let path = root.join("kendex.toml");
+    std::fs::write(&path, text).unwrap();
+    let manifest = load_current(&path).unwrap().unwrap();
+    let app = serde_json::to_string(&manifest).unwrap();
+    let received: Manifest = serde_json::from_str(&app).unwrap();
+    let fresh = root.join("saved.toml");
+    save(&fresh, &received).unwrap();
+    let original: toml::Table = toml::from_str(text).unwrap();
+    let saved: toml::Table = toml::from_str(&std::fs::read_to_string(fresh).unwrap()).unwrap();
+    assert_eq!(saved["bot-instructions"], original["bot-instructions"]);
+}
+
+#[test]
 fn round_trips_the_binding_skeleton() {
     let text = r#"
 schema = 6

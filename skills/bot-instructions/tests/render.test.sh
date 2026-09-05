@@ -59,8 +59,8 @@ grep -q '^# fixture$' "$repo/AGENTS.md" && ok "the splice leaves the repo's own 
   || bad "the splice leaves the repo's own heading"
 grep -q '^## Something else$' "$repo/AGENTS.md" && ok "the splice leaves the following section" \
   || bad "the splice leaves the following section"
-grep -q 'Tracked: <FIX-n>' "$repo/AGENTS.md" && ok "[repo] tracker substitutes into reply-contract" \
-  || bad "[repo] tracker substitutes into reply-contract"
+grep -q 'Tracked: <FIX-n>' "$repo/AGENTS.md" && ok "[bot-instructions.repo] tracker substitutes into reply-contract" \
+  || bad "[bot-instructions.repo] tracker substitutes into reply-contract"
 grep -q '\.claude/agents/\*\*' "$repo/AGENTS.md" \
   && ok "the exclusion set rides render-out-of-scope into AGENTS.md" \
   || bad "the exclusion set rides render-out-of-scope into AGENTS.md"
@@ -77,10 +77,10 @@ grep -q '^- Author replies are .* a label it knows\.$' "$repo/AGENTS.md" \
 # `--staged` judges one coherent state: a worktree input that moved on does
 # not decide what the staged outputs are compared against.
 git -C "$repo" add -A >/dev/null 2>&1
-printf '\n[[exclusions.path]]\nglob = "docs/**"\nreason = "prose"\n' >> "$repo/bot-instructions.toml"
+printf '\n[[bot-instructions.exclusions.path]]\nglob = "docs/**"\nreason = "prose"\n' >> "$repo/kendex.toml"
 expect_green "--staged ignores a worktree TOML the index does not carry" check --staged --repo "$repo"
 expect_red drift "the worktree check reds on the same state" check --repo "$repo"
-git -C "$repo" checkout -- bot-instructions.toml
+git -C "$repo" checkout -- kendex.toml
 
 # kendex installs a skill by symlinking `.agents/skills/<name>` at its source,
 # so the documented `--spec` value is a symlink to a directory. The two roots
@@ -170,8 +170,8 @@ done
 
 # The every-flag-false return, and a dry run, both write nothing and say so.
 nothing="$(bi_minimal_repo nothing-enabled)"
-printf '%s' "$BI_MIN_HEAD" > "$nothing/bot-instructions.toml"
-expect_green 'a render with every [bots] flag false writes nothing' render --repo "$nothing"
+printf '%s' "$BI_MIN_HEAD" > "$nothing/kendex.toml"
+expect_green 'a render with every [bot-instructions.bots] flag false writes nothing' render --repo "$nothing"
 
 dry="$(bi_new_repo dry-run-preview)"
 bi_commit "$dry"
@@ -183,7 +183,7 @@ else
 fi
 
 # `renders.md` § Common rules: repo text is never reflowed, `tone_instructions`
-# alone excepted. `[repo] summary` reaches three surfaces, and the doctrine
+# alone excepted. `[bot-instructions.repo] summary` reaches three surfaces, and the doctrine
 # paragraph-joiner would put a two-line summary on one line at two of them
 # while `.pr_agent.toml` carried it unreflowed.
 if python3 - "$repo" <<'SUMMARY'; then
@@ -199,9 +199,9 @@ missing = [rel for rel in (".github/copilot-instructions.md",
 if missing:
     sys.exit("reflowed in: " + ", ".join(missing))
 SUMMARY
-  ok 'a multi-line [repo] summary keeps its line breaks on every surface'
+  ok 'a multi-line [bot-instructions.repo] summary keeps its line breaks on every surface'
 else
-  bad 'a multi-line [repo] summary keeps its line breaks on every surface'
+  bad 'a multi-line [bot-instructions.repo] summary keeps its line breaks on every surface'
 fi
 
 # `exclude_globs` renders as prose on the three surfaces with no exclude field
@@ -213,7 +213,7 @@ fenced="$(bi_new_repo fenced-surface)"
   cat "$BI_FIXTURES/canonical.toml"
   cat <<'SURFACE'
 
-[[surface]]
+[[bot-instructions.surface]]
 name = "fenced"
 globs = ["src/**"]
 exclude_globs = ["src/tests/**"]
@@ -225,7 +225,7 @@ kendex render --dry-run
 ```
 """
 SURFACE
-} > "$fenced/bot-instructions.toml"
+} > "$fenced/kendex.toml"
 bi_must adopt --repo "$fenced" || exit 1
 bi_must render --repo "$fenced" || exit 1
 if python3 - "$BI_ROOT/skills/bot-instructions" "$fenced" <<'PROBE'; then
@@ -344,7 +344,7 @@ fi
 # cannot close one. The control injects one through the manifest read, the
 # input list's one repo-derived member, and drives `cli.main` so it asserts on
 # what the run PRINTS: the refusal has to reach the operator attributed to the
-# validator that owns the injected source, not to `bot-instructions.toml`.
+# validator that owns the injected source, not to `kendex.toml`.
 if python3 - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PROBE'; then
 import contextlib, io, os, sys
 PKG, repo = sys.argv[1], sys.argv[2]
@@ -354,8 +354,9 @@ from lib import cli, manifest
 original = manifest.resolve
 
 def leaky(t):
-    resolved, paths = original(t)
-    return resolved, paths + ["kendex.toml --> and live reviewer instructions"]
+    resolved = original(t)
+    resolved.paths.insert(0, "kendex.toml --> and live reviewer instructions")
+    return resolved
 
 manifest.resolve = leaky
 err = io.StringIO()

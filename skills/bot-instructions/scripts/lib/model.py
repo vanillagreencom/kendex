@@ -6,7 +6,7 @@ contains them. `RenderModel.inputs` is this implementation's single copy of
 that list.
 """
 
-from .constants import CODERABBIT_SCHEMA_PATH, TOML_PATH
+from .constants import CODERABBIT_SCHEMA_PATH
 from .errors import InputError, ManifestError
 from . import manifest, marker as marker_mod, spec
 
@@ -42,13 +42,13 @@ class RenderModel:
         return self._blocks[bid]
 
     def repo_authored(self, bid):
-        """Did `bot-instructions.toml` write any of this block's text?
+        """Did `[bot-instructions]` write any of this block's text?
 
         `renders.md` § Common rules asks two things that read as a
         contradiction until the block's ORIGIN is in hand. Doctrine from the
         spec copy is this package's own prose, hard-wrapped for that file's
-        sake, so joining its paragraphs loses nothing. `[doctrine.replace]`
-        and `[doctrine.append]` put a repo author's bytes into the same block,
+        sake, so joining its paragraphs loses nothing. `[bot-instructions.doctrine.replace]`
+        and `[bot-instructions.doctrine.append]` put a repo author's bytes into the same block,
         and repo text is what the no-reflow rule is about.
 
         Whole-block, because `append` mixes the two: telling the halves apart
@@ -85,7 +85,7 @@ def _assemble(config, doctrine):
         for bid in table:
             if bid not in known:
                 raise InputError(
-                    f"{TOML_PATH} [doctrine.{kind}]: {bid!r} is not a doctrine block id. "
+                    f"{config.where} [bot-instructions.doctrine.{kind}]: {bid!r} is not a doctrine block id. "
                     f"Known ids: {', '.join(sorted(known))}"
                 )
     tracker = config.repo["tracker"]
@@ -104,37 +104,31 @@ def _assemble(config, doctrine):
     return out, from_repo
 
 
-def build(tree, config, doctrine, spec_paths):
+def build(tree, config, doctrine, spec_paths, resolved):
     """Resolve the exclusion set and the input list for one render."""
-    inputs = [TOML_PATH] + list(spec_paths)
+    inputs = list(resolved.paths) + list(spec_paths)
+    for path in resolved.paths:
+        try:
+            spec.check_marker_path(path)
+        except InputError as exc:
+            raise ManifestError(str(exc)) from exc
     exclusions = []
     if config.bots["coderabbit"]:
         inputs.append(CODERABBIT_SCHEMA_PATH)
     if config.exclusions["derive_render"]:
-        resolved, read = manifest.resolve(tree)
         exclusions.extend(manifest.derive(tree, resolved))
-        # The one member of the input list a repo decides, so the one whose
-        # marker-path refusal is a manifest finding. Checked here, where the
-        # source is still known: the sweep in `RenderModel.__init__` sees a
-        # flat list and would blame `bot-instructions.toml`.
-        for path in read:
-            try:
-                spec.check_marker_path(path)
-            except InputError as exc:
-                raise ManifestError(str(exc)) from exc
-        inputs.extend(read)
     for entry in config.exclusions["path"]:
         exclusions.append({"glob": entry["glob"], "reason": entry["reason"], "derived": False})
     if config.bots["codex"]:
         inputs.append("AGENTS.md")
-    _check_duplicates(exclusions)
+    _check_duplicates(exclusions, config.where)
     return RenderModel(config, doctrine, exclusions, inputs)
 
 
-def _check_duplicates(exclusions):
+def _check_duplicates(exclusions, where):
     """One glob, one entry, in every destination.
 
-    A `[[exclusions.path]]` entry naming a tree `derive_render` already
+    A `[[bot-instructions.exclusions.path]]` entry naming a tree `derive_render` already
     derives is the common case, and it is still a duplicate: it renders the
     same pattern twice with two different reasons beside it, and the second
     reason is the one a reader believes.
@@ -143,9 +137,9 @@ def _check_duplicates(exclusions):
     for entry in exclusions:
         if entry["glob"] in seen:
             raise InputError(
-                f"{TOML_PATH}: exclusion {entry['glob']!r} is declared twice. If "
-                "`[exclusions] derive_render` already derives that tree, drop the "
-                "`[[exclusions.path]]` entry rather than restating it"
+                f"{where}: exclusion {entry['glob']!r} is declared twice. If "
+                "`[bot-instructions.exclusions] derive_render` already derives that tree, drop the "
+                "`[[bot-instructions.exclusions.path]]` entry rather than restating it"
             )
         seen.add(entry["glob"])
 

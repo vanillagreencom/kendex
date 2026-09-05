@@ -22,14 +22,14 @@ class Build:
         # that parsed the render back would be checking the emitter against
         # itself, and would need a reader for every format this writes.
         self.data = data                # repo-relative path -> structure
-        self.region_body = region_body  # None when [bots] codex is false
+        self.region_body = region_body  # None when [bot-instructions.bots] codex is false
 
 
 def build(model, schema=None):
     """The scratch tree. `schema` is the vendored CodeRabbit schema, already
     read under `coderabbit-schema`'s own clause: reading it again here would
     report a second failure as a `toml-schema` finding at
-    `bot-instructions.toml`."""
+    `[bot-instructions]`."""
     bots = model.config.bots
     files, data = {}, {}
     region = None
@@ -44,7 +44,7 @@ def build(model, schema=None):
     if bots["coderabbit"]:
         if schema is None:
             raise RenderError(
-                ".coderabbit.yaml: [bots] coderabbit is true and no vendored schema was "
+                ".coderabbit.yaml: [bot-instructions.bots] coderabbit is true and no vendored schema was "
                 "handed to the render. The caller reads it under coderabbit-schema"
             )
         data[".coderabbit.yaml"] = render_coderabbit.state(model, schema)
@@ -79,7 +79,7 @@ def load_schema(tree):
     raw = tree.read(CODERABBIT_SCHEMA_PATH)
     if raw is None:
         raise InputError(
-            f"{CODERABBIT_SCHEMA_PATH}: absent, and `[bots] coderabbit` is true. "
+            f"{CODERABBIT_SCHEMA_PATH}: absent, and `[bot-instructions.bots] coderabbit` is true. "
             "references/checklist.md § Adding a repo carries the step that puts the "
             "first copy there; no verb writes it"
         )

@@ -1,0 +1,1 @@
+- Breaking: move review-bot settings to `[bot-instructions]` in the effective manifest. Prefix each child table with `bot-instructions.`. Remove the separate bot configuration file and re-render.

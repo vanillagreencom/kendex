@@ -1,7 +1,7 @@
 ---
 name: bot-instructions
-description: "Load to render, check, or adopt a repo's GitHub review-bot instruction files from the shared doctrine and its bot-instructions.toml."
-summary: "Renders every GitHub review bot's native instruction file from one doctrine source plus a per-repo TOML, with validators for the surfaces that fail silently."
+description: "Load to render, check, or adopt a repo's GitHub review-bot instruction files from the shared doctrine and its effective manifest."
+summary: "Renders every GitHub review bot's native instruction file from one doctrine source plus the [bot-instructions] manifest table, with validators for the surfaces that fail silently."
 license: MIT
 user-invocable: true
 metadata:
@@ -9,7 +9,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "1.0.1"
+  version: "2.0.0"
 tags: [review]
 ---
 
@@ -37,33 +37,19 @@ Routing per block and surface: [schemas/renders.md](schemas/renders.md) § Doctr
 
 ## The pieces
 
-```
-doctrine (§ Doctrine below)     the rules that must reach two or more bots
-bot-instructions.toml           one per repo, at the repo root
-  ├─ [repo]                     what this repo is, in the bots' own words
-  ├─ [bots]                     which bot capabilities are live here
-  ├─ [cadence]                  when each bot re-reviews
-  ├─ [exclusions]               what is not this repo's code to fix
-  ├─ [[surface]]                a path set and what a reviewer must know there
-  └─ [doctrine]                 per-repo additions to a doctrine block
-        │
-        ▼  render
-AGENTS.md § Code Review Rules   .coderabbit.yaml
-.github/copilot-instructions.md .pr_agent.toml + best_practices.md
-.github/instructions/*.md       .macroscope/
-```
+The effective manifest holds `[bot-instructions]`. Its child tables configure bots, repo context, cadence, exclusions, path instructions and doctrine overrides. The generator writes the enabled bots' native files. Table selection and precedence: [schemas/repo-toml.md](schemas/repo-toml.md).
 
-A `[[surface]]` reaches Copilot, CodeRabbit and Macroscope, plus Qodo through `best_practices.md` when `[bots] qodo_best_practices` is on. Only Macroscope honors `exclude_globs`, so narrow `globs` where scoping matters. Keys: [schemas/repo-toml.md](schemas/repo-toml.md). Validators: [schemas/validators.md](schemas/validators.md).
+A `[[bot-instructions.surface]]` reaches Copilot, CodeRabbit and Macroscope, plus Qodo through `best_practices.md` when `[bot-instructions.bots] qodo_best_practices` is on. Only Macroscope honors `exclude_globs`, so narrow `globs` where scoping matters. Keys: [schemas/repo-toml.md](schemas/repo-toml.md). Validators: [schemas/validators.md](schemas/validators.md).
 
 - `render` writes every enabled surface after validating it.
 - `check` re-renders and diffs, reading the index under `--staged`.
 - `adopt` takes a hand-written file or `AGENTS.md` region under management once.
 
-The generator owns only the `AGENTS.md` § Code Review Rules region and never creates the file. A repo without the heading adds it, sets `[bots] codex`, runs `adopt`, then `render`. A tracked nested `AGENTS.md` carrying that heading is a `check` finding. Retire a surface with delete, then `render`. `render` replaces only a file whose canonical marker is present; `adopt` is the way in. Details: [schemas/renders.md](schemas/renders.md) § Common rules.
+The generator owns only the `AGENTS.md` § Code Review Rules region and never creates the file. A repo without the heading adds it, sets `[bot-instructions.bots] codex`, runs `adopt`, then `render`. A tracked nested `AGENTS.md` carrying that heading is a `check` finding. Retire a surface with delete, then `render`. `render` replaces only a file whose canonical marker is present; `adopt` is the way in. Details: [schemas/renders.md](schemas/renders.md) § Common rules.
 
 ## Every rendered config excludes the render trees
 
-A repo enables `[exclusions] derive_render` or lists every render tree in `[[exclusions.path]]`. Set construction: [schemas/repo-toml.md](schemas/repo-toml.md) § `[exclusions]`. Placement and enforcement: [schemas/renders.md](schemas/renders.md) § Doctrine routing.
+A repo enables `[bot-instructions.exclusions] derive_render` or lists every render tree in `[[bot-instructions.exclusions.path]]`. Set construction: [schemas/repo-toml.md](schemas/repo-toml.md) § `[bot-instructions.exclusions]`. Placement and enforcement: [schemas/renders.md](schemas/renders.md) § Doctrine routing.
 
 ## A pull request changing its own review
 
@@ -73,10 +59,9 @@ A repo enables `[exclusions] derive_render` or lists every render tree in `[[exc
 
 ## The render inputs
 
-- `bot-instructions.toml`.
+- `kendex.toml`, plus `kendex-local.toml` when the root declares `is_source_catalog = true`.
 - The spec copy's doctrine source and routing table.
 - `.bot-instructions/coderabbit-schema.json` when CodeRabbit is on.
-- `kendex.toml`, plus `kendex-local.toml` for a source catalog, when render exclusions are derived.
 - The existing `AGENTS.md` when Codex is on.
 
 Policy set:
@@ -92,7 +77,7 @@ Version and marker semantics: [schemas/renders.md](schemas/renders.md) § Common
 
 ## Doctrine
 
-Keep one `## Doctrine` section in the spec copy. `--spec` selects that copy; the default is the running package. End the section at the next level-one or level-two heading. Keep each `###` block ID unchanged and unique. Keep every block non-empty. Write text that YAML and TOML scalars can carry verbatim. Put repo names, paths, issues, and repo-specific rules in `bot-instructions.toml`.
+Keep one `## Doctrine` section in the spec copy. `--spec` selects that copy; the default is the running package. End the section at the next level-one or level-two heading. Keep each `###` block ID unchanged and unique. Keep every block non-empty. Write text that YAML and TOML scalars can carry verbatim. Put repo names, paths, issues, and repo-specific rules in `[bot-instructions]`.
 
 ### scope
 

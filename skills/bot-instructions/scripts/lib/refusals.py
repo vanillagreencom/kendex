@@ -3,12 +3,12 @@
 `schemas/repo-toml.md` § The content refusals is the spec's statement of this.
 Every row here refuses text that would break the STRUCTURE of a file this
 package emits; a value this package merely dislikes is not refused.
-`toml-schema` applies the rows whose source is `bot-instructions.toml`; the
+`toml-schema` applies the rows whose source is `[bot-instructions]`; the
 render-side second check applies the `doctrine block text` row, because
 doctrine text does not come through that file at all.
 
 **Two of the table's rows are enforced elsewhere, and this is not their copy.**
-The glob row is `globs.check`; the `[cadence] qodo_commands` row is
+The glob row is `globs.check`; the `[bot-instructions.cadence] qodo_commands` row is
 `config._cadence` reading `constants.QODO_VERBS`. `tests/toml-schema.test.sh`
 holds the table against these three, so a row added to either side without the
 other reds.
@@ -79,7 +79,7 @@ def _toml_delimiter(value):
 def control(value):
     """The `control` predicate. Public, because `coderabbit-schema` runs it
     over the document it validates: a default in the vendored schema does not
-    arrive through `bot-instructions.toml` and so meets no row here."""
+    arrive through `[bot-instructions]` and so meets no row here."""
     m = _CONTROL.search(value)
     if m is None:
         return None
@@ -91,7 +91,7 @@ def control(value):
 
 
 def _single_line(value):
-    # A `[[exclusions.path]] reason` runs one line inside a YAML comment and
+    # A `[[bot-instructions.exclusions.path]] reason` runs one line inside a YAML comment and
     # one line in `.macroscope/ignore.md`; a break puts its tail into the
     # first as structure beside `path_filters` and into the second as a
     # pattern. `control` does not cover `\n`.
@@ -106,21 +106,21 @@ def _single_line(value):
 # One row per input string, one predicate list per row, mirroring the columns
 # of `repo-toml.md` § The content refusals. The second element names which
 # side reads the value, and it is why the doctrine row is not a `toml-schema`
-# clause: that value is in the spec copy, not in `bot-instructions.toml`.
+# clause: that value is in the spec copy, not in `[bot-instructions]`.
 _STRUCTURAL = ["single-line", "marker", "toml-delimiter", "control"]
 
 ROWS = {
-    "[repo] name": (_STRUCTURAL, "toml-schema"),
-    "[repo] tracker": (_STRUCTURAL, "toml-schema"),
-    "[repo] summary": (["heading", "marker", "toml-delimiter", "control"], "toml-schema"),
-    "[[surface]] instructions": (["heading", "marker", "control"], "toml-schema"),
-    "[doctrine.*] values": (["heading", "marker", "toml-delimiter", "control"], "toml-schema"),
+    "[bot-instructions.repo] name": (_STRUCTURAL, "toml-schema"),
+    "[bot-instructions.repo] tracker": (_STRUCTURAL, "toml-schema"),
+    "[bot-instructions.repo] summary": (["heading", "marker", "toml-delimiter", "control"], "toml-schema"),
+    "[[bot-instructions.surface]] instructions": (["heading", "marker", "control"], "toml-schema"),
+    "[bot-instructions.doctrine.*] values": (["heading", "marker", "toml-delimiter", "control"], "toml-schema"),
     "doctrine block text": (["heading", "marker", "toml-delimiter", "control"], "render-side"),
-    "[[exclusions.path]] reason": (
+    "[[bot-instructions.exclusions.path]] reason": (
         ["marker", "comment-close", "control", "single-line"],
         "toml-schema",
     ),
-    "[tone] coderabbit": (["control"], "toml-schema"),
+    "[bot-instructions.tone] coderabbit": (["control"], "toml-schema"),
 }
 
 _PREDICATES = {

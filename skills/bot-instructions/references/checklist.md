@@ -11,7 +11,7 @@ Two passes. The order is not a preference — three rules fix it, and a sequence
 
 **What those rules require, since everything below follows from them.**
 
-*From `toml-schema`'s cross-flag clauses.* A `[[surface]]` set needs at least one of `copilot`, `coderabbit`, `macroscope` or `qodo_best_practices` on, because those four are every route surface text has. `copilot` or `coderabbit` needs `codex`, because the `AGENTS.md` section is where both get most of their doctrine. `qodo_best_practices` and `qodo_review_md` need `qodo`.
+*From `toml-schema`'s cross-flag clauses.* A `[[bot-instructions.surface]]` set needs at least one of `copilot`, `coderabbit`, `macroscope` or `qodo_best_practices` on, because those four are every route surface text has. `copilot` or `coderabbit` needs `codex`, because the `AGENTS.md` section is where both get most of their doctrine. `qodo_best_practices` and `qodo_review_md` need `qodo`.
 
 *From `adopt`'s own rule.* It takes a file or region over only for a capability that is on.
 
@@ -19,10 +19,10 @@ Those two give **capability-dependent content lands with its capability**, and n
 
 *From `agents-section`'s nested-`AGENTS.md` clause.* It rejects a nested `AGENTS.md` carrying a `## Code Review Rules` section, it is the one clause no flag gates, and it runs against the repo before every write. So it is invisible to the flag reasoning above and constrains the sequence anyway: a repo holding such a section cannot complete **any** render, including a pass-one render with every flag off. Clearing it is therefore a pass-one prerequisite rather than part of the `codex` capability's own pass.
 
-**Pass one, the repo-wide TOML.** `[repo]`, `[exclusions]`, `[cadence]`, `[tone]`, `[budgets]` and any `[doctrine.*]` overrides, with every `[bots]` flag false and no `[[surface]]` entries.
+**Pass one, the repo-wide TOML.** `[bot-instructions.repo]`, `[bot-instructions.exclusions]`, `[bot-instructions.cadence]`, `[bot-instructions.tone]`, `[bot-instructions.budgets]` and any `[bot-instructions.doctrine.*]` overrides, with every `[bot-instructions.bots]` flag false and no `[[bot-instructions.surface]]` entries.
 
-1. Read the repo's existing hand-written bot files now and plan where their claims go: which become `[[surface]]` entries, which become `[doctrine.append]`, which will not fold and stay hand-written as policy paths. Write the repo-wide tables; leave the surfaces for the pass that turns on a bot able to read them.
-2. Clear any nested `AGENTS.md` carrying a `## Code Review Rules` section. Fold what it holds into `[doctrine.append]` or a `[[surface]]` and delete the section, or move the section out of an `AGENTS.md`. The generator writes only the root one, and `agents-section` rejects a nested one unconditionally, so this is what a pass-one render stops on if it is skipped. Its content is not lost: it lands in the TOML written in step 1.
+1. Read the repo's existing hand-written bot files now and plan where their claims go: which become `[[bot-instructions.surface]]` entries, which become `[bot-instructions.doctrine.append]`, which will not fold and stay hand-written as policy paths. Write the repo-wide tables; leave the surfaces for the pass that turns on a bot able to read them.
+2. Clear any nested `AGENTS.md` carrying a `## Code Review Rules` section. Fold what it holds into `[bot-instructions.doctrine.append]` or a `[[bot-instructions.surface]]` and delete the section, or move the section out of an `AGENTS.md`. The generator writes only the root one, and `agents-section` rejects a nested one unconditionally, so this is what a pass-one render stops on if it is skipped. Its content is not lost: it lands in the TOML written in step 1.
 3. Do not run `adopt` here. Nothing can be adopted for a capability that is off, so it would report nothing on exactly the repo this planning is for.
 4. Run `render`. With step 2 done it writes nothing and says so, because every flag is off; that no-op is the staging point, not a finished install, and the existing bot files are still the repo's own and still what the bots read. With step 2 skipped it does not write nothing — it stops on the nested section before the write and names the file, which is the clause doing its job rather than a failure of the sequence.
 
@@ -30,7 +30,7 @@ Those two give **capability-dependent content lands with its capability**, and n
 
 5. Work that capability's settings section below.
 6. Do its prerequisite, where it has one. `codex` needs a `## Code Review Rules` heading added to `AGENTS.md` by hand, since the generator never adds it. `coderabbit` needs CodeRabbit's published schema at `.bot-instructions/coderabbit-schema.json`; no verb writes it and `coderabbit-schema` fails without it, deliberately, because a validator that skipped on a missing schema would be silent for the life of the repo. `qodo_review_md` needs the portal toggle already on.
-7. Set the flag. With the first of `copilot`, `coderabbit`, `macroscope` or `qodo_best_practices`, add the `[[surface]]` entries planned in step 1 — they are legal from that moment and were not before.
+7. Set the flag. With the first of `copilot`, `coderabbit`, `macroscope` or `qodo_best_practices`, add the `[[bot-instructions.surface]]` entries planned in step 1 — they are legal from that moment and were not before.
 8. Run `adopt`. It can now take over that capability's generated paths, the `AGENTS.md` region the heading opened included, and it names every file and region it takes plus every repo-root or `.github/` markdown file those files point at. That second list is where a repo-wide hand-written reviewer file shows up. Read both against the TOML: a claim in one of those files that the TOML does not carry is about to be deleted, or to go on steering reviews from outside the package.
 9. Run `render`, then read the diff. Doctrine text appearing for the first time is expected; a repo-specific claim disappearing means it never made it into the TOML.
 10. Run `check`. Then repeat from step 5 for the next capability.
@@ -43,7 +43,7 @@ Every bot here has at least one setting that lives in a web UI and cannot be exp
 
 Work one capability's section at a time, as the settings step of the sequence above, and record each line's outcome in the repo beside the TOML so the next person can tell a deliberate `false` from an unanswered question.
 
-A capability whose section here is unanswered stays `false` in `[bots]`. A `true` flag renders files that reach nothing, which is worse than no files at all — and a section answered but never followed by setting the flag leaves the reverse, a bot enabled at the vendor reading nothing this package wrote.
+A capability whose section here is unanswered stays `false` in `[bot-instructions.bots]`. A `true` flag renders files that reach nothing, which is worse than no files at all — and a section answered but never followed by setting the flag leaves the reverse, a bot enabled at the vendor reading nothing this package wrote.
 
 None of this state is machine-readable from the repo, and an administrator can change any of it without touching the repo. Every check here can keep passing after a bot has been switched off in a settings page nobody looked at, so the last section's smoke test is what actually confirms the set.
 
@@ -52,7 +52,7 @@ None of this state is machine-readable from the repo, and an administrator can c
 - [ ] Copilot is enabled for the repository, under an org or enterprise plan that covers code review.
 - [ ] Automatic review is enabled, either per repository or through an organization ruleset requiring Copilot as a reviewer. Without it the instruction files load only when someone requests a review by hand.
 - [ ] Custom instructions are enabled for code review in the repository's Copilot settings. The files exist regardless; this toggle decides whether review reads them.
-- [ ] Content exclusion paths are set, if any are wanted. Settings → Copilot → Content exclusion, in YAML fnmatch form. This is the only exclusion mechanism Copilot has, and it is not a repo file. Anything in `[[exclusions.path]]` that must also be invisible to Copilot is entered here by hand.
+- [ ] Content exclusion paths are set, if any are wanted. Settings → Copilot → Content exclusion, in YAML fnmatch form. This is the only exclusion mechanism Copilot has, and it is not a repo file. Anything in `[[bot-instructions.exclusions.path]]` that must also be invisible to Copilot is entered here by hand.
 - [ ] The organization's runner-type setting is understood. An org admin can set a default runner type across all repositories and lock it, overriding per-repo configuration.
 
 ## Codex code review
@@ -77,11 +77,11 @@ Once the file lands, everything the file controls moves into it. The dashboard i
 ## Qodo
 
 - [ ] The Qodo app is installed on the repository and seats cover it.
-- [ ] Which Qodo product this repo is on is known. `best_practices.md` is loaded automatically by Qodo Merge, the commercial product, and not by open-source PR-Agent; `[bots] qodo_best_practices` should be `false` where the file would be inert.
+- [ ] Which Qodo product this repo is on is known. `best_practices.md` is loaded automatically by Qodo Merge, the commercial product, and not by open-source PR-Agent; `[bot-instructions.bots] qodo_best_practices` should be `false` where the file would be inert.
 - [ ] No `.pr_agent.toml` page exists in the repository wiki. A wiki page of that name applies without a commit and is invisible to version control and to the generator.
 - [ ] No `pr-agent-settings` repository exists at the organization or project level carrying settings this repo does not expect.
 - [ ] What other best-practices sources Qodo loads for this repo is known. Organization and mapped-repository files layer above the generated one and the generator cannot see them. Qodo recommends 800 lines per file and documents no limit on the total, so nothing here checks the total and the per-file number is this package's budget rather than a vendor cap.
-- [ ] Before setting `[bots] qodo_review_md`: the portal toggle under Configurations → Context, "REVIEW.md instructions", is on. Without it the file is inert, which is why the flag is set by hand after this line rather than inferred.
+- [ ] Before setting `[bot-instructions.bots] qodo_review_md`: the portal toggle under Configurations → Context, "REVIEW.md instructions", is on. Without it the file is inert, which is why the flag is set by hand after this line rather than inferred.
 
 ## Macroscope
 
@@ -93,7 +93,7 @@ Once the file lands, everything the file controls moves into it. The dashboard i
 
 ## If the repo's kendex.toml is a source catalog
 
-- [ ] `[exclusions] derive_render` reads the manifest kendex resolves, which in a repo whose `kendex.toml` declares `is_source_catalog = true` is the sibling `kendex-local.toml`. Confirm the rendered exclusion list actually names the repo's rendered skill trees. An empty list here is the failure this line exists to catch, not a repo with nothing to exclude.
+- [ ] `[bot-instructions.exclusions] derive_render` reads the manifest kendex resolves, which in a repo whose `kendex.toml` declares `is_source_catalog = true` is the sibling `kendex-local.toml`. Confirm the rendered exclusion list actually names the repo's rendered skill trees. An empty list here is the failure this line exists to catch, not a repo with nothing to exclude.
 
 ## Glob dialect
 
@@ -102,14 +102,14 @@ Once the file lands, everything the file controls moves into it. The dashboard i
 ## If the repo has its own guard over these files
 
 - [ ] Every predicate that guard uses is at least as loose as the render's. A guard slicing `AGENTS.md` on `^## Code Review Rules$`, or matching a pointer sentence on one line of `.github/copilot-instructions.md`, is reading bytes this package writes; the render spec pins both, and a repo adding a third predicate reconciles it before rendering rather than at adoption time.
-- [ ] `[repo] tracker` is set wherever a guard pins the tracked reply form. Without it the render leaves the generic placeholder and the guard reads the form as gone.
-- [ ] Retiring a bot whose file another check requires is a pointer move first, then the deletion. Where a repo's own gate reads `.github/copilot-instructions.md`, `[bots] copilot = false` means moving what that gate reads before removing the file.
+- [ ] `[bot-instructions.repo] tracker` is set wherever a guard pins the tracked reply form. Without it the render leaves the generic placeholder and the guard reads the form as gone.
+- [ ] Retiring a bot whose file another check requires is a pointer move first, then the deletion. Where a repo's own gate reads `.github/copilot-instructions.md`, `[bot-instructions.bots] copilot = false` means moving what that gate reads before removing the file.
 
 ## The exclusion classes a repo starts from
 
-Three classes are worth an exclusion in most repos. Only the first is derived; the other two are `[[exclusions.path]]` entries a repo writes, because their paths differ per repo and because **an exclusion with no stated reason is indistinguishable from a mistake at the next read** — a shipped default nobody wrote a reason for is that mistake with nothing to catch it.
+Three classes are worth an exclusion in most repos. Only the first is derived; the other two are `[[bot-instructions.exclusions.path]]` entries a repo writes, because their paths differ per repo and because **an exclusion with no stated reason is indistinguishable from a mistake at the next read** — a shipped default nobody wrote a reason for is that mistake with nothing to catch it.
 
-- **Render trees.** `[exclusions] derive_render = true`. Derived from the manifest kendex resolves, so it follows a refresh instead of falling behind it, and it carries the one fixed reason `repo-toml.md` § `[exclusions]` states.
+- **Render trees.** `[bot-instructions.exclusions] derive_render = true`. Derived from the manifest kendex resolves, so it follows a refresh instead of falling behind it, and it carries the one fixed reason `repo-toml.md` § `[bot-instructions.exclusions]` states.
 - **Vendored trees this repo pins byte-for-byte.** One entry per tree. The reason names the upstream and says the fix lands there.
 - **Lock files.** `Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml` and the rest, wherever they sit. The reason is that a package manager writes them, so a finding on one is a finding about a dependency change rather than about the file. Exclude the file, not the manifest beside it.
 
@@ -117,7 +117,7 @@ Copy the second and third as entries rather than expecting the generator to know
 
 ## Excluding the render trees
 
-- [ ] The exclusion set actually covers this repo's render trees. `render` fails when a destination the routing table marks as carrying the paths does not carry them, on every repo; what `[exclusions] derive_render` decides is whether the set is derived from the install manifest or written by hand, so a repo deriving nothing still has to name its render trees in `[[exclusions.path]]` for that check to have anything to enforce.
+- [ ] The exclusion set actually covers this repo's render trees. `render` fails when a destination the routing table marks as carrying the paths does not carry them, on every repo; what `[bot-instructions.exclusions] derive_render` decides is whether the set is derived from the install manifest or written by hand, so a repo deriving nothing still has to name its render trees in `[[bot-instructions.exclusions.path]]` for that check to have anything to enforce.
 - [ ] Enforcement for Codex, Copilot and Qodo comes from the merge gate, not from here. Those three receive the paths as an instruction and may comment on them anyway; a gate that passes a render-only diff needs no bot to cooperate, which is the only thing that makes "a render-only diff opens no bot rounds" true rather than requested. CodeRabbit and Macroscope subtract for real and need nothing from the gate.
 
 ## If the repo's gate reads bot output

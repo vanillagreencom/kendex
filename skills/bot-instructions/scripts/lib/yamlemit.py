@@ -21,13 +21,13 @@ class Commented:
 
     `reviews.path_filters` is the one place a rendered value needs a reason
     beside it — `renders.md` § `reviews.path_filters` requires one per entry,
-    for the reason `repo-toml.md` § `[exclusions]` gives for requiring the key
+    for the reason `repo-toml.md` § `[bot-instructions.exclusions]` gives for requiring the key
     at all: an exclusion with no stated reason is indistinguishable from a
     mistake at the next read. A YAML comment runs to end of line, and a
     comment that ends early becomes structure: the rest of the reason is read
     as a mapping key beside `path_filters`.
 
-    No check here. The only text this carries is a `[[exclusions.path]]
+    No check here. The only text this carries is a `[[bot-instructions.exclusions.path]]
     reason`, whose row refuses every character that could end the line, or the
     fixed reason a derived exclusion gets.
     """

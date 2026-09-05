@@ -1,16 +1,14 @@
-"""`bot-instructions.toml`: the schema, and the `toml-schema` validator.
+"""`[bot-instructions]`: the schema, and the `toml-schema` validator.
 
 The schema is closed. An unknown key, an unknown table, a value of the wrong
 type, or an absent required key is an error naming the key — a typo like
-`[bot]`, `derive_renders` or `review_only` would otherwise be ignored while
+`[bot-instructions.bot]`, `derive_renders` or `review_only` would otherwise be ignored while
 defaults produced plausible output.
 
 KEYS below is the schema. The required-key clause derives from its `required`
 column rather than restating which fields are required, because a restated
 list falls behind the column.
 """
-
-import tomllib
 
 from .constants import (
     DEFAULT_COPILOT_CHARS,
@@ -24,9 +22,9 @@ from . import globs, refusals
 # table -> key -> (type, required, default, refusal row or None)
 KEYS = {
     "repo": {
-        "name": (str, True, None, "[repo] name"),
-        "summary": (str, True, None, "[repo] summary"),
-        "tracker": (str, False, None, "[repo] tracker"),
+        "name": (str, True, None, "[bot-instructions.repo] name"),
+        "summary": (str, True, None, "[bot-instructions.repo] summary"),
+        "tracker": (str, False, None, "[bot-instructions.repo] tracker"),
     },
     "bots": {
         k: (bool, False, False, None)
@@ -41,7 +39,7 @@ KEYS = {
         "qodo_commands": (list, False, ["/agentic_review"], None),
         "qodo_push_trigger": (bool, False, False, None),
     },
-    "tone": {"coderabbit": (str, False, None, "[tone] coderabbit")},
+    "tone": {"coderabbit": (str, False, None, "[bot-instructions.tone] coderabbit")},
     "budgets": {
         "copilot_chars": (int, False, DEFAULT_COPILOT_CHARS, None),
         "qodo_best_practices_lines": (int, False, DEFAULT_QODO_LINES, None),
@@ -54,19 +52,20 @@ SURFACE_KEYS = {
     "globs": (list, True, None, None),
     "exclude_globs": (list, False, None, None),
     "reviewer_only": (bool, False, False, None),
-    "instructions": (str, True, None, "[[surface]] instructions"),
+    "instructions": (str, True, None, "[[bot-instructions.surface]] instructions"),
 }
 
 EXCLUSION_KEYS = {
     "glob": (str, True, None, None),
-    "reason": (str, True, None, "[[exclusions.path]] reason"),
+    "reason": (str, True, None, "[[bot-instructions.exclusions.path]] reason"),
 }
 
 TOP_LEVEL = frozenset({"schema", "surface", "doctrine"}) | frozenset(KEYS)
 
 
 class Config:
-    def __init__(self, data):
+    def __init__(self, data, where):
+        self.where = where
         self.raw = data
         self.repo = data["repo"]
         self.bots = data["bots"]
@@ -113,11 +112,9 @@ def _table(raw, name, schema, where):
     return out
 
 
-def parse(text, where="bot-instructions.toml"):
-    try:
-        raw = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
-        raise InputError(f"{where}: not valid TOML ({exc})") from exc
+def parse(raw, where):
+    if not isinstance(raw, dict):
+        raise InputError(f"{where}: expected a table")
     for key in raw:
         if key not in TOP_LEVEL:
             raise InputError(f"{where}: unknown table or key {key!r}")
@@ -128,23 +125,23 @@ def parse(text, where="bot-instructions.toml"):
             f"{where}: schema = {raw['schema']!r}; this generator knows 1 and refuses a "
             "value it does not know rather than rendering a partly understood file"
         )
-    data = {name: _table(raw, name, schema, f"{where} [{name}]") for name, schema in KEYS.items()}
+    data = {name: _table(raw, name, schema, f"{where} [bot-instructions.{name}]") for name, schema in KEYS.items()}
     data["exclusions"]["path"] = _exclusions(raw.get("exclusions", {}), where)
     data["surface"] = _surfaces(raw.get("surface", []), where)
     data["doctrine"] = _doctrine(raw.get("doctrine", {}), where)
     _cadence(data["cadence"], where)
     _budgets(data["budgets"], where)
     _cross_flags(data, where)
-    return Config(data)
+    return Config(data, where)
 
 
 def _exclusions(table, where):
     entries = table.get("path", [])
     if not isinstance(entries, list):
-        raise InputError(f"{where} [[exclusions.path]]: expected an array of tables")
+        raise InputError(f"{where} [[bot-instructions.exclusions.path]]: expected an array of tables")
     out = []
     for i, entry in enumerate(entries):
-        w = f"{where} [[exclusions.path]][{i}]"
+        w = f"{where} [[bot-instructions.exclusions.path]][{i}]"
         if not isinstance(entry, dict):
             raise InputError(f"{w}: expected a table")
         out.append(_table({"e": entry}, "e", EXCLUSION_KEYS, w))
@@ -154,11 +151,11 @@ def _exclusions(table, where):
 
 def _surfaces(entries, where):
     if not isinstance(entries, list):
-        raise InputError(f"{where} [[surface]]: expected an array of tables")
+        raise InputError(f"{where} [[bot-instructions.surface]]: expected an array of tables")
     out = []
     seen = set()
     for i, entry in enumerate(entries):
-        w = f"{where} [[surface]][{i}]"
+        w = f"{where} [[bot-instructions.surface]][{i}]"
         if not isinstance(entry, dict):
             raise InputError(f"{w}: expected a table")
         s = _table({"e": entry}, "e", SURFACE_KEYS, w)
@@ -192,27 +189,27 @@ def _doctrine(table, where):
     out = {"append": {}, "replace": {}}
     # Typed before it is iterated, the way `_table` types its siblings:
     # untyped, a string iterates character by character and reports
-    # `[doctrine.r]: unknown table`, which is the wrong cause entirely.
+    # `[bot-instructions.doctrine.r]: unknown table`, which is the wrong cause entirely.
     if not isinstance(table, dict):
-        raise InputError(f"{where} [doctrine]: expected a table, got {type(table).__name__}")
+        raise InputError(f"{where} [bot-instructions.doctrine]: expected a table, got {type(table).__name__}")
     for key in table:
         if key not in out:
-            raise InputError(f"{where} [doctrine.{key}]: unknown table")
+            raise InputError(f"{where} [bot-instructions.doctrine.{key}]: unknown table")
     for kind in out:
         given = table.get(kind, {})
         if not isinstance(given, dict):
-            raise InputError(f"{where} [doctrine.{kind}]: expected a table")
+            raise InputError(f"{where} [bot-instructions.doctrine.{kind}]: expected a table")
         for block, value in given.items():
-            w = f"{where} [doctrine.{kind}] {block}"
+            w = f"{where} [bot-instructions.doctrine.{kind}] {block}"
             _typed(value, str, w)
-            refusals.apply("[doctrine.*] values", value, w)
+            refusals.apply("[bot-instructions.doctrine.*] values", value, w)
             out[kind][block] = value
     return out
 
 
 def _cadence(cadence, where):
     for i, verb in enumerate(cadence["qodo_commands"]):
-        w = f"{where} [cadence] qodo_commands[{i}]"
+        w = f"{where} [bot-instructions.cadence] qodo_commands[{i}]"
         _typed(verb, str, w)
         if verb not in QODO_VERBS:
             raise InputError(
@@ -228,19 +225,19 @@ def _cadence(cadence, where):
 def _budgets(budgets, where):
     for key, value in budgets.items():
         if value <= 0:
-            raise InputError(f"{where} [budgets] {key}: must be positive, got {value}")
+            raise InputError(f"{where} [bot-instructions.budgets] {key}: must be positive, got {value}")
 
 
 def _cross_flags(data, where):
     bots = data["bots"]
     if (bots["qodo_best_practices"] or bots["qodo_review_md"]) and not bots["qodo"]:
         raise InputError(
-            f"{where} [bots]: qodo_best_practices or qodo_review_md is true with qodo false, "
+            f"{where} [bot-instructions.bots]: qodo_best_practices or qodo_review_md is true with qodo false, "
             "so the file it renders has no reader"
         )
     if (bots["copilot"] or bots["coderabbit"]) and not bots["codex"]:
         raise InputError(
-            f"{where} [bots]: copilot or coderabbit is true with codex false. Both read the "
+            f"{where} [bot-instructions.bots]: copilot or coderabbit is true with codex false. Both read the "
             "AGENTS.md section — CodeRabbit through code_guidelines, Copilot code review "
             "directly — so without it .coderabbit.yaml carries one doctrine block and the "
             "Copilot pointer aims at a section that does not exist"
@@ -248,7 +245,7 @@ def _cross_flags(data, where):
     routes = ("copilot", "coderabbit", "macroscope", "qodo_best_practices")
     if data["surface"] and not any(bots[r] for r in routes):
         raise InputError(
-            f"{where}: a non-empty [[surface]] set with {', '.join(routes)} all false. Those "
+            f"{where}: a non-empty [[bot-instructions.surface]] set with {', '.join(routes)} all false. Those "
             "four are every route surface text has, so these surfaces are instructions "
             "nothing will ever read"
         )

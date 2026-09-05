@@ -26,7 +26,7 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 tauri = "2"
 tauri-build = "2"
 tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
-specta = { version = "=2.0.0-rc.25", features = ["derive"] }
+specta = { version = "=2.0.0-rc.25", features = ["derive", "toml"] }
 specta-typescript = "0.0.12"
 tempfile = "3"
 sha2 = "0.11"
