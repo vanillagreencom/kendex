@@ -100,6 +100,32 @@ else
   bad "a worktree-only mention does not wire a staged suite" "rc=$RC out=$OUT"
 fi
 
+# The same index rule covers settings. A staged JSONC declaration must govern
+# the staged theme even when the worktree setting no longer declares it.
+seed stagedjsonc
+mkdir -p "$R/themes/white/apps"
+printf '{\n  // staged JSONC\n  "name": "white",\n}\n' >"$R/themes/white/apps/vscode-theme.json"
+printf '[env]\nPREFLIGHT_JSONC_GLOBS = "**/themes/*/apps/vscode-theme.json"\n' >"$R/kendex.settings.toml"
+git -C "$R" add "$R/themes/white/apps/vscode-theme.json" "$R/kendex.settings.toml"
+printf '[env]\nPREFLIGHT_JSONC_GLOBS = ""\n' >"$R/kendex.settings.toml"
+run_pf --staged
+if [ "$RC" -eq 0 ] && ! has "data-syntax"; then
+  ok "a staged JSONC setting governs the staged file despite a narrower worktree copy"
+else
+  bad "a staged JSONC setting governs the staged file despite a narrower worktree copy" "rc=$RC out=$OUT"
+fi
+
+# The inverse closes the bypass: a worktree-only allowance cannot admit strict
+# JSON when the staged settings leave it out.
+git -C "$R" add "$R/kendex.settings.toml"
+printf '[env]\nPREFLIGHT_JSONC_GLOBS = "**/themes/*/apps/vscode-theme.json"\n' >"$R/kendex.settings.toml"
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "themes/white/apps/vscode-theme.json:2: [data-syntax] invalid JSON"; then
+  ok "a worktree-only JSONC setting cannot widen the staged policy"
+else
+  bad "a worktree-only JSONC setting cannot widen the staged policy" "rc=$RC out=$OUT"
+fi
+
 echo "=== untracked files are new files in the default scope, invisible to --staged ==="
 seed untracked
 printf '# Never added\n\nSee `docs/gone.md` here too.\n' >"$R/docs/never-added.md"

@@ -15,6 +15,16 @@
 # Exit codes: 0 clean; 1 findings; 2 usage/environment error.
 set -euo pipefail
 
+PF_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
+PF_BOOT="${PF_BOOT%x}"
+SCRIPT_DIR="${PF_BOOT%$'\n'}"
+# shellcheck source=lib/kendex-env.sh
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+# shellcheck source=lib/globs.sh
+source "$SCRIPT_DIR/lib/globs.sh"
+# shellcheck source=lib/load-settings.sh
+source "$SCRIPT_DIR/lib/load-settings.sh"
+
 TAB="$(printf '\t')"
 NL='
 '
@@ -78,6 +88,7 @@ cleanup() {
   exit "$cleanup_status"
 }
 trap cleanup EXIT
+pf_load_project_env "$MODE" "$REPO_ROOT" "$TMP" || env_error "could not load project settings"
 : >"$TMP/findings.tsv"
 : >"$TMP/added.tsv"
 : >"$TMP/newfiles.list"
@@ -419,6 +430,16 @@ line_hint() { # TEXT -> the line number a tool mentions, else 0
   case "$n" in "" | *[!0-9]*) printf '0' ;; *) printf '%s' "$n" ;; esac
 }
 first_line() { printf '%s' "$1" | awk 'NF { print; exit }'; }
+
+JSONC_GLOBS="${PREFLIGHT_JSONC_GLOBS-**/tsconfig*.json **/jsconfig*.json **/.vscode/*.json **/.devcontainer/*.json **/*-color-theme.json}"
+
+is_jsonc_path() { # PATH — file kind or configured JSONC-by-convention path
+  case "$1" in
+    *.jsonc) return 0 ;;
+    *.json) pf_path_matches_globs "$JSONC_GLOBS" "$1" ;;
+    *) return 1 ;;
+  esac
+}
 
 TOML_PY='import sys, tomllib
 try:
@@ -838,19 +859,12 @@ while IFS= read -r f; do
   fi
 
   case "$f" in
-    *.json)
-      # JSON-with-comments is a real and widespread dialect; jq is right to
-      # reject those files and preflight would be wrong to report them.
-      case "$f" in
-        tsconfig*.json | jsconfig*.json | */tsconfig*.json | */jsconfig*.json | .vscode/* | */.vscode/* | .devcontainer/* | */.devcontainer/*) ;;
-        *)
-          if have jq && ! out="$(jq empty -- "$cpath" 2>&1)"; then
-            msg="$(first_line "$out")"
-            emit "$f" "$(line_hint "$out")" data-syntax "invalid JSON: ${msg#jq: }"
-          fi
-          ;;
-      esac
-      ;;
+    *.json | *.jsonc)
+      # jq owns strict JSON; suffixes and settings declare the comment dialect.
+      if ! is_jsonc_path "$f" && have jq && ! out="$(jq empty -- "$cpath" 2>&1)"; then
+        msg="$(first_line "$out")"
+        emit "$f" "$(line_hint "$out")" data-syntax "invalid JSON: ${msg#jq: }"
+      fi ;;
     *.toml)
       if ! out="$(check_toml "$cpath")"; then
         emit "$f" "$(line_hint "$out")" data-syntax "invalid TOML: $(first_line "$out")"
@@ -963,44 +977,8 @@ done <"$TMP/files.list"
 # the lane quiet, as does an empty glob set.
 MIGRATION_GLOBS="${PREFLIGHT_MIGRATION_GLOBS-**/migrations/V*__*.sql **/db/migration/V*__*.sql}"
 
-glob_matches() { # PATTERN PATH — a `*` never reaches past its own component
-  local pat="$1" path="$2" pc pp
-  while :; do
-    if [ -z "$pat" ]; then
-      if [ -z "$path" ]; then return 0; fi
-      return 1
-    fi
-    [ -n "$path" ] || return 1
-    case "$pat" in */*) pc="${pat%%/*}"; pat="${pat#*/}" ;; *) pc="$pat"; pat="" ;; esac
-    case "$path" in */*) pp="${path%%/*}"; path="${path#*/}" ;; *) pp="$path"; path="" ;; esac
-    case "$pp" in $pc) ;; *) return 1 ;; esac
-  done
-}
-
 is_migration_path() { # PATH — a configured glob, `**/` the only depth crossing
-  local pat rc=1 rest
-  # The setting holds patterns, so the word split runs with globbing off:
-  # expanded against the working directory they would become file lists.
-  set -f
-  for pat in $MIGRATION_GLOBS; do
-    case "$pat" in
-      '**/'*)
-        pat="${pat#'**/'}"
-        rest="$1"
-        while :; do
-          if glob_matches "$pat" "$rest"; then
-            rc=0
-            break
-          fi
-          case "$rest" in */*) rest="${rest#*/}" ;; *) break ;; esac
-        done
-        ;;
-      *) glob_matches "$pat" "$1" && rc=0 ;;
-    esac
-    [ "$rc" = 1 ] || break
-  done
-  set +f
-  return "$rc"
+  pf_path_matches_globs "$MIGRATION_GLOBS" "$1"
 }
 
 migration_content_moved() { # PATH — the diff moved text, not only the file mode

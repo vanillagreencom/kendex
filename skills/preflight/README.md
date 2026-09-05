@@ -8,7 +8,7 @@ A diff-scoped, fail-only checker for the escape classes worth catching mechanica
 kendex add vanillagreencom/kendex --skill preflight
 ```
 
-Needs `git`, `awk` and the usual POSIX userland; Bash 3.2 is enough. `shellcheck` is optional and enables the two shellcheck lanes; `data-syntax` reads JSON through `jq` and TOML through `taplo` or a Python 3.11+ `tomllib`. A lane whose tool is missing skips silently.
+Needs `git`, `awk` and the usual POSIX userland; Bash 3.2 is enough. `shellcheck` is optional and enables the two shellcheck lanes; `data-syntax` reads strict JSON through `jq` and TOML through `taplo` or a Python 3.11+ `tomllib`. A lane whose tool is missing skips silently.
 
 ## What it does
 
@@ -39,4 +39,8 @@ Flags: `preflight --help`. The lane table, scope rules and the subtrees each lan
 
 ## Customise
 
-Nothing to configure; `--base REF` sets the comparison point and `--repo PATH` runs against another checkout.
+`PREFLIGHT_JSONC_GLOBS` names `.json` files whose producer permits comments. Its default covers tsconfig, jsconfig, `.vscode`, `.devcontainer`, and VS Code `*-color-theme.json` files. The `.jsonc` suffix needs no setting.
+
+`PREFLIGHT_MIGRATION_GLOBS` names migrations whose recorded checksum makes an edit unsafe. Its default covers the versioned refinery and Flyway paths in [references/lanes.md](references/lanes.md).
+
+Set these values in `kendex.settings.toml` under `[env]`, in `.kendex/settings.toml`, in `.env.local`, or in the process environment. Later sources take priority. `--base REF` sets the comparison point. `--repo PATH` runs against another checkout.
