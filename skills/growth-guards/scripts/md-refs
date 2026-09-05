@@ -1,17 +1,8 @@
 #!/usr/bin/env bash
-# md-refs — every reference in agent-loaded markdown and architecture docs
-# lands: a relative link's path is a tracked file or directory and its
-# anchor a heading slug or explicit anchor in that file; a code-span citation
-# (`path.md`, `path.md § Heading`, `path.md#anchor`) names a tracked file and
-# a heading it has; a decision ID names a tracked decision file. Fenced code
-# is never read. The grammar is lib/md-refs.awk's (with lib/md-slug.awk's
-# reductions) over lib/md-blocks.awk's line stream, stated in CHECKS.md §
-# md-refs.
-#
-# Scopes: --staged judges every matching markdown file the staged diff adds
-# or changes; --all judges every tracked matching file; with neither,
-# GROWTH_GUARDS_MD_SCOPE decides (lib/md-scope.sh). Targets resolve against
-# the index, so a link to a file this commit deletes is dead.
+# md-refs checks links, section routes, and decision references in markdown.
+# Both callers and targets come from the index. A staged change rechecks all
+# configured documents so target edits cannot leave unchanged callers broken.
+# Fenced code is not read. The grammar is in lib/md-refs.awk.
 #
 # Exit codes: 0 clean; 1 dead references; 2 usage/config/collection error.
 set -euo pipefail
@@ -47,17 +38,16 @@ usage() {
   cat <<EOF
 usage: md-refs [--staged | --all]
 
-A dead reference in agent-loaded markdown fails: a relative link whose path
-is not a tracked file or directory or whose #anchor is no heading of the
-target; a code-span citation (\`path.md\`, \`path.md § Heading\`,
-\`path.md#anchor\`) naming no tracked file or no heading it has; a decision
-ID with no tracked file under DECISIONS_DIR. Fenced code is never read.
-Decision IDs are judged only where DECISIONS_DIR is tracked.
+A dead relative link, code-span section or anchor citation, or decision
+reference fails. A link followed by § must start with a heading from its
+target; prose may follow that heading. Fenced code is not read. A path alone
+in a code span is not a citation. Decision IDs are judged only where
+DECISIONS_DIR is tracked.
 
---staged judges every matching markdown file the staged diff adds or
-changes; --all judges every tracked matching file. With neither,
-GROWTH_GUARDS_MD_SCOPE decides: 'touched' (the default) is --staged and
-judges nothing when nothing is staged; 'all' is --all.
+--staged and --all check every tracked matching document. With neither,
+GROWTH_GUARDS_MD_SCOPE=touched checks that set when any change is staged,
+including a deletion; all checks it unconditionally. Callers and targets
+both resolve against the index. Exclusions apply to the document set.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -107,8 +97,25 @@ esac
 ID_WIDTH="$(gg_setting DECISION_ID_WIDTH "$DECISION_ID_WIDTH_DEFAULT")" || exit 2
 gg_positive_int "$ID_WIDTH" DECISION_ID_WIDTH
 
+# A removed target also invalidates references in unchanged documents.
+if [ "$STAGED" -eq 0 ] && [ "$ALL" -eq 0 ]; then
+  scope="$(gg_setting GROWTH_GUARDS_MD_SCOPE "$GG_MD_SCOPE_DEFAULT")" || exit 2
+  if [ "$scope" = touched ]; then
+    gg_require_merged_index
+    diff_status=0
+    git diff --cached --quiet || diff_status=$?
+    case "$diff_status" in
+      0) ;;
+      1) STAGED=1 ;;
+      *) gg_collection_error "could not read staged changes (git diff exit $diff_status)" ;;
+    esac
+  fi
+fi
 gg_md_scope md-refs "$STAGED" "$ALL"
 [ "$GG_MD_MODE" != none ] || exit 0
+# References are checked across the configured document set, including callers
+# the commit does not edit. Targets and callers both come from the index.
+GG_MD_MODE=all
 
 gg_tmpdir
 gg_md_select markdown

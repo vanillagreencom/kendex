@@ -52,32 +52,49 @@ function emit_explicit(content,   s, id) {
   }
 }
 
-# A destination beginning at P in S: the `<...>` form, or up to whitespace or
-# an unbalanced `)`, backslash escapes before ASCII punctuation resolved.
-function parse_dest(s, p,   c, out, depth) {
+# Parse the destination and retain its enclosing link's closing position.
+# Angle destinations, escaped punctuation, and optional titles share this read.
+function parse_dest(s, p,   c, out, depth, title) {
+  LINK_CLOSE = 0
   while (p <= length(s) && substr(s, p, 1) ~ /[ \t]/) p++
   out = ""
   if (substr(s, p, 1) == "<") {
     p++
     while (p <= length(s)) {
       c = substr(s, p, 1)
-      if (c == ">") return out
+      if (c == ">") { p++; break }
       if (c == "\\" && index(ESCAPABLE, substr(s, p + 1, 1)) > 0) { out = out substr(s, p + 1, 1); p += 2; continue }
       out = out c
       p++
     }
-    return out
+  } else {
+    depth = 0
+    while (p <= length(s)) {
+      c = substr(s, p, 1)
+      if (c == "\\" && index(ESCAPABLE, substr(s, p + 1, 1)) > 0) { out = out substr(s, p + 1, 1); p += 2; continue }
+      if (c ~ /[ \t]/) break
+      if (c == "(") depth++
+      else if (c == ")") { if (depth == 0) break; depth-- }
+      out = out c
+      p++
+    }
   }
-  depth = 0
-  while (p <= length(s)) {
-    c = substr(s, p, 1)
-    if (c == "\\" && index(ESCAPABLE, substr(s, p + 1, 1)) > 0) { out = out substr(s, p + 1, 1); p += 2; continue }
-    if (c ~ /[ \t]/) break
-    if (c == "(") depth++
-    else if (c == ")") { if (depth == 0) break; depth-- }
-    out = out c
+  while (p <= length(s) && substr(s, p, 1) ~ /[ \t]/) p++
+  title = substr(s, p, 1)
+  if (title == "\"" || title == "\047" || title == "(") {
     p++
+    depth = 1
+    while (p <= length(s) && depth > 0) {
+      c = substr(s, p, 1)
+      if (c == "\\" && index(ESCAPABLE, substr(s, p + 1, 1)) > 0) { p += 2; continue }
+      if (title == "(" && c == "(") depth++
+      else if (c == (title == "(" ? ")" : title)) depth--
+      p++
+    }
+    if (depth > 0) return out
+    while (p <= length(s) && substr(s, p, 1) ~ /[ \t]/) p++
   }
+  if (substr(s, p, 1) == ")") LINK_CLOSE = p
   return out
 }
 
@@ -89,17 +106,24 @@ function is_local(dest) {
   return 1
 }
 
-function emit_links(s,   i, j, k, dest, raw) {
+function emit_links(s, original,   i, j, k, dest, raw, tail) {
   i = 1
   while (1) {
     j = index(substr(s, i), "](")
     if (j == 0) break
     j = i + j - 1
     dest = parse_dest(s, j + 2)
-    k = index(substr(s, j), ")")
-    raw = (k > 0) ? substr(s, j, k) : substr(s, j)
-    if (is_local(dest)) printf "L\t%s\t%d\t%s\t%s\n", src, line_no, dest, raw
-    i = j + 2
+    k = LINK_CLOSE
+    raw = (k > 0) ? substr(s, j, k - j + 1) : substr(s, j)
+    if (is_local(dest)) {
+      printf "L\t%s\t%d\t%s\t%s\n", src, line_no, dest, raw
+      tail = (k > 0) ? substr(original, k + 1) : ""
+      if (dest ~ /\.md$/ && tail ~ /^[ \t]+§[ \t]+/) {
+        sub(/^[ \t]+§[ \t]+/, "", tail)
+        printf "C\t%s\t%d\t%s\tprefix-section\t%s\t%s\n", src, line_no, dest, tail, dest " § " tail
+      }
+    }
+    i = (k > 0) ? k + 1 : j + 2
   }
   if (s ~ /^[ \t]*\[[^][]+\]:[ \t]*[^ \t]/) {
     j = index(s, "]:")
@@ -202,6 +226,29 @@ function load_headings(   line, f) {
   close(headings)
 }
 
+# A bare section route starts with an existing heading; prose may follow it.
+# Exact code-span citations and anchor links keep their exact-match rules.
+function has_section_prefix(target, value,   key, prefix, name, tail, number) {
+  prefix = target "#"
+  value = tolower(value)
+  gsub(/[`*_]/, "", value)
+  number = ""
+  if (match(value, /^[0-9]+(\.[0-9]+)*/) && substr(value, RLENGTH + 1) ~ /^([ \t.,;:)]|$)/) number = substr(value, 1, RLENGTH)
+  for (key in texts) {
+    if (index(key, prefix) != 1) continue
+    name = substr(key, length(prefix) + 1)
+    gsub(/[`*_]/, "", name)
+    if (number != "") {
+      if (match(name, /^[0-9]+(\.[0-9]+)*/) && substr(name, 1, RLENGTH) == number && substr(name, RLENGTH + 1) ~ /^([.)]?[ \t]|$)/) return 1
+      continue
+    }
+    if (name == "" || substr(value, 1, length(name)) != name) continue
+    tail = substr(value, length(name) + 1)
+    if (tail == "" || tail ~ /^[ \t.,;:)]/) return 1
+  }
+  return 0
+}
+
 function fail(msg) { if (phase == "verdict") printf "V\t%s\t%d\t%s\n", src_path, line_no, msg }
 
 function want_target(t) { if (phase == "targets" && !(t in wanted)) { wanted[t] = 1; print t } }
@@ -249,7 +296,7 @@ mode == "refs" {
   }
   split_spans(f[3])
   for (i = 1; i <= nspans; i++) emit_citation(spans[i])
-  emit_links(outside)
+  emit_links(outside, f[3])
   emit_ids(f[3])
   next
 }
@@ -298,6 +345,8 @@ mode == "resolve" {
     want_target(target)
     if (ckind == "section") {
       if (!((target "#" tolower(value)) in texts)) fail("`" raw "`: " target " has no heading '" value "'")
+    } else if (ckind == "prefix-section") {
+      if (!has_section_prefix(target, value)) fail(raw ": " target " has no heading at the start of '" value "'")
     } else if (!((target "#" value) in slugs)) fail("`" raw "`: " target " has no heading or explicit anchor #" value)
     next
   }

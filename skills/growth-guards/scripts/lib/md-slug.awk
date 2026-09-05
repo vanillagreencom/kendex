@@ -12,7 +12,7 @@
 # drop_punct, and any other multibyte character is kept as a letter.
 
 # The text of every code span in S into spans[1..nspans], and the text
-# between them into `outside`, each span replaced by one space. Runs of
+# between them into `outside`, each span replaced by spaces of equal length. Runs of
 # backticks pair by length; an unmatched run is literal text.
 function split_spans(s,   i, n, rest, p, j, k, m, found) {
   nspans = 0
@@ -42,7 +42,7 @@ function split_spans(s,   i, n, rest, p, j, k, m, found) {
     if (found > 0) {
       nspans++
       spans[nspans] = substr(rest, 1, found - 1)
-      outside = outside " "
+      outside = outside sprintf("%*s", found + 2 * n - 1, "")
       s = substr(rest, found + n)
     } else {
       outside = outside substr(s, 1, n)

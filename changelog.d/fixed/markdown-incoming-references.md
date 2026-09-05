@@ -1,0 +1,1 @@
+- Markdown checks catch broken incoming references after target edits and check links followed by a section heading prefix.

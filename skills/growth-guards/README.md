@@ -34,7 +34,7 @@ Every check is a standalone executable with one exit contract: `0` clean, `1` vi
 
 The `pre-commit` hook judges one commit snapshot and `commit-msg` runs the message gate; the chain and its order are [DEVELOPMENT.md](DEVELOPMENT.md) § The pre-commit chain. Both block on any failure; `git commit --no-verify` is the only bypass.
 
-The markdown lanes start narrow: `md-format` and `md-refs` judge the files a commit touches. Reflow the tree once with `scripts/md-reflow --all`, commit, then set `GROWTH_GUARDS_MD_SCOPE = "all"` so CI judges every tracked markdown file. Vendored or generated markdown goes in `tools/md-excludes` with a reason.
+`md-format` starts with changed documents. `md-refs` checks all configured documents when any change is staged, so it also finds broken references from unchanged callers. Reflow the tree with `scripts/md-reflow --all`, then set `GROWTH_GUARDS_MD_SCOPE = "all"` for unconditional checks. Put vendored or generated markdown in `tools/md-excludes` with a reason.
 
 In CI, run the batch without `--staged`: the index-wide `todo-ban` scan is the only lane that sees a marker no commit ever diffed. `byte-ceiling --base origin/main` gates a PR's additions and file-size growth.
 
