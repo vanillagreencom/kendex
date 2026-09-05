@@ -24,8 +24,7 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
         .args(args)
         .current_dir(cwd)
         .env_clear()
-        .env("HOME", home)
-        .env("KENDEX_REAL_HOME", "1")
+        .envs(test_util::fixture_env(home))
         .env(
             "KENDEX_GIT_BASE",
             format!("file://{}", home.join("git").display()),

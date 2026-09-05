@@ -1,5 +1,8 @@
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -10,8 +13,7 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
         .args(args)
         .current_dir(cwd)
         .env_clear()
-        .env("HOME", home)
-        .env("KENDEX_REAL_HOME", "1")
+        .envs(test_util::fixture_env(home))
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         // Keeps the post-subscribe fetch off the network: shorthands
         // resolve under an empty local base and fail fast.

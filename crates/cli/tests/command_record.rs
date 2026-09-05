@@ -37,8 +37,7 @@ fn command(home: &Path, vars: &[(&str, &Path)]) -> Command {
     let mut run = Command::new(env!("CARGO_BIN_EXE_kendex"));
     run.current_dir(home)
         .env_clear()
-        .env("HOME", home)
-        .env("KENDEX_REAL_HOME", "1")
+        .envs(test_util::fixture_env(home))
         .env("KENDEX_BACKGROUND_REFRESH", "off")
         .env("PATH", std::env::var("PATH").unwrap_or_default());
     for (key, value) in vars {

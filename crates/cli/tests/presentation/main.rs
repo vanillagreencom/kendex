@@ -40,8 +40,7 @@ fn kendex(home: &Path, cwd: &Path, ui: &str, args: &[&str]) -> Output {
         .args(args)
         .current_dir(cwd)
         .env_clear()
-        .env("HOME", home)
-        .env("KENDEX_REAL_HOME", "1")
+        .envs(test_util::fixture_env(home))
         .env("KENDEX_BACKGROUND_REFRESH", "off")
         // Both renderings are driven from one place, so a test can ask
         // for the terminal one without a terminal. Unset is the real
@@ -91,8 +90,7 @@ fn kendex_on_a_terminal(home: &Path, cwd: &Path, args: &[&str]) -> String {
         .args(args)
         .current_dir(cwd)
         .env_clear()
-        .env("HOME", home)
-        .env("KENDEX_REAL_HOME", "1")
+        .envs(test_util::fixture_env(home))
         .env("KENDEX_BACKGROUND_REFRESH", "off")
         .env("KENDEX_UI", "pretty")
         .env("LANG", "C.UTF-8")

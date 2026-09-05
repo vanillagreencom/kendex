@@ -97,8 +97,7 @@ fn run_install_in(
     let output = Command::new("bash")
         .arg(script)
         .env_clear()
-        .env("HOME", home)
-        .env("KENDEX_REAL_HOME", "1")
+        .envs(test_util::fixture_env(home))
         .env(
             "PATH",
             // `path_ahead` sits between the fake tools and the home
