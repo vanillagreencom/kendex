@@ -48,8 +48,8 @@ pair() {
   reset
 }
 
-pair 'bot-instructions.toml' \
-  'printf "\n[[exclusions.path]]\nglob = \"src/main.rs\"\nreason = \"generated entry point\"\n" >> "$repo/bot-instructions.toml"'
+pair 'kendex.toml' \
+  'printf "\n[[bot-instructions.exclusions.path]]\nglob = \"src/main.rs\"\nreason = \"generated entry point\"\n" >> "$repo/kendex.toml"'
 
 pair 'the spec copy doctrine source' \
   'python3 -c "
@@ -185,5 +185,34 @@ expect_green 'a spec copy outside the repo is read from the worktree, and agrees
 edit_doctrine "$BI_TMP/outside-spec/SKILL.md"
 expect_red drift 'and an edit to it is read there, since no index carries it' \
   check --staged --repo "$outside" --spec "$BI_TMP/outside-spec"
+
+# A source catalog keeps both customization and install state in its local
+# manifest. The root's bot table is deliberately invalid if selected.
+repo="$(bi_vendored_repo staged-catalog)" || exit 1
+SPEC="$repo/$BI_VENDORED_SPEC"
+mv "$repo/kendex.toml" "$repo/kendex-local.toml"
+printf 'schema = 6\nis_source_catalog = true\nbot-instructions = "catalog metadata"\n' > "$repo/kendex.toml"
+bi_must render --repo "$repo" --spec "$SPEC" || exit 1
+bi_commit "$repo"
+expect_green 'source catalog bot settings come from the local manifest' \
+  check --staged --repo "$repo" --spec "$SPEC"
+pair 'source catalog local bot settings' \
+  'printf "\n[[bot-instructions.exclusions.path]]\nglob = \"src/main.rs\"\nreason = \"generated entry point\"\n" >> "$repo/kendex-local.toml"'
+
+# Selection itself comes from the index, not the worktree's routing flag.
+printf 'schema = 6\nis_source_catalog = false\nbot-instructions = "catalog metadata"\n' > "$repo/kendex.toml"
+expect_green 'an unstaged catalog routing change does not select the root bot table' \
+  check --staged --repo "$repo" --spec "$SPEC"
+expect_red toml-schema 'the worktree routing change selects its invalid root bot table' \
+  check --repo "$repo" --spec "$SPEC"
+git -C "$repo" add kendex.toml
+expect_red toml-schema 'a staged routing change selects the root bot table' \
+  check --staged --repo "$repo" --spec "$SPEC"
+reset
+git -C "$repo" rm --cached -q kendex-local.toml
+expect_red toml-schema 'a local manifest absent from the index cannot use the disk copy' \
+  check --staged --repo "$repo" --spec "$SPEC"
+expect_green 'the present local manifest still satisfies a worktree check' \
+  check --repo "$repo" --spec "$SPEC"
 
 bi_summary

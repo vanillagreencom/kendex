@@ -108,7 +108,7 @@ expect_red doctrine-routing 'a block missing from the macroscope doctrine.md col
 
 # 7. The frozen-id invariant. Renaming a heading and its row together leaves
 #    both sets agreeing, so a comparison of the pair passes and a consuming
-#    repo's `[doctrine.append]` on the old id silently reaches nothing. The
+#    repo's `[bot-instructions.doctrine.append]` on the old id silently reaches nothing. The
 #    comparison is against the frozen set, which lives in the implementation.
 spec="$(new_spec renamed-pair)"
 python3 - "$spec/SKILL.md" "$spec/schemas/renders.md" <<'PY'
@@ -251,7 +251,7 @@ fi
 
 # A block's ORIGIN decides whether its paragraphs are joined. Doctrine from
 # the spec copy is this package's own prose, hard-wrapped for that file, so
-# joining it is right; a `[doctrine.replace]` is a repo author's bytes, and
+# joining it is right; a `[bot-instructions.doctrine.replace]` is a repo author's bytes, and
 # `renders.md` § Common rules says repo text is never reflowed.
 #
 # Both halves in one fixture: the overridden block must survive intact and a
@@ -262,7 +262,7 @@ fenced="$(bi_new_repo doctrine-fenced)"
   cat "$BI_FIXTURES/canonical.toml"
   cat <<'OVERRIDE'
 
-[doctrine.replace]
+[bot-instructions.doctrine.replace]
 severity = """
 Rank a finding by what it costs, not by how easy it was to see.
 
@@ -280,7 +280,7 @@ git ls-files -- ':(glob)vendor'
 ```
 """
 OVERRIDE
-} > "$fenced/bot-instructions.toml"
+} > "$fenced/kendex.toml"
 # The package copy's own doctrine is one paragraph per line, so the joining
 # half needs a spec copy with a wrap planted in it: one line break inside the
 # `rounds` block, the rest byte-identical.

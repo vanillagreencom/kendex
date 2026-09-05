@@ -153,7 +153,7 @@ export const commands = {
 	replaceUnmanagedItem: (scope: Scope, kind: ItemKind, name: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("replace_unmanaged_item", { scope, kind, name })),
 	toggleItem: (scope: Scope, kind: ItemKind, name: string, enabled: boolean) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("toggle_item", { scope, kind, name, enabled })),
 	removeItem: (scope: Scope, kind: ItemKind, name: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("remove_item", { scope, kind, name })),
-	getManifest: (scope: Scope) => typedError<ManifestRead_Serialize, string>(__TAURI_INVOKE("get_manifest", { scope })),
+	getManifest: (scope: Scope) => typedError<ManifestRead_Serialize, string>(__TAURI_INVOKE("get_manifest", { scope })).then((v) => ((v.status === "ok" ? { ...v, data: ({...v.data,manifest:v.data.manifest==null?v.data.manifest:v.data.manifest}) } : v) as typeof v)),
 	/**
 	 *  The Customize tab's settings half: what every installed skill declares
 	 *  and where this place's file stands on each key.
@@ -762,6 +762,9 @@ export type AvailablePackage = {
  *  is not the bytes, and reading them apart is how the two come adrift.
  */
 export type Base = string | null;
+
+/**  Package-owned review-bot settings, retained without interpreting their schema. */
+export type BotInstructions = Record<string, unknown>;
 
 /**
  *  A curated set with per-member state. Partly-installed is the derived
@@ -1982,6 +1985,11 @@ export type Manifest_Deserialize = {
 	"agent-launch-instructions"?: { [key in string]: string },
 	"agent-additional-instructions"?: { [key in string]: string },
 	"skill-instructions"?: { [key in string]: string },
+	/**
+	 *  Review-bot configuration. The bot-instructions package owns its schema;
+	 *  core retains TOML types through manifest and app reads and writes.
+	 */
+	"bot-instructions"?: Record<string, unknown>,
 	/**  `[agent-frontmatter.<harness>.<agent>]`. */
 	"agent-frontmatter"?: { [key in string]: { [key in string]: FrontmatterOverrides_Deserialize } },
 	"custom-hooks"?: CustomHook_Deserialize[],
@@ -2032,6 +2040,11 @@ export type Manifest_Serialize = {
 	"agent-launch-instructions"?: { [key in string]: string },
 	"agent-additional-instructions"?: { [key in string]: string },
 	"skill-instructions"?: { [key in string]: string },
+	/**
+	 *  Review-bot configuration. The bot-instructions package owns its schema;
+	 *  core retains TOML types through manifest and app reads and writes.
+	 */
+	"bot-instructions"?: Record<string, unknown>,
 	/**  `[agent-frontmatter.<harness>.<agent>]`. */
 	"agent-frontmatter"?: { [key in string]: { [key in string]: FrontmatterOverrides_Serialize } },
 	"custom-hooks"?: CustomHook_Serialize[],

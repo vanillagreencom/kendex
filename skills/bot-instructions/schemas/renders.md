@@ -1,12 +1,12 @@
 # Render spec
 
-One section per output. Each names the exact path, what the generator owns inside it, which doctrine blocks it carries and in what order, and how repo text from `bot-instructions.toml` is escaped into that file's syntax.
+One section per output. Each names the exact path, what the generator owns inside it, which doctrine blocks it carries and in what order, and how repo text from `[bot-instructions]` is escaped into that file's syntax.
 
 Doctrine block ids are the `###` headings of the doctrine source, whose parse rule is SKILL.md § Doctrine. The routing table below is the only other place they are written down, and `doctrine-routing` holds the two to the same set.
 
 ## Common rules
 
-**Block assembly.** A block's text is its heading's slice with the heading line dropped and surrounding blank lines trimmed. `[doctrine.replace]` substitutes the slice; `[doctrine.append]` adds its text as a final paragraph. The `reply-contract` block's `<issue>` placeholder becomes `<PREFIX>-<n>` when `[repo] tracker` is set.
+**Block assembly.** A block's text is its heading's slice with the heading line dropped and surrounding blank lines trimmed. `[bot-instructions.doctrine.replace]` substitutes the slice; `[bot-instructions.doctrine.append]` adds its text as a final paragraph. The `reply-contract` block's `<issue>` placeholder becomes `<PREFIX>-<n>` when `[bot-instructions.repo] tracker` is set.
 
 **Marker.** Every file the generator owns whole, and the one region it owns inside `AGENTS.md`, carries a marker: the file's **first comment**, preceded only by a prologue the format requires. There are exactly two such prologues, and no output has any other: YAML frontmatter in a markdown output that carries it — a `.instructions.md` file and a `.macroscope/correctness/<surface>.md` — which is frontmatter only at byte 0, and the `yaml-language-server` schema line at the top of `.coderabbit.yaml`.
 
@@ -16,7 +16,7 @@ One rule, and one no containment test can express: a quotation of the marker, a 
 
 The first line, **or the first line after a leading prologue**. A leading YAML frontmatter block is skipped, and so is the `yaml-language-server` schema line `.coderabbit.yaml` opens with. One rule at every path, so a file that was moved or copied still answers — a rendered `.macroscope/correctness/<surface>.md` copied to `.macroscope/approvability.md` keeps its frontmatter, and that copy is `orphan`'s case rather than an exotic one.
 
-The marker is a comment in that file's syntax naming this package, the spec copy's version, and the paths this render read — SKILL.md § The render inputs is the set. A repo input is named by the repo-relative path actually read; the spec copy's two files are named by their names within the spec copy, because an absolute path would make a render depend on where a checkout sits and the version already says which copy it was. The comment ends with the sentence `Edit bot-instructions.toml or the spec copy, then re-render.` A markdown output uses an HTML comment on **one line**, so the whole marker is the one line `owns` tests. YAML and TOML use `#`, over two lines, and so does `.macroscope/ignore.md`, whose grammar is glob-per-line with `#` comments rather than markdown's.
+The marker is a comment in that file's syntax naming this package, the spec copy's version, and the paths this render read — SKILL.md § The render inputs is the set. A repo input is named by the repo-relative path actually read; the spec copy's two files are named by their names within the spec copy, because an absolute path would make a render depend on where a checkout sits and the version already says which copy it was. The comment ends with the sentence `Edit [bot-instructions] in the effective manifest or the spec copy, then re-render.` A markdown output uses an HTML comment on **one line**, so the whole marker is the one line `owns` tests. YAML and TOML use `#`, over two lines, and so does `.macroscope/ignore.md`, whose grammar is glob-per-line with `#` comments rather than markdown's.
 
 **The version and every recorded path are refused, not escaped, outside a safe class.** The marker is the one place the generator writes bytes it did not author, and no structured-file validator need be in a render to catch a comment that closed early: with only `codex` enabled there is none. A version outside `[A-Za-z0-9.+-]`, or a path outside `[A-Za-z0-9._/-]`, fails naming it. That is the whole of what this package validates about its own installed spec copy — shape where the bytes reach an output's syntax, trust everywhere else, the same trust the doctrine text landing in those outputs already has.
 
@@ -40,11 +40,11 @@ That read decodes strictly, and so does every other read in this package. **Text
 
 **No timestamps and no input hashes** in a rendered file. A render is reproducible from its inputs, and either would turn every unrelated re-render into a diff.
 
-**Ordering is fixed, never sorted at render time.** Doctrine blocks appear in the order each section below states. `[[surface]]` entries appear in TOML declaration order. Exclusion entries appear with the derived render trees first, in lexicographic order, then `[[exclusions.path]]` entries in declaration order. Stable ordering is what makes a re-render diff readable.
+**Ordering is fixed, never sorted at render time.** Doctrine blocks appear in the order each section below states. `[[bot-instructions.surface]]` entries appear in TOML declaration order. Exclusion entries appear with the derived render trees first, in lexicographic order, then `[[bot-instructions.exclusions.path]]` entries in declaration order. Stable ordering is what makes a re-render diff readable.
 
 **Repo text is never reflowed.** Line breaks in a TOML multi-line string are preserved except where a target forbids them, and two do: `tone_instructions`, which CodeRabbit reads as one scalar, and the `AGENTS.md` owned region, where § `AGENTS.md` requires one block to be exactly one bullet with no blank line inside.
 
-**Doctrine text is reflowed by its origin, not by its destination.** A block as the spec copy wrote it is this package's own prose, hard-wrapped for that file, and its paragraphs are joined on every destination that carries them — those breaks belong to the spec copy rather than to the meaning. A block a repo overrode through `[doctrine.append]` or `[doctrine.replace]` is repo text, so the rule above governs it and its line breaks reach every destination. The two read as a contradiction only while the origin is out of hand: joining both is how a fenced example in an override arrived as one line on every surface that carries paragraphs.
+**Doctrine text is reflowed by its origin, not by its destination.** A block as the spec copy wrote it is this package's own prose, hard-wrapped for that file, and its paragraphs are joined on every destination that carries them — those breaks belong to the spec copy rather than to the meaning. A block a repo overrode through `[bot-instructions.doctrine.append]` or `[bot-instructions.doctrine.replace]` is repo text, so the rule above governs it and its line breaks reach every destination. The two read as a contradiction only while the origin is out of hand: joining both is how a fenced example in an override arrived as one line on every surface that carries paragraphs.
 
 **`exclude_globs` is real on one surface only.** Macroscope has an `exclude` frontmatter key evaluated after `include`, so the subtraction is expressed there. Copilot's frontmatter has no exclude key and CodeRabbit's `path_instructions` entry has no exclude field, so on both the subtraction is rendered as a closing PARAGRAPH of the instruction text, one blank line under it, naming the paths the rules do not cover. A blank line rather than a space, because `instructions` ending in a fenced code block end on the closing fence, and a fence with text after it on the line closes nothing — the sentence and everything after it then rendered as code. Those bots load the instructions for the excluded files and are asked to disregard them. A surface needing exact scoping narrows `globs`.
 
@@ -63,7 +63,7 @@ One table, one row per doctrine block, one column per destination that carries d
 | `trust-model` | 7 | – (b) | – (a) | – | 3 | 7 | – (c) | 7 |
 | `reply-contract` | 8 | – (b) | – (a) | – | 4 | 8 | 6 | 8 |
 
-`[repo] summary` placement, since the destinations differ: it opens `copilot-instructions`, immediately after the `# <repo name>` line and before every block. Everywhere else it follows the last block — both `pr_agent` `[review_agent]` keys, `pr_agent extra`, and `macroscope doctrine.md`.
+`[bot-instructions.repo] summary` placement, since the destinations differ: it opens `copilot-instructions`, immediately after the `# <repo name>` line and before every block. Everywhere else it follows the last block — both `pr_agent` `[review_agent]` keys, `pr_agent extra`, and `macroscope doctrine.md`.
 
 **The exclusion set's placement.** Where it is rendered, it follows the `render-out-of-scope` block immediately, in the same bullet or paragraph that block renders as, in the exclusion set's own fixed order. Three destinations carry it: `AGENTS.md`, `pr_agent issues`, and `pr_agent extra` — the columns whose `render-out-of-scope` cell carries a number and whose bot has no file-based review exclusion. Copilot needs no fourth, because note (b) already routes this block to it through `AGENTS.md`, which it reads.
 
@@ -89,13 +89,13 @@ The three unenforced rows are why the paths are rendered at all. Codex has no fi
 
 **`AGENTS.md` carries all eight**, and so does `macroscope doctrine.md`. Each is its bot's only surface: neither Codex nor Macroscope reads a second instruction file, has a path-scoped mechanism, or has anywhere else a block could arrive. A block omitted from one of those two does not reach that bot at all.
 
-**`best_practices.md` carries no doctrine.** It exists to give `[[surface]]` text a route to Qodo, and `.pr_agent.toml` already carries every block.
+**`best_practices.md` carries no doctrine.** It exists to give `[[bot-instructions.surface]]` text a route to Qodo, and `.pr_agent.toml` already carries every block.
 
-**The `AGENTS.md` section is the doctrine root, not a Codex-only file.** CodeRabbit reads it through `code_guidelines`, and Copilot code review reads it directly, so `[bots] codex = false` with either of those on would leave `.coderabbit.yaml` carrying one block and the Copilot pointer aimed at a section that does not exist. `toml-schema` rejects that pair.
+**The `AGENTS.md` section is the doctrine root, not a Codex-only file.** CodeRabbit reads it through `code_guidelines`, and Copilot code review reads it directly, so `[bot-instructions.bots] codex = false` with either of those on would leave `.coderabbit.yaml` carrying one block and the Copilot pointer aimed at a section that does not exist. `toml-schema` rejects that pair.
 
 ## `AGENTS.md` § Code Review Rules
 
-Read by Codex, by Copilot code review on GitHub.com, and by CodeRabbit through `knowledge_base.code_guidelines.filePatterns`. Rendered when `[bots] codex` is true, which `toml-schema` requires whenever `copilot` or `coderabbit` is.
+Read by Codex, by Copilot code review on GitHub.com, and by CodeRabbit through `knowledge_base.code_guidelines.filePatterns`. Rendered when `[bot-instructions.bots] codex` is true, which `toml-schema` requires whenever `copilot` or `coderabbit` is.
 
 **Owned region.** From the heading line through the line before the next heading at level 1 or 2, or end of file. The generator replaces that region's body and touches nothing else in the file.
 
@@ -107,7 +107,7 @@ Where the opening predicates differ, the stricter one is the contract: a repo wh
 
 **Missing section.** An error. The generator never creates `AGENTS.md` and never adds the heading.
 
-**The bootstrap is add-the-heading, set `[bots] codex`, `adopt`, then `render`.** The flag precedes the `adopt` because `adopt` takes a region over only for a capability that is on. A hand-added heading leaves an unmarked region at a generated path, and `render` refuses to replace one of those — the rule that stops it destroying hand-written bot files. `adopt` is the verb that makes an unmanaged thing managed, and a region is no different from a file in that respect, so it takes the region over and names it in what it prints. No bootstrap exemption: an exemption would need a boundary between a region `render` may write unmarked and a hand-written one it must refuse, and every boundary anyone can state there reopens the overwrite the marker gate exists to prevent.
+**The bootstrap is add-the-heading, set `[bot-instructions.bots] codex`, `adopt`, then `render`.** The flag precedes the `adopt` because `adopt` takes a region over only for a capability that is on. A hand-added heading leaves an unmarked region at a generated path, and `render` refuses to replace one of those — the rule that stops it destroying hand-written bot files. `adopt` is the verb that makes an unmanaged thing managed, and a region is no different from a file in that respect, so it takes the region over and names it in what it prints. No bootstrap exemption: an exemption would need a boundary between a region `render` may write unmarked and a hand-written one it must refuse, and every boundary anyone can state there reopens the overwrite the marker gate exists to prevent.
 
 **The splice happens at write time.** The build phase produces the region's body; the write re-reads `AGENTS.md`, locates the owned region in those bytes, and replaces it there. Nothing outside the region is ever carried through the build, so an edit landing between the build and the write survives instead of being overwritten by a copy taken before it. A file whose region cannot be located at write time — the heading gone, or duplicated, since the build read it — fails naming the path rather than guessing where the region went.
 
@@ -117,7 +117,7 @@ One block renders as exactly one bullet, its paragraphs joined by a space and no
 
 The `render-out-of-scope` bullet is the one that carries data as well as doctrine: the exclusion set follows its text in the same bullet, comma-joined in the set's fixed order. It stays inside the owned region like everything else the generator writes there, so the region's rules are unchanged — one bullet, no blank line, no line a heading predicate would catch — and a path is not a heading, so nothing about the region's boundaries moves. This is the only place Codex can receive those paths, since it reads no second file.
 
-A repo whose guard pins the tracked reply form needs `[repo] tracker` set. Such a guard matches the repo's own `Tracked: <PREFIX>-<n>` shape literally inside the `- Author replies are` bullet, and an absent tracker leaves the generic `<issue>` placeholder the render substitutes into, which that guard reads as the form being gone.
+A repo whose guard pins the tracked reply form needs `[bot-instructions.repo] tracker` set. Such a guard matches the repo's own `Tracked: <PREFIX>-<n>` shape literally inside the `- Author replies are` bullet, and an absent tracker leaves the generic `<issue>` placeholder the render substitutes into, which that guard reads as the form being gone.
 
 **Escaping.** Markdown, passed through. A line that markdown would read as a heading ends the owned region at the next render, so the generator refuses any doctrine or repo line matching the heading predicate in `repo-toml.md` § The content refusals. That file refuses the same predicate at input time; this is the second check because doctrine text does not come through it, and that table records which classes get a second check here and which do not.
 
@@ -130,14 +130,14 @@ Read by Copilot code review, repo-wide, from the pull request's head branch.
 **Body.**
 
 1. The marker comment.
-2. `# <repo name>` followed by `[repo] summary`, which the routing table's placement note names as this destination's opening rather than its close.
+2. `# <repo name>` followed by `[bot-instructions.repo] summary`, which the routing table's placement note names as this destination's opening rather than its close.
 3. `# Code review calibration`, then the blocks the `copilot-instructions` column of the routing table carries, in its order, as `##` subsections.
 4. `## Reply contract`, one sentence pointing at `AGENTS.md` § Code Review Rules, spelled with that exact file name and section name, emitted on one line and never wrapped: a reader looking for the file name and the section name together reads one line, and a wrap splits the pointer in two.
-5. `## Path rules`, one sentence naming `.github/instructions/` as where per-path rules live, emitted only when at least one `[[surface]]` exists.
+5. `## Path rules`, one sentence naming `.github/instructions/` as where per-path rules live, emitted only when at least one `[[bot-instructions.surface]]` exists.
 
 Three blocks reach Copilot through `AGENTS.md` rather than through this file; the routing table's note (b) says which and why.
 
-**Budget.** The rendered file must not exceed `[budgets] copilot_chars` (default 6000). Over it, the render fails naming the character count and the budget. GitHub documents no numeric cap here; see `references/limits.md`.
+**Budget.** The rendered file must not exceed `[bot-instructions.budgets] copilot_chars` (default 6000). Over it, the render fails naming the character count and the budget. GitHub documents no numeric cap here; see `references/limits.md`.
 
 **Escaping.** Markdown, passed through, with the same heading predicate as above so a repo string cannot forge a section.
 
@@ -145,7 +145,7 @@ Three blocks reach Copilot through `AGENTS.md` rather than through this file; th
 
 Read by Copilot code review on GitHub.com, JetBrains and Xcode, scoped by `applyTo`.
 
-**Owned.** One whole file per `[[surface]]`, named `<surface.name>.instructions.md`. Files in that directory carrying no marker are hand-written and are left alone; a marked file no current surface produces is an orphan.
+**Owned.** One whole file per `[[bot-instructions.surface]]`, named `<surface.name>.instructions.md`. Files in that directory carrying no marker are hand-written and are left alone; a marked file no current surface produces is an orphan.
 
 **Body.**
 
@@ -190,7 +190,7 @@ The last two are here for the same reason as the rest. `code_generation` gets no
 
 `inheritance` is written `false` explicitly. It decides whether an unset key takes a parent level's value instead of resolving down the ladder, which is the one key that changes what "full state" means, so a full-state render states it rather than relying on its default.
 
-`tone_instructions` is `[tone] coderabbit` with newlines collapsed to single spaces, emitted as a folded scalar. Its 250-character cap is the vendored schema's own `maxLength` and `coderabbit-schema` is its single enforcer, so the render carries no second copy of the number and no fixture can red two owners of one bound. The shipped default when `[tone]` is absent:
+`tone_instructions` is `[bot-instructions.tone] coderabbit` with newlines collapsed to single spaces, emitted as a folded scalar. Its 250-character cap is the vendored schema's own `maxLength` and `coderabbit-schema` is its single enforcer, so the render carries no second copy of the number and no fixture can red two owners of one bound. The shipped default when `[bot-instructions.tone]` is absent:
 
 > Terse and technical. Give the defect, its triggering input, and the consequence. No praise, diff restatement, or summary. One finding per thread. If unsure, name the part you could not verify.
 
@@ -200,9 +200,9 @@ The last two are here for the same reason as the rest. `code_generation` gets no
 
 **An override naming no property the vendored schema defines fails the render**, naming the key. The walk resolves this package's choices against the schema, so a property the vendored copy does not define is a choice that never applies and a key that resolves to the vendor's default instead — silently, and with every validator green. Renaming a property is what a schema refresh does, and refreshing that copy is a step in `references/checklist.md`, so this is the expected way in rather than a hypothetical one. `load_schema`'s top-level check is the same shape one level up.
 
-**`reviews.path_filters`.** The exclusion set, each entry prefixed `!`, each preceded by a comment carrying its reason — the entry's own `reason` where it has one, and the fixed string `repo-toml.md` § `[exclusions]` states for a derived entry, which has no TOML row to carry one. Exclusion-only: a single entry without `!` turns the list into an allowlist and un-reviews every unlisted file in the repo. The glob dialect is what keeps these patterns usable by `git sparse-checkout`, which CodeRabbit feeds them to. Both rules are enforced by `repo-toml.md` § The glob dialect rather than left to the author.
+**`reviews.path_filters`.** The exclusion set, each entry prefixed `!`, each preceded by a comment carrying its reason — the entry's own `reason` where it has one, and the fixed string `repo-toml.md` § `[bot-instructions.exclusions]` states for a derived entry, which has no TOML row to carry one. Exclusion-only: a single entry without `!` turns the list into an allowlist and un-reviews every unlisted file in the repo. The glob dialect is what keeps these patterns usable by `git sparse-checkout`, which CodeRabbit feeds them to. Both rules are enforced by `repo-toml.md` § The glob dialect rather than left to the author.
 
-**`reviews.path_instructions`.** One entry per `[[surface]]`. `path` is the surface's globs joined as a brace alternation when there is more than one (`{a/**,b/**}`), which minimatch understands and which is safe here because `path_instructions` never reaches sparse-checkout. `instructions` is the surface text with `exclude_globs`, when present, rendered as a closing sentence naming the paths the rules do not cover. Each entry is capped at 20,000 characters.
+**`reviews.path_instructions`.** One entry per `[[bot-instructions.surface]]`. `path` is the surface's globs joined as a brace alternation when there is more than one (`{a/**,b/**}`), which minimatch understands and which is safe here because `path_instructions` never reaches sparse-checkout. `instructions` is the surface text with `exclude_globs`, when present, rendered as a closing sentence naming the paths the rules do not cover. Each entry is capped at 20,000 characters.
 
 A final entry with `path: "**"` carries `render-out-of-scope` when the exclusion set is non-empty. The path filters already remove those trees; the instruction is what stops a finding arriving through a file that references them.
 
@@ -226,7 +226,7 @@ Read by Qodo from the root of the default branch.
 
 **Sections.**
 
-- `[github_app]`: `pr_commands` from `[cadence] qodo_commands`, `handle_push_trigger` from `[cadence] qodo_push_trigger`.
+- `[github_app]`: `pr_commands` from `[bot-instructions.cadence] qodo_commands`, `handle_push_trigger` from `[bot-instructions.cadence] qodo_push_trigger`.
 - `[review_agent]`: `comments_location_policy = "inline"`, `issues_user_guidelines`, `compliance_user_guidelines`.
 - `[pr_reviewer]`: `extra_instructions`, plus the noise keys off (`require_tests_review`, `require_security_review`, `require_ticket_analysis_review`, `enable_review_labels_security`, `enable_review_labels_effort`, `require_score_review`, `require_estimate_effort_to_review`, `require_can_be_split_review`, `persistent_comment`, all false).
 - `[pr_description]`: `publish_labels = false`.
@@ -243,37 +243,37 @@ The routing table's three `pr_agent` columns say which block goes where and in w
 
 ## `best_practices.md`
 
-Read by Qodo Merge, the commercial product, from the repo root. Rendered only when `[bots] qodo_best_practices` is true.
+Read by Qodo Merge, the commercial product, from the repo root. Rendered only when `[bot-instructions.bots] qodo_best_practices` is true.
 
 **Owned.** The whole file.
 
-**Body.** The marker comment, then one `##` section per `[[surface]]` holding its `instructions`, headed by the surface name and its globs written out as prose, and closing with the same `exclude_globs` sentence the Copilot and CodeRabbit renders carry. Surface text has no other route to Qodo, so a subtraction dropped here is a subtraction that never reaches it at all.
+**Body.** The marker comment, then one `##` section per `[[bot-instructions.surface]]` holding its `instructions`, headed by the surface name and its globs written out as prose, and closing with the same `exclude_globs` sentence the Copilot and CodeRabbit renders carry. Surface text has no other route to Qodo, so a subtraction dropped here is a subtraction that never reaches it at all.
 
 No doctrine. `.pr_agent.toml` carries every block already, which is why this file has no column in the routing table.
 
 **No surfaces.** The file is not written. An existing marked one becomes an orphan, so retiring the last surface says so rather than leaving a marker-only file that looks like current guidance.
 
-**Budget.** `[budgets] qodo_best_practices_lines`, default 800. Qodo gives that number as writing guidance and states no length at which it rejects or truncates, so the budget is this package's own, taken from that guidance the way `[budgets] copilot_chars` is taken from a two-page reading; `references/limits.md` marks it a recommendation and carries the page. Organization and mapped-repository best-practices files layer above this one and the generator cannot see them, so nothing here bounds the total.
+**Budget.** `[bot-instructions.budgets] qodo_best_practices_lines`, default 800. Qodo gives that number as writing guidance and states no length at which it rejects or truncates, so the budget is this package's own, taken from that guidance the way `[bot-instructions.budgets] copilot_chars` is taken from a two-page reading; `references/limits.md` marks it a recommendation and carries the page. Organization and mapped-repository best-practices files layer above this one and the generator cannot see them, so nothing here bounds the total.
 
 ## `REVIEW.md`
 
-Rendered only when `[bots] qodo_review_md` is true. That flag exists because the file is inert until the portal's "REVIEW.md instructions" toggle is on, and nothing in the repo can read the portal: someone works the checklist line, then sets the flag.
+Rendered only when `[bot-instructions.bots] qodo_review_md` is true. That flag exists because the file is inert until the portal's "REVIEW.md instructions" toggle is on, and nothing in the repo can read the portal: someone works the checklist line, then sets the flag.
 
 **Body.** The marker as an HTML comment, then the blocks the `REVIEW.md` column of the routing table carries, in its order, as plain markdown. Qodo documents no schema for it, which makes the marker the only thing identifying the file as this package's: without it the next render refuses to replace its own output and `orphan` cannot tell it from a file the repo wrote.
 
 ## `.macroscope/`
 
-Rendered only when `[bots] macroscope` is true. Read from the most recent commit on the pull request, except for a fork pull request, which reads the default branch.
+Rendered only when `[bot-instructions.bots] macroscope` is true. Read from the most recent commit on the pull request, except for a fork pull request, which reads the default branch.
 
 **`.macroscope/ignore.md`.** One glob per line, `#` comments, blank lines ignored: the grammar Macroscope documents, cited in `references/limits.md` § Macroscope. The file is markdown by extension only, so the marker takes the `#` form here rather than the HTML form every other markdown output uses, and each glob's reason is a `#` comment on the line above it, taken from the same two sources `path_filters` uses: the entry's `reason`, or the fixed derived string. An HTML comment in this file would be a pattern matching nothing.
 
-A `reason` is single-line, which is what stops a reason from putting a line of the author's choosing into a file whose every non-comment line is a pattern. `bot-instructions.toml` refuses a break at input time.
+A `reason` is single-line, which is what stops a reason from putting a line of the author's choosing into a file whose every non-comment line is a pattern. `[bot-instructions]` refuses a break at input time.
 
 Repository-wide: a check-run agent's own `include` overrides it, which is a reason not to give an agent a broad `include`.
 
 **`.macroscope/correctness/doctrine.md`.** No frontmatter, so it applies repo-wide: the marker as an HTML comment, then the blocks its routing-table column names, which is all eight: `.macroscope/` is Macroscope's only instruction surface, it reads no `AGENTS.md`, and a block left out here reaches it nowhere. Its name is reserved, as are `correctness` and the two `.macroscope/` root names.
 
-**`.macroscope/correctness/<name>.md`.** One per `[[surface]]`: frontmatter `include` from `globs` and `exclude` from `exclude_globs`, both as YAML string arrays, then the marker, then the surface's `instructions` as the body. The body is the point of the file — a marker and frontmatter with no guidance under them is a correctness file that tells Macroscope nothing, which is what the render never emits. Macroscope evaluates `exclude` after `include`, which matches the TOML's meaning directly, so this is the one surface where the subtraction needs no restatement in prose.
+**`.macroscope/correctness/<name>.md`.** One per `[[bot-instructions.surface]]`: frontmatter `include` from `globs` and `exclude` from `exclude_globs`, both as YAML string arrays, then the marker, then the surface's `instructions` as the body. The body is the point of the file — a marker and frontmatter with no guidance under them is a correctness file that tells Macroscope nothing, which is what the render never emits. Macroscope evaluates `exclude` after `include`, which matches the TOML's meaning directly, so this is the one surface where the subtraction needs no restatement in prose.
 
 **Not written.** `.macroscope/check-run-agents/`, `.macroscope/approvability.md`, and `.macroscope/correctness/correctness.md`. The first two create merge-blocking check runs and per-run spend, which is a decision a repo owner makes, not one a doctrine render makes for eight repos at once. The third is Macroscope's governing file: spelled exactly that way at the top of `correctness/`, it carries `waitsFor`, `requires`, `waitsForTimeout` and `waitsForDiscoveryTimeout` for the whole correctness run. This package permits no frontmatter key but `include` and `exclude`, so a render over it would drop those four permanently and Macroscope only warns. A repo keeps its own governing file, hand-written and unmarked, and no surface may be named `correctness`.
 

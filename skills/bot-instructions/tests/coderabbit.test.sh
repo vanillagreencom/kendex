@@ -202,7 +202,7 @@ fi
 git -C "$repo" checkout -- .bot-instructions/coderabbit-schema.json .coderabbit.yaml
 
 # The one arrival route the input table cannot cover: a default in the
-# VENDORED SCHEMA. No `bot-instructions.toml` produces it, so `coderabbit-schema`
+# VENDORED SCHEMA. No `kendex.toml` produces it, so `coderabbit-schema`
 # runs the class over the document it validates — the emitter does not, because
 # a refusal there would reach the operator naming no validator. Nothing is
 # written either way: `render_verb` validates before its write phase.

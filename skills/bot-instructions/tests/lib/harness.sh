@@ -7,6 +7,7 @@
 # Sourced, never executed: no mode bit, per this repo's CI convention.
 
 set -u
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 BI_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 BI="$BI_ROOT/skills/bot-instructions/scripts/bot-instructions"
@@ -57,14 +58,6 @@ bi_new_repo() {
   printf 'prose\n' > "$repo/docs/generated/api.md"
   printf '# fixture\n' > "$repo/README.md"
   printf 'x\n' > "$repo/src/tests/t.rs"
-  cat > "$repo/kendex.toml" <<'EOF'
-schema = 6
-[install]
-harnesses = ["claude"]
-[skills.dev]
-source = "."
-enabled = true
-EOF
   cat > "$repo/AGENTS.md" <<'EOF'
 # fixture
 
@@ -78,7 +71,7 @@ Hand-written today.
 
 Text.
 EOF
-  cp "$BI_FIXTURES/canonical.toml" "$repo/bot-instructions.toml"
+  cp "$BI_FIXTURES/canonical.toml" "$repo/kendex.toml"
   git -C "$repo" add -A >/dev/null 2>&1
   printf '%s\n' "$repo"
 }
@@ -173,10 +166,23 @@ expect_message() {
 
 # Replace one key's value in a fixture TOML by rewriting the whole file from a
 # heredoc the caller supplies on stdin.
-bi_toml() { cat > "$1/bot-instructions.toml"; }
+bi_toml() { cat > "$1/kendex.toml"; }
+
+# Install-only mutations retain the bot configuration in the same manifest.
+bi_manifest() {
+  python3 -c '
+import sys
+from pathlib import Path
+p = Path(sys.argv[1]) / "kendex.toml"
+s = p.read_text()
+key = "[bot-instructions]\n"
+assert s.count(key) == 1, "fixture shape changed"
+p.write_text(sys.stdin.read() + "\n" + key + s.split(key, 1)[1])
+' "$1"
+}
 
 # A repo with nothing enabled, for the clauses that reject before any flag
-# matters. Every `[bots]` flag false is a legitimate state, so a control here
+# matters. Every `[bot-instructions.bots]` flag false is a legitimate state, so a control here
 # reds on its own mutation and on nothing else.
 bi_minimal_repo() {
   local name repo
@@ -189,9 +195,10 @@ bi_minimal_repo() {
   printf '%s\n' "$repo"
 }
 
-BI_MIN_HEAD='schema = 1
+BI_MIN_HEAD='[bot-instructions]
+schema = 1
 
-[repo]
+[bot-instructions.repo]
 name = "fixture"
 summary = "A fixture repository."
 '
@@ -201,7 +208,7 @@ summary = "A fixture repository."
 bi_control() {
   local want label repo
   want="$1"; label="$2"; repo="$3"
-  { printf '%s' "$BI_MIN_HEAD"; cat; } > "$repo/bot-instructions.toml"
+  { printf '%s' "$BI_MIN_HEAD"; cat; } > "$repo/kendex.toml"
   expect_red "$want" "$label" check --repo "$repo"
 }
 

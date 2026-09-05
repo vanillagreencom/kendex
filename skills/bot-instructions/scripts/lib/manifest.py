@@ -1,4 +1,4 @@
-"""`[exclusions] derive_render`: the install manifest, and what it derives.
+"""`[bot-instructions.exclusions] derive_render`: the install manifest, and what it derives.
 
 **The manifest is the one kendex resolves, never a hardcoded filename.** That
 is `kendex.toml`, except where it declares `is_source_catalog = true` and
@@ -40,26 +40,28 @@ HARNESS_ROOTS = {
 
 
 class Resolved:
-    def __init__(self, paths, harnesses, skills):
+    def __init__(self, paths, data):
         self.paths = paths          # every manifest path actually read
-        self.harnesses = harnesses
-        self.skills = skills        # name -> source
+        self.data = data            # the effective manifest, read once
+
+    @property
+    def chosen(self):
+        return self.paths[-1]
 
 
 def resolve(tree):
-    """Read the manifest kendex resolves. Returns (Resolved, [paths read])."""
+    """Read the manifest kendex resolves for configuration and exclusions."""
     root_text = tree.read(ROOT_MANIFEST)
     if root_text is None:
         raise ManifestError(
-            f"{ROOT_MANIFEST}: absent, and `[exclusions] derive_render` is true. A repo "
-            "the generator cannot derive from says so rather than shipping a short list"
+            f"{ROOT_MANIFEST}: absent at the repo root"
         )
     paths = [ROOT_MANIFEST]
     try:
         root = tomllib.loads(root_text)
     except tomllib.TOMLDecodeError as exc:
         raise ManifestError(f"{ROOT_MANIFEST}: not valid TOML ({exc})") from exc
-    chosen, data = ROOT_MANIFEST, root
+    data = root
     if root.get("is_source_catalog") is True:
         local_text = tree.read(LOCAL_MANIFEST)
         if local_text is None:
@@ -72,23 +74,22 @@ def resolve(tree):
             data = tomllib.loads(local_text)
         except tomllib.TOMLDecodeError as exc:
             raise ManifestError(f"{LOCAL_MANIFEST}: not valid TOML ({exc})") from exc
-        chosen = LOCAL_MANIFEST
-    harnesses = data.get("install", {}).get("harnesses", [])
-    skills = data.get("skills", {})
-    if not harnesses and not skills:
-        raise ManifestError(
-            f"{chosen}: declares no install — no `[install] harnesses` and no `[skills.*]` "
-            "rows. Reading the wrong file and finding nothing to exclude is "
-            "indistinguishable from a repo with nothing to exclude, so emptiness is the "
-            "finding rather than an empty derivation"
-        )
-    return Resolved(paths, list(harnesses), skills), paths
+    return Resolved(paths, data)
 
 
 def derive(tree, resolved):
     """The derived exclusion globs, lexicographic, each with the fixed reason."""
+    harnesses = resolved.data.get("install", {}).get("harnesses", [])
+    skills = resolved.data.get("skills", {})
+    if not harnesses and not skills:
+        raise ManifestError(
+            f"{resolved.chosen}: declares no install — no `[install] harnesses` and no `[skills.*]` "
+            "rows. Reading the wrong file and finding nothing to exclude is "
+            "indistinguishable from a repo with nothing to exclude, so emptiness is the "
+            "finding rather than an empty derivation"
+        )
     trees = set()
-    for name, entry in resolved.skills.items():
+    for name, entry in skills.items():
         if not isinstance(entry, dict):
             # Loud, like every neighbour here. Skipping the row would leave a
             # vendored tree in review scope with both verbs exiting 0 —
@@ -105,7 +106,7 @@ def derive(tree, resolved):
             # it stays in review scope.
             continue
         trees.add(_checked(f".agents/skills/{name}/**", f"[skills.{name}]"))
-    for harness in resolved.harnesses:
+    for harness in harnesses:
         row = HARNESS_ROOTS.get(harness)
         if row is None:
             raise ManifestError(

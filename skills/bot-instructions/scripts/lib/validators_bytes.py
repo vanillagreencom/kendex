@@ -37,7 +37,7 @@ def doctrine_routing(ctx, out):
     frozen = set(ctx.frozen_ids)
     for bid in sorted(frozen - headings):
         out.append(Finding(v, f"block id {bid!r} is frozen and the doctrine source no longer "
-                              "defines it. A consuming repo's [doctrine.append] keyed on it "
+                              "defines it. A consuming repo's [bot-instructions.doctrine.append] keyed on it "
                               "would silently reach nothing"))
     for bid in sorted(headings - frozen):
         out.append(Finding(v, f"block id {bid!r} is not in the frozen set. Renaming a heading "
@@ -74,7 +74,7 @@ def coderabbit_schema(ctx, out):
                            CODERABBIT_SCHEMA_PATH))
     doc = ctx.build.data.get(".coderabbit.yaml")
     if doc is None:
-        out.append(Finding(v, "[bots] coderabbit is true and no .coderabbit.yaml was rendered"))
+        out.append(Finding(v, "[bot-instructions.bots] coderabbit is true and no .coderabbit.yaml was rendered"))
         return
     try:
         for message in jsonschema.validate(doc, schema, ".coderabbit.yaml"):
@@ -139,7 +139,7 @@ def copilot_budget(ctx, out):
     budget = ctx.config.budgets["copilot_chars"]
     if len(text) > budget:
         sizes = "; ".join(f"{head}: {size}" for head, size in _sections(text))
-        out.append(Finding(v, f"{len(text)} characters, over [budgets] copilot_chars "
+        out.append(Finding(v, f"{len(text)} characters, over [bot-instructions.budgets] copilot_chars "
                               f"{budget}. Sections by size — {sizes}",
                            ".github/copilot-instructions.md"))
 

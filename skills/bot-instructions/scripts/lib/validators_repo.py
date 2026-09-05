@@ -46,7 +46,7 @@ def agents_section(ctx, out):
         return
     text = ctx.read("AGENTS.md")
     if text is None:
-        out.append(Finding(v, "[bots] codex is true and the repo has no AGENTS.md. The "
+        out.append(Finding(v, "[bot-instructions.bots] codex is true and the repo has no AGENTS.md. The "
                               "generator never creates it and never adds the heading",
                            "AGENTS.md"))
         return
@@ -80,7 +80,7 @@ def orphan(ctx, out):
         region = render.region_of(text)
         if marker.owns("AGENTS.md", region):
             out.append(Finding(v, "the `## Code Review Rules` region carries the marker and "
-                                  "[bots] codex is false. De-orphaning it is not a deletion "
+                                  "[bot-instructions.bots] codex is false. De-orphaning it is not a deletion "
                                   "of the file: the heading is the repo's and has to "
                                   "survive; what goes is the marker and the body below it",
                                "AGENTS.md"))
@@ -133,7 +133,7 @@ def drift(ctx, out):
     if existing is _UNREADABLE:
         return
     if existing is None:
-        out.append(Finding(v, "[bots] codex is true and AGENTS.md is absent", "AGENTS.md"))
+        out.append(Finding(v, "[bot-instructions.bots] codex is true and AGENTS.md is absent", "AGENTS.md"))
         return
     region = render.region_of(existing)
     if region is None:

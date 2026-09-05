@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import { commands } from "@/bindings";
+import { commands, type Manifest_Deserialize } from "@/bindings";
 import { NO_REASON_GIVEN } from "@/lib/settled";
 
 // The seam every `Result`-returning command answers through — tauri-specta
@@ -87,4 +87,46 @@ describe("a command whose transport answered", () => {
       data: returned,
     });
   });
+
+  it.each<Manifest_Deserialize>([
+    { schema: 6 },
+    {
+      schema: 6,
+      "bot-instructions": {
+        schema: 1,
+        bots: { codex: true, qodo: false },
+        cadence: { qodo_commands: ["/review"] },
+        doctrine: { append: { severity: "Keep the repo rule." } },
+      },
+    },
+  ])(
+    "retains optional bot settings through the manifest bridge: %j",
+    async (manifest) => {
+      const returned = { manifest };
+      bridged.__TAURI_INTERNALS__ = {
+        invoke: () => Promise.resolve(returned),
+      };
+      await expect(commands.getManifest({ scope: "global" })).resolves.toEqual({
+        status: "ok",
+        data: returned,
+      });
+      let sent: unknown;
+      bridged.__TAURI_INTERNALS__ = {
+        invoke: (_command, args) => {
+          sent = args;
+          return Promise.resolve({});
+        },
+      };
+      await commands.saveCustomize(
+        { scope: "global" },
+        { manifest, base: null },
+        null,
+      );
+      expect(sent).toEqual({
+        scope: { scope: "global" },
+        manifest: { manifest, base: null },
+        settings: null,
+      });
+    },
+  );
 });

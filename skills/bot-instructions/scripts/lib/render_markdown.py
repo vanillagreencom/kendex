@@ -1,7 +1,7 @@
 """The markdown outputs.
 
 `schemas/renders.md` states each body. Escaping is markdown passed through:
-doctrine text does not come through `bot-instructions.toml`, so its refusals
+doctrine text does not come through `[bot-instructions]`, so its refusals
 run in `spec.parse_doctrine` before any of this.
 """
 
@@ -39,7 +39,7 @@ def paragraphs(text):
 
 
 def summary_block(model):
-    """`[repo] summary` as the repo wrote it.
+    """`[bot-instructions.repo] summary` as the repo wrote it.
 
     `renders.md` § Common rules: repo text is never reflowed, and
     `tone_instructions` is the only line-break exception. `paragraphs` is for

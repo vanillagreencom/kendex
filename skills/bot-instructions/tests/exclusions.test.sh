@@ -45,8 +45,8 @@ fi
 # A glob matching no tracked path silences nothing and reads clean, which is
 # how a typo or a wrong anchor survives.
 repo="$(bi_rendered_repo excl-dead)" || exit 1
-printf '\n[[exclusions.path]]\nglob = "app/[slug]/**"\nreason = "a route that does not exist here"\n' \
-  >> "$repo/bot-instructions.toml"
+printf '\n[[bot-instructions.exclusions.path]]\nglob = "app/[slug]/**"\nreason = "a route that does not exist here"\n' \
+  >> "$repo/kendex.toml"
 expect_red exclusion-consistency 'an exclusion glob matching no tracked path' \
   render --dry-run --repo "$repo"
 
@@ -57,8 +57,8 @@ expect_red exclusion-consistency 'an exclusion glob matching no tracked path' \
 alive="$(bi_new_repo excl-bare-dir)"
 {
   cat "$BI_FIXTURES/canonical.toml"
-  printf '\n[[exclusions.path]]\nglob = "docs"\nreason = "operator prose, not this repo behavior"\n'
-} > "$alive/bot-instructions.toml"
+  printf '\n[[bot-instructions.exclusions.path]]\nglob = "docs"\nreason = "operator prose, not this repo behavior"\n'
+} > "$alive/kendex.toml"
 git -C "$alive" add -A >/dev/null 2>&1
 bi_must adopt --repo "$alive" || exit 1
 expect_green 'an exclusion naming a bare directory renders' render --repo "$alive"
@@ -73,7 +73,7 @@ expect_green 'and checks clean, since the tree beneath it is what it covers' \
 empty="$BI_TMP/excl-empty"
 mkdir -p "$empty"
 git -C "$empty" init -q .
-cp "$repo/bot-instructions.toml" "$empty/bot-instructions.toml"
+cp "$repo/kendex.toml" "$empty/kendex.toml"
 cp "$repo/kendex.toml" "$empty/kendex.toml"
 cp "$repo/AGENTS.md" "$empty/AGENTS.md"
 mkdir -p "$empty/.bot-instructions"
@@ -93,10 +93,10 @@ repo="$(bi_rendered_repo excl-catalog)" || exit 1
 python3 - "$repo" <<'PY'
 import os, sys
 repo = sys.argv[1]
+original = open(os.path.join(repo, "kendex.toml")).read()
 open(os.path.join(repo, "kendex.toml"), "w").write(
     'is_source_catalog = true\n\n[marketplace]\nname = "fixture"\n')
-open(os.path.join(repo, "kendex-local.toml"), "w").write(
-    'schema = 6\n\n[install]\nharnesses = ["claude"]\n\n[skills.dev]\nsource = "."\nenabled = true\n')
+open(os.path.join(repo, "kendex-local.toml"), "w").write(original)
 PY
 bi_must render --repo "$repo"
 if grep -q '.agents/skills/dev/\*\*' "$repo/.macroscope/ignore.md" \
@@ -113,19 +113,19 @@ expect_green 'and that render checks clean' check --repo "$repo"
 # and finding nothing to exclude is indistinguishable from a repo with nothing
 # to exclude, and both sides of the comparison would come back empty and agree.
 rm -f "$repo/kendex-local.toml"
-expect_red exclusion-consistency \
+expect_red toml-schema \
   'a source catalog whose sibling install manifest is absent' check --repo "$repo"
 
 repo="$(bi_rendered_repo excl-noinstall)" || exit 1
-printf 'schema = 6\n' > "$repo/kendex.toml"
+printf 'schema = 6\n' | bi_manifest "$repo"
 expect_red exclusion-consistency 'a resolved manifest that declares no install' \
   check --repo "$repo"
 
 printf 'not valid toml =\n' > "$repo/kendex.toml"
-expect_red exclusion-consistency 'an unparseable resolved manifest' check --repo "$repo"
+expect_red toml-schema 'an unparseable resolved manifest' check --repo "$repo"
 
 rm -f "$repo/kendex.toml"
-expect_red exclusion-consistency 'an absent resolved manifest' check --repo "$repo"
+expect_red toml-schema 'an absent resolved manifest' check --repo "$repo"
 
 # A `[skills.*]` row that is not a table. Skipping it drops that tree from the
 # derived exclusions with both verbs exiting 0. Paired with the table row,
@@ -135,7 +135,7 @@ mkdir -p "$repo/.agents/skills/vendored"
 printf 'x\n' > "$repo/.agents/skills/vendored/SKILL.md"
 skills_manifest() {
   printf 'schema = 6\n[install]\nharnesses = ["claude"]\n[skills.dev]\nsource = "."\nenabled = true\n%s' \
-    "$1" > "$repo/kendex.toml"
+    "$1" | bi_manifest "$repo"
   git -C "$repo" add -A >/dev/null 2>&1
 }
 skills_manifest '[skills.vendored]
@@ -168,12 +168,12 @@ fi
 # hand-written entries with none of them.
 repo="$(bi_new_repo excl-no-derive)"
 sed 's/^derive_render = true$/derive_render = false/' \
-  "$BI_FIXTURES/canonical.toml" > "$repo/bot-instructions.toml"
+  "$BI_FIXTURES/canonical.toml" > "$repo/kendex.toml"
 bi_must adopt --repo "$repo" || exit 1
 bi_must render --repo "$repo" || exit 1
 bi_commit "$repo"
-printf '\n[[exclusions.path]]\nglob = "app/[slug]/**"\nreason = "a route that does not exist here"\n' \
-  >> "$repo/bot-instructions.toml"
+printf '\n[[bot-instructions.exclusions.path]]\nglob = "app/[slug]/**"\nreason = "a route that does not exist here"\n' \
+  >> "$repo/kendex.toml"
 expect_red exclusion-consistency \
   'with derive_render false: an exclusion glob matching no tracked path' \
   render --dry-run --repo "$repo"
@@ -194,7 +194,7 @@ expect_green 'and --staged derives the same set' check --staged --repo "$repo"
 repo="$(bi_new_repo excl-copilot)"
 mkdir -p "$repo/.github/skills/x"
 printf 'x\n' > "$repo/.github/skills/x/SKILL.md"
-printf 'schema = 6\n\n[install]\nharnesses = ["copilot"]\n' > "$repo/kendex.toml"
+printf 'schema = 6\n\n[install]\nharnesses = ["copilot"]\n' | bi_manifest "$repo"
 git -C "$repo" add -A >/dev/null 2>&1
 bi_must adopt --repo "$repo" || exit 1
 bi_must render --repo "$repo" || exit 1
@@ -292,8 +292,8 @@ expect_green 'and the repo checks clean on the derived set' check --repo "$repo"
 # no tracked path. Presuming it live because a symlink sits above it made the
 # derivation and the dead-exclusion clause agree by construction on a false
 # statement, so the run passed on a glob that silences nothing anywhere.
-printf '\n[[exclusions.path]]\nglob = ".claude/CLAUDE.md/**"\nreason = "a tree that is a file"\n' \
-  >> "$repo/bot-instructions.toml"
+printf '\n[[bot-instructions.exclusions.path]]\nglob = ".claude/CLAUDE.md/**"\nreason = "a tree that is a file"\n' \
+  >> "$repo/kendex.toml"
 expect_red exclusion-consistency \
   'a glob under a symlink entry matching nothing is reported dead' \
   render --dry-run --repo "$repo"

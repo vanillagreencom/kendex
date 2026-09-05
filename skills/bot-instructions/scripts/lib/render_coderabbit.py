@@ -24,7 +24,7 @@ from . import yamlemit
 
 
 def tone(model):
-    """`[tone] coderabbit` with newlines collapsed, emitted as a folded scalar.
+    """`[bot-instructions.tone] coderabbit` with newlines collapsed, emitted as a folded scalar.
 
     The 250-character cap is the vendored schema's own `maxLength`, so
     `coderabbit-schema` is its single enforcer and this carries no second copy
@@ -228,7 +228,7 @@ def render(model, doc):
     """`doc` as bytes, each path filter under a comment carrying its reason.
 
     `renders.md` § `reviews.path_filters` requires one per entry, for the
-    reason `repo-toml.md` § `[exclusions]` gives for requiring the key at all:
+    reason `repo-toml.md` § `[bot-instructions.exclusions]` gives for requiring the key at all:
     an exclusion with no stated reason is indistinguishable from a mistake at
     the next read.
     """

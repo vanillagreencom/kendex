@@ -172,7 +172,17 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         window::window_toggle_maximize,
         window::window_close,
     ]);
-    builder.typed_error_impl(TYPED_ERROR_IMPL)
+    // Package-owned TOML has no app schema. Keep its JSON values unchanged
+    // and require a consumer to narrow them before use.
+    let package_values = specta_typescript::semantic::Configuration::empty()
+        .define::<kendex_core::manifest::BotInstructions>(
+        |_| specta_typescript::define("Record<string, unknown>").into(),
+        None,
+        None,
+    );
+    builder
+        .semantic_types(package_values)
+        .typed_error_impl(TYPED_ERROR_IMPL)
 }
 
 /// Everything that must settle before the window opens: an apply the last

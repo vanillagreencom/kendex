@@ -15,16 +15,16 @@ git -C "$repo" add -A >/dev/null 2>&1
 expect_red agents-section 'a nested AGENTS.md carrying a Code Review Rules section' \
   check --repo "$repo"
 
-# Unconditional, and this is the clause no flag gates: `[bots] codex = false`
+# Unconditional, and this is the clause no flag gates: `[bot-instructions.bots] codex = false`
 # says this package does not manage the section, not that Codex is uninstalled.
-printf 'schema = 1\n[repo]\nname = "fixture"\nsummary = "A fixture repository."\n' \
-  > "$repo/bot-instructions.toml"
+printf '[bot-instructions]\nschema = 1\n[bot-instructions.repo]\nname = "fixture"\nsummary = "A fixture repository."\n' \
+  > "$repo/kendex.toml"
 # `orphan` too, and genuinely: with every flag false the marked AGENTS.md
 # region is a path the current TOML does not produce.
 expect_red 'agents-section orphan' 'the nested clause reds with every flag false' \
   render --dry-run --repo "$repo"
 rm -f "$repo/crates/core/AGENTS.md"
-cp "$BI_FIXTURES/canonical.toml" "$repo/bot-instructions.toml"
+cp "$BI_FIXTURES/canonical.toml" "$repo/kendex.toml"
 
 # The same nested file under a directory whose NAME is not UTF-8, which is a
 # legal name on every filesystem this runs on. A lossy decode replaces the
@@ -73,7 +73,7 @@ retired_bot() {
   # A root file of a bot whose flag went false. `qodo_review_md` is off in
   # this TOML variant, and the file this package wrote is still there.
   marker "$1" > "$1/REVIEW.md"
-  python3 - "$1/bot-instructions.toml" <<'PY'
+  python3 - "$1/kendex.toml" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p).read().replace("qodo_review_md = true", "qodo_review_md = false")
@@ -100,7 +100,7 @@ copied_check_run() {
   cp "$1/.macroscope/correctness/tests.md" "$1/.macroscope/check-run-agents/copied.md"
 }
 codex_off() {
-  python3 - "$1/bot-instructions.toml" <<'PY'
+  python3 - "$1/kendex.toml" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p).read()
@@ -126,7 +126,7 @@ o copied-check-run \
 repo="$(bi_rendered_repo orphan-codex-off)" || exit 1
 codex_off "$repo"
 git -C "$repo" add -A >/dev/null 2>&1
-expect_red 'orphan drift' 'the marked AGENTS.md region when [bots] codex goes false' \
+expect_red 'orphan drift' 'the marked AGENTS.md region when [bot-instructions.bots] codex goes false' \
   check --repo "$repo"
 
 # Unmarked files are not judged, whatever the flags say: this package never
@@ -393,7 +393,7 @@ fi
 macroscope_off() {
   local root
   root="$1"
-  python3 - "$root/bot-instructions.toml" <<'PY'
+  python3 - "$root/kendex.toml" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p).read().replace("macroscope = true", "macroscope = false")

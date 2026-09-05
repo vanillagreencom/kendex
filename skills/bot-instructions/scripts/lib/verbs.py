@@ -25,7 +25,7 @@ def render_verb(ctx, root, dry_run=False):
     if ctx.build.region_body is not None:
         paths.append("AGENTS.md")
     if not paths:
-        return ["nothing to render: every [bots] flag is false"] + ctx.skipped
+        return ["nothing to render: every [bot-instructions.bots] flag is false"] + ctx.skipped
     if dry_run:
         return [f"would write {p}" for p in paths] + ctx.skipped
     written = []

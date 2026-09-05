@@ -246,6 +246,11 @@ pub struct ForkProvenance {
     pub forked_at: String,
 }
 
+/// Package-owned review-bot settings, retained without interpreting their schema.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Type)]
+#[serde(transparent)]
+pub struct BotInstructions(pub toml::Table);
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub struct Manifest {
@@ -303,6 +308,10 @@ pub struct Manifest {
     pub agent_additional_instructions: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub skill_instructions: BTreeMap<String, String>,
+    /// Review-bot configuration. The bot-instructions package owns its schema;
+    /// core retains TOML types through manifest and app reads and writes.
+    #[serde(default, skip_serializing_if = "file::is_default")]
+    pub bot_instructions: BotInstructions,
     /// `[agent-frontmatter.<harness>.<agent>]`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub agent_frontmatter: BTreeMap<String, BTreeMap<String, FrontmatterOverrides>>,
