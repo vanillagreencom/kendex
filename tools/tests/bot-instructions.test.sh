@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# The CI command must use candidate doctrine and reject stale generated files.
+# The CI command runs the CANDIDATE's checker on the candidate spec and
+# rejects stale generated files. This repository is the package's source, so
+# a change to the renderer or the derivation is judged by itself; the trusted
+# default-branch checker is the consumer rule, and here it reported drift by
+# construction on every such change.
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$REPO/skills/bot-instructions/tests/lib/harness.sh"
@@ -18,11 +22,6 @@ changed, count = re.subn(r'(?m)^  version: "[^"]+"$', '  version: "candidate"', 
 assert count == 1 and changed != s
 p.write_text(changed)
 PY
-# A pull request can replace its checker with a passing script. CI must use
-# the trusted checkout's executable while reading this candidate's doctrine.
-mkdir -p "$spec/scripts" || exit 1
-printf '#!/usr/bin/env bash\nexit 0\n' >"$spec/scripts/bot-instructions"
-chmod +x "$spec/scripts/bot-instructions" || exit 1
 bi_must adopt --repo "$candidate" --spec "$spec" || exit 1
 bi_must render --repo "$candidate" --spec "$spec" || exit 1
 bi_commit "$candidate"
@@ -35,20 +34,31 @@ command="$(awk '
 runner="$BI_TMP/runner"
 mkdir -p "$runner" || exit 1
 ln -s "$candidate" "$runner/candidate" || exit 1
-checker="$runner/bot-checker/skills/bot-instructions"
-python3 - "$BI_ROOT/skills/bot-instructions" "$checker" <<'PY' || exit 1
+
+# The candidate's checker is what runs: a stub in the candidate's own package
+# copy decides the exit code. With a trusted-checkout checker this stub would
+# never be reached.
+mkdir -p "$spec/scripts" || exit 1
+printf '#!/usr/bin/env bash\nexit 3\n' >"$spec/scripts/bot-instructions"
+chmod +x "$spec/scripts/bot-instructions" || exit 1
+output="$(cd "$runner" && bash -c "$command" 2>&1)" && status=0 || status=$?
+[ "$status" -eq 3 ] && ok "CI runs the candidate's checker" \
+  || bad "CI runs the candidate's checker" "exit $status: $output"
+
+# The real package in the candidate's copy: a clean candidate passes and a
+# stale one is refused, so the wiring judges what it reads.
+rm -rf -- "${spec:?}/scripts"
+python3 - "$BI_ROOT/skills/bot-instructions/scripts" "$spec/scripts" <<'PY' || exit 1
 import shutil, sys
 shutil.copytree(sys.argv[1], sys.argv[2], ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
 PY
-
-output="$(cd "$runner" && bash -c "$command" 2>&1)"
-status=$?
-[ "$status" -eq 0 ] && ok "CI reads the candidate spec through the trusted checker" \
-  || bad "CI reads the candidate spec through the trusted checker" "$output"
-if python3 - "$checker" <<'PY'; then
+output="$(cd "$runner" && bash -c "$command" 2>&1)" && status=0 || status=$?
+[ "$status" -eq 0 ] && ok "a clean candidate passes its own checker" \
+  || bad "a clean candidate passes its own checker" "exit $status: $output"
+if python3 - "$spec" <<'PY'; then
 from pathlib import Path
 import sys
-assert not list(Path(sys.argv[1]).rglob('*.pyc')), 'the checker wrote bytecode into its installed files'
+assert not list(Path(sys.argv[1]).rglob('*.pyc')), 'the checker wrote bytecode into its package files'
 PY
   ok "running the checker leaves its package files unchanged"
 else
@@ -56,8 +66,7 @@ else
 fi
 
 printf '\nStale instructions.\n' >>"$candidate/.github/copilot-instructions.md"
-output="$(cd "$runner" && bash -c "$command" 2>&1)"
-status=$?
+output="$(cd "$runner" && bash -c "$command" 2>&1)" && status=0 || status=$?
 if [ "$status" -eq 1 ] && [[ "$output" == *"drift:"*".github/copilot-instructions.md"* ]]; then
   ok "CI refuses stale candidate output"
 else

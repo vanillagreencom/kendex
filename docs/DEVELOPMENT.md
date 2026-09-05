@@ -44,7 +44,7 @@ From a worktree, `kendex apply`, `kendex refresh` and `kendex verify --scope pro
 
 ## Review bot files
 
-Edit `[bot-instructions]` in `kendex-local.toml`. The installed [bot-instructions skill](../skills/bot-instructions/SKILL.md) owns the root review section and Copilot files. The commit guard checks their staged state; full validation checks their worktree state. CI runs the default-branch checker against the candidate configuration and doctrine.
+Edit `[bot-instructions]` in `kendex-local.toml`. The installed [bot-instructions skill](../skills/bot-instructions/SKILL.md) owns the root review section and Copilot files. The commit guard checks their staged state; full validation checks their worktree state. CI runs the candidate's own checker against the candidate configuration and doctrine; the default-branch checker is the consumer rule.
 
 Codex and Copilot retain their existing review capability. Other vendor capabilities are off because their settings are unconfirmed. Local checks prove generated file consistency, not vendor enablement, instruction loading, content exclusions, or automatic review settings. Confirm those through the [settings checklist](../skills/bot-instructions/references/checklist.md#the-settings).
 
