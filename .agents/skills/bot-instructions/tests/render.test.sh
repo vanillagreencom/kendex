@@ -59,6 +59,17 @@ for path in .coderabbit.yaml .pr_agent.toml best_practices.md REVIEW.md \
   [ -f "$repo/$path" ] && ok "wrote $path" || bad "wrote $path"
 done
 
+# One title. A consumer that lints every tracked markdown file rejects a
+# second level-one heading, and Copilot reads the levels below all the same.
+if [ "$(grep -c '^# ' "$repo/.github/copilot-instructions.md")" -eq 1 ] \
+   && grep -q '^## Code review calibration$' "$repo/.github/copilot-instructions.md" \
+   && grep -q '^### scope$' "$repo/.github/copilot-instructions.md"; then
+  ok 'copilot-instructions.md carries one level-one heading, calibration below it'
+else
+  bad 'copilot-instructions.md carries one level-one heading, calibration below it' \
+      "$(grep '^#' "$repo/.github/copilot-instructions.md" | head -4 | tr '\n' ' ')"
+fi
+
 # `.macroscope/ignore.md` is markdown by extension only. Macroscope documents
 # it as one glob per line with `#` comments and blank lines ignored
 # (references/limits.md § Macroscope cites the page), so an HTML comment there

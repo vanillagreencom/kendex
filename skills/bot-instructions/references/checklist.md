@@ -90,6 +90,7 @@ Once the file lands, everything the file controls moves into it. The dashboard i
 - [ ] Maximum automatic runs per pull request is set.
 - [ ] Spend caps are set: monthly, per pull request, and per review. Macroscope bills per review, and this package's exclusion list is what keeps a vendored tree from being paid for repeatedly.
 - [ ] The generated `.macroscope/ignore.md` excludes what it names. The render writes the grammar Macroscope documents, one glob per line with `#` comments, and `references/limits.md` § Macroscope cites the page. Confirm once that the exclusions took effect.
+- [ ] A repo that lints every tracked `*.md` excludes `.macroscope/ignore.md` from that lint and states why: the file is Macroscope's glob-per-line grammar, where `#` opens a comment, not a heading.
 
 ## If the repo's kendex.toml is a source catalog
 

@@ -4,25 +4,25 @@
 
 kendex has a desktop app and CLI over a shared Rust core. It distributes skills, agent definitions, hooks, and Pi extensions to coding tools. The app uses Tauri and React. Pi extensions include source files and committed bundles.
 
-# Code review calibration
+## Code review calibration
 
-## scope
+### scope
 
 Raise a defect only in changed lines or code those lines directly break. Report correctness defects, security defects, data loss, and fail-open paths in gates, guards, or CI. Do not report unrelated defects. Do not question the inclusion of a file that the PR body explicitly includes in its scope.
 
-## rounds
+### rounds
 
 Report all findings about the current diff in one round. Write one comment per root cause. Name every affected site in that comment.
 
-## severity
+### severity
 
 Mark a finding as blocking only if it must stop the merge. Mark other findings as suggestions. Group suggestions together. Omit suggestions when a repeat review covers a one-line fix. Match severity and confidence to the evidence.
 
-## no-preferences
+### no-preferences
 
 Do not report style, wording, naming, or comment preferences. Do not request speculative changes to a path that already fails closed. Leave formatting and lint to CI. Request a test only when the diff changes behavior that no test exercises. Name that behavior in one comment.
 
-## declined
+### declined
 
 Read the PR's decline replies and the repo's instruction files before reporting a finding. Do not repeat a finding class that a stated decline or a documented accepted trade-off already answers. Reopen it only when the relevant code has changed.
 
