@@ -19,6 +19,9 @@ unset GROWTH_GUARDS_COMMENT_PATHS GROWTH_GUARDS_COMMENT_EXCLUDES \
   GROWTH_GUARDS_COMMENT_REFERENCE_TYPES GH_ISSUE_PATTERN \
   GROWTH_GUARDS_CHECKS GROWTH_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
+# Extraction fixtures use an explicitly declared tracker prefix.
+export GH_ISSUE_PATTERN='ABC-[0-9]+'
+
 PASS=0
 FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
@@ -117,9 +120,22 @@ put a.rs '// tracked as ABC-123 on 2026-08-12'
 OUT="$(cd "$R" && GROWTH_GUARDS_COMMENT_REFERENCE_TYPES=issue-id "$CM" 2>&1)" && RC=0 || RC=$?
 [ "$RC" -eq 1 ] && [ "$(printf '%s\n' "$OUT" | grep -c 'FAIL history reference')" -eq 1 ] && case "$OUT" in *"history reference (issue id)"*) true ;; *) false ;; esac \
   && ok "the selected reference class runs alone" || bad "reference selection" "rc=$RC out=$OUT"
-put a.rs '// encoded as UTF-8'
+echo "=== default references do not guess a tracker from technical names ==="
+put a.rs '// UTF-8 HTTP-200 RFC-3339 gpt-6-astra exit-2'
+OUT="$(cd "$R" && GH_ISSUE_PATTERN= "$CM" 2>&1)" && RC=0 || RC=$?
+passes "technical names pass without a tracker pattern"
+put a.rs '// see ABC-123'
+OUT="$(cd "$R" && GH_ISSUE_PATTERN= "$CM" 2>&1)" && RC=0 || RC=$?
+passes "an undeclared tracker prefix is not guessed"
 run_cm
-fails_at "the default key shape is any letter run, a hyphen and a digit run, so UTF-8 matches it (set GH_ISSUE_PATTERN to narrow)" a.rs 1
+fails_at "a configured tracker prefix catches the same reference" a.rs 1
+for text in '// see #1234' '// dated 2026-08-12'; do
+  put a.rs "$text"
+  OUT="$(cd "$R" && GH_ISSUE_PATTERN= "$CM" 2>&1)" && RC=0 || RC=$?
+  fails_at "default numeric and date references remain checked" a.rs 1
+done
+OUT="$(cd "$R" && GH_ISSUE_PATTERN= GROWTH_GUARDS_COMMENT_REFERENCE_TYPES=issue-id "$CM" 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 2 ] && ok "an ID-only scan requires a tracker pattern" || bad "unconfigured ID-only scan" "rc=$RC out=$OUT"
 
 echo "=== a reference inside a quoted example still counts ==="
 put a.rs '// the string "ABC-123" is a reference, and so is `#228`'
@@ -131,7 +147,7 @@ new_repo pattern
 put a.rs '// see KEN-12 and ABC-123'
 run_cm
 [ "$RC" -eq 1 ] && [ "$(printf '%s\n' "$OUT" | grep -c 'history reference (issue id)')" -eq 1 ] \
-  && ok "control: under the default pattern one issue-id record covers the line" \
+  && ok "control: the fixture tracker pattern reports the issue-id line" \
   || bad "control: default pattern" "rc=$RC out=$OUT"
 put a.rs '// see ABC-123 only'
 OUT="$(cd "$R" && GH_ISSUE_PATTERN='ken-[0-9]+' "$CM" 2>&1)" && RC=0 || RC=$?
@@ -141,12 +157,12 @@ OUT="$(cd "$R" && GH_ISSUE_PATTERN='ken-[0-9]+' "$CM" 2>&1)" && RC=0 || RC=$?
 fails_at "the same pattern catches KEN-12 whatever its case" a.rs 1
 printf '[env]\nGH_ISSUE_PATTERN = "ken-[0-9]+"\n' >"$R/kendex.settings.toml"
 git -C "$R" add -A
-run_cm
+OUT="$(cd "$R" && env -u GH_ISSUE_PATTERN "$CM" 2>&1)" && RC=0 || RC=$?
 fails_at "the pattern resolves from kendex.settings.toml [env]" a.rs 1
 rm "$R/kendex.settings.toml"
 put a.rs '// see ABC-123 again'
 OUT="$(cd "$R" && GH_ISSUE_PATTERN= "$CM" 2>&1)" && RC=0 || RC=$?
-fails_at "an empty pattern is unconfigured and keeps the default shape" a.rs 1
+passes "an empty pattern leaves issue IDs unconfigured"
 OUT="$(cd "$R" && GH_ISSUE_PATTERN='(' "$CM" 2>&1)" && RC=0 || RC=$?
 [ "$RC" -eq 2 ] && case "$OUT" in *"GH_ISSUE_PATTERN is not a POSIX ERE"*) true ;; *) false ;; esac \
   && ok "a pattern no engine can compile is exit 2, never a silent no-match" \

@@ -99,7 +99,7 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 | `GROWTH_GUARDS_MD_SCOPE` | `touched` | With neither flag, `touched` runs md-format on staged files and md-refs on all configured documents when anything is staged; `all` checks every matching file. |
 | `DECISIONS_DIR`, `DECISION_ID_PREFIX`, `DECISION_ID_WIDTH` | `docs/decisions`, `D`, `3` | The decider skill's scheme, read by md-refs to judge decision IDs; IDs are not judged where the directory is not tracked. |
 | `GROWTH_GUARDS_COMMENT_PATHS` | the extensions in [CHECKS.md § comments](CHECKS.md#comments) | Space-separated globs naming the source files the comments lane scans, matched against the full repo-relative path (`*` crosses `/`); replaces the default. |
-| `GROWTH_GUARDS_COMMENT_EXCLUDES` | `tools/comments-excludes` | comments exclusion list (generated, vendored, and immutable first-party files). `GH_ISSUE_PATTERN` (the github skill's key) is the issue-id shape; empty keeps `[A-Z]+-[0-9]+`. |
+| `GROWTH_GUARDS_COMMENT_EXCLUDES` | `tools/comments-excludes` | comments exclusion list (generated, vendored, and immutable first-party files). `GH_ISSUE_PATTERN` (the github skill's key) declares the tracker ID shape; empty leaves ID checks inactive. |
 | `GROWTH_GUARDS_COMMENT_REFERENCE_TYPES` | `issue-id issue-number date` | Reference classes the comments lane checks; name at least one type. |
 | `GROWTH_GUARDS_COMMIT_TYPES` | `build chore ci docs feat fix perf refactor revert style test` | Accepted commit types. |
 | `GROWTH_GUARDS_SUBJECT_MAX` | `72` | Characters allowed in a hand-written commit header. |

@@ -43,7 +43,6 @@ source "$SCRIPT_DIR/lib/comment-text.sh"
 # once in the table in CHECKS.md § comments. Two spellings of each name
 # because `*` crosses `/` but never stands in for the separator.
 PATHS_DEFAULT="*.rs *.go *.c *.h *.cc *.cpp *.hpp *.java *.kt *.kts *.swift *.wgsl *.js *.mjs *.cjs *.jsx *.ts *.tsx *.css *.scss *.less *.sh *.bash *.zsh *.py *.rb *.toml *.yml *.yaml *.sql *.lua *.html *.htm *.xml *.svg *.vue *.svelte Makefile */Makefile *.mk Dockerfile */Dockerfile"
-ISSUE_DEFAULT='[A-Z]+-[0-9]+'
 EXCLUDES_DEFAULT="tools/comments-excludes"
 REFERENCE_TYPES_DEFAULT="issue-id issue-number date"
 
@@ -72,8 +71,8 @@ kendex.settings.toml [env] > default):
                                    space-separated subset of: issue-id,
                                    issue-number, date
                                    (default $REFERENCE_TYPES_DEFAULT)
-  GH_ISSUE_PATTERN                 POSIX ERE for an issue id; empty keeps
-                                   the default ($ISSUE_DEFAULT)
+  GH_ISSUE_PATTERN                 POSIX ERE for this repository's issue ids;
+                                   empty leaves issue-id checks unconfigured
 Flag --excludes overrides the path setting.
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
@@ -107,9 +106,8 @@ gg_load_path_globs "$PATHS_RAW" comments GROWTH_GUARDS_COMMENT_PATHS || exit 2
 EXCLUDES_FILE="$(gg_resolve_path "$EXCLUDES_OPT" GROWTH_GUARDS_COMMENT_EXCLUDES "$EXCLUDES_DEFAULT" excludes)" || exit 2
 gg_load_excludes "$EXCLUDES_FILE"
 ISSUE_ERE="$(gg_setting GH_ISSUE_PATTERN "")" || exit 2
-# Empty is the github skill's "unconfigured", which leaves each reader its
-# own default — this lane's is the generic key shape.
-[ -n "$ISSUE_ERE" ] || ISSUE_ERE="$ISSUE_DEFAULT"
+# Issue IDs need a declared tracker pattern. Technical names also use letters
+# and digits separated by a hyphen, so their shape alone identifies no tracker.
 REFERENCE_TYPES="$(gg_setting GROWTH_GUARDS_COMMENT_REFERENCE_TYPES "$REFERENCE_TYPES_DEFAULT")" || exit 2
 gg_tmpdir
 
@@ -128,20 +126,22 @@ CHECK_HASH=0
 CHECK_DATE=0
 for reference_type in $REFERENCE_TYPES; do
   case "$reference_type" in
-    issue-id) CHECK_ISSUE=1 ;;
+    issue-id) [ -z "$ISSUE_ERE" ] || CHECK_ISSUE=1 ;;
     issue-number) CHECK_HASH=1 ;;
     date) CHECK_DATE=1 ;;
     *) gg_config_error "GROWTH_GUARDS_COMMENT_REFERENCE_TYPES contains unknown type '$(gg_scrubbed "$reference_type")'" ;;
   esac
 done
-[ "$CHECK_ISSUE" -eq 1 ] || ISSUE_BOUNDED='a^'
-[ "$CHECK_HASH" -eq 1 ] || HASH_ERE='a^'
-[ "$CHECK_DATE" -eq 1 ] || DATE_ERE='a^'
 [ "$((CHECK_ISSUE + CHECK_HASH + CHECK_DATE))" -gt 0 ] \
-  || gg_config_error "GROWTH_GUARDS_COMMENT_REFERENCE_TYPES must name at least one reference type"
+  || gg_config_error "GROWTH_GUARDS_COMMENT_REFERENCE_TYPES must name an active type; issue-id needs GH_ISSUE_PATTERN"
 # What the index pre-filter lists carriers by: a file whose whole content
 # matches no shape has no comment that does either.
-UNION_ERE="$DATE_ERE|$HASH_ERE|$ISSUE_BOUNDED"
+PATTERNS=()
+[ "$CHECK_DATE" -eq 0 ] || PATTERNS+=("$DATE_ERE")
+[ "$CHECK_HASH" -eq 0 ] || PATTERNS+=("$HASH_ERE")
+[ "$CHECK_ISSUE" -eq 0 ] || PATTERNS+=("$ISSUE_BOUNDED")
+printf -v UNION_ERE '%s|' "${PATTERNS[@]}"
+UNION_ERE="${UNION_ERE%|}"
 REMEDY="state the constraint that holds now and delete the story; the issue id, the number and the date belong in the commit that made the change; a generated, vendored, or immutable file belongs in $EXCLUDES_FILE with a reason"
 
 # A pattern this lane cannot compile is a configuration error, never a
@@ -162,7 +162,7 @@ probe_ere() { # VALUE KEY — require both engines to accept one configured ERE
   [ "$status" -le 1 ] && [ ! -s "$GG_TMP/grep.err" ] \
     || gg_config_error "$key is not a POSIX ERE grep can read: '$(gg_scrubbed "$value")'"
 }
-probe_ere "$ISSUE_BOUNDED" GH_ISSUE_PATTERN
+[ -z "$ISSUE_ERE" ] || probe_ere "$ISSUE_BOUNDED" GH_ISSUE_PATTERN
 
 # Which shape a comment line carries, one record per (line, shape):
 # "line<TAB>shape<TAB>text". Reads the extractor's "line<TAB>text" records.
