@@ -106,7 +106,7 @@ function is_local(dest) {
   return 1
 }
 
-function emit_links(s, original,   i, j, k, dest, raw, tail) {
+function emit_links(s, original,   i, j, k, dest, raw, tail, path) {
   i = 1
   while (1) {
     j = index(substr(s, i), "](")
@@ -118,9 +118,11 @@ function emit_links(s, original,   i, j, k, dest, raw, tail) {
     if (is_local(dest)) {
       printf "L\t%s\t%d\t%s\t%s\n", src, line_no, dest, raw
       tail = (k > 0) ? substr(original, k + 1) : ""
-      if (dest ~ /\.md$/ && tail ~ /^[ \t]+§[ \t]+/) {
+      path = dest
+      sub(/#.*/, "", path)
+      if ((path == "" || path ~ /\.md$/) && tail ~ /^[ \t]+§[ \t]+/) {
         sub(/^[ \t]+§[ \t]+/, "", tail)
-        printf "C\t%s\t%d\t%s\tprefix-section\t%s\t%s\n", src, line_no, dest, tail, dest " § " tail
+        printf "C\t%s\t%d\t%s\tprefix-section\t%s\t%s\n", src, line_no, path, tail, dest " § " tail
       }
     }
     i = (k > 0) ? k + 1 : j + 2
@@ -233,18 +235,18 @@ function has_section_prefix(target, value,   key, prefix, name, tail, number) {
   value = tolower(value)
   gsub(/[`*_]/, "", value)
   number = ""
-  if (match(value, /^[0-9]+(\.[0-9]+)*/) && substr(value, RLENGTH + 1) ~ /^([ \t.,;:)]|$)/) number = substr(value, 1, RLENGTH)
+  if (match(value, /^[0-9]+(\.[0-9]+)*/) && substr(value, RLENGTH + 1) ~ /^([ \t.,;:!?)]|$)/) number = substr(value, 1, RLENGTH)
   for (key in texts) {
     if (index(key, prefix) != 1) continue
     name = substr(key, length(prefix) + 1)
     gsub(/[`*_]/, "", name)
     if (number != "") {
-      if (match(name, /^[0-9]+(\.[0-9]+)*/) && substr(name, 1, RLENGTH) == number && substr(name, RLENGTH + 1) ~ /^([.)]?[ \t]|$)/) return 1
+      if (match(name, /^[0-9]+(\.[0-9]+)*/) && substr(name, 1, RLENGTH) == number && substr(name, RLENGTH + 1) ~ /^[.)]?([ \t]|$)/) return 1
       continue
     }
     if (name == "" || substr(value, 1, length(name)) != name) continue
     tail = substr(value, length(name) + 1)
-    if (tail == "" || tail ~ /^[ \t.,;:)]/) return 1
+    if (tail == "" || tail ~ /^[ \t.,;:!?)]/) return 1
   }
   return 0
 }
@@ -334,7 +336,7 @@ mode == "resolve" {
     value = f[6]
     raw = f[7]
     judged++
-    target = resolve_from(dir_of(src_path), path)
+    target = (path == "") ? src_path : resolve_from(dir_of(src_path), path)
     if (ESCAPED || !(target in tracked_set)) {
       target = normalize(path)
       if (ESCAPED || !(target in tracked_set)) {

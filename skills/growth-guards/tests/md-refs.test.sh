@@ -190,6 +190,27 @@ cite "escaped destination parentheses do not hide a missing section" 1 $'[guide]
 cite "parentheses in a link title do not hide a missing section" 1 $'[guide](guide(foo).md "A ) title") § Missing.\n' 1 "has no heading at the start"
 cite "an angle destination and title retain a valid section route" 0 $'[guide](<guide(foo).md> "A ) title") § Install.\n'
 
+echo "=== symmetric normalization, punctuation and anchored section routes ==="
+new_repo section-text
+put guide.md $'# Guide\n\n## snake_case\n\n## Install\n\n## 2.\n\n## 3)\n\n## 4.1.\n\n## Use *tools*\n'
+cite "snake_case resolves with symmetric normalization" 0 $'[guide](guide.md) § snake_case.\n'
+cite "formatted snake_case resolves with symmetric normalization" 0 $'[guide](guide.md) § **snake_case** describes naming.\n'
+cite "emphasis inside a heading resolves" 0 $'[guide](guide.md) § Use tools.\n'
+cite "a question mark ends a section prefix" 0 $'[guide](guide.md) § Install?\n'
+cite "an exclamation mark ends a section prefix" 0 $'[guide](guide.md) § Install!\n'
+cite "punctuation does not accept an incomplete heading" 1 $'[guide](guide.md) § Instal!\n' 1 "has no heading at the start"
+cite "a valid anchor does not hide a missing section" 1 $'[guide](guide.md#install) § Missing.\n' 1 "has no heading at the start"
+cite "an anchored link also accepts a valid section" 0 $'[guide](guide.md#install) § Install.\n'
+cite "a bare anchor does not hide a missing section" 1 $'# Guide\n\n[guide](#guide) § Missing.\n' 3 "has no heading at the start"
+cite "a terminal period in a bare numbered heading resolves" 0 $'[guide](guide.md) § 2 describes setup.\n'
+cite "a terminal parenthesis in a bare numbered heading resolves" 0 $'[guide](guide.md) § 3 describes setup.\n'
+cite "a terminal period in a nested numbered heading resolves" 0 $'[guide](guide.md) § 4.1 describes setup.\n'
+cite "a question mark ends a numbered section prefix" 0 $'[guide](guide.md) § 2?\n'
+cite "an exclamation mark ends a numbered section prefix" 0 $'[guide](guide.md) § 3!\n'
+cite "a missing child cannot resolve to a punctuated number" 1 $'[guide](guide.md) § 4.1.2 describes setup.\n' 1 "has no heading at the start"
+put guide.md $'# Guide\n\n## `snake_case`\n'
+cite "code spans resolve with symmetric normalization" 0 $'[guide](guide.md) § `snake_case`.\n'
+
 echo "=== scopes: touched, --staged, --all ==="
 new_repo scopes
 put ok.md $'# OK\n'
