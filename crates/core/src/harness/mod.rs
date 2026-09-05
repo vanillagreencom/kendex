@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::env::Env;
 use crate::model::{DetectedHarness, HarnessId, ItemKind};
 
+pub mod antigravity;
 pub mod claude;
 pub mod codex;
 pub mod copilot;
@@ -174,7 +175,7 @@ pub trait HarnessAdapter: Send + Sync {
     fn project_surfaces(&self, kind: ItemKind, project: &Path, env: &Env) -> Vec<Surface>;
 }
 
-pub fn all_adapters() -> [&'static dyn HarnessAdapter; 7] {
+pub fn all_adapters() -> [&'static dyn HarnessAdapter; 8] {
     [
         &claude::Claude,
         &codex::Codex,
@@ -183,6 +184,7 @@ pub fn all_adapters() -> [&'static dyn HarnessAdapter; 7] {
         &pi::Pi,
         &gemini::Gemini,
         &copilot::Copilot,
+        &antigravity::Antigravity,
     ]
 }
 
@@ -195,6 +197,7 @@ pub fn adapter(id: HarnessId) -> &'static dyn HarnessAdapter {
         HarnessId::Pi => &pi::Pi,
         HarnessId::Gemini => &gemini::Gemini,
         HarnessId::Copilot => &copilot::Copilot,
+        HarnessId::Antigravity => &antigravity::Antigravity,
     }
 }
 

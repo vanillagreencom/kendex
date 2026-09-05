@@ -220,6 +220,7 @@ fn is_rendering(harness: HarnessId, map: &crate::frontmatter::Map) -> bool {
         HarnessId::Claude => &["disallowedTools", "background"],
         HarnessId::Gemini => &["kind"],
         HarnessId::Pi => &["deny-tools"],
+        HarnessId::Antigravity => &["subagent"],
         HarnessId::Codex | HarnessId::Copilot | HarnessId::Cursor | HarnessId::Opencode => &[],
     };
     marks.iter().any(|key| map.get(key).is_some())
@@ -237,7 +238,7 @@ fn carries(harness: HarnessId, key: &str) -> bool {
         (
             HarnessId::Claude,
             "color" | "effort" | "model" | "isolation" | "memory" | "background"
-        ) | (HarnessId::Gemini, "model")
+        ) | (HarnessId::Gemini | HarnessId::Antigravity, "model")
             | (HarnessId::Pi, "color" | "effort")
     )
 }
@@ -315,7 +316,7 @@ pub(super) fn uncleared(on_disk: &Stated, after: &Stated) -> Vec<&'static str> {
 fn permission_keys(harness: HarnessId) -> (Option<&'static str>, Option<&'static str>) {
     match harness {
         HarnessId::Claude => (Some("tools"), Some("disallowedTools")),
-        HarnessId::Gemini => (Some("tools"), None),
+        HarnessId::Gemini | HarnessId::Antigravity => (Some("tools"), None),
         HarnessId::Pi => (None, Some("deny-tools")),
         HarnessId::Codex | HarnessId::Copilot | HarnessId::Cursor | HarnessId::Opencode => {
             (None, None)

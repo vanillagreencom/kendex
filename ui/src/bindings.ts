@@ -391,7 +391,7 @@ export const commands = {
 	 *  the view alone would report a switch that never reached the files.
 	 */
 	packageSetRev: (scope: Scope, kind: ItemKind, name: string, rev: string | null) => typedError<PackageUpdate_Serialize, string>(__TAURI_INVOKE("package_set_rev", { scope, kind, name, rev })),
-	packageDiff: (scope: Scope, kind: ItemKind, name: string, from: VersionSel, to: VersionSel, harness: "claude" | "codex" | "opencode" | "cursor" | "pi" | "gemini" | "copilot" | null) => typedError<PackageDiff, string>(__TAURI_INVOKE("package_diff", { scope, kind, name, from, to, harness })),
+	packageDiff: (scope: Scope, kind: ItemKind, name: string, from: VersionSel, to: VersionSel, harness: "claude" | "codex" | "opencode" | "cursor" | "pi" | "gemini" | "copilot" | "antigravity" | null) => typedError<PackageDiff, string>(__TAURI_INVOKE("package_diff", { scope, kind, name, from, to, harness })),
 	/**  Keep an edited install as a local fork, then render it in place. */
 	packageFork: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("package_fork", { scope, kind, name, harness })),
 	/**
@@ -1495,7 +1495,7 @@ export type GitReadiness = {
 	ahead: number | null,
 };
 
-export type HarnessId = "claude" | "codex" | "opencode" | "cursor" | "pi" | "gemini" | "copilot";
+export type HarnessId = "claude" | "codex" | "opencode" | "cursor" | "pi" | "gemini" | "copilot" | "antigravity";
 
 /**
  *  Whose hold keeps a place at its revision — what the Follow source

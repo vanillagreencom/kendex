@@ -3,6 +3,7 @@ use crate::model::{HarnessId, ItemKind, Scope};
 
 use super::permission::PermissionIntent;
 
+pub mod antigravity;
 pub mod claude;
 pub mod codex;
 pub mod copilot;
@@ -225,6 +226,7 @@ pub fn generate(agent: &EffectiveAgent) -> Result<RenderedAgent, String> {
         HarnessId::Pi => pi::generate(agent),
         HarnessId::Gemini => Ok(gemini::generate(agent)),
         HarnessId::Copilot => Ok(copilot::generate(agent)),
+        HarnessId::Antigravity => Ok(antigravity::generate(agent)),
     }
 }
 

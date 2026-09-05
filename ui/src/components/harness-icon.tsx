@@ -1,3 +1,4 @@
+import AntigravityMark from "@/assets/tools/antigravity.svg?react";
 import ClaudeMark from "@/assets/tools/claude.svg?react";
 import CodexMark from "@/assets/tools/codex.svg?react";
 import CopilotMark from "@/assets/tools/copilot.svg?react";
@@ -22,6 +23,7 @@ const MARKS: Record<HarnessId, React.FC<React.SVGProps<SVGSVGElement>>> = {
   pi: PiMark,
   gemini: GeminiMark,
   copilot: CopilotMark,
+  antigravity: AntigravityMark,
 };
 
 const TINT: Record<HarnessId, string> = {
@@ -32,6 +34,7 @@ const TINT: Record<HarnessId, string> = {
   pi: "text-harness-pi",
   gemini: "text-harness-gemini",
   copilot: "text-harness-copilot",
+  antigravity: "text-harness-antigravity",
 };
 
 // Each vendor draws its mark with its own padding and its own weight, so
@@ -46,6 +49,7 @@ const OPTICAL: Record<HarnessId, string> = {
   pi: "scale-[0.66]",
   gemini: "scale-[1.15]",
   copilot: "scale-[0.88]",
+  antigravity: "scale-[0.9]",
 };
 
 /** A tool's mark, in the tool's own colour. Decorative — every place this

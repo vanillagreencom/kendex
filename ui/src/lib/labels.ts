@@ -11,6 +11,7 @@ export const HARNESS_NAMES: Record<HarnessId, string> = {
   pi: "Pi",
   gemini: "Gemini CLI",
   copilot: "GitHub Copilot",
+  antigravity: "Antigravity",
 };
 
 export const harnessName = (id: HarnessId): string => HARNESS_NAMES[id];

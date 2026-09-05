@@ -21,6 +21,7 @@
 //! | Gemini agent carries a description | breakage |
 //! | Copilot agent carries a description | breakage |
 //! | Copilot agent names the installed agent | breakage |
+//! | Antigravity agent carries name and description, and `model` is inherit, flash or pro | breakage |
 //! | Gemini agent `model` is a Gemini id or `inherit` | advisory |
 //! | Gemini command parses as TOML | breakage |
 //! | Gemini command carries a prompt | breakage |
@@ -90,6 +91,7 @@ pub fn validate_agent(harness: HarnessId, name: &str, text: &str) -> Vec<Finding
         HarnessId::Pi => agent::pi(text),
         HarnessId::Gemini => agent::gemini(name, text),
         HarnessId::Copilot => agent::copilot(name, text),
+        HarnessId::Antigravity => agent::antigravity(name, text),
     });
     findings
 }

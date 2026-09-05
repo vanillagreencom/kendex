@@ -21,6 +21,7 @@ const HARNESS_CHIP: Record<HarnessId, string> = {
   pi: "bg-harness-pi/12 text-harness-pi",
   gemini: "bg-harness-gemini/12 text-harness-gemini",
   copilot: "bg-harness-copilot/12 text-harness-copilot",
+  antigravity: "bg-harness-antigravity/12 text-harness-antigravity",
 };
 
 /**

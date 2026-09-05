@@ -29,6 +29,7 @@ const HARNESSES: HarnessId[] = [
   "pi",
   "gemini",
   "copilot",
+  "antigravity",
 ];
 
 export function LibraryFilters({
