@@ -23,7 +23,7 @@ Project markers: `.github/copilot-instructions.md`, or a `.github/agents`, `.git
 | command | — | — | unsupported |
 | pi-extension | — | — | unsupported |
 
-Commands are unsupported because prompt files (`.github/prompts/*.prompt.md`) are IDE-only, read by neither the CLI nor github.com. Hooks are read from two places and written to one: every `*.json` under the hooks directory is a whole `{version, hooks}` document, the settings file carries a `hooks` key of the same entries, and only the files are written. Only the plugin `enabledPlugins` flip is written.
+Commands are unsupported because Copilot CLI reads no command surface of its own: prompt files (`.github/prompts/*.prompt.md`) are IDE-only, read by neither the CLI nor github.com, and the one command directory the CLI does read, top-level `.claude/commands/*.md` as "commands (alternative skill format)", is Claude Code's, which the Claude adapter owns. Hooks are read from two places and written to one: every `*.json` under the hooks directory is a whole `{version, hooks}` document, the settings file carries a `hooks` key of the same entries, and only the files are written. Only the plugin `enabledPlugins` flip is written.
 
 ## Format
 
@@ -66,4 +66,4 @@ Legacy `~/.copilot/config.json` is read and never written; a global scope holdin
 
 ## Cross-reads
 
-Copilot CLI discovers skills from `.claude/skills` and `.agents/skills`; the second is where kendex installs a project skill for it, so that one is claimed. VS Code discovers agents from `.claude/agents`, and the CLI reads the `.claude/settings*.json` subset listed above. The adapter claims none of those, and a repo-root `.mcp.json` stays off its surface list as Claude Code's file; the reach is a note on the plan for skills and the layer stack above for hooks.
+Copilot CLI discovers skills from `.claude/skills` and `.agents/skills`; the second is where kendex installs a project skill for it, so that one is claimed. It also reads top-level `.claude/commands/*.md` as single-file skills, so a command kendex installs for Claude Code at project scope is offered by Copilot too. VS Code discovers agents from `.claude/agents`, and the CLI reads the `.claude/settings*.json` subset listed above. The adapter claims none of those, and a repo-root `.mcp.json` stays off its surface list as Claude Code's file; the reach is a note on the plan for skills and the layer stack above for hooks.

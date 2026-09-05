@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 
 /// One fixture home exercising every adapter: claude agent + skill +
-/// hooks + mcp, codex agent + prompt, opencode mcp with a disabled
+/// hooks + mcp, codex agent + a prompt file Codex no longer reads, opencode mcp with a disabled
 /// entry, pi package, and a registered project with a shared skill tree.
 #[test]
 fn scans_a_realistic_machine() {
@@ -98,7 +98,8 @@ fn scans_a_realistic_machine() {
         find(ItemKind::Agent, "rust")[0].description.as_deref(),
         Some("rust dev")
     );
-    assert_eq!(find(ItemKind::Command, "ship").len(), 1);
+    // Codex removed custom prompts in 0.118; the file is nobody's command.
+    assert_eq!(find(ItemKind::Command, "ship").len(), 0);
 
     let db = find(ItemKind::McpServer, "db");
     assert_eq!(db[0].enabled, Some(false));

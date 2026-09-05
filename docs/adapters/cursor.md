@@ -37,3 +37,7 @@ Cursor has no global rules directory and no documented global skills path, so bo
 ## Hooks
 
 Advisory, and the artifact is a rule, not a registration: a Cursor hook is `.cursor/rules/safety-<name>.mdc` carrying the hook's description and safety prose with `alwaysApply: true` (`HookTarget::Rule`, `crates/core/src/engine/targets.rs`). The global scope has no hook target, so a hook declared for Cursor at global scope installs nothing. Disabling renames the rule file to `.disabled`.
+
+## Not supported
+
+Writing commands: Cursor has deprecated slash commands in favour of skills (every commands page redirects to the skills migration, and `/migrate-to-skills` converts them), so `.cursor/commands` is read and never written, and a skill with `disable-model-invocation: true` is the successor.

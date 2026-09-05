@@ -41,8 +41,8 @@ Installing a package from a git repository needs git 2.41 or newer; kendex refus
 | Agents | ● | ● | ● | ●¹ | ● | ● | ● | ● |
 | Skills | ● | ● | ● | ●¹ | ● | ● | ● | ● |
 | Hooks | ● | ● | ●² | ●¹ ² | ●³ | ● | ● | ● |
-| Commands | ● | ●⁴ | ● | ○ | ● | ● | - | - |
-| MCP servers | ● | ○ | ○ | ○ | - | ●⁵ | ● | ○ |
+| Commands | ● | ●⁴ | ● | ○⁵ | ● | ● | -⁶ | - |
+| MCP servers | ● | ○ | ○ | ○ | - | ●⁷ | ● | ○ |
 | Plugins | ◐ | ○ | ○ | ○ | - | ○ | ◐ | ○ |
 | Pi extensions | - | - | - | - | ● | - | - | - |
 
@@ -52,7 +52,9 @@ Installing a package from a git repository needs git 2.41 or newer; kendex refus
 2. OpenCode has no hook runtime and Cursor takes a rule rather than a registration, so a hook on either is instructions the model may ignore; a `PreToolUse` hook on `Bash` also sets OpenCode's `permission.bash` to ask.
 3. Pi runs hooks through the `pi-hooks` extension; without it registered they are only instructions.
 4. Codex stores a command as a skill.
-5. Gemini records whether an MCP server is on in one machine-wide file, so a project can declare a server but not switch it off there.
+5. Cursor has deprecated slash commands in favour of skills, so a command there is shown and never written.
+6. Copilot CLI reads no command directory of its own; the one it does read is Claude Code's.
+7. Gemini records whether an MCP server is on in one machine-wide file, so a project can declare a server but not switch it off there.
 
 The full per-tool facts are in [docs/adapters](docs/adapters/README.md).
 

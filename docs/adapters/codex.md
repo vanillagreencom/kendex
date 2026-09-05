@@ -17,13 +17,13 @@ Project markers: a `.codex/` or `.agents/` directory.
 |---|---|---|---|
 | agent | `~/.codex/agents/*.toml` | `.codex/agents/*.toml` | managed, both |
 | skill | `~/.codex/skills/<name>/SKILL.md` | `.agents/skills/<name>/SKILL.md`, shared with Pi and Antigravity | managed, both |
-| command | `~/.codex/prompts/*.md`, observed and never written | — | observe global; install, toggle, remove, refresh both; `installs_as: skill` |
+| command | — | — | install, toggle, remove, refresh both; `installs_as: skill` |
 | hook | `~/.codex/hooks.json` | `.codex/hooks.json` | managed, both, enforced |
 | mcp-server | `~/.codex/config.toml` `[mcp_servers.<name>]` | `.codex/config.toml` | observe only, both |
 | plugin | `~/.codex/plugins/` cache tree with `.codex-plugin/plugin.json`, toggles in `config.toml` `[plugins]` | — | observe only, global |
 | pi-extension | — | — | unsupported |
 
-The prompts directory is scanned because Codex still loads it, and never written or adopted.
+Codex removed custom prompts in 0.118 (2026-03), so `~/.codex/prompts` is read by nothing and kendex neither scans nor writes it; a command is a skill there, invoked as `$name` or through `/skills`.
 
 ## Format
 
