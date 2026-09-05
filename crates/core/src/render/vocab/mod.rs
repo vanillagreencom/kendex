@@ -91,9 +91,8 @@ pub fn copilot_tool_name(tool: &str) -> String {
         .unwrap_or_else(|| tool.trim().to_owned())
 }
 
-/// Antigravity's own tool names, the step types its loader lowercases
-/// (<https://antigravity.google/docs/subagents>, the CLI's embedded
-/// customization guide). A name of its own passes through unchanged, so an
+/// Antigravity's own tool names, as the CLI's `init` event lists them
+/// (`agy -p --output-format stream-json`; <https://antigravity.google/docs/subagents>). A name of its own passes through unchanged, so an
 /// author may write either vocabulary.
 fn antigravity_tool(tool: &str) -> Option<&'static str> {
     Some(match normalize(tool).as_str() {
@@ -109,8 +108,7 @@ fn antigravity_tool(tool: &str) -> Option<&'static str> {
         "websearch" | "searchweb" => "search_web",
         "task" | "agent" | "subagent" | "spawnagent" | "invokesubagent" => "invoke_subagent",
         "question" | "askuserquestion" | "askquestion" => "ask_question",
-        "notebookread" | "readnotebook" => "read_notebook",
-        "notebookedit" | "editnotebook" => "edit_notebook",
+        "notebookedit" => "notebook_edit",
         _ => return None,
     })
 }
