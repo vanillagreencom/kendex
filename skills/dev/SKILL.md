@@ -33,6 +33,10 @@ Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/revie
   - the mechanical enablers of landing it ride without tracing to it: locks, changelog, baselines, dismissal renewals, that list and nothing else, never code that runs at runtime;
   - a defect the change introduces or arms is in scope by definition, unless Step 0 of [`../orch/references/finding-disposition.md`](../orch/references/finding-disposition.md) excludes it.
 - Every behavior change ships with a test that runs against the script or program enforcing it, at the smallest surface that fails. A workflow sentence ships no test. A test that pins prose, drives a second implementation, or stubs the function under test does not count as a test.
+- A review finding adds a case only when it names a behaviour no existing case reaches. Otherwise it tightens the existing case's assertion, and the item reasoning names that case.
+- A second fix round on the same function's guard is recurrence: redesign the rule under test so the class is unrepresentable, and fold the family of cases into one table.
+- A test whose premise died is deleted whole in the commit that kills the premise, and the PR body names the deletion.
+- Test shape (one control per surface, tables for shaped input, one file per surface) is [code-quality § Tests](../code-quality/SKILL.md#tests).
 - A refusal, a validator, a lock, a retry, or a test exists only for an input a real producer emits, this project's code or anything it calls or serves; name that producer beside it, or do not write it.
 - When a change deletes a call, apply [code-quality § Cleanup](../code-quality/SKILL.md#cleanup) to its callee. Its deletion maps to the call removal's Done-when item; no internal caller is not proof that a supported external API is unused.
 - A field, setting, or view member added by the change has a real producer and consumer. A named and documented external producer or consumer is valid when the change adds its in-repository counterpart; otherwise, add both sides in the change.
