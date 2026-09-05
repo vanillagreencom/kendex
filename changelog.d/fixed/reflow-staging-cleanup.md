@@ -1,0 +1,1 @@
+- Markdown reflow removes its temporary file when replacement fails and preserves the original document.
