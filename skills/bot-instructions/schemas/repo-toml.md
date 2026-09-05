@@ -156,6 +156,10 @@ First-push-only cadence is `coderabbit_incremental = false` with `qodo_push_trig
 
 `coderabbit`, string, optional. Renders to `tone_instructions`, whose hard cap is 250 characters after the generator strips the newlines a TOML multi-line string introduces. Over the cap, CodeRabbit rejects the entire file. The cap counts Unicode code points, which is what the vendored schema's `maxLength` counts. Absent, the shipped default is used; see `renders.md` for its text.
 
+### `[bot-instructions.retention]`
+
+`coderabbit`, bool, default `true`. What CodeRabbit keeps between pull requests. `false` renders `knowledge_base.opt_out = true`, which removes its stored learnings and its issue and pull request context; code guidelines and web search are stateless and stay on. A repo whose checked-in policy is complete sets it `false` so no learning accumulated in chat shadows the policy.
+
 ### `[bot-instructions.budgets]`
 
 | Key | Type | Default | Bounds |
