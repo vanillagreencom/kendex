@@ -63,7 +63,7 @@ A repo enables `[bot-instructions.exclusions] derive_render` or lists every rend
 
 - Treat every policy path below as invalidating prior review evidence.
 - Require trusted human approval on a pull request that touches a policy path.
-- Run `check` in CI from the default branch copy, with `--spec` naming the pull request tree's package copy.
+- Run `check` in CI from the default branch copy, with `--spec` naming the pull request tree's package copy. The package's own source repository runs the pull request's checker instead: a renderer change judged by the default-branch copy drifts by construction.
 
 ## The render inputs
 

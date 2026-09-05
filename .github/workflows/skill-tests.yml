@@ -34,6 +34,12 @@ permissions:
   contents: read
 
 jobs:
+  # This repository is the package's source, so the candidate's own checker
+  # judges the candidate's renders: a change to the renderer or the derivation
+  # is judged by itself. The trusted default-branch checker is the consumer
+  # rule (SKILL.md § A pull request changing its own review); here it would
+  # report drift by construction on every such change. Code review covers the
+  # checker, and the review gate holds every policy path.
   bot-instructions:
     name: Bot instructions
     runs-on: ubuntu-latest
@@ -43,13 +49,8 @@ jobs:
         with:
           path: candidate
           persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          path: bot-checker
-          persist-credentials: false
       - id: bot-instructions-check
-        run: bot-checker/skills/bot-instructions/scripts/bot-instructions check --repo candidate --spec candidate/skills/bot-instructions
+        run: candidate/skills/bot-instructions/scripts/bot-instructions check --repo candidate --spec candidate/skills/bot-instructions
 
   # SHARDED: five shards bound wall time at the slowest shard and give suite
   # growth per-shard headroom instead of a shared cliff. `orch` and `rest`
