@@ -31,8 +31,6 @@ Needs Bash 4.0 or newer, `curl` and `jq`; macOS system Bash 3.2 is unsupported, 
 
 `./scripts/linear.sh --help` lists the resources; `./scripts/linear.sh <resource> --help` is one resource's options. The cache lives at `.cache/linear` under the physical git worktree root, so symlinked checkout spellings share one copy.
 
-`LINEAR_TEAM` has no default because a team name resolves inside whatever workspace the API key reaches: a guessed default would write into whichever tracker that key happens to own. With no team configured, writes refuse and reads run without a team filter.
-
 ## Customise
 
 Set non-secret keys in committed `kendex.settings.toml` under `[env]`; the key list with each default and what leaving it unset means is [kendex.settings.toml.example](kendex.settings.toml.example).

@@ -32,10 +32,6 @@ Needs `gh` (authenticated with `gh auth login`) and `jq`. `op` is needed only wh
 
 The merge gate in `pr-merge` is policy, not mechanism: it binds only merges routed through `pr-merge`, so a raw `gh pr merge` or the GitHub UI still bypasses it. It is narrower than GitHub's `required_conversation_resolution`, which counts outdated threads too.
 
-## Exit 75 recovery
-
-`pr-merge --auto` exits 75 when the PR is queued or auto-merge is armed. That state is volatile, so the caller arms one exact head and waits on that head with the orch skill's `queue-wait`, sized as step 1 of § 5 in orch's merge-pr workflow says; `queue-wait --help` § Verdicts maps each verdict to a route, and an unrecognized verdict is never re-armed. With the review-gate skill installed, its `pr-watch.sh` prints `disarmed … (re-arm)` lines for every open PR in one pass.
-
 ## Customise
 
 Set non-secret defaults in `kendex.settings.toml` under `[env]`; keep tokens in `.env.local`. A value set in the parent process wins over project files.

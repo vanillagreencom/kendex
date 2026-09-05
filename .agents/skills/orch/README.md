@@ -30,8 +30,6 @@ Waiting on CI, approvals and the merge queue goes through the skill's own waiter
 
 Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secrets in `.env.local`. Nothing is marked required, so installing writes nothing into your settings file; [kendex.settings.toml.example](kendex.settings.toml.example) comments the keys worth changing first.
 
-## Configuration
-
 | Variable | Purpose | Default |
 |---------|---------|---------|
 | `ORCH_STATE_DIR` | Workflow state directory; the `--state-dir` flag wins where both are set | `tmp` |

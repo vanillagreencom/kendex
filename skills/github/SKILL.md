@@ -54,7 +54,7 @@ Contracts: `label-add --help`, `git-https-auth --help`, `git-diff-summary --help
 
 ### PR Merge Outcomes
 
-Full contract: `pr-merge --help`. Exit `75` is volatile, so keep a watcher running until `MERGED`. If `can_merge` is false with no `issues`, read `state`. The thread gate is **Policy, not mechanism.** `--force` and the explicit-user-only `--admin` are its overrides.
+Full contract: `pr-merge --help`. Exit `75` is volatile: the caller arms one exact head and waits on that head with the orch skill's `queue-wait`, whose `--help` § Verdicts maps each verdict to a route; an unrecognized verdict is never re-armed. With the review-gate skill installed, its `pr-watch.sh` prints a `disarmed … (re-arm)` line for every open PR in one pass. If `can_merge` is false with no `issues`, read `state`. The thread gate is **Policy, not mechanism.** `--force` and the explicit-user-only `--admin` are its overrides.
 
 ### PR blocked with no visible conversations
 
