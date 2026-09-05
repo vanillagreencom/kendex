@@ -3,9 +3,9 @@
 # name: task-completed-check
 # event: TaskCompleted
 # matcher:
-# description: Run workspace lint checks before marking a task complete. Currently supports Rust (cargo clippy).
-# safety: Prevents marking tasks done when source files have lint violations.
-# timeout: 120
+# description: Before a task is marked complete, runs `cargo clippy --workspace --all-targets -- -D warnings` when a Rust file changed in the working tree, the index or as an untracked file, and refuses the completion naming the first diagnostics. Rust only.
+# safety: Refuses on any clippy failure and on a git that cannot list the changed set. Claude Code does not block on a hook that outruns its budget, so the budget is that harness's own default for a command hook; a cold build of a large workspace that outruns it completes the task unchecked, and a warm target directory is what keeps this gate closed.
+# timeout: 600
 # harnesses: [claude-code]
 # ---
 
