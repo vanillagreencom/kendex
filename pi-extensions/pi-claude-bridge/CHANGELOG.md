@@ -4,7 +4,7 @@
 
 ### 4.0.1
 
-- Update the bundled Claude Agent SDK to 0.3.261; its matching native Claude Code is 2.1.261. A configured or PATH-selected Claude executable still takes precedence.
+- Require Claude Agent SDK 0.3.261 or later; the tested SDK bundles Claude Code 2.1.261. A configured or PATH-selected Claude executable still takes precedence and must be 2.1.255 or later for Fable 5.1.
 - Fable selection now uses `claude-fable-5-1`, displayed as Claude Fable 5.1. Update saved model selections and model-effort override keys to the new ID.
 
 - `PI_CODING_AGENT_DIR` is used only when it names a root-anchored path — a drive or UNC share on Windows, a leading `/` on POSIX. Anything else uses `~/.pi/agent`.

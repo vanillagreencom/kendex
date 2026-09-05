@@ -80,8 +80,8 @@ export function modelDisplayName(modelId: string): string {
 }
 
 // Project pi-ai's model entries down to the fields pi's registerProvider expects,
-// keep MODEL_IDS_IN_ORDER ordering, and fill bridge-owned future IDs when pi-ai
-// has not shipped metadata for them yet. Unknown missing IDs are still dropped.
+// keep MODEL_IDS_IN_ORDER ordering, and fill bridge-owned metadata for supported
+// IDs absent from pi-ai. Unknown missing IDs are still dropped.
 export function buildModels<T extends { id: string; [key: string]: any }>(piAiModels: T[]) {
 	return MODEL_IDS_IN_ORDER
 		.map((id) => piAiModels.find((m) => m.id === id) ?? FALLBACK_MODELS[id])

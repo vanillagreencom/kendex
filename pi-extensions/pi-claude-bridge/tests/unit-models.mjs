@@ -41,7 +41,7 @@ describe("MODELS projection", () => {
 		assert.equal(models[2]?.id, FABLE_FALLBACK_MODEL_ID);
 	});
 
-	it("fills bridge-owned future IDs missing from pi-ai and drops unknown missing IDs", () => {
+	it("fills supported model metadata missing from pi-ai and drops unknown missing IDs", () => {
 		const models = buildModels([mockPiAiModel("claude-haiku-4-5")]);
 		assert.deepEqual(models.map((m) => m.id), ["claude-fable-5-1", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"]);
 		assert.equal(models.find((m) => m.id === "claude-fable-5-1")?.name, "Claude Fable 5.1");
