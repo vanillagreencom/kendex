@@ -25,7 +25,8 @@ pub fn resolve_declared(
     name: &str,
     decl: &crate::manifest::ItemDecl,
 ) -> Result<DeclaredPackage> {
-    let ready = crate::source::require_ready(env, scope, &decl.source, manifest)?;
+    let ready =
+        crate::source::require_ready_at(env, scope, &decl.source, manifest, decl.rev.as_deref())?;
     let sealed = crate::source_read::SealedSource::open(&ready.root)?;
     let direct = sealed.root().join("pi-extensions").join(name);
     let source_dir = if sealed.is_file(&direct.join("package.json")) {

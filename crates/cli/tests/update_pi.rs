@@ -1,8 +1,14 @@
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::rooted;
+
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
+
+use kendex_core::process::Hardened;
 
 // Integration-test helpers sit outside #[test] fns, so clippy's
 // allow-unwrap-in-tests does not reach them.
@@ -14,6 +20,10 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
         .env_clear()
         .env("HOME", home)
         .env("KENDEX_REAL_HOME", "1")
+        .env(
+            "KENDEX_GIT_BASE",
+            format!("file://{}", home.join("git").display()),
+        )
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .output()
         .expect("kendex binary runs")
@@ -23,6 +33,34 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
 fn write(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, text).unwrap();
+}
+
+#[allow(clippy::unwrap_used)]
+fn git(dir: &Path, args: &[&str]) {
+    let output = Hardened::git(args, Some(dir)).run().unwrap();
+    assert!(output.status.success(), "git {args:?}");
+}
+
+#[allow(clippy::unwrap_used)]
+fn commit(dir: &Path, message: &str) -> String {
+    git(dir, &["add", "-A"]);
+    git(
+        dir,
+        &[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--quiet",
+            "-m",
+            message,
+        ],
+    );
+    let output = Hardened::git(&["rev-parse", "HEAD"], Some(dir))
+        .run()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
 /// A project that declares one pi extension from a local catalog and already
@@ -104,6 +142,104 @@ fn update_reinstalls_from_the_declared_source() {
     assert!(output.status.success());
     let summary = String::from_utf8_lossy(&output.stderr);
     assert!(summary.contains("all pi packages up to date"), "{summary}");
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_successful_package_is_recorded_when_another_update_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = rooted(&tmp);
+    let project = root.join("dev/app");
+    write(
+        &project.join("kendex.toml"),
+        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.bad]\nsource = \"cat\"\n\n[pi-extensions.good]\nsource = \"cat\"\n",
+    );
+    write(
+        &project.join("catalog/pi-extensions/good/package.json"),
+        "{\"name\":\"good\",\"version\":\"1.0.0\"}\n",
+    );
+    write(
+        &project.join("catalog/pi-extensions/good/index.js"),
+        "export const good = true;\n",
+    );
+    write(
+        &project.join("catalog/pi-extensions/bad/package.json"),
+        "{\"name\":\"../bad\",\"version\":\"1.0.0\"}\n",
+    );
+    fs::create_dir_all(project.join(".pi")).unwrap();
+
+    let output = kendex(&root, &project, &["update-pi"]);
+
+    assert!(!output.status.success(), "{output:?}");
+    assert!(project.join(".pi/packages/good/index.js").is_file());
+    let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
+    assert!(lock.entries.values().any(|entry| entry.name == "good"));
+    assert!(!lock.entries.values().any(|entry| entry.name == "bad"));
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_pinned_pi_extension_installs_and_verifies_against_its_revision() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = rooted(&tmp);
+    let project = root.join("dev/app");
+    let upstream = root.join("git/owner/catalog");
+    write(
+        &upstream.join("pi-extensions/pi-widgets/package.json"),
+        "{\"name\":\"pi-widgets\",\"version\":\"1.0.0\"}\n",
+    );
+    write(
+        &upstream.join("pi-extensions/pi-widgets/index.js"),
+        "export const version = 1;\n",
+    );
+    git(&upstream, &["init", "--quiet", "-b", "main"]);
+    let pinned = commit(&upstream, "one");
+    write(
+        &upstream.join("pi-extensions/pi-widgets/package.json"),
+        "{\"name\":\"pi-widgets\",\"version\":\"2.0.0\"}\n",
+    );
+    write(
+        &upstream.join("pi-extensions/pi-widgets/index.js"),
+        "export const version = 2;\n",
+    );
+    commit(&upstream, "two");
+    write(
+        &project.join("kendex.toml"),
+        &format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"owner/catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\nrev = \"{pinned}\"\n"
+        ),
+    );
+    fs::create_dir_all(project.join(".pi")).unwrap();
+    let refresh = kendex(&root, &project, &["refresh", "--scope", "project", "--yes"]);
+    assert!(
+        refresh.status.success(),
+        "{}",
+        String::from_utf8_lossy(&refresh.stderr)
+    );
+
+    let update = kendex(&root, &project, &["update-pi"]);
+    assert!(
+        update.status.success(),
+        "{}",
+        String::from_utf8_lossy(&update.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(project.join(".pi/packages/pi-widgets/index.js")).unwrap(),
+        "export const version = 1;\n"
+    );
+    let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
+    let recorded = lock
+        .entries
+        .values()
+        .find(|entry| entry.name == "pi-widgets")
+        .unwrap();
+    assert_eq!(recorded.source_commit.as_deref(), Some(pinned.as_str()));
+    let verify = kendex(&root, &project, &["verify", "--scope", "project"]);
+    assert!(
+        verify.status.success(),
+        "{}",
+        String::from_utf8_lossy(&verify.stderr)
+    );
 }
 
 #[test]

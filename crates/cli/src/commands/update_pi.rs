@@ -366,8 +366,8 @@ fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
             }
         }
     }
+    record_pi_installs(env, plans)?;
     if failures.is_empty() {
-        record_pi_installs(env, plans)?;
         say(&match updated {
             0 => "all pi packages up to date".to_owned(),
             count => format!("updated {count} package(s)"),

@@ -5,6 +5,7 @@ import {
   type ReportRouteView,
   type Scope,
 } from "@/bindings";
+import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -62,6 +63,15 @@ export function ReportDialog({
               {route.issueUrl}
             </p>
           ) : null}
+          {route?.warnings.map((warning) => (
+            <StatusNote
+              key={warning}
+              tone="warning"
+              title="Routing used fallback evidence"
+            >
+              {warning}
+            </StatusNote>
+          ))}
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>
               Close

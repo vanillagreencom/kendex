@@ -90,6 +90,8 @@ pub struct ReportRouteView {
     pub label: Option<String>,
     /// Prefilled issue page — only when the report belongs upstream.
     pub issue_url: Option<String>,
+    /// Install-record and scan failures kept beside fallback routing.
+    pub warnings: Vec<String>,
 }
 
 /// Where a problem report about this item belongs: the kendex upstream
@@ -110,10 +112,14 @@ fn route_for(
     name: &str,
     kind: Option<ItemKind>,
 ) -> Result<ReportRouteView, String> {
-    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))
-        .map_err(|e| e.to_string())?;
-    let route =
-        kendex_core::report::route(&lock, name, kind, kendex_core::report::DEFAULT_UPSTREAM);
+    let resolved = kendex_core::report::resolve(
+        env,
+        scope,
+        name,
+        kind,
+        kendex_core::report::DEFAULT_UPSTREAM,
+    );
+    let route = resolved.route;
     let issue_url = route.repo.as_ref().map(|repo| {
         let mut url = format!(
             "https://github.com/{repo}/issues/new?title={}",
@@ -129,6 +135,7 @@ fn route_for(
         repo: route.repo,
         label: route.label,
         issue_url,
+        warnings: resolved.warnings,
     })
 }
 
@@ -139,21 +146,30 @@ mod tests {
     use kendex_core::model::Scope;
 
     #[test]
-    fn a_malformed_lock_fails_the_report_route() {
+    fn old_and_malformed_locks_keep_the_warning_beside_fallback_routing() {
         let tmp = tempfile::tempdir().unwrap();
         let env = Env::fake(tmp.path(), FakeOs::Linux);
         let project = tmp.path().join("dev/app");
         std::fs::create_dir_all(&project).unwrap();
         std::fs::write(
-            project.join(".kendex-lock.json"),
-            format!(r#"{{"version":{}"#, kendex_core::lock::LOCK_VERSION),
+            project.join("kendex.toml"),
+            "schema = 6\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n[skills.gh]\nsource = \"kendex\"\n",
         )
         .unwrap();
-        let scope = Scope::Project { root: project };
-
-        let Err(error) = route_for(&env, &scope, "gh", None) else {
-            panic!("a malformed lock must fail the route");
+        let scope = Scope::Project {
+            root: project.clone(),
         };
-        assert!(error.contains("could not be read"), "{error}");
+
+        for record in [
+            "{\"version\":5}\n".to_owned(),
+            format!(r#"{{"version":{}"#, kendex_core::lock::LOCK_VERSION),
+        ] {
+            std::fs::write(project.join(".kendex-lock.json"), record).unwrap();
+            let route = route_for(&env, &scope, "gh", None).unwrap();
+            assert!(route.kendex_owned);
+            assert_eq!(route.repo.as_deref(), Some("vanillagreencom/kendex"));
+            assert_eq!(route.warnings.len(), 1);
+            assert!(route.warnings[0].contains("install record unreadable"));
+        }
     }
 }

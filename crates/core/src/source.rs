@@ -284,7 +284,23 @@ pub fn require_ready(
     name: &str,
     manifest: &Manifest,
 ) -> Result<ResolvedSource> {
-    match resolve(env, scope, name, manifest)? {
+    require_resolved(resolve(env, scope, name, manifest)?)
+}
+
+/// A source's ready root at an item-level revision, or the error that
+/// explains why those bytes are unreachable.
+pub fn require_ready_at(
+    env: &Env,
+    scope: &Scope,
+    name: &str,
+    manifest: &Manifest,
+    rev: Option<&str>,
+) -> Result<ResolvedSource> {
+    require_resolved(resolve_at(env, scope, name, manifest, rev)?)
+}
+
+fn require_resolved(state: SourceState) -> Result<ResolvedSource> {
+    match state {
         SourceState::Ready(source) => Ok(source),
         SourceState::Pending { name, .. } => Err(CoreError::SourcePending { name }),
         SourceState::Disabled { name } => Err(CoreError::SourceDisabled { name }),
