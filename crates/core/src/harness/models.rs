@@ -3,6 +3,11 @@
 //! vendor ids pass through untouched. Renderers own how "inherit" is
 //! spelled on their surface (a literal, or omitting the field) — this table
 //! only decides *what* the alias means there.
+//!
+//! A tier is a pin, never a synonym for inherit: an agent that wants the
+//! session's model says `inherit`. Only Pi reads the heavy tiers as
+//! inherit, because Pi has no alias for a Claude tier and a pinned id
+//! there would name one provider's model for every session.
 
 use crate::model::HarnessId;
 
@@ -38,10 +43,8 @@ pub fn resolve_model(harness: HarnessId, model: &str) -> ResolvedModel {
     let tier = matches!(bare.as_str(), "fable" | "opus" | "sonnet" | "haiku");
     if tier {
         return match (harness, bare.as_str()) {
-            // Heavy tiers inherit the session model rather than pinning a
-            // possibly-smaller default; light tiers pin their alias.
-            (HarnessId::Claude, "fable" | "opus") => resolved(None),
-            (HarnessId::Claude, other) => resolved(Some(other)),
+            // Claude Code takes every tier alias as written.
+            (HarnessId::Claude, tier) => resolved(Some(tier)),
             (HarnessId::Codex, _) => resolved(Some("gpt-6-astra")),
             (HarnessId::Opencode, _) => resolved(Some("openai/gpt-6-astra")),
             (HarnessId::Pi, "fable" | "opus") => resolved(None),
@@ -95,12 +98,12 @@ mod tests {
 
     #[test]
     fn tiers_stay_tiers_and_explicit_ids_pass_through() {
-        assert_eq!(resolve_model(HarnessId::Claude, "opus").id, None);
-        assert_eq!(resolve_model(HarnessId::Claude, "fable").id, None);
-        assert_eq!(
-            resolve_model(HarnessId::Claude, "sonnet").id.as_deref(),
-            Some("sonnet")
-        );
+        for tier in ["fable", "opus", "sonnet", "haiku"] {
+            assert_eq!(
+                resolve_model(HarnessId::Claude, tier).id.as_deref(),
+                Some(tier)
+            );
+        }
         assert_eq!(
             resolve_model(HarnessId::Codex, "haiku").id.as_deref(),
             Some("gpt-6-astra")

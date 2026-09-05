@@ -3,6 +3,7 @@ name: reviewer-error
 description: "Silent failure and error handling reviewer. Detects fail-open paths, swallowed errors, wrong-cause diagnostics, and inadequate error propagation."
 tags: review, debugging
 deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, delegate_subagent, question, tasks_write
+effort: xhigh
 color: orange
 ---
 

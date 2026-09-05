@@ -1,0 +1,1 @@
+- On Claude Code a model tier is a pin: `opus` renders as `opus`, not `inherit`. Say `inherit` to follow the session model.

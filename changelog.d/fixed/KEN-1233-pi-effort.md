@@ -1,0 +1,1 @@
+- A Pi agent whose model inherits the session now renders its effort as an `effort` key, which `pi-agents-tmux` passes to the child as `--thinking`; before, the effort was dropped with the model id.

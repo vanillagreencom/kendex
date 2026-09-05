@@ -727,7 +727,10 @@ export async function writeLauncher(
 	const bridgeExtension = settingBoolean("forceSessionBridgeForPanes", true, cwd) ? resolveSessionBridgeExtension(cwd) : undefined;
 	if (bridgeExtension) args.push("-e", bridgeExtension);
 	if (model) args.push("--model", model);
-	if (thinkingLevel && thinkingLevel !== "off") args.push("--thinking", thinkingLevel);
+	// The same choice the one-shot runner makes: the parent's level, the model
+	// id's `:level` suffix, or the agent's own `effort` key, in that order.
+	const effort = selectedEffortForAgent(agent, model, thinkingLevel);
+	if (effort && effort !== "off") args.push("--thinking", effort);
 	const selectedTools = selectedToolsForAgent(agent, cwd, ["complete_subagent"], activeTools);
 	if (selectedTools && selectedTools.length > 0) args.push("--tools", selectedTools.join(","));
 

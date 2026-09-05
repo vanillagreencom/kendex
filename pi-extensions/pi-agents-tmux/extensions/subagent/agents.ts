@@ -150,7 +150,8 @@ function loadAgentsFromDir(dir: string, source: "user" | "project", blockedSourc
 		}
 
 		const model = normalizeModel(frontmatter.model);
-		const effort = normalizeReasoningEffort(frontmatter["model-reasoning-effort"] ?? frontmatter.modelReasoningEffort ?? frontmatter.effort) ?? effortFromModelId(model);
+		// Suffix first, the order the launchers spawn with (`selectedEffortForAgent`).
+		const effort = effortFromModelId(model) ?? normalizeReasoningEffort(frontmatter["model-reasoning-effort"] ?? frontmatter.modelReasoningEffort ?? frontmatter.effort);
 
 		agents.push({
 			name,

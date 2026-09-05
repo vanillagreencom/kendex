@@ -182,11 +182,15 @@ mod tests {
     }
 
     #[test]
-    fn engineer_defaults_pane_true_background_false_and_opus_inherits() {
+    fn engineer_defaults_pane_true_background_false_and_opus_pins() {
         let source = engineer();
         let scope = Scope::Global;
         let text = generate(&effective(&source, &scope, vec![])).text;
-        assert!(text.contains("model: inherit"));
+        assert!(text.contains("model: opus"));
+        let mut inheriting = engineer();
+        inheriting.model = "inherit".into();
+        let text_inheriting = generate(&effective(&inheriting, &scope, vec![])).text;
+        assert!(text_inheriting.contains("model: inherit"));
         assert!(text.contains("background: false"));
         assert!(text.contains("disallowedTools: Agent, AskUserQuestion"));
         assert!(text.contains("skills: dev, rust-perf"));

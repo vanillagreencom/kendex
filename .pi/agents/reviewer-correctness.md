@@ -3,6 +3,7 @@ name: reviewer-correctness
 description: "Broad correctness and regression reviewer for behavior breakage, boundary/edge-case predicates, API/CLI/devex regressions, feature-gate leaks, migrations, state semantics, and cross-module side effects."
 tags: review
 deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, delegate_subagent, question, tasks_write
+effort: xhigh
 color: red
 ---
 
