@@ -160,7 +160,7 @@ expect_message "exactly one is required" 'two `## Doctrine` sections' \
 
 # Doctrine text is under the same content refusals as repo text, applied where
 # it is read: `renders.md` § Render-side second checks. A `---` under a text
-# line renders into `.github/copilot-instructions.md`, where blocks are `##`
+# line renders into `.github/copilot-instructions.md`, where blocks are `###`
 # subsections with paragraphs preserved, and markdown reads the pair as a
 # setext heading — a forged section in the file whose escaping rule exists to
 # stop exactly that.
