@@ -2626,6 +2626,8 @@ export type ReportRouteView = {
 	label: string | null,
 	/**  Prefilled issue page — only when the report belongs upstream. */
 	issueUrl: string | null,
+	/**  Install-record and scan failures kept beside fallback routing. */
+	warnings: string[],
 };
 
 /**

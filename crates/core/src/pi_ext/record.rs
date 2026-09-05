@@ -25,7 +25,8 @@ pub fn resolve_declared(
     name: &str,
     decl: &crate::manifest::ItemDecl,
 ) -> Result<DeclaredPackage> {
-    let ready = crate::source::require_ready(env, scope, &decl.source, manifest)?;
+    let ready =
+        crate::source::require_ready_at(env, scope, &decl.source, manifest, decl.rev.as_deref())?;
     let sealed = crate::source_read::SealedSource::open(&ready.root)?;
     let direct = sealed.root().join("pi-extensions").join(name);
     let source_dir = if sealed.is_file(&direct.join("package.json")) {
@@ -106,11 +107,38 @@ pub fn record_matching_manifest(
     manifest: &crate::manifest::Manifest,
     lock: &mut crate::lock::Lock,
 ) -> Result<Vec<crate::engine::DriftRow>> {
+    record_matching(env, scope, manifest, lock, manifest.pi_extensions.iter())
+}
+
+/// Compare one declaration after its carrier install completed.
+pub fn record_matching_name(
+    env: &Env,
+    scope: &crate::model::Scope,
+    manifest: &crate::manifest::Manifest,
+    lock: &mut crate::lock::Lock,
+    name: &str,
+) -> Result<Vec<crate::engine::DriftRow>> {
+    record_matching(
+        env,
+        scope,
+        manifest,
+        lock,
+        manifest.pi_extensions.get_key_value(name).into_iter(),
+    )
+}
+
+fn record_matching<'a>(
+    env: &Env,
+    scope: &crate::model::Scope,
+    manifest: &crate::manifest::Manifest,
+    lock: &mut crate::lock::Lock,
+    declarations: impl Iterator<Item = (&'a String, &'a crate::manifest::ItemDecl)>,
+) -> Result<Vec<crate::engine::DriftRow>> {
     use crate::engine::{DriftRow, DriftState};
     use crate::model::{HarnessId, ItemKind};
     let root = scope_root(env, scope)?;
     let mut drift = Vec::new();
-    for (name, decl) in &manifest.pi_extensions {
+    for (name, decl) in declarations {
         let key = crate::lock::entry_key(ItemKind::PiExtension, name, HarnessId::Pi);
         let result = resolve_declared(env, scope, manifest, name, decl)
             .and_then(|package| matching_lock_entry(&root, name, &package, lock.entries.get(&key)));

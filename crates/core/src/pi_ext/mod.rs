@@ -17,8 +17,8 @@ use crate::process::Hardened;
 pub mod carrier;
 mod record;
 pub use record::{
-    DeclaredPackage, check_origin, matching_lock_entry, record_matching_manifest, resolve_declared,
-    scope_root,
+    DeclaredPackage, check_origin, matching_lock_entry, record_matching_manifest,
+    record_matching_name, resolve_declared, scope_root,
 };
 mod files;
 mod renames;

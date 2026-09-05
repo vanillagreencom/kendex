@@ -219,9 +219,8 @@ fn plan_scope(
     })
 }
 
-/// Where each declared pi-extension's bytes live right now. A source that
-/// cannot be read is a note, not a failure — the rest of the scope still
-/// updates.
+/// Resolve each declared Pi extension. An unreadable source becomes a note
+/// so the rest of the scope still updates.
 fn declared_sources(
     env: &Env,
     scope: &Scope,
@@ -346,6 +345,7 @@ fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
             };
             match pi_ext::install(env, &plan.root, source_dir) {
                 Ok(outcome) => {
+                    record_pi_installs(env, plan, Some(&row.name))?;
                     updated += 1;
                     out(&format!(
                         "  {verb} {} -> {}",
@@ -367,7 +367,9 @@ fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
         }
     }
     if failures.is_empty() {
-        record_pi_installs(env, plans)?;
+        plans
+            .iter()
+            .try_for_each(|plan| record_pi_installs(env, plan, None))?;
         say(&match updated {
             0 => "all pi packages up to date".to_owned(),
             count => format!("updated {count} package(s)"),
@@ -377,22 +379,22 @@ fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
     Err(format!("update failed for: {}", failures.join(", ")).into())
 }
 
-fn record_pi_installs(env: &Env, plans: &[ScopePlan]) -> CliResult {
-    for plan in plans {
-        let Some(manifest) = manifest::load_current(&manifest::manifest_path(env, &plan.scope))?
-        else {
-            continue;
-        };
-        let path = kendex_core::lock::lock_path(env, &plan.scope);
-        let mut lock = kendex_core::lock::load(&path)?;
-        let before = lock.clone();
-        let drift = pi_ext::record_matching_manifest(env, &plan.scope, &manifest, &mut lock)?;
-        if lock != before {
-            kendex_core::lock::save(&path, &lock)?;
-        }
-        for row in drift {
-            say(&format!("  ! {}: {}", row.name, row.detail));
-        }
+fn record_pi_installs(env: &Env, plan: &ScopePlan, completed: Option<&str>) -> CliResult {
+    let Some(manifest) = manifest::load_current(&manifest::manifest_path(env, &plan.scope))? else {
+        return Ok(());
+    };
+    let path = kendex_core::lock::lock_path(env, &plan.scope);
+    let mut lock = kendex_core::lock::load(&path)?;
+    let before = lock.clone();
+    let drift = match completed {
+        Some(name) => pi_ext::record_matching_name(env, &plan.scope, &manifest, &mut lock, name)?,
+        None => pi_ext::record_matching_manifest(env, &plan.scope, &manifest, &mut lock)?,
+    };
+    if lock != before {
+        kendex_core::lock::save(&path, &lock)?;
+    }
+    for row in drift {
+        say(&format!("  ! {}: {}", row.name, row.detail));
     }
     Ok(())
 }
