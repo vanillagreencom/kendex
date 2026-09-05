@@ -325,6 +325,13 @@ pub(super) fn mcp_registry(env: &Env, scope: &Scope, harness: HarnessId) -> Opti
         // OpenCode keeps its servers in the scope's one config file, under
         // `mcp` (opencode.ai/docs/mcp-servers).
         HarnessId::Opencode => Some(crate::harness::opencode::config_file(env, scope)),
+        // Cursor merges `~/.cursor/mcp.json` with the workspace's
+        // `.cursor/mcp.json`, the project entry winning a name clash
+        // (cursor.com/docs/mcp).
+        HarnessId::Cursor => Some(match scope {
+            Scope::Global => adapter(harness).default_global_root(env).join("mcp.json"),
+            Scope::Project { root } => root.join(".cursor/mcp.json"),
+        }),
         // Copilot reads a repository's servers from `.github/mcp.json` and a
         // machine's from its own config root (matrix §2). A `.mcp.json` at
         // the repo root is Claude Code's file, which Copilot also reads —

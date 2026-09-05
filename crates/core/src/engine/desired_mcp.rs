@@ -62,6 +62,7 @@ pub(super) fn desired_mcp(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()>
                 (true, HarnessId::Copilot) => {
                     mcp_upsert(harness, ctx.name, super::copilot::server(&value))
                 }
+                (true, HarnessId::Cursor) => mcp_upsert(harness, ctx.name, cursor_server(&value)),
                 (true, _) => mcp_upsert(harness, ctx.name, value.clone()),
                 (false, _) => mcp_remove(harness, ctx.name),
             };
@@ -107,6 +108,43 @@ fn transport_refusal(harness: HarnessId, value: &Value) -> Option<String> {
         names(&transport),
         harness.display_name(),
     ))
+}
+
+/// The entry as Cursor reads it: transport is inferred from `command` or
+/// `url`, and the `type` key the docs list is never read, while its schema
+/// marks the entry with an unknown key (research on 3.18.9, `KKs`,
+/// `parseMcpServersFromFile`), so the key comes off. An environment value
+/// reaches the process through Cursor's variable resolver, which reads
+/// `${env:NAME}` and nothing else (cursor.com/docs/mcp § interpolation), so
+/// the catalog's `$NAME` and `${NAME}` references are spelled that way; a
+/// value naming a resolver, `${env:…}` or `${workspaceFolder}`, passes
+/// through.
+fn cursor_server(value: &Value) -> Value {
+    let mut entry = value.clone();
+    let Some(object) = entry.as_object_mut() else {
+        return entry;
+    };
+    object.remove("type");
+    if let Some(env) = object.get_mut("env").and_then(Value::as_object_mut) {
+        for reference in env.values_mut() {
+            let name = reference.as_str().and_then(|text| {
+                match text
+                    .strip_prefix("${")
+                    .and_then(|rest| rest.strip_suffix('}'))
+                {
+                    // A colon names one of Cursor's resolvers; a bare name
+                    // inside the braces names nothing it can resolve.
+                    Some(inner) if !inner.contains(':') && !inner.is_empty() => Some(inner),
+                    Some(_) => None,
+                    None => text.strip_prefix('$'),
+                }
+            });
+            if let Some(name) = name {
+                *reference = Value::String(format!("${{env:{name}}}"));
+            }
+        }
+    }
+    entry
 }
 
 /// `mcp/<name>.toml` → the JSON value claude stores under `mcpServers`.
@@ -184,6 +222,17 @@ mod tests {
             "env value for TOKEN must be a $REFERENCE, never a secret"
         );
         assert!(mcp_value("transport = \"stdio\"\n").is_err());
+        assert!(mcp_value("transport = \"carrier-pigeon\"\n").is_err());
+
+        let cursor = cursor_server(&json!({"type": "sse", "url": "https://mcp.example"}));
+        assert_eq!(cursor, json!({"url": "https://mcp.example"}));
+        let cursor = cursor_server(
+            &json!({"command": "gh", "env": {"A": "$A_TOKEN", "B": "${B_TOKEN}", "C": "${env:C_TOKEN}"}}),
+        );
+        assert_eq!(
+            cursor,
+            json!({"command": "gh", "env": {"A": "${env:A_TOKEN}", "B": "${env:B_TOKEN}", "C": "${env:C_TOKEN}"}})
+        );
         assert!(mcp_value("transport = \"carrier-pigeon\"\n").is_err());
     }
 }

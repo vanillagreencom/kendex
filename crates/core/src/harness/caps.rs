@@ -331,8 +331,8 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
         (Opencode, Plugin) => observe_only(BOTH),
         (Opencode, PiExtension) => unsupported(),
 
-        // Cursor is managed project-only (no global agent scope in v1), but
-        // its global command/MCP surfaces exist and are observed.
+        // Cursor's agents and skills are managed project-only (no global
+        // rules or skills directory); its global command surface is observed.
         (Cursor, Agent) => managed(PROJECT),
         // Cursor reads the shared `.agents/skills` tree, which is where a
         // project skill goes; `.cursor/skills` is the directory only Cursor
@@ -345,7 +345,10 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
             ..managed(PROJECT)
         }),
         (Cursor, Command) => observe_only(BOTH),
-        (Cursor, McpServer) => observe_only(BOTH),
+        // `mcp.json` under either root, `mcpServers.<name>` in Claude's
+        // shape less the `type` key Cursor never reads; the file holds no
+        // switch of its own, so off is out (cursor.com/docs/mcp).
+        (Cursor, McpServer) => managed(BOTH),
         (Cursor, Plugin) => observe_only(GLOBAL),
         (Cursor, PiExtension) => unsupported(),
 

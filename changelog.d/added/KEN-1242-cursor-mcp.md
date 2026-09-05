@@ -1,0 +1,1 @@
+- MCP servers install on Cursor in `mcp.json` at both scopes, in the shape Cursor reads, with the remove-and-restore toggle Claude Code's file has.
