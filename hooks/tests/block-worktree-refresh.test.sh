@@ -22,6 +22,9 @@ TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 ERR_FILE="$TMP_ROOT/stderr"
 BASH_BIN="$(command -v bash)"
+# The fixture's own git calls must build the fixture, not whatever repository
+# a wrapper's redirection variables name.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 export HOME="$TMP_ROOT/home"
 mkdir -p "$HOME"
 printf '[user]\n\temail = t@t\n\tname = t\n[init]\n\tdefaultBranch = main\n' >"$HOME/.gitconfig"
@@ -90,7 +93,12 @@ for verb in refresh apply 'add orch' 'remove orch' update-pi; do
 done
 assert_contains "$ERR_FILE" 'git worktree list' 'the refusal names how to find the main checkout'
 assert_contains "$ERR_FILE" '--scope global' 'the refusal names the global scope'
-run_in "$WT" 'cd sub && kendex refresh';          assert_eq "$rc" 2 'the verb is found after a chained command'
+run_in "$WT" 'true && kendex refresh';            assert_eq "$rc" 2 'the verb is found after a chained command'
+run_in "$MAIN" "cd $WT && kendex refresh";        assert_eq "$rc" 2 'a cd before the verb moves the write out of the directory git is asked about'
+assert_contains "$ERR_FILE" 'after a cd or pushd' 'the refusal names the move'
+run_in "$OUTSIDE" "pushd $WT; kendex apply";      assert_eq "$rc" 2 'a pushd in an earlier segment is a move too'
+run_in "$MAIN" "cd $WT && kendex refresh -g";     assert_eq "$rc" 0 'a global write after a cd passes: no directory is written'
+run_in "$MAIN" "kendex refresh && cd $WT";        assert_eq "$rc" 0 'a cd after the verb does not move the write'
 run_in "$WT" "$(printf 'echo x\nkendex apply')";  assert_eq "$rc" 2 'the verb is found on the second line'
 run_in "$WT" '/home/u/.cargo/bin/kendex refresh'; assert_eq "$rc" 2 'an absolute path in front of kendex is still kendex'
 run_in "$WT" '"/home/u/.cargo/bin/kendex" refresh'; assert_eq "$rc" 2 'a quoted path in front of kendex is still kendex'
@@ -101,8 +109,15 @@ echo "=== block-worktree-refresh: the right forms pass ==="
 run_in "$MAIN" 'kendex refresh';                  assert_eq "$rc" 0 'the same write from the main checkout passes'
 run_in "$WT" 'kendex refresh -g';                 assert_eq "$rc" 0 'the -g scope passes'
 run_in "$WT" 'kendex refresh --global';           assert_eq "$rc" 0 'the --global scope passes'
-run_in "$WT" 'kendex add --scope global orch';    assert_eq "$rc" 0 'the --scope global words pass'
-run_in "$WT" 'kendex add --scope=global orch';    assert_eq "$rc" 0 'the --scope=global word passes'
+run_in "$WT" 'kendex remove --scope global orch'; assert_eq "$rc" 0 'the --scope global words pass'
+run_in "$WT" 'kendex remove --scope=global orch'; assert_eq "$rc" 0 'the --scope=global word passes'
+run_in "$WT" 'kendex add --global orch';          assert_eq "$rc" 0 'add takes the global scope as --global'
+run_in "$WT" 'kendex update-pi --check';          assert_eq "$rc" 0 'update-pi --check previews and is a read'
+run_in "$WT" 'kendex update-pi -c';               assert_eq "$rc" 0 'update-pi -c is the same read'
+run_in "$WT" 'kendex add orch';                   assert_eq "$rc" 2 'add from the worktree is refused'
+assert_contains "$ERR_FILE" 'pass --global for a global change' 'the add refusal names the form add accepts'
+run_in "$WT" 'kendex update-pi';                  assert_eq "$rc" 2 'update-pi from the worktree is refused'
+assert_contains "$ERR_FILE" 'pass --scope global for a global change' 'the update-pi refusal names the form update-pi accepts'
 run_in "$WT" 'kendex refresh -g; kendex verify';  assert_eq "$rc" 0 'a global write beside a read passes'
 run_in "$WT" 'kendex refresh -g && kendex refresh'; assert_eq "$rc" 2 'a global word in an earlier segment does not exempt a later write'
 run_in "$WT" 'ls -g && kendex refresh';            assert_eq "$rc" 2 'a -g on another command does not exempt the write'

@@ -3,7 +3,7 @@
 # name: block-worktree-refresh
 # event: PreToolUse
 # matcher: Bash
-# description: Refuse a `kendex` command that writes the project scope (`refresh`, `apply`, `add`, `remove`, `update-pi`, `updates --apply`) when the working directory is a linked git worktree and the command does not name the global scope. A project's kendex install is registered to the main checkout, so a project-scope write from a linked worktree renders into that checkout and removes what it does not expect there. Names the two forms that are right: the same command from the main checkout, or `--scope global` for a global change.
+# description: Refuse a `kendex` command that writes the project scope (`refresh`, `apply`, `add`, `remove`, `update-pi`, `updates --apply`) when the working directory is a linked git worktree and the command does not name the global scope, and whenever a `cd` or `pushd` stands before the verb in the same command, since the directory the write lands in cannot then be read from the command. A project's kendex install is registered to the main checkout, so a project-scope write from a linked worktree renders into that checkout and removes what it does not expect there. Names the two forms that are right: the same command from the main checkout, or the verb's global form (`--global` for add, `--scope global` for update-pi, either for the rest).
 # safety: Reads the command text and asks git whether the working directory's git dir differs from its common dir, which is what makes a worktree linked; writes nothing. A git that cannot answer refuses. The verb is read as a word after a `kendex` word, wherever in the command it stands, so a command that merely spells the pair in prose is refused, and that is the accepted cost; the bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. `kendex verify`, `check`, `list`, `report` and every other verb pass; a command carrying `-g`, `--global` or `--scope global` in the verb's own segment, with no `--scope project` or `--scope all` beside it, passes because it names the scope this hook does not guard. A payload that cannot be read, an empty one included, is refused, never skipped.
 # timeout: 10
 # ---
@@ -76,16 +76,28 @@ WRITE_RE='(^|[^[:alnum:]_.-])kendex["'"'"']?[[:space:]]+(refresh|apply|add|remov
 GLOBAL_RE='(^|[[:space:]])(-g|--global|--scope([[:space:]]+|=)global)([[:space:]]|$)'
 PROJECT_RE='(^|[[:space:]])--scope([[:space:]]+|=)(project|all)([[:space:]]|$)'
 APPLY_RE='(^|[[:space:]])--apply([[:space:]]|$)'
+CHECK_RE='(^|[[:space:]])(--check|-c)([[:space:]]|$)'
+# A `cd` or `pushd` word in the verb's segment or an earlier one moves the
+# shell before kendex runs, so the directory git is asked about below is not
+# the one the write lands in; such a command is refused whatever that
+# directory says, since the effective one cannot be established from words.
+MOVE_RE='(^|[^[:alnum:]_.-])(cd|pushd)([[:space:]]|$)'
 VERB=""
+MOVED=""
 while IFS= read -r SEGMENT; do
   case "$SEGMENT" in
     \#*) continue ;;
     *[[:blank:]]\#*) SEGMENT=${SEGMENT%%[[:blank:]]\#*} ;;
   esac
+  [[ $SEGMENT =~ $MOVE_RE ]] && MOVED=1
   [[ $SEGMENT =~ $WRITE_RE ]] || continue
   # The verb is taken before the scope tests, which reset BASH_REMATCH.
   FOUND=${BASH_REMATCH[2]}
   if [ "$FOUND" = updates ] && ! [[ $SEGMENT =~ $APPLY_RE ]]; then
+    continue
+  fi
+  # `update-pi --check` previews and writes nothing.
+  if [ "$FOUND" = update-pi ] && [[ $SEGMENT =~ $CHECK_RE ]]; then
     continue
   fi
   if [[ $SEGMENT =~ $GLOBAL_RE ]] && ! [[ $SEGMENT =~ $PROJECT_RE ]]; then
@@ -98,6 +110,20 @@ $SEGMENTS
 EOF
 if [ -z "$VERB" ]; then
   exit 0
+fi
+# `add` takes the global scope as `--global` alone; `update-pi` as `--scope
+# global` alone; the other verbs take either.
+case "$VERB" in
+  add) GLOBAL_FORM='--global' ;;
+  update-pi) GLOBAL_FORM='--scope global' ;;
+  *) GLOBAL_FORM='--scope global (or --global)' ;;
+esac
+if [ -n "$MOVED" ]; then
+  {
+    echo "block-worktree-refresh: refusing 'kendex $VERB' at project scope after a cd or pushd in the same command: the directory the write lands in cannot be established from the command's words."
+    echo "  Run kendex from the main checkout as its own command (the first line of 'git worktree list' names it), or pass $GLOBAL_FORM for a global change."
+  } >&2
+  exit 2
 fi
 
 # The working directory is the payload's cwd where the harness sends one
@@ -171,6 +197,6 @@ fi
 {
   echo "block-worktree-refresh: refusing 'kendex $VERB' at project scope from the linked worktree $CWD."
   echo "  The project install is registered to the main checkout (the first line of 'git worktree list'); a project-scope write from here renders into that checkout and removes what it does not expect there."
-  echo "  Run the same command from the main checkout, or pass --scope global for a global change. Reads (kendex verify, check, list) are not refused."
+  echo "  Run the same command from the main checkout, or pass $GLOBAL_FORM for a global change. Reads (kendex verify, check, list) are not refused."
 } >&2
 exit 2
