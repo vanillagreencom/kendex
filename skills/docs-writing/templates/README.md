@@ -1,21 +1,19 @@
-# <Package or repo>
+# <Name>
 
-<What it is and who it is for, in two or three sentences.>
+<What the package is, who uses it, and its benefit, in two or three plain sentences.>
 
 ## Install
 
-```bash
-<the one command, where an install step exists>
-```
+<One command, or a bullet or table row per method.>
 
-## What it does
+## Features
 
-- <One feature, plainly, one line each.>
+- <What the user can do.>
 
 ## How it works
 
-<Three to five lines: the flow or the shape.>
+<Three to six plain sentences or bullets naming the parts and what happens in order. Use terms a new user understands.>
 
-## Customise
+## Settings
 
-- `<SETTING>`: <what it changes, and the file it is set in>.
+<Name each setting the reader sets, what it changes, and the file it lives in. Link to the full definitions where needed.>
