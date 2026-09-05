@@ -53,9 +53,11 @@ pub enum ModelShape {
 
 pub fn model_shape(harness: HarnessId) -> ModelShape {
     match harness {
-        HarnessId::Claude | HarnessId::Codex | HarnessId::Gemini | HarnessId::Copilot => {
-            ModelShape::Bare
-        }
+        HarnessId::Claude
+        | HarnessId::Codex
+        | HarnessId::Gemini
+        | HarnessId::Copilot
+        | HarnessId::Antigravity => ModelShape::Bare,
         HarnessId::Opencode | HarnessId::Pi => ModelShape::ProviderQualified,
         HarnessId::Cursor => ModelShape::Absent,
     }
@@ -73,7 +75,7 @@ pub fn effort_levels(harness: HarnessId) -> Option<&'static [&'static str]> {
             Some(&["minimal", "low", "medium", "high", "xhigh"])
         }
         HarnessId::Pi => Some(&["minimal", "low", "medium", "high", "xhigh", "max"]),
-        HarnessId::Cursor | HarnessId::Gemini | HarnessId::Copilot => None,
+        HarnessId::Cursor | HarnessId::Gemini | HarnessId::Copilot | HarnessId::Antigravity => None,
     }
 }
 
@@ -101,6 +103,9 @@ pub fn resolve_model(harness: HarnessId, model: &str) -> ResolvedModel {
             // policy, and a per-repo allowlist, so kendex pins nothing and
             // lets Copilot choose (matrix §4, §D12).
             (HarnessId::Copilot, _) => resolved(Some("auto")),
+            // Antigravity's frontmatter takes its own two tiers and inherit.
+            (HarnessId::Antigravity, "fable" | "opus") => resolved(Some("pro")),
+            (HarnessId::Antigravity, _) => resolved(Some("flash")),
         };
     }
     // Explicit ids pass through as written. OpenCode and Pi load a model

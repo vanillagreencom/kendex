@@ -57,7 +57,7 @@ fn event_fires(harness: HarnessId, event: &str) -> bool {
         HarnessId::Gemini => crate::harness::gemini::event(event).is_some(),
         HarnessId::Copilot => crate::harness::copilot::event(event).is_some(),
         // Advisory harnesses never fire anything; enforcement answers first.
-        HarnessId::Opencode | HarnessId::Cursor => true,
+        HarnessId::Opencode | HarnessId::Cursor | HarnessId::Antigravity => true,
     }
 }
 

@@ -193,7 +193,7 @@ fn word(tool: &str, harness: HarnessId) -> Option<Word> {
         // Both name a tool the same way in prose as in an allowlist.
         HarnessId::Copilot => Some(Word::Name(copilot_tool(&tool)?)),
         HarnessId::Gemini => Some(Word::Name(gemini_tool(&tool)?)),
-        HarnessId::Codex => Some(Word::Phrase(match tool.as_str() {
+        HarnessId::Codex | HarnessId::Antigravity => Some(Word::Phrase(match tool.as_str() {
             "read" => "open the file",
             "grep" => "search",
             "glob" | "ls" => "list files",

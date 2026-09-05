@@ -11,6 +11,7 @@ One page per harness, holding the on-disk facts an adapter maintainer needs: roo
 | Pi | [pi.md](pi.md) | `crates/core/src/harness/pi.rs` | `~/.pi/agent` (`PI_CODING_AGENT_DIR`) | `.pi/`, `.agents/` |
 | Gemini CLI | [gemini.md](gemini.md) | `crates/core/src/harness/gemini/mod.rs` | `~/.gemini` | `.gemini/` |
 | GitHub Copilot | [copilot.md](copilot.md) | `crates/core/src/harness/copilot/mod.rs` | `~/.copilot` (`COPILOT_HOME`) | `.github/` |
+| Antigravity | [antigravity.md](antigravity.md) | `crates/core/src/harness/antigravity.rs` | `~/.gemini/config` | `.agents/` |
 
 The Gemini and Copilot pages rest on [gemini-copilot-matrix.md](gemini-copilot-matrix.md), the observation record the code cites as `matrix §N`; it is kept as written.
 
@@ -36,6 +37,7 @@ An agent's `model` and `effort` reach each harness under that harness's own key 
 | Gemini CLI | bare `gemini-*` id or `inherit`; tiers map to the 3.x previews | none | — | — |
 | GitHub Copilot | bare id from Copilot's own list; every tier is `auto`; an omitted key inherits | none | — | — |
 | Cursor | none | none | — | — |
+| Antigravity | its own tiers: `inherit`, `flash`, `pro`; opus and fable are `pro`, sonnet and haiku `flash` | none | — | — |
 
 A tier alias is a pin, never a synonym for `inherit`; `inherit` is the default that follows the session on every harness. A `provider/model` id is refused on a harness bound to one vendor, and a bare id is refused where the loader needs the provider named (both halves non-empty, and on Pi an optional `:level` from Pi's own set); kendex names no fallback provider because a subagent cannot run on a provider the session is not signed in to.
 

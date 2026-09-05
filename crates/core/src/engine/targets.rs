@@ -186,6 +186,8 @@ pub(crate) fn hook_target(
         // own roots (`crate::harness::pi::HOOK_HOME`).
         HarnessId::Pi => Some(pi_hook(env, scope, name)),
         HarnessId::Copilot => Some(copilot_hook(env, scope, name)),
+        // `hooks.json` is a registry kendex does not yet write.
+        HarnessId::Antigravity => None,
     }
 }
 

@@ -62,6 +62,7 @@
      asks you to decode two colour languages at once. */
   --harness-claude: oklch(0.55 0.16 45);
   --harness-copilot: oklch(0.52 0.14 96);
+  --harness-antigravity: oklch(0.55 0.16 280);
   --harness-codex: oklch(0.52 0.13 147);
   --harness-cursor: oklch(0.52 0.13 198);
   --harness-gemini: oklch(0.53 0.16 249);
@@ -112,6 +113,7 @@
   --code-comment: oklch(0.6 0.02 260);
   --harness-claude: oklch(0.76 0.13 45);
   --harness-copilot: oklch(0.76 0.12 96);
+  --harness-antigravity: oklch(0.78 0.12 280);
   --harness-codex: oklch(0.76 0.11 147);
   --harness-cursor: oklch(0.76 0.11 198);
   --harness-gemini: oklch(0.74 0.13 249);
@@ -166,6 +168,7 @@
   --color-harness-pi: var(--harness-pi);
   --color-harness-gemini: var(--harness-gemini);
   --color-harness-copilot: var(--harness-copilot);
+  --color-harness-antigravity: var(--harness-antigravity);
 }
 
 @layer base {

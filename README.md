@@ -36,15 +36,15 @@ Installing a package from a git repository needs git 2.41 or newer; kendex refus
 
 ## Supported tools
 
-| | Claude Code | Codex | OpenCode | Cursor | Pi | Gemini CLI | GitHub Copilot |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| Agents | ● | ● | ● | ●¹ | ● | ● | ● |
-| Skills | ● | ● | ● | ●¹ | ● | ● | ● |
-| Hooks | ● | ● | ●² | ●¹ ² | ●³ | ● | ● |
-| Commands | ● | ●⁴ | ○ | ○ | ○ | ● | - |
-| MCP servers | ● | ○ | ○ | ○ | - | ●⁵ | ● |
-| Plugins | ◐ | ○ | ○ | ○ | - | ○ | ◐ |
-| Pi extensions | - | - | - | - | ● | - | - |
+| | Claude Code | Codex | OpenCode | Cursor | Pi | Gemini CLI | GitHub Copilot | Antigravity |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| Agents | ● | ● | ● | ●¹ | ● | ● | ● | ● |
+| Skills | ● | ● | ● | ●¹ | ● | ● | ● | ● |
+| Hooks | ● | ● | ●² | ●¹ ² | ●³ | ● | ● | - |
+| Commands | ● | ●⁴ | ○ | ○ | ○ | ● | - | - |
+| MCP servers | ● | ○ | ○ | ○ | - | ●⁵ | ● | ○ |
+| Plugins | ◐ | ○ | ○ | ○ | - | ○ | ◐ | ○ |
+| Pi extensions | - | - | - | - | ● | - | - | - |
 
 ● managed · ◐ enable and disable · ○ shown read-only · - not supported.
 

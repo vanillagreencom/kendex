@@ -194,6 +194,9 @@ pub const fn format_caps(harness: HarnessId) -> FormatCaps {
             name_rule: NameRule::LowerKebab { max_len: None },
             ..format_defaults()
         },
+        // Antigravity's `mcp_config.json` keys a remote server `serverUrl`
+        // and is read, never written; its names are unconstrained.
+        HarnessId::Antigravity => format_defaults(),
     }
 }
 
@@ -389,5 +392,15 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
             ..observe_only(BOTH)
         },
         (Copilot, PiExtension) => unsupported(),
+
+        // Agents load from `agents/*.md` and skills from the shared tree at
+        // either scope. Hooks run from `hooks.json`, a registry kendex
+        // neither reads nor writes yet, so the row is honestly unsupported;
+        // MCP servers and plugins are read and never written.
+        (Antigravity, Agent | Skill) => managed(BOTH),
+        (Antigravity, Command | Hook) => unsupported(),
+        (Antigravity, McpServer) => observe_only(BOTH),
+        (Antigravity, Plugin) => observe_only(GLOBAL),
+        (Antigravity, PiExtension) => unsupported(),
     }
 }
