@@ -41,3 +41,11 @@ CLI and installer tests use `fixture_env` from `crates/test_util.rs` to set HOME
 This repository is a kendex project as well as the default catalog. `kendex.toml` is what the catalog publishes; `kendex-local.toml` is the manifest this checkout installs from, so the published file stays the definition. Every skill, agent and hook the repository uses is a render under `.agents/skills/`, `.claude/`, `.codex/` and `.pi/`, and a change to a source lands its render in the same commit; the rule is `skills/AGENTS.md`. The binary that applies or verifies this tree must be built from it first; the command is in the root `AGENTS.md` § Commands.
 
 From a worktree, `kendex apply`, `kendex refresh` and `kendex verify --scope project` act on the shared main checkout, not the worktree, and delete its renders. In a worktree, sync a render by replaying the source diff onto it; test behaviour on fixture projects under `tmp/` (gitignored) or a temporary directory.
+
+## Review bot files
+
+Edit `[bot-instructions]` in `kendex-local.toml`. The installed [bot-instructions skill](../skills/bot-instructions/SKILL.md) owns the root review section and Copilot files. The commit guard checks their staged state; full validation checks their worktree state. CI runs the default-branch checker against the candidate configuration and doctrine.
+
+Codex and Copilot retain their existing review capability. Other vendor capabilities are off because their settings are unconfirmed. Local checks prove generated file consistency, not vendor enablement, instruction loading, content exclusions, or automatic review settings. Confirm those through the [settings checklist](../skills/bot-instructions/references/checklist.md#the-settings).
+
+Review carry-forward is disabled here. The current gate accepts configured bot or human evidence and does not require a human specifically for policy-file changes. Changes to review policy need a trusted human's approval under the package's adoption policy.

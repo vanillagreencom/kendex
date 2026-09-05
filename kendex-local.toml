@@ -175,6 +175,11 @@ harnesses = [
 ]
 enabled = true
 
+[skills.bot-instructions]
+source = "."
+harnesses = ["claude", "codex", "pi"]
+enabled = true
+
 [skills.code-quality]
 source = "."
 harnesses = [
@@ -1000,3 +1005,112 @@ deny-tools = [
 ]
 allowed-subagents = []
 pane = false
+
+[bot-instructions]
+schema = 1
+
+[bot-instructions.repo]
+name = "kendex"
+tracker = "KEN"
+summary = '''
+kendex has a desktop app and CLI over a shared Rust core. It distributes skills, agent definitions, hooks, and Pi extensions to coding tools. The app uses Tauri and React. Pi extensions include source files and committed bundles.
+'''
+
+[bot-instructions.bots]
+codex = true
+copilot = true
+coderabbit = false
+qodo = false
+qodo_best_practices = false
+qodo_review_md = false
+macroscope = false
+
+[bot-instructions.exclusions]
+derive_render = true
+
+[bot-instructions.doctrine.append]
+reply-contract = '''
+A tracked reply can also name a GitHub issue. Decline reasons follow `skills/orch/references/finding-disposition.md` § Decision flow.
+'''
+trust-model = '''
+The accepted evidence forms are configured in `kendex.settings.toml`. See `skills/review-gate/scripts/review-predicate.sh` help for their trust and commit-binding rules. A trusted comment binds evidence to a commit; its text does not establish the author's trust.
+'''
+declined = '''
+Accepted rationale can appear in settings comments, engine comments, or `skills/review-gate/references/`.
+
+Review-gate does not order evidence across review objects, check runs, commit statuses, and trusted comments. Each form has its own resolution rules in `skills/review-gate/scripts/review-predicate.sh` help.
+
+A state change between reads is handled by another convergence pass. Do not request locks for that window. The schedule in `.github/workflows/review-gate-writer.yml` is best effort, not a latency guarantee.
+
+When docs carry-forward is enabled, eligible documentation changes can retain earlier evidence. Excluded policy paths require fresh evidence. This is an accepted package behavior, not active kendex policy: `REVIEW_GATE_CARRY_FORWARD` is empty here.
+
+A gate success immediately before a push belongs to the earlier commit. Another convergence evaluates the new head. The merge queue checks at admission. Do not report the earlier success as a fail-open path.
+
+Thread resolution is not rechecked by GitHub after queue admission. `skills/orch/scripts/queue-wait` dequeues or disarms a PR when it observes late findings. Findings inside its probe gap can merge. `skills/orch/workflows/merge-pr.md` reads and answers unresolved threads once after merge. A thread arriving after that read remains unhandled.
+
+`skills/review-gate/scripts/validate-workflow.sh` checks template equality with the supported path and check-run opt-in allowances. It requires the template's commented opt-in lines. It does not prove expressions, triggers, permission scopes, or concurrency semantics. `skills/review-gate/tests/review-writer-template.test.sh` executes the relay and checks its identity. Do not request wider semantic checks as a fix to the equality validator.
+
+Do not request test coverage for instruction markdown or for a `tools/guard` change that adds no guard test lane. Structural markdown checks establish syntax elements, not the truth of prose. `skills/orch/tests/lib/md.sh` defines that check boundary.
+
+`hooks/pre-commit-check.sh` reads Git words, not shell expansion. Quoted flags, assignments, aliases, and expanded spellings are outside its contract. The installed Git hook provides the commit check in an armed repository.
+
+Local Git hook markers and execute bits record consent to arm the repository. They do not prove that a hook body still calls the package. This boundary is accepted even when a local edit comments out the call. Package checks provide integrity validation; marker checks do not.
+
+Do not raise Windows-only resolution issues involving PATHEXT or `.cmd` shims without a Windows report. This limit does not exclude other Windows correctness defects.
+
+For project-owned formats, follow `skills/dev/SKILL.md` § Engineering Rules. Its compatibility rule does not apply to readers of another tool's state.
+
+A short refusal list is not a complete grammar. A finding about its matches must show a fail-open path, data loss, or a security defect on input a shipped producer emits. Reword a refused value instead of extending the list.
+'''
+
+[[bot-instructions.surface]]
+name = "crates"
+globs = ["crates/**"]
+reviewer_only = true
+instructions = '''
+Edits to TOML structure must preserve string values. A line-oriented rewrite must track string state. See `crates/core/src/settings_toml.rs` and `crates/core/src/settings_toml/tests.rs::nothing_inside_a_multiline_value_is_structure`.
+
+Inline test modules can use OS temporary directories with cleanup. The worktree scratch-directory rule governs agent artifacts, not test-runtime fixtures.
+'''
+
+[[bot-instructions.surface]]
+name = "hooks"
+globs = ["hooks/**"]
+reviewer_only = true
+instructions = '''
+The security policy in `hooks/command-safety.sh` uses a fail-closed allowlist. Do not propose a denylist or loosen that policy.
+'''
+
+[[bot-instructions.surface]]
+name = "pi-extension-bundles"
+globs = ["pi-extensions/*/bundle/**"]
+reviewer_only = true
+instructions = '''
+These committed bundles are built from each extension's source. Bundle findings are valid. Report each finding against the corresponding source file. Rebuild the bundle from source; do not propose editing the bundle itself.
+'''
+
+[[bot-instructions.surface]]
+name = "skills-and-agents"
+globs = ["skills/**", "agents/**"]
+reviewer_only = true
+instructions = '''
+Follow `skills/docs-writing/SKILL.md` for always-loaded markdown and `skills/code-quality/SKILL.md` for mechanisms. Do not add defensive caveats, history, or editorial commentary to skill and agent instructions.
+
+Issue citations are excluded from instruction-flow markdown. Reference schemas under `skills/*/schemas/` can retain issue provenance.
+
+`tools/bash32-lint` defines the Bash portability roster. The newer-Bash exception covers `skills/linear/scripts`, not its tests. New Bash constructs outside that exception can break supported runtimes.
+
+The executable-bit step in `.github/workflows/skill-tests.yml` defines which script and test files require that bit. Preserve its sourced-library and control-file exceptions. Apply the requirement to new files in that step's scope.
+'''
+
+[[bot-instructions.surface]]
+name = "tests"
+globs = ["**/tests/**", "**/*.test.sh", "**/*.test.ts", "**/fixtures/**"]
+reviewer_only = true
+instructions = '''
+The `--` rule covers paths from configuration, arguments, or the environment. Its absence on a fixture path that the test creates is not a finding.
+
+A scratch directory removed by the test's EXIT trap is cleaned up. Do not report it as a leak.
+
+`${arr[@]+"${arr[@]}"}` is the quoted empty-array expansion used with Bash 3.2 and `set -u`. Do not report it as unquoted expansion or word splitting.
+'''

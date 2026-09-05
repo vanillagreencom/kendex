@@ -2,8 +2,7 @@
 # The one markdown reader the doc lints share. It lives under orch because
 # orch's lints are its callers; a suite in any skill may source it by path.
 #
-# `review-bots.md` bans sentence-pinning lints on markdown:
-# an editorial rephrase must not redden a suite while the contract holds. What
+# An editorial rephrase must not redden a suite while the contract holds. What
 # a doc lint may pin is an IDENTIFIER — a heading, a state field, an inline
 # code literal, a setting name — and the placement of one identifier relative
 # to another.
