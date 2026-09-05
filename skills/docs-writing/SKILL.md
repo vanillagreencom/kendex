@@ -109,11 +109,12 @@ Read by an agent on every load.
 Read by every harness at the start of every session, at the repository root.
 
 - A map, not a manual: what the repo is in two or three sentences.
+- Everything a Codex session must know, because Codex reads only the root-to-cwd chain of `AGENTS.md` files, at launch, under a 32 KiB combined cap.
 - The commands that are not discoverable from the tooling itself.
 - The conventions that differ from a tool default or a language norm.
 - One line per deeper doc, saying when to read it.
 - A nested `AGENTS.md` holds the conventions and invariants local to its directory, and stays small.
-- Excluded: anything derivable from the code, and any rule a shipped kendex package already states.
+- Excluded: anything derivable from the code.
 
 ### `CLAUDE.md`
 
@@ -128,15 +129,10 @@ Read when opened. The format, templates, and workflows are the `decider` skill's
 
 - Follow [`../decider/SKILL.md`](../decider/SKILL.md). This skill ships no second template and states no second format.
 - Architecture docs cite a decision by ID and never restate it.
-- A decision a rewrite shows to be obsolete is superseded through the decider workflow, never deleted.
 
 ### `CHANGELOG.md` and `changelog.d/`
 
 The `changelog-entries` lane owns the shape. Follow the repository's `changelog.d/README.md`.
-
-## Loading
-
-Codex reads only the root-to-cwd chain of `AGENTS.md` files, at launch, under a 32 KiB combined cap, so everything a Codex session must know stays in the root file. Claude Code and Gemini reach nested files through shims kendex writes and verifies: a sibling `CLAUDE.md` holding the import line, and `context.fileName` in `.gemini/settings.json`. Pi reaches them through the `pi-nested-agents-md` extension, declared in the manifest and installed by `kendex update-pi`.
 
 ## Format
 

@@ -4,7 +4,9 @@ The convention for every markdown file a repository owns: the root and nested `A
 
 ## Install
 
-- Any repo: `kendex add vanillagreencom/kendex --skill docs-writing`
+```bash
+kendex add vanillagreencom/kendex --skill docs-writing
+```
 
 ## What it does
 
@@ -17,7 +19,7 @@ The convention for every markdown file a repository owns: the root and nested `A
 
 ## How it works
 
-An agent loads `SKILL.md` when it writes or reviews a markdown file and follows the convention there. Sibling packages enforce the mechanical half: `growth-guards` (the `md-format`, `md-refs`, `prose` and `comments` lanes), `size-ratchet` (a byte class per file kind), the `doc-drift-check` hook (docs move with the code they cover), and kendex itself (the per-harness shims that make nested `AGENTS.md` files reachable). Install those beside this skill.
+An agent loads `SKILL.md` when it writes or reviews a markdown file and follows the convention there. Sibling packages enforce the mechanical half: `growth-guards` (the `md-format`, `md-refs` and `prose` lanes), `size-ratchet` (a byte class per file kind), the `doc-drift-check` hook (docs move with the code they cover), and kendex itself (the per-harness shims that make nested `AGENTS.md` files reachable). Install those beside this skill.
 
 ## Customise
 
