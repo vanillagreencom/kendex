@@ -299,7 +299,7 @@ while IFS="$TAB" read -r oid f limit class; do
   case "$n" in "" | *[!0-9]*) collection_error "invalid byte count for tracked document: $f" ;; esac
   if [ "$n" -gt "$limit" ]; then
     printf 'size-ratchet FAIL: %s: %s bytes > %s bytes (class %s)\n' "$f" "$n" "$limit" "$class"
-    printf '  remedy: trim or split the document; exclusions require a reason in %s\n' "$EXCLUDES_FILE"
+    printf '  remedy: split the document at a natural seam, move detail to a linked reference, or delete content the code or another document already states; a document that must stay whole gets a row in %s with its reason\n' "$EXCLUDES_FILE"
     violations=$((violations + 1))
   fi
   checked=$((checked + 1))

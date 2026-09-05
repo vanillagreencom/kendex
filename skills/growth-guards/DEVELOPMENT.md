@@ -21,7 +21,7 @@ What a maintainer must not break. What each check fails: [CHECKS.md](CHECKS.md);
 - Content decides what is scannable; an attribute never does. Listings force text (`--text`, no `-I`), diffs pin `--no-ext-diff --no-textconv --no-color --text`, and each named blob is sniffed for a NUL in its first block.
 - `gg_content_carriers` lists the measurable carriers and `gg_grep_lane` details the hits; both force text and move together, since a file the listing names and the detail scan drops is a spurious exit 2.
 - Every skip goes through `gg_note_skip` and is counted in `GG_WALK_SKIPPED` by distinct path; each verdict line carries `N matched path(s) not measured`.
-- Every failure carries its remediation; every exclusion carries its reason; a tighten-only baseline exists only where legacy counts exist.
+- A check that refuses states what it refused, why, and the preferred remedy first, before any exemption path; every exclusion carries its reason; a tighten-only baseline exists only where legacy counts exist.
 - A remedy is data, never a pasteable command line.
 
 ## Git hook install contract
