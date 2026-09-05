@@ -11,6 +11,8 @@ Both scopes hold the same layout under their own root. Two complications: a syst
 
 Project markers: a `.gemini/` directory, or a `GEMINI.md` file at the repo root. `gemini-extension.json` is not a marker.
 
+Global detection: `~/.gemini/settings.json`, the file the CLI writes on its first run. The directory alone is not the marker, because Antigravity keeps its own root under it and both tools write the shared Google auth files there (`detect` in `crates/core/src/harness/gemini/mod.rs`). A Gemini CLI that has never written its settings file is listed in `[install] harnesses` by hand.
+
 ## Surfaces
 
 | Kind | Global | Project | Caps |

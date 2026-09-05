@@ -94,8 +94,8 @@ Read-only scanning needs markers that are cheap and do not produce false positiv
 
 | Scope | Marker | Strength |
 |---|---|---|
-| Global | `~/.gemini/` directory exists | strong — the CLI creates it on first run |
-| Global | `~/.gemini/settings.json` | strong |
+| Global | `~/.gemini/` directory exists | weak — Antigravity's root (`~/.gemini/config`) and the shared Google auth files create it too |
+| Global | `~/.gemini/settings.json` | strong — the marker kendex uses |
 | Project | `.gemini/` directory | strong |
 | Project | `GEMINI.md` at repo root | strong |
 | Project | `.gemini/settings.json`, `.gemini/commands/`, `.gemini/agents/`, `.gemini/skills/` | strong, per-kind |
