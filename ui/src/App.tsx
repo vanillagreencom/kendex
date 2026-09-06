@@ -8,6 +8,7 @@ import { Sidebar } from "@/components/sidebar";
 import { StatusFooter } from "@/components/status-footer";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { WindowControls } from "@/components/window-controls";
+import { receiveDeepLinks } from "@/lib/deep-link";
 import { AvailablePackagePage } from "@/pages/available-package";
 import { BundleDetailPage } from "@/pages/bundle-detail";
 import { CustomizePage } from "@/pages/customize";
@@ -100,6 +101,26 @@ function useMouseNavigation() {
   }, [back, forward]);
 }
 
+// A `kendex://` link is followed from here, once the page is up: a link
+// that launched the app waits in the backend until this first effect asks
+// for it, and a link clicked while the app runs arrives as an event. The
+// listener may outlive a mount it was started under in StrictMode's
+// double effect, so a stop that arrives after the unmount is used at once.
+function useDeepLinks() {
+  useEffect(() => {
+    let stop: (() => void) | null = null;
+    let unmounted = false;
+    void receiveDeepLinks().then((unlisten) => {
+      if (unmounted) unlisten();
+      else stop = unlisten;
+    });
+    return () => {
+      unmounted = true;
+      stop?.();
+    };
+  }, []);
+}
+
 /** The reads the app starts with. Every one of them is owned here so a
  *  page that shows what they found subscribes instead of asking again. */
 export function useStartupLoads() {
@@ -147,6 +168,7 @@ export function useStartupLoads() {
 export default function App() {
   useAppearance();
   useStartupLoads();
+  useDeepLinks();
   useMouseNavigation();
   useZoomShortcuts();
   const page = useNavStore((s) => s.page);

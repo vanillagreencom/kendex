@@ -58,6 +58,12 @@ export const unreadableRecordsWriteLine = (place: string): string =>
 
 export const SEE_PROBLEMS_LABEL = "See Problems";
 
+/** The link that launched the app could not be asked for: the person
+ *  clicked something and is waiting for it, so the failure is said where
+ *  they are looking. */
+export const deepLinkLostToast = (reason: string): string =>
+  `The link that opened kendex could not be read: ${reason}`;
+
 // What subscribing does, said wherever Subscribe is offered so nobody has
 // to press it to find out. Subscribing writes a source declaration into
 // one place's manifest and fetches it; the packages it offers become

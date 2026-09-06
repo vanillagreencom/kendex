@@ -4,6 +4,7 @@ mod app_update;
 pub mod audit;
 mod commands;
 mod community;
+pub mod deep_link;
 mod editor;
 // Nothing outside Linux reaches this: the fixes it decides are for GTK
 // and for how the Linux app is packaged.
@@ -29,7 +30,7 @@ mod window;
 #[path = "../../test_util.rs"]
 mod test_util;
 
-use tauri_specta::{Builder, collect_commands};
+use tauri_specta::{Builder, collect_commands, collect_events};
 
 /// Values the UI reads instead of keeping a second copy of.
 fn constants(builder: Builder<tauri::Wry>) -> Builder<tauri::Wry> {
@@ -55,9 +56,10 @@ fn constants(builder: Builder<tauri::Wry>) -> Builder<tauri::Wry> {
 ///
 /// A command returning a plain value gets no wrapper, tauri-specta emitting
 /// one only where there is a refusal type to name: `app_version`,
-/// `capability_table`, `mine_authoring_doc` and `window_zoom_state` reject
-/// to their callers unfolded, so a fire-and-forget read of one still drops
-/// its rejection. Nothing in `specta_builder` can reach them.
+/// `capability_table`, `deep_link_take`, `mine_authoring_doc` and
+/// `window_zoom_state` reject to their callers unfolded, so a
+/// fire-and-forget read of one still drops its rejection. Nothing in
+/// `specta_builder` can reach them.
 ///
 /// `E | string` in the signature is what holds a reader honest: the fold
 /// puts a bare message in the `E` slot, and declaring that widening is what
@@ -83,6 +85,7 @@ const TYPED_ERROR_IMPL: &str = r#"async function typedError<T, E>(result: Promis
 pub fn specta_builder() -> Builder<tauri::Wry> {
     let builder = constants(Builder::<tauri::Wry>::new()).commands(collect_commands![
         commands::app_version,
+        deep_link::deep_link_take,
         app_update::app_update_check,
         app_update::app_update_channel,
         app_update::app_update_command_channel,
@@ -172,17 +175,20 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         window::window_toggle_maximize,
         window::window_close,
     ]);
-    // Package-owned TOML has no app schema. Keep its JSON values unchanged
-    // and require a consumer to narrow them before use.
+    let builder = builder.events(collect_events![deep_link::DeepLinkOpened]);
+    opaque_package_values(builder).typed_error_impl(TYPED_ERROR_IMPL)
+}
+
+/// Package-owned TOML has no app schema. Keep its JSON values unchanged
+/// and require a consumer to narrow them before use.
+fn opaque_package_values(builder: Builder<tauri::Wry>) -> Builder<tauri::Wry> {
     let package_values = specta_typescript::semantic::Configuration::empty()
         .define::<kendex_core::manifest::BotInstructions>(
         |_| specta_typescript::define("Record<string, unknown>").into(),
         None,
         None,
     );
-    builder
-        .semantic_types(package_values)
-        .typed_error_impl(TYPED_ERROR_IMPL)
+    builder.semantic_types(package_values)
 }
 
 /// Everything that must settle before the window opens: an apply the last
@@ -215,6 +221,29 @@ pub fn run() -> tauri::Result<()> {
     }
     let builder = specta_builder();
     tauri::Builder::default()
+        .manage(deep_link::DeepLinks::default())
+        // First among the plugins, so a second launch is forwarded before
+        // its window is built. The forwarded argv is what the deep-link
+        // plugin reads a `kendex://` link out of. On Linux a debug binary
+        // answers to its own bus name, so a link meant for the installed
+        // app never surfaces in it. The binary, not the home it was
+        // launched onto: the handler file names the binary and a link
+        // launches it with no `KENDEX_REAL_HOME`, and that launch must
+        // still reach a debug instance that has it. The plugin keys
+        // Windows and macOS on the bundle identifier alone, so there a
+        // debug build launched beside the installed app hands its argv
+        // over and exits.
+        .plugin(
+            tauri_plugin_single_instance::Builder::new()
+                .dbus_id(if cfg!(debug_assertions) {
+                    "ai.kendex.app.dev"
+                } else {
+                    "ai.kendex.app"
+                })
+                .callback(|app, _argv, _cwd| window::bring_to_front(app))
+                .build(),
+        )
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -226,7 +255,9 @@ pub fn run() -> tauri::Result<()> {
         // window it never draws. The release check waits on the `?`: a
         // window that never opened has nowhere to put a notice.
         .setup(move |app| {
+            builder.mount_events(app);
             window::show_at_zoom(app, zoom)?;
+            deep_link::wire(app);
             app_update::schedule_startup_check();
             Ok(())
         })

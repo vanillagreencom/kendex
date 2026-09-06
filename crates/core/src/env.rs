@@ -5,7 +5,7 @@ use crate::error::{CoreError, Result};
 
 mod sandbox;
 
-pub(crate) use sandbox::sandboxed;
+pub use sandbox::sandboxed;
 use sandbox::{dev_home, real_home_opt_in, sandbox_vars};
 
 /// The one spelling of the app's directory segment under config/cache/data.

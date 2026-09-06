@@ -51,6 +51,22 @@ pub struct ZoomState {
     pub launch_refused: bool,
 }
 
+/// A second launch reached the running app instead of opening: the window
+/// the person is looking for is this one, wherever it sits. A window that
+/// will not come forward is said, not failed on: the link it carried is
+/// delivered either way.
+pub fn bring_to_front(app: &tauri::AppHandle) {
+    use std::io::Write;
+    use tauri::Manager;
+    let Some(window) = app.get_webview_window(MAIN) else {
+        let _ = writeln!(std::io::stderr(), "no main window to bring forward");
+        return;
+    };
+    if let Err(error) = window.unminimize().and_then(|()| window.set_focus()) {
+        let _ = writeln!(std::io::stderr(), "window not brought forward: {error}");
+    }
+}
+
 /// What the webview is showing, for a page with no memory of its own.
 #[tauri::command]
 #[specta::specta]
