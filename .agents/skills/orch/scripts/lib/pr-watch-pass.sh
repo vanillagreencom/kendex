@@ -5,10 +5,12 @@
 # of its lib/ it reads that script's globals (REPOS, PR_WATCH, PW_STATE_DIR,
 # WORK_DIR, SINCE) and calls its `die`.
 
-# The latest pr-watch result across every --repo, appended to every event's
-# output: each line carries the repo it came from, and rc is the highest
-# status any repo's reducer returned.
+# The latest pr-watch result across every --repo, closing every event block:
+# each line carries the repo it came from, and rc is the highest status any
+# repo's reducer returned. PW_EVENT marks a pass whose block opened with the
+# pr-watch event, where those lines already stand under it.
 PW_RC=0
+PW_EVENT=0
 PW_OUT=""
 PW_ERR=""
 PW_PASSES=0
@@ -83,15 +85,17 @@ pw_init_state() {
 }
 
 pr_watch_context() {
-  [[ "$PW_RC" -ne 0 ]] || return 0
+  [[ "$PW_RC" -ne 0 && "$PW_EVENT" -eq 0 ]] || return 0
   echo "pr-watch rc=$PW_RC"
   [[ -z "$PW_OUT" ]] || printf '%s\n' "$PW_OUT"
   [[ -z "$PW_ERR" ]] || printf '%s\n' "$PW_ERR"
 }
 
-# Every step exits on its first event; the loop body only reaches `sleep`
-# when nothing needs the overseer.
+# A new key is the pass's first event: printed here, ahead of the checks that
+# follow it, and the pass runs on so a lane's question is read on the same
+# pass. The loop body only reaches `sleep` when nothing needs the overseer.
 check_pr_watch() {
+  PW_EVENT=0
   [[ -n "$PR_WATCH" ]] || return 0
   local errf="$WORK_DIR/pr-watch.err" i repo out err rc keys carried new_keys key
   local rc_max=0 out_all="" err_all="" event=0
@@ -184,5 +188,7 @@ check_pr_watch() {
     PW_SEEN[$i]="${pass_keys[$i]}"
   done
   [[ "$event" -eq 1 ]] || return 0
-  exit 0
+  PW_EVENT=1
+  # shellcheck disable=SC2034  # read by oversee-watch's pass loop
+  PASS_EVENT=1
 }

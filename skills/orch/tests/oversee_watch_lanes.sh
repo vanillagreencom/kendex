@@ -61,6 +61,18 @@ screen() {
     working_below_turn) printf '%b\n' '❯ go ahead and refactor it' '⏺ Thinking (esc to interrupt)' "$COMPOSER" > "$pane" ;;
     # a submitted turn opens with the composer's marker, and nothing below it
     prompt_above_turn) printf '%b\n' '❯ run the suite' '⏺ Bash(cargo test)' '  ⎿ Compiling kendex v5.0.0' > "$pane" ;;
+    # a byte-exact Claude Code 2.1.261 dialog under fixtures/: the permission
+    # prompt indents its selected row one column, AskUserQuestion draws its
+    # row at column 0 with the question ABOVE it; each is checked for the
+    # line its row rests on
+    claude:claude-dialog-permission)
+      local capture="$CODEX_PANES/${1#claude:}.txt"
+      grep -qF ' ❯ 1. Yes' "$capture" && grep -qF 'Do you want to proceed?' "$capture" || { echo "screen: $1 lost its indented row or its question; the row would pin nothing" >&2; exit 1; }
+      cat "$capture" > "$pane" ;;
+    claude:claude-dialog-askuserquestion)
+      local capture="$CODEX_PANES/${1#claude:}.txt"
+      grep -q '^❯ 1\. Yes' "$capture" && grep -qF 'Proceed with the rename?' "$capture" || { echo "screen: $1 lost its column-0 row or its question; the row would pin nothing" >&2; exit 1; }
+      cat "$capture" > "$pane" ;;
     codex:*)
       local capture="$CODEX_PANES/${1#codex:}.txt"
       case "$1" in
@@ -112,6 +124,12 @@ lane() {
     # ...the same, looked up unqualified; and after tmux destroyed the session
     arch_bare) WATCHED="gh-1 gh-2" ;;
     arch_gone) rm -f "$STUB_DIR/windows-arch.txt"; WATCHED="gh-1 arch:gh-2" ;;
+    # gh-1 parked on its limit banner: every pass of every run leaves on it,
+    # so a sibling's two-pass kinds get one pass per run
+    walled) printf '%b\n' '⏺ Working through the queue.' "You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)" "$COMPOSER" > "$STUB_DIR/pane-gh-1.txt" ;;
+    walled_bash) lane walled; printf 'bash\n' > "$STUB_DIR/cmd-gh-2.txt" ;;
+    # ...and gh-2's pane replaced between runs
+    walled_newpane) lane walled; printf '7000 %%9\n' > "$STUB_DIR/pane-key-gh-2.txt" ;;
     # two lanes whose names differ only outside the filename-safe set
     collide)
       printf 'a+b\na@b\n' > "$STUB_DIR/windows.txt"
@@ -233,6 +251,8 @@ lane_table \
   "a wrapped lane's question is still the event|new|prompt|fish_child|1|first=EVENT+lane-asking+gh-2" \
   "a codex directory-trust dialog is a question|new|codex:codex-dialog-trust|codex|1|first=EVENT+lane-asking+gh-2 out~Do+you+trust+the+contents+of+this+directory?=true" \
   "a codex model picker is a question|new|codex:codex-dialog-model|codex|1|first=EVENT+lane-asking+gh-2 out~Select+Model+and+Effort=true" \
+  "a permission prompt under a tool block is a question, its rows indented|new|claude:claude-dialog-permission|claude|1|first=EVENT+lane-asking+gh-2 out~Do+you+want+to+proceed?=true" \
+  "the measured AskUserQuestion screen is a question (its column-0 row is pinned as live input in the usage-limit suite)|new|claude:claude-dialog-askuserquestion|claude|1|first=EVENT+lane-asking+gh-2 out~Proceed+with+the+rename?=true" \
   "lanes whose names flatten to one slug keep separate pane snapshots|new|-|collide|1|rc=0 first=EVENT+lane-asking+a+b" \
   "a selection list above the last user turn is answered: the lane reaches the idle event it was masking|new|answered_dialog|claude|2|rc=0 first=EVENT+idle-after-return+gh-2 out~EVENT+lane-asking=false" \
   "control: the same list below the last user turn is still the event|new|live_dialog|claude|1|first=EVENT+lane-asking+gh-2 out~+++❯+1.+Yes=true" \
@@ -263,6 +283,19 @@ lane_table \
   "an interrupt hint above the last user turn is scrollback, not work in flight|new|working_above_turn|claude|2|rc=0 first=EVENT+idle-after-return+gh-2" \
   "control: the same hint below the last user turn still means busy|new|working_below_turn|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false" \
   "a scrollback user turn is not the composer the lane is sitting at|new|prompt_above_turn|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false"
+
+echo "=== two-pass kinds beside a lane that fires every pass ==="
+# A pass with any event exits the process, and a lane parked on its banner is
+# one on every pass, so a sibling's first idle or exited pass has to survive
+# into the next run: the debounce is a baseline row keyed by the pane, and a
+# replacement pane starts the count over. The must-fail is the row kept in a
+# process global: run 2 then reads as usage-limit alone.
+lane_table \
+  "a parked lane leaves every pass on its wall: an idle sibling's first pass is remembered across runs|new|idle|walled|1|rc=0 out~EVENT+usage-limit+gh-1=true out~EVENT+idle-after-return=false" \
+  "...and the next run's first pass reports it idle beside the wall|cont|idle|walled|1|rc=0 out~EVENT+usage-limit+gh-1=true out~EVENT+idle-after-return+gh-2=true" \
+  "a replacement pane starts the count over|cont|idle|walled_newpane|1|out~EVENT+usage-limit+gh-1=true out~EVENT+idle-after-return=false" \
+  "an exited sibling's first pass is remembered the same way|new|fish_prompt|walled_bash|1|out~EVENT+usage-limit+gh-1=true out~EVENT+lane-exited=false" \
+  "...and the next run reports it exited beside the wall|cont|fish_prompt|walled_bash|1|rc=0 out~EVENT+usage-limit+gh-1=true out~EVENT+lane-exited+gh-2=true"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -8,8 +8,8 @@
 # shared lib/oversee-watch-harness.sh sandbox.
 #
 # oversee-watch is the overseer's single blocking watch: it loops until the
-# fleet needs a hand and prints one wake, with one EVENT line or one line per
-# merged or triage item. Covered here:
+# fleet needs a hand and prints one wake carrying every event the pass found,
+# one EVENT line each, and exits once. Covered here:
 #   1.  pr-watch: on the fleet's first run attention present at start is a
 #       baseline (no event, one stderr note, context on the next event); that
 #       baseline persists, so a line appearing between two runs is the next
@@ -22,7 +22,9 @@
 #       error key preempts a repo's opening pass while every other kind there
 #       still baselines silently;
 #       rc≠0 with no lines is a global failure (exit 2); attention
-#       at start does not starve a lane's question; the state file is
+#       at start does not starve a lane's question, and a new line and a
+#       question on one pass are both reported, the control being the
+#       reducer's early exit restored; the state file is
 #       rewritten after every pass, and an uncreatable state dir or an
 #       unreadable state file exits 2 naming the path; the reducer runs for
 #       every --repo, with per-repo baselines and repo-prefixed lines on both
@@ -211,6 +213,48 @@ err="$TMP_ROOT/e1f"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" "a lane question is seen despite standing pr-watch attention" "$err"
 assert_contains "$out" "pr-watch rc=1" "the question event still carries the pr-watch context" "$err"
+
+# 1f'. a new reducer line and a lane's question on the SAME pass are both
+# reported, as one block: the pr-watch event opens it with its reducer lines,
+# the asking line follows with its pane tail, the reducer lines are not
+# repeated as trailing context, and the pass exits once. Before, the pass
+# left on the reducer line and the question waited for a pass on which no PR
+# moved.
+new_case prwatch_and_asking_same_pass
+printf '0' > "$STUB_DIR/prwatch.rc.1"
+printf '12\tabcdef01\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out.2"
+printf '1' > "$STUB_DIR/prwatch.rc.2"
+printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.2.txt"
+err="$TMP_ROOT/e1f2"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "a reducer line beside a question exits 0" "$err"
+assert_eq "$(sed -n '1p;2p;3p' <<<"$out")" "$(printf 'EVENT pr-watch rc=1\nowner/repo\t12\tabcdef01\tthreads-open\t2 unresolved\nEVENT lane-asking gh-2')" \
+  "the block opens with the reducer event and its line, the asking line next" "$err"
+assert_contains "$out" "❯ 1. Yes" "the asking line carries its pane tail" "$err"
+assert_eq "$(grep -c 'threads-open' <<<"$out")" "1" "the reducer line is printed once, never again as trailing context" "$err"
+assert_not_contains "$out" "EVENT heartbeat" "the pass with events exits before any heartbeat" "$err"
+
+# The must-fail control: the reducer arm's early exit restored. The mutant
+# leaves the pass on the new reducer line, so the same fleet reads as pr-watch
+# alone; the copy must differ from the source or the control proves nothing.
+# The copy keeps orch's place in a skills tree: its libraries resolve the
+# github skill beside it.
+REDUCER_MUTANT_DIR="$TMP_ROOT/reducer-mutant"
+mkdir -p "$REDUCER_MUTANT_DIR/orch"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$REDUCER_MUTANT_DIR/orch/scripts"
+ln -s "$REPO_ROOT/skills/github" "$REDUCER_MUTANT_DIR/github"
+sed 's/^  PASS_EVENT=1$/  exit 0/' "$REPO_ROOT/skills/orch/scripts/lib/pr-watch-pass.sh" > "$REDUCER_MUTANT_DIR/orch/scripts/lib/pr-watch-pass.sh"
+assert_eq "$(cmp -s "$REDUCER_MUTANT_DIR/orch/scripts/lib/pr-watch-pass.sh" "$REPO_ROOT/skills/orch/scripts/lib/pr-watch-pass.sh" && echo same || echo differs)" "differs" \
+  "control: the mutant really restores the reducer arm's early exit"
+new_case prwatch_and_asking_same_pass_mutant
+printf '0' > "$STUB_DIR/prwatch.rc.1"
+printf '12\tabcdef01\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out.2"
+printf '1' > "$STUB_DIR/prwatch.rc.2"
+printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.2.txt"
+err="$TMP_ROOT/e1f3"
+out="$(WATCH_BIN="$REDUCER_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "control: the mutant still reports the reducer line" "$err"
+assert_not_contains "$out" "EVENT lane-asking" "control: with the early exit restored the question goes unreported" "$err"
 
 # 1g. the baseline persists across runs of the same fleet: the overseer exits
 # on every event and re-runs the watch, so a line that appears BETWEEN two runs

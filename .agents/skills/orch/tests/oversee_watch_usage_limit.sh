@@ -69,6 +69,14 @@ screen() {
     stale_over_question) printf '%b\n' "$BANNER" '❯ pick the round back up' '⏺ Teammate @dev-ken832-r3 finished' "$QUESTION" > "$STUB_DIR/pane-gh-2.txt" ;;
     live_over_question) printf '%b\n' '❯ pick the round back up' '⏺ Teammate @dev-ken832-r3 finished' "$BANNER" "$QUESTION" > "$STUB_DIR/pane-gh-2.txt" ;;
     healthy) composed '⏺ All green, nothing blocking.' "$COMPOSER" ;;
+    # the measured AskUserQuestion screen (its selected row at column 0, the
+    # question above the row) with the banner drawn under the user's turn
+    banner_over_column0_dialog)
+      grep -q '^❯ 1\. Yes' "$CODEX_PANES/claude-dialog-askuserquestion.txt" \
+        || { echo "screen: the AskUserQuestion fixture no longer draws its row at column 0, so the row would pin nothing" >&2; exit 1; }
+      { head -n 7 "$CODEX_PANES/claude-dialog-askuserquestion.txt"; printf '%s\n' "$BANNER"; tail -n +8 "$CODEX_PANES/claude-dialog-askuserquestion.txt"; } > "$STUB_DIR/pane-gh-2.txt"
+      grep -q '^❯ Use the AskUserQuestion' <(head -n 7 "$STUB_DIR/pane-gh-2.txt") \
+        || { echo "screen: the banner did not land under the user turn" >&2; exit 1; } ;;
     # this suite's own source among the text a lane prints mid-turn
     working) printf '%b\n' '⏺ Reading the suite.' "  printf \"You've hit your usage limit \xc2\xb7 resets 17:00\"" 'esc to interrupt' > "$STUB_DIR/pane-gh-2.txt" ;;
     banner_1700) composed "You've hit your usage limit \xc2\xb7 resets 17:00" "$COMPOSER" ;;
@@ -208,6 +216,7 @@ usage_table \
   "...and under a byte-oriented locale, where a marker class would degrade|cont|realistic|claude|-|C|rc=0 first=$AT_0950" \
   "a stale banner never masks the live question on a dialog screen|new|stale_over_question|claude|-|-|rc=0 first=EVENT+lane-asking+gh-2 out~EVENT+usage-limit=false" \
   "a banner below the turn on a dialog screen is still the event, and outranks the question|new|live_over_question|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950" \
+  "a dialog's column-0 selected row is live input, not the turn: the banner above it is still the event|new|banner_over_column0_dialog|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~EVENT+lane-asking=false" \
   "a codex banner below the last turn is reported, the composer notwithstanding|new|codex_live|codex|-|-|rc=0 first=EVENT+usage-limit+gh-2" \
   "a codex banner the lane has worked past is not the event: the composer never resurrects it|new|codex_stale|codex|-|-|rc=0 first=$HEARTBEAT out~EVENT+usage-limit=false" \
   "a codex dialog row is live input, so the banner above the turn stays scrollback|new|codex_dialog_stale|codex|-|-|rc=0 first=EVENT+lane-asking+gh-2 out~EVENT+usage-limit=false" \
@@ -259,6 +268,63 @@ usage_table \
   "and a dated reset still ahead is a wall standing|cont|banner:You've hit your weekly limit \\xc2\\xb7 resets Sep 6, 4pm|claude|-|UTC|rc=0 first=EVENT+usage-limit+gh-2+resets=2026-09-06T16:00:00Z" \
   "a lane with a turn in flight is left alone|new|working|claude|$RESET_NOW|UTC|rc=0 first=$HEARTBEAT" \
   "the working pass left no sighting, so this one is the first|cont|banner_1700|claude|1788372000|UTC|rc=0 first=EVENT+usage-limit+gh-2+resets=2026-09-03T17:00:00Z"
+
+echo "=== a walled lane does not starve the fleet ==="
+# One pass reports every lane it found something on, as one block: a fleet
+# with one lane parked on its banner and another sitting on an unanswered
+# prompt emits usage-limit for the first AND lane-asking for the second, each
+# followed by its own pane tail, and exits once. Before, the usage-limit arm
+# left the pass on the first walled lane, and with a parked lane the steady
+# state (oversee.md § 4), no other lane's question was reported until the
+# banner cleared.
+new_case walled_and_asking_fleet
+printf '%b\n' '⏺ Working through the queue.' "$BANNER" 'Run /usage-credits to raise it' "$COMPOSER" > "$STUB_DIR/pane-gh-1.txt"
+printf '%b\n' "$QUESTION" > "$STUB_DIR/pane-gh-2.txt"
+printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
+run TZ=UTC
+expect="rc=0 first=EVENT+usage-limit+gh-1+resets=2026-09-02T16:50:00Z out~EVENT+lane-asking+gh-2=true out~Do+you+want+to+proceed?=true out~EVENT+heartbeat=false"
+assert_eq "$(watch "$expect")" "$expect" \
+  "a walled lane and an asking lane are both reported in one pass, the wall first" "$ERR"
+assert_eq "$(grep -c '^EVENT ' <<<"$OUT")" "2" "the block carries exactly the two events" "$ERR"
+assert_eq "$(grep -n '^EVENT ' <<<"$OUT" | cut -d: -f1 | tr '\n' ' ')" "1 6 " \
+  "the walled lane's four-line pane tail sits between its line and the asking line" "$ERR"
+
+# The must-fail control: the usage-limit arm's early exit restored. The
+# mutant leaves the pass on the first walled lane, so the fleet above reads
+# as usage-limit alone; the copy must differ from the source or the control
+# proves nothing. The copy keeps orch's place in a skills tree: its libraries
+# resolve the github skill beside it.
+MUTANT_DIR="$TMP_ROOT/mutant"
+mkdir -p "$MUTANT_DIR/orch"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_DIR/orch/scripts"
+ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+sed '/^      echo "EVENT \$event \$lane/,/^      PASS_EVENT=1$/ s/^      PASS_EVENT=1$/      pr_watch_context; exit 0/' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really restores the usage-limit arm's early exit"
+new_case walled_and_asking_fleet_mutant
+printf '%b\n' '⏺ Working through the queue.' "$BANNER" 'Run /usage-credits to raise it' "$COMPOSER" > "$STUB_DIR/pane-gh-1.txt"
+printf '%b\n' "$QUESTION" > "$STUB_DIR/pane-gh-2.txt"
+printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TZ=UTC
+expect="rc=0 first=EVENT+usage-limit+gh-1+resets=2026-09-02T16:50:00Z out~EVENT+lane-asking=false"
+assert_eq "$(watch "$expect")" "$expect" \
+  "control: with the early exit restored the asking lane goes unreported" "$ERR"
+
+# The same mutant with the dialog-row arm removed instead: a column-0 selected
+# row reads as the turn, the banner above it falls out of the slice, and the
+# screen is reported as the question it cannot answer.
+sed 's/ || line\[last\] ~ dialog))$/))/' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really removes the dialog-row arm"
+new_case column0_dialog_mutant
+lane claude
+screen banner_over_column0_dialog
+printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TZ=UTC
+expect="first=EVENT+lane-asking+gh-2 out~EVENT+usage-limit=false"
+assert_eq "$(watch "$expect")" "$expect" \
+  "control: without the arm the column-0 row is the turn and the banner above it goes unreported" "$ERR"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
