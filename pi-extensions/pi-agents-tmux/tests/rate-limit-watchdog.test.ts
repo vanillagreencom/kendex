@@ -75,11 +75,21 @@ function warnTag(line: string): string {
 }
 
 // Each broker payload as its event, its own fields and its refs (agent, task,
-// pane), which the activity tab's attribution is built from.
+// pane), which the activity tab's attribution is built from. The five event
+// names the watchdog emits map to their tags; any other name is printed
+// whole so a misspelled emit reddens its row.
+const EVENT_TAGS: Record<string, string> = {
+	"subagents:rate_limit_exhausted": "exhausted",
+	"subagents:rate_limit_resolved": "resolved",
+	"subagents:rate_limit_retry": "retry",
+	"subagents:rate_limit_skipped": "skipped",
+	"subagents:rate_limited": "limited",
+};
 function activityTag(entry: { event: string; payload: Record<string, unknown> }): string {
 	const p = entry.payload;
 	const refs = `@${p.agent}/${p.taskId}/${p.paneId}`;
-	const name = entry.event.replace(/^subagents:rate_limit(ed|_)?/, "") || "limited";
+	const name = EVENT_TAGS[entry.event];
+	if (name === undefined) return `${entry.event}${refs}`;
 	if (name === "skipped") return `skipped(${p.reason})${refs}`;
 	if (name === "limited" || name === "retry") return `${name}(a=${p.attempt},next=${p.next_retry_at},src=${p.reset_source ?? "-"}${p.degraded_reset_source ? ",degraded" : ""})${refs}`;
 	if (name === "exhausted") return `exhausted(a=${p.attempt},${JSON.stringify(p.reason)})${refs}`;
