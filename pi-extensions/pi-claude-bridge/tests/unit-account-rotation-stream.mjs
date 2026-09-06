@@ -15,6 +15,10 @@ import {
 	probeClaudeAccountProfile,
 	streamClaudeAgentSdk,
 } from "../src/index.ts";
+import * as piAi from "@earendil-works/pi-ai";
+import { buildModels } from "../src/models.ts";
+import { resolveGetModels } from "../src/pi-ai-compat.ts";
+import { buildNativeProvider } from "../src/native-provider.ts";
 import { RATE_LIMIT_TOKEN } from "../src/rate-limit.ts";
 import { setExtensionApi } from "../src/bridge-state.ts";
 import { CLAUDE_ACCOUNT_ROUTER_SYMBOL } from "../src/account-router.ts";
@@ -632,7 +636,7 @@ describe("managed account stream rotation", () => {
 
 	it("uses Opus only after the account router reports every Fable allowance spent", async () => {
 		const observed = observedState();
-		const fableModel = { ...model, id: "claude-fable-5", name: "Claude Fable 5" };
+		const fableModel = { ...model, id: "claude-fable-5-1", name: "Claude Fable 5.1" };
 		const router = makeRouter(observed);
 		router.acquire = (input) => {
 			observed.acquires.push(input);
@@ -661,9 +665,12 @@ describe("managed account stream rotation", () => {
 		assert.ok(textEvents(events).includes("opus-after-fable"));
 	});
 
-	it("does not let SDK model fallback skip another managed Fable account", async () => {
+	it("selects registered Fable 5.1 without skipping another managed account", async () => {
 		const observed = observedState();
-		const fableModel = { ...model, id: "claude-fable-5", name: "Claude Fable 5" };
+		const getModels = await resolveGetModels(piAi);
+		const provider = buildNativeProvider(piAi, buildModels(getModels("anthropic")), streamClaudeAgentSdk);
+		const fableModel = provider.getModels()[0];
+		assert.equal(fableModel.name, "Claude Fable 5.1");
 		globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL] = makeRouter(observed);
 		let queryOptions;
 		__testSetSdkQueryFactory((input) => {
@@ -674,8 +681,8 @@ describe("managed account stream rotation", () => {
 			], "a", observed);
 		});
 
-		await collect(streamClaudeAgentSdk(fableModel, context, { sessionId: "fable-ready" }));
-		assert.equal(queryOptions.model, "claude-fable-5");
+		await collect(provider.streamSimple(fableModel, context, { sessionId: "fable-ready" }));
+		assert.equal(queryOptions.model, "claude-fable-5-1");
 		assert.equal(queryOptions.fallbackModel, undefined);
 	});
 
