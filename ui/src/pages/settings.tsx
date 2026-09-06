@@ -27,7 +27,12 @@ const THEME_LABELS: Record<Appearance, string> = {
 
 export function SettingsPage() {
   const { settings, onScreen, setAppearance } = useSettingsStore();
-  const [version, setVersion] = useState<string | null>(null);
+  // Null until the read answers; after that the read's own answer, so a
+  // version the app could not ask for says so instead of sitting on the
+  // ellipsis a still-loading read wears.
+  const [version, setVersion] = useState<Awaited<
+    ReturnType<typeof commands.appVersion>
+  > | null>(null);
 
   useEffect(() => {
     void commands.appVersion().then(setVersion);
@@ -101,11 +106,20 @@ export function SettingsPage() {
                 <span className="flex items-baseline gap-2">
                   Version
                   <span className="font-mono text-xs font-normal text-muted-foreground">
-                    {version ?? "…"}
+                    {version === null
+                      ? "…"
+                      : version.status === "ok"
+                        ? version.data
+                        : "unavailable"}
                   </span>
                 </span>
               }
-              description="kendex keeps your AI coding tools in sync."
+              role={version?.status === "error" ? "alert" : undefined}
+              description={
+                version?.status === "error"
+                  ? `kendex couldn't read its own version: ${version.error}`
+                  : "kendex keeps your AI coding tools in sync."
+              }
             />
           </Section>
         </div>

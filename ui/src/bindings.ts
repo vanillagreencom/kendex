@@ -6,7 +6,7 @@ import * as __TAURI_EVENT from "@tauri-apps/api/event";
 
 /** Commands */
 export const commands = {
-	appVersion: () => __TAURI_INVOKE<string>("app_version"),
+	appVersion: () => typedError<string, string>(__TAURI_INVOKE("app_version")),
 	/**
 	 *  The page's ask, after its first render: the URL that launched the app,
 	 *  if one did. Asking is also what switches delivery to events, so the
@@ -164,7 +164,7 @@ export const commands = {
 	 *  The full harness × kind capability matrix — the UI gates every action on
 	 *  this, never on its own assumptions.
 	 */
-	capabilityTable: () => __TAURI_INVOKE<CapabilityRow[]>("capability_table"),
+	capabilityTable: () => typedError<CapabilityRow[], string>(__TAURI_INVOKE("capability_table")),
 	/**
 	 *  Where a problem report about this item belongs: the kendex upstream
 	 *  (with a prefilled issue link) or the user's own repo.
@@ -367,7 +367,7 @@ export const commands = {
 	 *  The one authoring document, compiled in so the app renders the same
 	 *  text the repository publishes.
 	 */
-	mineAuthoringDoc: () => __TAURI_INVOKE<string>("mine_authoring_doc"),
+	mineAuthoringDoc: () => typedError<string, string>(__TAURI_INVOKE("mine_authoring_doc")),
 	accountStatus: () => typedError<AccountStatus, AccountReadFailed>(__TAURI_INVOKE("account_status")),
 	accountLoginStart: () => typedError<LoginStart, string>(__TAURI_INVOKE("account_login_start")),
 	/**  One poll; the frontend owns the timer so a closed dialog stops asking. */
@@ -485,7 +485,7 @@ export const commands = {
 	 */
 	windowSetZoom: (percent: number) => typedError<null, string>(__TAURI_INVOKE("window_set_zoom", { percent })),
 	/**  What the webview is showing, for a page with no memory of its own. */
-	windowZoomState: () => __TAURI_INVOKE<ZoomState>("window_zoom_state"),
+	windowZoomState: () => typedError<ZoomState, string>(__TAURI_INVOKE("window_zoom_state")),
 	windowMinimize: () => typedError<null, string>(__TAURI_INVOKE("window_minimize")),
 	windowToggleMaximize: () => typedError<null, string>(__TAURI_INVOKE("window_toggle_maximize")),
 	windowClose: () => typedError<null, string>(__TAURI_INVOKE("window_close")),

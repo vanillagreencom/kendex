@@ -57,8 +57,8 @@ describe("settings store", () => {
       data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
     });
     vi.mocked(commands.windowZoomState).mockResolvedValue({
-      percent: settings.zoom ?? 100,
-      launchRefused: false,
+      status: "ok",
+      data: { percent: settings.zoom ?? 100, launchRefused: false },
     });
   });
 
@@ -333,7 +333,10 @@ describe("settings store", () => {
       status: "error",
       error: "cannot locate the home directory on this system",
     });
-    vi.mocked(commands.capabilityTable).mockResolvedValue([]);
+    vi.mocked(commands.capabilityTable).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
 
     await useSettingsStore.getState().load();
 
@@ -345,6 +348,53 @@ describe("settings store", () => {
     );
     expect(useSettingsStore.getState().settings).toBeNull();
   });
+
+  // The window and the capability table answer the same page as the settings
+  // file, and each folds a transport failure into a reply of its own rather
+  // than rejecting past the store. A page built from whichever two answered
+  // would offer actions against tools it could not reach, or draw a size the
+  // window is not at, with nothing on screen having said so.
+  it.each([
+    [
+      "the capability table",
+      () =>
+        vi.mocked(commands.capabilityTable).mockResolvedValue({
+          status: "error",
+          error: "the capability table could not be read",
+        }),
+      "the capability table could not be read",
+    ],
+    [
+      "the window's size",
+      () =>
+        vi.mocked(commands.windowZoomState).mockResolvedValue({
+          status: "error",
+          error: "the window could not be asked its size",
+        }),
+      "the window could not be asked its size",
+    ],
+  ])(
+    "shows the error modal when %s could not be read, and holds no settings",
+    async (_what, breakRead, message) => {
+      vi.mocked(commands.getSettings).mockResolvedValue({
+        status: "ok",
+        data: { settings, base: "file" },
+      });
+      vi.mocked(commands.capabilityTable).mockResolvedValue({
+        status: "ok",
+        data: [],
+      });
+      breakRead();
+
+      await useSettingsStore.getState().load();
+
+      const dialog = useProblemsStore.getState().dialog;
+      expect(dialog.open).toBe(true);
+      expect(dialog.title).toBe("Couldn't load your settings");
+      expect(dialog.message).toBe(message);
+      expect(useSettingsStore.getState().settings).toBeNull();
+    },
+  );
 
   it("shows the error modal and returns an empty list when discovering projects fails", async () => {
     vi.mocked(commands.discoverProjects).mockResolvedValue({

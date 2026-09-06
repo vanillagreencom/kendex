@@ -82,10 +82,9 @@ function freshZoomStore() {
   });
   vi.clearAllMocks();
   windowTakes();
-  vi.mocked(commands.windowZoomState).mockImplementation(async () => ({
-    percent: webviewAt,
-    launchRefused: false,
-  }));
+  vi.mocked(commands.windowZoomState).mockImplementation(async () =>
+    ok({ percent: webviewAt, launchRefused: false }),
+  );
   vi.mocked(commands.updateSettings).mockImplementation(async (next, base) =>
     ok({ settings: next, base }),
   );
@@ -119,11 +118,10 @@ describe("zoom, on screen", () => {
     vi.mocked(commands.getSettings).mockResolvedValue(
       ok({ settings: { ...settings, zoom: 150 }, base: "file" }),
     );
-    vi.mocked(commands.capabilityTable).mockResolvedValue([]);
-    vi.mocked(commands.windowZoomState).mockResolvedValue({
-      percent: 100,
-      launchRefused: true,
-    });
+    vi.mocked(commands.capabilityTable).mockResolvedValue(ok([]));
+    vi.mocked(commands.windowZoomState).mockResolvedValue(
+      ok({ percent: 100, launchRefused: true }),
+    );
 
     await useSettingsStore.getState().load();
 
@@ -160,7 +158,7 @@ describe("zoom, on screen", () => {
     vi.mocked(commands.getSettings).mockResolvedValue(
       ok({ settings: { ...settings, zoom: 150 }, base: "file" }),
     );
-    vi.mocked(commands.capabilityTable).mockResolvedValue([]);
+    vi.mocked(commands.capabilityTable).mockResolvedValue(ok([]));
 
     await useSettingsStore.getState().load();
 
@@ -283,9 +281,7 @@ describe("zoom, on screen", () => {
   /// A run that cannot read the window has nothing to write and says so.
   it("writes nothing when the window cannot say what size it is at", async () => {
     await useSettingsStore.getState().setZoom(150);
-    vi.mocked(commands.windowZoomState).mockRejectedValue(
-      new Error("no bridge"),
-    );
+    vi.mocked(commands.windowZoomState).mockResolvedValue(failed("no bridge"));
 
     await useSettingsStore.getState().saveZoom();
 

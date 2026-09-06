@@ -55,11 +55,15 @@ fn constants(builder: Builder<tauri::Wry>) -> Builder<tauri::Wry> {
 /// refusal in.
 ///
 /// A command returning a plain value gets no wrapper, tauri-specta emitting
-/// one only where there is a refusal type to name: `app_version`,
-/// `capability_table`, `deep_link_take`, `mine_authoring_doc` and
-/// `window_zoom_state` reject to their callers unfolded, so a
-/// fire-and-forget read of one still drops its rejection. Nothing in
-/// `specta_builder` can reach them.
+/// one only where there is a refusal type to name, so its rejection reaches
+/// its caller unfolded and a fire-and-forget read drops it. Returning a
+/// `Result` is what puts a command behind the wrapper, which is the whole
+/// reason `app_version`, `capability_table`, `mine_authoring_doc` and
+/// `window_zoom_state` answer one they never refuse with. `deep_link_take`
+/// is the one command left outside, deliberately: its only caller reads it
+/// through `caught` in `ui/src/lib/deep-link.ts`. That set is pinned by
+/// `crates/app/tests/bindings.rs`, so a fifth is an edit to the list rather
+/// than a command that regenerates clean and reds nothing.
 ///
 /// `E | string` in the signature is what holds a reader honest: the fold
 /// puts a bare message in the `E` slot, and declaring that widening is what

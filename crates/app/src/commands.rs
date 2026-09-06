@@ -9,10 +9,11 @@ use specta::Type;
 
 use crate::scopes::env;
 
+// A `Result` for the transport fold, not for a refusal: `specta_builder`.
 #[tauri::command]
 #[specta::specta]
-pub fn app_version() -> String {
-    env!("CARGO_PKG_VERSION").to_owned()
+pub fn app_version() -> Result<String, String> {
+    Ok(env!("CARGO_PKG_VERSION").to_owned())
 }
 
 #[tauri::command(async)]
@@ -66,9 +67,10 @@ pub struct CapabilityRow {
 
 /// The full harness × kind capability matrix — the UI gates every action on
 /// this, never on its own assumptions.
+// A `Result` for the transport fold, not for a refusal: `specta_builder`.
 #[tauri::command]
 #[specta::specta]
-pub fn capability_table() -> Vec<CapabilityRow> {
+pub fn capability_table() -> Result<Vec<CapabilityRow>, String> {
     let mut rows = Vec::new();
     for harness in HarnessId::ALL {
         for kind in ItemKind::ALL {
@@ -79,7 +81,7 @@ pub fn capability_table() -> Vec<CapabilityRow> {
             });
         }
     }
-    rows
+    Ok(rows)
 }
 
 #[derive(Serialize, Type)]

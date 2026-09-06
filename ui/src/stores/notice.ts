@@ -86,14 +86,14 @@ export const useNoticeStore = create<NoticeState>((set, get) => ({
       settled(commands.appUpdateCommandChannel()),
       // The running version is the half of the sentence the release feed
       // cannot supply; without it there is no notice to write.
-      commands.appVersion().catch(() => null),
+      settled(commands.appVersion()),
     ]);
-    if (view.status === "error" || current === null) return;
+    if (view.status === "error" || current.status === "error") return;
     const status = view.data;
     if (status.kind !== "updateAvailable" || status.muted) return;
     set({
       notice: {
-        current,
+        current: current.data,
         latest: status.version,
         releaseNotesUrl: status.releaseNotesUrl,
       },

@@ -104,8 +104,9 @@ pub fn mine_accept_workflow(path: PathBuf) -> Result<MineRow, String> {
 
 /// The one authoring document, compiled in so the app renders the same
 /// text the repository publishes.
+// A `Result` for the transport fold, not for a refusal: `specta_builder`.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn mine_authoring_doc() -> String {
-    include_str!("../../../docs/authoring/README.md").to_owned()
+pub fn mine_authoring_doc() -> Result<String, String> {
+    Ok(include_str!("../../../docs/authoring/README.md").to_owned())
 }

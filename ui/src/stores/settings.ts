@@ -129,31 +129,40 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
         commands.capabilityTable(),
         commands.windowZoomState(),
       ]);
-      if (settings.status === "ok") {
-        hold(settings.data, at);
-        set({ capabilities, zoom: webview.percent });
-        // The opening had no UI to say this in, so it is said here rather
-        // than leaving the person with an app that quietly ignored their
-        // size. Both halves are needed: the refusal stands for the whole
-        // session, so on its own it would go on complaining after a resize
-        // put the person back where they wanted to be.
-        const asked = settings.data.settings.zoom ?? ZOOM.default;
-        if (webview.launchRefused && webview.percent !== asked) {
-          useProblemsStore.getState().showError({
-            title: "Couldn't open at your saved zoom",
-            message: `kendex is at ${webview.percent}% instead of the ${asked}% you saved. Your saved zoom is unchanged.`,
-            steps: ["Try again", "If it keeps happening, restart kendex"],
-            actions: [
-              { label: "Retry", onClick: () => void get().setZoom(asked) },
-            ],
-          });
-        }
-      } else {
+      // All three or none. The page gates its actions on the capability
+      // table and draws its slider from the window, so one built out of
+      // whichever two answered would be a page quietly claiming it can do
+      // things it cannot. A read that failed is the transport rather than
+      // anything any of the three refuses, and to the person it is the one
+      // page that would not load — so it is said in one set of words.
+      const couldNotLoad = (message: string) =>
         useProblemsStore.getState().showError({
           title: "Couldn't load your settings",
-          message: settings.error,
+          message,
           steps: ["Try again", "If it keeps happening, restart kendex"],
           actions: [{ label: "Retry", onClick: () => void get().load() }],
+        });
+      if (settings.status === "error") return couldNotLoad(settings.error);
+      if (capabilities.status === "error")
+        return couldNotLoad(capabilities.error);
+      if (webview.status === "error") return couldNotLoad(webview.error);
+
+      hold(settings.data, at);
+      set({ capabilities: capabilities.data, zoom: webview.data.percent });
+      // The opening had no UI to say this in, so it is said here rather
+      // than leaving the person with an app that quietly ignored their
+      // size. Both halves are needed: the refusal stands for the whole
+      // session, so on its own it would go on complaining after a resize
+      // put the person back where they wanted to be.
+      const asked = settings.data.settings.zoom ?? ZOOM.default;
+      if (webview.data.launchRefused && webview.data.percent !== asked) {
+        useProblemsStore.getState().showError({
+          title: "Couldn't open at your saved zoom",
+          message: `kendex is at ${webview.data.percent}% instead of the ${asked}% you saved. Your saved zoom is unchanged.`,
+          steps: ["Try again", "If it keeps happening, restart kendex"],
+          actions: [
+            { label: "Retry", onClick: () => void get().setZoom(asked) },
+          ],
         });
       }
     },

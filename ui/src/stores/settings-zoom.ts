@@ -69,11 +69,8 @@ export function zoomActions(
   /** What the window is showing, asked of the window. Null when even that
    *  could not be read, which is the one case nothing here can correct. */
   async function showing(): Promise<number | null> {
-    try {
-      return (await commands.windowZoomState()).percent;
-    } catch {
-      return null;
-    }
+    const state = await commands.windowZoomState();
+    return state.status === "ok" ? state.data.percent : null;
   }
 
   /** Why the window did not take the size, or null when it did. A bridge
