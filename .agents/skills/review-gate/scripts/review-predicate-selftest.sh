@@ -63,6 +63,11 @@ ACTIVE_CARRY="$(rg_setting REVIEW_GATE_CARRY_FORWARD "")" || exit 1
 ACTIVE_CARRY_EXCLUDE="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE "")" || exit 1
 ACTIVE_CARRY_EXCLUDE_PROPHYLACTIC="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "")" || exit 1
 ACTIVE_VENDORED_PATHS="$(rg_setting REVIEW_GATE_VENDORED_PATHS "")" || exit 1
+# The repo's ACTIVE render set is never copied into behavior cases (reset()
+# pins it empty — under a committed set every no-evidence case would read a
+# comparison the case never modelled); the configured layer drives THIS
+# value through one approve and its near-miss.
+ACTIVE_RENDER_PATHS="$(rg_setting REVIEW_GATE_RENDER_PATHS "")" || exit 1
 # The repo's ACTIVE mode is validated here but NEVER copied into behavior
 # cases (reset() pins enforce — under a committed "off" every awaiting/
 # objection case would answer approved and red the required selftest job).
@@ -82,6 +87,7 @@ trap 'rm -rf "$work"' EXIT
 
 HEAD='a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'
 OTHER='ffffffffffffffffffffffffffffffffffffffff'
+BASE='0000000000000000000000000000000000000001'
 AUTHOR='author-under-test'
 
 fixtures="$work/fixtures"
@@ -154,6 +160,7 @@ run() { # case-name, expected-verdict, expected-exit
     REVIEW_GATE_CARRY_FORWARD="$CFG_CARRY" \
     REVIEW_GATE_CARRY_FORWARD_EXCLUDE="$CFG_CARRY_EXCLUDE" \
     REVIEW_GATE_VENDORED_PATHS="$CFG_VENDORED_PATHS" \
+    REVIEW_GATE_RENDER_PATHS="$CFG_RENDER_PATHS" \
     REVIEW_GATE_MODE="$CFG_GATE_MODE" \
     GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
     "$predicate" 2>/dev/null)"
@@ -177,7 +184,7 @@ reset() {
   printf '{"check_runs":[]}\n' >"$fixtures/checkruns.json"
   printf '[]\n' >"$fixtures/statuses.json"
   threads >"$fixtures/graphql.json"
-  jq -n --arg a "$AUTHOR" '{user:{login:$a}}' >"$fixtures/pull.json"
+  jq -n --arg a "$AUTHOR" --arg base "$BASE" '{user:{login:$a},base:{sha:$base}}' >"$fixtures/pull.json"
   rm -f "$fixtures"/*.page2.json "$fixtures"/graphql.cursor-*.json "$fixtures"/.failcount.* "$fixtures"/.urls.log
   unset GH_SHIM_FAIL GH_SHIM_FAIL_TIMES GH_SHIM_EMPTY || true
   CFG_THREADS="$ACTIVE_THREADS"
@@ -190,6 +197,7 @@ reset() {
   CFG_CARRY="$ACTIVE_CARRY"
   CFG_CARRY_EXCLUDE="$ACTIVE_CARRY_EXCLUDE"
   CFG_VENDORED_PATHS="$ACTIVE_VENDORED_PATHS"
+  CFG_RENDER_PATHS=""
   # PINNED to enforce, never the repo's ACTIVE value: mode "off" is a bypass
   # switch, not a trust surface — under it every behavior case would answer
   # approved and the suite would fail, turning a deliberately disabled gate
@@ -1800,6 +1808,20 @@ CFG_CARRY="docs"; CFG_VENDORED_PATHS=".agents/*"
 compare_fix ahead "[$RENDER_DELTA]"
 run "vendored off: the same delta refuses — a path set alone enables nothing" awaiting
 
+# The render-only lane: a PR whose ENTIRE file list sits under
+# REVIEW_GATE_RENDER_PATHS approves with no review evidence. The approve and
+# its near-miss live here; the lane's full table, each refusal pinned by
+# reason, is tests/render-lane.test.sh.
+reset
+CFG_RENDER_PATHS=".agents/*"
+compare_fix ahead "[$(delta_file ".agents/skills/hello/scripts/run.sh" modified "")]"
+run "render lane: a diff wholly under the render set approves with no evidence" approved
+
+reset
+CFG_RENDER_PATHS=".agents/*"
+compare_fix ahead "[$(delta_file ".agents/skills/hello/scripts/run.sh" modified ""),$(delta_file "src/main.rs" modified "")]"
+run "render lane: one file outside the set — the same diff awaits review" awaiting
+
 # ================================================================ configured ===
 # The same discipline against THIS repo's resolved trust settings.
 echo "--- configured layer (this repo's REVIEW_GATE_* settings)"
@@ -2465,6 +2487,23 @@ if [ -n "$ACTIVE_OUTAGE" ]; then
     status_ctx "$ACTIVE_OUTAGE" success "reviewer outage attested" "$(first_item "$ACTIVE_PUBLISHER_REJECT")"
     run "configured: outage attestation from a rejected publisher is not evidence" awaiting
   fi
+fi
+
+if [ -n "$ACTIVE_RENDER_PATHS" ]; then
+  # A file the repo's own first entry covers: every '*' of the glob replaced
+  # by a name character is a path that glob matches, under the closed
+  # grammar (path characters plus '*') the engine enforces.
+  reset
+  CFG_RENDER_PATHS="$ACTIVE_RENDER_PATHS"
+  compare_fix ahead "[$(delta_file "$(first_item "$ACTIVE_RENDER_PATHS" | tr '*' 'x')" modified "")]"
+  run "configured: a diff under this repo's render set approves with no evidence" approved
+
+  reset
+  CFG_RENDER_PATHS="$ACTIVE_RENDER_PATHS"
+  compare_fix ahead "[$(delta_file "$(first_item "$ACTIVE_RENDER_PATHS" | tr '*' 'x')" modified "")]"
+  GH_SHIM_FAIL=compare
+  export GH_SHIM_FAIL
+  run "configured: the same diff, unenumerable — the normal path, awaiting" awaiting
 fi
 
 if [ "$failures" -ne 0 ]; then

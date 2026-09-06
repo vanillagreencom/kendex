@@ -31,6 +31,7 @@ Set `REVIEW_GATE_*` values in `kendex.settings.toml` under `[env]`. Environment 
 - `REVIEW_GATE_CONTEXT` names the required commit status.
 - Select trusted reviewer logins and check names using [references/settings.md](references/settings.md).
 - The same reference defines when approval may carry forward after a documentation or generated-file change.
+- `REVIEW_GATE_RENDER_PATHS` names the harness render trees the repo commits as kendex output. A PR whose entire diff sits under them is approved without review evidence, and its CI checks still decide the merge. Any file outside the set, or a diff the gate cannot enumerate, takes the normal path.
 - `REVIEW_GATE_MODE = "off"` disables review evaluation. Its passing status means the gate is disabled.
 
 `REVIEW_GATE_CHECK_RUN_NAME` is a GitHub repository variable for the optional check-run trigger. Set it in GitHub Actions variables, not in the settings file.
