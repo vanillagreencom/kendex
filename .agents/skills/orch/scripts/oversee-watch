@@ -502,9 +502,13 @@ check_triage() {
 # run in this session) keeps it under this checkout; an absolute setting is
 # one directory for every checkout.
 item_state_dir() {
-  local item="$1" wt
+  local item="$1" wt exists errf="$WORK_DIR/worktree.err"
   case "$STATE_DIR_SETTING" in /*) printf '%s\n' "$WORKFLOW_STATE_DIR"; return 0 ;; esac
-  if [[ "$("$WORKTREE_CLI" exists "$item" 2>/dev/null || true)" == "true" ]]; then
+  # A CLI that fails is not a missing worktree: read as one, the state read
+  # goes to this checkout, finds nothing, and the handoff is dropped.
+  exists="$("$WORKTREE_CLI" exists "$item" 2>"$errf")" \
+    || die "worktree exists failed for $item: $(cat "$errf")"
+  if [[ "$exists" == "true" ]]; then
     wt="$("$WORKTREE_CLI" path "$item")" || die "worktree path failed for $item"
     printf '%s/%s\n' "$wt" "$STATE_DIR_SETTING"
     return 0

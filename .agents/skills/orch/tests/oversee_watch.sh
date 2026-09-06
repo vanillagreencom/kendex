@@ -724,6 +724,16 @@ out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
 assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=EVENT handoff KEN-1" "an item with no worktree is read from this checkout's state" "$err"
 assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "--state-dir $CASE_REPO_ROOT/tmp get KEN-1" "and the read names this checkout's state directory" "$err"
 
+# A worktree CLI that fails is not a missing worktree: read as one, the state
+# read would go to this checkout and the record would be dropped in silence.
+new_case handoff_worktree_fail
+handoff_record KEN-1
+: > "$STUB_DIR/worktree-fail"
+err="$TMP_ROOT/e2b4b"
+out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
+assert_eq "rc=$rc out=$out" "rc=2 out=" "a failing worktree CLI exits 2 with no event" "$err"
+assert_contains "$(cat "$err")" "worktree exists failed for KEN-1: worktree: settings load failed" "and names the failure" "$err"
+
 new_case handoff_resumed
 handoff_record KEN-1 2026-09-06T05:10:00Z
 err="$TMP_ROOT/e2b5"

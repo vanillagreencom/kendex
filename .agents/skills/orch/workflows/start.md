@@ -11,7 +11,7 @@ Prepare one work item from the main repo. Never watches or manages other session
 
 ## 0. Resume From A Handoff
 
-**Skip if** no explicit `[ISSUE_ID]` was given, or the read below fails for want of a state file or prints `null`.
+**Skip if** no work item was named (`start` alone, or `start new`), or the read below fails for want of a state file, prints `null`, or prints a record carrying `resumed_at`. For `start github OWNER/REPO#N`, `[ISSUE_ID]` is `issue-[N]` (§ 1).
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.handoff'

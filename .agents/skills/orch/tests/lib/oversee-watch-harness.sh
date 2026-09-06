@@ -370,10 +370,12 @@ esac
 EOF
 
 # Worktree CLI stub, for the item's state location: `exists <id>` answers from
-# the presence of wt-<id> under the case, and `path <id>` names it.
+# the presence of wt-<id> under the case, and `path <id>` names it;
+# worktree-fail present makes every call fail.
 cat > "$TMP_ROOT/bin/worktree-stub.sh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
+[[ -f "$STUB_DIR/worktree-fail" ]] && { echo "worktree: settings load failed" >&2; exit 3; }
 case "${1:-}" in
   exists) [[ -d "$STUB_DIR/wt-${2:-}" ]] && echo true || echo false ;;
   path) printf '%s/wt-%s\n' "$STUB_DIR" "${2:-}" ;;
