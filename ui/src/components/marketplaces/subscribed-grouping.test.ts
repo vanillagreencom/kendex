@@ -100,10 +100,10 @@ describe("what makes two folder declarations one marketplace", () => {
 
   it("folds two places resolving to one directory", () => {
     const groups = groupByMarketplace([
-      folder({ scope: "global" }, "/srv/catalog", "/srv/catalog"),
-      folder(project("/work/beta"), "../../srv/catalog", "/srv/catalog"),
+      folder({ scope: "global" }, "/work/beta/catalog", "/work/beta/catalog"),
+      folder(project("/work/beta"), "catalog", "/work/beta/catalog"),
     ]);
-    expect(groups).toHaveLength(1);
+    expect(groups.map((group) => group.key)).toEqual(["/work/beta/catalog"]);
     expect(groups[0].places).toHaveLength(2);
   });
 });

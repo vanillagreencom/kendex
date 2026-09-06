@@ -43,13 +43,15 @@ export interface SubscribedMarketplace {
  * A local folder has no repository, so the directory it resolves to is the
  * identity: `resolvedPath` is core's `source::path_root` over the
  * declaration, an absolute path as written and a relative one under the
- * declaring scope's own root. So `./catalog` in three places is three
+ * declaring scope's own root. So `catalog` in three places is three
  * strings, and `/srv/catalog` declared twice is one — where the running
  * platform reads it as absolute. Which spellings are absolute is that
  * platform's answer, which is why this reads the resolved path rather than
  * the declaration: on Windows `/srv/catalog` is root-relative and joins
  * onto each declaring scope's own drive, so a personal manifest on `C:`
- * and a project on `D:` name two directories, and core says so.
+ * and a project on `D:` name two directories, and core says so. The join
+ * is lexical, so a `..` spelling of a directory another place names
+ * outright is a second card: over-split, never the under-split above.
  *
  * The alias is the last resort for a declaration carrying neither. It
  * usually over-splits, which is harmless — but two scopes declaring such a

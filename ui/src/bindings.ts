@@ -2159,11 +2159,13 @@ export type MarketplaceRow = {
 	 *  Where that folder is on this machine, from
 	 *  [`kendex_core::source::path_root`]: the declaration resolved against
 	 *  the place that declares it, slashed. A folder marketplace's
-	 *  identity, the way `repo_identity` is a repository's — two places
-	 *  naming one directory agree here, and two directories never share a
-	 *  string, which the spelling alone cannot promise: rootedness is the
-	 *  running platform's answer, and a POSIX-rooted path on Windows joins
-	 *  onto each declaring scope's own drive.
+	 *  identity, the way `repo_identity` is a repository's. Two directories
+	 *  never share a string, which the spelling alone cannot promise:
+	 *  rootedness is the running platform's answer, and a POSIX-rooted path
+	 *  on Windows joins onto each declaring scope's own drive. The join is
+	 *  lexical — no `.`/`..` collapse, no symlink or case folding — so one
+	 *  directory reached by a `..` spelling is a second card, which only
+	 *  over-splits; that card's own places and controls stay right.
 	 */
 	resolvedPath: string | null,
 	rev: string | null,

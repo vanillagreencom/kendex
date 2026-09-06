@@ -80,6 +80,10 @@ fn an_absolute_path_is_one_directory_from_every_scope() {
     };
     assert_eq!(
         path_root(&env, &alpha, "/srv/catalog"),
+        PathBuf::from("/srv/catalog")
+    );
+    assert_eq!(
+        path_root(&env, &alpha, "/srv/catalog"),
         path_root(&env, &beta, "/srv/catalog")
     );
     assert_eq!(
