@@ -1194,6 +1194,14 @@ create_issue() {
     require_agent_routing_label "$labels" "$no_agent_label" || return 1
     require_issue_reach "$description" "$priority" "$review_born" || return 1
 
+    # --attach: refuse unreadable paths before ANY API call, which is what
+    # `--help` promises, so this stays ahead of the resolvers below. Images
+    # embed into the description; other files become Linear attachments on
+    # the created issue after the create (attachmentCreate needs its id).
+    if [ ${#attach_paths[@]} -gt 0 ]; then
+        attach_preflight_files "${attach_paths[@]}" || return 1
+    fi
+
     # Resolve --project and --milestone BEFORE uploading, for the reason the
     # label pre-resolution below states: each can still refuse — an unknown
     # project, a milestone name with no project, an ambiguous one, a failed
@@ -1215,12 +1223,8 @@ create_issue() {
         fi
     fi
 
-    # --attach: refuse unreadable paths before any API call, then upload
-    # (uploads run only after the routing guard above has passed). Images
-    # embed into the description; other files become Linear attachments on
-    # the created issue after the create (attachmentCreate needs its id).
+    # Uploads run only after the routing guard and the resolvers above.
     if [ ${#attach_paths[@]} -gt 0 ]; then
-        attach_preflight_files "${attach_paths[@]}" || return 1
         # Resolve declared agent labels BEFORE uploading: under a declared
         # taxonomy an unresolvable agent label refuses the create later
         # (routed-or-refused), and uploads done first would strand orphaned

@@ -69,3 +69,10 @@ control_expect "a milestone UUID needs no project"
 control_replace scripts/lib/common.sh 2 \
     '    if milestone_ref_is_uuid "$milestone_ref"; then' \
     '    if false; then'
+
+# Skip the --attach preflight, so an unreadable path reaches the resolvers this
+# change hoisted and costs API calls before the refusal --help promises.
+control_expect "no project lookup precedes the missing-path refusal"
+control_replace scripts/commands/issues.sh 2 \
+    '        attach_preflight_files "${attach_paths[@]}" || return 1' \
+    '        true'

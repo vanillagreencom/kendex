@@ -203,6 +203,20 @@ assert_ne "a milestone name refuses the update of an issue in no project" \
   "$update_attach_rc" 0
 assert_file_lacks "no upload is sent before the update refusal" "$CURL_LOG" "fileUpload"
 
+# Hoisting the resolvers above the upload must not hoist them above the
+# --attach preflight: `--help` promises an unreadable path refuses before any
+# API call, and the existing preflight case passes no --project, so nothing
+# else reaches this ordering.
+: >"$CURL_LOG"
+run_status missing_attach_rc run_linear issues create --title t --team TestTeam \
+  --labels agent:rust --priority 3 --description d --project Dup --milestone Alpha \
+  --attach "$TMP_ROOT/nope.bin"
+assert_ne "a missing --attach path refuses the create" "$missing_attach_rc" 0
+assert_file_lacks "no project lookup precedes the missing-path refusal" \
+  "$CURL_LOG" "projects(filter:"
+assert_file_lacks "no milestone lookup precedes the missing-path refusal" \
+  "$CURL_LOG" "projectMilestones"
+
 # The ambiguity refusal needs the lookup, not just the arguments, so it is the
 # one that proves the whole resolution runs ahead of the upload.
 : >"$CURL_LOG"
