@@ -6,8 +6,8 @@
 # their sandbox from lib/oversee-watch-harness.sh.
 #
 # Covered here: window absence versus probe failure; shell-exit debounce; live
-# versus answered prompts for both harnesses; idle-return debounce; scrollback
-# boundaries; and one-capture classification.
+# versus answered prompts for both harnesses; idle-return debounce, within a
+# run and across runs; scrollback boundaries; and one-capture classification.
 #
 # One table. A row names a screen (a pane fixture kept whole in `screen`), the
 # lane it sits in (the pane's foreground command, its children, the windows
@@ -284,18 +284,52 @@ lane_table \
   "control: the same hint below the last user turn still means busy|new|working_below_turn|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false" \
   "a scrollback user turn is not the composer the lane is sitting at|new|prompt_above_turn|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false"
 
-echo "=== two-pass kinds beside a lane that fires every pass ==="
-# A pass with any event exits the process, and a lane parked on its banner is
-# one on every pass, so a sibling's first idle or exited pass has to survive
-# into the next run: the debounce is a baseline row keyed by the pane, and a
-# replacement pane starts the count over. The must-fail is the row kept in a
-# process global: run 2 then reads as usage-limit alone.
+echo "=== idle-after-return across runs: the same screen is reported once ==="
+# The overseer exits the watch on the event and re-runs it over the same
+# lane, which still sits at the same screen: the row that carried the second
+# pass now carries that the screen was reported, so a re-run says nothing
+# until the lane takes a turn and sits idle at a different one.
 lane_table \
-  "a parked lane leaves every pass on its wall: an idle sibling's first pass is remembered across runs|new|idle|walled|1|rc=0 out~EVENT+usage-limit+gh-1=true out~EVENT+idle-after-return=false" \
-  "...and the next run's first pass reports it idle beside the wall|cont|idle|walled|1|rc=0 out~EVENT+usage-limit+gh-1=true out~EVENT+idle-after-return+gh-2=true" \
-  "a replacement pane starts the count over|cont|idle|walled_newpane|1|out~EVENT+usage-limit+gh-1=true out~EVENT+idle-after-return=false" \
+  "an idle lane is reported on the run that finds it|new|idle|claude|2|rc=0 first=EVENT+idle-after-return+gh-2" \
+  "...and not again by a re-run over the same screen|cont|idle|claude|2|rc=0 first=$HEARTBEAT2 out~EVENT+idle-after-return=false" \
+  "...while a different idle screen is news again|cont|idle_short|claude|2|rc=0 first=EVENT+idle-after-return+gh-2"
+
+echo "=== two-pass kinds beside a lane parked on its wall ==="
+# A pass with any event exits the process, so a sibling's first idle or exited
+# pass has to survive into the next run: the debounce is a baseline row keyed
+# by the pane, and a replacement pane starts the count over. The wall itself
+# is reported by the run that first sees it and by no re-run after: the
+# sibling is what the next run says. The must-fail is the row kept in a
+# process global: run 2 then reads as a bare heartbeat.
+lane_table \
+  "a parked lane is reported once, and an idle sibling's first pass is remembered across runs|new|idle|walled|1|rc=0 out~EVENT+usage-limit+gh-1=true out~EVENT+idle-after-return=false" \
+  "...and the next run's first pass reports it idle, the standing wall not again|cont|idle|walled|1|rc=0 out~EVENT+usage-limit+gh-1=false out~EVENT+idle-after-return+gh-2=true" \
+  "a replacement pane starts the count over|cont|idle|walled_newpane|1|first=$HEARTBEAT1 out~EVENT+usage-limit+gh-1=false out~EVENT+idle-after-return=false" \
   "an exited sibling's first pass is remembered the same way|new|fish_prompt|walled_bash|1|out~EVENT+usage-limit+gh-1=true out~EVENT+lane-exited=false" \
-  "...and the next run reports it exited beside the wall|cont|fish_prompt|walled_bash|1|rc=0 out~EVENT+usage-limit+gh-1=true out~EVENT+lane-exited+gh-2=true"
+  "...and the next run reports it exited, the standing wall not again|cont|fish_prompt|walled_bash|1|rc=0 out~EVENT+usage-limit+gh-1=false out~EVENT+lane-exited+gh-2=true"
+
+# The must-fail controls: the reported mark never consulted, one arm each, so
+# the same screen is news on every run. Each copy must differ from the source
+# or the control proves nothing. The copy keeps orch's place in a skills
+# tree: its libraries resolve the github skill beside it.
+MUTANT_DIR="$TMP_ROOT/mutant"
+mkdir -p "$MUTANT_DIR/orch"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_DIR/orch/scripts"
+ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+sed 's/^    if \[\[ "$prior" == "$screen_key|reported" \]\]; then continue; fi$/    prior="${prior%|reported}"/' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really ignores the idle row's reported mark"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
+  "control: the idle lane is still reported on the run that finds it|new|idle|claude|2|rc=0 first=EVENT+idle-after-return+gh-2" \
+  "control: without the mark a re-run over the same screen reports it again|cont|idle|claude|2|rc=0 first=EVENT+idle-after-return+gh-2"
+sed 's/^      if \[\[ "$seen_reported" == "$event" \]\]; then continue; fi$//' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really ignores the wall's reported mark"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
+  "control: the parked lane is still reported on the run that finds it|new|-|walled|1|rc=0 out~EVENT+usage-limit+gh-1=true" \
+  "control: without the mark a re-run reports the standing wall again|cont|-|walled|1|rc=0 out~EVENT+usage-limit+gh-1=true"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

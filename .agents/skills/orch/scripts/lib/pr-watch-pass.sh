@@ -65,9 +65,10 @@ pw_prefix() { awk -v repo="$1" '{ print repo "\t" $0 }' <<<"$2"; }
 
 # One baseline file per repo, loaded before the first pass.
 pw_init_state() {
-  # Lanes count: their asking fingerprints are rows in the first repository's
-  # baseline, so a lane-only run still loads and writes it.
-  [[ -n "$PR_WATCH" || "${TRIAGE_ENABLED:-0}" -eq 1 || ${#LANES[@]} -gt 0 ]] || return 0
+  # Lanes and items count: their rows (asking fingerprints, merged and
+  # handoff keys) live in the first repository's baseline, so a run with no
+  # reducer still loads and writes it.
+  [[ -n "$PR_WATCH" || "${TRIAGE_ENABLED:-0}" -eq 1 || ${#LANES[@]} -gt 0 || ${#ITEMS[@]} -gt 0 ]] || return 0
   local i state_file
   mkdir -p "$PW_STATE_DIR" \
     || die "could not create the pr-watch state directory $PW_STATE_DIR (set OVERSEE_WATCH_STATE_DIR)"
