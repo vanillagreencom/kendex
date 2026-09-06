@@ -453,7 +453,13 @@ mkdir -p -- "$2/$3.cache"
 printf 'session\n' > "$2/$3.session"
 if [[ $# -ge 4 ]]; then
   printf 'reappeared\n' > "$4"
-  chmod 644 -- "$4"
+  # `--` before the mode, never after it: getopt(3) stops at the first
+  # non-option argument, which for chmod is the mode, so a `--` behind it is a
+  # file operand nobody has. BSD chmod fails on that line, this stub exits
+  # non-zero under set -e, and the lane reads as a failed CLI. The shipped
+  # installer takes the same shape; skills/commit-guards/tests/bsd-argv-install.test.sh
+  # runs the rule as a program.
+  chmod -- 644 "$4"
 fi
 cat "$1"
 SH

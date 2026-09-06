@@ -261,10 +261,22 @@ am_errs_on_200='{"data":{"disablePullRequestAutoMerge":null},"errors":[{"message
 # merge-group head commit, and REST check-runs bodies for that commit.
 q_in_queue_head='{"data":{"repository":{"pullRequest":{"id":"PR_node123","isInMergeQueue":true,"mergeQueueEntry":{"state":"AWAITING_CHECKS","position":1,"headCommit":{"oid":"aaa111"}},"autoMergeRequest":{"enabledAt":"2026-07-24T09:00:00Z"}}}}}'
 # checkruns_body <completed> <in_progress>
+# Counted loops, never `seq 1 "$n"`: BSD seq walks toward its last value, so
+# `seq 1 0` prints `1` and `0` where GNU seq prints nothing. A body asked for
+# zero in-progress runs came back with two of them on macOS, and every case
+# reading a flat, idle queue as stalled read it as still progressing instead.
 checkruns_body() {
   local done="$1" pending="$2" runs="" i
-  for i in $(seq 1 "$done"); do runs+='{"name":"c'"$i"'","status":"completed","conclusion":"success"},'; done
-  for i in $(seq 1 "$pending"); do runs+='{"name":"p'"$i"'","status":"in_progress","conclusion":null},'; done
+  i=0
+  while [ "$i" -lt "$done" ]; do
+    i=$((i + 1))
+    runs+='{"name":"c'"$i"'","status":"completed","conclusion":"success"},'
+  done
+  i=0
+  while [ "$i" -lt "$pending" ]; do
+    i=$((i + 1))
+    runs+='{"name":"p'"$i"'","status":"in_progress","conclusion":null},'
+  done
   printf '{"total_count":%d,"check_runs":[%s]}' "$((done + pending))" "${runs%,}"
 }
 

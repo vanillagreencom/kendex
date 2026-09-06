@@ -32,7 +32,13 @@ gg_staged_added_lines() { # PATH — one "line<TAB>content" record per line this
   # still arrives as hunks, so no path reaches the parser with its content
   # withheld; a genuinely binary blob never reaches the parser at all — the
   # lane's content sniff drops it before this runs.
-  awk '
+  # LC_ALL=C, like the grep every caller runs over this output: BWK awk — the
+  # awk macOS ships — decodes its input as characters under a UTF-8 locale and
+  # aborts with `towc: multibyte conversion failure`, exit 2, on the first byte
+  # sequence that is not valid UTF-8. A tracked text file may hold any byte;
+  # this lane's own content sniff already decided the blob is text, and a
+  # scan that exits 2 is a lane that errors instead of judging.
+  LC_ALL=C awk '
     /^diff --git / { hunk = 0; next }
     /^@@/ {
       h = $3

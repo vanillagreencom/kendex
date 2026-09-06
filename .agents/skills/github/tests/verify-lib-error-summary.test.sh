@@ -122,7 +122,7 @@ printf 'error[E0001]: %s\n' "$pad"
 exit 1
 CMD
 chmod +x "$TMP_ROOT/fail-long-line.sh"
-assert_ge "$(bash "$TMP_ROOT/fail-long-line.sh" | wc -c || true)" 131072 "the single error line clears MAX_ARG_STRLEN on its own"
+assert_ge "$(bash "$TMP_ROOT/fail-long-line.sh" | wc -c | tr -d ' ' || true)" 131072 "the single error line clears MAX_ARG_STRLEN on its own"
 
 echo "=== one error line past MAX_ARG_STRLEN is still summarized (KEN-1171) ==="
 results="$(drive "rust|bash $TMP_ROOT/fail-long-line.sh||.")"
