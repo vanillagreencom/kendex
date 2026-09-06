@@ -894,18 +894,7 @@ check_lanes() {
     below="$(pane_below_last_turn "$pane")"
     if [[ -n "$(lane_limit_banner "$below")" ]]; then
       walled_now+="$i"$'\n'
-      # The detail is a nicety; a claim store this process cannot read must
-      # not take down the event that carries the pane tail.
-      claims="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" || true)"
-      # Claims are kept for every live tmux server, and a window NAME is
-      # unique only within a session: the account is resolved on the pane
-      # actually captured here — `<server pid> <pane id>`, the same key the
-      # claim's liveness uses — so no other lane can answer for it.
       pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
-      claimed="$(lane_claims_config_dir "$claims" "${pane_key%% *}" "${pane_key##* }")"
-      if [[ -z "$claimed" && -n "$claims" ]]; then
-        echo "oversee-watch: no live lane claim for the pane behind '$lane'; the usage-limit event names no account" >&2
-      fi
       # The banner states when the wall lifts, and that decides which event
       # this is. A reset already behind us means the lane is parked against a
       # window that has since reopened — the harness will not notice on its
@@ -933,6 +922,18 @@ check_lanes() {
       # lane stays walled above; a reset going by turns the event into
       # usage-limit-passed, which is news once more.
       if [[ "$seen_reported" == "$event" ]]; then continue; fi
+      # The detail is a nicety; a claim store this process cannot read must
+      # not take down the event that carries the pane tail. Read here, below
+      # the suppression, so its note qualifies a line that is going out.
+      claims="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" || true)"
+      # Claims are kept for every live tmux server, and a window NAME is
+      # unique only within a session: the account is resolved on the pane
+      # actually captured here — `<server pid> <pane id>`, the same key the
+      # claim's liveness uses — so no other lane can answer for it.
+      claimed="$(lane_claims_config_dir "$claims" "${pane_key%% *}" "${pane_key##* }")"
+      if [[ -z "$claimed" && -n "$claims" ]]; then
+        echo "oversee-watch: no live lane claim for the pane behind '$lane'; the usage-limit event names no account" >&2
+      fi
       echo "EVENT $event $lane${claimed:+ $claimed}$reset_note"
       [[ -z "$pane" ]] || pane_tail "$pane"
       PASS_EVENT=1

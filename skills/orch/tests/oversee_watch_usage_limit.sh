@@ -232,6 +232,25 @@ usage_table \
   "the event names the config dir the lane was claimed on, never a same-named window elsewhere|new|banner:You've hit your weekly limit|claim_live|-|-|rc=0 first=EVENT+usage-limit+gh-2+/home/me/.eclaude out~otherclaude=false out~thirdclaude=false" \
   "a claim whose pane is gone names no account and is pruned|new|banner:You've hit your weekly limit|claim_dead|-|-|rc=0 first=EVENT+usage-limit+gh-2 claims=0"
 
+# The note is about the event line it qualifies: a re-run that suppresses the
+# standing wall prints neither. Red with the claim read above the suppression.
+new_case claim_note_only_with_event
+# one live claim on this server, on a pane other than the one captured
+printf '900 %%3\n900 %%9\n' > "$STUB_DIR/panes.txt"
+printf '900 %%3\n' > "$STUB_DIR/pane-key-gh-2.txt"
+mkdir -p "$STATE_DIR/claims"
+printf '900\t%%9\t/home/me/.eclaude\tgh-9\t2026-08-16T00:00:00Z\n' > "$STATE_DIR/claims/a.claim"
+screen "banner:You've hit your weekly limit"
+run
+expect="rc=0 first=EVENT+usage-limit+gh-2"
+assert_eq "$(watch "$expect")" "$expect" "the run that reports the wall notes the missing claim" "$ERR"
+assert_eq "$(grep -c 'no live lane claim' "$ERR")" "1" "and prints the note once"
+rm -f "$STUB_DIR/pane-gh-2.calls" "$STUB_DIR/cmd-gh-2.calls"
+run
+expect="rc=0 first=$HEARTBEAT out~EVENT+usage-limit=false"
+assert_eq "$(watch "$expect")" "$expect" "a re-run over the same wall reports nothing" "$ERR"
+assert_eq "$(grep -c 'no live lane claim' "$ERR" || true)" "0" "and the note about an event it did not print stays silent"
+
 echo "=== the reset the banner states ==="
 # SURFACE 1: the reset parsed out of each banner form the grammar accepts,
 # each a fresh sighting because each names a different wall (the
