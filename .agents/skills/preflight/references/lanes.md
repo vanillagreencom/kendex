@@ -1,20 +1,12 @@
 # Lane details
 
-The lane table and the scope rules are [SKILL.md](../SKILL.md) § Lanes. This file holds what does not fit a table cell: how the diff is taken, the `unwired-suite` wiring grammar, and why `applied-migration-edited` ships the default glob set it does.
+What each lane fails on, its exclusions, the settings and the exit codes are in `preflight --help`. This file holds the grammars that do not fit a help entry: how the diff is taken, how `unwired-suite` reads a runner, and which globs `data-syntax` and `applied-migration-edited` ship.
 
-## What a lane may read
+## Diff construction
 
-CONTENT decides which lines a lane may read, never an attribute. The diff is taken with `--text`, so a `.gitattributes` `-diff` or `binary` row cannot withhold the lines a change adds, and a file whose own bytes are binary contributes no lines in any scope.
+Content decides which lines a lane may read, never an attribute. The diff is taken with `--text`, so a `.gitattributes` `-diff` or `binary` row cannot withhold the lines a change adds. A file whose own bytes are binary contributes no lines in any scope.
 
-The default and `--base` scopes include every non-ignored untracked file as a new file; `--staged` sees only the index.
-
-## `data-syntax` JSONC paths
-
-The `.jsonc` suffix declares JSON with comments. Some producers keep `.json` instead. `PREFLIGHT_JSONC_GLOBS` replaces the path set for those files. The default keeps tsconfig, jsconfig, `.vscode`, `.devcontainer`, and VS Code's `*-color-theme.json` convention. A leading `**/` matches at any depth. A `*` does not cross a path component.
-
-The lane has no JSONC parser. It leaves these files to the producer that declares the dialect. Strict `.json` files still pass through `jq`.
-
-During `--staged`, shared settings come from the index. A new untracked shared settings file cannot change the commit verdict. The personal `.env.local` file remains a runtime input.
+The default and `--base` scopes include every non-ignored untracked file as a new file. `--staged` sees only the index, and reads shared settings from the index too, so a new untracked settings file cannot change the commit verdict. The personal `.env.local` file stays a runtime input in every scope.
 
 ## `unwired-suite` wiring grammar
 
@@ -24,14 +16,22 @@ Wiring is the suite named outright, a path-shaped glob its path satisfies, a dir
 
 A command position means directly, chained after `;`/`&`/`|`, behind a directly preceding `npx`/`pnpm`/`yarn`/`exec`/`dlx`, with `NAME=value` assignment words (values plain or quoted) allowed before the runner word.
 
-A comment (full-line or trailing), dependency key, or package path is not an invocation, and neither is a prose mention, except a colon-opened value beginning with the runner word, accepted erring quiet. A path-prefixed binary (`node_modules/.bin/vitest`) is not recognized, and a pinned explicit `include`/`testMatch` is not evaluated. An empty or unreadable runner set leaves the lane quiet.
+A comment (full-line or trailing), dependency key, or package path is not an invocation, and neither is a prose mention, except a colon-opened value beginning with the runner word, accepted erring quiet. A path-prefixed binary (`node_modules/.bin/vitest`) is not recognized, and a pinned explicit `include`/`testMatch` is not evaluated.
+
+## Glob semantics
+
+A leading `**/` matches at any depth and is the only depth crossing, so a `*` never reaches past its own path component. Both glob settings replace their shipped set rather than adding to it, and an empty value leaves the lane quiet.
+
+## `data-syntax` JSONC paths
+
+The `.jsonc` suffix declares JSON with comments. Some producers keep `.json` instead, and `PREFLIGHT_JSONC_GLOBS` names those paths. The shipped set is `**/tsconfig*.json`, `**/jsconfig*.json`, `**/.vscode/*.json`, `**/.devcontainer/*.json` and `**/*-color-theme.json`, which is VS Code's convention plus the two TypeScript manifests.
+
+The lane has no JSONC parser and leaves these files to the producer that declares the dialect.
 
 ## `applied-migration-edited` glob set
 
-refinery and Flyway record a checksum over a versioned migration's name and text and refuse to run against a database whose recorded checksum moved.
+refinery and Flyway record a checksum over a versioned migration's name and text, and refuse to run against a database whose recorded checksum moved.
 
-`PREFLIGHT_MIGRATION_GLOBS` replaces the set, default `**/migrations/V*__*.sql` and `**/db/migration/V*__*.sql`, which is those two runners' filename shape under the two directory names they use, Flyway's own being the singular one, and nothing else: a runner recording an applied version without a checksum (golang-migrate, Goose, Alembic, Django) reopens its database after an edit, so naming its files would hard-fail a legitimate change. Every other layout is opt-in, sqlx and Flyway repeatable migrations (`R__*`) included.
+The shipped set is `**/migrations/V*__*.sql` and `**/db/migration/V*__*.sql`: those two runners' filename shape under the two directory names they use, Flyway's own being the singular one, and nothing else. A runner that records an applied version without a checksum (golang-migrate, Goose, Alembic, Django) reopens its database after an edit, so naming its files would hard-fail a legitimate change. Every other layout is opt-in through `PREFLIGHT_MIGRATION_GLOBS`, sqlx and Flyway repeatable migrations (`R__*`) included.
 
-A leading `**/` matches at any depth and is the only depth crossing, so a `*` never reaches past its own path component.
-
-Not the shape: a migration added at a new version, one this branch added and then corrected (the staged scope diffs against HEAD and is qualified against the base for exactly that), and a mode change, which moves no text. `--all` reads every tracked line as added and a repository with no base to read answers nothing, so both stay quiet, as does an empty value.
+A migration this branch added and then corrected is not the shape: the staged scope diffs against HEAD and qualifies each hit against the base for exactly that.

@@ -19,15 +19,15 @@ Requires Git, awk and standard POSIX tools. Bash 3.2 is supported. Install shell
 
 ## How it works
 
-The checker selects changed files from Git. Each check reads the file types it supports. Findings identify the file, location and check. Your validation command or Git hook uses the exit result to stop on a finding.
+The checker selects changed files from Git. Each check reads the file types it supports and reports only on lines the change added. Findings identify the file, location and check. Your validation command or Git hook uses the exit result to stop on a finding. Run `preflight --help` for each check, its scope and the exit codes.
 
 ## Settings
 
-`PREFLIGHT_JSONC_GLOBS` names `.json` files whose producer permits comments. Its default covers tsconfig, jsconfig, `.vscode`, `.devcontainer`, and VS Code `*-color-theme.json` files. The `.jsonc` suffix needs no setting.
+`PREFLIGHT_JSONC_GLOBS` names `.json` files whose producer permits comments. The `.jsonc` suffix needs no setting.
 
-`PREFLIGHT_MIGRATION_GLOBS` names migrations whose recorded checksum makes an edit unsafe. Its default covers the versioned refinery and Flyway paths in [references/lanes.md](references/lanes.md).
+`PREFLIGHT_MIGRATION_GLOBS` names migrations whose recorded checksum makes an edit unsafe.
 
-Set these values in `kendex.settings.toml` under `[env]`, in `.kendex/settings.toml`, in `.env.local`, or in the process environment. Later sources take priority. `--base REF` sets the comparison point. `--repo PATH` runs against another checkout.
+Each setting replaces the shipped set, which [references/lanes.md](references/lanes.md) lists. Set these values in `kendex.settings.toml` under `[env]`, in `.kendex/settings.toml`, in `.env.local`, or in the process environment. Later sources take priority. `--base REF` sets the comparison point. `--repo PATH` runs against another checkout.
 
 ## Wiring
 
