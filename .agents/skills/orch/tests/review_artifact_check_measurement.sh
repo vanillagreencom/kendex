@@ -71,7 +71,8 @@ json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 
 # observe EXPECT — prints the run's value of every `name=` field EXPECT names,
 # in EXPECT's order. Plain names are JSON result fields, their spaces printed
-# as `+`; a key the result does not carry reads ABSENT.
+# as `+`; a key the result does not carry reads ABSENT. `+` reads as a space
+# in a needle too, so a literal plus cannot be pinned; no field carries one.
 #   rc               exit status
 #   path             the basename of the reported path, or null
 #   detail~<text>    whether the detail names <text> (`+` reads as a space)
@@ -79,7 +80,9 @@ json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 #                    refusing branch found. The half after it is the shared
 #                    requirement, which quotes the very tokens the branches
 #                    match on, so a needle against the whole detail pins
-#                    nothing
+#                    nothing; a detail whose branch half carries the
+#                    requirement (the separator gone, so the split lands on
+#                    the requirement's own em-dash) aborts the suite
 #   bar~<text>       the half after the em-dash: the requirement
 #   silenced~<text>  whether measurement_suppressed names <text>
 observe() {
@@ -90,8 +93,11 @@ observe() {
       rc) value="$RC" ;;
       path) value="$(json '.path | if . == null then "null" else sub(".*/"; "") end')" ;;
       detail~*) needle="${name#detail~}"; value="$(json '.detail // ""' | grep -qF -- "${needle//+/ }" && echo true || echo false)" ;;
-      branch~*) needle="${name#branch~}"; value="$(json '.detail // "" | split(" — ")[0]' | grep -qF -- "${needle//+/ }" && echo true || echo false)" ;;
-      bar~*) needle="${name#bar~}"; value="$(json '.detail // "" | split(" — ")[1:] | join(" — ")' | grep -qF -- "${needle//+/ }" && echo true || echo false)" ;;
+      branch~*|bar~*)
+        json '.detail // "" | split(" — ")[0]' | grep -qF -- 'must name the instrument' && { printf 'observe: %s asked of a detail whose branch half carries the requirement: %s\n' "$name" "$(json '.detail')" >&2; exit 1; }
+        needle="${name#*~}"
+        if [[ "$name" == branch~* ]]; then value="$(json '.detail // "" | split(" — ")[0]' | grep -qF -- "${needle//+/ }" && echo true || echo false)"
+        else value="$(json '.detail // "" | split(" — ")[1:] | join(" — ")' | grep -qF -- "${needle//+/ }" && echo true || echo false)"; fi ;;
       silenced~*) needle="${name#silenced~}"; value="$(json '.measurement_suppressed // ""' | grep -qF -- "${needle//+/ }" && echo true || echo false)" ;;
       *) value="$(json "if has(\"$name\") then .$name else \"ABSENT\" end")"; value="${value// /+}" ;;
     esac
@@ -101,7 +107,8 @@ observe() {
 }
 
 # file_table ROW... — one artifact, one --file run, one assertion per row:
-# `label^body^expect`, `^` so a body may carry any character a JSON string does.
+# `label^body^expect`, `^` because bodies carry `|`; a body with a `^` of its
+# own mis-splits into an expect no observer accepts, so the row fails loudly.
 file_table() {
   local row label body expect
   for row in "$@"; do
