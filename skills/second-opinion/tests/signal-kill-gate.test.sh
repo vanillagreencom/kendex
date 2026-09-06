@@ -105,12 +105,26 @@ chmod +x "$TMP_ROOT/bin/lane-good"
 # path in STUB_LANE_PATTERN; nothing else on the host does — then stays alive
 # only until that lane is gone, so its own exit can never race the
 # classification and the chain above it collapses as soon as the lane is dead.
+# The lane to kill is this stub's own ancestor, found by walking up the
+# parent chain: BSD pkill excludes the caller's ancestors from an argv match
+# by default, so a pattern kill from inside the lane reaches nothing on macOS.
 cat > "$TMP_ROOT/bin/kill-lane" <<'SH'
 #!/usr/bin/env bash
 cat > /dev/null
 echo $$ >> "$STUB_PIDS"
-pkill -TERM -f -- "$STUB_LANE_PATTERN"
-for _ in $(seq 50); do pgrep -f -- "$STUB_LANE_PATTERN" >/dev/null || break; sleep 0.1; done
+# Every matching ancestor, the lane child included, as the pattern kill
+# reached; /bin/ps by path, since the ps on PATH is this suite's stand-in.
+pid=$PPID
+targets=""
+while [ "$pid" -gt 1 ]; do
+  case "$(/bin/ps -o args= -p "$pid")" in
+    *"$STUB_LANE_PATTERN"*) targets="$targets $pid" ;;
+  esac
+  pid=$(/bin/ps -o ppid= -p "$pid" | tr -d ' ')
+  [ -n "$pid" ] || break
+done
+[ -z "$targets" ] || kill -TERM $targets
+for _ in $(seq 50); do kill -0 $targets 2>/dev/null || break; sleep 0.1; done
 SH
 chmod +x "$TMP_ROOT/bin/kill-lane"
 

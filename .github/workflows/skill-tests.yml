@@ -89,12 +89,13 @@ jobs:
   # never tested. The probe step after it is the leg's must-fail control. The
   # node shards are excluded: nothing in them is bash.
   #
-  # The leg swaps the shell and nothing else on purpose: the suites and the
-  # scripts they run call flock, timeout and sha256sum, which macOS does not
-  # ship (workflow-state and lanes take flock with no fallback), so the leg
-  # installs GNU coreutils and flock and asserts them beside the shell. A red
-  # leg is then a Bash 3.2 finding, not a missing utility. BSD sed, grep and
-  # awk stay the runner's: no suite has needed the GNU ones there.
+  # The leg swaps the shell and nothing else on purpose: it installs the GNU
+  # userland the suites are written against — coreutils, sed, grep, awk,
+  # find, diff and flock, which macOS lacks outright (workflow-state and
+  # lanes take flock with no fallback) or ships as BSD — and asserts each
+  # beside the shell, so a red leg is a Bash 3.2 finding and not a utility
+  # difference. What the suites do on the BSD userland is a property of its
+  # own that this leg does not prove.
   skill-suites-shard:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     if: github.event_name != 'push'
@@ -109,22 +110,27 @@ jobs:
           - os: macos-latest
             shard: pi-claude-bridge
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # The macOS legs fork and spawn slower than the Linux ones on the same
+    # suites: first run, orch 13 min and guards 11 min against 4 and 4.
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 30 || 15 }}
     steps:
       - uses: actions/checkout@v4
 
       # ---- macOS leg: Bash 3.2 first on PATH, asserted, and its probe -----
       # gnubin goes on PATH before the shell's directory does, so the
       # directory added last, the shell's, is searched first.
-      - name: GNU coreutils and flock, which the suites call and macOS lacks
+      - name: the GNU userland the suites are written against
         if: matrix.os == 'macos-latest'
         env:
           HOMEBREW_NO_AUTO_UPDATE: '1'
           HOMEBREW_NO_INSTALL_CLEANUP: '1'
         run: |
           set -u
-          brew install coreutils flock
-          echo "$(brew --prefix)/opt/coreutils/libexec/gnubin" >>"$GITHUB_PATH"
+          brew install coreutils gnu-sed grep gawk findutils diffutils flock
+          prefix="$(brew --prefix)"
+          for f in coreutils gnu-sed grep findutils; do
+            echo "$prefix/opt/$f/libexec/gnubin" >>"$GITHUB_PATH"
+          done
 
       - name: /bin/bash first on PATH
         if: matrix.os == 'macos-latest'
@@ -155,9 +161,13 @@ jobs:
           got "bash on PATH, $(command -v bash)" "$(version_of bash)"
           got "/usr/bin/env bash" "$(version_of /usr/bin/env bash)"
           # The utilities the step above installed, resolved the way a suite
-          # resolves them.
+          # resolves them: present, and the GNU one where macOS ships a BSD one.
           for c in flock timeout sha256sum; do
             command -v "$c" || { echo "$c is not on PATH; the suites that call it would fail for the wrong reason"; fail=1; }
+          done
+          for c in sed grep awk find diff; do
+            "$c" --version 2>/dev/null | head -n 1 | grep -q GNU ||
+              { echo "$c on PATH is $(command -v "$c"), not the GNU one; a suite red there would be a userland difference"; fail=1; }
           done
           exit "$fail"
 

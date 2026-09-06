@@ -323,9 +323,12 @@ is_cfg_test_declared() {
     # target, so a route discovered by any scan is genuine no matter which
     # candidate prompted it; ERR (unreadable module) fails this candidate
     # closed only when the file sits in its consulted set.
+    # The directory list crosses into awk tab-joined: BWK awk (macOS) refuses
+    # a -v value carrying a newline, and a tab cannot sit in a path the
+    # tab-separated cache already holds.
     routes=$(printf '%s\n' "$DECL_CACHE" | awk -F'\t' \
-        -v cand="$candidate" -v dirs="$relevant_dirs" '
-        BEGIN { n = split(dirs, a, "\n"); for (i = 1; i <= n; i++) rd[a[i]] = 1 }
+        -v cand="$candidate" -v dirs="$(printf '%s' "$relevant_dirs" | tr '\n' '\t')" '
+        BEGIN { n = split(dirs, a, "\t"); for (i = 1; i <= n; i++) rd[a[i]] = 1 }
         $1 == cand { next }
         $3 == "ERR" { if ($2 in rd) print "err"; next }
         $4 != cand { next }
