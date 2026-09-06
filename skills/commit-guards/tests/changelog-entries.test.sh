@@ -7,8 +7,8 @@
 # write path is pinned next door in changelog-collate.test.sh.
 # The configured globs decide what is read and content comes from the index;
 # the index readers this family of checks shares are pinned once, in
-# index-reads.test.sh. Every green assertion is paired with a control that
-# proves it can fail.
+# index-reads.test.sh and lane-readers.test.sh. Every green assertion is
+# paired with a control that proves it can fail.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

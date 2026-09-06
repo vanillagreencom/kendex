@@ -4,7 +4,7 @@
 # replaceable and validated, and ordinary wording passes.
 # Every green assertion is paired with a control that proves it
 # can fail. The index readers this family of checks shares are pinned once,
-# in index-reads.test.sh.
+# in index-reads.test.sh and lane-readers.test.sh.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

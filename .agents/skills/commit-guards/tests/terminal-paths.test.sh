@@ -28,7 +28,7 @@ filemode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
 R="$ROOT/install-file"
 mkdir -p "$R/tools"
 
-# index-reads.test.sh's `call`, with the session's fds on a pty. LIB is a
+# atomic-install.test.sh's `install_line`, with the session's fds on a pty. LIB is a
 # parameter so a mutant copy of the tree can be run through the same probe.
 #
 # SRC is a parameter for a different reason: every path this helper writes

@@ -6,7 +6,7 @@
 # errors — never a pass. Every green assertion is paired with a control that
 # proves it can fail. The index readers this family of checks shares — the
 # staged lane's carriers pre-filter and content sniff among them — are
-# pinned once, in index-reads.test.sh, which drives them through this check.
+# pinned once, in lane-readers.test.sh, which drives them through this check.
 #
 # Marker words are assembled from split tokens throughout so this test
 # file never contains a marker shape itself — the kendex repo runs

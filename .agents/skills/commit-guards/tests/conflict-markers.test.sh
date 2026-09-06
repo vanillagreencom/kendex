@@ -4,7 +4,7 @@
 # separator do not, excludes need reasons, and the check's own source never
 # trips it. Every green assertion is paired with a control that proves it can
 # fail. The index readers this family of checks shares are pinned once, in
-# index-reads.test.sh.
+# index-reads.test.sh and lane-readers.test.sh.
 #
 # Marker runs are assembled with printf throughout so this test file never
 # contains a marker shape itself — the kendex repo runs conflict-markers
