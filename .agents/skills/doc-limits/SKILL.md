@@ -4,6 +4,8 @@ description: "Load to add, tune, or debug document byte ceilings and DOC_LIMITS_
 summary: "Hard byte ceilings for tracked Markdown documents, with path classes and reasoned exclusions."
 license: MIT
 user-invocable: true
+dependencies:
+  required: [commit-guards]
 metadata:
   author: vanillagreen
   source: kendex

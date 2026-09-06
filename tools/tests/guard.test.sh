@@ -28,6 +28,7 @@ git -C "$R" init -q
 git -C "$R" symbolic-ref HEAD refs/heads/main
 git -C "$R" config user.email test@example.com
 git -C "$R" config user.name test
+printf '[]\n' >"$R/.kendex-generated.json"
 git -C "$R" config core.hooksPath "$TMP/nohooks"
 printf '# fixture\n' >"$R/AGENTS.md"
 cat >"$R/kendex.toml" <<'TOML'

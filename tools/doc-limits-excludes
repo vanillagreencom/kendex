@@ -1,10 +1,3 @@
 # Document size exceptions. Each row is pattern<TAB>reason.
 
-.agents/*	kendex's render of skills/, whose SOURCE is governed, so governing the mirror duplicates every document finding
-!.agents/skills/app-deploy/*	in-place skill (kendex-local.toml): this tree IS the source, so the row above must not cover it
-!.agents/skills/kendex-issues/*	in-place skill (kendex-local.toml): this tree IS the source, so the row above must not cover it
-.claude/skills/*	rendered skill links into .agents/skills
-.claude/agents/*	kendex-rendered agent copies, source in agents/
-.codex/agents/*	kendex-rendered agent copies, source in agents/
-.pi/agents/*	kendex-rendered agent copies, source in agents/
 CHANGELOG*.md	append-only release record, read by release rather than as agent instructions

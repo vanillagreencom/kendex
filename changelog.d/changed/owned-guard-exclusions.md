@@ -1,0 +1,1 @@
+- Doc-limits and suppression-ban require the render inventory at the Git root. Refresh and stage it with the renders; adopted source stays checked without manual ownership rows.

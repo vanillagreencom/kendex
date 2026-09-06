@@ -36,6 +36,8 @@ new_repo() { # NAME -> repo path on stdout
   git -C "$r" -c init.defaultBranch=main init -q
   git -C "$r" config user.email test@example.com
   git -C "$r" config user.name test
+  printf '[]\n' >"$r/.kendex-generated.json"
+  git -C "$r" add .kendex-generated.json
   # A real directory, the shape a project install has: path resolution and
   # the shared-worktree check both key on where the copy physically is.
   #

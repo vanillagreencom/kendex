@@ -217,18 +217,23 @@ fn apply_discloses_a_hand_declared_package_and_waits_for_its_own_yes() {
     );
 }
 
-/// Which companions are here is kendex's answer, not the package's: one
-/// installed before the declaring package reads as installed in its block.
+/// Installing the document check discloses its required guard package
+/// without arming that package's hooks.
 #[test]
-fn a_companion_already_here_reads_as_installed() {
+fn doc_limits_discloses_its_reader_dependency_without_arming_hooks() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
     offer(&world, "doc-limits");
     offer(&world, "commit-guards");
-    world.run(&["add", "cat", "--skill", "doc-limits", "-y"]);
-    let spoken = world.try_run(&["add", "cat", "--skill", "commit-guards", "-y"]);
+    let spoken = world.try_run(&["add", "cat", "--skill", "doc-limits", "-y"]);
     let out = spoke(&spoken);
     assert!(spoken.status.success(), "{out}");
     assert!(out.contains("doc-limits (installed)"), "{out}");
     assert!(out.contains("preflight (not installed)"), "{out}");
+    assert!(
+        world
+            .at(".agents/skills/commit-guards/scripts/lib/generated-paths.sh")
+            .is_file()
+    );
+    assert!(!world.at(".git/hooks/kendex-guards").exists());
 }

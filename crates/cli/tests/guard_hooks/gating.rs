@@ -279,8 +279,6 @@ fn the_main_checkout_is_searched_at_the_projects_path() {
     let project = root.join("apps/web");
     std::fs::create_dir_all(project.join(".agents")).unwrap();
     install_package(home, &project, &["commit-guards"]);
-    let install = run(home, &project, "kendex", &["guard", "install"]);
-    assert!(install.status.success(), "{}", said(&install));
 
     // The manifest is committed and the render is not, which is what a
     // linked worktree of such a repository actually contains.
@@ -291,6 +289,8 @@ fn the_main_checkout_is_searched_at_the_projects_path() {
         &root,
         &["commit", "--quiet", "-m", "feat: the project"],
     );
+    let install = run(home, &project, "kendex", &["guard", "install"]);
+    assert!(install.status.success(), "{}", said(&install));
     git_ok(home, &root, &["worktree", "add", "--quiet", "../linked"]);
     let there = home.join("linked/apps/web");
     assert!(
@@ -477,8 +477,13 @@ fn a_project_below_the_git_toplevel_is_found_where_it_renders() {
     std::fs::write(project.join("b.rs"), work_marker("TO", "DO: not yet")).unwrap();
     git_ok(home, &outer, &["add", "-A"]);
     let out = run(home, &project, "kendex", &["guard", "run", "pre-commit"]);
-    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert_eq!(out.status.code(), Some(2), "{}", said(&out));
     assert!(said(&out).contains("todo-ban"), "{}", said(&out));
+    assert!(
+        said(&out).contains(".kendex-generated.json"),
+        "the missing repository inventory must refuse: {}",
+        said(&out)
+    );
 
     // And arming from there gates a real commit.
     let armed = run(home, &project, "kendex", &["guard", "install"]);

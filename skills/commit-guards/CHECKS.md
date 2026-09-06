@@ -41,6 +41,8 @@ Legal: a per-line suppression naming its lint with a reason (`# noqa: E501`, `//
 
 The bare-allow ratchet counts reasonless `#[allow(dead_code)]` and `#[allow(unused...)]` attributes per `*.rs` file; `reason = "..."` exempts one. Counts are held to `COMMIT_GUARDS_SUPPRESSION_BASELINE`, tighten-only: a new bare allow, growth past a row, and a row looser than reality all fail. `--update` lowers or removes rows and re-checks, never adds or raises one; the first baseline is written by hand from the reported `new bare allow` lines. `--baseline FILE` and `--excludes FILE` override the baseline and `COMMIT_GUARDS_SUPPRESSION_EXCLUDES`.
 
+Generated paths and adopted source follow [SKILL.md § Generated-file exclusions](SKILL.md#generated-file-exclusions).
+
 ## conflict-markers
 
 Seven `<`, seven `|`, or seven `>` at column 0, followed by a space or end of line, fail in every tracked file. Indented or quoted occurrences and the seven-`=` separator do not fire. `--excludes FILE` overrides `COMMIT_GUARDS_CONFLICT_EXCLUDES`.

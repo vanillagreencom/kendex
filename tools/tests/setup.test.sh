@@ -36,6 +36,7 @@ new_fixture() { # NAME — a clone-shaped repo carrying the package and these to
   git -C "$R" symbolic-ref HEAD refs/heads/main
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
+  printf '[]\n' >"$R/.kendex-generated.json"
   HOOKS="$R/.git/hooks"
 }
 

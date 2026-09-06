@@ -11,9 +11,12 @@
 
 ## Exclusion list
 
+- Generated files are excluded by exact path from the render writer's `.kendex-generated.json`. Adopted in-place source remains governed because the writer leaves it out of that inventory. Adoption needs no ownership row in the exclusions file.
+- The inventory is required at the Git repository root. An absent, unreadable or malformed inventory fails with exit `2`. Install or refresh kendex at that root in the main checkout and stage the inventory with the renders. An installation confined below the Git root produces no repository inventory.
+- The default mode reads the worktree inventory, falling back to its index copy when absent. Staged mode reads the tracked index copy; an inventory staged for deletion is absent. An untracked inventory reads from the worktree.
 - `DOC_LIMITS_EXCLUDES` selects the repository-relative file. Its default is `tools/doc-limits-excludes`. `--excludes FILE` overrides it.
 - Each row is `pattern<TAB>reason`. A missing pattern or reason is a configuration error. Blank lines and lines starting with `#` are ignored.
-- A leading `!` restores matching documents to the measured set. It takes priority over every exclusion. `\!` matches a literal leading exclamation mark.
+- A leading `!` restores matching documents to the measured set. It takes priority over every exclusion, including inventory entries. `\!` matches a literal leading exclamation mark.
 - Exclusions are the exception path for documents that cannot fit their class. The checker has no per-file allowance.
 
 ## Check result

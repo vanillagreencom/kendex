@@ -11,6 +11,8 @@ mkdir -p "$R/tools"
 git -C "$R" -c init.defaultBranch=main init -q
 git -C "$R" config user.email test@example.com
 git -C "$R" config user.name test
+printf '[]\n' >"$R/.kendex-generated.json"
+git -C "$R" add .kendex-generated.json
 PASS=0
 FAIL=0
 expect() { # EXPECTED-EXIT LABEL: assert the preceding run's result

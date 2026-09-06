@@ -276,6 +276,8 @@ gg_walk_staged_paths() { # NOUN ON_FILE — callback receives PATH BLOBFILE SHA
 
 # --- exclusion list: pattern<TAB>reason, reason mandatory --------------------
 GG_EXCLUDE_PATTERNS=()
+# shellcheck source=generated-paths.sh
+source "${BASH_SOURCE[0]%/*}/generated-paths.sh"
 
 # The scans read the INDEX, so policy files come from the index too: staged
 # edits to one govern staged scans, and a sparse checkout that omits the
@@ -373,6 +375,7 @@ gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS and GG_EXCLUDE_CARVES
 gg_is_excluded() { # PATH — 0 when an exclusion glob matches and no `!` row carves it back
   # The loaded lists, matched by the one spelling above. Guarded expansion: an
   # empty array is an unbound variable under Bash 3.2 with set -u.
-  gg_path_matches "$1" ${GG_EXCLUDE_PATTERNS[@]+"${GG_EXCLUDE_PATTERNS[@]}"} || return 1
+  generated_path_contains "$1" \
+    || gg_path_matches "$1" ${GG_EXCLUDE_PATTERNS[@]+"${GG_EXCLUDE_PATTERNS[@]}"} || return 1
   ! gg_path_matches "$1" ${GG_EXCLUDE_CARVES[@]+"${GG_EXCLUDE_CARVES[@]}"}
 }

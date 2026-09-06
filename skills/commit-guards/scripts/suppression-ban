@@ -43,6 +43,8 @@ kendex.settings.toml [env] > default):
   COMMIT_GUARDS_SUPPRESSION_BASELINE   baseline path        (default tools/suppression-baseline.tsv)
   COMMIT_GUARDS_SUPPRESSION_EXCLUDES   exclusion-list path  (default tools/suppression-ban-excludes)
 Flags override both for the path settings.
+Generated files are excluded by exact path from .kendex-generated.json.
+The inventory is required and reads from the index when tracked.
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF
@@ -80,6 +82,10 @@ gg_repo_root_cd
 BASELINE_FILE="$(gg_resolve_path "$BASELINE_OPT" COMMIT_GUARDS_SUPPRESSION_BASELINE "tools/suppression-baseline.tsv" baseline)" || exit 2
 EXCLUDES_FILE="$(gg_resolve_path "$EXCLUDES_OPT" COMMIT_GUARDS_SUPPRESSION_EXCLUDES "tools/suppression-ban-excludes" excludes)" || exit 2
 gg_load_excludes "$EXCLUDES_FILE"
+
+inventory="$(gg_policy_content .kendex-generated.json)" \
+  || gg_collection_error 'cannot read .kendex-generated.json; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
+generated_paths_load "$inventory" || exit 2
 
 gg_tmpdir
 
