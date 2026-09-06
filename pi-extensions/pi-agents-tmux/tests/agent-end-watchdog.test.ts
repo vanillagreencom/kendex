@@ -43,7 +43,7 @@ const REAL_OUTBOX = { agent: AGENT, filesChanged: [], status: "completed", summa
 type Failure = { code?: string; message: string };
 interface WorldOpts {
 	enabled?: boolean;
-	record?: PaneTaskRecord["status"] | "no-status" | "none" | "throws";
+	record?: PaneTaskRecord["status"] | "no-status" | "no-outbox" | "none" | "throws";
 	paneIdle?: boolean;
 	writeFails?: Failure;
 	markFails?: Failure;
@@ -52,6 +52,7 @@ interface World {
 	watchdog: ReturnType<typeof createAgentEndWatchdog>;
 	runtimeRoot: string;
 	outboxFile: string;
+	defaultOutboxFile: string;
 	timers: Array<{ fn: () => void; cancelled: boolean; delayMs: number }>;
 	probes: { record: number; outbox: number; idle: number };
 	writes: SyntheticOutboxPayload[];
@@ -71,10 +72,13 @@ function failing(failure: Failure): () => Promise<never> {
 function world(opts: WorldOpts = {}): World {
 	const runtimeRoot = tempRuntime();
 	const outboxFile = join(runtimeRoot, "outbox", AGENT, `${TASK}.json`);
+	// The path the watchdog computes itself, distinct from the record's own.
+	const defaultOutboxFile = join(runtimeRoot, "outbox", AGENT, `${TASK}.default.json`);
 	const w: World = {
 		watchdog: undefined as never,
 		runtimeRoot,
 		outboxFile,
+		defaultOutboxFile,
 		timers: [],
 		probes: { record: 0, outbox: 0, idle: 0 },
 		writes: [],
@@ -92,18 +96,22 @@ function world(opts: WorldOpts = {}): World {
 			return { cancel: () => void (entry.cancelled = true) };
 		},
 		isEnabled: () => opts.enabled ?? true,
-		outboxPathFor: () => outboxFile,
+		outboxPathFor: () => defaultOutboxFile,
 		readTaskRecord: async () => {
 			w.probes.record += 1;
 			if (record === "throws") throw new Error("registry unreadable");
 			if (record === "none") return undefined;
 			const rec: PaneTaskRecord = { agent: AGENT, createdAt: "2026-05-15T00:00:00.000Z", outboxFile, status: record as PaneTaskRecord["status"], task: "Plan.", taskId: TASK };
 			if (record === "no-status") delete (rec as Partial<PaneTaskRecord>).status;
+			if (record === "no-outbox") {
+				rec.status = "running";
+				delete rec.outboxFile;
+			}
 			return rec;
 		},
-		outboxExists: async () => {
+		outboxExists: async (file) => {
 			w.probes.outbox += 1;
-			return existsSync(outboxFile);
+			return existsSync(file);
 		},
 		isPaneIdle: async () => {
 			w.probes.idle += 1;
@@ -127,18 +135,20 @@ function world(opts: WorldOpts = {}): World {
 	return w;
 }
 
-// A warning by the failure it names; any other line printed whole.
+// A warning by the failure it names, with the pair and message it carries;
+// any other line printed whole.
 function warnTag(line: string): string {
 	for (const [needle, tag] of [["writeSyntheticOutbox failed", "write-failed"], ["markFired failed", "mark-failed"], ["unexpected error", "unexpected"], ["runCheck threw", "check-threw"]] as const) {
-		if (line.includes(needle)) return `${tag}(${JSON.stringify(line.slice(line.lastIndexOf(": ") + 2))})`;
+		if (line.includes(needle)) return `${tag}(${JSON.stringify(line.slice(line.indexOf(" for ") + 5))})`;
 	}
 	return JSON.stringify(line);
 }
 
-// The synthetic payload by its status, reason, refs and synthetic mark; the
-// disk by what sits at the outbox path.
+// The synthetic payload by its status, reason, refs, synthetic mark and
+// whether it carries a summary at all; the disk by what sits at the record's
+// outbox path, and at the computed one when anything does.
 function payloadTag(p: SyntheticOutboxPayload): string {
-	return `${p.status}/${p.reason}@${p.agent}/${p.taskId}${p.synthetic === true ? "/synthetic" : "/NOT-SYNTHETIC"}`;
+	return `${p.status}/${p.reason}@${p.agent}/${p.taskId}${p.synthetic === true ? "/synthetic" : "/NOT-SYNTHETIC"}${p.summary ? "" : "/EMPTY-SUMMARY"}`;
 }
 function diskTag(file: string): string {
 	if (!existsSync(file)) return "absent";
@@ -197,7 +207,8 @@ async function runScript(w: World, steps: Step[]): Promise<string> {
 		const warned = w.warnings.slice(w.seen.warnings).map(warnTag);
 		w.seen = { writes: w.writes.length, marked: w.marked.length, warnings: w.warnings.length, probes: { ...w.probes } };
 		const live = w.timers.filter((t) => !t.cancelled).length;
-		lines.push(`${head} fired=${w.watchdog.hasFired(TASK)} pending=${w.watchdog.hasPending(TASK)} timers=${live} probes=${probes} +writes=[${wrote.join(",")}] +marked=[${marks.join(",")}] disk=${diskTag(w.outboxFile)}${warned.length ? ` warn=[${warned.join(",")}]` : ""}`);
+		const fallback = existsSync(w.defaultOutboxFile) ? ` default=${diskTag(w.defaultOutboxFile)}` : "";
+		lines.push(`${head} fired=${w.watchdog.hasFired(TASK)} pending=${w.watchdog.hasPending(TASK)} timers=${live} probes=${probes} +writes=[${wrote.join(",")}] +marked=[${marks.join(",")}] disk=${diskTag(w.outboxFile)}${fallback}${warned.length ? ` warn=[${warned.join(",")}]` : ""}`);
 	}
 	return lines.join("\n");
 }
@@ -269,20 +280,24 @@ const rows: Array<[string, WorldOpts, Step[], string]> = [
 	["a task with no status yet is active", { record: "no-status" }, [check], `fired fired=true pending=false timers=0 probes=r1o1i1 +writes=[${SYNTHETIC}] +marked=[${TASK}] disk=synthetic`],
 	["a queued task is active", { record: "queued" }, [check], `fired fired=true pending=false timers=0 probes=r1o1i1 +writes=[${SYNTHETIC}] +marked=[${TASK}] disk=synthetic`],
 	["a blocked task is terminal", { record: "blocked" }, [check], "skip:task-terminal fired=false pending=false timers=0 probes=r1o0i0 +writes=[] +marked=[] disk=absent"],
+	["a failed task is terminal", { record: "failed" }, [check], "skip:task-terminal fired=false pending=false timers=0 probes=r1o0i0 +writes=[] +marked=[] disk=absent"],
+	["a task already needing completion is terminal", { record: "needs_completion" }, [check], "skip:task-terminal fired=false pending=false timers=0 probes=r1o0i0 +writes=[] +marked=[] disk=absent"],
+	["a task of unknown status is active", { record: "unknown" }, [check], `fired fired=true pending=false timers=0 probes=r1o1i1 +writes=[${SYNTHETIC}] +marked=[${TASK}] disk=synthetic`],
+	["a record without an outbox path is written at the computed one", { record: "no-outbox" }, [check], `fired fired=true pending=false timers=0 probes=r1o1i1 +writes=[${SYNTHETIC}] +marked=[${TASK}] disk=absent default=synthetic`],
 	["an outbox already on disk", {}, [realCompletion, check], ["real-completion fired=false pending=false timers=0 probes=r0o0i0 +writes=[] +marked=[] disk=real(real completion)", "skip:outbox-present fired=false pending=false timers=0 probes=r1o1i0 +writes=[] +marked=[] disk=real(real completion)"].join("\n")],
 	["a busy pane", { paneIdle: false }, [check], "skip:pane-busy fired=false pending=false timers=0 probes=r1o1i1 +writes=[] +marked=[] disk=absent"],
 	["a writer losing the O_EXCL race is a quiet outbox-present", { writeFails: { code: "EEXIST", message: "outbox already exists" } }, [check, check], ["skip:outbox-present fired=false pending=false timers=0 probes=r1o1i1 +writes=[] +marked=[] disk=absent", "skip:outbox-present fired=false pending=false timers=0 probes=r1o1i1 +writes=[] +marked=[] disk=absent"].join("\n")],
-	["a writer failing otherwise is warned and the task stays unfired", { writeFails: { code: "ENOSPC", message: "disk full" } }, [check], 'error("disk full") fired=false pending=false timers=0 probes=r1o1i1 +writes=[] +marked=[] disk=absent warn=[write-failed("disk full")]'],
-	["a failing mark is warned after the outbox is written and the task counts as fired", { markFails: { message: "registry locked" } }, [check, check], [`fired fired=true pending=false timers=0 probes=r1o1i1 +writes=[${SYNTHETIC}] +marked=[] disk=synthetic warn=[mark-failed("registry locked")]`, "skip:already-fired fired=true pending=false timers=0 probes=r0o0i0 +writes=[] +marked=[] disk=synthetic"].join("\n")],
-	["an unreadable registry is warned and the task stays unfired", { record: "throws" }, [check], 'error("registry unreadable") fired=false pending=false timers=0 probes=r1o0i0 +writes=[] +marked=[] disk=absent warn=[unexpected("registry unreadable")]'],
+	["a writer failing otherwise is warned and the task stays unfired", { writeFails: { code: "ENOSPC", message: "disk full" } }, [check], 'error("disk full") fired=false pending=false timers=0 probes=r1o1i1 +writes=[] +marked=[] disk=absent warn=[write-failed("planner/task-watchdog-1: disk full")]'],
+	["a failing mark is warned after the outbox is written and the task counts as fired", { markFails: { message: "registry locked" } }, [check, check], [`fired fired=true pending=false timers=0 probes=r1o1i1 +writes=[${SYNTHETIC}] +marked=[] disk=synthetic warn=[mark-failed("planner/task-watchdog-1: registry locked")]`, "skip:already-fired fired=true pending=false timers=0 probes=r0o0i0 +writes=[] +marked=[] disk=synthetic"].join("\n")],
+	["an unreadable registry is warned and the task stays unfired", { record: "throws" }, [check], 'error("registry unreadable") fired=false pending=false timers=0 probes=r1o0i0 +writes=[] +marked=[] disk=absent warn=[unexpected("planner/task-watchdog-1: registry unreadable")]'],
 ];
 
 test("the settled-run watchdog", async () => {
 	for (const [label, opts, steps, expect] of rows) assert.equal(await runScript(world(opts), steps), expect, label);
 });
 
-// The real writer: an O_EXCL create, so a completion already on disk is kept
-// and the loss is reported by its code.
+// The real writer and existence probe: an O_EXCL create, so a completion
+// already on disk is kept and the loss is reported by its code.
 async function writerLine(existing: string | undefined): Promise<string> {
 	const runtimeRoot = tempRuntime();
 	const outboxFile = join(runtimeRoot, "outbox", AGENT, `${TASK}.json`);
@@ -290,6 +305,7 @@ async function writerLine(existing: string | undefined): Promise<string> {
 		mkdirSync(join(runtimeRoot, "outbox", AGENT), { recursive: true });
 		writeFileSync(outboxFile, existing);
 	}
+	const existed = await defaultOutboxExists(outboxFile);
 	let head: string;
 	try {
 		await defaultWriteSyntheticOutbox(outboxFile, buildSyntheticOutbox(AGENT, TASK));
@@ -299,13 +315,13 @@ async function writerLine(existing: string | undefined): Promise<string> {
 	}
 	const parsed = JSON.parse(readFileSync(outboxFile, "utf8"));
 	const disk = parsed.synthetic === true ? payloadTag(parsed) : `real(${parsed.summary})`;
-	return `${head} exists=${await defaultOutboxExists(outboxFile)} disk=${disk}`;
+	return `existed=${existed} ${head} exists=${await defaultOutboxExists(outboxFile)} disk=${disk}`;
 }
 
 // label | what is on disk | expect
 const writerRows: Array<[string, string | undefined, string]> = [
-	["a free path is created with the synthetic payload", undefined, `written exists=true disk=${SYNTHETIC}`],
-	["an outbox already on disk is kept and the loss carries EEXIST", JSON.stringify({ summary: "real" }), "rejected:EEXIST exists=true disk=real(real)"],
+	["a free path is created with the synthetic payload", undefined, `existed=false written exists=true disk=${SYNTHETIC}`],
+	["an outbox already on disk is kept and the loss carries EEXIST", JSON.stringify({ summary: "real" }), "existed=true rejected:EEXIST exists=true disk=real(real)"],
 ];
 
 test("the O_EXCL synthetic outbox writer", async () => {
@@ -334,6 +350,7 @@ const DEFAULT_GRACE_MS = WATCHDOG_DEFAULT_GRACE_SEC * 1000;
 const graceRows: Array<[string, string | undefined, number]> = [
 	["unset is the default", undefined, DEFAULT_GRACE_MS],
 	["empty is the default", "", DEFAULT_GRACE_MS],
+	["whitespace is the default", " ", DEFAULT_GRACE_MS],
 	["seconds are milliseconds", "3", 3000],
 	["a fraction keeps whole milliseconds", "0.0015", 1],
 	["zero is zero", "0", 0],
