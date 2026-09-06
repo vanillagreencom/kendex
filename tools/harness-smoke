@@ -39,7 +39,10 @@
 # only after `cursor-agent mcp enable`, which records the approval under
 # HOME, so its mcp row runs under an isolated HOME; Pi's carrier dispatches
 # only the tool_call listener, so its hook row asks the model for one tool
-# call.
+# call. Antigravity is the one harness with no config-root knob at all — its
+# root is a fixed `~/.gemini/config` and a copied credential set makes agy
+# hang on its login flow — so its row runs against the operator's real root
+# and leaves one project record and one log file there per run.
 #
 # Exit 0 when every row passed (advisory and skipped included), 1 when any
 # row failed, 2 when the fixture could not be installed or `kendex verify`
@@ -341,7 +344,9 @@ run() { # NAME CMD... — cwd is the scratch project
   printf '%s\n' "$OUT" >"$LOGS/$name.log"
 }
 last_line() { grep -v '^[[:space:]]*$' <<<"$OUT" | tail -n 1; }
-marker_text() { tr '\n' ';' <"$MARKER" 2>/dev/null; }
+# The redirect is inside the group, so a missing marker takes the shell's own
+# diagnostic with it instead of printing it beside the row's real one.
+marker_text() { { tr '\n' ';' <"$MARKER"; } 2>/dev/null; }
 ESC=$(printf '\033')
 clip() { # TEXT — one evidence cell: colour, leading space and pipes gone, at most 160 characters
   printf '%s' "$1" | sed -e "s/$ESC\\[[0-9;]*m//g" -e 's/^[[:space:]]*//' -e 's/|/¦/g' | cut -c1-160
@@ -420,7 +425,8 @@ holds() { # HARNESS QUESTION RENDER-PATH COMMAND-TEXT MARKER-LINE — a plain-te
 }
 questions() { # HARNESS — the rows this harness answers, in the order it answers them
   case "$1" in
-    claude | opencode | gemini) printf '%s' 'skill agent hook command mcp' ;;
+    claude) printf '%s' 'skill hook agent command mcp' ;;
+    opencode | gemini) printf '%s' 'skill agent hook command mcp' ;;
     codex) printf '%s' 'skill command agent hook mcp' ;;
     pi) printf '%s' 'skill agent command pi-ext hook' ;;
     *) printf '%s' 'skill agent hook mcp' ;;
@@ -453,21 +459,24 @@ copied_home() { # NAME SOURCE-DIR FILE — prints the isolated dir
 claude_rows() {
   have claude || { absent claude claude; return; }
   install_for claude
-  rm -f -- "$MARKER"
-  run claude-skill claude -p '/smoke-skill'
-  judge claude skill 'SMOKE-SKILL-LOADED' 'Unknown command' 'claude -p /smoke-skill'
-  fired claude SessionStart .claude/hooks/smoke-session.sh 'claude -p'
-  run claude-agent claude -p --agent smoke-agent 'Reply exactly as your agent instructions say.'
-  judge claude agent 'SMOKE-AGENT-LOADED' 'not found' 'claude -p --agent smoke-agent'
-  run claude-command claude -p '/smoke-command'
-  judge claude command "$COMMAND_ANSWER" 'Unknown command' 'claude -p /smoke-command'
-  # A project `.mcp.json` server starts as `⏸ Pending approval`, and the
-  # approval is recorded per project in the config dir rather than in the
-  # render, so the row opens that gate in a config dir of its own.
+  # Every claude run goes through a CLAUDE_CONFIG_DIR of its own. A project
+  # `.mcp.json` server starts as `⏸ Pending approval`, and the approval is
+  # recorded per project in the config dir rather than in the render, so the
+  # mcp row needs one anyway; using it for the -p runs as well keeps a
+  # transcript directory for a dead scratch path out of the real config.
   local home
   home=$(copied_home claude-home "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" .credentials.json)
   jq -n --arg p "$PROJECT" '{hasCompletedOnboarding: true, projects: {($p): {hasTrustDialogAccepted: true, enabledMcpjsonServers: ["smoke-mcp"]}}}' \
     >"$home/.claude.json"
+  rm -f -- "$MARKER"
+  run claude-skill env CLAUDE_CONFIG_DIR="$home" claude -p '/smoke-skill'
+  judge claude skill 'SMOKE-SKILL-LOADED' 'Unknown command' 'claude -p /smoke-skill'
+  fired claude SessionStart .claude/hooks/smoke-session.sh 'claude -p'
+  run claude-agent env CLAUDE_CONFIG_DIR="$home" claude -p --agent smoke-agent \
+    'Reply exactly as your agent instructions say.'
+  judge claude agent 'SMOKE-AGENT-LOADED' 'not found' 'claude -p --agent smoke-agent'
+  run claude-command env CLAUDE_CONFIG_DIR="$home" claude -p '/smoke-command'
+  judge claude command "$COMMAND_ANSWER" 'Unknown command' 'claude -p /smoke-command'
   rm -f -- "$MARKER"
   run claude-mcp env CLAUDE_CONFIG_DIR="$home" claude mcp list
   judge claude mcp 'smoke-mcp: .* Connected' 'smoke-mcp: .*(Pending approval|Failed)' \
@@ -539,7 +548,11 @@ opencode_rows() {
   fi
   rm -f -- "$MARKER"
   run opencode-mcp opencode mcp list
-  judge opencode mcp 'smoke-mcp.*connected' '' 'opencode mcp list' "McpStart $PROJECT"
+  # The other five statuses opencode can print for a server, so a refusal reads
+  # as the harness's no rather than as silence. None of them holds `connected`.
+  judge opencode mcp 'smoke-mcp.*connected' \
+    'smoke-mcp.*(failed|not initialized|disabled|needs )' \
+    'opencode mcp list' "McpStart $PROJECT"
 }
 
 # Cursor: no listing surface for rules or skills, so the model is asked to
@@ -600,6 +613,9 @@ pi_rows() {
   row pi agent unanswerable 'Pi core has no agent surface; .pi/agents/*.md is read by the pi-agents-tmux extension, which lists agents only in its interactive dashboard'
   located pi command .pi/prompts/smoke-command.md 'pi --mode rpc get_commands' \
     'fromjson? | select(.type == "response" and .command == "get_commands") | .data.commands[] | select(.name == "smoke-command") | .sourceInfo.path' -R
+  # The marker is deliberately not cleared here: `pi list` starts no session,
+  # so the PiExtension line this row reads is the one the RPC run above left,
+  # which is the same claim — any pi start loads the extension.
   run pi-ext pi list
   holds pi pi-ext .pi/packages/smoke-ext 'pi list' "PiExtension $PROJECT"
   rm -f -- "$MARKER"
@@ -665,16 +681,17 @@ copilot_rows() {
 # Antigravity: the agy CLI reads the shared .agents/skills tree, and a slash
 # invocation in print mode expands the skill. `-p` swallows the next word, so
 # the prompt is attached to it and every other flag comes first. Its agent,
-# hook and MCP registries answer from the global root, which this check must
-# not write, and whether agy also reads the project renders kendex writes for
-# them is an open adapter question, so those three rows are unanswerable here
-# rather than asked at a scope that cannot answer.
+# hook and MCP registries answer from the global root alone, so asking those
+# three would mean installing the fixture into the operator's own Antigravity
+# configuration; whether agy also reads the project renders kendex writes for
+# them is an open adapter question, so they are unanswerable here rather than
+# asked at a scope that cannot answer.
 antigravity_rows() {
   have agy || { absent antigravity agy; return; }
   install_for antigravity
   run agy-skill agy --dangerously-skip-permissions -p=/smoke-skill
   judge antigravity skill '^SMOKE-SKILL-LOADED$' '' 'agy -p=/smoke-skill'
-  local why='agy answers for agents, hooks and MCP servers from its global root, which this check must not write; whether it also reads the project renders kendex writes is an open adapter question'
+  local why='agy answers for agents, hooks and MCP servers from its global root alone, and this check installs no fixture into the real Antigravity configuration that would answer them; whether agy also reads the project renders kendex writes for them is an open adapter question'
   row antigravity agent unanswerable "$why"
   row antigravity hook unanswerable "$why"
   row antigravity mcp unanswerable "$why"
