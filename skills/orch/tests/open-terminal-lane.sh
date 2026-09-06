@@ -28,12 +28,13 @@ make_fetcher "$FETCHER"
 
 # --- stubs -----------------------------------------------------------------
 OT_STUB_BIN="$TMP_ROOT/ot-bin"; mkdir -p "$OT_STUB_BIN"
-# `worktree create` hands back a fresh directory and logs the call, so a row
-# can assert that no worktree was created when the lane refused.
+# `worktree create` hands back a fresh directory beside its log, under the
+# run the suite's trap removes, and logs the call, so a row can assert that
+# no worktree was created when the lane refused.
 cat > "$OT_STUB_BIN/worktree" <<'STUBEOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OT_WT_LOG"
-[[ "${1:-}" == "create" ]] && { d="$(mktemp -d)"; printf '%s\n' "$d"; exit 0; }
+[[ "${1:-}" == "create" ]] && { d="$(mktemp -d "$(dirname "$OT_WT_LOG")/wt.XXXXXX")"; printf '%s\n' "$d"; exit 0; }
 exit 0
 STUBEOF
 cat > "$OT_STUB_BIN/gh" <<'STUBEOF'
@@ -224,6 +225,7 @@ table() {
   local row label env args expect
   for row in "$@"; do
     IFS='|' read -r label env args expect <<<"$row"
+    [[ -n "$expect" ]] || { printf 'table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
     # shellcheck disable=SC2086
     run_ot "$env" $args
     assert_eq "$(observe "$expect")" "$expect" "$label"
@@ -275,9 +277,9 @@ echo "=== --lane auto over a batch re-picks off every claimed lane ==="
 # next item blind; an item another session owns never carried a session and
 # is not a lane the batch ran on.
 table \
-  'a two-item batch spreads across two accounts, most headroom first|| --harness claude --lane auto --cmd true CC-4 CC-5|rc=0 claim_lanes=claude,eclaude out_lanes=claude,eclaude summary=spread=2' \
-  'a claimed window whose launch failed still moves the next item off that lane|OT_TMUX_FAIL=send-keys|--harness claude --lane auto --cmd true CC-8 CC-9|claim_lanes=claude,eclaude out_lanes=claude,eclaude' \
-  'a third item returning to a used lane still reports two distinct lanes||--harness claude --lane auto --cmd true CC-12 CC-13 CC-14|summary=spread=2' \
+  'a two-item batch spreads across two accounts, most headroom first|| --harness claude --lane auto --cmd true CC-4 CC-5|rc=0 launched=2 claim_lanes=claude,eclaude out_lanes=claude,eclaude summary=spread=2' \
+  'a claimed window whose launch failed still moves the next item off that lane|OT_TMUX_FAIL=send-keys|--harness claude --lane auto --cmd true CC-8 CC-9|launched=2 claim_lanes=claude,eclaude out_lanes=claude,eclaude' \
+  'a third item returning to a used lane still reports two distinct lanes||--harness claude --lane auto --cmd true CC-12 CC-13 CC-14|launched=3 summary=spread=2' \
   "a re-picked lane carrying a separator stops the batch after the first launch|LANES_HOME=$TABHOME;FIXTURE_DIR=$TABFIX|--harness claude --lane auto --cmd true CC-22 CC-23|rc=1 launched=1 claims=1" \
   "a re-pick that cannot place its item stops the batch after the first launch|ORCH_LANES_FETCH_CMD=$TMP_ROOT/fetch-flaky;FLAKY_COUNT=$TMP_ROOT/flaky-count;FLAKY_OK=3|--harness claude --lane auto --cmd true CC-6 CC-7|rc=1 launched=1 claims=1" \
   "a lane picked for an item another session owns is not one the batch ran on|WORKTREE_CLI=$OWNED_STUB;OWNED_COUNT=$TMP_ROOT/owned-count;OWNED_ROOT=$TMP_ROOT|--harness claude --lane auto --cmd true CC-17 CC-18|launched=1 summary=lane=claude"
