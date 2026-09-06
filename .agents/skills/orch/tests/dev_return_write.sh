@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Tests for dev-return-write: the deterministic writer for a dev
-# agent's round-scoped completion artifact
-# ([WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json). Running the writer instead
-# of hand-authoring the JSON makes the receipt well-formed and complete by
-# construction — every artifact it emits must round-trip through
-# dev-artifact-check (round mode) as valid, and every bad invocation must exit 2.
-
+# Tests for dev-return-write: the deterministic writer for a dev agent's
+# round-scoped completion artifact ([WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json).
+# Running the writer instead of hand-authoring the JSON makes the receipt
+# well-formed and complete by construction: every artifact it emits round-trips
+# through dev-artifact-check as valid, and every bad invocation exits 2 on the
+# guard it names, writing nothing.
+#
+# One run and one comparison per row. `observe` reads exactly the fields the
+# row's expect names; a refusal row pins the stderr clause only its guard
+# emits, since an implement row's unresolvable commit would otherwise exit 2
+# on the growth measurement whatever the row's own guard did.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
-
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 WRITE="$REPO_ROOT/skills/orch/scripts/dev-return-write"
@@ -17,307 +20,192 @@ ROUND_WRITE="$REPO_ROOT/skills/orch/scripts/dev-round-write"
 STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
+# shellcheck source=lib/waiter-assertions.sh
+source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-PASS=0
-FAIL=0
-
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
+new_repo() {
+  local dir="$TMP_ROOT/$1"
+  mkdir -p "$dir"
+  git -C "$dir" init -q -b main
+  git -C "$dir" config user.email test@example.com
+  git -C "$dir" config user.name Test
+  git -C "$dir" config commit.gpgsign false
+  git -C "$dir" commit -q --allow-empty -m base
+  printf '%s' "$dir"
 }
 
-# Assert an invocation fails validation with exit code 2.
-assert_exit2() {
-  local name="$1"; shift
-  set +e
-  "$WRITE" "$@" >/dev/null 2>&1
-  local rc=$?
-  set -e
-  assert_eq "$rc" "2" "$name"
-}
-
-echo "=== dev-return-write ==="
-
-worktree="$TMP_ROOT/wt"
-mkdir -p "$worktree"
-git -C "$worktree" init -q -b main
-git -C "$worktree" config user.email test@example.com
-git -C "$worktree" config user.name Test
-git -C "$worktree" config commit.gpgsign false
-git -C "$worktree" commit -q --allow-empty -m base
-git -C "$worktree" switch -q -c issue-776
-printf 'one\ntwo\nthree\n' > "$worktree/implementation.txt"
-git -C "$worktree" add implementation.txt
-git -C "$worktree" commit -q -m implementation
-implementation_head="$(git -C "$worktree" rev-parse HEAD)"
+# The implement worktree: a three-line implementation on issue-776, later grown
+# by two lines. The fix worktree: a delegated two-item round.
+WT="$(new_repo wt)"
+git -C "$WT" switch -q -c issue-776
+printf 'one\ntwo\nthree\n' > "$WT/implementation.txt"
+git -C "$WT" add implementation.txt
+git -C "$WT" commit -q -m implementation
+IMPL_HEAD="$(git -C "$WT" rev-parse HEAD)"
+HEAD="$IMPL_HEAD"
 RID="1750000000-99"
-
-# --- valid implement (single): no --item → items: [] ---
-init_growth_state "$STATE" "$worktree" issue-776 "$RID"
-out="$("$WRITE" --worktree "$worktree" --kind implement --issue issue-776 --round-id "$RID" \
-  --branch issue-776 --commit "$implementation_head" --validate pass --qa-label needs-review)"
-assert_eq "$out" "$worktree/tmp/dev-return-issue-776-$RID.json" "implement single prints the round-scoped artifact path"
-assert_eq "$([[ -f "$out" ]] && echo yes)" "yes" "implement single wrote the file"
-assert_eq "$(jq -r '.schema_version' "$out")" "1" "implement single .schema_version is 1"
-assert_eq "$(jq -r '.schema_version | type' "$out")" "number" "implement single .schema_version is a JSON number"
-assert_eq "$(jq -r '.round_id' "$out")" "$RID" "implement single .round_id matches --round-id"
-assert_eq "$(jq -r '.kind' "$out")" "implement" "implement single .kind"
-assert_eq "$(jq -r '.issue' "$out")" "issue-776" "implement single .issue"
-assert_eq "$(jq -r '.commit' "$out")" "$implementation_head" "implement single .commit"
-assert_eq "$(jq -r '.baseline_lines' "$out")" "3" "implement single carries its measured baseline"
-assert_eq "$(jq -r '.validate' "$out")" "pass" "implement single .validate"
-assert_eq "$(jq -c '.qa_labels' "$out")" '["needs-review"]' "implement single .qa_labels"
-assert_eq "$(jq -r '.summary_posted' "$out")" "true" "implement single .summary_posted true"
-assert_eq "$(jq -r '.summary' "$out")" "null" "implement single .summary null without --summary-file"
-assert_eq "$(jq -r '.bundled' "$out")" "false" "implement single .bundled false"
-assert_eq "$(jq -c '.items' "$out")" "[]" "implement single .items is []"
-assert_eq "$("$STATE" --state-dir "$worktree/tmp" get issue-776 '.pr.baseline_lines // "null"')" "null" \
-  "the developer-side writer does not mutate workflow state"
-# round-trips through dev-artifact-check round mode as valid
-assert_eq "$(env ORCH_STATE_DIR="$worktree/tmp" "$CHECK" --worktree "$worktree" --issue issue-776 --round-id "$RID" | jq -r '.reason')" "valid" \
-  "implement single round-trips through dev-artifact-check round mode as valid"
-assert_eq "$("$STATE" --state-dir "$worktree/tmp" get issue-776 .pr.baseline_lines)" "3" \
-  "orchestrator acceptance records additions plus deletions"
-printf 'four\nfive\n' >> "$worktree/implementation.txt"
-git -C "$worktree" add implementation.txt
-git -C "$worktree" commit -q -m growth
-current_head="$(git -C "$worktree" rev-parse HEAD)"
-"$WRITE" --worktree "$worktree" --kind implement --issue issue-776 --round-id later \
-  --branch issue-776 --commit "$current_head" --validate pass >/dev/null
-env ORCH_STATE_DIR="$worktree/tmp" "$CHECK" --worktree "$worktree" --issue issue-776 --round-id later >/dev/null
-assert_eq "$("$STATE" --state-dir "$worktree/tmp" get issue-776 .pr.baseline_lines)" "3" "a later round preserves the first baseline"
-
-# --- valid implement: no qa labels → [] ; --no-summary → false ; FAILING validate ---
-out="$("$WRITE" --worktree "$worktree" --kind implement --issue issue-100 --round-id 5-5 \
-  --branch b --commit "$current_head" --validate "FAILING: lint,build" --no-summary)"
-assert_eq "$(jq -c '.qa_labels' "$out")" "[]" "implement no labels → qa_labels []"
-assert_eq "$(jq -r '.summary_posted' "$out")" "false" "--no-summary sets summary_posted false"
-assert_eq "$(jq -r '.validate' "$out")" "FAILING: lint,build" "FAILING validate accepted verbatim"
-assert_eq "$("$CHECK" --file "$out" | jq -r '.reason')" "valid" "implement no-summary round-trips as valid"
-
-# --- --summary-file embeds content for GitHub/ad-hoc recovery ---
-printf '## Completion Summary\n- did the thing\n' > "$worktree/summary.md"
-out="$("$WRITE" --worktree "$worktree" --kind implement --issue issue-gh --round-id 6-6 \
-  --branch b --commit "$current_head" --validate pass --no-summary --summary-file "$worktree/summary.md")"
-assert_eq "$(jq -r '.summary' "$out" | head -1)" "## Completion Summary" "--summary-file embeds the summary content"
-assert_eq "$(jq -r '.summary_posted' "$out")" "false" "--summary-file keeps summary_posted false (nothing posted to a tracker)"
-
-# --- valid fix: items present ---
-fix_worktree="$TMP_ROOT/fix-wt"
-mkdir -p "$fix_worktree"
-git -C "$fix_worktree" init -q -b main
-git -C "$fix_worktree" config user.email test@example.com
-git -C "$fix_worktree" config user.name Test
-git -C "$fix_worktree" config commit.gpgsign false
-git -C "$fix_worktree" commit -q --allow-empty -m base
-fix_head="$(git -C "$fix_worktree" rev-parse HEAD)"
-init_growth_state "$STATE" "$fix_worktree" issue-776 7-7 100
-env ORCH_STATE_DIR="$fix_worktree/tmp" "$ROUND_WRITE" --worktree "$fix_worktree" --issue issue-776 --round-id 7-7 \
+FW="$(new_repo fix-wt)"
+FIX_HEAD="$(git -C "$FW" rev-parse HEAD)"
+init_growth_state "$STATE" "$FW" issue-776 7-7 100
+env ORCH_STATE_DIR="$FW/tmp" "$ROUND_WRITE" --worktree "$FW" --issue issue-776 --round-id 7-7 \
   --item 1 "fix nil deref" "tools/guard on a staged render" --item 2 "review decision" "tools/guard on a staged render" >/dev/null
-out="$("$WRITE" --worktree "$fix_worktree" --kind fix --issue issue-776 --round-id 7-7 \
-  --branch issue-776 --commit "$fix_head" --validate pass \
-  --item 1 Applied "fixed nil deref" --item 2 Skipped "contradicts D010")"
-assert_eq "$(jq -r '.kind' "$out")" "fix" "fix .kind"
-assert_eq "$(jq -r '.items | length' "$out")" "2" "fix has 2 items"
-assert_eq "$(jq -r '.items[0].n | type' "$out")" "number" "fix item[0].n is a JSON number"
-assert_eq "$(jq -r '.items[1].decision' "$out")" "Skipped" "fix item[1].decision"
-assert_eq "$("$CHECK" --worktree "$fix_worktree" --issue issue-776 --round-id 7-7 --expect-items-from-round | jq -r '.reason')" "valid" \
-  "fix round-trips through bound round authorization"
+printf '## Completion Summary\n- did the thing\n' > "$TMP_ROOT/summary.md"
+SUMMARY_FILE="$TMP_ROOT/summary.md"
 
-# --- valid bundled implement: --bundled + items ---
-current_head="$(git -C "$worktree" rev-parse HEAD)"
-out="$("$WRITE" --worktree "$worktree" --kind implement --issue PROJ-100 --round-id 8-8 \
-  --branch feat/proj-100 --commit "$current_head" --validate pass --bundled \
-  --item 1 Applied "sub A done" --item 2 Applied "sub B done" \
-  --qa-label needs-safety-audit --qa-label needs-review)"
-assert_eq "$(jq -r '.bundled' "$out")" "true" "bundled implement .bundled true"
-assert_eq "$(jq -r '.items | length' "$out")" "2" "bundled implement has 2 items"
-assert_eq "$(jq -c '.qa_labels' "$out")" '["needs-safety-audit","needs-review"]' "bundled implement aggregated qa_labels"
-assert_eq "$("$CHECK" --file "$out" | jq -r '.reason')" "valid" \
-  "bundled implement round-trips as valid"
+# run ARGS... — one writer run; OUT is the printed path, RC the exit, ERR the
+# stderr file. In ARGS `+` reads as a space, EMPTY as an empty argument, SPACES
+# as three spaces, %H as the implement worktree's head, %FW as the fix worktree.
+RUN_SEQ=0
+run() {
+  local args=() a
+  for a in "$@"; do
+    a="${a//+/ }"; a="${a//%H/$HEAD}"; a="${a//%FW/$FW}"
+    case "$a" in EMPTY) a="" ;; SPACES) a="   " ;; esac
+    args+=("$a")
+  done
+  RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
+  mkdir -p "$RUN"
+  ERR="$RUN/stderr"
+  set +e
+  OUT=$("$WRITE" ${args[@]+"${args[@]}"} 2>"$ERR")
+  RC=$?
+  set -e
+}
 
-# --- Blocked decision accepted ---
-out="$("$WRITE" --worktree "$worktree" --kind fix --issue issue-b --round-id 9-9 \
-  --branch b --commit c --validate pass --item 3 Blocked "needs API design")"
-assert_eq "$(jq -r '.items[0].decision' "$out")" "Blocked" "fix item Blocked decision accepted"
+rec() { jq -r "$@" "$OUT" 2>/dev/null || echo UNPARSEABLE; }
 
-# --- inline --summary: a round must not depend on a file write
-# the harness can refuse. Exactly one of --summary/--summary-file.
-printf '## Summary\nOne paragraph of completion detail.\n' > "$worktree/summary-file.md"
-out="$("$WRITE" --worktree "$worktree" --kind implement --issue issue-1236i --round-id 12-12 \
-  --branch b --commit "$current_head" --validate pass --no-summary --summary "inline completion summary")"
-assert_eq "$(jq -r '.summary' "$out")" "inline completion summary" "implement inline --summary embeds the summary text"
-assert_eq "$("$CHECK" --file "$out" | jq -r '.reason')" "valid" "implement inline-summary round-trips as valid"
+# observe EXPECT — prints the run's value of every `name=` field EXPECT names,
+# in EXPECT's order (`+` reads as a space in a needle, and a value's spaces
+# print as `+`):
+#   rc              exit status
+#   written         `yes` when stdout names an existing file
+#   stderr~<text>   whether stderr carries <text>
+#   roundtrip       dev-artifact-check --file's reason for the written artifact
+#   has:<key>       whether the record carries <key>
+#   <jq path>       the path's value in the record (`.summary|split("\n")[0]`
+#                   style filters allowed; a missing file reads UNPARSEABLE)
+observe() {
+  local got="" token name value needle
+  for token in $1; do
+    name="${token%%=*}"
+    case "$name" in
+      rc) value="$RC" ;;
+      written) value="$([[ -n "$OUT" && -f "$OUT" ]] && echo yes || echo no)" ;;
+      stderr~*) needle="${name#stderr~}"; value="$(grep -qF -- "${needle//+/ }" "$ERR" && echo true || echo false)" ;;
+      roundtrip) value="$("$CHECK" --file "$OUT" 2>/dev/null | jq -r '.reason' 2>/dev/null || echo UNPARSEABLE)" ;;
+      has:*) value="$(rec "has(\"${name#has:}\")")" ;;
+      *) value="$(rec "${name//+/ }")"; value="${value// /+}" ;;
+    esac
+    got="$got $name=$value"
+  done
+  printf '%s' "${got# }"
+}
 
-# --- atomic write: no leftover temp files in tmp/ after a successful write ---
-tmp_leftovers="$(find "$worktree/tmp" -maxdepth 1 -name '.dev-return-*' | wc -l | tr -d ' ')"
-assert_eq "$tmp_leftovers" "0" "atomic write leaves no temp files behind"
+# table ROW... — `label|args|expect`, one run and one assertion per row.
+table() {
+  local row label args expect
+  for row in "$@"; do
+    IFS='|' read -r label args expect <<<"$row"
+    [[ -n "$expect" ]] || { printf 'table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+    # shellcheck disable=SC2086
+    run $args
+    assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
+  done
+}
 
-# --- validation / exit-2 paths ---
-assert_exit2 "bad --kind exits 2" \
-  --worktree "$worktree" --kind review --issue i --round-id "$RID" --branch b --commit c --validate pass
-assert_exit2 "missing --round-id exits 2" \
-  --worktree "$worktree" --kind implement --issue i --branch b --commit c --validate pass
-assert_exit2 "missing --issue (required arg) exits 2" \
-  --worktree "$worktree" --kind implement --round-id "$RID" --branch b --commit c --validate pass
-assert_exit2 "value flag with no value at end exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate
-assert_exit2 "missing --worktree exits 2" \
-  --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass
-assert_exit2 "nonexistent --worktree dir exits 2" \
-  --worktree "$TMP_ROOT/nope" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass
-assert_exit2 "bad --validate exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate weird
-assert_exit2 "path-unsafe --issue (slash) exits 2" \
-  --worktree "$worktree" --kind implement --issue "a/b" --round-id "$RID" --branch b --commit c --validate pass
-assert_exit2 "path-traversal --issue (..) exits 2" \
-  --worktree "$worktree" --kind implement --issue ".." --round-id "$RID" --branch b --commit c --validate pass
-assert_exit2 "path-unsafe --round-id (slash) exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id "a/../b" --branch b --commit c --validate pass
-assert_exit2 "path-traversal --round-id (..) exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id ".." --branch b --commit c --validate pass
-assert_exit2 "missing --summary-file exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass --summary-file "$TMP_ROOT/nope.md"
-assert_exit2 "bad --item DECISION exits 2" \
-  --worktree "$worktree" --kind fix --issue i --round-id "$RID" --branch b --commit c --validate pass --item 1 Fixed "x"
-assert_exit2 "empty --item REASONING exits 2" \
-  --worktree "$worktree" --kind fix --issue i --round-id "$RID" --branch b --commit c --validate pass --item 1 Applied ""
-assert_exit2 "non-numeric --item N exits 2" \
-  --worktree "$worktree" --kind fix --issue i --round-id "$RID" --branch b --commit c --validate pass --item x Applied "x"
-assert_exit2 "--item with too few args exits 2" \
-  --worktree "$worktree" --kind fix --issue i --round-id "$RID" --branch b --commit c --validate pass --item 1 Applied
-assert_exit2 "fix with no --item exits 2" \
-  --worktree "$worktree" --kind fix --issue i --round-id "$RID" --branch b --commit c --validate pass
-assert_exit2 "bundled implement with no --item exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass --bundled
-assert_exit2 "unknown argument exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass --frobnicate
+echo "=== a single implement record, complete by construction ==="
+# The record carries every field the schema names, the measured baseline
+# included, without mutating workflow state; orchestrator acceptance records
+# the baseline once and a later round preserves it.
+init_growth_state "$STATE" "$WT" issue-776 "$RID"
+run --worktree "$WT" --kind implement --issue issue-776 --round-id "$RID" --branch issue-776 --commit "$IMPL_HEAD" --validate pass --qa-label needs-review
+assert_eq "$OUT" "$WT/tmp/dev-return-issue-776-$RID.json" "the writer prints the round-scoped artifact path" "$ERR"
+assert_eq "$(rec -c '.')" "{\"schema_version\":1,\"round_id\":\"$RID\",\"kind\":\"implement\",\"issue\":\"issue-776\",\"branch\":\"issue-776\",\"commit\":\"$IMPL_HEAD\",\"validate\":\"pass\",\"validate_note\":null,\"qa_labels\":[\"needs-review\"],\"summary_posted\":true,\"summary\":null,\"bundled\":false,\"items\":[],\"baseline_lines\":3}" \
+  "the record is the schema's shape with the measured baseline, a numeric schema_version and no note" "$ERR"
+assert_eq "$("$STATE" --state-dir "$WT/tmp" get issue-776 '.pr.baseline_lines // "null"')" "null" "the developer-side writer does not mutate workflow state"
+assert_eq "$(env ORCH_STATE_DIR="$WT/tmp" "$CHECK" --worktree "$WT" --issue issue-776 --round-id "$RID" | jq -r '.reason'),$("$STATE" --state-dir "$WT/tmp" get issue-776 .pr.baseline_lines)" "valid,3" \
+  "the record round-trips through round-mode acceptance, which records the baseline"
+printf 'four\nfive\n' >> "$WT/implementation.txt"
+git -C "$WT" add implementation.txt
+git -C "$WT" commit -q -m growth
+HEAD="$(git -C "$WT" rev-parse HEAD)"
+run --worktree "$WT" --kind implement --issue issue-776 --round-id later --branch issue-776 --commit "$HEAD" --validate pass
+env ORCH_STATE_DIR="$WT/tmp" "$CHECK" --worktree "$WT" --issue issue-776 --round-id later >/dev/null
+assert_eq "$("$STATE" --state-dir "$WT/tmp" get issue-776 .pr.baseline_lines)" "3" "a later round preserves the first baseline"
 
-# One summary source only — both flags at once must be a loud
-# error (a silent precedence rule would quietly misrecord the deliverable).
-assert_exit2 "implement with both --summary and --summary-file exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass \
-  --summary "inline" --summary-file "$worktree/summary-file.md"
-# Exclusion and validation key on flag PRESENCE, not value: an explicitly
-# empty --summary-file (an unset path variable) is a supplied second source /
-# a config error, never a silent no-op.
-assert_exit2 "--summary plus empty --summary-file value still exits 2 (presence, not content)" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass \
-  --summary "inline" --summary-file ""
-assert_exit2 "explicitly empty --summary-file alone exits 2 for implement" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass \
-  --summary-file ""
-# Every other flag here is valid and the commit resolves, so the whitespace-only
-# summary is the ONLY thing that can fail this call.
-assert_exit2 "whitespace-only --summary exits 2 (an empty deliverable is not a record)" \
-  --worktree "$worktree" --kind implement --issue issue-blanksum --round-id "$RID" --branch b \
-  --commit "$current_head" --validate pass --summary "   "
-assert_exit2 "--summary with no value exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass --summary
+echo "=== the record's variable fields, one written artifact per row ==="
+# No labels is an empty list; --no-summary is summary_posted false; a FAILING
+# verdict is recorded verbatim; --summary-file and --summary embed the text
+# without marking it posted; a fix carries its items with numeric n and the
+# three decisions; a bundled implement aggregates labels; the note is the
+# additive channel for a caveat the enumeration cannot express, present and
+# null when omitted; leading-dash prose is a value unless it is this script's
+# own flag; a successful write leaves no temp file behind.
+table \
+  "no labels, --no-summary and a FAILING verdict|--worktree $WT --kind implement --issue issue-100 --round-id 5-5 --branch b --commit %H --validate FAILING:+lint,build --no-summary|written=yes .qa_labels|tojson=[] .summary_posted=false .validate=FAILING:+lint,build roundtrip=valid" \
+  "--summary-file embeds the file and keeps summary_posted false|--worktree $WT --kind implement --issue issue-gh --round-id 6-6 --branch b --commit %H --validate pass --no-summary --summary-file $SUMMARY_FILE|.summary|split(\"\\n\")[0]=##+Completion+Summary .summary_posted=false" \
+  "a fix carries its items, n numeric, and round-trips through the bound round|--worktree %FW --kind fix --issue issue-776 --round-id 7-7 --branch issue-776 --commit $FIX_HEAD --validate pass --item 1 Applied fixed+nil+deref --item 2 Skipped contradicts+D010|.kind=fix .items|length=2 .items[0].n|type=number .items[1].decision=Skipped" \
+  "a bundled implement aggregates its labels|--worktree $WT --kind implement --issue PROJ-100 --round-id 8-8 --branch feat/proj-100 --commit %H --validate pass --bundled --item 1 Applied sub+A+done --item 2 Applied sub+B+done --qa-label needs-safety-audit --qa-label needs-review|.bundled=true .items|length=2 .qa_labels|tojson=[\"needs-safety-audit\",\"needs-review\"] roundtrip=valid" \
+  "a Blocked decision is accepted|--worktree $WT --kind fix --issue issue-b --round-id 9-9 --branch b --commit c --validate pass --item 3 Blocked needs+API+design|.items[0].decision=Blocked" \
+  "an inline --summary embeds the text|--worktree $WT --kind implement --issue issue-1236i --round-id 12-12 --branch b --commit %H --validate pass --no-summary --summary inline+completion+summary|.summary=inline+completion+summary roundtrip=valid" \
+  "a --validate-note is recorded verbatim beside a strictly enumerated pass|--worktree $WT --kind implement --issue issue-note --round-id $RID --branch b --commit %H --validate pass --validate-note 80/80+on+re-run;+first+run+flaked|.validate=pass .validate_note=80/80+on+re-run;+first+run+flaked" \
+  "a FAILING verdict carries a note too|--worktree $WT --kind implement --issue issue-failnote --round-id $RID --branch b --commit %H --validate FAILING:+lint --validate-note lint+fails+only+under+--release|.validate=FAILING:+lint .validate_note=lint+fails+only+under+--release" \
+  "an omitted note is present and null|--worktree $WT --kind implement --issue issue-nonote --round-id $RID --branch b --commit %H --validate pass|has:validate_note=true .validate_note=null" \
+  "a leading single-dash summary is a value|--worktree $WT --kind implement --issue issue-dash --round-id 13-13 --branch b --commit %H --validate pass --summary -+close+as+duplicate+of+the+merged+fix --no-summary|.summary=-+close+as+duplicate+of+the+merged+fix" \
+  "double-dash prose that is not an own flag is a summary|--worktree $WT --kind implement --issue issue-ddash --round-id 14-14 --branch b --commit %H --validate pass --summary --foo+is+a+flag+of+the+consuming+tool --no-summary|.summary=--foo+is+a+flag+of+the+consuming+tool" \
+  "double-dash prose is accepted as --item REASONING|--worktree $WT --kind fix --issue issue-ddash2 --round-id 14-15 --branch b --commit c --validate pass --item 1 Skipped --force+would+be+needed|.items[0].reasoning=--force+would+be+needed"
+assert_eq "$(find "$WT/tmp" -maxdepth 1 -name '.dev-return-*' | wc -l | tr -d ' ')" "0" "a successful write leaves no temp file behind"
+assert_eq "$("$CHECK" --worktree "$FW" --issue issue-776 --round-id 7-7 --expect-items-from-round | jq -r '.reason')" "valid" "the fix record round-trips through the bound round's authorization"
 
-# Option-token swallow: with an argc-only check, a value flag whose value was
-# omitted mid-line consumes the NEXT FLAG as its value — "--summary
-# --no-summary" would record the literal string "--no-summary" as the round's
-# deliverable in a well-formed, accepted artifact. Every value-taking flag
-# shares the guard.
-assert_exit2 "--summary followed by another flag exits 2 (option token is not a value)" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass --summary --no-summary
-assert_exit2 "--summary-file followed by another flag exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass --summary-file --no-summary
-assert_exit2 "--branch followed by another flag exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch --commit c --validate pass
-assert_exit2 "--validate-note followed by another flag exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass \
-  --validate-note --qa-label needs-review
-assert_exit2 "--item REASONING as option token exits 2" \
-  --worktree "$worktree" --kind fix --issue i --round-id "$RID" --branch b --commit c --validate pass \
-  --item 1 Applied --bundled
-# Control: ordinary leading-dash prose (a Markdown bullet) is still a value.
-out="$("$WRITE" --worktree "$worktree" --kind implement --issue issue-dash --round-id 13-13 \
-  --branch b --commit "$current_head" --validate pass --summary "- close as duplicate of the merged fix" --no-summary)"
-assert_eq "$(jq -r '.summary' "$out")" "- close as duplicate of the merged fix" \
-  "a leading single-dash summary value is accepted"
-# The guard matches this script's OWN flag vocabulary exactly: free-form prose
-# that merely begins with '--' is a legal value, not a forgotten-value error.
-out="$("$WRITE" --worktree "$worktree" --kind implement --issue issue-ddash --round-id 14-14 \
-  --branch b --commit "$current_head" --validate pass --summary "--foo is a flag of the consuming tool, not of this script" --no-summary)"
-assert_eq "$(jq -r '.summary' "$out" | head -1)" "--foo is a flag of the consuming tool, not of this script" \
-  "double-dash-leading prose that is not an own-flag token is accepted as a summary"
-out="$("$WRITE" --worktree "$worktree" --kind fix --issue issue-ddash2 --round-id 14-15 \
-  --branch b --commit c --validate pass --item 1 Skipped "--force would be needed; declined per policy")"
-assert_eq "$(jq -r '.items[0].reasoning' "$out")" "--force would be needed; declined per policy" \
-  "double-dash-leading prose is accepted as --item REASONING"
+echo "=== every refusal exits 2 on its own guard and writes nothing ==="
+# Every value-taking flag refuses a missing value and an option token in its
+# place (an argc-only check would record `--no-summary` as the deliverable);
+# single-valued flags refuse duplicates rather than last-win; both summary
+# sources at once, or an explicitly empty --summary-file, are a config error
+# and never a silent no-op; an empty or whitespace note or summary is refused
+# rather than stored. Every implement row's commit `c` is unresolvable, so the
+# stderr clause is what proves the row's own guard fired.
+table \
+  "a bad --kind|--worktree $WT --kind review --issue i --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~--kind+must+be+implement+or+fix=true" \
+  "a missing --round-id|--worktree $WT --kind implement --issue i --branch b --commit c --validate pass|rc=2 stderr~--round-id+is+required=true" \
+  "a missing --issue|--worktree $WT --kind implement --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~--issue+is+required=true" \
+  "a value flag with no value at the end|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate|rc=2 stderr~--validate+requires+a+value=true" \
+  "a missing --worktree|--kind implement --issue i --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~--worktree+is+required=true" \
+  "a nonexistent --worktree|--worktree $TMP_ROOT/nope --kind implement --issue i --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~is+not+a+directory=true" \
+  "a bad --validate|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate weird|rc=2 stderr~--validate+must+be+'pass'+or+begin+with+'FAILING:'=true" \
+  "a path-unsafe --issue|--worktree $WT --kind implement --issue a/b --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~--issue+'a/b'+must+match=true" \
+  "a path-traversal --issue|--worktree $WT --kind implement --issue .. --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~--issue+'..'+must+match=true" \
+  "a path-unsafe --round-id|--worktree $WT --kind implement --issue i --round-id a/../b --branch b --commit c --validate pass|rc=2 stderr~--round-id+'a/../b'+must+match=true" \
+  "a path-traversal --round-id|--worktree $WT --kind implement --issue i --round-id .. --branch b --commit c --validate pass|rc=2 stderr~--round-id+'..'+must+match=true" \
+  "a missing --summary-file|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary-file $TMP_ROOT/nope.md|rc=2 stderr~does+not+exist=true" \
+  "a bad --item DECISION|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --item 1 Fixed x|rc=2 stderr~--item+DECISION+must+be+Applied=true" \
+  "an empty --item REASONING|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --item 1 Applied EMPTY|rc=2 stderr~REASONING+must+be+non-empty=true" \
+  "a non-numeric --item N|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --item x Applied x|rc=2 stderr~--item+N+must+be+a+non-negative+integer=true" \
+  "--item with too few arguments|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --item 1 Applied|rc=2 stderr~--item+requires+exactly+3+arguments=true" \
+  "a fix with no --item|--worktree $WT --kind fix --issue issue-noitems --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~at+least+one+--item+is+required=true" \
+  "a bundled implement with no --item|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --bundled|rc=2 stderr~at+least+one+--item+is+required=true" \
+  "an unknown argument|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --frobnicate|rc=2 stderr~unknown+argument:+--frobnicate=true" \
+  "both --summary and --summary-file|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary inline --summary-file $SUMMARY_FILE|rc=2 stderr~mutually+exclusive=true" \
+  "--summary plus an empty --summary-file value: presence, not content|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary inline --summary-file EMPTY|rc=2 stderr~mutually+exclusive=true" \
+  "an explicitly empty --summary-file alone|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary-file EMPTY|rc=2 stderr~--summary-file+requires+a+non-empty+path=true" \
+  "a whitespace-only --summary: an empty deliverable is not a record|--worktree $WT --kind implement --issue issue-blanksum --round-id $RID --branch b --commit %H --validate pass --summary SPACES|rc=2 stderr~--summary+must+contain+non-whitespace=true" \
+  "--summary with no value|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary|rc=2 stderr~--summary+requires+a+value=true" \
+  "--summary followed by another flag: an option token is not a value|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary --no-summary|rc=2 stderr~--summary+requires+a+value,+got+flag+'--no-summary'=true" \
+  "--summary-file followed by another flag|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary-file --no-summary|rc=2 stderr~--summary-file+requires+a+value,+got+flag+'--no-summary'=true" \
+  "--branch followed by another flag|--worktree $WT --kind implement --issue i --round-id $RID --branch --commit c --validate pass|rc=2 stderr~--branch+requires+a+value,+got+flag+'--commit'=true" \
+  "--validate-note followed by another flag|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-note --qa-label needs-review|rc=2 stderr~--validate-note+requires+a+value,+got+flag+'--qa-label'=true" \
+  "--item REASONING as an option token|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --item 1 Applied --bundled|rc=2 stderr~REASONING+must+be+text,+got+flag+'--bundled'=true" \
+  "a duplicate --summary|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary first --summary second|rc=2 stderr~--summary+supplied+more+than+once=true" \
+  "a duplicate --summary-file|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary-file $SUMMARY_FILE --summary-file $SUMMARY_FILE|rc=2 stderr~--summary-file+supplied+more+than+once=true" \
+  "a duplicate --branch|--worktree $WT --kind implement --issue i --round-id $RID --branch b --branch b2 --commit c --validate pass|rc=2 stderr~--branch+supplied+more+than+once=true" \
+  "a duplicate --validate|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate pass|rc=2 stderr~--validate+supplied+more+than+once=true" \
+  "an empty --commit|--worktree $WT --kind implement --issue i --round-id $RID --branch b --validate pass --commit EMPTY|rc=2 stderr~--commit+is+required=true" \
+  "a whitespace-only --validate-note|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-note SPACES|rc=2 stderr~--validate-note+must+contain+non-whitespace=true" \
+  "--validate-note with no value|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-note|rc=2 stderr~--validate-note+requires+a+value=true"
+assert_eq "$([[ -f "$WT/tmp/dev-return-issue-noitems-$RID.json" ]] && echo yes || echo no)" "no" "a rejected invocation writes no artifact at the target path"
 
-# Single-valued flags refuse duplicates: a repeated flag would silently
-# last-win — the same quiet-misrecording class as summary-source precedence.
-assert_exit2 "duplicate --summary exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass \
-  --summary "first" --summary "second"
-assert_exit2 "duplicate --summary-file exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass \
-  --summary-file "$worktree/summary-file.md" --summary-file "$worktree/summary-file.md"
-assert_exit2 "duplicate --branch exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --branch b2 \
-  --commit c --validate pass
-assert_exit2 "duplicate --validate exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b \
-  --commit c --validate pass --validate pass
-assert_exit2 "missing or empty --commit exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --validate pass --commit ""
-
-# A rejected invocation must not leave a partial artifact at the target path.
-set +e
-"$WRITE" --worktree "$worktree" --kind fix --issue issue-noitems --round-id "$RID" \
-  --branch b --commit c --validate pass >/dev/null 2>&1
-set -e
-assert_eq "$([[ -f "$worktree/tmp/dev-return-issue-noitems-$RID.json" ]] && echo yes || echo no)" "no" \
-  "rejected fix (no items) writes no artifact file"
-
-# --- a qualified validation result is recordable ---
-# `validate` stays a closed enumeration (orch gates on it); the note is the
-# additive channel for a caveat the enumeration cannot express. Without it a
-# pass-only-on-re-run is recorded as a bare "pass" and the caveat is lost from
-# the artifact orch treats as authoritative.
-NOTE="80/80 on re-run; first run flaked on Rust Tests (release), same git_diff_hash"
-noted="$("$WRITE" --worktree "$worktree" --kind implement --issue issue-note --round-id "$RID" \
-  --branch b --commit "$current_head" --validate pass --validate-note "$NOTE")"
-assert_eq "$(jq -r '.validate' "$noted")" "pass" "--validate-note leaves validate strictly enumerated"
-assert_eq "$(jq -r '.validate_note' "$noted")" "$NOTE" "--validate-note is recorded verbatim"
-
-# A FAILING run can carry a caveat too — the note is not pass-only.
-failnote="$("$WRITE" --worktree "$worktree" --kind implement --issue issue-failnote --round-id "$RID" \
-  --branch b --commit "$current_head" --validate "FAILING: lint" --validate-note "lint fails only under --release")"
-assert_eq "$(jq -r '.validate' "$failnote")" "FAILING: lint" "a note does not relax a FAILING verdict"
-assert_eq "$(jq -r '.validate_note' "$failnote")" "lint fails only under --release" "FAILING artifacts can carry a note"
-
-# Omitted: the field is present and null, so consumers never have to distinguish
-# "absent key" from "no note".
-plain="$("$WRITE" --worktree "$worktree" --kind implement --issue issue-nonote --round-id "$RID" \
-  --branch b --commit "$current_head" --validate pass)"
-assert_eq "$(jq -r 'has("validate_note")' "$plain")" "true" "validate_note is always present"
-assert_eq "$(jq -r '.validate_note' "$plain")" "null" "an omitted note is null, not empty string"
-
-# An empty or whitespace-only note looks like a recorded caveat while carrying
-# nothing, so it is refused rather than stored.
-assert_exit2 "whitespace-only --validate-note exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c \
-  --validate pass --validate-note "   "
-assert_exit2 "--validate-note with no value exits 2" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c \
-  --validate pass --validate-note
-
-# The note must never become a way to smuggle a third verdict past the gate.
-assert_exit2 "--validate still rejects an out-of-domain verdict even with a note" \
-  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c \
-  --validate pass_with_notes --validate-note "explained"
-
+echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
