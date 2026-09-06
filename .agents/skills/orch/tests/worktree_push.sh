@@ -326,9 +326,12 @@ for arg in "$@"; do
     ;;
   esac
 done
+# The honest answer is a variable, not a default word: Bash 3.2 keeps the
+# backslash of a `\}` inside `${var:-word}`, which is not JSON.
+honest='{"path":"/x","exists":true}'
 if [[ "$mode" == exists ]]; then
   [[ "${STUB_EXISTS:-}" == fail ]] && exit 7
-  printf '%s\n' "${STUB_EXISTS_JSON:-{\"path\":\"/x\",\"exists\":true\}}"
+  printf '%s\n' "${STUB_EXISTS_JSON:-$honest}"
 fi
 exit 0
 EOF

@@ -1209,12 +1209,13 @@ ARTIFACT_PATH=""
 #
 # Order is load-bearing: repeated slashes collapse FIRST, or `.//x` strips its
 # leading `./` into the absolute-looking `/x`. Purely lexical — a `..` that
-# survives is still the vet's to refuse.
+# survives is still the vet's to refuse. The replacement is a bare `/`: Bash
+# 3.2 keeps the backslash of an escaped `\/` there, and wrote `.\/tmp`.
 normalize_relative_home() {
   local rel="$1"
-  while [[ "$rel" == *//* ]]; do rel="${rel//\/\//\/}"; done
+  while [[ "$rel" == *//* ]]; do rel="${rel//\/\///}"; done
   while [[ "$rel" == ./* ]]; do rel="${rel#./}"; done
-  while [[ "$rel" == */./* ]]; do rel="${rel//\/.\//\/}"; done
+  while [[ "$rel" == */./* ]]; do rel="${rel//\/.\///}"; done
   while [[ "$rel" == */. ]]; do rel="${rel%/.}"; done
   while [[ "$rel" == */ ]]; do rel="${rel%/}"; done
   if [[ "$rel" == "." ]]; then rel=""; fi

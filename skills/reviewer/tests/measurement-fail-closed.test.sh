@@ -209,9 +209,12 @@ else
 
   # MUST-FAIL CONTROLS on the escape: it has to SAY something, and it is
   # refused on its own terms rather than silently ignored.
+  # The body is assembled outside the substitution: Bash 3.2 splits a `\"`
+  # inside "$( )" at the quote and hands expect_reason the wrong words.
   for degenerate in '"."' '"n/a"' '"none"' '"unknown"' '"   "' '"---"' 'true' '0'; do
+    degenerate_body='{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":'"$degenerate"'}'
     expect_reason \
-      "$(artifact "degenerate-$DEGEN_N" "{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[],\"measurement_failed\":$degenerate}")" \
+      "$(artifact "degenerate-$DEGEN_N" "$degenerate_body")" \
       invalid_declaration "a declaration of $degenerate names no instrument and is refused"
     DEGEN_N=$((DEGEN_N + 1))
   done

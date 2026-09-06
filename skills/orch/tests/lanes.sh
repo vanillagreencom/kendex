@@ -216,7 +216,8 @@ stage_panes() {
   PANES_PATH="$CLAIM_BIN"
   [[ "$spec" != broken ]] || { PANES_PATH="$FAIL_BIN"; return; }
   IFS=';' read -ra parts <<<"$spec"
-  for part in "${parts[@]}"; do
+  # An empty spec leaves the array empty, which Bash 3.2 reads as unbound.
+  for part in ${parts[@]+"${parts[@]}"}; do
     target="$PANES"
     entries="$part"
     if [[ "$part" == *=* ]]; then

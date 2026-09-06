@@ -222,7 +222,7 @@ candidates=(${unique_candidates[@]+"${unique_candidates[@]}"})
 
 mode="repository"
 if [[ "$force_docs_only" == true ]]; then
-  for path in "${candidates[@]}"; do
+  for path in ${candidates[@]+"${candidates[@]}"}; do
     is_doc_path "$path" \
       || fail "--docs-only path is not documentation: $path"
   done
@@ -276,7 +276,7 @@ declare -a verification_paths=()
 if [[ "$mode" == "repository" ]]; then
   verification_paths=("${source_roots[@]}")
 else
-  verification_paths=("${candidates[@]}")
+  verification_paths=(${candidates[@]+"${candidates[@]}"})
 fi
 
 json_array() {
@@ -287,9 +287,10 @@ json_array() {
   fi
 }
 
-changed_json="$(json_array "${candidates[@]}")"
-roots_json="$(json_array "${source_roots[@]}")"
-paths_json="$(json_array "${verification_paths[@]}")"
+# Each list may be empty, which Bash 3.2 reads as unbound under set -u.
+changed_json="$(json_array ${candidates[@]+"${candidates[@]}"})"
+roots_json="$(json_array ${source_roots[@]+"${source_roots[@]}"})"
+paths_json="$(json_array ${verification_paths[@]+"${verification_paths[@]}"})"
 code_verification_required=true
 if [[ "$mode" == "docs-only" ]]; then
   code_verification_required=false

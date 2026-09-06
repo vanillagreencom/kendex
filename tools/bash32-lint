@@ -133,9 +133,12 @@ PATTERN="$PATTERN"'|\$('"$BASH4_VARS"')([^A-Za-z0-9_]|$)|\$\{('"$BASH4_VARS"')\}
 #     skills/commit-guards/tests/bsd-argv-install.test.sh executes the real
 #     installer under a BSD chmod shim. `dirname --` and `basename --` have
 #     neither a rule here nor a shim there, and are live in shipped scripts.
-#   - whether a script RUNS under Bash 3.2. Nothing here does; CI is Linux on
-#     Bash 5 and `bash -n` is that same shell. A clean scan says the source
-#     carries no construct named above, and says nothing further.
+#   - whether a script RUNS under Bash 3.2. Nothing here does; `bash -n` is
+#     the host's shell. A clean scan says the source carries no construct
+#     named above, and says nothing further. The macOS leg of the skill
+#     suites shard in .github/workflows/skill-tests.yml runs every suite on
+#     /bin/bash 3.2.57, asserting the version it got, and is what reaches
+#     the misses above.
 
 die() {
   printf 'bash32-lint: %s\n' "$1" >&2

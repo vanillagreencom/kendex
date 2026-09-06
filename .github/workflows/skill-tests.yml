@@ -18,9 +18,10 @@ name: Skill Tests
 # answers review-only; see the review-gate skill) — no gate job reads the
 # predicate.
 #
-# Every job names its GitHub-hosted runner in `runs-on:`, the same label on
-# every event. The repository is public, so those runners are free, and shard
-# durations compare across events.
+# Every job names its GitHub-hosted runner in `runs-on:`, directly or through
+# its matrix's `os` list, the same label on every event. The repository is
+# public, so those runners are free, and shard durations compare across
+# events.
 #
 # SHARD BUDGET: a shard whose measured wall time passes five minutes is split,
 # not widened. Each test step carries a `timeout-minutes` set from the last
@@ -74,17 +75,91 @@ jobs:
   # ten runs before the split: review-gate 58s, orch 250s, node 101s,
   # pi-claude-bridge 45s; after it the shell shards are guards ~230s, linear
   # ~205s, rest ~170s.
+  #
+  # THE macOS LEG runs the five shell shards a second time on the runner whose
+  # /bin/bash is 3.2.57, the shell every skill claims to support (skills/
+  # AGENTS.md). tools/bash32-lint scans the source for that claim; this leg
+  # runs it, which is the only way to reach what a text scan cannot — a
+  # quoted builtin name, a construct assembled at runtime. The image's only
+  # bash is that one today, and the leg does not rely on it: a symlink to
+  # /bin/bash goes first on PATH, so the step shell, a `bash "$t"` in a loop
+  # and every `#!/usr/bin/env bash` under it resolve to the same interpreter,
+  # and a step asserts the version each of those resolutions got before any
+  # suite runs — a leg that ran Bash 5 in silence would report a property it
+  # never tested. The probe step after it is the leg's must-fail control. The
+  # node shards are excluded: nothing in them is bash.
   skill-suites-shard:
-    name: Skill suites shard (${{ matrix.shard }})
+    name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     if: github.event_name != 'push'
     strategy:
       fail-fast: false
       matrix:
         shard: [review-gate, orch, guards, linear, rest, node, pi-claude-bridge]
-    runs-on: ubuntu-latest
+        os: [ubuntu-latest, macos-latest]
+        exclude:
+          - os: macos-latest
+            shard: node
+          - os: macos-latest
+            shard: pi-claude-bridge
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
+      # ---- macOS leg: Bash 3.2 first on PATH, asserted, and its probe -----
+      - name: /bin/bash first on PATH
+        if: matrix.os == 'macos-latest'
+        run: |
+          set -u
+          mkdir "$RUNNER_TEMP/bash32"
+          ln -s /bin/bash "$RUNNER_TEMP/bash32/bash"
+          echo "$RUNNER_TEMP/bash32" >>"$GITHUB_PATH"
+
+      # Its own step, so the PATH above is in force. A suite reaches the
+      # shell three ways — the step shell that runs the loop, the `bash` the
+      # loop names, and the `/usr/bin/env bash` in a script's shebang — and
+      # each is asked what it is. One that is not 3.2 ends the leg.
+      - name: the interpreter is Bash 3.2
+        if: matrix.os == 'macos-latest'
+        run: |
+          set -u
+          fail=0
+          # shellcheck disable=SC2016 # the child expands it, which is the point
+          version_of() { "$@" -c 'printf %s "$BASH_VERSION"'; }
+          got() { # got WHAT VERSION
+            case "$2" in
+              3.2.*) echo "$1: Bash $2" ;;
+              *) echo "$1: Bash $2, not 3.2 — this leg would test nothing"; fail=1 ;;
+            esac
+          }
+          got "the step shell" "$BASH_VERSION"
+          got "bash on PATH, $(command -v bash)" "$(version_of bash)"
+          got "/usr/bin/env bash" "$(version_of /usr/bin/env bash)"
+          exit "$fail"
+
+      # The must-fail control. The construct is read out of the fixture that
+      # pins it as a miss of the text scan, so the probe is by construction
+      # one the scan cannot catch and the shell can: the scan is run on it
+      # and must be clean, and under Bash 3.2 a quoted name of a builtin the
+      # shell does not have is `command not found`, exit 127. Any other exit
+      # — 0 on a shell that has mapfile — fails the leg.
+      - name: probe — a quoted Bash 4 builtin fails under this shell
+        if: matrix.os == 'macos-latest'
+        run: |
+          set -u
+          fixture=tools/tests/data/bash32-uncatchable.txt
+          line="$(grep -xF -- "'mapfile' -t values" "$fixture")" ||
+            { echo "$fixture no longer pins the quoted builtin this probe runs"; exit 1; }
+          dir="$RUNNER_TEMP/bash32-probe"
+          mkdir "$dir"
+          printf '%s\n' '#!/usr/bin/env bash' 'set -u' "$line" >"$dir/quoted-builtin.sh"
+          tools/bash32-lint "$dir"
+          status=0
+          bash "$dir/quoted-builtin.sh" </dev/null || status=$?
+          [ "$status" -eq 127 ] ||
+            { echo "the probe exited $status under Bash $BASH_VERSION; 3.2 gives it 127, command not found"; exit 1; }
+          echo "the probe failed under Bash 3.2 as it must (exit $status)"
+
       - name: shard names agree with the matrix
         env:
           SHARD: ${{ matrix.shard }}
@@ -190,13 +265,22 @@ jobs:
 
       # ---- shard: linear — the linear suites, and the two mid-sized
       # packages that balance the shard against `guards` ------------------
+      # The linear CLI's contract is Bash 4 or newer (skills/linear/scripts
+      # is tools/bash32-lint's NO_SCAN entry), so under Bash 3 its suites
+      # cannot pass and the one that runs is the contract suite, which under
+      # that shell proves the preflight diagnostic the contract promises.
       - name: linear, bot-instructions and preflight suites
         if: matrix.shard == 'linear'
         run: |
           set -u
+          if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
+            set -- skills/linear/tests/bash4-runtime-contract.test.sh
+          else
+            set -- skills/linear/tests/*.sh
+          fi
           fail=0
           failed=""
-          for t in skills/linear/tests/*.sh skills/bot-instructions/tests/*.sh skills/preflight/tests/*.sh; do
+          for t in "$@" skills/bot-instructions/tests/*.sh skills/preflight/tests/*.sh; do
             echo "=== $t"
             if ! bash "$t"; then
               echo "FAILED: $t"
