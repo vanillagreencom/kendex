@@ -130,8 +130,9 @@ Settings (env > .env.local > .kendex/settings.toml > kendex.settings.toml
                              comments
   PREFLIGHT_MIGRATION_GLOBS  the migrations applied-migration-edited freezes
 
-Each replaces its shipped set rather than adding to it, and an empty value
-leaves its lane quiet.
+Each replaces its shipped set rather than adding to it. Emptied, the JSONC
+set exempts nothing and every .json file is parsed as strict JSON, while an
+empty migration set leaves applied-migration-edited quiet.
 
 Optional tools: shellcheck for shellcheck-errors and masked-returns, jq for
 JSON, taplo or python3 with tomllib for TOML. A needed lane whose tool is
