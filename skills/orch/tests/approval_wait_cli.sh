@@ -86,7 +86,8 @@ run() {
 # in EXPECT's order (`+` reads as a space in a needle, so a literal plus cannot
 # be pinned; no field carries one):
 #   rc              exit status
-#   mode            stdout whole, `EMPTY` when nothing was printed
+#   mode            stdout whole
+#   stdout          `empty` when nothing was printed, else `lines`
 #   stdout~<text>   whether stdout carries <text>
 #   stderr~<text>   whether stderr carries <text>
 #   gh              `called` when the gh stub was reached, else `uncalled`
@@ -97,7 +98,8 @@ observe() {
     name="${token%%=*}"
     case "$name" in
       rc) value="$RC" ;;
-      mode) value="${OUT:-EMPTY}"; value="${value// /+}" ;;
+      mode) value="${OUT// /+}" ;;
+      stdout) value="$([[ -n "$OUT" ]] && echo lines || echo empty)" ;;
       stdout~*) needle="${name#stdout~}"; value="$(grep -qF -- "${needle//+/ }" <<<"$OUT" && echo true || echo false)" ;;
       stderr~*) needle="${name#stderr~}"; value="$(grep -qF -- "${needle//+/ }" "$ERR" && echo true || echo false)" ;;
       gh) value="$([[ -s "$GH_CALLS" ]] && echo called || echo uncalled)" ;;
@@ -162,7 +164,7 @@ resolve_table \
   "a duplicate REVIEW_GATE_MODE assignment fails loud, naming the cause|gate||settings:REVIEW_GATE_MODE=off,REVIEW_GATE_MODE=enforce|rc=2 stderr~assigned+more+than+once=true" \
   "the fallback loader reads the committed settings file|nogate||settings:REVIEW_GATE_MODE=off|mode=off" \
   "the fallback ignores a machine-local .kendex off for the mode key too|nogate||kendex:REVIEW_GATE_MODE=off|mode=approval" \
-  "a duplicate assignment fails the fallback loud, exit 1, and resolves no mode|nogate||settings:REVIEW_GATE_MODE=off,REVIEW_GATE_MODE=enforce|rc=1 mode=EMPTY stderr~assigned+more+than+once=true"
+  "a duplicate assignment fails the fallback loud, exit 1, and resolves no mode|nogate||settings:REVIEW_GATE_MODE=off,REVIEW_GATE_MODE=enforce|rc=1 stdout=empty stderr~assigned+more+than+once=true"
 
 echo "=== the arg parser answers -h, --help and its own errors before gh ==="
 # `label|args|expect`; the usage text carries the exit-code table, the
