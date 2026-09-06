@@ -21,7 +21,7 @@ impl HarnessAdapter for Cursor {
 
     fn global_surfaces(&self, kind: ItemKind, root: &Path, _env: &Env) -> Vec<Surface> {
         match kind {
-            // v1 manages cursor project-only; there is no global rules dir.
+            // agents and skills are project-only; there is no global rules dir.
             ItemKind::Agent | ItemKind::Skill | ItemKind::PiExtension => vec![],
             ItemKind::Hook => vec![Surface::Structured {
                 path: root.join("hooks.json"),

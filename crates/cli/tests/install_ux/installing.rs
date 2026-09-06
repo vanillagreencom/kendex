@@ -123,17 +123,9 @@ fn an_install_that_would_land_nowhere_is_refused() {
     assert!(!nowhere.status.success(), "{said}");
     assert!(said.contains("nothing would be installed"), "{said}");
 
-    // Cursor takes skills but no MCP servers, so naming it for one is a
+    // Pi takes skills but no MCP servers, so naming it for one is a
     // request that would plan nothing.
-    let wrong = world.try_run(&[
-        "add",
-        "cat",
-        "--mcp-server",
-        "gh",
-        "--harness",
-        "cursor",
-        "-y",
-    ]);
+    let wrong = world.try_run(&["add", "cat", "--mcp-server", "gh", "--harness", "pi", "-y"]);
     let said = crate::said(&wrong);
     assert!(!wrong.status.success(), "{said}");
     assert!(said.contains("nothing would be installed"), "{said}");
