@@ -16,6 +16,9 @@
 #      the hook warns loudly and names fix-links instead;
 #   4. repair-links is quiet and safe when addressed at the main checkout.
 set -euo pipefail
+# A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
+# call below at the real repository; -C overrides neither.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"

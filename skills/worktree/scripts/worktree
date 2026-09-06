@@ -2684,7 +2684,7 @@ validate_pending_restack_state() {
   # on it. abort unwinds through Git's own paused state, which the cross-check
   # above matched against the record, and its post-conditions verify the
   # restored branch and head: refusing here on HEAD's position alone left the
-  # worktree with no guarded exit (#1195).
+  # worktree with no guarded exit.
   if ! git -C "$wt" cat-file -e "${original_head}^{commit}" 2>/dev/null || \
      ! git -C "$wt" cat-file -e "${base_oid}^{commit}" 2>/dev/null || \
      { [[ "$action" != abort ]] && ! git -C "$wt" merge-base --is-ancestor "$base_oid" HEAD; }; then
@@ -2746,7 +2746,7 @@ report_paused_restack() {
     # Git refuses to continue while a tracked file differs from the index and
     # names merge conflicts whatever the real cause. With nothing unmerged,
     # repeating that sends the resolver back to files already staged, and the
-    # empty-commit skip below would drop the commit they just resolved (#1195).
+    # empty-commit skip below would drop the commit they just resolved.
     echo "Restack stopped on unstaged changes, not on unresolved conflicts:" >&2
     sed 's/^/  /' <<<"$unstaged_files" >&2
     echo "Stage or discard them, then run: $0 restack continue \"$wt\"" >&2
@@ -2775,7 +2775,7 @@ finish_guarded_restack_abort() {
 # refused after Git had already unwound. Nothing can continue or abort a rebase
 # that is not running, and every guarded control refuses a missing paused
 # state, so abort is the only way to drop that record — without it the exit is
-# unsetting the kendex-restack keys by hand (#1195). Returns 2 when the record
+# unsetting the kendex-restack keys by hand. Returns 2 when the record
 # is not orphaned after all, for the caller to hand to the guarded controls.
 abort_orphaned_restack_record() {
   local wt="$1" branch="" head="" checkout_err=""

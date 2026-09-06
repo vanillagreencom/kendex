@@ -9,8 +9,9 @@
 # delete/recreate). `--restack` must redo the rebase and stop IN the conflict
 # state with guarded continue/skip/abort guidance. A completed supported rewrite must carry
 # an exact, one-worktree push authorization without weakening remote-movement
-# or unexpected-local-divergence rejection. Clean-rebase reuse must keep
-# working unchanged.
+# or unexpected-local-divergence rejection. A sibling suite run under a git
+# hook's exported environment must keep its own sandbox and leave a live
+# authorization alone. Clean-rebase reuse must keep working unchanged.
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
@@ -447,7 +448,7 @@ assert_eq "$(git -C "$CHAINED_WT" config --worktree --get kendex-restack.authori
 # `git diff --name-only` lists unmerged paths too, so on a conflicted pause both
 # arms of report_paused_restack match and only their order keeps the conflict
 # message. Nothing else in the repo asserts it, so swapping them would ship the
-# wrong cause green (kendex#1195).
+# wrong cause green.
 PRECEDENCE_ROOT="$TMP_ROOT/precedence"
 make_conflict_pair "$PRECEDENCE_ROOT" issue-precedence
 PRECEDENCE_WT="$PRECEDENCE_ROOT/trees/issue-precedence"
@@ -468,7 +469,7 @@ assert_not_contains "$precedence_err" "unstaged changes" "an unmerged index is n
 # "You must edit all merge conflicts" whatever the real cause. Repeating that
 # against an index with no unmerged paths sends the resolver back to files it
 # already staged, and the empty-commit skip beside it would drop the commit
-# whose conflicts they just resolved (kendex#1195).
+# whose conflicts they just resolved.
 UNSTAGED_ROOT="$TMP_ROOT/unstaged"
 make_conflict_pair "$UNSTAGED_ROOT" issue-unstaged
 UNSTAGED_WT="$UNSTAGED_ROOT/trees/issue-unstaged"
@@ -499,7 +500,7 @@ assert_eq "$(cat "$UNSTAGED_WT/file.txt")" "resolved" "the resumed restack keeps
 # --- A recorded restack whose Git state is gone still has a guarded exit ------
 # Nothing can continue or abort a rebase that is not running, and every control
 # refuses a missing paused state, so without this the tool's own record can only
-# be unset by hand (kendex#1195).
+# be unset by hand.
 ORPHAN_ROOT="$TMP_ROOT/orphan"
 make_conflict_pair "$ORPHAN_ROOT" issue-orphan
 ORPHAN_WT="$ORPHAN_ROOT/trees/issue-orphan"
@@ -523,7 +524,7 @@ assert_eq "$(git -C "$ORPHAN_WT" rev-parse HEAD)" "$orphan_original_head" "guard
 # A live paused restack whose HEAD was moved off the base still aborts. continue
 # and skip replay onto that base and must refuse, but abort restores the
 # recorded original head from the paused state's own metadata, and refusing it
-# here left raw git as the only way out (kendex#1195).
+# here left raw git as the only way out.
 MOVED_HEAD_ROOT="$TMP_ROOT/moved-head"
 make_conflict_pair "$MOVED_HEAD_ROOT" issue-moved-head
 MOVED_HEAD_WT="$MOVED_HEAD_ROOT/trees/issue-moved-head"
@@ -551,7 +552,7 @@ assert_eq "$(git -C "$MOVED_HEAD_WT" config --worktree --get-regexp '^kendex-res
 
 # `--quit` removes Git's state and leaves the index unmerged, so the reattach
 # fails. The refusal must carry Git's own reason and a next step, and must not
-# force the checkout over a resolver's staged work (kendex#1195).
+# force the checkout over a resolver's staged work.
 QUIT_ROOT="$TMP_ROOT/quit"
 make_conflict_pair "$QUIT_ROOT" issue-quit
 QUIT_WT="$QUIT_ROOT/trees/issue-quit"
@@ -575,7 +576,7 @@ assert_ne "$(git -C "$QUIT_WT" ls-files -u)" "" "the refused abort leaves the st
 
 # A foreign repository carrying the same keys is never written to. The orphan
 # block runs before validate_pending_restack_state, so its own registration
-# check is the only thing containing it (kendex#1195).
+# check is the only thing containing it.
 FOREIGN_ROOT="$TMP_ROOT/foreign"
 make_conflict_pair "$FOREIGN_ROOT" issue-foreign
 git init -q -b main "$FOREIGN_ROOT/outsider"
@@ -687,6 +688,34 @@ set -e
 assert_eq "$local_move_code" "1" "unexpected local rewrite is not covered by prior restack authorization"
 assert_eq "$(git --git-dir="$LOCAL_MOVE_ROOT/origin.git" rev-parse refs/heads/issue-local-move)" "$local_move_remote_before" "unexpected local rewrite leaves remote unchanged"
 assert_contains "$(cat "$LOCAL_MOVE_ROOT/push.err")" "not contained in local branch" "unexpected local rewrite reports divergence"
+
+# --- A suite run under a git hook's environment keeps its own sandbox --------
+# A git hook exports GIT_DIR and GIT_INDEX_FILE at the worktree it fires in,
+# and both outrank -C, so a sibling suite run from that context builds its
+# fixtures at that worktree unless it clears them first: it dies at its first
+# fixture, or worse, lands commits there. The battery a restack is verified
+# with runs beside a live authorization, so one is held here across such a
+# run.
+ENV_ROOT="$TMP_ROOT/env-live"
+make_published_clean_pair "$ENV_ROOT" issue-env-live
+ENV_WT="$ENV_ROOT/trees/issue-env-live"
+(cd "$ENV_ROOT/main" && "$WORKTREE_SCRIPT" create issue-env-live --restack >/dev/null 2>"$ENV_ROOT/restack.err")
+env_head="$(git -C "$ENV_WT" rev-parse HEAD)"
+assert_eq "$(git -C "$ENV_WT" config --worktree --get kendex-restack.authorizedHead)" "$env_head" "restack authorizes the live worktree before a suite runs under its environment"
+env_git_dir="$(git -C "$ENV_WT" rev-parse --absolute-git-dir)"
+env_fingerprint() {
+  git -C "$ENV_WT" log --format=%H
+  echo '--'
+  git -C "$ENV_WT" ls-files --stage
+  echo '--'
+  git -C "$ENV_WT" config --worktree --list
+}
+env_before="$(env_fingerprint)"
+env_suite_rc=0
+env GIT_DIR="$env_git_dir" GIT_INDEX_FILE="$env_git_dir/index" \
+  bash "$TEST_DIR/worktree_push_rebase.sh" >"$ENV_ROOT/suite.out" 2>&1 || env_suite_rc=$?
+assert_eq "$env_suite_rc" "0" "a sibling suite passes under an exported git environment"
+assert_eq "$(env_fingerprint)" "$env_before" "that suite left the live worktree's log, index and restack authorization untouched"
 
 # --- Clean-rebase reuse unchanged ----------------------------------------------
 CLEAN_ROOT="$TMP_ROOT/clean"

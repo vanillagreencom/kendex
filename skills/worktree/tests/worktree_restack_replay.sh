@@ -377,7 +377,7 @@ assert_eq "$(git -C "$ABORT_WT" config --worktree --get-regexp '^kendex-restack\
 # The replay cross-check asserts HEAD is detached. continue and skip pick onto
 # that detach point and still need it; abort does not, and refusing there left
 # no guarded exit. A two-commit branch is what reaches this: a one-commit range
-# never pauses with a second pick outstanding (kendex#1195).
+# never pauses with a second pick outstanding.
 ONBRANCH_ROOT="$TMP_ROOT/onbranch"
 make_conflict_pair "$ONBRANCH_ROOT" issue-replay-onbranch
 ONBRANCH_WT="$ONBRANCH_ROOT/trees/issue-replay-onbranch"
@@ -407,7 +407,7 @@ assert_eq "$(git -C "$ONBRANCH_WT" config --worktree --get-regexp '^kendex-resta
 
 # `cherry-pick --quit` drops the sequencer and leaves the index unmerged, so the
 # orphan path cannot reattach. It refuses with Git's reason rather than forcing
-# the checkout over the resolver's staged work (kendex#1195).
+# the checkout over the resolver's staged work.
 REPLAY_QUIT_ROOT="$TMP_ROOT/replay-quit"
 make_conflict_pair "$REPLAY_QUIT_ROOT" issue-replay-quit
 REPLAY_QUIT_WT="$REPLAY_QUIT_ROOT/trees/issue-replay-quit"
@@ -430,7 +430,7 @@ assert_eq "$(git -C "$REPLAY_QUIT_WT" config --worktree --get kendex-restack.pen
 # --- An orphaned record is cleared from the detached replay base ---------------
 # A replay never moves the branch, so a sequencer state that disappears out of
 # band leaves HEAD detached at the base with the tool's record still standing.
-# The guarded exit has to reattach the recorded branch (kendex#1195).
+# The guarded exit has to reattach the recorded branch.
 DETACHED_ROOT="$TMP_ROOT/detached"
 make_conflict_pair "$DETACHED_ROOT" issue-replay-detached
 DETACHED_WT="$DETACHED_ROOT/trees/issue-replay-detached"
