@@ -62,8 +62,12 @@ const rows: Array<[string, Entry, string, string]> = [
 	}, "count=0 status=needs_completion outbox=true diag(Malformed completion JSON)=true event-summary~Malformed=true", DIRTY],
 	["a malformed outbox inside the grace period is left alone", async (root, repo) => {
 		await seedPaneTask(root, repo, "task-poll-fresh");
-		writeOutbox(root, "task-poll-fresh", "{");
+		const outboxFile = writeOutbox(root, "task-poll-fresh", "{");
 		const emitted: Emitted = [];
+		// The poller reads the mtime against its own wall clock; stamping it at the
+		// poll keeps the row on the inside-the-grace branch under a paused worker.
+		const now = new Date();
+		utimesSync(outboxFile, now, now);
 		const count = await pollPaneCompletions(root, fakePi(emitted));
 		const persisted = (await readTaskRegistry(root))["task-poll-fresh"];
 		return { own: `count=${count} status=${persisted?.status} events=${eventNames(emitted)}`, persisted };
