@@ -109,6 +109,21 @@ impl Hardened {
         Hardened::new("curl", owned(args))
     }
 
+    /// The freedesktop tools that make a `.desktop` file the handler for a
+    /// URL scheme: `update-desktop-database` over the directory the file
+    /// was written to, then `xdg-mime default` naming it. Linux only; the
+    /// desktop app registers its `kendex://` scheme through them.
+    pub fn update_desktop_database(applications: &Path) -> Hardened {
+        Hardened::new(
+            "update-desktop-database",
+            vec![applications.as_os_str().to_owned()],
+        )
+    }
+
+    pub fn xdg_mime(args: &[&str]) -> Hardened {
+        Hardened::new("xdg-mime", owned(args))
+    }
+
     /// One of the package's shell scripts, spawned the way the platform can
     /// actually run it.
     ///

@@ -26,6 +26,16 @@ The boundary is the home, not the machine: a repository you point a debug build 
 KENDEX_REAL_HOME=1 cargo run -p kendex-cli --bin kendex -- list
 ```
 
+## The `kendex://` scheme
+
+The app registers the `kendex://` scheme for the binary it runs as on launch on Linux and Windows; macOS registration is the bundle's `Info.plist`, which the bundler writes from `tauri.conf.json`. A sandboxed debug build registers nothing, since the handler file and the mime default belong to the real machine and would point every link at a `target/` binary; `KENDEX_REAL_HOME=1` is the opt-in, and then the last build launched owns the scheme. On Linux the registration is `~/.local/share/applications/kendex-url-handler.desktop`, written by `crates/app/src/deep_link/linux.rs` with a bare `Exec=` path where the path allows one, because `xdg-open` cannot run the quoted one the deep-link plugin writes, plus an `xdg-mime` default; it needs `xdg-mime` and `update-desktop-database` on the path. Windows registration is the plugin's, under the current user's registry key.
+
+```sh
+xdg-open 'kendex://m/vanillagreencom/kendex/agent/generalist'   # Linux: reaches the running app, or launches it
+```
+
+On Linux a debug build and the installed app are two apps to the single-instance plugin, each on its own D-Bus name, whatever home either was launched onto. On Windows and macOS the plugin keys on the bundle identifier alone, so a debug build launched while the installed app runs hands its argv to that app and exits.
+
 ## Process fixtures
 
 CLI and installer tests use `fixture_env` from `crates/test_util.rs` to set HOME and the XDG config, cache, and data directories from one fixture root. The helper disables the debug sandbox. Set an explicit test override after these defaults. HOME alone does not replace an inherited XDG directory. Production builds retain the platform's HOME and XDG behavior.

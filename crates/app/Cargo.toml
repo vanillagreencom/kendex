@@ -34,6 +34,16 @@ tauri-specta.workspace = true
 specta.workspace = true
 specta-typescript.workspace = true
 tauri-plugin-dialog = "2.7.2"
+# `kendex://` links from the website. The single-instance plugin comes with
+# it: a second launch by a link is forwarded to the running app as that
+# app's argv, which its `deep-link` feature hands to the deep-link plugin.
+tauri-plugin-deep-link = "2.4.9"
+tauri-plugin-single-instance = { version = "2.4.3", features = ["deep-link"] }
+# What the deep-link plugin hands over is a parsed `url::Url`; the path
+# segments come back percent-encoded, and a package name is looked up as
+# the site spelled it.
+url = "2"
+percent-encoding = "2"
 tauri-plugin-opener = "2.5.4"
 tauri-plugin-updater = "2"
 

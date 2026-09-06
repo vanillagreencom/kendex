@@ -24,6 +24,19 @@ fn the_window_opens_hidden_so_the_saved_zoom_lands_first() {
     assert_eq!(window["label"].as_str(), Some("main"));
 }
 
+/// The scheme the website's "Open in app" links carry. The deep-link
+/// plugin registers only the schemes this file declares, and a link in a
+/// scheme it does not know is dropped before the app sees it, so the
+/// parser's own name for the scheme and the declaration are held together.
+#[test]
+fn the_deep_link_scheme_is_declared_for_the_desktop() {
+    let schemes = &config()["plugins"]["deep-link"]["desktop"]["schemes"];
+    assert_eq!(
+        schemes.as_array().map(Vec::as_slice),
+        Some(&[serde_json::Value::from(kendex_app::deep_link::SCHEME)][..])
+    );
+}
+
 /// The app's updater reads its key from this file at build time, so the
 /// copy core holds for `kendex update` can only be kept honest by an
 /// assertion. Two keys means one delivery path trusting what the other

@@ -33,6 +33,11 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["kendex"]
+      }
+    },
     "updater": {
       "endpoints": [
         "https://github.com/vanillagreencom/kendex/releases/latest/download/latest.json"
