@@ -26,9 +26,13 @@ Restart the host after installation.
 
 ## How it works
 
-Open `/extensions` on Pi or `/kendex:extensions` on OMP. OMP keeps its built-in `/extensions` command. The manager reads Pi's package settings or OMP's installed plugin records, then displays each package's declared extension entrypoints. OMP keeps user and project entrypoints separate and offers manager settings only for its active installation. Restart the host after toggling a package.
+- Open `/extensions` on Pi, or `/kendex:extensions` on OMP, which keeps its own built-in `/extensions` command.
+- The manager reads Pi's package settings, or OMP's record of the plugins it has installed.
+- It lists each package together with the extension files that package declares.
+- On OMP it keeps packages installed for your user apart from packages installed for the project, and offers its own settings only for the copy that is running.
+- Restart Pi or OMP after you turn a package on or off.
 
-OMP module toggles, updates, uninstall, and other extensions' settings are unavailable in this manager. Use OMP's native controls for those actions, optional plugin features, or project plugin overrides that block enabling a plugin. The manager does not run Pi package commands or Pi append-system scripts on OMP.
+On OMP the manager cannot toggle a plugin's modules, update or uninstall a plugin, or edit another extension's settings. Use OMP's own controls for those actions, for a plugin's optional features, and for a project override that stops a plugin being enabled. The manager also does not run a Pi package's commands or its append-system scripts on OMP.
 
 ## Settings
 

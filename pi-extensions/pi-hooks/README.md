@@ -25,7 +25,10 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 
 ## How it works
 
-kendex installs hook scripts and a hook registry for Pi. Before a tool call, this extension reads the applicable project and user registries. It gives each matching hook the tool name and arguments. Pi runs the tool only after the hooks allow the call.
+- kendex installs the hook scripts, and a registry: the list of which hook runs on which event.
+- Before Pi runs a tool, this extension reads the registry for your user account, and the project's own registry once Pi has marked the workspace trusted.
+- It gives each hook whose matcher fits the tool's name and the arguments it was called with, and stops at the first refusal.
+- Pi runs the tool only once every one of those hooks has allowed the call.
 
 The other hook events cannot stop anything in Pi, so the extension delivers what a hook says instead:
 
@@ -35,7 +38,11 @@ The other hook events cannot stop anything in Pi, so the extension delivers what
 | `Stop`, `TaskCompleted` | `turn_end`, read once per response on `agent_settled` | Sent to the agent once as a message that starts the next turn. A hook's answer to that message runs the hooks again with `stop_hook_active: true` and is not sent back, so a response runs them at most twice. |
 | `SessionStart` | `session_start` | Added to the session's opening context. |
 
-On those three events every matching hook runs. Exit `2` delivers the hook's stderr, exit `0` delivers its stdout, and any other exit status, a timeout or a missing script is reported to the agent as a hook that did not run. A `PostToolUse` matcher is read against the tool name and a `SessionStart` matcher against the source (`startup`, `resume` or `clear`); `Stop` and `TaskCompleted` hooks take no matcher.
+- Every hook whose matcher fits runs on those three events.
+- A hook that exits `2` hands the agent what it wrote to its error output, and one that exits `0` hands over what it wrote to its normal output.
+- Any other exit status is reported to the agent as a hook that reached no verdict; a hook that ran out of time, or whose script is missing, is reported as one that did not run.
+- A `PostToolUse` matcher is matched against the tool's name, and a `SessionStart` matcher against why the session started: `startup`, `resume` or `clear`.
+- `Stop` and `TaskCompleted` hooks take no matcher, so both always run.
 
 ## Settings
 
