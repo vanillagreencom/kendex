@@ -4,7 +4,7 @@
 # it has; a decision ID names a tracked decision file, judged only where the
 # decisions directory is tracked, and its heading where the citation names
 # one; the same section citation is judged in a source file's comment text
-# and a TOML file's string values; fenced code is never read; the scopes and
+# and a TOML file's string literals; fenced code is never read; the scopes and
 # the path list are md-format's. Every green assertion is paired with a
 # control that proves it can fail.
 set -euo pipefail
@@ -275,6 +275,21 @@ rm -f "$R/blob.h"
 [ "$RC" -eq 0 ] && case "$OUT" in *"not measured: blob.h"*"binary content"*) true ;; *) false ;; esac \
   && ok "a binary blob at a source path is named, never counted clean" \
   || bad "binary carrier named" "rc=$RC out=$OUT"
+
+src_cite "a URL is prose, not a citation into this repository" 0 scripts/link.sh \
+  $'#!/usr/bin/env bash\n# See https://example.com/guide.md \302\247 Gone for more.\ntrue\n'
+src_cite "control: the same path without the scheme is judged" 1 scripts/link.sh \
+  $'#!/usr/bin/env bash\n# See AGENTS.md \302\247 Gone for more.\ntrue\n' \
+  2 "AGENTS.md has no heading at the start of 'Gone"
+# A carrier the extractor cannot read is an incomplete scan, never a pass:
+# the block comment below never closes, and the file holds a section sign.
+put src/broken.c $'/* AGENTS.md \302\247 Gone\nint main(void) { return 0; }\n'
+run_refs --all
+git -C "$R" rm -q --cached src/broken.c
+rm -f "$R/src/broken.c"
+[ "$RC" -eq 2 ] && case "$OUT" in *"scan incomplete"*"1 carrier(s) could not be read"*) true ;; *) false ;; esac \
+  && ok "a carrier the extractor cannot read is exit 2, never a clean verdict" \
+  || bad "unreadable carrier fails closed" "rc=$RC out=$OUT"
 
 # The walk's own skip branches, each over a path that carries a live citation
 # so a silent drop would read as a pass.

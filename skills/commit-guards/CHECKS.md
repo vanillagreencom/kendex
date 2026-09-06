@@ -137,7 +137,7 @@ The slug is GitHub's: link syntax, code-span backticks and HTML tags reduce to t
 
 A source file carries the same citations outside markdown, and they are judged there too:
 
-- The `<path>.md § Heading` form in the COMMENT TEXT of any tracked file named by `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS`, and in the STRING VALUES of a TOML file as well: a manifest's values are its content, where a program's string literals are its data. Comment text and string values come from the comments lane's extractor, so the grammars and their limits are § comments'.
+- The `<path>.md § Heading` form in the COMMENT TEXT of any tracked file named by `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS`, and in the STRING LITERALS of a TOML file as well, a quoted key among them: a manifest's text is its content, where a program's string literals are its data. Comment text and string literals come from the comments lane's extractor, so the grammars and their limits are § comments'.
 - A decision ID there, but only where it carries a `§` heading, on the same rules.
 - Nothing else. Outside markdown a link, a bare path and a bare decision ID are prose, and only `§` points a reader at a place in a file. The heading runs to the end of the line and the prefix rule judges it, so prose may follow it.
 - One `git grep` over the index names the files this pass opens: a file whose bytes do not hold the section sign holds none of these citations, so it is counted without being read. A carrier whose content is binary is named as unmeasured, as the other lanes name theirs.

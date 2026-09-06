@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # md-refs checks links, section routes, and decision references in markdown,
 # and the `<path>.md § Heading` citations a source file carries in its
-# COMMENT TEXT or a TOML file in its string values. Both callers and targets
+# COMMENT TEXT or a TOML file in its string literals. Both callers and targets
 # come from the index. A staged change rechecks all configured documents and
 # source files so target edits cannot leave unchanged callers broken. Fenced
 # code is not read. The grammar is in lib/md-refs.awk; comment text and TOML
@@ -55,7 +55,7 @@ DECISIONS_DIR is tracked, and one carrying '§ Heading' is judged against
 that decision's headings too.
 
 A source file is read for the same '<path>.md § Heading' citation in its
-COMMENT TEXT, and a TOML file in its string values as well, resolved as the
+COMMENT TEXT, and a TOML file in its string literals as well, resolved as the
 code-span form is. A decision ID there is judged only where it carries a
 '§ Heading'. Nothing else is: outside markdown a link, a bare path and a
 bare ID are prose.
@@ -178,9 +178,13 @@ while IFS= read -r -d '' sha && IFS= read -r -d '' f; do
 done <"$GG_TMP/md-files.z"
 
 # Pass one, continued: what each source file cites in its comment text, and
-# a TOML file in its string values too — a manifest's values are its content,
+# a TOML file in its string literals too — a manifest's text is its content,
 # where a program's string literals are its data.
 SRC_COUNT=0
+# A carrier this lane could not read is not a clean file. The comments lane
+# calls that an incomplete scan and exits 2; a carrier holds a section sign,
+# so leaving it unread and exiting 0 would pass a citation nobody judged.
+SRC_EXTRACT_ERRORS=0
 # One file carrying a section sign; 1 when the path was named as unmeasured.
 source_file() { # PATH BLOBFILE
   local f="$1" blob="$2" want=comments status=0 fam
@@ -200,6 +204,7 @@ source_file() { # PATH BLOBFILE
   [ "$fam" != hash-toml ] || want=strings
   if ! gg_comment_text "$fam" "$blob" "$f" "$want" >"$GG_TMP/text"; then
     gg_note_skip "$f" "comment text could not be extracted: $GG_COMMENT_ERROR"
+    SRC_EXTRACT_ERRORS=$((SRC_EXTRACT_ERRORS + 1))
     return 1
   fi
   LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=refs -v grammar=text -v src="$f" \
@@ -323,6 +328,10 @@ else
 fi
 
 SETS="$GG_MD_COUNT $SCOPE_DESC and $SRC_COUNT source file(s)"
+if [ "$SRC_EXTRACT_ERRORS" -gt 0 ]; then
+  echo "md-refs: scan incomplete — $SRC_EXTRACT_ERRORS carrier(s) could not be read; $violations dead reference(s) among $judged in $SETS; $DEC_NOTE$UNMEASURED"
+  exit 2
+fi
 if [ "$violations" -gt 0 ]; then
   echo "md-refs: $violations dead reference(s) among $judged in $SETS; $DEC_NOTE$UNMEASURED"
   exit 1

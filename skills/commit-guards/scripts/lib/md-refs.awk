@@ -191,7 +191,7 @@ function emit_ids(s,   i, p, q, n, before, after, tail, section) {
 # A doc-section citation in plain text: the path token before ` § `, and the
 # rest of the line as the heading the prefix rule judges. A token that is not
 # a markdown path is prose naming a section and cites nothing.
-function emit_text_citation(s,   p, i, j, path, rest) {
+function emit_text_citation(s,   p, i, j, path, rest, before) {
   p = 1
   while (1) {
     i = index(substr(s, p), SECTION_SEP)
@@ -201,9 +201,14 @@ function emit_text_citation(s,   p, i, j, path, rest) {
     while (j > 1 && substr(s, j - 1, 1) ~ /^[A-Za-z0-9._\/-]$/) j--
     path = substr(s, j, i - j)
     rest = rtrim(substr(s, i + length(SECTION_SEP)))
+    before = (j > 1) ? substr(s, j - 1, 1) : ""
     # A bare `.md` is what the walk back leaves of a placeholder such as
-    # `<path>.md`, whose brackets end the token; it names no file.
-    if (path ~ /\.md$/ && path != ".md" && path !~ /\/\.md$/ && rest != "") \
+    # `<path>.md`, whose brackets end the token; it names no file. A `:`
+    # before the token, or a `//` opening it, is the tail of a URL the walk
+    # back could not cross: is_local() refuses the same shapes in markdown,
+    # and outside it a link is prose.
+    if (path ~ /\.md$/ && path != ".md" && path !~ /\/\.md$/ && path !~ /^\/\// \
+        && before != ":" && rest != "") \
       printf "C\t%s\t%d\t%s\tprefix-section\t%s\t%s\n", src, line_no, path, rest, path SECTION_SEP rest
     p = i + length(SECTION_SEP)
   }

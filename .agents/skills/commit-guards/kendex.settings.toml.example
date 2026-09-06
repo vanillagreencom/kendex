@@ -51,7 +51,7 @@ COMMIT_GUARDS_MD_PATHS = "*.md"
 COMMIT_GUARDS_MD_REFS_PATHS = "AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
 
 # The source files md-refs reads for the same `<path>.md § Heading` citation
-# in their comment text, and in a TOML file's string values. Same glob
+# in their comment text, and in a TOML file's string literals. Same glob
 # dialect; the default is the extension list in CHECKS.md § comments.
 # COMMIT_GUARDS_MD_REFS_SOURCE_PATHS = ""
 
