@@ -72,7 +72,12 @@ export interface UpdateOffer {
  *  (`crates/core/src/package/updates/eval.rs`), so the fact the check would
  *  otherwise state here is that it never covered this place, which is the
  *  symptom of this cause. Nothing this page can re-read lifts it, so it
- *  carries no [`retry`]; the note names the source to refresh instead.
+ *  carries no [`retry`]; the note names the source to refresh instead. It
+ *  speaks ahead of this page's own reads on purpose: the record read fails
+ *  on the same unfetched source, in core's words (`crates/core/src/package/
+ *  detail.rs` `package_meta`), and a record read that failed for a reason
+ *  of its own — a lock this build cannot read — gets its words and its
+ *  retry once the source is fetched, which had to happen first anyway.
  *
  *  Then a fact about the package (`updates-read-state.ts`
  *  [`packageUpdateNote`]): core's refusal for the kind, a hold, an edit of

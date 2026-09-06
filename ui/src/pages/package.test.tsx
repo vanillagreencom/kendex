@@ -322,9 +322,9 @@ describe("what the package page says instead of Update", () => {
       status: "ok",
       data: VERSIONS,
     },
-  ) => {
-    vi.mocked(commands.packageVersions).mockResolvedValue(timeline);
-    vi.mocked(commands.packageMeta).mockResolvedValue({
+    /** What the record read answers: a following package unless a test
+     *  is about that read. */
+    record: Awaited<ReturnType<typeof commands.packageMeta>> = {
       status: "ok",
       data: {
         source: "cat",
@@ -338,7 +338,10 @@ describe("what the package page says instead of Update", () => {
         fork: null,
         catalog: null,
       },
-    });
+    },
+  ) => {
+    vi.mocked(commands.packageVersions).mockResolvedValue(timeline);
+    vi.mocked(commands.packageMeta).mockResolvedValue(record);
     useUpdatesStore.setState(standing);
     return openPage(VG, [VG], { [scopeKey(VG)]: PLAIN }, null, kind);
   };
@@ -413,20 +416,50 @@ describe("what the package page says instead of Update", () => {
       (button) => button.textContent === TRY_AGAIN_LABEL,
     );
 
+  /** The timeline's answer on a source no fetch has downloaded. */
+  const UNFETCHED = {
+    status: "error",
+    error: { kind: "source-pending", source: "cat" },
+  } as const;
+  /** The record read's answer on the same source: core's words, unshaped. */
+  const RECORD_UNFETCHED = {
+    status: "error",
+    error: "REFUSED-BY-CORE: source 'cat' has not been downloaded yet",
+  } as const;
+
   // A source no fetch has downloaded is core's answer, not a failed read:
   // reading again answers the same, and the check it would send the reader
   // to has already left this place without a row for the same reason. The
   // note names the source and carries no Try again, and it outranks the
   // check's "never covered this place", which is the symptom of it.
   it("names the source no fetch has downloaded, with no Try again", async () => {
-    const host = await openWith({ read: READ_LANDED }, "skill", {
-      status: "error",
-      error: { kind: "source-pending", source: "cat" },
-    });
+    const host = await openWith(
+      { read: READ_LANDED },
+      "skill",
+      UNFETCHED,
+      RECORD_UNFETCHED,
+    );
 
     expect(header(host)).toContain(sourceUnfetchedNote("cat"));
     expect(headerRetry(host)).toHaveLength(0);
     expect(header(host)).not.toContain(NO_UPDATE_STANDING_NOTE);
+    expect(header(host)).not.toContain(PACKAGE_READ_FAILED);
+  });
+
+  // The record read fails on the same source in core's own words, which on
+  // its own is a read that failed with a Try again beside it. With a row
+  // here the check has nothing to say ahead of the reads, so this is where
+  // the unfetched note has to outrank the record's failure on its own.
+  it("keeps Try again off it where the record read failed on the same source", async () => {
+    const host = await openWith(
+      { read: READ_LANDED, rows: [updateRow(VG)] },
+      "skill",
+      UNFETCHED,
+      RECORD_UNFETCHED,
+    );
+
+    expect(header(host)).toContain(sourceUnfetchedNote("cat"));
+    expect(headerRetry(host)).toHaveLength(0);
     expect(header(host)).not.toContain(PACKAGE_READ_FAILED);
   });
 
