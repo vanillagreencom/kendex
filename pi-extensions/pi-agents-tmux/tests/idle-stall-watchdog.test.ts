@@ -29,6 +29,7 @@ type Rec = { taskId?: string; status?: PaneTaskStatus; agent?: string; activityA
 interface WorldOpts {
 	enabled?: boolean;
 	now?: number;
+	threshold?: number;
 	records?: Rec[] | "throws";
 	awaitingRetry?: boolean;
 	outboxPresent?: boolean;
@@ -41,7 +42,7 @@ interface World {
 	watchdog: ReturnType<typeof createIdleStallWatchdog>;
 	opts: WorldOpts;
 	probes: { outbox: number; idle: number };
-	writes: StallSyntheticOutboxPayload[];
+	writes: Array<{ file: string; payload: StallSyntheticOutboxPayload }>;
 	marked: string[];
 	warnings: string[];
 	intervals: Array<{ ms: number; handler: () => void; handle: number }>;
@@ -73,10 +74,9 @@ function world(opts: WorldOpts): World {
 		seen: { writes: 0, marked: 0, warnings: 0, probes: { outbox: 0, idle: 0 } },
 	};
 	let nextHandle = 1;
-	const written = new Set<string>();
 	const deps: IdleStallWatchdogDeps = {
 		intervalMs: 60_000,
-		thresholdMs: THRESHOLD_MS,
+		thresholdMs: opts.threshold ?? THRESHOLD_MS,
 		isEnabled: () => w.opts.enabled ?? true,
 		now: () => w.opts.now ?? STALE_NOW,
 		listActiveTasks: async () => {
@@ -88,7 +88,8 @@ function world(opts: WorldOpts): World {
 		outboxExists: async (file) => {
 			w.probes.outbox += 1;
 			if (w.opts.outboxThrows) throw new Error("outbox unreadable");
-			return (w.opts.outboxPresent ?? false) || written.has(file);
+			void file;
+			return w.opts.outboxPresent ?? false;
 		},
 		isPaneIdle: async () => {
 			w.probes.idle += 1;
@@ -98,13 +99,12 @@ function world(opts: WorldOpts): World {
 		writeSyntheticOutbox: opts.writeFails
 			? failing(opts.writeFails)
 			: async (file, payload) => {
-					written.add(file);
-					w.writes.push(payload);
+					w.writes.push({ file, payload });
 				},
 		markFired: opts.markFails
 			? failing(opts.markFails)
-			: async (rec) => {
-					w.marked.push(rec.taskId);
+			: async (rec, payload) => {
+					w.marked.push(payload === w.writes.at(-1)?.payload ? rec.taskId : `${rec.taskId}!payload-mismatch`);
 				},
 		logWarn: (msg) => void w.warnings.push(msg),
 		setInterval: (handler, ms) => {
@@ -120,20 +120,26 @@ function world(opts: WorldOpts): World {
 	return w;
 }
 
-// A warning by the failure it names, with the message it carries; any other
-// line printed whole.
+// A warning by the failure it names, the pair it names and the message it
+// carries; any other line printed whole.
 function warnTag(line: string): string {
-	for (const [needle, tag] of [["writeSyntheticOutbox failed", "write-failed"], ["markFired failed", "mark-failed"], ["unexpected error", "unexpected"], ["listActiveTasks threw", "list-failed"], ["tick threw", "tick-failed"]] as const) {
-		if (line.includes(needle)) return `${tag}(${JSON.stringify(line.slice(line.indexOf(needle) + needle.length).replace(/^.*?: /, ""))})`;
+	for (const [needle, tag] of [["writeSyntheticOutbox failed", "write-failed"], ["markFired failed", "mark-failed"], ["unexpected error", "unexpected"], ["listActiveTasks threw", "list-failed"]] as const) {
+		if (!line.includes(needle)) continue;
+		const rest = line.slice(line.indexOf(needle) + needle.length);
+		const m = /^(?: for (\S+))?: ([\s\S]*)$/.exec(rest);
+		return m ? `${tag}(${m[1] ?? "-"}, ${JSON.stringify(m[2])})` : JSON.stringify(line);
 	}
 	return JSON.stringify(line);
 }
 
-// The payload by its status, reason, refs and synthetic mark, and the one
-// datum it carries about the stall: the seconds in its summary.
-function payloadTag(p: StallSyntheticOutboxPayload): string {
+// The payload by its status, reason, refs and synthetic mark, the one datum
+// it carries about the stall (the seconds in its summary), the fields it
+// carries at all, and the file it was written to.
+function payloadTag(w: { file: string; payload: StallSyntheticOutboxPayload }): string {
+	const p = w.payload;
 	const stale = /for (\d+)s/.exec(p.summary)?.[1] ?? JSON.stringify(p.summary);
-	return `${p.status}/${p.reason}@${p.agent}/${p.taskId}${p.synthetic === true ? "/synthetic" : "/NOT-SYNTHETIC"} stale=${stale}s`;
+	const fields = Object.keys(p).sort().join("+");
+	return `${p.status}/${p.reason}@${p.agent}/${p.taskId}${p.synthetic === true ? "/synthetic" : "/NOT-SYNTHETIC"} stale=${stale}s ${fields} -> ${w.file}`;
 }
 function outcomeTag(o: StallCheckOutcome): string {
 	if (o.fired) return `${o.taskId}:fired`;
@@ -164,15 +170,19 @@ async function runScript(w: World, steps: Step[]): Promise<string> {
 	return lines.join("\n");
 }
 
-const FIRED = `task-1:fired probes=o1i1 +writes=[needs_completion/${STALL_WATCHDOG_REASON}@planner/task-1/synthetic stale=600s] +marked=[task-1]`;
+const FIELDS = "agent+filesChanged+notes+reason+status+summary+synthetic+taskId+validation";
+const PAYLOAD = (agent: string, task: string, stale: number) => `needs_completion/${STALL_WATCHDOG_REASON}@${agent}/${task}/synthetic stale=${stale}s ${FIELDS} -> /outbox/${agent}/${task}.json`;
+const FIRED = `task-1:fired probes=o1i1 +writes=[${PAYLOAD("planner", "task-1", 600)}] +marked=[task-1]`;
 const QUIET = "+writes=[] +marked=[]";
 
 // label | world | ticks | expect (one line per tick)
 const rows: Array<[string, WorldOpts, Step[], string]> = [
 	["an idle task past the threshold with no outbox fires", {}, [tick], FIRED],
-	["exactly at the threshold is stale", { now: LAST_ACTIVITY + THRESHOLD_MS }, [tick], `task-1:fired probes=o1i1 +writes=[needs_completion/${STALL_WATCHDOG_REASON}@planner/task-1/synthetic stale=300s] +marked=[task-1]`],
+	["exactly at the threshold is stale", { now: LAST_ACTIVITY + THRESHOLD_MS }, [tick], `task-1:fired probes=o1i1 +writes=[${PAYLOAD("planner", "task-1", 300)}] +marked=[task-1]`],
 	["one millisecond under the threshold is not", { now: LAST_ACTIVITY + THRESHOLD_MS - 1 }, [tick], `task-1:skip:not-stale probes=o1i0 ${QUIET}`],
 	["activity far in the future is not stale", { now: LAST_ACTIVITY - 600_000 }, [tick], `task-1:skip:not-stale probes=o1i0 ${QUIET}`],
+	["a part second is not counted", { now: LAST_ACTIVITY + 600_999 }, [tick], FIRED],
+	["at a zero threshold activity in the future counts as no stall and fires", { now: LAST_ACTIVITY - 600_000, threshold: 0 }, [tick], `task-1:fired probes=o1i1 +writes=[${PAYLOAD("planner", "task-1", 0)}] +marked=[task-1]`],
 	["a pane awaiting a rate-limit retry is not condemned until the retry state clears", { awaitingRetry: true }, [tick, retryCleared, tick], [`task-1:skip:rate-limited probes=o0i0 ${QUIET}`, `retry-cleared probes=o0i0 ${QUIET}`, FIRED].join("\n")],
 	["an outbox already present", { outboxPresent: true }, [tick], `task-1:skip:outbox-present probes=o1i0 ${QUIET}`],
 	["a busy pane", { paneIdle: false }, [tick], `task-1:skip:pane-busy probes=o1i1 ${QUIET}`],
@@ -185,12 +195,12 @@ const rows: Array<[string, WorldOpts, Step[], string]> = [
 	["a task of unknown status is judged", { records: [{ status: "unknown" }] }, [tick], FIRED],
 	["a record without a task id", { records: [{ taskId: "" }] }, [tick], `:skip:missing-task-id probes=o0i0 ${QUIET}`],
 	["a fired task is not fired again on the next tick", {}, [tick, tick], [FIRED, `task-1:skip:already-fired probes=o0i0 ${QUIET}`].join("\n")],
-	["every listed task is judged in order and on its own", { records: [{}, { activityAt: STALE_NOW, taskId: "task-2" }, { agent: "scout", taskId: "task-3" }] }, [tick], `task-1:fired task-2:skip:not-stale task-3:fired probes=o3i2 +writes=[needs_completion/${STALL_WATCHDOG_REASON}@planner/task-1/synthetic stale=600s,needs_completion/${STALL_WATCHDOG_REASON}@scout/task-3/synthetic stale=600s] +marked=[task-1,task-3]`],
+	["every listed task is judged in order and on its own", { records: [{}, { activityAt: STALE_NOW, taskId: "task-2" }, { agent: "scout", taskId: "task-3" }] }, [tick], `task-1:fired task-2:skip:not-stale task-3:fired probes=o3i2 +writes=[${PAYLOAD("planner", "task-1", 600)},${PAYLOAD("scout", "task-3", 600)}] +marked=[task-1,task-3]`],
 	["a writer losing the O_EXCL race is a quiet race-lost and the task may fire later", { writeFails: { code: "EEXIST", message: "outbox already exists" } }, [tick, tick], [`task-1:skip:race-lost probes=o1i1 ${QUIET}`, `task-1:skip:race-lost probes=o1i1 ${QUIET}`].join("\n")],
-	["a writer failing otherwise is warned and the task stays unfired", { writeFails: { code: "ENOSPC", message: "disk full" } }, [tick], `task-1:error("disk full") probes=o1i1 ${QUIET} warn=[write-failed("disk full")]`],
-	["a failing mark is warned after the write and the task counts as fired", { markFails: { message: "registry locked" } }, [tick, tick], [`task-1:fired probes=o1i1 +writes=[needs_completion/${STALL_WATCHDOG_REASON}@planner/task-1/synthetic stale=600s] +marked=[] warn=[mark-failed("registry locked")]`, `task-1:skip:already-fired probes=o0i0 ${QUIET}`].join("\n")],
-	["an unreadable registry is warned and the tick judges nothing", { records: "throws" }, [tick], `none probes=o0i0 ${QUIET} warn=[list-failed("registry unreadable")]`],
-	["a probe that throws is warned and the task stays unfired", { outboxThrows: true }, [tick], `task-1:error("outbox unreadable") probes=o1i0 ${QUIET} warn=[unexpected("outbox unreadable")]`],
+	["a writer failing otherwise is warned and the task stays unfired", { writeFails: { code: "ENOSPC", message: "disk full" } }, [tick], `task-1:error("disk full") probes=o1i1 ${QUIET} warn=[write-failed(planner/task-1, "disk full")]`],
+	["a failing mark is warned after the write and the task counts as fired", { markFails: { message: "registry locked" } }, [tick, tick], [`task-1:fired probes=o1i1 +writes=[${PAYLOAD("planner", "task-1", 600)}] +marked=[] warn=[mark-failed(planner/task-1, "registry locked")]`, `task-1:skip:already-fired probes=o0i0 ${QUIET}`].join("\n")],
+	["an unreadable registry is warned and the tick judges nothing", { records: "throws" }, [tick], `none probes=o0i0 ${QUIET} warn=[list-failed(-, "registry unreadable")]`],
+	["a probe that throws is warned and the task stays unfired", { outboxThrows: true }, [tick], `task-1:error("outbox unreadable") probes=o1i0 ${QUIET} warn=[unexpected(planner/task-1, "outbox unreadable")]`],
 ];
 
 test("the idle-stall watchdog", async () => {
