@@ -1,47 +1,16 @@
 #!/usr/bin/env bash
-# Tests for orch/scripts/queue-wait.
+# Tests for orch/scripts/queue-wait, the merge-queue membership waiter
+# merge-pr § 3.2 routes on. Its reason to exist is the cross-poll memory a
+# re-entering orchestrator cannot keep, WAS_QUEUED: whether any prior poll saw
+# the PR queued or armed, without which an ejection and a PR that never
+# entered the queue look the same. Beside it, the late-findings guard that
+# dequeues on an unresolved thread, and the progress signal on a still-queued
+# deadline.
 #
-# queue-wait is the merge-queue membership waiter merge-pr § 3.2 routes on.
-# Its reason to exist is the CROSS-POLL memory a re-entering orchestrator
-# cannot keep: WAS_QUEUED — whether any prior poll observed the PR queued
-# or armed. Without it, "ejected from the queue" and "never entered it" look
-# identical, and a PR ejected by a failed merge-group run goes unnoticed.
-#
-# Covered:
-#   1.  merged on the first poll
-#   2.  queued, then merged (WAS_QUEUED recorded, exit 0)
-#   3.  ejected after being queued — THE WAS_QUEUED path
-#   4.  never queued is NOT reported as ejected (the disambiguation)
-#   5.  auto-merge disarmed (armed, never enqueued, arming gone)
-#   6.  timeout while still queued (armed, never a success, never a failure)
-#   7.  malformed / empty GraphQL response is an error, never "not queued"
-#   8.  GraphQL errors[] (e.g. an unsupported field on older GHES)
-#   9.  auth failure exits 3, matching ci-wait / approval-wait
-#   10. failed-required-check probe delegates to ci-wait (verdict fail)
-#   11. --no-check-probe suppresses that probe (the flag has teeth)
-#   12. PR closed without merging
-#   13. human-readable (non --json) output names the verdict
-#   14. a transient GitHub error is absorbed inside the wait budget
-#   15-19. argument validation, --help, low-confidence one-poll flag, budget bound
-#   20. late-findings guard: ANY unresolved thread while queued
-#       disarms auto-merge first, then dequeues with the PR node id
-#   21. pre-existing unresolved threads trigger too (late by construction);
-#       a fully resolved thread set never triggers
-#   22. a failed or anomalous thread read is no evidence — no dequeue, keep
-#       polling, warn after 3 (query failure, null reviewThreads, non-boolean
-#       isResolved, missing/non-advancing cursor)
-#   23. --no-guard restores unguarded queueing (no thread reads at all)
-#   24. a failed dequeue half is loud (late_findings_dequeue_failed, named)
-#   25. armed-but-never-enqueued guard path disables auto-merge only
-#   26. an errors[] body on HTTP success is a mutation failure (named half)
-#   27. the final guard probe fires before a still-queued timeout return
-#   28. the pagination walk is bounded — an overlong walk is a failed read
-#   29. progress signal on the budget-exhausted queued verdict:
-#       advancing check-run count, or a check-run still running on a flat
-#       count → progressing true / still_progressing; nothing moving (or a
-#       change older than the window) with nothing running → false / stalled;
-#       no headCommit → progressing null, never still_progressing;
-#       a failed check-run read is unknown (null), never zero, and warns
+# One case per behaviour surface; shaped input is one table per case, one
+# asserted row per shape. A row stages its own fixture sequence; its `expect`
+# names the fields it pins and `observe` reads exactly those, so a row fails
+# on the field it names.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -307,593 +276,273 @@ checkruns_body() {
 source "$TEST_DIR/lib/virtual-clock.sh"
 virtual_clock_install "$TMP_ROOT/bin" "$TMP_ROOT/clock"
 
-# Run queue-wait through the .agents symlink, exactly how it is invoked in
-# production. `env "$@"` injects the stub's fixture directory and knobs; the
-# trailing args are the caller-visible ones.
-run_queue_wait() {
-  local env_args=()
-  while [[ $# -gt 0 && "$1" != "--" ]]; do
-    env_args+=("$1")
-    shift
+# --- harness ---------------------------------------------------------------
+
+# stage SPEC — writes one case's fixtures into a fresh sequence directory.
+# SPEC is comma-separated `prefix:n=name` items (n a poll number or `last`),
+# each name a fixture body above; two shorthands open the common worlds:
+#   open_queued       state:last=open,queue:last=in
+#   open_queued_head  the same with the entry exposing its head commit
+#   open_armed        state:last=open,queue:last=armed
+# A name ending in a failure reads as the sidecar it needs: `fail502` is an
+# empty body, exit 1 and an HTTP 502 on stderr; `gql_errors` and `dq_err`
+# exit 1 with their body. `threads:pages=N` writes N pages that keep promising
+# more and an unresolved terminal page after them; `checkruns:advancing=N`
+# writes N reads whose completed count grows by one each poll with one run
+# still in progress; `checkruns:<n>=cD.P` is D completed and P in progress.
+stage() {
+  local spec="$1" items item prefix n name i
+  new_case "$((++STAGE_SEQ))"
+  IFS=',' read -ra items <<<"$spec"
+  for item in "${items[@]}"; do
+    case "$item" in
+      open_queued) write_fixture state last "$pr_open"; write_fixture queue last "$q_in_queue"; continue ;;
+      open_queued_head) write_fixture state last "$pr_open"; write_fixture queue last "$q_in_queue_head"; continue ;;
+      open_armed) write_fixture state last "$pr_open"; write_fixture queue last "$q_armed_only"; continue ;;
+    esac
+    prefix="${item%%:*}"
+    n="${item#*:}"; n="${n%%=*}"
+    name="${item#*=}"
+    case "$prefix:$name" in
+      *:fail502) write_fixture "$prefix" "$n" '' 1 "HTTP 502: Bad Gateway" ;;
+      state:open) write_fixture state "$n" "$pr_open" ;;
+      state:merged) write_fixture state "$n" "$pr_merged" ;;
+      state:closed) write_fixture state "$n" "$pr_closed" ;;
+      queue:in) write_fixture queue "$n" "$q_in_queue" ;;
+      queue:in_head) write_fixture queue "$n" "$q_in_queue_head" ;;
+      queue:out) write_fixture queue "$n" "$q_out" ;;
+      queue:armed) write_fixture queue "$n" "$q_armed_only" ;;
+      queue:braces) write_fixture queue "$n" '{}' ;;
+      queue:empty) write_fixture queue "$n" '' ;;
+      queue:gql_errors) write_fixture queue "$n" '{"errors":[{"message":"Field '"'"'isInMergeQueue'"'"' doesn'"'"'t exist on type '"'"'PullRequest'"'"'"}]}' 1 ;;
+      threads:none) write_fixture threads "$n" "$t_none" ;;
+      threads:late) write_fixture threads "$n" "$t_late" ;;
+      threads:pre_one_resolved) write_fixture threads "$n" "$t_pre_one_resolved" ;;
+      threads:all_resolved) write_fixture threads "$n" "$t_all_resolved" ;;
+      threads:rt_null) write_fixture threads "$n" "$t_rt_null" ;;
+      threads:bad_bool) write_fixture threads "$n" "$t_bad_bool" ;;
+      threads:cursor_null) write_fixture threads "$n" "$t_cursor_null" ;;
+      threads:cursor_stuck) write_fixture threads "$n" "$t_cursor_stuck" ;;
+      threads:partial_errors) write_fixture threads "$n" "$t_partial_errors" ;;
+      threads:object_errors) write_fixture threads "$n" "$t_object_errors" ;;
+      threads:string_errors) write_fixture threads "$n" "$t_string_errors" ;;
+      threads:*)
+        [[ "$n" == pages ]] || { echo "stage: unknown fixture $item" >&2; exit 1; }
+        for i in $(seq 1 "$name"); do
+          write_fixture threads "$i" '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"c'"$i"'"},"nodes":[{"isResolved":false}]}}}}}'
+        done
+        write_fixture threads "$((name + 1))" "$t_late"
+        ;;
+      dequeue:am_ok) write_fixture dequeue "$n" "$am_ok" ;;
+      dequeue:dq_ok) write_fixture dequeue "$n" "$dq_ok" ;;
+      dequeue:dq_err) write_fixture dequeue "$n" "$dq_err" 1 ;;
+      dequeue:am_errs_on_200) write_fixture dequeue "$n" "$am_errs_on_200" ;;
+      checkruns:queued_run) write_fixture checkruns "$n" '{"total_count":2,"check_runs":[{"name":"c1","status":"completed","conclusion":"success"},{"name":"q1","status":"queued","conclusion":null}]}' ;;
+      checkruns:c*.*)
+        [[ "$name" =~ ^c([0-9]+)\.([0-9]+)$ ]] || { echo "stage: unknown fixture $item" >&2; exit 1; }
+        write_fixture checkruns "$n" "$(checkruns_body "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}")"
+        ;;
+      checkruns:*)
+        [[ "$n" == advancing ]] || { echo "stage: unknown fixture $item" >&2; exit 1; }
+        for i in $(seq 1 "$name"); do
+          write_fixture checkruns "$i" "$(checkruns_body "$i" 1)"
+        done
+        ;;
+      *) echo "stage: unknown fixture $item" >&2; exit 1 ;;
+    esac
   done
-  shift || true
-  (cd "$TMP_ROOT/repo" \
-    && PATH="$TMP_ROOT/bin:$PATH" \
-       env STUB_SEQ_DIR="$SEQ_DIR" \
-           QUEUE_WAIT_CONFIRM_POLLS=2 \
-           QUEUE_WAIT_ARM_GRACE=120 \
-           QUEUE_WAIT_PROBE_INTERVAL=0 \
-           ${env_args[@]+"${env_args[@]}"} \
-           .agents/skills/orch/scripts/queue-wait "$@")
+}
+STAGE_SEQ=0
+
+# run_wait ENV ARGS... — runs queue-wait through the .agents symlink, exactly
+# how production invokes it, with the staged sequence directory and the
+# suite's default knobs; ENV is a comma-separated list of `env` arguments
+# that may override those knobs. Sets OUT, RC and ERR (the stderr file).
+run_wait() {
+  local env_list="$1" env_args=()
+  shift
+  [[ -z "$env_list" ]] || IFS=',' read -ra env_args <<<"$env_list"
+  ERR="$SEQ_DIR/stderr"
+  set +e
+  OUT=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+    env STUB_SEQ_DIR="$SEQ_DIR" \
+        QUEUE_WAIT_CONFIRM_POLLS=2 \
+        QUEUE_WAIT_ARM_GRACE=120 \
+        QUEUE_WAIT_PROBE_INTERVAL=0 \
+        ${env_args[@]+"${env_args[@]}"} \
+        .agents/skills/orch/scripts/queue-wait "$@" 2>"$ERR")
+  RC=$?
+  set -e
 }
 
-echo "=== queue-wait (kendex#819) ==="
+json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 
-# --- 1. merged on the first poll -------------------------------------------
-new_case merged_now
-write_fixture state last "$pr_merged"
-write_fixture queue last "$q_in_queue"
-err="$TMP_ROOT/e1"
-out="$(run_queue_wait -- 1 1 10 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "0" "merged exits 0" "$err"
-assert_eq "$(jq -r .verdict <<<"$out")" "merged" "merged verdict" "$err"
-assert_eq "$(jq -r .status <<<"$out")" "complete" "merged status complete" "$err"
-assert_eq "$(jq -r .merged_at <<<"$out")" "2026-07-24T10:00:00Z" "merged_at reported" "$err"
+# observe EXPECT — prints the run's value of every `name=` field EXPECT names,
+# in EXPECT's order, so a row compares as one string. Plain names are JSON
+# result fields; the derived names read the sequence directory or stderr:
+#   has_<field>       whether the JSON carries that field at all
+#   error~<text>      whether the JSON error names <text>, where the message
+#                     is the fact's only carrier: which read failed, which
+#                     mutation half failed, that the PR may still be queued
+#   stdout            `line` when anything was printed, `empty` otherwise
+#   stdout~<word>     whether the text result names that verdict word
+#   help_sections     the --help sections merge-pr.md and pr-merge route an
+#                     agent to, of exit_codes, environment and arm_grace
+#   mutations         the GraphQL mutations issued, in order: `disable`,
+#                     `dequeue`, or `none`
+#   mutation_ids      the ids those mutations named, or `none`
+#   thread_reads      reviewThreads reads the stub served
+#   checkruns_read    whether any check-runs read reached the stub
+#   guard_warned      the guard's consecutive-failure warning on stderr
+#   checkrun_warned   the progress read's consecutive-failure warning
+observe() {
+  local got="" token name value
+  for token in $1; do
+    name="${token%%=*}"
+    case "$name" in
+      rc) value="$RC" ;;
+      has_*) value="$(json "has(\"${name#has_}\")")" ;;
+      error~*) value="$(json '.error // ""' | grep -qF -- "${name#error~}" && echo true || echo false)" ;;
+      stdout) value="$([[ -n "$OUT" ]] && echo line || echo empty)" ;;
+      stdout~*) value="$(grep -qF -- "${name#stdout~}" <<<"$OUT" && echo true || echo false)" ;;
+      help_sections)
+        value=""
+        grep -q '^Exit codes:' <<<"$OUT" && value="$value,exit_codes"
+        grep -q '^Environment' <<<"$OUT" && value="$value,environment"
+        grep -q 'QUEUE_WAIT_ARM_GRACE' <<<"$OUT" && value="$value,arm_grace"
+        value="${value#,}"; [[ -n "$value" ]] || value=none
+        ;;
+      mutations)
+        value="$(sed -e 's/^disablePullRequestAutoMerge .*/disable/' -e 's/^dequeuePullRequest .*/dequeue/' "$SEQ_DIR/mutations.log" 2>/dev/null | paste -sd, - || true)"
+        [[ -n "$value" ]] || value=none
+        ;;
+      mutation_ids)
+        value="$(grep -o 'PR_[A-Za-z0-9]*\|MQE_[A-Za-z0-9]*' "$SEQ_DIR/mutations.log" 2>/dev/null | sort -u | paste -sd, - || true)"
+        [[ -n "$value" ]] || value=none
+        ;;
+      thread_reads) value="$(cat "$SEQ_DIR/threads.count" 2>/dev/null || echo 0)" ;;
+      checkruns_read) value="$([[ -f "$SEQ_DIR/checkruns.count" ]] && echo true || echo false)" ;;
+      guard_warned) value="$(grep -q 'thread fetch failed 3 consecutive' "$ERR" && echo true || echo false)" ;;
+      checkrun_warned) value="$(grep -q 'check-run read failed 3 consecutive' "$ERR" && echo true || echo false)" ;;
+      *) value="$(json ".$name")" ;;
+    esac
+    got="$got $name=$value"
+  done
+  printf '%s' "${got# }"
+}
 
-# --- 2. queued, then merged ------------------------------------------------
-new_case queued_then_merged
-write_fixture state 1 "$pr_open"
-write_fixture state last "$pr_merged"
-write_fixture queue last "$q_in_queue"
-err="$TMP_ROOT/e2"
-out="$(run_queue_wait -- 1 1 10 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "0" "queued-then-merged exits 0" "$err"
-assert_eq "$(jq -r .verdict <<<"$out")" "merged" "queued-then-merged verdict" "$err"
-assert_eq "$(jq -r .was_queued <<<"$out")" "true" "WAS_QUEUED survives the poll that merged" "$err"
+# table DEFAULT_ARGS ROW... — one staged world, one run and one assertion per
+# row. A row is `label|stage|args|env|expect`; empty args mean DEFAULT_ARGS.
+# Positional args are `<pr> <poll-interval> <budget-seconds>` plus flags, on
+# the virtual clock.
+table() {
+  local default_args="$1" row label spec args env expect
+  shift
+  for row in "$@"; do
+    IFS='|' read -r label spec args env expect <<<"$row"
+    [[ -n "$expect" ]] || { printf 'table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+    [[ -n "$args" ]] || args="$default_args"
+    stage "$spec"
+    # shellcheck disable=SC2086
+    run_wait "$env" $args
+    assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
+  done
+}
 
-# --- 3. ejected after being queued (THE WAS_QUEUED path) -------------------
-new_case ejected
-write_fixture state last "$pr_open"
-write_fixture queue 1 "$q_in_queue"
-write_fixture queue last "$q_out"
-err="$TMP_ROOT/e3"
-out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "1" "ejection exits 1" "$err"
-assert_eq "$(jq -r .verdict <<<"$out")" "ejected" "ejected verdict after queue membership is lost" "$err"
-assert_eq "$(jq -r .status <<<"$out")" "complete" "ejected status complete" "$err"
-assert_eq "$(jq -r .was_queued <<<"$out")" "true" "ejected records WAS_QUEUED" "$err"
-assert_eq "$(jq -r .was_in_merge_queue <<<"$out")" "true" "ejected records queue membership" "$err"
-assert_eq "$(jq -r .cause <<<"$out")" "merge_group_failed" "ejected cause" "$err"
+QW='1 1 20 --json --no-check-probe'
 
-# 3b. a single out-of-queue blip does not eject on its own: seeing the PR
-# back in the queue clears the candidate, and a candidate that never reached
-# the confirmation count carries no verdict's name, the deadline included.
-new_case ejected_single_blip
-write_fixture state last "$pr_open"
-write_fixture queue 1 "$q_in_queue"
-write_fixture queue 2 "$q_out"
-write_fixture queue last "$q_in_queue"
-err="$TMP_ROOT/e3b"
-out="$(run_queue_wait QUEUE_WAIT_CONFIRM_POLLS=2 -- 1 1 4 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .verdict <<<"$out")" "queued" "a one-poll blip back into the queue is not an ejection" "$err"
-assert_eq "$rc" "1" "unconfirmed blip still exits 1 (never silent success)" "$err"
+echo "=== the verdict over the PR state and queue membership sequence ==="
+# WAS_QUEUED is the cross-poll memory: an entry seen queued or armed and then
+# gone is ejected or disarmed; one never seen is not_queued. Membership lost
+# for a single poll is not an ejection until QUEUE_WAIT_CONFIRM_POLLS agree.
+# A transient API failure is absorbed and counted; the check probe delegates
+# a failed required check to ci-wait unless --no-check-probe; the last sleep
+# is clamped so elapsed lands on the budget; a one-poll observation exposes
+# its age.
+table "$QW" \
+  'merged on the first poll|state:last=merged,queue:last=in|1 1 10 --json --no-check-probe||rc=0 verdict=merged status=complete merged_at=2026-07-24T10:00:00Z' \
+  'queued then merged keeps WAS_QUEUED|state:1=open,state:last=merged,queue:last=in|1 1 10 --json --no-check-probe||rc=0 verdict=merged was_queued=true' \
+  'membership lost after being queued is an ejection|state:last=open,queue:1=in,queue:last=out|||rc=1 verdict=ejected status=complete was_queued=true was_in_merge_queue=true cause=merge_group_failed' \
+  'a one-poll blip out and back is not an ejection|state:last=open,queue:1=in,queue:2=out,queue:last=in|1 1 4 --json --no-check-probe||rc=1 verdict=queued' \
+  'never queued is not_queued, not ejected|state:last=open,queue:last=out||QUEUE_WAIT_ARM_GRACE=2|rc=1 verdict=not_queued status=timeout was_queued=false cause=never_armed' \
+  'armed then cleared is disarmed|state:last=open,queue:1=armed,queue:last=out|||rc=1 verdict=disarmed was_queued=true was_in_merge_queue=false cause=auto_merge_cleared' \
+  'still queued at the deadline is a timeout, never a silent success|open_queued|1 1 3 --json --no-check-probe||rc=1 status=timeout verdict=queued in_merge_queue=true merge_queue_state=QUEUED' \
+  'closed without merging|state:last=closed,queue:last=in|1 1 10 --json --no-check-probe||rc=1 verdict=closed' \
+  'a transient error is absorbed and counted|state:1=open,state:last=merged,queue:1=fail502,queue:last=in|||rc=0 verdict=merged transient_api_errors=1' \
+  'a failed required check on an armed PR disarms through the probe|open_armed|1 1 20 --json|STUB_PR_CHECKS_MODE=failure|rc=1 verdict=disarmed cause=check_failed' \
+  '--no-check-probe leaves the same PR queued|open_armed|1 1 3 --json --no-check-probe|STUB_PR_CHECKS_MODE=failure|verdict=queued' \
+  'a one-poll queued verdict exposes the age of its sample|open_queued|1 1 1 --json --no-check-probe||verdict=queued polls=1 has_last_poll_age_seconds=true' \
+  'the last sleep is clamped to the remaining budget|open_queued|1 3 4 --json --no-check-probe||elapsed_seconds=4'
 
-# --- 4. never queued is NOT an ejection ------------------------------------
-new_case never_queued
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_out"
-err="$TMP_ROOT/e4"
-out="$(run_queue_wait QUEUE_WAIT_ARM_GRACE=2 -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "1" "never-queued exits 1" "$err"
-assert_eq "$(jq -r .verdict <<<"$out")" "not_queued" "never-queued verdict is not_queued, not ejected" "$err"
-assert_eq "$(jq -r .status <<<"$out")" "timeout" "never-queued status timeout" "$err"
-assert_eq "$(jq -r .was_queued <<<"$out")" "false" "never-queued records WAS_QUEUED false" "$err"
-assert_eq "$(jq -r .cause <<<"$out")" "never_armed" "never-queued cause" "$err"
+echo "=== an unreadable queue answer is an error, never not_queued ==="
+# merge-pr.md § 5 hands the error to an operator, so each shape names itself:
+# an unreadable body, the GraphQL message GitHub sent, the auth ladder.
+table "$QW" \
+  'an empty object body|state:last=open,queue:last=braces|||rc=1 status=error verdict=unknown error~readable=true' \
+  'an empty body|state:last=open,queue:last=empty|||rc=1 status=error verdict=unknown error~readable=true' \
+  'a GraphQL errors array surfaces its message|state:last=open,queue:last=gql_errors|||rc=1 status=error verdict=unknown error~isInMergeQueue=true' \
+  'no GitHub auth path exits 3 like the other waiters|open_queued||STUB_GH_DENY_KEYRING=1|rc=3 status=error error~auth=true'
 
-# --- 5. auto-merge disarmed ------------------------------------------------
-new_case disarmed
-write_fixture state last "$pr_open"
-write_fixture queue 1 "$q_armed_only"
-write_fixture queue last "$q_out"
-err="$TMP_ROOT/e5"
-out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "1" "disarm exits 1" "$err"
-assert_eq "$(jq -r .verdict <<<"$out")" "disarmed" "armed-then-cleared verdict is disarmed" "$err"
-assert_eq "$(jq -r .was_queued <<<"$out")" "true" "disarm records WAS_QUEUED" "$err"
-assert_eq "$(jq -r .was_in_merge_queue <<<"$out")" "false" "disarm never saw queue membership" "$err"
-assert_eq "$(jq -r .cause <<<"$out")" "auto_merge_cleared" "disarm cause" "$err"
+echo "=== the late-findings guard: any unresolved thread while queued or armed ==="
+# Disarm first (a bare dequeue can be raced back in by the arming), then
+# dequeue with the PR node id. A pre-existing unresolved thread is the same
+# unsafe state; a resolved set never triggers. A failed or anomalous thread
+# read is no evidence: no mutation, keep polling, warn after three (each
+# anomalous body plants an unresolved node, so a fail-open reader would
+# dequeue and a read-as-empty reader would stay silent without the warning).
+# A failed mutation half is loud with its own cause and names the half. The
+# deadline runs one last probe. The pagination walk is bounded.
+DQ='dequeue:1=am_ok,dequeue:2=dq_ok'
+table "$QW" \
+  "an unresolved thread while queued disarms, then dequeues by node id|open_queued,threads:last=late,$DQ|||rc=1 verdict=dequeued status=complete cause=late_findings unresolved_count=1 mutations=disable,dequeue mutation_ids=PR_node123" \
+  "a thread unresolved since before enqueue dequeues; the resolved sibling is not counted|open_queued,threads:last=pre_one_resolved,$DQ|||rc=1 verdict=dequeued unresolved_count=1 mutations=disable,dequeue" \
+  'a fully resolved thread set never triggers|open_queued,threads:last=all_resolved|1 1 3 --json --no-check-probe||verdict=queued unresolved_count=0 mutations=none thread_reads=4' \
+  'every thread fetch failing is no evidence and warns|open_queued,threads:last=fail502|1 1 5 --json --no-check-probe||rc=1 verdict=queued mutations=none guard_warned=true' \
+  "a null reviewThreads is a failed read|open_queued,threads:last=rt_null,$DQ|1 1 4 --json --no-check-probe||verdict=queued mutations=none guard_warned=true" \
+  "a non-boolean isResolved is a failed read|open_queued,threads:last=bad_bool,$DQ|1 1 4 --json --no-check-probe||verdict=queued mutations=none guard_warned=true" \
+  "hasNextPage with a null cursor is a failed read|open_queued,threads:last=cursor_null,$DQ|1 1 4 --json --no-check-probe||verdict=queued mutations=none guard_warned=true" \
+  "a cursor that never advances is a failed read|open_queued,threads:last=cursor_stuck,$DQ|1 1 4 --json --no-check-probe||verdict=queued mutations=none guard_warned=true" \
+  "data beside a top-level errors array is a failed read|open_queued,threads:last=partial_errors,$DQ|1 1 4 --json --no-check-probe||verdict=queued mutations=none guard_warned=true" \
+  "an errors object is a failed read|open_queued,threads:last=object_errors,$DQ|1 1 4 --json --no-check-probe||verdict=queued mutations=none guard_warned=true" \
+  "an errors string is a failed read|open_queued,threads:last=string_errors,$DQ|1 1 4 --json --no-check-probe||verdict=queued mutations=none guard_warned=true" \
+  "--no-guard reads no threads and mutates nothing|open_queued,threads:last=late,$DQ|1 1 3 --json --no-check-probe --no-guard||verdict=queued thread_reads=0 mutations=none" \
+  'a failed dequeue half is loud and names the half|open_queued,threads:last=late,dequeue:1=am_ok,dequeue:2=dq_err|||rc=1 verdict=dequeued status=error cause=late_findings_dequeue_failed error~dequeuePullRequest=true error~QUEUED=true mutations=disable,dequeue' \
+  'an errors array on an HTTP 200 disarm is a failed half; the dequeue is still attempted|open_queued,threads:last=late,dequeue:1=am_errs_on_200,dequeue:2=dq_ok|||rc=1 cause=late_findings_dequeue_failed error~disablePullRequestAutoMerge=true mutations=disable,dequeue' \
+  'armed but never enqueued disables auto-merge only|open_armed,threads:last=late,dequeue:1=am_ok|||rc=1 verdict=dequeued cause=late_findings mutations=disable' \
+  "the final probe at the deadline catches a late thread|open_queued,threads:1=none,threads:last=late,$DQ|1 1 1 --json --no-check-probe||verdict=dequeued polls=1 mutations=disable,dequeue" \
+  "an overlong pagination walk stops at the bound, a failed read and not a count|open_queued,threads:pages=40,$DQ|1 1 1 --json --no-check-probe||verdict=queued mutations=none thread_reads=40"
 
-# --- 6. timeout while still queued -----------------------------------------
-new_case still_queued
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue"
-err="$TMP_ROOT/e6"
-out="$(run_queue_wait -- 1 1 3 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "1" "still-queued deadline exits 1 (never a silent success)" "$err"
-assert_eq "$(jq -r .status <<<"$out")" "timeout" "still-queued status timeout" "$err"
-assert_eq "$(jq -r .verdict <<<"$out")" "queued" "still-queued verdict" "$err"
-assert_eq "$(jq -r .in_merge_queue <<<"$out")" "true" "still-queued reports live membership" "$err"
-assert_eq "$(jq -r .merge_queue_state <<<"$out")" "QUEUED" "still-queued reports entry state" "$err"
+echo "=== the progress signal on a budget-exhausted queued verdict ==="
+# When the entry exposes its head commit, movement in the entry tuple or the
+# completed check-run count within the last three polls, or a check-run still
+# running, is still_progressing; measurable and unmoving is stalled. No head
+# commit means progress is unobservable: null, never a check-run read. A
+# failed read is unknown, never zero, warns after three, and neither erases
+# the comparison baseline nor counts as movement.
+table '1 1 8 --json --no-check-probe' \
+  'a completed count advancing every poll is still progressing|open_queued_head,checkruns:advancing=12|1 1 4 --json --no-check-probe||rc=1 verdict=queued status=timeout progressing=true cause=still_progressing checkruns_read=true' \
+  'a flat count with nothing running is stalled|open_queued_head,checkruns:last=c1.0|||verdict=queued progressing=false cause=stalled checkruns_read=true' \
+  'one change older than the window, then flat, is stalled|open_queued_head,checkruns:1=c1.0,checkruns:last=c2.0|||verdict=queued progressing=false cause=stalled' \
+  'a flat count with a run in progress is still progressing|open_queued_head,checkruns:last=c1.1|||verdict=queued polls=8 progressing=true cause=still_progressing' \
+  'a flat count with a run queued is still progressing|open_queued_head,checkruns:last=queued_run|||progressing=true cause=still_progressing' \
+  'no head commit on the entry: progress unobservable, no check-run read|open_queued,checkruns:last=c3.0|1 1 4 --json --no-check-probe||verdict=queued has_progressing=true progressing=null cause=stalled checkruns_read=false' \
+  'every check-run read failing is unknown, never zero, and warns|open_queued_head,checkruns:last=fail502|1 1 5 --json --no-check-probe||verdict=queued has_progressing=true progressing=null cause=stalled checkrun_warned=true' \
+  'a failed read between two reads does not erase the movement|open_queued_head,checkruns:1=c1.0,checkruns:2=fail502,checkruns:last=c2.0|1 1 4 --json --no-check-probe||verdict=queued progressing=true cause=still_progressing' \
+  'a merged verdict carries progressing and no cause|state:last=merged,queue:last=in_head|1 1 10 --json --no-check-probe||verdict=merged has_progressing=true has_cause=false'
 
-# --- 7. malformed / empty GraphQL response ---------------------------------
-new_case malformed
-write_fixture state last "$pr_open"
-write_fixture queue last '{}'
-err="$TMP_ROOT/e7"
-out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "1" "malformed queue response exits 1" "$err"
-assert_eq "$(jq -r .status <<<"$out")" "error" "malformed queue response is an error" "$err"
-assert_contains "$(jq -r .error <<<"$out")" "no readable pull request" "malformed error names the cause" "$err"
-assert_eq "$(jq -r .verdict <<<"$out")" "unknown" "malformed never routes as not_queued/ejected" "$err"
+echo "=== text mode names the verdict on stdout ==="
+# The line's wording beyond the verdict word is not a contract anything
+# parses; what holds is that every verdict prints its own line, with the same
+# exit code as --json.
+table '1 1 20 --no-check-probe' \
+  'ejected|state:last=open,queue:1=in,queue:last=out|||rc=1 stdout~ejected=true' \
+  "dequeued|open_queued,threads:last=late,$DQ|||rc=1 stdout~dequeued=true" \
+  'queued after one poll|open_queued|1 1 1 --no-check-probe||rc=1 stdout~queued=true' \
+  'queued and stalled|open_queued_head,checkruns:last=c1.0|1 1 8 --no-check-probe||rc=1 stdout~queued=true'
 
-new_case empty_body
-write_fixture state last "$pr_open"
-write_fixture queue last ''
-err="$TMP_ROOT/e7b"
-out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .status <<<"$out")" "error" "empty queue response is an error" "$err"
-
-# --- 8. GraphQL errors[] ---------------------------------------------------
-new_case gql_errors
-write_fixture state last "$pr_open"
-write_fixture queue last '{"errors":[{"message":"Field '"'"'isInMergeQueue'"'"' doesn'"'"'t exist on type '"'"'PullRequest'"'"'"}]}' 1
-err="$TMP_ROOT/e8"
-out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "1" "GraphQL errors[] exits 1" "$err"
-assert_eq "$(jq -r .status <<<"$out")" "error" "GraphQL errors[] is an error" "$err"
-assert_contains "$(jq -r .error <<<"$out")" "isInMergeQueue" "GraphQL error message is surfaced" "$err"
-
-# --- 9. auth failure -------------------------------------------------------
-new_case auth_fail
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue"
-err="$TMP_ROOT/e9"
-out="$(run_queue_wait STUB_GH_DENY_KEYRING=1 -- 1 1 10 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "3" "auth failure exits 3 (matches ci-wait/approval-wait)" "$err"
-assert_eq "$(jq -r .status <<<"$out")" "error" "auth failure emits an error result" "$err"
-assert_contains "$(jq -r .error <<<"$out")" "no working GitHub auth path" "auth failure names the ladder" "$err"
-
-# --- 10. failed-required-check probe delegates to ci-wait ------------------
-new_case probe_fail
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_armed_only"
-err="$TMP_ROOT/e10"
-out="$(run_queue_wait STUB_PR_CHECKS_MODE=failure -- 1 1 20 --json 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "1" "failed required check exits 1" "$err"
-assert_eq "$(jq -r .verdict <<<"$out")" "disarmed" "armed PR with a failed required check is disarmed" "$err"
-assert_eq "$(jq -r .cause <<<"$out")" "check_failed" "probe cause is check_failed" "$err"
-
-# --- 11. --no-check-probe suppresses the probe -----------------------------
-new_case probe_off
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_armed_only"
-err="$TMP_ROOT/e11"
-out="$(run_queue_wait STUB_PR_CHECKS_MODE=failure -- 1 1 3 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .verdict <<<"$out")" "queued" "--no-check-probe leaves an armed PR queued (flag has teeth)" "$err"
-
-# --- 12. closed without merging --------------------------------------------
-new_case closed
-write_fixture state last "$pr_closed"
-write_fixture queue last "$q_in_queue"
-err="$TMP_ROOT/e12"
-out="$(run_queue_wait -- 1 1 10 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "1" "closed PR exits 1" "$err"
-assert_eq "$(jq -r .verdict <<<"$out")" "closed" "closed PR verdict" "$err"
-
-# --- 13. human-readable output ---------------------------------------------
-new_case human
-write_fixture state last "$pr_open"
-write_fixture queue 1 "$q_in_queue"
-write_fixture queue last "$q_out"
-err="$TMP_ROOT/e13"
-out="$(run_queue_wait -- 1 1 20 --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_contains "$out" "Merge queue: ejected" "non-JSON output names the ejection" "$err"
-
-# --- 14. transient GitHub error absorbed -----------------------------------
-new_case transient
-write_fixture state 1 "$pr_open"
-write_fixture state last "$pr_merged"
-write_fixture queue 1 '' 1 "HTTP 502: Bad Gateway"
-write_fixture queue last "$q_in_queue"
-err="$TMP_ROOT/e14"
-out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "0" "transient error absorbed, wait completes" "$err"
-assert_eq "$(jq -r .verdict <<<"$out")" "merged" "transient error does not change the verdict" "$err"
-assert_eq "$(jq -r '.transient_api_errors // 0' <<<"$out")" "1" "transient error counted in JSON" "$err"
-
-# --- 18. a one-poll queued verdict is flagged low-confidence -----------------
-# With poll_interval == max_wait the loop polls exactly once. The "still queued"
-# observation is then a single sample; the verdict must say so, in both the
-# human line and the JSON (last_poll_age_seconds), so a routing caller does not
-# read a stale one-poll observation as live.
-new_case one_poll_queued
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue"
-err="$TMP_ROOT/e18"
-out="$(run_queue_wait -- 1 1 1 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .verdict <<<"$out")" "queued" "one-poll still-queued verdict" "$err"
-assert_eq "$(jq -r .polls <<<"$out")" "1" "exactly one poll happened" "$err"
-assert_eq "$(jq -r 'has("last_poll_age_seconds")' <<<"$out")" "true" "JSON exposes last_poll_age_seconds" "$err"
-herr="$TMP_ROOT/e18h"
-hout="$(run_queue_wait -- 1 1 1 --no-check-probe 2>"$herr")" && rc=0 || rc=$?
-assert_contains "$hout" "LOW CONFIDENCE" "one-poll human verdict is flagged low-confidence" "$herr"
-
-# --- 19. max_wait is a real upper bound (sleep clamped to remaining) ---------
-# poll_interval 3 with max_wait 4: the first sleep spends 3 of the budget and
-# the second is clamped to the 1 that remains, landing elapsed on exactly the
-# budget. Unclamped it would be 6. On the virtual clock those are the only two
-# numbers reachable, so the assertion is the equality rather than a bound with
-# a second of slack for wall-clock jitter — a clamp off by anything at all is
-# now a failure rather than rounding.
-new_case budget_upper_bound
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue"
-err="$TMP_ROOT/e19"
-out="$(run_queue_wait -- 1 3 4 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .elapsed_seconds <<<"$out")" "4" "elapsed lands on max_wait exactly (clamped sleep)" "$err"
-
-# --- 20. late-findings guard: unresolved thread while queued -----------------
-# ANY unresolved thread seen while queued triggers, with no baseline: an
-# unresolved thread in the queue is unsafe whenever it appeared.
-# The queued PR is also armed, so the guard must disarm auto-merge FIRST (a
-# bare dequeue can be raced back into the queue by the arming) and then issue
-# dequeuePullRequest with the PR NODE id (not the queue-entry id).
-new_case guard_dequeue
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue"
-write_fixture threads last "$t_late"
-write_fixture dequeue 1 "$am_ok"
-write_fixture dequeue 2 "$dq_ok"
-err="$TMP_ROOT/e20"
-out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "1" "late-findings dequeue exits 1" "$err"
-assert_eq "$(jq -r .verdict <<<"$out")" "dequeued" "late-findings verdict is dequeued" "$err"
-assert_eq "$(jq -r .status <<<"$out")" "complete" "late-findings status complete" "$err"
-assert_eq "$(jq -r .cause <<<"$out")" "late_findings" "late-findings cause" "$err"
-assert_eq "$(jq -r .unresolved_count <<<"$out")" "1" "unresolved count reported" "$err"
-assert_contains "$(sed -n 1p "$SEQ_DIR/mutations.log" 2>/dev/null)" "disablePullRequestAutoMerge" "disarm runs first" "$err"
-assert_contains "$(sed -n 2p "$SEQ_DIR/mutations.log" 2>/dev/null)" "dequeuePullRequest" "dequeue runs second" "$err"
-assert_contains "$(cat "$SEQ_DIR/mutations.log" 2>/dev/null)" "PR_node123" "mutations pass the PR node id" "$err"
-
-# 20h. same shape, human-readable output names the dequeue.
-new_case guard_dequeue_human
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue"
-write_fixture threads last "$t_late"
-write_fixture dequeue 1 "$am_ok"
-write_fixture dequeue 2 "$dq_ok"
-err="$TMP_ROOT/e20h"
-out="$(run_queue_wait -- 1 1 20 --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_contains "$out" "Merge queue: dequeued" "non-JSON output names the dequeue" "$err"
-
-# --- 21. pre-existing unresolved threads trigger too -------------------------
-# A thread unresolved since before enqueue is exactly the unsafe state, and
-# enqueue never proved threads were zero, so it dequeues; the resolved sibling
-# is not counted.
-new_case guard_preexisting
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue"
-write_fixture threads last "$t_pre_one_resolved"
-write_fixture dequeue 1 "$am_ok"
-write_fixture dequeue 2 "$dq_ok"
-err="$TMP_ROOT/e21"
-out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "1" "pre-existing unresolved thread exits 1" "$err"
-assert_eq "$(jq -r .verdict <<<"$out")" "dequeued" "pre-existing unresolved thread dequeues" "$err"
-assert_eq "$(jq -r .unresolved_count <<<"$out")" "1" "resolved sibling not counted" "$err"
-assert_contains "$(cat "$SEQ_DIR/mutations.log" 2>/dev/null)" "dequeuePullRequest" "pre-existing thread issues the dequeue" "$err"
-
-# 21b. a fully resolved thread set never triggers.
-new_case guard_all_resolved
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue"
-write_fixture threads last "$t_all_resolved"
-err="$TMP_ROOT/e21b"
-out="$(run_queue_wait -- 1 1 3 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .verdict <<<"$out")" "queued" "resolved-only threads leave the PR queued" "$err"
-assert_eq "$([ -f "$SEQ_DIR/mutations.log" ] && echo present || echo absent)" "absent" "no mutation for resolved-only threads" "$err"
-assert_eq "$(jq -r .unresolved_count <<<"$out")" "0" "resolved-only count is zero" "$err"
-
-# --- 22. a failed thread fetch is no evidence --------------------------------
-# Every guard fetch fails: no dequeue may be fabricated, the wait keeps
-# polling to its deadline, and 3 consecutive failures warn on stderr.
-new_case guard_fetch_fail
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue"
-write_fixture threads last '' 1 "HTTP 502: Bad Gateway"
-err="$TMP_ROOT/e22"
-out="$(run_queue_wait -- 1 1 5 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "1" "blind guard still exits 1 at the deadline" "$err"
-assert_eq "$(jq -r .verdict <<<"$out")" "queued" "fetch failure never fabricates a dequeue" "$err"
-assert_eq "$([ -f "$SEQ_DIR/mutations.log" ] && echo present || echo absent)" "absent" "no mutation on fetch failure" "$err"
-assert_contains "$(cat "$err")" "thread fetch failed 3 consecutive" "consecutive fetch failures warn" "$err"
-
-# 22b-22e. anomalous read shapes are FAILED reads, never counts (each body
-# plants an unresolved node, so a fail-open reader would dequeue and a
-# read-as-empty reader would stay silent without the warning): a null
-# reviewThreads, a non-boolean isResolved, a hasNextPage with a null cursor,
-# a hasNextPage whose cursor never advances, a 200 whose well-shaped data
-# rides alongside a top-level GraphQL errors array, and the two zero-length
-# non-array `errors` fields that a length-only check would wave through.
-for shape in rt_null bad_bool cursor_null cursor_stuck partial_errors object_errors string_errors; do
-  case "$shape" in
-    rt_null) body="$t_rt_null" ;;
-    bad_bool) body="$t_bad_bool" ;;
-    cursor_null) body="$t_cursor_null" ;;
-    cursor_stuck) body="$t_cursor_stuck" ;;
-    partial_errors) body="$t_partial_errors" ;;
-    object_errors) body="$t_object_errors" ;;
-    string_errors) body="$t_string_errors" ;;
-  esac
-  new_case "guard_shape_$shape"
-  write_fixture state last "$pr_open"
-  write_fixture queue last "$q_in_queue"
-  write_fixture threads last "$body"
-  write_fixture dequeue 1 "$am_ok"
-  write_fixture dequeue 2 "$dq_ok"
-  err="$TMP_ROOT/e22-$shape"
-  out="$(run_queue_wait -- 1 1 4 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-  assert_eq "$(jq -r .verdict <<<"$out")" "queued" "$shape is a failed read, not a dequeue" "$err"
-  assert_eq "$([ -f "$SEQ_DIR/mutations.log" ] && echo present || echo absent)" "absent" "$shape never mutates" "$err"
-  assert_contains "$(cat "$err")" "thread fetch failed 3 consecutive" "$shape takes the failed-read path (warns)" "$err"
-done
-
-# --- 23. --no-guard restores unguarded queueing ------------------------------
-# Same trigger fixtures as case 20: with the guard off there must be no
-# thread read at all (the flag has teeth), no mutation, and the old
-# still-queued timeout verdict.
-new_case guard_off
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue"
-write_fixture threads last "$t_late"
-write_fixture dequeue 1 "$am_ok"
-write_fixture dequeue 2 "$dq_ok"
-err="$TMP_ROOT/e23"
-out="$(run_queue_wait -- 1 1 3 --json --no-check-probe --no-guard 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .verdict <<<"$out")" "queued" "--no-guard leaves the PR queued" "$err"
-assert_eq "$([ -f "$SEQ_DIR/threads.count" ] && echo present || echo absent)" "absent" "--no-guard never reads threads" "$err"
-assert_eq "$([ -f "$SEQ_DIR/mutations.log" ] && echo present || echo absent)" "absent" "--no-guard never mutates" "$err"
-
-# --- 24. a failed dequeue half is loud ---------------------------------------
-# Disarm succeeds, dequeue fails: partial success must surface its own cause,
-# name the failed half, and state the PR may still be queued.
-new_case guard_dequeue_fail
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue"
-write_fixture threads last "$t_late"
-write_fixture dequeue 1 "$am_ok"
-write_fixture dequeue 2 "$dq_err" 1
-err="$TMP_ROOT/e24"
-out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "1" "failed dequeue exits 1" "$err"
-assert_eq "$(jq -r .verdict <<<"$out")" "dequeued" "failed dequeue keeps the dequeued verdict" "$err"
-assert_eq "$(jq -r .cause <<<"$out")" "late_findings_dequeue_failed" "failed dequeue has its own cause" "$err"
-assert_eq "$(jq -r .status <<<"$out")" "error" "failed dequeue is an error result" "$err"
-assert_contains "$(jq -r .error <<<"$out")" "STILL QUEUED" "failed dequeue states the PR is still queued" "$err"
-assert_contains "$(jq -r .error <<<"$out")" "dequeuePullRequest" "failed dequeue names the failed half" "$err"
-assert_contains "$(cat "$SEQ_DIR/mutations.log" 2>/dev/null)" "dequeuePullRequest" "failed dequeue was attempted" "$err"
-
-# --- 25. armed-but-never-enqueued guard path disables auto-merge only --------
-new_case guard_armed_only
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_armed_only"
-write_fixture threads last "$t_late"
-write_fixture dequeue 1 "$am_ok"
-err="$TMP_ROOT/e25"
-out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "1" "armed-only late finding exits 1" "$err"
-assert_eq "$(jq -r .verdict <<<"$out")" "dequeued" "armed-only verdict is dequeued" "$err"
-assert_eq "$(jq -r .cause <<<"$out")" "late_findings" "armed-only cause" "$err"
-assert_contains "$(cat "$SEQ_DIR/mutations.log" 2>/dev/null)" "disablePullRequestAutoMerge" "armed-only path disables auto-merge" "$err"
-assert_eq "$(grep -c "dequeuePullRequest" "$SEQ_DIR/mutations.log" 2>/dev/null || true)" "0" "armed-only path never dequeues" "$err"
-
-# --- 26. an errors[] body on HTTP success is a mutation failure --------------
-# The disarm half returns HTTP 200 with an errors key; the dequeue half
-# succeeds. Partial failure, loudly naming disablePullRequestAutoMerge.
-new_case guard_errors_on_200
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue"
-write_fixture threads last "$t_late"
-write_fixture dequeue 1 "$am_errs_on_200"
-write_fixture dequeue 2 "$dq_ok"
-err="$TMP_ROOT/e26"
-out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "1" "errors-on-200 exits 1" "$err"
-assert_eq "$(jq -r .cause <<<"$out")" "late_findings_dequeue_failed" "errors-on-200 is a mutation failure" "$err"
-assert_contains "$(jq -r .error <<<"$out")" "disablePullRequestAutoMerge" "errors-on-200 names the failed half" "$err"
-assert_eq "$(grep -c "dequeuePullRequest" "$SEQ_DIR/mutations.log" 2>/dev/null || true)" "1" "the dequeue half was still attempted" "$err"
-
-# --- 27. the final guard probe fires before a still-queued timeout -----------
-# Budget 1/1: the single loop poll reads a clean thread set; the late thread
-# lands after it. The deadline return must run one last probe and dequeue
-# instead of reporting "still queued".
-new_case guard_final_probe
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue"
-write_fixture threads 1 "$t_none"
-write_fixture threads last "$t_late"
-write_fixture dequeue 1 "$am_ok"
-write_fixture dequeue 2 "$dq_ok"
-err="$TMP_ROOT/e27"
-out="$(run_queue_wait -- 1 1 1 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .verdict <<<"$out")" "dequeued" "final probe catches the late thread at the deadline" "$err"
-assert_eq "$(jq -r .polls <<<"$out")" "1" "the catch came from the final probe, not a loop poll" "$err"
-assert_contains "$(cat "$SEQ_DIR/mutations.log" 2>/dev/null)" "dequeuePullRequest" "final probe issues the dequeue" "$err"
-
-# --- 28. the pagination walk is bounded --------------------------------------
-# 40 pages that keep promising more, then a terminal page (with an
-# unresolved node) reachable only by an unbounded walk. Both the loop probe
-# and the final probe must refuse past 20 pages — no count, no dequeue —
-# despite every page also showing an unresolved node.
-new_case guard_page_bound
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue"
-for i in $(seq 1 40); do
-  write_fixture threads "$i" '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"c'"$i"'"},"nodes":[{"isResolved":false}]}}}}}'
-done
-write_fixture threads 41 "$t_late"
-write_fixture dequeue 1 "$am_ok"
-write_fixture dequeue 2 "$dq_ok"
-err="$TMP_ROOT/e28"
-out="$(run_queue_wait -- 1 1 1 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .verdict <<<"$out")" "queued" "overlong walk is a failed read, not a count" "$err"
-assert_eq "$([ -f "$SEQ_DIR/mutations.log" ] && echo present || echo absent)" "absent" "overlong walk never mutates" "$err"
-
-# --- 29. progress signal on the budget-exhausted queued verdict -----
-# A `queued` verdict at the deadline cannot by itself tell "the merge-group
-# suite is still running" from "nothing has moved". queue-wait tracks the
-# entry tuple (state, position, headCommit.oid) and, when the head commit is
-# exposed, the check-runs on it: a tuple/completed-count change within the
-# last 3 polls OR a check-run still running on the last read is
-# `progressing: true` / `cause: still_progressing`; measurable, unchanged in
-# the window, and nothing running is `stalled`. Every fixture below is still
-# queued and OPEN throughout.
-
-# 29a. completed check-run count advancing every poll → still progressing.
-new_case progress_advancing
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue_head"
-for i in $(seq 1 12); do
-  write_fixture checkruns "$i" "$(checkruns_body "$i" 1)"
-done
-err="$TMP_ROOT/e29a"
-out="$(run_queue_wait -- 1 1 4 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "1" "progressing queued verdict still exits 1" "$err"
-assert_eq "$(jq -r .verdict <<<"$out")" "queued" "advancing check-runs: verdict stays queued" "$err"
-assert_eq "$(jq -r .status <<<"$out")" "timeout" "advancing check-runs: status stays timeout" "$err"
-assert_eq "$(jq -r .progressing <<<"$out")" "true" "advancing check-runs: progressing true" "$err"
-assert_eq "$(jq -r .cause <<<"$out")" "still_progressing" "advancing check-runs: cause still_progressing" "$err"
-assert_eq "$([ -f "$SEQ_DIR/checkruns.count" ] && echo present || echo absent)" "present" "the head commit's check-runs were read" "$err"
-herr="$TMP_ROOT/e29ah"
-new_case progress_advancing_human
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue_head"
-for i in $(seq 1 12); do
-  write_fixture checkruns "$i" "$(checkruns_body "$i" 1)"
-done
-hout="$(run_queue_wait -- 1 1 4 --no-check-probe 2>"$herr")" && rc=0 || rc=$?
-assert_contains "$hout" "still progressing" "human still-queued line reports progress" "$herr"
-
-# 29b. nothing moves across polls AND nothing is running → stalled. This is
-# the control for the still-running term: same flat count as 29f below with
-# zero non-completed check-runs, so an over-broad "running" read would flip
-# it to progressing.
-new_case progress_flat
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue_head"
-write_fixture checkruns last "$(checkruns_body 1 0)"
-err="$TMP_ROOT/e29b"
-out="$(run_queue_wait -- 1 1 8 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .verdict <<<"$out")" "queued" "flat check-runs: verdict stays queued" "$err"
-assert_eq "$(jq -r .progressing <<<"$out")" "false" "flat, none running: progressing false" "$err"
-assert_eq "$(jq -r .cause <<<"$out")" "stalled" "flat, none running: cause stalled" "$err"
-assert_eq "$([ -f "$SEQ_DIR/checkruns.count" ] && echo present || echo absent)" "present" "flat case did read the check-runs (stalled is evidence, not absence)" "$err"
-
-# 29b2. one early change, then flat past the 3-poll window with nothing
-# running → stalled. The window is the discriminator: an old change is not
-# "still progressing".
-new_case progress_early_then_flat
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue_head"
-write_fixture checkruns 1 "$(checkruns_body 1 0)"
-write_fixture checkruns last "$(checkruns_body 2 0)"
-err="$TMP_ROOT/e29b2"
-out="$(run_queue_wait -- 1 1 8 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .verdict <<<"$out")" "queued" "early-then-flat: verdict stays queued" "$err"
-assert_eq "$(jq -r .progressing <<<"$out")" "false" "early-then-flat: a change older than the window is not progress" "$err"
-assert_eq "$(jq -r .cause <<<"$out")" "stalled" "early-then-flat: cause stalled" "$err"
-herr="$TMP_ROOT/e29bh"
-new_case progress_flat_human
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue_head"
-write_fixture checkruns last "$(checkruns_body 1 0)"
-hout="$(run_queue_wait -- 1 1 8 --no-check-probe 2>"$herr")" && rc=0 || rc=$?
-assert_contains "$hout" "STALLED" "human still-queued line reports the stall" "$herr"
-
-# 29f. completed count flat across 4+ polls, but a check-run is in_progress:
-# a suite still running IS progress (a 15-min shard completes nothing for
-# many polls). Must be still_progressing, never stalled.
-new_case progress_flat_running
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue_head"
-write_fixture checkruns last "$(checkruns_body 1 1)"
-err="$TMP_ROOT/e29f"
-out="$(run_queue_wait -- 1 1 8 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .verdict <<<"$out")" "queued" "flat count, one running: verdict stays queued" "$err"
-polls_n="$(jq -r .polls <<<"$out")"
-assert_eq "$([ "$polls_n" -ge 4 ] 2>/dev/null && echo "4+" || echo "$polls_n")" "4+" "flat count, one running: 4+ polls elapsed" "$err"
-assert_eq "$(jq -r .progressing <<<"$out")" "true" "flat count, one running: progressing true" "$err"
-assert_eq "$(jq -r .cause <<<"$out")" "still_progressing" "flat count, one running: cause still_progressing" "$err"
-# 29f2. same, with the running check-run `queued` rather than `in_progress`.
-new_case progress_flat_queued_run
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue_head"
-write_fixture checkruns last '{"total_count":2,"check_runs":[{"name":"c1","status":"completed","conclusion":"success"},{"name":"q1","status":"queued","conclusion":null}]}'
-err="$TMP_ROOT/e29f2"
-out="$(run_queue_wait -- 1 1 8 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .progressing <<<"$out")" "true" "flat count, one queued check-run: progressing true" "$err"
-assert_eq "$(jq -r .cause <<<"$out")" "still_progressing" "flat count, one queued check-run: cause still_progressing" "$err"
-
-# 29c. no headCommit on the entry (existing fixture shape): progress is
-# never observable — progressing null, cause stalled, and NO check-run read.
-new_case progress_no_head
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue"
-write_fixture checkruns last "$(checkruns_body 3 0)"
-err="$TMP_ROOT/e29c"
-out="$(run_queue_wait -- 1 1 4 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .verdict <<<"$out")" "queued" "no headCommit: verdict stays queued" "$err"
-assert_eq "$(jq -r 'has("progressing")' <<<"$out")" "true" "no headCommit: progressing key present" "$err"
-assert_eq "$(jq -r '.progressing' <<<"$out")" "null" "no headCommit: progressing null (never observable)" "$err"
-assert_eq "$(jq -r .cause <<<"$out")" "stalled" "no headCommit: never asserted as still_progressing" "$err"
-assert_eq "$([ -f "$SEQ_DIR/checkruns.count" ] && echo present || echo absent)" "absent" "no headCommit: no check-run read attempted" "$err"
-
-# 29d. head present but every check-run read fails: unknown, never zero —
-# progressing null, cause stalled, loud after 3 consecutive failures.
-new_case progress_read_fail
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue_head"
-write_fixture checkruns last '' 1 "HTTP 502: Bad Gateway"
-err="$TMP_ROOT/e29d"
-out="$(run_queue_wait -- 1 1 5 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .verdict <<<"$out")" "queued" "failed check-run read: verdict stays queued" "$err"
-assert_eq "$(jq -r 'has("progressing")' <<<"$out")" "true" "failed check-run read: progressing key present" "$err"
-assert_eq "$(jq -r '.progressing' <<<"$out")" "null" "failed check-run read: progressing null, never false-from-zero" "$err"
-assert_eq "$(jq -r .cause <<<"$out")" "stalled" "failed check-run read: never asserted as still_progressing" "$err"
-assert_contains "$(cat "$err")" "check-run read failed 3 consecutive" "consecutive check-run read failures warn" "$err"
-
-# 29d2. a failed read BETWEEN two successful reads must not erase movement:
-# counts 1 → unreadable → 2 on the same head, nothing running, tuple flat.
-# The completed count advanced within the window, so the verdict is still
-# progressing — the unknown poll neither counts as zero nor resets the
-# comparison baseline. Control for 29b: same fixtures with the middle read
-# succeeding at 1 would also be progressing; only a baseline erasure could
-# make this stalled.
-new_case progress_read_fail_between
-write_fixture state last "$pr_open"
-write_fixture queue last "$q_in_queue_head"
-write_fixture checkruns 1 "$(checkruns_body 1 0)"
-write_fixture checkruns 2 '' 1 "HTTP 502: Bad Gateway"
-write_fixture checkruns last "$(checkruns_body 2 0)"
-err="$TMP_ROOT/e29d2"
-out="$(run_queue_wait -- 1 1 4 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .verdict <<<"$out")" "queued" "read failure between reads: verdict stays queued" "$err"
-assert_eq "$(jq -r .progressing <<<"$out")" "true" "read failure between reads: the later count advance is still progress" "$err"
-assert_eq "$(jq -r .cause <<<"$out")" "still_progressing" "read failure between reads: cause still_progressing" "$err"
-
-# 29e. progressing is emitted on every verdict, not only queued.
-new_case progress_on_merged
-write_fixture state last "$pr_merged"
-write_fixture queue last "$q_in_queue_head"
-err="$TMP_ROOT/e29e"
-out="$(run_queue_wait -- 1 1 10 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .verdict <<<"$out")" "merged" "merged verdict unchanged by the progress signal" "$err"
-assert_eq "$(jq -r 'has("progressing")' <<<"$out")" "true" "merged verdict carries progressing" "$err"
-assert_eq "$(jq -r 'has("cause")' <<<"$out")" "false" "merged verdict carries no progress cause" "$err"
-
-# Call-recording gh stub for the argument cases: every one terminates in
-# the parser, before auth or any gh call, so ANY gh invocation is a failure
-# the log makes visible.
+echo "=== argument validation ends in the parser, before any gh call ==="
+# The recording gh stub fails every call, so a case that reached auth or a
+# poll reads as calls > 0.
 mkdir -p "$TMP_ROOT/argbin"
 cat > "$TMP_ROOT/argbin/gh" <<EOF
 #!/usr/bin/env bash
@@ -901,60 +550,30 @@ printf '%s\n' "\$*" >> "$TMP_ROOT/argval-gh.calls"
 exit 1
 EOF
 chmod +x "$TMP_ROOT/argbin/gh"
-
-run_qw() {
-  (cd "$TMP_ROOT/repo" \
-    && PATH="$TMP_ROOT/argbin:$PATH" \
-       .agents/skills/orch/scripts/queue-wait "$@")
-}
-
-echo "=== queue-wait argument validation ==="
-
-# --- 15. argument validation: poll_interval > max_wait ----------
-# The reported invocation shape: `queue-wait 481 1800` reads as poll=1800,
-# max=600 and can only ever poll once while overshooting the budget.
-err="$TMP_ROOT/e15"
-run_qw 1 1800 600 --json --no-check-probe >/dev/null 2>"$err" && rc=0 || rc=$?
-assert_eq "$rc" "2" "poll_interval > max_wait exits 2" "$err"
-assert_contains "$(cat "$err")" "exceeds max_wait" "swapped-arg error names the cause" "$err"
-
-# --- 16. argument validation: non-numeric interval --------------------------
-err="$TMP_ROOT/e16"
-run_qw 1 abc 600 --json --no-check-probe >/dev/null 2>"$err" && rc=0 || rc=$?
-assert_eq "$rc" "2" "non-numeric poll_interval exits 2" "$err"
-assert_contains "$(cat "$err")" "positive integer" "non-numeric error is explicit" "$err"
-
-# --- 17. --help prints usage and exits 0 ------------------------------------
-err="$TMP_ROOT/e17"
-out="$(run_qw --help 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "0" "--help exits 0" "$err"
-assert_contains "$out" "Usage: queue-wait" "--help prints usage" "$err"
-# The heredoc is the contract's sole home: pin tokens whose
-# semantics live nowhere else: tokens, never sentences).
-assert_contains "$out" "Exit codes:" "--help carries the exit-code table" "$err"
-assert_contains "$out" "not_queued" "--help carries the verdict vocabulary" "$err"
-assert_contains "$out" "QUEUE_WAIT_ARM_GRACE" "--help carries the environment knobs" "$err"
-
-# --- 17b. an unknown flag is rejected in the parser, never absorbed ---------
-# Without the -*) branch, --bogus-flag lands in a positional slot and dies
-# later blaming poll_interval, same shape as ci-wait).
-err="$TMP_ROOT/e17b"
-run_qw 1 30 600 --bogus-flag >/dev/null 2>"$err" && rc=0 || rc=$?
-assert_eq "$rc" "2" "unknown flag exits 2" "$err"
-assert_contains "$(cat "$err")" "unknown option" "unknown-flag error names the flag, not a positional" "$err"
-
-
-# Missing PR# is the usage-error class (exit 2), never exit 1.
-err="$TMP_ROOT/e-missing"
-run_qw >/dev/null 2>"$err" && rc=0 || rc=$?
-assert_eq "$rc" "2" "missing PR# exits 2" "$err"
-assert_contains "$(cat "$err")" "missing required <PR#>" "missing PR# names the argument" "$err"
-
-if [[ -e "$TMP_ROOT/argval-gh.calls" ]]; then
-  assert_eq "$(cat "$TMP_ROOT/argval-gh.calls")" "" "no case above ever invoked gh"
-else
-  assert_eq "no-calls" "no-calls" "no case above ever invoked gh"
-fi
+# --help is routed: merge-pr.md and the github skill's pr-merge send an agent
+# to its Verdicts, Exit codes and Environment sections, so those sections are
+# pinned; the verdict vocabulary is the routing lint's.
+arg_rows=(
+  'poll_interval past max_wait is a usage error|1 1800 600 --json --no-check-probe|rc=2 stdout=empty gh_calls=0'
+  'a non-numeric poll_interval is a usage error|1 abc 600 --json --no-check-probe|rc=2 stdout=empty gh_calls=0'
+  'an unknown flag is refused in the parser|1 30 600 --bogus-flag|rc=2 stdout=empty gh_calls=0'
+  'a missing PR number is a usage error, not exit 1||rc=2 stdout=empty gh_calls=0'
+  '--help prints the routed sections and exits 0|--help|rc=0 help_sections=exit_codes,environment,arm_grace gh_calls=0'
+)
+for row in "${arg_rows[@]}"; do
+  IFS='|' read -r label args expect <<<"$row"
+  [[ -n "$expect" ]] || { printf 'args: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+  new_case "arg-$((++STAGE_SEQ))"
+  : > "$TMP_ROOT/argval-gh.calls"
+  ERR="$TMP_ROOT/argval.err"
+  set +e
+  # shellcheck disable=SC2086
+  OUT=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/argbin:$PATH" .agents/skills/orch/scripts/queue-wait $args 2>"$ERR")
+  RC=$?
+  set -e
+  got="$(observe "${expect% gh_calls=*}") gh_calls=$(wc -l <"$TMP_ROOT/argval-gh.calls" | tr -d ' ')"
+  assert_eq "$got" "$expect" "$label" "$ERR"
+done
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
