@@ -1,14 +1,17 @@
 {
-  "lastVersion": "0.84.2",
-  "lastDate": "2026-08-14",
-  "lastRun": "2026-08-18T03:19:32Z",
-  "lastRunHead": "82ecc517781e788389008fc43d3b5f06f044e191",
+  "lastVersion": "0.85.1",
+  "lastDate": "2026-09-05",
+  "lastRun": "2026-09-06T03:39:09Z",
+  "lastRunHead": "8d056a7f518775d7f0a87b2b85416414c5a91c01",
   "sourcesCovered": [
     "agent",
     "ai",
+    "client",
     "coding-agent",
+    "protocol",
     "server",
-    "storage",
+    "session-backends/sqlite-node",
+    "telemetry",
     "tui",
     "releases"
   ]
