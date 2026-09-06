@@ -9,7 +9,7 @@ Maintainer notes. Consumer docs: [README.md](README.md); the agent command refer
 3. Register its write actions with `linear_guard_write_action` (below).
 4. Update the Commands table in `SKILL.md`.
 
-Cache reads, merges and write-through are `scripts/lib/cache.sh`; output formats are `scripts/lib/formatters.sh`; issue rules at create and transition time are `scripts/lib/issue-validation.sh`; the Bash 4 runtime preflight is `scripts/lib/bash-version.sh`.
+Cache reads, merges and write-through are `scripts/lib/cache.sh`; output formats are `scripts/lib/formatters.sh`, which also holds the jq definitions those filters prepend (`ISSUE_RELATION_JQ` for issue relations, `PROJECT_PICK_JQ` for the rule deciding which project a name means); issue rules at create and transition time are `scripts/lib/issue-validation.sh`; the Bash 4 runtime preflight is `scripts/lib/bash-version.sh`.
 
 ## Team targeting
 
