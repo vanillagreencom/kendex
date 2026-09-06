@@ -36,8 +36,11 @@ json.dump({"cause": "fs.rs::write_all's guard \"quoted\" $(whoami) `id` | ;", "c
 PYW
 "$WS" --state-dir "$cd_sd" append-file KEN-CAP pr_comment_review.patched_causes "$cause" >/dev/null
 "$WS" --state-dir "$cd_sd" append-file KEN-CAP pr_comment_review.patched_causes "$cause" >/dev/null
-got="$("$WS" --state-dir "$cd_sd" get KEN-CAP '.pr_comment_review.patched_causes | length')"
-[[ "$got" == "2" ]] && ok "append-file appends rather than replacing" \
+# The type is read beside the length: jq counts an object's keys under the
+# same operator, and the fixture object has two, so a bare assignment would
+# read as two appended entries.
+got="$("$WS" --state-dir "$cd_sd" get KEN-CAP '.pr_comment_review.patched_causes | "\(type):\(length)"')"
+[[ "$got" == "array:2" ]] && ok "append-file appends rather than replacing" \
   || bad "append-file appends rather than replacing" "got=$got"
 want="$(jq -r .cause "$cause")"
 got="$("$WS" --state-dir "$cd_sd" get KEN-CAP '.pr_comment_review.patched_causes[0].cause')"

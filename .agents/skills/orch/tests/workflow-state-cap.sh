@@ -22,9 +22,6 @@ FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
-# --- `cap`: the one reader of a round cap ----------------------------------
-# The guard above and every workflow that reads a cap come through this table,
-# so its verdict must agree with the write it gates, exactly, at the boundary.
 echo
 echo "--- workflow-state cap ---"
 
