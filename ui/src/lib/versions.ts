@@ -66,20 +66,20 @@ export interface UpdateOffer {
  *  Four reasons, ranked by what each is a fact about, because no order over
  *  the words themselves can be right.
  *
- *  A source no fetch has downloaded yet comes first (`package-read-state.ts`
- *  [`unfetchedNote`]). It is why everything after it has nothing to say:
- *  the update check records the same case as a warning and leaves no row
- *  (`crates/core/src/package/updates/eval.rs`), so the fact the check would
+ *  A source no fetch has downloaded yet (`package-read-state.ts`
+ *  [`unfetchedNote`]) comes ahead of the update check's facts. It is why
+ *  the check has none: it records the same case as a warning and leaves no
+ *  row (`crates/core/src/package/updates/eval.rs`), so what the check would
  *  otherwise state here is that it never covered this place, which is the
  *  symptom of this cause. Nothing this page can re-read lifts it, so it
  *  carries no [`retry`]; the note names the source to refresh instead. It
- *  speaks ahead of this page's own reads on purpose: the record read fails
- *  on the same unfetched source, in core's words (`crates/core/src/package/
- *  detail.rs` `package_meta`), and a record read that failed for a reason
- *  of its own — a lock this build cannot read — gets its words and its
- *  retry once the source is fetched, which had to happen first anyway.
+ *  yields to one thing: this page's record read failing for a reason of its
+ *  own. That read touches the manifest and the lock and never the source
+ *  (`crates/core/src/package/detail.rs` `package_meta`), so a failure there
+ *  beside an unfetched timeline is a second fact, one a re-read can lift,
+ *  and it keeps its words and its retry.
  *
- *  Then a fact about the package (`updates-read-state.ts`
+ *  Otherwise a fact about the package (`updates-read-state.ts`
  *  [`packageUpdateNote`]): core's refusal for the kind, a hold, an edit of
  *  the reader's own, a place a settled check never covered. Those are
  *  answers — true whatever any read does next.
@@ -121,17 +121,16 @@ export const updateOffer = (page: {
   standing: string | null;
 }): UpdateOffer => {
   const reason =
-    page.unfetched ?? page.withheld ?? page.readNote ?? page.standing;
+    page.unfetched === null
+      ? (page.withheld ?? page.readNote ?? page.standing)
+      : (page.readNote ?? page.unfetched);
   // The button and the note come from the one string, so whatever withholds
-  // an Update is also what is said in its place.
+  // an Update is also what is said in its place, and only a read of this
+  // page's own is one reading again can lift.
   const current = page.installed != null && !hasNewer(page.latest);
   return {
     can: canUpdatePackage({ ...page, withheld: reason }),
     note: current ? null : reason,
-    retry:
-      !current &&
-      page.unfetched === null &&
-      page.withheld === null &&
-      page.readNote !== null,
+    retry: !current && page.readNote !== null && reason === page.readNote,
   };
 };

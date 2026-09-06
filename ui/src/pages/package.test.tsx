@@ -421,11 +421,6 @@ describe("what the package page says instead of Update", () => {
     status: "error",
     error: { kind: "source-pending", source: "cat" },
   } as const;
-  /** The record read's answer on the same source: core's words, unshaped. */
-  const RECORD_UNFETCHED = {
-    status: "error",
-    error: "REFUSED-BY-CORE: source 'cat' has not been downloaded yet",
-  } as const;
 
   // A source no fetch has downloaded is core's answer, not a failed read:
   // reading again answers the same, and the check it would send the reader
@@ -433,12 +428,7 @@ describe("what the package page says instead of Update", () => {
   // note names the source and carries no Try again, and it outranks the
   // check's "never covered this place", which is the symptom of it.
   it("names the source no fetch has downloaded, with no Try again", async () => {
-    const host = await openWith(
-      { read: READ_LANDED },
-      "skill",
-      UNFETCHED,
-      RECORD_UNFETCHED,
-    );
+    const host = await openWith({ read: READ_LANDED }, "skill", UNFETCHED);
 
     expect(header(host)).toContain(sourceUnfetchedNote("cat"));
     expect(headerRetry(host)).toHaveLength(0);
@@ -446,21 +436,20 @@ describe("what the package page says instead of Update", () => {
     expect(header(host)).not.toContain(PACKAGE_READ_FAILED);
   });
 
-  // The record read fails on the same source in core's own words, which on
-  // its own is a read that failed with a Try again beside it. With a row
-  // here the check has nothing to say ahead of the reads, so this is where
-  // the unfetched note has to outrank the record's failure on its own.
-  it("keeps Try again off it where the record read failed on the same source", async () => {
-    const host = await openWith(
-      { read: READ_LANDED, rows: [updateRow(VG)] },
-      "skill",
-      UNFETCHED,
-      RECORD_UNFETCHED,
-    );
+  // The record read touches the manifest and the lock, never the source, so
+  // its failing beside an unfetched timeline is a second fact and one a
+  // re-read can lift. It keeps its words and its Try again; the unfetched
+  // note waits behind it.
+  it("lets a record read that failed on its own speak ahead of it", async () => {
+    const REFUSED = "REFUSED-BY-CORE: the lock could not be read";
+    const host = await openWith({ read: READ_LANDED }, "skill", UNFETCHED, {
+      status: "error",
+      error: REFUSED,
+    });
 
-    expect(header(host)).toContain(sourceUnfetchedNote("cat"));
-    expect(headerRetry(host)).toHaveLength(0);
-    expect(header(host)).not.toContain(PACKAGE_READ_FAILED);
+    expect(header(host)).toContain(packageReadFailedNote(REFUSED));
+    expect(headerRetry(host)).toHaveLength(1);
+    expect(header(host)).not.toContain(sourceUnfetchedNote("cat"));
   });
 
   // The control: every other refusal of the timeline is a read that failed,
