@@ -161,18 +161,21 @@ test("an unreadable nearest manifest fails closed under a pi ancestor", () => {
 // The depth as read, the child generation the guard grants (or `refused`), and
 // the same through getPiInvocation, which runs the guard before resolving.
 function depthLine(env: NodeJS.ProcessEnv): string {
+	// Only the recursion guard's own error reads as `refused`; anything else
+	// prints whole.
+	const refusedOr = (error: unknown) => (/recursion guard/.test(String(error)) ? "refused" : `threw:${String(error)}`);
 	const guard = () => {
 		try {
 			return String(assertSubagentSpawnDepth(env));
-		} catch {
-			return "refused";
+		} catch (error) {
+			return refusedOr(error);
 		}
 	};
 	const viaInvocation = () => {
 		try {
 			return String(getPiInvocation([], runtime({ env })).childDepth);
-		} catch {
-			return "refused";
+		} catch (error) {
+			return refusedOr(error);
 		}
 	};
 	return `current=${currentSubagentDepth(env)} child=${guard()} invocation=${viaInvocation()}`;
@@ -293,26 +296,29 @@ async function launcherLine(world: SpawnWorld): Promise<string> {
 	return withProcessEnv(world.depth, entry?.value, async () => {
 		const paths = await writeLauncher(root, "parent-session-id", cwd, agent({ pane: true, systemPrompt: "You are iced.", ...world.agent }), world.parentModel, world.parentThinking);
 		const script = readFileSync(paths.launcherFile, "utf-8");
-		const depth = script.match(new RegExp(`^export ${PI_SUBAGENT_DEPTH_ENV}=(\\S+)$`, "m"))?.[1] ?? "-";
-		const exported = script.match(new RegExp(`^export ${PI_SUBAGENT_ENTRY_ENV}='([^']*)'$`, "m"))?.[1];
-		const unset = new RegExp(`^unset ${PI_SUBAGENT_ENTRY_ENV}$`, "m").test(script);
-		const entryLine = exported !== undefined && unset ? "export+unset" : exported !== undefined ? aliased(exported, entry?.alias ?? {}) : unset ? "unset" : "-";
+		// The environment at `exec` is the assignments before it: exactly one
+		// depth export and exactly one entry export or unset, or the counts print.
 		const execAt = script.indexOf("\nexec ");
-		const exportsBeforeExec = execAt > 0 && !/^(export|unset) /m.test(script.slice(execAt));
+		const before = execAt > 0 ? script.slice(0, execAt).split("\n") : [];
+		const depthWrites = before.map((line) => line.match(new RegExp(`^export ${PI_SUBAGENT_DEPTH_ENV}=(\\S+)$`))?.[1]).filter((v): v is string => v !== undefined);
+		const entryWrites = before.map((line) => line.match(new RegExp(`^export ${PI_SUBAGENT_ENTRY_ENV}='([^']*)'$`))?.[1] ?? (new RegExp(`^unset ${PI_SUBAGENT_ENTRY_ENV}$`).test(line) ? "unset" : undefined)).filter((v): v is string => v !== undefined);
+		const depth = depthWrites.length === 1 ? depthWrites[0] : `${depthWrites.length}-writes`;
+		const entryLine = entryWrites.length === 1 ? (entryWrites[0] === "unset" ? "unset" : aliased(entryWrites[0], entry?.alias ?? {})) : `${entryWrites.length}-writes`;
+		const afterExec = /^(export|unset) /m.test(script.slice(execAt + 1));
 		const execLine = script.slice(execAt + 1).split("\n")[0] ?? "";
 		const quoted = (name: string) => execLine.match(new RegExp(`'${name}' '([^']*)'`))?.[1] ?? "-";
-		return `depth=${depth} entry=${entryLine} exports-before-exec=${exportsBeforeExec} model=${quoted("--model")} thinking=${quoted("--thinking")}`;
+		return `depth=${depth} entry=${entryLine} exports-after-exec=${afterExec} model=${quoted("--model")} thinking=${quoted("--thinking")}`;
 	});
 }
 
 // label | the parent's env, agent and model | expect the launcher line
 const launcherRows: Array<[string, SpawnWorld, string]> = [
-	["the launcher exports the next depth and unsets a stale entry before the exec", { depth: "1" }, "depth=2 entry=unset exports-before-exec=true model=- thinking=-"],
-	["a relative entry override is exported resolved", { entry: relativeOverride }, "depth=1 entry=override exports-before-exec=true model=- thinking=-"],
-	["the frontmatter effort becomes the thinking flag", { agent: { effort: "high" }, parentModel: "anthropic/claude-opus-5" }, "depth=1 entry=unset exports-before-exec=true model=anthropic/claude-opus-5 thinking=high"],
-	["a model suffix wins over the effort key", { agent: { effort: "high" }, parentModel: "openai-codex/gpt-6-astra:low" }, "depth=1 entry=unset exports-before-exec=true model=openai-codex/gpt-6-astra:low thinking=low"],
-	["an effort of off passes no thinking flag", { agent: { effort: "off" }, parentModel: "anthropic/claude-opus-5" }, "depth=1 entry=unset exports-before-exec=true model=anthropic/claude-opus-5 thinking=-"],
-	["the parent's selected level wins over the effort key", { agent: { effort: "high" }, parentThinking: "low" }, "depth=1 entry=unset exports-before-exec=true model=- thinking=low"],
+	["the launcher exports the next depth and unsets a stale entry before the exec", { depth: "1" }, "depth=2 entry=unset exports-after-exec=false model=- thinking=-"],
+	["a relative entry override is exported resolved", { entry: relativeOverride }, "depth=1 entry=override exports-after-exec=false model=- thinking=-"],
+	["the frontmatter effort becomes the thinking flag", { agent: { effort: "high" }, parentModel: "anthropic/claude-opus-5" }, "depth=1 entry=unset exports-after-exec=false model=anthropic/claude-opus-5 thinking=high"],
+	["a model suffix wins over the effort key", { agent: { effort: "high" }, parentModel: "openai-codex/gpt-6-astra:low" }, "depth=1 entry=unset exports-after-exec=false model=openai-codex/gpt-6-astra:low thinking=low"],
+	["an effort of off passes no thinking flag", { agent: { effort: "off" }, parentModel: "anthropic/claude-opus-5" }, "depth=1 entry=unset exports-after-exec=false model=anthropic/claude-opus-5 thinking=-"],
+	["the parent's selected level wins over the effort key", { agent: { effort: "high" }, parentThinking: "low" }, "depth=1 entry=unset exports-after-exec=false model=- thinking=low"],
 ];
 
 test("what the pane launcher hands the child", async () => {
