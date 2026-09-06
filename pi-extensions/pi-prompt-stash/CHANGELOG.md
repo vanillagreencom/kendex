@@ -2,8 +2,9 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 2.0.1
 
+- Stash stores are no longer moved from the older locations `~/.pi/agent/kendex/prompt-stash/sessions/<id>/` and `<project>/.pi/<store file>` at session start or when the popup opens. Items left there stay there; the store is read from the per-session directory only.
 - `PI_CODING_AGENT_DIR` is used only when it names a root-anchored path — a drive or UNC share on Windows, a leading `/` on POSIX. Anything else uses `~/.pi/agent`.
 
 ### 2.0.0

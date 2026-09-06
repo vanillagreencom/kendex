@@ -2,8 +2,9 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 2.0.1
 
+- Artifacts are no longer moved from the older locations `~/.pi/agent/kendex/pi-output-policy/sessions/<id>/artifacts` and `<project>/.pi/artifacts/output-policy` at session start or on the first write. Artifacts left there stay there; new artifacts land in the per-session directory only.
 - `PI_CODING_AGENT_DIR` is used only when it names a root-anchored path — a drive or UNC share on Windows, a leading `/` on POSIX. Anything else uses `~/.pi/agent`.
 
 ### 2.0.0

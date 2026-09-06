@@ -2,8 +2,10 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 2.0.1
 
+- `web_fetch` stays in the active tool set without an Exa API key. Its direct HTTP, GitHub clone, PDF and YouTube transcript paths need no key, and the Exa `/contents` fallback is skipped when the key is unset. The Exa-only tools (`web_research`, `web_answer`, `web_find_similar`, `code_search` and their `_exa` aliases) remain gated on the key.
+- `buildWebFetchToolResult` takes an options object only; the numeric `maxCharacters` positional form and the trailing page-images argument are removed.
 - The extension uses `PI_CODING_AGENT_DIR` only when root-anchored — a drive or UNC share on Windows, a leading `/` on POSIX. Anything else uses `~/.pi/agent`. The install helper is unchanged.
 
 ### 2.0.0
