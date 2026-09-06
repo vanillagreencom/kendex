@@ -315,7 +315,9 @@ for bound in KENDEX_GITHUB_AUTH_TIMEOUT KENDEX_GITHUB_OP_TIMEOUT \
     "the refusal names $bound" "$stderr"
   assert_eq "$(jq -r .detail <<<"$output")" "2.55" \
     "the refusal carries the value it rejected for $bound" "$stderr"
-  assert_eq "$(wc -c <"$calls")" "0" \
+  # BSD wc right-aligns its count in a fixed-width field, so the blanks come
+  # off before the string comparison.
+  assert_eq "$(wc -c <"$calls" | tr -d ' ')" "0" \
     "an unreadable $bound reaches no gh call" "$stderr"
 done
 
@@ -327,7 +329,7 @@ rc=$?
 set -e
 assert_eq "$rc" "0" "inherited op GH_TOKEN falls back to keyring" "$stderr"
 assert_eq "$(jq -r .number <<<"$output")" "42" "inherited op GH_TOKEN preserves gh JSON" "$stderr"
-assert_eq "$(wc -l <"$TMP_ROOT/op.calls")" "1" "inherited op GH_TOKEN attempts op once" "$stderr"
+assert_eq "$(wc -l <"$TMP_ROOT/op.calls" | tr -d ' ')" "1" "inherited op GH_TOKEN attempts op once" "$stderr"
 
 rm -f "$TMP_ROOT/op.calls"
 stderr="$TMP_ROOT/inherited-github-token-op.err"
@@ -337,7 +339,7 @@ rc=$?
 set -e
 assert_eq "$rc" "0" "inherited op GITHUB_TOKEN falls back to keyring" "$stderr"
 assert_eq "$(jq -r .number <<<"$output")" "42" "inherited op GITHUB_TOKEN preserves gh JSON" "$stderr"
-assert_eq "$(wc -l <"$TMP_ROOT/op.calls")" "1" "inherited op GITHUB_TOKEN attempts op once" "$stderr"
+assert_eq "$(wc -l <"$TMP_ROOT/op.calls" | tr -d ' ')" "1" "inherited op GITHUB_TOKEN attempts op once" "$stderr"
 
 cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
 GH_BOT_TOKEN=op://vault/item/field

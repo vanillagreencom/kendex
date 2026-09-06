@@ -214,15 +214,18 @@ ENVEOF
 rm -f "$TMP_ROOT/op.calls"
 output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" STUB_KEYRING_OK=1 "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" pr-view --json number,state)
 assert_eq "$(jq -r .number <<<"$output")" "42" "github.sh router falls back to keyring for unresolved GH_TOKEN"
-assert_eq "$(wc -l <"$TMP_ROOT/op.calls")" "1" "unresolved GH_TOKEN attempts op once before keyring fallback"
+# The blanks come off every count below: BSD wc right-aligns its number in a
+# fixed-width field, so `$(wc -l <f)` reads "       1" on macOS and "1" on
+# GNU, and these are compared as strings.
+assert_eq "$(wc -l <"$TMP_ROOT/op.calls" | tr -d ' ')" "1" "unresolved GH_TOKEN attempts op once before keyring fallback"
 
 rm -f "$TMP_ROOT/op.calls"
 (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" STUB_KEYRING_OK=1 GH_TOKEN=op://vault/github/user "$REPO_ROOT/skills/github/scripts/commands/label-add.sh" 42 test-label >/dev/null)
-assert_eq "$(wc -l <"$TMP_ROOT/op.calls")" "1" "label-add falls back to keyring for unresolved GH_TOKEN"
+assert_eq "$(wc -l <"$TMP_ROOT/op.calls" | tr -d ' ')" "1" "label-add falls back to keyring for unresolved GH_TOKEN"
 
 rm -f "$TMP_ROOT/op.calls"
 (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" STUB_KEYRING_OK=1 GITHUB_TOKEN=op://vault/github/user "$REPO_ROOT/skills/github/scripts/commands/label-remove.sh" 42 test-label >/dev/null)
-assert_eq "$(wc -l <"$TMP_ROOT/op.calls")" "1" "label-remove falls back to keyring for unresolved GITHUB_TOKEN"
+assert_eq "$(wc -l <"$TMP_ROOT/op.calls" | tr -d ' ')" "1" "label-remove falls back to keyring for unresolved GITHUB_TOKEN"
 
 cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
 GH_BOT_TOKEN=ghs_ROUTERBOT123
@@ -263,7 +266,7 @@ printf '%s\n' 'body text' >"$TMP_ROOT/pr-body.md"
 rm -f "$TMP_ROOT/op.calls"
 output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" STUB_KEYRING_OK=1 GH_TOKEN=op://vault/github/user "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" pr-edit-body 42 --body-file "$TMP_ROOT/pr-body.md")
 assert_eq "$output" "updated" "github.sh pr-edit-body falls back to keyring for unresolved GH_TOKEN"
-assert_eq "$(wc -l <"$TMP_ROOT/op.calls")" "1" "pr-edit-body unresolved GH_TOKEN attempts op once"
+assert_eq "$(wc -l <"$TMP_ROOT/op.calls" | tr -d ' ')" "1" "pr-edit-body unresolved GH_TOKEN attempts op once"
 
 cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
 GH_BOT_TOKEN=op://vault/github/bot
@@ -271,7 +274,7 @@ ENVEOF
 rm -f "$TMP_ROOT/op.calls"
 output=$(load_token)
 assert_eq "$output" "ghs_RESOLVED123" "project op reference resolves when no env token exists"
-assert_eq "$(wc -l <"$TMP_ROOT/op.calls")" "1" "project op reference calls op once"
+assert_eq "$(wc -l <"$TMP_ROOT/op.calls" | tr -d ' ')" "1" "project op reference calls op once"
 
 cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
 GH_BOT_TOKEN=ghs_FILEBOT123

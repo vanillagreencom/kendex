@@ -1,0 +1,1 @@
+- BSD sed, awk, wc, paste, touch, date, seq and mktemp differences are handled where the shipped scripts and their suites hit them; open-terminal and orch state writers need no setsid or flock.

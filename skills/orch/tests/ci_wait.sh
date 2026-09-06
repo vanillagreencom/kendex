@@ -411,7 +411,18 @@ table "$JSON" \
 stage ""
 RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"; mkdir -p "$RUN"
 set +e
-OUT=$(timeout 6s bash -c 'cd "$1" && PATH="$2:$PATH" STUB_CLOCK= KENDEX_GITHUB_AUTH_TIMEOUT=1 STUB_GH_AUTH_STATUS_SLEEP=1 .agents/skills/orch/scripts/ci-wait 1 1 30 --json' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin" 2>"$RUN/stderr")
+# The 6s bound is a net under ci-wait's own KENDEX_GITHUB_AUTH_TIMEOUT, which
+# is what the assertion reads. macOS ships no timeout(1) — it is coreutils —
+# so on a host without one the case runs unbounded and a regression that did
+# hang would be caught by the job's timeout-minutes instead of here.
+bounded6() { # CMD... — run CMD under a 6s bound where the host has one
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 6s "$@"
+  else
+    "$@"
+  fi
+}
+OUT=$(bounded6 bash -c 'cd "$1" && PATH="$2:$PATH" STUB_CLOCK= KENDEX_GITHUB_AUTH_TIMEOUT=1 STUB_GH_AUTH_STATUS_SLEEP=1 .agents/skills/orch/scripts/ci-wait 1 1 30 --json' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin" 2>"$RUN/stderr")
 RC=$?
 set -e
 assert_eq "$(observe "rc=3 status=error")" "rc=3 status=error" "a hanging keyring auth is a bounded exit 3, not a hang" "$RUN/stderr"

@@ -163,10 +163,12 @@ else
   bad "the shipped program runs under gh's RE2 engine" "exit $re2_rc: $(head -1 "$work/re2.err")"
 fi
 
-if [ "$(wc -l <"$work/re2.out")" = "$replies" ]; then
+# BSD wc right-aligns its count in a fixed-width field, so the blanks come off
+# before this string comparison.
+if [ "$(wc -l <"$work/re2.out" | tr -d ' ')" = "$replies" ]; then
   ok "RE2 answered every one of the $replies fixture replies"
 else
-  bad "RE2 answered every one of the $replies fixture replies" "$(wc -l <"$work/re2.out") verdicts"
+  bad "RE2 answered every one of the $replies fixture replies" "$(wc -l <"$work/re2.out" | tr -d ' ') verdicts"
 fi
 
 # THE assertion, in a function, because control three has to be able to kill

@@ -70,7 +70,7 @@
 #   the reference case). A lane chooser that silently rotates OAuth tokens
 #   during a fleet launch trades a visible "unknown" for an invisible auth
 #   failure across every session. Reporting the lane as `expired` and letting
-#   the operator decide is the safer default; --refresh takes the same flock the
+#   the operator decide is the safer default; --refresh takes the same lock the
 #   reference implementation uses and re-reads under it.
 #
 # Credentials never reach argv: `ps` and journald can read /proc/<pid>/cmdline,
@@ -353,16 +353,21 @@ measure_lane() {
 	emit_lane "$alias" "$harness" "$dir" "$status" "$detail" "$plan" "$buckets"
 }
 
-# Refresh under an flock on the credentials file, re-reading inside the lock:
+# Refresh under a lock on the credentials file, re-reading inside the lock:
 # a peer tool may have rotated the refresh token between our first read and
 # this attempt, and refreshing with the stale one fails while the credentials
-# are actually fine.
+# are actually fine. lib/file-lock.sh carries the lock on a host with no
+# flock, where the bare `flock -w 30 9` this used to run resolved to nothing
+# and every refresh on that host returned failure instead of a token.
 refresh_claude_token() {
 	local dir="$1" creds="$2" lock="$dir/.lanes-refresh.lock" rt client_id resp new_at
 	client_id="${ORCH_LANES_CLAUDE_CLIENT_ID:-}"
 	[[ -n "$client_id" ]] || return 1
 	exec 9>"$lock" || return 1
-	flock -w 30 9 || return 1
+	# Every caller runs this function in a command substitution, so the whole
+	# body is a subshell and the EXIT trap orch_take_lock arms releases a mkdir
+	# mutex on every path out — including this one.
+	orch_take_lock 9 "$lock" 30 || { exec 9>&-; return 1; }
 	rt=$(jq -r 'try (.claudeAiOauth.refreshToken // empty) catch empty' "$creds")
 	[[ -n "$rt" ]] || { exec 9>&-; return 1; }
 	resp=$(jq -nc --arg ci "$client_id" --arg rt "$rt" \
@@ -560,6 +565,8 @@ need_jq
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 export PROJECT_ROOT
+# shellcheck source=lib/file-lock.sh
+source "$SCRIPT_DIR/lib/file-lock.sh"
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
 # This script runs without errexit, so the loader's refusal must be checked

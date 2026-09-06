@@ -157,7 +157,7 @@ glob_table() {
         before) mtime=$BEFORE ;; after) mtime=$AFTER ;; later) mtime=$LATER ;;
         *) echo "glob_table: unknown time $when in $item" >&2; exit 1 ;;
       esac
-      touch -d "@$mtime" "$WT/tmp/review-r-$file.json"
+      touch_epoch "$mtime" "$WT/tmp/review-r-$file.json"
     done
     case "$which" in
       real) run_check %W r %D ;;

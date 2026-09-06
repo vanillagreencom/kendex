@@ -1392,7 +1392,7 @@ artifact_file() {
     # way to report — losing both the record AND its documented 4/5 exit class.
     # A record is a diagnostic: leaving ARTIFACT_PATH empty lets the caller say
     # so inline and keep the classification.
-    ARTIFACT_PATH=$(mktemp 2>/dev/null) || ARTIFACT_PATH=""
+    ARTIFACT_PATH=$(so_tmpfile 2>/dev/null) || ARTIFACT_PATH=""
     if [[ -n "$ARTIFACT_PATH" ]]; then
       echo "→ record kept in system temp instead: $ARTIFACT_PATH" >&2
     else
@@ -1495,7 +1495,7 @@ derive_review_scope() {
   REVIEW_BRANCH=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
   local git_err diff_files
-  git_err=$(mktemp)
+  git_err=$(so_tmpfile)
   # shellcheck disable=SC2086
   # core.quotePath=false keeps non-ASCII path bytes literal — the default
   # C-quoting ("services/\303\251/…") would break the nested-AGENTS ancestor
@@ -1742,7 +1742,7 @@ if $MULTI_LANE; then
   # this tool owns. And the parent holds each lane's review in memory from the
   # moment that lane is reaped, so nothing it still needs is on disk after the
   # reap either.
-  LANE_TMP_DIR=$(mktemp -d)
+  LANE_TMP_DIR=$(so_tmpdir)
   LANE_TMP_FILES=()
   LANE_PIDS=()
   # On any exit — including INT/TERM — kill still-running lane children before
@@ -1823,7 +1823,7 @@ if $MULTI_LANE; then
       # Placement can never decide whether the review happens, so a lane with no
       # home falls back to a temp file — named on stderr above, so an operator
       # knows that lane traded the home's durability for a temp one.
-      [[ -n "$lane_out" ]] || lane_out=$(mktemp)
+      [[ -n "$lane_out" ]] || lane_out=$(so_tmpfile)
       LANE_TMP_FILES+=("$lane_out")
     fi
     lane_err="$LANE_TMP_DIR/lane-${lane}.stderr"
@@ -2176,14 +2176,14 @@ if [[ -z "$PROMPT" ]]; then
 fi
 
 # Write prompt to temp file — use printf to avoid echo interpreting leading dashes
-PROMPT_TMP=$(mktemp)
+PROMPT_TMP=$(so_tmpfile)
 # Guarded for the same reason as cleanup_lanes: an EXIT trap whose last command
 # fails REPLACES the run's exit status, so a temp directory that turned
 # read-only under the run would rewrite a documented 4/5 into rm's status.
 trap 'rm -f -- "$PROMPT_TMP" || true' EXIT
 printf '%s\n' "$PROMPT" > "$PROMPT_TMP"
 
-STDERR_TMP=$(mktemp)
+STDERR_TMP=$(so_tmpfile)
 # RETRY_PROMPT_TMP is created only when extraction fails and a retry runs; keep
 # it in the cleanup trap. Sidecar files written by preserve_raw_response and
 # preserve_raw_and_fail are deliberately NOT tracked here — they are the durable
@@ -2565,7 +2565,7 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
     # Persist the raw first response now, before the retry outcome is known —
     # a successful reformat must not erase the original.
     preserve_raw_response "$RESULT"
-    RETRY_PROMPT_TMP=$(mktemp)
+    RETRY_PROMPT_TMP=$(so_tmpfile)
     if [[ -n "$RETRY_PROBLEM" ]]; then
       build_retry_prompt "$RESULT" "$RETRY_PROBLEM" > "$RETRY_PROMPT_TMP"
     else

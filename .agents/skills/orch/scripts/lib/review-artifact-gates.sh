@@ -43,7 +43,21 @@ emit_unavailable() {
 
 # jq's stderr lands here and is read only when the gate's exit status says the
 # gate failed. Never printed as an answer.
-review_artifact_gate_err="$(mktemp 2>/dev/null)" || {
+# The template names $TMPDIR outright. A bare `mktemp` reads it only on GNU;
+# BSD mktemp — the one macOS ships — ignores it and allocates under the OS's
+# own per-user temp directory, so an unusable TMPDIR did not stop the check
+# there and it answered `valid` over a channel the caller never named. The
+# trailing slash comes off because macOS sets TMPDIR with one, and a relative
+# root is prefixed with `./` so a TMPDIR named `-x` cannot reach mktemp, or the
+# rm in the cleanup below, as an option.
+review_artifact_gate_tmp_root="${TMPDIR:-/tmp}"
+review_artifact_gate_tmp_root="${review_artifact_gate_tmp_root%/}"
+case "$review_artifact_gate_tmp_root" in
+  "") review_artifact_gate_tmp_root="/" ;;
+  /*) ;;
+  *) review_artifact_gate_tmp_root="./$review_artifact_gate_tmp_root" ;;
+esac
+review_artifact_gate_err="$(mktemp "$review_artifact_gate_tmp_root/review-artifact-check.XXXXXX" 2>/dev/null)" || {
   emit_unavailable "review-artifact-check could not create its temporary error channel (mktemp failed; check TMPDIR and free space), so no artifact could be validated"
   exit 1
 }

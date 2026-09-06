@@ -26,8 +26,9 @@ ensure_state_exists() {
     fi
 }
 
-# Atomic update: flock + write to temp, validate, move
-# Uses flock to serialize concurrent writes and prevent state corruption.
+# Atomic update: take the lock, write to temp, validate, move.
+# The lock serializes concurrent writes and prevents state corruption;
+# lib/file-lock.sh says which mechanism carries it on which platform.
 # Any remaining arguments are passed to jq ahead of the filter, which is how
 # `update --arg`/`--argjson` hand values in out of band.
 atomic_update() {
@@ -39,7 +40,7 @@ atomic_update() {
     local tmp_file="${state_file}.tmp"
 
     (
-        flock -w 10 200 || { echo "Error: could not acquire lock on $lock_file" >&2; exit 1; }
+        orch_take_lock 200 "$lock_file" 10 || { echo "Error: could not acquire lock on $lock_file" >&2; exit 1; }
 
         if ! jq ${jq_args[@]+"${jq_args[@]}"} "$jq_expr" "$state_file" > "$tmp_file" 2>&1; then
             echo "Error: jq expression failed: $jq_expr" >&2
@@ -210,7 +211,7 @@ cmd_update_report() {
     # file exists to race on, so concurrent calls for the same issue each
     # return exactly their own transition's evidence.
     (
-        flock -w 10 200 || { echo "Error: could not acquire lock on $lock_file" >&2; exit 1; }
+        orch_take_lock 200 "$lock_file" 10 || { echo "Error: could not acquire lock on $lock_file" >&2; exit 1; }
 
         local combined
         if ! combined=$(jq -c ${jq_args[@]+"${jq_args[@]}"} "$jq_expr" "$state_file" 2>&1); then
@@ -309,7 +310,7 @@ cmd_append() {
         local tmp_file="${state_file}.tmp"
         local lock_file="${state_file}.lock"
         (
-            flock -w 10 200 || { echo "Error: could not acquire lock" >&2; exit 1; }
+            orch_take_lock 200 "$lock_file" 10 || { echo "Error: could not acquire lock" >&2; exit 1; }
             jq --arg v "$value" ".${field} += [\$v]" "$state_file" > "$tmp_file" 2>&1 || { rm -f "$tmp_file"; exit 1; }
             jq empty "$tmp_file" 2>/dev/null || { echo "Error: invalid JSON" >&2; rm -f "$tmp_file"; exit 1; }
             mv "$tmp_file" "$state_file"
@@ -458,7 +459,7 @@ cmd_set() {
         local tmp_file="${state_file}.tmp"
         local lock_file="${state_file}.lock"
         (
-            flock -w 10 200 || { echo "Error: could not acquire lock" >&2; exit 1; }
+            orch_take_lock 200 "$lock_file" 10 || { echo "Error: could not acquire lock" >&2; exit 1; }
             jq --arg v "$value" ".${field} = \$v" "$state_file" > "$tmp_file" 2>&1 || { rm -f "$tmp_file"; exit 1; }
             jq empty "$tmp_file" 2>/dev/null || { echo "Error: invalid JSON" >&2; rm -f "$tmp_file"; exit 1; }
             mv "$tmp_file" "$state_file"
@@ -655,7 +656,8 @@ Environment:
 
 Dependencies:
   jq               JSON processing
-  flock             File locking (util-linux)
+  flock             File locking, where it is installed; without it a mkdir
+                    mutex serializes the same writers (stock macOS has no flock)
 EOF
 }
 
@@ -712,6 +714,8 @@ parse_rc=0
 [[ "$parse_rc" -eq 9 ]] || exit "$parse_rc"
 unset parse_rc
 
+# shellcheck source=lib/file-lock.sh
+source "$SCRIPT_DIR/lib/file-lock.sh"
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
 kendex_load_project_env "$PROJECT_ROOT"

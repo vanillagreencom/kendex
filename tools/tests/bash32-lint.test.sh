@@ -74,12 +74,14 @@ fi
 # skills/*/scripts and skills/*/tests is scanned or named in one of the
 # lint's exception lists.
 # Read out of the lint rather than restated here — a second copy of the
-# exceptions is the duplication this whole change removes.
+# exceptions is the duplication this whole change removes. -E, because `\|`
+# alternation inside `\(...\)` is a GNU BRE extension: BSD sed reads it as a
+# literal bar, matches nothing, and leaves the roster coverage unproven.
 NL='
 '
 declared=""
 status=0
-declared="$(sed -n 's#^NO_\(SCAN\|SHELL\)="\(.*\)"$#\2#p' "$LINT" | tr ' ' '\n')" || status=$?
+declared="$(sed -nE 's#^NO_(SCAN|SHELL)="(.*)"$#\2#p' "$LINT" | tr ' ' '\n')" || status=$?
 if [ "$status" -ne 0 ] || [ -z "$declared" ]; then
   bad "the lint's exception lists could not be read, so roster coverage is unproven"
 else

@@ -699,8 +699,12 @@ lane_limit_banner() {
 lane_row_prune() {
   local kind="$1" state="$2"
   shift 2
-  awk -F'\t' -v kind="$kind" -v lanes="$(printf '%s\n' "$@")" '
-    BEGIN { n = split(lanes, a, "\n"); for (i = 1; i <= n; i++) watched[a[i]] = 1 }
+  # The lane list crosses in the environment, never through -v: it holds one
+  # lane per line, and BWK awk — the awk macOS ships — refuses a -v value
+  # carrying a newline outright ("awk: newline in string"), so every prune died
+  # there and no lane event was ever emitted. ENVIRON takes the value whole.
+  ow_lanes="$(printf '%s\n' "$@")" awk -F'\t' -v kind="$kind" '
+    BEGIN { n = split(ENVIRON["ow_lanes"], a, "\n"); for (i = 1; i <= n; i++) watched[a[i]] = 1 }
     NF && !($1 == kind && !($2 in watched))
   ' <<<"$state"
 }

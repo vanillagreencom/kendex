@@ -140,7 +140,12 @@ assert_ne "$written_ts" "$BOGUS_TS" "written timestamp is NOT the model-supplied
 
 # The written value must be the wrapper's own wall clock: parse it to epoch and
 # confirm it falls within the [before, after] window of the run.
-written_epoch="$(date -u -d "$written_ts" +%s 2>/dev/null || echo "")"
+# `date -d` is GNU; BSD date parses an explicit format with -j -f, and the -u
+# is load-bearing there because the trailing Z is a LITERAL in the format
+# string — without it BSD date reads the stamp in the machine's local zone and
+# the window check below shifts by the UTC offset.
+written_epoch="$(date -u -d "$written_ts" +%s 2>/dev/null \
+  || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$written_ts" +%s 2>/dev/null || echo "")"
 if [[ -z "$written_epoch" ]]; then
   fail "written timestamp parses as an ISO-8601 UTC time (got '$written_ts')"
 elif (( written_epoch >= before && written_epoch <= after )); then

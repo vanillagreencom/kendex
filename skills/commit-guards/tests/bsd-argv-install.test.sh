@@ -135,3 +135,84 @@ if [ -x "$broken/.git/hooks/pre-commit" ] && [ -x "$broken/.git/hooks/commit-msg
 fi
 
 echo "pass: bsd-argv-install"
+
+# --- BSD sed argv, the same way: run it, do not read it -------------------
+#
+# `--` is not an end-of-options marker for BSD sed either. getopt(3) stops at
+# the first non-option argument, which for sed is the script, so a `--` after
+# it is a file operand — a file named `--`, which nobody has. BSD sed reports
+# it and exits 1 while still processing the real file, so a caller reading the
+# exit status sees a failure over content it actually got. install-git-hooks
+# reads line 3 of a candidate helper that way, and preflight reads a runner
+# body that way; the same rule judges both, and this is install-git-hooks.
+REAL_SED="$(command -v sed)"
+cat >"$shim/sed" <<SHIM
+#!/bin/sh
+# Every argument after the script is a file operand; a \`--\` among them is a
+# file nobody has.
+seen_script=0
+for arg in "\$@"; do
+  case "\$seen_script\$arg" in
+    0-*) continue ;;
+  esac
+  if [ "\$seen_script" -eq 1 ] && [ "\$arg" = "--" ]; then
+    echo "sed: --: No such file or directory" >&2
+    exit 1
+  fi
+  seen_script=1
+done
+exec $REAL_SED "\$@"
+SHIM
+chmod 0755 "$shim/sed"
+
+# The shim has teeth, and only on the wrong shape.
+printf 'a\nb\nc\n' >"$TMP/sed-probe"
+if PATH="$shim:$PATH" sed -n '3p' -- "$TMP/sed-probe" >/dev/null 2>&1; then
+  echo "FAIL: the sed shim accepts a -- operand, so it judges nothing" >&2
+  exit 1
+fi
+if [ "$(PATH="$shim:$PATH" sed -n '3p' <"$TMP/sed-probe")" != c ]; then
+  echo "FAIL: the sed shim does not pass a correct call through to the real sed" >&2
+  exit 1
+fi
+
+# A helper an earlier install wrote, whose baked scripts directory is gone.
+# install-git-hooks replaces exactly that file and refuses every other one, so
+# reading its line 3 is the whole decision: a read that fails leaves ours
+# looking like somebody else's file and the install stops.
+dangling_helper() { # REPO — plant a helper of an install that no longer exists
+  printf '#!/bin/sh\n# Scripts directory of the install that wrote this file.\ninstalled_scripts=%s\n# kendex earlier-package git hooks. Managed by an earlier install.\nexit 0\n' \
+    "'$TMP/install-that-moved/scripts'" >"$1/.git/hooks/kendex-guards"
+}
+
+dangling_helper "$repo"
+out=""
+status=0
+out="$(PATH="$shim:$PATH" "$installer" --repo "$repo" 2>&1)" || status=$?
+case "$out" in
+  *"scripts directory is gone; replacing it"*) ;;
+  *)
+    echo "FAIL: under BSD sed argv rules the dangling helper was not recognised (exit $status)" >&2
+    printf '%s\n' "$out" >&2
+    exit 1
+    ;;
+esac
+
+# The control: a copy with the `--` restored must NOT recognise it. Without
+# this the assertion above passes on any installer, including one that never
+# reads line 3.
+perl -pi -e "s/sed -n '3p' <\"\\\$1\"/sed -n '3p' -- \"\\\$1\"/" "$broken_installer"
+grep -q "sed -n '3p' -- " "$broken_installer" || {
+  echo "FAIL: the control could not restore the -- operand; the assertion below proves nothing" >&2
+  exit 1
+}
+dangling_helper "$broken"
+broken_out="$(PATH="$shim:$PATH" "$broken_installer" --repo "$broken" 2>&1)" || true
+case "$broken_out" in
+  *"scripts directory is gone; replacing it"*)
+    echo "FAIL: must-fail control recognised the dangling helper with a -- operand under BSD sed" >&2
+    exit 1
+    ;;
+esac
+
+echo "pass: bsd-argv-sed"

@@ -250,7 +250,11 @@ body_term_hits() {
     fi
     # -l lists matching files. Unreadable or absent files are not matches, and
     # a term that matches nothing is not an error.
-    matched=$(printf '%s\0' "${paths[@]}" | xargs -0 -r grep -ilE -e "$term" -- 2>/dev/null || true)
+    # No -r: it is a GNU extension, its only job is to skip a run on empty
+    # input, and the array is already proven non-empty above. Dropping it is
+    # what keeps this line off the differences between xargs implementations
+    # rather than resting on any one of them accepting the flag.
+    matched=$(printf '%s\0' "${paths[@]}" | xargs -0 grep -ilE -e "$term" -- 2>/dev/null || true)
     if [[ -n "$matched" ]]; then
       while IFS= read -r path; do
         hits+="$path"$'\t'"$term"$'\n'

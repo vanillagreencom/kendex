@@ -21,8 +21,21 @@ tz_date() {
 # is not shifted by the runner's local zone.
 to_epoch() {
   local stamp="$1" fmt="${2:-%Y-%m-%dT%H:%M:%SZ}" zone="${3-UTC}"
+  local bsd_stamp="$stamp" bsd_fmt="$fmt"
+  # BSD `date -j -f` takes every field its format does not name from the
+  # CURRENT time, so a format without %S resolves to this minute's seconds
+  # instead of to :00 — a clock read seconds late, and a different answer on
+  # every run. GNU `date -d` zeroes them. The seconds are named outright for
+  # the BSD arm rather than left to the clock.
+  case "$bsd_fmt" in
+    *%S*) ;;
+    *)
+      bsd_stamp="$bsd_stamp:00"
+      bsd_fmt="$bsd_fmt:%S"
+      ;;
+  esac
   tz_date "$zone" -d "$stamp" +%s 2>/dev/null \
-    || tz_date "$zone" -j -f "$fmt" "$stamp" +%s 2>/dev/null
+    || tz_date "$zone" -j -f "$bsd_fmt" "$bsd_stamp" +%s 2>/dev/null
 }
 
 # The other direction on the same ladder: GNU spells an epoch input `-d @`,

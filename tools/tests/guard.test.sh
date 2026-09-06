@@ -48,9 +48,12 @@ printf '%s\n' \
 # and its hand-named roster entries against the repository it runs in, so the
 # fixture derives each rather than copying a list that goes stale with it. An
 # exception directory holds no shell file; a roster one dies without one.
+# -E on the exception read, because `\|` alternation inside `\(...\)` is a GNU
+# BRE extension: BSD sed reads it as a literal bar, so the loop below creates
+# no exception directory and every guard pass dies in the bash32-lint lane.
 while IFS= read -r e; do
   mkdir -p "$R/$e" && printf 'not shell\n' >"$R/$e/README.md"
-done < <(sed -n 's#^NO_\(SCAN\|SHELL\)="\(.*\)"$#\2#p' "$REPO/tools/bash32-lint" | tr ' ' '\n' | grep .)
+done < <(sed -nE 's#^NO_(SCAN|SHELL)="(.*)"$#\2#p' "$REPO/tools/bash32-lint" | tr ' ' '\n' | grep .)
 while IFS= read -r e; do
   mkdir -p "$R/$e" && printf '#!/usr/bin/env bash\necho rostered\n' >"$R/$e/rostered.sh"
 done < <(sed -n 's#^  set -- \(.*\)$#\1#p' "$REPO/tools/bash32-lint" | tr ' ' '\n' | grep -v '[*]')

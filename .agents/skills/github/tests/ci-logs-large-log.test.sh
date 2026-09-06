@@ -75,9 +75,11 @@ padding="$(printf 'x%.0s' {1..1400})"
     printf '2026-09-02T10:00:00Z  compiling crate %s\n' "$padding"
   done
 } > "$TMP_ROOT/big.log"
-log_bytes=$(wc -c <"$TMP_ROOT/big.log")
+# BSD wc right-aligns its count in a fixed-width field; assert_ge below reads
+# its argument with ^[0-9]+$, which a padded number fails.
+log_bytes=$(wc -c <"$TMP_ROOT/big.log" | tr -d ' ')
 assert_ge "$log_bytes" 131072 "staged log clears the pipe buffer and the single-argument cap"
-assert_eq "$(wc -l <"$TMP_ROOT/big.log")" "100" "staged log fits the default --lines window whole"
+assert_eq "$(wc -l <"$TMP_ROOT/big.log" | tr -d ' ')" "100" "staged log fits the default --lines window whole"
 
 # The job name matches none of the fallback heuristics, so the log is the only
 # thing that can produce a classification other than "unknown".
