@@ -228,13 +228,9 @@ if [ -z "$AWAITING_AFTER" ]; then
   fi
 fi
 WRITER_WORKFLOW="${PR_WATCH_WRITER_WORKFLOW:-Review gate writer}"
-# Where the disarmed line reads the submit-time size from: orch's
-# workflow-state directory, resolved as every workflow-state call resolves
-# it, $ORCH_STATE_DIR then tmp/ under THIS process's working directory. The
-# record is read as the file orch's schema documents rather than through
-# orch's own workflow-state CLI: orch calls this reducer, so calling back
-# into it would close a loop between the two skills — and the caller here
-# has a PR, not the issue key that CLI addresses state by.
+# Read as the file orch's schema documents, not through orch's own
+# workflow-state CLI: orch calls this reducer, so calling back would close a
+# loop, and a PR is not the issue key that CLI addresses state by.
 SIZE_STATE_DIR="${ORCH_STATE_DIR:-tmp}"
 
 attention=0
@@ -246,21 +242,14 @@ emit() { # pr, head, kind, detail
   emitted_this_pr=1
 }
 
-# The submit-time size the reader needs BEFORE arming: branch-size-check
-# measures a branch's added lines against the allowance its issue states and
-# records the verdict at `pr.size_check`, keyed by the state file's own
-# branch. This reads that record and nothing else — no second measurement,
-# and no refusal: an oversized branch is refused at submit, and re-refusing
-# it here would be the same rule in two tools.
+# The size the reader needs BEFORE arming, read and never re-measured: an
+# oversized branch is refused at submit, and refusing it again here would be
+# one rule in two tools. The kinds block above is the output contract.
 #
-# A record is bound to the base and head it compared, so only one whose
-# head_sha IS this head describes the branch as it stands: any other is
-# reported STALE rather than as this head's size, and no record at all is
-# UNAVAILABLE. Both are also where every failure lands — an absent state
-# directory, a head branch the PR object did not carry, an unreadable
-# file — because this annotation informs a line that already stands, and a
-# local state file must never be able to turn a real disarmed finding into
-# an error.
+# Every failure lands on stale or unavailable — an absent state directory, a
+# head branch the PR object did not carry, an unreadable file — because this
+# annotation informs a line that already stands, and a local state file must
+# never turn a real disarmed finding into an error.
 size_note() { # branch, head -> the annotation, prefixed for the detail
   local branch="$1" head="$2" note="" file
   local files=()

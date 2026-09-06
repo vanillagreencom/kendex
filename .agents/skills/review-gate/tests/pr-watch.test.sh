@@ -243,15 +243,18 @@ pr_row() { # number, [state], [armed], [draft], [created_at] -> one pulls-list r
 # writes: the record under `pr.size_check`, keyed by the lane's own branch and
 # bound to the head it measured. A null allowance is the `allowance_missing`
 # verdict, which the check emits for an issue that states no expected delta.
-size_state() { # dir, branch, head_sha, production_lines, allowance-or-null
+size_state() { # dir, branch, head_sha, production_lines, allowance-or-null, [verdict]
   mkdir -p "$1"
   jq -n --arg branch "$2" --arg head "$3" --argjson prod "$4" --argjson allow "$5" \
+    --arg verdict "${6:-}" \
     '{issue_id:"KEN-1", branch:$branch, worktree:"/wt",
       pr:{baseline_lines:100,
           size_check:{base_sha:"0000000000000000000000000000000000000000", head_sha:$head,
                       production_lines:$prod, test_lines:40, mirror_lines:0,
                       production_allowance:$allow, test_allowance:null,
-                      verdict:(if $allow == null then "allowance_missing" else "pass" end),
+                      verdict:(if $verdict != "" then $verdict
+                               elif $allow == null then "allowance_missing"
+                               else "pass" end),
                       reason:""}}}' > "$1/workflow-state-KEN-1.json"
 }
 SD_CURRENT="$TMP_ROOT/state/current"; size_state "$SD_CURRENT" lane "$HEAD_A" 214 250
@@ -260,19 +263,13 @@ SD_NOALLOW="$TMP_ROOT/state/noallow"; size_state "$SD_NOALLOW" lane "$HEAD_A" 21
 SD_OTHER="$TMP_ROOT/state/other";     size_state "$SD_OTHER"   other-lane "$HEAD_A" 214 250
 # A stated allowance of zero is a real number, not an absent line: the check's
 # delta grammar accepts `0 lines`, which is how a test-only issue states its
-# production budget. Over it, the verdict is what says so.
-SD_ZERO="$TMP_ROOT/state/zero"; size_state "$SD_ZERO" lane "$HEAD_A" 5 0
-jq '.pr.size_check.verdict = "production_over"' "$SD_ZERO/workflow-state-KEN-1.json" > "$SD_ZERO/tmp" \
-  && mv "$SD_ZERO/tmp" "$SD_ZERO/workflow-state-KEN-1.json"
-# A branch inside its production allowance but past its test allowance: the
-# production ratio alone reads clean, so the verdict is the only signal.
-SD_TESTSOVER="$TMP_ROOT/state/testsover"; size_state "$SD_TESTSOVER" lane "$HEAD_A" 214 250
-jq '.pr.size_check.verdict = "tests_over" | .pr.size_check.test_allowance = 120
-    | .pr.size_check.test_lines = 400' "$SD_TESTSOVER/workflow-state-KEN-1.json" > "$SD_TESTSOVER/tmp" \
-  && mv "$SD_TESTSOVER/tmp" "$SD_TESTSOVER/workflow-state-KEN-1.json"
-# `workflow-state init` with no --branch records the empty string, so an empty
-# head ref must never be allowed to key the lookup.
-SD_NOBRANCH="$TMP_ROOT/state/nobranch"; size_state "$SD_NOBRANCH" "" "$HEAD_A" 214 250
+# production budget. Past it, and past a test allowance the production ratio
+# says nothing about, the verdict is the only signal. `workflow-state init`
+# with no --branch records the empty string, so an empty head ref must never
+# be allowed to key the lookup.
+SD_ZERO="$TMP_ROOT/state/zero";           size_state "$SD_ZERO"      lane "$HEAD_A"   5   0 production_over
+SD_TESTSOVER="$TMP_ROOT/state/testsover"; size_state "$SD_TESTSOVER" lane "$HEAD_A" 214 250 tests_over
+SD_NOBRANCH="$TMP_ROOT/state/nobranch";   size_state "$SD_NOBRANCH"  ""   "$HEAD_A" 214 250
 
 # --- fixtures ----------------------------------------------------------------
 # Open-PR listings: number 7 armed, unarmed, unarmed draft, armed draft, two
@@ -485,35 +482,20 @@ mutant_watch() { # label, sed-expr, anchor — points WATCH_BIN at the mutated c
 }
 LIVE_WATCH="$WATCH_BIN"
 
-mutant_watch evaluated-call \
-  's|(re-arm)$(size_note "$head_ref" "$head")|(re-arm)|' \
-  '(re-arm)$(size_note'
-table \
-  "must-fail: without the evaluated site's call that line carries no size||ORCH_STATE_DIR=$SD_CURRENT;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=none"
+mutant_watch evaluated-call 's|(re-arm)$(size_note "$head_ref" "$head")|(re-arm)|' '(re-arm)$(size_note'
+table "must-fail: without the evaluated site's call that line carries no size||ORCH_STATE_DIR=$SD_CURRENT;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=none"
 
-mutant_watch cheap-call \
-  's|before re-arming$(size_note "$head_ref" "$head")|before re-arming|' \
-  'before re-arming$(size_note'
-table \
-  "must-fail: without the cheap site's call that line carries no size|--no-evaluate|ORCH_STATE_DIR=$SD_CURRENT;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=unused;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=none"
+mutant_watch cheap-call 's|before re-arming$(size_note "$head_ref" "$head")|before re-arming|' 'before re-arming$(size_note'
+table "must-fail: without the cheap site's call that line carries no size|--no-evaluate|ORCH_STATE_DIR=$SD_CURRENT;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=unused;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=none"
 
-mutant_watch head-binding \
-  's#map(select(.head_sha == $head)) | first#first#' \
-  'map(select(.head_sha == $head)) | first'
-table \
-  "must-fail: without the head binding the old record reads as current||ORCH_STATE_DIR=$SD_STALE;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=214/250/85%@bbbbbbbb"
+mutant_watch head-binding 's#map(select(.head_sha == $head)) | first#first#' 'map(select(.head_sha == $head)) | first'
+table "must-fail: without the head binding the old record reads as current||ORCH_STATE_DIR=$SD_STALE;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=214/250/85%@bbbbbbbb"
 
-mutant_watch branch-binding \
-  's#(.branch? // "") == $branch#true#' \
-  '(.branch? // "") == $branch'
-table \
-  "must-fail: without the branch binding another lane's record is reported||ORCH_STATE_DIR=$SD_OTHER;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=214/250/85%@aaaaaaaa"
+mutant_watch branch-binding 's#(.branch? // "") == $branch#true#' '(.branch? // "") == $branch'
+table "must-fail: without the branch binding another lane's record is reported||ORCH_STATE_DIR=$SD_OTHER;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=214/250/85%@aaaaaaaa"
 
-mutant_watch empty-branch-guard \
-  's#if \[ -n "$branch" \]; then#if true; then#' \
-  'if [ -n "$branch" ]; then'
-table \
-  "must-fail: without the empty-branch guard a branchless lane's record is reported||ORCH_STATE_DIR=$SD_NOBRANCH;STUB_OPEN_PRS=$P7UNOREF;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=214/250/85%@aaaaaaaa"
+mutant_watch empty-branch-guard 's#if \[ -n "$branch" \]; then#if true; then#' 'if [ -n "$branch" ]; then'
+table "must-fail: without the empty-branch guard a branchless lane's record is reported||ORCH_STATE_DIR=$SD_NOBRANCH;STUB_OPEN_PRS=$P7UNOREF;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=214/250/85%@aaaaaaaa"
 
 WATCH_BIN="$LIVE_WATCH"
 
