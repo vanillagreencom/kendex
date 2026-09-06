@@ -12,13 +12,17 @@ Commit the installed skill and generated-file inventory. The CI runner needs `jq
 
 ## Features
 
-- Compare changed files with kendex's generated-file inventory.
+- Compare the files a change touched with the list of files kendex generated.
 - Run product checks for unrecorded files and uncertain results.
 - Support pull requests, pushes and merge-queue events.
 
 ## How it works
 
-kendex writes a generated-file inventory beside the installed files. Your CI step gives the checker the event and the base and head commits. The checker reads both inventories and compares them with the changed files. It returns a value your workflow uses to run or skip product checks.
+- kendex writes a list of every file it generated, called the inventory, beside the files it installed.
+- Your CI step tells the checker which GitHub event it is handling and which two commits to compare.
+- The checker works out the range that event needs, then reads the inventory as it stood at each end of that range.
+- It answers `true` only when every file the change touched appears in one of those two inventories.
+- Anything it cannot prove answers `false`, and your workflow uses that answer to run or skip the product checks.
 
 ## Settings
 

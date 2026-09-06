@@ -25,7 +25,11 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 
 ## How it works
 
-Each Pi session opens a local socket and writes a discovery record. The CLI uses those records to select the requested session. It sends a request through the socket. The session returns the result and sends subscribed activity updates. Large saved events can be read in full through the history command.
+- Each Pi session opens a connection on your own machine and writes a small file saying where that connection is.
+- The CLI reads those files to find the session you asked for.
+- It sends your request down that channel, and the session sends the result back.
+- A session you subscribed to keeps sending you what it does next.
+- The history command reads a saved event in full when it was too large to return inline.
 
 ## Settings
 

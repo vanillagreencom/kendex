@@ -27,11 +27,13 @@ A package on a local path needs no git. On Windows, `kendex guard` runs the comm
 - Convert agent and skill files into the formats each tool reads.
 - Preview package changes before applying them.
 - Keep personal settings and a separate setup for each project.
-- Manage customizations you already have.
-- Browse the [community marketplace](https://kendex.ai) and subscribe to package repositories.
-- Open a marketplace or package in the app from a `kendex://` link, the scheme the app registers for kendex.ai pages.
+- Adopt customizations you already set up yourself: kendex keeps your files and starts managing them.
+- Browse the [community marketplace](https://kendex.ai) for packages to install.
+- Subscribe to a package repository so you can install from it too.
+- Open a marketplace or a package in the app by clicking a `kendex://` link on a kendex.ai page.
 - Find outdated packages and update them.
-- Add your own instructions to agents and skills, and per-tool settings to agents.
+- Add your own instructions to an agent or a skill.
+- Give one agent different settings in each tool.
 - Enable, disable or remove installed customizations.
 - See where an installed package came from.
 
@@ -61,7 +63,13 @@ The full per-tool facts are in [docs/adapters](docs/adapters/README.md).
 
 ## How it works
 
-The desktop app and CLI share the core code that manages your setup. kendex reads the customizations in each coding tool's folders. A global `kendex.toml` declares your personal setup, and each project can have its own `kendex.toml`. kendex compares that file with the installed setup and shows a preview. After you apply the changes, a lock file records what kendex installed. To undo an installation, remove the package.
+- The desktop app and the CLI read and write the same setup, so a change made in one shows up in the other.
+- You list what you want in a `kendex.toml` file: one for your personal setup, and one inside any project that needs its own.
+- kendex reads the customizations already sitting in each coding tool's folders.
+- It compares your list with what it found, and shows you the difference before it changes anything.
+- You apply the change, and kendex writes the files each tool reads.
+- kendex records what it installed, and where each package came from, in a lock file, so it can update it or take it away later.
+- Delete a package from your list and the next apply deletes its files.
 
 ## Settings
 

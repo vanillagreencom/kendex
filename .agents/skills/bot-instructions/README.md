@@ -19,7 +19,10 @@ Requires Python 3.11 or newer. Follow [references/checklist.md](references/check
 
 ## How it works
 
-You enable the review bots in the manifest's `[bot-instructions]` table. The renderer reads that table and the shared review rules. It prepares and validates each bot's instruction file before writing it. The check command compares those files with the configured output.
+- You list the review bots you use in the `[bot-instructions]` table of the project's `kendex.toml`.
+- The skill reads that table together with the review rules every bot shares.
+- It checks each bot's instruction file is valid, then writes it where that bot looks for it.
+- The check command compares the files on disk with what the table says they should hold.
 
 ## Settings
 
