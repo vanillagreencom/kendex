@@ -23,8 +23,9 @@ repo-effects:
   companions:
     - "doc-limits"
     - "preflight"
+    - "bot-instructions"
   notes:
-    - "A missing companion is announced and skipped, as is a repo-local doc-limits that rejects --staged and preflight on a first commit; every other companion or guard failure blocks the commit."
+    - "A missing companion is announced and skipped, as is a repo-local doc-limits that rejects --staged and preflight on a first commit; every other companion or guard failure blocks the commit, a bot-instructions check that finds a stale render included."
     - "Both hooks block on nonzero results; Git's no-verify flag bypasses both for one commit."
     - "Git does not clone hooks; arm every clone once."
 ---
@@ -71,7 +72,7 @@ Exit codes: `0` clean, `1` violations, `2` usage, configuration, or collection e
 
 Run `scripts/install-git-hooks [--repo PATH]` to arm the shims.
 
-Pre-commit order: `doc-limits --staged` when installed -> `preflight --staged` when installed -> `commit-guards all --staged` -> `COMMIT_GUARDS_PRE_COMMIT_LOCAL` when configured. `commit-msg` runs the message gate.
+Pre-commit order: `doc-limits --staged` when installed -> `preflight --staged` when installed -> `bot-instructions check --staged` when installed -> `commit-guards all --staged` -> `COMMIT_GUARDS_PRE_COMMIT_LOCAL` when configured. `commit-msg` runs the message gate.
 
 Arming and disarming apply to the whole repository. Disarm before removing the skill. Ownership and layering: [README.md § Git hooks](README.md#git-hooks); install mechanics: [DEVELOPMENT.md § Git hook install contract](DEVELOPMENT.md#git-hook-install-contract).
 

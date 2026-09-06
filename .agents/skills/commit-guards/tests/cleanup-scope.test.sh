@@ -9,8 +9,15 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 TB="$SKILL_DIR/scripts/todo-ban"
-PC="$SKILL_DIR/scripts/pre-commit"
 . "$TEST_DIR/lib/harness.bash"
+
+# The chain runs from an install that carries no sibling skills: this suite
+# pins cleanup state, and a sibling resolved from the source tree beside
+# this package would judge the fixture repositories on its own terms.
+BARE_INSTALL="$TMP/install/skills"
+mkdir -p "$BARE_INSTALL"
+cp -R "$SKILL_DIR" "$BARE_INSTALL/commit-guards"
+PC="$BARE_INSTALL/commit-guards/scripts/pre-commit"
 
 unset COMMIT_GUARDS_CHECKS COMMIT_GUARDS_SETTINGS_FILE GG_TMP \
   GG_SETTINGS_INDEX_OWNED GG_SETTINGS_INDEX_DIR GG_SETTINGS_FROM_INDEX 2>/dev/null || true

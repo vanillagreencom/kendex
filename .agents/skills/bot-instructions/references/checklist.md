@@ -3,7 +3,7 @@
 ## Before the first pass
 
 - [ ] `python3 --version` is 3.11 or newer where the verbs run — locally and on whatever runs this repo's guards. The generator needs `tomllib` and nothing else, and it refuses to start on an older one rather than half-parsing a TOML.
-- [ ] `check` is wired into whatever runs this repo's other guards, with `--staged` in the commit lane so it judges one coherent staged state. This package ships no hook of its own: a repo that already has a commit chain does not need a second one.
+- [ ] `check --staged` runs at commit. Where `commit-guards` is installed its pre-commit chain runs it as a lane; write no wrapper for it. Elsewhere, wire `check --staged` into whatever runs this repo's other guards so it judges one coherent staged state.
 
 ## Adding a repo
 

@@ -219,8 +219,8 @@ DECISIONS_DIR = "docs/decisions"
 # for the same commit; CI runs the full suites independently.
 DEV_VALIDATE_CMD = "tools/guard --full"
 
-# The repo-root executable the guard chain runs last, after doc-limits,
-# preflight and the commit-guards batch. tools/guard holds this repository's
+# The repo-root executable the guard chain runs last, after doc-limits, preflight,
+# the bot-instructions check and the commit-guards batch. tools/guard holds this repository's
 # own scans and compile checks for changed crates or UI files. Expensive
 # tests, documentation builds and cross-target checks run through DEV_VALIDATE_CMD.
 COMMIT_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"

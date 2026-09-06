@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # pre-commit — the staged-scope guard chain, shaped for the git pre-commit
-# hook (the installed .git/hooks/kendex-guards shim execs it): doc-limits
-# and preflight when the committing work tree or this install carries those
-# sibling skills, then `commit-guards all --staged`, then the repo-local
-# entry named by COMMIT_GUARDS_PRE_COMMIT_LOCAL. Every lane announces itself,
+# hook (the installed .git/hooks/kendex-guards shim execs it): doc-limits,
+# preflight and bot-instructions when the committing work tree or this
+# install carries those sibling skills, then `commit-guards all --staged`,
+# then the repo-local entry named by COMMIT_GUARDS_PRE_COMMIT_LOCAL. Every lane announces itself,
 # a skipped or unconfigured one included.
 #
 # Every step runs before the verdict, so one commit attempt reports every
@@ -29,10 +29,10 @@ usage() {
   cat <<'EOF'
 usage: pre-commit
 
-Runs the staged-scope guard chain: doc-limits and preflight (each resolved
-from the committing work tree first, then from the install beside this
-skill), the commit-guards batch at commit scope, then the optional repo-local
-entry. Takes no arguments — git passes none to pre-commit. Wire it through
+Runs the staged-scope guard chain: doc-limits, preflight and bot-instructions
+check (each resolved from the committing work tree first, then from the
+install beside this skill), the commit-guards batch at commit scope, then the
+optional repo-local entry. Takes no arguments — git passes none to pre-commit. Wire it through
 the installed shim: `install-git-hooks --repo <root>`.
 
 Configuration (env > .env.local > .kendex/settings.toml >
@@ -190,6 +190,17 @@ if PREFLIGHT_SKILL="$(resolve_sibling preflight)"; then
   fi
 else
   echo "=== pre-commit: preflight not installed — skipped (no preflight skill under $(gg_searched_roots) ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../preflight)"
+fi
+
+# Same sibling contract for the bot-instructions check: the rendered review
+# bot instruction files are judged against the staged doctrine and manifest,
+# one coherent staged state, so no consumer wires a wrapper of its own.
+if BOT_SKILL="$(resolve_sibling bot-instructions)"; then
+  BOT_CHECK="$BOT_SKILL/scripts/bot-instructions"
+  [ -x "$BOT_CHECK" ] || gg_config_error "the bot-instructions skill is installed at $BOT_SKILL but $BOT_CHECK is missing or not executable — reinstall it"
+  run_step "bot-instructions check --staged" "$BOT_CHECK" check --staged
+else
+  echo "=== pre-commit: bot-instructions not installed — skipped (no bot-instructions skill under $(gg_searched_roots) ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../bot-instructions)"
 fi
 
 BATCH="$SCRIPT_DIR/commit-guards"
