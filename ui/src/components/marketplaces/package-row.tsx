@@ -43,6 +43,16 @@ export interface PackageEntry {
   revision?: string | null;
 }
 
+/** Which of the columns beyond the four every width keeps are on screen.
+ * The table settles this once from its own room and hands it down, so the
+ * header and every row draw the same set. */
+export interface PackageColumns {
+  tags: boolean;
+  marketplace: boolean;
+  updated: boolean;
+  places: boolean;
+}
+
 /** One row of [PackagesTable]: the package, what it is, when it last
  * changed, how it scored, where it is installed from this marketplace, and
  * the one thing this table can do with it. Whether a bare repository's row
@@ -50,16 +60,16 @@ export interface PackageEntry {
  * same reading the page header uses. */
 export function PackageRow({
   entry,
-  showMarketplace,
-  showPlaces,
+  columns,
   places,
   offerSubscribe,
 }: {
   entry: PackageEntry;
-  showMarketplace: boolean;
-  /** A marketplace's own page says where each of its packages landed; the
+  /** Which of the optional columns this row draws. The table settles it
+   *  from its own room, so the header and the body never disagree. A
+   *  marketplace's own page says where each of its packages landed; the
    *  cross-marketplace list names the marketplace in that room instead. */
-  showPlaces: boolean;
+  columns: PackageColumns;
   /** Where this package is installed from this marketplace, already
    *  worded. The table builds the whole index once — see
    *  `lib/installed-places.ts` — so a row neither scans the provenance
@@ -92,10 +102,24 @@ export function PackageRow({
   };
 
   const updated = row.updatedAt ? Date.parse(row.updatedAt) : Number.NaN;
+  const onlyKept =
+    !columns.tags &&
+    !columns.marketplace &&
+    !columns.updated &&
+    !columns.places;
 
   return (
     <TableRow className="cursor-pointer" onClick={open}>
-      <TableCell>
+      {/* The one column with no width of its own, so without a ceiling a
+          long summary sets the whole table's, pushes every other column
+          past the right edge, and leaves the reader a name and nothing
+          else. Same measure the Library's name column takes — except in
+          the state where every optional column is already gone and the
+          name is the only room left to give, where it asks for less so
+          the four that stay fit the narrowest window kendex opens. A
+          ceiling caps what the column asks for, not what it may have:
+          where the table has room to spare the name still takes it. */}
+      <TableCell className={onlyKept ? "max-w-72" : "max-w-[22rem]"}>
         <div className="flex min-w-0 items-center gap-2.5">
           <Icon className="size-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
@@ -113,11 +137,13 @@ export function PackageRow({
       <TableCell className="text-muted-foreground">
         {kindLabel(row.kind)}
       </TableCell>
-      <TableCell>
-        <TagBadges tags={row.tags} />
-      </TableCell>
-      {showMarketplace ? (
-        <TableCell className="text-muted-foreground">
+      {columns.tags ? (
+        <TableCell className="max-w-48">
+          <TagBadges tags={row.tags} />
+        </TableCell>
+      ) : null}
+      {columns.marketplace ? (
+        <TableCell className="max-w-40 text-muted-foreground">
           <div className="truncate">{catalogLabel(catalog)}</div>
           {entry.revision ? (
             <div className="truncate font-mono text-xs">
@@ -126,15 +152,18 @@ export function PackageRow({
           ) : null}
         </TableCell>
       ) : null}
-      <TableCell className="text-muted-foreground">
-        {Number.isNaN(updated) ? (
-          // A catalog kendex keeps no history for has no date to show, and
-          // a guess would be this machine's clock rather than the package's.
-          <span aria-hidden>—</span>
-        ) : (
-          <Ago at={updated} exact={row.updatedAt} />
-        )}
-      </TableCell>
+      {columns.updated ? (
+        <TableCell className="text-muted-foreground">
+          {Number.isNaN(updated) ? (
+            // A catalog kendex keeps no history for has no date to show,
+            // and a guess would be this machine's clock rather than the
+            // package's.
+            <span aria-hidden>—</span>
+          ) : (
+            <Ago at={updated} exact={row.updatedAt} />
+          )}
+        </TableCell>
+      ) : null}
       <TableCell>
         {safety ? (
           <SafetyDot
@@ -149,8 +178,8 @@ export function PackageRow({
           <SafetyDot tone="muted" words={SAFETY_DOT_UNCHECKED} />
         )}
       </TableCell>
-      {showPlaces ? (
-        <TableCell className="truncate text-muted-foreground">
+      {columns.places ? (
+        <TableCell className="max-w-40 truncate text-muted-foreground">
           {places || <span aria-hidden>—</span>}
         </TableCell>
       ) : null}

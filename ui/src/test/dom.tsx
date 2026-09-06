@@ -70,3 +70,66 @@ export function mount(
  *  resolves on the microtask queue, and the state it sets is not on
  *  screen until that has drained. */
 export const settle = (): Promise<void> => act(async () => {});
+
+// jsdom lays nothing out and ships no ResizeObserver, so a component that
+// sizes itself from its own room gets neither. This is the browser's
+// contract filled in: observing an element reports a width at once, as a
+// browser does on the first observation, and [roomIs] re-reports it the way
+// a resize would. The width starts at zero — what an element that has not
+// been laid out reports — so a test that never sets one sees exactly what
+// the unmeasured case renders.
+const observing = new Map<ResizeObserverCallback, Set<Element>>();
+let room = 0;
+
+function report(
+  callback: ResizeObserverCallback,
+  targets: Iterable<Element>,
+): void {
+  const entries = [...targets].map(
+    (target) =>
+      ({
+        target,
+        contentRect: { width: room, height: 0 } as DOMRectReadOnly,
+      }) as ResizeObserverEntry,
+  );
+  if (entries.length > 0)
+    callback(entries, undefined as unknown as ResizeObserver);
+}
+
+class StubResizeObserver implements ResizeObserver {
+  private readonly targets = new Set<Element>();
+
+  constructor(private readonly callback: ResizeObserverCallback) {
+    observing.set(callback, this.targets);
+  }
+
+  observe(target: Element): void {
+    this.targets.add(target);
+    report(this.callback, [target]);
+  }
+
+  unobserve(target: Element): void {
+    this.targets.delete(target);
+  }
+
+  disconnect(): void {
+    this.targets.clear();
+    observing.delete(this.callback);
+  }
+}
+
+globalThis.ResizeObserver = StubResizeObserver;
+
+/** Report `width` as the room every observed element has, and tell the
+ *  observers, the way a browser does when the window changes size. */
+export function roomIs(width: number): void {
+  room = width;
+  act(() => {
+    for (const [callback, targets] of observing) report(callback, targets);
+  });
+}
+
+afterEach(() => {
+  observing.clear();
+  room = 0;
+});
