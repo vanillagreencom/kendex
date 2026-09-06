@@ -206,7 +206,11 @@ impl McpEntry {
             args,
             env,
             headers: map("headers"),
-            url: string("url"),
+            // Antigravity keys the endpoint `serverUrl` and Gemini's
+            // streamable-HTTP one is `httpUrl`; the secret scan reads all.
+            url: string("url")
+                .or_else(|| string("serverUrl"))
+                .or_else(|| string("httpUrl")),
         }
     }
 }

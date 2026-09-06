@@ -48,8 +48,9 @@ fn registration(
     let content = match item.kind {
         ItemKind::McpServer => match mcp_entry(edits) {
             Some(entry) => Content::Mcp(entry),
-            // A disabled server is planned as a removal, so the plan holds
-            // no entry to read and nothing about it can be judged.
+            // A disabled server is planned as a removal on every harness but
+            // Antigravity, which keeps the entry with its switch, so a plan
+            // holding no entry has nothing to judge.
             None => Content::Unread {
                 why: "this server is being removed from the harness's configuration, not written to it",
             },

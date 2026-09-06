@@ -49,7 +49,12 @@ fn mcp_object(servers: Option<&serde_json::Value>) -> Vec<RawEntry> {
     map.iter()
         .map(|(name, entry)| RawEntry {
             name: name.clone(),
-            enabled: None,
+            // Antigravity holds a switched-off server in the file under
+            // `disabled: true`; a file with no such key says nothing.
+            enabled: entry
+                .get("disabled")
+                .and_then(serde_json::Value::as_bool)
+                .map(|disabled| !disabled),
             description: mcp_summary(entry),
             source_path: None,
         })

@@ -21,14 +21,14 @@ Project markers: `.agents/agents/`, `.agents/rules/`, `.agents/hooks.json`, `.ag
 | skill | `~/.gemini/config/skills/<name>/SKILL.md` | `.agents/skills/<name>/SKILL.md`, shared with Codex and Pi | managed, both |
 | command | — | — | unsupported: a skill is the slash command |
 | hook | `~/.gemini/config/hooks.json`, scripts under `~/.gemini/config/hooks/` | `.agents/hooks.json`, scripts under `.agents/hooks/` | managed, both, enforced |
-| mcp-server | `~/.gemini/config/mcp_config.json` | `.agents/mcp_config.json` | observe only, both |
+| mcp-server | `~/.gemini/config/mcp_config.json` | `.agents/mcp_config.json` | managed, both |
 | plugin | `~/.gemini/config/plugins/<name>/plugin.json` | `.agents/plugins/<name>/plugin.json` | observe only, both |
 | pi-extension | — | — | unsupported |
 
 ## Format
 
 - Name rule `Any`; namespace separator `__`.
-- MCP transports: stdio (`command`) and SSE (`serverUrl`); the file is read, never written.
+- MCP transports: stdio (`command`, `args`, `env`) and, under one `serverUrl` key, SSE and streamable HTTP; the docs refuse `url` and `httpUrl`, so a url server is rewritten to `serverUrl` with no `type` beside it (`server`, `crates/core/src/engine/antigravity.rs`). Switching a server off writes `disabled: true` on the entry and switching it on takes the key away, so the declaration stays until removal, and the scan reads that key back as the switch; other entries stay. A file the strict JSON edit cannot parse, comments, trailing commas or a byte-order mark the loader itself tolerates, is not edited, the registration reports the conflict instead. Antigravity documents no substitution for an `env` value, so a server declaring one is refused for this harness with the reason. The `agy mcp` subcommands write only the user-level file.
 - Agent file: YAML frontmatter and a markdown body, `<name>.md`. Fields written: `name`, `description`, `model` (only when a tier was asked for), `subagent: true`, `tools` (allowlist) (`crates/core/src/render/agent/antigravity.rs`). Skills travel as prose: the frontmatter's `skills:` list names paths under the customization root, and kendex does not yet write it. An agent may also be a directory, `agents/<name>/agent.md`; kendex writes the file form and reads the directory form as the item `<name>/agent`.
 - Model dialect: `inherit` omits the key; `fable` and `opus` are `pro`, `sonnet` and `haiku` are `flash`; any other value is refused at render, since the loader reads no ids (`crates/core/src/harness/models.rs`, `crates/core/src/render/validate/agent.rs`). The file has no effort key, so an effort setting renders nothing; the session's `--effort` (`low`, `medium`, `high`) and the model's own `-high`/`-medium`/`-low` id suffix decide reasoning.
 - Permissions: an allowlist renders as `tools:` in Antigravity's own names; a name it has no word for is left out with a warning, since its documentation says an unknown name in the list can hang the subagent; a deny list cannot be expressed and warns.
@@ -44,4 +44,4 @@ Agent scoping: none; only `agents = "all"` custom hooks are enforced.
 
 ## Not supported
 
-Commands (a skill is the slash command), Pi extensions, writing MCP servers or plugins, and the `skills:` frontmatter list.
+Commands (a skill is the slash command; workflows under `.agents/workflows/` still run but retire on 2026-11-01), Pi extensions, writing plugins, and the `skills:` frontmatter list.
