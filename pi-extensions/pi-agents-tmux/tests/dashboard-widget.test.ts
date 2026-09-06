@@ -145,7 +145,8 @@ test("the compact widget prints the activity, not the prompt", () => {
 	const transcriptPath = join(cwd, "compact.jsonl");
 	writeFileSync(transcriptPath, toolCallTranscript.join("\n"));
 	const rendered = widget(cwd, [dashboardItem({ status: "running", task: "initial prompt", message: "initial prompt", transcriptPath })], "compact");
-	assert.equal([/tool: Bash/.test(rendered), /initial prompt/.test(rendered)].join(","), "true,false");
+	const promptOnly = widget(cwd, [dashboardItem({ status: "running", task: "initial prompt", message: "initial prompt" })], "compact");
+	assert.equal([/tool: Bash/.test(rendered), /initial prompt/.test(rendered), /initial prompt/.test(promptOnly)].join(","), "true,false,false");
 });
 
 // The expanded message lines, each as `<branch> <direction> <text>`.
