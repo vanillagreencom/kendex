@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### 2.0.1
+### 3.0.0
 
 - **Breaking**: the settings keys `enabled` and `defaultMode` are no longer read. The mode comes from `mode` alone, and a configuration without `mode` is off. A configuration that relied on `enabled: true` without `mode` had caveman active at 2.0.0 and gets an off session here, with no notice; set `mode` to keep it on. `/caveman debug` no longer lists the removed keys.
 - A session state entry written before the `override` shape is no longer restored; the session starts from the configured mode.
