@@ -7,6 +7,7 @@ import { ShowEverythingButton } from "@/components/harnesses/show-everything-but
 import { KindCountBadges } from "@/components/kind-count-badges";
 import { Button } from "@/components/ui/button";
 import { HARNESS_FOLDER_HELP, NOT_INSTALLED_LABEL } from "@/lib/copy";
+import type { ItemPlace } from "@/lib/derive";
 import { harnessName } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { useNavStore } from "@/stores/nav";
@@ -18,14 +19,17 @@ import { useNavStore } from "@/stores/nav";
  * harnesses, one "Set folder" button each, would say the same thing twice and
  * bury the fact that almost nobody needs it. */
 export function HarnessRow({
-  id,
+  place,
   detectedRoot,
   version,
   counts,
   folder,
   onFolderChange,
 }: {
-  id: HarnessId;
+  /** What this row is a row of, in the form the Library takes: the same
+   * object the counts were taken over, so every link below asks for the
+   * set that was counted rather than a second description of it. */
+  place: ItemPlace & { harness: HarnessId };
   detectedRoot: string | null;
   version: string | null;
   counts: [ItemKind, number][];
@@ -35,6 +39,7 @@ export function HarnessRow({
 }) {
   const goToLibrary = useNavStore((s) => s.goToLibrary);
   const [editing, setEditing] = useState(false);
+  const id = place.harness;
   const name = harnessName(id);
 
   return (
@@ -47,7 +52,7 @@ export function HarnessRow({
           {detectedRoot ? (
             <ShowEverythingButton
               name={name}
-              onOpen={() => goToLibrary({ harness: id })}
+              onOpen={() => goToLibrary(place)}
             />
           ) : (
             <span className="text-sm font-medium text-muted-foreground">
@@ -96,7 +101,7 @@ export function HarnessRow({
         <div className="flex shrink-0 flex-wrap justify-end gap-1.5 pt-0.5">
           <KindCountBadges
             counts={counts}
-            onKindClick={(kind) => goToLibrary({ harness: id, kind })}
+            onKindClick={(kind) => goToLibrary({ ...place, kind })}
           />
         </div>
       ) : null}

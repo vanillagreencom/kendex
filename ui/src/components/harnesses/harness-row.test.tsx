@@ -20,7 +20,7 @@ const mount = (detectedRoot: string | null) => {
   useNavStore.setState(navHome);
   return mountTree(
     <HarnessRow
-      id="claude"
+      place={{ harness: "claude" }}
       detectedRoot={detectedRoot}
       version={null}
       counts={[["skill", 3]]}

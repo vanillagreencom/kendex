@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { ObservedItem } from "@/bindings";
+import { KINDS } from "@/lib/labels";
 import {
-  countByKind,
   filterItems,
   groupItems,
   groupScopes,
   groupVendor,
   installationAt,
   installedCount,
+  installedCountByKind,
   recentItems,
   scopeMatches,
 } from "./derive";
@@ -166,15 +167,56 @@ describe("groupScopes", () => {
   });
 });
 
-describe("countByKind", () => {
+describe("installedCountByKind", () => {
   it("tallies per kind", () => {
-    const counts = countByKind([
-      item({}),
-      item({ name: "x" }),
-      item({ kind: "agent" }),
-    ]);
+    const counts = installedCountByKind(
+      [item({}), item({ name: "x" }), item({ kind: "agent" })],
+      {},
+    );
     expect(counts.get("skill")).toBe(2);
     expect(counts.get("agent")).toBe(1);
+  });
+
+  it("counts packages, not installations", () => {
+    const counts = installedCountByKind(
+      [
+        item({ harness: "claude" }),
+        item({ harness: "codex" }),
+        item({ scope: { scope: "project", root: "/p" } }),
+      ],
+      {},
+    );
+    expect(counts.get("skill")).toBe(1);
+  });
+
+  it("counts only what the place holds", () => {
+    const items = [
+      item({}),
+      item({ name: "elsewhere", harness: "codex" }),
+      item({ name: "over-there", scope: { scope: "project", root: "/p" } }),
+    ];
+    expect(
+      installedCountByKind(items, { harness: "claude" }).get("skill"),
+    ).toBe(2);
+    expect(installedCountByKind(items, { scope: "global" }).get("skill")).toBe(
+      2,
+    );
+    expect(
+      installedCountByKind(items, { scope: { project: "/p" } }).get("skill"),
+    ).toBe(1);
+  });
+
+  // The badges sit beside the Library's kind filter, which lists kinds in
+  // KINDS order. Grouping sorts on `kind:name`, so tallying straight off the
+  // groups hands back the wire order instead.
+  it("hands the kinds back in the order the app shows them in", () => {
+    const items = KINDS.map((kind) => item({ kind, name: `one-${kind}` }));
+    expect([...installedCountByKind(items, {}).keys()]).toEqual(KINDS);
+  });
+
+  it("leaves out a kind the place holds nothing of", () => {
+    const counts = installedCountByKind([item({ kind: "agent" })], {});
+    expect(counts.has("skill")).toBe(false);
   });
 });
 

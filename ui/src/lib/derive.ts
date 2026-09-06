@@ -1,10 +1,12 @@
 import type {
+  HarnessId,
   ItemKind,
   ObservedItem,
   ScanResult,
   Scope,
   Tag,
 } from "@/bindings";
+import { KINDS } from "@/lib/labels";
 import { sameScope } from "@/lib/scope";
 
 export type ScopeSelection = "all" | "global" | { project: string };
@@ -127,6 +129,47 @@ export function installedCount(groups: ItemGroup[]): number {
   return groups.length;
 }
 
+/** Where a count is being taken: everything the Library narrows by when a
+ *  kind badge there is clicked, less the kind the badge itself names. A
+ *  surface hands one of these to {@link installedCountByKind} and the same
+ *  one to the link it draws, so the number and the page it opens cannot
+ *  describe different views. */
+export interface ItemPlace {
+  scope?: ScopeSelection;
+  harness?: HarnessId;
+}
+
+/** How many packages a place holds of each kind — one per kind+name group,
+ *  the unit the Library shows a row per, counted over the place's own
+ *  narrowing so a badge's number is the row count on the page its click
+ *  opens. A package installed on two harnesses, or in two locations, is one
+ *  package here as it is there. A kind the place holds nothing of is absent
+ *  rather than zero: the badges are what a place has, not a checklist of
+ *  what it hasn't. */
+export function installedCountByKind(
+  items: ObservedItem[],
+  place: ItemPlace,
+): Map<ItemKind, number> {
+  const tally = new Map<ItemKind, number>();
+  const here = filterItems(items, {
+    scope: place.scope ?? "all",
+    harness: place.harness,
+  });
+  for (const group of groupItems(here)) {
+    tally.set(group.kind, (tally.get(group.kind) ?? 0) + 1);
+  }
+  // Handed back in the app's kind order, not the grouping's: the badges sit
+  // beside the Library's own kind filter, and a reader must meet one order.
+  // `groupItems` sorts on the group key, which puts kinds in the wire order
+  // {@link KINDS} exists to keep off screen.
+  const counts = new Map<ItemKind, number>();
+  for (const kind of KINDS) {
+    const count = tally.get(kind);
+    if (count) counts.set(kind, count);
+  }
+  return counts;
+}
+
 /** The installation belonging to one place, where the group has one.
  *
  *  A package can be installed in several places and a page names one of
@@ -159,14 +202,6 @@ export function groupScopes(group: ItemGroup): Scope[] {
     if (!seen.has(key)) seen.set(key, install.scope);
   }
   return [...seen.values()];
-}
-
-export function countByKind(items: ObservedItem[]): Map<ItemKind, number> {
-  const counts = new Map<ItemKind, number>();
-  for (const item of items) {
-    counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
-  }
-  return counts;
 }
 
 function projectScopes(result: ScanResult): string[] {

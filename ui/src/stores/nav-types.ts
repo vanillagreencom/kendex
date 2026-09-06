@@ -1,7 +1,7 @@
 // The vocabulary of places: every page id, the refs that address what a
 // nested page is showing, and the snapshot the back stack keeps.
-import type { Catalog, HarnessId, ItemKind, Scope } from "@/bindings";
-import type { ScopeSelection } from "@/lib/derive";
+import type { Catalog, ItemKind, Scope } from "@/bindings";
+import type { ItemPlace } from "@/lib/derive";
 
 export type Page =
   | "home"
@@ -34,11 +34,10 @@ export type MarketplacesTab = "subscribed" | "packages" | "community" | "mine";
 /** What a link into the Library is asking to see — every narrowing it wants,
  * where to look included. A link states the whole thing, so a field it leaves
  * out is a narrowing it does not want, and an all-empty filter asks for
- * everything. */
-export interface LibraryFilter {
-  harness?: HarnessId;
+ * everything. It is a place plus a kind, which is what lets a kind badge
+ * count exactly the rows its own link lands on. */
+export interface LibraryFilter extends ItemPlace {
   kind?: ItemKind;
-  scope?: ScopeSelection;
 }
 
 /** The package a package page is showing — everything a backend query
