@@ -118,10 +118,22 @@ pub(crate) fn harnesses_for(
     kind: ItemKind,
     scope: &Scope,
 ) -> Vec<HarnessId> {
-    requested
-        .map(<[HarnessId]>::to_vec)
-        .unwrap_or_else(|| manifest.install.harnesses.clone())
+    requested_or_default(requested, manifest)
         .into_iter()
         .filter(|harness| crate::harness::installs_here(*harness, kind, scope))
         .collect()
+}
+
+/// The tools a request or declaration aims at, before any kind can narrow
+/// them: the ones it names, or the scope's own list where it names none.
+/// Read on its own where a refusal has to say which tools it turned the
+/// install down for — the answer must be the one the filter above started
+/// from, not a second spelling of the fallback.
+pub(crate) fn requested_or_default(
+    requested: Option<&[HarnessId]>,
+    manifest: &Manifest,
+) -> Vec<HarnessId> {
+    requested
+        .map(<[HarnessId]>::to_vec)
+        .unwrap_or_else(|| manifest.install.harnesses.clone())
 }

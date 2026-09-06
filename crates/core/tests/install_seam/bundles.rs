@@ -10,6 +10,7 @@ use kendex_core::apply;
 use kendex_core::engine::{audit, ops};
 use kendex_core::error::CoreError;
 use kendex_core::lock::{BundleRef, Reason, load as load_lock, lock_path};
+use kendex_core::model::HarnessId;
 
 use super::{Fixture, add_and_apply, manifest_of, manifest_with, skill, world, write};
 
@@ -253,6 +254,132 @@ fn a_set_whose_member_the_catalog_offers_installs() {
     manifest_with(&f, &[("cat", &catalog)], "");
     add_and_apply(&f, &request("starter"));
     assert!(f.project.join(".claude/skills/dev").exists());
+}
+
+/// A catalog offering `servers`, a set carrying only MCP servers.
+fn servers_catalog(f: &Fixture) -> PathBuf {
+    let catalog = f.home.join("catalog");
+    write(
+        &catalog,
+        "mcp/db.toml",
+        "command = \"db-mcp\"\nargs = [\"--stdio\"]\n",
+    );
+    write(
+        &catalog,
+        "kendex.toml",
+        "is_source_catalog = true\n\n[bundles.servers]\nmcp-servers = [\"db\"]\n",
+    );
+    catalog
+}
+
+/// A set every offered member of which lands on no tool this install
+/// targets is refused at the declaration, naming the set and the tools.
+/// Pi has nowhere to put an MCP server, so declaring `servers` for Pi would
+/// record the set, filter its only member away at plan time, and report a
+/// successful install of no files.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_mcp_server_set_asked_for_on_pi_alone_is_refused() {
+    let f = world();
+    let catalog = servers_catalog(&f);
+    manifest_with(&f, &[("cat", &catalog)], "");
+    let before = fs::read_to_string(f.project.join("kendex.toml")).unwrap();
+
+    let error = ops::add(&f.env, &f.scope, &for_harness("servers", HarnessId::Pi)).unwrap_err();
+
+    let said = error.to_string();
+    assert!(
+        matches!(error, CoreError::BundleLandsNowhere { ref name, .. } if name == "servers"),
+        "{said}"
+    );
+    assert!(
+        said.contains(HarnessId::Pi.display_name()),
+        "the tool it was turned down for: {said}"
+    );
+    assert_eq!(
+        fs::read_to_string(f.project.join("kendex.toml")).unwrap(),
+        before,
+        "a refusal writes nothing"
+    );
+}
+
+/// The must-fail counterpart: the same set asked for on a tool that does
+/// hold an MCP server installs it. The refusal is about where the members
+/// land, not about sets of MCP servers.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_same_set_asked_for_on_claude_installs() {
+    let f = world();
+    let catalog = servers_catalog(&f);
+    manifest_with(&f, &[("cat", &catalog)], "");
+
+    add_and_apply(&f, &for_harness("servers", HarnessId::Claude));
+
+    assert!(manifest_of(&f).bundles.contains_key("servers"));
+    let mcp = fs::read_to_string(f.project.join(".mcp.json")).unwrap();
+    assert!(mcp.contains("db-mcp"), "{mcp}");
+}
+
+/// Asking again for a set already installed for one tool, without naming a
+/// tool this time, is judged on the list that set keeps — not on the
+/// scope's defaults, which the declaration does not widen to. Read the
+/// request alone and both directions are wrong: the Pi-only set below is
+/// let through because the scope also lists Claude, and the Claude-only one
+/// is refused because the scope lists only Pi.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_set_already_declared_for_one_tool_is_judged_on_that_tool() {
+    let f = world();
+    let catalog = servers_catalog(&f);
+    manifest_with(&f, &[("cat", &catalog)], "");
+    let held = f.project.join("kendex.toml");
+    let claude_and_pi = fs::read_to_string(&held).unwrap().replace(
+        "harnesses = [\"claude\"]",
+        "harnesses = [\"claude\", \"pi\"]",
+    );
+    fs::write(
+        &held,
+        format!("{claude_and_pi}[bundles.servers]\nsource = \"cat\"\nharnesses = [\"pi\"]\n"),
+    )
+    .unwrap();
+    let before = fs::read_to_string(&held).unwrap();
+
+    let error = ops::add(&f.env, &f.scope, &request("servers")).unwrap_err();
+
+    assert!(
+        matches!(error, CoreError::BundleLandsNowhere { ref name, .. } if name == "servers"),
+        "a set kept on Pi alone was judged on the scope's wider list: {error}"
+    );
+    assert_eq!(
+        fs::read_to_string(&held).unwrap(),
+        before,
+        "a refusal writes nothing"
+    );
+
+    let pi_only = fs::read_to_string(&held)
+        .unwrap()
+        .replace("harnesses = [\"claude\", \"pi\"]", "harnesses = [\"pi\"]")
+        .replace(
+            "[bundles.servers]\nsource = \"cat\"\nharnesses = [\"pi\"]\n",
+            "[bundles.servers]\nsource = \"cat\"\nharnesses = [\"claude\"]\n",
+        );
+    fs::write(&held, pi_only).unwrap();
+
+    add_and_apply(&f, &request("servers"));
+
+    let mcp = fs::read_to_string(f.project.join(".mcp.json")).unwrap();
+    assert!(
+        mcp.contains("db-mcp"),
+        "a set kept on Claude was refused for the scope's Pi-only list: {mcp}"
+    );
+}
+
+/// One `add --bundle <name> --harness <tool>` from that catalog.
+fn for_harness(name: &str, harness: HarnessId) -> ops::AddRequest {
+    ops::AddRequest {
+        harnesses: Some(vec![harness]),
+        ..request(name)
+    }
 }
 
 /// One `add --bundle <name>` from the catalog these tests declare.

@@ -4,7 +4,7 @@
 use super::AddRequest;
 use crate::error::{CoreError, Result};
 use crate::manifest::{ItemDecl, Manifest};
-use crate::model::ItemKind;
+use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::CatalogBundle;
 
 /// Declare one curated set, carried the way the request asked. Asking for
@@ -18,14 +18,13 @@ pub(super) fn declare_bundle(
     request: &AddRequest,
     hold_at: Option<&str>,
 ) -> ItemDecl {
+    let harnesses = declared_harnesses(manifest, &bundle.name, request).map(<[HarnessId]>::to_vec);
     let decl = manifest
         .bundles
         .entry(bundle.name.clone())
         .or_insert_with(|| ItemDecl::from_source(source_name));
     decl.source = source_name.to_owned();
-    if let Some(harnesses) = &request.harnesses {
-        decl.harnesses = Some(harnesses.clone());
-    }
+    decl.harnesses = harnesses;
     if let Some(method) = request.method {
         decl.method = Some(method);
     }
@@ -40,6 +39,29 @@ pub(super) fn declare_bundle(
     }
     manifest.suppressed.retain(|_, held| !held.is_empty());
     declared
+}
+
+/// The tools this set will be declared with once the request is written:
+/// the ones the request names, and the ones the declaration already carries
+/// where it names none.
+///
+/// A request answers only what it says. Asking again for a set that was
+/// installed for one tool, without naming a tool this time, does not widen
+/// it to the scope's defaults — so a refusal that read the request alone
+/// would be answering for a declaration nobody is about to write, and the
+/// plan would then install against a different list than the one it was
+/// judged on.
+fn declared_harnesses<'a>(
+    manifest: &'a Manifest,
+    name: &str,
+    request: &'a AddRequest,
+) -> Option<&'a [HarnessId]> {
+    request.harnesses.as_deref().or_else(|| {
+        manifest
+            .bundles
+            .get(name)
+            .and_then(|decl| decl.harnesses.as_deref())
+    })
 }
 
 // Install-all subsumption, and the one-bundle-per-name rule.
@@ -154,15 +176,21 @@ pub(super) fn shaped_by_user(
 }
 
 /// The sets one request names, as the catalog offers them. A name it does
-/// not offer is refused, and so is a set it offers and can hand nothing
-/// over for: what a set installs derives at plan time, so declaring one
-/// would record the set, plan nothing, and report a successful install of
-/// no files — the shape a member list nothing backs leaves behind.
+/// not offer is refused, and so is a set that would put nothing on disk:
+/// what a set installs derives at plan time, so declaring one would record
+/// the set, plan nothing, and report a successful install of no files.
+///
+/// Two ways a set gets there, both answered from the one list of members
+/// the catalog actually offers: the source hands none of them over, or it
+/// hands them over and no tool this install targets holds their kinds.
 pub(super) fn resolve_sets(
     sealed: &crate::source_read::SealedSource,
     config: &crate::source::SourceConfig,
     source_name: &str,
     wanted: &[String],
+    request: &AddRequest,
+    manifest: &Manifest,
+    scope: &Scope,
 ) -> Result<Vec<CatalogBundle>> {
     let mut sets = Vec::new();
     for name in wanted {
@@ -172,9 +200,15 @@ pub(super) fn resolve_sets(
                 source_name: source_name.to_owned(),
             });
         };
-        if !bundle.members.iter().any(|member| {
-            crate::source::find_item(sealed, config, member.kind, &member.name).is_some()
-        }) {
+        let mut offered: Vec<ItemKind> = Vec::new();
+        for member in &bundle.members {
+            if crate::source::find_item(sealed, config, member.kind, &member.name).is_some()
+                && !offered.contains(&member.kind)
+            {
+                offered.push(member.kind);
+            }
+        }
+        if offered.is_empty() {
             return Err(CoreError::BundleInstallsNothing {
                 name: name.clone(),
                 source_name: source_name.to_owned(),
@@ -182,6 +216,21 @@ pub(super) fn resolve_sets(
                     .members
                     .iter()
                     .map(|member| crate::names::shown(&member.name))
+                    .collect(),
+            });
+        }
+        if let Some(harnesses) = super::lands::set_lands_nowhere(
+            &offered,
+            declared_harnesses(manifest, name, request),
+            manifest,
+            scope,
+        ) {
+            return Err(CoreError::BundleLandsNowhere {
+                name: name.clone(),
+                source_name: source_name.to_owned(),
+                harnesses: harnesses
+                    .into_iter()
+                    .map(|harness| harness.display_name().to_owned())
                     .collect(),
             });
         }

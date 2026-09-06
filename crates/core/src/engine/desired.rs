@@ -220,7 +220,7 @@ mod artifact;
 mod places;
 pub use artifact::{artifact_disk_hash, artifact_paths};
 pub(crate) use places::{effective_method, skill_dir};
-pub(crate) use places::{harnesses_for, target_harnesses};
+pub(crate) use places::{harnesses_for, requested_or_default, target_harnesses};
 pub use places::{native_dir, own_dir, read_dirs, skill_canonical};
 pub(super) mod hold;
 

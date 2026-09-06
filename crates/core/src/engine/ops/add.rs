@@ -245,7 +245,15 @@ fn add_from(
         source_name,
         request,
     )?);
-    let sets = resolve_sets(&sealed, &config, source_name, &wanted.bundles)?;
+    let sets = resolve_sets(
+        &sealed,
+        &config,
+        source_name,
+        &wanted.bundles,
+        request,
+        manifest,
+        scope,
+    )?;
 
     // Bundles first: declaring a set folds in the equal-option members
     // declared earlier, while an item this same request asks for by name
