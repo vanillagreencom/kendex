@@ -6,6 +6,7 @@ import { RepoEffectsDialog } from "@/components/marketplaces/repo-effects-dialog
 import { NavBar } from "@/components/nav-bar";
 import { Sidebar } from "@/components/sidebar";
 import { StatusFooter } from "@/components/status-footer";
+import { TermsGate } from "@/components/terms-gate";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { WindowControls } from "@/components/window-controls";
 import { receiveDeepLinks } from "@/lib/deep-link";
@@ -234,6 +235,10 @@ export default function App() {
           </main>
         </div>
         <StatusFooter />
+        {/* Last, and over everything: the first thing a new install shows.
+            It records an answer and gets out of the way — nothing else in
+            the app waits on it. */}
+        <TermsGate />
       </div>
     </TooltipProvider>
   );

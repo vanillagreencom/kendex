@@ -11,6 +11,7 @@ use clap::{Parser, Subcommand};
 use kendex_core::command_update::record_first_run;
 use kendex_core::env::Env;
 use kendex_core::install_channel::{Host, HostProbe};
+use kendex_core::legal;
 
 use commands::project::ProjectCommand;
 use flags::{AddFlags, ReportFlags};
@@ -213,6 +214,7 @@ pub fn main() -> ExitCode {
     // the install this record is missing from.
     if let Ok(env) = Env::detect() {
         bootstrap_the_command_record(&env);
+        announce_the_terms_on_first_run(&env);
     }
     let cli = Cli::parse();
     // The machine check's whole contract is its exit code: 1 means "drift,
@@ -279,6 +281,62 @@ fn bootstrap_the_command_record(env: &Env) {
         return;
     };
     let _ = record_first_run(env, &Host.resolve(&running));
+}
+
+/// The one line a first run says about the terms, and the record it leaves.
+///
+/// Said once and then not again, because it writes the same field the
+/// app's first-run screen writes: accepting in either shell answers for
+/// both, and a version the person has already agreed to is not put in
+/// front of them a second time. A later version of the documents asks
+/// again, which is the whole reason the record carries a number.
+///
+/// Nothing here refuses. The verb the person ran still runs, whether or
+/// not they have seen the line: the acceptance is a step, not a gate on
+/// the work.
+///
+/// Beside the command record and for its reason — `--version` and `--help`
+/// are answered by clap without reaching dispatch, and either is as likely
+/// to be someone's first run as any verb.
+///
+/// The line goes out before the record is written, so a write that fails
+/// leaves the line to print again next run. That is the direction worth
+/// failing in: a record with nobody told proves nothing. A settings file
+/// that cannot be read says nothing at all — there is nowhere to record an
+/// answer, and a verb the person ran is not held up over it.
+///
+/// Only where stderr is a terminal, and the record follows the line rather
+/// than the run: a pipe has no reader, and the person whose first runs all
+/// went through one is still asked the first time they are at a terminal.
+/// Not a preference — `kendex check`'s whole contract with the session
+/// hooks is an exit code over a quiet stderr, and a notice written into
+/// that would be read as the check having something to say. `KENDEX_UI`
+/// is deliberately not consulted: it picks a rendering, and being sent to
+/// a person is a different question from how it is drawn for them.
+///
+/// Nor under `sudo`. `legal::accept` refuses a root write outright, so a
+/// line printed here would be one that could never be answered — and the
+/// person's own next unprivileged run says it and records it. The refusal
+/// and its reasoning are `kendex_core::privilege`'s, beside the command
+/// record above, which stops for the same reason.
+fn announce_the_terms_on_first_run(env: &Env) {
+    if !std::io::IsTerminal::is_terminal(&std::io::stderr())
+        || kendex_core::privilege::acting_as_root()
+    {
+        return;
+    }
+    let Ok(settings) = kendex_core::settings::load(env) else {
+        return;
+    };
+    if !legal::asks_again(settings.terms.as_ref()) {
+        return;
+    }
+    ui::note(&format!(
+        "using kendex accepts its terms and privacy policy — {} and {}",
+        legal::LEGAL.terms_url,
+        legal::LEGAL.privacy_url
+    ));
+    let _ = legal::accept(env);
 }
 
 /// The bare form: `kendex <source> [flags]` maps to `add`.

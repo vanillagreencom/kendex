@@ -15,8 +15,17 @@ vi.mock("@/bindings", () => ({
     accountLoginPoll: vi.fn(),
     accountLogout: vi.fn(),
     openUrl: vi.fn(),
+    termsState: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: { ask: false, accepted: null },
+    }),
   },
   ZOOM: { min: 50, max: 200, step: 10, default: 100 },
+  LEGAL: {
+    version: 1,
+    termsUrl: "https://kendex.ai/legal/terms",
+    privacyUrl: "https://kendex.ai/legal/privacy",
+  },
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 

@@ -20,36 +20,9 @@ pub struct InstalledCommand {
     pub path: PathBuf,
 }
 
-/// Whether this process is acting as root.
-///
-/// Every path written below is resolved from the environment this process
-/// was handed — `HOME` and `XDG_DATA_HOME` decide where [`Env`] puts the
-/// record — and a privileged run was handed that environment by whoever
-/// invoked it. `sudo` resets it on most machines, but a `sudoers` carrying
-/// `env_keep HOME` does not, and then a root process opens a file every
-/// component of whose name belongs to the invoking account: a link there
-/// is followed, and root writes wherever it points.
-///
-/// So a run acting as root writes no record. The person's own next
-/// unprivileged run — any verb, `--version` included — writes one into the
-/// file their own account owns.
-///
-/// The effective uid and nothing else. `sudo`, `su`, `doas` and a root
-/// login are one case here and none of them is distinguishable by a
-/// variable: `SUDO_USER` and its neighbours are set by whoever invoked the
-/// command, so a check reading one would be a check the invoker decides.
-#[cfg(unix)]
-fn acting_as_root() -> bool {
-    rustix::process::geteuid().is_root()
-}
-
-/// Windows has no uid to answer with, and none of the elevation this
-/// guards for — a command re-run under another account against the first
-/// account's environment — is reachable there.
-#[cfg(not(unix))]
-fn acting_as_root() -> bool {
-    false
-}
+/// Whether this process is acting as root, and so writes no record: the
+/// reasoning, which the settings file shares, is [`crate::privilege`]'s.
+use crate::privilege::acting_as_root;
 
 /// What a run is asking to record. The two entries below differ only in
 /// this value, so [`acting_as_root`] is read in one place: a wrapper that
