@@ -1,56 +1,16 @@
 #!/usr/bin/env bash
-# Tests for orch/scripts/ci-wait auth ladder.
+# Tests for orch/scripts/ci-wait: the auth ladder (env token, keyring, bot
+# token), the deterministic result contract (pass, fail, timeout, error, on
+# stdout in both modes, pending at the deadline never silent), the no-checks
+# registration grace, and the run correlations that keep a stale or
+# superseded failure from ending a wait: latest run per workflow,
+# approval-gated status replacement, superseded same-head runs the rollup
+# omits, rerun attempts under an older run id, and the transient-failure
+# retry over a log past the pipe buffer.
 #
-# The cases cover:
-#   1. stale GH_TOKEN + working keyring  -> sanitizer unsets, ci-wait passes
-#   2. no env tokens + working keyring   -> no warning, ci-wait passes
-#   3. stale GH_TOKEN + broken keyring + no .env.local bot token
-#                                        -> exit 3 with "no working" diagnostic
-#   4. stale GH_TOKEN + broken keyring + valid .env.local GH_BOT_TOKEN
-#                                        -> bot-token fallback recovers
-#   5. broken keyring + inherited valid GH_BOT_TOKEN + .env.local op:// token
-#                                        -> inherited token wins, no op read
-#   6. valid selected token + stale keyring auth status
-#                                        -> token preflight wins once
-#   7. no env token + hanging keyring auth
-#                                        -> bounded failure, not hang
-#
-# Plus the deterministic-output contract: ci-wait must always
-# emit a parseable result on stdout — pass/fail/timeout/error — and must
-# report still-pending checks at the deadline as a timeout, never as
-# success or silence (cases 10-14).
-#
-# Plus the no-checks registration grace: CI_WAIT_NO_CHECKS_GRACE
-# (default 180s) bounds how long ci-wait polls before failing when no checks
-# have registered. Inside the window the verdict stays pending; past it, the
-# explicit "no CI checks" error fires (cases 12, 12b, 12c).
-#
-# Plus approval-gated run/status correlation: a later all-skipped
-# COMMENTED run cannot hide the active substantive APPROVED run, and the old
-# pre-approval CI Required failure remains pending until the approved run
-# publishes its replacement status (cases 20-24).
-#
-# Plus superseded-run failure correlation: GitHub's check-suite
-# rollup can omit a newer same-head run entirely (observed for a
-# pull_request_review_comment dispatch whose same-second pull_request_review
-# sibling was cancelled by concurrency), leaving only the cancelled run's
-# checks and its stale aggregate status visible to `gh pr checks`. A settled
-# failure attributable only to superseded runs is correlated against the
-# head's Actions run list: an active newer substantive run keeps the wait
-# pending, a successful one discards the stale failures, and a failed newest
-# run — or no newer run at all — stays terminal (cases 25-28).
-#
-# Plus rerun-attempt correlation: a rerun executes as another attempt under
-# the ORIGINAL run id and creation time, so an in-flight attempt 2 of an
-# OLDER pull_request run is current-head work even though no run
-# with a newer id exists. Any in-flight same-head substantive run keeps the
-# wait pending; the attempt's completed success supersedes via its fresher
-# updated_at, and its failure stays terminal (cases 29-31).
-#
-# Plus argument validation: -h/--help answers with usage and
-# exit 0, an unknown flag or non-integer positional gets usage on stderr and
-# exit 2 before any gh call — never a `set -u` unbound-variable abort or a jq
-# crash on a flag consumed as the PR number (cases 32-35).
+# One case per behaviour surface; shaped input is one table per case, one
+# asserted row per shape. A row's `expect` names the fields it pins and
+# `observe` reads exactly those, so a row fails on the field it names.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # The invoking shell's real auth env must not reach the cases below — the
@@ -291,7 +251,7 @@ chmod +x "$TMP_ROOT/bin/gh"
 cat > "$TMP_ROOT/bin/op" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'op called: %s\n' "\$*" >>"$TMP_ROOT/op.calls"
+printf 'op called: %s\n' "\$*" >>"\${STUB_OP_CALLS_FILE:-$TMP_ROOT/op.calls}"
 exit 1
 EOF
 chmod +x "$TMP_ROOT/bin/op"
@@ -305,529 +265,240 @@ chmod +x "$TMP_ROOT/bin/op"
 source "$TEST_DIR/lib/virtual-clock.sh"
 virtual_clock_install "$TMP_ROOT/bin" "$TMP_ROOT/clock"
 
-# Run ci-wait via the .agents symlink, exactly how it's invoked in
-# production. `env "$@"` injects test-controlled env tokens / stub flags.
+# --- harness -----------------------------------------------------------------
+
+FX="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait"
+INCIDENT_HEAD=e99849b1c72b1c082cf8325f316799e753f99561
+DEFAULT_HEAD=737bce791577e140436490e0fed5751bb5144a61
+
+# run_wait ENV ARGS... — runs ci-wait via the .agents symlink, exactly how
+# production invokes it, in the fixture repo with the stub PATH. ENV is a
+# comma-separated list of `env` arguments (assignments or `-u NAME`); every run
+# gets its own count, capture and stderr files under $RUN, so no row reads
+# another's polls or calls. Sets OUT and RC.
+RUN_SEQ=0
 run_wait() {
-  (cd "$TMP_ROOT/repo" \
-    && PATH="$TMP_ROOT/bin:$PATH" \
-       env "$@" .agents/skills/orch/scripts/ci-wait 1 1 30)
+  local env_list="$1" env_args=()
+  shift
+  RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
+  mkdir -p "$RUN"
+  [[ -z "$env_list" ]] || IFS=',' read -ra env_args <<<"$env_list"
+  set +e
+  OUT=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+    env ${env_args[@]+"${env_args[@]}"} \
+        STUB_GH_API_USER_COUNT_FILE="$RUN/api-user-calls" \
+        STUB_PR_CHECKS_COUNT_FILE="$RUN/checks-polls" \
+        STUB_REPO_ARG_FILE="$RUN/repo-arg" \
+        STUB_ACTIONS_RUNS_QUERY_FILE="$RUN/runs-query" \
+        STUB_RERUN_CALLS_FILE="$RUN/rerun-calls" \
+        STUB_OP_CALLS_FILE="$RUN/op-calls" \
+        .agents/skills/orch/scripts/ci-wait "$@" 2>"$RUN/stderr")
+  RC=$?
+  set -e
 }
 
-run_wait_short() {
-  (cd "$TMP_ROOT/repo" \
-    && PATH="$TMP_ROOT/bin:$PATH" \
-       env "$@" .agents/skills/orch/scripts/ci-wait 1 1 5)
+json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
+needle() { printf '%s' "${1//+/ }"; }
+
+# observe EXPECT — prints the run's value of every `name=` field EXPECT names,
+# in EXPECT's order, so a row compares as one string. Plain names are JSON
+# result fields; the derived names read the run's files or the output:
+#   passed / failed / pending   the length of that checks array
+#   check.<name>                the state of that check in any array, or
+#                               absent (`+` in the name reads as a space, so
+#                               an identifier's own underscores stay)
+#   count.<name>                how many entries carry that name
+#   out~<text>, stdout~<text>, stderr~<text>
+#                               whether the JSON, stdout or stderr carries
+#                               <text> (`+` reads as a space)
+#   stdout / stderr             `line` when anything was printed, else `empty`
+#   error_named                 whether the JSON error field is a non-empty string
+#   api_user_calls              `gh api user` validations the stub served
+#   checks_polls                `gh pr checks` reads the stub served
+#   repo_arg                    the --repo slug ci-wait passed to gh pr
+#   runs_head                   the head_sha the Actions-runs query scoped to
+#   reruns                      run ids `gh run rerun` received, or none
+#   op_calls                    `op` invocations, or none
+observe() {
+  local got="" token name value n
+  for token in $1; do
+    name="${token%%=*}"
+    case "$name" in
+      rc) value="$RC" ;;
+      passed|failed|pending) value="$(json ".${name}_checks | length")" ;;
+      check.*)
+        n="$(needle "${name#check.}")"
+        value="$(jq -r --arg n "$n" '[.passed_checks[]?, .pending_checks[]?, .failed_checks[]? | select(.name == $n)] | if length == 0 then "absent" else .[0].state end' <<<"$OUT" 2>/dev/null || echo UNPARSEABLE)"
+        ;;
+      count.*)
+        n="$(needle "${name#count.}")"
+        value="$(jq -r --arg n "$n" '[.passed_checks[]?, .pending_checks[]?, .failed_checks[]? | select(.name == $n)] | length' <<<"$OUT" 2>/dev/null || echo UNPARSEABLE)"
+        ;;
+      out~*|stdout~*) value="$(grep -qF -- "$(needle "${name#*~}")" <<<"$OUT" && echo true || echo false)" ;;
+      stderr~*) value="$(grep -qF -- "$(needle "${name#stderr~}")" "$RUN/stderr" && echo true || echo false)" ;;
+      stdout) value="$([[ -n "$OUT" ]] && echo line || echo empty)" ;;
+      stderr) value="$([[ -s "$RUN/stderr" ]] && echo line || echo empty)" ;;
+      error_named) value="$(json '(.error | type) == "string" and .error != ""')" ;;
+      api_user_calls) value="$(cat "$RUN/api-user-calls" 2>/dev/null || echo 0)" ;;
+      checks_polls) value="$(cat "$RUN/checks-polls" 2>/dev/null || echo 0)" ;;
+      repo_arg) value="$(cat "$RUN/repo-arg" 2>/dev/null || echo none)" ;;
+      runs_head) value="$(grep -o 'head_sha=[0-9a-f]*' "$RUN/runs-query" 2>/dev/null | head -1 | cut -d= -f2 || true)"; value="${value:-none}" ;;
+      reruns) value="$(grep -o 'run rerun [0-9]*' "$RUN/rerun-calls" 2>/dev/null | awk '{print $3}' | paste -sd, - || true)"; value="${value:-none}" ;;
+      op_calls) value="$(wc -l <"$RUN/op-calls" 2>/dev/null | tr -d ' ' || true)"; value="${value:-none}" ;;
+      *) value="$(json ".$name")" ;;
+    esac
+    got="$got $name=$value"
+  done
+  printf '%s' "${got# }"
 }
 
-run_wait_json() {
-  (cd "$TMP_ROOT/repo" \
-    && PATH="$TMP_ROOT/bin:$PATH" \
-       env "$@" .agents/skills/orch/scripts/ci-wait 1 1 30 --json)
+# stage SPEC — the repo-side fixture one row needs: `envlocal=<line>` writes
+# that line to .env.local (`envlocal=` removes it), `origin=<url>` sets the
+# origin remote. Several items separate with `;`. Every row's stage is applied
+# from a clean repo.
+stage() {
+  local spec="$1" items item
+  rm -f "$TMP_ROOT/repo/.env.local"
+  git -C "$TMP_ROOT/repo" remote remove origin 2>/dev/null || true
+  [[ -n "$spec" ]] || return 0
+  IFS=';' read -ra items <<<"$spec"
+  for item in "${items[@]}"; do
+    case "$item" in
+      envlocal=) ;;
+      envlocal=*) printf '%s\n' "${item#envlocal=}" > "$TMP_ROOT/repo/.env.local" ;;
+      origin=*) git -C "$TMP_ROOT/repo" remote add origin "${item#origin=}" ;;
+      *) echo "stage: unknown item $item" >&2; exit 1 ;;
+    esac
+  done
 }
 
-run_wait_json_short() {
-  (cd "$TMP_ROOT/repo" \
-    && PATH="$TMP_ROOT/bin:$PATH" \
-       env "$@" .agents/skills/orch/scripts/ci-wait 1 1 5 --json)
+# table DEFAULT_ARGS ROW... — one run and one assertion per row. A row is
+# `label|stage|args|env|expect`; empty args mean DEFAULT_ARGS. Positional args
+# are `<pr> <poll-interval> <budget-seconds>` plus flags, on the virtual clock.
+table() {
+  local default_args="$1" row label spec args env expect
+  shift
+  for row in "$@"; do
+    IFS='|' read -r label spec args env expect <<<"$row"
+    [[ -n "$expect" ]] || { printf 'table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+    [[ -n "$args" ]] || args="$default_args"
+    stage "$spec"
+    # shellcheck disable=SC2086
+    run_wait "$env" $args
+    assert_eq "$(observe "$expect")" "$expect" "$label" "$RUN/stderr"
+  done
 }
 
-# jq field extractor for --json output assertions.
-json_field() {
-  jq -r "$2" <<<"$1" 2>/dev/null || echo "UNPARSEABLE"
-}
+JSON='1 1 30 --json'
+JSON_SHORT='1 1 5 --json'
 
-echo "=== ci-wait auth handling ==="
+echo "=== the auth ladder: env token, keyring, bot token ==="
+# A stale inherited token is unset with a warning and the keyring tried; with
+# the keyring denied, .env.local's GH_BOT_TOKEN recovers; an inherited bot
+# token wins over a project op:// reference without reading it; a valid
+# selected token is validated once and ignores a stale keyring status.
+table "$JSON" \
+  'a stale GH_TOKEN is unset with a warning and the keyring works|||GH_TOKEN=bad-token|rc=0 verdict=pass stderr~unsetting+them=true' \
+  'no env tokens: the keyring works with no warning||||rc=0 verdict=pass stderr~unsetting+them=false' \
+  'stale token, keyring denied, no bot token: exit 3 with a named error|envlocal=||GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 status=error error_named=true' \
+  'stale token, keyring denied: .env.local GH_BOT_TOKEN recovers, each token validated once|envlocal=export GH_BOT_TOKEN=ghs_VALIDBOT123||GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1,STUB_GH_VALID_TOKEN=ghs_VALIDBOT123|rc=0 verdict=pass api_user_calls=2' \
+  'an inherited GH_BOT_TOKEN wins over the project op:// reference, which is never read|envlocal=export GH_BOT_TOKEN=op://vault/github/bot||GH_BOT_TOKEN=ghs_ENVBOT123,STUB_GH_DENY_KEYRING=1,STUB_GH_VALID_TOKEN=ghs_ENVBOT123|rc=0 verdict=pass op_calls=none' \
+  'a valid selected token validates once and ignores a stale keyring status|||GH_TOKEN=ghs_VALIDUSER123,STUB_GH_VALID_TOKEN=ghs_VALIDUSER123,STUB_GH_AUTH_STATUS_FAIL=1|rc=0 verdict=pass stderr~unsetting+them=false api_user_calls=1'
 
-# Case 1: stale GH_TOKEN inherited from caller; keyring works once unset.
-stderr="$TMP_ROOT/case1.err"
+# A hanging keyring auth is bounded: the one case off the virtual clock, since
+# the hang is what is under test (STUB_CLOCK= sends the stub's sleep to the
+# real one, leaving the preflight a wait to bound).
+stage ""
+RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"; mkdir -p "$RUN"
 set +e
-output=$(run_wait GH_TOKEN=bad-token 2>"$stderr")
-rc=$?
+OUT=$(timeout 6s bash -c 'cd "$1" && PATH="$2:$PATH" STUB_CLOCK= KENDEX_GITHUB_AUTH_TIMEOUT=1 STUB_GH_AUTH_STATUS_SLEEP=1 .agents/skills/orch/scripts/ci-wait 1 1 30 --json' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin" 2>"$RUN/stderr")
+RC=$?
 set -e
-assert_eq "$rc" "0" "case1: stale GH_TOKEN sanitized, ci-wait exits 0" "$stderr"
-assert_contains "$output" "CI passed" "case1: ci-wait reaches CI passed"
-assert_contains "$(cat "$stderr")" "unsetting them" "case1: stale-token warning on stderr"
+assert_eq "$(observe "rc=3 status=error")" "rc=3 status=error" "a hanging keyring auth is a bounded exit 3, not a hang" "$RUN/stderr"
 
-# Case 2: no env tokens; keyring works directly.
-stderr="$TMP_ROOT/case2.err"
-set +e
-output=$(run_wait 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "case2: keyring works without env tokens" "$stderr"
-assert_contains "$output" "CI passed" "case2: ci-wait reaches CI passed"
-assert_not_contains "$(cat "$stderr")" "unsetting them" "case2: sanitizer silent when no env tokens" "$stderr"
+echo "=== the verdict over the checks sequence ==="
+# A pending exit code with valid JSON keeps polling; WAITING/REQUESTED/EXPECTED
+# are pending even without a bucket; pending at the deadline is a timeout,
+# never success or silence; no checks registered is pending inside the
+# CI_WAIT_NO_CHECKS_GRACE window and an error past it; a settled failure is
+# terminal; an auth failure is a parseable error object.
+table "$JSON" \
+  'a pending exit with valid JSON keeps polling|||STUB_PR_CHECKS_MODE=pending_once|rc=0 verdict=pass checks_polls=2' \
+  "an EXPECTED check is pending until it clears||$JSON_SHORT|STUB_PR_CHECKS_MODE=expected_once|rc=0 verdict=pass checks_polls=2" \
+  'a pass is complete with its checks listed||||rc=0 status=complete verdict=pass passed=1' \
+  "checks still in progress at the deadline are a timeout||$JSON_SHORT|STUB_PR_CHECKS_MODE=pending_always|rc=1 status=timeout verdict=pending check.build=IN_PROGRESS" \
+  'no checks registered past the grace window is a named error|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=3|rc=1 status=error error_named=true' \
+  "no checks registered inside the default grace window stays pending||$JSON_SHORT|STUB_PR_CHECKS_MODE=empty|rc=1 status=timeout verdict=pending" \
+  'a settled failing check is a complete fail|||STUB_PR_CHECKS_MODE=failure|rc=1 status=complete verdict=fail check.build=FAILURE' \
+  'an auth failure with --json is a parseable error object naming its cause|||GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 status=error error_named=true'
 
-# Case 3: stale GH_TOKEN + keyring denied + no .env.local bot token.
-rm -f "$TMP_ROOT/repo/.env.local"
-stderr="$TMP_ROOT/case3.err"
-set +e
-output=$(run_wait GH_TOKEN=bad-token STUB_GH_DENY_KEYRING=1 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "3" "case3: no working auth path -> exit 3" "$stderr"
-assert_contains "$(cat "$stderr")" "no working GitHub auth path" "case3: clear diagnostic on stderr"
+echo "=== text mode prints a result line for every terminal status ==="
+# The line beyond its leading words is not a contract anything parses; the
+# leading words are text-only, so a JSON default flip fails these rows.
+table '1 1 30' \
+  'passed||||rc=0 stdout~CI+passed=true' \
+  'failed|||STUB_PR_CHECKS_MODE=failure|rc=1 stdout~CI+failed=true' \
+  'timeout||1 1 5|STUB_PR_CHECKS_MODE=pending_always|rc=1 stdout~CI+timeout=true' \
+  'error|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=3|rc=1 stdout~CI+error=true'
 
-# Case 4: stale GH_TOKEN + keyring denied + valid .env.local GH_BOT_TOKEN.
-cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
-export GH_BOT_TOKEN=ghs_VALIDBOT123
-ENVEOF
-stderr="$TMP_ROOT/case4.err"
-api_count_file="$TMP_ROOT/case4-api-user-count"
-set +e
-output=$(run_wait GH_TOKEN=bad-token STUB_GH_DENY_KEYRING=1 STUB_GH_VALID_TOKEN=ghs_VALIDBOT123 STUB_GH_API_USER_COUNT_FILE="$api_count_file" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "case4: .env.local GH_BOT_TOKEN recovers" "$stderr"
-assert_contains "$output" "CI passed" "case4: ci-wait reaches CI passed via bot-token fallback"
-assert_eq "$(cat "$api_count_file")" "2" "case4: stale env and bot token are each validated once" "$stderr"
-rm -f "$TMP_ROOT/repo/.env.local"
+echo "=== the repo slug falls back to the origin URL without its .git suffix ==="
+# When `gh repo view` answers empty, owner/repo comes from the origin URL; the
+# stub rejects a `.git`-suffixed --repo the way gh does, so a pass proves the
+# suffix was stripped and the path segment kept.
+table "$JSON" \
+  'an ssh origin ending in .git|origin=git@github.com:owner/repo.git||STUB_GH_REPO_VIEW_EMPTY=1|rc=0 verdict=pass repo_arg=owner/repo' \
+  'an https origin ending in .git|origin=https://github.com/owner/repo.git||STUB_GH_REPO_VIEW_EMPTY=1|rc=0 verdict=pass repo_arg=owner/repo' \
+  'an https origin without .git keeps its last segment|origin=https://github.com/owner/repo||STUB_GH_REPO_VIEW_EMPTY=1|rc=0 verdict=pass repo_arg=owner/repo'
 
-# Case 5: process env already has a resolved bot token; project op reference
-# should not be read.
-cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
-export GH_BOT_TOKEN=op://vault/github/bot
-ENVEOF
-rm -f "$TMP_ROOT/op.calls"
-stderr="$TMP_ROOT/case5.err"
-set +e
-output=$(run_wait GH_BOT_TOKEN=ghs_ENVBOT123 STUB_GH_DENY_KEYRING=1 STUB_GH_VALID_TOKEN=ghs_ENVBOT123 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "case5: inherited GH_BOT_TOKEN recovers without project secret load" "$stderr"
-assert_contains "$output" "CI passed" "case5: ci-wait reaches CI passed via inherited bot token"
-if [[ -e "$TMP_ROOT/op.calls" ]]; then
-  assert_eq "$(cat "$TMP_ROOT/op.calls")" "" "case5: inherited GH_BOT_TOKEN does not call op" "$stderr"
-else
-  assert_eq "missing" "missing" "case5: inherited GH_BOT_TOKEN does not call op"
-fi
-rm -f "$TMP_ROOT/repo/.env.local"
+echo "=== checks are scoped to the latest run per workflow ==="
+# An older cancelled run's jobs are not current failures while the newer run
+# has only its classifier pending; once the newer run recreates a job by name,
+# that instance replaces the cancelled one.
+table "$JSON" \
+  "a superseded run's cancelled jobs are dropped, the current classifier stays pending||$JSON_SHORT|STUB_PR_CHECKS_MODE=superseded_pending|rc=1 status=timeout verdict=pending failed=0 check.Changes=IN_PROGRESS check.Lint=absent check.Linux+Integration=absent" \
+  'a job the newer run recreated replaces the cancelled one by name|||STUB_PR_CHECKS_MODE=superseded_replaced|rc=0 verdict=pass failed=0 count.Lint=1 check.Lint=SUCCESS out~CANCELLED=false'
 
-# Case 6: a selected env token works for API calls while gh auth status would
-# fail because of a stale keyring account.
-stderr="$TMP_ROOT/case6.err"
-api_count_file="$TMP_ROOT/case6-api-user-count"
-set +e
-output=$(run_wait GH_TOKEN=ghs_VALIDUSER123 STUB_GH_VALID_TOKEN=ghs_VALIDUSER123 STUB_GH_AUTH_STATUS_FAIL=1 STUB_GH_API_USER_COUNT_FILE="$api_count_file" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "case6: valid selected token ignores stale keyring status" "$stderr"
-assert_contains "$output" "CI passed" "case6: ci-wait reaches CI passed via selected token"
-assert_not_contains "$(cat "$stderr")" "unsetting them" "case6: selected token does not trigger sanitizer fallback" "$stderr"
-assert_eq "$(cat "$api_count_file")" "1" "case6: selected token validates once at startup" "$stderr"
+echo "=== approval-gated run and status correlation ==="
+# A stale pre-approval CI Required failure stays pending while an approved
+# run is active, is not superseded by a later all-skipped run, stays terminal
+# with no fresh substantive run, fails at once when the approved run fails,
+# waits for the replacement status, and passes once it is published.
+table "$JSON" \
+  "an active approved run keeps the stale failure pending; an all-skipped later run does not supersede||$JSON_SHORT|STUB_PR_CHECKS_FIXTURE=$FX/stale-preapproval-active-approved.json,STUB_PR_CHECKS_EXIT=8|rc=1 status=timeout verdict=pending failed=0 check.CI+Required=EXPECTED check.Build=IN_PROGRESS out~SKIPPED=false" \
+  "no fresh substantive run: the pre-approval failure is terminal|||STUB_PR_CHECKS_FIXTURE=$FX/stale-preapproval-no-fresh-run.json,STUB_PR_CHECKS_EXIT=1|rc=1 status=complete verdict=fail check.CI+Required=FAILURE" \
+  "a failed approved run fails at once|||STUB_PR_CHECKS_FIXTURE=$FX/stale-preapproval-fresh-failed.json,STUB_PR_CHECKS_EXIT=1|rc=1 status=complete verdict=fail check.Build=FAILURE" \
+  "approved jobs passed but the aggregate lags: pending to the bounded timeout||$JSON_SHORT|STUB_PR_CHECKS_FIXTURE=$FX/stale-preapproval-status-lag.json,STUB_PR_CHECKS_EXIT=1|rc=1 status=timeout verdict=pending check.CI+Required=EXPECTED" \
+  "the replacement status published against the approved run passes|||STUB_PR_CHECKS_FIXTURE=$FX/approved-status-replaced.json|rc=0 status=complete verdict=pass check.CI+Required=SUCCESS failed=0"
 
-# Case 7: no env tokens and keyring auth hangs. The bounded auth preflight
-# should return the normal no-working-auth diagnostic instead of hanging.
-# The one case that opts out of the virtual clock: the hang is what is under
-# test, so `STUB_CLOCK=` sends the stub's `sleep 5` to the real sleep, leaving
-# the preflight a wait to actually bound. On the virtual clock the stub would
-# return instantly and there would be no hang to survive.
-stderr="$TMP_ROOT/case7.err"
-set +e
-output=$(timeout 6s bash -c 'cd "$1" && PATH="$2:$PATH" STUB_CLOCK= KENDEX_GITHUB_AUTH_TIMEOUT=1 STUB_GH_AUTH_STATUS_SLEEP=1 .agents/skills/orch/scripts/ci-wait 1 1 30' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "3" "case7: hanging keyring auth exits 3" "$stderr"
-assert_contains "$(cat "$stderr")" "no working GitHub auth path" "case7: hanging keyring auth reports no working path" "$stderr"
+echo "=== a settled failure attributable only to superseded runs is correlated against the head's Actions runs ==="
+# The rollup can omit a newer same-head run entirely; an active newer
+# substantive run keeps the wait pending, a successful one discards the stale
+# failures, a failed one or none at all stays terminal. The query scopes to
+# the current head.
+table "$JSON" \
+  "an active newer sibling keeps the cancelled run's failure pending, queried for the head||$JSON_SHORT|STUB_PR_CHECKS_FIXTURE=$FX/cancelled-review-run-checks.json,STUB_PR_CHECKS_EXIT=1,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-newer-sibling-active.json|rc=1 status=timeout verdict=pending failed=0 check.CI+Required=EXPECTED check.CI+Gate+Publisher=EXPECTED runs_head=$DEFAULT_HEAD" \
+  "a successful newer sibling discards the frozen failures and passes|||STUB_PR_CHECKS_FIXTURE=$FX/cancelled-review-run-status-replaced.json,STUB_PR_CHECKS_EXIT=1,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-newer-sibling-success.json|rc=0 status=complete verdict=pass failed=0 check.CI+Required=SUCCESS" \
+  "a failed newer sibling is terminal at once|||STUB_PR_CHECKS_FIXTURE=$FX/cancelled-review-run-checks.json,STUB_PR_CHECKS_EXIT=1,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-newer-sibling-failure.json|rc=1 status=complete verdict=fail check.CI+Required=FAILURE" \
+  "a cancelled run with no newer sibling fails closed|||STUB_PR_CHECKS_FIXTURE=$FX/cancelled-review-run-checks.json,STUB_PR_CHECKS_EXIT=1,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-cancelled-alone.json|rc=1 status=complete verdict=fail check.CI+Gate+Publisher=FAILURE"
 
-# Case 8: gh pr checks exits 8 while checks are pending but still prints valid
-# JSON. ci-wait should treat the JSON as authoritative and keep polling.
-stderr="$TMP_ROOT/case8.err"
-checks_count_file="$TMP_ROOT/case8-checks-count"
-set +e
-output=$(run_wait STUB_PR_CHECKS_MODE=pending_once STUB_PR_CHECKS_COUNT_FILE="$checks_count_file" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "case8: pending checks exit code keeps polling" "$stderr"
-assert_contains "$output" "CI passed" "case8: ci-wait reaches CI passed after pending checks"
-assert_eq "$(cat "$checks_count_file")" "2" "case8: ci-wait polls again after pending JSON" "$stderr"
+echo "=== a rerun attempt under an older run id is current-head work ==="
+# A rerun keeps its original run id and creation time, so no newer id exists;
+# the in-flight attempt keeps the wait pending and its completed success
+# supersedes through its fresher updated_at; a failed attempt is terminal by
+# the same arm the failed newer sibling above proves.
+RERUN="STUB_PR_CHECKS_EXIT=1,STUB_HEAD_SHA=$INCIDENT_HEAD"
+table "$JSON" \
+  "an in-flight attempt of an older run keeps the cancelled failure pending||$JSON_SHORT|STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-checks.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-active.json|rc=1 status=timeout verdict=pending failed=0 check.CI+Required=EXPECTED check.CI+Gate+Publisher=EXPECTED runs_head=$INCIDENT_HEAD" \
+  "a successful attempt supersedes through its fresher updated_at|||STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-status-replaced.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-success.json|rc=0 status=complete verdict=pass failed=0 check.CI+Required=SUCCESS"
 
-# Case 9: WAITING/REQUESTED/EXPECTED states must count as pending even when
-# bucket is absent. Otherwise one success plus one expected required check can
-# age through stale-check handling instead of polling.
-stderr="$TMP_ROOT/case9.err"
-checks_count_file="$TMP_ROOT/case9-checks-count"
-set +e
-output=$(run_wait_short STUB_PR_CHECKS_MODE=expected_once STUB_PR_CHECKS_COUNT_FILE="$checks_count_file" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "case9: EXPECTED checks are treated as pending" "$stderr"
-assert_contains "$output" "CI passed" "case9: ci-wait reaches CI passed after expected check clears"
-assert_eq "$(cat "$checks_count_file")" "2" "case9: ci-wait polls again after EXPECTED JSON" "$stderr"
-
-echo "=== ci-wait output contract (kendex#454) ==="
-
-# Case 10: --json pass. Result must be a parseable object with
-# status=complete / verdict=pass.
-stderr="$TMP_ROOT/case10.err"
-set +e
-output=$(run_wait_json 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "case10: json pass exits 0" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "complete" "case10: json status is complete" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "pass" "case10: json verdict is pass" "$stderr"
-assert_eq "$(json_field "$output" '.passed_checks | length')" "1" "case10: json lists passed checks" "$stderr"
-
-# Case 11: checks still IN_PROGRESS at the deadline must report a timeout,
-# never exit 0 or stay silent.
-stderr="$TMP_ROOT/case11.err"
-set +e
-output=$(run_wait_json_short STUB_PR_CHECKS_MODE=pending_always 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "case11: pending checks at deadline exit 1" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "timeout" "case11: json status is timeout" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "pending" "case11: json verdict is pending" "$stderr"
-assert_eq "$(json_field "$output" '.pending_checks[0].name')" "build" "case11: json lists pending checks" "$stderr"
-
-# Case 11b: same deadline scenario in text mode still emits a stdout result.
-stderr="$TMP_ROOT/case11b.err"
-set +e
-output=$(run_wait_short STUB_PR_CHECKS_MODE=pending_always 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "case11b: text-mode timeout exits 1" "$stderr"
-assert_contains "$output" "CI timeout" "case11b: text-mode timeout prints CI timeout on stdout"
-
-# Case 12: no checks ever registered and the grace window (overridden via
-# CI_WAIT_NO_CHECKS_GRACE) has elapsed -> status=error with diagnostic, not
-# a silent exit. The override also proves the env var drives the cutoff:
-# with the 180s default and this 30s deadline, the error path could never
-# fire (see case 12c).
-stderr="$TMP_ROOT/case12.err"
-set +e
-output=$(run_wait_json STUB_PR_CHECKS_MODE=empty CI_WAIT_NO_CHECKS_GRACE=3 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "case12: no registered checks past grace exit 1" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "error" "case12: json status is error" "$stderr"
-assert_contains "$(json_field "$output" '.error')" "no CI checks" "case12: json error names the cause"
-assert_contains "$(cat "$stderr")" "grace 3s" "case12: CI_WAIT_NO_CHECKS_GRACE override sets the grace window"
-
-# Case 12b: same in text mode — stdout carries a CI error line.
-stderr="$TMP_ROOT/case12b.err"
-set +e
-output=$(run_wait STUB_PR_CHECKS_MODE=empty CI_WAIT_NO_CHECKS_GRACE=3 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "case12b: text-mode no-checks exit 1" "$stderr"
-assert_contains "$output" "CI error" "case12b: text-mode no-checks prints CI error on stdout"
-
-# Case 12c: no checks registered but still INSIDE the default 180s grace
-# window when the deadline hits -> timeout with verdict pending, never the
-# no-checks error. Approval-gated repos dispatch CI from the
-# pull_request_review event, so registration can legitimately lag this long.
-stderr="$TMP_ROOT/case12c.err"
-set +e
-output=$(run_wait_json_short STUB_PR_CHECKS_MODE=empty 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "case12c: no checks inside grace window exit 1 (timeout)" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "timeout" "case12c: json status is timeout, not error" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "pending" "case12c: verdict stays pending inside grace window" "$stderr"
-assert_not_contains "$output" "no CI checks" "case12c: no-checks error suppressed inside grace window"
-
-# Case 13: settled failing check -> status=complete / verdict=fail.
-stderr="$TMP_ROOT/case13.err"
-set +e
-output=$(run_wait_json STUB_PR_CHECKS_MODE=failure 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "case13: failed checks exit 1" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "complete" "case13: json status is complete" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "fail" "case13: json verdict is fail" "$stderr"
-assert_eq "$(json_field "$output" '.failed_checks[0].name')" "build" "case13: json lists failed checks" "$stderr"
-
-# Case 14: auth failure with --json still yields a parseable error object.
-rm -f "$TMP_ROOT/repo/.env.local"
-stderr="$TMP_ROOT/case14.err"
-set +e
-output=$(run_wait_json GH_TOKEN=bad-token STUB_GH_DENY_KEYRING=1 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "3" "case14: json auth failure exits 3" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "error" "case14: json auth failure reports status error" "$stderr"
-assert_contains "$(json_field "$output" '.error')" "auth" "case14: json auth failure names auth in error"
-
-echo "=== ci-wait repo-slug fallback (kendex#476) ==="
-
-# When `gh repo view --json nameWithOwner` returns empty (e.g. the transient
-# unknown-merge-state path), ci-wait derives owner/repo from the origin URL.
-# GNU sed / POSIX ERE has no non-greedy quantifier: a `[^/]+?(\.git)?$`
-# pattern greedily keeps the trailing ".git", and every subsequent
-# `gh --repo owner/repo.git` call fails. The stub records the
-# --repo slug and rejects any `*.git` value like real gh, so a clean pass
-# proves the suffix was stripped. Covers SSH and HTTPS origins, with and
-# without ".git".
-
-# Case 15: SSH origin ending in .git.
-git -C "$TMP_ROOT/repo" remote add origin git@github.com:owner/repo.git
-stderr="$TMP_ROOT/case15.err"
-repo_arg_file="$TMP_ROOT/case15-repo-arg"
-set +e
-output=$(run_wait STUB_GH_REPO_VIEW_EMPTY=1 STUB_REPO_ARG_FILE="$repo_arg_file" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "case15: ssh .git origin fallback exits 0" "$stderr"
-assert_contains "$output" "CI passed" "case15: ci-wait reaches CI passed via ssh origin fallback"
-assert_eq "$(cat "$repo_arg_file")" "owner/repo" "case15: --repo slug drops .git suffix (ssh)" "$stderr"
-
-# Case 16: HTTPS origin ending in .git.
-git -C "$TMP_ROOT/repo" remote set-url origin https://github.com/owner/repo.git
-stderr="$TMP_ROOT/case16.err"
-repo_arg_file="$TMP_ROOT/case16-repo-arg"
-set +e
-output=$(run_wait STUB_GH_REPO_VIEW_EMPTY=1 STUB_REPO_ARG_FILE="$repo_arg_file" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "case16: https .git origin fallback exits 0" "$stderr"
-assert_contains "$output" "CI passed" "case16: ci-wait reaches CI passed via https origin fallback"
-assert_eq "$(cat "$repo_arg_file")" "owner/repo" "case16: --repo slug drops .git suffix (https)" "$stderr"
-
-# Case 17: HTTPS origin WITHOUT a .git suffix must still resolve cleanly and
-# must not lose a trailing path segment.
-git -C "$TMP_ROOT/repo" remote set-url origin https://github.com/owner/repo
-stderr="$TMP_ROOT/case17.err"
-repo_arg_file="$TMP_ROOT/case17-repo-arg"
-set +e
-output=$(run_wait STUB_GH_REPO_VIEW_EMPTY=1 STUB_REPO_ARG_FILE="$repo_arg_file" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "case17: https origin without .git exits 0" "$stderr"
-assert_eq "$(cat "$repo_arg_file")" "owner/repo" "case17: --repo slug preserved without .git" "$stderr"
-
-echo "=== ci-wait superseded-run scoping (kendex#492) ==="
-
-# Case 18: an older canceled run's CANCELLED jobs must NOT be reported as
-# current failures when the newer authoritative run has only its classifier job
-# pending and has not yet recreated those jobs. Scoping to the latest run per
-# workflow drops the superseded run's checks, so the verdict is pending (waiting
-# on "Changes"), never a false fail on the stale CANCELLED Lint/Integration/etc.
-stderr="$TMP_ROOT/case18.err"
-set +e
-output=$(run_wait_json_short STUB_PR_CHECKS_MODE=superseded_pending 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "case18: superseded-run pending exits 1 (timeout)" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "timeout" "case18: json status is timeout" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "pending" "case18: verdict pending, not fail" "$stderr"
-assert_eq "$(json_field "$output" '.failed_checks | length')" "0" "case18: no stale CANCELLED jobs in failed_checks" "$stderr"
-assert_contains "$output" '"Changes"' "case18: current classifier job reported as pending" "$stderr"
-assert_not_contains "$output" '"Lint"' "case18: superseded run's Lint dropped from output" "$stderr"
-assert_not_contains "$output" '"Linux Integration"' "case18: superseded run's Integration dropped" "$stderr"
-
-# Case 19: once the newer run recreates a named job (Lint SUCCESS on the newest
-# RUN_ID), that current-head instance replaces the older run's CANCELLED "Lint"
-# by context name — no stale CANCELLED entry survives, verdict passes.
-stderr="$TMP_ROOT/case19.err"
-set +e
-output=$(run_wait_json STUB_PR_CHECKS_MODE=superseded_replaced 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "case19: superseded-then-replaced exits 0" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "pass" "case19: verdict pass after replacement" "$stderr"
-assert_eq "$(json_field "$output" '.failed_checks | length')" "0" "case19: no CANCELLED Lint in failed_checks" "$stderr"
-assert_not_contains "$output" '"CANCELLED"' "case19: no stale CANCELLED state survives" "$stderr"
-assert_eq "$(json_field "$output" '[.passed_checks[].name] | map(select(. == "Lint")) | length')" "1" "case19: exactly one current Lint instance kept" "$stderr"
-
-echo "=== ci-wait approval-gated run/status correlation (kendex#607) ==="
-
-# Case 20: CI Required is still red from the unapproved run. A newer approved
-# run is active, followed by a still-newer COMMENTED run whose jobs all skipped.
-# The all-skipped run is not authoritative; the approved run and stale aggregate
-# status both remain pending instead of producing an immediate terminal fail.
-stderr="$TMP_ROOT/case20.err"
-set +e
-output=$(run_wait_json_short STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/stale-preapproval-active-approved.json" STUB_PR_CHECKS_EXIT=8 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "case20: active approved run exits 1 only at timeout" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "timeout" "case20: active approved run remains pending" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "pending" "case20: stale red status is not terminal" "$stderr"
-assert_eq "$(json_field "$output" '.failed_checks | length')" "0" "case20: stale CI Required removed from failures" "$stderr"
-assert_eq "$(json_field "$output" '[.pending_checks[] | select(.name == "CI Required")][0].state')" "EXPECTED" "case20: stale CI Required rewritten as expected" "$stderr"
-assert_contains "$output" '"Build"' "case20: substantive approved run remains visible" "$stderr"
-assert_not_contains "$output" '"SKIPPED"' "case20: later COMMENTED no-op run does not supersede" "$stderr"
-
-# Case 21: with no newer substantive run, an all-skipped COMMENTED dispatch is
-# not evidence of approved CI. The original pre-approval failure stays terminal.
-stderr="$TMP_ROOT/case21.err"
-set +e
-output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/stale-preapproval-no-fresh-run.json" STUB_PR_CHECKS_EXIT=1 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "case21: no fresh substantive run exits 1" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "complete" "case21: original failure is terminal" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "fail" "case21: no fresh run fails closed" "$stderr"
-assert_eq "$(json_field "$output" '[.failed_checks[] | select(.name == "CI Required")][0].state')" "FAILURE" "case21: CI Required remains failed" "$stderr"
-
-# Case 22: a newer substantive run that itself fails must fail immediately;
-# stale-status suppression cannot hide a real current-run failure.
-stderr="$TMP_ROOT/case22.err"
-set +e
-output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/stale-preapproval-fresh-failed.json" STUB_PR_CHECKS_EXIT=1 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "case22: failed approved run exits 1" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "complete" "case22: current run failure is terminal" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "fail" "case22: failed approved run fails closed" "$stderr"
-assert_eq "$(json_field "$output" '[.failed_checks[] | select(.name == "Build")][0].state')" "FAILURE" "case22: current failed job is reported" "$stderr"
-
-# Case 23: all approved-run jobs passed, but the aggregate status never moved
-# off the old red run. Keep waiting for the replacement and hit the bounded
-# timeout rather than silently passing or immediately consuming stale failure.
-stderr="$TMP_ROOT/case23.err"
-set +e
-output=$(run_wait_json_short STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/stale-preapproval-status-lag.json" STUB_PR_CHECKS_EXIT=1 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "case23: missing replacement status exits 1" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "timeout" "case23: missing replacement reaches bounded timeout" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "pending" "case23: status lag stays pending until timeout" "$stderr"
-assert_eq "$(json_field "$output" '[.pending_checks[] | select(.name == "CI Required")][0].state')" "EXPECTED" "case23: lagging aggregate status is expected" "$stderr"
-
-# Case 24: once the newer substantive run publishes CI Required against its own
-# run ID, the stale pre-approval checks and later no-op dispatch are discarded
-# and the current proof passes normally.
-stderr="$TMP_ROOT/case24.err"
-set +e
-output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/approved-status-replaced.json" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "case24: replacement status exits 0" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "complete" "case24: replacement status completes" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "pass" "case24: replacement status passes" "$stderr"
-assert_eq "$(json_field "$output" '[.passed_checks[] | select(.name == "CI Required")][0].state')" "SUCCESS" "case24: current aggregate status is reported" "$stderr"
-assert_eq "$(json_field "$output" '.failed_checks | length')" "0" "case24: stale pre-approval failures are absent" "$stderr"
-
-echo "=== ci-wait superseded-run failure correlation (kendex#650) ==="
-
-# Case 25: the rollup shows only a concurrency-cancelled pull_request_review
-# run (cancelled jobs, CI Gate Publisher failure, stale CI Required status)
-# while its same-second pull_request_review_comment sibling — invisible to the
-# rollup — is still in progress. The cancellation-produced failure must stay
-# pending until the sibling's outcome, never terminate the wait on its own.
-stderr="$TMP_ROOT/case25.err"
-runs_query_file="$TMP_ROOT/case25-runs-query"
-set +e
-output=$(run_wait_json_short STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/cancelled-review-run-checks.json" STUB_PR_CHECKS_EXIT=1 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-newer-sibling-active.json" STUB_ACTIONS_RUNS_QUERY_FILE="$runs_query_file" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "case25: active newer sibling exits 1 only at timeout" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "timeout" "case25: cancelled run stays pending while sibling is active" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "pending" "case25: cancellation-produced failure is not terminal" "$stderr"
-assert_eq "$(json_field "$output" '.failed_checks | length')" "0" "case25: superseded failures removed from failed_checks" "$stderr"
-assert_eq "$(json_field "$output" '[.pending_checks[] | select(.name == "CI Required")][0].state')" "EXPECTED" "case25: stale aggregate status reported as expected" "$stderr"
-assert_eq "$(json_field "$output" '[.pending_checks[] | select(.name == "CI Gate Publisher")][0].state')" "EXPECTED" "case25: cancelled run's gate failure reported as expected" "$stderr"
-assert_contains "$(cat "$runs_query_file")" "head_sha=737bce791577e140436490e0fed5751bb5144a61" "case25: correlation queries Actions runs for the current head" "$stderr"
-
-# Case 26: the sibling run completed successfully and republished CI Required
-# against its own run ID. The cancelled run's frozen checks will never update;
-# they are discarded and the surviving aggregate status passes the wait.
-stderr="$TMP_ROOT/case26.err"
-set +e
-output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/cancelled-review-run-status-replaced.json" STUB_PR_CHECKS_EXIT=1 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-newer-sibling-success.json" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "case26: successful newer sibling exits 0" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "complete" "case26: successful sibling completes the wait" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "pass" "case26: successful sibling passes" "$stderr"
-assert_eq "$(json_field "$output" '.failed_checks | length')" "0" "case26: superseded cancelled checks are discarded" "$stderr"
-assert_eq "$(json_field "$output" '[.passed_checks[] | select(.name == "CI Required")][0].state')" "SUCCESS" "case26: replacement aggregate status is reported" "$stderr"
-
-# Case 27: the sibling run completed with a genuine failure. Supersession must
-# not blunt fail-fast: the settled failure is terminal immediately.
-stderr="$TMP_ROOT/case27.err"
-set +e
-output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/cancelled-review-run-checks.json" STUB_PR_CHECKS_EXIT=1 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-newer-sibling-failure.json" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "case27: failed newer sibling exits 1" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "complete" "case27: failed sibling is terminal" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "fail" "case27: failed sibling fails closed" "$stderr"
-assert_eq "$(json_field "$output" '[.failed_checks[] | select(.name == "CI Required")][0].state')" "FAILURE" "case27: aggregate failure is reported" "$stderr"
-
-# Case 28: a cancelled run with NO newer same-head run: the cancellation is a
-# terminal failure (fail closed, nothing to wait for).
-stderr="$TMP_ROOT/case28.err"
-set +e
-output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/cancelled-review-run-checks.json" STUB_PR_CHECKS_EXIT=1 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-cancelled-alone.json" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "case28: cancelled run without newer sibling exits 1" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "complete" "case28: lone cancelled run is terminal" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "fail" "case28: lone cancelled run fails closed" "$stderr"
-assert_eq "$(json_field "$output" '[.failed_checks[] | select(.name == "CI Gate Publisher")][0].state')" "FAILURE" "case28: cancelled run's gate failure is reported" "$stderr"
-
-echo "=== ci-wait rerun-attempt correlation (kendex#699) ==="
-
-# Case 29: the rollup shows only the concurrency-cancelled pull_request_review
-# run 29662812172 (cancelled jobs, CI Gate Publisher failure, stale CI Required
-# status) while attempt 2 of the OLDER pull_request run 29662588017 is in
-# progress on the same head. The
-# rerun keeps its original (lower) run id and creation time, so no run with
-# `.id >` the failing run's exists; the in-flight attempt alone must keep the
-# wait pending instead of terminal-failing.
-stderr="$TMP_ROOT/case29.err"
-runs_query_file="$TMP_ROOT/case29-runs-query"
-set +e
-output=$(run_wait_json_short STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/rerun-attempt-checks.json" STUB_PR_CHECKS_EXIT=1 STUB_HEAD_SHA=e99849b1c72b1c082cf8325f316799e753f99561 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-rerun-attempt-active.json" STUB_ACTIONS_RUNS_QUERY_FILE="$runs_query_file" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "case29: active rerun attempt exits 1 only at timeout" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "timeout" "case29: cancelled run stays pending while attempt is active" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "pending" "case29: lower-id in-flight attempt is not terminal" "$stderr"
-assert_eq "$(json_field "$output" '.failed_checks | length')" "0" "case29: superseded failures removed from failed_checks" "$stderr"
-assert_eq "$(json_field "$output" '[.pending_checks[] | select(.name == "CI Required")][0].state')" "EXPECTED" "case29: stale aggregate status reported as expected" "$stderr"
-assert_eq "$(json_field "$output" '[.pending_checks[] | select(.name == "CI Gate Publisher")][0].state')" "EXPECTED" "case29: cancelled run's gate failure reported as expected" "$stderr"
-assert_contains "$(cat "$runs_query_file")" "head_sha=e99849b1c72b1c082cf8325f316799e753f99561" "case29: correlation queries Actions runs for the incident head" "$stderr"
-
-# Case 30: attempt 2 completed successfully and republished CI Required
-# against its own run id. Despite the lower id, its fresher updated_at proves
-# it settled after the cancelled run froze; the frozen failures are discarded
-# and the surviving aggregate status passes the wait.
-stderr="$TMP_ROOT/case30.err"
-set +e
-output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/rerun-attempt-status-replaced.json" STUB_PR_CHECKS_EXIT=1 STUB_HEAD_SHA=e99849b1c72b1c082cf8325f316799e753f99561 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-rerun-attempt-success.json" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "case30: successful rerun attempt exits 0" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "complete" "case30: successful attempt completes the wait" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "pass" "case30: successful attempt passes" "$stderr"
-assert_eq "$(json_field "$output" '.failed_checks | length')" "0" "case30: superseded cancelled checks are discarded" "$stderr"
-assert_eq "$(json_field "$output" '[.passed_checks[] | select(.name == "CI Required")][0].state')" "SUCCESS" "case30: replacement aggregate status is reported" "$stderr"
-
-# Case 31: attempt 2 completed with a genuine failure. Rerun-attempt
-# correlation must not blunt fail-fast: the settled failure is terminal
-# immediately.
-stderr="$TMP_ROOT/case31.err"
-set +e
-output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/rerun-attempt-checks.json" STUB_PR_CHECKS_EXIT=1 STUB_HEAD_SHA=e99849b1c72b1c082cf8325f316799e753f99561 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-rerun-attempt-failure.json" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "case31: failed rerun attempt exits 1" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "complete" "case31: failed attempt is terminal" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "fail" "case31: failed attempt fails closed" "$stderr"
-assert_eq "$(json_field "$output" '[.failed_checks[] | select(.name == "CI Required")][0].state')" "FAILURE" "case31: aggregate failure is reported" "$stderr"
-
-echo "=== ci-wait transient retry on a large log (KEN-1143) ==="
-
-# Case 36: the retry path is reached with a failed-job log far past the 64KB
-# pipe buffer, its transient marker on the first line. Under `gh... | head
-# -200`, head closing after its 200 lines kills gh with SIGPIPE, pipefail
-# promotes the 141 to the pipeline status, and `|| return 1` reports "not
-# transient" without reading a single pattern — the retry is dead for every
-# log big enough to need it. That piped form of is_transient_failure is this
-# case's must-fail control.
-# Two sizes carry the case, and both are asserted rather than assumed. The
-# 200-line WINDOW must clear two 64KB pipe buffers, so that `echo "$logs" |
-# grep -qi` blocks after the first-line match and dies; the log BEYOND that
-# window must clear one more, so that `gh | head -200` blocks once head has
-# stopped reading. 400 lines of ~1KB gives 200KB in the window and 200KB past
-# it. gh streams the marker in the first line, where a real runner-acquisition
-# failure reports it.
-transient_log="$TMP_ROOT/case36-log"
+echo "=== the transient-failure retry reads a log past the pipe buffer ==="
+# Under `gh ... | head -200`, head closing after its lines kills gh with
+# SIGPIPE, pipefail promotes the 141, and the retry is dead for every log big
+# enough to need it. Two sizes carry the case and both are asserted rather
+# than assumed: the scanned window clears two 64KB pipe buffers, the log past
+# it one more. The marker sits on the first line, where a runner-acquisition
+# failure reports it. A genuine gh failure is still not transient.
+transient_log="$TMP_ROOT/transient-log"
 {
   printf 'The job was not acquired: rate limit exceeded, retrying in 30s\n'
   padding="$(printf 'x%.0s' {1..950})"
@@ -837,37 +508,19 @@ transient_log="$TMP_ROOT/case36-log"
 } > "$transient_log"
 transient_window_bytes=$(head -n 200 "$transient_log" | wc -c)
 transient_tail_bytes=$(($(wc -c <"$transient_log") - transient_window_bytes))
-assert_le 131072 "$transient_window_bytes" "case36: two pipe buffers fit inside the scanned window"
-assert_le 65536 "$transient_tail_bytes" "case36: one pipe buffer fits inside the log past the window"
+assert_le 131072 "$transient_window_bytes" "two pipe buffers fit inside the scanned window"
+assert_le 65536 "$transient_tail_bytes" "one pipe buffer fits inside the log past the window"
+table "$JSON" \
+  "a transient marker in a large failed-job log reruns the failing run; the retried failure still settles terminal|||STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-checks.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json,STUB_RUN_LOG_FILE=$transient_log|rc=1 verdict=fail reruns=29662812172" \
+  "a gh failure reading the log is not transient: nothing is rerun|||STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-checks.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json|rc=1 verdict=fail reruns=none"
 
-stderr="$TMP_ROOT/case36.err"
-rerun_calls="$TMP_ROOT/case36-rerun"
-: > "$rerun_calls"
-set +e
-output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/rerun-attempt-checks.json" STUB_PR_CHECKS_EXIT=1 STUB_HEAD_SHA=e99849b1c72b1c082cf8325f316799e753f99561 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-rerun-attempt-failure.json" STUB_RUN_LOG_FILE="$transient_log" STUB_RERUN_CALLS_FILE="$rerun_calls" 2>"$stderr")
-rc=$?
-set -e
-assert_contains "$(cat "$stderr")" "Detected transient failure: rate limit" "case36: pattern loop reads the large log" "$stderr"
-assert_contains "$(cat "$stderr")" "Retrying transient failure (attempt 1/1)" "case36: transient failure is retried" "$stderr"
-assert_contains "$(cat "$rerun_calls")" "run rerun 29662812172" "case36: the failing run is rerun" "$stderr"
-assert_eq "$rc" "1" "case36: the retried failure still settles terminal" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "fail" "case36: retry does not turn a real failure into a pass" "$stderr"
-
-# Case 36b: a genuine `gh` failure is still "not transient" — the `|| return 1`
-# branch keeps its one real meaning, and nothing is rerun.
-stderr="$TMP_ROOT/case36b.err"
-rerun_calls="$TMP_ROOT/case36b-rerun"
-: > "$rerun_calls"
-set +e
-output=$(run_wait_json STUB_PR_CHECKS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/rerun-attempt-checks.json" STUB_PR_CHECKS_EXIT=1 STUB_HEAD_SHA=e99849b1c72b1c082cf8325f316799e753f99561 STUB_ACTIONS_RUNS_FIXTURE="$REPO_ROOT/skills/orch/tests/fixtures/ci-wait/runs-rerun-attempt-failure.json" STUB_RERUN_CALLS_FILE="$rerun_calls" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "case36b: unreadable log exits 1" "$stderr"
-assert_eq "$(json_field "$output" '.verdict')" "fail" "case36b: unreadable log fails closed" "$stderr"
-assert_eq "$(cat "$rerun_calls")" "" "case36b: a gh failure triggers no rerun" "$stderr"
-
-# Call-recording gh stub: every case here terminates in the parser or the
-# config resolver, so ANY gh invocation is a failure the log makes visible.
+echo "=== argument validation ends in the parser, before any gh call ==="
+# The recording gh stub fails every call, so a case that reached auth or a
+# poll reads as calls > 0. references/gates.md names each script's --help as
+# its authoritative contract, so the help row pins the exit-code table, the
+# no-CI route and the grace knob. The unknown flag follows complete
+# positionals: in a positional slot it would be refused as a non-integer, the
+# same exit, so only that shape proves the flag arm.
 mkdir -p "$TMP_ROOT/argbin"
 cat > "$TMP_ROOT/argbin/gh" <<EOF
 #!/usr/bin/env bash
@@ -875,109 +528,28 @@ printf '%s\n' "\$*" >> "$TMP_ROOT/argval-gh.calls"
 exit 1
 EOF
 chmod +x "$TMP_ROOT/argbin/gh"
-
-echo "=== ci-wait argument validation ==="
-
-# Usage errors must terminate in the arg parser, before auth or any gh call:
-# an unknown flag that falls through into a positional slot dies under
-# `set -u` as "timeout: unbound variable", and `--help` taken as the PR number
-# crashes in jq. This gh stub records every invocation so a clean pass proves
-# gh was never reached.
-run_wait_args() {
-  (cd "$TMP_ROOT/repo" \
-    && PATH="$TMP_ROOT/argbin:$PATH" \
-       .agents/skills/orch/scripts/ci-wait "$@")
-}
-
-assert_no_gh_calls() {
-  local name="$1"
-  if [[ -e "$TMP_ROOT/argval-gh.calls" ]]; then
-    assert_eq "$(cat "$TMP_ROOT/argval-gh.calls")" "" "$name"
-  else
-    assert_eq "no-calls" "no-calls" "$name"
-  fi
-  rm -f "$TMP_ROOT/argval-gh.calls"
-}
-
-# Case 32: --help answers with usage and exit 0 instead of being consumed as
-# the PR number.
-stderr="$TMP_ROOT/case32.err"
-set +e
-output=$(run_wait_args --help 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "case32: --help exits 0" "$stderr"
-assert_contains "$output" "Usage: ci-wait" "case32: --help prints usage"
-# The heredoc is the contract's sole home: pin tokens whose semantics live
-# nowhere else (tokens, never sentences).
-assert_contains "$output" "Exit codes:" "case32: --help carries the exit-code table"
-assert_contains "$output" "no-CI route" "case32: --help carries the verdict=none contract"
-assert_contains "$output" "CI_WAIT_NO_CHECKS_GRACE" "case32: --help carries the grace knob"
-assert_no_gh_calls "case32: --help never invokes gh"
-
-# Case 32b: -h behaves like --help.
-stderr="$TMP_ROOT/case32b.err"
-set +e
-output=$(run_wait_args -h 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "case32b: -h exits 0" "$stderr"
-assert_contains "$output" "Usage: ci-wait" "case32b: -h prints usage"
-assert_no_gh_calls "case32b: -h never invokes gh"
-
-# Case 33: an unknown flag is rejected with usage on stderr, never absorbed
-# into a positional slot (the "timeout: unbound variable" abort).
-stderr="$TMP_ROOT/case33.err"
-set +e
-output=$(run_wait_args 492 --timeout 2400 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "2" "case33: unknown flag exits 2" "$stderr"
-assert_contains "$(cat "$stderr")" "unknown option '--timeout'" "case33: unknown flag named on stderr"
-assert_contains "$(cat "$stderr")" "Usage: ci-wait" "case33: unknown flag prints usage on stderr"
-assert_not_contains "$(cat "$stderr")" "unbound variable" "case33: no set -u abort"
-assert_no_gh_calls "case33: unknown flag never invokes gh"
-
-# Case 34: a non-integer PR number is rejected before any gh call instead of
-# crashing later in jq.
-stderr="$TMP_ROOT/case34.err"
-set +e
-output=$(run_wait_args abc 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "2" "case34: non-integer PR exits 2" "$stderr"
-assert_contains "$(cat "$stderr")" "positive integer" "case34: non-integer PR error is explicit"
-assert_no_gh_calls "case34: non-integer PR never invokes gh"
-
-# Case 34b: non-integer poll_interval / max_wait are rejected the same way.
-stderr="$TMP_ROOT/case34b.err"
-set +e
-output=$(run_wait_args 1 abc 30 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "2" "case34b: non-integer poll_interval exits 2" "$stderr"
-assert_contains "$(cat "$stderr")" "positive integer" "case34b: non-integer poll_interval error is explicit"
-
-stderr="$TMP_ROOT/case34c.err"
-set +e
-output=$(run_wait_args 1 15 abc 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "2" "case34c: non-integer max_wait exits 2" "$stderr"
-assert_contains "$(cat "$stderr")" "positive integer" "case34c: non-integer max_wait error is explicit"
-
-# Case 35: no arguments at all gets usage, not an unbound-variable abort.
-stderr="$TMP_ROOT/case35.err"
-set +e
-output=$(run_wait_args 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "2" "case35: missing PR argument exits 2" "$stderr"
-assert_contains "$(cat "$stderr")" "Usage: ci-wait" "case35: missing PR argument prints usage on stderr"
-assert_no_gh_calls "case35: missing PR argument never invokes gh"
-
-# `--json` remaining accepted with valid positionals is covered by the output
-# contract above (cases 10-14 run `ci-wait 1 1 30 --json` end to end).
+arg_rows=(
+  '--help prints the routed contract and exits 0|--help|rc=0 stdout~Exit+codes:=true stdout~no-CI+route=true stdout~CI_WAIT_NO_CHECKS_GRACE=true gh_calls=0'
+  '-h is the same|-h|rc=0 stdout~Exit+codes:=true gh_calls=0'
+  'an unknown flag after complete positionals is refused in the parser|1 1 30 --nope|rc=2 stdout=empty stderr=line gh_calls=0'
+  'a non-integer PR number is a usage error|abc|rc=2 stdout=empty stderr=line gh_calls=0'
+  'a non-integer poll_interval is a usage error|1 abc 30|rc=2 stdout=empty stderr=line gh_calls=0'
+  'a non-integer max_wait is a usage error|1 15 abc|rc=2 stdout=empty stderr=line gh_calls=0'
+  'no arguments is a usage error||rc=2 stdout=empty stderr=line gh_calls=0'
+)
+for row in "${arg_rows[@]}"; do
+  IFS='|' read -r label args expect <<<"$row"
+  [[ -n "$expect" ]] || { printf 'args: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+  : > "$TMP_ROOT/argval-gh.calls"
+  RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"; mkdir -p "$RUN"
+  set +e
+  # shellcheck disable=SC2086
+  OUT=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/argbin:$PATH" .agents/skills/orch/scripts/ci-wait $args 2>"$RUN/stderr")
+  RC=$?
+  set -e
+  got="$(observe "${expect% gh_calls=*}") gh_calls=$(wc -l <"$TMP_ROOT/argval-gh.calls" | tr -d ' ')"
+  assert_eq "$got" "$expect" "$label" "$RUN/stderr"
+done
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
