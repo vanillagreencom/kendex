@@ -78,11 +78,11 @@ first repository's OVERSEE_WATCH_STATE_DIR baseline from kept or canceled
 verdicts. Lane prompts use pane and turn.
 
 A line already delivered is not delivered again by a re-run: merged,
-lane-asking, usage-limit, idle-after-return and handoff are keyed in that
-baseline and repeat only when what they report changes: another PR, a
-different wall or a reset gone by, a different screen, a new record. A
-suppressed line still holds: a walled lane stays walled, and the pass runs on
-to the remaining checks and the heartbeat.
+lane-asking, usage-limit, lane-exited, idle-after-return and handoff are keyed
+in that baseline and repeat only when what they report changes: another PR, a
+different wall or a reset gone by, a replacement pane, a different screen, a
+new record. A suppressed line still holds: a walled lane stays walled, and the
+pass runs on to the remaining checks and the heartbeat.
 
 Options:
   --interval SECS     seconds between passes (default 240)
@@ -234,7 +234,7 @@ watch_state_init() {
 # `<pr>\t<kind>` and triage's `triage\t<id>`:
 #   lane-asking<TAB><lane><TAB><fingerprint>
 #   usage-limit<TAB><lane><TAB><first-seen-epoch>|<pane key>|<reported event>|<reset key>
-#   lane-exited<TAB><lane><TAB><pane key>
+#   lane-exited<TAB><lane><TAB><pane key>[|reported]
 #   lane-idle<TAB><lane><TAB><pane key>|<screen key>[|reported]
 #   handoff<TAB><item><TAB><record checksum>
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
@@ -242,9 +242,9 @@ watch_state_init() {
 # lines below where it is written; the reset key's own layout is
 # usage_reset_key's, and it comes LAST because it carries `|` of its own.
 # The reported columns are what keeps a re-run from delivering a line again:
-# a lane parked on its wall, sitting idle, or an item merged and still in
-# --item read the same on every pass of every run, and the overseer re-runs
-# the watch after every event.
+# a lane parked on its wall, sitting idle, left at a bare shell, or an item
+# merged and still in --item read the same on every pass of every run, and the
+# overseer re-runs the watch after every event.
 # Each helper takes the whole baseline blob and returns the answer or the
 # rewritten blob, so a pass mutates a local and commits once.
 # One per-lane row per KIND in the watch state, all laid out above:
@@ -252,10 +252,10 @@ watch_state_init() {
 # `usage-limit` the pass clock this watch first saw a lane's limit banner on,
 # the pane it saw it in, and the wall it named; `lane-exited` and `lane-idle`
 # the pane a lane read as exited or idle on the previous pass, the first half
-# of the two consecutive passes those kinds need. Rows, not process globals:
-# a pass that found any event exits the process, so with a lane parked on its
-# banner every pass is a first pass, and a debounce kept in memory never
-# reaches its second. Same three columns, same file, one set of readers.
+# of the two consecutive passes those kinds need, marked once reported. Rows,
+# not process globals: a pass that found any event exits the process, so with a
+# lane parked on its banner every pass is a first pass, and a debounce kept in
+# memory never reaches its second. Same three columns, same file, one set of readers.
 lane_row_get() {
   awk -F'\t' -v kind="$1" -v lane="$3" '$1 == kind && NF == 3 && $2 == lane { print $3 }' <<<"$2"
 }
@@ -852,25 +852,29 @@ check_lanes() {
   # why. Two consecutive passes: a live harness can hold a childless shell in
   # the foreground for one poll, and relaunching a working lane costs more
   # than one interval. The first pass is a `lane-exited` row keyed by the
-  # pane, so the second can be the next run's first, and a replacement pane
-  # starts over.
+  # pane, so the second can be the next run's first; that second pass marks
+  # the row reported, so a later run over the same pane stays silent, and a
+  # replacement pane starts over and is news again.
   asking_state="${PW_SEEN[0]}"
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
-    if [[ "$(lane_state "$states" "$i")" == exited ]]; then
-      pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
-      prior="$(lane_row_get lane-exited "$asking_state" "$lane")"
-      asking_state="$(lane_row_set lane-exited "$asking_state" "$lane" "$pane_key")"
-      if [[ "$prior" == "$pane_key" ]]; then
-        echo "EVENT lane-exited $lane"
-        pane="$(cat -- "$(lane_pane_file "$i")")"
-        [[ -z "$pane" ]] || pane_tail "$pane"
-        PASS_EVENT=1
-        asking_state="$(lane_row_clear lane-asking "$asking_state" "$lane")"
-      fi
-    else
+    if [[ "$(lane_state "$states" "$i")" != exited ]]; then
       asking_state="$(lane_row_clear lane-exited "$asking_state" "$lane")"
+      continue
+    fi
+    pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
+    prior="$(lane_row_get lane-exited "$asking_state" "$lane")"
+    if [[ "$prior" == "$pane_key|reported" ]]; then continue; fi
+    if [[ "$prior" == "$pane_key" ]]; then
+      asking_state="$(lane_row_set lane-exited "$asking_state" "$lane" "$pane_key|reported")"
+      echo "EVENT lane-exited $lane"
+      pane="$(cat -- "$(lane_pane_file "$i")")"
+      [[ -z "$pane" ]] || pane_tail "$pane"
+      PASS_EVENT=1
+      asking_state="$(lane_row_clear lane-asking "$asking_state" "$lane")"
+    else
+      asking_state="$(lane_row_set lane-exited "$asking_state" "$lane" "$pane_key")"
     fi
   done
   lane_row_commit "$asking_state"

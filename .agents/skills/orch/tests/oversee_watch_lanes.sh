@@ -5,9 +5,9 @@
 # heartbeat and the process-wide failures) is oversee_watch.sh. All build
 # their sandbox from lib/oversee-watch-harness.sh.
 #
-# Covered here: window absence versus probe failure; shell-exit debounce; live
-# versus answered prompts for both harnesses; idle-return debounce, within a
-# run and across runs; scrollback boundaries; and one-capture classification.
+# Covered here: window absence versus probe failure; live versus answered
+# prompts for both harnesses; the shell-exit and idle-return debounces, within
+# a run and across runs; scrollback boundaries; and one-capture classification.
 #
 # One table. A row names a screen (a pane fixture kept whole in `screen`), the
 # lane it sits in (the pane's foreground command, its children, the windows
@@ -130,6 +130,8 @@ lane() {
     walled_bash) lane walled; printf 'bash\n' > "$STUB_DIR/cmd-gh-2.txt" ;;
     # ...and gh-2's pane replaced between runs
     walled_newpane) lane walled; printf '7000 %%9\n' > "$STUB_DIR/pane-key-gh-2.txt" ;;
+    # a bare shell whose pane is replaced between runs, no wall beside it
+    bash_newpane) lane bash; printf '7000 %%9\n' > "$STUB_DIR/pane-key-gh-2.txt" ;;
     # two lanes whose names differ only outside the filename-safe set
     collide)
       printf 'a+b\na@b\n' > "$STUB_DIR/windows.txt"
@@ -284,15 +286,21 @@ lane_table \
   "control: the same hint below the last user turn still means busy|new|working_below_turn|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false" \
   "a scrollback user turn is not the composer the lane is sitting at|new|prompt_above_turn|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false"
 
-echo "=== idle-after-return across runs: the same screen is reported once ==="
+echo "=== two-pass kinds across runs: the same pane is reported once ==="
 # The overseer exits the watch on the event and re-runs it over the same
 # lane, which still sits at the same screen: the row that carried the second
 # pass now carries that the screen was reported, so a re-run says nothing
-# until the lane takes a turn and sits idle at a different one.
+# until the lane takes a turn and sits idle at a different one. A bare shell
+# is the same story with no screen in the key: the pane alone is what the
+# lane-exited row remembers, so a replacement pane is what makes it news.
 lane_table \
   "an idle lane is reported on the run that finds it|new|idle|claude|2|rc=0 first=EVENT+idle-after-return+gh-2" \
   "...and not again by a re-run over the same screen|cont|idle|claude|2|rc=0 first=$HEARTBEAT2 out~EVENT+idle-after-return=false" \
   "...while a different idle screen is news again|cont|idle_short|claude|2|rc=0 first=EVENT+idle-after-return+gh-2"
+lane_table \
+  "an exited lane is reported on the run that finds it|new|fish_prompt|bash|2|rc=0 first=EVENT+lane-exited+gh-2" \
+  "...and not again by a re-run over the same pane|cont|fish_prompt|bash|2|rc=0 first=$HEARTBEAT2 out~EVENT+lane-exited=false" \
+  "...while a replacement pane is news again|cont|fish_prompt|bash_newpane|2|rc=0 first=EVENT+lane-exited+gh-2"
 
 echo "=== two-pass kinds beside a lane parked on its wall ==="
 # A pass with any event exits the process, so a sibling's first idle or exited
@@ -323,6 +331,13 @@ assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/
 WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
   "control: the idle lane is still reported on the run that finds it|new|idle|claude|2|rc=0 first=EVENT+idle-after-return+gh-2" \
   "control: without the mark a re-run over the same screen reports it again|cont|idle|claude|2|rc=0 first=EVENT+idle-after-return+gh-2"
+sed 's/^    if \[\[ "$prior" == "$pane_key|reported" \]\]; then continue; fi$/    prior="${prior%|reported}"/' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really ignores the exited row's reported mark"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
+  "control: the exited lane is still reported on the run that finds it|new|fish_prompt|bash|2|rc=0 first=EVENT+lane-exited+gh-2" \
+  "control: without the mark a re-run over the same pane reports it again|cont|fish_prompt|bash|2|rc=0 first=EVENT+lane-exited+gh-2"
 sed 's/^      if \[\[ "$seen_reported" == "$event" \]\]; then continue; fi$//' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
