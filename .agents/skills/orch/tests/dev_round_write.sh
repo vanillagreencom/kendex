@@ -303,6 +303,9 @@ for row in "${record_rows[@]}"; do
   IFS='|' read -r label rid filter <<<"$row"
   run_write --worktree "$WT" --issue issue-1230 --round-id "$rid" --item 1 schema "$OK_REACH"
   record="$WT/tmp/dev-round-issue-1230-$rid.json"
+  # The row damages a record that exists; a failed setup write would leave
+  # the reader refusing an absent record for every filter alike.
+  [[ "$RC" -eq 0 && -f "$record" ]] || { printf 'record row %s: the setup write failed (rc=%s)\n' "$label" "$RC" >&2; cat "$ERR" >&2; exit 1; }
   if [[ "$filter" == delete ]]; then rm -f "$record"; else jq "$filter" "$record" > "$TMP_ROOT/edited.json" && mv "$TMP_ROOT/edited.json" "$record"; fi
   set +e
   "$CHECK" --worktree "$WT" --issue issue-1230 --round-id "$rid" --expect-items-from-round >/dev/null 2>&1; rc=$?
