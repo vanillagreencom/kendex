@@ -625,6 +625,18 @@ fn an_edit_to_a_fork_becomes_its_content_and_leaves_apply_and_check_agreeing() {
     let report = audit(&w.env, &w.scope).unwrap();
     assert_eq!(report.drift, Vec::new());
     assert!(report.fork_edits.is_empty());
+    // Nothing to write but the record of the source the absorb wrote. The
+    // rendering is what it was, so there is no second render and no second
+    // decision — only the hash of a source that moved catching up.
+    assert_eq!(
+        report
+            .plan
+            .ops
+            .iter()
+            .map(|op| op.line())
+            .collect::<Vec<_>>(),
+        vec!["Update the install record".to_owned()],
+    );
     apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(fs::read_to_string(skill_file(&w)).unwrap(), edited);
     let gh = fork_row(&w);
@@ -701,9 +713,15 @@ fn a_fork_edited_on_both_sides_still_conflicts() {
         "---\nname: gh\ndescription: mine\n---\nInstall one.\n",
         "---\nname: gh\ndescription: mine\n---\nSource one.\n",
     );
-    // The same after an absorb has settled the fork once, which is the
-    // ordering that reaches it through a record already holding an edit.
+
+    // And again through a record an absorb has already settled, which is
+    // the ordering the first half cannot reach: a fresh fork, its pending
+    // edit taken in, and only then both sides moved. Settling the pair
+    // above would not do — the two stay divergent, so the apply between
+    // them absorbs nothing.
+    let (w, _) = edited_fork();
     let report = audit(&w.env, &w.scope).unwrap();
+    assert_eq!(report.fork_edits.len(), 1, "the absorb this half needs");
     apply::execute(&w.env, &report.plan).unwrap();
     both_ways(
         &w,
@@ -783,5 +801,105 @@ fn a_fork_edited_differently_in_two_tools_keeps_both_renderings() {
         fs::read_to_string(&gemini)
             .unwrap()
             .contains("What Gemini's copy says."),
+    );
+}
+
+/// A rendering the source parser cannot read back is never taken into the
+/// source. Absorbing a codex agent's own format would write it into the
+/// local source as the agent's prose, so that rendering keeps the edit
+/// hold and the source is left exactly as it was.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_edit_to_a_fork_rendering_the_source_cannot_hold_is_not_absorbed() {
+    let w = agent_world(
+        "\"claude\", \"codex\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "",
+    );
+    let claude = rendered(&w, HarnessId::Claude, "rev");
+    edit_body(&claude);
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let dir = native_dir(&w.env, &w.scope, HarnessId::Codex, ItemKind::Agent).unwrap();
+    let codex = fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("rev."))
+        })
+        .unwrap_or_else(|| panic!("no codex rendering in {dir:?}"));
+    let source_before = fs::read_to_string(captured(&w, "rev")).unwrap();
+    edit_line(&codex, "My body.", "Edited in codex.");
+
+    let report = audit(&w.env, &w.scope).unwrap();
+    assert!(
+        report
+            .drift
+            .iter()
+            .any(|row| row.cause == Some(DriftCause::LocalEdit)),
+        "{:?}",
+        report.drift
+    );
+    assert!(report.fork_edits.is_empty(), "{:?}", report.fork_edits);
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert_eq!(
+        fs::read_to_string(captured(&w, "rev")).unwrap(),
+        source_before
+    );
+    assert!(
+        fs::read_to_string(&codex)
+            .unwrap()
+            .contains("Edited in codex.")
+    );
+}
+
+/// A forked agent carrying the skills its first capture already wrote to
+/// kendex.toml absorbs like any other. The carry is what the manifest
+/// holds, not work the absorb still owes it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_forked_agent_whose_skills_are_already_recorded_absorbs() {
+    let w = world();
+    write_skill(&w.upstream, "recon", "Recon.");
+    write_agent(&w.upstream, "rev", "Upstream body.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[agent-skills]\nrev = [\"recon\"]\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n\n[skills.recon]\nsource = \"cat\"\n"
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+
+    let claude = rendered(&w, HarnessId::Claude, "rev");
+    edit_body(&claude);
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+    assert!(manifest_of(&w).agent_skills.contains_key("rev"));
+
+    edit_line(&claude, "My body.", "Edited again.");
+    let report = audit(&w.env, &w.scope).unwrap();
+    assert_eq!(report.drift, Vec::new(), "{:?}", report.drift);
+    assert_eq!(report.fork_edits.len(), 1, "{:?}", report.fork_edits);
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert!(
+        fs::read_to_string(captured(&w, "rev"))
+            .unwrap()
+            .contains("Edited again.")
     );
 }

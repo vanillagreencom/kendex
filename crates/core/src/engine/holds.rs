@@ -265,8 +265,9 @@ pub(super) fn hold_local_edit(
 /// exactly as the person left it, records it, and says so through
 /// `fork_edits` rather than a conflict row. From the next pass on the fork
 /// is an ordinary settled item: its source renders to what is on disk, so
-/// every later pass plans nothing and `apply` and the Library's check
-/// agree, with no decision left for either to report.
+/// no pass after has drift to report or anything to write but the record
+/// of the source that moved, and `apply` and the Library's check agree
+/// with no decision left for either to report.
 ///
 /// Writing the source is what makes that true rather than merely recorded,
 /// and it is not optional. `rendered_hash` is the anchor the whole engine

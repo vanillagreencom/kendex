@@ -359,6 +359,21 @@ pub(super) fn absorb_ops(
     edited: &std::path::Path,
 ) -> Result<Vec<PlannedOp>> {
     forkable_kind(kind, name)?;
+    // The same format gate `edited_rendering` puts on a fork's capture,
+    // asked here because an absorb reaches the capture without it. A
+    // rendering the source parser cannot read back is not a rendering the
+    // source can be written from: taken anyway, a codex agent's toml would
+    // land in the local source as the agent's own prose.
+    if !forkable_harness(kind, harness) {
+        return Err(CoreError::ItemNotInSource {
+            name: name.to_owned(),
+            source_name: format!(
+                "{}'s copy of this {} is not in a form its source can hold",
+                harness.display_name(),
+                kind.name()
+            ),
+        });
+    }
     let Some(decl) = manifest.declared(kind).get(name) else {
         return Err(CoreError::NotDeclared {
             kind,
@@ -378,7 +393,14 @@ pub(super) fn absorb_ops(
         },
         edited,
     )?;
-    if captured.carry.is_some() {
+    // A carry the manifest already holds changes nothing and is no reason
+    // to refuse: a fork's own carry is mostly what its first capture wrote
+    // there, and reading the carry's presence as work outstanding would
+    // leave every forked agent with skills at the conflict this absorb
+    // exists to end. What decides it is whether applying it would move the
+    // manifest, asked of `apply` itself rather than of a second reading of
+    // its rule.
+    if carry_needs_writing(manifest, name, captured.carry) {
         return Err(CoreError::ForkWidensAccess {
             name: crate::names::shown(name),
             problem: "its catalog settings would have to be written to kendex.toml first".into(),
@@ -395,4 +417,22 @@ fn existing_or_disabled(path: PathBuf) -> PathBuf {
     }
     let disabled = PathBuf::from(format!("{}.disabled", path.display()));
     if disabled.exists() { disabled } else { path }
+}
+
+/// Whether this carry still has something to write into the manifest. The
+/// plan that absorbs an edit writes no manifest, so a carry that would
+/// move one has to stop the absorb; one the manifest already holds is
+/// already recorded and stops nothing.
+fn carry_needs_writing(
+    manifest: &manifest::Manifest,
+    name: &str,
+    carry: Option<crate::engine::agent_carry::AgentCarry>,
+) -> bool {
+    let Some(carry) = carry else {
+        return false;
+    };
+    let mut after = manifest.clone();
+    carry.apply(&mut after, name);
+    after.agent_skills != manifest.agent_skills
+        || after.agent_frontmatter != manifest.agent_frontmatter
 }
