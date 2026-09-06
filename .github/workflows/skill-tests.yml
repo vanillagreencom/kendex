@@ -28,6 +28,9 @@ name: Skill Tests
 # ten runs' maximum with headroom, so a hang fails inside the budget instead
 # of running to the job ceiling; the compile steps carry their own for a cold
 # cache. The per-shard figures behind each budget are in the comment above it.
+# The budget is measured on the Linux leg: the macOS leg runs the same shards
+# on a runner that forks and spawns at less than half the pace, and carries
+# its own ceiling rather than a split of its own.
 
 "on":
   pull_request:
@@ -111,8 +114,9 @@ jobs:
           - os: macos-latest
             shard: pi-claude-bridge
     runs-on: ${{ matrix.os }}
-    # The macOS legs fork and spawn slower than the Linux ones on the same
-    # suites: first run, orch 13 min and guards 11 min against 4 and 4.
+    # The macOS legs on the same suites, first green run: orch 10m45s
+    # against 4m45s on Linux, guards 9m09s against 3m13s, rest 7m39s against
+    # 3m07s, review-gate 3m45s against 1m05s, linear 2m47s against 3m30s.
     timeout-minutes: ${{ matrix.os == 'macos-latest' && 30 || 15 }}
     steps:
       - uses: actions/checkout@v4
