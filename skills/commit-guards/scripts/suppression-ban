@@ -83,8 +83,19 @@ BASELINE_FILE="$(gg_resolve_path "$BASELINE_OPT" COMMIT_GUARDS_SUPPRESSION_BASEL
 EXCLUDES_FILE="$(gg_resolve_path "$EXCLUDES_OPT" COMMIT_GUARDS_SUPPRESSION_EXCLUDES "tools/suppression-ban-excludes" excludes)" || exit 2
 gg_load_excludes "$EXCLUDES_FILE"
 
-inventory="$(gg_policy_content .kendex-generated.json)" \
-  || gg_collection_error 'cannot read .kendex-generated.json; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
+# The read discipline gg_load_excludes uses: status 1 is the answer "the
+# commit has no such file", anything else is a measurement that already named
+# itself. A commit with no inventory is a project whose items are all
+# in-place, which has no renders to record; the empty inventory excludes
+# nothing, so every tracked file stays scanned. A present inventory that does
+# not parse still refuses below.
+inventory_status=0
+inventory="$(gg_policy_content .kendex-generated.json)" || inventory_status=$?
+case "$inventory_status" in
+  0) ;;
+  1) inventory='[]' ;;
+  *) gg_collection_error "refusing to run on an unread render inventory: .kendex-generated.json (exit $inventory_status, cause above)" ;;
+esac
 generated_paths_load "$inventory" || exit 2
 
 gg_tmpdir

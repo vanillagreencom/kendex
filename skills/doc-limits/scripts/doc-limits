@@ -261,8 +261,17 @@ if [ "$STAGED" -eq 0 ] && [ ! -f "$INVENTORY_SOURCE" ]; then
     INVENTORY_SOURCE="$TMP/generated.json"
   fi
 fi
-inventory="$(cat -- "$INVENTORY_SOURCE")" \
-  || collection_error 'cannot read .kendex-generated.json; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
+# An ABSENT inventory is an empty one: a project whose items are all in-place
+# has no renders to record, so the writer produces no file. Excluding nothing
+# is the fail-closed read — every tracked document stays measured. A source
+# that exists as something else, or that cannot be read, still refuses, and so
+# does a present inventory that does not parse.
+if [ ! -e "$INVENTORY_SOURCE" ] && [ ! -L "$INVENTORY_SOURCE" ]; then
+  inventory='[]'
+else
+  inventory="$(cat -- "$INVENTORY_SOURCE")" \
+    || collection_error 'cannot read .kendex-generated.json; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
+fi
 generated_paths_load "$inventory" || exit 2
 is_excluded() { # PATH — inclusion rows override both exclusion sources
   generated_path_contains "$1" \

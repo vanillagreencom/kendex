@@ -36,8 +36,15 @@ expect 0
 git -C "$R" add .kendex-generated.json
 expect 1
 git -C "$R" checkout HEAD -- .kendex-generated.json
+# No inventory in the commit: an all-in-place project writes none, so the
+# empty inventory excludes nothing and the render it used to cover is scanned.
 git -C "$R" rm -q --cached .kendex-generated.json
-expect 2
+expect 1
+printf 'pub fn ok() {}\n' >"$R/.agents/skills/rendered/lib.rs"
+git -C "$R" add -- .agents/skills/rendered/lib.rs
+expect 0
+printf '#![allow(dead_code)]\n' >"$R/.agents/skills/rendered/lib.rs"
+git -C "$R" add -- .agents/skills/rendered/lib.rs
 git -C "$R" add .kendex-generated.json
 
 printf '{}\n' >"$R/.kendex-generated.json"

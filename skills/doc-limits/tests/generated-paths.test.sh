@@ -44,8 +44,15 @@ expect 0 --staged
 git -C "$R" add .kendex-generated.json
 expect 1 --staged
 git -C "$R" checkout HEAD -- .kendex-generated.json
+# No inventory in the commit: an all-in-place project writes none, so the
+# empty inventory excludes nothing and the render it used to cover is measured.
 git -C "$R" rm -q --cached .kendex-generated.json
-expect 2 --staged
+expect 1 --staged
+printf 'rendered\n' >"$R/.agents/skills/rendered/SKILL.md"
+git -C "$R" add .agents/skills/rendered/SKILL.md
+expect 0 --staged
+head -c 1025 /dev/zero | tr '\0' x >"$R/.agents/skills/rendered/SKILL.md"
+git -C "$R" add .agents/skills/rendered/SKILL.md
 git -C "$R" add .kendex-generated.json
 rm "$R/.kendex-generated.json"
 expect 0
