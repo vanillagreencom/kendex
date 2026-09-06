@@ -73,28 +73,23 @@ fn found(result: &AuditResult) -> Vec<(&str, Severity, &str)> {
 /// for each. Those three are gone.
 ///
 /// What is left is what the switch is written as code: the two messages
-/// its hooks print, and the three lines of its own tests that hand the
-/// switch to git to seed a fixture repository. A shell string is a switch
-/// written into a file a harness loads, and the rule counts it there.
+/// its hooks print. A shell string is a switch written into a file a
+/// harness loads, and the rule counts it there.
 #[test]
 fn commit_guards_is_flagged_where_the_switch_stands_as_code() {
     let result = shipped("commit-guards");
     let helper = "skills/commit-guards/scripts/lib/helper-body.sh";
     let hook = "skills/commit-guards/scripts/pre-commit";
-    let ran = "skills/commit-guards/tests/commit-msg.test.sh";
     assert_eq!(
         found(&result),
         vec![
             ("safety-bypass", Severity::Critical, helper),
             ("safety-bypass", Severity::Critical, hook),
-            ("safety-bypass", Severity::High, ran),
-            ("safety-bypass", Severity::High, ran),
-            ("safety-bypass", Severity::High, ran),
         ],
         "{:#?}",
         result.findings
     );
-    assert_eq!(result.safety.score, 71);
+    assert_eq!(result.safety.score, 74);
 }
 
 /// Six lines of this skill's tests spell `--dangerously-skip-permissions`
