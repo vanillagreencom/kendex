@@ -64,15 +64,20 @@ export function HarnessSelect({
   onChange: (choice: Choice) => void;
 }) {
   const [targets, setTargets] = useState<InstallTarget[]>([]);
+  // The read's dependency is the kinds as one value, because the array
+  // itself is fresh on every render. Splitting that key back is where the
+  // emptiness has to survive: `"".split(",")` is one blank kind, which
+  // `ItemKind` has no variant for, so the command refuses the whole call
+  // and the picker is left with no row to tick. Naming no kind is what an
+  // empty key means, and the command reads that as every kind.
   const wanted = kinds.join(",");
 
   useEffect(() => {
     let live = true;
-    void commands
-      .installTargets(scope, wanted.split(",") as ItemKind[])
-      .then((r) => {
-        if (live && r.status === "ok") setTargets(r.data);
-      });
+    const asked = wanted === "" ? [] : (wanted.split(",") as ItemKind[]);
+    void commands.installTargets(scope, asked).then((r) => {
+      if (live && r.status === "ok") setTargets(r.data);
+    });
     return () => {
       live = false;
     };

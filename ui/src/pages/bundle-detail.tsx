@@ -5,7 +5,10 @@ import {
   BundleMemberLine,
   memberKey,
 } from "@/components/marketplaces/bundle-member-row";
-import type { Choice } from "@/components/marketplaces/harness-select";
+import {
+  type Choice,
+  isInstallable,
+} from "@/components/marketplaces/harness-select";
 import { RecordsUnreadableNote } from "@/components/marketplaces/packages-trouble";
 import { RepoAction } from "@/components/marketplaces/repo-action";
 import {
@@ -120,9 +123,10 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
   // could tell. Landing place, not browsed one — the engine mutates where
   // the install goes.
   const recordsUnknown = detail?.recordsUnreadable ?? false;
-  // Which tools the picker may offer follows what is actually ticked; with
-  // nothing ticked the set is every kind, which is what the whole bundle
-  // would carry.
+  // Which tools the picker may offer follows what is actually ticked. With
+  // nothing ticked it names no kind, and no kind is read as every kind —
+  // the same answer Install all is refused by, since a bundle install
+  // declares every kind whatever the set happens to hold.
   const selectedKinds = [
     ...new Set(
       (detail?.members ?? [])
@@ -152,8 +156,14 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
         }
         action={
           subscribed ? (
+            // This installs with whatever the bar's tool picker last
+            // answered, so a picker emptied by hand holds it back the same
+            // way it holds back the bar's own button: an install to no tool
+            // reports success over a plan that wrote nothing.
             <Button
-              disabled={busy || !detail || recordsUnknown}
+              disabled={
+                busy || !detail || recordsUnknown || !isInstallable(choice)
+              }
               onClick={() => installItems([])}
             >
               Install all
