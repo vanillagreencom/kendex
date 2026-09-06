@@ -63,11 +63,11 @@ fn run_with(
     let mut rows: Vec<ItemSafety> = Vec::new();
     let mut input_rows: HashMap<(String, String), usize> = HashMap::new();
     for item in &state.items {
-        let input = input_for(item);
+        let (input, destination) = input_for(item);
         let input_key = (item.name.clone(), input.content_hash());
         let target = SafetyTarget {
             harness: item.harness,
-            location: input.location.clone(),
+            location: destination,
         };
         if let Some(&row) = input_rows.get(&input_key) {
             rows[row].targets.push(target);

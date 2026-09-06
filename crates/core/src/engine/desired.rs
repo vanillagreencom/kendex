@@ -34,6 +34,12 @@ pub struct Desired {
     /// provenance clash.
     pub recorded_fork: bool,
     pub hash: String,
+    /// Where the catalog holds this item, `/`-spelled and relative to the
+    /// catalog root — what the safety rules read, and what a plan's
+    /// advisory rows name. `None` for an installation no catalog file
+    /// backs: a plugin switch, a hook whose command the declaration
+    /// itself carries.
+    pub source_path: Option<String>,
     pub upstream_skills: Option<Vec<String>>,
     /// Set where deriving the place again could name another one — a
     /// command stored as a skill, a skill's tree and link — so the lock
@@ -375,6 +381,12 @@ pub(super) struct ItemCtx<'a> {
 impl ItemCtx<'_> {
     pub(super) fn reasons_for(&self, harness: HarnessId) -> BTreeSet<crate::lock::Reason> {
         self.reasons.get(&harness).cloned().unwrap_or_default()
+    }
+
+    /// Where the catalog holds this item, as every surface that cites a
+    /// source location spells it.
+    pub(super) fn source_path(&self) -> String {
+        self.sealed.catalog_path(self.item_path)
     }
 
     pub(super) fn recorded_fork(&self, kind: ItemKind) -> bool {

@@ -163,6 +163,7 @@ pub(super) fn desired_agent(
                 ctx.name,
                 harness,
             )?,
+            source_path: Some(ctx.source_path()),
             upstream_skills: Some(skills.upstream_now.clone()),
             emitted: None,
             reasons: ctx.reasons_for(harness),

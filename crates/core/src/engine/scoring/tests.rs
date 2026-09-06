@@ -182,6 +182,7 @@ fn item(
         source_commit: None,
         recorded_fork: false,
         hash: String::new(),
+        source_path: Some(format!("{}s/{name}", kind.name())),
         upstream_skills: None,
         emitted: None,
         reasons: std::collections::BTreeSet::new(),

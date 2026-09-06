@@ -45,16 +45,14 @@ fn shape(setup: &[&str], args: &[&str]) -> Vec<String> {
 }
 
 /// The block every verb that plans prints before its own lines: one
-/// score per item and matching result, each naming every position it
-/// covers, and one conflict however many tools it blocks.
+/// score per item and matching result, each finding at the one catalog
+/// file it was read from, and one conflict however many tools it blocks.
 fn planned_block() -> Vec<&'static str> {
     vec![
         "safety: skill commit-guards for Claude Code, Codex scores 75/100",
         "  [finding]",
-        "  also at <project>/.agents/skills/commit-guards/SKILL.md:5",
         "safety: skill tidy for Claude Code, Codex scores 75/100",
         "  [finding]",
-        "  also at <project>/.agents/skills/tidy/SKILL.md:5",
         "conflict: skill commit-guards for Claude Code, Codex: <project>/.claude/skills/commit-guards already holds files kendex did not write",
         "  also at <project>/.agents/skills/commit-guards",
         "  differs from the catalog in 2 files: SKILL.md, references/rules.md",

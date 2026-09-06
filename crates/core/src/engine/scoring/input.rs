@@ -6,9 +6,18 @@ use crate::quality::{AuditInput, Content, McpEntry, UNREADABLE_PLUGIN};
 
 use super::super::desired::{Artifact, Desired};
 
-/// What this item's rendering gives the rules to read.
-pub(super) fn input_for(item: &Desired) -> AuditInput {
-    let (location, content) = match &item.artifact {
+/// What this item's rendering gives the rules to read, and the place it
+/// would be written.
+///
+/// The two are not the same string, and the audit takes the source one: a
+/// preview prints before anything is written, so a destination it named
+/// would be a file the reader cannot open. The catalog path is what the
+/// rules read, and it is what `check --catalog` and the marketplace
+/// preview name for the same bytes. The destination stays the row's
+/// target — where this rendering lands is a separate question from where
+/// the rule fired.
+pub(super) fn input_for(item: &Desired) -> (AuditInput, String) {
+    let (destination, content) = match &item.artifact {
         Artifact::File { path, bytes } => (
             crate::paths::slashed(path),
             Content::Document {
@@ -25,13 +34,17 @@ pub(super) fn input_for(item: &Desired) -> AuditInput {
         ),
         Artifact::Registration { script, edits } => registration(item, script.as_ref(), edits),
     };
-    AuditInput {
+    let input = AuditInput {
         kind: item.kind,
         name: item.name.clone(),
         harness: Some(item.harness),
-        location,
+        location: item
+            .source_path
+            .clone()
+            .unwrap_or_else(|| destination.clone()),
         content,
-    }
+    };
+    (input, destination)
 }
 
 type Script = (std::path::PathBuf, Vec<u8>);

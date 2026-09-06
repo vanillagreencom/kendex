@@ -207,6 +207,7 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
                     ctx.name,
                     *harness,
                 )?,
+                source_path: Some(ctx.source_path()),
                 upstream_skills: None,
                 emitted: emitted.clone(),
                 reasons: ctx.reasons_for(*harness),

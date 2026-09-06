@@ -111,6 +111,7 @@ pub(super) fn desired_custom_hooks(
                     )
                     .as_bytes(),
                 ),
+                source_path: None,
                 upstream_skills: None,
                 emitted: None,
                 reasons: BTreeSet::from([Reason::Requested]),

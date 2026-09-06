@@ -141,6 +141,81 @@ fn add_apply_and_refresh_print_the_same_block() {
     assert_eq!(block(&refreshed), expected, "refresh differs from add");
 }
 
+/// The subtext on a planned row names the catalog file the rules read.
+///
+/// A preview prints before anything is written, so the install
+/// destination it used to name is a file that does not exist yet: a
+/// reader who follows the location finds nothing there.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_preview_names_the_catalog_file_it_read() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = declared(&home, RISKY);
+
+    // No `-y` and no terminal: the plan and its advisory block print,
+    // then the write refuses. This is the state the subtext is read in.
+    let preview = kendex(&home, &project, &["apply"]);
+    assert!(
+        !preview.status.success(),
+        "a non-tty apply without -y writes nothing: {preview:?}"
+    );
+    let printed = String::from_utf8_lossy(&preview.stderr).into_owned();
+    assert!(
+        !project.join(".claude/skills/deploy/SKILL.md").exists(),
+        "the preview wrote the file it cites: {printed}"
+    );
+
+    let findings = finding_lines(&printed);
+    assert_eq!(findings.len(), 1, "{printed}");
+    assert!(
+        findings[0].contains("(skills/deploy/SKILL.md:"),
+        "the subtext does not name the catalog file: {printed}"
+    );
+    assert!(
+        !findings[0].contains(".claude/skills/deploy"),
+        "the subtext names the destination, which does not exist yet: {printed}"
+    );
+}
+
+/// `check --catalog` and a write verb mean the same thing by the
+/// parenthesised path: one file, one location, whichever surface reads it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_catalog_check_and_a_write_verb_cite_one_location() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = declared(&home, RISKY);
+    let catalog = home.join("catalog");
+
+    // The subtext each surface prints, taken off the same finding line.
+    let cited = |output: &Output| -> Vec<String> {
+        let printed = String::from_utf8_lossy(&output.stderr).into_owned();
+        finding_lines(&printed)
+            .iter()
+            .map(|line| {
+                let at = line
+                    .rfind(" (")
+                    .unwrap_or_else(|| panic!("no location as subtext: {printed}"));
+                line[at + 2..line.len() - 1].to_owned()
+            })
+            .collect()
+    };
+
+    let checked = kendex(
+        &home,
+        &home,
+        &["check", "--catalog", catalog.to_str().unwrap()],
+    );
+    assert!(checked.status.success(), "{checked:?}");
+    let applied = kendex(&home, &project, &["apply", "-y"]);
+    assert!(applied.status.success(), "{applied:?}");
+
+    let expected = cited(&checked);
+    assert_eq!(expected.len(), 1, "the check found nothing to compare");
+    assert_eq!(cited(&applied), expected, "apply cites another place");
+}
+
 /// A clean package still says what it scored. A clean row going silent
 /// would make "scored 100" and "never scored" read alike.
 #[test]
