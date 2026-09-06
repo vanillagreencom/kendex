@@ -113,13 +113,15 @@ run_check() {
   set -e
 }
 
-json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
+json() { jq -r "$@" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 
 # observe EXPECT — prints the run's value of every `name=` field EXPECT names,
 # in EXPECT's order. Plain names are JSON result fields, a key the result does
 # not carry reads ABSENT;
 #   rc              exit status
-#   path            the basename of the reported path, or null
+#   path            the reported path with the staged worktree's tmp/ prefix
+#                   removed, or null; a path anywhere else prints whole and
+#                   fails the row
 #   detail~<text>   whether the detail names <text> (`+` reads as a space):
 #                   the detail is what the rejected reviewer acts on, and
 #                   which shape it saw lives nowhere else
@@ -132,7 +134,7 @@ observe() {
     name="${token%%=*}"
     case "$name" in
       rc) value="$RC" ;;
-      path) value="$(json '.path | if . == null then "null" else sub(".*/"; "") end')" ;;
+      path) value="$(json --arg tmp "$WT/tmp/" '.path | if . == null then "null" else ltrimstr($tmp) end')" ;;
       detail~*) needle="${name#detail~}"; value="$(json '.detail // ""' | grep -qF -- "${needle//+/ }" && echo true || echo false)" ;;
       detail_present) value="$(json '(.detail | type) == "string" and .detail != ""')" ;;
       stdout~*) needle="${name#stdout~}"; value="$(grep -qF -- "${needle//+/ }" <<<"$OUT" && echo true || echo false)" ;;
