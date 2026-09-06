@@ -96,7 +96,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `open-terminal` | Terminal handoff; model, effort, and permission flags via `--launch-flags` |
 | `lanes` | Enumerate harness auth lanes; `pick` prints the launch env prefix for the least-loaded qualifying lane, exit 3 when none qualifies; `context` reports each live lane's context use |
 | `reconcile-work-items` | Read-only tracker sweep (parked containers, items stale past `RECONCILE_STALE_HOURS`, Done items with unchecked boxes). Exit 1 on findings |
-| `oversee-watch` | Block until the fleet needs the overseer, then print one wake carrying every merged and triage line |
+| `oversee-watch` | Block until the fleet needs the overseer, then print one wake carrying every event the pass found |
 
 Every script takes `--help` bar `pr-view-json` and `resolve-base-branch`, whose only argument is a path. Waiter and gate semantics, including the `3` exit on hard auth failure and reading the effective gate mode (`approval`, `review`, `off`) only through `approval-wait --resolve-mode`: [references/gates.md](references/gates.md). Artifact checks: [references/artifact-checks.md](references/artifact-checks.md). Schemas: `schemas/workflow-state.md` (state file), `schemas/dev-return.md` (dev completion artifact), `schemas/dev-round.md` (fix-round item set), [`../reviewer/schemas/review-finding.md`](../reviewer/schemas/review-finding.md) (review/QA findings).
 

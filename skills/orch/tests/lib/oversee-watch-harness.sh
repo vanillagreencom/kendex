@@ -26,9 +26,10 @@ OVERSEE_TEST_REAL_DATE="$(command -v date)" \
 [[ -x "$OVERSEE_TEST_REAL_DATE" ]] \
   || { echo "oversee-watch harness: resolved date is not executable: $OVERSEE_TEST_REAL_DATE" >&2; exit 1; }
 
-# Byte-exact 120x40 captures of a live Codex 0.151.0 pane. A Codex shape is
-# asserted from one of these, never hand-written: a predicate reasoned
-# instead of measured is wrong about the screen it claims to describe.
+# Byte-exact captures of live panes: 120x40 of Codex 0.151.0, and the dialog
+# screens of Claude Code 2.1.261. A dialog shape is asserted from one of
+# these, never hand-written: a predicate reasoned instead of measured is wrong
+# about the screen it claims to describe.
 CODEX_PANES="$REPO_ROOT/skills/orch/tests/fixtures/oversee-watch"
 
 PASS=0

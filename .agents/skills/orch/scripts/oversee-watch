@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# oversee-watch blocks until the fleet needs the overseer, reports one wake,
-# and exits. The workflow handles every EVENT line and re-runs it.
+# oversee-watch blocks until the fleet needs the overseer, reports every event
+# the pass found as one block, and exits. The workflow handles every EVENT line
+# and re-runs it.
 #
 # Pass order: one lane snapshot, pr-watch, merged items, team triage, lane
-# classification, heartbeat. Every event carries the
-# latest pr-watch context. Live tracker and pane reads remain authoritative;
-# persisted state holds only edge keys. Usage, event details, configuration,
-# and failure contracts live in usage().
+# classification, heartbeat. A check that finds an event records it and the
+# pass runs on to the next check, so no kind starves another: a reducer line
+# on every pass or a lane parked on its limit banner would otherwise be the
+# only thing the watch ever said. The block carries the latest pr-watch
+# context once. Live tracker and pane reads remain authoritative; persisted
+# state holds only edge keys. Usage, event details, configuration, and failure
+# contracts live in usage().
 
 set -euo pipefail
 
@@ -19,10 +23,11 @@ Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
                      [--item ISSUE_ID]... [--repo OWNER/REPO]...
                      [LANE_WINDOW...]
 
-Blocks until the fleet needs the overseer, then prints one event or one line per
-merged and triage item. Re-run after handling it with the live fleet in scope.
+Blocks until the fleet needs the overseer, then prints every event the pass
+found as one block, each line prefixed with its kind, and exits once. Re-run
+after handling every line with the live fleet in scope.
 
-Events, checked in this order every pass:
+Events, checked and reported in this order every pass:
   EVENT pr-watch rc=N        new review-gate attention; reducer output follows
   EVENT merged <PR> <branch> an --item PR merged at or after --since
   EVENT triage <item>        an item created at or after --since that is absent
@@ -63,7 +68,8 @@ Events, checked in this order every pass:
                              tail follows
   EVENT heartbeat            --max-loops passes with no event; open PRs follow
 
-The latest pr-watch attention lines follow every event when any exist. Triage
+The latest pr-watch attention lines close the block when any exist and the
+pr-watch event did not open it. Triage
 reads the live tracker list and rebuilds only acknowledged triage keys in the
 first repository's OVERSEE_WATCH_STATE_DIR baseline from kept or canceled
 verdicts. Lane prompts use pane and turn.
@@ -85,7 +91,7 @@ Options:
                       tmux's own target form, names one in another session
 
 Exit codes:
-  0  an EVENT line was printed
+  0  at least one EVENT line was printed
   2  usage or global failure: auth, repository, PR, tracker,
      watch-state, or tmux-lane read failed. A state write can fail after its
      event was printed. Pr-watch commits repository baselines in order, so
@@ -215,17 +221,23 @@ watch_state_init() {
 # `<pr>\t<kind>` and triage's `triage\t<id>`:
 #   lane-asking<TAB><lane><TAB><fingerprint>
 #   usage-limit<TAB><lane><TAB><first-seen-epoch>|<pane key>|<reset key>
+#   lane-exited<TAB><lane><TAB><pane key>
+#   lane-idle<TAB><lane><TAB><pane key>
 #   handoff<TAB><item><TAB><record checksum>
 # The usage-limit value is split apart where the event is emitted, some 200
 # lines below where it is written; the reset key's own layout is
 # usage_reset_key's.
 # Each helper takes the whole baseline blob and returns the answer or the
 # rewritten blob, so a pass mutates a local and commits once.
-# One per-lane row per KIND in the watch state, both laid out above:
+# One per-lane row per KIND in the watch state, all laid out above:
 # `lane-asking` holds the prompt fingerprint a lane was last reported on,
 # `usage-limit` the pass clock this watch first saw a lane's limit banner on,
-# the pane it saw it in, and the wall it named. Same three columns, same file,
-# one set of readers.
+# the pane it saw it in, and the wall it named; `lane-exited` and `lane-idle`
+# the pane a lane read as exited or idle on the previous pass, the first half
+# of the two consecutive passes those kinds need. Rows, not process globals:
+# a pass that found any event exits the process, so with a lane parked on its
+# banner every pass is a first pass, and a debounce kept in memory never
+# reaches its second. Same three columns, same file, one set of readers.
 lane_row_get() {
   awk -F'\t' -v kind="$1" -v lane="$3" '$1 == kind && NF == 3 && $2 == lane { print $3 }' <<<"$2"
 }
@@ -273,19 +285,32 @@ WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens'
 PANE_MARKER_RE='^❯|^›'
 # The live input a lane is sitting at, as opposed to a turn it already took:
 # one signature per harness, both measured off a running session.
-#   Claude Code draws its composer as the marker then U+00A0, draft or not,
-#   and indents its dialog rows, so only the composer reaches column 0.
+#   Claude Code draws its composer as the marker then U+00A0, draft or not.
+#   Its permission dialog indents its rows; its AskUserQuestion dialog draws
+#   the selected row at column 0, DIALOG_ROW_RE below.
 #   Codex draws its composer, its placeholder, its draft AND its selected
 #   dialog row all as the marker, a blank and text — the same shape as a turn —
 #   and always draws one of them below the transcript. So every Codex screen
 #   ends in a live-input marker line, and its marker alone is the signature.
-# The last marker line is the live input when it carries either signature;
-# pane_below_last_turn holds the rest of the rule.
+# The last marker line is the live input when it carries any of the three
+# signatures; pane_below_last_turn holds the rest of the rule.
 # Byte escapes, never `\u`: bash leaves a `\u` escape unexpanded in the C
 # locale, and an awk that does not expand one either then matches nothing.
 # gawk does expand it, so no test on a gawk runner can catch that spelling.
 CLAUDE_COMPOSER_RE=$'^\xe2\x9d\xaf\xc2\xa0'
 CODEX_MARKER_RE='^›'
+# A dialog's selected row, drawn at column 0: measured on Claude Code's
+# AskUserQuestion screen (fixtures/oversee-watch/claude-dialog-askuserquestion),
+# where `❯ 1. Yes` opens the row and the question sits ABOVE it, and on every
+# Codex dialog. It is the live input the lane is waiting at, never a turn:
+# read as a turn it becomes the boundary, and the question above it falls out
+# of the slice. A submitted turn that itself opens with a numbered item reads
+# as live input too and widens the slice by one turn: toward a stale banner
+# or dialog above it, and, when a stale interrupt hint sits in that turn,
+# toward lane_limit_banner reading a live banner as work in flight. Only a
+# turn a human typed opens that way. `[.]`, not `\.`: awk expands escapes in
+# a -v value.
+DIALOG_ROW_RE='^(❯|›) [0-9]+[.] '
 
 parse_argv "$@"
 
@@ -432,8 +457,7 @@ check_merged() {
   hits="${hits%$'\n'}"
   [[ -n "$hits" ]] || return 0
   printf '%s\n' "$hits"
-  pr_watch_context
-  exit 0
+  PASS_EVENT=1
 }
 
 check_triage() {
@@ -492,8 +516,7 @@ check_triage() {
   while IFS= read -r id; do
     echo "EVENT triage $id"
   done <<<"$new_ids"
-  pr_watch_context
-  exit 0
+  PASS_EVENT=1
 }
 
 # Where an item's workflow state lives. The lane writes it from inside its
@@ -523,7 +546,8 @@ item_state_dir() {
 # relaunch from reporting it again, and a record the relaunched lane stamped
 # `.resumed_at` on is spent. Ordered after lane-exited and before
 # usage-limit: the lane's exit is the older news, and a spent account is not
-# what a handed-off lane is waiting on.
+# what a handed-off lane is waiting on. Every item's record is reported in the
+# pass that finds it, and the rows are committed once, after the lines are out.
 check_handoff() {
   [[ ${#ITEMS[@]} -gt 0 ]] || return 0
   local item dir rec key prior errf="$WORK_DIR/handoff.err" state="${PW_SEEN[0]}"
@@ -543,11 +567,9 @@ check_handoff() {
     prior="$(lane_row_get handoff "$state" "$item")"
     state="$(lane_row_set handoff "$state" "$item" "$key")"
     [[ "$key" != "$prior" ]] || continue
-    lane_row_commit "$state"
     echo "EVENT handoff $item"
     printf '%s\n' "$rec"
-    pr_watch_context
-    exit 0
+    PASS_EVENT=1
   done
   state="$(lane_row_prune handoff "$state" "${ITEMS[@]}")"
   lane_row_commit "$state"
@@ -600,7 +622,8 @@ note_probe_unusable() {
 # on the visible screen, and reporting it every pass buries the live lanes.
 #
 # The boundary is the last marker line, unless that line is the live input the
-# lane is sitting at — in which case it is the marker line before it.
+# lane is sitting at — a composer or a dialog's selected row — in which case it
+# is the marker line before it.
 #
 # A marker line that is the LAST line of the capture counts as live input
 # whatever it looks like. Nothing sits after it, so the wider window costs
@@ -609,10 +632,10 @@ note_probe_unusable() {
 # usage-limit into a silent no-op for the lane. Unrecognized fails toward a
 # stale banner, never toward silence.
 pane_turn_slice() {
-  awk -v mode="$2" -v marker="$PANE_MARKER_RE" -v composer="$CLAUDE_COMPOSER_RE" -v codex="$CODEX_MARKER_RE" '
+  awk -v mode="$2" -v marker="$PANE_MARKER_RE" -v composer="$CLAUDE_COMPOSER_RE" -v codex="$CODEX_MARKER_RE" -v dialog="$DIALOG_ROW_RE" '
     { line[NR] = $0; if ($0 ~ marker) { prev = last; last = NR } }
     END {
-      live = (last > 0 && (last == NR || line[last] ~ composer || line[last] ~ codex))
+      live = (last > 0 && (last == NR || line[last] ~ composer || line[last] ~ codex || line[last] ~ dialog))
       turn = live ? prev : last
       first = mode == "before" ? 1 : turn + 1
       final = mode == "before" ? turn : NR
@@ -651,11 +674,6 @@ lane_row_prune() {
     NF && !($1 == kind && !($2 in watched))
   ' <<<"$state"
 }
-
-# Watch-list positions whose harness read as exited on the previous pass.
-LANE_SHELL_SEEN=""
-# Watch-list positions that sat at an idle harness prompt on the previous pass.
-LANE_IDLE_SEEN=""
 
 # LANE_OBS columns are watch-list position, ready/gone, pane pid, current
 # command, and server-plus-pane occurrence key. Capture bytes live in the file
@@ -701,6 +719,8 @@ observe_lanes() {
       LANE_OBS+="$i"$'\t'"gone"$'\t\t\t\n'
       state="$(lane_row_clear lane-asking "$state" "$lane")"
       state="$(lane_row_clear usage-limit "$state" "$lane")"
+      state="$(lane_row_clear lane-exited "$state" "$lane")"
+      state="$(lane_row_clear lane-idle "$state" "$lane")"
       continue
     fi
     errf="$WORK_DIR/lane-probe.$i.err"
@@ -749,30 +769,31 @@ observe_lanes() {
     fi
   done
   state="$(lane_row_prune usage-limit "$state" "${LANES[@]}")"
+  state="$(lane_row_prune lane-exited "$state" "${LANES[@]}")"
+  state="$(lane_row_prune lane-idle "$state" "${LANES[@]}")"
   lane_row_commit "$state"
 }
 
 check_lanes() {
   # No lane to watch still leaves the items: a handoff is read from state.
   [[ ${#LANES[@]} -gt 0 ]] || { check_handoff; return 0; }
-  local lane pane below cmd pid state probe i states="" shell_now="" idle_now="" asking_now="" claims="" claimed pane_key
+  local lane pane below cmd pid state probe i states="" asking_now="" walled_now="" claims="" claimed pane_key
   local seen seen_at seen_pane seen_key reset_at reset_utc reset_note event
-  local asking_state="${PW_SEEN[0]}" next_state fingerprint prior turn_identity
+  local asking_state fingerprint prior turn_identity idle
+  # One liveness read and one pane capture per lane per pass: a lane's kind is
+  # decided from a single observation, never from two screens taken apart. The
+  # pid leads the format so a command carrying a space cannot shift the split.
+  # A lane whose window is gone is reported here and is `gone` to every loop
+  # below: it has no pane to classify.
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
     if [[ "$(lane_state "$LANE_OBS" "$i")" != ready ]]; then
       echo "EVENT window-gone $lane"
-      pr_watch_context
-      exit 0
+      PASS_EVENT=1
+      states+="$i"$'\t'"gone"$'\n'
+      continue
     fi
-  done
-  # One liveness read and one pane capture per lane per pass: a lane's kind is
-  # decided from a single observation, never from two screens taken apart. The
-  # pid leads the format so a command carrying a space cannot shift the split.
-  i=0
-  for lane in "${LANES[@]}"; do
-    i=$((i + 1))
     pid="$(lane_field "$LANE_OBS" "$i" 3)"
     cmd="$(lane_field "$LANE_OBS" "$i" 4)"
     state=live
@@ -795,42 +816,49 @@ check_lanes() {
   # nothing running under it IS that lane, finished; the pane tail carries
   # why. Two consecutive passes: a live harness can hold a childless shell in
   # the foreground for one poll, and relaunching a working lane costs more
-  # than one interval.
+  # than one interval. The first pass is a `lane-exited` row keyed by the
+  # pane, so the second can be the next run's first, and a replacement pane
+  # starts over.
+  asking_state="${PW_SEEN[0]}"
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
     if [[ "$(lane_state "$states" "$i")" == exited ]]; then
-      shell_now+="$i"$'\n'
-      if grep -qxF -- "$i" <<<"$LANE_SHELL_SEEN"; then
+      pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
+      prior="$(lane_row_get lane-exited "$asking_state" "$lane")"
+      asking_state="$(lane_row_set lane-exited "$asking_state" "$lane" "$pane_key")"
+      if [[ "$prior" == "$pane_key" ]]; then
         echo "EVENT lane-exited $lane"
         pane="$(cat -- "$(lane_pane_file "$i")")"
         [[ -z "$pane" ]] || pane_tail "$pane"
-        next_state="$(lane_row_clear lane-asking "$asking_state" "$lane")"
-        lane_row_commit "$next_state"
-        pr_watch_context
-        exit 0
+        PASS_EVENT=1
+        asking_state="$(lane_row_clear lane-asking "$asking_state" "$lane")"
       fi
+    else
+      asking_state="$(lane_row_clear lane-exited "$asking_state" "$lane")"
     fi
   done
-  LANE_SHELL_SEEN="$shell_now"
+  lane_row_commit "$asking_state"
   check_handoff
-  # check_handoff commits its rows through PW_SEEN; the copy taken above would
-  # write them back out on the next commit below.
+  # check_handoff commits its rows through PW_SEEN; a copy taken before it
+  # would write them back out on the next commit below.
   asking_state="${PW_SEEN[0]}"
   # The harness is still running and the account is spent: every lane on that
   # account dies with it, so the config dir is the actionable part and a live
-  # claim is where it is recorded. Before `lane-asking` — a limit banner can sit
-  # above a stale prompt, and the account is the news. One pass: a banner is
-  # terminal for that account window, not a screen a poll can catch mid-draw.
-  # Only below the last user turn: a banner the lane has since worked past is
-  # the screen remembering a spent window that has since reset.
+  # claim is where it is recorded. A walled lane is neither asking nor idle: a
+  # limit banner can sit above a stale prompt, and the account is the news, so
+  # the two loops below skip it. One pass: a banner is terminal for that
+  # account window, not a screen a poll can catch mid-draw. Only below the last
+  # user turn: a banner the lane has since worked past is the screen
+  # remembering a spent window that has since reset.
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
-    if [[ "$(lane_state "$states" "$i")" == exited ]]; then continue; fi
+    if [[ "$(lane_state "$states" "$i")" != live ]]; then continue; fi
     pane="$(cat -- "$(lane_pane_file "$i")")"
     below="$(pane_below_last_turn "$pane")"
     if [[ -n "$(lane_limit_banner "$below")" ]]; then
+      walled_now+="$i"$'\n'
       # The detail is a nicety; a claim store this process cannot read must
       # not take down the event that carries the pane tail.
       claims="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" || true)"
@@ -854,6 +882,7 @@ check_lanes() {
       seen="$(lane_row_get usage-limit "$asking_state" "$lane")"
       reset_at=""
       if [[ -n "$seen" ]]; then
+        # shellcheck disable=SC2034  # the pane column answers only in observe_lanes
         IFS='|' read -r seen_at seen_pane seen_key <<<"$seen"
         reset_at="$(usage_reset_epoch "$seen_key" "$seen_at")"
       fi
@@ -867,8 +896,7 @@ check_lanes() {
       fi
       echo "EVENT $event $lane${claimed:+ $claimed}$reset_note"
       [[ -z "$pane" ]] || pane_tail "$pane"
-      pr_watch_context
-      exit 0
+      PASS_EVENT=1
     fi
   done
   # A pane keeps its last screen, so neither a stale prompt under a bare shell
@@ -878,7 +906,8 @@ check_lanes() {
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
-    if [[ "$(lane_state "$states" "$i")" == exited ]]; then continue; fi
+    if [[ "$(lane_state "$states" "$i")" != live ]]; then continue; fi
+    if grep -qxF -- "$i" <<<"$walled_now"; then continue; fi
     pane="$(cat -- "$(lane_pane_file "$i")")"
     below="$(pane_below_last_turn "$pane")"
     if grep -Eq -- "$LANE_ASKING_RE" <<<"$below"; then
@@ -891,34 +920,45 @@ check_lanes() {
       if [[ "$fingerprint" == "$prior" ]]; then continue; fi
       echo "EVENT lane-asking $lane"
       pane_tail "$pane"
-      lane_row_commit "$asking_state"
-      pr_watch_context
-      exit 0
+      PASS_EVENT=1
     else
       asking_state="$(lane_row_clear lane-asking "$asking_state" "$lane")"
     fi
   done
-  lane_row_commit "$asking_state"
   # The round is over and nobody is driving: the harness is up, at its input
   # prompt, with nothing in flight. Two consecutive passes, because the screen
-  # between a finished tool call and the next one reads the same.
+  # between a finished tool call and the next one reads the same; the first is
+  # a `lane-idle` row keyed by the pane, as for lane-exited above. A lane that
+  # is walled, asking, working or exited is not idle and drops its row.
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
-    if [[ "$(lane_state "$states" "$i")" == exited ]]; then continue; fi
-    if grep -qxF -- "$i" <<<"$asking_now"; then continue; fi
-    pane="$(cat -- "$(lane_pane_file "$i")")"
-    if grep -Eq -- "$WORKING_RE" <<<"$(pane_below_last_turn "$pane")"; then continue; fi
-    if ! grep -Eq -- "$PANE_MARKER_RE" <<<"$(pane_below_last_turn "$pane")"; then continue; fi
-    idle_now+="$i"$'\n'
-    if grep -qxF -- "$i" <<<"$LANE_IDLE_SEEN"; then
+    idle=0
+    if [[ "$(lane_state "$states" "$i")" == live ]] \
+       && ! grep -qxF -- "$i" <<<"$walled_now" \
+       && ! grep -qxF -- "$i" <<<"$asking_now"; then
+      pane="$(cat -- "$(lane_pane_file "$i")")"
+      below="$(pane_below_last_turn "$pane")"
+      if ! grep -Eq -- "$WORKING_RE" <<<"$below" && grep -Eq -- "$PANE_MARKER_RE" <<<"$below"; then
+        idle=1
+      fi
+    fi
+    if [[ "$idle" -eq 0 ]]; then
+      asking_state="$(lane_row_clear lane-idle "$asking_state" "$lane")"
+      continue
+    fi
+    pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
+    prior="$(lane_row_get lane-idle "$asking_state" "$lane")"
+    asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" "$pane_key")"
+    if [[ "$prior" == "$pane_key" ]]; then
       echo "EVENT idle-after-return $lane"
       pane_tail "$pane"
-      pr_watch_context
-      exit 0
+      PASS_EVENT=1
     fi
   done
-  LANE_IDLE_SEEN="$idle_now"
+  # Committed after every asking and idle line is out: a row written ahead of
+  # its event would make a crash between the two lose the question for good.
+  lane_row_commit "$asking_state"
 }
 
 heartbeat() {
@@ -940,14 +980,22 @@ loop=0
 # unstamped sighting forward: there is no state below in which a row exists
 # without the clock that earned it.
 PASS_NOW=""
+# Set by any check that printed an event this pass. Every check runs on either
+# way; the pass ends here, once, with the pr-watch context closing the block.
+PASS_EVENT=0
 while :; do
   loop=$((loop + 1))
   PASS_NOW="$(date -u +%s)" || die "could not read the current UTC time"
+  PASS_EVENT=0
   observe_lanes
   check_pr_watch
   check_merged
   check_triage
   check_lanes
+  if [[ "$PASS_EVENT" -eq 1 ]]; then
+    pr_watch_context
+    exit 0
+  fi
   [[ "$loop" -lt "$MAX_LOOPS" ]] || heartbeat
   sleep "$INTERVAL"
 done
