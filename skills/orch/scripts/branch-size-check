@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+# branch-size-check — measure a branch's added lines against the allowance its
+# issue states, before the push (kendex KEN-1185).
+#
+# Usage:
+#   branch-size-check --worktree PATH --issue ID [--state-dir DIR] [--json]
+#
+# --issue is the normalized workflow-state key: `issue-N` for GitHub, the
+# tracker identifier (KEN-123) otherwise. The state file resolves exactly like
+# any other workflow-state call: --state-dir, then $ORCH_STATE_DIR, then tmp/
+# under the caller's working directory — which is the caller's, not the
+# worktree's, so name it when the two differ.
+#
+# Added lines only are counted, from `git diff --numstat --find-renames`
+# against the base branch: a pure move costs nothing and a rewrite costs what
+# it adds. They are shown in three parts — production; test, a path under
+# test/, tests/ or __tests__/ or named tests.rs, *test_util.rs, *.test.* or
+# *.spec.*; render mirror, a path under ORCH_SIZE_RENDER_ROOTS whose source
+# changed in the same diff — and only the first two are judged. The split is
+# by path: a test module inside a source file counts with its file.
+#
+# The allowance is the issue's own `**Expected delta**` line and nothing else,
+# in one of two forms:
+#   **Expected delta**: 250 lines
+#   **Expected delta**: 250 lines, 120 test lines
+# Production additions past the first count refuse, and test additions past
+# the second. With no test count the test lines are shown and not judged. With
+# no line at all nothing is judged: the verdict is allowance_missing, the
+# counts are reported for the reviewer, and the exit is 0. A line in any other
+# shape is a usage failure fixed on the issue.
+#
+# The verdict is recorded as workflow state pr.size_check, bound to the base
+# and head SHAs it measured; every run overwrites it.
+#
+# Exit codes: 0 within the allowance, or no allowance to judge by; 2 a usage
+# or environment failure, whose message names the cause; 3 the branch is over
+# an allowance and must be cut before it is pushed.
+#
+# ORCH_SIZE_RENDER_ROOTS   render-mirror roots, blank separated
+#                          (default ".agents .claude .codex .pi")
+
+set -euo pipefail
+
+PROG="branch-size-check"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+print_usage() {
+  sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'
+}
+
+# `.env.local` is sourced as shell by the settings loader, so a help request is
+# answered before any project configuration is read.
+for _arg in "$@"; do
+  case "$_arg" in
+  --help | -h | help) print_usage; exit 0 ;;
+  esac
+done
+unset _arg
+
+# shellcheck source=lib/branch-growth.sh
+source "$SCRIPT_DIR/lib/branch-growth.sh"
+
+ID_GRAMMAR='^[A-Za-z0-9._-]+$'
+DELTA_GRAMMAR='^([0-9]+) lines(, ([0-9]+) test lines)?$'
+
+die() {
+  printf '%s: %s\n' "$PROG" "$1" >&2
+  exit 2
+}
+
+worktree=""
+issue=""
+state_dir=""
+as_json=false
+while (( $# > 0 )); do
+  case "$1" in
+    --worktree)  [[ $# -ge 2 ]] || die "--worktree requires a value";  worktree="$2";  shift 2 ;;
+    --issue)     [[ $# -ge 2 ]] || die "--issue requires a value";     issue="$2";     shift 2 ;;
+    --state-dir) [[ $# -ge 2 ]] || die "--state-dir requires a path";  state_dir="$2"; shift 2 ;;
+    --json)      as_json=true; shift ;;
+    *) die "unknown argument: $1" ;;
+  esac
+done
+
+[[ -n "$worktree" ]] || die "--worktree is required"
+[[ -d "$worktree" ]] || die "--worktree path '$worktree' is not a directory"
+[[ -n "$issue" ]] || die "--issue is required (the normalized workflow-state key)"
+[[ "$issue" =~ $ID_GRAMMAR && "$issue" != *..* ]] \
+  || die "--issue '$issue' must match ${ID_GRAMMAR} with no '..'"
+command -v jq >/dev/null 2>&1 || die "jq is required"
+
+state_flags=()
+[[ -z "$state_dir" ]] || state_flags=(--state-dir "$state_dir")
+
+REPO_ROOT="$(git -C "$worktree" rev-parse --show-toplevel 2>/dev/null)" \
+  || die "--worktree path '$worktree' is not inside a git repository"
+export PROJECT_ROOT="$REPO_ROOT"
+export SCRIPT_DIR
+# shellcheck source=lib/kendex-env.sh
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+kendex_load_project_env "$REPO_ROOT"
+
+render_roots="${ORCH_SIZE_RENDER_ROOTS:-.agents .claude .codex .pi}"
+
+# --- The issue's own text is the one source of the allowance ----------------
+# A tracker that cannot be read leaves no allowance to judge by and no way to
+# say the issue states none, so it is an environment failure, never a verdict.
+issue_body=""
+if [[ "$issue" == issue-* ]]; then
+  command -v gh >/dev/null 2>&1 || die "gh is required to read GitHub issue '$issue'"
+  # gh and the Linear CLI both resolve their repository from the working
+  # directory, which is the caller's, not the worktree's. The subshell scopes
+  # the move; PROJECT_ROOT is dropped so the Linear cache honors the caller's
+  # own LINEAR_CACHE_ROOT redirect.
+  issue_body="$( (cd "$REPO_ROOT" && gh issue view "${issue#issue-}" --json body --jq '.body // ""') 2>/dev/null)" \
+    || die "GitHub issue '$issue' could not be read"
+else
+  [[ -x "$SCRIPT_DIR/../../linear/scripts/linear.sh" ]] \
+    || die "the linear skill is required to read '$issue'"
+  # The CLI answers on stderr when it has no issue to give, so both streams are
+  # read: a JSON object naming no issue is the cache answering that it holds
+  # none, and anything else is a read that did not happen at all.
+  raw="$( (cd "$REPO_ROOT" && env -u PROJECT_ROOT "$SCRIPT_DIR/../../linear/scripts/linear.sh" \
+    cache issues get "$issue" --format=raw) 2>&1 || true)"
+  jq -e 'type == "object" and has("issue")' <<<"$raw" >/dev/null 2>&1 \
+    || die "issue '$issue' could not be read from the Linear cache"
+  issue_body="$(jq -r '.issue.description // ""' <<<"$raw")"
+fi
+
+# Read from the template's own header line and nowhere else: a sentence
+# elsewhere in the body is prose, not a declared allowance.
+delta_line="$(
+  printf '%s\n' "$issue_body" \
+    | sed -n 's/^[[:space:]]*[*_]*[Ee]xpected delta[*_]*[[:space:]]*:[[:space:]]*//p' \
+    | head -n 1 | sed 's/[[:space:]]*$//'
+)"
+allowance=""
+test_allowance=""
+if [[ -n "$delta_line" ]]; then
+  [[ "$delta_line" =~ $DELTA_GRAMMAR ]] \
+    || die "the expected delta stated by '$issue' does not parse: '$delta_line' — state it as '250 lines' or '250 lines, 120 test lines'"
+  allowance="${BASH_REMATCH[1]}"
+  test_allowance="${BASH_REMATCH[3]}"
+fi
+
+# --- Measure ----------------------------------------------------------------
+if ! branch_size_classified "$worktree" "$SCRIPT_DIR/resolve-base-branch" HEAD "$render_roots"; then
+  die "$BRANCH_GROWTH_ERROR"
+fi
+production_lines="$BRANCH_SIZE_PRODUCTION"
+test_lines="$BRANCH_SIZE_TEST"
+mirror_lines="$BRANCH_SIZE_MIRROR"
+base_sha="$(git -C "$worktree" rev-parse --verify "$BRANCH_GROWTH_BASE_REF^{commit}")" \
+  || die "base ref '$BRANCH_GROWTH_BASE_REF' names no commit in '$worktree'"
+head_sha="$(git -C "$worktree" rev-parse --verify 'HEAD^{commit}')" \
+  || die "HEAD names no commit in '$worktree'"
+
+verdict="pass"
+reason=""
+if [[ -z "$allowance" ]]; then
+  verdict="allowance_missing"
+  reason="'$issue' states no **Expected delta** line; $production_lines production, $test_lines test and $mirror_lines render-mirror lines added, none judged"
+elif (( production_lines > allowance )); then
+  verdict="production_over"
+  reason="$production_lines production lines added; the issue allows $allowance"
+elif [[ -n "$test_allowance" ]] && (( test_lines > test_allowance )); then
+  verdict="tests_over"
+  reason="$test_lines test lines added; the issue allows $test_allowance"
+fi
+
+record="$(jq -n \
+  --arg base_sha "$base_sha" \
+  --arg head_sha "$head_sha" \
+  --argjson production "$production_lines" \
+  --argjson tests "$test_lines" \
+  --argjson mirror "$mirror_lines" \
+  --argjson allowance "${allowance:-null}" \
+  --argjson test_allowance "${test_allowance:-null}" \
+  --arg verdict "$verdict" \
+  --arg reason "$reason" \
+  '{base_sha: $base_sha, head_sha: $head_sha,
+    production_lines: $production, test_lines: $tests, mirror_lines: $mirror,
+    production_allowance: $allowance, test_allowance: $test_allowance,
+    verdict: $verdict, reason: $reason}')"
+
+"$SCRIPT_DIR/workflow-state" ${state_flags[@]+"${state_flags[@]}"} update "$issue" \
+  --argjson size_check "$record" '.pr.size_check = $size_check' >/dev/null \
+  || die "the $verdict verdict for '$issue' could not be recorded in workflow state"
+
+[[ "$as_json" != "true" ]] || printf '%s\n' "$record"
+
+case "$verdict" in
+  pass)
+    [[ "$as_json" == "true" ]] || printf '%s: production %s of %s lines added; tests %s%s; render mirror %s lines excluded\n' \
+      "$PROG" "$production_lines" "$allowance" "$test_lines" \
+      "${test_allowance:+ of $test_allowance}" "$mirror_lines"
+    exit 0 ;;
+  allowance_missing)
+    printf '%s: no allowance to judge by: %s; report the counts for review\n' "$PROG" "$reason" >&2
+    exit 0 ;;
+esac
+
+printf '%s: submit refused: %s; cut the branch back to the Done-when before pushing\n' \
+  "$PROG" "$reason" >&2
+exit 3

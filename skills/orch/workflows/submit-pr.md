@@ -37,7 +37,17 @@ git -C "[WORKTREE_PATH]" diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEA
 
 Stop before pushing when the branch is empty (detached HEAD), equals the base branch, the working tree is dirty, or the committed diff against the base is empty. Then run `.agents/skills/preflight/scripts/preflight --base "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]" --repo [WORKTREE_PATH]` when installed. Reuse a successful full-validation result for the current commit from an accepted dev completion artifact or this submit session. Otherwise run the project's `DEV_VALIDATE_CMD`, resolved as in [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate). A changed commit needs a new result. Either check failing blocks the push. In managed lifecycle, return the failed preflight to the caller so the dev agent can normalize the branch and clean the worktree. Never create a PR from dirty or detached state.
 
-### 1.2 Local Pre-PR Review
+### 1.2 Size Check
+
+The branch's added lines are measured against the allowance its issue states, once, before the push. The fix-round tripwire runs at round mint against the branch's own first commit, so a branch already grown when the PR opened never meets it.
+
+```bash
+.agents/skills/orch/scripts/branch-size-check --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID]
+```
+
+Exit 0 continues. Exit 3 is a refusal, not a warning: it names the count and the allowance. Cut the branch back to the Done-when and re-run it; the cut is a round like any other, the size tripwire in [references/finding-disposition.md](../references/finding-disposition.md). Adding a size-ratchet exclusion or deleting comments is not a cut. Exit 2 is a usage or environment failure whose message names the cause; report it, never push past it. An `**Expected delta**` line the check cannot parse is one such cause, corrected on the issue. When the issue states no allowance the check judges nothing, exits 0 and reports the counts; carry them into the PR body under `## Size` for the reviewer, never invent an allowance. The verdict lands in workflow state `pr.size_check`, bound to the base and head it measured; § 1.3 re-runs it after any commit it adds.
+
+### 1.3 Local Pre-PR Review
 
 Drain what a review bot would surface before the PR exists.
 
@@ -64,9 +74,9 @@ Use the epoch output as `LOCAL_STARTED_AT`:
 
 `ok == true` → route the findings below; `reason == "valid_undermeasured"` → report its `measurement_failed` string (and `measurement_suppressed` when present) with the findings; never treat the local pass as clean. `ok == false`, or any non-zero exit, → report the `reason` and its `detail` and continue to § 2. Local review is advisory, never a submission blocker, and none of those outcomes is a pass.
 
-Route the findings per the `review-finding` schema. Disposition every finding per [references/finding-disposition.md](../references/finding-disposition.md) § Decision flow, Step 0 first, and only what survives it enters the fix set. No blockers and no `category: "fix"` or `category: "issue"` suggestions → § 2. Otherwise delegate any blockers and fix-category suggestions: `⤵ workflows/dev-fix.md § 1-3 → § 1.2 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`, `items` (blockers plus fix-category suggestions), `source: local-review`. `category: "issue"` suggestions and the fix round's escalated items that clear the filing bar ([references/finding-disposition.md](../references/finding-disposition.md)) build an audit-input file at `tmp/audit-local-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "local-review"`, then go through `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9`, each escalated item taking the `origin` its `outcome` maps to in [`review-pr.md`](review-pr.md) § 8, with the created IDs listed in the PR body.
+Route the findings per the `review-finding` schema. Disposition every finding per [references/finding-disposition.md](../references/finding-disposition.md) § Decision flow, Step 0 first, and only what survives it enters the fix set. No blockers and no `category: "fix"` or `category: "issue"` suggestions → § 2. Otherwise delegate any blockers and fix-category suggestions: `⤵ workflows/dev-fix.md § 1-3 → § 1.3 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`, `items` (blockers plus fix-category suggestions), `source: local-review`. `category: "issue"` suggestions and the fix round's escalated items that clear the filing bar ([references/finding-disposition.md](../references/finding-disposition.md)) build an audit-input file at `tmp/audit-local-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "local-review"`, then go through `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9`, each escalated item taking the `origin` its `outcome` maps to in [`review-pr.md`](review-pr.md) § 8, with the created IDs listed in the PR body.
 
-**The loop is bounded at one confirming pass.** If dev-fix applied commits, run the review once more over the updated diff, then go to § 2 regardless of what it found. If nothing was applied, → § 2.
+**The loop is bounded at one confirming pass.** If dev-fix applied commits, run the review once more over the updated diff, then re-run the § 1.2 command and route its exit as § 1.2 does, and only then → § 2 regardless of what the review found. If nothing was applied, → § 2.
 
 ---
 
@@ -109,6 +119,9 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
 
    ## QA Metrics
    [Results from the QA agents that ran — project-configurable.]
+
+   ## Size
+   [The § 1.2 counts, only when the issue states no allowance.]
 
    ## Test Plan
    [validation steps]

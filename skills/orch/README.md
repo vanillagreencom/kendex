@@ -43,5 +43,6 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `WORKTREE_CLI` | Path to the worktree CLI `open-terminal` and `oversee-watch` drive; empty resolves the installed worktree skill's script | resolved |
 | Review-gate settings | `REVIEW_GATE_MODE`, `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_WAIT_SECS`: [references/gates.md](references/gates.md) | |
 | Lane settings | `ORCH_LANE_DIRS`, `ORCH_LANE_ALIASES`, `ORCH_LANE_MAX_PCT`, `ORCH_TMUX_VERIFY_SECS`: `lanes --help`, `open-terminal --help` | |
+| `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots `branch-size-check` excludes when the render's source changed in the same diff | `.agents .claude .codex .pi` |
 
 Maintainer notes and the test entry point: [DEVELOPMENT.md](DEVELOPMENT.md).

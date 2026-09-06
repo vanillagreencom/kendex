@@ -80,6 +80,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `worktree-push` | Push an issue worktree via `worktree push`, reconciling rebased SHAs in workflow state (`.rebase_map`, `fixed_items`, `pr_comment_review.fixes`) in the same call; `--check-live-round` answers whether a fix round is in flight and pushes nothing |
 | `dev-round-write` | Persist a fix round's delegated item set at stamp time; `--cut` records the round that cuts an oversized branch |
 | `dev-artifact-check` | Validate a dev round's completion artifact by round id |
+| `branch-size-check` | Measure the branch's added production, test and render-mirror lines before the push, against the allowance the issue's `**Expected delta**` line states. Exit 3 refuses. `--help` |
 | `approval-wait` | Poll the reviewer gate; `--resolve-mode` prints the effective gate mode |
 | `ci-wait` | Block until CI completes on a PR |
 | `queue-wait` | Blocking merge-queue / auto-merge waiter and verdict producer |
