@@ -255,6 +255,10 @@ export function registerEdit(pi: ExtensionAPI, agent: any, cwd: string): void {
 		label: "edit",
 		description: original.description,
 		parameters: original.parameters,
+		// Pi's agent loop prepares arguments before schema validation; the
+		// replacement definition has to carry the hook or the shapes Pi's own
+		// tool accepts fail validation before execute() can delegate.
+		prepareArguments: original.prepareArguments,
 		async execute(id: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, context: any) {
 			const effectiveCwd = contextCwd(context, cwd);
 			const targetPath = params?.path ?? params?.file_path;

@@ -90,17 +90,49 @@ function errorResponse(status: number, body: unknown, statusText = "Error"): Res
 	return new Response(typeof body === "string" ? body : JSON.stringify(body), { status, statusText });
 }
 
-function successSseResponse(): Response {
-	const event = {
-		type: "response.completed",
-		response: {
-			id: "resp_ok",
-			status: "completed",
-			usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0, input_tokens_details: { cached_tokens: 0 } },
-		},
-	};
-	return new Response(`data: ${JSON.stringify(event)}\n\n`, { status: 200, headers: { "content-type": "text/event-stream" } });
+const completedEvent = {
+	type: "response.completed",
+	response: {
+		id: "resp_ok",
+		status: "completed",
+		usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0, input_tokens_details: { cached_tokens: 0 } },
+	},
+};
+
+function sseResponse(body: string): Response {
+	return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
+
+function successSseResponse(): Response {
+	return sseResponse(`data: ${JSON.stringify(completedEvent)}\n\n`);
+}
+
+// The Codex backend can close the stream right after the terminal event
+// without the blank line that ends an SSE frame. EOF ends that frame.
+const unterminatedTerminalFrames: Array<{ name: string; body: string }> = [
+	{ name: "LF-terminated final line", body: `data: ${JSON.stringify(completedEvent)}\n` },
+	{ name: "CRLF-terminated final line", body: `data: ${JSON.stringify(completedEvent)}\r\n` },
+	{ name: "no line terminator", body: `data: ${JSON.stringify(completedEvent)}` },
+];
+
+for (const frame of unterminatedTerminalFrames) {
+	test(`SSE terminal event without a trailing blank line completes the stream (${frame.name})`, async () => {
+		globalThis.fetch = (async () => sseResponse(frame.body)) as typeof fetch;
+
+		const result = await runCodexProvider();
+
+		assert.equal(result.errorMessage, undefined);
+		assert.equal(result.stopReason, "stop");
+	});
+}
+
+test("malformed residual SSE data at EOF is ignored like any malformed frame", async () => {
+	globalThis.fetch = (async () => sseResponse(`data: ${JSON.stringify(completedEvent)}\n\ndata: {not json`)) as typeof fetch;
+
+	const result = await runCodexProvider();
+
+	assert.equal(result.stopReason, "stop");
+});
 
 test("SSE transport sends compressed tool choice and applies nullable header overrides", async () => {
 	let captured: RequestInit | undefined;

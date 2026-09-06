@@ -663,10 +663,12 @@ async function* parseSSE(response: Response): AsyncIterable<StreamEventShape> {
 	try {
 		while (true) {
 			const { done, value } = await reader.read();
-			if (done) break;
 
-			buffer += decoder.decode(value, { stream: true });
+			buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
 			buffer = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+			// EOF ends the residual frame: the backend may close right after the
+			// terminal event without the blank line that normally closes it.
+			if (done && buffer.trim()) buffer += "\n\n";
 			let idx = buffer.indexOf("\n\n");
 			while (idx !== -1) {
 				const chunk = buffer.slice(0, idx);
@@ -687,6 +689,7 @@ async function* parseSSE(response: Response): AsyncIterable<StreamEventShape> {
 				}
 				idx = buffer.indexOf("\n\n");
 			}
+			if (done) break;
 		}
 	} finally {
 		try {

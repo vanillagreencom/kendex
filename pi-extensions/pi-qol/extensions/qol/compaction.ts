@@ -186,6 +186,11 @@ async function singleShotSummary(ctx: ExtensionContext, request: SummarizeReques
 	if (response.stopReason === "error" || response.stopReason === "aborted") {
 		throw new Error(response.errorMessage || `Summary request stopped: ${response.stopReason}`);
 	}
+	// A length stop carries text, but the text ends wherever the cap fell; as a
+	// continuation checkpoint it would silently drop the rest of the context.
+	if (response.stopReason === "length") {
+		throw new Error("Summary generation hit the token cap and the summary is incomplete");
+	}
 	const summary = response.content
 		.filter((content): content is { type: "text"; text: string } => content.type === "text")
 		.map((content) => content.text)
