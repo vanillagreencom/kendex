@@ -149,6 +149,11 @@ echo "=== lanes context ==="
   # pane command names neither and both shapes are offered. %28 is a wrapped
   # codex lane, %29 a wrapped claude one, %30 a wrapped pane showing neither.
   for n in 28 29 30; do printf '%s %%%s agent-confine\n' "$LIVE_PID" "$n"; done
+  # 31: a claude pane whose transcript ends in prose carrying a COMPLETE
+  # status-shaped tail, account parenthetical and hint included. 32: a
+  # per-account wrapper pane showing no status line at all.
+  printf '%s %%31 claude\n' "$LIVE_PID"
+  printf '%s %%32 nclaude\n' "$LIVE_PID"
   printf '%s %%9 fish\n' "$LIVE_PID"
   # tmux reports a login shell with the leading dash it was started with.
   printf '%s %%11 -bash\n' "$LIVE_PID"
@@ -190,6 +195,8 @@ write_claim twentyeight "%27" "$H/.codex"  "ken-128"
 write_claim twentynine  "%28" "$H/.codex"  "ken-129"
 write_claim thirty      "%29" "$H/.claude" "ken-130"
 write_claim thirtyone   "%30" "$H/.codex"  "ken-131"
+write_claim thirtytwo   "%31" "$H/.claude" "ken-132"
+write_claim thirtythree "%32" "$H/.claude" "ken-133"
 # The foreign lane's pane NUMBER exists here too, on a screen that parses
 # cleanly: %1 is the first lane's, reading 35.
 write_claim_on "$FOREIGN_PID" foreign "%1" "$H/.claude" "ken-110"
@@ -354,6 +361,10 @@ screen 29 '  kendex (🌳 ken-130) Opus 5 27% (brad@drovr.dev)     /rc
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent
   ◯ dev-ken-885  Follow workflow: .agents/skills/dev/workflo… 4m 2s'
 screen 30 'plain shell output with no harness status line'
+screen 31 '  kendex (🌳 ken-132) Opus 5 35% (brad@drovr.dev)     /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+● Documentation: a status line reads kendex (🌳 ken-132) Opus 5 92% (brad@drovr.dev)     /rc'
+screen 32 'plain shell output with no harness status line'
 
 OUT="$(run_ctx --json)"
 
@@ -406,8 +417,10 @@ lanes_table "$OUT" \
   "prose carrying model, version and percentage below a real status line does not outrank it|ken-116|context_used_pct=35" \
   "a screen whose only model and percentage sit in prose carries no reading|ken-117|status=no_status_line context_used_pct=null" \
   "claude prose after a status-shaped prefix does not outrank the line above|ken-122|context_used_pct=41" \
+  "prose ending in a complete status-shaped tail is not a line: the line starts with the project|ken-132|context_used_pct=35" \
   "a codex status line quoted on a claude pane's last row does not take the reading|ken-127|harness=claude context_used_pct=41" \
   "a per-account claude wrapper is a harness and its pane is measured|ken-119|status=ok context_used_pct=27" \
+  "a wrapper pane with no status line is refused for the claude shape alone|ken-133|status=no_status_line detail~no+claude+status+line=true" \
   "a wrapped claude lane under an agent-row footer keeps its reading|ken-130|harness=claude context_used_pct=27" \
   "a screen with neither shape is no_status_line, never 0, refused for the shape it was read for|ken-104|status=no_status_line context_used_pct=null detail~no+claude+status+line=true"
 
@@ -420,11 +433,11 @@ echo "=== the codex shape is converted and read off the line the screen ends on 
 # is not a context figure, on a pane offered both shapes too; the wrapper
 # names no harness so a wrapped codex lane is measured.
 lanes_table "$OUT" \
-  "Context 86% left is 14 used, read under blank rows|ken-102|status=ok harness=codex context_used_pct=14" \
+  "Context 86% left is 14 used|ken-102|status=ok harness=codex context_used_pct=14" \
   "Context 40% used is taken as it stands|ken-106|harness=codex context_used_pct=40" \
   "whatever follows the separator is taken as it comes, a claude item included|ken-107|harness=codex context_used_pct=14" \
   "a percentage over 100 is not a context figure, and says what it checked|ken-108|status=no_status_line context_used_pct=null detail~does+not+end+in+a+valid+codex+context+figure=true" \
-  "on a pane offered both shapes an out-of-range codex line refuses rather than falling through|ken-128|context_used_pct=null" \
+  "on a pane offered both shapes an out-of-range codex line refuses for both rather than falling through|ken-128|context_used_pct=null detail~neither+harness's+context+figure=true" \
   "a codex screen not ending in a status line carries no reading; the line above is not searched out|ken-120|status=no_status_line context_used_pct=null" \
   "a screen whose only context percentage sits in codex prose carries no reading|ken-121|status=no_status_line context_used_pct=null" \
   "a model with its reasoning effort behind the separator is a status item|ken-123|harness=codex context_used_pct=0" \
@@ -437,7 +450,7 @@ lanes_table "$OUT" \
 echo "=== the pane's process, not its screen, decides whether it is measured ==="
 lanes_table "$OUT" \
   "a pane that exited to its shell is not measured from what it left, and names the evidence|ken-109|status=no_status_line context_used_pct=null detail~exited+to+its+shell=true" \
-  "a login shell is refused, dash and all|ken-112|status=no_status_line context_used_pct=null" \
+  "a login shell is refused, dash and all, on the shell arm|ken-112|status=no_status_line context_used_pct=null detail~exited+to+its+shell=true" \
   "a second shell name is refused too|ken-113|status=no_status_line context_used_pct=null" \
   "a command that is neither shell nor harness is refused, naming the process|ken-118|status=no_status_line context_used_pct=null detail~running+less=true" \
   "a claim on another tmux server is unreadable, never the local pane's number|ken-110|status=unreadable context_used_pct=null detail~another+tmux+server=true" \
@@ -460,16 +473,17 @@ lanes_table "$OVER" \
   "a claude status line carrying a percentage over 100 is not a context figure|ken-104|status=no_status_line context_used_pct=null"
 
 echo "=== every committed codex capture parses to the figure on its screen ==="
-# Real `tmux capture-pane` output from Codex 0.151.0: in the four that carry a
+# Real `tmux capture-pane` output from Codex 0.151.0, read by file so the
+# blank rows a capture ends in reach the parser: in the four that carry a
 # status line it is the last non-empty row; the two ending in a dialog over
 # the footer carry no reading, never a zero.
 FIXTURES="$TEST_DIR/fixtures/oversee-watch"
 parse_fixture() { # <capture file name>
   "$BASH" -c 'source "$1"; lane_context_parse codex <"$2"' _ "$SCRIPTS_DIR/lib/lane-context.sh" "$FIXTURES/$1" || printf 'none\n'
 }
-for row in "codex-working.txt|codex	0" "codex-composer-draft.txt|codex	0" "codex-composer-idle.txt|codex	0" "codex-idle-after-turn.txt|codex	1" "codex-dialog-model.txt|none" "codex-dialog-trust.txt|none"; do
+for row in "codex-working.txt|codex,0" "codex-composer-draft.txt|codex,0" "codex-composer-idle.txt|codex,0" "codex-idle-after-turn.txt|codex,1" "codex-dialog-model.txt|none" "codex-dialog-trust.txt|none"; do
   IFS='|' read -r capture want <<<"$row"
-  assert_eq "$(parse_fixture "$capture")" "$want" "$capture parses to its screen's figure"
+  assert_eq "$(parse_fixture "$capture" | tr '\t' ',')" "$want" "$capture parses to its screen's figure"
 done
 
 echo "=== the table names the direction it reports, with and without column ==="
@@ -491,7 +505,7 @@ for row in \
   "an unmeasured lane's number column is a dash, never a zero|TABLE|^ken-104[[:space:]]+%4[[:space:]]+[^[:space:]]+[[:space:]]+-[[:space:]]+-[[:space:]]+no_status_line[[:space:]]*\$" \
   "the legend states which direction it reports|TABLE|CONSUMED" \
   "the legend names both codex spellings and which is converted|TABLE|LEFT or what is USED" \
-  "the column-less header is aligned, not a run of tabs|NOCOL_OUT|$HEADER" \
+  "the column-less header is aligned with spaces, not a run of tabs|NOCOL_OUT|^LANE {2,}PANE {2,}ACCOUNT {2,}HARNESS {2,}CONTEXT_USED_PCT {2,}STATUS *\$" \
   "a measured lane keeps its row where column is missing|NOCOL_OUT|^ken-101[[:space:]]+%1[[:space:]]+drovr[[:space:]]+claude[[:space:]]+35%[[:space:]]+ok[[:space:]]*\$" \
   "an unmeasured lane keeps its row too, dashes and all|NOCOL_OUT|^ken-104[[:space:]]+%4[[:space:]]+drovr[[:space:]]+-[[:space:]]+-[[:space:]]+no_status_line[[:space:]]*\$" \
   "the legend survives the missing column too|NOCOL_OUT|CONSUMED"; do
@@ -509,7 +523,7 @@ mkdir -p "$BROKEN_STATE"
 : > "$BROKEN_STATE/claims"
 LANES_HOME="$H" OVERSEE_WATCH_STATE_DIR="$BROKEN_STATE" TMUX_PANES_FILE="$PANES" PANE_DIR="$PANE_DIR" \
   PATH="$BIN:$PATH" "$LANES" context >/dev/null 2>"$TMP_ROOT/broken.err" && rc=0 || rc=$?
-assert_eq "$rc" "1" "an unreadable claim store refuses rather than reporting an empty fleet"
+assert_eq "rc=$rc named=$(grep -qF 'refusing to report context' "$TMP_ROOT/broken.err" && echo yes || echo no)" "rc=1 named=yes" "an unreadable claim store refuses rather than reporting an empty fleet, and names what it refused"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
