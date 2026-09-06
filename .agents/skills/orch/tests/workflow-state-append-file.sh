@@ -55,7 +55,10 @@ got="$("$WS" --state-dir "$cd_sd" get KEN-CAP '.pr_comment_review.frozen_causes 
   || bad "append-file creates the array when the field is absent" "got=$got"
 
 # Fails closed on anything that is not exactly one JSON value: a truncated or
-# doubled write must not reach the record the recurrence rule reads.
+# doubled write must not reach the record the recurrence rule reads. The
+# whole array is snapshotted first, so a refusal that rewrote an entry while
+# keeping the count would not pass as untouched.
+before="$("$WS" --state-dir "$cd_sd" get KEN-CAP '.pr_comment_review.patched_causes')"
 printf 'not json\n' > "$TMP_ROOT/bad.json"
 rc=0; "$WS" --state-dir "$cd_sd" append-file KEN-CAP pr_comment_review.patched_causes "$TMP_ROOT/bad.json" >/dev/null 2>&1 || rc=$?
 [[ "$rc" -ne 0 ]] && ok "append-file refuses a file that is not JSON" || bad "append-file refuses a file that is not JSON"
@@ -64,9 +67,9 @@ rc=0; "$WS" --state-dir "$cd_sd" append-file KEN-CAP pr_comment_review.patched_c
 [[ "$rc" -ne 0 ]] && ok "append-file refuses a file holding two values" || bad "append-file refuses a file holding two values"
 rc=0; "$WS" --state-dir "$cd_sd" append-file KEN-CAP pr_comment_review.patched_causes "$TMP_ROOT/nope.json" >/dev/null 2>&1 || rc=$?
 [[ "$rc" -ne 0 ]] && ok "append-file refuses a missing file" || bad "append-file refuses a missing file"
-got="$("$WS" --state-dir "$cd_sd" get KEN-CAP '.pr_comment_review.patched_causes | length')"
-[[ "$got" == "2" ]] && ok "a refused append leaves the record untouched" \
-  || bad "a refused append leaves the record untouched" "got=$got"
+got="$("$WS" --state-dir "$cd_sd" get KEN-CAP '.pr_comment_review.patched_causes')"
+[[ "$got" == "$before" ]] && ok "a refused append leaves the record untouched" \
+  || bad "a refused append leaves the record untouched" "before=$before got=$got"
 
 # The workflows that record a cause come through it — no second spelling of
 # the append jq survives.
