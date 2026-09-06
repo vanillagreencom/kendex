@@ -176,10 +176,10 @@ enum Capture {
 /// rendering from outside its own file.
 struct Captured {
     files: Capture,
-    /// What the captured bytes render back to, where the capture goes
-    /// through a renderer at all. `None` for a skill, whose tree is its
-    /// own source form.
-    rendering: Option<String>,
+    /// What the captured bytes render back to, beside the bytes they were
+    /// captured from. `None` only where the capture has no text a renderer
+    /// touches.
+    rendering: Option<(String, String)>,
     carry: Option<crate::engine::agent_carry::AgentCarry>,
     /// The catalog revision an agent's bytes were read at, `None` for a
     /// skill: a skill's tree is one capture no per-tool rendering derives
@@ -203,21 +203,25 @@ struct ForkOf<'a> {
 
 fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
     Ok(match of.kind {
-        ItemKind::Skill => Captured {
-            files: Capture::Tree(source_form(crate::capture::read_tree(edited)?)),
-            carry: None,
-            read_at: None,
-            rendering: None,
-        },
+        ItemKind::Skill => {
+            let files = source_form(crate::capture::read_tree(edited)?);
+            Captured {
+                rendering: skill_round_trip(of, &files),
+                files: Capture::Tree(files),
+                carry: None,
+                read_at: None,
+            }
+        }
         // Every other kind is turned away by `edited_rendering` first, so
         // what reaches here is an agent.
         _ => {
             let captured = capture_agent(of, edited)?;
+            let on_disk = std::fs::read_to_string(edited).map_err(|e| CoreError::io(edited, e))?;
             Captured {
                 files: Capture::File(captured.bytes),
                 carry: captured.carry,
                 read_at: captured.read_at,
-                rendering: Some(captured.rendering),
+                rendering: Some((captured.rendering, on_disk)),
             }
         }
     })
@@ -407,14 +411,15 @@ pub(super) fn absorb_ops(
     // leave the two disagreeing for good: the same never-settling state
     // this whole path exists to end. Asked of the renderer's own output,
     // never of a list of the fields that can be lost.
-    if let Some(rendering) = &captured.rendering {
-        let on_disk = std::fs::read_to_string(edited).map_err(|e| CoreError::io(edited, e))?;
-        if rendering != &on_disk {
-            return Err(CoreError::ForkWidensAccess {
-                name: crate::names::shown(name),
-                problem: "the edit changes something its source form cannot hold".into(),
-            });
-        }
+    if captured
+        .rendering
+        .as_ref()
+        .is_some_and(|(rendered, on_disk)| rendered != on_disk)
+    {
+        return Err(CoreError::ForkWidensAccess {
+            name: crate::names::shown(name),
+            problem: "the edit changes something its source form cannot hold".into(),
+        });
     }
     // A carry the manifest already holds changes nothing and is no reason
     // to refuse: a fork's own carry is mostly what its first capture wrote
@@ -458,4 +463,25 @@ fn carry_needs_writing(
     carry.apply(&mut after, name);
     after.agent_skills != manifest.agent_skills
         || after.agent_frontmatter != manifest.agent_frontmatter
+}
+
+/// A captured skill tree beside what it renders back to. A skill's tree is
+/// nearly its own source form, but not quite: the renderer strips and
+/// re-injects the project-instructions block in `SKILL.md`, so bytes
+/// written inside that block are not bytes a source can hold. Source and
+/// disk carry the same `SKILL.md` here — the capture only renames it — so
+/// what the round trip asks is whether those bytes are already what this
+/// project renders.
+fn skill_round_trip(of: &ForkOf, files: &[(PathBuf, Vec<u8>)]) -> Option<(String, String)> {
+    let bytes = files
+        .iter()
+        .find(|(rel, _)| rel == std::path::Path::new("SKILL.md"))
+        .map(|(_, bytes)| bytes)?;
+    let text = String::from_utf8(bytes.clone()).ok()?;
+    let instructions =
+        crate::render::agent::merged_instructions(&of.manifest.skill_instructions, of.name);
+    Some((
+        crate::render::skill::inject_instructions(&text, instructions.as_deref()),
+        text,
+    ))
 }

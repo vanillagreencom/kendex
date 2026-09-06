@@ -1010,3 +1010,52 @@ fn an_edit_to_a_disabled_fork_is_absorbed_from_the_toggled_name() {
         "and the rendering that comes back on is that same content"
     );
 }
+
+/// The generated project-instructions block is not the person's to keep.
+/// A skill's tree is nearly its own source form, but the renderer strips
+/// and re-injects that block, so bytes written inside it would come back
+/// off at the next render — and the record would by then call them ours.
+/// That edit keeps the hold instead.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_edit_inside_a_skills_generated_block_is_not_absorbed() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    declare(
+        &w,
+        "[skills.gh]\nsource = \"cat\"\n\n[skill-instructions]\ngh = \"Ours.\"\n",
+    );
+    sync_and_apply(&w);
+    assert!(
+        fs::read_to_string(skill_file(&w))
+            .unwrap()
+            .contains("Ours."),
+        "the block is rendered in"
+    );
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let source_before = fs::read_to_string(fork_source(&w)).unwrap();
+    edit_line(&skill_file(&w), "Ours.", "Mine, typed into the block.");
+
+    let report = audit(&w.env, &w.scope).unwrap();
+    assert!(
+        report
+            .drift
+            .iter()
+            .any(|row| row.cause == Some(DriftCause::LocalEdit)),
+        "{:?}",
+        report.drift
+    );
+    assert!(report.fork_edits.is_empty(), "{:?}", report.fork_edits);
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert_eq!(fs::read_to_string(fork_source(&w)).unwrap(), source_before);
+    assert!(
+        fs::read_to_string(skill_file(&w))
+            .unwrap()
+            .contains("Mine, typed into the block."),
+        "and nothing wrote over it"
+    );
+}
