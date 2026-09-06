@@ -6,25 +6,25 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$(git rev-parse --show-toplevel)/.pi/kendex/hooks/block-bare-cd.sh\""
+            "command": "p='.pi/kendex/hooks/block-bare-cd.sh'; r=$(cd -P . && pwd); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { echo \"kendex: no directory above $PWD holds $p; run kendex refresh in the project\" >&2; exit 1; }; bash \"$r/$p\""
           },
           {
             "type": "command",
-            "command": "bash \"$(git rev-parse --show-toplevel)/.pi/kendex/hooks/pre-commit-check.sh\"",
+            "command": "p='.pi/kendex/hooks/pre-commit-check.sh'; r=$(cd -P . && pwd); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { echo \"kendex: no directory above $PWD holds $p; run kendex refresh in the project\" >&2; exit 1; }; bash \"$r/$p\"",
             "timeout": 60
           },
           {
             "type": "command",
-            "command": "bash \"$(git rev-parse --show-toplevel)/.pi/kendex/hooks/block-repo-copy.sh\""
+            "command": "p='.pi/kendex/hooks/block-repo-copy.sh'; r=$(cd -P . && pwd); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { echo \"kendex: no directory above $PWD holds $p; run kendex refresh in the project\" >&2; exit 1; }; bash \"$r/$p\""
           },
           {
             "type": "command",
-            "command": "bash \"$(git rev-parse --show-toplevel)/.pi/kendex/hooks/block-argv-kill.sh\"",
+            "command": "p='.pi/kendex/hooks/block-argv-kill.sh'; r=$(cd -P . && pwd); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { echo \"kendex: no directory above $PWD holds $p; run kendex refresh in the project\" >&2; exit 1; }; bash \"$r/$p\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "bash \"$(git rev-parse --show-toplevel)/.pi/kendex/hooks/block-worktree-refresh.sh\"",
+            "command": "p='.pi/kendex/hooks/block-worktree-refresh.sh'; r=$(cd -P . && pwd); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { echo \"kendex: no directory above $PWD holds $p; run kendex refresh in the project\" >&2; exit 1; }; bash \"$r/$p\"",
             "timeout": 10
           }
         ]

@@ -52,6 +52,14 @@ A surface is one of four shapes, declared per kind and scope by each adapter (`S
 
 Every harness but Claude Code reads a project's `.agents/skills`, so one rendered tree serves them all and a per-harness directory stays on the surface list for what is already there and for a copy delivery. Claude's own `.claude/skills/<name>` collapses onto the shared tree through a relative link when the bytes match. An adapter claims only its own namespace; a cross-read is reported as an input to effective state, never as a second installation.
 
+## Hook commands
+
+A hook registered at project scope names its script relative to the project root and finds that file when it runs, so the text is the same on every machine and a repository can commit the registry holding it (`project_command`, `crates/core/src/engine/targets.rs`). Claude Code is the exception: it publishes `$CLAUDE_PROJECT_DIR`, and its command is written against that. A global command names its script outright, absolute; nothing commits a global registry.
+
+No other harness publishes a project-directory variable, so the command walks up from the directory the harness runs the hook in until a directory holds the script. That is the directory the harness found this registry from, having walked up from it for its own config, so the project the registration came from is an ancestor and the one holding the file. The walk refuses a start that is not absolute, which is what a shell answers from a directory removed under it, and when nothing from the start up holds the script it exits 1 naming the start and the file rather than letting bash report a missing file.
+
+`$(git rev-parse --show-toplevel)` was the same text everywhere and the wrong answer instead: kendex installs into a project that is no git repository, where it substitutes nothing, and into one below the git top level, where it substitutes the enclosing tree's root. A project marker would be the wrong answer another way: a nested `.claude/` stops a marker walk short of the project, and a Copilot-only project has no marker directory at all.
+
 ## Names
 
 A namespaced `<plugin>/<item>` name is the identity in the manifest, the lock and the UI. On disk the two halves are joined by `__`, or by `-` where the name rule is lower-kebab; `namespace_separator` in `crates/core/src/harness/caps.rs` derives it from the rule. The shared tree always uses `__`.

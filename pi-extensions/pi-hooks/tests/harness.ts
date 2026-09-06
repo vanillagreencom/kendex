@@ -143,9 +143,55 @@ export function renderStub(project: string, name: string, opts: { exitCode: numb
 	registerProjectHook(project, name);
 }
 
+/** `crates/core/src`, from this package. */
+export function crateSrc(): string {
+	return join(import.meta.dir, "..", "..", "..", "crates", "core", "src");
+}
+
+/** The body of a Rust item, by the line that opens it. */
+function rustBody(file: string, opens: string): string {
+	const text = readFileSync(join(crateSrc(), file), "utf8");
+	const at = text.indexOf(opens);
+	if (at < 0) throw new Error(`${opens} not found in crates/core/src/${file}`);
+	const end = text.indexOf("\n}", at);
+	if (end < 0) throw new Error(`${opens} in crates/core/src/${file} does not close`);
+	return text.slice(at + opens.length, end);
+}
+
+/** The template of the `format!` call in `body`, as the shell it stands for. */
+function rustFormat(body: string, what: string): string {
+	const call = body.indexOf("format!(");
+	if (call < 0) throw new Error(`no format! call in ${what}`);
+	const literal = /"((?:[^"\\]|\\[\s\S])*)"/.exec(body.slice(call));
+	if (literal === null) throw new Error(`no format template in ${what}`);
+	return literal[1]!
+		// A trailing backslash continues a Rust literal onto the next line,
+		// swallowing that line's indentation with it.
+		.replace(/\\\n\s*/g, "")
+		.replaceAll('\\"', '"')
+		.replaceAll("{{", "\u0001")
+		.replaceAll("}}", "\u0002");
+}
+
+function braces(text: string): string {
+	return text.replaceAll("\u0001", "{").replaceAll("\u0002", "}");
+}
+
+/**
+ * The command `engine::targets::project_command` writes for `rel`, rendered
+ * from that function rather than spelled again here. A rename or a
+ * respelling on the Rust side throws, which is the whole point: a carrier
+ * that reads a command kendex no longer writes is every project hook
+ * silently off.
+ */
+export function projectCommand(rel: string): string {
+	const command = rustFormat(rustBody("engine/targets.rs", "fn project_command(rel: &str) -> String {"), "project_command");
+	return braces(command.replace("{}", `'${rel.replaceAll("'", "'\\''")}'`));
+}
+
 /** The registration kendex writes for a project-scope hook, command and all. */
 export function registerProjectHook(project: string, name: string): void {
-	registerRendered(join(project, ".pi"), "tool_call", "Bash", `bash "$(git rev-parse --show-toplevel)/.pi/kendex/hooks/${name}.sh"`);
+	registerRendered(join(project, ".pi"), "tool_call", "Bash", projectCommand(`.pi/kendex/hooks/${name}.sh`));
 }
 
 export function renderUserStub(userRoot: string, name: string, opts: { exitCode: number; stderr?: string; log: string }): void {

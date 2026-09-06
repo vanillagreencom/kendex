@@ -225,9 +225,13 @@ fn a_hook_registers_under_geminis_event_name_in_milliseconds() {
     // The source matches on `Bash`, Claude's name for the shell. Gemini
     // matches its own name or nothing at all.
     assert_eq!(group["matcher"], "run_shell_command");
-    assert_eq!(
-        group["hooks"][0]["command"],
-        "bash \"$(git rev-parse --show-toplevel)/.gemini/hooks/audit.sh\""
+    // The command finds the project when it runs and names no directory of
+    // this machine's, so a repository can commit the settings file it is in.
+    let command = group["hooks"][0]["command"].as_str().unwrap();
+    assert!(command.contains("p='.gemini/hooks/audit.sh'"), "{command}");
+    assert!(
+        !command.contains(&*f.project.to_string_lossy()),
+        "{command}"
     );
     // The source declares ten seconds; Gemini reads the field as milliseconds.
     assert_eq!(group["hooks"][0]["timeout"], 10000);
