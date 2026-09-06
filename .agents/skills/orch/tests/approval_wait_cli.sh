@@ -1,314 +1,180 @@
 #!/usr/bin/env bash
-# Tests for approval-wait's pre-poll CLI layer, split from
-# approval_wait.sh at this seam (the wait-loop suites live there; nothing
-# here polls — every case terminates before the first gh call):
-#   - --resolve-mode precedence: PR_REVIEW_GATE / PR_APPROVAL_GATE /
-#     REVIEW_GATE_MODE, settings-file resolution, and the engine-only
-#     dotenv boundary
-#   - -h/--help and unknown-flag argument parsing
+# approval-wait's argument surface: `--resolve-mode` precedence over the
+# process environment, kendex.settings.toml, the dotenv files and the
+# settings-file override, with and without the review-gate engine installed;
+# and the parser's own answers (-h, --help, an unknown flag, a missing value)
+# before anything reaches gh. One run and one comparison per row: `observe`
+# reads exactly the fields the row's expect names.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
-
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
+# shellcheck source=lib/waiter-assertions.sh
+source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-PASS=0
-FAIL=0
+# Two projects: `gate` has the review-gate engine beside orch, `nogate` has
+# orch copied and only github beside it, so approval-wait's own fallback
+# loader reads the settings. A gh that records every call and fails.
+mkdir -p "$TMP_ROOT/gate/.agents/skills" "$TMP_ROOT/nogate/.agents/skills" "$TMP_ROOT/bin"
+ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/gate/.agents/skills/orch"
+ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/gate/.agents/skills/review-gate"
+cp -r "$REPO_ROOT/skills/orch" "$TMP_ROOT/nogate/.agents/skills/orch"
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/nogate/.agents/skills/github"
+for p in gate nogate; do
+  git -C "$TMP_ROOT/$p" init -q
+  git -C "$TMP_ROOT/$p" config user.email test@example.com
+  git -C "$TMP_ROOT/$p" config user.name Test
+done
+GH_CALLS="$TMP_ROOT/gh.calls"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> %s\nexit 1\n' "$GH_CALLS" > "$TMP_ROOT/bin/gh"
+chmod +x "$TMP_ROOT/bin/gh"
 
-dump_stderr() {
-  local file="$1"
-  [[ -n "$file" && -f "$file" ]] || return 0
-  printf '        stderr:\n'
-  sed 's/^/          /' "$file"
+# stage PROJECT FILES — the project's configuration files for one row, every
+# other file of the set removed first. FILES is `;`-separated `kind:K=V,K=V`
+# items: `settings` and `alt` write a TOML `[env]` table (kendex.settings.toml
+# and alt-settings.toml), `kendex` the machine-local .kendex/settings.toml,
+# `dotenv` and `dotenvlocal` a `.env` or `.env.local` line per pair. A key
+# listed twice is written twice.
+stage() {
+  local project="$TMP_ROOT/$1" spec="$2" items item kind pairs pair path
+  rm -f -- "$project/kendex.settings.toml" "$project/alt-settings.toml" "$project/.env" "$project/.env.local" "$project/.kendex/settings.toml"
+  [[ -n "$spec" ]] || return 0
+  IFS=';' read -ra items <<<"$spec"
+  for item in "${items[@]}"; do
+    kind="${item%%:*}"; pairs="${item#*:}"
+    case "$kind" in
+      settings) path="$project/kendex.settings.toml" ;;
+      alt) path="$project/alt-settings.toml" ;;
+      kendex) mkdir -p "$project/.kendex"; path="$project/.kendex/settings.toml" ;;
+      dotenv) path="$project/.env" ;;
+      dotenvlocal) path="$project/.env.local" ;;
+      *) echo "stage: unknown file kind $kind" >&2; exit 1 ;;
+    esac
+    case "$kind" in settings|alt|kendex) printf '[env]\n' > "$path" ;; *) : > "$path" ;; esac
+    IFS=',' read -ra pair <<<"$pairs"
+    for pair in "${pair[@]}"; do
+      case "$kind" in
+        settings|alt|kendex) printf '%s = "%s"\n' "${pair%%=*}" "${pair#*=}" >> "$path" ;;
+        *) printf '%s\n' "$pair" >> "$path" ;;
+      esac
+    done
+  done
 }
 
-assert_eq() {
-  local got="$1" want="$2" name="$3" stderr_file="${4:-}"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-    dump_stderr "$stderr_file"
-  fi
+# run PROJECT ENV ARGS... — one approval-wait run in PROJECT under the
+# space-separated ENV assignments; OUT, RC and ERR (a file) are what `observe`
+# reads. The gh call log is emptied first.
+RUN_SEQ=0
+run() {
+  local project="$TMP_ROOT/$1" env_spec="$2" env_args=()
+  shift 2
+  # shellcheck disable=SC2206
+  [[ -z "$env_spec" ]] || env_args=($env_spec)
+  ERR="$TMP_ROOT/run-$((++RUN_SEQ)).err"
+  rm -f -- "$GH_CALLS"
+  set +e
+  OUT="$(cd "$project" && PATH="$TMP_ROOT/bin:$PATH" env ${env_args[@]+"${env_args[@]}"} .agents/skills/orch/scripts/approval-wait "$@" 2>"$ERR")"
+  RC=$?
+  set -e
 }
 
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3" stderr_file="${4:-}"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-    dump_stderr "$stderr_file"
-  fi
+# observe EXPECT — prints the run's value of every `name=` field EXPECT names,
+# in EXPECT's order (`+` reads as a space in a needle):
+#   rc              exit status
+#   mode            stdout whole, `EMPTY` when nothing was printed
+#   stdout~<text>   whether stdout carries <text>
+#   stderr~<text>   whether stderr carries <text>
+#   gh              `called` when the gh stub was reached, else `uncalled`
+observe() {
+  local got="" token name value needle
+  for token in $1; do
+    name="${token%%=*}"
+    case "$name" in
+      rc) value="$RC" ;;
+      mode) value="${OUT:-EMPTY}"; value="${value// /+}" ;;
+      stdout~*) needle="${name#stdout~}"; value="$(grep -qF -- "${needle//+/ }" <<<"$OUT" && echo true || echo false)" ;;
+      stderr~*) needle="${name#stderr~}"; value="$(grep -qF -- "${needle//+/ }" "$ERR" && echo true || echo false)" ;;
+      gh) value="$([[ -s "$GH_CALLS" ]] && echo called || echo uncalled)" ;;
+      *) echo "observe: unknown field $name" >&2; exit 1 ;;
+    esac
+    got="$got $name=$value"
+  done
+  printf '%s' "${got# }"
 }
 
-assert_not_contains() {
-  local haystack="$1" needle="$2" name="$3" stderr_file="${4:-}"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        forbidden substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-    dump_stderr "$stderr_file"
-  else
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  fi
+# resolve_table ROW... — `label|project|env|files|expect`, one --resolve-mode
+# run per row.
+resolve_table() {
+  local row label project env files expect
+  for row in "$@"; do
+    IFS='|' read -r label project env files expect <<<"$row"
+    [[ -n "$expect" ]] || { printf 'resolve_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+    stage "$project" "$files"
+    run "$project" "$env" --resolve-mode
+    assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
+  done
 }
 
-mkdir -p "$TMP_ROOT/repo/.agents/skills"
-ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
-# review-gate too: --resolve-mode reads REVIEW_GATE_MODE through that
-# skill's own settings resolver when it is installed.
-ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/repo/.agents/skills/review-gate"
-git -C "$TMP_ROOT/repo" init -q
-git -C "$TMP_ROOT/repo" config user.email test@example.com
-git -C "$TMP_ROOT/repo" config user.name Test
+echo "=== --resolve-mode precedence ==="
+# PR_REVIEW_GATE names the mode and beats the legacy PR_APPROVAL_GATE, whose
+# on and off map to approval and off; the default is approval, and so is an
+# invalid value. The process environment beats kendex.settings.toml.
+# REVIEW_GATE_MODE=off overrides either reviewer key; any other value never
+# narrows (the engine fails loud on it, not this resolver). REVIEW_GATE_MODE is
+# read from the process environment and the committed settings file only: a
+# .env file is read by nothing, and .env.local is ignored for that one key
+# while it keeps full precedence for PR_REVIEW_GATE. REVIEW_GATE_SETTINGS_FILE
+# names another settings file, /dev/null included. A key assigned twice in the
+# settings file fails loud, exit 2 from the engine and exit 1 from the
+# fallback loader, which resolves no mode. The fallback reads the committed
+# file and ignores the machine-local .kendex copy for the mode key too.
+resolve_table \
+  "PR_REVIEW_GATE=review|gate|PR_REVIEW_GATE=review||mode=review" \
+  "PR_REVIEW_GATE=off|gate|PR_REVIEW_GATE=off||mode=off" \
+  "PR_REVIEW_GATE=approval|gate|PR_REVIEW_GATE=approval||mode=approval" \
+  "PR_REVIEW_GATE beats the legacy PR_APPROVAL_GATE|gate|PR_REVIEW_GATE=review PR_APPROVAL_GATE=off||mode=review" \
+  "legacy on maps to approval|gate|PR_APPROVAL_GATE=on||mode=approval" \
+  "legacy off maps to off|gate|PR_APPROVAL_GATE=off||mode=off" \
+  "the default is approval|gate|||mode=approval" \
+  "an invalid value falls back to approval|gate|PR_REVIEW_GATE=bogus||rc=0 mode=approval" \
+  "a settings-file PR_REVIEW_GATE applies|gate||settings:PR_REVIEW_GATE=review|mode=review" \
+  "the process environment beats the settings file|gate|PR_REVIEW_GATE=approval|settings:PR_REVIEW_GATE=review|mode=approval" \
+  "REVIEW_GATE_MODE=off overrides approval|gate|REVIEW_GATE_MODE=off PR_REVIEW_GATE=approval||mode=off" \
+  "REVIEW_GATE_MODE=off overrides review|gate|REVIEW_GATE_MODE=off PR_REVIEW_GATE=review||mode=off" \
+  "REVIEW_GATE_MODE=enforce preserves the reviewer keys|gate|REVIEW_GATE_MODE=enforce PR_REVIEW_GATE=review||mode=review" \
+  "a non-off REVIEW_GATE_MODE never narrows here|gate|REVIEW_GATE_MODE=bogus PR_REVIEW_GATE=review||mode=review" \
+  "a settings-file REVIEW_GATE_MODE=off applies|gate||settings:REVIEW_GATE_MODE=off,PR_REVIEW_GATE=review|mode=off" \
+  "a .env REVIEW_GATE_MODE=off is read by nothing|gate||dotenv:REVIEW_GATE_MODE=off|mode=approval" \
+  "a parent-environment off still applies beside a dotenv file|gate|REVIEW_GATE_MODE=off|dotenv:REVIEW_GATE_MODE=off|mode=off" \
+  "a settings-file off still applies beside a dotenv file|gate||settings:REVIEW_GATE_MODE=off;dotenv:REVIEW_GATE_MODE=off|mode=off" \
+  "a .env.local REVIEW_GATE_MODE=off is ignored, the per-key exception|gate||dotenvlocal:REVIEW_GATE_MODE=off|mode=approval" \
+  "control: a .env.local PR_REVIEW_GATE keeps full precedence|gate||dotenvlocal:PR_REVIEW_GATE=review|mode=review" \
+  "REVIEW_GATE_SETTINGS_FILE=/dev/null forces the default over a settings-file off|gate|REVIEW_GATE_SETTINGS_FILE=/dev/null|settings:REVIEW_GATE_MODE=off|mode=approval" \
+  "REVIEW_GATE_SETTINGS_FILE names another settings file|gate|REVIEW_GATE_SETTINGS_FILE=alt-settings.toml|alt:REVIEW_GATE_MODE=off|mode=off" \
+  "a duplicate REVIEW_GATE_MODE assignment fails loud, naming the cause|gate||settings:REVIEW_GATE_MODE=off,REVIEW_GATE_MODE=enforce|rc=2 stderr~assigned+more+than+once=true" \
+  "the fallback loader reads the committed settings file|nogate||settings:REVIEW_GATE_MODE=off|mode=off" \
+  "the fallback ignores a machine-local .kendex off for the mode key too|nogate||kendex:REVIEW_GATE_MODE=off|mode=approval" \
+  "a duplicate assignment fails the fallback loud, exit 1, and resolves no mode|nogate||settings:REVIEW_GATE_MODE=off,REVIEW_GATE_MODE=enforce|rc=1 mode=EMPTY stderr~assigned+more+than+once=true"
 
-# Call-recording gh stub: every case here terminates in the parser or the
-# config resolver, so ANY gh invocation is a failure the log makes visible.
-mkdir -p "$TMP_ROOT/argbin"
-cat > "$TMP_ROOT/argbin/gh" <<EOF
-#!/usr/bin/env bash
-printf '%s\n' "\$*" >> "$TMP_ROOT/argval-gh.calls"
-exit 1
-EOF
-chmod +x "$TMP_ROOT/argbin/gh"
-
-run_resolve_mode() {
-  (cd "$TMP_ROOT/repo" \
-    && PATH="$TMP_ROOT/argbin:$PATH" \
-       env "$@" .agents/skills/orch/scripts/approval-wait --resolve-mode)
-}
-
-echo "=== approval-wait --resolve-mode precedence ==="
-
-# PR_REVIEW_GATE wins outright, including over a conflicting PR_APPROVAL_GATE.
-assert_eq "$(run_resolve_mode PR_REVIEW_GATE=review)" "review" "resolve: PR_REVIEW_GATE=review"
-assert_eq "$(run_resolve_mode PR_REVIEW_GATE=off)" "off" "resolve: PR_REVIEW_GATE=off"
-assert_eq "$(run_resolve_mode PR_REVIEW_GATE=approval)" "approval" "resolve: PR_REVIEW_GATE=approval"
-assert_eq "$(run_resolve_mode PR_REVIEW_GATE=review PR_APPROVAL_GATE=off)" "review" "resolve: PR_REVIEW_GATE beats legacy PR_APPROVAL_GATE"
-
-# PR_APPROVAL_GATE derivation when PR_REVIEW_GATE is unset: on -> approval,
-# off -> off.
-assert_eq "$(run_resolve_mode PR_APPROVAL_GATE=on)" "approval" "resolve: legacy on maps to approval"
-assert_eq "$(run_resolve_mode PR_APPROVAL_GATE=off)" "off" "resolve: legacy off maps to off"
-
-# Both unset defaults to approval.
-assert_eq "$(run_resolve_mode)" "approval" "resolve: default approval"
-
-# An unrecognized PR_REVIEW_GATE fails safe to approval (gate stays on).
-assert_eq "$(run_resolve_mode PR_REVIEW_GATE=bogus 2>/dev/null)" "approval" "resolve: invalid value falls back to approval"
-
-# kendex.settings.toml [env] is read with orch-env precedence: the settings
-# value applies when the process env is silent, and process env wins over it.
-cat > "$TMP_ROOT/repo/kendex.settings.toml" <<'EOF'
-[env]
-PR_REVIEW_GATE = "review"
-EOF
-assert_eq "$(run_resolve_mode)" "review" "resolve: settings-file PR_REVIEW_GATE applies"
-assert_eq "$(run_resolve_mode PR_REVIEW_GATE=approval)" "approval" "resolve: process env beats settings file"
-rm -f "$TMP_ROOT/repo/kendex.settings.toml"
-
-# The engine's one-switch gate disable wins over every reviewer-gate key —
-# env and settings-file sources both; enforce (and any non-"off" value)
-# leaves the reviewer keys authoritative.
-assert_eq "$(run_resolve_mode REVIEW_GATE_MODE=off PR_REVIEW_GATE=approval)" "off" "resolve: REVIEW_GATE_MODE=off overrides approval"
-assert_eq "$(run_resolve_mode REVIEW_GATE_MODE=off PR_REVIEW_GATE=review)" "off" "resolve: REVIEW_GATE_MODE=off overrides review"
-assert_eq "$(run_resolve_mode REVIEW_GATE_MODE=enforce PR_REVIEW_GATE=review)" "review" "resolve: enforce preserves the reviewer keys"
-assert_eq "$(run_resolve_mode REVIEW_GATE_MODE=bogus PR_REVIEW_GATE=review)" "review" "resolve: a non-off value never narrows (engine fails loud, not here)"
-cat > "$TMP_ROOT/repo/kendex.settings.toml" <<'EOF'
-[env]
-REVIEW_GATE_MODE = "off"
-PR_REVIEW_GATE = "review"
-EOF
-assert_eq "$(run_resolve_mode)" "off" "resolve: settings-file REVIEW_GATE_MODE=off applies"
-rm -f "$TMP_ROOT/repo/kendex.settings.toml"
-
-# The engine boundary: REVIEW_GATE_MODE resolves from process env
-# and the settings files ONLY — the engine skips dotenv for this key by
-# per-key exception, and a .env file is read by nothing at all, so neither
-# shape may turn the waiter off while the gate stays enforcing. The
-# PR_REVIEW_* keys keep full .env.local precedence.
-cat > "$TMP_ROOT/repo/.env" <<'EOF'
-REVIEW_GATE_MODE=off
-EOF
-assert_eq "$(run_resolve_mode)" "approval" "resolve: a .env REVIEW_GATE_MODE=off is read by nothing"
-assert_eq "$(run_resolve_mode REVIEW_GATE_MODE=off)" "off" "resolve: parent-env off still applies beside a dotenv file"
-cat > "$TMP_ROOT/repo/kendex.settings.toml" <<'EOF'
-[env]
-REVIEW_GATE_MODE = "off"
-EOF
-assert_eq "$(run_resolve_mode)" "off" "resolve: settings-file off still applies beside a dotenv file"
-rm -f "$TMP_ROOT/repo/kendex.settings.toml"
-mv "$TMP_ROOT/repo/.env" "$TMP_ROOT/repo/.env.local"
-assert_eq "$(run_resolve_mode)" "approval" "resolve: .env.local REVIEW_GATE_MODE=off is ignored (per-key exception)"
-rm -f "$TMP_ROOT/repo/.env.local"
-# Control: the reviewer keys keep their .env.local precedence, so the
-# exception above is the mode key's, not a dead dotenv layer.
-cat > "$TMP_ROOT/repo/.env.local" <<'EOF'
-PR_REVIEW_GATE=review
-EOF
-assert_eq "$(run_resolve_mode)" "review" "resolve: .env.local PR_REVIEW_GATE keeps full precedence (control)"
-rm -f "$TMP_ROOT/repo/.env.local"
-
-# REVIEW_GATE_MODE goes through the ENGINE's resolver (rg_setting), so its
-# settings-file semantics are the engine's, not the generic loader's.
-cat > "$TMP_ROOT/repo/kendex.settings.toml" <<'EOF'
-[env]
-REVIEW_GATE_MODE = "off"
-EOF
-assert_eq "$(run_resolve_mode REVIEW_GATE_SETTINGS_FILE=/dev/null)" "approval" "resolve: REVIEW_GATE_SETTINGS_FILE=/dev/null forces the default over settings off"
-rm -f "$TMP_ROOT/repo/kendex.settings.toml"
-cat > "$TMP_ROOT/repo/alt-settings.toml" <<'EOF'
-[env]
-REVIEW_GATE_MODE = "off"
-EOF
-assert_eq "$(run_resolve_mode REVIEW_GATE_SETTINGS_FILE=alt-settings.toml)" "off" "resolve: the REVIEW_GATE_SETTINGS_FILE override is honored"
-rm -f "$TMP_ROOT/repo/alt-settings.toml"
-# The engine fails loud on a duplicate assignment; the waiter propagates it
-# instead of quietly picking a value the predicate would reject.
-cat > "$TMP_ROOT/repo/kendex.settings.toml" <<'EOF'
-[env]
-REVIEW_GATE_MODE = "off"
-REVIEW_GATE_MODE = "enforce"
-EOF
-stderr="$TMP_ROOT/dup.err"
-set +e
-run_resolve_mode >/dev/null 2>"$stderr"
-rc=$?
-set -e
-assert_eq "$rc" "2" "resolve: a duplicate REVIEW_GATE_MODE assignment fails loud" "$stderr"
-assert_contains "$(cat "$stderr")" "assigned more than once" "resolve: the duplicate diagnostic names the cause"
-rm -f "$TMP_ROOT/repo/kendex.settings.toml"
-
-# Without the review-gate skill, the generic-loader fallback resolves
-# REVIEW_GATE_MODE from the COMMITTED kendex.settings.toml alone — matching
-# the engine resolver, so installing review-gate cannot flip the mode — and
-# a refused load terminates instead of resolving a mode from a partial
-# read. The orch skill is a REAL COPY here, not a symlink: through a
-# symlinked orch the engine lib still resolves via the link target's
-# siblings and the fallback never runs.
-mkdir -p "$TMP_ROOT/repo2/.agents/skills"
-cp -r "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo2/.agents/skills/orch"
-# github supplies only the shared gh-auth shim target; a symlink is fine —
-# the engine lookup resolves through orch's own physical path, not this one.
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/repo2/.agents/skills/github"
-git -C "$TMP_ROOT/repo2" init -q
-run_resolve_mode_fallback() {
-  (cd "$TMP_ROOT/repo2" \
-    && PATH="$TMP_ROOT/argbin:$PATH" \
-       env "$@" .agents/skills/orch/scripts/approval-wait --resolve-mode)
-}
-cat > "$TMP_ROOT/repo2/kendex.settings.toml" <<'EOF'
-[env]
-REVIEW_GATE_MODE = "off"
-EOF
-assert_eq "$(run_resolve_mode_fallback)" "off" "resolve: the fallback reads the committed kendex.settings.toml"
-mkdir -p "$TMP_ROOT/repo2/.kendex"
-rm -f "$TMP_ROOT/repo2/kendex.settings.toml"
-cat > "$TMP_ROOT/repo2/.kendex/settings.toml" <<'EOF'
-[env]
-REVIEW_GATE_MODE = "off"
-EOF
-assert_eq "$(run_resolve_mode_fallback)" "approval" "resolve: a machine-local .kendex off is IGNORED for MODE in the fallback too"
-rm -f "$TMP_ROOT/repo2/.kendex/settings.toml"
-cat > "$TMP_ROOT/repo2/kendex.settings.toml" <<'EOF'
-[env]
-REVIEW_GATE_MODE = "off"
-REVIEW_GATE_MODE = "enforce"
-EOF
-stderr="$TMP_ROOT/fallback-dup.err"
-set +e
-fallback_out=$(run_resolve_mode_fallback 2>"$stderr")
-rc=$?
-set -e
-# Exit 1, not the engine's 2: the code pins that the FALLBACK branch ran and
-# refused, and the empty stdout that no mode was resolved from the partial
-# read.
-assert_eq "$rc" "1" "resolve: a duplicate assignment fails the fallback loud (fallback exit 1, not the engine's 2)" "$stderr"
-assert_eq "$fallback_out" "" "resolve: the refused fallback load resolves no mode" "$stderr"
-assert_contains "$(cat "$stderr")" "assigned more than once" "resolve: the fallback duplicate diagnostic names the cause"
-
-echo "=== -h/--help answer in the arg parser (KEN-556) ==="
-
-# Usage must terminate before auth or any gh call, never consumed as the PR
-# number. The recording stub proves gh was never reached, and the token pins
-# guard the heredoc: it is the contract's sole home (tokens, never sentences).
-run_help() {
-  (cd "$TMP_ROOT/repo" \
-    && PATH="$TMP_ROOT/argbin:$PATH" \
-       .agents/skills/orch/scripts/approval-wait "$@")
-}
-
-stderr="$TMP_ROOT/help.err"
-set +e
-output=$(run_help --help 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "--help exits 0" "$stderr"
-assert_contains "$output" "Usage: approval-wait" "--help prints usage"
-assert_contains "$output" "Exit codes:" "--help carries the exit-code table"
-assert_contains "$output" "proceeded" "--help carries the proceeded status"
-assert_contains "$output" "PR_REVIEW_ON_TIMEOUT" "--help carries the on-timeout setting"
-if [[ -e "$TMP_ROOT/argval-gh.calls" ]]; then
-  assert_eq "$(cat "$TMP_ROOT/argval-gh.calls")" "" "--help never invokes gh"
-else
-  assert_eq "no-calls" "no-calls" "--help never invokes gh"
-fi
-rm -f "$TMP_ROOT/argval-gh.calls"
-
-set +e
-output=$(run_help -h 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "0" "-h exits 0" "$stderr"
-assert_contains "$output" "Usage: approval-wait" "-h prints usage"
-
-# An unknown flag is rejected in the parser, never absorbed into a positional
-# slot (same shape as ci-wait case 33 and queue-wait 17b).
-stderr="$TMP_ROOT/badflag.err"
-set +e
-output=$(run_help --bogus-flag 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "2" "unknown flag exits 2" "$stderr"
-assert_contains "$(cat "$stderr")" "unknown option" "unknown-flag error names the flag"
-if [[ -e "$TMP_ROOT/argval-gh.calls" ]]; then
-  assert_eq "$(cat "$TMP_ROOT/argval-gh.calls")" "" "unknown flag never invokes gh"
-else
-  assert_eq "no-calls" "no-calls" "unknown flag never invokes gh"
-fi
-rm -f "$TMP_ROOT/argval-gh.calls"
-
-
-
-# Missing arguments are the usage-error class (exit 2), never exit 1 —
-# exit 1 is reserved for operational review results.
-stderr="$TMP_ROOT/missing.err"
-set +e
-output=$(run_help 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "2" "missing PR# exits 2" "$stderr"
-assert_contains "$(cat "$stderr")" "missing required <PR#>" "missing PR# names the argument"
-
-set +e
-output=$(run_help 1 --mode 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "2" "--mode without a value exits 2" "$stderr"
-assert_contains "$(cat "$stderr")" "requires a value" "--mode diagnostic names the requirement"
-
-set +e
-output=$(run_help 1 --on-timeout 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "2" "--on-timeout without a value exits 2" "$stderr"
+echo "=== the arg parser answers -h, --help and its own errors before gh ==="
+# `label|args|expect`; the usage text carries the exit-code table, the
+# proceeded status and the on-timeout setting the workflow quotes.
+stage gate ""
+for row in \
+  "--help prints the contract on stdout, exits 0 and never invokes gh|--help|rc=0 stdout~Usage:+approval-wait=true stdout~Exit+codes:=true stdout~proceeded=true stdout~PR_REVIEW_ON_TIMEOUT=true gh=uncalled" \
+  "-h prints usage|-h|rc=0 stdout~Usage:+approval-wait=true" \
+  "an unknown flag exits 2, is named, and never invokes gh|--bogus-flag|rc=2 stderr~unknown+option=true gh=uncalled" \
+  "a missing PR# exits 2 and names the argument||rc=2 stderr~missing+required+<PR#>=true" \
+  "--mode without a value exits 2 and names the requirement|1 --mode|rc=2 stderr~requires+a+value=true" \
+  "--on-timeout without a value exits 2|1 --on-timeout|rc=2"; do
+  IFS='|' read -r label args expect <<<"$row"
+  [[ -n "$expect" ]] || { printf 'usage: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+  # shellcheck disable=SC2086
+  run gate "" $args
+  assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
+done
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
