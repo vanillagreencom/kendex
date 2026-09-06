@@ -176,6 +176,10 @@ enum Capture {
 /// rendering from outside its own file.
 struct Captured {
     files: Capture,
+    /// What the captured bytes render back to, where the capture goes
+    /// through a renderer at all. `None` for a skill, whose tree is its
+    /// own source form.
+    rendering: Option<String>,
     carry: Option<crate::engine::agent_carry::AgentCarry>,
     /// The catalog revision an agent's bytes were read at, `None` for a
     /// skill: a skill's tree is one capture no per-tool rendering derives
@@ -203,6 +207,7 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
             files: Capture::Tree(source_form(crate::capture::read_tree(edited)?)),
             carry: None,
             read_at: None,
+            rendering: None,
         },
         // Every other kind is turned away by `edited_rendering` first, so
         // what reaches here is an agent.
@@ -212,6 +217,7 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
                 files: Capture::File(captured.bytes),
                 carry: captured.carry,
                 read_at: captured.read_at,
+                rendering: Some(captured.rendering),
             }
         }
     })
@@ -393,6 +399,23 @@ pub(super) fn absorb_ops(
         },
         edited,
     )?;
+    // The capture has to hold the whole edit. A rendering carries fields
+    // its source form has nowhere to keep — an agent's `description:` and
+    // `tags:` have no override table to ride into — and a fork answers
+    // that by re-rendering the install over them. An absorb keeps the
+    // install, so a capture that renders back to anything else would
+    // leave the two disagreeing for good: the same never-settling state
+    // this whole path exists to end. Asked of the renderer's own output,
+    // never of a list of the fields that can be lost.
+    if let Some(rendering) = &captured.rendering {
+        let on_disk = std::fs::read_to_string(edited).map_err(|e| CoreError::io(edited, e))?;
+        if rendering != &on_disk {
+            return Err(CoreError::ForkWidensAccess {
+                name: crate::names::shown(name),
+                problem: "the edit changes something its source form cannot hold".into(),
+            });
+        }
+    }
     // A carry the manifest already holds changes nothing and is no reason
     // to refuse: a fork's own carry is mostly what its first capture wrote
     // there, and reading the carry's presence as work outstanding would

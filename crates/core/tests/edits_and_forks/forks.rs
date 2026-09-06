@@ -903,3 +903,50 @@ fn a_forked_agent_whose_skills_are_already_recorded_absorbs() {
             .contains("Edited again.")
     );
 }
+
+/// An edit the source form has nowhere to keep is not absorbed. A
+/// rendered agent's `description:` has no override table to ride into, so
+/// a capture would render back without it and the install and its source
+/// would disagree for good. That rendering keeps the edit hold instead.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_edit_the_source_form_cannot_hold_is_not_absorbed() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    edit_body(&file);
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let source_before = fs::read_to_string(captured(&w, "rev")).unwrap();
+    edit_line(
+        &file,
+        "description: \"agent rev\"",
+        "description: \"my rev\"",
+    );
+
+    let report = audit(&w.env, &w.scope).unwrap();
+    assert!(
+        report
+            .drift
+            .iter()
+            .any(|row| row.cause == Some(DriftCause::LocalEdit)),
+        "{:?}",
+        report.drift
+    );
+    assert!(report.fork_edits.is_empty(), "{:?}", report.fork_edits);
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert_eq!(
+        fs::read_to_string(captured(&w, "rev")).unwrap(),
+        source_before
+    );
+    assert!(
+        fs::read_to_string(&file).unwrap().contains("my rev"),
+        "and the edit is still the person's"
+    );
+}

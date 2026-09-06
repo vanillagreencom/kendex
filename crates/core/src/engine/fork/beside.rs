@@ -80,6 +80,7 @@ pub fn fork_beside(
         files,
         carry,
         read_at,
+        ..
     } = captured;
     let mut ops = capture_ops(env, scope, kind, new_name, &edited, named(files, new_name)?)?;
     let provenance = provenance(env, scope, kind, name, harness, &manifest, &decl)?;

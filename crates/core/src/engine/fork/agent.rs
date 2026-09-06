@@ -20,6 +20,10 @@ use crate::engine::agent_carry::{AgentCarry, agent_carry};
 pub(super) struct CapturedAgent {
     pub bytes: Vec<u8>,
     pub carry: Option<AgentCarry>,
+    /// What these captured bytes render back to for this harness. A fork
+    /// writes it over the install and is done; an absorb keeps the
+    /// install, so it has to know whether the two are the same text.
+    pub rendering: String,
     /// The catalog revision those bytes came from.
     pub read_at: Option<String>,
 }
@@ -99,6 +103,7 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
         bytes,
         carry: (!carry.is_empty()).then_some(carry),
         read_at,
+        rendering,
     })
 }
 
