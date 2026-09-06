@@ -43,7 +43,7 @@ function world(overrides: Partial<SubagentRateLimitWatchdogDeps> = {}) {
 	const activity: Array<{ event: string; payload: Record<string, unknown> }> = [];
 	const exhausted: string[] = [];
 	const warnings: string[] = [];
-	const persisted: Array<number | null> = [];
+	const persisted: string[] = [];
 	const clock = { value: 0 };
 	const deps: SubagentRateLimitWatchdogDeps = {
 		backoffLadderSec: () => [1, 2, 4],
@@ -53,7 +53,7 @@ function world(overrides: Partial<SubagentRateLimitWatchdogDeps> = {}) {
 		maxAttempts: () => 3,
 		now: () => clock.value,
 		onExhausted: (paneId, attempt, reason) => exhausted.push(`${paneId}#${attempt}:${reason}`),
-		persistRetryState: (_paneId, at) => persisted.push(at),
+		persistRetryState: (paneId, at) => persisted.push(`${paneId}=${at}`),
 		scheduleAfter: (delayMs, fn) => {
 			const entry = { cancelled: false, delayMs, fn };
 			timers.push(entry);
@@ -62,7 +62,7 @@ function world(overrides: Partial<SubagentRateLimitWatchdogDeps> = {}) {
 		sendUserMessage: (message) => steers.push(message),
 		...overrides,
 	};
-	return { activity, clock, deps, exhausted, persisted, seen: { activity: 0, warnings: 0 }, steers, timers, warnings, watchdog: createSubagentRateLimitWatchdog(deps) };
+	return { activity, clock, deps, exhausted, persisted, seen: { activity: 0, persisted: 0, warnings: 0 }, steers, timers, warnings, watchdog: createSubagentRateLimitWatchdog(deps) };
 }
 type World = ReturnType<typeof world>;
 
@@ -74,12 +74,16 @@ function warnTag(line: string): string {
 	return JSON.stringify(line);
 }
 
+// Each broker payload as its event, its own fields and its refs (agent, task,
+// pane), which the activity tab's attribution is built from.
 function activityTag(entry: { event: string; payload: Record<string, unknown> }): string {
 	const p = entry.payload;
+	const refs = `@${p.agent}/${p.taskId}/${p.paneId}`;
 	const name = entry.event.replace(/^subagents:rate_limit(ed|_)?/, "") || "limited";
-	if (name === "skipped") return `skipped(${p.reason})`;
-	if (name === "limited" || name === "retry") return `${name}(a=${p.attempt},next=${p.next_retry_at},src=${p.reset_source ?? "-"}${p.degraded_reset_source ? ",degraded" : ""})`;
-	return `${name}(a=${p.attempt})`;
+	if (name === "skipped") return `skipped(${p.reason})${refs}`;
+	if (name === "limited" || name === "retry") return `${name}(a=${p.attempt},next=${p.next_retry_at},src=${p.reset_source ?? "-"}${p.degraded_reset_source ? ",degraded" : ""})${refs}`;
+	if (name === "exhausted") return `exhausted(a=${p.attempt},${JSON.stringify(p.reason)})${refs}`;
+	return `${name}(a=${p.attempt})${refs}`;
 }
 
 function outcomeTag(outcome: RateLimitOutcome): string {
@@ -93,9 +97,9 @@ function outcomeTag(outcome: RateLimitOutcome): string {
 }
 
 // One step's line: what the step returned, then the pane read back (awaiting,
-// timers armed/cancelled and the last delay, steers sent and whether they were
-// the canonical text, the last persisted mirror value, exhaustion callbacks),
-// then the activity and warnings the step added.
+// timers armed and which were cancelled, the last delay, steers sent and
+// whether they were the canonical text, exhaustion callbacks), then the mirror
+// writes, activity and warnings the step added.
 type Step = { at?: number; do: (w: World) => string };
 function runScript(w: World, steps: Step[]): string {
 	const lines: string[] = [];
@@ -104,11 +108,14 @@ function runScript(w: World, steps: Step[]): string {
 		const head = step.do(w);
 		const added = w.activity.slice(w.seen.activity).map(activityTag);
 		const warned = w.warnings.slice(w.seen.warnings).map(warnTag);
+		const written = w.persisted.slice(w.seen.persisted);
 		w.seen.activity = w.activity.length;
 		w.seen.warnings = w.warnings.length;
+		w.seen.persisted = w.persisted.length;
 		const steer = w.steers.length ? (w.steers.every((s) => s === RATE_LIMIT_STEER_MESSAGE) ? `${w.steers.length}/canonical` : `${w.steers.length}/other`) : "0";
 		const last = w.timers[w.timers.length - 1];
-		lines.push(`${head} await=${w.watchdog.isAwaitingRetry("rust")} timers=${w.timers.length}/${w.timers.filter((t) => t.cancelled).length}${last ? ` delay=${last.delayMs}` : ""} steers=${steer} persist=${w.persisted.length ? w.persisted[w.persisted.length - 1] : "-"} exhausted=${w.exhausted.length ? w.exhausted.join(";") : "-"} +[${added.join(",")}]${warned.length ? ` warn=[${warned.join(",")}]` : ""}`);
+		const cancelled = w.timers.map((t, i) => (t.cancelled ? i : -1)).filter((i) => i >= 0);
+		lines.push(`${head} await=${w.watchdog.isAwaitingRetry("rust")} timers=${w.timers.length} cancelled=[${cancelled.join(",")}]${last ? ` delay=${last.delayMs}` : ""} steers=${steer} exhausted=${w.exhausted.length ? w.exhausted.join(";") : "-"} persist=[${written.join(",")}] +[${added.join(",")}]${warned.length ? ` warn=[${warned.join(",")}]` : ""}`);
 	}
 	return lines.join("\n");
 }
@@ -118,105 +125,112 @@ const fire = (w: World) => `fire=${w.watchdog.fireRetryNow("rust")}`;
 const cancel = (w: World) => `cancel=${w.watchdog.cancel("rust")}`;
 const fireTimer = (index: number) => (w: World) => { w.timers[index]!.fn(); return `timer[${index}]-fired`; };
 
-const ARMED_1 = "retry#1@2000:backoff-only(degraded) await=true timers=1/0 delay=1000 steers=0 persist=2000 exhausted=- +[limited(a=1,next=2000,src=backoff-only,degraded)]";
+const ARMED_1 = "retry#1@2000:backoff-only(degraded) await=true timers=1 cancelled=[] delay=1000 steers=0 exhausted=- persist=[rust=2000] +[limited(a=1,next=2000,src=backoff-only,degraded)@rust/task-1/rust]";
 
 // label | deps overrides | the script | expect one line per step
 const rows: Array<[string, Partial<SubagentRateLimitWatchdogDeps>, Step[], string]> = [
 	["the first detection arms the first ladder step and mirrors the retry time", {}, [{ at: 1_000, do: msg(RATE_LIMITED) }], ARMED_1],
 	["the fired steer is the canonical text and clears the mirror", {}, [{ at: 1_000, do: msg(RATE_LIMITED) }, { do: fire }], [
 		ARMED_1,
-		"fire=true await=false timers=1/0 delay=1000 steers=1/canonical persist=null exhausted=- +[]",
+		"fire=true await=false timers=1 cancelled=[] delay=1000 steers=1/canonical exhausted=- persist=[rust=null] +[]",
 	].join("\n")],
 	["a second detection after the steer climbs the ladder", {}, [{ at: 1_000, do: msg(RATE_LIMITED) }, { do: fire }, { at: 5_000, do: msg(RATE_LIMITED) }], [
 		ARMED_1,
-		"fire=true await=false timers=1/0 delay=1000 steers=1/canonical persist=null exhausted=- +[]",
-		"retry#2@7000:backoff-only(degraded) await=true timers=2/0 delay=2000 steers=1/canonical persist=7000 exhausted=- +[retry(a=2,next=7000,src=backoff-only,degraded)]",
+		"fire=true await=false timers=1 cancelled=[] delay=1000 steers=1/canonical exhausted=- persist=[rust=null] +[]",
+		"retry#2@7000:backoff-only(degraded) await=true timers=2 cancelled=[] delay=2000 steers=1/canonical exhausted=- persist=[rust=7000] +[retry(a=2,next=7000,src=backoff-only,degraded)@rust/task-1/rust]",
 	].join("\n")],
 	["a detection while a retry is pending re-arms on the latest decision", {}, [{ at: 1_000, do: msg(RATE_LIMITED) }, { at: 1_500, do: msg(RATE_LIMITED) }], [
 		ARMED_1,
-		"retry#2@3500:backoff-only(degraded) await=true timers=2/1 delay=2000 steers=0 persist=3500 exhausted=- +[retry(a=2,next=3500,src=backoff-only,degraded)]",
+		"retry#2@3500:backoff-only(degraded) await=true timers=2 cancelled=[0] delay=2000 steers=0 exhausted=- persist=[rust=3500] +[retry(a=2,next=3500,src=backoff-only,degraded)@rust/task-1/rust]",
 	].join("\n")],
 	["the fourth detection exhausts the three attempts and calls the handler", {}, [
 		{ at: 1_000, do: msg(RATE_LIMITED) }, { do: fire }, { do: msg(RATE_LIMITED) }, { do: fire }, { do: msg(RATE_LIMITED) }, { do: fire }, { do: msg(RATE_LIMITED) },
 	], [
 		ARMED_1,
-		"fire=true await=false timers=1/0 delay=1000 steers=1/canonical persist=null exhausted=- +[]",
-		"retry#2@3000:backoff-only(degraded) await=true timers=2/0 delay=2000 steers=1/canonical persist=3000 exhausted=- +[retry(a=2,next=3000,src=backoff-only,degraded)]",
-		"fire=true await=false timers=2/0 delay=2000 steers=2/canonical persist=null exhausted=- +[]",
-		"retry#3@5000:backoff-only(degraded) await=true timers=3/0 delay=4000 steers=2/canonical persist=5000 exhausted=- +[retry(a=3,next=5000,src=backoff-only,degraded)]",
-		"fire=true await=false timers=3/0 delay=4000 steers=3/canonical persist=null exhausted=- +[]",
-		"exhausted#3 await=false timers=3/0 delay=4000 steers=3/canonical persist=null exhausted=rust#3:rate-limit retries exhausted after 3 attempts +[exhausted(a=3)]",
+		"fire=true await=false timers=1 cancelled=[] delay=1000 steers=1/canonical exhausted=- persist=[rust=null] +[]",
+		"retry#2@3000:backoff-only(degraded) await=true timers=2 cancelled=[] delay=2000 steers=1/canonical exhausted=- persist=[rust=3000] +[retry(a=2,next=3000,src=backoff-only,degraded)@rust/task-1/rust]",
+		"fire=true await=false timers=2 cancelled=[] delay=2000 steers=2/canonical exhausted=- persist=[rust=null] +[]",
+		"retry#3@5000:backoff-only(degraded) await=true timers=3 cancelled=[] delay=4000 steers=2/canonical exhausted=- persist=[rust=5000] +[retry(a=3,next=5000,src=backoff-only,degraded)@rust/task-1/rust]",
+		"fire=true await=false timers=3 cancelled=[] delay=4000 steers=3/canonical exhausted=- persist=[rust=null] +[]",
+		"exhausted#3 await=false timers=3 cancelled=[] delay=4000 steers=3/canonical exhausted=rust#3:rate-limit retries exhausted after 3 attempts persist=[rust=null] +[exhausted(a=3,\"rate-limit retries exhausted after 3 attempts\")@rust/task-1/rust]",
+	].join("\n")],
+	["a detection with a retry still pending exhausts a one-attempt ladder and disarms it", { maxAttempts: () => 1 }, [{ at: 1_000, do: msg(RATE_LIMITED) }, { at: 1_500, do: msg(RATE_LIMITED) }], [
+		ARMED_1,
+		'exhausted#1 await=false timers=1 cancelled=[0] delay=1000 steers=0 exhausted=rust#1:rate-limit retries exhausted after 1 attempt persist=[rust=null] +[exhausted(a=1,"rate-limit retries exhausted after 1 attempt")@rust/task-1/rust]',
 	].join("\n")],
 	["a healthy turn after the steer resolves and resets the ladder", {}, [{ at: 1_000, do: msg(RATE_LIMITED) }, { do: fire }, { do: msg(HEALTHY) }, { do: msg(RATE_LIMITED) }], [
 		ARMED_1,
-		"fire=true await=false timers=1/0 delay=1000 steers=1/canonical persist=null exhausted=- +[]",
-		"resolved#1 await=false timers=1/0 delay=1000 steers=1/canonical persist=null exhausted=- +[skipped(stopreason-mismatch),resolved(a=1)]",
-		"retry#1@2000:backoff-only(degraded) await=true timers=2/0 delay=1000 steers=1/canonical persist=2000 exhausted=- +[limited(a=1,next=2000,src=backoff-only,degraded)]",
+		"fire=true await=false timers=1 cancelled=[] delay=1000 steers=1/canonical exhausted=- persist=[rust=null] +[]",
+		"resolved#1 await=false timers=1 cancelled=[] delay=1000 steers=1/canonical exhausted=- persist=[rust=null] +[skipped(stopreason-mismatch)@rust/task-1/rust,resolved(a=1)@rust/task-1/rust]",
+		"retry#1@2000:backoff-only(degraded) await=true timers=2 cancelled=[] delay=1000 steers=1/canonical exhausted=- persist=[rust=2000] +[limited(a=1,next=2000,src=backoff-only,degraded)@rust/task-1/rust]",
 	].join("\n")],
 	["a healthy turn before the steer cancels the timer and resolves", {}, [{ at: 1_000, do: msg(RATE_LIMITED) }, { do: msg(HEALTHY) }, { do: fire }], [
 		ARMED_1,
-		"resolved#1 await=false timers=1/1 delay=1000 steers=0 persist=null exhausted=- +[skipped(stopreason-mismatch),resolved(a=1)]",
-		"fire=false await=false timers=1/1 delay=1000 steers=0 persist=null exhausted=- +[]",
+		"resolved#1 await=false timers=1 cancelled=[0] delay=1000 steers=0 exhausted=- persist=[rust=null] +[skipped(stopreason-mismatch)@rust/task-1/rust,resolved(a=1)@rust/task-1/rust]",
+		"fire=false await=false timers=1 cancelled=[0] delay=1000 steers=0 exhausted=- persist=[] +[]",
 	].join("\n")],
 	["the user-role echo of the steer neither resolves nor resets", {}, [{ at: 1_000, do: msg(RATE_LIMITED) }, { do: fire }, { do: msg(STEER_ECHO) }, { do: msg(RATE_LIMITED) }], [
 		ARMED_1,
-		"fire=true await=false timers=1/0 delay=1000 steers=1/canonical persist=null exhausted=- +[]",
-		"skip:non-assistant await=false timers=1/0 delay=1000 steers=1/canonical persist=null exhausted=- +[skipped(non-assistant)]",
-		"retry#2@3000:backoff-only(degraded) await=true timers=2/0 delay=2000 steers=1/canonical persist=3000 exhausted=- +[retry(a=2,next=3000,src=backoff-only,degraded)]",
+		"fire=true await=false timers=1 cancelled=[] delay=1000 steers=1/canonical exhausted=- persist=[rust=null] +[]",
+		"skip:non-assistant await=false timers=1 cancelled=[] delay=1000 steers=1/canonical exhausted=- persist=[] +[skipped(non-assistant)@rust/task-1/rust]",
+		"retry#2@3000:backoff-only(degraded) await=true timers=2 cancelled=[] delay=2000 steers=1/canonical exhausted=- persist=[rust=3000] +[retry(a=2,next=3000,src=backoff-only,degraded)@rust/task-1/rust]",
 	].join("\n")],
-	["a healthy turn with nothing pending is only skipped", {}, [{ do: msg(HEALTHY) }], "skip:stopreason-mismatch await=false timers=0/0 steers=0 persist=- exhausted=- +[skipped(stopreason-mismatch)]"],
+	["a healthy turn with nothing pending is only skipped", {}, [{ do: msg(HEALTHY) }], "skip:stopreason-mismatch await=false timers=0 cancelled=[] steers=0 exhausted=- persist=[] +[skipped(stopreason-mismatch)@rust/task-1/rust]"],
 	["an assistant turn without a stop reason after the steer does not resolve", {}, [{ at: 1_000, do: msg(RATE_LIMITED) }, { do: fire }, { do: msg(NO_STOP_REASON) }, { do: msg(RATE_LIMITED) }], [
 		ARMED_1,
-		"fire=true await=false timers=1/0 delay=1000 steers=1/canonical persist=null exhausted=- +[]",
-		"skip:no-stopreason await=false timers=1/0 delay=1000 steers=1/canonical persist=null exhausted=- +[skipped(no-stopreason)]",
-		"retry#2@3000:backoff-only(degraded) await=true timers=2/0 delay=2000 steers=1/canonical persist=3000 exhausted=- +[retry(a=2,next=3000,src=backoff-only,degraded)]",
+		"fire=true await=false timers=1 cancelled=[] delay=1000 steers=1/canonical exhausted=- persist=[rust=null] +[]",
+		"skip:no-stopreason await=false timers=1 cancelled=[] delay=1000 steers=1/canonical exhausted=- persist=[] +[skipped(no-stopreason)@rust/task-1/rust]",
+		"retry#2@3000:backoff-only(degraded) await=true timers=2 cancelled=[] delay=2000 steers=1/canonical exhausted=- persist=[rust=3000] +[retry(a=2,next=3000,src=backoff-only,degraded)@rust/task-1/rust]",
 	].join("\n")],
 	["an error turn without rate-limit prose after the steer does not resolve", {}, [{ at: 1_000, do: msg(RATE_LIMITED) }, { do: fire }, { do: msg(ERROR_WITHOUT_PROSE) }, { do: msg(RATE_LIMITED) }], [
 		ARMED_1,
-		"fire=true await=false timers=1/0 delay=1000 steers=1/canonical persist=null exhausted=- +[]",
-		"skip:no-prose await=false timers=1/0 delay=1000 steers=1/canonical persist=null exhausted=- +[skipped(no-prose)]",
-		"retry#2@3000:backoff-only(degraded) await=true timers=2/0 delay=2000 steers=1/canonical persist=3000 exhausted=- +[retry(a=2,next=3000,src=backoff-only,degraded)]",
+		"fire=true await=false timers=1 cancelled=[] delay=1000 steers=1/canonical exhausted=- persist=[rust=null] +[]",
+		"skip:no-prose await=false timers=1 cancelled=[] delay=1000 steers=1/canonical exhausted=- persist=[] +[skipped(no-prose)@rust/task-1/rust]",
+		"retry#2@3000:backoff-only(degraded) await=true timers=2 cancelled=[] delay=2000 steers=1/canonical exhausted=- persist=[rust=3000] +[retry(a=2,next=3000,src=backoff-only,degraded)@rust/task-1/rust]",
 	].join("\n")],
-	["an assistant turn without a stop reason is skipped", {}, [{ do: msg(NO_STOP_REASON) }], "skip:no-stopreason await=false timers=0/0 steers=0 persist=- exhausted=- +[skipped(no-stopreason)]"],
-	["an error turn without rate-limit prose is skipped", {}, [{ do: msg(ERROR_WITHOUT_PROSE) }], "skip:no-prose await=false timers=0/0 steers=0 persist=- exhausted=- +[skipped(no-prose)]"],
-	["a disabled watchdog does nothing", { isEnabled: () => false }, [{ at: 1_000, do: msg(RATE_LIMITED) }], "disabled await=false timers=0/0 steers=0 persist=- exhausted=- +[]"],
+	["an assistant turn without a stop reason is skipped", {}, [{ do: msg(NO_STOP_REASON) }], "skip:no-stopreason await=false timers=0 cancelled=[] steers=0 exhausted=- persist=[] +[skipped(no-stopreason)@rust/task-1/rust]"],
+	["an error turn without rate-limit prose is skipped", {}, [{ do: msg(ERROR_WITHOUT_PROSE) }], "skip:no-prose await=false timers=0 cancelled=[] steers=0 exhausted=- persist=[] +[skipped(no-prose)@rust/task-1/rust]"],
+	["a disabled watchdog does nothing", { isEnabled: () => false }, [{ at: 1_000, do: msg(RATE_LIMITED) }], "disabled await=false timers=0 cancelled=[] steers=0 exhausted=- persist=[] +[]"],
 	["cancel clears the pending retry, the mirror and the ladder", {}, [{ at: 1_000, do: msg(RATE_LIMITED) }, { do: cancel }, { do: cancel }, { do: msg(RATE_LIMITED) }], [
 		ARMED_1,
-		"cancel=true await=false timers=1/1 delay=1000 steers=0 persist=null exhausted=- +[]",
-		"cancel=false await=false timers=1/1 delay=1000 steers=0 persist=null exhausted=- +[]",
-		"retry#1@2000:backoff-only(degraded) await=true timers=2/1 delay=1000 steers=0 persist=2000 exhausted=- +[limited(a=1,next=2000,src=backoff-only,degraded)]",
+		"cancel=true await=false timers=1 cancelled=[0] delay=1000 steers=0 exhausted=- persist=[rust=null] +[]",
+		"cancel=false await=false timers=1 cancelled=[0] delay=1000 steers=0 exhausted=- persist=[rust=null] +[]",
+		"retry#1@2000:backoff-only(degraded) await=true timers=2 cancelled=[0] delay=1000 steers=0 exhausted=- persist=[rust=2000] +[limited(a=1,next=2000,src=backoff-only,degraded)@rust/task-1/rust]",
 	].join("\n")],
 	["a stale timer firing after a re-arm does not steer", {}, [{ at: 1_000, do: msg(RATE_LIMITED) }, { at: 1_500, do: msg(RATE_LIMITED) }, { do: fireTimer(0) }], [
 		ARMED_1,
-		"retry#2@3500:backoff-only(degraded) await=true timers=2/1 delay=2000 steers=0 persist=3500 exhausted=- +[retry(a=2,next=3500,src=backoff-only,degraded)]",
-		"timer[0]-fired await=true timers=2/1 delay=2000 steers=0 persist=3500 exhausted=- +[]",
+		"retry#2@3500:backoff-only(degraded) await=true timers=2 cancelled=[0] delay=2000 steers=0 exhausted=- persist=[rust=3500] +[retry(a=2,next=3500,src=backoff-only,degraded)@rust/task-1/rust]",
+		"timer[0]-fired await=true timers=2 cancelled=[0] delay=2000 steers=0 exhausted=- persist=[] +[]",
 	].join("\n")],
 	["a throwing persist hook is warned and the retry still arms", { persistRetryState: () => { throw new Error("disk gone"); } }, [{ at: 1_000, do: msg(RATE_LIMITED) }],
-		"retry#1@2000:backoff-only(degraded) await=true timers=1/0 delay=1000 steers=0 persist=- exhausted=- +[limited(a=1,next=2000,src=backoff-only,degraded)] warn=[persist-failed]"],
+		"retry#1@2000:backoff-only(degraded) await=true timers=1 cancelled=[] delay=1000 steers=0 exhausted=- persist=[] +[limited(a=1,next=2000,src=backoff-only,degraded)@rust/task-1/rust] warn=[persist-failed]"],
 	["a throwing steer is warned, not thrown", { sendUserMessage: () => { throw new Error("bridge socket gone"); } }, [{ at: 1_000, do: msg(RATE_LIMITED) }, { do: fire }], [
 		ARMED_1,
-		"fire=true await=false timers=1/0 delay=1000 steers=0 persist=null exhausted=- +[] warn=[steer-failed]",
+		"fire=true await=false timers=1 cancelled=[] delay=1000 steers=0 exhausted=- persist=[rust=null] +[] warn=[steer-failed]",
 	].join("\n")],
 	["a throwing activity sink is warned, not thrown", { emitActivity: () => { throw new Error("broker offline"); } }, [{ at: 1_000, do: msg(RATE_LIMITED) }],
-		"retry#1@2000:backoff-only(degraded) await=true timers=1/0 delay=1000 steers=0 persist=2000 exhausted=- +[] warn=[emit-failed]"],
+		"retry#1@2000:backoff-only(degraded) await=true timers=1 cancelled=[] delay=1000 steers=0 exhausted=- persist=[rust=2000] +[] warn=[emit-failed]"],
 	["a throwing exhaustion handler is warned, not thrown", { maxAttempts: () => 1, onExhausted: () => { throw new Error("outbox gone"); } }, [{ at: 1_000, do: msg(RATE_LIMITED) }, { do: fire }, { do: msg(RATE_LIMITED) }], [
 		ARMED_1,
-		"fire=true await=false timers=1/0 delay=1000 steers=1/canonical persist=null exhausted=- +[]",
-		"exhausted#1 await=false timers=1/0 delay=1000 steers=1/canonical persist=null exhausted=- +[exhausted(a=1)] warn=[exhausted-failed]",
+		"fire=true await=false timers=1 cancelled=[] delay=1000 steers=1/canonical exhausted=- persist=[rust=null] +[]",
+		"exhausted#1 await=false timers=1 cancelled=[] delay=1000 steers=1/canonical exhausted=- persist=[rust=null] +[exhausted(a=1,\"rate-limit retries exhausted after 1 attempt\")@rust/task-1/rust] warn=[exhausted-failed]",
 	].join("\n")],
 	["session-limit prose with no usage source schedules on the prose reset, degraded", { getUsageSnapshot: () => null }, [{ at: SESSION_LIMIT_NOW, do: msg(SESSION_LIMIT) }],
-		`retry#1@${SESSION_LIMIT_RESET_AT}:prose-fallback(degraded) await=true timers=1/0 delay=${SESSION_LIMIT_RESET_AT - SESSION_LIMIT_NOW} steers=0 persist=${SESSION_LIMIT_RESET_AT} exhausted=- +[limited(a=1,next=${SESSION_LIMIT_RESET_AT},src=prose-fallback,degraded)]`],
+		`retry#1@${SESSION_LIMIT_RESET_AT}:prose-fallback(degraded) await=true timers=1 cancelled=[] delay=${SESSION_LIMIT_RESET_AT - SESSION_LIMIT_NOW} steers=0 exhausted=- persist=[rust=${SESSION_LIMIT_RESET_AT}] +[limited(a=1,next=${SESSION_LIMIT_RESET_AT},src=prose-fallback,degraded)@rust/task-1/rust]`],
 	["a usage snapshot wins over the prose reset", { getUsageSnapshot: () => claudeUsage() }, [{ at: SESSION_LIMIT_NOW, do: msg(SESSION_LIMIT) }],
-		`retry#1@${USAGE_RESET_AT}:usage-endpoint await=true timers=1/0 delay=${USAGE_RESET_AT - SESSION_LIMIT_NOW} steers=0 persist=${USAGE_RESET_AT} exhausted=- +[limited(a=1,next=${USAGE_RESET_AT},src=usage-endpoint)]`],
+		`retry#1@${USAGE_RESET_AT}:usage-endpoint await=true timers=1 cancelled=[] delay=${USAGE_RESET_AT - SESSION_LIMIT_NOW} steers=0 exhausted=- persist=[rust=${USAGE_RESET_AT}] +[limited(a=1,next=${USAGE_RESET_AT},src=usage-endpoint)@rust/task-1/rust]`],
+	// collectCodexQuotaWindows emits a window from a reset timestamp alone when
+	// the endpoint carries no utilization and no limit flag; dropping it would
+	// lose the usage-endpoint reset and fall back to the ladder.
 	["a Codex window carrying only a reset time still schedules on it", {
 		getUsageSnapshot: () => normalizeQuotaSnapshot("codex", "usage-endpoint", { rate_limit: { primary_window: { reset_after_seconds: (USAGE_RESET_AT - RATE_LIMIT_RESET_MARGIN_MS - SESSION_LIMIT_NOW) / 1000 } } }, SESSION_LIMIT_NOW),
 	}, [{ at: SESSION_LIMIT_NOW, do: msg(SESSION_LIMIT) }],
-		`retry#1@${USAGE_RESET_AT}:usage-endpoint await=true timers=1/0 delay=${USAGE_RESET_AT - SESSION_LIMIT_NOW} steers=0 persist=${USAGE_RESET_AT} exhausted=- +[limited(a=1,next=${USAGE_RESET_AT},src=usage-endpoint)]`],
+		`retry#1@${USAGE_RESET_AT}:usage-endpoint await=true timers=1 cancelled=[] delay=${USAGE_RESET_AT - SESSION_LIMIT_NOW} steers=0 exhausted=- persist=[rust=${USAGE_RESET_AT}] +[limited(a=1,next=${USAGE_RESET_AT},src=usage-endpoint)@rust/task-1/rust]`],
 	["a failing usage source is warned with its secret redacted and the prose reset stands", {
 		getUsageSnapshot: () => ({ provider: "claude", reason: "http-401 bearer sk-ant-oauth-secret-token-warning-123456789", resetSource: "usage-endpoint", source: "quota-source-error", status: 401 }),
-	}, [{ at: SESSION_LIMIT_NOW, do: msg(SESSION_LIMIT) }, { do: (w) => `redacted=${!w.warnings.some((line) => line.includes("secret-token")) && w.warnings.some((line) => line.includes("http-401"))}` }], [
-		`retry#1@${SESSION_LIMIT_RESET_AT}:prose-fallback(degraded) await=true timers=1/0 delay=${SESSION_LIMIT_RESET_AT - SESSION_LIMIT_NOW} steers=0 persist=${SESSION_LIMIT_RESET_AT} exhausted=- +[limited(a=1,next=${SESSION_LIMIT_RESET_AT},src=prose-fallback,degraded)] warn=[usage-failed]`,
-		`redacted=true await=true timers=1/0 delay=${SESSION_LIMIT_RESET_AT - SESSION_LIMIT_NOW} steers=0 persist=${SESSION_LIMIT_RESET_AT} exhausted=- +[]`,
+	}, [{ at: SESSION_LIMIT_NOW, do: msg(SESSION_LIMIT) }, { do: (w) => `status-kept=${w.warnings.some((line) => line.includes("http-401"))} token-redacted=${!w.warnings.some((line) => line.includes("secret-token"))}` }], [
+		`retry#1@${SESSION_LIMIT_RESET_AT}:prose-fallback(degraded) await=true timers=1 cancelled=[] delay=${SESSION_LIMIT_RESET_AT - SESSION_LIMIT_NOW} steers=0 exhausted=- persist=[rust=${SESSION_LIMIT_RESET_AT}] +[limited(a=1,next=${SESSION_LIMIT_RESET_AT},src=prose-fallback,degraded)@rust/task-1/rust] warn=[usage-failed]`,
+		`status-kept=true token-redacted=true await=true timers=1 cancelled=[] delay=${SESSION_LIMIT_RESET_AT - SESSION_LIMIT_NOW} steers=0 exhausted=- persist=[] +[]`,
 	].join("\n")],
 ];
 
@@ -237,10 +251,10 @@ test("a usage snapshot that arrives late re-arms the degraded prose timer before
 	await Promise.resolve();
 	const after = runScript(w, [{ do: fireTimer(0) }]);
 	assert.equal(`${first}\n${after}`, [
-		`retry#1@${SESSION_LIMIT_RESET_AT}:prose-fallback(degraded) await=true timers=1/0 delay=${SESSION_LIMIT_RESET_AT - SESSION_LIMIT_NOW} steers=0 persist=${SESSION_LIMIT_RESET_AT} exhausted=- +[limited(a=1,next=${SESSION_LIMIT_RESET_AT},src=prose-fallback,degraded)]`,
+		`retry#1@${SESSION_LIMIT_RESET_AT}:prose-fallback(degraded) await=true timers=1 cancelled=[] delay=${SESSION_LIMIT_RESET_AT - SESSION_LIMIT_NOW} steers=0 exhausted=- persist=[rust=${SESSION_LIMIT_RESET_AT}] +[limited(a=1,next=${SESSION_LIMIT_RESET_AT},src=prose-fallback,degraded)@rust/task-1/rust]`,
 		// The re-arm happened between the two scripts, so its `retry` event
 		// appears on the stale timer's line.
-		`timer[0]-fired await=true timers=2/1 delay=${USAGE_RESET_AT - SESSION_LIMIT_NOW} steers=0 persist=${USAGE_RESET_AT} exhausted=- +[retry(a=1,next=${USAGE_RESET_AT},src=usage-endpoint)]`,
+		`timer[0]-fired await=true timers=2 cancelled=[0] delay=${USAGE_RESET_AT - SESSION_LIMIT_NOW} steers=0 exhausted=- persist=[rust=${USAGE_RESET_AT}] +[retry(a=1,next=${USAGE_RESET_AT},src=usage-endpoint)@rust/task-1/rust]`,
 	].join("\n"));
 });
 
@@ -255,9 +269,9 @@ test("a usage snapshot that arrives after the pane resolved does not re-arm it",
 	await Promise.resolve();
 	const after = runScript(w, [{ do: (w) => "settled" }]);
 	assert.equal(`${before}\n${after}`, [
-		`retry#1@${SESSION_LIMIT_RESET_AT}:prose-fallback(degraded) await=true timers=1/0 delay=${SESSION_LIMIT_RESET_AT - SESSION_LIMIT_NOW} steers=0 persist=${SESSION_LIMIT_RESET_AT} exhausted=- +[limited(a=1,next=${SESSION_LIMIT_RESET_AT},src=prose-fallback,degraded)]`,
-		`resolved#1 await=false timers=1/1 delay=${SESSION_LIMIT_RESET_AT - SESSION_LIMIT_NOW} steers=0 persist=null exhausted=- +[skipped(stopreason-mismatch),resolved(a=1)]`,
-		`settled await=false timers=1/1 delay=${SESSION_LIMIT_RESET_AT - SESSION_LIMIT_NOW} steers=0 persist=null exhausted=- +[]`,
+		`retry#1@${SESSION_LIMIT_RESET_AT}:prose-fallback(degraded) await=true timers=1 cancelled=[] delay=${SESSION_LIMIT_RESET_AT - SESSION_LIMIT_NOW} steers=0 exhausted=- persist=[rust=${SESSION_LIMIT_RESET_AT}] +[limited(a=1,next=${SESSION_LIMIT_RESET_AT},src=prose-fallback,degraded)@rust/task-1/rust]`,
+		`resolved#1 await=false timers=1 cancelled=[0] delay=${SESSION_LIMIT_RESET_AT - SESSION_LIMIT_NOW} steers=0 exhausted=- persist=[rust=null] +[skipped(stopreason-mismatch)@rust/task-1/rust,resolved(a=1)@rust/task-1/rust]`,
+		`settled await=false timers=1 cancelled=[0] delay=${SESSION_LIMIT_RESET_AT - SESSION_LIMIT_NOW} steers=0 exhausted=- persist=[] +[]`,
 	].join("\n"));
 });
 
