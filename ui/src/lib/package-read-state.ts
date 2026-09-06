@@ -4,9 +4,12 @@
 // of the header's question is `updates-read-state.ts` [`packageUpdateNote`];
 // `versions.ts` [`updateOffer`] ranks the two into the one string the header
 // renders.
+import type { TimelineRefused } from "@/bindings";
 import { packageFilesReadFailedNote } from "@/lib/copy";
-import { packageReadFailedNote } from "@/lib/copy-updates";
-import type { ReadState } from "@/lib/read-state";
+import { packageReadFailedNote, sourceUnfetchedNote } from "@/lib/copy-updates";
+import { READ_LANDED, type ReadState, readFailed } from "@/lib/read-state";
+import { isShapedRefusal, refusalWords } from "@/lib/refusal";
+import { NO_REASON_GIVEN } from "@/lib/settled";
 
 /** How the page's own three reads went. The two that gate Update are kept
  *  apart rather than folded into one answer: either one failing is a
@@ -21,6 +24,13 @@ export interface PackageReads {
   record: ReadState;
   /** The timeline Update moves along. */
   timeline: ReadState;
+  /** The source core said no fetch has downloaded yet, or null. A timeline
+   *  read that answered this landed — core read the manifest and the mirror
+   *  and said what it found — and left no rows because there are none to
+   *  read until a refresh. Kept apart from `timeline` so that answer is
+   *  neither a read that failed, which offers a re-read that answers the
+   *  same, nor a package at its newest, which says nothing. */
+  unfetched: string | null;
   /** The files the Overview lists. */
   files: ReadState;
   /** Whether the newest of these reads is still out. The last answer stays
@@ -41,6 +51,33 @@ const failedNote = ({ status, error }: ReadState): string | null =>
  *  this ranks and why. */
 export const packageReadNote = (reads: PackageReads): string | null =>
   failedNote(reads.record) ?? failedNote(reads.timeline);
+
+/** What the timeline read leaves behind: how it went, and the source no
+ *  fetch has downloaded where that was core's answer. A transport failure
+ *  arrives with no shape around it and lands as a read that failed, the way
+ *  `refusal.ts` says every folded message must. */
+export const timelineOf = (
+  response:
+    | { status: "ok" }
+    | { status: "error"; error: TimelineRefused | string },
+): Pick<PackageReads, "timeline" | "unfetched"> => {
+  if (response.status === "ok")
+    return { timeline: READ_LANDED, unfetched: null };
+  const { error } = response;
+  if (isShapedRefusal(error) && error.kind === "source-pending") {
+    return { timeline: READ_LANDED, unfetched: error.source };
+  }
+  return {
+    timeline: readFailed(refusalWords(error) ?? NO_REASON_GIVEN),
+    unfetched: null,
+  };
+};
+
+/** What the header says while the package's source is unfetched, or null.
+ *  Where this ranks, and why it carries no Try again, is `versions.ts`
+ *  [`updateOffer`]'s. */
+export const unfetchedNote = (reads: PackageReads): string | null =>
+  reads.unfetched === null ? null : sourceUnfetchedNote(reads.unfetched);
 
 /** What the Overview's file list says instead of files when its read did
  *  not land, or null while it is pending or once it landed. Its own note,

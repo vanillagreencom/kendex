@@ -1,6 +1,9 @@
-type CommandResult<T> =
+/** A command's answer. `E` is the refusal a command shapes, where it
+ *  shapes one; a transport failure lands as a string beside it, the way
+ *  the bindings' `typedError` widens every command's refusal. */
+type CommandResult<T, E = string> =
   | { status: "ok"; data: T }
-  | { status: "error"; error: string };
+  | { status: "error"; error: E };
 
 /** Stands in when a rejection carries no message at all. An empty error
  *  body renders as blank under whatever title shows it, and consumers that
@@ -28,9 +31,9 @@ export async function caught<T>(work: Promise<T>): Promise<CommandResult<T>> {
 
 /** Await a command so it always answers, in the one failure shape every
  *  store reads. */
-export async function settled<T>(
-  read: Promise<CommandResult<T>>,
-): Promise<CommandResult<T>> {
+export async function settled<T, E = string>(
+  read: Promise<CommandResult<T, E>>,
+): Promise<CommandResult<T, E | string>> {
   try {
     const response = await read;
     // The engine can return a refusal with an empty reason too — normalize

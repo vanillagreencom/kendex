@@ -18,7 +18,11 @@ import { groupItems, groupScopes, installationAt } from "@/lib/derive";
 import { packageDisplayName } from "@/lib/labels";
 import { usePackageMark } from "@/lib/package-mark";
 import { vendorAt } from "@/lib/package-places";
-import { packageFilesNote, packageReadNote } from "@/lib/package-read-state";
+import {
+  packageFilesNote,
+  packageReadNote,
+  unfetchedNote,
+} from "@/lib/package-read-state";
 import {
   packageRequiredBy,
   packageUpdateNote,
@@ -135,6 +139,7 @@ export function PackagePage() {
     latest,
     installed,
     metaLoaded: meta != null,
+    unfetched: unfetchedNote(reads),
     withheld,
     readNote: packageReadNote(reads),
     standing,

@@ -26,6 +26,9 @@ import { SAFETY_TAB, SAFETY_VENDOR } from "@/lib/copy-safety";
 import {
   EDITED_CANT_UPDATE_NOTE,
   NO_UPDATE_STANDING_NOTE,
+  PACKAGE_READ_FAILED,
+  packageReadFailedNote,
+  sourceUnfetchedNote,
   UPDATE_NEEDS_CHECK_HERE,
   UPDATE_NEEDS_CHECK_NOTE,
   UPDATES_CHECKING,
@@ -313,11 +316,14 @@ describe("what the package page says instead of Update", () => {
       checking: boolean;
     }>,
     kind: ItemKind = "skill",
-  ) => {
-    vi.mocked(commands.packageVersions).mockResolvedValue({
+    /** What the timeline read answers: the versions above unless a test
+     *  is about the read itself. */
+    timeline: Awaited<ReturnType<typeof commands.packageVersions>> = {
       status: "ok",
       data: VERSIONS,
-    });
+    },
+  ) => {
+    vi.mocked(commands.packageVersions).mockResolvedValue(timeline);
     vi.mocked(commands.packageMeta).mockResolvedValue({
       status: "ok",
       data: {
@@ -399,6 +405,47 @@ describe("what the package page says instead of Update", () => {
     expect(host.textContent).toContain(EDITED_CANT_UPDATE_NOTE);
     expect(host.textContent).not.toContain(NO_UPDATE_STANDING_NOTE);
     expect(host.textContent).not.toContain(UPDATES_CHECKING);
+  });
+
+  /** The header's Try again, which only a read that failed offers. */
+  const headerRetry = (host: HTMLElement) =>
+    Array.from(host.querySelectorAll("header button")).filter(
+      (button) => button.textContent === TRY_AGAIN_LABEL,
+    );
+
+  // A source no fetch has downloaded is core's answer, not a failed read:
+  // reading again answers the same, and the check it would send the reader
+  // to has already left this place without a row for the same reason. The
+  // note names the source and carries no Try again, and it outranks the
+  // check's "never covered this place", which is the symptom of it.
+  it("names the source no fetch has downloaded, with no Try again", async () => {
+    const host = await openWith({ read: READ_LANDED }, "skill", {
+      status: "error",
+      error: { kind: "source-pending", source: "cat" },
+    });
+
+    expect(header(host)).toContain(sourceUnfetchedNote("cat"));
+    expect(headerRetry(host)).toHaveLength(0);
+    expect(header(host)).not.toContain(NO_UPDATE_STANDING_NOTE);
+    expect(header(host)).not.toContain(PACKAGE_READ_FAILED);
+  });
+
+  // The control: every other refusal of the timeline is a read that failed,
+  // in core's words, and a re-read can lift it. The row is there so the
+  // check has no fact of its own to state ahead of the read.
+  it("offers Try again over a timeline read that failed", async () => {
+    const REFUSED = "REFUSED-BY-CORE: the lock could not be read";
+    const host = await openWith(
+      { read: READ_LANDED, rows: [updateRow(VG)] },
+      "skill",
+      {
+        status: "error",
+        error: { kind: "failed", message: REFUSED },
+      },
+    );
+
+    expect(header(host)).toContain(packageReadFailedNote(REFUSED));
+    expect(headerRetry(host)).toHaveLength(1);
   });
 });
 
