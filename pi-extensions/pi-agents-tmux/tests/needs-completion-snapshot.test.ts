@@ -64,10 +64,10 @@ const rows: Array<[string, Entry, string, string]> = [
 		await seedPaneTask(root, repo, "task-poll-fresh");
 		const outboxFile = writeOutbox(root, "task-poll-fresh", "{");
 		const emitted: Emitted = [];
-		// The poller reads the mtime against its own wall clock; stamping it at the
-		// poll keeps the row on the inside-the-grace branch under a paused worker.
-		const now = new Date();
-		utimesSync(outboxFile, now, now);
+		// The poller reads the mtime against its own wall clock; an mtime a minute
+		// ahead keeps the file inside the 1.5 s grace however long the worker pauses.
+		const ahead = new Date(Date.now() + 60_000);
+		utimesSync(outboxFile, ahead, ahead);
 		const count = await pollPaneCompletions(root, fakePi(emitted));
 		const persisted = (await readTaskRegistry(root))["task-poll-fresh"];
 		return { own: `count=${count} status=${persisted?.status} events=${eventNames(emitted)}`, persisted };
