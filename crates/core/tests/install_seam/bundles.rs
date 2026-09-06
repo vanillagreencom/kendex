@@ -10,6 +10,7 @@ use kendex_core::apply;
 use kendex_core::engine::{audit, ops};
 use kendex_core::error::CoreError;
 use kendex_core::lock::{BundleRef, Reason, load as load_lock, lock_path};
+use kendex_core::model::HarnessId;
 
 use super::{Fixture, add_and_apply, manifest_of, manifest_with, skill, world, write};
 
@@ -253,6 +254,78 @@ fn a_set_whose_member_the_catalog_offers_installs() {
     manifest_with(&f, &[("cat", &catalog)], "");
     add_and_apply(&f, &request("starter"));
     assert!(f.project.join(".claude/skills/dev").exists());
+}
+
+/// A catalog offering `servers`, a set carrying only MCP servers.
+fn servers_catalog(f: &Fixture) -> PathBuf {
+    let catalog = f.home.join("catalog");
+    write(
+        &catalog,
+        "mcp/db.toml",
+        "command = \"db-mcp\"\nargs = [\"--stdio\"]\n",
+    );
+    write(
+        &catalog,
+        "kendex.toml",
+        "is_source_catalog = true\n\n[bundles.servers]\nmcp-servers = [\"db\"]\n",
+    );
+    catalog
+}
+
+/// A set every offered member of which lands on no tool this install
+/// targets is refused at the declaration, naming the set and the tools.
+/// Pi has nowhere to put an MCP server, so declaring `servers` for Pi would
+/// record the set, filter its only member away at plan time, and report a
+/// successful install of no files.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_mcp_server_set_asked_for_on_pi_alone_is_refused() {
+    let f = world();
+    let catalog = servers_catalog(&f);
+    manifest_with(&f, &[("cat", &catalog)], "");
+    let before = fs::read_to_string(f.project.join("kendex.toml")).unwrap();
+
+    let error = ops::add(&f.env, &f.scope, &for_harness("servers", HarnessId::Pi)).unwrap_err();
+
+    let said = error.to_string();
+    assert!(
+        matches!(error, CoreError::BundleLandsNowhere { ref name, .. } if name == "servers"),
+        "{said}"
+    );
+    assert!(
+        said.contains(HarnessId::Pi.display_name()),
+        "the tool it was turned down for: {said}"
+    );
+    assert_eq!(
+        fs::read_to_string(f.project.join("kendex.toml")).unwrap(),
+        before,
+        "a refusal writes nothing"
+    );
+}
+
+/// The must-fail counterpart: the same set asked for on a tool that does
+/// hold an MCP server installs it. The refusal is about where the members
+/// land, not about sets of MCP servers.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_same_set_asked_for_on_claude_installs() {
+    let f = world();
+    let catalog = servers_catalog(&f);
+    manifest_with(&f, &[("cat", &catalog)], "");
+
+    add_and_apply(&f, &for_harness("servers", HarnessId::Claude));
+
+    assert!(manifest_of(&f).bundles.contains_key("servers"));
+    let mcp = fs::read_to_string(f.project.join(".mcp.json")).unwrap();
+    assert!(mcp.contains("db-mcp"), "{mcp}");
+}
+
+/// One `add --bundle <name> --harness <tool>` from that catalog.
+fn for_harness(name: &str, harness: HarnessId) -> ops::AddRequest {
+    ops::AddRequest {
+        harnesses: Some(vec![harness]),
+        ..request(name)
+    }
 }
 
 /// One `add --bundle <name>` from the catalog these tests declare.

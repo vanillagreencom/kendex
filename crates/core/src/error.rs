@@ -430,6 +430,30 @@ pub enum CoreError {
         members: Vec<String>,
     },
 
+    /// The source offers the set and its members, and no tool this install
+    /// targets holds any of their kinds — a set of MCP servers asked for on
+    /// a tool that has nowhere to put one. The same refusal as
+    /// [`Self::BundleInstallsNothing`] one step further in: the set would be
+    /// recorded and every member of it filtered away at plan time, leaving
+    /// an install that put nothing anywhere.
+    #[error(
+        "the bundle '{name}' from source '{source_name}' would install nothing — {}",
+        match harnesses.is_empty() {
+            true => "this scope installs to no tool at all".to_owned(),
+            false => format!(
+                "{} {} none of what it carries at this scope",
+                harnesses.join(", "),
+                match harnesses.len() { 1 => "takes", _ => "take" },
+            ),
+        }
+    )]
+    BundleLandsNowhere {
+        name: String,
+        source_name: String,
+        /// The tools the install targets, named as the user sees them.
+        harnesses: Vec<String>,
+    },
+
     /// Nothing was left behind, and `cause` is the failure that stopped it
     /// — kept whole rather than flattened into `reason`, because what a
     /// caller does about a rollback depends on why: a precondition that

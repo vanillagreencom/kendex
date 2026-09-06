@@ -4,7 +4,7 @@
 use super::AddRequest;
 use crate::error::{CoreError, Result};
 use crate::manifest::{ItemDecl, Manifest};
-use crate::model::ItemKind;
+use crate::model::{ItemKind, Scope};
 use crate::source::CatalogBundle;
 
 /// Declare one curated set, carried the way the request asked. Asking for
@@ -154,15 +154,21 @@ pub(super) fn shaped_by_user(
 }
 
 /// The sets one request names, as the catalog offers them. A name it does
-/// not offer is refused, and so is a set it offers and can hand nothing
-/// over for: what a set installs derives at plan time, so declaring one
-/// would record the set, plan nothing, and report a successful install of
-/// no files — the shape a member list nothing backs leaves behind.
+/// not offer is refused, and so is a set that would put nothing on disk:
+/// what a set installs derives at plan time, so declaring one would record
+/// the set, plan nothing, and report a successful install of no files.
+///
+/// Two ways a set gets there, both answered from the one list of members
+/// the catalog actually offers: the source hands none of them over, or it
+/// hands them over and no tool this install targets holds their kinds.
 pub(super) fn resolve_sets(
     sealed: &crate::source_read::SealedSource,
     config: &crate::source::SourceConfig,
     source_name: &str,
     wanted: &[String],
+    request: &AddRequest,
+    manifest: &Manifest,
+    scope: &Scope,
 ) -> Result<Vec<CatalogBundle>> {
     let mut sets = Vec::new();
     for name in wanted {
@@ -172,9 +178,15 @@ pub(super) fn resolve_sets(
                 source_name: source_name.to_owned(),
             });
         };
-        if !bundle.members.iter().any(|member| {
-            crate::source::find_item(sealed, config, member.kind, &member.name).is_some()
-        }) {
+        let mut offered: Vec<ItemKind> = Vec::new();
+        for member in &bundle.members {
+            if crate::source::find_item(sealed, config, member.kind, &member.name).is_some()
+                && !offered.contains(&member.kind)
+            {
+                offered.push(member.kind);
+            }
+        }
+        if offered.is_empty() {
             return Err(CoreError::BundleInstallsNothing {
                 name: name.clone(),
                 source_name: source_name.to_owned(),
@@ -182,6 +194,17 @@ pub(super) fn resolve_sets(
                     .members
                     .iter()
                     .map(|member| crate::names::shown(&member.name))
+                    .collect(),
+            });
+        }
+        if let Some(harnesses) = super::lands::set_lands_nowhere(&offered, request, manifest, scope)
+        {
+            return Err(CoreError::BundleLandsNowhere {
+                name: name.clone(),
+                source_name: source_name.to_owned(),
+                harnesses: harnesses
+                    .into_iter()
+                    .map(|harness| harness.display_name().to_owned())
                     .collect(),
             });
         }

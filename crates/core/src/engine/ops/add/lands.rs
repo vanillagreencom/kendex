@@ -5,9 +5,14 @@
 //! reports done — so it is refused here, before the manifest is touched,
 //! and the same filter draws the picker so the choice can never be made in
 //! the first place.
+//!
+//! A curated set is the same question asked one step later: what it holds
+//! is the catalog's to say, so it is answered where the request's sets have
+//! been resolved rather than from the request alone.
 
 use super::AddRequest;
-use crate::model::{ItemKind, Scope};
+use crate::manifest::Manifest;
+use crate::model::{HarnessId, ItemKind, Scope};
 
 /// Why this request would install nothing, or `None` where at least one
 /// named tool can take at least one of the kinds asked for.
@@ -43,9 +48,45 @@ pub(super) fn lands_nowhere(request: &AddRequest, scope: &Scope) -> Option<Strin
     ))
 }
 
+/// The same question for one curated set, asked once its members are
+/// known: `None` where at least one kind the catalog offers for the set
+/// reaches a tool this request installs to, and the tools it turned the
+/// install down for otherwise.
+///
+/// A set has to be asked separately because the manifest records only that
+/// the set is installed — what it holds derives at plan time, so
+/// [`requested_kinds`] can only widen a bundle request to every kind and
+/// any tool taking any kind passes it. This reads what the plan itself
+/// will read for each member, so the two cannot disagree about whether a
+/// declaration puts bytes on disk.
+///
+/// The tools are the ones the request names, or the scope's own list where
+/// it names none — by here that list has already been brought up to date
+/// against the machine, so it is what the plan will read too.
+pub(super) fn set_lands_nowhere(
+    offered: &[ItemKind],
+    request: &AddRequest,
+    manifest: &Manifest,
+    scope: &Scope,
+) -> Option<Vec<HarnessId>> {
+    let lands = offered.iter().any(|kind| {
+        !crate::engine::desired::harnesses_for(request.harnesses.as_deref(), manifest, *kind, scope)
+            .is_empty()
+    });
+    match lands {
+        true => None,
+        false => Some(crate::engine::desired::requested_or_default(
+            request.harnesses.as_deref(),
+            manifest,
+        )),
+    }
+}
+
 /// The kinds this request would declare. A whole-source or bundle install
 /// carries whatever the catalog holds, so it is every kind — narrowing it
 /// to what happens to be named would refuse a request that is not empty.
+/// What a named set actually holds is [`set_lands_nowhere`]'s question,
+/// asked where its members have been resolved.
 pub fn requested_kinds(request: &AddRequest) -> Vec<ItemKind> {
     if request.all || !request.bundles.is_empty() {
         return ItemKind::ALL.to_vec();
