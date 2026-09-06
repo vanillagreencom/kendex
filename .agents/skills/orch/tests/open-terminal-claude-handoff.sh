@@ -152,9 +152,11 @@ OT_UNDER_TEST="$OT"
 #              it from `delivered` is the non-breaking space after the caret.
 #              Not somewhere to type either: the composer is OCCUPIED, and
 #              `send-keys -l` would append a second copy of the brief
-#   plain      the brief submitted into the transcript, over a ready composer,
-#              with no response marker anywhere: UNDELIVERED on the activity
-#              requirement alone
+#   earlyturn  a turn in its FIRST FRAMES: the brief submitted into the
+#              transcript, a spinner frame this script deliberately does not
+#              read, no token counter yet, and the composer already empty
+#              again. LAUNCHED — and the screen that must never be typed into,
+#              since readiness alone would send a second brief into the turn
 #   working    a turn in flight: the verb, the elapsed time and the streaming
 #              token counter the harness draws only while one runs. The brief
 #              is nowhere but the echoed launch command, the screen a long
@@ -178,7 +180,7 @@ screen() {
     echo) printf '%s\n' "\$ claude -n CC-737 --dangerously-skip-permissions '$BRIEF'" '● Reading workflows/start.md' '╭─ Enable browser integration? ─╮' '> ' ;;
     delivered) printf '%s\n' "$CARET $BRIEF" '● Reading workflows/start.md' ;;
     composer) printf '%s\n' '● Reading workflows/start.md' '╭──────────────────────────────────────────╮' "│ > $BRIEF │" '╰──────────────────────────────────────────╯' '  ? for shortcuts' ;;
-    plain) printf '%s\n' "$CARET $BRIEF" "$RULE" "$CARET$NBSP" "$RULE" "$STATUS" ;;
+    earlyturn) printf '%s\n' "$CARET $BRIEF" '✶ Orchestrating…' "$RULE" "$CARET$NBSP" "$RULE" "$STATUS" ;;
     draft) printf '%s\n' '● Reading workflows/start.md' "$RULE" "$CARET$NBSP$BRIEF" "$RULE" "$STATUS" ;;
     working) printf '%s\n' "\$ claude -n CC-737 '$BRIEF'" '✻ Orchestrating… (3s · ↓ 79 tokens · thinking with high effort)' ;;
     signin) printf '%s\n' '  Select login method' '✻ Opening browser to sign in…' ;;
@@ -389,7 +391,7 @@ launch_table \
   "a composer that stays occupied is a failed lane, and never has a second brief typed into it|tmux|-|-|draft|rc=1 stderr~never+reached+a+ready+composer=true resends=0" \
   "a lane that comes up on the very last nudge is seen, not reported stuck|tmux|-|-|echo,echo,delivered|rc=0 out~Confirmed+'CC-737'+launched=true resends=0 enters=2" \
   "an older TUI's shortcuts footer is still read as ready|tmux|-|-|echo,ready-legacy,delivered|rc=0 out~Re-delivered+brief+to+'CC-737'=true resends=1" \
-  "the brief on a transcript line with no response begun is not delivery either|tmux|-|-|plain|rc=1 stderr~brief+undelivered+to+'CC-737'=true resends=1" \
+  "a turn in its first frames is launched and never typed into, before any counter or marker shows|tmux|-|-|earlyturn|rc=0 out~Done:+launched+1=true resends=0 enters=1" \
   "a turn in flight is a launched lane whatever its transcript line reads as: no re-send|tmux|-|-|working|rc=0 out~Done:+launched+1=true resends=0 enters=1" \
   "a lane that starts working while the launcher waits for a composer ends the wait launched, nothing typed into it|tmux|-|-|echo,working|rc=0 out~Confirmed+'CC-737'+launched=true resends=0 enters=1" \
   "a composer that never becomes ready is a failed lane, named as stuck|tmux|-|-|echo,echo|rc=1 stderr~never+reached+a+ready+composer=true out~Done:+launched+1=false" \
@@ -438,6 +440,13 @@ launch_table \
 mutant last-pass-blind open-terminal 's@^    screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 1$@    (( waited < TMUX_VERIFY_SECS )) || return 1; screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 1@;/^    (( waited < TMUX_VERIFY_SECS )) || return 1$/d' 'the read-before-budget order'
 launch_table \
   "control: deciding before the capture reports a lane that came up on the last nudge as stuck|tmux|-|-|echo,echo,delivered|rc=1 stderr~never+reached+a+ready+composer=true"
+# Require a transcript-activity marker on top of the brief and the first
+# frames of a turn read as an idle, ready composer: the counter is not drawn
+# yet, the spinner frame is one this script does not read, and the composer is
+# already empty — so a second brief goes into the turn.
+mutant activity-required open-terminal 's@^  \[\[ "$filtered" == \*"$brief"\* \]\]$@  [[ "$filtered" == *"$brief"* ]] || return 1; [[ "$screen" == *"\xe2\x97\x8f"* ]]@' 'the delivery read'
+launch_table \
+  "control: with a marker required on top, a turn in its first frames takes a second brief|tmux|-|-|earlyturn|resends=1"
 unmutate
 
 echo "=== open-terminal claude handoff: the verify timeout ==="

@@ -437,11 +437,15 @@ READY_RE="$COMPOSER_RE"'[[:blank:]]*$|\? for shortcuts'
 # still read as ready. On the shipped v2.1.261 the │ filter matches nothing —
 # the composer is two ──── rules around the prompt line — so COMPOSER_RE is
 # what carries this now.
-# On top of that the read requires a transcript-activity marker proving the
-# TUI accepted the prompt: a ●/⏺ response bullet, a ✻/✳ spinner or end-of-turn
-# line, or the esc-to-interrupt hint. The conjunction stays, as the last check
-# before a lane is called launched: a draft the user is still typing sits on
-# the composer line under a status bar that already carries ●.
+# Dropping the composer line is the WHOLE of that guard, and it has to be:
+# this read also decides whether the launcher may type, and no
+# transcript-activity marker can be required of it. A turn's first second or
+# two draws a spinner frame this script deliberately does not read and no
+# token counter yet, while the composer is ALREADY EMPTY again — the empty
+# form is on 57 of 57 mid-turn captures. Ask for a marker on top and that
+# window reads as an idle, ready composer, and a second brief goes into a turn
+# that has just begun. The filter is measured instead: on 45 first-run
+# captures nothing survives it, and a draft never does.
 #
 # -J joins wrapped lines so a narrow pane cannot split the brief across a line
 # break and fake an unlaunched screen.
@@ -466,9 +470,7 @@ lane_launched() { # SCREEN BRIEF
   # always reads its whole input; the containment checks are bash matches.
   local filtered
   filtered="$(printf '%s\n' "$screen" | grep -vF 'claude -n' | grep -vF '│' | grep -Ev -- "$COMPOSER_RE")" || true
-  [[ "$filtered" == *"$brief"* ]] || return 1
-  [[ "$screen" == *'●'* || "$screen" == *'⏺'* || "$screen" == *'✻'* ||
-     "$screen" == *'✳'* || "$screen" == *'esc to interrupt'* ]]
+  [[ "$filtered" == *"$brief"* ]]
 }
 
 tmux_wait_launched() {
