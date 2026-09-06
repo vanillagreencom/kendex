@@ -31,6 +31,13 @@ Events, checked in this order every pass:
   EVENT lane-exited <lane>   `pgrep -P` reports no child under a bare shell on
                              two passes; pane tail follows. An unusable probe
                              is not an answer and keeps the lane watched
+  EVENT handoff <item>       the --item's workflow state carries a `.handoff`
+                             record with no `.resumed_at`; the record follows.
+                             Emitted once per record, on every surface: it
+                             reads the item's state, never a pane. The state
+                             is the item's worktree's when one exists, else
+                             this checkout's (ORCH_STATE_DIR relative to
+                             either; an absolute one is shared)
   EVENT usage-limit <lane> [<config-dir>] [resets=<utc>]
                              a live harness with no turn in flight shows a
                              limit banner below the last user turn on its screen;
@@ -69,7 +76,8 @@ Options:
                       value names the state file, so a run given a different
                       one starts from no sightings and parks every walled lane
                       afresh; LINEAR_TEAM below arms the triage check
-  --item ISSUE_ID     live item; repeatable. No values skips merged with a note
+  --item ISSUE_ID     live item; repeatable. No values skips merged and
+                      handoff with a note
   --repo OWNER/REPO   repository; repeatable and case-normalized. The reducer
                       covers all; merged and heartbeat read the first
   LANE_WINDOW...      tmux window names to watch; requires $TMUX. A bare name
@@ -98,11 +106,15 @@ Environment:
                               the project root; absolute paths stay unchanged
   OVERSEE_WATCH_PR_WATCH      path to pr-watch.sh
   OVERSEE_WATCH_TRACKER       path to the Linear CLI
-  OVERSEE_WATCH_WORKFLOW_STATE path to workflow-state
+  OVERSEE_WATCH_WORKFLOW_STATE path to workflow-state; with an --item a
+                              missing one exits 2 rather than dropping handoff
+  WORKTREE_CLI                the worktree CLI that names an --item's tree;
+                              empty resolves the installed worktree skill's
+                              script, and with an --item a missing one exits 2
   PR_WATCH_WRITER_WORKFLOW    workflow dispatched by pr-watch --heal
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
-                              triage, lane-asking and usage-limit rows — plus
-                              claims/
+                              triage, lane-asking, usage-limit and handoff
+                              rows — plus claims/
 USAGE
 }
 die() { echo "oversee-watch: $*" >&2; exit 2; }
@@ -174,7 +186,13 @@ source "$SCRIPT_DIR/lib/pr-watch-pass.sh"
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
 TRACKER="${OVERSEE_WATCH_TRACKER:-$SKILLS_DIR/linear/scripts/linear.sh}"
 WORKFLOW_STATE="${OVERSEE_WATCH_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
-WORKFLOW_STATE_DIR="${ORCH_STATE_DIR:-$PROJECT_ROOT/tmp}"
+WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
+# The state directory as configured, kept apart from its resolution: a
+# relative setting names a directory under EACH checkout, so an item's state
+# is under its own worktree (item_state_dir), while this checkout's copy
+# holds the fleet log.
+STATE_DIR_SETTING="${ORCH_STATE_DIR:-tmp}"
+WORKFLOW_STATE_DIR="$STATE_DIR_SETTING"
 case "$WORKFLOW_STATE_DIR" in
   /*) ;;
   *) WORKFLOW_STATE_DIR="$PROJECT_ROOT/$WORKFLOW_STATE_DIR" ;;
@@ -197,6 +215,7 @@ watch_state_init() {
 # `<pr>\t<kind>` and triage's `triage\t<id>`:
 #   lane-asking<TAB><lane><TAB><fingerprint>
 #   usage-limit<TAB><lane><TAB><first-seen-epoch>|<pane key>|<reset key>
+#   handoff<TAB><item><TAB><record checksum>
 # The usage-limit value is split apart where the event is emitted, some 200
 # lines below where it is written; the reset key's own layout is
 # usage_reset_key's.
@@ -367,7 +386,14 @@ else
   PR_WATCH=""
 fi
 if [[ -z "$ITEM_BRANCHES" ]]; then
-  echo "oversee-watch: no --item given; skipping the merged check (pr-watch/triage/window/lane-asking checks still run)" >&2
+  echo "oversee-watch: no --item given; skipping the merged and handoff checks (pr-watch/triage/window/lane-asking checks still run)" >&2
+else
+  # Handoff fails CLOSED like triage: a lane that handed off and exited is
+  # otherwise a lane-exited the overseer relaunches from nothing.
+  [[ -x "$WORKFLOW_STATE" ]] \
+    || die "workflow-state CLI not found at $WORKFLOW_STATE; the handoff check needs it (set OVERSEE_WATCH_WORKFLOW_STATE)"
+  [[ -x "$WORKTREE_CLI" ]] \
+    || die "worktree CLI not found at $WORKTREE_CLI; the handoff check needs it to name an item's worktree (set WORKTREE_CLI)"
 fi
 if [[ ${#REPOS[@]} -gt 1 ]]; then
   # Only the checks this run actually performs: the two notes above may have
@@ -468,6 +494,59 @@ check_triage() {
   done <<<"$new_ids"
   pr_watch_context
   exit 0
+}
+
+# Where an item's workflow state lives. The lane writes it from inside its
+# worktree, so a relative ORCH_STATE_DIR puts it under that tree; an item with
+# no worktree (a surface that made its own environment, or a sequential item
+# run in this session) keeps it under this checkout; an absolute setting is
+# one directory for every checkout.
+item_state_dir() {
+  local item="$1" wt
+  case "$STATE_DIR_SETTING" in /*) printf '%s\n' "$WORKFLOW_STATE_DIR"; return 0 ;; esac
+  if [[ "$("$WORKTREE_CLI" exists "$item" 2>/dev/null || true)" == "true" ]]; then
+    wt="$("$WORKTREE_CLI" path "$item")" || die "worktree path failed for $item"
+    printf '%s/%s\n' "$wt" "$STATE_DIR_SETTING"
+    return 0
+  fi
+  printf '%s\n' "$WORKFLOW_STATE_DIR"
+}
+
+# A lane told to hand off records `.handoff` in its item's state and exits.
+# The record is the carrier, read from workflow state and never a pane, so the
+# check runs on every surface. It is reported once per record: the row keyed
+# by the record's checksum is what stops a re-run between the event and the
+# relaunch from reporting it again, and a record the relaunched lane stamped
+# `.resumed_at` on is spent. Ordered after lane-exited and before
+# usage-limit: the lane's exit is the older news, and a spent account is not
+# what a handed-off lane is waiting on.
+check_handoff() {
+  [[ ${#ITEMS[@]} -gt 0 ]] || return 0
+  local item dir rec key prior errf="$WORK_DIR/handoff.err" state="${PW_SEEN[0]}"
+  for item in "${ITEMS[@]}"; do
+    dir="$(item_state_dir "$item")"
+    if ! "$WORKFLOW_STATE" --state-dir "$dir" exists "$item" >/dev/null 2>&1; then
+      state="$(lane_row_clear handoff "$state" "$item")"
+      continue
+    fi
+    rec="$("$WORKFLOW_STATE" --state-dir "$dir" get "$item" '.handoff | select(type == "object" and .resumed_at == null) | tojson' 2>"$errf")" \
+      || die "could not read the handoff record for $item under $dir: $(cat "$errf")"
+    if [[ -z "$rec" ]]; then
+      state="$(lane_row_clear handoff "$state" "$item")"
+      continue
+    fi
+    key="$(printf '%s' "$rec" | cksum | awk '{ print $1 }')"
+    prior="$(lane_row_get handoff "$state" "$item")"
+    state="$(lane_row_set handoff "$state" "$item" "$key")"
+    [[ "$key" != "$prior" ]] || continue
+    lane_row_commit "$state"
+    echo "EVENT handoff $item"
+    printf '%s\n' "$rec"
+    pr_watch_context
+    exit 0
+  done
+  state="$(lane_row_prune handoff "$state" "${ITEMS[@]}")"
+  lane_row_commit "$state"
 }
 
 # The last 40 non-empty pane lines. `|| true`: an all-blank pane is a grep
@@ -670,7 +749,8 @@ observe_lanes() {
 }
 
 check_lanes() {
-  [[ ${#LANES[@]} -gt 0 ]] || return 0
+  # No lane to watch still leaves the items: a handoff is read from state.
+  [[ ${#LANES[@]} -gt 0 ]] || { check_handoff; return 0; }
   local lane pane below cmd pid state probe i states="" shell_now="" idle_now="" asking_now="" claims="" claimed pane_key
   local seen seen_at seen_pane seen_key reset_at reset_utc reset_note event
   local asking_state="${PW_SEEN[0]}" next_state fingerprint prior turn_identity
@@ -729,6 +809,10 @@ check_lanes() {
     fi
   done
   LANE_SHELL_SEEN="$shell_now"
+  check_handoff
+  # check_handoff commits its rows through PW_SEEN; the copy taken above would
+  # write them back out on the next commit below.
+  asking_state="${PW_SEEN[0]}"
   # The harness is still running and the account is spent: every lane on that
   # account dies with it, so the config dir is the actionable part and a live
   # claim is where it is recorded. Before `lane-asking` — a limit banner can sit

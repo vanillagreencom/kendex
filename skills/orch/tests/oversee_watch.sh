@@ -38,6 +38,12 @@
 #       match branches case-insensitively; no --since means no floor; no
 #       --item skips the check with a note; gh stderr noise on success does
 #       not break the JSON parse
+#   2b. handoff: an --item whose state carries `.handoff` with no
+#       `.resumed_at` fires once, with the record, read from the item's
+#       worktree state (this checkout's when it has no worktree); a state
+#       without the key and a resumed record fire nothing; a re-run before
+#       the relaunch stamps the record fires nothing; the must-fail control
+#       is the emit arm removed
 #   3.  heartbeat after --max-loops with the open PR list
 #   4.  gh auth failure exits 2; a stale env token falls through to the
 #       project GH_BOT_TOKEN; a failing pr list exits 2 (never a quiet 0)
@@ -642,7 +648,7 @@ assert_contains "$out" "EVENT merged 5 issue-5" "an item's merge beyond a newest
 err="$TMP_ROOT/e2c"
 out="$(run_watch -- --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=2026-08-15T09:00:00Z" "no --item reaches the heartbeat" "$err"
-assert_contains "$(cat "$err")" "no --item given; skipping the merged check" "no --item is noted on stderr"
+assert_contains "$(cat "$err")" "no --item given; skipping the merged and handoff checks" "no --item is noted on stderr"
 assert_eq "$(grep -c 'merged' "$STUB_DIR/gh.calls" || true)" "0" "no --item never lists merged PRs"
 
 # gh stderr noise on a successful list does not reach the JSON parse
@@ -678,6 +684,69 @@ out="$(run_watch -- --repo vanillagreencom/x --since 2026-08-15T09:00:00Z --item
 assert_eq "$rc" "0" "mixed-case owner exits 0" "$err"
 assert_contains "$out" "EVENT merged 5 issue-5" "an owner login differing only in case still fires merged" "$err"
 
+
+# --- 2b. handoff -----------------------------------------------------------
+# handoff_record ITEM [RESUMED_AT] — the item's worktree and its state carrying
+# the fixed-shape record, stamped resumed when RESUMED_AT is given.
+handoff_record() {
+  mkdir -p "$STUB_DIR/wt-$1"
+  jq -nc --arg r "${2:-}" '{cycles: 0, handoff: ({written_at: "2026-09-06T05:00:00Z", merged: ["#2210"], remaining: ["merge-pr § 5"], branch: "ken-1", worktree: "/w", open_pr: 2218, traps: []} + (if $r == "" then {} else {resumed_at: $r} end))}' \
+    > "$STUB_DIR/state-$1.json"
+}
+HEARTBEAT="EVENT heartbeat loops=2 interval=0s since=none"
+
+new_case handoff_absent
+mkdir -p "$STUB_DIR/wt-KEN-1"
+printf '{"cycles":0}\n' > "$STUB_DIR/state-KEN-1.json"
+err="$TMP_ROOT/e2b1"
+out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
+assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=$HEARTBEAT" "a state without the key fires nothing" "$err"
+
+new_case handoff_once
+handoff_record KEN-1
+err="$TMP_ROOT/e2b2"
+out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
+assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=EVENT handoff KEN-1" "a record with no resumed_at is the event" "$err"
+assert_contains "$out" '"remaining":["merge-pr § 5"]' "the record follows the event line" "$err"
+assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "--state-dir $STUB_DIR/wt-KEN-1/tmp get KEN-1" "the record is read from the item's worktree state" "$err"
+assert_eq "$(grep -c "$(printf 'handoff\tKEN-1\t')" "$STATE_DIR/owner_repo__none")" "1" "the committed baseline keys the record" "$err"
+# The same fleet re-run before the relaunch has stamped the record.
+err="$TMP_ROOT/e2b3"
+out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
+assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=$HEARTBEAT" "the same record is reported once" "$err"
+assert_not_contains "$out" "EVENT handoff" "a re-run carries no second handoff line" "$err"
+
+new_case handoff_no_worktree
+handoff_record KEN-1
+rmdir "$STUB_DIR/wt-KEN-1"
+err="$TMP_ROOT/e2b4"
+out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
+assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=EVENT handoff KEN-1" "an item with no worktree is read from this checkout's state" "$err"
+assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "--state-dir $CASE_REPO_ROOT/tmp get KEN-1" "and the read names this checkout's state directory" "$err"
+
+new_case handoff_resumed
+handoff_record KEN-1 2026-09-06T05:10:00Z
+err="$TMP_ROOT/e2b5"
+out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
+assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=$HEARTBEAT" "a resumed record fires nothing" "$err"
+
+# The must-fail control: the emit arm removed. The mutant keeps every read
+# and row and never reaches the event, so the once case above reads as a
+# heartbeat against it; the copy must differ from the source or the control
+# proves nothing.
+# The copy keeps orch's place in a skills tree: its libraries resolve the
+# github skill beside it.
+MUTANT_DIR="$TMP_ROOT/mutant"
+mkdir -p "$MUTANT_DIR/orch"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_DIR/orch/scripts"
+ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+sed 's/^    \[\[ "\$key" != "\$prior" \]\] || continue$/    continue/' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" "control: the mutant really removes the emit arm"
+new_case handoff_mutant
+handoff_record KEN-1
+err="$TMP_ROOT/e2b6"
+out="$(WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
+assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=$HEARTBEAT" "control: without the emit arm the same record is never reported" "$err"
 
 # --- 5. heartbeat ----------------------------------------------------------
 new_case heartbeat

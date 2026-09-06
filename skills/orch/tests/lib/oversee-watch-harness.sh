@@ -340,24 +340,50 @@ fi
 exec "$real" "$@"
 EOF
 
-# Fleet verdict-log reader. It executes the watcher's jq filter against the
-# case's oversee-state.json while preserving explicit failure fixtures.
+# Workflow-state reader. `get oversee <expr>` executes the watcher's jq filter
+# against the case's oversee-state.json while preserving explicit failure
+# fixtures; `exists <item>` and `get <item> <expr>` read state-<item>.json,
+# a missing file exiting 1 the way the real CLI does. Every call's argv is
+# appended to workflow-state.args.
 cat > "$TMP_ROOT/bin/workflow-state-stub.sh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
-printf '%s\n' "$*" > "$STUB_DIR/workflow-state.args"
+printf '%s\n' "$*" >> "$STUB_DIR/workflow-state.args"
 [[ -f "$STUB_DIR/workflow-state.err" ]] && cat "$STUB_DIR/workflow-state.err" >&2
 rc=0; [[ -f "$STUB_DIR/workflow-state.rc" ]] && rc="$(cat "$STUB_DIR/workflow-state.rc")"
 [[ "$rc" -eq 0 ]] || exit "$rc"
-expr=""
-for arg in "$@"; do expr="$arg"; done
-[[ -n "$expr" ]] || { echo "workflow-state stub: missing jq expression" >&2; exit 2; }
-jq -r "$expr" "$STUB_DIR/oversee-state.json"
+while [[ $# -gt 0 && "$1" == --* ]]; do shift 2; done
+cmd="${1:-}"; id="${2:-}"; expr="${3:-}"
+if [[ "$id" == oversee ]]; then
+  [[ -n "$expr" ]] || { echo "workflow-state stub: missing jq expression" >&2; exit 2; }
+  jq -r "$expr" "$STUB_DIR/oversee-state.json"
+  exit
+fi
+file="$STUB_DIR/state-$id.json"
+case "$cmd" in
+  exists) [[ -f "$file" ]] ;;
+  get)
+    [[ -f "$file" ]] || { echo "Error: State file not found: $file" >&2; exit 1; }
+    jq -r "${expr:-.}" "$file" ;;
+  *) echo "workflow-state stub: unexpected call: $*" >&2; exit 2 ;;
+esac
+EOF
+
+# Worktree CLI stub, for the item's state location: `exists <id>` answers from
+# the presence of wt-<id> under the case, and `path <id>` names it.
+cat > "$TMP_ROOT/bin/worktree-stub.sh" <<'EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+case "${1:-}" in
+  exists) [[ -d "$STUB_DIR/wt-${2:-}" ]] && echo true || echo false ;;
+  path) printf '%s/wt-%s\n' "$STUB_DIR" "${2:-}" ;;
+  *) echo "worktree stub: unexpected call: $*" >&2; exit 2 ;;
+esac
 EOF
 
 chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/tmux" "$TMP_ROOT/bin/pgrep" \
   "$TMP_ROOT/bin/pr-watch-stub.sh" "$TMP_ROOT/bin/linear-stub.sh" "$TMP_ROOT/bin/date" \
-  "$TMP_ROOT/bin/workflow-state-stub.sh"
+  "$TMP_ROOT/bin/workflow-state-stub.sh" "$TMP_ROOT/bin/worktree-stub.sh"
 
 STUB_DIR=""
 STATE_DIR=""
@@ -383,6 +409,8 @@ new_case() {
 }
 
 # run_watch [ENV=VAL ...] -- ARGS...   (fast cadence; TMUX set unless NO_TMUX=1)
+# WATCH_BIN names the script under test; a suite points it at a mutant copy
+# for a must-fail control and leaves it unset otherwise.
 # `--repo owner/repo` is supplied only when ARGS name no repo of their own:
 # --repo is repeatable, so injecting it beside a case's own would make that
 # case a two-repo fleet with owner/repo first. `--no-repo` is the harness's own
@@ -418,8 +446,9 @@ run_watch() {
            OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \
            OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/linear-stub.sh" \
            OVERSEE_WATCH_WORKFLOW_STATE="$TMP_ROOT/bin/workflow-state-stub.sh" \
+           WORKTREE_CLI="$TMP_ROOT/bin/worktree-stub.sh" \
            OVERSEE_WATCH_STATE_DIR="$STATE_DIR" \
            ${env_args[@]+"${env_args[@]}"} \
-           .agents/skills/orch/scripts/oversee-watch --interval 0 --max-loops 2 \
+           "${WATCH_BIN:-.agents/skills/orch/scripts/oversee-watch}" --interval 0 --max-loops 2 \
              ${repo_args[@]+"${repo_args[@]}"} ${watch_args[@]+"${watch_args[@]}"})
 }

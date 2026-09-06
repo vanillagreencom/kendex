@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Tests for `lanes context` and lib/lane-context.sh. The overseer compacts a
-# lane before it runs out of context, so it needs one number per live lane,
-# read from the lane's own pane status line and nothing else. The two
+# Tests for `lanes context` and lib/lane-context.sh. The overseer hands a
+# lane off before it runs out of context, so it needs one number per live
+# lane, read from the lane's own pane status line and nothing else. The two
 # harnesses print it in OPPOSITE directions (Claude's `Opus 5 41%` is the share
 # used, Codex's `Context 86% left` the share remaining) and in different
 # places (Codex draws it last, so its reading is the final non-empty line and
@@ -154,6 +154,8 @@ echo "=== lanes context ==="
   # per-account wrapper pane showing no status line at all.
   printf '%s %%31 claude\n' "$LIVE_PID"
   printf '%s %%32 nclaude\n' "$LIVE_PID"
+  # 33: a 1M-window lane past the overseer's handoff mark.
+  printf '%s %%33 claude\n' "$LIVE_PID"
   printf '%s %%9 fish\n' "$LIVE_PID"
   # tmux reports a login shell with the leading dash it was started with.
   printf '%s %%11 -bash\n' "$LIVE_PID"
@@ -197,6 +199,7 @@ write_claim thirty      "%29" "$H/.claude" "ken-130"
 write_claim thirtyone   "%30" "$H/.codex"  "ken-131"
 write_claim thirtytwo   "%31" "$H/.claude" "ken-132"
 write_claim thirtythree "%32" "$H/.claude" "ken-133"
+write_claim thirtyfour  "%33" "$H/.claude" "ken-134"
 # The foreign lane's pane NUMBER exists here too, on a screen that parses
 # cleanly: %1 is the first lane's, reading 35.
 write_claim_on "$FOREIGN_PID" foreign "%1" "$H/.claude" "ken-110"
@@ -365,6 +368,12 @@ screen 31 '  kendex (🌳 ken-132) Opus 5 35% (brad@drovr.dev)     /rc
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
 ● Documentation: a status line reads kendex (🌳 ken-132) Opus 5 92% (brad@drovr.dev)     /rc'
 screen 32 'plain shell output with no harness status line'
+# 33. The handoff mark is an absolute token count, so the reading carries the
+# percentage times the window the line names: 52% of `(1M context)` is
+# 520000 tokens. A line naming no window (%1) carries no token figure, and
+# the codex line never names one.
+screen 33 '  kendex (🌳 ken-134) Fable 5.1 (1M context) 52% (brad@drovr.dev)     /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
 
 OUT="$(run_ctx --json)"
 
@@ -410,6 +419,9 @@ echo "=== the claude shape reports the share used, wherever the footer puts the 
 # wrapper or the agent-confine launcher is still a measured claude pane.
 lanes_table "$OUT" \
   "an orchestrating lane's real footer: the status line under agent rows reports used|ken-101|status=ok harness=claude context_used_pct=35" \
+  "a line naming no window yields no token figure|ken-101|context_tokens=null" \
+  "a 1M lane at 52% reads 520000 tokens: the percentage times the window the line names|ken-134|harness=claude context_used_pct=52 context_tokens=520000" \
+  "a (1M context) parenthetical yields the token figure beside the percentage|ken-114|context_tokens=220000" \
   "the bottom-most reading wins over one repainted past|ken-103|context_used_pct=18" \
   "a (1M context) parenthetical between the model and the percentage is read through|ken-114|harness=claude context_used_pct=22" \
   "a dotted model version is read through, parenthetical and all|ken-115|harness=claude context_used_pct=12" \
@@ -433,7 +445,7 @@ echo "=== the codex shape is converted and read off the line the screen ends on 
 # is not a context figure, on a pane offered both shapes too; the wrapper
 # names no harness so a wrapped codex lane is measured.
 lanes_table "$OUT" \
-  "Context 86% left is 14 used|ken-102|status=ok harness=codex context_used_pct=14" \
+  "Context 86% left is 14 used, and names no window|ken-102|status=ok harness=codex context_used_pct=14 context_tokens=null" \
   "Context 40% used is taken as it stands|ken-106|harness=codex context_used_pct=40" \
   "whatever follows the separator is taken as it comes, a claude item included|ken-107|harness=codex context_used_pct=14" \
   "a percentage over 100 is not a context figure, and says what it checked|ken-108|status=no_status_line context_used_pct=null detail~does+not+end+in+a+valid+codex+context+figure=true" \
@@ -472,6 +484,20 @@ screen 4 'plain shell output with no harness status line'
 lanes_table "$OVER" \
   "a claude status line carrying a percentage over 100 is not a context figure|ken-104|status=no_status_line context_used_pct=null"
 
+echo "=== the token figure is the multiplication, not the window ==="
+# The must-fail control for the rows above: a copy of the library with the
+# multiplication dropped reports the window itself, so a 52% lane reads as a
+# full one. The mutant must differ from the source or the control proves
+# nothing; the source parses the same screen to the multiplied figure.
+MUTANT="$TMP_ROOT/mutant-lane-context.sh"
+sed 's/int(used \* window \/ 100)/window/' "$SCRIPTS_DIR/lib/lane-context.sh" > "$MUTANT"
+assert_eq "$(cmp -s "$MUTANT" "$SCRIPTS_DIR/lib/lane-context.sh" && echo same || echo differs)" "differs" "control: the mutant really drops the multiplication"
+parse_screen() { # <lib> <pane number>
+  "$BASH" -c 'source "$1"; lane_context_parse claude <"$2"' _ "$1" "$PANE_DIR/$2.screen" | cut -f3
+}
+assert_eq "$(parse_screen "$SCRIPTS_DIR/lib/lane-context.sh" 33)" "520000" "the source multiplies the percentage by the window"
+assert_eq "$(parse_screen "$MUTANT" 33)" "1000000" "control: without the multiplication the same screen reads as the whole window"
+
 echo "=== every committed codex capture parses to the figure on its screen ==="
 # Real `tmux capture-pane` output from Codex 0.151.0, read by file so the
 # blank rows a capture ends in reach the parser: in the four that carry a
@@ -481,7 +507,7 @@ FIXTURES="$TEST_DIR/fixtures/oversee-watch"
 parse_fixture() { # <capture file name>
   "$BASH" -c 'source "$1"; lane_context_parse codex <"$2"' _ "$SCRIPTS_DIR/lib/lane-context.sh" "$FIXTURES/$1" || printf 'none\n'
 }
-for row in "codex-working.txt|codex,0" "codex-composer-draft.txt|codex,0" "codex-composer-idle.txt|codex,0" "codex-idle-after-turn.txt|codex,1" "codex-dialog-model.txt|none" "codex-dialog-trust.txt|none"; do
+for row in "codex-working.txt|codex,0," "codex-composer-draft.txt|codex,0," "codex-composer-idle.txt|codex,0," "codex-idle-after-turn.txt|codex,1," "codex-dialog-model.txt|none" "codex-dialog-trust.txt|none"; do
   IFS='|' read -r capture want <<<"$row"
   assert_eq "$(parse_fixture "$capture" | tr '\t' ',')" "$want" "$capture parses to its screen's figure"
 done
@@ -494,20 +520,22 @@ echo "=== the table names the direction it reports, with and without column ==="
 TABLE="$(run_ctx)"
 NOCOL="$TMP_ROOT/nocol"; mkdir -p "$NOCOL"
 for b in jq awk cat; do ln -s "$(command -v "$b")" "$NOCOL/$b"; done
-RECS='[{"lane":"ken-101","pane":"%1","account":"drovr","config_dir":"/h/.claude","harness":"claude","context_used_pct":35,"status":"ok","detail":null},{"lane":"ken-104","pane":"%4","account":"drovr","config_dir":"/h/.claude","harness":null,"context_used_pct":null,"status":"no_status_line","detail":"x"}]'
+RECS='[{"lane":"ken-101","pane":"%1","account":"drovr","config_dir":"/h/.claude","harness":"claude","context_used_pct":35,"context_tokens":null,"status":"ok","detail":null},{"lane":"ken-104","pane":"%4","account":"drovr","config_dir":"/h/.claude","harness":null,"context_used_pct":null,"context_tokens":null,"status":"no_status_line","detail":"x"}]'
 NOCOL_OUT="$(PATH="$NOCOL" "$BASH" -c 'source "$1"; printf "%s" "$2" | lane_context_render' _ "$SCRIPTS_DIR/lib/lane-context.sh" "$RECS" 2>&1)" && nocol_rc=0 || nocol_rc=$?
 assert_eq "$nocol_rc" "0" "the table renders without column installed"
-HEADER='^LANE[[:space:]]+PANE[[:space:]]+ACCOUNT[[:space:]]+HARNESS[[:space:]]+CONTEXT_USED_PCT[[:space:]]+STATUS[[:space:]]*$'
+HEADER='^LANE[[:space:]]+PANE[[:space:]]+ACCOUNT[[:space:]]+HARNESS[[:space:]]+CONTEXT_USED_PCT[[:space:]]+CONTEXT_TOKENS[[:space:]]+STATUS[[:space:]]*$'
 # `label|table|regex` — a whole-line match, since the legend repeats the column name.
 for row in \
   "the header carries the number column, in order|TABLE|$HEADER" \
-  "a row carries the lane's number between its harness and its status|TABLE|^ken-101[[:space:]]+%1[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+35%[[:space:]]+ok[[:space:]]*\$" \
-  "an unmeasured lane's number column is a dash, never a zero|TABLE|^ken-104[[:space:]]+%4[[:space:]]+[^[:space:]]+[[:space:]]+-[[:space:]]+-[[:space:]]+no_status_line[[:space:]]*\$" \
+  "a row carries the lane's number between its harness and its status, a dash for tokens where the line names no window|TABLE|^ken-101[[:space:]]+%1[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+35%[[:space:]]+-[[:space:]]+ok[[:space:]]*\$" \
+  "a lane naming its window carries the token figure in its own column|TABLE|^ken-134[[:space:]]+%33[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+52%[[:space:]]+520000[[:space:]]+ok[[:space:]]*\$" \
+  "an unmeasured lane's number columns are dashes, never zeros|TABLE|^ken-104[[:space:]]+%4[[:space:]]+[^[:space:]]+[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+no_status_line[[:space:]]*\$" \
   "the legend states which direction it reports|TABLE|CONSUMED" \
   "the legend names both codex spellings and which is converted|TABLE|LEFT or what is USED" \
-  "the column-less header is aligned with spaces, not a run of tabs|NOCOL_OUT|^LANE {2,}PANE {2,}ACCOUNT {2,}HARNESS {2,}CONTEXT_USED_PCT {2,}STATUS *\$" \
-  "a measured lane keeps its row where column is missing|NOCOL_OUT|^ken-101[[:space:]]+%1[[:space:]]+drovr[[:space:]]+claude[[:space:]]+35%[[:space:]]+ok[[:space:]]*\$" \
-  "an unmeasured lane keeps its row too, dashes and all|NOCOL_OUT|^ken-104[[:space:]]+%4[[:space:]]+drovr[[:space:]]+-[[:space:]]+-[[:space:]]+no_status_line[[:space:]]*\$" \
+  "the legend says what the token column is and when it is empty|TABLE|CONTEXT_TOKENS: that percent of the window the status line names" \
+  "the column-less header is aligned with spaces, not a run of tabs|NOCOL_OUT|^LANE {2,}PANE {2,}ACCOUNT {2,}HARNESS {2,}CONTEXT_USED_PCT {2,}CONTEXT_TOKENS {2,}STATUS *\$" \
+  "a measured lane keeps its row where column is missing|NOCOL_OUT|^ken-101[[:space:]]+%1[[:space:]]+drovr[[:space:]]+claude[[:space:]]+35%[[:space:]]+-[[:space:]]+ok[[:space:]]*\$" \
+  "an unmeasured lane keeps its row too, dashes and all|NOCOL_OUT|^ken-104[[:space:]]+%4[[:space:]]+drovr[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+no_status_line[[:space:]]*\$" \
   "the legend survives the missing column too|NOCOL_OUT|CONSUMED"; do
   IFS='|' read -r label which re <<<"$row"
   assert_line "${!which}" "$re" "$label"
