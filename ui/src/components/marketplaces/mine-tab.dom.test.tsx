@@ -174,6 +174,16 @@ describe("the authoring guide", () => {
     await settle();
   };
 
+  /** Close it the way a person does — the dialog's own close control, which
+   *  lives in the portal rather than in the tab's subtree. */
+  const closeGuide = async () => {
+    const close = document.body.querySelector<HTMLElement>(
+      '[role="dialog"] button',
+    );
+    await act(async () => close?.click());
+    await settle();
+  };
+
   it("draws the document the command answered with", async () => {
     vi.mocked(commands.mineSubmissions).mockResolvedValue(answered([]));
     vi.mocked(commands.mineAuthoringDoc).mockResolvedValue(
@@ -185,6 +195,32 @@ describe("the authoring guide", () => {
 
     // The dialog renders in a portal, so its content is on the body rather
     // than in the tab's own subtree.
+    expect(document.body.textContent).toContain("Authoring");
+    expect(document.body.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  // The read is skipped once the document is in hand, so the error has to be
+  // the one answer that does not count as in hand: without that, a person
+  // who hit a failing read once is left with the message for the rest of the
+  // session however many times they reopen the dialog.
+  it("asks again when the dialog is reopened after a read that failed", async () => {
+    vi.mocked(commands.mineSubmissions).mockResolvedValue(answered([]));
+    vi.mocked(commands.mineAuthoringDoc).mockResolvedValue({
+      status: "error",
+      error: "the bridge closed",
+    });
+    const host = mount(<MineTab />);
+    await settle();
+    await openGuide(host);
+    expect(commands.mineAuthoringDoc).toHaveBeenCalledTimes(1);
+
+    await closeGuide();
+    vi.mocked(commands.mineAuthoringDoc).mockResolvedValue(
+      answered("# Authoring"),
+    );
+    await openGuide(host);
+
+    expect(commands.mineAuthoringDoc).toHaveBeenCalledTimes(2);
     expect(document.body.textContent).toContain("Authoring");
     expect(document.body.querySelector('[role="alert"]')).toBeNull();
   });
