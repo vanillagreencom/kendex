@@ -66,68 +66,24 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     // mutation, so a failure here is a repository that moved under the
     // run. The steps before it are installed either way, and the error is
     // held until the close has reported them.
-    let mut settled = Vec::new();
-    let mut failed: Option<Box<dyn std::error::Error>> = None;
-    for step in steps {
-        match install_step(env, scope, step) {
-            Ok(done) => settled.push(done),
-            Err(error) => {
-                failed = Some(error);
-                break;
-            }
-        }
-    }
+    let (closing, failed) =
+        install_steps(steps, |step, wrote| install_step(env, scope, step, wrote));
     if failed.is_none() {
         say("collection installed — every member is in the lock at its resolved commit");
     }
-
-    // One screen for the collection, and one question.
-    //
-    // A package can arrive by more than one route in a single command — the
-    // repository that carries it, and a dependency of something else — and a
-    // person should read what it does to their repository once. Collapsed by
-    // name over the settled plans, which is the same set each plan already
-    // answers for itself.
-    let mut once: std::collections::BTreeMap<&str, &kendex_core::repo_effects::DeclaredEffects> =
-        std::collections::BTreeMap::new();
-    for step in &settled {
-        for effect in &step.report.repo_effects {
-            once.entry(effect.name.as_str()).or_insert(effect);
-        }
-    }
-    let pending: Vec<kendex_core::repo_effects::DeclaredEffects> =
-        once.into_values().cloned().collect();
     // The same close `add <package>` gives, over every step at once: a
     // collection is one install, and a run that opened a frame has to end
     // on what it wrote, skipped and flagged like any other. The parts are
     // the ones each step already counted, never re-derived.
-    let applied: usize = settled.iter().map(|step| step.applied).sum();
-    // Read off what the run applied, not off the member plans alone: a
-    // reused source whose member is already declared plans nothing and
-    // still writes — its subscription, or the pin that holds it at the
-    // snapshot — and a ledger deciding from the plan would call that run
-    // up to date over changes it had just made. `None` only where
-    // nothing was planned and nothing was written, the way `add` reads a
-    // scope that had nothing to do.
-    let count = wrote_count(
-        applied,
-        settled.iter().any(|step| !step.report.plan.is_empty()),
-    );
-    let mut blocked: Vec<Blocked> = Vec::new();
-    let mut scored: Vec<kendex_core::engine::ItemSafety> = Vec::new();
-    for step in settled {
-        blocked.extend(step.blocked);
-        scored.extend(step.scored);
-    }
     let close = || {
         say_ledger(
             scope,
             Wrote {
                 verb: "added",
-                count,
+                count: closing.count,
             },
-            &blocked,
-            &scored,
+            &closing.blocked,
+            &closing.scored,
         );
     };
     if let Some(error) = failed {
@@ -140,7 +96,85 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     // Every member is installed by now, so the account and its separate
     // yes come last — and the close is handed over, so what the run wrote
     // is reported whatever the reader answers.
-    super::repo_effects::disclose_and_finish(env, scope, &pending, allow_effects, close)
+    super::repo_effects::disclose_and_finish(env, scope, &closing.pending, allow_effects, close)
+}
+
+/// Take the steps in order, stopping at the first failure, and reduce
+/// what the run wrote into its close.
+///
+/// The written set, never the succeeded set. A step is not outcome-free
+/// before it fails: it can apply a new subscription, apply the pins that
+/// hold reused members at the snapshot, and print blocked and safety rows
+/// before a later fetch returns an error. Dropping that with the error
+/// closes a run that changed the repository on a ledger naming less than
+/// it did. Each step fills its own [`Written`] as it goes, so the outcome
+/// is kept whichever way the step returned.
+fn install_steps(
+    steps: Vec<kendex_core::source_ops::CollectionStep>,
+    mut install: impl FnMut(kendex_core::source_ops::CollectionStep, &mut Written) -> CliResult,
+) -> (Closing, Option<Box<dyn std::error::Error>>) {
+    let mut written: Vec<Written> = Vec::new();
+    let mut failed: Option<Box<dyn std::error::Error>> = None;
+    for step in steps {
+        let mut wrote = Written::default();
+        let outcome = install(step, &mut wrote);
+        written.push(wrote);
+        if let Err(error) = outcome {
+            failed = Some(error);
+            break;
+        }
+    }
+    (closing(written), failed)
+}
+
+/// What the run says at the end: the ledger's count, the collapsed
+/// repository-effects screen, and the rows each step could not settle.
+struct Closing {
+    count: Option<usize>,
+    pending: Vec<kendex_core::repo_effects::DeclaredEffects>,
+    blocked: Vec<Blocked>,
+    scored: Vec<kendex_core::engine::ItemSafety>,
+}
+
+fn closing(written: Vec<Written>) -> Closing {
+    // One screen for the collection, and one question.
+    //
+    // A package can arrive by more than one route in a single command — the
+    // repository that carries it, and a dependency of something else — and a
+    // person should read what it does to their repository once. Collapsed by
+    // name over the whole run's writes.
+    let mut once: std::collections::BTreeMap<&str, &kendex_core::repo_effects::DeclaredEffects> =
+        std::collections::BTreeMap::new();
+    for step in &written {
+        for effect in &step.effects {
+            once.entry(effect.name.as_str()).or_insert(effect);
+        }
+    }
+    let pending: Vec<kendex_core::repo_effects::DeclaredEffects> =
+        once.into_values().cloned().collect();
+    // Read off what the run applied, not off the member plans alone: a
+    // reused source whose member is already declared plans nothing and
+    // still writes — its subscription, or the pin that holds it at the
+    // snapshot — and a ledger deciding from the plan would call that run
+    // up to date over changes it had just made. `None` only where
+    // nothing was planned and nothing was written, the way `add` reads a
+    // scope that had nothing to do.
+    let count = wrote_count(
+        written.iter().map(|step| step.applied).sum(),
+        written.iter().any(|step| step.planned),
+    );
+    let mut blocked: Vec<Blocked> = Vec::new();
+    let mut scored: Vec<kendex_core::engine::ItemSafety> = Vec::new();
+    for step in written {
+        blocked.extend(step.blocked);
+        scored.extend(step.scored);
+    }
+    Closing {
+        count,
+        pending,
+        blocked,
+        scored,
+    }
 }
 
 /// Whether the run has a count to report, and what it is.
@@ -154,11 +188,18 @@ fn wrote_count(applied: usize, planned_anything: bool) -> Option<usize> {
     (applied > 0 || planned_anything).then_some(applied)
 }
 
-/// What one step wrote, and what it could not. The collection's closing
-/// ledger is the sum of these, so each step hands back the counts it
-/// already took rather than leaving them to be worked out again.
-struct Installed {
-    report: kendex_core::engine::EngineReport,
+/// What one step wrote, and what it could not, gathered as it writes it.
+/// The collection's closing ledger and its repository-effects screen are
+/// the sum of these, so each step hands back the counts it already took
+/// rather than leaving them to be worked out again — and a step that
+/// fails hands back everything it had written before it did.
+#[derive(Default)]
+struct Written {
+    /// The repository effects this step's plan declared.
+    effects: Vec<kendex_core::repo_effects::DeclaredEffects>,
+    /// Whether the step planned anything at all, which is the one thing
+    /// separating a silent run from one that wrote nothing.
+    planned: bool,
     blocked: Vec<Blocked>,
     scored: Vec<kendex_core::engine::ItemSafety>,
     applied: usize,
@@ -167,20 +208,24 @@ struct Installed {
 /// Subscribe (or reuse), install every member, and — for a reused
 /// subscription that may track a moved branch — pin each member to the
 /// snapshot commit so what installs is the snapshot, not the branch head.
+///
+/// Every write lands in `wrote` before the next fallible call, so the
+/// error path carries what the step had already done.
 fn install_step(
     env: &Env,
     scope: &Scope,
     step: kendex_core::source_ops::CollectionStep,
-) -> Result<Installed, Box<dyn std::error::Error>> {
+    wrote: &mut Written,
+) -> CliResult {
     let reused = matches!(step.action, SourceAction::Reuse { .. });
-    // What the subscription itself wrote counts the way `add` counts its
-    // own manifest save: the ledger reports changes, not packages.
-    let mut applied = 0usize;
     let source = match step.action {
         SourceAction::Reuse { name } => name,
         SourceAction::Subscribe { reference } => {
             let subscribed = source_ops::subscribe(env, scope, &reference, None)?;
-            applied += apply_report(env, &subscribed.report)?;
+            // What the subscription itself wrote counts the way `add`
+            // counts its own manifest save: the ledger reports changes,
+            // not packages.
+            wrote.applied += apply_report(env, &subscribed.report)?;
             say(&format!(
                 "{}: subscribed to '{}'",
                 scope_label(scope),
@@ -228,25 +273,22 @@ fn install_step(
             hold: false,
         },
     )?;
-    let blocked = print_report(env, &report);
-    applied += apply_report(env, &report)?;
-    let mut scored = report.safety.clone();
+    // The step's own plan goes to the caller, which discloses over the
+    // whole collection at once. Nothing here runs an effect.
+    wrote.effects.extend(report.repo_effects.iter().cloned());
+    wrote.planned = !report.plan.is_empty();
+    wrote.blocked.extend(print_report(env, &report));
+    wrote.scored.extend(report.safety.iter().cloned());
+    wrote.applied += apply_report(env, &report)?;
     if reused && let Some(commit) = &step.commit {
         for (kind, name) in &members {
             let pinned = kendex_core::package::set_rev(env, scope, *kind, name, Some(commit))?;
             print_safety(&pinned);
-            scored.extend(pinned.safety.iter().cloned());
-            applied += apply_report(env, &pinned)?;
+            wrote.scored.extend(pinned.safety.iter().cloned());
+            wrote.applied += apply_report(env, &pinned)?;
         }
     }
-    // The step's own plan goes back to the caller, which discloses over the
-    // whole collection at once. Nothing here runs an effect.
-    Ok(Installed {
-        report,
-        blocked,
-        scored,
-        applied,
-    })
+    Ok(())
 }
 
 /// Fetch one step's repository at its snapshot commit and prove every
@@ -272,7 +314,69 @@ fn prevalidate(env: &Env, step: &kendex_core::source_ops::CollectionStep) -> Cli
 
 #[cfg(test)]
 mod tests {
-    use super::wrote_count;
+    use super::{Written, install_steps, wrote_count};
+    use kendex_core::repo_effects::{DeclaredEffects, RepoEffects};
+    use kendex_core::source_ops::{CollectionStep, SourceAction};
+
+    fn step(repo: &str) -> CollectionStep {
+        CollectionStep {
+            repo: repo.to_owned(),
+            commit: None,
+            action: SourceAction::Subscribe {
+                reference: repo.to_owned(),
+            },
+            agents: Vec::new(),
+            skills: vec!["guard".to_owned()],
+            hooks: Vec::new(),
+            commands: Vec::new(),
+            mcp_servers: Vec::new(),
+        }
+    }
+
+    fn declared(name: &str) -> DeclaredEffects {
+        DeclaredEffects {
+            name: name.to_owned(),
+            root: std::path::PathBuf::from("packages").join(name),
+            effects: RepoEffects {
+                summary: "arms this repository's commit hooks".to_owned(),
+                writes: Vec::new(),
+                installer: None,
+                uninstaller: None,
+                removal: None,
+                notes: Vec::new(),
+                companions: Vec::new(),
+            },
+        }
+    }
+
+    /// A step that subscribed and then failed changed the repository, so
+    /// the close names what it wrote: its subscription in the ledger's
+    /// count, and the declaration it installed on the repository-effects
+    /// screen. Read off the steps that succeeded alone, a run that had
+    /// just written twice closes on one.
+    #[test]
+    fn a_failed_step_still_names_what_it_wrote() {
+        let (closing, failed) = install_steps(
+            vec![step("owner/first"), step("owner/second")],
+            |step, wrote: &mut Written| {
+                wrote.applied += 1;
+                wrote.planned = true;
+                wrote.effects.push(declared(&step.repo));
+                match step.repo.as_str() {
+                    "owner/second" => Err("owner/second moved under the run".into()),
+                    _ => Ok(()),
+                }
+            },
+        );
+        assert!(failed.is_some());
+        assert_eq!(closing.count, Some(2));
+        let named: Vec<&str> = closing
+            .pending
+            .iter()
+            .map(|effects| effects.name.as_str())
+            .collect();
+        assert_eq!(named, ["owner/first", "owner/second"]);
+    }
 
     /// A run that wrote reports what it wrote, whatever the member plans
     /// said. The pin and the subscription are writes the member plan

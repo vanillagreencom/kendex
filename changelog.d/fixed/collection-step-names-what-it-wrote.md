@@ -1,0 +1,1 @@
+- Count what a failed collection install already wrote: a step that subscribed or pinned before it failed now reports those changes in the closing ledger instead of none of them.
