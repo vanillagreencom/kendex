@@ -47,7 +47,7 @@ async function probeLine(opts: Opts): Promise<string> {
 	const deps: ProbePaneIdleDeps = {
 		resolveBridgeBin: async () => (opts.bin === null ? undefined : (opts.bin ?? BIN)),
 		execCapture: async (command, args, options) => {
-			execs.push(`${command === BIN ? "bin" : JSON.stringify(command)} ${args.join(",")} cwd=${options?.cwd} timeout=${options?.timeoutMs}`);
+			execs.push(`${command === BIN ? "bin" : JSON.stringify(command)} ${JSON.stringify(args)} cwd=${options?.cwd} timeout=${options?.timeoutMs}`);
 			if (opts.throws !== undefined) throw opts.throws;
 			return opts.exec ?? { code: 0, stderr: "", stdout: "" };
 		},
@@ -64,7 +64,7 @@ async function probeLine(opts: Opts): Promise<string> {
 	return `${result.idle ? "idle" : "busy"}:${result.reason} exec=[${execs.join(";")}]${warnings.length ? ` warn=[${warnings.map(warnTag).join(",")}]` : ""}`;
 }
 
-const SOCKET_EXEC = "exec=[bin state,--socket,/tmp/pi-bridge.sock cwd=/tmp/cwd timeout=2000]";
+const SOCKET_EXEC = 'exec=[bin ["state","--socket","/tmp/pi-bridge.sock"] cwd=/tmp/cwd timeout=2000]';
 
 // label | deps | expect
 const rows: Array<[string, Opts, string]> = [
@@ -93,10 +93,10 @@ const rows: Array<[string, Opts, string]> = [
 	["a record without an agent", { record: { ...RECORD, agent: "" } }, "busy:registry-miss exec=[]"],
 	["an entry without bridge metadata", { entry: { bridgePid: undefined, bridgeSocket: undefined } }, "busy:bridge-missing-metadata exec=[]"],
 	["no bridge binary", { bin: null }, "busy:bridge-bin-not-found exec=[]"],
-	["a pid alone is probed by pid", { entry: { bridgePid: "9999", bridgeSocket: undefined }, exec: state({ data: { isIdle: true } }) }, "idle:bridge-idle exec=[bin state,--pid,9999 cwd=/tmp/cwd timeout=2000]"],
-	["a socket beside a pid wins", { entry: { bridgePid: "9999", bridgeSocket: "/run/b.sock" }, exec: state({ data: { isIdle: true } }) }, "idle:bridge-idle exec=[bin state,--socket,/run/b.sock cwd=/tmp/cwd timeout=2000]"],
-	["an injected timeout is handed to the exec", { exec: state({ data: { isIdle: true } }), timeoutMs: 500 }, "idle:bridge-idle exec=[bin state,--socket,/tmp/pi-bridge.sock cwd=/tmp/cwd timeout=500]"],
-	["the resolved binary is the command", { bin: "/opt/pi-bridge", exec: state({ data: { isIdle: true } }) }, 'idle:bridge-idle exec=["/opt/pi-bridge" state,--socket,/tmp/pi-bridge.sock cwd=/tmp/cwd timeout=2000]'],
+	["a pid alone is probed by pid", { entry: { bridgePid: "9999", bridgeSocket: undefined }, exec: state({ data: { isIdle: true } }) }, 'idle:bridge-idle exec=[bin ["state","--pid","9999"] cwd=/tmp/cwd timeout=2000]'],
+	["a socket beside a pid wins", { entry: { bridgePid: "9999", bridgeSocket: "/run/b.sock" }, exec: state({ data: { isIdle: true } }) }, 'idle:bridge-idle exec=[bin ["state","--socket","/run/b.sock"] cwd=/tmp/cwd timeout=2000]'],
+	["an injected timeout is handed to the exec", { exec: state({ data: { isIdle: true } }), timeoutMs: 500 }, 'idle:bridge-idle exec=[bin ["state","--socket","/tmp/pi-bridge.sock"] cwd=/tmp/cwd timeout=500]'],
+	["the resolved binary is the command", { bin: "/opt/pi-bridge", exec: state({ data: { isIdle: true } }) }, 'idle:bridge-idle exec=["/opt/pi-bridge" ["state","--socket","/tmp/pi-bridge.sock"] cwd=/tmp/cwd timeout=2000]'],
 ];
 
 test("probePaneIdle", async () => {
