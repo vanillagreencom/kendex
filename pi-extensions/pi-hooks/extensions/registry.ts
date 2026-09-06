@@ -1,5 +1,5 @@
 import { readFileSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 
 import { piUserDir } from "./config.js";
 
@@ -107,7 +107,10 @@ function renderedScript(command: string, anchor: string | undefined): string {
 /** The guard name a registered command runs, or `""` where `engine::targets::pi_hook` did not write that command for this root. */
 export function renderedName(root: string, command: string, anchor: string | undefined): string {
 	const script = renderedScript(command, anchor);
-	const file = script.slice(script.lastIndexOf("/") + 1);
+	// `resolve` spells the path the platform's way, so the file is taken off
+	// it by the platform's separator too: a slice at `/` would hand back a
+	// whole Windows path as the name.
+	const file = basename(script);
 	if (!file.endsWith(".sh")) return "";
 	const name = file.slice(0, -3);
 	if (name === "") return "";
