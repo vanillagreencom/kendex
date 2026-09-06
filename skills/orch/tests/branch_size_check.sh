@@ -10,12 +10,30 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-CHECK_BIN="$REPO_ROOT/skills/orch/scripts/branch-size-check"
 STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+
+# The check reads the issue through the Linear CLI beside its own skill, and
+# that CLI refuses Bash 3.2, which the macOS suite leg runs. A stand-in at the
+# sibling path answers `cache issues get ID --format=raw` from the fixture's
+# cache the way the CLI does: {"issue": row} on stdout, or a stderr line and
+# exit 1 when the cache holds no such issue. The check under test is a whole
+# copy of scripts/ beside it, the same shape every mutant takes.
+mkdir -p "$TMP_ROOT/linear/scripts"
+cat > "$TMP_ROOT/linear/scripts/linear.sh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+[[ "${1:-}" == cache && "${2:-}" == issues && "${3:-}" == get ]] \
+  || { echo "linear stand-in: unsupported call: $*" >&2; exit 2; }
+row="$(jq -c --arg id "$4" '.[] | select(.identifier == $id)' .cache/linear/issues.json)"
+[[ -n "$row" ]] || { echo "Error: issue $4 not found in cache" >&2; exit 1; }
+jq -n --argjson issue "$row" '{issue: $issue}'
+SH
+chmod +x "$TMP_ROOT/linear/scripts/linear.sh"
+CHECK_BIN="$(copy_scripts live)/branch-size-check"
 
 PASS=0
 FAIL=0
@@ -49,13 +67,11 @@ git -C "$WT" add -A
 git -C "$WT" commit -q -m base
 git -C "$WT" switch -q -c size
 
-# The Linear cache the check reads through the linear CLI, which needs a
-# meta.json beside the rows before it will answer at all.
+# The Linear cache the stand-in answers from.
 write_issue() {
   mkdir -p "$WT/.cache/linear"
   jq -n --arg body "$1" '[{identifier: "KEN-SIZE", description: $body}]' \
     > "$WT/.cache/linear/issues.json"
-  jq -n '{synced_at: "2026-09-02T00:00:00Z"}' > "$WT/.cache/linear/meta.json"
 }
 
 mk() { mkdir -p "$(dirname "$WT/$2")"; seq 1 "$1" > "$WT/$2"; }
@@ -70,15 +86,6 @@ run_check() {
 # suite at that line, with no tally and every later assertion unrun.
 capture() { local __v="$1"; shift; set +e; printf -v "$__v" '%s' "$("$@" 2>/dev/null)"; set -e; }
 rc_of() { local __v="$1"; shift; set +e; "$@" >/dev/null 2>&1; printf -v "$__v" '%s' "$?"; set -e; }
-# copy_scripts copies scripts/ alone, so a mutant resolves its sibling skills
-# one level above the copy. Without this every mutant dies reading the issue,
-# and a control whose mutant never runs credits a pass to nothing.
-mutant_scripts() {
-  mkdir -p "$TMP_ROOT/linear"
-  [[ -e "$TMP_ROOT/linear/scripts" ]] \
-    || ln -s "$REPO_ROOT/skills/linear/scripts" "$TMP_ROOT/linear/scripts"
-  copy_scripts "$1"
-}
 
 # --- Every classification rule, one file per rule, additions alone ----------
 write_issue "**Expected delta**: 40 lines, 20 test lines"
@@ -122,7 +129,7 @@ assert_eq "$(jq -r '.mirror_lines' <<<"$mirror_json")" "11" \
 assert_eq "$(jq -r '.production_lines' <<<"$mirror_json")" "47" \
   "a render whose source did not change stays in production beside a same-basename source"
 
-PAIR_SCRIPTS="$(mutant_scripts pairing-mutant)"
+PAIR_SCRIPTS="$(copy_scripts pairing-mutant)"
 PAIR_LIB="$PAIR_SCRIPTS/lib/branch-growth.sh"
 assert_eq "$(grep -Fc 'if (rest_stem == s) return 1' "$PAIR_LIB")" "1" \
   "pairing control finds exactly one live match"
@@ -188,7 +195,7 @@ assert_eq "$([[ "$prod_error" == *"100 production lines added"* && "$prod_error"
 assert_eq "$("$STATE" --state-dir "$WT/tmp" get KEN-SIZE '.pr.size_check.verdict')" "production_over" \
   "the refusal is recorded with its reason"
 
-PROD_SCRIPTS="$(mutant_scripts production-mutant)"
+PROD_SCRIPTS="$(copy_scripts production-mutant)"
 PROD_MUTANT="$PROD_SCRIPTS/branch-size-check"
 assert_eq "$(grep -Fc 'elif (( production_lines > allowance )); then' "$PROD_MUTANT")" "1" \
   "production control finds exactly one live comparison"
@@ -215,7 +222,7 @@ assert_eq "$([[ "$test_error" == *"50 test lines added"* && "$test_error" == *"a
 
 # A private copy of its own: a mutant already carrying the production mutation
 # would prove nothing about this comparison.
-TEST_SCRIPTS="$(mutant_scripts test-mutant)"
+TEST_SCRIPTS="$(copy_scripts test-mutant)"
 TEST_MUTANT="$TEST_SCRIPTS/branch-size-check"
 assert_eq "$(grep -Fc 'elif [[ -n "$test_allowance" ]] && (( test_lines > test_allowance )); then' "$TEST_MUTANT")" "1" \
   "test control finds exactly one live comparison"
