@@ -29,8 +29,10 @@
 #         percentage USED), Codex prints either `Context 86% left` (the
 #         percentage REMAINING) or `Context 14% used`, and only the `left`
 #         spelling is converted. Both harnesses are reported as
-#         CONTEXT_USED_PCT — the share CONSUMED. The lanes are the live
-#         claims below, one per pane.
+#         CONTEXT_USED_PCT — the share CONSUMED. CONTEXT_TOKENS is that
+#         share of the window the status line names (Claude prints
+#         `(1M context)`); a line naming no window yields no figure. The
+#         lanes are the live claims below, one per pane.
 #
 # Options:
 #   --harness NAME   claude, codex, or all (default: all for list, claude for pick)

@@ -9,6 +9,20 @@ Prepare one work item from the main repo. Never watches or manages other session
 | `start github OWNER/REPO#N` | prepare GitHub issue |
 | `start new ...` | `workflows/start-new.md` |
 
+## 0. Resume From A Handoff
+
+**Skip if** no work item was named (`start` alone, or `start new`), or the read below fails for want of a state file, prints `null`, or prints a record carrying `resumed_at`. For `start github OWNER/REPO#N`, `[ISSUE_ID]` is `issue-[N]` (§ 1).
+
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.handoff'
+```
+
+The record is a lane's handoff (`oversee.md` § 4 Hand off a lane), on every surface. Print it, stamp it, then continue from the first entry of its `remaining` list instead of § 1-5:
+
+```bash
+.agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] handoff.resumed_at
+```
+
 ## 1. Route
 
 1. Args starting with `new` → invoke `workflows/start-new.md`.

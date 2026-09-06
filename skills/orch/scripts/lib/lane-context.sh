@@ -68,12 +68,13 @@ LANE_CONTEXT_HARNESSES='[a-z0-9]*claude|codex|pi|agent-confine'
 LANE_CONTEXT_SHELLS='sh|bash|zsh|fish|dash|ksh|mksh|tcsh|csh|nu|xonsh|elvish'
 
 # One record. $1 window, $2 pane id, $3 config dir, $4 account label,
-# $5 harness, $6 used percent, $7 status, $8 detail. Empty numeric or label
-# fields become null, never 0 or "".
+# $5 harness, $6 used percent, $7 status, $8 detail, $9 context tokens.
+# Empty numeric or label fields become null, never 0 or "".
 lane_context_emit() {
   jq -nc \
     --arg lane "$1" --arg pane "$2" --arg cfg "$3" --arg account "$4" \
-    --arg harness "$5" --arg used "$6" --arg status "$7" --arg detail "$8" '
+    --arg harness "$5" --arg used "$6" --arg status "$7" --arg detail "$8" \
+    --arg tokens "${9:-}" '
     {
       lane: (if $lane == "" then null else $lane end),
       pane: $pane,
@@ -81,6 +82,7 @@ lane_context_emit() {
       config_dir: (if $cfg == "" then null else $cfg end),
       harness: (if $harness == "" then null else $harness end),
       context_used_pct: (if $used == "" then null else ($used | tonumber) end),
+      context_tokens: (if $tokens == "" then null else ($tokens | tonumber) end),
       status: $status,
       detail: (if $detail == "" then null else $detail end)
     }'
@@ -105,8 +107,13 @@ lane_context_shape() {
 
 # Read one context figure from a captured screen on stdin. $1 is the pane's
 # foreground process, which `lane_context_shape` turns into the shape offered.
-# Prints `<harness>\t<used percent>`; exits 1 when the shape offered found
-# nothing.
+# Prints `<harness>\t<used percent>\t<context tokens>`; exits 1 when the
+# shape offered found nothing. The token figure is the percentage times the
+# window the status line itself names — Claude's `(1M context)` parenthetical
+# between the version and the percentage — and is empty on a line naming
+# none: the codex status line never names its window, and a Claude session
+# on its default window prints no parenthetical. The overseer's handoff mark
+# is an absolute token count, so a lane with no figure never reaches it.
 #
 # The codex shape is offered the FINAL NON-EMPTY line and no other. The
 # claude shape is offered every line and its LAST match wins; no window is
@@ -158,14 +165,24 @@ lane_context_parse() {
       if (shape == "codex") next
       low = tolower($0)
       if (match(low, /^[ \t]*[^ \t()]+([ \t]+\([^)]*\))?[ \t]+(opus|sonnet|haiku|fable)[ \t]+[0-9]+(\.[0-9]+)?([ \t]*\([^)]*\))?[ \t]+[0-9]+%[ \t]+\([^) \t]+\)([ \t]+\/[^ \t]*)*[ \t]*$/)) {
-        s = substr(low, RSTART, RLENGTH)
-        match(s, /[0-9]+%[ \t]+\([^) \t]+\)/)
-        s = substr(s, RSTART, RLENGTH)
+        line = substr(low, RSTART, RLENGTH)
+        # The window parenthetical is the one naming a token count, so the
+        # branch parenthetical before the model never matches it.
+        window = ""
+        if (match(line, /\([0-9]+(\.[0-9]+)?[km][ \t]+context\)/)) {
+          w = substr(line, RSTART + 1, RLENGTH - 2)
+          unit = (w ~ /m/) ? 1000000 : 1000
+          sub(/[km].*$/, "", w)
+          window = w * unit
+        }
+        match(line, /[0-9]+%[ \t]+\([^) \t]+\)/)
+        s = substr(line, RSTART, RLENGTH)
         sub(/%.*$/, "", s)
-        if (s != "" && s + 0 <= 100) { c_found = 1; c_used = s + 0 }
+        if (s != "" && s + 0 <= 100) { c_found = 1; c_used = s + 0; c_window = window }
       }
     }
     END {
+      window = ""
       low = (shape == "claude") ? "" : tolower(last)
       if (match(low, /^[^a-z0-9]*context:?[ \t]+[0-9]+%[ \t]+(left|used)([ \t]+(·|[|])[ \t]+[^ \t].*)?[ \t]*$/)) {
         codex_line = 1
@@ -176,8 +193,10 @@ lane_context_parse() {
         gsub(/[^0-9]/, "", s)
         if (s + 0 <= 100) { harness = "codex"; used = remaining ? 100 - (s + 0) : s + 0 }
       }
-      if (!codex_line && c_found) { harness = "claude"; used = c_used }
-      if (harness != "") printf "%s\t%d\n", harness, used
+      if (!codex_line && c_found) { harness = "claude"; used = c_used; window = c_window }
+      if (harness == "") exit
+      if (window == "") printf "%s\t%d\t\n", harness, used
+      else printf "%s\t%d\t%d\n", harness, used, int(used * window / 100)
     }
   ')"
   [[ -n "$out" ]] || return 1
@@ -201,7 +220,7 @@ lane_context_parse() {
 # guessing it from a screen that quotes both all day.
 lane_context_collect() {
   local claims="$1" alias_fn="$2" cfg lane server pane screen parsed
-  local this_server detail cmd pane_cmds p_pid p_pane p_cmd
+  local this_server detail cmd pane_cmds p_pid p_pane p_cmd harness used tokens
   # `<pane id> <command>` per line, not an associative array: macOS Bash 3.2
   # has none and rejects an associative-array declaration, which under this
   # file's errexit would abort the whole report rather than lose one lane.
@@ -252,8 +271,9 @@ lane_context_collect() {
           "no_status_line" "$detail"
         continue
       fi
+      IFS=$'\t' read -r harness used tokens <<<"$parsed"
       lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" \
-        "${parsed%%$'\t'*}" "${parsed##*$'\t'}" "ok" ""
+        "$harness" "$used" "ok" "" "$tokens"
     done <<<"$claims"
   } | jq -s '.'
 }
@@ -296,10 +316,12 @@ lane_context_render() {
     return 0
   fi
   jq -r '
-    (["LANE","PANE","ACCOUNT","HARNESS","CONTEXT_USED_PCT","STATUS"] | @tsv),
+    (["LANE","PANE","ACCOUNT","HARNESS","CONTEXT_USED_PCT","CONTEXT_TOKENS","STATUS"] | @tsv),
     (.[] | [ (.lane // "-"), .pane, (.account // "-"), (.harness // "-"),
              (if .context_used_pct == null then "-" else (.context_used_pct | tostring) + "%" end),
+             (if .context_tokens == null then "-" else (.context_tokens | tostring) end),
              .status ] | @tsv)
   ' <<<"$recs" | lane_context_columns
   printf 'CONTEXT_USED_PCT: percent of the context window CONSUMED. A Codex lane prints what is LEFT or what is USED; only LEFT is converted here.\n'
+  printf 'CONTEXT_TOKENS: that percent of the window the status line names, as Claude does with (1M context); a dash where the line names no window.\n'
 }
