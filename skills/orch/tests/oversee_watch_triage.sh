@@ -65,7 +65,10 @@ watch() {
   printf '%s' "${got# }"
 }
 
-check() { assert_eq "$(watch "$2")" "$2" "$1" "$ERR"; }
+check() {
+  [[ -n "$2" ]] || { printf 'check: a case with no expect asserts nothing: %s\n' "$1" >&2; exit 1; }
+  assert_eq "$(watch "$2")" "$2" "$1" "$ERR"
+}
 
 tracker_items() { printf '%s\n' "$1" > "$STUB_DIR/tracker.out"; }
 verdicts() { printf '{"triaged":%s}\n' "$1" > "$STUB_DIR/oversee-state.json"; }
@@ -100,7 +103,7 @@ check "an unacknowledged item repeats on the next run" "first=EVENT+triage+KEN-1
 verdicts '[{"issue":"KEN-1200","verdict":"kept"},{"issue":"KEN-1202","verdict":"canceled"},{"issue":"KEN-1204","verdict":"pending"}]'
 run -- --max-loops 1
 check "kept and canceled verdicts rebuild the baseline, pending stays out and repeats, the read anchored to the project tmp directory" \
-  "first=EVENT+triage+KEN-1204 state~triage%tKEN-1200=true state~triage%tKEN-1202=true state~triage%tKEN-1204=false wsargs~kept=true wsargs~canceled=true wsargs~--state-dir+%R/tmp+get+oversee=true"
+  "first=EVENT+triage+KEN-1204 state~triage%tKEN-1200=true state~triage%tKEN-1202=true state~triage%tKEN-1204=false wsargs~--state-dir+%R/tmp+get+oversee=true"
 verdicts '[{"issue":"KEN-1200","verdict":"kept"},{"issue":"KEN-1202","verdict":"canceled"},{"issue":"KEN-1204","verdict":"kept"}]'
 run -- --max-loops 1
 check "terminal verdicts close every repeated event" "first=$HEARTBEAT1"
@@ -172,7 +175,6 @@ for row in \
   "a date-only --since is refused, naming the documented form|||--since 2026-08-15|rc=2 stdout=empty stderr~UTC+timestamp+ending+in+Z=true" \
   "an offset --since is refused, naming the documented form|||--since 2026-08-15T09:00:00+00:00|rc=2 stdout=empty stderr~UTC+timestamp+ending+in+Z=true"; do
   IFS='|' read -r label env stubs args expect <<<"$row"
-  [[ -n "$expect" ]] || { printf 'refusals: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
   new_case triage_refusal
   if [[ -n "$stubs" ]]; then
     IFS=';' read -ra items <<<"$stubs"
