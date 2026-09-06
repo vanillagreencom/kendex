@@ -64,6 +64,46 @@ fn a_seeded_bad_catalog_fails_the_check() {
     );
 }
 
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unoffered_set_member_fails_strict_check() {
+    for (member, exit_code) in [("review", 0), ("nope", 1)] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let catalog = catalog_shipping(&home, "[env]\n");
+        std::fs::write(
+            catalog.join("kendex.toml"),
+            format!("[bundles.starter]\nskills = [\"{member}\"]\n"),
+        )
+        .unwrap();
+        let output = kendex(
+            &home,
+            &home,
+            &[
+                "check",
+                "--catalog",
+                catalog.to_str().unwrap(),
+                "--strict",
+                "--json",
+            ],
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(exit_code),
+            "{member}: {output:?}"
+        );
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(json["ok"], exit_code == 0);
+        assert_eq!(json["breakage"], exit_code);
+        if member == "nope" {
+            let findings = json["findings"].as_array().unwrap();
+            assert_eq!(findings.len(), 1);
+            assert_eq!(findings[0]["name"], "starter");
+            assert!(findings[0]["message"].as_str().unwrap().contains(member));
+        }
+    }
+}
+
 /// `--json` wraps the same findings in the versioned envelope the indexer
 /// consumes: schema, typed findings, the counts, and `ok` — what fails the
 /// run (breakage, plus structural advisories under `--strict`), whatever
