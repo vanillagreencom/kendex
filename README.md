@@ -19,7 +19,7 @@ curl -fsSL https://kendex.ai/install.sh | sh
 | macOS | the script above installs the CLI; `brew install vanillagreencom/kendex/kendex` installs the app |
 | Windows | the installer at [kendex.ai/download](https://kendex.ai/download), which also lists the CLI-only packages |
 
-Installing a package from a git repository needs git 2.41 or newer; kendex refuses an older one and names the version it found. A package on a local path needs no git. On Windows, `kendex guard` runs the commit guards through the `sh` that Git for Windows ships.
+A package on a local path needs no git. On Windows, `kendex guard` runs the commit guards through the `sh` that Git for Windows ships.
 
 ## Features
 
