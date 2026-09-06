@@ -27,11 +27,13 @@ export function PackageBody({
   meta,
   versions,
   files,
+  filesNote,
   installed,
   view,
   setView,
   diff,
   busy,
+  reading,
   onToggle,
   onSwitchVersion,
   onCompare,
@@ -44,11 +46,15 @@ export function PackageBody({
   meta: PackageMeta_Serialize | null;
   versions: VersionRow[];
   files: PackageFile[];
+  /** Why the file list has no files, where its read did not land. */
+  filesNote: string | null;
   installed: VersionRow | undefined;
   view: PackageView;
   setView: (view: PackageView) => void;
   diff: PackageDiff | null;
   busy: boolean;
+  /** Whether the page's own reads are out. */
+  reading: boolean;
   onToggle: (enable: boolean) => void;
   onSwitchVersion: (row: VersionRow) => void;
   onCompare: (row: VersionRow) => void;
@@ -100,13 +106,16 @@ export function PackageBody({
               meta={meta}
               versions={versions}
               files={files}
+              filesNote={filesNote}
               selectedFile={view.file}
               busy={busy}
+              retryRunning={reading}
               onToggle={(_, enable) => onToggle(enable)}
               onSwitchVersion={onSwitchVersion}
               onCompare={onCompare}
               onFollow={onFollow}
               onSelectFile={(file) => setView({ mode: "files", file })}
+              onRetryFiles={onReload}
             />
             <div className="min-w-0 flex-1">
               <FilePreview

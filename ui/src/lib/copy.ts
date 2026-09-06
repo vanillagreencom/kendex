@@ -106,6 +106,14 @@ export const TRY_AGAIN_LABEL = "Try again";
 
 // Package page: files, versions, and the diff between them.
 export const PACKAGE_FILES_TITLE = "Files";
+// The file list is the page's third read and the one no Update turns on. A
+// package that ships no files and one whose files could not be read leave
+// the same empty column, so a read that did not land says so where the list
+// would be, with the reason the read came back with, and offers the read
+// again.
+export const PACKAGE_FILES_READ_FAILED = "Couldn't read this package's files";
+export const packageFilesReadFailedNote = (reason: string): string =>
+  `${PACKAGE_FILES_READ_FAILED} — ${reason}`;
 export const PACKAGE_VERSION_TITLE = "Version";
 export const README_TAG = "readme";
 export const UPDATE_LABEL = "Update";
