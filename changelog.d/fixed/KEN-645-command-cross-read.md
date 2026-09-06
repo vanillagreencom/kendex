@@ -1,0 +1,1 @@
+- The warning that a command installed as a skill is offered by other tools names every tool that reads the directory it landed in, not Pi alone.
