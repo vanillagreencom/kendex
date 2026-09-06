@@ -51,8 +51,9 @@ The installer writes into `.git/hooks`, never `core.hooksPath`:
 
 1. `doc-limits --staged` for document byte ceilings, from the committing work tree's copy first, then this install's; a stated skip where neither exists or the repo-local one rejects `--staged` in its first-line parser diagnostic.
 2. `preflight --staged`, resolved the same way; a first commit skips it with a note.
-3. `commit-guards all --staged`.
-4. The repo-root-relative executable `COMMIT_GUARDS_PRE_COMMIT_LOCAL` names, when set.
+3. `bot-instructions check --staged`, resolved the same way, so no consumer carries a wrapper for it.
+4. `commit-guards all --staged`.
+5. The repo-root-relative executable `COMMIT_GUARDS_PRE_COMMIT_LOCAL` names, when set.
 
 Every step runs before the verdict; any other companion failure blocks. The shims fail closed on `2` for a guard that could not run, naming what is missing.
 

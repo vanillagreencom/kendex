@@ -33,9 +33,11 @@ say() {
   fail=1
 }
 
-bot_args=(check)
-[ "$FULL" -eq 1 ] || bot_args+=(--staged)
-"$TOOLS_DIR/../.agents/skills/bot-instructions/scripts/bot-instructions" "${bot_args[@]}" || say "bot instruction check failed"
+# The staged bot-instructions check is a lane of the commit-guards chain that
+# runs this script; --full judges the working tree, which the chain does not.
+if [ "$FULL" -eq 1 ]; then
+  "$TOOLS_DIR/../.agents/skills/bot-instructions/scripts/bot-instructions" check || say "bot instruction check failed"
+fi
 
 # The hit lines below are a tracked file's own bytes, and a source file may
 # carry an ESC or another C0 control as legitimate content. Printed raw they

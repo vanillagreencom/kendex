@@ -1,0 +1,1 @@
+- The commit-guards pre-commit chain runs `bot-instructions check --staged` itself where that package is installed, resolved like doc-limits and preflight; consumers drop their wrapper scripts.

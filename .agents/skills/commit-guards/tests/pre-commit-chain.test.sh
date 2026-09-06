@@ -51,6 +51,7 @@ fake_skill() { # ROOT NAME MARKER RC — a gate that proves which copy ran
 }
 fake_skill "$FULL_INSTALL" doc-limits "install doc-limits ran" 0
 fake_skill "$FULL_INSTALL" preflight "install preflight ran" 0
+fake_skill "$FULL_INSTALL" bot-instructions "install bot-instructions ran" 0
 
 new_repo() { # NAME -> repo path on stdout; seeded, with one file staged
   local r="$TMP/$1"
@@ -133,6 +134,22 @@ case "$OUT" in
   *"install preflight ran"*) ok "the install's preflight ran" ;;
   *) bad "install preflight ran" "out=$OUT" ;;
 esac
+case "$OUT" in
+  *"install bot-instructions ran"*) ok "the install's bot-instructions check ran" ;;
+  *) bad "install bot-instructions ran" "out=$OUT" ;;
+esac
+
+echo "=== a failing tree-carried bot-instructions check blocks ==="
+RBOT="$(new_repo tree-bot-check)"
+fake_skill "$RBOT/.agents/skills" bot-instructions "bot-instructions: AGENTS.md differs from a fresh render" 1
+RC=0
+OUT="$(cd "$RBOT" && "$PC" 2>&1)" || RC=$?
+[ "$RC" -eq 1 ] && ok "the tree's bot-instructions verdict blocks (exit 1)" \
+  || bad "tree bot-instructions verdict blocks" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"=== pre-commit: bot-instructions check --staged"*) ok "the lane announces itself" ;;
+  *) bad "bot-instructions lane announces itself" "out=$OUT" ;;
+esac
 
 echo "=== genuine absence on both sides is a stated skip naming both probes ==="
 R5="$(new_repo double-absence)"
@@ -169,6 +186,11 @@ case "$OUT" in
   *"nor at $BARE_INSTALL/commit-guards/scripts/../../preflight)"*)
     ok "the preflight skip names the install probe" ;;
   *) bad "preflight skip names the install probe" "out=$OUT" ;;
+esac
+case "$OUT" in
+  *"bot-instructions not installed — skipped (no bot-instructions skill under "*)
+    ok "the bot-instructions skip names the work-tree probe" ;;
+  *) bad "bot-instructions skip names the tree probe" "out=$OUT" ;;
 esac
 
 echo "=== a tree-carried skill without a runnable script blocks, never skips ==="

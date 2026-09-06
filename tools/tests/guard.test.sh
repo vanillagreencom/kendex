@@ -86,7 +86,7 @@ run_guard() { # [VAR=VALUE...] — sets OUT and RC
   OUT="$(cd "$R" && env "$@" "$GUARD" ${args[@]+"${args[@]}"} 2>&1)" || RC=$?
 }
 
-echo "=== bot instructions use the index at commit and the worktree in full validation ==="
+echo "=== bot instructions: full validation reads the worktree; the staged check is the chain's lane ==="
 BOT="$REPO/.agents/skills/bot-instructions/scripts/bot-instructions"
 printf '\n[bot-instructions.bots]\ncodex = true\ncopilot = true\n' >>"$R/kendex.toml"
 printf '\n## Code Review Rules\n\nFixture rules.\n' >>"$R/AGENTS.md"
@@ -108,9 +108,12 @@ FULL_GUARD=0
 git -C "$R" add .github/copilot-instructions.md
 "$BOT" render --repo "$R" >/dev/null
 run_guard
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"drift:"*".github/copilot-instructions.md"* ]] \
-  && ok "commit checks reject stale staged bot output despite a repaired worktree" \
-  || bad "commit checks reject stale staged bot output despite a repaired worktree" "rc=$RC out=$OUT"
+# The commit-guards pre-commit chain runs `bot-instructions check --staged`
+# as its own lane before this script; a second staged run here would judge
+# the same index twice.
+[ "$RC" -eq 0 ] && [[ "$OUT" != *"drift:"* ]] \
+  && ok "commit checks leave the staged bot check to the chain's lane" \
+  || bad "commit checks leave the staged bot check to the chain's lane" "rc=$RC out=$OUT"
 git -C "$R" reset -q --hard HEAD
 rm -rf -- "$R/.github"
 
