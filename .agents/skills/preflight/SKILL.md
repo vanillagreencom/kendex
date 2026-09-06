@@ -31,6 +31,6 @@ Run preflight in the validate step, before the project's own validation command.
 .agents/skills/preflight/scripts/preflight --all        # every tracked file, every line
 ```
 
-A finding names the line the change added. Correct that line; never widen a lane's exclusions to clear it.
+Correct the line a finding names; never widen a lane's exclusions to clear it.
 
 Lanes, scopes, settings, output and exit codes are in `preflight --help`. Diff construction and the `unwired-suite`, `data-syntax` and `applied-migration-edited` glob grammars are [references/lanes.md](references/lanes.md). Hook and CI wiring is [README.md](README.md) § Wiring.

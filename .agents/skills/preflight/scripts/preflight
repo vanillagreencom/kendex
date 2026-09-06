@@ -40,7 +40,9 @@ and there is no warnings tier.
 Scopes:
   (default)     the merge base of HEAD and the default branch (origin/HEAD,
                 else origin/main, else main), plus every non-ignored
-                untracked file as a new file with every line added
+                untracked file as a new file with every line added. Where
+                none of the three resolves the run is an environment error,
+                never a clean result
   --staged      the index only (pre-commit scope)
   --base REF    the merge base of HEAD and REF, plus untracked files
   --all         every tracked file, every line treated as added
@@ -54,15 +56,16 @@ Lanes:
                   syntax error has already spoken for it.
   masked-returns  SC2155 or SC2311 on an added line: a declaration whose own
                   exit status hides the command's.
-  fail-open       an =$(mktemp ...) assignment added to a file that never
-                  sets errexit; a new shell file that does not set -e, -u and
-                  pipefail, unless git records it non-executable under a
-                  scripts/lib/ tree, where it is sourced and the preamble
-                  would set the calling shell's mode instead; an added grep,
-                  find, git, jq, diff or cmp at a command position whose
+  fail-open       three shapes. Mktemp assignment: an =$(mktemp ...)
+                  assignment added to a file that never sets errexit. Strict
+                  mode: a new shell file that does not set -e, -u and
+                  pipefail, unless it is non-executable under a scripts/lib/
+                  tree, where it is sourced and the preamble would set the
+                  calling shell's mode instead. Swallowed status: an added
+                  grep, find, git, jq, diff or cmp at a command position whose
                   status a trailing || true (or || :) discards. The same text
                   quoted inside a message is not the shape.
-  unwired-suite   a new suite file no tracked runner invokes. Suites are
+  unwired-suite   a new suite file no runner invokes. Suites are
                   tests/*.test.sh, tests/test-*.sh, *.test.ts, *.test.js and
                   *.test.mjs; a file under a fixtures/ directory is material a
                   suite reads, never a suite. A runner set that is empty or
@@ -72,14 +75,16 @@ Lanes:
                   a command position, not one named in a comment or a string.
                   Reported once per file.
   hardcoded-temp-path
-                  an added directory-creating call taking a literal absolute
-                  temp path as (part of) its first argument: mkdtemp and mkdir
-                  and their Sync variants (JS/TS), mkdtemp, makedirs and mkdir
-                  (Python), create_dir_all (Rust), and a shell mkdir -p at a
-                  command position. The literals are /tmp and /var/tmp. Not
-                  the shape: the literal as a value (a config field, a fixture
-                  string, a path nothing creates), a TMPDIR-derived path, and
-                  a commented-out call.
+                  an added directory-creating call whose first argument opens
+                  a quoted path under the /tmp or /var/tmp root: mkdtemp and
+                  mkdir and their Sync variants (JS/TS), mkdtemp, makedirs and
+                  mkdir (Python), create_dir_all (Rust), and a shell mkdir -p
+                  at a command position. The mkdtemp pair always creates, so a
+                  quoted bare root in any of its arguments is the same shape.
+                  Plain mkdir of the bare root is not, since creating a root
+                  that exists is a no-op. Nor is the literal as a value (a
+                  config field, a fixture string, a path nothing creates), a
+                  TMPDIR-derived path, or a commented-out call.
   docs-cited-paths
                   in a changed .md file, an added backticked path naming
                   nothing tracked or on disk, judged only inside a directory
@@ -106,9 +111,12 @@ Scope rules:
   shebang. A file whose content git reads as binary contributes no lines to
   any lane; the whole-file lanes still see its path. A deleted path leaves the
   change set, and applied-migration-edited reads it from the diff instead.
-  Under a tests/ or fixtures/ tree, and in a test-named source file,
-  fail-open, mktemp-trap and the source-file direction of docs-cited-paths
-  stand down; those trees set their own rules.
+  A tests/ or fixtures/ tree sets its own rules: mktemp-trap, the source-file
+  direction of docs-cited-paths, and the strict-mode and swallowed-status
+  shapes of fail-open stand down there. In a test-named source file (tests.rs,
+  *_test.*, *_tests.*, *.test.*, *.spec.*, test_*) only the swallowed-status
+  shape and that same docs-cited-paths direction stand down. The mktemp
+  assignment shape of fail-open is judged in every tree.
   In an installed-artifact subtree (.agents/ and the harness directories'
   skills, agents, hooks, rules, instructions, packages and kendex trees)
   masked-returns, fail-open, unwired-suite, mktemp-trap and the source-file
@@ -119,9 +127,11 @@ Scope rules:
 Settings (env > .env.local > .kendex/settings.toml > kendex.settings.toml
 [env] > default):
   PREFLIGHT_JSONC_GLOBS      .json paths whose producer writes JSON with
-                             comments; replaces the shipped set
-  PREFLIGHT_MIGRATION_GLOBS  the migrations applied-migration-edited freezes;
-                             replaces the shipped set
+                             comments
+  PREFLIGHT_MIGRATION_GLOBS  the migrations applied-migration-edited freezes
+
+Each replaces its shipped set rather than adding to it, and an empty value
+leaves its lane quiet.
 
 Optional tools: shellcheck for shellcheck-errors and masked-returns, jq for
 JSON, taplo or python3 with tomllib for TOML. A needed lane whose tool is

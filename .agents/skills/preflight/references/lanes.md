@@ -10,7 +10,7 @@ The default and `--base` scopes include every non-ignored untracked file as a ne
 
 ## `unwired-suite` wiring grammar
 
-Runners are `.github/workflows/*.yml`, `tools/validate*`, `scripts/validate*`, `package.json`, `Makefile`, `justfile`, and any `run-all.sh`.
+Runners are `.github/workflows/*.yml`, `tools/validate*`, `scripts/validate*`, `package.json`, `Makefile`, `justfile`, and any `run-all.sh`. They are collected from tracked and untracked paths alike: an untracked runner is in scope exactly when an untracked suite is, so a workflow added beside its suite wires it before either is committed.
 
 Wiring is the suite named outright, a path-shaped glob its path satisfies, a directory it lives under, a manifest below the repo root whose subtree holds it, a runner beside it globbing its own directory, or a runner invoking bare `vitest`/`jest` at a command position whose default include glob covers the suite (`*.test.ts`/`js`/`mjs`) under the directory the runner runs from.
 
@@ -20,7 +20,7 @@ A comment (full-line or trailing), dependency key, or package path is not an inv
 
 ## Glob semantics
 
-A leading `**/` matches at any depth and is the only depth crossing, so a `*` never reaches past its own path component. Both glob settings replace their shipped set rather than adding to it, and an empty value leaves the lane quiet.
+A leading `**/` matches at any depth and is the only depth crossing, so a `*` never reaches past its own path component. Both glob settings read this grammar.
 
 ## `data-syntax` JSONC paths
 
@@ -32,6 +32,6 @@ The lane has no JSONC parser and leaves these files to the producer that declare
 
 refinery and Flyway record a checksum over a versioned migration's name and text, and refuse to run against a database whose recorded checksum moved.
 
-The shipped set is `**/migrations/V*__*.sql` and `**/db/migration/V*__*.sql`: those two runners' filename shape under the two directory names they use, Flyway's own being the singular one, and nothing else. A runner that records an applied version without a checksum (golang-migrate, Goose, Alembic, Django) reopens its database after an edit, so naming its files would hard-fail a legitimate change. Every other layout is opt-in through `PREFLIGHT_MIGRATION_GLOBS`, sqlx and Flyway repeatable migrations (`R__*`) included.
+The shipped set is `**/migrations/V*__*.sql` and `**/db/migration/V*__*.sql`: those two runners' filename shape under the two directory names they use, Flyway's own being the singular one, and nothing else. A runner that records an applied version without a checksum (golang-migrate, Goose, Alembic, Django) reopens its database after an edit, so naming its files would hard-fail a legitimate change. Every other layout is opt-in, sqlx and Flyway repeatable migrations (`R__*`) included.
 
 A migration this branch added and then corrected is not the shape: the staged scope diffs against HEAD and qualifies each hit against the base for exactly that.
