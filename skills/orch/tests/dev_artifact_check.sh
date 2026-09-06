@@ -62,6 +62,8 @@ json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 # key the result does not carry reads ABSENT, so `null` means a real null.
 #   rc              exit status
 #   stderr~<text>   whether stderr carries <text> (`+` reads as a space)
+#   hint_present    whether the result carries a non-empty string hint; an
+#                   unparseable result reads false, never fired
 #   help_sections   which of the routed --help sections are present: gates
 #                   (the ordering line), reasons (every ok=false reason the
 #                   check emits), items (the --expect-items confinement)
@@ -80,6 +82,7 @@ observe() {
         value="${value#,}"; value="${value:-none}"
         ;;
       stderr~*) needle="${name#stderr~}"; value="$(grep -qF -- "${needle//+/ }" "$ERR" && echo true || echo false)" ;;
+      hint_present) value="$(json '(.hint | type) == "string" and .hint != ""')" ;;
       *) value="$(json "if has(\"$name\") then .$name else \"ABSENT\" end")" ;;
     esac
     got="$got $name=$value"
@@ -249,7 +252,7 @@ done
 # when the shapes coincide (the inline form is the control).
 "$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 16-16 --branch b --commit "$RR_HEAD" --validate pass --item 1 Applied a --item 2 Applied b --item 3 Applied c >/dev/null
 run_check --file "$RR/tmp/dev-return-issue-9-16-16.json" --expect-items 3
-assert_eq "$([[ "$(json .hint)" != null ]] && echo fires || echo silent)" "fires" "control: file-mode --expect-items 3 against items 1..3 fires the count-vs-set hint" "$ERR"
+assert_eq "$(observe "reason=incomplete hint_present=true")" "reason=incomplete hint_present=true" "control: file-mode --expect-items 3 against items 1..3 fires the count-vs-set hint" "$ERR"
 round_write --worktree "$RR" --issue issue-9 --round-id 16-16 --item 3 "only item three" "tools/guard on a staged render" >/dev/null
 run_check --worktree "$RR" --issue issue-9 --round-id 16-16 --expect-items-from-round
 assert_eq "$(observe "reason=incomplete hint=null")" "reason=incomplete hint=null" "from-round never emits the hint and still reports incomplete" "$ERR"
