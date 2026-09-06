@@ -1,9 +1,13 @@
 //! What each launch decision has to come out as.
 
 use std::ffi::OsStr;
-use std::path::Path;
+use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use super::*;
+use crate::test_util::rooted;
 
 /// A Wayland session with nothing set — the shape every case varies.
 fn wayland() -> Session<'static> {
@@ -356,4 +360,59 @@ fn a_deb_that_inherited_the_variables_keeps_the_backend_the_person_set() {
         };
         assert_eq!(backend(session), None, "{appimage:?} {appdir:?}");
     }
+}
+
+/// A stand-in for a login shell: a script that ignores `-l -c` and does
+/// what the case needs. The real one runs other people's startup files,
+/// which is the whole reason the call is bounded.
+fn a_shell_that(body: &str, tmp: &tempfile::TempDir) -> PathBuf {
+    let shell = rooted(tmp).join("shell");
+    let mut file = std::fs::File::create(&shell).expect("fixture shell is writable");
+    write!(file, "#!/bin/sh\n{body}\n").expect("fixture shell is writable");
+    drop(file);
+    std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755))
+        .expect("fixture shell is runnable");
+    shell
+}
+
+/// The control. A startup file that waits on something — a network call, a
+/// version manager, a lock — must not hold the window shut: the wait ends
+/// at the limit and `PATH` stays the one launchd gave.
+#[test]
+fn a_login_shell_that_never_answers_is_stopped_at_the_limit() {
+    let tmp = tempfile::tempdir().expect("fixture root");
+    let shell = a_shell_that("sleep 120", &tmp);
+    let limit = Duration::from_millis(400);
+
+    let started = Instant::now();
+    let asked = ask_login_shell(&shell, limit);
+    let waited = started.elapsed();
+
+    assert_eq!(asked, Asked::TimedOut);
+    // Bounded by the limit, not by the sleep. Generous against a loaded
+    // machine; the point is that it is not two minutes.
+    assert!(waited < Duration::from_secs(30), "waited {waited:?}");
+    // And a shell that did not answer leaves the plan empty, so the
+    // relaunch never happens and launchd's PATH stands.
+    assert!(
+        plan(Session {
+            path: Some(LAUNCHD_GIVES),
+            login_path: None,
+            ..Session::default()
+        })
+        .is_empty()
+    );
+}
+
+/// Its must-fail control: the same bound, a shell that does answer. Without
+/// it the case above would pass on a call that refuses everything.
+#[test]
+fn a_login_shell_that_answers_within_the_limit_is_heard() {
+    let tmp = tempfile::tempdir().expect("fixture root");
+    let shell = a_shell_that("printf '%s\\n' \"/opt/homebrew/bin:/usr/bin\"", &tmp);
+
+    assert_eq!(
+        ask_login_shell(&shell, Duration::from_secs(30)),
+        Asked::Printed("/opt/homebrew/bin:/usr/bin\n".to_owned())
+    );
 }

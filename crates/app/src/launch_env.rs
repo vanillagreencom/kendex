@@ -40,6 +40,18 @@ const LAUNCHD_PATH: [&str; 4] = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
 #[cfg(target_os = "macos")]
 const FALLBACK_SHELL: &str = "/bin/zsh";
 
+/// How long the login shell gets to answer.
+///
+/// It is asked before the window opens, with nothing on screen, so waiting
+/// on it is a launch that looks stuck. Startup files are other people's
+/// code and some of them wait on things — a network call, a version
+/// manager, a lock — and a kendex that never opens is a worse failure than
+/// one running on the `PATH` launchd gave. Long enough that a shell doing
+/// ordinary work answers, short enough that a person does not read the
+/// wait as a hang.
+#[cfg(target_os = "macos")]
+const ASK_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// What the environment said when this process started.
 #[derive(Debug, Default, Clone, Copy)]
 struct Session<'a> {
@@ -227,34 +239,58 @@ fn answered_path(printed: &str) -> Option<&str> {
     said(printed.lines().next_back().map(str::trim))
 }
 
-/// Ask the login shell what `PATH` is.
+/// What the login shell had to say.
 ///
-/// `-l -c` runs the startup files a terminal run would run and nothing
-/// interactive, and `printenv` is the spelling every login shell answers
-/// the same way: in fish `$PATH` is a list, so `echo` would hand back a
-/// space-separated line rather than a `PATH`. Standard input is closed so
-/// a startup file that reads it is answered with end-of-file instead of
-/// holding the window shut, and a shell that fails or says nothing leaves
-/// the environment as it was. What it printed is read by `answered_path`.
-#[cfg(target_os = "macos")]
-fn login_shell_path() -> Option<String> {
-    use std::process::{Command, Stdio};
+/// A shell that ran out of time is told apart from every other failure
+/// because it is the one worth saying out loud: the rest leave `PATH`
+/// alone in no time at all, but a shell that hung held the window shut for
+/// as long as it was given, and whoever watched that wait is owed the
+/// reason for it.
+#[derive(Debug, PartialEq, Eq)]
+#[cfg(any(target_os = "macos", test))]
+enum Asked {
+    /// What it printed.
+    Printed(String),
+    /// Nothing usable: it failed, it never started, or its answer was not
+    /// text.
+    Silent,
+    /// It was still going when the wait ran out, and was stopped.
+    TimedOut,
+}
 
-    let shell = std::env::var("SHELL")
-        .ok()
-        .filter(|shell| !shell.trim().is_empty())
-        .unwrap_or_else(|| FALLBACK_SHELL.to_owned());
-    let asked = Command::new(shell)
-        .args(["-l", "-c", "printenv PATH"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if !asked.status.success() {
-        return None;
+/// Ask a login shell what `PATH` is, and stop waiting at `limit`.
+///
+/// The question and the child's posture are
+/// `kendex_core::process::Hardened`'s, which is where every external
+/// process kendex starts is built; all this adds is the bound, because the
+/// default one is for a clone over a slow link and this call happens with
+/// no window on screen.
+#[cfg(any(target_os = "macos", test))]
+fn ask_login_shell(shell: &std::path::Path, limit: std::time::Duration) -> Asked {
+    use kendex_core::error::CoreError;
+    use kendex_core::process::Hardened;
+
+    match Hardened::login_shell_path(shell).timeout(limit).run() {
+        Ok(output) if output.status.success() => match String::from_utf8(output.stdout) {
+            Ok(printed) => Asked::Printed(printed),
+            Err(_) => Asked::Silent,
+        },
+        Ok(_) => Asked::Silent,
+        Err(CoreError::Io { source, .. }) if source.kind() == std::io::ErrorKind::TimedOut => {
+            Asked::TimedOut
+        }
+        Err(_) => Asked::Silent,
     }
-    let printed = String::from_utf8(asked.stdout).ok()?;
-    answered_path(&printed).map(str::to_owned)
+}
+
+/// The shell to ask. `SHELL` is set even on a Finder launch, which is what
+/// makes the question askable at all.
+#[cfg(target_os = "macos")]
+fn login_shell() -> std::path::PathBuf {
+    std::env::var_os("SHELL")
+        .filter(|shell| !shell.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(FALLBACK_SHELL))
 }
 
 /// Relaunch with the selected environment values. Setting them in this
@@ -304,9 +340,23 @@ pub(crate) fn apply() {
     // is asked only where its answer can differ from what is in hand. A
     // terminal-started kendex already has the answer and pays nothing.
     #[cfg(target_os = "macos")]
-    let login_path = from_launchd(path.as_deref())
-        .then(login_shell_path)
-        .flatten();
+    let login_path = if from_launchd(path.as_deref()) {
+        match ask_login_shell(&login_shell(), ASK_LIMIT) {
+            Asked::Printed(printed) => answered_path(&printed).map(str::to_owned),
+            Asked::Silent => None,
+            Asked::TimedOut => {
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "launch environment: the login shell did not answer in {}s, so the PATH \
+                     launchd gave stands; a startup file it runs is waiting on something",
+                    ASK_LIMIT.as_secs()
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
     #[cfg(not(target_os = "macos"))]
     let login_path: Option<String> = None;
     let session = Session {
