@@ -50,12 +50,13 @@ describe("the account read on window focus", () => {
         base: null,
       },
     } as unknown as Awaited<ReturnType<typeof commands.getSettings>>);
-    vi.mocked(commands.capabilityTable).mockResolvedValue(
-      [] as unknown as Awaited<ReturnType<typeof commands.capabilityTable>>,
-    );
+    vi.mocked(commands.capabilityTable).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
     vi.mocked(commands.windowZoomState).mockResolvedValue({
-      percent: 100,
-      launchRefused: false,
+      status: "ok",
+      data: { percent: 100, launchRefused: false },
     });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",
@@ -78,9 +79,10 @@ describe("the account read on window focus", () => {
       status: "error",
       error: "no command channel in a test",
     } as Awaited<ReturnType<typeof commands.appUpdateCommandChannel>>);
-    vi.mocked(commands.appVersion).mockResolvedValue(
-      "0.0.0-test" as Awaited<ReturnType<typeof commands.appVersion>>,
-    );
+    vi.mocked(commands.appVersion).mockResolvedValue({
+      status: "ok",
+      data: "0.0.0-test",
+    });
   });
 
   // A terminal can sign in or out while the window is away, and a read

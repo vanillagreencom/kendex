@@ -105,7 +105,10 @@ beforeEach(() => {
     error: null,
     note: null,
   });
-  vi.mocked(commands.appVersion).mockResolvedValue(RUNNING);
+  vi.mocked(commands.appVersion).mockResolvedValue({
+    status: "ok",
+    data: RUNNING,
+  });
   vi.mocked(commands.appUpdateCheck).mockResolvedValue(available());
   vi.mocked(commands.getSettings).mockResolvedValue({
     status: "ok",

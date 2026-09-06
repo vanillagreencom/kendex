@@ -36,10 +36,11 @@ export interface ZoomSlice {
  * written once, when the input settles — a save per step rewrites the
  * settings file dozens of times for one gesture.
  *
- * Neither action ever rejects. Both talk to the window over an IPC bridge
- * that throws when the bridge itself fails rather than replying with an
- * error, and every call site here is a fire-and-forget handler where a
- * rejection would reach nobody.
+ * Neither action ever rejects, and neither does a command it calls: every
+ * one of them answers a `Result`, so the generated bindings fold a bridge
+ * that failed into the same `{ status: "error" }` a refusal arrives in
+ * (`specta_builder` in `crates/app/src/lib.rs`). Every call site here is a
+ * fire-and-forget handler, where a rejection would reach nobody.
  */
 export function zoomActions(
   set: (fields: Partial<ZoomFields>) => void,
@@ -69,23 +70,16 @@ export function zoomActions(
   /** What the window is showing, asked of the window. Null when even that
    *  could not be read, which is the one case nothing here can correct. */
   async function showing(): Promise<number | null> {
-    try {
-      return (await commands.windowZoomState()).percent;
-    } catch {
-      return null;
-    }
+    const state = await commands.windowZoomState();
+    return state.status === "ok" ? state.data.percent : null;
   }
 
   /** Why the window did not take the size, or null when it did. A bridge
-   *  that throws and a reply that says no are the same answer here: the
+   *  that failed and a reply that says no arrive as one answer here: the
    *  window is not showing what the display says it is. */
   async function refused(percent: number): Promise<string | null> {
-    try {
-      const shown = await commands.windowSetZoom(percent);
-      return shown.status === "ok" ? null : shown.error;
-    } catch (error: unknown) {
-      return String(error);
-    }
+    const shown = await commands.windowSetZoom(percent);
+    return shown.status === "ok" ? null : shown.error;
   }
 
   function setZoom(percent: number): Promise<void> {

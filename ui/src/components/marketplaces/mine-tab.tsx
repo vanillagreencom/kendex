@@ -29,7 +29,12 @@ export function MineTab() {
   const actionError = useMineStore((s) => s.actionError);
   const [creating, setCreating] = useState(false);
   const [importTarget, setImportTarget] = useState<string | null>(null);
-  const [doc, setDoc] = useState<string | null>(null);
+  // Null until the read answers; after that the read's own answer, so a
+  // document that never arrived draws the reason and the dialog can be
+  // closed and opened again to ask for it once more.
+  const [doc, setDoc] = useState<Awaited<
+    ReturnType<typeof commands.mineAuthoringDoc>
+  > | null>(null);
   const [docOpen, setDocOpen] = useState(false);
   const [submitTarget, setSubmitTarget] = useState<string | null>(null);
   const loadSubmissions = useAccountStore((s) => s.loadSubmissions);
@@ -64,8 +69,8 @@ export function MineTab() {
 
   const openDoc = () => {
     setDocOpen(true);
-    if (doc === null) {
-      void commands.mineAuthoringDoc().then((text) => setDoc(text));
+    if (doc === null || doc.status === "error") {
+      void commands.mineAuthoringDoc().then(setDoc);
     }
   };
 
@@ -159,8 +164,12 @@ export function MineTab() {
           >
             {doc === null ? (
               <TextBar width="w-64" />
+            ) : doc.status === "ok" ? (
+              <MarkdownView source={doc.data} />
             ) : (
-              <MarkdownView source={doc} />
+              <StatusNote tone="critical" title="Couldn't open the guide">
+                {doc.error}
+              </StatusNote>
             )}
           </section>
           {/* biome-ignore-end lint/a11y/noNoninteractiveTabindex: the rule

@@ -68,10 +68,11 @@ pub fn bring_to_front(app: &tauri::AppHandle) {
 }
 
 /// What the webview is showing, for a page with no memory of its own.
+// A `Result` for the transport fold, not for a refusal: `specta_builder`.
 #[tauri::command]
 #[specta::specta]
-pub fn window_zoom_state(zoom: tauri::State<'_, WebviewZoom>) -> ZoomState {
-    zoom.read()
+pub fn window_zoom_state(zoom: tauri::State<'_, WebviewZoom>) -> Result<ZoomState, String> {
+    Ok(zoom.read())
 }
 
 /// Zoom is set on the webview rather than by restyling the page: it holds

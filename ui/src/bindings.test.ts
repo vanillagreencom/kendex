@@ -4,8 +4,9 @@ import { commands, type Manifest_Deserialize } from "@/bindings";
 import { NO_REASON_GIVEN } from "@/lib/settled";
 
 // The seam every `Result`-returning command answers through — tauri-specta
-// emits the runtime only where there is a refusal type to name, so the four
-// commands returning a plain value reject to their callers. The transport
+// emits the runtime only where there is a refusal type to name, so
+// `deep_link_take`, the one command still answering a plain value, rejects to
+// its caller and is read through `caught` there. The transport
 // rejects with an `Error` when it fails rather than when the command
 // refuses, and the runtime tauri-specta ships rethrows that — so a write
 // path that fires its command and forgets it would drop the rejection: the

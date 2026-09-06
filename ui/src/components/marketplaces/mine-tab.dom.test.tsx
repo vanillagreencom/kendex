@@ -160,6 +160,87 @@ it("leaves the account alone when a tick fails for any other reason", async () =
   expect(useAccountStore.getState().submissions).toEqual([ROW]);
 });
 
+// The guide is read once, when the dialog first opens. `mine_authoring_doc`
+// cannot refuse — it answers a `Result` so a transport failure folds into
+// the same reply (`specta_builder` in `crates/app/src/lib.rs`), which is the
+// only failure this dialog ever draws. Without it the dialog sits on its
+// loading skeleton for the rest of the session with nothing said.
+describe("the authoring guide", () => {
+  const openGuide = async (host: HTMLElement) => {
+    const button = [...host.querySelectorAll("button")].find((element) =>
+      element.textContent?.includes("How a marketplace repo works"),
+    );
+    await act(async () => button?.click());
+    await settle();
+  };
+
+  /** Close it the way a person does — the dialog's own close control, which
+   *  lives in the portal rather than in the tab's subtree. */
+  const closeGuide = async () => {
+    const close = document.body.querySelector<HTMLElement>(
+      '[role="dialog"] button',
+    );
+    await act(async () => close?.click());
+    await settle();
+  };
+
+  it("draws the document the command answered with", async () => {
+    vi.mocked(commands.mineSubmissions).mockResolvedValue(answered([]));
+    vi.mocked(commands.mineAuthoringDoc).mockResolvedValue(
+      answered("# Authoring"),
+    );
+    const host = mount(<MineTab />);
+    await settle();
+    await openGuide(host);
+
+    // The dialog renders in a portal, so its content is on the body rather
+    // than in the tab's own subtree.
+    expect(document.body.textContent).toContain("Authoring");
+    expect(document.body.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  // The read is skipped once the document is in hand, so the error has to be
+  // the one answer that does not count as in hand: without that, a person
+  // who hit a failing read once is left with the message for the rest of the
+  // session however many times they reopen the dialog.
+  it("asks again when the dialog is reopened after a read that failed", async () => {
+    vi.mocked(commands.mineSubmissions).mockResolvedValue(answered([]));
+    vi.mocked(commands.mineAuthoringDoc).mockResolvedValue({
+      status: "error",
+      error: "the bridge closed",
+    });
+    const host = mount(<MineTab />);
+    await settle();
+    await openGuide(host);
+    expect(commands.mineAuthoringDoc).toHaveBeenCalledTimes(1);
+
+    await closeGuide();
+    vi.mocked(commands.mineAuthoringDoc).mockResolvedValue(
+      answered("# Authoring"),
+    );
+    await openGuide(host);
+
+    expect(commands.mineAuthoringDoc).toHaveBeenCalledTimes(2);
+    expect(document.body.textContent).toContain("Authoring");
+    expect(document.body.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("says why the guide did not arrive when the read answers an error", async () => {
+    vi.mocked(commands.mineSubmissions).mockResolvedValue(answered([]));
+    vi.mocked(commands.mineAuthoringDoc).mockResolvedValue({
+      status: "error",
+      error: "the bridge closed",
+    });
+    const host = mount(<MineTab />);
+    await settle();
+    await openGuide(host);
+
+    const alert = document.body.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("Couldn't open the guide");
+    expect(alert?.textContent).toContain("the bridge closed");
+  });
+});
+
 // Which of the three states a marketplace is in, and what each draws as a
 // line and an offer, is `mine-submission.ts`'s ruling and is proven there.
 // What the tab owes is that a row the server named survives a tick that
