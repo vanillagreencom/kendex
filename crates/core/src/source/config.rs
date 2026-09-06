@@ -74,6 +74,34 @@ impl SourceConfig {
         self.mode == CatalogMode::Unusable || !self.unreadable_bundles.is_empty()
     }
 
+    /// What [`SourceConfig::hides_content`] turned on, in the catalog's own
+    /// words, and `None` on exactly the readings where it answers no.
+    ///
+    /// A removal that keeps files says why, and it must not name a cause the
+    /// verdict did not turn on. [`SourceConfig::findings`] is not that
+    /// answer: it carries advisory findings a working catalog also has, in
+    /// the order they were read, so its head is `[marketplace]` for a
+    /// catalog whose sets are what will not read.
+    pub fn hidden_content(&self) -> Option<String> {
+        if !self.hides_content() {
+            return None;
+        }
+        // Each problem opens with the `[bundles.<name>]` it belongs to.
+        let mut hidden: Vec<String> = self.unreadable_bundles.values().cloned().collect();
+        if self.mode == CatalogMode::Unusable {
+            // `unusable` is the only place this mode is set, and it pushes
+            // the finding saying why in the same call and then returns, so
+            // nothing advisory has been read into the list yet.
+            hidden.extend(self.config_findings.iter().map(CatalogFinding::to_string));
+        }
+        // A verdict reached on something neither of those reports would
+        // leave a kept file with no account of itself.
+        if hidden.is_empty() {
+            hidden.push("it answered with less than it offers".to_owned());
+        }
+        Some(hidden.join("; "))
+    }
+
     fn unusable(&mut self, file: &'static str, problem: String, fix: &str) {
         self.config_findings
             .push(CatalogFinding::new(file, problem, fix));

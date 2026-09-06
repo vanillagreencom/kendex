@@ -309,11 +309,41 @@ fn an_unreadable_set_keeps_its_member_and_what_that_member_requires() {
 
     fs::remove_file(catalog.join("kendex.toml")).unwrap();
     std::os::unix::fs::symlink(f.home.join("away.toml"), catalog.join("kendex.toml")).unwrap();
-    sweep(&f);
+    let report = sweep(&f);
     assert!(
         member.exists(),
         "a catalog that would not open lost its member"
     );
+    // The open is the only thing holding this error: the set declaration
+    // reaches a catalog that gives back nothing, and every caller below sees
+    // a plan that derived nothing rather than one that could not read. A
+    // retention nothing accounts for is what the removal pass then keeps.
+    assert_eq!(
+        report
+            .notes
+            .iter()
+            .filter(
+                |note| note.starts_with("the catalog 'cat' could not be read")
+                    && note.contains("kendex.toml")
+            )
+            .count(),
+        1,
+        "a catalog that would not open kept files with nothing said: {:?}",
+        report.notes
+    );
+}
+
+/// The lines saying this plan kept a catalog's installations rather than
+/// sweeping them — one per catalog it could not read.
+fn kept_notes<'a>(report: &'a kendex_core::engine::EngineReport, source: &str) -> Vec<&'a String> {
+    report
+        .notes
+        .iter()
+        .filter(|note| {
+            note.starts_with(&format!("the catalog '{source}' "))
+                && note.contains(" it brought in ")
+        })
+        .collect()
 }
 
 /// The must-fail counterpart: a catalog that reads still sweeps what its set
@@ -337,13 +367,298 @@ fn a_readable_catalog_sweeps_what_its_set_dropped() {
         "kendex.toml",
         "[bundles.starter]\nskills = [\"docs\"]\n",
     );
-    sweep(&f);
+    let report = sweep(&f);
     assert!(!member.exists(), "a set that reads kept what it dropped");
+    assert!(
+        !report
+            .notes
+            .iter()
+            .any(|note| note.contains("could not be read")),
+        "a catalog that reads was reported as one that would not: {:?}",
+        report.notes
+    );
+}
+
+/// A sweep that reaches no declaration from the catalog it is about to
+/// delete files for, against each shape the read can fail in: a control file
+/// that will not open, and one that parses carrying a set body that will not
+/// read. Nothing opens the catalog during expansion, so "can this origin
+/// still be read" arrives at the removal pass with nothing behind it, and a
+/// catalog nobody looked at must not answer as one that read. Two members,
+/// because the retention is reported per catalog and a one-member set cannot
+/// tell one note from one per file kept. The last step is the must-fail
+/// counterpart: the same orphans and the same absent declaration against a
+/// catalog that reads, which go.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_sweep_with_no_declaration_left_reads_the_catalog_itself() {
+    let f = world();
+    let catalog = starter_catalog(&f, "catalog");
+    manifest_with(
+        &f,
+        &[("cat", &catalog)],
+        "[bundles.starter]\nsource = \"cat\"\n",
+    );
+    apply_now(&f);
+    let members = [
+        f.project.join(".claude/skills/dev"),
+        f.project.join(".claude/skills/docs"),
+    ];
+    assert!(members.iter().all(|path| path.exists()), "both install");
+
+    manifest_with(&f, &[("cat", &catalog)], "");
+    fs::remove_file(catalog.join("kendex.toml")).unwrap();
+    std::os::unix::fs::symlink(f.home.join("away.toml"), catalog.join("kendex.toml")).unwrap();
+    let report = sweep(&f);
+    assert!(
+        members.iter().all(|path| path.exists()),
+        "a catalog no declaration opened lost its members"
+    );
+    let kept = kept_notes(&report, "cat");
+    assert_eq!(
+        kept.len(),
+        1,
+        "one catalog it could not read is one note: {:?}",
+        report.notes
+    );
+    assert!(
+        kept[0].contains("kendex.toml") && kept[0].contains("symlink in a catalog"),
+        "the note carries the read failure: {}",
+        kept[0]
+    );
+    assert!(
+        kept[0].ends_with("; the 2 installations it brought in were kept"),
+        "the note says what it held, and how much: {}",
+        kept[0]
+    );
+
+    // A control file that parses, carrying a set body this reader will not
+    // read — and a broken `[marketplace]` ahead of it, an advisory problem a
+    // working catalog also has, so the cause has to be the one the verdict
+    // turned on rather than the first one on the display list.
+    fs::remove_file(catalog.join("kendex.toml")).unwrap();
+    write(
+        &catalog,
+        "kendex.toml",
+        "[marketplace]\ntags = \"analysis\"\n\n[bundles.starter]\nskills = [\"dev\"]\nversion = \"1.0\"\n",
+    );
+    let report = sweep(&f);
+    assert!(
+        members.iter().all(|path| path.exists()),
+        "an unreadable set body lost the members"
+    );
+    let kept = kept_notes(&report, "cat");
+    assert_eq!(
+        kept.len(),
+        1,
+        "one note for the catalog: {:?}",
+        report.notes
+    );
+    assert!(
+        kept[0].contains("[bundles.starter]")
+            && kept[0].contains("version")
+            && !kept[0].contains("[marketplace]"),
+        "the note names the set the verdict turned on: {}",
+        kept[0]
+    );
+
+    write(
+        &catalog,
+        "kendex.toml",
+        "[bundles.starter]\ndescription = \"the starter set\"\nskills = [\"dev\", \"docs\"]\n",
+    );
+    sweep(&f);
+    assert!(
+        members.iter().all(|path| !path.exists()),
+        "a catalog that reads kept orphans nothing declares"
+    );
+}
+
+/// A catalog that cannot be resolved at all keeps what it installed, and the
+/// plan says so. Every note about a source's state is written per
+/// declaration, and the first step here has none — the subscription is gone
+/// — so without this the person sees `kendex apply` do nothing while a stale
+/// package sits there with no line about it. The second step is the count:
+/// one member is held by a declaration that could not be processed and is
+/// reported against that declaration, so the retention must not add it to
+/// what it says is riding on the catalog.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_sweep_with_no_subscription_left_says_what_it_kept() {
+    let f = world();
+    let catalog = starter_catalog(&f, "catalog");
+    manifest_with(
+        &f,
+        &[("cat", &catalog)],
+        "[bundles.starter]\nsource = \"cat\"\n",
+    );
+    apply_now(&f);
+    let member = f.project.join(".claude/skills/dev");
+    let other = f.project.join(".claude/skills/docs");
+    assert!(member.exists() && other.exists(), "both install first");
+
+    manifest_with(&f, &[], "");
+    let report = sweep(&f);
+    assert!(
+        member.exists() && other.exists(),
+        "an unsubscribed catalog lost its members"
+    );
+    assert_eq!(
+        report
+            .notes
+            .iter()
+            .filter(|note| note.starts_with("the catalog 'cat' ")
+                && note.ends_with("; the 2 installations it brought in were kept"))
+            .count(),
+        1,
+        "the plan says which catalog it kept files for, and how many: {:?}",
+        report.notes
+    );
+
+    manifest_with(&f, &[("cat", &catalog)], "[skills.dev]\nsource = \"cat\"\n");
+    fs::remove_dir_all(&catalog).unwrap();
+    let report = sweep(&f);
+    assert!(
+        member.exists(),
+        "a catalog that is gone lost the named member"
+    );
+    assert!(other.exists(), "it lost the member only the set brought in");
+    assert_eq!(
+        report
+            .notes
+            .iter()
+            .filter(
+                |note| note.starts_with("the catalog 'cat' is not on this machine")
+                    && note.ends_with("; the installation it brought in was kept")
+            )
+            .count(),
+        1,
+        "the plan says the catalog is gone, and counts only what it held: {:?}",
+        report.notes
+    );
+}
+
+/// A plugin-registry catalog's sets are its plugins, and what a plugin holds
+/// is a second read that can fail on its own — the registry and the control
+/// file both read fine and say nothing about it. The same no-declaration
+/// sweep must not take a plugin's items because the plugin would not
+/// enumerate. What keeps this from reading as "keep everything" is the
+/// readable step the two tests above end on.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_sweep_with_no_declaration_left_reads_a_plugins_own_members() {
+    let f = world();
+    let catalog = f.home.join("market");
+    write(
+        &catalog,
+        ".claude-plugin/marketplace.json",
+        r#"{"name": "market", "owner": {"name": "someone"},
+  "plugins": [{"name": "tools", "source": "./plugins/tools"}]}"#,
+    );
+    write(
+        &catalog,
+        "plugins/tools/.claude-plugin/plugin.json",
+        r#"{"name": "tools"}"#,
+    );
+    skill(&catalog.join("plugins/tools"), "dev");
+    manifest_with(
+        &f,
+        &[("cat", &catalog)],
+        "[bundles.tools]\nsource = \"cat\"\n",
+    );
+    apply_now(&f);
+    let member = f.project.join(".claude/skills/tools__dev");
+    assert!(member.exists(), "the plugin's skill installs first");
+
+    manifest_with(&f, &[("cat", &catalog)], "");
+    let manifest = catalog.join("plugins/tools/.claude-plugin/plugin.json");
+    fs::remove_file(&manifest).unwrap();
+    std::os::unix::fs::symlink(f.home.join("away.json"), &manifest).unwrap();
+    let report = sweep(&f);
+    assert!(
+        member.exists(),
+        "a plugin that would not enumerate lost its skill"
+    );
+    assert_eq!(
+        kept_notes(&report, "cat").len(),
+        1,
+        "the plan names the catalog it kept files for: {:?}",
+        report.notes
+    );
+}
+
+/// A member the person also declared by name carries `Requested` beside the
+/// set's edge. Dropping that declaration while the set stops reading leaves
+/// exactly one entry: out of desired state, with a derivation this pass
+/// cannot check — and the set may still require it. The last step is the
+/// must-fail counterpart: a set that reads and no longer carries it goes,
+/// so the retention is not "keep everything the person once declared".
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_declared_member_keeps_its_set_edge_when_the_set_stops_reading() {
+    let f = world();
+    let catalog = f.home.join("catalog");
+    skill(&catalog, "dev");
+    skill(&catalog, "docs");
+    write(
+        &catalog,
+        "kendex.toml",
+        "[bundles.starter]\nskills = [\"dev\"]\n",
+    );
+    manifest_with(
+        &f,
+        &[("cat", &catalog)],
+        "[skills.dev]\nsource = \"cat\"\n\n[bundles.starter]\nsource = \"cat\"\n",
+    );
+    apply_now(&f);
+    let member = f.project.join(".claude/skills/dev");
+    assert!(member.exists(), "the member installs first");
+    let lock = load_lock(&lock_path(&f.env, &f.scope)).unwrap();
+    assert_eq!(
+        lock.entries["skill:dev:claude"].reasons,
+        BTreeSet::from([
+            Reason::Requested,
+            Reason::MemberOf {
+                bundle: BundleRef {
+                    source: "cat".to_owned(),
+                    name: "starter".to_owned(),
+                },
+            },
+        ]),
+        "the entry is both asked for and carried"
+    );
+
+    manifest_with(
+        &f,
+        &[("cat", &catalog)],
+        "[bundles.starter]\nsource = \"cat\"\n",
+    );
+    write(
+        &catalog,
+        "kendex.toml",
+        "[bundles.starter]\nskills = [\"dev\"]\nversion = \"1.0\"\n",
+    );
+    sweep(&f);
+    assert!(
+        member.exists(),
+        "an unreadable set trashed the member the person had also declared"
+    );
+
+    write(
+        &catalog,
+        "kendex.toml",
+        "[bundles.starter]\nskills = [\"docs\"]\n",
+    );
+    sweep(&f);
+    assert!(
+        !member.exists(),
+        "a set that reads kept a member it no longer carries"
+    );
 }
 
 /// One `kendex apply` sweep of this scope, orphans and all.
 #[allow(clippy::unwrap_used)]
-fn sweep(f: &Fixture) {
+fn sweep(f: &Fixture) -> kendex_core::engine::EngineReport {
     let report = kendex_core::engine::plan_apply(
         &f.env,
         &f.scope,
@@ -355,4 +670,5 @@ fn sweep(f: &Fixture) {
     )
     .unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
+    report
 }

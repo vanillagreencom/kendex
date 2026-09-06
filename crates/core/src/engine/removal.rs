@@ -8,9 +8,11 @@ use super::{DriftRow, DriftState, PlanOptions};
 use crate::apply::{Description, Op, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::Result;
-use crate::lock::{Lock, LockEntry};
+use crate::lock::{Lock, LockEntry, Reason};
 use crate::manifest::Manifest;
 use crate::model::{ItemKind, Scope};
+
+use super::origin::Origins;
 
 /// Whether the user's hands are (or may be) on this installation's bytes.
 /// Automatic removals — refusals, sweeps, orphan cleanup nobody named —
@@ -180,9 +182,11 @@ pub(super) fn orphans(
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut super::config_edits::ConfigEditPlan,
     new_lock: &mut Lock,
+    notes: &mut Vec<String>,
 ) -> Result<Vec<super::SetChange>> {
     let desired_keys: BTreeSet<&String> = state.items.iter().map(|d| &d.key).collect();
     let mut sweepable = Vec::new();
+    let mut origins = Origins::default();
 
     for (key, entry) in &lock.entries {
         if desired_keys.contains(key) || refused_keys.contains(key) {
@@ -196,14 +200,18 @@ pub(super) fn orphans(
         let unreachable_source = manifest.declared(entry.kind).contains_key(&entry.name)
             && !state.processed.contains(&(entry.kind, entry.name.clone()));
         let named = options.named_for_removal(entry.kind, &entry.name);
-        // An installation nobody declared was derived from one that was, and
-        // the catalog it came from is where its reason is written down. With
-        // that catalog offline, "nothing requires it anymore" is not
+        // An installation something else brought in was derived from a
+        // declaration, and the catalog it came from is where that reason is
+        // written down. With that catalog offline, "nothing requires it" is not
         // something this pass knows — so it keeps what it cannot account for.
         // Being named is not that judgement, and it still goes.
-        let unreadable_origin = derived_only(entry)
+        // `unreachable_source` has already decided to keep this one and is
+        // reported per declaration, so asking here would only count it into
+        // a retention it is not part of.
+        let unreadable_origin = !unreachable_source
+            && derived_at_all(entry)
             && !named
-            && !origin_readable(env, scope, manifest, state, &entry.source);
+            && !origins.readable(env, scope, manifest, state, &entry.source);
         if unreachable_source || unreadable_origin {
             new_lock.entries.insert(key.clone(), entry.clone());
             continue;
@@ -265,38 +273,28 @@ pub(super) fn orphans(
         }
         guard.extend(ops, removal_ops(env, scope, entry, config_edits)?);
     }
+    origins.notes(notes);
     Ok(sweepable)
 }
 
 /// Whether this installation only ever existed for another item's sake —
 /// nobody asked for it by name, so once nothing needs it, nothing does.
-pub(super) fn derived_only(entry: &crate::lock::LockEntry) -> bool {
-    !entry.reasons.contains(&crate::lock::Reason::Requested)
+fn derived_only(entry: &LockEntry) -> bool {
+    !entry.reasons.contains(&Reason::Requested)
 }
 
-/// Whether the catalog behind an installation can be read right now. The
-/// pass has usually resolved it already; a source no declaration named this
-/// time is resolved here, because the last item that needed it going away is
-/// exactly when this question gets asked.
-pub(super) fn origin_readable(
-    env: &Env,
-    scope: &Scope,
-    manifest: &Manifest,
-    state: &desired::DesiredState,
-    source: &str,
-) -> bool {
-    // A catalog that resolved and could not say what it offers is not a
-    // readable origin: what it derived this pass is short through no choice
-    // of the person's, and "nothing requires it anymore" is exactly what
-    // this pass does not know about the difference.
-    if state.unreadable_catalogs.contains(source) {
-        return false;
-    }
-    match state.sources.get(source) {
-        Some(resolution) => matches!(resolution, crate::source::SourceState::Ready(_)),
-        None => matches!(
-            crate::source::resolve(env, scope, source, manifest),
-            Ok(crate::source::SourceState::Ready(_))
-        ),
-    }
+/// Whether anything derived this installation at all — a set carries it, or
+/// something requires it.
+///
+/// One entry can be both asked for by name and derived, and a declaration
+/// dropped while its catalog will not read leaves exactly that entry: out of
+/// desired state, with a derivation this pass cannot check. What a removal
+/// gated on an unreadable origin has to know is whether a derivation is at
+/// stake, which is not the same question as whether the person also asked
+/// for it.
+fn derived_at_all(entry: &LockEntry) -> bool {
+    entry.reasons.iter().any(|reason| match reason {
+        Reason::MemberOf { .. } | Reason::RequiredBy { .. } => true,
+        Reason::Requested => false,
+    })
 }
