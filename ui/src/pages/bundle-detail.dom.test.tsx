@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppSettings, BundleDetail, Scope } from "@/bindings";
 import { commands } from "@/bindings";
 import { unreadableRecordsLine } from "@/lib/copy-marketplaces";
+import { harnessName } from "@/lib/labels";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
@@ -26,7 +27,8 @@ vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn(), message: vi.fn() },
 }));
 
-const catalog = subscription({ scope: "global" }, "kit");
+const HOME: Scope = { scope: "global" };
+const catalog = subscription(HOME, "kit");
 const ACME: Extract<Scope, { scope: "project" }> = {
   scope: "project",
   root: "/work/acme",
@@ -47,6 +49,23 @@ async function chooseDestination(host: HTMLElement, label: string) {
   if (!(option instanceof HTMLElement)) throw new Error(`no ${label} option`);
   await userEvent.click(option);
   await settle();
+}
+
+/** The tool picker's row for one tool, opened. Same keyboard path as the
+ *  destination select: a pointer click does not open a base-ui trigger
+ *  under jsdom. The popup is portalled, so it is read off the document. */
+async function toolBox(host: HTMLElement, tool: string) {
+  const trigger = [...host.querySelectorAll("button")].find((button) =>
+    button.textContent?.includes("Install for"),
+  );
+  if (!trigger) throw new Error("no tool picker rendered");
+  act(() => trigger.focus());
+  await userEvent.keyboard("{Enter}");
+  await settle();
+  const row = [
+    ...document.querySelectorAll('[data-slot="dropdown-menu-content"] label'),
+  ].find((label) => label.textContent?.includes(tool));
+  return row?.querySelector<HTMLInputElement>('input[type="checkbox"]');
 }
 
 const starter: BundleDetail = {
@@ -78,10 +97,25 @@ function answer(detail: BundleDetail) {
 beforeEach(() => {
   vi.clearAllMocks();
   answer(starter);
-  vi.mocked(commands.installTargets).mockResolvedValue({
-    status: "ok",
-    data: [{ harness: "claude", detected: true, sharesTheUniversalTree: true }],
-  });
+  // The real command deserializes its payload into `ItemKind`, which has no
+  // variant for a blank string, so a call carrying one is refused whole and
+  // the picker gets no rows. The mock refuses the same payload, or the
+  // picker would draw its rows off an answer the app never gets.
+  vi.mocked(commands.installTargets).mockImplementation(
+    async (_scope, kinds) =>
+      kinds.some((kind) => (kind as string) === "")
+        ? { status: "error", error: "unknown variant ``" }
+        : {
+            status: "ok",
+            data: [
+              {
+                harness: "claude",
+                detected: true,
+                sharesTheUniversalTree: true,
+              },
+            ],
+          },
+  );
   useMarketplacesStore.setState({ bundles: {}, readErrors: {}, busy: false });
   useSettingsStore.setState({
     settings: { projects: [ACME.root] } as AppSettings,
@@ -133,6 +167,48 @@ describe("the curated set page", () => {
     await chooseDestination(host, "Personal");
     await chooseDestination(host, "acme");
     expect(commands.marketplaceBundle).toHaveBeenCalledTimes(2);
+  });
+
+  // The tool picker is the one control that decides how Install all lands,
+  // and this page opens it before any member is ticked. Nothing ticked
+  // names no kind, and no kind has to reach the command as no kinds: joined
+  // and split back naively it arrives as one blank kind, which `ItemKind`
+  // has no variant for, so the command refuses the call, no row is drawn,
+  // and the control is dead until a member is ticked.
+  it("asks about every kind while nothing is ticked, and draws the tools", async () => {
+    const host = mount(<BundleDetailPage />);
+    await settle();
+
+    expect(commands.installTargets).toHaveBeenCalledWith(HOME, []);
+    expect(host.textContent).not.toContain("No tools — pick at least one");
+    expect(await toolBox(host, harnessName("claude"))).toBeTruthy();
+
+    // The other half of the same answer: ticking narrows the picker to the
+    // kinds actually ticked, which is the filter the install of those
+    // members is refused by. No kinds means every kind; it does not mean
+    // the picker stops asking about the ticked ones.
+    const box = host.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    if (!box) throw new Error("no member checkbox rendered");
+    await userEvent.click(box);
+    await settle();
+
+    expect(commands.installTargets).toHaveBeenLastCalledWith(HOME, ["skill"]);
+  });
+
+  // Install all installs with whatever this picker last answered, so a
+  // picker emptied by hand is a choice to install nowhere for it too: a
+  // plan that writes nothing and reports success.
+  it("holds Install all back on a picker emptied by hand", async () => {
+    const host = mount(<BundleDetailPage />);
+    await settle();
+    expect(installAll(host)?.disabled).toBe(false);
+
+    const claude = await toolBox(host, harnessName("claude"));
+    if (!claude) throw new Error("no tool row rendered");
+    await userEvent.click(claude);
+    await settle();
+
+    expect(installAll(host)?.disabled).toBe(true);
   });
 
   // A destination whose read fails is the one state the picker has to
