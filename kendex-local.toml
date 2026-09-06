@@ -10,6 +10,24 @@ enabled = true
 
 [skill-instructions]
 all = "Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first."
+project-management = '''
+### Project taxonomy
+
+The taxonomy the label preflight in `references/labels.md` validates every final label set against. `surface` names the one place a person meets the work, so app work sorts from package work: a create or a label update whose final set carries no `surface`, or more than one, fails § Validation before any mutation. A label outside these categories is legacy and is not assigned here. The `agent` names themselves stay in `LINEAR_AGENT_LABELS` (`kendex.settings.toml` `[env]`), which is what `issues create` refuses against; this category only maps them onto the contract.
+
+```json
+{
+  "required_categories_for_new_issues": ["agent", "surface"],
+  "categories": {
+    "agent": {"required": true, "exclusive": true, "match": {"prefix": "agent:"}, "forbid_group_labels": true},
+    "surface": {"required": true, "exclusive": true, "labels": ["app", "cli", "skills", "harness", "ci-infra", "docs", "releases"]},
+    "stack": {"required": false, "exclusive": false, "labels": ["rust-core", "iced", "test", "security", "macos", "windows", "linux"]},
+    "classification": {"required": false, "exclusive": false, "labels": ["bug", "feature", "refactor", "design", "chore", "owner-gated", "1.0"]},
+    "workflow": {"required": false, "exclusive": false, "labels": ["research", "needs-research", "baseline", "blocked"]}
+  }
+}
+```
+'''
 
 [agent-additional-instructions]
 all = "Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first."
