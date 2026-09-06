@@ -177,7 +177,9 @@ Options:
                   gate
   --pr NUMBER     Look up the branch from a GitHub PR number (implies --base);
                   with --base, the way to inspect existing remote work whose
-                  issue worktree is absent
+                  issue worktree is absent. A fork PR checks out origin's
+                  refs/pull/NUMBER/head as local branch fork-pr-NUMBER, with
+                  no upstream
   --reuse         Explicitly reuse an existing issue worktree: refuses a
                   foreign session-guard lease by name (exit 75), refreshes its
                   own lease in place, rebases onto origin/<default>, then
@@ -2785,6 +2787,13 @@ merged_pr_for_branch() {
     printf 'branch has no local tip to compare a merged pull request against\n'
     return 2
   fi
+  # A fork inspection branch is named fork-pr-<n> (see resolve_pr_head), and
+  # GitHub files that PR under the contributor's head name, so a --head query
+  # can never find it. The number in the name is the lookup key instead.
+  if [[ "$branch" =~ ^fork-pr-([0-9]+)$ ]]; then
+    merged_fork_pr_at_tip "${BASH_REMATCH[1]}" "$tip"
+    return $?
+  fi
   if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-merged-pr.XXXXXX")"; then
     printf 'could not create a scratch file for the gh diagnostic\n'
     return 2
@@ -2835,22 +2844,126 @@ merged_pr_for_branch() {
   return 1
 }
 
-resolve_pr_branch() {
-  local pr="$1" output=""
+# The merged proof for a fork-pr-<n> branch: PR <n> is merged into the default
+# branch and the head it merged is this tip. Same exit contract as
+# merged_pr_for_branch; the proof is commit identity, and the PR number in the
+# branch name is only the lookup key.
+merged_fork_pr_at_tip() {
+  local pr="$1" tip="$2" err_file="" row="" detail="" state="" base="" oid="" rc=0
+  if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-merged-pr.XXXXXX")"; then
+    printf 'could not create a scratch file for the gh diagnostic\n'
+    return 2
+  fi
+  row="$( (cd "$PROJECT_ROOT" && env -u GH_REPO -u GITHUB_REPOSITORY \
+             gh pr view "$pr" --json state,baseRefName,headRefOid \
+             --jq '[.state, .baseRefName, .headRefOid] | @tsv') 2>"$err_file" )" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    detail="$(tr '\n' ' ' <"$err_file")"
+    rm -f "$err_file"
+    printf '%s\n' "${detail:-gh pr view $pr failed (exit $rc)}"
+    return 2
+  fi
+  rm -f "$err_file"
+  IFS=$'\t' read -r state base oid <<<"$row"
+  if [[ -z "$state" || -z "$base" ]] || ! [[ "$oid" =~ ^[0-9a-f]{7,64}$ ]]; then
+    printf 'gh returned a pull request #%s record this cannot read: %s\n' "$pr" "$row"
+    return 2
+  fi
+  if [[ "$state" != "MERGED" ]]; then
+    printf 'fork pull request #%s is %s, not merged\n' "$pr" "$state"
+    return 1
+  fi
+  if [[ "$base" != "$DEFAULT_BRANCH" ]]; then
+    printf 'fork pull request #%s merged into %s, not %s\n' "$pr" "$base" "$DEFAULT_BRANCH"
+    return 1
+  fi
+  if [[ "$oid" != "$tip" ]]; then
+    printf 'carries work past its merged pull request (#%s merged head %s, not this tip %s)\n' "$pr" "$oid" "$tip"
+    return 1
+  fi
+  printf '%s\n' "$pr"
+  return 0
+}
+
+# Sets BASE to the branch the PR checks out as. A same-repository PR leaves
+# PR_HEAD_OID empty, sets BASE to its head branch name and takes the plain
+# --base path. A fork PR sets PR_HEAD_OID and BASE to fork-pr-<n>: its head
+# branch lives in the contributor's repository, so origin carries no such
+# head and the commit is reachable only through origin's refs/pull/<n>/head.
+# The contributor's branch name is not reused locally; it shares a namespace
+# with the user's own branches (a fork PR opened from `main` would name the
+# main checkout's branch) and with origin's heads (a push from the inspection
+# worktree would land on an unrelated origin branch of that name).
+resolve_pr_head() {
+  local pr="$1" output="" name="" oid="" cross=""
   if ! command -v gh >/dev/null 2>&1; then
     echo "Error: gh is required to resolve PR #$pr" >&2
     return 1
   fi
-  if ! output="$(gh pr view "$pr" --json headRefName -q .headRefName 2>&1)"; then
+  if ! output="$(gh pr view "$pr" --json headRefName,headRefOid,isCrossRepository \
+                  -q '[.headRefName, .headRefOid, (.isCrossRepository | tostring)] | @tsv' 2>&1)"; then
     echo "Error: Could not find branch for PR #$pr" >&2
     [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
     return 1
   fi
-  if [[ -z "$output" ]]; then
+  IFS=$'\t' read -r name oid cross <<<"$output"
+  if [[ -z "$name" ]] || ! [[ "$oid" =~ ^[0-9a-f]{40,64}$ ]]; then
     echo "Error: Could not find branch for PR #$pr" >&2
     return 1
   fi
-  printf '%s\n' "$output"
+  case "$cross" in
+    true)
+      PR_HEAD_OID="$oid"
+      BASE="fork-pr-$pr"
+      return 0
+      ;;
+    false) PR_HEAD_OID="" ;;
+    *)
+      echo "Error: gh reported an isCrossRepository value this cannot read for PR #$pr: '$cross'" >&2
+      return 1
+      ;;
+  esac
+  BASE="$name"
+}
+
+# The start point for --base/--pr must exist before any mutation. A fork PR
+# head is fetched from origin's refs/pull/<n>/head, and the fetch counts only
+# if it delivered the commit gh reported as the head. No remote is added for
+# the fork, so nothing here can ever push to it.
+ensure_base_start_point() {
+  local pr="$1" base="$2" head_oid="$3" output=""
+  if [[ -z "$head_oid" ]]; then
+    if ! remote_branch_discovered origin "$base"; then
+      echo "Error: Cannot resolve remote branch 'origin/$base'" >&2
+      return 1
+    fi
+    return 0
+  fi
+  if ! output="$(git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin "refs/pull/$pr/head" 2>&1)"; then
+    echo "Error: Could not fetch refs/pull/$pr/head from origin for fork PR #$pr" >&2
+    [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
+    return 1
+  fi
+  if ! git -C "$PROJECT_ROOT" rev-parse --verify --quiet "$head_oid^{commit}" >/dev/null; then
+    echo "Error: refs/pull/$pr/head on origin did not deliver commit $head_oid, the head gh reports for PR #$pr" >&2
+    return 1
+  fi
+  ensure_fork_branch_resettable "$pr" "$base" "$head_oid"
+}
+
+# A fork PR's local branch fork-pr-<n> survives `remove` while the PR is
+# open, so a second inspection finds it. The fork add resets it to the PR
+# head; that is lossless only when every commit on the stale branch is in
+# the PR head. A branch that diverged (commits made in the inspection
+# worktree) is refused by name rather than reset.
+ensure_fork_branch_resettable() {
+  local pr="$1" base="$2" head_oid="$3"
+  git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/heads/$base" >/dev/null || return 0
+  if git -C "$PROJECT_ROOT" merge-base --is-ancestor "refs/heads/$base" "$head_oid" 2>/dev/null; then
+    return 0
+  fi
+  echo "Error: Local branch '$base' has commits that are not in the head of fork PR #$pr; delete or rename that branch before inspecting the PR again." >&2
+  return 1
 }
 
 CANDIDATE_BRANCHES=()
@@ -3833,16 +3946,14 @@ case "${1:-}" in
     # 3. Explicit --pr/--base are inspection modes, not claims. Their
     # authoritative branch/ref lookup must succeed before mutation, and the
     # issue lock serializes their final check plus add.
+    PR_HEAD_OID=""
     if [[ -n "$PR" ]]; then
-      BASE="$(resolve_pr_branch "$PR")" || exit 1
+      resolve_pr_head "$PR" || exit 1
     fi
 
     if [[ -n "$BASE" ]]; then
       discover_ownership_remote_heads || exit 1
-      if ! remote_branch_discovered origin "$BASE"; then
-        echo "Error: Cannot resolve remote branch 'origin/$BASE'" >&2
-        exit 1
-      fi
+      ensure_base_start_point "$PR" "$BASE" "$PR_HEAD_OID" || exit 1
       EXISTING_WT="$(worktree_for_branch "$BASE" 2>/dev/null || true)"
       if [[ -n "$EXISTING_WT" ]]; then
         # A base branch checked out in the main checkout is not issue work,
@@ -3858,14 +3969,11 @@ case "${1:-}" in
       acquire_issue_claim_lock "$ISSUE" || exit 1
       guard_new_target_path "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
       if [[ -n "$PR" ]]; then
-        BASE="$(resolve_pr_branch "$PR")" || exit 1
+        resolve_pr_head "$PR" || exit 1
       fi
       fetch_origin || exit 1
       discover_ownership_remote_heads || exit 1
-      if ! remote_branch_discovered origin "$BASE"; then
-        echo "Error: Cannot resolve remote branch 'origin/$BASE'" >&2
-        exit 1
-      fi
+      ensure_base_start_point "$PR" "$BASE" "$PR_HEAD_OID" || exit 1
       EXISTING_WT="$(worktree_for_branch "$BASE" 2>/dev/null || true)"
       if [[ -n "$EXISTING_WT" ]]; then
         # Same main-checkout guard as the pre-lock check above.
@@ -3877,8 +3985,25 @@ case "${1:-}" in
       fi
 
       mkdir -p "$TREES_DIR"
-      git -C "$PROJECT_ROOT" worktree add --track -b "$BASE" "$WT_PATH" "origin/$BASE" >/dev/null 2>&1 || \
-        git -C "$PROJECT_ROOT" worktree add "$WT_PATH" "$BASE" >/dev/null 2>&1
+      if [[ -n "$PR_HEAD_OID" ]]; then
+        # A fork head has no origin branch to track; the local branch is
+        # fork-pr-<n> with no upstream. -B resets the branch a previous
+        # inspection left behind; ensure_fork_branch_resettable has already
+        # refused a branch that reset would lose commits from. --no-track
+        # skips new tracking config, but -B keeps an upstream a pre-existing
+        # branch carried; drop it so a push cannot reach an origin branch of
+        # that name.
+        git -C "$PROJECT_ROOT" worktree add --no-track -B "$BASE" "$WT_PATH" "$PR_HEAD_OID" >/dev/null 2>&1
+        if git -C "$WT_PATH" config --get "branch.$BASE.merge" >/dev/null 2>&1; then
+          git -C "$WT_PATH" branch --unset-upstream "$BASE" >/dev/null 2>&1 || {
+            echo "Error: could not clear the upstream of branch '$BASE' in $WT_PATH" >&2
+            exit 1
+          }
+        fi
+      else
+        git -C "$PROJECT_ROOT" worktree add --track -b "$BASE" "$WT_PATH" "origin/$BASE" >/dev/null 2>&1 || \
+          git -C "$PROJECT_ROOT" worktree add "$WT_PATH" "$BASE" >/dev/null 2>&1
+      fi
     else
       build_candidate_branches "$ISSUE" "$BRANCH"
       discover_candidate_ownership || exit 1
@@ -3896,9 +4021,10 @@ case "${1:-}" in
 
     release_issue_claim_lock
 
-    # Set upstream tracking if remote branch exists
+    # Set upstream tracking if remote branch exists. A fork PR branch keeps
+    # no upstream even when origin has an unrelated branch of the same name.
     CREATED_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
-    if [[ -n "$CREATED_BRANCH" ]]; then
+    if [[ -n "$CREATED_BRANCH" && -z "$PR_HEAD_OID" ]]; then
       _REMOTE="${BOT_REMOTE_NAME:-origin}"
       if git -C "$WT_PATH" rev-parse --verify "$_REMOTE/$CREATED_BRANCH" &>/dev/null; then
         git -C "$WT_PATH" branch --set-upstream-to="$_REMOTE/$CREATED_BRANCH" "$CREATED_BRANCH" >/dev/null 2>&1 || true

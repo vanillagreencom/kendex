@@ -1,0 +1,337 @@
+#!/usr/bin/env bash
+# Tests for `create --pr` against a fork pull request: the head branch lives
+# in the contributor's repository, so origin has no such head and the commit
+# is reachable only through origin's refs/pull/<n>/head. The worktree branch
+# is fork-pr-<n>, so the contributor's branch name never touches a local or
+# origin branch of the same name. A same-repository PR keeps the tracked
+# origin-branch checkout, and a pull ref that does not deliver the head gh
+# reports refuses before any worktree exists.
+set -euo pipefail
+
+# A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
+# call in this file back at the real repository.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
+TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+trap 'rm -rf "$TMP_ROOT"' EXIT
+
+PASS=0
+FAIL=0
+
+assert_eq() {
+  local got="$1" want="$2" name="$3"
+  if [[ "$got" == "$want" ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
+  fi
+}
+
+assert_contains() {
+  local haystack="$1" needle="$2" name="$3"
+  if grep -qF -- "$needle" <<<"$haystack"; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
+  fi
+}
+
+assert_path_absent() {
+  local path="$1" name="$2"
+  if [[ ! -e "$path" ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        unexpected path: %s\n' "$name" "$path"
+  fi
+}
+
+ROOT="$TMP_ROOT/fork-pr"
+mkdir -p "$ROOT/main" "$ROOT/bin" "$ROOT/gh-state"
+git -C "$ROOT/main" init -q -b main
+git -C "$ROOT/main" config user.email test@example.com
+git -C "$ROOT/main" config user.name Test
+git -C "$ROOT/main" config commit.gpgsign false
+printf 'base\n' >"$ROOT/main/base.txt"
+git -C "$ROOT/main" add base.txt
+git -C "$ROOT/main" commit -q -m base
+printf 'WORKTREE_BASE_DIR="../trees"\n' >"$ROOT/main/.env.local"
+git init -q --bare "$ROOT/origin.git"
+git -C "$ROOT/main" remote add origin "$ROOT/origin.git"
+git -C "$ROOT/main" push -q -u origin main
+
+# The contributor's repository: a clone of origin whose branch never reaches
+# origin as a head. GitHub exposes such a head to the base repository only as
+# refs/pull/<n>/head, which is the one ref the fixture publishes.
+git clone -q "$ROOT/origin.git" "$ROOT/fork"
+git -C "$ROOT/fork" config user.email fork@example.com
+git -C "$ROOT/fork" config user.name Fork
+git -C "$ROOT/fork" config commit.gpgsign false
+git -C "$ROOT/fork" checkout -q -b fix/widget-expiry
+printf 'fork fix\n' >"$ROOT/fork/fix.txt"
+git -C "$ROOT/fork" add fix.txt
+git -C "$ROOT/fork" commit -q -m 'fork fix'
+FORK_HEAD="$(git -C "$ROOT/fork" rev-parse HEAD)"
+git -C "$ROOT/fork" push -q origin "HEAD:refs/pull/7/head"
+
+# A same-repository PR: its head is an ordinary origin branch.
+git -C "$ROOT/main" checkout -q -b feat/same
+printf 'same repo\n' >"$ROOT/main/same.txt"
+git -C "$ROOT/main" add same.txt
+git -C "$ROOT/main" commit -q -m 'same-repo feature'
+SAME_HEAD="$(git -C "$ROOT/main" rev-parse HEAD)"
+git -C "$ROOT/main" push -q origin feat/same "HEAD:refs/pull/8/head"
+git -C "$ROOT/main" checkout -q main
+git -C "$ROOT/main" branch -q -D feat/same
+
+# A pull ref that is not the head gh reports: the base's own tip.
+git -C "$ROOT/main" push -q origin "main:refs/pull/9/head"
+PHANTOM_OID="$(printf '%040d' 1)"
+
+# A fork PR opened from the fork's own `main`: the head branch name is the
+# main checkout's branch name.
+git -C "$ROOT/fork" checkout -q main
+printf 'fork main fix\n' >"$ROOT/fork/from-main.txt"
+git -C "$ROOT/fork" add from-main.txt
+git -C "$ROOT/fork" commit -q -m 'fork main fix'
+FORK_MAIN_HEAD="$(git -C "$ROOT/fork" rev-parse HEAD)"
+git -C "$ROOT/fork" push -q origin "HEAD:refs/pull/11/head"
+git -C "$ROOT/fork" checkout -q fix/widget-expiry
+
+# gh as it answers `pr view <n> --json <fields> -q <query>`: the stored
+# document is the field set gh returns, and the query runs over it.
+cat >"$ROOT/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}:${2:-}" in
+  pr:list) exit 0 ;;
+  pr:view)
+    pr="$3"
+    shift 3
+    query=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -q | --jq) query="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    doc="${GH_STATE:?}/pr-$pr.json"
+    if [[ ! -f "$doc" ]]; then
+      printf 'GraphQL: Could not resolve to a PullRequest with the number of %s.\n' "$pr" >&2
+      exit 1
+    fi
+    jq -r "$query" "$doc"
+    ;;
+  *)
+    printf 'gh stub: unexpected call %s\n' "$*" >&2
+    exit 64
+    ;;
+esac
+STUB
+chmod +x "$ROOT/bin/gh"
+export PATH="$ROOT/bin:$PATH"
+export GH_STATE="$ROOT/gh-state"
+
+pr_doc() {
+  local number="$1" name="$2" oid="$3" cross="$4" state="${5:-OPEN}" base="${6:-main}"
+  printf '{"headRefName":"%s","headRefOid":"%s","isCrossRepository":%s,"state":"%s","baseRefName":"%s"}\n' \
+    "$name" "$oid" "$cross" "$state" "$base" >"$GH_STATE/pr-$number.json"
+}
+pr_doc 7 fix/widget-expiry "$FORK_HEAD" true
+pr_doc 8 feat/same "$SAME_HEAD" false
+pr_doc 9 fix/phantom "$PHANTOM_OID" true
+pr_doc 10 fix/no-pull-ref "$FORK_HEAD" true
+pr_doc 11 main "$FORK_MAIN_HEAD" true
+
+echo "=== worktree create --pr on a fork pull request ==="
+
+origin_heads_before="$(git -C "$ROOT/origin.git" for-each-ref --format='%(refname) %(objectname)' | sort)"
+
+set +e
+fork_out="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-fork --pr 7 2>"$ROOT/fork.err")"
+fork_code=$?
+set -e
+FORK_WT="$ROOT/trees/issue-fork"
+assert_eq "$fork_code" "0" "fork PR creates a worktree (stderr: $(tr '\n' ' ' <"$ROOT/fork.err"))"
+assert_eq "$fork_out" "$FORK_WT" "fork PR prints the worktree path"
+assert_eq "$(git -C "$FORK_WT" rev-parse HEAD 2>/dev/null || true)" "$FORK_HEAD" "fork worktree HEAD is the PR head commit"
+assert_eq "$(git -C "$FORK_WT" branch --show-current 2>/dev/null || true)" "fork-pr-7" "fork worktree branch is fork-pr-7, not the contributor's branch name"
+assert_eq "$(git -C "$ROOT/main" rev-parse --verify --quiet refs/heads/fix/widget-expiry || true)" "" "no local branch carries the contributor's branch name"
+set +e
+fork_upstream="$(git -C "$FORK_WT" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)"
+fork_upstream_code=$?
+set -e
+assert_eq "$fork_upstream_code:$fork_upstream" "128:" "fork worktree branch has no upstream"
+assert_eq "$(git -C "$ROOT/main" remote | sort | tr '\n' ' ')" "origin " "no remote is added for the fork"
+assert_eq "$(git -C "$ROOT/origin.git" for-each-ref --format='%(refname) %(objectname)' | sort)" "$origin_heads_before" "origin refs are unchanged after the fork checkout"
+
+set +e
+same_out="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-same --pr 8 2>"$ROOT/same.err")"
+same_code=$?
+set -e
+SAME_WT="$ROOT/trees/issue-same"
+assert_eq "$same_code" "0" "same-repository PR creates a worktree (stderr: $(tr '\n' ' ' <"$ROOT/same.err"))"
+assert_eq "$same_out" "$SAME_WT" "same-repository PR prints the worktree path"
+assert_eq "$(git -C "$SAME_WT" rev-parse HEAD 2>/dev/null || true)" "$SAME_HEAD" "same-repository worktree HEAD is the origin branch tip"
+assert_eq "$(git -C "$SAME_WT" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)" "origin/feat/same" "same-repository branch tracks its origin branch"
+
+# A fork PR whose head branch is named `main` is inspectable: the local
+# branch is fork-pr-11, so the main checkout's `main` is neither in the way
+# nor reset to the contributor's commit.
+LOCAL_MAIN_BEFORE="$(git -C "$ROOT/main" rev-parse refs/heads/main)"
+set +e
+from_main_out="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-from-main --pr 11 2>"$ROOT/from-main.err")"
+from_main_code=$?
+set -e
+FROM_MAIN_WT="$ROOT/trees/issue-from-main"
+assert_eq "$from_main_code:$from_main_out" "0:$FROM_MAIN_WT" "a fork PR opened from the fork's main creates a worktree (stderr: $(tr '\n' ' ' <"$ROOT/from-main.err"))"
+assert_eq "$(git -C "$FROM_MAIN_WT" rev-parse HEAD 2>/dev/null || true)" "$FORK_MAIN_HEAD" "fork-from-main worktree HEAD is the PR head commit"
+assert_eq "$(git -C "$FROM_MAIN_WT" branch --show-current 2>/dev/null || true)" "fork-pr-11" "fork-from-main worktree branch is fork-pr-11"
+assert_eq "$(git -C "$ROOT/main" rev-parse refs/heads/main)" "$LOCAL_MAIN_BEFORE" "the main checkout's local main is untouched"
+assert_eq "$(git -C "$ROOT/main" branch --show-current)" "main" "the main checkout still has main checked out"
+
+# Inspecting the same fork PR again: `remove` keeps the local fork-pr-7 branch
+# while the PR is open, the contributor has pushed since, and origin has
+# meanwhile grown an unrelated branch under the contributor's branch name.
+# The second create resets the stale branch to the new head and still sets
+# no upstream.
+printf 'fork fix 2\n' >>"$ROOT/fork/fix.txt"
+git -C "$ROOT/fork" commit -q -am 'fork fix 2'
+FORK_HEAD_2="$(git -C "$ROOT/fork" rev-parse HEAD)"
+git -C "$ROOT/fork" push -q -f origin "HEAD:refs/pull/7/head"
+pr_doc 7 fix/widget-expiry "$FORK_HEAD_2" true
+git -C "$ROOT/main" push -q origin "main:refs/heads/fix/widget-expiry"
+(cd "$ROOT/main" && "$WORKTREE_SCRIPT" remove issue-fork >/dev/null 2>&1) || true # exits 1: the open PR's branch stays
+assert_path_absent "$FORK_WT" "remove clears the fork worktree"
+assert_eq "$(git -C "$ROOT/main" rev-parse --verify --quiet refs/heads/fork-pr-7 || true)" "$FORK_HEAD" "remove keeps the open PR's local branch at the first head"
+# The stale branch also carries tracking config pointing at that unrelated
+# origin branch; -B preserves it, so the create must clear it afterwards.
+git -C "$ROOT/main" fetch -q origin
+git -C "$ROOT/main" branch -q --set-upstream-to=origin/fix/widget-expiry fork-pr-7
+set +e
+again_out="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-fork --pr 7 2>"$ROOT/again.err")"
+again_code=$?
+set -e
+assert_eq "$again_code:$again_out" "0:$FORK_WT" "re-inspecting the fork PR after remove creates the worktree again (stderr: $(tr '\n' ' ' <"$ROOT/again.err"))"
+assert_eq "$(git -C "$FORK_WT" rev-parse HEAD 2>/dev/null || true)" "$FORK_HEAD_2" "re-inspected worktree HEAD is the contributor's new head"
+set +e
+again_upstream="$(git -C "$FORK_WT" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)"
+again_upstream_code=$?
+set -e
+assert_eq "$again_upstream_code:$again_upstream" "128:" "an unrelated origin branch of the same name does not become the upstream"
+
+# A local branch that diverged from the PR head is refused by name, not reset.
+git -C "$FORK_WT" config user.email test@example.com
+git -C "$FORK_WT" config user.name Test
+git -C "$FORK_WT" config commit.gpgsign false
+printf 'local only\n' >"$FORK_WT/local.txt"
+git -C "$FORK_WT" add local.txt
+git -C "$FORK_WT" commit -q -m 'local only'
+(cd "$ROOT/main" && "$WORKTREE_SCRIPT" remove issue-fork >/dev/null 2>&1) || true # exits 1: the open PR's branch stays
+set +e
+(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-fork --pr 7 >"$ROOT/diverged.out" 2>"$ROOT/diverged.err")
+diverged_code=$?
+set -e
+assert_eq "$diverged_code" "1" "a diverged local branch refuses the fork checkout with exit 1"
+assert_contains "$(cat "$ROOT/diverged.err")" "Local branch 'fork-pr-7' has commits that are not in the head of fork PR #7" "the refusal names the diverged branch"
+assert_path_absent "$FORK_WT" "a diverged local branch creates no worktree"
+
+# A fork head the base cannot deliver refuses before any worktree exists:
+#   number  issue            message fragment
+rows=(
+  "9	issue-phantom	did not deliver commit $PHANTOM_OID"
+  "10	issue-no-ref	Could not fetch refs/pull/10/head from origin"
+)
+for row in "${rows[@]}"; do
+  IFS=$'\t' read -r number issue fragment <<<"$row"
+  set +e
+  (cd "$ROOT/main" && "$WORKTREE_SCRIPT" create "$issue" --pr "$number" >"$ROOT/$issue.out" 2>"$ROOT/$issue.err")
+  code=$?
+  set -e
+  assert_eq "$code" "1" "PR #$number: undeliverable fork head exits 1"
+  assert_contains "$(cat "$ROOT/$issue.err")" "$fragment" "PR #$number: refusal names the cause"
+  assert_path_absent "$ROOT/trees/$issue" "PR #$number: no worktree is created"
+done
+
+echo "=== remove and cleanup prove a merged fork PR by its number ==="
+
+# GitHub files the PR under the contributor's head name, so a --head query
+# for fork-pr-<n> answers nothing; the number in the branch name is the key.
+# A squash lands the content on main as a new commit, so ancestry never
+# proves it either.
+squash_fork_onto_main() {
+  local file="$1" content="$2"
+  printf '%s\n' "$content" >"$ROOT/main/$file"
+  git -C "$ROOT/main" add "$file"
+  git -C "$ROOT/main" commit -q -m "$file (squashed)"
+  git -C "$ROOT/main" push -q origin main
+}
+squash_fork_onto_main from-main.txt 'fork main fix'
+pr_doc 11 main "$FORK_MAIN_HEAD" true MERGED
+squashed_ancestor=no
+git -C "$ROOT/main" merge-base --is-ancestor fork-pr-11 origin/main && squashed_ancestor=yes
+assert_eq "$squashed_ancestor" "no" "precondition: the squashed fork branch is not an ancestor of origin/main"
+set +e
+merged_rm_out="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" remove issue-from-main 2>"$ROOT/merged-rm.err")"
+merged_rm_code=$?
+set -e
+assert_eq "$merged_rm_code:$merged_rm_out" "0:Removed: $FROM_MAIN_WT" "remove of a merged fork PR worktree exits 0 (stderr: $(tr '\n' ' ' <"$ROOT/merged-rm.err"))"
+assert_path_absent "$FROM_MAIN_WT" "remove clears the merged fork worktree"
+assert_eq "$(git -C "$ROOT/main" rev-parse --verify --quiet refs/heads/fork-pr-11 || true)" "" "remove deletes the merged fork branch"
+assert_contains "$(cat "$ROOT/merged-rm.err")" "Deleted branch 'fork-pr-11' — squash-merged in pull request #11." "remove names the merged pull request"
+
+# cleanup: one merged fork PR (#12) is collected, an open one (#13) is kept.
+git -C "$ROOT/fork" checkout -q -b fix/cleanup main
+printf 'cleanup fix\n' >"$ROOT/fork/cleanup.txt"
+git -C "$ROOT/fork" add cleanup.txt
+git -C "$ROOT/fork" commit -q -m 'cleanup fix'
+CLEANUP_HEAD="$(git -C "$ROOT/fork" rev-parse HEAD)"
+git -C "$ROOT/fork" push -q origin "HEAD:refs/pull/12/head"
+git -C "$ROOT/fork" checkout -q -b fix/still-open main
+printf 'still open\n' >"$ROOT/fork/open.txt"
+git -C "$ROOT/fork" add open.txt
+git -C "$ROOT/fork" commit -q -m 'still open'
+OPEN_HEAD="$(git -C "$ROOT/fork" rev-parse HEAD)"
+git -C "$ROOT/fork" push -q origin "HEAD:refs/pull/13/head"
+pr_doc 12 fix/cleanup "$CLEANUP_HEAD" true
+pr_doc 13 fix/still-open "$OPEN_HEAD" true
+CLEANUP_WT="$ROOT/trees/issue-cleanup"
+OPEN_WT="$ROOT/trees/issue-open"
+set +e
+cleanup_create_out="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-cleanup --pr 12 2>"$ROOT/cleanup-create.err" \
+  && "$WORKTREE_SCRIPT" create issue-open --pr 13 2>"$ROOT/open-create.err")"
+cleanup_create_code=$?
+set -e
+assert_eq "$cleanup_create_code" "0" "two fork PR worktrees exist before cleanup (stderr: $(cat "$ROOT/cleanup-create.err" "$ROOT/open-create.err" | tr '\n' ' '))"
+squash_fork_onto_main cleanup.txt 'cleanup fix'
+pr_doc 12 fix/cleanup "$CLEANUP_HEAD" true MERGED
+set +e
+cleanup_out="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$ROOT/cleanup.err")"
+cleanup_code=$?
+set -e
+assert_eq "$cleanup_code" "0" "cleanup exits 0 (stderr: $(tr '\n' ' ' <"$ROOT/cleanup.err"))"
+assert_contains "$cleanup_out" "Cleaned: $CLEANUP_WT" "cleanup collects the merged fork PR worktree"
+assert_path_absent "$CLEANUP_WT" "the merged fork worktree is gone"
+assert_eq "$(git -C "$ROOT/main" rev-parse --verify --quiet refs/heads/fork-pr-12 || true)" "" "cleanup deletes the merged fork branch"
+assert_eq "$(git -C "$OPEN_WT" rev-parse HEAD 2>/dev/null || true)" "$OPEN_HEAD" "cleanup keeps the open fork PR worktree"
+assert_contains "$(cat "$ROOT/cleanup.err")" "fork pull request #13 is OPEN, not merged" "cleanup names the open fork PR it keeps"
+
+# A merged fork PR whose merged head is not this tip is kept: the branch
+# carries work past the merge.
+pr_doc 13 fix/still-open "$FORK_HEAD" true MERGED
+set +e
+(cd "$ROOT/main" && "$WORKTREE_SCRIPT" cleanup >"$ROOT/moved.out" 2>"$ROOT/moved.err")
+set -e
+assert_eq "$(git -C "$OPEN_WT" rev-parse HEAD 2>/dev/null || true)" "$OPEN_HEAD" "a fork branch past its merged head is kept"
+assert_contains "$(cat "$ROOT/moved.err")" "carries work past its merged pull request (#13 merged head $FORK_HEAD" "cleanup names the head mismatch"
+
+echo
+echo "Passed: $PASS, Failed: $FAIL"
+[[ "$FAIL" -eq 0 ]]
