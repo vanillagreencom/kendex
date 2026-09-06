@@ -140,9 +140,9 @@ export PATH="$ROOT/bin:$PATH"
 export GH_STATE="$ROOT/gh-state"
 
 pr_doc() {
-  local number="$1" name="$2" oid="$3" cross="$4"
-  printf '{"headRefName":"%s","headRefOid":"%s","isCrossRepository":%s}\n' \
-    "$name" "$oid" "$cross" >"$GH_STATE/pr-$number.json"
+  local number="$1" name="$2" oid="$3" cross="$4" state="${5:-OPEN}" base="${6:-main}"
+  printf '{"headRefName":"%s","headRefOid":"%s","isCrossRepository":%s,"state":"%s","baseRefName":"%s"}\n' \
+    "$name" "$oid" "$cross" "$state" "$base" >"$GH_STATE/pr-$number.json"
 }
 pr_doc 7 fix/widget-expiry "$FORK_HEAD" true
 pr_doc 8 feat/same "$SAME_HEAD" false
@@ -259,6 +259,78 @@ for row in "${rows[@]}"; do
   assert_contains "$(cat "$ROOT/$issue.err")" "$fragment" "PR #$number: refusal names the cause"
   assert_path_absent "$ROOT/trees/$issue" "PR #$number: no worktree is created"
 done
+
+echo "=== remove and cleanup prove a merged fork PR by its number ==="
+
+# GitHub files the PR under the contributor's head name, so a --head query
+# for fork-pr-<n> answers nothing; the number in the branch name is the key.
+# A squash lands the content on main as a new commit, so ancestry never
+# proves it either.
+squash_fork_onto_main() {
+  local file="$1" content="$2"
+  printf '%s\n' "$content" >"$ROOT/main/$file"
+  git -C "$ROOT/main" add "$file"
+  git -C "$ROOT/main" commit -q -m "$file (squashed)"
+  git -C "$ROOT/main" push -q origin main
+}
+squash_fork_onto_main from-main.txt 'fork main fix'
+pr_doc 11 main "$FORK_MAIN_HEAD" true MERGED
+squashed_ancestor=no
+git -C "$ROOT/main" merge-base --is-ancestor fork-pr-11 origin/main && squashed_ancestor=yes
+assert_eq "$squashed_ancestor" "no" "precondition: the squashed fork branch is not an ancestor of origin/main"
+set +e
+merged_rm_out="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" remove issue-from-main 2>"$ROOT/merged-rm.err")"
+merged_rm_code=$?
+set -e
+assert_eq "$merged_rm_code:$merged_rm_out" "0:Removed: $FROM_MAIN_WT" "remove of a merged fork PR worktree exits 0 (stderr: $(tr '\n' ' ' <"$ROOT/merged-rm.err"))"
+assert_path_absent "$FROM_MAIN_WT" "remove clears the merged fork worktree"
+assert_eq "$(git -C "$ROOT/main" rev-parse --verify --quiet refs/heads/fork-pr-11 || true)" "" "remove deletes the merged fork branch"
+assert_contains "$(cat "$ROOT/merged-rm.err")" "Deleted branch 'fork-pr-11' — squash-merged in pull request #11." "remove names the merged pull request"
+
+# cleanup: one merged fork PR (#12) is collected, an open one (#13) is kept.
+git -C "$ROOT/fork" checkout -q -b fix/cleanup main
+printf 'cleanup fix\n' >"$ROOT/fork/cleanup.txt"
+git -C "$ROOT/fork" add cleanup.txt
+git -C "$ROOT/fork" commit -q -m 'cleanup fix'
+CLEANUP_HEAD="$(git -C "$ROOT/fork" rev-parse HEAD)"
+git -C "$ROOT/fork" push -q origin "HEAD:refs/pull/12/head"
+git -C "$ROOT/fork" checkout -q -b fix/still-open main
+printf 'still open\n' >"$ROOT/fork/open.txt"
+git -C "$ROOT/fork" add open.txt
+git -C "$ROOT/fork" commit -q -m 'still open'
+OPEN_HEAD="$(git -C "$ROOT/fork" rev-parse HEAD)"
+git -C "$ROOT/fork" push -q origin "HEAD:refs/pull/13/head"
+pr_doc 12 fix/cleanup "$CLEANUP_HEAD" true
+pr_doc 13 fix/still-open "$OPEN_HEAD" true
+CLEANUP_WT="$ROOT/trees/issue-cleanup"
+OPEN_WT="$ROOT/trees/issue-open"
+set +e
+cleanup_create_out="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-cleanup --pr 12 2>"$ROOT/cleanup-create.err" \
+  && "$WORKTREE_SCRIPT" create issue-open --pr 13 2>"$ROOT/open-create.err")"
+cleanup_create_code=$?
+set -e
+assert_eq "$cleanup_create_code" "0" "two fork PR worktrees exist before cleanup (stderr: $(cat "$ROOT/cleanup-create.err" "$ROOT/open-create.err" | tr '\n' ' '))"
+squash_fork_onto_main cleanup.txt 'cleanup fix'
+pr_doc 12 fix/cleanup "$CLEANUP_HEAD" true MERGED
+set +e
+cleanup_out="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$ROOT/cleanup.err")"
+cleanup_code=$?
+set -e
+assert_eq "$cleanup_code" "0" "cleanup exits 0 (stderr: $(tr '\n' ' ' <"$ROOT/cleanup.err"))"
+assert_contains "$cleanup_out" "Cleaned: $CLEANUP_WT" "cleanup collects the merged fork PR worktree"
+assert_path_absent "$CLEANUP_WT" "the merged fork worktree is gone"
+assert_eq "$(git -C "$ROOT/main" rev-parse --verify --quiet refs/heads/fork-pr-12 || true)" "" "cleanup deletes the merged fork branch"
+assert_eq "$(git -C "$OPEN_WT" rev-parse HEAD 2>/dev/null || true)" "$OPEN_HEAD" "cleanup keeps the open fork PR worktree"
+assert_contains "$(cat "$ROOT/cleanup.err")" "fork pull request #13 is OPEN, not merged" "cleanup names the open fork PR it keeps"
+
+# A merged fork PR whose merged head is not this tip is kept: the branch
+# carries work past the merge.
+pr_doc 13 fix/still-open "$FORK_HEAD" true MERGED
+set +e
+(cd "$ROOT/main" && "$WORKTREE_SCRIPT" cleanup >"$ROOT/moved.out" 2>"$ROOT/moved.err")
+set -e
+assert_eq "$(git -C "$OPEN_WT" rev-parse HEAD 2>/dev/null || true)" "$OPEN_HEAD" "a fork branch past its merged head is kept"
+assert_contains "$(cat "$ROOT/moved.err")" "carries work past its merged pull request (#13 merged head $FORK_HEAD" "cleanup names the head mismatch"
 
 echo
 echo "Passed: $PASS, Failed: $FAIL"

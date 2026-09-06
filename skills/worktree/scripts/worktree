@@ -2787,6 +2787,13 @@ merged_pr_for_branch() {
     printf 'branch has no local tip to compare a merged pull request against\n'
     return 2
   fi
+  # A fork inspection branch is named fork-pr-<n> (see resolve_pr_head), and
+  # GitHub files that PR under the contributor's head name, so a --head query
+  # can never find it. The number in the name is the lookup key instead.
+  if [[ "$branch" =~ ^fork-pr-([0-9]+)$ ]]; then
+    merged_fork_pr_at_tip "${BASH_REMATCH[1]}" "$tip"
+    return $?
+  fi
   if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-merged-pr.XXXXXX")"; then
     printf 'could not create a scratch file for the gh diagnostic\n'
     return 2
@@ -2835,6 +2842,47 @@ merged_pr_for_branch() {
   printf 'carries work past its merged pull request (merged under this name:%s; none has this tip %s as its head)\n' \
     "$seen" "$tip"
   return 1
+}
+
+# The merged proof for a fork-pr-<n> branch: PR <n> is merged into the default
+# branch and the head it merged is this tip. Same exit contract as
+# merged_pr_for_branch; the proof is commit identity, and the PR number in the
+# branch name is only the lookup key.
+merged_fork_pr_at_tip() {
+  local pr="$1" tip="$2" err_file="" row="" detail="" state="" base="" oid="" rc=0
+  if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-merged-pr.XXXXXX")"; then
+    printf 'could not create a scratch file for the gh diagnostic\n'
+    return 2
+  fi
+  row="$( (cd "$PROJECT_ROOT" && env -u GH_REPO -u GITHUB_REPOSITORY \
+             gh pr view "$pr" --json state,baseRefName,headRefOid \
+             --jq '[.state, .baseRefName, .headRefOid] | @tsv') 2>"$err_file" )" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    detail="$(tr '\n' ' ' <"$err_file")"
+    rm -f "$err_file"
+    printf '%s\n' "${detail:-gh pr view $pr failed (exit $rc)}"
+    return 2
+  fi
+  rm -f "$err_file"
+  IFS=$'\t' read -r state base oid <<<"$row"
+  if [[ -z "$state" || -z "$base" ]] || ! [[ "$oid" =~ ^[0-9a-f]{7,64}$ ]]; then
+    printf 'gh returned a pull request #%s record this cannot read: %s\n' "$pr" "$row"
+    return 2
+  fi
+  if [[ "$state" != "MERGED" ]]; then
+    printf 'fork pull request #%s is %s, not merged\n' "$pr" "$state"
+    return 1
+  fi
+  if [[ "$base" != "$DEFAULT_BRANCH" ]]; then
+    printf 'fork pull request #%s merged into %s, not %s\n' "$pr" "$base" "$DEFAULT_BRANCH"
+    return 1
+  fi
+  if [[ "$oid" != "$tip" ]]; then
+    printf 'carries work past its merged pull request (#%s merged head %s, not this tip %s)\n' "$pr" "$oid" "$tip"
+    return 1
+  fi
+  printf '%s\n' "$pr"
+  return 0
 }
 
 # Sets BASE to the branch the PR checks out as. A same-repository PR leaves
