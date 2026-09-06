@@ -88,6 +88,13 @@ jobs:
   # suite runs — a leg that ran Bash 5 in silence would report a property it
   # never tested. The probe step after it is the leg's must-fail control. The
   # node shards are excluded: nothing in them is bash.
+  #
+  # The leg swaps the shell and nothing else on purpose: the suites and the
+  # scripts they run call flock, timeout and sha256sum, which macOS does not
+  # ship (workflow-state and lanes take flock with no fallback), so the leg
+  # installs GNU coreutils and flock and asserts them beside the shell. A red
+  # leg is then a Bash 3.2 finding, not a missing utility. BSD sed, grep and
+  # awk stay the runner's: no suite has needed the GNU ones there.
   skill-suites-shard:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     if: github.event_name != 'push'
@@ -107,6 +114,18 @@ jobs:
       - uses: actions/checkout@v4
 
       # ---- macOS leg: Bash 3.2 first on PATH, asserted, and its probe -----
+      # gnubin goes on PATH before the shell's directory does, so the
+      # directory added last, the shell's, is searched first.
+      - name: GNU coreutils and flock, which the suites call and macOS lacks
+        if: matrix.os == 'macos-latest'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: |
+          set -u
+          brew install coreutils flock
+          echo "$(brew --prefix)/opt/coreutils/libexec/gnubin" >>"$GITHUB_PATH"
+
       - name: /bin/bash first on PATH
         if: matrix.os == 'macos-latest'
         run: |
@@ -135,6 +154,11 @@ jobs:
           got "the step shell" "$BASH_VERSION"
           got "bash on PATH, $(command -v bash)" "$(version_of bash)"
           got "/usr/bin/env bash" "$(version_of /usr/bin/env bash)"
+          # The utilities the step above installed, resolved the way a suite
+          # resolves them.
+          for c in flock timeout sha256sum; do
+            command -v "$c" || { echo "$c is not on PATH; the suites that call it would fail for the wrong reason"; fail=1; }
+          done
           exit "$fail"
 
       # The must-fail control. The construct is read out of the fixture that

@@ -117,11 +117,10 @@ gg_settings_index_mode
 TYPES="$(gg_setting COMMIT_GUARDS_COMMIT_TYPES "build chore ci docs feat fix perf refactor revert style test")" || exit 2
 TYPE_ALT=""
 for t in $TYPES; do
-  # Classes, not a-z: Bash 3.2 reads a bracket range by locale collation,
-  # under which an uppercase letter sits inside [a-z].
-  case "$t" in
-    "" | *[![:lower:][:digit:]-]*) gg_config_error "COMMIT_GUARDS_COMMIT_TYPES entry '$(gg_scrubbed "$t")' is not a lowercase type name" ;;
-  esac
+  # LC_ALL=C grep, as the header match below: a `case` range is a collation
+  # range in a UTF-8 locale, under which Bash 3.2 puts `F` inside [a-z].
+  printf '%s\n' "$t" | LC_ALL=C grep -qE '^[a-z0-9-]+$' ||
+    gg_config_error "COMMIT_GUARDS_COMMIT_TYPES entry '$(gg_scrubbed "$t")' is not a lowercase type name"
   TYPE_ALT="${TYPE_ALT:+$TYPE_ALT|}$t"
 done
 [ -n "$TYPE_ALT" ] || gg_config_error "COMMIT_GUARDS_COMMIT_TYPES resolved empty — at least one type is required"
