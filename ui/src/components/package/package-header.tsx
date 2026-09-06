@@ -3,7 +3,11 @@ import type { ItemKind } from "@/bindings";
 import { InlineMarkdown } from "@/components/inline-markdown";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
-import { FORKED_BADGE_LABEL, requiredByNote } from "@/lib/copy";
+import {
+  FORKED_BADGE_LABEL,
+  FORKED_EDITED_BADGE_LABEL,
+  requiredByNote,
+} from "@/lib/copy";
 import { kindIcon } from "@/lib/kind-icon";
 import type { PlaceMark } from "@/lib/place-marks";
 import { cn } from "@/lib/utils";
@@ -16,6 +20,7 @@ export function PackageHeader({
   displayName,
   description,
   forked,
+  forkEdited,
   mark,
   requiredBy,
   action,
@@ -24,6 +29,10 @@ export function PackageHeader({
   displayName: string;
   description: string | null;
   forked: boolean;
+  /** The fork's files carry the person's own edits. A second word on the
+   *  same badge: a fork is already theirs, so an edit to one is what it
+   *  now is rather than anything to answer. */
+  forkEdited: boolean;
   mark: PlaceMark | null;
   /** The installed packages that require this one, when that is why it is
    *  here rather than anybody asking for it by name. Empty says nothing. */
@@ -49,7 +58,9 @@ export function PackageHeader({
           />
           <span className="min-w-0 truncate">{displayName}</span>
           {forked ? (
-            <Badge variant="outline">{FORKED_BADGE_LABEL}</Badge>
+            <Badge variant="outline">
+              {forkEdited ? FORKED_EDITED_BADGE_LABEL : FORKED_BADGE_LABEL}
+            </Badge>
           ) : null}
         </span>
       }

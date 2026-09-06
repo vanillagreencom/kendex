@@ -29,6 +29,7 @@ export const updateRow = (
   noPerPackageUpdate: null,
   mixed: false,
   forked: false,
+  forkEdited: false,
   ignored: false,
   ...extra,
 });

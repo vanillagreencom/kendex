@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use super::desired::{Artifact, Desired};
 use super::item_plan::PlanSink;
-use super::{DriftCause, DriftRow, DriftState};
+use super::{DriftCause, DriftRow, DriftState, ForkEdit};
 use crate::env::Env;
 use crate::lock::{Lock, LockEntry};
 use crate::model::Scope;
@@ -193,6 +193,7 @@ pub(super) fn hold_local_edit(
     item: &Desired,
     scope: &Scope,
     lock: &Lock,
+    manifest: &crate::manifest::Manifest,
     sink: &mut PlanSink,
 ) -> bool {
     let (Some(disk), Some(compared)) = (
@@ -204,6 +205,9 @@ pub(super) fn hold_local_edit(
     let wanted = item.artifact.disk_hash();
     if disk == wanted {
         return false;
+    }
+    if absorb_fork_edit(env, item, scope, lock, manifest, compared, &disk, sink) {
+        return true;
     }
     // Bytes some apply provably wrote *at this location* are never an
     // edit: per-tool variants share and collapse trees, and a command
@@ -252,5 +256,101 @@ pub(super) fn hold_local_edit(
     sink.new_lock
         .entries
         .insert(item.key.clone(), entry.clone());
+    true
+}
+
+/// A fork is already the person's own copy, so an edit to one is not a
+/// divergence anybody has to settle — it is the fork's content. The pass
+/// takes those bytes into the fork's local source, leaves the installation
+/// exactly as the person left it, records it, and says so through
+/// `fork_edits` rather than a conflict row. From the next pass on the fork
+/// is an ordinary settled item: its source renders to what is on disk, so
+/// every later pass plans nothing and `apply` and the Library's check
+/// agree, with no decision left for either to report.
+///
+/// Writing the source is what makes that true rather than merely recorded,
+/// and it is not optional. `rendered_hash` is the anchor the whole engine
+/// reads as bytes an apply wrote — `wrote_here` here, `removal::edit_holds`
+/// for a sweep — so recording an edit under it while the source still held
+/// the bytes it replaced would tell every one of those guards the person's
+/// edit was ours to overwrite, and the first re-render (another tool
+/// ticked on, a rendering repaired) would take it. With the source
+/// holding it, every one of them is right again.
+///
+/// Only while the fork's own source stands still. A local source edited
+/// too is two changes to one item with nothing able to say which of them
+/// the person meant to keep, and that is the conflict `hold_local_edit`
+/// goes on to report — as is an edit the source cannot be made to hold.
+#[allow(clippy::too_many_arguments)]
+fn absorb_fork_edit(
+    env: &Env,
+    item: &Desired,
+    scope: &Scope,
+    lock: &Lock,
+    manifest: &crate::manifest::Manifest,
+    compared: &std::path::Path,
+    disk: &str,
+    sink: &mut PlanSink,
+) -> bool {
+    if !item.recorded_fork {
+        return false;
+    }
+    // The same record `hold_local_edit` requires: an entry whose own word
+    // covers the position these bytes were read at. Without one the bytes
+    // are not this installation's to take.
+    let Some(entry) = lock
+        .entries
+        .get(&item.key)
+        .filter(|entry| recorded_at(env, scope, entry, compared))
+    else {
+        return false;
+    };
+    if entry.source_hash != item.hash {
+        return false;
+    }
+    // One capture per package, and every rendering this absorb speaks for
+    // has to be the one it captured. Tools that share a skill's canonical
+    // tree reach this once per tool over the same bytes, and a second
+    // write of the one local slot would run its precondition against a
+    // slot the first already emptied. A rendering standing somewhere else
+    // holds bytes the source did not take, and recording those under
+    // `rendered_hash` would be the very claim this absorb exists to make
+    // true — so it is left to the edit hold, which keeps it and says so.
+    let package = (item.kind, item.name.clone());
+    let position = base_position(compared);
+    match sink.absorbed.get(&package) {
+        Some(captured) => {
+            if captured != &position {
+                return false;
+            }
+        }
+        None => {
+            let Ok(ops) = super::fork::absorb_ops(
+                env,
+                scope,
+                manifest,
+                item.kind,
+                &item.name,
+                item.harness,
+                compared,
+            ) else {
+                return false;
+            };
+            sink.ops.extend(ops);
+            sink.absorbed.insert(package, position);
+        }
+    }
+    sink.fork_edits.push(ForkEdit {
+        kind: item.kind,
+        name: item.name.clone(),
+        harness: item.harness,
+    });
+    sink.new_lock.entries.insert(
+        item.key.clone(),
+        LockEntry {
+            rendered_hash: Some(disk.to_owned()),
+            ..entry.clone()
+        },
+    );
     true
 }

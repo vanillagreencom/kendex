@@ -558,3 +558,230 @@ fn a_local_source_reached_through_a_link_refuses_the_fork() {
         "a refused fork must leave the edited install alone"
     );
 }
+
+/// A world with `gh` forked, applied, and then edited in place. Returned
+/// with the bytes the person left in the install.
+#[allow(clippy::unwrap_used)]
+fn edited_fork() -> (World, &'static str) {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    fs::write(
+        skill_file(&w),
+        "---\nname: gh\ndescription: mine\n---\nMy fork.\n",
+    )
+    .unwrap();
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
+
+    let edited = "---\nname: gh\ndescription: mine\n---\nMy fork, edited.\n";
+    fs::write(skill_file(&w), edited).unwrap();
+    (w, edited)
+}
+
+/// The fork's own source file, which is what its installations render from.
+fn fork_source(w: &World) -> PathBuf {
+    w.home.join("app/.kendex-local/skills/gh/SKILL.md")
+}
+
+/// A fork is already the person's own copy, so editing one settles nothing
+/// and decides nothing: the edit becomes the fork's content, and `apply`
+/// and the check the Library reads both come back clean and keep saying so.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_edit_to_a_fork_becomes_its_content_and_leaves_apply_and_check_agreeing() {
+    let (w, edited) = edited_fork();
+
+    let report = audit(&w.env, &w.scope).unwrap();
+    assert_eq!(report.drift, Vec::new(), "an edited fork is nothing to fix");
+    assert_eq!(
+        report
+            .fork_edits
+            .iter()
+            .map(|edit| (edit.kind, edit.name.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(ItemKind::Skill, "gh")],
+    );
+    // Until it is taken in, the page says so — a state, with nothing
+    // withheld and nothing to answer.
+    let gh = fork_row(&w);
+    assert!(gh.forked && gh.fork_edited, "{gh:?}");
+    assert!(!gh.blocked_by_local_edit && !gh.update_available, "{gh:?}");
+
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert_eq!(fs::read_to_string(skill_file(&w)).unwrap(), edited);
+    assert_eq!(
+        fs::read_to_string(fork_source(&w)).unwrap(),
+        edited,
+        "the fork renders from what the person wrote"
+    );
+
+    // And it stays settled: the pass after has nothing to plan, nothing to
+    // report, and nothing left pending to say on the page.
+    let report = audit(&w.env, &w.scope).unwrap();
+    assert_eq!(report.drift, Vec::new());
+    assert!(report.fork_edits.is_empty());
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert_eq!(fs::read_to_string(skill_file(&w)).unwrap(), edited);
+    let gh = fork_row(&w);
+    assert!(gh.forked && !gh.fork_edited, "{gh:?}");
+}
+
+/// What the Updates read says about `gh`.
+#[allow(clippy::unwrap_used)]
+fn fork_row(w: &World) -> kendex_core::package::updates::UpdateRow {
+    kendex_core::package::updates::updates(&w.env, &w.scope)
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|row| row.name == "gh")
+        .unwrap()
+}
+
+/// The absorbed edit is the fork's content everywhere after, not bytes the
+/// record merely tolerates where they stand: a second tool renders it, and
+/// a rendering taken off disk is put back as it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_absorbed_fork_edit_is_what_every_later_render_writes() {
+    let (w, edited) = edited_fork();
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
+
+    // Another tool ticked on renders the same package again.
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    let text = fs::read_to_string(&path).unwrap().replace(
+        "harnesses = [\"claude\"]",
+        "harnesses = [\"claude\", \"codex\"]",
+    );
+    fs::write(&path, text).unwrap();
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert_eq!(
+        fs::read_to_string(skill_file(&w)).unwrap(),
+        edited,
+        "a second tool renders the fork's content, never the copy it replaced"
+    );
+
+    // A rendering taken off disk is written again from the same content.
+    fs::remove_dir_all(w.home.join("app/.agents/skills/gh")).unwrap();
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert_eq!(fs::read_to_string(skill_file(&w)).unwrap(), edited);
+}
+
+/// The absorb is for the edit alone. A fork whose source moved too is two
+/// changes to one item, which stays the conflict it was — before an edit
+/// has been taken in and after.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_edited_on_both_sides_still_conflicts() {
+    let (w, _) = edited_fork();
+    let both_ways = |w: &World, install: &str, source: &str| {
+        fs::write(skill_file(w), install).unwrap();
+        fs::write(fork_source(w), source).unwrap();
+        let report = audit(&w.env, &w.scope).unwrap();
+        let row = report
+            .drift
+            .iter()
+            .find(|row| row.name == "gh")
+            .unwrap_or_else(|| panic!("no row: {:?}", report.drift));
+        assert_eq!(row.state, DriftState::Conflict);
+        assert!(report.fork_edits.is_empty(), "{:?}", report.fork_edits);
+        apply::execute(&w.env, &report.plan).unwrap();
+        assert_eq!(fs::read_to_string(skill_file(w)).unwrap(), install);
+    };
+
+    both_ways(
+        &w,
+        "---\nname: gh\ndescription: mine\n---\nInstall one.\n",
+        "---\nname: gh\ndescription: mine\n---\nSource one.\n",
+    );
+    // The same after an absorb has settled the fork once, which is the
+    // ordering that reaches it through a record already holding an edit.
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
+    both_ways(
+        &w,
+        "---\nname: gh\ndescription: mine\n---\nInstall two.\n",
+        "---\nname: gh\ndescription: mine\n---\nSource two.\n",
+    );
+}
+
+/// A sweep takes an absorbed fork's rendering, because a rendering is all
+/// it is by then: the content it was made from is in the fork's source,
+/// where the next declaration renders it from again.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_sweep_of_an_absorbed_fork_leaves_its_content_in_the_source() {
+    let (w, edited) = edited_fork();
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
+
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    let text = fs::read_to_string(&path)
+        .unwrap()
+        .replace("[skills.gh]\nsource = \"local\"\n", "");
+    fs::write(&path, text).unwrap();
+    let report = plan_apply(
+        &w.env,
+        &w.scope,
+        &PlanOptions {
+            remove_orphans: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert!(!skill_file(&w).exists());
+    assert_eq!(fs::read_to_string(fork_source(&w)).unwrap(), edited);
+}
+
+/// One fork rendering per tool, each edited its own way: the absorb speaks
+/// only for the rendering whose bytes it took into the source, and the
+/// other is held as the edit it is. Nothing is written over either way —
+/// recording bytes the source did not take is what would let the next
+/// render take them.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_edited_differently_in_two_tools_keeps_both_renderings() {
+    let w = agent_world(
+        "\"claude\", \"gemini\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "",
+    );
+    let claude = rendered(&w, HarnessId::Claude, "rev");
+    let gemini = rendered(&w, HarnessId::Gemini, "rev");
+    edit_body(&claude);
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    edit_line(&claude, "My body.", "What Claude's copy says.");
+    edit_line(&gemini, "My body.", "What Gemini's copy says.");
+    let report = audit(&w.env, &w.scope).unwrap();
+    assert!(
+        report
+            .drift
+            .iter()
+            .any(|row| row.cause == Some(DriftCause::LocalEdit)),
+        "the rendering the source did not take is still an edit to settle: {:?}",
+        report.drift
+    );
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert!(
+        fs::read_to_string(&claude)
+            .unwrap()
+            .contains("What Claude's copy says."),
+    );
+    assert!(
+        fs::read_to_string(&gemini)
+            .unwrap()
+            .contains("What Gemini's copy says."),
+    );
+}

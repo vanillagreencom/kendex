@@ -14,6 +14,9 @@ import type {
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import {
+  FORK_NOTICE_TITLE,
+  FORKED_BADGE_LABEL,
+  FORKED_EDITED_BADGE_LABEL,
   OPEN_IN_EDITOR_LABEL,
   OPEN_IN_FILE_BROWSER_LABEL,
   OPEN_IN_LABEL,
@@ -174,6 +177,7 @@ const updateRow = (scope: Project): UpdateRow => ({
   derived: false,
   requiredBy: [],
   forked: false,
+  forkEdited: false,
   mixed: false,
   removedUpstream: false,
   noPerPackageUpdate: null,
@@ -345,6 +349,56 @@ describe("what the package page says instead of Update", () => {
     useUpdatesStore.setState(standing);
     return openPage(VG, [VG], { [scopeKey(VG)]: PLAIN }, null, kind);
   };
+
+  /** The record read for a package the person forked. */
+  const forkedRecord = (): Awaited<
+    ReturnType<typeof commands.packageMeta>
+  > => ({
+    status: "ok",
+    data: {
+      source: "local",
+      repo: null,
+      repoUrl: null,
+      rev: null,
+      current: null,
+      installedAt: null,
+      harnesses: ["claude"],
+      enabled: true,
+      fork: { source: "cat", "forked-at": "2026-01-01T00:00:00Z" },
+      catalog: null,
+    },
+  });
+
+  // A fork is already the person's copy, so an edit to one is part of what
+  // the package is. The header says both words where the row reports the
+  // edit, and there is nothing on the page asking what to do about it.
+  it("names an edited fork as a state on the header", async () => {
+    const host = await openWith(
+      {
+        read: READ_LANDED,
+        rows: [{ ...updateRow(VG), forked: true, forkEdited: true }],
+      },
+      "skill",
+      { status: "ok", data: VERSIONS },
+      forkedRecord(),
+    );
+    expect(header(host)).toContain(FORKED_EDITED_BADGE_LABEL);
+    expect(host.textContent).not.toContain(FORK_NOTICE_TITLE);
+  });
+
+  it("says only Forked where the fork carries no edits", async () => {
+    const host = await openWith(
+      {
+        read: READ_LANDED,
+        rows: [{ ...updateRow(VG), forked: true }],
+      },
+      "skill",
+      { status: "ok", data: VERSIONS },
+      forkedRecord(),
+    );
+    expect(header(host)).toContain(FORKED_BADGE_LABEL);
+    expect(header(host)).not.toContain(FORKED_EDITED_BADGE_LABEL);
+  });
 
   it("says a check is running before the first read answers", async () => {
     const host = await openWith({ read: READ_PENDING });

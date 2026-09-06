@@ -11,11 +11,17 @@ pub(super) struct Eval<'a> {
     pub(super) ignored: Vec<IgnoredUpdate>,
     pub(super) scope_key: String,
     pub(super) edited: std::collections::BTreeMap<(ItemKind, String), Vec<HarnessId>>,
+    pub(super) fork_edited: std::collections::BTreeSet<(ItemKind, String)>,
     pub(super) manifest: &'a crate::manifest::Manifest,
     pub(super) lock: &'a crate::lock::Lock,
 }
 
 impl Eval<'_> {
+    /// Whether this fork's installed files carry the person's own edits.
+    fn fork_edited(&self, kind: ItemKind, name: &str) -> bool {
+        self.fork_edited.contains(&(kind, name.to_owned()))
+    }
+
     fn edited_harnesses(&self, kind: ItemKind, name: &str) -> Vec<HarnessId> {
         self.edited
             .get(&(kind, name.to_owned()))
@@ -119,6 +125,7 @@ impl Eval<'_> {
                         name,
                         &planned.decl,
                         false,
+                        false,
                     ));
                     at
                 });
@@ -163,9 +170,14 @@ impl Eval<'_> {
         match error {
             CoreError::ItemRevUnsupported { .. } => {
                 if forked {
-                    report
-                        .rows
-                        .push(unversioned_row(self.scope, kind, name, decl, true));
+                    report.rows.push(unversioned_row(
+                        self.scope,
+                        kind,
+                        name,
+                        decl,
+                        true,
+                        self.fork_edited(kind, name),
+                    ));
                 }
             }
             CoreError::SourcePending { .. } => report.warnings.push(warn(
@@ -212,6 +224,7 @@ impl Eval<'_> {
                     required_by: planned.required_by.clone(),
                     edited_harnesses,
                     forked,
+                    fork_edited: self.fork_edited(kind, name),
                     mixed: false,
                     removed_upstream: true,
                     repo_identity: crate::source_ref::repo_identity(&repo),
@@ -330,6 +343,7 @@ impl Eval<'_> {
             required_by: planned.required_by.clone(),
             edited_harnesses,
             forked,
+            fork_edited: self.fork_edited(kind, name),
             repo_identity: crate::source_ref::repo_identity(&package.repo),
             repo: package.repo.clone(),
             current,

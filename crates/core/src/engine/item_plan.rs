@@ -22,6 +22,13 @@ use crate::configedit::ConfigEdit;
 /// Everything one pass over the desired items accumulates.
 pub(super) struct PlanSink<'a> {
     pub(super) drift: &'a mut Vec<DriftRow>,
+    pub(super) fork_edits: &'a mut Vec<super::ForkEdit>,
+    /// For each package whose fork edit this pass took into the local
+    /// source, the one position those bytes were read at. Several
+    /// renderings of one package capture once, and a rendering holding
+    /// other bytes than the captured ones is not covered by that capture.
+    pub(super) absorbed:
+        &'a mut std::collections::BTreeMap<(crate::model::ItemKind, String), PathBuf>,
     pub(super) ops: &'a mut Vec<PlannedOp>,
     pub(super) config_edits: &'a mut ConfigEditPlan,
     pub(super) new_lock: &'a mut Lock,
@@ -47,6 +54,7 @@ pub(super) fn plan_item(
         config_edits,
         new_lock,
         written,
+        ..
     } = sink;
     let row = |state: DriftState, detail: String| DriftRow {
         kind: item.kind,
@@ -144,7 +152,14 @@ pub(super) fn plan_item(
     }
 
     let hash_moved = existing.is_some_and(|entry| entry.source_hash != item.hash);
-    if hash_moved && !dirty {
+    // Inputs that moved while the rendering did not are worth a row only
+    // where somebody else moved them. A fork's inputs are the person's own
+    // local source, and the pass that absorbs an edit into it leaves
+    // exactly this state — a source they just changed, rendering to bytes
+    // already on disk. Saying it would be the same never-clearing report
+    // the absorb exists to end: this pass records the new hash, and the
+    // one after has nothing to say either way.
+    if hash_moved && !dirty && !item.recorded_fork {
         drift.push(row(
             DriftState::Stale,
             "source or customization changed since install".into(),

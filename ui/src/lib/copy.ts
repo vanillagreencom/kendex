@@ -154,6 +154,9 @@ export const updatedToastLabel = (name: string): string => `Updated ${name}`;
 
 // Fork: what happens when the app finds files you edited by hand.
 export const FORKED_BADGE_LABEL = "Forked";
+/** A fork whose files you have since changed. One state, not a question:
+ *  the edit is the fork's content and nothing is held back for it. */
+export const FORKED_EDITED_BADGE_LABEL = "Forked · edited";
 export const FORK_NOTICE_TITLE = "You've changed this package's files";
 export const FORK_NOTICE_DETAIL =
   "Updates are paused so your edits stay. Keep it as your own copy, see what changed, or discard the edits and go back to the catalog's version.";

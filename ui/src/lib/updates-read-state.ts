@@ -172,3 +172,21 @@ export const packageRequiredBy = (
       one.name === place.name &&
       sameScope(one.scope, place.scope),
   )?.requiredBy ?? NO_PARENTS;
+
+/** Whether this place's fork carries the person's own edits. A state and
+ *  not a decision: the engine keeps those bytes and records them, so
+ *  nothing here is withheld and nothing is offered. False while no row
+ *  speaks for the place, which reads as the plain fork the header already
+ *  shows. */
+export const packageForkEdited = (
+  state: { rows: UpdateRow[] },
+  place: { kind: ItemKind; name: string; scope: Scope } | null,
+): boolean =>
+  state.rows.some(
+    (one) =>
+      place != null &&
+      one.kind === place.kind &&
+      one.name === place.name &&
+      sameScope(one.scope, place.scope) &&
+      one.forkEdited,
+  );

@@ -277,6 +277,30 @@ fn capture_ops(
     edited: &std::path::Path,
     captured: Capture,
 ) -> Result<Vec<PlannedOp>> {
+    let mut ops = into_local_source(env, scope, kind, name, captured)?;
+    ops.push(PlannedOp {
+        description: format!("clear the edited install of {name} for re-render").into(),
+        op: Op::Trash {
+            absent_is_done: false,
+            pre: Pre::HashIs {
+                hash: crate::hash::hash_tree(edited)?,
+            },
+            path: edited.to_path_buf(),
+        },
+    });
+    Ok(ops)
+}
+
+/// The half of [`capture_ops`] that moves bytes into the local source: a
+/// previous local copy goes to the trash (never overwritten in place) and
+/// the captured bytes land under the same name.
+fn into_local_source(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    captured: Capture,
+) -> Result<Vec<PlannedOp>> {
     let local_item = local_item(env, scope, kind, name);
     if let Some(escape) = crate::source::slot_escapes(env, scope, &local_item)? {
         return Err(escape);
@@ -310,17 +334,57 @@ fn capture_ops(
         description: format!("keep the edited {} {name} as a local fork", kind.name()).into(),
         op: capture,
     });
-    ops.push(PlannedOp {
-        description: format!("clear the edited install of {name} for re-render").into(),
-        op: Op::Trash {
-            absent_is_done: false,
-            pre: Pre::HashIs {
-                hash: crate::hash::hash_tree(edited)?,
-            },
-            path: edited.to_path_buf(),
-        },
-    });
     Ok(ops)
+}
+
+/// Take an edit made to a fork's own installation into the fork's source,
+/// leaving the installation exactly where it is. A fork is already the
+/// person's copy, so its edit is its new content rather than a divergence
+/// to settle: [`capture_ops`] clears the install because a fork's first
+/// capture has to re-render it, and here those bytes are already what the
+/// fork renders to.
+///
+/// Refuses everything `fork` refuses, and one thing more: catalog values
+/// that shaped the rendering from outside its own file would have to move
+/// into the manifest to survive, and a plan absorbing an edit writes no
+/// manifest. Each refusal returns the item to the edit hold, which is the
+/// conflict and the two named ways out it had before.
+pub(super) fn absorb_ops(
+    env: &Env,
+    scope: &Scope,
+    manifest: &manifest::Manifest,
+    kind: ItemKind,
+    name: &str,
+    harness: HarnessId,
+    edited: &std::path::Path,
+) -> Result<Vec<PlannedOp>> {
+    forkable_kind(kind, name)?;
+    let Some(decl) = manifest.declared(kind).get(name) else {
+        return Err(CoreError::NotDeclared {
+            kind,
+            name: name.to_owned(),
+        });
+    };
+    let captured = capture(
+        &ForkOf {
+            env,
+            scope,
+            manifest,
+            decl,
+            kind,
+            name,
+            installed_as: name,
+            harness,
+        },
+        edited,
+    )?;
+    if captured.carry.is_some() {
+        return Err(CoreError::ForkWidensAccess {
+            name: crate::names::shown(name),
+            problem: "its catalog settings would have to be written to kendex.toml first".into(),
+        });
+    }
+    into_local_source(env, scope, kind, name, captured.files)
 }
 
 /// The path an agent's rendering stands at: a switched-off installation

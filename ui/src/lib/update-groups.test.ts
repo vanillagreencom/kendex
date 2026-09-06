@@ -40,6 +40,7 @@ const row = (
   noPerPackageUpdate: null,
   mixed: false,
   forked: false,
+  forkEdited: false,
   ignored: false,
   ...extra,
 });
