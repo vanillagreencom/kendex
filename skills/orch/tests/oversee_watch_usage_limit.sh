@@ -153,8 +153,9 @@ watch() {
 
 # usage_table ROW... — `label|pass|screen|lane|now|zone|expect`. `pass` is
 # `new` (a fresh sandbox) or `cont` (the next pass over the row above: same
-# state, fresh capture); `now` the epoch the pane is read at or `-` for the
-# host clock; `zone` the runner's zone, UTC, LA (America/Los_Angeles), C (UTC
+# state, fresh capture); `now` the epoch the pane is read at, or `-` for the
+# host clock on a new row and the row above's clock on a cont row; `zone`
+# the runner's zone, UTC, LA (America/Los_Angeles), C (UTC
 # under a byte-oriented locale) or `-` for the host's.
 CASE_SEQ=0
 usage_table() {
@@ -196,51 +197,52 @@ echo "=== oversee-watch usage limits: is the account speaking now ==="
 # reset OFFER, which a looser USAGE_LIMIT_RE would turn into an event.
 usage_table \
   "a limit banner under a live harness is the event on ONE pass, the pane tail following|new|banner_idle|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~usage+limit=true" \
-  "the codex banner fires too: one regex covers both harnesses|new|codex_banner|codex|-|-|first=EVENT+usage-limit+gh-2" \
-  "a limit banner above a stale prompt is usage-limit, never lane-asking|new|banner_over_question|claude|$RESET_NOW|UTC|first=$AT_0950 out~EVENT+lane-asking=false" \
-  "a lane wrapped in a shell still gets its banner seen|new|banner:You've hit your weekly limit \\xc2\\xb7 resets Sunday|fish|-|-|first=EVENT+usage-limit+gh-2" \
-  "a banner the lane has since worked past is scrollback|new|stale_banner|claude|-|-|first=$HEARTBEAT out~EVENT+usage-limit=false" \
-  "an unsent draft in the composer is not a turn either|new|banner_draft|claude|$RESET_NOW|UTC|first=$AT_0950" \
-  "a banner below the last user turn is the event, the Claude signature deciding the boundary|new|banner_after_turn|claude|$RESET_NOW|UTC|first=$AT_0950" \
-  "an unrecognized last input line never swallows the screen|new|unrecognized_composer|claude|$RESET_NOW|UTC|first=$AT_0950" \
-  "transcript lines between the banner and the composer are not markers|new|realistic|claude|$RESET_NOW|UTC|first=$AT_0950" \
-  "...and under a byte-oriented locale, where a marker class would degrade|cont|realistic|claude|-|C|first=$AT_0950" \
-  "a stale banner never masks the live question on a dialog screen|new|stale_over_question|claude|-|-|first=EVENT+lane-asking+gh-2 out~EVENT+usage-limit=false" \
-  "a banner below the turn on a dialog screen is still the event, and outranks the question|new|live_over_question|claude|$RESET_NOW|UTC|first=$AT_0950" \
-  "a codex banner below the last turn is reported, the composer notwithstanding|new|codex_live|codex|-|-|first=EVENT+usage-limit+gh-2" \
-  "a codex banner the lane has worked past is not the event: the composer never resurrects it|new|codex_stale|codex|-|-|first=$HEARTBEAT out~EVENT+usage-limit=false" \
-  "a codex dialog row is live input, so the banner above the turn stays scrollback|new|codex_dialog_stale|codex|-|-|first=EVENT+lane-asking+gh-2 out~EVENT+usage-limit=false" \
-  "a banner below the turn on a codex dialog screen is still the event|new|codex_dialog_live|codex|-|-|first=EVENT+usage-limit+gh-2" \
-  "a codex startup screen is no event: an offered reset is credit to spend|new|codex_idle|codex|-|-|first=$HEARTBEAT out~EVENT+usage-limit=false" \
-  "control: a lane with no banner reaches the heartbeat|new|healthy|claude|-|-|first=$HEARTBEAT out~EVENT+usage-limit=false"
+  "the codex banner fires too: one regex covers both harnesses|new|codex_banner|codex|-|-|rc=0 first=EVENT+usage-limit+gh-2" \
+  "a limit banner above a stale prompt is usage-limit, never lane-asking|new|banner_over_question|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~EVENT+lane-asking=false" \
+  "a lane wrapped in a shell still gets its banner seen|new|banner:You've hit your weekly limit \\xc2\\xb7 resets Sunday|fish|-|-|rc=0 first=EVENT+usage-limit+gh-2" \
+  "a banner the lane has since worked past is scrollback|new|stale_banner|claude|-|-|rc=0 first=$HEARTBEAT out~EVENT+usage-limit=false" \
+  "an unsent draft in the composer is not a turn either|new|banner_draft|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950" \
+  "a banner below the last user turn is the event, the Claude signature deciding the boundary|new|banner_after_turn|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950" \
+  "an unrecognized last input line never swallows the screen|new|unrecognized_composer|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950" \
+  "transcript lines between the banner and the composer are not markers|new|realistic|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950" \
+  "...and under a byte-oriented locale, where a marker class would degrade|cont|realistic|claude|-|C|rc=0 first=$AT_0950" \
+  "a stale banner never masks the live question on a dialog screen|new|stale_over_question|claude|-|-|rc=0 first=EVENT+lane-asking+gh-2 out~EVENT+usage-limit=false" \
+  "a banner below the turn on a dialog screen is still the event, and outranks the question|new|live_over_question|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950" \
+  "a codex banner below the last turn is reported, the composer notwithstanding|new|codex_live|codex|-|-|rc=0 first=EVENT+usage-limit+gh-2" \
+  "a codex banner the lane has worked past is not the event: the composer never resurrects it|new|codex_stale|codex|-|-|rc=0 first=$HEARTBEAT out~EVENT+usage-limit=false" \
+  "a codex dialog row is live input, so the banner above the turn stays scrollback|new|codex_dialog_stale|codex|-|-|rc=0 first=EVENT+lane-asking+gh-2 out~EVENT+usage-limit=false" \
+  "a banner below the turn on a codex dialog screen is still the event|new|codex_dialog_live|codex|-|-|rc=0 first=EVENT+usage-limit+gh-2" \
+  "a codex startup screen is no event: an offered reset is credit to spend|new|codex_idle|codex|-|-|rc=0 first=$HEARTBEAT out~EVENT+usage-limit=false" \
+  "control: a lane with no banner reaches the heartbeat|new|healthy|claude|-|-|rc=0 first=$HEARTBEAT out~EVENT+usage-limit=false"
 
 echo "=== the account is the actionable part ==="
 # A live claim maps the window to its config dir; anything matching on the
 # window NAME alone would answer with another server's or another pane's
 # claim. A claim whose pane is gone is pruned on read, not reported.
 usage_table \
-  "the event names the config dir the lane was claimed on, never a same-named window elsewhere|new|banner:You've hit your weekly limit|claim_live|-|-|first=EVENT+usage-limit+gh-2+/home/me/.eclaude out~otherclaude=false out~thirdclaude=false" \
-  "a claim whose pane is gone names no account and is pruned|new|banner:You've hit your weekly limit|claim_dead|-|-|first=EVENT+usage-limit+gh-2 claims=0"
+  "the event names the config dir the lane was claimed on, never a same-named window elsewhere|new|banner:You've hit your weekly limit|claim_live|-|-|rc=0 first=EVENT+usage-limit+gh-2+/home/me/.eclaude out~otherclaude=false out~thirdclaude=false" \
+  "a claim whose pane is gone names no account and is pruned|new|banner:You've hit your weekly limit|claim_dead|-|-|rc=0 first=EVENT+usage-limit+gh-2 claims=0"
 
 echo "=== the reset the banner states ==="
 # SURFACE 1: the reset parsed out of each banner form the grammar accepts,
-# each a fresh sighting because each names a different wall; then the forms
+# each a fresh sighting because each names a different wall (the
+# zone-qualified form is the row that opens the observed-reset sequence
+# below); then the forms
 # the grammar deliberately excludes and a zone the host cannot resolve, which
 # keep the plain event with no time on it and are never evidence the wall
 # has lifted.
 usage_table \
-  "a zone-qualified clock resolves in the zone it names|new|banner:$BANNER|claude|$RESET_NOW|UTC|first=$AT_0950" \
-  "a one-component zone name is still a zone|new|banner:You've hit your usage limit \\xc2\\xb7 resets 9:50pm (UTC)|claude|$RESET_NOW|LA|first=EVENT+usage-limit+gh-2+resets=2026-09-02T21:50:00Z" \
-  "a clock with no meridiem is a 24-hour one|new|banner:You've hit your session limit \\xc2\\xb7 resets 21:00|claude|$RESET_NOW|UTC|first=EVENT+usage-limit+gh-2+resets=2026-09-02T21:00:00Z" \
-  "12pm is noon, not midnight and not hour 24|new|banner:You've hit your usage limit \\xc2\\xb7 resets 12pm|claude|$RESET_NOW|UTC|first=EVENT+usage-limit+gh-2+resets=2026-09-03T12:00:00Z" \
-  "a dated banner is read as a date|new|banner:You've hit your weekly limit \\xc2\\xb7 resets Sep 6, 4pm|claude|$RESET_NOW|UTC|first=EVENT+usage-limit+gh-2+resets=2026-09-06T16:00:00Z" \
-  "the year the dated form carries wins|new|banner:You've hit your weekly limit \\xc2\\xb7 resets Oct 7, 2027, 11:32am|claude|$RESET_NOW|UTC|first=EVENT+usage-limit+gh-2+resets=2027-10-07T11:32:00Z" \
-  "a weekday and a clock name that weekday|new|banner:You've hit your weekly limit \\xc2\\xb7 resets Thursday 4am|claude|$RESET_NOW|UTC|first=EVENT+usage-limit+gh-2+resets=2026-09-03T04:00:00Z" \
-  "codex's trigger and ordinal day read the same|new|banner:You've hit your usage limit. Try again at Sep 6th, 2026 4:30 PM|claude|$RESET_NOW|UTC|first=EVENT+usage-limit+gh-2+resets=2026-09-06T16:30:00Z" \
-  "a duration names no instant, and no time is invented|new|banner:You've hit your fast limit \\xc2\\xb7 resets in 5m|claude|$RESET_NOW|UTC|first=EVENT+usage-limit+gh-2 out~resets%e=false" \
-  "a bare number is not a clock|new|banner:You've hit your usage limit \\xc2\\xb7 resets 2026-09-03|claude|$RESET_NOW|UTC|first=EVENT+usage-limit+gh-2 out~resets%e=false" \
-  "a weekday alone guesses no midnight|new|banner:You've hit your weekly limit \\xc2\\xb7 resets Thursday|claude|$RESET_NOW|UTC|first=EVENT+usage-limit+gh-2 out~resets%e=false" \
-  "a zone the host cannot resolve drops the time|new|banner:You've hit your usage limit \\xc2\\xb7 resets 9:50am (Bogus/Zone)|claude|$RESET_NOW|UTC|first=EVENT+usage-limit+gh-2 out~resets%e=false"
+  "a one-component zone name is still a zone|new|banner:You've hit your usage limit \\xc2\\xb7 resets 9:50pm (UTC)|claude|$RESET_NOW|LA|rc=0 first=EVENT+usage-limit+gh-2+resets=2026-09-02T21:50:00Z" \
+  "a clock with no meridiem is a 24-hour one|new|banner:You've hit your session limit \\xc2\\xb7 resets 21:00|claude|$RESET_NOW|UTC|rc=0 first=EVENT+usage-limit+gh-2+resets=2026-09-02T21:00:00Z" \
+  "12pm is noon, not midnight and not hour 24|new|banner:You've hit your usage limit \\xc2\\xb7 resets 12pm|claude|$RESET_NOW|UTC|rc=0 first=EVENT+usage-limit+gh-2+resets=2026-09-03T12:00:00Z" \
+  "a dated banner is read as a date|new|banner:You've hit your weekly limit \\xc2\\xb7 resets Sep 6, 4pm|claude|$RESET_NOW|UTC|rc=0 first=EVENT+usage-limit+gh-2+resets=2026-09-06T16:00:00Z" \
+  "the year the dated form carries wins|new|banner:You've hit your weekly limit \\xc2\\xb7 resets Oct 7, 2027, 11:32am|claude|$RESET_NOW|UTC|rc=0 first=EVENT+usage-limit+gh-2+resets=2027-10-07T11:32:00Z" \
+  "a weekday and a clock name that weekday|new|banner:You've hit your weekly limit \\xc2\\xb7 resets Thursday 4am|claude|$RESET_NOW|UTC|rc=0 first=EVENT+usage-limit+gh-2+resets=2026-09-03T04:00:00Z" \
+  "codex's trigger and ordinal day read the same|new|banner:You've hit your usage limit. Try again at Sep 6th, 2026 4:30 PM|claude|$RESET_NOW|UTC|rc=0 first=EVENT+usage-limit+gh-2+resets=2026-09-06T16:30:00Z" \
+  "a duration names no instant, and no time is invented|new|banner:You've hit your fast limit \\xc2\\xb7 resets in 5m|claude|$RESET_NOW|UTC|rc=0 first=EVENT+usage-limit+gh-2 out~resets%e=false" \
+  "a bare number is not a clock|new|banner:You've hit your usage limit \\xc2\\xb7 resets 2026-09-03|claude|$RESET_NOW|UTC|rc=0 first=EVENT+usage-limit+gh-2 out~resets%e=false" \
+  "a weekday alone guesses no midnight|new|banner:You've hit your weekly limit \\xc2\\xb7 resets Thursday|claude|$RESET_NOW|UTC|rc=0 first=EVENT+usage-limit+gh-2 out~resets%e=false" \
+  "a zone the host cannot resolve drops the time|new|banner:You've hit your usage limit \\xc2\\xb7 resets 9:50am (Bogus/Zone)|claude|$RESET_NOW|UTC|rc=0 first=EVENT+usage-limit+gh-2 out~resets%e=false"
 
 # SURFACE 2: a clause naming no day is usage-limit-passed only once this watch
 # has seen that wall standing (the case the issue was filed on); the same
@@ -250,13 +252,13 @@ usage_table \
 # is-the-account-speaking for both consumers, so a turn in flight neither
 # emits nor stamps.
 usage_table \
-  "the first pass observes the wall and carries the reset it names|new|banner:$BANNER|claude|$RESET_NOW|UTC|first=$AT_0950" \
-  "the reset the first pass observed, now behind us, is its own event|cont|banner:$BANNER|claude|1788369300|UTC|first=EVENT+usage-limit-passed+gh-2+resets=2026-09-02T16:50:00Z" \
-  "a wall this watch never saw standing is parked, not bumped|new|banner:$BANNER|claude|1788369300|UTC|first=EVENT+usage-limit+gh-2+resets=2026-09-03T16:50:00Z" \
-  "a dated reset already behind us is passed without an observation|new|banner:You've hit your weekly limit \\xc2\\xb7 resets Aug 30, 4pm|claude|$RESET_NOW|UTC|first=EVENT+usage-limit-passed+gh-2+resets=2026-08-30T16:00:00Z" \
-  "and a dated reset still ahead is a wall standing|cont|banner:You've hit your weekly limit \\xc2\\xb7 resets Sep 6, 4pm|claude|-|UTC|first=EVENT+usage-limit+gh-2+resets=2026-09-06T16:00:00Z" \
-  "a lane with a turn in flight is left alone|new|working|claude|$RESET_NOW|UTC|first=$HEARTBEAT" \
-  "the working pass left no sighting, so this one is the first|cont|banner_1700|claude|1788372000|UTC|first=EVENT+usage-limit+gh-2+resets=2026-09-03T17:00:00Z"
+  "the first pass observes the wall and carries the reset it names|new|banner:$BANNER|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950" \
+  "the reset the first pass observed, now behind us, is its own event|cont|banner:$BANNER|claude|1788369300|UTC|rc=0 first=EVENT+usage-limit-passed+gh-2+resets=2026-09-02T16:50:00Z" \
+  "a wall this watch never saw standing is parked, not bumped|new|banner:$BANNER|claude|1788369300|UTC|rc=0 first=EVENT+usage-limit+gh-2+resets=2026-09-03T16:50:00Z" \
+  "a dated reset already behind us is passed without an observation|new|banner:You've hit your weekly limit \\xc2\\xb7 resets Aug 30, 4pm|claude|$RESET_NOW|UTC|rc=0 first=EVENT+usage-limit-passed+gh-2+resets=2026-08-30T16:00:00Z" \
+  "and a dated reset still ahead is a wall standing|cont|banner:You've hit your weekly limit \\xc2\\xb7 resets Sep 6, 4pm|claude|-|UTC|rc=0 first=EVENT+usage-limit+gh-2+resets=2026-09-06T16:00:00Z" \
+  "a lane with a turn in flight is left alone|new|working|claude|$RESET_NOW|UTC|rc=0 first=$HEARTBEAT" \
+  "the working pass left no sighting, so this one is the first|cont|banner_1700|claude|1788372000|UTC|rc=0 first=EVENT+usage-limit+gh-2+resets=2026-09-03T17:00:00Z"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
