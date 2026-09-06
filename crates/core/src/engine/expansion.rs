@@ -318,12 +318,30 @@ impl Catalogs<'_> {
         // failed — a symlinked control file, bytes that are not text, a file
         // past the cap — answered with nothing, and dropping that error would
         // make the silence look like a catalog that offers nothing.
+        //
+        // This is the narrower of the two readings, on purpose: what a set
+        // holds is read per declaration below, which reports its own
+        // failures. `origin::origin` is the wider one, and a failure shape
+        // added here has to be added there too or a sweep keeps answering
+        // that a catalog reads.
         let leaf = crate::source::repo_leaf(&ready.provenance);
         let opened = SealedSource::open(&ready.root)
             .and_then(|sealed| Ok((source_config(&sealed, leaf)?, sealed)));
-        let Ok((config, sealed)) = opened else {
-            state.unreadable_catalogs.insert(source.to_owned());
-            return None;
+        let (config, sealed) = match opened {
+            Ok(opened) => opened,
+            // The removal pass reads the mark and stays quiet, because this
+            // is the one place holding the error: the callers below get a
+            // `None` that says only that nothing was derived, and a plan
+            // that keeps a broken catalog's files while saying nothing is
+            // the silence this whole read exists to end.
+            Err(problem) => {
+                state.unreadable_catalogs.insert(source.to_owned());
+                state.notes.push(format!(
+                    "the catalog '{source}' could not be read — {}",
+                    super::origin::said(problem)
+                ));
+                return None;
+            }
         };
         if config.hides_content() {
             state.unreadable_catalogs.insert(source.to_owned());

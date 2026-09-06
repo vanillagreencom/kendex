@@ -22,10 +22,11 @@ enum Origin {
     /// It answered with everything it offers.
     Readable,
     /// It did not, and the expansion is what found that: the pass records
-    /// the source and not why, so this sweep has nothing to say about it
-    /// beyond keeping what it installed. A set-only declaration whose
-    /// catalog will not open is that shape, and it is silent — no note
-    /// this branch writes and none the expansion writes either.
+    /// the source and not why, because whichever of its two reads marked it
+    /// has already put the reason on the plan — the open that failed says
+    /// so where it holds the error, and a catalog that opened and hid
+    /// content is reported by its own findings. Saying it again here would
+    /// say it twice.
     Marked,
     /// It did not, and this is the clause that follows the catalog's name
     /// where the sweep says what it kept.
@@ -86,7 +87,7 @@ impl Origins {
 /// reader's refusal opens with those same words, and `kendex refresh` reads
 /// that phrase as one declared item failing to install — which is not what
 /// an unreadable origin is, since it is reached without a declaration.
-fn said(problem: crate::error::CoreError) -> String {
+pub(super) fn said(problem: crate::error::CoreError) -> String {
     match problem {
         crate::error::CoreError::SourceEscape { path, reason } => {
             format!("{} — {reason}", path.display())

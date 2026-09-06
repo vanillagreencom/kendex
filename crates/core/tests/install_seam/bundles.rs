@@ -309,10 +309,27 @@ fn an_unreadable_set_keeps_its_member_and_what_that_member_requires() {
 
     fs::remove_file(catalog.join("kendex.toml")).unwrap();
     std::os::unix::fs::symlink(f.home.join("away.toml"), catalog.join("kendex.toml")).unwrap();
-    sweep(&f);
+    let report = sweep(&f);
     assert!(
         member.exists(),
         "a catalog that would not open lost its member"
+    );
+    // The open is the only thing holding this error: the set declaration
+    // reaches a catalog that gives back nothing, and every caller below sees
+    // a plan that derived nothing rather than one that could not read. A
+    // retention nothing accounts for is what the removal pass then keeps.
+    assert_eq!(
+        report
+            .notes
+            .iter()
+            .filter(
+                |note| note.starts_with("the catalog 'cat' could not be read")
+                    && note.contains("kendex.toml")
+            )
+            .count(),
+        1,
+        "a catalog that would not open kept files with nothing said: {:?}",
+        report.notes
     );
 }
 
@@ -459,20 +476,17 @@ fn a_sweep_with_no_declaration_left_reads_the_catalog_itself() {
 
 /// A catalog that cannot be resolved at all keeps what it installed, and the
 /// plan says so. Every note about a source's state is written per
-/// declaration, and both steps here have none — the subscription is gone,
-/// then the directory is — so without this the person sees `kendex apply`
-/// do nothing while a stale package sits there with no line about it.
+/// declaration, and the first step here has none — the subscription is gone
+/// — so without this the person sees `kendex apply` do nothing while a stale
+/// package sits there with no line about it. The second step is the count:
+/// one member is held by a declaration that could not be processed and is
+/// reported against that declaration, so the retention must not add it to
+/// what it says is riding on the catalog.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_sweep_with_no_subscription_left_says_what_it_kept() {
     let f = world();
-    let catalog = f.home.join("catalog");
-    skill(&catalog, "dev");
-    write(
-        &catalog,
-        "kendex.toml",
-        "[bundles.starter]\nskills = [\"dev\"]\n",
-    );
+    let catalog = starter_catalog(&f, "catalog");
     manifest_with(
         &f,
         &[("cat", &catalog)],
@@ -480,35 +494,46 @@ fn a_sweep_with_no_subscription_left_says_what_it_kept() {
     );
     apply_now(&f);
     let member = f.project.join(".claude/skills/dev");
-    assert!(member.exists(), "the member installs first");
+    let other = f.project.join(".claude/skills/docs");
+    assert!(member.exists() && other.exists(), "both install first");
 
     manifest_with(&f, &[], "");
     let report = sweep(&f);
-    assert!(member.exists(), "an unsubscribed catalog lost its member");
+    assert!(
+        member.exists() && other.exists(),
+        "an unsubscribed catalog lost its members"
+    );
     assert_eq!(
         report
             .notes
             .iter()
             .filter(|note| note.starts_with("the catalog 'cat' ")
-                && note.ends_with("; the installation it brought in was kept"))
+                && note.ends_with("; the 2 installations it brought in were kept"))
             .count(),
         1,
-        "the plan says which catalog it kept a file for: {:?}",
+        "the plan says which catalog it kept files for, and how many: {:?}",
         report.notes
     );
 
-    manifest_with(&f, &[("cat", &catalog)], "");
+    manifest_with(&f, &[("cat", &catalog)], "[skills.dev]\nsource = \"cat\"\n");
     fs::remove_dir_all(&catalog).unwrap();
     let report = sweep(&f);
-    assert!(member.exists(), "a catalog that is gone lost its member");
+    assert!(
+        member.exists(),
+        "a catalog that is gone lost the named member"
+    );
+    assert!(other.exists(), "it lost the member only the set brought in");
     assert_eq!(
         report
             .notes
             .iter()
-            .filter(|note| note.starts_with("the catalog 'cat' is not on this machine"))
+            .filter(
+                |note| note.starts_with("the catalog 'cat' is not on this machine")
+                    && note.ends_with("; the installation it brought in was kept")
+            )
             .count(),
         1,
-        "the plan says the catalog is not here: {:?}",
+        "the plan says the catalog is gone, and counts only what it held: {:?}",
         report.notes
     );
 }

@@ -205,7 +205,11 @@ pub(super) fn orphans(
         // written down. With that catalog offline, "nothing requires it" is not
         // something this pass knows — so it keeps what it cannot account for.
         // Being named is not that judgement, and it still goes.
-        let unreadable_origin = derived_at_all(entry)
+        // `unreachable_source` has already decided to keep this one and is
+        // reported per declaration, so asking here would only count it into
+        // a retention it is not part of.
+        let unreadable_origin = !unreachable_source
+            && derived_at_all(entry)
             && !named
             && !origins.readable(env, scope, manifest, state, &entry.source);
         if unreachable_source || unreadable_origin {
