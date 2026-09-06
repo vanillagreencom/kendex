@@ -8,7 +8,7 @@ control_replace scripts/commands/issues.sh 1 \
 
 # Ask the name query without the project filter, as it shipped. The fixture then
 # answers from every project, foreign milestone first.
-control_expect "issues update sets the project's own milestone"
+control_expect "issues update succeeds without --project on an issue that has one"
 control_replace scripts/lib/common.sh 1 \
     "    local query='query GetMilestone(\$name: String!, \$projectId: ID!) { projectMilestones(filter: {name: {eq: \$name}, project: {id: {eq: \$projectId}}}) { nodes { id } } }'" \
     "    local query='query GetMilestone(\$name: String!) { projectMilestones(filter: {name: {eq: \$name}}) { nodes { id } } }'"
@@ -52,3 +52,18 @@ control_expect "no upload is sent before the update refusal"
 control_replace scripts/commands/issues.sh 1 \
     '    require_milestone_project "$milestone" "$milestone_scope" || return 1' \
     '    true'
+
+# Scope the update to the issue's own project even when --project names another,
+# so setting a milestone while moving an issue resolves in the project it is
+# leaving.
+control_expect "--project wins over the project the issue is already in"
+control_replace scripts/commands/issues.sh 1 \
+    '        milestone_id=$(resolve_milestone_id "$milestone" "${project_id:-$issue_project_id}")' \
+    '        milestone_id=$(resolve_milestone_id "$milestone" "$issue_project_id")'
+
+# Stop treating a UUID as already resolved, so the project requirement reaches
+# a reference that names one milestone on its own.
+control_expect "a milestone UUID needs no project"
+control_replace scripts/lib/common.sh 2 \
+    '    if milestone_ref_is_uuid "$milestone_ref"; then' \
+    '    if false; then'

@@ -64,13 +64,15 @@ case "$query" in
   case "$query" in *"project: {id:"*) scoped=yes ;; esac
   if [ "$scoped" = no ]; then
     printf '%s' '{"data":{"projectMilestones":{"nodes":[{"id":"alpha-elsewhere"},{"id":"alpha-here"}]}}}___HTTP_CODE___200'
-  elif [ "$project" != "live-uuid" ]; then
-    printf '%s' '{"data":{"projectMilestones":{"nodes":[]}}}___HTTP_CODE___200'
   else
-    case "$name" in
-    Alpha) printf '%s' '{"data":{"projectMilestones":{"nodes":[{"id":"alpha-here"}]}}}___HTTP_CODE___200' ;;
-    Twin) printf '%s' '{"data":{"projectMilestones":{"nodes":[{"id":"twin-one"},{"id":"twin-two"}]}}}___HTTP_CODE___200' ;;
-    Boom) printf '%s' '{"errors":[{"message":"Rate limited"}]}___HTTP_CODE___200' ;;
+    case "$project/$name" in
+    # The project --project names.
+    live-uuid/Alpha) printf '%s' '{"data":{"projectMilestones":{"nodes":[{"id":"alpha-here"}]}}}___HTTP_CODE___200' ;;
+    # The project ISS-1 is already in. Its Alpha is a different milestone, so
+    # a case that passes --project proves which of the two won.
+    old-uuid/Alpha) printf '%s' '{"data":{"projectMilestones":{"nodes":[{"id":"alpha-old"}]}}}___HTTP_CODE___200' ;;
+    live-uuid/Twin) printf '%s' '{"data":{"projectMilestones":{"nodes":[{"id":"twin-one"},{"id":"twin-two"}]}}}___HTTP_CODE___200' ;;
+    live-uuid/Boom) printf '%s' '{"errors":[{"message":"Rate limited"}]}___HTTP_CODE___200' ;;
     *) printf '%s' '{"data":{"projectMilestones":{"nodes":[]}}}___HTTP_CODE___200' ;;
     esac
   fi
@@ -81,7 +83,7 @@ case "$query" in
   if [ "$(jq -r '.variables.id // empty' <<<"$payload")" = "ISS-2" ]; then
     printf '%s' '{"data":{"issue":{"id":"iss2-uuid","identifier":"ISS-2","team":{"id":"team-uuid"},"project":null}}}___HTTP_CODE___200'
   else
-    printf '%s' '{"data":{"issue":{"id":"iss-uuid","identifier":"ISS-1","team":{"id":"team-uuid"},"project":{"id":"live-uuid","name":"Dup"}}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"issue":{"id":"iss-uuid","identifier":"ISS-1","team":{"id":"team-uuid"},"project":{"id":"old-uuid","name":"Old"}}}}___HTTP_CODE___200'
   fi
   ;;
 *"fileUpload"*)
@@ -128,7 +130,7 @@ assert "issues create files the issue under the project's own milestone" \
 : >"$CURL_LOG"
 run_status update_rc update_with_milestone Alpha
 assert_eq "issues update succeeds with a project-scoped milestone name" "$update_rc" 0
-assert "issues update sets the project's own milestone" \
+assert "--project wins over the project the issue is already in" \
   jq -s -e 'any(.[]; (.query | contains("issueUpdate")) and .variables.input.projectMilestoneId == "alpha-here")' \
   "$CURL_LOG" >/dev/null
 
@@ -167,8 +169,19 @@ assert_file_lacks "no milestone lookup is sent without a project to scope it" \
 run_status own_project_rc run_linear issues update ISS-1 --milestone Alpha
 assert_eq "issues update succeeds without --project on an issue that has one" "$own_project_rc" 0
 assert "issues update scopes the name to the issue's own project" \
-  jq -s -e 'any(.[]; (.query | contains("issueUpdate")) and .variables.input.projectMilestoneId == "alpha-here")' \
+  jq -s -e 'any(.[]; (.query | contains("issueUpdate")) and .variables.input.projectMilestoneId == "alpha-old")' \
   "$CURL_LOG" >/dev/null
+
+# Surface: a milestone UUID resolves with no project at all. It names one
+# milestone already, and refusing it would take `--milestone <uuid>` with it.
+: >"$CURL_LOG"
+run_status uuid_rc run_linear issues update ISS-2 \
+  --milestone 11111111-2222-3333-4444-555555555555
+assert_eq "a milestone UUID needs no project" "$uuid_rc" 0
+assert "the UUID reaches the mutation as given" \
+  jq -s -e 'any(.[]; (.query | contains("issueUpdate")) and .variables.input.projectMilestoneId == "11111111-2222-3333-4444-555555555555")' \
+  "$CURL_LOG" >/dev/null
+assert_file_lacks "a milestone UUID is not looked up by name" "$CURL_LOG" "projectMilestones"
 
 # Surface: the refusal is decided from the arguments, so it lands before
 # --attach uploads. A refusal after an upload strands the asset in Linear

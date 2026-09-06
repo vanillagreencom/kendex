@@ -798,9 +798,12 @@ resolve_label_id() {
 # A milestone reference that is already a UUID, and so needs no project to
 # resolve it in. One statement of the rule: the pre-upload guard below and
 # resolve_milestone_id must agree on it, or a reference one calls a name the
-# other calls resolved.
+# other calls resolved. LINEAR_UUID_PATTERN is that grammar everywhere else,
+# `--cycle` included, and it accepts uppercase hex; a second, lowercase-only
+# spelling here would refuse an uppercase UUID for want of a project the
+# option's contract says it does not need.
 milestone_ref_is_uuid() {
-    [[ "$1" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+    [[ "$1" =~ $LINEAR_UUID_PATTERN ]]
 }
 
 # Refuse a milestone NAME that has no project to resolve it in.
