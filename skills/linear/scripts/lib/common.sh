@@ -795,10 +795,17 @@ resolve_label_id() {
     echo "$label_id"
 }
 
-# Resolve milestone name or UUID to UUID
-# Usage: resolve_milestone_id "Alpha" or resolve_milestone_id "uuid-here"
+# Resolve milestone name or UUID to UUID, within one project
+# Usage: resolve_milestone_id "Alpha" "project-uuid" or resolve_milestone_id "uuid-here"
+#
+# A milestone name is unique to its project and nothing more: "Alpha" exists in
+# as many projects as reuse it, and an unscoped name query returns all of them
+# in no fixed order, so nodes[0] filed the issue under whichever project the API
+# listed first. The project the caller already resolved is the scope, and a name
+# with no project to scope it is refused rather than guessed at.
 resolve_milestone_id() {
     local milestone_ref="$1"
+    local project_id="${2:-}"
 
     # Check if it's already a UUID
     if [[ "$milestone_ref" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
@@ -806,18 +813,40 @@ resolve_milestone_id() {
         return 0
     fi
 
-    # Look up by name
-    local query='query GetMilestone($name: String!) { projectMilestones(filter: {name: {eq: $name}}) { nodes { id } } }'
-    local vars result
-    vars=$(jq -cn --arg name "$milestone_ref" '{name: $name}')
-    result=$(graphql_query "$query" "$vars")
-    local milestone_id
-    milestone_id=$(echo "$result" | jq -r '.projectMilestones.nodes[0].id // empty')
+    if [ -z "$project_id" ]; then
+        jq -cn --arg ref "$milestone_ref" \
+            '{error: ("Cannot resolve milestone " + ($ref | tojson) + " without a project: the same milestone name exists in other projects. Pass --project, or pass the milestone UUID.")}' >&2
+        return 1
+    fi
 
-    if [ -z "$milestone_id" ]; then
+    # Look up by name within the project.
+    local query='query GetMilestone($name: String!, $projectId: ID!) { projectMilestones(filter: {name: {eq: $name}, project: {id: {eq: $projectId}}}) { nodes { id } } }'
+    local vars result
+    vars=$(jq -cn --arg name "$milestone_ref" --arg projectId "$project_id" '{name: $name, projectId: $projectId}')
+    # A FAILED query is an API failure (rate limit, outage); "Milestone not
+    # found" is only true of a lookup that succeeded and matched nothing.
+    if ! result=$(graphql_query "$query" "$vars"); then
+        jq -cn --arg ref "$milestone_ref" \
+            '{error: ("Could not resolve milestone " + ($ref | tojson) + ": Linear API request failed (see previous error)")}' >&2
+        return 1
+    fi
+
+    # The whole match set, joined: a UUID holds no comma, so a comma in the
+    # join is exactly a second match, and the same string names the candidates
+    # in the refusal.
+    local milestone_ids
+    milestone_ids=$(echo "$result" | jq -r '[(.projectMilestones.nodes // [])[].id] | join(", ")')
+
+    if [ -z "$milestone_ids" ]; then
         jq -cn --arg ref "$milestone_ref" '{error: ("Milestone not found: " + $ref)}' >&2
         return 1
     fi
 
-    echo "$milestone_id"
+    if [[ "$milestone_ids" == *,* ]]; then
+        jq -cn --arg ref "$milestone_ref" --arg matches "$milestone_ids" \
+            '{error: ("Milestone name is ambiguous within the project: " + ($ref | tojson) + " matches " + $matches + "; pass a milestone UUID to target one)")}' >&2
+        return 1
+    fi
+
+    echo "$milestone_ids"
 }

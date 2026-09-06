@@ -86,7 +86,7 @@ Create Options:
   --estimate <1-5>      Effort estimate (points)
   --assignee <name|me>  Assignee
   --parent <id>         Parent issue ID (creates sub-issue)
-  --milestone <name|uuid> Project milestone (name or UUID)
+  --milestone <name|uuid> Project milestone (a name needs --project; a UUID does not)
   --cycle <id>          Cycle (sprint) ID
   --attach <path>       Upload a file to Linear and attach it (repeatable).
                         Images (png/jpg/jpeg/gif/webp/svg) embed into the
@@ -129,7 +129,7 @@ Update Options:
   --assignee <name|me>  Change assignee
   --parent <id>         Set parent issue (convert to sub-issue)
   --remove-parent       Remove parent (convert to top-level issue)
-  --milestone <name|uuid> Set project milestone (name or UUID)
+  --milestone <name|uuid> Set project milestone (a name needs --project; a UUID does not)
   --cycle <id>          Set cycle (sprint) ID
   --clear-cycle         Remove cycle assignment
   --attach <path>       Upload a file to Linear and attach it (repeatable).
@@ -1287,9 +1287,10 @@ create_issue() {
         fi
     fi
 
-    # Handle project (auto-resolves name or UUID)
+    # Handle project (auto-resolves name or UUID). The id outlives this block:
+    # milestone resolution below is scoped to it.
+    local project_id=""
     if [ -n "$project" ]; then
-        local project_id
         project_id=$(resolve_project_id "$project")
         if [ -z "$project_id" ]; then
             return 1
@@ -1341,10 +1342,11 @@ create_issue() {
         input_parts+=("\"parentId\": \"$requested_parent_id\"")
     fi
 
-    # Handle milestone (auto-resolves name or UUID, fail fast on miss)
+    # Handle milestone (auto-resolves name or UUID, fail fast on miss). A name
+    # is resolved inside the project resolved above; without one it is refused.
     if [ -n "$milestone" ]; then
         local milestone_id
-        milestone_id=$(resolve_milestone_id "$milestone")
+        milestone_id=$(resolve_milestone_id "$milestone" "$project_id")
         if [ -z "$milestone_id" ]; then
             return 1
         fi
@@ -1807,9 +1809,10 @@ update_issue() {
         input_parts+=("\"labelIds\": $resolved_label_json")
     fi
 
-    # Handle project (auto-resolves name or UUID)
+    # Handle project (auto-resolves name or UUID). The id outlives this block:
+    # milestone resolution below is scoped to it.
+    local project_id=""
     if [ -n "$project" ]; then
-        local project_id
         project_id=$(resolve_project_id "$project")
         if [ -z "$project_id" ]; then
             return 1
@@ -1853,10 +1856,11 @@ update_issue() {
         input_parts+=("\"parentId\": \"$parent_id\"")
     fi
 
-    # Handle milestone (auto-resolves name or UUID, fail fast on miss)
+    # Handle milestone (auto-resolves name or UUID, fail fast on miss). A name
+    # is resolved inside the project resolved above; without one it is refused.
     if [ -n "$milestone" ]; then
         local milestone_id
-        milestone_id=$(resolve_milestone_id "$milestone")
+        milestone_id=$(resolve_milestone_id "$milestone" "$project_id")
         if [ -z "$milestone_id" ]; then
             return 1
         fi
