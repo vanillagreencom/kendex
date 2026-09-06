@@ -63,7 +63,7 @@ function renderRegisteredGuard(project: string, listener: string, name: string, 
 	mkdirSync(join(script, ".."), { recursive: true });
 	writeFileSync(script, `#!/usr/bin/env bash\nset -euo pipefail\ncat >> ${JSON.stringify(log)}\nexit 0\n`);
 	chmodSync(script, 0o755);
-	registerRendered(join(project, ".pi"), listener, undefined, `bash "$(git rev-parse --show-toplevel)/.pi/kendex/hooks/${name}.sh"`);
+	registerRendered(join(project, ".pi"), listener, undefined, projectCommand(`.pi/kendex/hooks/${name}.sh`));
 }
 
 /** The session-start dispatch is fire-and-forget, like the drift report beside
@@ -422,6 +422,8 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 	 * never held for it: the run is started and the words arrive when they do. */
 	test("a registered SessionStart hook runs, and its matcher reads Pi's reason in Claude Code's words", async () => {
 		const project = initCleanRustRepo("pi-hooks-session-");
+		// The native drift report shares this listener and is not the subject.
+		writePiConfig(project, { sessionDriftCheck: false });
 		const log = join(project, "session.log");
 		try {
 			const carrier = installCarrier();
@@ -593,7 +595,7 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 			// Registered as kendex registers a rendered guard, with no render
 			// behind it; then one that outlives the budget; then one that
 			// exits 1.
-			registerRendered(root, TOOL_RESULT_LISTENER, undefined, 'bash "$(git rev-parse --show-toplevel)/.pi/kendex/hooks/audit.sh"');
+			registerRendered(root, TOOL_RESULT_LISTENER, undefined, projectCommand(".pi/kendex/hooks/audit.sh"));
 			registerRendered(root, TOOL_RESULT_LISTENER, undefined, "sleep 30");
 			registerRendered(root, TOOL_RESULT_LISTENER, undefined, customCommand(log, "audit: it fell over", 1));
 
