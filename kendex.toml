@@ -1,5 +1,5 @@
 # The kendex catalog: what this repository offers to every kendex install.
-# Items live in agents/, skills/, hooks/ and pi-extensions/; the tables
+# Items live in agents/, skills/, hooks/, commands/ and pi-extensions/; the tables
 # below say what the catalog states about itself and how its agents and
 # skills belong together.
 
@@ -10,7 +10,7 @@ is_source_catalog = true
 
 [marketplace]
 name = "kendex"
-description = "The official kendex catalog: agents, skills, hooks and Pi extensions for AI coding harnesses"
+description = "The official kendex catalog: agents, skills, hooks, commands and Pi extensions for AI coding harnesses"
 author = "vanillagreen"
 license = "MIT"
 homepage = "https://kendex.ai"

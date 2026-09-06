@@ -14,6 +14,7 @@
 
 mod adopting;
 mod cloning;
+mod code_scrub;
 mod coexistence;
 mod disclosing;
 mod guarding;
