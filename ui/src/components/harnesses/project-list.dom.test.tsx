@@ -1,14 +1,27 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AuditView, DriftRow, ScanResult, Scope } from "@/bindings";
+import type {
+  AuditView,
+  DriftRow,
+  ObservedItem,
+  ScanResult,
+  Scope,
+} from "@/bindings";
 import { commands } from "@/bindings";
+import { InstalledView } from "@/components/library/installed-view";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { unmanagedHereLabel } from "@/lib/copy";
+import { kindLabel } from "@/lib/labels";
 import { READ_LANDED } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
+import { useEditorStore } from "@/stores/editor";
+import { useLibraryViewStore } from "@/stores/library-view";
+import { useNavStore } from "@/stores/nav";
+import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
+import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
 import { ProjectList } from "./project-list";
 
@@ -132,5 +145,114 @@ describe("a project added while the list is on screen", () => {
     expect(vi.mocked(commands.auditAll).mock.calls.length).toBeGreaterThan(
       beforeRegistering,
     );
+  });
+});
+
+const installed = (overrides: Partial<ObservedItem>): ObservedItem => ({
+  kind: "skill",
+  name: "deploy",
+  harness: "claude",
+  scope: { scope: "global" },
+  path: "/h/.claude/skills/deploy",
+  fileState: { state: "dir" },
+  enabled: true,
+  origin: null,
+  description: null,
+  tags: [],
+  modifiedAt: null,
+  vendor: null,
+  ...overrides,
+});
+
+// Personal holds two skills over three installations: one of them is applied
+// to two harnesses. Counting installations puts 3 on the card's badge over a
+// table of 2 rows, which is what these cases are here to catch. The project's
+// own skill is at another place and belongs to neither number.
+const machine: ScanResult = {
+  ...emptyScan,
+  items: [
+    installed({}),
+    installed({ harness: "codex", path: "/h/.codex/skills/deploy" }),
+    installed({ name: "lint", path: "/h/.claude/skills/lint" }),
+    installed({
+      name: "release",
+      scope: ACME,
+      path: "/work/acme/.claude/skills/release",
+    }),
+  ],
+};
+
+// Read off the badge's own wording rather than a second copy of it here, so
+// a relabelled kind fails as a missing badge rather than passing vacuously.
+const SKILL_BADGE = new RegExp(
+  `^(\\d+) (${kindLabel("skill", 1)}|${kindLabel("skill", 2)})$`,
+);
+
+/** The skills badge on the card whose name button reads `name`. */
+function skillBadge(host: HTMLElement, name: string): HTMLButtonElement {
+  const card = [...host.querySelectorAll<HTMLElement>('[data-slot="card"]')]
+    .filter((el) => el.textContent?.startsWith(name))
+    .at(0);
+  if (!card) throw new Error(`no card for ${name}`);
+  const badge = [...card.querySelectorAll<HTMLButtonElement>("button")].find(
+    (b) => SKILL_BADGE.test(b.textContent ?? ""),
+  );
+  if (!badge) throw new Error(`no skills badge on the ${name} card`);
+  return badge;
+}
+
+const badgeCount = (host: HTMLElement, name: string): number =>
+  Number(SKILL_BADGE.exec(skillBadge(host, name).textContent ?? "")?.[1]);
+
+/** The rows the Library actually renders for the view the click handed it. */
+const destinationRows = (): number =>
+  mount(<InstalledView />).querySelectorAll("tbody tr").length;
+
+// A badge is a promise about the page behind it. The Library shows one row
+// per package however many harnesses or places carry it, so a badge counting
+// installations lands on a table shorter than the number just clicked.
+describe("a place card's kind badge", () => {
+  beforeEach(() => {
+    vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useUpdatesStore.setState({ rows: [], read: READ_LANDED });
+    useScanStore.setState({ scanning: false, result: machine, error: null });
+    useSettingsStore.setState({
+      settings: { projects: ["/work/acme"] } as never,
+    });
+    useNavStore.setState({
+      page: "projects",
+      libraryFilter: null,
+      libraryScope: "all",
+      search: "",
+    });
+    useLibraryViewStore.setState({
+      kind: "any",
+      harness: "any",
+      tag: "any",
+      from: "any",
+    });
+  });
+
+  it("shows the row count of the view its click opens", () => {
+    const host = mount(<ProjectList />);
+    const badge = badgeCount(host, "Personal");
+
+    act(() => skillBadge(host, "Personal").click());
+    expect(useNavStore.getState().libraryFilter).toEqual({
+      scope: "global",
+      kind: "skill",
+    });
+    expect(badge).toBe(destinationRows());
+  });
+
+  // The must-fail control: three installations of two packages sit behind
+  // Personal, so 3 is the pre-fix number this case rejects. Without it the
+  // equality above would hold on any pair that moved together. The project
+  // card pins that a place counts only what is at it.
+  it("counts packages rather than the installations behind them", () => {
+    const host = mount(<ProjectList />);
+    expect(badgeCount(host, "Personal")).toBe(2);
+    expect(badgeCount(host, "acme")).toBe(1);
   });
 });

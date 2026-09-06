@@ -7,7 +7,7 @@ import { ProjectCard } from "@/components/harnesses/project-card";
 import { ScanFolderDialog } from "@/components/harnesses/scan-folder-dialog";
 import { Button } from "@/components/ui/button";
 import { unmanagedCount } from "@/lib/audit-counts";
-import { countByKind } from "@/lib/derive";
+import { type ItemPlace, installedCountByKind } from "@/lib/derive";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { sameScope } from "@/lib/scope";
 import { cn } from "@/lib/utils";
@@ -44,9 +44,11 @@ export function ProjectList() {
   const [adding, setAdding] = useState(false);
   const [scanning, setScanning] = useState(false);
 
-  const globalItems =
-    result?.items.filter((i) => i.scope.scope === "global") ?? [];
+  const items = result?.items ?? [];
   const projects = settings?.projects ?? [];
+  // A card counts one place and links to that place. Both read the same
+  // object, so the badge cannot name a narrowing its click does not make.
+  const personal: ItemPlace = { scope: "global" };
 
   return (
     <div className={PAGE_BODY}>
@@ -64,10 +66,10 @@ export function ProjectList() {
         <ProjectCard
           name="Personal"
           subtitle="Works in every project on this computer"
-          counts={[...countByKind(globalItems).entries()]}
+          counts={[...installedCountByKind(items, personal).entries()]}
           emptyLabel="Nothing from kendex yet."
-          onOpen={() => goToLibrary({ scope: "global" })}
-          onKindClick={(kind) => goToLibrary({ kind, scope: "global" })}
+          onOpen={() => goToLibrary(personal)}
+          onKindClick={(kind) => goToLibrary({ ...personal, kind })}
           unmanaged={notManaged(GLOBAL)}
           onUnmanaged={() => goToUnmanaged(GLOBAL)}
         />
@@ -78,29 +80,24 @@ export function ProjectList() {
           </p>
         ) : (
           projects.map((root) => {
-            const items =
-              result?.items.filter(
-                (i) => i.scope.scope === "project" && i.scope.root === root,
-              ) ?? [];
             const name = root.split("/").pop() ?? root;
             const scope: Scope = { scope: "project", root };
+            const place: ItemPlace = { scope: { project: root } };
             return (
               <ProjectCard
                 key={root}
                 name={name}
                 subtitle={root}
                 path={root}
-                counts={[...countByKind(items).entries()]}
+                counts={[...installedCountByKind(items, place).entries()]}
                 emptyLabel="Nothing from kendex yet."
                 badge={
                   result?.missingProjects.includes(root)
                     ? "Folder not found"
                     : undefined
                 }
-                onOpen={() => goToLibrary({ scope: { project: root } })}
-                onKindClick={(kind) =>
-                  goToLibrary({ kind, scope: { project: root } })
-                }
+                onOpen={() => goToLibrary(place)}
+                onKindClick={(kind) => goToLibrary({ ...place, kind })}
                 unmanaged={notManaged(scope)}
                 onUnmanaged={() => goToUnmanaged(scope)}
                 action={

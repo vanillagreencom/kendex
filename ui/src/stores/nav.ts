@@ -135,10 +135,13 @@ export const useNavStore = create<NavState>((set) => ({
   // Always a handoff, even an empty one: a link that names no filter is
   // asking for everything, and the Library has to be able to tell that
   // apart from arriving with no link at all, where the stored view stands.
-  goToLibrary: ({ harness, kind, scope } = {}) =>
+  // Carried whole rather than field by field: a narrowing the filter gains
+  // is one a badge already counts by, and a link that dropped it would open
+  // a wider page than the number that was clicked.
+  goToLibrary: (filter = {}) =>
     set((state) => ({
       page: "library",
-      libraryFilter: { harness, kind, scope },
+      libraryFilter: { ...filter },
       history: pushHistory(state, "library"),
       future: [],
     })),

@@ -1,7 +1,7 @@
 import type { HarnessId } from "@/bindings";
 import { HarnessRow } from "@/components/harnesses/harness-row";
 import { Button } from "@/components/ui/button";
-import { countByKind } from "@/lib/derive";
+import { installedCountByKind } from "@/lib/derive";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
@@ -59,12 +59,15 @@ export function HarnessList() {
         <div className="flex flex-col">
           {rows.map((id) => {
             const info = result?.harnesses.find((h) => h.harness === id);
-            const items = result?.items.filter((i) => i.harness === id) ?? [];
-            const counts = countByKind(items);
+            // The row's badges count what this harness holds, and its links
+            // ask the Library for the same place — one object, so neither
+            // can be narrowed without the other.
+            const place = { harness: id };
+            const counts = installedCountByKind(result?.items ?? [], place);
             return (
               <HarnessRow
                 key={id}
-                id={id}
+                place={place}
                 detectedRoot={info?.root ?? null}
                 version={info?.version ?? null}
                 counts={[...counts.entries()]}
