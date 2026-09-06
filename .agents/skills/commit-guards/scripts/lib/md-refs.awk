@@ -178,7 +178,10 @@ function emit_ids(s,   i, p, q, n, before, after, tail, section) {
     while (substr(s, q + n, 1) ~ /^[0-9]$/) n++
     before = (i > 1) ? substr(s, i - 1, 1) : ""
     after = substr(s, q + n, 1)
-    if (n >= id_width && before !~ /^[A-Za-z0-9]$/ && after !~ /^[A-Za-z0-9]$/) {
+    # In plain text a `:` or `/` before the ID glues it to a URL or a path
+    # segment, which is prose there, as it is for a path citation.
+    if (n >= id_width && before !~ /^[A-Za-z0-9]$/ && after !~ /^[A-Za-z0-9]$/ \
+        && !(grammar == "text" && (before == ":" || before == "/"))) {
       tail = substr(s, q + n)
       section = (index(tail, SECTION_SEP) == 1) ? rtrim(substr(tail, length(SECTION_SEP) + 1)) : ""
       if (grammar != "text" || section != "") \

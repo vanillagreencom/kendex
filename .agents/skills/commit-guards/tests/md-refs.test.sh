@@ -278,6 +278,8 @@ rm -f "$R/blob.h"
 
 src_cite "a URL is prose, not a citation into this repository" 0 scripts/link.sh \
   $'#!/usr/bin/env bash\n# See https://example.com/guide.md \302\247 Gone for more.\ntrue\n'
+src_cite "a decision ID inside a URL is prose too" 0 scripts/link.sh \
+  $'#!/usr/bin/env bash\n# See https://example.com/D404 \302\247 Scope for more.\ntrue\n'
 src_cite "control: the same path without the scheme is judged" 1 scripts/link.sh \
   $'#!/usr/bin/env bash\n# See AGENTS.md \302\247 Gone for more.\ntrue\n' \
   2 "AGENTS.md has no heading at the start of 'Gone"
@@ -285,11 +287,17 @@ src_cite "control: the same path without the scheme is judged" 1 scripts/link.sh
 # the block comment below never closes, and the file holds a section sign.
 put src/broken.c $'/* AGENTS.md \302\247 Gone\nint main(void) { return 0; }\n'
 run_refs --all
-git -C "$R" rm -q --cached src/broken.c
-rm -f "$R/src/broken.c"
 [ "$RC" -eq 2 ] && case "$OUT" in *"scan incomplete"*"1 carrier(s) could not be read"*) true ;; *) false ;; esac \
   && ok "a carrier the extractor cannot read is exit 2, never a clean verdict" \
   || bad "unreadable carrier fails closed" "rc=$RC out=$OUT"
+# The same carrier as the only measurable file: the empty-set answer must not
+# reach the exit 0 ahead of the incomplete scan.
+OUT="$(cd "$R" && COMMIT_GUARDS_MD_REFS_PATHS='no/such/*.md' "$MDR" --all 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"scan incomplete"*) true ;; *) false ;; esac \
+  && ok "an unreadable carrier beats the empty-set fast path" \
+  || bad "empty set hides an unread carrier" "rc=$RC out=$OUT"
+git -C "$R" rm -q --cached src/broken.c
+rm -f "$R/src/broken.c"
 
 # The walk's own skip branches, each over a path that carries a live citation
 # so a silent drop would read as a pass.

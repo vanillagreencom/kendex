@@ -274,6 +274,14 @@ SKIPPED=$((SKIPPED + GG_WALK_SKIPPED))
 UNMEASURED=""
 [ "$SKIPPED" -eq 0 ] || UNMEASURED="; $SKIPPED matched path(s) not measured"
 
+# Before the empty-set answer below: a carrier this lane could not read is
+# what the verdict cannot speak for, and a run whose only source file was
+# that carrier would otherwise call itself measurable-free and exit 0.
+if [ "$SRC_EXTRACT_ERRORS" -gt 0 ]; then
+  echo "md-refs: scan incomplete — $SRC_EXTRACT_ERRORS carrier(s) could not be read$UNMEASURED"
+  exit 2
+fi
+
 if [ "$GG_MD_COUNT" -eq 0 ] && [ "$SRC_COUNT" -eq 0 ]; then
   if [ "$SKIPPED" -eq 0 ]; then
     echo "md-refs: OK — no $SCOPE_DESC to judge (COMMIT_GUARDS_MD_REFS_PATHS $MD_GLOBS_SHOWN; COMMIT_GUARDS_MD_REFS_SOURCE_PATHS $SRC_GLOBS_SHOWN)"
@@ -328,10 +336,6 @@ else
 fi
 
 SETS="$GG_MD_COUNT $SCOPE_DESC and $SRC_COUNT source file(s)"
-if [ "$SRC_EXTRACT_ERRORS" -gt 0 ]; then
-  echo "md-refs: scan incomplete — $SRC_EXTRACT_ERRORS carrier(s) could not be read; $violations dead reference(s) among $judged in $SETS; $DEC_NOTE$UNMEASURED"
-  exit 2
-fi
 if [ "$violations" -gt 0 ]; then
   echo "md-refs: $violations dead reference(s) among $judged in $SETS; $DEC_NOTE$UNMEASURED"
   exit 1
