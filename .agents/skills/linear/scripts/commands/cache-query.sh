@@ -35,7 +35,7 @@ Issues:
 Projects:
   projects list [--state X] [--first]
   projects get <ID-or-name>
-  projects list-dependencies <ID>
+  projects list-dependencies <ID-or-name>
 
 Comments:
   comments list <issue-ID>
@@ -792,34 +792,20 @@ cache_get_project() {
         return 1
     fi
 
-    # Linear keeps a canceled project under the name a live one reuses
-    # and `.[] | select(.id == $ref or .name == $ref)` emitted one
-    # top-level object PER match: `cache projects get "<name>" | jq -r '.id'`
-    # read two ids at rc 0 and the safe formatter shaped each object.
-    # The selection below is the cache-side spelling of lib/common.sh
-    # resolve_project_id's rule, so both spellings of `projects get` answer
-    # alike: an id match wins outright whatever its state, a canceled match
-    # otherwise loses to every live one, and an all-canceled match set is
-    # refused. One pass, so the refusal's list is the selection's complement
-    # rather than a second predicate that can drift from it.
+    # `.[] | select(.id == $ref or .name == $ref)` emitted one top-level object
+    # PER match: `cache projects get "<name>" | jq -r '.id'` read two ids at
+    # rc 0 and the safe formatter shaped each object. PROJECT_PICK_JQ
+    # (lib/formatters.sh) is the rule that picks one, shared with the live
+    # spelling so the two cannot answer differently.
     local matches project
     matches=$(cache_jq_file "$CACHE_DIR/projects.json" "[]" --arg ref "$project_ref" \
-        '[.[] | select(.id == $ref or .name == $ref)]') || return 1
-    project=$(echo "$matches" | jq -c --arg ref "$project_ref" '
-        [.[] | select(.id == $ref)] as $by_id
-        | if ($by_id | length) > 0 then $by_id[0]
-          else [.[] | select((.state // "" | ascii_downcase) != "canceled")][0] // empty
-          end')
+        "$PROJECT_PICK_JQ"'project_matches($ref)') || return 1
+    project=$(echo "$matches" | jq -c --arg ref "$project_ref" \
+        "$PROJECT_PICK_JQ"'live_project_pick($ref)')
 
     if [[ -z "$project" ]]; then
-        # Naming each rejected UUID and its state is what lets a deliberate
-        # read of a canceled project pass one.
         echo "$matches" | jq -c --arg ref "$project_ref" \
-            'if length == 0 then {error: ("Project not found in cache: " + $ref)}
-             else {error: ("Project not found in cache: " + $ref
-                 + " (no live project has this name; matches: "
-                 + (map(.id + " (" + (.state // "") + ")") | join(", "))
-                 + "; pass a project UUID to target one)")} end' >&2
+            "$PROJECT_PICK_JQ"'live_project_refusal($ref; "Project not found in cache")' >&2
         return 1
     fi
 
@@ -834,24 +820,43 @@ cache_get_project() {
 }
 
 cache_list_dependencies() {
-    local project_id="$1"
+    local project_ref="$1"
 
-    if [[ -z "$project_id" ]]; then
-        echo '{"error": "Project ID required"}' >&2
+    if [[ -z "$project_ref" ]]; then
+        echo '{"error": "Project ID or name required"}' >&2
         return 1
     fi
 
-    # No fallback object here: an unreadable cache must not answer "this
-    # project has no dependencies", which is what a well-formed empty
-    # relations payload tells every caller asking whether it is blocked.
-    cache_jq_file "$CACHE_DIR/projects.json" "" --arg id "$project_id" '.[] | select(.id == $id or .name == $id) | {
-        project: {
-            id: .id,
-            name: .name,
-            relations: .relations,
-            inverseRelations: .inverseRelations
-        }
-    }'
+    # This selected every match and emitted one top-level object per match, so
+    # a name the cache holds twice printed the dead project's relations beside
+    # the live one's at rc 0, in cache-file order, with nothing saying a second
+    # object followed. PROJECT_PICK_JQ (lib/formatters.sh) is the same rule the
+    # two `projects get` spellings read.
+    local matches project
+    matches=$(cache_jq_file "$CACHE_DIR/projects.json" "[]" --arg ref "$project_ref" \
+        "$PROJECT_PICK_JQ"'project_matches($ref)') || return 1
+    project=$(echo "$matches" | jq --arg ref "$project_ref" \
+        "$PROJECT_PICK_JQ"'live_project_pick($ref) | {
+            project: {
+                id: .id,
+                name: .name,
+                relations: .relations,
+                inverseRelations: .inverseRelations
+            }
+        }')
+
+    # Nothing selected now refuses rather than printing nothing at rc 0: a
+    # silent empty is what tells a caller asking whether a project is blocked
+    # that it has no dependencies. Both callers of this command
+    # (project-management's roadmap-create and tpm-roadmap-plan workflows)
+    # pass a project id and read the relations to confirm they exist.
+    if [[ -z "$project" ]]; then
+        echo "$matches" | jq -c --arg ref "$project_ref" \
+            "$PROJECT_PICK_JQ"'live_project_refusal($ref; "Project not found in cache")' >&2
+        return 1
+    fi
+
+    printf '%s\n' "$project"
 }
 
 # =============================================================================

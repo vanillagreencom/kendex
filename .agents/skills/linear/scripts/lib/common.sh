@@ -645,9 +645,8 @@ linear_guard_write_action() {
 # Linear keeps a canceled project under the name a live one reuses, and the
 # name query returns both in no fixed order, so nodes[0] handed writes the
 # canceled one at random and `issues create --project` reported success on an
-# issue nobody could find. A canceled match loses to every live one;
-# an all-canceled match set is refused, naming its UUIDs so a deliberate read
-# can pass one.
+# issue nobody could find. PROJECT_PICK_JQ (lib/formatters.sh) states the rule
+# that settles it and every other spelling of the lookup.
 resolve_project_id() {
     local project_ref="$1"
 
@@ -672,37 +671,24 @@ resolve_project_id() {
         return 1
     fi
 
-    # One pass, so the rejected list is the selection's complement rather than
-    # a second predicate that can drift from it: line 1 is the chosen id, line 2
-    # the rejected ones with the state that rejected each. A widened predicate
-    # keeps the message true without being edited.
-    local selection project_id rejected
-    selection=$(echo "$result" | jq -r '
-        (.projects.nodes // []) as $all
-        | ($all | map(select((.state // "" | ascii_downcase) != "canceled"))) as $live
-        | ($live[0].id // ""),
-          ($all - $live | map(.id + " (" + .state + ")") | join(", "))')
-    # Command substitution strips the trailing newline, so with nothing
-    # rejected — one live project, the everyday case — the second read hits EOF
-    # and returns 1. Under this file's errexit that status ends the function
-    # before it can print the id it just resolved. Every call site in the skill
-    # spells the call var=$(resolve_project_id ...), where bash does not apply
-    # errexit, so the abort shows up only in a bare call or in a command
-    # substitution under shopt -s inherit_errexit, which sync.sh sets.
-    { IFS= read -r project_id; IFS= read -r rejected; } <<<"$selection" || true
+    # PROJECT_PICK_JQ (lib/formatters.sh) is the rule; this is one of its
+    # callers. The name query cannot return an id match, so only the
+    # canceled-loses-to-live arm ever fires here, and passing $ref anyway is
+    # what keeps this spelling the same one the cache reads.
+    local project_id
+    project_id=$(echo "$result" | jq -r --arg ref "$project_ref" \
+        "$PROJECT_PICK_JQ"'(.projects.nodes // []) | (live_project_pick($ref) | .id) // ""')
 
     if [ -n "$project_id" ]; then
         echo "$project_id"
         return 0
     fi
 
-    if [ -n "$rejected" ]; then
-        jq -nc --arg name "$project_ref" --arg matches "$rejected" \
-            '{error: ("Project not found: " + $name + " (no live project has this name; matches: " + $matches + "; pass a project UUID to target one)")}' >&2
-        return 1
-    fi
-
-    jq -nc --arg message "Project not found: $project_ref" '{error: $message}' >&2
+    # Naming each rejected UUID and its state is what lets a deliberate read of
+    # a canceled project pass one; with nothing matched at all the same builder
+    # emits the plain not-found line.
+    echo "$result" | jq -c --arg ref "$project_ref" \
+        "$PROJECT_PICK_JQ"'(.projects.nodes // []) | live_project_refusal($ref; "Project not found")' >&2
     return 1
 }
 

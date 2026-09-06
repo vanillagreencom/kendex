@@ -20,6 +20,39 @@ def issue_blocked_by_open_ids($relations): issue_blocked_by_open_relations($rela
 def issue_blocked_by_rows($relations; $with_relation_id): issue_blocked_by_relations($relations) | map(issue_blocker_row + if $with_relation_id then {relation_id: .id} else {} end);
 def issue_blocked_by_open_rows($relations; $with_relation_id): issue_blocked_by_open_relations($relations) | map(issue_blocker_row + if $with_relation_id then {relation_id: .id} else {} end);
 '
+
+# One rule decides which project a name means, for every spelling of the
+# lookup: an id match wins outright whatever its state, a canceled match
+# otherwise loses to every live one, and an all-canceled match set is refused
+# naming each UUID and its state so a deliberate read can pass one. Open-coded
+# once per lookup, it was corrected one site at a time and the site nobody
+# reached still shipped the defect. Callers prepend this the way they prepend
+# ISSUE_RELATION_JQ; `git grep -n live_project_pick` enumerates them.
+#
+# Input is the array of matches. `live_project_refusal` takes the subject line
+# because the live and cache lookups name different stores; everything the two
+# messages share — the parenthetical, and which states count as live — lives
+# here, so neither can drift from the other.
+readonly PROJECT_PICK_JQ='
+def project_is_live: (.state // "" | ascii_downcase) != "canceled";
+def project_matches($ref): [.[] | select(.id == $ref or .name == $ref)];
+# null, not empty, so live_project_rejected can subtract it: an empty
+# selection would take the whole binding with it and leave no rejected list
+# to name in the refusal.
+def live_project_choice($ref): (first(.[] | select(.id == $ref)) // first(.[] | select(project_is_live))) // null;
+def live_project_pick($ref): live_project_choice($ref) | select(. != null);
+# The complement of the selection rather than a second predicate, so widening
+# what counts as live keeps the refusal true without being edited.
+def live_project_rejected($ref): live_project_choice($ref) as $picked | [.[] | select(. != $picked)];
+def live_project_refusal($ref; $subject):
+    live_project_rejected($ref) as $rejected
+    | {error: ($subject + ": " + $ref
+        + (if ($rejected | length) == 0 then ""
+           else " (no live project has this name; matches: "
+               + ($rejected | map(.id + " (" + (.state // "") + ")") | join(", "))
+               + "; pass a project UUID to target one)"
+           end))};
+'
 # Format issues list to safe structure
 # Input: Raw GraphQL response with .issues.nodes[]
 # Output: Flat array with all nullable fields defaulted

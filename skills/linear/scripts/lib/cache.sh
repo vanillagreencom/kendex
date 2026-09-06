@@ -248,12 +248,6 @@ cache_jq_file() {
     printf '%s\n' "$out"
 }
 
-cache_get_issue() {
-    local id="$1"
-    cache_jq_file "$CACHE_DIR/issues.json" "" --arg id "$id" \
-        '[.[] | select(.id == $id or .identifier == $id)] | first // empty'
-}
-
 cache_get_children_recursive() {
     local parent="$1" max_depth="${2:-3}"
     # Returns flat array with depth field. Emits both `id` and `identifier`
@@ -289,12 +283,6 @@ cache_get_children_recursive() {
             end;
         descendants($p; 0)
     '
-}
-
-cache_get_project() {
-    local id="$1"
-    cache_jq_file "$CACHE_DIR/projects.json" "" --arg id "$id" \
-        '[.[] | select(.id == $id or .name == $id)] | first // empty'
 }
 
 cache_get_comments() {
