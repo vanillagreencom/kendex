@@ -32,13 +32,22 @@ assert_eq() { # LABEL EXPECT ACTUAL
 }
 
 # The repository a row built, and the checkout it commits from when that is
-# not the repository itself.
+# not the repository itself. The installer resolves paths physically and
+# the fixtures spell them as given, so both spellings of each root are
+# aliased, the physical one first because the logical one can be its suffix
+# (macOS keeps TMPDIR under a /var symlink to /private/var).
 R=""
+R_PHYS=""
 W=""
+ROOT_PHYS="$(cd -- "$ROOT" && pwd -P)"
 
 aliased() { # TEXT -> the text with the row's repository and the scratch root aliased
   local s="$1"
-  [ -z "$R" ] || s="${s//"$R"/<repo>}"
+  if [ -n "$R" ]; then
+    s="${s//"$R_PHYS"/<repo>}"
+    s="${s//"$R"/<repo>}"
+  fi
+  s="${s//"$ROOT_PHYS"/<root>}"
   printf '%s' "${s//"$ROOT"/<root>}"
 }
 
@@ -58,10 +67,15 @@ KEEP='^(commit-guards git hooks: |::warning::install-git-hooks: |::error::|kende
 # checkout, the kept lines only) or hook (the pre-commit shim run from the
 # repository root, the way git runs it, the kept lines only).
 run() { # ENVS ACTION ARG
-  local envs=() rc=0 out="" installer="" filtered=1
+  local envs=() rc=0 out="" installer="" filtered=1 dir=""
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   installer="$R/.agents/skills/commit-guards/scripts/install-git-hooks"
   [ -x "$installer" ] || installer="$INSTALL"
+  # A commit runs from the checkout's physical path, the ordinary layout:
+  # reached through a symlink, the helper drops the main-checkout root it
+  # cannot vouch for and its search line changes, which is the scope
+  # suite's subject, not this one's.
+  dir="$(cd -- "${W:-$R}" && pwd -P)"
   case "$2" in
     install)
       filtered=0
@@ -72,10 +86,10 @@ run() { # ENVS ACTION ARG
       out="$(env ${envs[@]+"${envs[@]}"} "$installer" --repo "$R" --uninstall 2>&1)" || rc=$?
       ;;
     commit)
-      out="$(env ${envs[@]+"${envs[@]}"} git -C "${W:-$R}" commit -m "$3" 2>&1)" || rc=$?
+      out="$(env ${envs[@]+"${envs[@]}"} git -C "$dir" commit -m "$3" 2>&1)" || rc=$?
       ;;
     hook)
-      out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} .git/hooks/pre-commit 2>&1)" || rc=$?
+      out="$(cd -- "$dir" && env ${envs[@]+"${envs[@]}"} .git/hooks/pre-commit 2>&1)" || rc=$?
       ;;
     *)
       echo "harness: unknown action $2" >&2
@@ -113,7 +127,9 @@ content() { # FILE
   raw="${raw//"$PRE_LINE"/@PRE@}"
   raw="${raw//"$MSG_LINE"/@MSG@}"
   raw="${raw//"$CREATED"/@CREATED@}"
-  printf '%s%s' "$(aliased "${raw//$'\n'/"$JOIN"}")" "$tail"
+  # The replacement is unquoted: Bash 3.2 keeps the quotes of a quoted one
+  # as literal bytes, and a literal '~' there is the caller's home.
+  printf '%s%s' "$(aliased "${raw//$'\n'/$JOIN}")" "$tail"
 }
 
 shape() { # PATH
@@ -167,6 +183,7 @@ local_entry() { mkdir -p "$R/tools"; stage tools/local-check "$1"; chmod +x "$R/
 # the grammar every armed repository is measured against, and the helper
 # every fixture's helper is compared to.
 armed reference
+R_PHYS="$(cd -- "$R" && pwd -P)"
 PRE_LINE="$(sed -n 2p "$R/.git/hooks/pre-commit")"
 MSG_LINE="$(sed -n 2p "$R/.git/hooks/commit-msg")"
 CREATED="# kendex-guards-hook created this file"
@@ -210,6 +227,7 @@ run_rows() { # label | fixture | env | action | arg | expect | state
     R=""
     W=""
     "$fx"
+    R_PHYS="$(cd -- "$R" && pwd -P)"
     assert_eq "$label" "$expect" "$(run "$env" "$action" "$arg")"
     [ -z "$want_state" ] || assert_eq "$label: the hooks directory" "$want_state" "$(state)"
   done
