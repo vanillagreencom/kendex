@@ -177,28 +177,44 @@ jobs:
           done
           exit "$fail"
 
-      # The must-fail control. The construct is read out of the fixture that
-      # pins it as a miss of the text scan, so the probe is by construction
-      # one the scan cannot catch and the shell can: the scan is run on it
-      # and must be clean, and under Bash 3.2 a quoted name of a builtin the
-      # shell does not have is `command not found`, exit 127. Any other exit
-      # — 0 on a shell that has mapfile — fails the leg.
-      - name: probe — a quoted Bash 4 builtin fails under this shell
+      # The must-fail control, one row per axis the text scan cannot reach:
+      # a builtin name behind quote removal, and one behind word splitting —
+      # a redirection standing where the scan expects a separator. Each line
+      # is read out of the fixture that pins it as a miss of the scan, so the
+      # probe is by construction one the scan cannot catch and the shell can:
+      # the scan is run on the pair and must be clean, and Bash 3.2 gives a
+      # quoted name of a builtin it lacks `command not found`, 127, and the
+      # `-A` it never had `invalid option`, 2. Any other exit — 0 on a shell
+      # that has both — fails the leg.
+      - name: probe — Bash 4 constructs the scan cannot see fail under this shell
         if: matrix.os == 'macos-latest'
         run: |
           set -u
           fixture=tools/tests/data/bash32-uncatchable.txt
-          line="$(grep -xF -- "'mapfile' -t values" "$fixture")" ||
-            { echo "$fixture no longer pins the quoted builtin this probe runs"; exit 1; }
           dir="$RUNNER_TEMP/bash32-probe"
           mkdir "$dir"
-          printf '%s\n' '#!/usr/bin/env bash' 'set -u' "$line" >"$dir/quoted-builtin.sh"
+          fail=0
+          n=0
+          while IFS='|' read -r construct want; do
+            n=$((n + 1))
+            line="$(grep -xF -- "$construct" "$fixture")" ||
+              { echo "$fixture no longer pins '$construct' as a miss, so it is no probe"; exit 1; }
+            printf '%s\n' '#!/usr/bin/env bash' 'set -u' "$line" >"$dir/probe-$n.sh"
+            status=0
+            bash "$dir/probe-$n.sh" </dev/null || status=$?
+            if [ "$status" -eq "$want" ]; then
+              echo "probe $n failed under Bash 3.2 as it must: $construct (exit $status)"
+            else
+              echo "probe $n exited $status under Bash $BASH_VERSION; 3.2 gives '$construct' exit $want"
+              fail=1
+            fi
+          done <<'EOF'
+          'mapfile' -t values|127
+          declare>/dev/null -A cache|2
+          EOF
+          [ "$n" -eq 2 ] || { echo "the probe table read $n rows, not 2"; exit 1; }
           tools/bash32-lint "$dir"
-          status=0
-          bash "$dir/quoted-builtin.sh" </dev/null || status=$?
-          [ "$status" -eq 127 ] ||
-            { echo "the probe exited $status under Bash $BASH_VERSION; 3.2 gives it 127, command not found"; exit 1; }
-          echo "the probe failed under Bash 3.2 as it must (exit $status)"
+          exit "$fail"
 
       - name: shard names agree with the matrix
         env:
