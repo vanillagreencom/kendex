@@ -199,7 +199,12 @@ jobs:
           # diffutils)` — and never for the bare word: Apple's grep advertises
           # itself as `grep (BSD grep, GNU compatible)`, so the word alone reds
           # this leg on the very build it exists to run against.
-          for c in sed grep awk find diff ps; do
+          # Every utility whose BSD behaviour a suite or a shipped script now
+          # depends on, not just the five the leg used to install: a coreutils
+          # gnubin arriving on PATH would make wc, paste, touch, date, mktemp
+          # and seq GNU while the rest stayed Apple's, and this assertion would
+          # stay green over a userland the leg no longer measures.
+          for c in sed grep awk find diff ps wc paste touch date mktemp seq; do
             resolved="$(command -v "$c")" || resolved=""
             case "$resolved" in
               /usr/bin/* | /bin/*) ;;

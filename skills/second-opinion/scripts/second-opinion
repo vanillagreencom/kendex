@@ -289,34 +289,6 @@ if ! $FOREGROUND_CAP_WAS_IN_CALLER_ENV && [[ -n "${SECOND_OPINION_FOREGROUND_CAP
 fi
 source "$SCRIPT_DIR/second-opinion-runtime"
 second_opinion_runtime_setup
-# --- System temp --------------------------------------------------------------
-# Every system-temp allocation goes through these two, with an explicit
-# template rooted at $TMPDIR.
-#
-# A bare `mktemp` reads $TMPDIR only on GNU. BSD mktemp — the one macOS ships —
-# ignores it and allocates under the per-user directory the OS names
-# (_CS_DARWIN_USER_TEMP_DIR), so an operator who set TMPDIR to bound this run's
-# temp files got them somewhere else entirely, and the fallbacks below landed
-# nowhere the caller named. A trailing slash comes off first: macOS sets TMPDIR
-# with one, and `$TMPDIR/x` would carry a `//` into every path this prints.
-# The trailing slash comes off because macOS sets TMPDIR with one, and a
-# relative root is prefixed with `./` so a TMPDIR named `-dashtmp` cannot reach
-# mktemp — or the rm in a cleanup trap — as an option. `--` is not the answer
-# here: mktemp's support for it is not uniform across the BSD/macOS target,
-# which is why artifact_file() below leans on an absolute home instead.
-so_tmp_root() {
-  local root="${TMPDIR:-/tmp}"
-  root="${root%/}"
-  case "$root" in
-    "") root="/" ;;
-    /*) ;;
-    *) root="./$root" ;;
-  esac
-  printf '%s' "$root"
-}
-so_tmpfile() { mktemp "$(so_tmp_root)/second-opinion.XXXXXX"; }
-so_tmpdir() { mktemp -d "$(so_tmp_root)/second-opinion.XXXXXX"; }
-
 # --- Defaults -----------------------------------------------------------------
 MODE=""
 PROMPT_FILE=""

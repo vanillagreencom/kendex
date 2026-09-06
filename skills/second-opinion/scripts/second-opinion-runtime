@@ -10,6 +10,31 @@ LAUNCH_WORKER_PID=""
 LAUNCH_RUNTIME_DIR=""
 RUNTIME_SELF="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)/${BASH_SOURCE[0]##*/}"
 die() { echo "second-opinion-runtime: $1" >&2; exit 1; }
+
+# The system temp directory this run allocates under, as a path mktemp reads
+# as a path. Defined here because this file is SOURCED by second-opinion, so
+# both the detached runtime directory and the command's own temp files come
+# from one rule.
+#
+# A bare `mktemp` reads $TMPDIR only on GNU. BSD mktemp — the one macOS ships —
+# ignores it and allocates under the per-user directory the OS names
+# (_CS_DARWIN_USER_TEMP_DIR), so an operator who set TMPDIR to bound this run
+# got its files somewhere else entirely. The trailing slash comes off because
+# macOS sets TMPDIR with one, and a relative root is prefixed with `./` so a
+# TMPDIR named `-dashtmp` cannot reach mktemp — or the rm in a cleanup trap —
+# as an option.
+so_tmp_root() {
+  local root="${TMPDIR:-/tmp}"
+  root="${root%/}"
+  case "$root" in
+    "") root="/" ;;
+    /*) ;;
+    *) root="./$root" ;;
+  esac
+  printf '%s' "$root"
+}
+so_tmpfile() { mktemp "$(so_tmp_root)/second-opinion.XXXXXX"; }
+so_tmpdir() { mktemp -d "$(so_tmp_root)/second-opinion.XXXXXX"; }
 runtime_dir_valid() { [[ -d "$1" && ! -L "$1" ]]; }
 validate_runtime_dir() {
   runtime_dir_valid "$1" || die "runtime directory is missing, unsafe, or changed: $1"
@@ -138,10 +163,7 @@ create_runtime_dir() {
   # An explicit template rooted at $TMPDIR: a bare `mktemp -d` reads TMPDIR
   # only on GNU, and BSD mktemp allocates under the OS's per-user temp
   # directory instead, so this fallback ignored the caller's TMPDIR on macOS.
-  runtime_tmp_root="${TMPDIR:-/tmp}"
-  runtime_tmp_root="${runtime_tmp_root%/}"
-  case "$runtime_tmp_root" in "") runtime_tmp_root="/" ;; /*) ;; *) runtime_tmp_root="./$runtime_tmp_root" ;; esac
-  [[ -n "$dir" ]] || dir=$(mktemp -d "$runtime_tmp_root/second-opinion-runtime.XXXXXX" 2>/dev/null) || die "cannot create runtime directory"
+  [[ -n "$dir" ]] || dir=$(mktemp -d "$(so_tmp_root)/second-opinion-runtime.XXXXXX" 2>/dev/null) || die "cannot create runtime directory"
   chmod 700 "$dir" || die "cannot secure runtime directory: $dir"
   printf '%s\n' "$dir"
 }
