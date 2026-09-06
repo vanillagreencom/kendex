@@ -139,6 +139,16 @@ export const commands = {
 	 *  survives whatever else is being saved at the same moment.
 	 */
 	saveZoom: (percent: number) => typedError<number, string>(__TAURI_INVOKE("save_zoom", { percent })),
+	termsState: () => typedError<TermsState, string>(__TAURI_INVOKE("terms_state")),
+	/**
+	 *  Record that the person accepted the documents this build asks about.
+	 * 
+	 *  Its own targeted write rather than the whole-file settings path:
+	 *  acceptance is one field settled by one click, and sending the whole
+	 *  object back would let a copy read before the screen opened put an older
+	 *  file over whatever else has been saved since.
+	 */
+	acceptTerms: () => typedError<TermsState, string>(__TAURI_INVOKE("accept_terms")),
 	registerProject: (path: string) => typedError<SettingsRead, string>(__TAURI_INVOKE("register_project", { path })),
 	unregisterProject: (path: string) => typedError<SettingsRead, string>(__TAURI_INVOKE("unregister_project", { path })),
 	/**
@@ -497,6 +507,8 @@ export const events = {
 };
 
 /* Constants */
+export const LEGAL = {"version":1,"termsUrl":"https://kendex.ai/legal/terms","privacyUrl":"https://kendex.ai/legal/privacy"} as const;
+
 export const MANIFEST_SCHEMA = 6 as const;
 
 export const ZOOM = {"min":50,"max":200,"step":10,"default":100} as const;
@@ -607,6 +619,14 @@ export type AppSettings = {
 	 *  the person and the display in front of them, not to a project.
 	 */
 	zoom?: number,
+	/**
+	 *  Which version of the Terms of Service and Privacy Policy this
+	 *  machine accepted, and when. Machine-local like the rest of this
+	 *  file, and shared by both shells: the app's first-run screen and the
+	 *  CLI's first-run line write it, and neither asks again once it is
+	 *  here. [`crate::legal`] owns the rule.
+	 */
+	terms?: TermsAcceptance | null,
 };
 
 export type AppUpdateStatus = { kind: "neverChecked" } | { kind: "upToDate"; version: string } | { kind: "updateAvailable"; version: string; releaseNotesUrl: string; cliAssetAvailable: boolean; muted: boolean } | { kind: "feedOlder"; version: string };
@@ -3150,6 +3170,28 @@ export type TemplateFinding = {
 	line: number,
 	problem: string,
 	fix: string,
+};
+
+/**
+ *  What this machine accepted. Written once per version — a second accept
+ *  of a version already recorded leaves the first date standing, because
+ *  the date is when the person agreed and no later run changes that.
+ */
+export type TermsAcceptance = {
+	version: number,
+	/**  ISO-8601 UTC, from [`crate::clock::timestamp`]. */
+	"accepted-at": string,
+};
+
+/**
+ *  Whether to ask, and what is on record — from one read, because the
+ *  first-run screen and the About row would otherwise hold two answers
+ *  taken at different moments, and only one of them would be right after
+ *  an accept.
+ */
+export type TermsState = {
+	ask: boolean,
+	accepted: TermsAcceptance | null,
 };
 
 /**

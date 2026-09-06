@@ -1,8 +1,9 @@
 import { MinusIcon, PlusIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Appearance } from "@/bindings";
-import { commands, ZOOM } from "@/bindings";
+import { commands, LEGAL, ZOOM } from "@/bindings";
 import { AccountSection } from "@/components/account-section";
+import { ExternalLink } from "@/components/external-link";
 import { PageHeader } from "@/components/page-header";
 import { Section, SettingRow } from "@/components/section";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ import { SETTINGS_SUBTITLE } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/stores/settings";
+import { useTermsStore } from "@/stores/terms";
 import { zoom } from "@/stores/zoom";
 
 const THEME_LABELS: Record<Appearance, string> = {
@@ -33,10 +35,16 @@ export function SettingsPage() {
   const [version, setVersion] = useState<Awaited<
     ReturnType<typeof commands.appVersion>
   > | null>(null);
+  const accepted = useTermsStore((s) => s.state?.accepted ?? null);
+  const loadTerms = useTermsStore((s) => s.load);
 
   useEffect(() => {
     void commands.appVersion().then(setVersion);
-  }, []);
+    // The record is written on first run and on an accept, both of which
+    // can have happened since this page last read it — in this window or
+    // in a terminal.
+    void loadTerms();
+  }, [loadTerms]);
 
   const percent = onScreen();
 
@@ -121,6 +129,24 @@ export function SettingsPage() {
                   : "kendex keeps your AI coding tools in sync."
               }
             />
+            <SettingRow
+              label={
+                <span className="flex items-baseline gap-2">
+                  Terms
+                  <span className="font-mono text-xs font-normal text-muted-foreground">
+                    {accepted
+                      ? `version ${accepted.version}, accepted ${accepted["accepted-at"].slice(0, 10)}`
+                      : "not accepted"}
+                  </span>
+                </span>
+              }
+              description="What you accepted, and when. The record is on this computer only."
+            >
+              <div className="flex gap-4 text-sm">
+                <ExternalLink url={LEGAL.termsUrl}>Terms</ExternalLink>
+                <ExternalLink url={LEGAL.privacyUrl}>Privacy</ExternalLink>
+              </div>
+            </SettingRow>
           </Section>
         </div>
       </div>

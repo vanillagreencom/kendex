@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use kendex_core::env::Env;
+#[path = "../pty.rs"]
+mod pty;
 #[path = "../../../test_util.rs"]
 mod test_util;
 pub use test_util::{rooted, source_path};
@@ -56,38 +58,16 @@ fn kendex(home: &Path, cwd: &Path, ui: &str, args: &[&str]) -> Output {
 
 /// The same run, with a terminal on stderr instead of a pipe.
 ///
-/// One thing needs it. The framed rendering's spinner draws through
+/// One thing here needs it. The framed rendering's spinner draws through
 /// `indicatif`, which writes nothing whatever when stderr is not a
 /// terminal, so the line it puts on the screen is invisible to every other
 /// test in this file. `TERM` has to be set for the same reason: without it
 /// `console` reports a terminal it cannot draw on, and the spinner stays
 /// silent on the pty too.
-///
-/// Returns everything the terminal was sent, colour codes and redraws
-/// included. Reading runs until the last writer closes, which on Linux
-/// arrives as `EIO` rather than end of file. Stdout goes nowhere: only
-/// the terminal is under test, and a pipe nobody drains deadlocks the
-/// pair once a chattier verb fills its buffer.
 #[allow(clippy::expect_used)]
 fn kendex_on_a_terminal(home: &Path, cwd: &Path, args: &[&str]) -> String {
-    use std::io::Read;
-    use std::os::fd::OwnedFd;
-
-    let controller =
-        rustix::pty::openpt(rustix::pty::OpenptFlags::RDWR | rustix::pty::OpenptFlags::NOCTTY)
-            .expect("a pseudoterminal");
-    rustix::pty::grantpt(&controller).expect("granted");
-    rustix::pty::unlockpt(&controller).expect("unlocked");
-    let name = rustix::pty::ptsname(&controller, Vec::new()).expect("its name");
-    let terminal: OwnedFd = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(name.to_str().expect("a utf-8 device name"))
-        .expect("the terminal side opens")
-        .into();
-
-    let mut child = Command::new(env!("CARGO_BIN_EXE_kendex"))
-        .args(args)
+    let mut run = Command::new(env!("CARGO_BIN_EXE_kendex"));
+    run.args(args)
         .current_dir(cwd)
         .env_clear()
         .envs(test_util::fixture_env(home))
@@ -95,35 +75,8 @@ fn kendex_on_a_terminal(home: &Path, cwd: &Path, args: &[&str]) -> String {
         .env("KENDEX_UI", "pretty")
         .env("LANG", "C.UTF-8")
         .env("TERM", "xterm-256color")
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
-        .stdin(std::process::Stdio::from(
-            terminal.try_clone().expect("a second handle"),
-        ))
-        .stderr(std::process::Stdio::from(
-            terminal.try_clone().expect("a third handle"),
-        ))
-        .stdout(std::process::Stdio::null())
-        .spawn()
-        .expect("kendex binary runs");
-    // The parent's own handle goes now, or the read below never ends: the
-    // terminal stays open as long as any writer holds it.
-    drop(terminal);
-
-    let mut sent = Vec::new();
-    let mut buffer = [0u8; 4096];
-    let mut reader = std::fs::File::from(controller);
-    loop {
-        match Read::read(&mut reader, &mut buffer) {
-            Ok(0) => break,
-            Ok(read) => sent.extend_from_slice(&buffer[..read]),
-            // A signal arriving mid-read is not the end of the stream.
-            // Taking it for one cuts the capture short without saying so.
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-            Err(_) => break,
-        }
-    }
-    let _ = child.wait();
-    String::from_utf8_lossy(&sent).into_owned()
+        .env("PATH", std::env::var("PATH").unwrap_or_default());
+    pty::sent_to_a_terminal(run)
 }
 
 fn said(output: &Output) -> String {

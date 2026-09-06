@@ -10,6 +10,7 @@ mod editor;
 // and for how the Linux app is packaged.
 #[cfg(target_os = "linux")]
 mod launch_env;
+mod legal;
 pub mod marketplaces;
 mod mine;
 mod native;
@@ -42,7 +43,12 @@ fn constants(builder: Builder<tauri::Wry>) -> Builder<tauri::Wry> {
     // manifest yet. `save::check` validates that draft before the plan's
     // `manifest::save` would stamp anything, so a second copy of this
     // number in the UI is a first save refused by its own validator.
-    builder.constant("MANIFEST_SCHEMA", kendex_core::manifest::MANIFEST_SCHEMA)
+    let builder = builder.constant("MANIFEST_SCHEMA", kendex_core::manifest::MANIFEST_SCHEMA);
+    // The version of the terms this build asks about, and where the two
+    // documents are published. The first-run screen decides from the same
+    // number the record stores and the command line prints, so the three
+    // cannot disagree about which documents someone accepted.
+    builder.constant("LEGAL", kendex_core::legal::LEGAL)
 }
 
 /// The runtime the generated bindings call every `Result`-returning command
@@ -98,6 +104,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         app_settings::get_settings,
         app_settings::update_settings,
         app_settings::save_zoom,
+        legal::terms_state,
+        legal::accept_terms,
         app_settings::register_project,
         app_settings::unregister_project,
         app_settings::project_offers,

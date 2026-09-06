@@ -34,6 +34,7 @@ pub mod harness;
 pub mod hash;
 pub mod hook;
 pub mod install_channel;
+pub mod legal;
 pub mod library;
 pub mod lock;
 pub mod manifest;

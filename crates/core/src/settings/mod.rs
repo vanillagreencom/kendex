@@ -40,6 +40,13 @@ pub struct AppSettings {
     /// the person and the display in front of them, not to a project.
     #[serde(default = "default_zoom")]
     pub zoom: u16,
+    /// Which version of the Terms of Service and Privacy Policy this
+    /// machine accepted, and when. Machine-local like the rest of this
+    /// file, and shared by both shells: the app's first-run screen and the
+    /// CLI's first-run line write it, and neither asks again once it is
+    /// here. [`crate::legal`] owns the rule.
+    #[serde(default)]
+    pub terms: Option<crate::legal::TermsAcceptance>,
 }
 
 fn default_zoom() -> u16 {
@@ -72,6 +79,7 @@ impl Default for AppSettings {
             ignored_updates: Vec::new(),
             muted_app_notice: None,
             zoom: ZOOM.default,
+            terms: None,
         }
     }
 }
