@@ -394,7 +394,7 @@ Use the output as `MAIN_REPO_ROOT`.
    A foreign-lease refusal from the helper keeps the worktree too; carry its diagnostic onto § 6's worktree line. Where § 4 found an issue worktree, read its path last, whichever way the removal went:
 
    ```bash
-   ls -d [WORKTREE_PATH]
+   ls -d -- "[WORKTREE_PATH]"
    ```
 
    A `No such file or directory` is the removal; a listed path is a worktree still standing. § 6 is written after this step, never before.

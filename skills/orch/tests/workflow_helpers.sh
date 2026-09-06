@@ -184,7 +184,7 @@ assert_file_contains "$merge_workflow" '| Base sync |' \
 # summary's worktree line then says is not pinned; § 6's own prose carries it.
 removal_precedes_summary() { # doc
   local removal summary
-  removal="$(grep -n -m1 -F 'ls -d [WORKTREE_PATH]' "$1" | cut -d: -f1)"
+  removal="$(grep -n -m1 -F 'ls -d -- "[WORKTREE_PATH]"' "$1" | cut -d: -f1)"
   summary="$(grep -n -m1 -F '## 6. Present Results' "$1" | cut -d: -f1)"
   [[ -n "$removal" && -n "$summary" && "$removal" -lt "$summary" ]]
 }
