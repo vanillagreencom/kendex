@@ -311,7 +311,11 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
         echo "::error::$file: $name is assigned more than once in [env] (each key must be unique in the table)" >&2
         return 1
       fi
-      line="$(printf '%s\n' "$matches" | head -n 1)"
+      # The first line in-shell, never `printf | head -n 1`: head closes the
+      # pipe on line one, and past the pipe buffer that SIGPIPEs printf, which
+      # pipefail turns into a 141 the sourcing caller's errexit acts on. This
+      # file sets no mode of its own; it runs in the caller's, which does.
+      line="${matches%%$'\n'*}"
       # A PRESENT assignment this parser cannot read (e.g. TOML array syntax
       # for a list key) must fail LOUDLY, never collapse to empty: an empty
       # value can silently widen the gate (empty trusted-logins = any

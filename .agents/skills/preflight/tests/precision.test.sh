@@ -193,10 +193,27 @@ find . -name x >/dev/null || echo none
 echo "$MSG"
 usage
 EOF
+# Every benign neighbour of the early-close-pipe shape: a reader fed a
+# here-string or a file instead of a pipe, a reader that runs to EOF, an
+# early-closing reader with no shell writer above it, and the shape named in
+# a comment or a message.
+cat >"$R/scripts/piped.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+# Naming the shape is not writing it: echo "$v" | grep -q x runs nothing.
+MSG='the idiom is echo "$v" | head -1'
+v="$1"
+if grep -q x <<<"$v"; then echo hit; fi
+grep -m 5 -E "^error" <<<"$v" | tr '\n' ' '
+printf '%s' "$v" | tr '\n' ' '
+git log --oneline | head -5
+echo "$v" | jq -e . >/dev/null 2>&1 || grep -q x <<<"$v"
+echo "$MSG"
+EOF
 printf '{\n  // a comment: this dialect is real and jq is right to reject it\n  "strict": true\n}\n' >"$R/tsconfig.json"
 git -C "$R" add -A
 run_pf
-clean "no lane fires on placeholders, URLs, quoted or data-file or test-file doc cites, foreign subtrees, referenced TODOs, strict scripts, wired suites, trapped scratch dirs, captured statuses, the same shapes named in a comment or a string, or JSON-with-comments"
+clean "no lane fires on placeholders, URLs, quoted or data-file or test-file doc cites, foreign subtrees, referenced TODOs, strict scripts, wired suites, trapped scratch dirs, captured statuses, here-string, read-to-EOF and OR-list pipeline shapes, the same shapes named in a comment or a string, or JSON-with-comments"
 
 echo "=== control: the same fixture still fails on a real defect ==="
 printf 'And a citation that is dead: `docs/gone.md`.\n' >>"$R/README.md"

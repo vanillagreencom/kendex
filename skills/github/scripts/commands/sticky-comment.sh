@@ -190,17 +190,22 @@ get_analysis() {
   # Combine all sources for analysis
   local all_signals="$rec_section $status_line $approval_statement"
 
-  # Determine recommendation type (order matters: most specific first)
-  if echo "$all_signals" | grep -qi "approve with follow-up\|approve.*follow-up"; then
+  # Determine recommendation type (order matters: most specific first).
+  # Each test reads a here-string, never a pipe: `grep -q` exits at its first
+  # match, and while the writer still has lines queued past the 64KB pipe
+  # buffer that is a SIGPIPE pipefail reports as 141. Errexit does not fire in
+  # condition position, so the 141 reads as a plain no-match and the verdict
+  # falls through to `pending` with the approval in hand.
+  if grep -qi "approve with follow-up\|approve.*follow-up" <<<"$all_signals"; then
     rec_type="approve_with_followup"
-  elif echo "$all_signals" | grep -qiE "✅.*[Aa]pproved|\*\*[Aa]pproved\*\*|approved for merge|ready for merge|Verdict.*Approved"; then
+  elif grep -qiE "✅.*[Aa]pproved|\*\*[Aa]pproved\*\*|approved for merge|ready for merge|Verdict.*Approved" <<<"$all_signals"; then
     rec_type="approve"
-  elif echo "$all_signals" | grep -qiE "will block|blocks merge|cannot merge|do not merge|reject"; then
+  elif grep -qiE "will block|blocks merge|cannot merge|do not merge|reject" <<<"$all_signals"; then
     # Note: avoid matching "no blocking issues" which is positive
     rec_type="block"
-  elif echo "$all_signals" | grep -qi "changes requested\|address.*before\|needs changes"; then
+  elif grep -qi "changes requested\|address.*before\|needs changes" <<<"$all_signals"; then
     rec_type="changes"
-  elif echo "$all_signals" | grep -qi "Review Complete ✅"; then
+  elif grep -qi "Review Complete ✅" <<<"$all_signals"; then
     # "Review Complete ✅" without explicit rejection = approve
     rec_type="approve"
   fi

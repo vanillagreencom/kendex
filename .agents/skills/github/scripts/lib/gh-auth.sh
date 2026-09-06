@@ -107,7 +107,14 @@ kendex_github_resolve_op_reference_to_var() {
       ;;
   esac
   if [[ -n "$op_output" ]]; then
-    export KENDEX_GITHUB_TOKEN_ERROR_DETAIL="$(printf '%s' "$op_output" | head -c 500 | tr '\n' ' ')"
+    # Clipped in-shell, and clipped BEFORE flattening: `| head -c 500`
+    # SIGPIPEs `printf` past the pipe buffer, and pipefail turns that into a
+    # 141 the sourcing caller's errexit acts on — this file sets no mode of
+    # its own. Clipping first also keeps the quadratic `${var//…}` over 500
+    # characters rather than the whole output; newline for space is one
+    # character for one, so the order does not change the text.
+    local detail="${op_output:0:500}"
+    export KENDEX_GITHUB_TOKEN_ERROR_DETAIL="${detail//$'\n'/ }"
   fi
   return 1
 }

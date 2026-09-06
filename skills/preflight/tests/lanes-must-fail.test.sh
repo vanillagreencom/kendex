@@ -116,6 +116,15 @@ run_pf
 fires "grep || true fails as fail-open, naming the command whose status is lost" "scripts/existing.sh:4: [fail-open] grep || true swallows exit 2"
 fires "the shape is caught inside a command substitution too" "scripts/existing.sh:5: [fail-open] git || true swallows exit 2"
 
+echo "=== lane early-close-pipe: a writer piped into an early-closing reader ==="
+seed earlyclose
+# Written from the shell, never with cat reading a file: a cat-fed fixture
+# pushes several hundred KB before it blocks, so it passes either way.
+printf '#!/usr/bin/env bash\nset -euo pipefail\nif echo "$1" | grep -q x; then echo hit; fi\n' >"$R/scripts/existing.sh"
+git -C "$R" add -A
+run_pf
+fires "a condition piping echo into grep -q fails as early-close-pipe" "scripts/existing.sh:3: [early-close-pipe] a shell writer piped into a reader that stops before EOF"
+
 echo "=== lane mktemp-trap: a new script whose scratch nothing removes ==="
 seed scratch
 printf '#!/usr/bin/env bash\nset -euo pipefail\nD="$(mktemp -d)"\necho "$D"\n' >"$R/scripts/scratch.sh"
