@@ -24,11 +24,131 @@ fn appimage() -> Session<'static> {
     }
 }
 
-fn backend(session: Session<'_>) -> Option<String> {
+/// What launchd hands a GUI application, spelled out rather than joined
+/// from the constant so the constant is pinned in a second place. Read off
+/// a bundle opened with `open` from an emptied environment on macOS 26.
+const LAUNCHD_GIVES: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
+
+/// What a login shell says, shaped like the one on that same Mac: the
+/// Homebrew directory holding the git that clears the floor comes first,
+/// and launchd's four are still at the end.
+const LOGIN_SHELL_SAYS: &str =
+    "/opt/homebrew/bin:/Users/me/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+
+/// A Finder launch: launchd's `PATH`, and a login shell that answers.
+fn finder() -> Session<'static> {
+    Session {
+        path: Some(LAUNCHD_GIVES),
+        login_path: Some(LOGIN_SHELL_SAYS),
+        ..Session::default()
+    }
+}
+
+fn named<'a>(session: Session<'a>, name: &str) -> Option<String> {
     plan(session)
         .into_iter()
-        .find(|(name, _)| *name == "GDK_BACKEND")
+        .find(|(entry, _)| *entry == name)
         .map(|(_, value)| value)
+}
+
+fn backend(session: Session<'_>) -> Option<String> {
+    named(session, "GDK_BACKEND")
+}
+
+fn path(session: Session<'_>) -> Option<String> {
+    named(session, "PATH")
+}
+
+/// The whole point: the plan is settled before anything is spawned, so the
+/// git version probe and the checkout it guards both run on this `PATH`.
+#[test]
+fn a_finder_launch_starts_over_with_the_login_shells_path() {
+    assert_eq!(path(finder()), Some(LOGIN_SHELL_SAYS.to_owned()));
+    // launchd's list is nobody's choice in any order, and a shorter one is
+    // no more of a choice than the full one.
+    for given in ["/bin:/usr/bin", "/sbin:/usr/sbin:/bin:/usr/bin", ""] {
+        assert_eq!(
+            path(Session {
+                path: Some(given),
+                ..finder()
+            }),
+            Some(LOGIN_SHELL_SAYS.to_owned()),
+            "{given:?}"
+        );
+    }
+}
+
+/// A login shell prints its startup files' output before the answer, so
+/// the whole of stdout is not the answer: a greeting welded onto the first
+/// directory would put a `PATH` naming a directory that does not exist in
+/// place, and nothing would ask again.
+#[test]
+fn the_answer_is_the_last_line_the_login_shell_printed() {
+    for (what, printed) in [
+        ("nothing before it", "/opt/homebrew/bin:/usr/bin\n"),
+        ("no closing newline", "/opt/homebrew/bin:/usr/bin"),
+        (
+            "a greeting before it",
+            "Welcome back!\n/opt/homebrew/bin:/usr/bin\n",
+        ),
+        (
+            "several lines before it",
+            "Welcome back!\nnvm: using v24\n/opt/homebrew/bin:/usr/bin\n",
+        ),
+    ] {
+        assert_eq!(
+            answered_path(printed),
+            Some("/opt/homebrew/bin:/usr/bin"),
+            "{what}"
+        );
+    }
+    // Nothing said is no answer, and `shell_path` then leaves `PATH` alone.
+    for printed in ["", "\n", "   \n"] {
+        assert_eq!(answered_path(printed), None, "{printed:?}");
+    }
+}
+
+/// The must-fail control. A `PATH` naming anything launchd does not hand
+/// over came through a shell and is the person's, and a login shell that
+/// answers with nothing leaves the environment as it was.
+#[test]
+fn a_path_that_came_through_a_shell_is_left_alone() {
+    let kept = [
+        (
+            "started from a terminal",
+            Some(LOGIN_SHELL_SAYS),
+            Some(LOGIN_SHELL_SAYS),
+        ),
+        (
+            "one directory of their own on it",
+            Some("/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"),
+            Some(LOGIN_SHELL_SAYS),
+        ),
+        ("the login shell said nothing", Some(LAUNCHD_GIVES), None),
+        (
+            "the login shell said only blanks",
+            Some(LAUNCHD_GIVES),
+            Some("  "),
+        ),
+        // Nothing to take, and taking it is what a relaunch would do
+        // again on the next start, and the one after that.
+        (
+            "the login shell said launchd's own list back",
+            Some(LAUNCHD_GIVES),
+            Some("/bin:/usr/bin"),
+        ),
+    ];
+    for (what, given, said) in kept {
+        assert_eq!(
+            path(Session {
+                path: given,
+                login_path: said,
+                ..Session::default()
+            }),
+            None,
+            "{what}"
+        );
+    }
 }
 
 #[test]
@@ -151,7 +271,11 @@ fn a_backend_the_person_chose_is_left_alone() {
 
 /// What stops a relaunch looping: applying the plan leaves nothing to do.
 /// There is no marker in the environment for a child to inherit and a
-/// later launch to trust.
+/// later launch to trust. `login_path` is carried forward rather than
+/// re-derived because the second run does not read it back from what the
+/// first set — it asks the login shell again — and `shell_path` refuses a
+/// launchd-shaped answer whatever the shell says, so no answer it could
+/// give a second time reopens the plan.
 #[test]
 fn applying_the_plan_leaves_nothing_to_do() {
     let sessions = [
@@ -172,6 +296,7 @@ fn applying_the_plan_leaves_nothing_to_do() {
                 ..Session::default()
             },
         ),
+        ("a Finder launch", finder()),
     ];
     for (what, session) in sessions {
         let first = plan(session);
@@ -185,6 +310,7 @@ fn applying_the_plan_leaves_nothing_to_do() {
         let relaunched = Session {
             webkit: applied("WEBKIT_DISABLE_DMABUF_RENDERER").or(session.webkit),
             gdk: applied("GDK_BACKEND").or(session.gdk),
+            path: applied("PATH").or(session.path),
             ..session
         };
         assert!(plan(relaunched).is_empty(), "{what}: would relaunch again");
