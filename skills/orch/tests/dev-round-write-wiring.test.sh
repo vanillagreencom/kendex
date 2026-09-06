@@ -82,8 +82,8 @@ for doc in "$REPO_ROOT/skills/dev/workflows/dev-fix.md" "$REPO_ROOT/skills/orch/
   "$REPO_ROOT/skills/orch/workflows/review-pr-comments.md" "$WRITE_BIN" "$CHECK"; do
   DOC_TEXT="$(<"$doc")"
   pins \
-    "$(basename "$doc") points at the canonical scope~DOC_TEXT~$SCOPE_REF~yes" \
-    "$(basename "$doc") makes no repository-wide additions claim~DOC_TEXT~$SCOPE_CLAIM~no"
+    "${doc#"$REPO_ROOT/"} points at the canonical scope~DOC_TEXT~$SCOPE_REF~yes" \
+    "${doc#"$REPO_ROOT/"} makes no repository-wide additions claim~DOC_TEXT~$SCOPE_CLAIM~no"
 done
 
 echo "=== controls: a commented decoy, a prose decoy and an inert command cannot satisfy the pins ==="

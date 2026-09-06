@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Tests for dev-artifact-check's additions classifier as the public checker
-# runs it over a real linked worktree: helper names by suffix, substring and
-# dotfile are protected additions a fix round cannot add unlisted, product
+# runs it over a real linked worktree: helper names by unconditional substring
+# and by suffix inside a test path are protected additions a fix round cannot
+# add unlisted, product
 # and documentation basenames are not, an inert classifier and a classifier
 # whose output is invalid are each caught by their control, and round-mode
 # waiting leaves no scratch behind. The writer these rounds are stamped by is
@@ -69,7 +70,7 @@ commit_files() {
   git -C "$repo" commit -q -m "$msg"
 }
 
-echo "=== helper names by suffix, substring and dotfile are protected additions ==="
+echo "=== helper names by unconditional substring and by suffix inside a test path are protected additions ==="
 MAIN="$(new_repo linked-main)"
 WT="$TMP_ROOT/linked-wt"
 git -C "$MAIN" worktree add -q -b linked "$WT"
@@ -87,7 +88,9 @@ assert_eq "$(observe "$E")" "$E" "the public checker refuses the explicit substr
 
 # Control: an inert classifier accepts the same round outright.
 INERT="$(copy_scripts inert-classifier)/dev-artifact-check"
+assert_eq "$(awk '/^is_protected_addition\(\)/,/^}/' "$INERT" | grep -Fc 'return 0')" "4" "control: the classifier has four protected returns to invert"
 sed -i.bak '/^is_protected_addition()/,/^}/ s/return 0/return 1/' "$INERT"
+assert_eq "$(awk '/^is_protected_addition\(\)/,/^}/' "$INERT" | grep -Fc 'return 0')" "0" "control: every protected return is inverted in the private copy"
 chmod +x "$INERT"
 run_check "$INERT" --worktree "$WT" --issue issue-826 --round-id 30-30 --expect-items-from-round
 E='rc=0 ok=true verdict=accept reason=valid files=[]'
@@ -95,7 +98,9 @@ assert_eq "$(observe "$E")" "$E" "control: an inert classifier accepts the round
 
 # A classifier whose output is invalid is its own refusal, routed to retry.
 FAILED="$(copy_scripts failed-classifier)/dev-artifact-check"
+assert_eq "$(grep -Fc '[[ -s "$result" ]]' "$FAILED")" "1" "control: one result check to invert"
 sed -i.bak 's/\[\[ -s "\$result" \]\]/[[ ! -s "$result" ]]/' "$FAILED"
+assert_eq "$(grep -Fc '[[ -s "$result" ]]' "$FAILED")" "0" "control: the result check is inverted in the private copy"
 chmod +x "$FAILED"
 run_check "$FAILED" --worktree "$WT" --issue issue-826 --round-id 30-30 --expect-items-from-round
 E='rc=1 ok=false verdict=retry reason=classifier_failed'

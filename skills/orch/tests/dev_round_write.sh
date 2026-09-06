@@ -80,7 +80,7 @@ observe() {
       out) value="$OUT" ;;
       written) value="$([[ -n "$OUT" && -f "$OUT" ]] && echo yes || echo no)" ;;
       stderr~*) needle="${name#stderr~}"; value="$(grep -qF -- "${needle//+/ }" "$ERR" && echo true || echo false)" ;;
-      *) needle="$name"; value="$(rec "${needle//+/ }")" ;;
+      *) value="$(rec "$name")" ;;
     esac
     got="$got $name=$value"
   done
@@ -213,19 +213,19 @@ table \
   "no --item: an empty delegated set is not a fix round|--worktree $WT --issue i --round-id 1-1|rc=2" \
   "missing --worktree|--issue i --round-id 1-1 --item 1 t $OKR|rc=2" \
   "a nonexistent --worktree|--worktree $TMP_ROOT/nope --issue i --round-id 1-1 --item 1 t $OKR|rc=2" \
-  "a worktree with no HEAD commit|--worktree $NOHEAD --issue i --round-id 1-1 --item 1 t $OKR|rc=2" \
+  "a worktree with no HEAD commit|--worktree $NOHEAD --issue i --round-id 1-1 --item 1 t $OKR|rc=2 stderr~no+resolvable+HEAD+commit=true" \
   "missing --issue|--worktree $WT --round-id 1-1 --item 1 t $OKR|rc=2" \
   "missing --round-id|--worktree $WT --issue i --item 1 t $OKR|rc=2" \
-  "a path-unsafe --issue|--worktree $WT --issue a/b --round-id 1-1 --item 1 t $OKR|rc=2" \
+  "a path-unsafe --issue|--worktree $WT --issue a/b --round-id 1-1 --item 1 t $OKR|rc=2 stderr~must+match=true" \
   "a path-traversal --round-id|--worktree $WT --issue i --round-id .. --item 1 t $OKR|rc=2" \
   "a non-numeric --item N|--worktree $WT --issue i --round-id 1-1 --item x t $OKR|rc=2" \
   "a leading-zero --item N is not a canonical integer|--worktree $WT --issue i --round-id 1-1 --item 01 t $OKR|rc=2" \
   "an empty --item TEXT|--worktree $WT --issue i --round-id 1-1 --item 1 EMPTY $OKR|rc=2" \
   "a whitespace-only --item TEXT|--worktree $WT --issue i --round-id 1-1 --item 1 SPACES $OKR|rc=2" \
-  "an --item TEXT that is one of the writer's own flags: a forgotten value|--worktree $WT --issue i --round-id 1-1 --item 1 --worktree $OKR|rc=2" \
+  "an --item TEXT that is one of the writer's own flags: a forgotten value|--worktree $WT --issue i --round-id 1-1 --item 1 --worktree $OKR|rc=2 stderr~got+flag+'--worktree'=true" \
   "--item with too few arguments|--worktree $WT --issue i --round-id 1-1 --item 1|rc=2" \
   "a duplicate item number: a set, not a list|--worktree $WT --issue i --round-id 1-1 --item 1 a $OKR --item 1 b $OKR|rc=2" \
-  "a duplicate --issue: no silent last-wins|--worktree $WT --issue i --issue j --round-id 1-1 --item 1 t $OKR|rc=2" \
+  "a duplicate --issue: no silent last-wins|--worktree $WT --issue i --issue j --round-id 1-1 --item 1 t $OKR|rc=2 stderr~--issue+supplied+more+than+once=true" \
   "an unknown argument|--worktree $WT --issue i --round-id 1-1 --item 1 t $OKR --bogus|rc=2"
 assert_eq "$([[ -f "$WT/tmp/dev-round-i-1-1.json" ]] && echo yes || echo no)" "no" "failed invocations write nothing"
 run_write -h
