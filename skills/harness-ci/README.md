@@ -21,7 +21,7 @@ Commit the installed skill and generated-file inventory. The CI runner needs `jq
 - kendex writes a list of every file it generated, called the inventory, beside the files it installed.
 - Your CI step tells the checker which GitHub event it is handling and which two commits to compare.
 - The checker works out the range that event needs, then reads the inventory as it stood at each end of that range.
-- It answers `true` only when every file the change touched appears in one of those two inventories.
+- It answers `true` only when every file the change touched is on the inventory at each end where that file exists.
 - Anything it cannot prove answers `false`, and your workflow uses that answer to run or skip the product checks.
 
 ## Settings

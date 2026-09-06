@@ -69,7 +69,7 @@ The full per-tool facts are in [docs/adapters](docs/adapters/README.md).
 - It compares your list with what it found, and shows you the difference before it changes anything.
 - You apply the change, and kendex writes the files each tool reads.
 - kendex records what it installed, and where each package came from, in a lock file, so it can update it or take it away later.
-- Delete a package from your list and the next apply deletes its files.
+- Delete a package from your list and the next apply removes its files, except ones you edited by hand and Pi extensions, which kendex keeps and reports.
 
 ## Settings
 
