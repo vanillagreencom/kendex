@@ -1,282 +1,89 @@
-import { afterAll, describe, expect, test } from "bun:test";
+// What the one-shot runner hands its child: the identity environment (the
+// agent, its colour, the pane and bridge markers stripped from an inherited
+// pane environment) and the tool flags built from the parent's active tools.
+// Each row reads back one line: every PI_SUBAGENT_* and PI_BRIDGE* key the
+// child receives, each planted parent key that did not survive, and the
+// argument list, with the session file under the runtime root aliased.
+
+import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test from "node:test";
 import type { AgentConfig } from "../extensions/subagent/agents.js";
-import {
-	runSingleAgent,
-	setSingleAgentSpawnForTests,
-} from "../extensions/subagent/runner.js";
+import { runSingleAgent, setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
 import type { SingleResult, SubagentDetails } from "../extensions/subagent/types.js";
 
-const tempDirs: string[] = [];
+const IDENTITY_KEY = /^PI_(SUBAGENT|BRIDGE)/;
 
-afterAll(() => {
-	for (const dir of tempDirs) rmSync(dir, { force: true, recursive: true });
-});
+interface Launch {
+	color?: string;
+	denyTools?: string[];
+	activeTools?: string[];
+	parent?: Record<string, string>;
+}
 
-function tempRuntime(): string {
-	const dir = mkdtempSync(join(tmpdir(), "pi-agents-runner-env-"));
-	tempDirs.push(dir);
-	return dir;
+function agent(opts: Launch): AgentConfig {
+	return { color: opts.color, denyTools: opts.denyTools, description: "scout test agent", filePath: "scout.md", name: "scout", pane: false, source: "project", systemPrompt: "" };
 }
 
 function makeDetails(results: SingleResult[]): SubagentDetails {
-	return { mode: "single", agentScope: "project", projectAgentsDir: null, results };
+	return { agentScope: "project", mode: "single", projectAgentsDir: null, results };
 }
 
-function mockPiEvents() {
-	return {
-		getActiveTools: () => [],
-		events: { emit: () => undefined },
-	} as any;
-}
-
-function captureSpawnedEnv(scenarios: Array<{ code: number; stdout?: string }>): Array<NodeJS.ProcessEnv | undefined> {
-	const envs: Array<NodeJS.ProcessEnv | undefined> = [];
-	setSingleAgentSpawnForTests(((command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+// Runs the agent under a parent environment holding only the planted keys of
+// the identity family, and reads back the child's spawn.
+async function launchLine(opts: Launch): Promise<string> {
+	const runtime = mkdtempSync(join(tmpdir(), "pi-agents-runner-env-"));
+	const saved = Object.entries(process.env).filter(([key]) => IDENTITY_KEY.test(key) || key in (opts.parent ?? {}));
+	for (const [key] of saved) delete process.env[key];
+	Object.assign(process.env, opts.parent ?? {});
+	const spawns: Array<{ args: string[]; env: NodeJS.ProcessEnv }> = [];
+	setSingleAgentSpawnForTests(((command: string, args: string[], options: { env: NodeJS.ProcessEnv }) => {
 		void command;
-		void args;
-		envs.push(options?.env);
-		const proc = new EventEmitter() as any;
-		proc.stdout = new EventEmitter();
-		proc.stderr = new EventEmitter();
-		proc.killed = false;
-		proc.kill = () => { proc.killed = true; return true; };
-		const scenario = scenarios.shift() ?? { code: 0 };
-		queueMicrotask(() => {
-			if (scenario.stdout) proc.stdout.emit("data", Buffer.from(scenario.stdout));
-			proc.emit("close", scenario.code, null);
-		});
+		spawns.push({ args, env: options.env });
+		const proc = Object.assign(new EventEmitter(), { kill: () => true, killed: false, stderr: new EventEmitter(), stdout: new EventEmitter() });
+		queueMicrotask(() => proc.emit("close", 0, null));
 		return proc;
-	}) as any);
-	return envs;
+	}) as unknown as Parameters<typeof setSingleAgentSpawnForTests>[0]);
+	try {
+		const pi = { events: { emit: () => undefined }, getActiveTools: () => opts.activeTools ?? [] } as unknown as Parameters<typeof runSingleAgent>[9];
+		await runSingleAgent(runtime, runtime, [agent(opts)], "scout", "recon", undefined, undefined, undefined, undefined, pi, undefined, undefined, makeDetails);
+	} finally {
+		setSingleAgentSpawnForTests();
+		for (const key of Object.keys(opts.parent ?? {})) delete process.env[key];
+		for (const key of Object.keys(process.env)) if (IDENTITY_KEY.test(key)) delete process.env[key];
+		Object.assign(process.env, Object.fromEntries(saved));
+		rmSync(runtime, { force: true, recursive: true });
+	}
+	if (spawns.length !== 1) return `spawns=${spawns.length}`;
+	const { args, env } = spawns[0];
+	const keys = [...new Set([...Object.keys(env).filter((key) => IDENTITY_KEY.test(key)), ...Object.keys(opts.parent ?? {})])].sort();
+	const envLine = keys.map((key) => `${key}=${env[key] ?? "-"}`).join(" ");
+	const argsLine = args.map((arg, i) => (args[i - 1] === "--session" ? (arg.startsWith(runtime) ? "<runtime-session>" : arg) : arg)).join(" ");
+	return `${envLine} | ${argsLine}`;
 }
 
-function captureSpawnedLaunches(scenarios: Array<{ code: number; stdout?: string }>): Array<{ args: string[]; env?: NodeJS.ProcessEnv }> {
-	const launches: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = [];
-	setSingleAgentSpawnForTests(((command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
-		void command;
-		launches.push({ args, env: options?.env });
-		const proc = new EventEmitter() as any;
-		proc.stdout = new EventEmitter();
-		proc.stderr = new EventEmitter();
-		proc.killed = false;
-		proc.kill = () => { proc.killed = true; return true; };
-		const scenario = scenarios.shift() ?? { code: 0 };
-		queueMicrotask(() => {
-			if (scenario.stdout) proc.stdout.emit("data", Buffer.from(scenario.stdout));
-			proc.emit("close", scenario.code, null);
-		});
-		return proc;
-	}) as any);
-	return launches;
-}
+const STRIPPED = { PI_BRIDGE_CHILD_ROLE: "role", PI_BRIDGE_PARENT_SESSION_ID: "parent", PI_BRIDGE_SOCKET_PATH: "/tmp/sock", PI_SUBAGENT_CHILD_PANE: "1", PI_SUBAGENT_PARENT_SESSION_ID: "session" };
+const BASE = "--mode json -p --name scout --session <runtime-session> --exclude-tools complete_subagent";
 
-function agent(name: string, color?: string): AgentConfig {
-	return {
-		name,
-		description: `${name} test agent`,
-		pane: false,
-		systemPrompt: "",
-		source: "project",
-		filePath: `${name}.md`,
-		color,
-	};
-}
+// label | launch | expect
+const rows: Array<[string, Launch, string]> = [
+	["a clean parent: the child carries the agent and the depth, no colour", {}, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_DEPTH=1 | ${BASE} Task: recon`],
+	["the agent's colour is exported", { color: "cyan" }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_CHILD_COLOR=cyan PI_SUBAGENT_DEPTH=1 | ${BASE} Task: recon`],
+	["a parent colour is cleared when the agent has none", { parent: { PI_SUBAGENT_CHILD_COLOR: "magenta" } }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_CHILD_COLOR=- PI_SUBAGENT_DEPTH=1 | ${BASE} Task: recon`],
+	["a parent colour is replaced by the agent's", { color: "cyan", parent: { PI_SUBAGENT_CHILD_COLOR: "magenta" } }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_CHILD_COLOR=cyan PI_SUBAGENT_DEPTH=1 | ${BASE} Task: recon`],
+	["a parent's child agent is replaced by this one", { parent: { PI_SUBAGENT_CHILD_AGENT: "other" } }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_DEPTH=1 | ${BASE} Task: recon`],
+	["pane and bridge markers are stripped, a PI_BRIDGE sibling and an unrelated key kept", { parent: { ...STRIPPED, KENDEX_TEST_KEEP: "kept", PI_BRIDGEX: "kept" } }, `KENDEX_TEST_KEEP=kept PI_BRIDGEX=kept PI_BRIDGE_CHILD_ROLE=- PI_BRIDGE_PARENT_SESSION_ID=- PI_BRIDGE_SOCKET_PATH=- PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_CHILD_PANE=- PI_SUBAGENT_DEPTH=1 PI_SUBAGENT_PARENT_SESSION_ID=- | ${BASE} Task: recon`],
+	["the parent's depth is one more in the child", { parent: { PI_SUBAGENT_DEPTH: "2" } }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_DEPTH=3 | ${BASE} Task: recon`],
+	["the excluded tool is dropped from the inherited tools", { activeTools: ["read", "complete_subagent", "delegate_subagent"] }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_DEPTH=1 | ${BASE} --tools read,delegate_subagent Task: recon`],
+	["the excluded tool is matched by its normalised name", { activeTools: ["read", " Complete-Subagent "] }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_DEPTH=1 | ${BASE} --tools read Task: recon`],
+	["only the excluded tool inherited: no tools at all", { activeTools: ["complete_subagent"] }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_DEPTH=1 | ${BASE} --no-tools Task: recon`],
+	["a denied tool is dropped, the rest deduplicated and trimmed", { activeTools: ["read", "bash", " read", "bash "], denyTools: ["Bash"] }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_DEPTH=1 | ${BASE} --tools read Task: recon`],
+	["every inherited tool denied: no tools at all", { activeTools: ["bash"], denyTools: ["bash"] }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_DEPTH=1 | ${BASE} --no-tools Task: recon`],
+];
 
-describe("bg one-shot runner exports child identity env (issue #228)", () => {
-	test("PI_SUBAGENT_CHILD_AGENT is set to the target agent name", async () => {
-		const envs = captureSpawnedEnv([{ code: 0 }]);
-		try {
-			await runSingleAgent(
-				tempRuntime(),
-				tempRuntime(),
-				[agent("scout")],
-				"scout",
-				"map the unknown",
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				mockPiEvents(),
-				undefined,
-				undefined,
-				makeDetails,
-			);
-			expect(envs).toHaveLength(1);
-			expect(envs[0]?.PI_SUBAGENT_CHILD_AGENT).toBe("scout");
-		} finally {
-			setSingleAgentSpawnForTests();
-		}
-	});
-
-	test("PI_SUBAGENT_CHILD_COLOR is exported when the agent has a color", async () => {
-		const envs = captureSpawnedEnv([{ code: 0 }]);
-		try {
-			await runSingleAgent(
-				tempRuntime(),
-				tempRuntime(),
-				[agent("scout", "cyan")],
-				"scout",
-				"recon",
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				mockPiEvents(),
-				undefined,
-				undefined,
-				makeDetails,
-			);
-			expect(envs[0]?.PI_SUBAGENT_CHILD_COLOR).toBe("cyan");
-		} finally {
-			setSingleAgentSpawnForTests();
-		}
-	});
-
-	test("pane-only env vars are stripped even when set in parent", async () => {
-		// Bridge state is pane-oriented. Background children must not inherit
-		// bridge session, role, or pane ownership. The parent environment must
-		// contain these variables so this test proves that the child deletes them.
-		const envs = captureSpawnedEnv([{ code: 0 }]);
-		const previousParent = process.env.PI_BRIDGE_PARENT_SESSION_ID;
-		const previousChild = process.env.PI_BRIDGE_CHILD_ROLE;
-		const previousSession = process.env.PI_SUBAGENT_PARENT_SESSION_ID;
-		const previousExtraBridge = process.env.PI_BRIDGE_SOCKET_PATH;
-		const previousChildPane = process.env.PI_SUBAGENT_CHILD_PANE;
-		try {
-			// Set sentinel values BEFORE spawn so the test actually exercises
-			// the strip path. If runner.ts ever drops the explicit deletes,
-			// these sentinels would otherwise leak through.
-			process.env.PI_BRIDGE_PARENT_SESSION_ID = "sentinel-parent";
-			process.env.PI_BRIDGE_CHILD_ROLE = "sentinel-role";
-			process.env.PI_SUBAGENT_PARENT_SESSION_ID = "sentinel-session";
-			process.env.PI_BRIDGE_SOCKET_PATH = "/tmp/sentinel-socket";
-			process.env.PI_SUBAGENT_CHILD_PANE = "1";
-			await runSingleAgent(
-				tempRuntime(),
-				tempRuntime(),
-				[agent("scout")],
-				"scout",
-				"recon",
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				mockPiEvents(),
-				undefined,
-				undefined,
-				makeDetails,
-			);
-			expect(envs[0]?.PI_BRIDGE_PARENT_SESSION_ID).toBeUndefined();
-			expect(envs[0]?.PI_BRIDGE_CHILD_ROLE).toBeUndefined();
-			expect(envs[0]?.PI_SUBAGENT_PARENT_SESSION_ID).toBeUndefined();
-			expect(envs[0]?.PI_SUBAGENT_CHILD_PANE).toBeUndefined();
-			// Any other PI_BRIDGE_* var must also be stripped, not just the
-			// two named ones.
-			expect(envs[0]?.PI_BRIDGE_SOCKET_PATH).toBeUndefined();
-		} finally {
-			setSingleAgentSpawnForTests();
-			if (previousParent === undefined) delete process.env.PI_BRIDGE_PARENT_SESSION_ID;
-			else process.env.PI_BRIDGE_PARENT_SESSION_ID = previousParent;
-			if (previousChild === undefined) delete process.env.PI_BRIDGE_CHILD_ROLE;
-			else process.env.PI_BRIDGE_CHILD_ROLE = previousChild;
-			if (previousSession === undefined) delete process.env.PI_SUBAGENT_PARENT_SESSION_ID;
-			else process.env.PI_SUBAGENT_PARENT_SESSION_ID = previousSession;
-			if (previousExtraBridge === undefined) delete process.env.PI_BRIDGE_SOCKET_PATH;
-			else process.env.PI_BRIDGE_SOCKET_PATH = previousExtraBridge;
-			if (previousChildPane === undefined) delete process.env.PI_SUBAGENT_CHILD_PANE;
-			else process.env.PI_SUBAGENT_CHILD_PANE = previousChildPane;
-		}
-	});
-
-	test("PI_SUBAGENT_CHILD_COLOR is cleared when the parent had it set but the agent has no color", async () => {
-		const envs = captureSpawnedEnv([{ code: 0 }]);
-		const previous = process.env.PI_SUBAGENT_CHILD_COLOR;
-		try {
-			process.env.PI_SUBAGENT_CHILD_COLOR = "magenta";
-			await runSingleAgent(
-				tempRuntime(),
-				tempRuntime(),
-				[agent("scout")],
-				"scout",
-				"recon",
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				mockPiEvents(),
-				undefined,
-				undefined,
-				makeDetails,
-			);
-			expect(envs[0]?.PI_SUBAGENT_CHILD_COLOR).toBeUndefined();
-		} finally {
-			setSingleAgentSpawnForTests();
-			if (previous === undefined) delete process.env.PI_SUBAGENT_CHILD_COLOR;
-			else process.env.PI_SUBAGENT_CHILD_COLOR = previous;
-		}
-	});
-
-	test("complete_subagent is excluded from bg one-shot child tools", async () => {
-		const launches = captureSpawnedLaunches([{ code: 0 }]);
-		try {
-			await runSingleAgent(
-				tempRuntime(),
-				tempRuntime(),
-				[agent("reviewer-test")],
-				"reviewer-test",
-				"review issue",
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				{ getActiveTools: () => ["read", "complete_subagent", "delegate_subagent"], events: { emit: () => undefined } } as any,
-				undefined,
-				undefined,
-				makeDetails,
-			);
-			expect(launches).toHaveLength(1);
-			const args = launches[0].args;
-			const excludeToolsIndex = args.indexOf("--exclude-tools");
-			expect(excludeToolsIndex).toBeGreaterThanOrEqual(0);
-			expect(args[excludeToolsIndex + 1]?.split(",")).toContain("complete_subagent");
-
-			const toolsIndex = args.indexOf("--tools");
-			expect(toolsIndex).toBeGreaterThanOrEqual(0);
-			expect(args[toolsIndex + 1]?.split(",")).toEqual(["read", "delegate_subagent"]);
-		} finally {
-			setSingleAgentSpawnForTests();
-		}
-	});
-
-	test("bg one-shot child gets no tools when complete_subagent was the only inherited tool", async () => {
-		const launches = captureSpawnedLaunches([{ code: 0 }]);
-		try {
-			await runSingleAgent(
-				tempRuntime(),
-				tempRuntime(),
-				[agent("reviewer-arch")],
-				"reviewer-arch",
-				"review issue",
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				{ getActiveTools: () => ["complete_subagent"], events: { emit: () => undefined } } as any,
-				undefined,
-				undefined,
-				makeDetails,
-			);
-			expect(launches).toHaveLength(1);
-			const args = launches[0].args;
-			expect(args).toContain("--exclude-tools");
-			expect(args).not.toContain("--tools");
-			expect(args).toContain("--no-tools");
-		} finally {
-			setSingleAgentSpawnForTests();
-		}
-	});
+test("runSingleAgent child identity", async () => {
+	for (const [label, launch, expect] of rows) assert.equal(await launchLine(launch), expect, label);
 });
