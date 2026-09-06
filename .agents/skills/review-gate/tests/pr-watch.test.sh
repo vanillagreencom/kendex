@@ -230,13 +230,34 @@ EOF
 chmod +x "$TMP_ROOT/bin/gh"
 
 HEAD_A="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+HEAD_B="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 pr_row() { # number, [state], [armed], [draft], [created_at] -> one pulls-list row
   jq -n --argjson n "$1" --arg state "${2:-open}" --arg armed "${3:-armed}" --arg draft "${4:-false}" \
     --arg created "${5:-2026-01-01T00:00:00Z}" --arg head "$HEAD_A" \
-    '{number:$n, state:$state, draft:($draft=="true"), head:{sha:$head}, user:{login:"author"},
+    '{number:$n, state:$state, draft:($draft=="true"), head:{sha:$head, ref:"lane"}, user:{login:"author"},
       created_at:$created,
       auto_merge: (if $armed=="armed" then {merge_method:"merge"} else null end)}'
 }
+
+# One orch workflow-state file per size fixture, the shape branch-size-check
+# writes: the record under `pr.size_check`, keyed by the lane's own branch and
+# bound to the head it measured. A null allowance is the `allowance_missing`
+# verdict, which the check emits for an issue that states no expected delta.
+size_state() { # dir, branch, head_sha, production_lines, allowance-or-null
+  mkdir -p "$1"
+  jq -n --arg branch "$2" --arg head "$3" --argjson prod "$4" --argjson allow "$5" \
+    '{issue_id:"KEN-1", branch:$branch, worktree:"/wt",
+      pr:{baseline_lines:100,
+          size_check:{base_sha:"0000000000000000000000000000000000000000", head_sha:$head,
+                      production_lines:$prod, test_lines:40, mirror_lines:0,
+                      production_allowance:$allow, test_allowance:null,
+                      verdict:(if $allow == null then "allowance_missing" else "pass" end),
+                      reason:""}}}' > "$1/workflow-state-KEN-1.json"
+}
+SD_CURRENT="$TMP_ROOT/state/current"; size_state "$SD_CURRENT" lane "$HEAD_A" 214 250
+SD_STALE="$TMP_ROOT/state/stale";     size_state "$SD_STALE"   lane "$HEAD_B" 214 250
+SD_NOALLOW="$TMP_ROOT/state/noallow"; size_state "$SD_NOALLOW" lane "$HEAD_A" 214 null
+SD_OTHER="$TMP_ROOT/state/other";     size_state "$SD_OTHER"   other-lane "$HEAD_A" 214 250
 
 # --- fixtures ----------------------------------------------------------------
 # Open-PR listings: number 7 armed, unarmed, unarmed draft, armed draft, two
@@ -289,6 +310,7 @@ T_NONARRAY='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"
 # counter and predicate-call log under $RUN. OUT is stdout and stderr
 # together, the way the scheduler sees it; RC the exit status.
 RUN_SEQ=0
+WATCH_BIN="$TMP_ROOT/scripts/pr-watch.sh"   # a mutant row swaps this
 run_watch() {
   local env_list="$1" env_args=()
   shift
@@ -301,7 +323,7 @@ run_watch() {
   OUT=$(cd "$TMP_ROOT/cwd" && PATH="$TMP_ROOT/bin:$PATH" \
     env GH_REPO=acme/widgets STUB_DISPATCH_LOG="$RUN/dispatch.log" \
         STUB_PR_CALLS_DIR="$RUN/prcalls" STUB_PREDICATE_CALLS="$RUN/predicate-calls" \
-        ${env_args[@]+"${env_args[@]}"} "$TMP_ROOT/scripts/pr-watch.sh" "$@" 2>&1)
+        ${env_args[@]+"${env_args[@]}"} "$WATCH_BIN" "$@" 2>&1)
   RC=$?
   set -e
 }
@@ -334,6 +356,22 @@ observe() {
       dispatches) value="$(wc -l <"$RUN/dispatch.log" | tr -d ' ')" ;;
       predicate_calls) value="$(wc -l <"$RUN/predicate-calls" | tr -d ' ')" ;;
       detail~*) value="$(grep -qF -- "${name#detail~}" <<<"$OUT" && echo true || echo false)" ;;
+      size)
+        # The disarmed line's size annotation reduced to the fields the
+        # contract names — the counts and their ratio, the measured head,
+        # or the one word a stale or missing record answers with.
+        local line
+        line="$(grep -o 'disarmed.*' <<<"$OUT" | head -1 || true)"
+        if [[ "$line" != *"— size "* ]]; then value=none
+        elif [[ "$line" == *"size unavailable"* ]]; then value=unavailable
+        elif [[ "$line" =~ size\ stale:\ the\ recorded\ measurement\ is\ of\ ([0-9a-f]{8}) ]]; then
+          value="stale@${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ size\ ([0-9]+)\ of\ ([0-9]+)\ production\ lines\ added\ \(([0-9]+)%\ of\ the\ allowance\),\ measured\ at\ ([0-9a-f]{8}) ]]; then
+          value="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}/${BASH_REMATCH[3]}%@${BASH_REMATCH[4]}"
+        elif [[ "$line" =~ size\ ([0-9]+)\ production\ lines\ added,\ no\ allowance\ stated,\ measured\ at\ ([0-9a-f]{8}) ]]; then
+          value="${BASH_REMATCH[1]}/none@${BASH_REMATCH[2]}"
+        else value=unparsed; fi
+        ;;
       help_sections)
         value=""
         grep -q '^Usage: pr-watch.sh' <<<"$OUT" && value="$value,usage"
@@ -390,6 +428,63 @@ table \
   "REVIEW_GATE_THREADS=off: threads report, a green gate over them is designed|--heal|REVIEW_GATE_THREADS=off;STUB_QUEUED=no;STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=2;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=threads-open dispatches=0" \
   "REVIEW_GATE_MODE=off: the same|--heal|REVIEW_GATE_MODE=off;STUB_QUEUED=no;STUB_OPEN_PRS=$P7;STUB_UNRESOLVED=2;STUB_VERDICT_LINE=$V_OFF;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=threads-open dispatches=0" \
   "REVIEW_GATE_THREADS=off: open threads do not eat the disarmed finding||REVIEW_GATE_THREADS=off;STUB_OPEN_PRS=$P7U;STUB_UNRESOLVED=2;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=threads-open,disarmed"
+
+echo "=== the disarmed line carries the submit-size record ==="
+# branch-size-check records the branch's measured size at submit, keyed by the
+# lane's branch and bound to the head it compared; the reducer reads that
+# record and never re-measures. Both disarmed paths carry it, a record of any
+# other head reads stale rather than as this head's size, and a state
+# directory holding only another lane's record leaves this one unavailable.
+table \
+  "the evaluated disarmed line carries the counts and their ratio||ORCH_STATE_DIR=$SD_CURRENT;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=214/250/85%@aaaaaaaa" \
+  "cheap mode's disarmed line carries the same annotation|--no-evaluate|ORCH_STATE_DIR=$SD_CURRENT;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=unused;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=214/250/85%@aaaaaaaa" \
+  "a record of another head reads stale, never as this head's size||ORCH_STATE_DIR=$SD_STALE;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=stale@bbbbbbbb" \
+  "another lane's record leaves this branch unavailable||ORCH_STATE_DIR=$SD_OTHER;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=unavailable" \
+  "no state directory at all is unavailable||ORCH_STATE_DIR=$TMP_ROOT/state/absent;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=unavailable" \
+  "a record stating no allowance reports the count and no ratio||ORCH_STATE_DIR=$SD_NOALLOW;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=214/none@aaaaaaaa"
+
+echo "=== must-fail controls for the four surfaces above ==="
+# Each control fails against a copy of the reducer with the one expression it
+# depends on removed: the call at each disarmed site, the head binding that
+# makes a record current, and the branch binding that makes it this lane's.
+mutant_watch() { # label, sed-expr, anchor — points WATCH_BIN at the mutated copy
+  local dir="$TMP_ROOT/mutants/$1"
+  mkdir -p "$dir/lib"
+  cp "$TMP_ROOT/scripts/pr-watch.sh" "$TMP_ROOT/scripts/review-predicate.sh" "$dir/"
+  cp "$TMP_ROOT/scripts/lib/settings.sh" "$dir/lib/"
+  chmod +x "$dir/pr-watch.sh" "$dir/review-predicate.sh"
+  assert_eq "$(grep -Fc -- "$3" "$dir/pr-watch.sh")" "1" "mutant $1: its anchor stands once in the live script"
+  sed -i.bak "$2" "$dir/pr-watch.sh"
+  assert_eq "$(grep -Fc -- "$3" "$dir/pr-watch.sh")" "0" "mutant $1: the anchor is gone from the copy"
+  WATCH_BIN="$dir/pr-watch.sh"
+}
+LIVE_WATCH="$WATCH_BIN"
+
+mutant_watch evaluated-call \
+  's|(re-arm)$(size_note "$head_ref" "$head")|(re-arm)|' \
+  '(re-arm)$(size_note'
+table \
+  "must-fail: without the evaluated site's call that line carries no size||ORCH_STATE_DIR=$SD_CURRENT;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=none"
+
+mutant_watch cheap-call \
+  's|before re-arming$(size_note "$head_ref" "$head")|before re-arming|' \
+  'before re-arming$(size_note'
+table \
+  "must-fail: without the cheap site's call that line carries no size|--no-evaluate|ORCH_STATE_DIR=$SD_CURRENT;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=unused;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=none"
+
+mutant_watch head-binding \
+  's#map(select(.head_sha == $head)) | first#first#' \
+  'map(select(.head_sha == $head)) | first'
+table \
+  "must-fail: without the head binding the old record reads as current||ORCH_STATE_DIR=$SD_STALE;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=214/250/85%@bbbbbbbb"
+
+mutant_watch branch-binding \
+  's#(.branch? // "") == $branch#true#' \
+  '(.branch? // "") == $branch'
+table \
+  "must-fail: without the branch binding another lane's record is reported||ORCH_STATE_DIR=$SD_OTHER;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=214/250/85%@aaaaaaaa"
+
+WATCH_BIN="$LIVE_WATCH"
 
 echo "=== the thread walk is paged, summed and bounded ==="
 # Over 100 threads, a cursor that never advances, or more than 20 advancing

@@ -69,7 +69,14 @@ Attention kinds:
                      it
   disarmed           gate open (success) on an un-queued PR with auto-merge
                      NOT armed — mergeable, but nothing will merge it (the
-                     known eviction-disarm failure mode)
+                     known eviction-disarm failure mode). The line also
+                     carries the size orch's branch-size-check recorded for
+                     this head branch at submit (workflow state
+                     `pr.size_check`): the production lines it added, the
+                     allowance the issue stated and the ratio between them,
+                     and the head it measured. A record of any other head
+                     reads `stale`, and no record at all `unavailable` —
+                     read only, never re-measured and refusing nothing
   awaiting-stale     no evidence and the head has sat unreviewed longer
                      than the quiet period (PR_REVIEW_WAIT_SECS, default
                      900) — time for a manual re-review trigger or the
@@ -100,6 +107,9 @@ Exit codes:
      with no per-PR lines — surface stderr, not just stdout
 
 Env (required): GH_TOKEN (or ambient gh auth), GH_REPO
+Env (optional): ORCH_STATE_DIR — where the disarmed line reads the submit
+size record from, defaulting to tmp/ under the working directory, the same
+resolution every orch workflow-state call uses
 
 Consumers: orch's workflows treat this as the single state reducer for
 multi-PR watching (orch's approval-wait remains the single-PR foreground
@@ -212,6 +222,14 @@ if [ -z "$AWAITING_AFTER" ]; then
   fi
 fi
 WRITER_WORKFLOW="${PR_WATCH_WRITER_WORKFLOW:-Review gate writer}"
+# Where the disarmed line reads the submit-time size from: orch's
+# workflow-state directory, resolved as every workflow-state call resolves
+# it, $ORCH_STATE_DIR then tmp/ under THIS process's working directory. The
+# record is read as the file orch's schema documents rather than through
+# orch's own workflow-state CLI: orch calls this reducer, so calling back
+# into it would close a loop between the two skills — and the caller here
+# has a PR, not the issue key that CLI addresses state by.
+SIZE_STATE_DIR="${ORCH_STATE_DIR:-tmp}"
 
 attention=0
 errored=0
@@ -220,6 +238,59 @@ healed=0
 emit() { # pr, head, kind, detail
   printf '%s\t%s\t%s\t%s\n' "$1" "$(printf %.8s "$2")" "$3" "$4"
   emitted_this_pr=1
+}
+
+# The submit-time size the reader needs BEFORE arming: branch-size-check
+# measures a branch's added lines against the allowance its issue states and
+# records the verdict at `pr.size_check`, keyed by the state file's own
+# branch. This reads that record and nothing else — no second measurement,
+# and no refusal: an oversized branch is refused at submit, and re-refusing
+# it here would be the same rule in two tools.
+#
+# A record is bound to the base and head it compared, so only one whose
+# head_sha IS this head describes the branch as it stands: any other is
+# reported STALE rather than as this head's size, and no record at all is
+# UNAVAILABLE. Both are also where every failure lands — an absent state
+# directory, a head branch the PR object did not carry, an unreadable
+# file — because this annotation informs a line that already stands, and a
+# local state file must never be able to turn a real disarmed finding into
+# an error.
+size_note() { # branch, head -> the annotation, prefixed for the detail
+  local branch="$1" head="$2" note="" file
+  local files=()
+  if [ -n "$branch" ]; then
+    for file in "$SIZE_STATE_DIR"/workflow-state-*.json; do
+      if [ -f "$file" ]; then files+=("$file"); fi
+    done
+  fi
+  if [ "${#files[@]}" -eq 0 ]; then
+    note="size unavailable: no submit measurement is recorded for this branch"
+  else
+    note="$(jq -rs --arg branch "$branch" --arg head "$head" '
+        def pct($n; $d): (($n * 100) / $d | floor);
+        map(select(type == "object" and (.branch? // "") == $branch
+                   and ((.pr?.size_check? | type) == "object"))
+            | .pr.size_check
+            | select((.head_sha? | type) == "string"
+                     and (.production_lines? | type) == "number")) as $records
+        | ($records | map(select(.head_sha == $head)) | first) as $current
+        | if $current != null then
+            "size "
+            + (if ($current.production_allowance | type) == "number"
+                  and $current.production_allowance > 0
+               then "\($current.production_lines) of \($current.production_allowance) production lines added (\(pct($current.production_lines; $current.production_allowance))% of the allowance)"
+               else "\($current.production_lines) production lines added, no allowance stated"
+               end)
+            + ", measured at \($current.head_sha[0:8])"
+          elif ($records | length) > 0 then
+            "size stale: the recorded measurement is of \($records[0].head_sha[0:8]), not this head"
+          else
+            "size unavailable: no submit measurement is recorded for this branch"
+          end' "${files[@]}" 2>/dev/null)" \
+      || note=""
+  fi
+  [ -n "$note" ] || note="size unavailable: the recorded measurement could not be read"
+  printf ' — %s' "$note"
 }
 
 heal() { # pr, head — one bounded writer dispatch ATTEMPT per invocation
@@ -332,6 +403,10 @@ for number in $pr_numbers; do
   draft="$(jq -r '.draft | tostring' <<<"$row")"
   armed="$(jq -r 'if .auto_merge == null then "false" else "true" end' <<<"$row")"
   created_at="$(jq -r '.created_at' <<<"$row")"
+  # The head branch keys the size record below and nothing else, so it is
+  # NOT part of the well-formed check above: a row without it annotates as
+  # unavailable, the same answer a repo running no orch lane gets.
+  head_ref="$(jq -r '.head.ref // ""' <<<"$row")"
   # Closed/merged PRs need nothing (reachable via explicit PR args). The
   # REST enum is open|closed — anything else is malformed data, and a
   # malformed state must never read as "closed, skip silently".
@@ -654,13 +729,13 @@ for number in $pr_numbers; do
     # disarmed line (an approved gate over an awaiting predicate is the
     # writer's problem, reported below as the state mismatch it is).
     if [ "$verdict" = "approved" ]; then
-      emit "$number" "$head" disarmed "gate open but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)"
+      emit "$number" "$head" disarmed "gate open but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)$(size_note "$head_ref" "$head")"
       attention=1
     elif [ "$EVALUATE" = "0" ]; then
       # Cheap mode saw only the STATUS — which could itself be the stale
       # green evaluate mode would classify as gate-stale. Surface the state
       # but never recommend arming on unconfirmed evidence.
-      emit "$number" "$head" disarmed "gate status reads success but auto-merge is not armed and the PR is not queued — UNCONFIRMED in cheap mode: run evaluate mode (or the predicate) before re-arming"
+      emit "$number" "$head" disarmed "gate status reads success but auto-merge is not armed and the PR is not queued — UNCONFIRMED in cheap mode: run evaluate mode (or the predicate) before re-arming$(size_note "$head_ref" "$head")"
       attention=1
     fi
   fi
