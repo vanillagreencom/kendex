@@ -217,62 +217,182 @@ fn a_safety_finding_is_reported_and_fails_nothing() {
     assert_eq!(report.failing(true), 0, "advisory under --strict too");
 }
 
-/// A `[bundles.<name>]` body carrying a key this reader does not know is
-/// that set's breakage: a plain check fails on it, naming the set and the
-/// key, while the set beside it and every item the catalog offers are
-/// untouched. kendex's own four sets shipped this shape — a `members` list
-/// nothing read — and installed nothing with every check green.
+/// Every `[bundles.<name>]` body shape this reader will not read is that
+/// set's breakage: a plain check fails on it, naming the set and the part it
+/// could not read, while the set beside it and every item the catalog offers
+/// are untouched. kendex's own four sets shipped the unknown-key shape — a
+/// `members` list nothing read — and installed nothing with every check
+/// green; the member-list shapes shipped fewer members than they were
+/// written with, and the non-table body shipped no set at all.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_body_key_the_reader_does_not_know_is_that_sets_breakage() {
+fn every_unreadable_set_body_is_reported_and_costs_the_catalog_nothing() {
+    // Each row is the broken `starter` body, the substring the finding has to
+    // name so the author is sent to the part that will not read, and what
+    // the fix has to spell out to be actionable.
+    const LISTS: &[&str] = &["agents", "skills", "commands", "hooks", "mcp-servers"];
+    const REWRITE: &[&str] = &["array of strings"];
+    let rows: [(&str, &str, &[&str]); 7] = [
+        (
+            "[bundles.starter]\nmembers = [\"skill/gh\"]\n",
+            "members",
+            LISTS,
+        ),
+        (
+            "[bundles]\nstarter = \"the starter set\"\n",
+            "is not a table",
+            LISTS,
+        ),
+        ("[bundles.starter]\nskills = \"gh\"\n", "`skills`", REWRITE),
+        (
+            "[bundles.starter]\nskills = [[\"gh\"]]\n",
+            "`skills`",
+            REWRITE,
+        ),
+        (
+            "[bundles.starter]\nskills = { a = \"gh\" }\n",
+            "`skills`",
+            REWRITE,
+        ),
+        (
+            "[bundles.starter]\nskills = [\"gh\", 3]\n",
+            "`skills`",
+            REWRITE,
+        ),
+        (
+            "[bundles.starter]\ndescription = 3\nskills = [\"gh\"]\n",
+            "`description`",
+            &["a string"],
+        ),
+    ];
+    // The two shapes that name no set at all: the table under which every
+    // set is declared is itself unreadable, so the finding is the catalog's.
+    let whole_table: [&str; 2] = [
+        "bundles = [\"starter\"]\n",
+        "[[bundles]]\nname = \"starter\"\nskills = [\"gh\"]\n",
+    ];
+    for (body, named, fix_names) in rows {
+        a_broken_body_is_that_sets_breakage(body, named, fix_names);
+    }
+    for body in whole_table {
+        a_broken_bundles_table_is_the_catalogs_breakage(body);
+    }
+}
+
+/// One row of the table: `body` declares the broken `starter` beside a
+/// readable `other`, so the check has to red it, name the set and `named`,
+/// and leave `other` and the catalog's own item alone.
+#[allow(clippy::unwrap_used)]
+fn a_broken_body_is_that_sets_breakage(body: &str, named: &str, fix_names: &[&str]) {
     let (_tmp, root) = repo();
     skill_at(&root, "skills", "gh");
     fs::write(
         root.join("kendex.toml"),
-        "[bundles.starter]\nmembers = [\"skill/gh\"]\n\n[bundles.other]\nskills = [\"gh\"]\n",
+        format!("{body}\n[bundles.other]\nskills = [\"gh\"]\n"),
     )
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
     let report = check(&sealed, "repo").unwrap();
-    assert!(report.failing(false) >= 1, "the check passed it");
+    assert!(report.failing(false) >= 1, "the check passed it: {body}");
     let finding = &report.catalog[0];
-    assert_eq!(finding.severity, "error", "{}", finding.message);
-    assert!(finding.message.contains("members"), "{}", finding.message);
+    assert_eq!(finding.severity, "error", "{body}: {}", finding.message);
     assert!(
-        finding.message.contains("[bundles.starter]"),
-        "{}",
+        finding.message.contains(named),
+        "{body}: {}",
         finding.message
     );
-    for list in ["agents", "skills", "commands", "hooks", "mcp-servers"] {
-        assert!(finding.fix.contains(list), "{list}: {}", finding.fix);
+    assert!(
+        finding.message.contains("[bundles.starter]"),
+        "{body}: {}",
+        finding.message
+    );
+    for wanted in fix_names {
+        assert!(
+            finding.fix.contains(wanted),
+            "{body}: {wanted}: {}",
+            finding.fix
+        );
     }
     let names: Vec<&str> = report.items.iter().map(|item| item.name.as_str()).collect();
-    assert_eq!(names, ["gh"], "the catalog stopped offering its item");
+    assert_eq!(
+        names,
+        ["gh"],
+        "{body}: the catalog stopped offering its item"
+    );
     let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
     let sets: Vec<String> = kendex_core::source::bundles::offered(&sealed, &config)
         .unwrap()
         .iter()
         .map(|set| set.name.clone())
         .collect();
-    assert_eq!(sets, ["other"], "the set beside it went too");
+    assert_eq!(sets, ["other"], "{body}: the set beside it went too");
 }
 
-/// The must-fail counterpart: the same catalog with its members under a list
-/// the reader reads is clean, under `--strict` too. Without it the control
-/// above would hold for a check that called every catalog broken.
+/// The same for a `bundles` that is not a table: no set in it can be named,
+/// so the finding is the catalog's, every lookup refuses on it rather than
+/// sending the author to fix the name they typed, and nothing derived from
+/// the catalog is swept until it reads. The catalog's own item still offers.
+#[allow(clippy::unwrap_used)]
+fn a_broken_bundles_table_is_the_catalogs_breakage(body: &str) {
+    let (_tmp, root) = repo();
+    skill_at(&root, "skills", "gh");
+    fs::write(root.join("kendex.toml"), body).unwrap();
+    let sealed = SealedSource::open(&root).unwrap();
+    let report = check(&sealed, "repo").unwrap();
+    assert!(report.failing(false) >= 1, "the check passed it: {body}");
+    let finding = &report.catalog[0];
+    assert_eq!(finding.severity, "error", "{body}: {}", finding.message);
+    assert!(
+        finding.message.contains("`bundles` is not a table"),
+        "{body}: {}",
+        finding.message
+    );
+    let names: Vec<&str> = report.items.iter().map(|item| item.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["gh"],
+        "{body}: the catalog stopped offering its item"
+    );
+    let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
+    assert!(config.hides_content(), "{body}: the catalog swept anyway");
+    assert!(
+        kendex_core::source::bundles::find(&sealed, &config, "starter").is_err(),
+        "{body}: the lookup answered no-such-set"
+    );
+}
+
+/// The must-fail counterpart: the same catalog with a table body, known keys
+/// and its members under a list of names is clean, under `--strict` too, and
+/// offers every member it was written with. Without it the control above
+/// would hold for a check that called every catalog broken, and for a reader
+/// that answered the malformed shapes by dropping members.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_bundle_written_in_the_shape_the_reader_reads_is_clean() {
     let (_tmp, root) = repo();
     skill_at(&root, "skills", "gh");
+    skill_at(&root, "skills", "linear");
     fs::write(
         root.join("kendex.toml"),
-        "[bundles.starter]\ndescription = \"the basics\"\nskills = [\"gh\"]\n",
+        "[bundles.starter]\ndescription = \"the basics\"\nskills = [\"gh\", \"linear\"]\n",
     )
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
     let report = check(&sealed, "repo").unwrap();
     assert_eq!(report.failing(true), 0, "{:?}", report.catalog);
+    let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
+    let sets = kendex_core::source::bundles::offered(&sealed, &config).unwrap();
+    let members: Vec<&str> = sets[0]
+        .members
+        .iter()
+        .map(|member| member.name.as_str())
+        .collect();
+    assert_eq!(members, ["gh", "linear"], "a member was dropped");
+    assert_eq!(sets[0].description.as_deref(), Some("the basics"));
+    assert!(
+        !config.hides_content(),
+        "a readable catalog stopped sweeping"
+    );
 }
 
 /// Catalog authors can leave renamed or removed items in any member list.
