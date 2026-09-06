@@ -9,7 +9,7 @@ import {
   type VersionRow,
 } from "@/bindings";
 import { installedCommits, landedWrites } from "@/lib/package-places";
-import type { PackageReads } from "@/lib/package-read-state";
+import { type PackageReads, timelineOf } from "@/lib/package-read-state";
 import {
   READ_PENDING,
   type ReadState,
@@ -70,6 +70,10 @@ export function usePackageData(ref: PackageRef | null): {
   // came back with is the only thing that tells them apart.
   const [record, setRecord] = useState<ReadState>(READ_PENDING);
   const [timeline, setTimeline] = useState<ReadState>(READ_PENDING);
+  // The source the timeline is waiting on, where core's answer was that no
+  // fetch has downloaded it: a landed read with nothing to draw, told apart
+  // from one that failed because only a refresh, never a re-read, lifts it.
+  const [unfetched, setUnfetched] = useState<string | null>(null);
   const [filesRead, setFilesRead] = useState<ReadState>(READ_PENDING);
   // Whether the newest load is still out. Counted here rather than read off
   // the order below: one ticket covers three answers, and `outstanding` flips
@@ -131,7 +135,9 @@ export function usePackageData(ref: PackageRef | null): {
       (response) => {
         if (!lands()) return;
         setVersions(response.status === "ok" ? response.data : []);
-        setTimeline(readOf(response));
+        const read = timelineOf(response);
+        setTimeline(read.timeline);
+        setUnfetched(read.unfetched);
       },
     );
   }, [ref]);
@@ -142,7 +148,7 @@ export function usePackageData(ref: PackageRef | null): {
     meta,
     files,
     versions,
-    reads: { record, timeline, files: filesRead, reading },
+    reads: { record, timeline, unfetched, files: filesRead, reading },
     load,
   };
 }

@@ -63,10 +63,23 @@ export interface UpdateOffer {
 /** The header's whole answer about Update, ranked once so the button and the
  *  note beside it can never disagree.
  *
- *  Three reasons, ranked by what each is a fact about, because no order over
+ *  Four reasons, ranked by what each is a fact about, because no order over
  *  the words themselves can be right.
  *
- *  A fact about the package comes first (`updates-read-state.ts`
+ *  A source no fetch has downloaded yet (`package-read-state.ts`
+ *  [`unfetchedNote`]) comes ahead of the update check's facts. It is why
+ *  the check has none: it records the same case as a warning and leaves no
+ *  row (`crates/core/src/package/updates/eval.rs`), so what the check would
+ *  otherwise state here is that it never covered this place, which is the
+ *  symptom of this cause. Nothing this page can re-read lifts it, so it
+ *  carries no [`retry`]; the note names the source to refresh instead. It
+ *  yields to one thing: this page's record read failing for a reason of its
+ *  own. That read touches the manifest and the lock and never the source
+ *  (`crates/core/src/package/detail.rs` `package_meta`), so a failure there
+ *  beside an unfetched timeline is a second fact, one a re-read can lift,
+ *  and it keeps its words and its retry.
+ *
+ *  Otherwise a fact about the package (`updates-read-state.ts`
  *  [`packageUpdateNote`]): core's refusal for the kind, a hold, an edit of
  *  the reader's own, a place a settled check never covered. Those are
  *  answers — true whatever any read does next.
@@ -75,11 +88,10 @@ export interface UpdateOffer {
  *  Two of core's answers never arrive here as errors: nothing declared under
  *  this name, and a source with no repository. The command layer folds both
  *  into an absent value (`crates/app/src/packages.rs` `no_managed_package`),
+ *  and the unfetched source arrives as its own shape (`TimelineRefused`),
  *  so the page never tells an answer about the manifest apart from a read
  *  that failed, and [`retry`] offers a read of this package again rather
- *  than a button over something no read can change. A failure whose remedy
- *  lies outside this page — a source nobody has fetched yet — names it in
- *  the text core sent with it.
+ *  than a button over something no read can change.
  *
  *  The update read's own standing comes last (`updates-read-state.ts`
  *  [`updatesReadNote`]): a check still running or one that failed says
@@ -99,6 +111,8 @@ export const updateOffer = (page: {
   latest: VersionRow | undefined;
   installed: VersionRow | undefined;
   metaLoaded: boolean;
+  /** The source this package's timeline waits on a fetch of, or null. */
+  unfetched: string | null;
   /** What the update read says about this package, or null. */
   withheld: string | null;
   /** Why this page's own reads say there is no Update, or null. */
@@ -106,13 +120,17 @@ export const updateOffer = (page: {
   /** How the update read itself is standing, or null. */
   standing: string | null;
 }): UpdateOffer => {
-  const reason = page.withheld ?? page.readNote ?? page.standing;
+  const reason =
+    page.unfetched === null
+      ? (page.withheld ?? page.readNote ?? page.standing)
+      : (page.readNote ?? page.unfetched);
   // The button and the note come from the one string, so whatever withholds
-  // an Update is also what is said in its place.
+  // an Update is also what is said in its place, and only a read of this
+  // page's own is one reading again can lift.
   const current = page.installed != null && !hasNewer(page.latest);
   return {
     can: canUpdatePackage({ ...page, withheld: reason }),
     note: current ? null : reason,
-    retry: !current && page.withheld === null && page.readNote !== null,
+    retry: !current && page.readNote !== null && reason === page.readNote,
   };
 };

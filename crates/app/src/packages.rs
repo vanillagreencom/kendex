@@ -36,19 +36,50 @@ fn no_managed_package(error: &CoreError) -> bool {
     )
 }
 
+/// Why the timeline was not read. A source no fetch has downloaded yet is
+/// an answer here, not a failure: the tracking selector resolves to nothing
+/// in an empty mirror, reading again answers the same, and only a refresh
+/// of that source lifts it. It is a shape the page can act on rather than
+/// words it would have to recognise, so the header can name the source and
+/// keep Try again off it, where every other refusal keeps the retry.
+#[derive(Debug, Serialize, Type)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum TimelineRefused {
+    /// Nothing has fetched this source. Names it, which is what the
+    /// person refreshes.
+    SourcePending { source: String },
+    /// Anything else that stopped the read, in core's words.
+    Failed { message: String },
+}
+
+impl From<String> for TimelineRefused {
+    fn from(message: String) -> TimelineRefused {
+        TimelineRefused::Failed { message }
+    }
+}
+
+fn timeline_refused(error: CoreError) -> TimelineRefused {
+    match error {
+        CoreError::SourcePending { name } => TimelineRefused::SourcePending { source: name },
+        other => TimelineRefused::Failed {
+            message: other.to_string(),
+        },
+    }
+}
+
 #[tauri::command(async)]
 #[specta::specta]
 pub fn package_versions(
     scope: Scope,
     kind: ItemKind,
     name: String,
-) -> Result<Vec<package::VersionRow>, String> {
+) -> Result<Vec<package::VersionRow>, TimelineRefused> {
     let env = env()?;
     match package::versions(&env, &scope, kind, &name) {
         Ok(rows) => Ok(rows),
         // No timeline to draw, which an empty log already says.
         Err(error) if no_managed_package(&error) => Ok(Vec::new()),
-        Err(error) => Err(error.to_string()),
+        Err(error) => Err(timeline_refused(error)),
     }
 }
 
@@ -263,5 +294,30 @@ mod tests {
             path: "lock".into(),
             message: "unparsable".to_owned(),
         }));
+    }
+
+    // An unfetched source is neither of them and not a failure either: it
+    // reaches the page as its own shape, naming the source, and every other
+    // refusal keeps core's words.
+    #[test]
+    fn an_unfetched_source_is_its_own_shape() {
+        assert!(!no_managed_package(&CoreError::SourcePending {
+            name: "tools".to_owned(),
+        }));
+        assert!(matches!(
+            timeline_refused(CoreError::SourcePending {
+                name: "tools".to_owned(),
+            }),
+            TimelineRefused::SourcePending { ref source } if source == "tools"
+        ));
+        let failed = CoreError::LockCorrupt {
+            path: "lock".into(),
+            message: "unparsable".to_owned(),
+        };
+        let words = failed.to_string();
+        assert!(matches!(
+            timeline_refused(failed),
+            TimelineRefused::Failed { ref message } if *message == words
+        ));
     }
 }

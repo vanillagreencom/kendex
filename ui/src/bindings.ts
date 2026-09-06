@@ -376,7 +376,7 @@ export const commands = {
 	mineSubmitPreflight: (path: string) => typedError<SubmitPreflight, string>(__TAURI_INVOKE("mine_submit_preflight", { path })),
 	mineSubmit: (repo: string) => typedError<SubmittedView, AccountCallRefused>(__TAURI_INVOKE("mine_submit", { repo })),
 	mineSubmissions: () => typedError<SubmissionRow[], AccountCallRefused>(__TAURI_INVOKE("mine_submissions")),
-	packageVersions: (scope: Scope, kind: ItemKind, name: string) => typedError<VersionRow[], string>(__TAURI_INVOKE("package_versions", { scope, kind, name })),
+	packageVersions: (scope: Scope, kind: ItemKind, name: string) => typedError<VersionRow[], TimelineRefused>(__TAURI_INVOKE("package_versions", { scope, kind, name })),
 	/**
 	 *  Bring one package current and apply — the Updates page's per-package
 	 *  and per-place Update, and the package page's. The scope's other
@@ -3151,6 +3151,23 @@ export type TemplateFinding = {
 	problem: string,
 	fix: string,
 };
+
+/**
+ *  Why the timeline was not read. A source no fetch has downloaded yet is
+ *  an answer here, not a failure: the tracking selector resolves to nothing
+ *  in an empty mirror, reading again answers the same, and only a refresh
+ *  of that source lifts it. It is a shape the page can act on rather than
+ *  words it would have to recognise, so the header can name the source and
+ *  keep Try again off it, where every other refusal keeps the retry.
+ */
+export type TimelineRefused = 
+/**
+ *  Nothing has fetched this source. Names it, which is what the
+ *  person refreshes.
+ */
+{ kind: "source-pending"; source: string } | 
+/**  Anything else that stopped the read, in core's words. */
+{ kind: "failed"; message: string };
 
 /**
  *  A scope whose standing could not be read at all, and why. The reason

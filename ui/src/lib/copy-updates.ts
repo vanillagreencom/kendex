@@ -61,6 +61,12 @@ export const NO_UPDATE_STANDING_NOTE =
 export const PACKAGE_READ_FAILED = "Couldn't read this package here";
 export const packageReadFailedNote = (reason: string): string =>
   `${PACKAGE_READ_FAILED} — ${reason}`;
+// A source no fetch has downloaded yet has no timeline to read. Core says
+// so as an answer rather than a failure, and reading this package again
+// answers the same, so this carries no Try again: it names the source,
+// because a refresh of it is the one thing that lifts it.
+export const sourceUnfetchedNote = (source: string): string =>
+  `The source "${source}" hasn't been downloaded yet — refresh it to see this package's versions`;
 
 // An edited copy is the user's work: no update touches it. The newest
 // version can only land beside it, under the name it always had, with the
