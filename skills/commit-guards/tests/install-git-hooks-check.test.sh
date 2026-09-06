@@ -234,6 +234,26 @@ check_in "$W42"
 [ "$RC" -eq 0 ] && ok "a linked worktree recognizes the helper the main checkout armed" \
   || bad "worktree recognizes armed helper" "rc=$RC out=$OUT"
 
+# An unarmed verdict ends in the remedy that arms, and from a linked work
+# tree the installer refuses — so the bare sentence would send the reader
+# round that refusal. Named only where it is true: from the main checkout
+# there is no other tree to send them to.
+rm -f "$R42/.git/hooks/pre-commit"
+check_in "$W42"
+case "$OUT" in
+  *"from the main checkout to re-arm"*)
+    ok "an unarmed linked worktree is told where the arming can be run" ;;
+  *) bad "worktree re-arm remedy names the main checkout" "rc=$RC out=$OUT" ;;
+esac
+check_in "$R42"
+case "$OUT" in
+  *"from the main checkout"*)
+    bad "main checkout remedy sends the reader elsewhere" "rc=$RC out=$OUT" ;;
+  *"to re-arm"*)
+    ok "control: from the main checkout the remedy names no other tree" ;;
+  *) bad "main checkout re-arm remedy" "rc=$RC out=$OUT" ;;
+esac
+
 HELPER42="$R42/.git/hooks/kendex-guards"
 # Every case below must answer non-zero: each is a helper this installer
 # would not have written, and blessing one is what lets something other than
