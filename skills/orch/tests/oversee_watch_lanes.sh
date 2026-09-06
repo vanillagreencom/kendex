@@ -1,493 +1,268 @@
 #!/usr/bin/env bash
-# Tests for the pane side of orch/scripts/oversee-watch: what the
-# watch reads off a lane's tmux window. Spent-account banners and their reset
-# clauses are oversee_watch_usage_limit.sh; the GitHub side — pr-watch,
-# merged, the heartbeat and the process-wide failures — is oversee_watch.sh.
-# All build their sandbox from lib/oversee-watch-harness.sh.
+# Tests for the pane side of orch/scripts/oversee-watch: what the watch reads
+# off a lane's tmux window. Spent-account banners and their reset clauses are
+# oversee_watch_usage_limit.sh; the GitHub side (pr-watch, merged, the
+# heartbeat and the process-wide failures) is oversee_watch.sh. All build
+# their sandbox from lib/oversee-watch-harness.sh.
 #
 # Covered here: window absence versus probe failure; shell-exit debounce; live
 # versus answered prompts for both harnesses; idle-return debounce; scrollback
 # boundaries; and one-capture classification.
+#
+# One table. A row names a screen (a pane fixture kept whole in `screen`), the
+# lane it sits in (the pane's foreground command, its children, the windows
+# the server holds), how many passes the watch takes, and the facts the run
+# must show; `watch` reads exactly those facts, so a row fails on the fact it
+# names. A `cont` row is the next run over the row above it, same state.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
 
-echo "=== oversee-watch lanes ==="
+HEARTBEAT1='EVENT+heartbeat+loops=1+interval=0s+since=none'
+HEARTBEAT2='EVENT+heartbeat+loops=2+interval=0s+since=none'
+COMPOSER='\xe2\x9d\xaf\xc2\xa0'          # Claude's composer: `❯` + U+00A0
+DIALOG='Do you want to proceed?\n   ❯ 1. Yes\n     2. No'
+IDLE_DONE='⏺ Done: the PR is merged and the worktree is gone.'
 
-# --- 3. window-gone --------------------------------------------------------
-new_case window_gone
-printf 'gh-1\n' > "$STUB_DIR/windows.txt"
-err="$TMP_ROOT/e3"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "0" "window-gone exits 0" "$err"
-assert_eq "$out" "EVENT window-gone gh-2" "missing lane window is the event" "$err"
+# screen NAME [LANE] — writes the pane fixture NAME, whole, as the screen of
+# LANE (gh-2 unless named). `codex:<capture>` is one of the byte-exact Codex
+# captures under fixtures/, checked for the line the row's reading rests on:
+# a predicate reasoned instead of measured is wrong about the screen it
+# claims to describe. `-` leaves the harness default, a lane mid-turn.
+screen() {
+  local pane="$STUB_DIR/pane-${2:-gh-2}.txt"
+  case "$1" in
+    -) ;;
+    exited_banner) printf '%b\n' '⏺ I will keep going.' '' "You've hit your session limit · resets 21:00" '$ ' > "$pane" ;;
+    fish_prompt) printf '%b\n' 'method@box ~/dev/kendex (main)>' > "$pane" ;;
+    # a pane holding only blank lines: the pane tail is a grep miss there
+    blank) printf '%b\n' '   ' '' '\t' > "$pane" ;;
+    prompt) printf '%b\n' "$DIALOG" > "$pane" ;;
+    question) printf '%b\n' '⏺ I found two ways to do this.' '' "$DIALOG" > "$pane" ;;
+    # a dialog the lane already answered, still on the screen above its turn
+    answered_dialog) printf '%b\n' '⏺ I found two ways to do this.' "$DIALOG" '❯ go with the first one' "$IDLE_DONE" "$COMPOSER" '  bypass permissions on' > "$pane" ;;
+    live_dialog) printf '%b\n' '❯ go ahead and refactor it' '⏺ I found two ways to do this.' "$DIALOG" > "$pane" ;;
+    idle) printf '%b\n' "$IDLE_DONE" "$COMPOSER" '  bypass permissions on' > "$pane" ;;
+    idle_short) printf '%b\n' '⏺ Done.' "$COMPOSER" > "$pane" ;;
+    idle_merged) printf '%b\n' '⏺ Done: the PR is merged.' "$COMPOSER" > "$pane" ;;
+    # the streaming token counter of the status line, over the same composer
+    working_counter) printf '%b\n' '✶ Germinating… (29m 16s \xc2\xb7 ↓ 58.7k tokens)' "$COMPOSER" > "$pane" ;;
+    # the other two working shapes, one per lane
+    working_hints)
+      printf '%b\n' '⏺ Thinking (esc to interrupt)' "$COMPOSER" > "$STUB_DIR/pane-gh-1.txt"
+      printf '%b\n' '⎿  (ctrl+b ctrl+b (twice) to run in background)' "$COMPOSER" > "$pane" ;;
+    # one screen per pass: idle, then working again
+    idle_then_working)
+      printf '%b\n' '⏺ Done.' "$COMPOSER" > "$STUB_DIR/pane-gh-2.1.txt"
+      printf '%b\n' '✶ Germinating… (2m 4s \xc2\xb7 ↓ 5.0k tokens)' "$COMPOSER" > "$STUB_DIR/pane-gh-2.2.txt" ;;
+    working_above_turn) printf '%b\n' '⏺ Thinking (esc to interrupt)' '❯ actually stop there and write it up' "$IDLE_DONE" "$COMPOSER" '  bypass permissions on' > "$pane" ;;
+    working_below_turn) printf '%b\n' '❯ go ahead and refactor it' '⏺ Thinking (esc to interrupt)' "$COMPOSER" > "$pane" ;;
+    # a submitted turn opens with the composer's marker, and nothing below it
+    prompt_above_turn) printf '%b\n' '❯ run the suite' '⏺ Bash(cargo test)' '  ⎿ Compiling kendex v5.0.0' > "$pane" ;;
+    codex:*)
+      local capture="$CODEX_PANES/${1#codex:}.txt"
+      case "$1" in
+        # Codex draws no submit hint at its composer, so the marker alone
+        # carries idleness; a busy Codex screen draws that composer too, so
+        # the interrupt hint is what keeps a busy lane out
+        codex:codex-idle-after-turn) ! grep -qF 'to submit message' "$capture" || { echo "screen: $1 carries a submit hint; the marker-alone reading no longer holds" >&2; exit 1; } ;;
+        codex:codex-working) grep -qF '› Ask Codex to do anything' "$capture" && grep -qF 'esc to interrupt' "$capture" || { echo "screen: $1 lost its composer or interrupt hint; the working row would pin nothing" >&2; exit 1; } ;;
+      esac
+      cat "$capture" > "$pane" ;;
+    *) echo "screen: unknown fixture $1" >&2; exit 1 ;;
+  esac
+}
 
-# --- 3a. a lane in another tmux session ------------------------------------
-# An overseer watching from its own session names a fleet window as
-# `session:window`, tmux's target form: the window is looked up in that
-# session and reported under the name given.
-new_case lane_in_other_session
-printf 'gh-1\n' > "$STUB_DIR/windows.txt"
-printf 'gh-2\n' > "$STUB_DIR/windows-arch.txt"
-printf 'bash\n' > "$STUB_DIR/cmd-arch:gh-2.txt"
-printf '$ \n' > "$STUB_DIR/pane-arch:gh-2.txt"
-err="$TMP_ROOT/e3a"
-out="$(run_watch -- gh-1 arch:gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "0" "a session-qualified lane exits 0" "$err"
-assert_eq "$(head -1 <<<"$out")" "EVENT lane-exited arch:gh-2" \
-  "a window in another session is watched under the name given" "$err"
-# the must-fail control: the same window name unqualified is looked up in
-# the caller's session, where it does not exist
-err="$TMP_ROOT/e3a2"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$out" "EVENT window-gone gh-2" "the bare name still means the caller's session" "$err"
-# tmux destroys a session with its last window, which is how a lane's own
-# session ends: that is the window gone, not a failure of the pass
-rm -f "$STUB_DIR/windows-arch.txt"
-err="$TMP_ROOT/e3a3"
-out="$(run_watch -- gh-1 arch:gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "0" "a destroyed session exits 0" "$err"
-assert_eq "$out" "EVENT window-gone arch:gh-2" "a lane whose session is gone is reported gone" "$err"
+# lane NAME — stages what surrounds the pane: the foreground command tmux
+# reports for gh-2 (claude by default), what runs under it, and the windows
+# the server holds. WATCHED is the lane list the run names.
+WATCHED="gh-1 gh-2"
+lane() {
+  WATCHED="gh-1 gh-2"
+  case "$1" in
+    claude) ;;
+    codex) printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt" ;;
+    bash) printf 'bash\n' > "$STUB_DIR/cmd-gh-2.txt" ;;
+    # a login shell reports itself as -bash
+    login) printf -- '-bash\n' > "$STUB_DIR/cmd-gh-2.txt" ;;
+    zsh) printf 'zsh\n' > "$STUB_DIR/cmd-gh-2.txt" ;;
+    # a shell on the first pass only, then the live command
+    bash_once) printf 'bash\n' > "$STUB_DIR/cmd-gh-2.1.txt" ;;
+    # the harness resumed from an interactive prompt: the shell stays the
+    # pane process with the harness as its child
+    fish_child) printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt"; printf '2747883\n' > "$STUB_DIR/kids-9002.txt" ;;
+    fish) printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt" ;;
+    # a child probe that cannot run: pgrep's syntax-error status, or its fatal one
+    fish_probe2) printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt"; : > "$STUB_DIR/probe-fail-9002" ;;
+    fish_probe3) printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt"; printf '3' > "$STUB_DIR/probe-fail-9002" ;;
+    # a liveness reply that is not `<pid> <command>`
+    obs:*) printf '%s\n' "${1#obs:}" > "$STUB_DIR/obs-gh-2.txt" ;;
+    nocmd) rm -f "$STUB_DIR/cmd-gh-2.txt" ;;
+    # the caller's session holds gh-1 only
+    nowindow) printf 'gh-1\n' > "$STUB_DIR/windows.txt" ;;
+    # gh-2 lives in session `arch`, at a bare shell, watched by tmux's target form
+    arch)
+      printf 'gh-1\n' > "$STUB_DIR/windows.txt"
+      printf 'gh-2\n' > "$STUB_DIR/windows-arch.txt"
+      printf 'bash\n' > "$STUB_DIR/cmd-arch:gh-2.txt"
+      printf '$ \n' > "$STUB_DIR/pane-arch:gh-2.txt"
+      WATCHED="gh-1 arch:gh-2" ;;
+    # ...the same, looked up unqualified; and after tmux destroyed the session
+    arch_bare) WATCHED="gh-1 gh-2" ;;
+    arch_gone) rm -f "$STUB_DIR/windows-arch.txt"; WATCHED="gh-1 arch:gh-2" ;;
+    # two lanes whose names differ only outside the filename-safe set
+    collide)
+      printf 'a+b\na@b\n' > "$STUB_DIR/windows.txt"
+      printf 'claude\n' > "$STUB_DIR/cmd-a+b.txt"
+      printf 'claude\n' > "$STUB_DIR/cmd-a@b.txt"
+      printf '%b\n' "$DIALOG" > "$STUB_DIR/pane-a+b.txt"
+      printf '⏺ working on it\n' > "$STUB_DIR/pane-a@b.txt"
+      WATCHED="a+b a@b" ;;
+    *) echo "lane: unknown lane $1" >&2; exit 1 ;;
+  esac
+}
 
-# --- 3b. lane-exited: window alive, harness gone ----------------------------
-# open-terminal runs the harness inside a shell, so a session that hit its
-# limit or crashed leaves a live window whose pane matches no question prompt.
-new_case lane_exited
-printf 'bash\n' > "$STUB_DIR/cmd-gh-2.txt"
-{
-  printf '⏺ I will keep going.\n\n'
-  printf "You've hit your session limit · resets 21:00\n"
-  printf '$ \n'
-} > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e3b"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "0" "lane-exited exits 0" "$err"
-assert_eq "$(head -1 <<<"$out")" "EVENT lane-exited gh-2" "a bare shell on two consecutive passes is the event" "$err"
-assert_contains "$out" "session limit" "the pane tail follows, carrying the exit reason" "$err"
-assert_not_contains "$out" "EVENT window-gone" "a live window is not reported gone" "$err"
-assert_not_contains "$out" "EVENT usage-limit" "a limit banner under an EXITED harness is lane-exited, not usage-limit" "$err"
-assert_not_contains "$out" "EVENT idle-after-return" "a bare shell is never idle-after-return" "$err"
+# run LOOPS — one watch of LOOPS passes over the watched lanes; OUT, RC and
+# ERR (a file) are what `watch` reads.
+RUN_SEQ=0
+run() {
+  local lanes
+  read -ra lanes <<<"$WATCHED"
+  ERR="$TMP_ROOT/run-$((++RUN_SEQ)).err"
+  OUT="$(run_watch -- --max-loops "$1" "${lanes[@]}" 2>"$ERR")" && RC=0 || RC=$?
+}
 
-# one pass is not enough: a live harness can hold a shell in the foreground
-# for a single poll, and relaunching a working lane costs more than a wait
-new_case lane_exited_debounce
-printf 'bash\n' > "$STUB_DIR/cmd-gh-2.txt"
-err="$TMP_ROOT/e3b2"
-out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none" "one pass of shell is not the event" "$err"
-assert_not_contains "$out" "EVENT lane-exited" "a single shell reading never fires" "$err"
+# watch EXPECT — prints the run's value of every `name=` field EXPECT names,
+# in EXPECT's order (in a needle `+` reads as a space):
+#   rc              exit status
+#   first           the first stdout line, or `none`
+#   lines           how many stdout lines the run printed
+#   out~<text>      whether stdout carries <text>
+#   stderr~<text>   whether stderr carries <text>
+#   notes~<text>    how many stderr lines carry <text>
+#   probes          how many child probes the run made
+#   probed~<pid>    whether a child probe named <pid>
+watch() {
+  local got="" token name value needle
+  set -f
+  for token in $1; do
+    name="${token%%=*}"
+    needle="${name#*~}"; needle="${needle//+/ }"
+    case "$name" in
+      rc) value="$RC" ;;
+      first) value="$(head -n 1 <<<"$OUT")"; value="${value:-none}"; value="${value// /+}" ;;
+      lines) value="$(printf '%s' "$OUT" | grep -c '' || true)" ;;
+      out~*) value="$(grep -qF -- "$needle" <<<"$OUT" && echo true || echo false)" ;;
+      stderr~*) value="$(grep -qF -- "$needle" "$ERR" && echo true || echo false)" ;;
+      notes~*) value="$(grep -cF -- "$needle" "$ERR" || true)" ;;
+      probes) value="$([[ -e "$STUB_DIR/pgrep.calls" ]] && grep -c . "$STUB_DIR/pgrep.calls" || echo 0)" ;;
+      probed~*) value="$([[ -e "$STUB_DIR/pgrep.calls" ]] && grep -qF -- "$needle" "$STUB_DIR/pgrep.calls" && echo true || echo false)" ;;
+      *) echo "watch: unknown field $name" >&2; exit 1 ;;
+    esac
+    got="$got $name=$value"
+  done
+  set +f
+  printf '%s' "${got# }"
+}
 
-# a shell on one pass followed by a live command is a transient, not an exit
-new_case lane_exited_transient
-printf 'bash\n' > "$STUB_DIR/cmd-gh-2.1.txt"
-err="$TMP_ROOT/e3b3"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "shell then live is not an exit" "$err"
-assert_not_contains "$out" "EVENT lane-exited" "a non-consecutive shell reading never fires" "$err"
+# lane_table ROW... — `label|pass|screen|lane|loops|expect`. `pass` is `new`
+# (a fresh sandbox) or `cont` (the next run over the row above, same state,
+# fresh captures).
+CASE_SEQ=0
+lane_table() {
+  local row label pass name which loops expect
+  for row in "$@"; do
+    IFS='|' read -r label pass name which loops expect <<<"$row"
+    [[ -n "$expect" ]] || { printf 'lane_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+    case "$pass" in
+      new) new_case "lane_$((++CASE_SEQ))" ;;
+      cont) rm -f "$STUB_DIR"/pane-*.calls "$STUB_DIR"/cmd-*.calls "$STUB_DIR"/pgrep.calls ;;
+      *) echo "lane_table: unknown pass $pass in $row" >&2; exit 1 ;;
+    esac
+    lane "$which"
+    screen "$name"
+    run "$loops"
+    assert_eq "$(watch "$expect")" "$expect" "$label" "$ERR"
+  done
+}
 
-# a login shell reports itself as -bash
-new_case lane_exited_login_shell
-printf -- '-bash\n' > "$STUB_DIR/cmd-gh-2.txt"
-err="$TMP_ROOT/e3b4"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT lane-exited gh-2" "a login shell (-bash) counts as a bare shell" "$err"
+echo "=== oversee-watch lanes: the window, and the harness in it ==="
+# A missing window is the event; a window in another session is watched under
+# tmux's `session:window` form and reported under the name given, and tmux
+# destroying a session with its last window is that window gone, not a
+# failure of the pass. A live window whose pane is a bare shell is
+# lane-exited, on two consecutive passes: a live harness can hold a shell in
+# the foreground for one poll, and relaunching a working lane costs more than
+# a wait. A shell with a child under it is the harness resumed from a prompt,
+# probed once per bare-shell lane per pass; a probe that cannot run at all is
+# not an answer, and its note carries the status that occurred (pgrep's 2 for
+# a syntax error, 3 for a fatal one, 127 for a missing binary).
+lane_table \
+  "a missing lane window is the event|new|-|nowindow|2|rc=0 first=EVENT+window-gone+gh-2 lines=1" \
+  "a window in another session is watched under the name given|new|-|arch|2|rc=0 first=EVENT+lane-exited+arch:gh-2" \
+  "the bare name still means the caller's session, where it does not exist|cont|-|arch_bare|2|first=EVENT+window-gone+gh-2 lines=1" \
+  "a lane whose session is gone is reported gone, not a failed pass|cont|-|arch_gone|2|rc=0 first=EVENT+window-gone+arch:gh-2 lines=1" \
+  "a bare shell on two consecutive passes is lane-exited, the pane tail carrying the reason, never window-gone, usage-limit or idle|new|exited_banner|bash|2|rc=0 first=EVENT+lane-exited+gh-2 out~session+limit=true out~EVENT+window-gone=false out~EVENT+usage-limit=false out~EVENT+idle-after-return=false" \
+  "one pass of shell is not the event|new|-|bash|1|first=$HEARTBEAT1 out~EVENT+lane-exited=false" \
+  "a shell then a live command is a transient, not an exit|new|-|bash_once|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false" \
+  "a login shell (-bash) counts as a bare shell|new|-|login|2|first=EVENT+lane-exited+gh-2" \
+  "a shell pane with a child is a live lane, probed once per pass, the harness pane never probed|new|-|fish_child|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false probes=2 probed~9001=false" \
+  "a lane whose child probe cannot run stays watched, the note naming the status once per run|new|-|fish_probe2|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false stderr~could+not+list+the+children+of+the+pane+behind+'gh-2'=true stderr~pgrep+-P+exited+2=true notes~could+not+list+the+children=1" \
+  "the note names the fatal status that occurred, never a fixed one|new|-|fish_probe3|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false stderr~pgrep+-P+exited+3=true stderr~pgrep+-P+exited+2=false" \
+  "control: a bare fish prompt with no child is the event on the second pass|new|fish_prompt|fish|2|first=EVENT+lane-exited+gh-2" \
+  "control: a live pane command is not an exit|new|-|codex|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false" \
+  "a blank pane does not swallow the event|new|blank|zsh|2|rc=0 first=EVENT+lane-exited+gh-2" \
+  "a liveness reply with no command exits 2, emits nothing, and is preserved|new|-|obs:9002|2|rc=2 lines=0 stderr~malformed+result+for+'gh-2':+9002=true" \
+  "a liveness reply with a non-pid exits 2, emits nothing, and is preserved|new|-|obs:fish fish|2|rc=2 lines=0 stderr~malformed+result+for+'gh-2':+fish+fish=true" \
+  "an unreadable pane command is a fail-closed probe error, never window-gone|new|-|nocmd|2|rc=2 lines=0 stderr~pane+command+probe+failed+for+'gh-2':+can't+find+window:+gh-2=true"
 
-# A lane resumed by typing the wrapper at an interactive prompt keeps the
-# shell as the pane process with the harness as its child, so the pane reads
-# `fish` for the lane's whole life. The child is what tells it from an exit.
-new_case lane_shell_with_child
-printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt"
-printf '2747883\n' > "$STUB_DIR/kids-9002.txt"
-err="$TMP_ROOT/e3b5"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
-  "a shell pane with a child process is a live lane, not an exit" "$err"
-assert_not_contains "$out" "EVENT lane-exited" "a wrapped lane is never dropped from the watch" "$err"
-assert_eq "$(grep -c . "$STUB_DIR/pgrep.calls")" "2" \
-  "one probe per bare-shell lane per pass (2 passes, 1 shell lane)" "$err"
-assert_not_contains "$(cat "$STUB_DIR/pgrep.calls")" "9001" \
-  "a lane whose foreground IS the harness is never probed" "$err"
+echo "=== lane-asking: a question nobody has answered ==="
+# A selection prompt is a question, never an idle prompt; the check reads the
+# same liveness answer as the exit check, so a wrapped lane's prompt is seen.
+# Codex marks its selected row with `›`, not `❯`, and words its hints its own
+# way, so the marker is the whole signature. Two lanes whose names flatten to
+# one slug keep separate pane snapshots. Only the slice below the last user
+# turn is a question still waiting: an answered list re-fires every pass and
+# masks the event the lane is really at. A stale prompt under a bare shell is
+# not a question anyone can answer, and firing it every pass would starve the
+# lane-exited that the second pass earns.
+lane_table \
+  "a question prompt is the event, the pane tail following, the working lane unreported|new|question|claude|2|rc=0 first=EVENT+lane-asking+gh-2 out~+++❯+1.+Yes=true out~gh-1=false out~EVENT+idle-after-return=false" \
+  "a wrapped lane's question is still the event|new|prompt|fish_child|1|first=EVENT+lane-asking+gh-2" \
+  "a codex directory-trust dialog is a question|new|codex:codex-dialog-trust|codex|1|first=EVENT+lane-asking+gh-2 out~Do+you+trust+the+contents+of+this+directory?=true" \
+  "a codex model picker is a question|new|codex:codex-dialog-model|codex|1|first=EVENT+lane-asking+gh-2 out~Select+Model+and+Effort=true" \
+  "lanes whose names flatten to one slug keep separate pane snapshots|new|-|collide|1|rc=0 first=EVENT+lane-asking+a+b" \
+  "a selection list above the last user turn is answered: the lane reaches the idle event it was masking|new|answered_dialog|claude|2|rc=0 first=EVENT+idle-after-return+gh-2 out~EVENT+lane-asking=false" \
+  "control: the same list below the last user turn is still the event|new|live_dialog|claude|1|first=EVENT+lane-asking+gh-2 out~+++❯+1.+Yes=true" \
+  "a stale prompt under an exited harness is not a question|new|prompt|bash|1|first=$HEARTBEAT1 out~EVENT+lane-asking=false" \
+  "...and the second pass reports the lane as exited rather than starved|cont|prompt|bash|2|first=EVENT+lane-exited+gh-2"
 
-# A probe that cannot run at all is not an answer. `ps --ppid` is procps-only
-# and BSD ps rejects it with the same status it uses for no match, which read
-# every pane as childless; whatever the cause, an unjudgeable lane stays
-# watched rather than being retired on a failure.
-new_case lane_probe_unusable
-printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt"
-: > "$STUB_DIR/probe-fail-9002"
-err="$TMP_ROOT/e3b7"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
-  "a lane whose child probe cannot run is never reported exited" "$err"
-assert_not_contains "$out" "EVENT lane-exited" "a failed probe never manufactures an exit" "$err"
-assert_contains "$(cat "$err")" "could not list the children of the pane behind 'gh-2'" \
-  "the unusable probe is named on stderr" "$err"
-assert_contains "$(cat "$err")" "pgrep -P exited 2" \
-  "the note carries the status that actually occurred" "$err"
-assert_eq "$(grep -c 'could not list the children' "$err")" "1" \
-  "the probe note is printed once per run, not per pass" "$err"
-
-# ...and the status it names is the one that occurred, not a fixed one: pgrep
-# reports 2 for a syntax error and 3 for a fatal one, and a pgrep missing from
-# PATH leaves 127, so a note hardcoding any of them misdirects the overseer.
-new_case lane_probe_unusable_fatal
-printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt"
-printf '3' > "$STUB_DIR/probe-fail-9002"
-err="$TMP_ROOT/e3ba"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_not_contains "$out" "EVENT lane-exited" "a fatal probe never manufactures an exit" "$err"
-assert_contains "$(cat "$err")" "pgrep -P exited 3" \
-  "the note names the fatal status, not the syntax-error one" "$err"
-assert_not_contains "$(cat "$err")" "pgrep -P exited 2" \
-  "the note never reports a status that did not occur" "$err"
-
-# The must-fail control for the case above: the same bare shell with nothing
-# under it — a lane typed at a prompt whose harness has quit
-new_case lane_exited_fish_prompt
-printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt"
-printf 'method@box ~/dev/kendex (main)>\n' > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e3b6"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT lane-exited gh-2" \
-  "a bare fish prompt with no child is the event on the second pass" "$err"
-
-# a live harness under the same conditions is no event
-new_case lane_live
-printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
-err="$TMP_ROOT/e3c"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "a live pane command is not an exit" "$err"
-assert_not_contains "$out" "EVENT lane-exited" "a live lane never fires lane-exited" "$err"
-
-# an exited lane whose pane holds only blank lines still reports the event:
-# the pane tail is a grep miss there, which pipefail would turn into an abort
-new_case lane_exited_blank_pane
-printf 'zsh\n' > "$STUB_DIR/cmd-gh-2.txt"
-printf '   \n\n\t\n' > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e3e"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "0" "an exited lane with a blank pane still exits 0" "$err"
-assert_eq "$(head -1 <<<"$out")" "EVENT lane-exited gh-2" "a blank pane does not swallow the event" "$err"
-
-# The liveness reply has one shape, `<pid> <command>`, and anything else is a
-# tmux that did not answer for this pane: a pid with no command behind it, or
-# a first field that is not a pid at all. Neither may be split into a pid and
-# an empty command and then judged.
-new_case lane_obs_missing_command
-printf '9002\n' > "$STUB_DIR/obs-gh-2.txt"
-err="$TMP_ROOT/e3b8"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "2" "a liveness reply with no command exits 2" "$err"
-assert_eq "$out" "" "a malformed liveness reply emits no window-gone event" "$err"
-assert_contains "$(cat "$err")" "malformed result for 'gh-2': 9002" \
-  "the malformed liveness result is preserved" "$err"
-
-new_case lane_obs_non_numeric_pid
-printf 'fish fish\n' > "$STUB_DIR/obs-gh-2.txt"
-err="$TMP_ROOT/e3b9"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "2" "a liveness reply with a non-pid exits 2" "$err"
-assert_eq "$out" "" "a non-pid liveness reply emits no window-gone event" "$err"
-assert_contains "$(cat "$err")" "malformed result for 'gh-2': fish fish" \
-  "the non-pid liveness result is preserved" "$err"
-
-# An unreadable pane command is a fail-closed probe error, never window-gone.
-new_case lane_cmd_unreadable
-rm -f "$STUB_DIR/cmd-gh-2.txt"
-err="$TMP_ROOT/e3d"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "2" "an unreadable pane command exits 2" "$err"
-assert_eq "$out" "" "an unreadable pane command emits no window-gone event" "$err"
-assert_contains "$(cat "$err")" "pane command probe failed for 'gh-2': can't find window: gh-2" \
-  "the pane command failure preserves tmux stderr" "$err"
-
-# --- 4. lane-asking --------------------------------------------------------
-new_case question
-{
-  printf '⏺ I found two ways to do this.\n\n'
-  printf 'Do you want to proceed?\n'
-  printf '   ❯ 1. Yes\n     2. No\n'
-} > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "0" "lane-asking exits 0" "$err"
-assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" "lane with a question prompt is the event" "$err"
-assert_contains "$out" "   ❯ 1. Yes" "pane tail follows the event line" "$err"
-assert_not_contains "$out" "gh-1" "a working lane is not reported" "$err"
-assert_not_contains "$out" "EVENT idle-after-return" \
-  "a selection prompt is a question, never an idle prompt" "$err"
-
-# The question check reads the same liveness answer, so a lane wrapped in a
-# shell still gets its prompt answered
-new_case question_wrapped_shell
-printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt"
-printf '2747883\n' > "$STUB_DIR/kids-9002.txt"
-printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4a3"
-out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
-  "a wrapped lane's question is still the event" "$err"
-
-# Codex on a dialog. It marks the row it has selected with `›`, not `❯`, and
-# words its key hints its own way, so nothing Claude Code draws reaches these
-# two screens: both fell through every predicate and the pass
-# said nothing about the lane. The marker is the whole signature — these two
-# cases are what proves a Codex enter hint would be redundant.
-new_case question_codex_dialog_trust
-printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
-cat "$CODEX_PANES/codex-dialog-trust.txt" > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4c1"
-out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
-  "a codex directory-trust dialog is a question" "$err"
-assert_contains "$out" "Do you trust the contents of this directory?" \
-  "the pane tail carries what the lane is being asked" "$err"
-
-new_case question_codex_dialog_model
-printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
-cat "$CODEX_PANES/codex-dialog-model.txt" > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4c2"
-out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
-  "a codex model picker is a question" "$err"
-assert_contains "$out" "Select Model and Effort" \
-  "the pane tail carries the choice on offer" "$err"
-
-# A tmux window name carries any character, so two lanes can differ only
-# outside a filename-safe set. Their pane snapshots must stay separate or each
-# lane is classified on the other's screen.
-new_case pane_snapshot_per_lane
-printf 'a+b\na@b\n' > "$STUB_DIR/windows.txt"
-printf 'claude\n' > "$STUB_DIR/cmd-a+b.txt"
-printf 'claude\n' > "$STUB_DIR/cmd-a@b.txt"
-printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-a+b.txt"
-printf '⏺ working on it\n' > "$STUB_DIR/pane-a@b.txt"
-err="$TMP_ROOT/e4a2"
-out="$(run_watch -- --max-loops 1 'a+b' 'a@b' 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "0" "colliding lane names exit 0" "$err"
-assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking a+b" \
-  "lanes whose names flatten to one slug keep separate pane snapshots" "$err"
-
-# A dialog the lane already answered stays on the screen. Only the slice below
-# the last user turn is a question still waiting: read off the whole pane, an
-# answered list re-fires every pass and masks the event the lane is really at.
-new_case question_answered_dialog_above_turn
-{
-  printf '⏺ I found two ways to do this.\n'
-  printf 'Do you want to proceed?\n'
-  printf '   ❯ 1. Yes\n     2. No\n'
-  printf '❯ go with the first one\n'
-  printf '⏺ Done: the PR is merged and the worktree is gone.\n'
-  printf '\xe2\x9d\xaf\xc2\xa0\n'
-  printf '  bypass permissions on\n'
-} > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4a4"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "0" "an answered dialog exits 0" "$err"
-assert_not_contains "$out" "EVENT lane-asking" \
-  "a selection list above the last user turn is answered, not waiting" "$err"
-assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
-  "the lane reaches the idle event the answered list was masking" "$err"
-
-# ...and its must-fail control: the same list BELOW the last user turn is a
-# question nobody has answered, so the slice can never pass by muting the check
-new_case question_live_dialog_below_turn
-{
-  printf '❯ go ahead and refactor it\n'
-  printf '⏺ I found two ways to do this.\n'
-  printf 'Do you want to proceed?\n'
-  printf '   ❯ 1. Yes\n     2. No\n'
-} > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4a5"
-out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
-  "a selection list below the last user turn is still the event" "$err"
-assert_contains "$out" "   ❯ 1. Yes" "the pane tail follows the event line" "$err"
-
-# --- 4b. idle-after-return: the round is over and nobody is driving ---------
-new_case idle_after_return
-{
-  printf '⏺ Done: the PR is merged and the worktree is gone.\n'
-  printf '\xe2\x9d\xaf\xc2\xa0\n'
-  printf '  bypass permissions on\n'
-} > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4b"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "0" "idle-after-return exits 0" "$err"
-assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
-  "an idle prompt on two consecutive passes is the event" "$err"
-assert_contains "$out" "the PR is merged" "the pane tail follows the idle event" "$err"
-
-# Codex's ready prompt reads differently and counts the same. The fixture is
-# the state this event is named for: a lane that finished its turn and is
-# waiting. Codex draws no submit hint at its composer — only the marker and
-# either the placeholder or an unsent draft — so the marker carries idleness,
-# and the hint this case would assert on renders on none of these screens.
-new_case idle_after_return_codex
-printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
-cat "$CODEX_PANES/codex-idle-after-turn.txt" > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4b2"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
-  "a codex lane that finished its turn is idle too" "$err"
-assert_not_contains "$(cat "$STUB_DIR/pane-gh-2.txt")" "to submit message" \
-  "the real composer carries no submit hint, so the marker alone decides" "$err"
-
-# ...a composer the lane never took a turn at, and one holding an unsent
-# draft, which has the same shape as a turn already taken
-new_case idle_after_return_codex_composer
-printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
-cat "$CODEX_PANES/codex-composer-idle.txt" > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4b2a"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
-  "a codex lane at a fresh composer is idle too" "$err"
-
-new_case idle_after_return_codex_draft
-printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
-cat "$CODEX_PANES/codex-composer-draft.txt" > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4b2b"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
-  "a codex composer holding a draft is idle too" "$err"
-
-# The gate that makes the Codex marker safe to read as an idle prompt. Codex
-# draws its composer BELOW the working indicator, so the marker is on screen
-# for the whole turn and WORKING_RE alone keeps a busy lane out. It matches
-# through `to interrupt`, which is what `• Working (8s • esc to interrupt)`
-# carries; refresh this capture against a Codex that words it differently and
-# this case goes red rather than waking every busy lane.
-new_case idle_after_return_codex_working
-printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
-cat "$CODEX_PANES/codex-working.txt" > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4b2c"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_contains "$(cat "$STUB_DIR/pane-gh-2.txt")" "› Ask Codex to do anything" \
-  "a busy codex screen draws its composer, so the marker cannot decide alone" "$err"
-assert_contains "$(cat "$STUB_DIR/pane-gh-2.txt")" "esc to interrupt" \
-  "the interrupt hint is the alternative carrying the gate, not the token counter" "$err"
-assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
-  "a working codex lane is not idle, its marker notwithstanding" "$err"
-assert_not_contains "$out" "EVENT idle-after-return" \
-  "WORKING_RE is what keeps the codex marker from waking a busy lane" "$err"
-
-# The idle check reads the same liveness answer too
-new_case idle_after_return_wrapped_shell
-printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt"
-printf '2747883\n' > "$STUB_DIR/kids-9002.txt"
-printf '⏺ Done: the PR is merged.\n\xe2\x9d\xaf\xc2\xa0\n' > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4b7"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
-  "a wrapped lane at its composer is idle, not exited" "$err"
-
-# One pass is not enough: the screen between two tool calls reads the same
-new_case idle_after_return_debounce
-printf '⏺ Done.\n\xe2\x9d\xaf\xc2\xa0\n' > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4b3"
-out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none" \
-  "one idle pass is not the event" "$err"
-assert_not_contains "$out" "EVENT idle-after-return" "a single idle reading never fires" "$err"
-
-# The must-fail control: a WORKING lane shows the same composer prompt, so the
-# prompt alone can never decide idleness
-new_case idle_after_return_working
-{
-  printf '✶ Germinating… (29m 16s \xc2\xb7 ↓ 58.7k tokens)\n'
-  printf '\xe2\x9d\xaf\xc2\xa0\n'
-} > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4b4"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
-  "a working lane showing its composer prompt is not idle" "$err"
-assert_not_contains "$out" "EVENT idle-after-return" "the token counter keeps a busy lane out" "$err"
-
-# The other two working shapes: the interrupt hint and a foreground shell
-new_case idle_after_return_working_hints
-printf '⏺ Thinking (esc to interrupt)\n\xe2\x9d\xaf\xc2\xa0\n' > "$STUB_DIR/pane-gh-1.txt"
-printf '⎿  (ctrl+b ctrl+b (twice) to run in background)\n\xe2\x9d\xaf\xc2\xa0\n' > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4b5"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
-  "the interrupt hint and the background-shell hint both mean busy" "$err"
-assert_not_contains "$out" "EVENT idle-after-return" "neither working hint reads as idle" "$err"
-
-# Idle then working is a lane that picked itself back up, not a return
-new_case idle_after_return_transient
-printf '⏺ Done.\n\xe2\x9d\xaf\xc2\xa0\n' > "$STUB_DIR/pane-gh-2.1.txt"
-printf '✶ Germinating… (2m 4s \xc2\xb7 ↓ 5.0k tokens)\n\xe2\x9d\xaf\xc2\xa0\n' > "$STUB_DIR/pane-gh-2.2.txt"
-err="$TMP_ROOT/e4b6"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
-  "an idle pass followed by a working one is not the event" "$err"
-assert_not_contains "$out" "EVENT idle-after-return" "a non-consecutive idle reading never fires" "$err"
-
-# Scrollback never goes away, so a working indicator the lane has since taken
-# a turn past would suppress this event for good — the debounce cannot help,
-# the line is not transient. Only the slice below the last user turn is work
-# in flight now.
-new_case idle_after_return_working_above_turn
-{
-  printf '⏺ Thinking (esc to interrupt)\n'
-  printf '❯ actually stop there and write it up\n'
-  printf '⏺ Done: the PR is merged and the worktree is gone.\n'
-  printf '\xe2\x9d\xaf\xc2\xa0\n'
-  printf '  bypass permissions on\n'
-} > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4b8"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "0" "an interrupt hint in scrollback exits 0" "$err"
-assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
-  "an interrupt hint above the last user turn is scrollback, not work in flight" "$err"
-
-# ...and its must-fail control: the same hint BELOW the last user turn is a
-# lane really working, so the slice can never pass by muting the check
-new_case idle_after_return_working_below_turn
-{
-  printf '❯ go ahead and refactor it\n'
-  printf '⏺ Thinking (esc to interrupt)\n'
-  printf '\xe2\x9d\xaf\xc2\xa0\n'
-} > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4b9"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
-  "an interrupt hint below the last user turn still means busy" "$err"
-assert_not_contains "$out" "EVENT idle-after-return" "the slice does not mute the working check" "$err"
-
-# The prompt half of the same rule: a submitted user turn opens with the same
-# marker the composer does, so read off the whole pane a lane that is nowhere
-# near its composer satisfies the idle prompt off scrollback alone.
-new_case idle_after_return_prompt_above_turn
-{
-  printf '❯ run the suite\n'
-  printf '⏺ Bash(cargo test)\n'
-  printf '  ⎿ Compiling kendex v5.0.0\n'
-} > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4b10"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
-  "a scrollback user turn is not the composer the lane is sitting at" "$err"
-assert_not_contains "$out" "EVENT idle-after-return" "a marker above the last user turn never reads as idle" "$err"
-
-# A pane keeps its last screen after the harness exits, so a stale prompt
-# under a bare shell is not a question anyone can answer — and firing it every
-# pass would starve the lane-exited that the second pass earns.
-new_case question_bare_shell
-printf 'bash\n' > "$STUB_DIR/cmd-gh-2.txt"
-printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e4c"
-out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none" \
-  "a stale prompt under an exited harness is not a question" "$err"
-assert_not_contains "$out" "EVENT lane-asking" "an exited lane never fires lane-asking" "$err"
-# ...and the second pass reports it as what it is
-err="$TMP_ROOT/e4c2"
-out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT lane-exited gh-2" \
-  "the exited lane is reported as exited rather than starved by its stale prompt" "$err"
+echo "=== idle-after-return: the round is over and nobody is driving ==="
+# An idle prompt on two consecutive passes is the event: the screen between
+# two tool calls reads the same for one pass, and idle then working is a lane
+# that picked itself back up. A working lane shows the same composer, so the
+# prompt alone never decides: the token counter, the interrupt hint and the
+# background-shell hint all mean busy. Codex draws its composer below the
+# working indicator for the whole turn, so WORKING_RE is what keeps its
+# marker from waking a busy lane. Scrollback never goes away: only the slice
+# below the last user turn is work in flight now, and a submitted turn's
+# marker above it is not the composer the lane is sitting at.
+lane_table \
+  "an idle prompt on two consecutive passes is the event, the pane tail following|new|idle|claude|2|rc=0 first=EVENT+idle-after-return+gh-2 out~the+PR+is+merged=true" \
+  "a codex lane that finished its turn is idle too, the marker alone deciding|new|codex:codex-idle-after-turn|codex|2|first=EVENT+idle-after-return+gh-2" \
+  "a codex lane at a fresh composer is idle too|new|codex:codex-composer-idle|codex|2|first=EVENT+idle-after-return+gh-2" \
+  "a codex composer holding a draft is idle too|new|codex:codex-composer-draft|codex|2|first=EVENT+idle-after-return+gh-2" \
+  "a working codex lane is not idle, its composer notwithstanding|new|codex:codex-working|codex|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false" \
+  "a wrapped lane at its composer is idle, not exited|new|idle_merged|fish_child|2|first=EVENT+idle-after-return+gh-2" \
+  "one idle pass is not the event|new|idle_short|claude|1|first=$HEARTBEAT1 out~EVENT+idle-after-return=false" \
+  "control: a working lane showing its composer is not idle, the token counter keeping it out|new|working_counter|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false" \
+  "the interrupt hint and the background-shell hint both mean busy|new|working_hints|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false" \
+  "an idle pass followed by a working one is not the event|new|idle_then_working|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false" \
+  "an interrupt hint above the last user turn is scrollback, not work in flight|new|working_above_turn|claude|2|rc=0 first=EVENT+idle-after-return+gh-2" \
+  "control: the same hint below the last user turn still means busy|new|working_below_turn|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false" \
+  "a scrollback user turn is not the composer the lane is sitting at|new|prompt_above_turn|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
