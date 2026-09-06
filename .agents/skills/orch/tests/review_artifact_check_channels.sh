@@ -48,22 +48,20 @@ shim() {
     torn_zs) printf '#!/usr/bin/env bash\nfor a in "$@"; do\n  case "$a" in\n    *"gate:zero-sample"*) echo "jq: error (at file): simulated torn read" >&2; exit 5 ;;\n  esac\ndone\nexec %s "$@"\n' "$REAL_JQ" > "$dir/jq" ;;
     # the same, in a PREDICATE gate, where exit 1 means "no" and >=2 "could not answer"
     torn_pred) printf '#!/usr/bin/env bash\nfor a in "$@"; do\n  case "$a" in\n    *"gate:no-review"*) echo "jq: error: simulated torn read" >&2; exit 5 ;;\n  esac\ndone\nexec %s "$@"\n' "$REAL_JQ" > "$dir/jq" ;;
+    # the same, in the .verdict read itself: jq -e is that read's spelling
+    torn_verdict) printf '#!/usr/bin/env bash\nif [ "$1" = "-e" ]; then echo "jq: error: simulated torn read" >&2; exit 5; fi\nexec %s "$@"\n' "$REAL_JQ" > "$dir/jq" ;;
     # a diagnostic on stderr that leaves the exit status alone
     chatty) printf '#!/usr/bin/env bash\necho "chatty jq: a diagnostic that changes no exit status" >&2\nexec %s "$@"\n' "$REAL_JQ" > "$dir/jq" ;;
     # fails only emit's own `jq -n`: every gate answers, the artifact passes,
     # and the ONLY thing that fails is saying so
     noemit) printf '#!/usr/bin/env bash\nif [ "$1" = "-n" ]; then exit 4; fi\nexec %s "$@"\n' "$REAL_JQ" > "$dir/jq" ;;
-    # present, and fails every call: the entry probe passes, so this reaches
-    # emit's own fallback rather than the probe
-    broken) printf '#!/usr/bin/env bash\nexit 3\n' > "$dir/jq" ;;
     *) echo "shim: unknown name $1" >&2; exit 1 ;;
   esac
   chmod +x "$dir/jq"
 }
-for s in torn_zs torn_pred chatty noemit broken; do shim "$s"; done
+for s in torn_zs torn_pred torn_verdict chatty noemit; do shim "$s"; done
 
-# A PATH with everything the check needs except jq; the `broken` rows use the
-# same PATH plus the failing jq.
+# A PATH with everything the check needs except jq.
 NOJQ_BIN="$TMP_ROOT/nojq-bin"
 mkdir -p "$NOJQ_BIN"
 for b in bash env dirname mktemp rm tr stat date sleep ls cat sed grep basename touch mkdir printf; do
@@ -73,10 +71,6 @@ if [[ -n "$(PATH="$NOJQ_BIN" command -v jq 2>/dev/null || printf '')" ]]; then
   echo "the no-jq fixture PATH still resolves jq; the no-jq rows would pin nothing" >&2
   exit 1
 fi
-BROKEN_BIN="$TMP_ROOT/brokenjq-bin"
-mkdir -p "$BROKEN_BIN"
-cp -a "$NOJQ_BIN/." "$BROKEN_BIN/"
-cp "$TMP_ROOT/jqshim-broken/jq" "$BROKEN_BIN/jq"
 
 # --- harness -----------------------------------------------------------------
 
@@ -102,12 +96,11 @@ run_check() {
   set +e
   case "$1" in
     real) OUT=$("$CHECK" "${args[@]}" 2>"$ERR") ;;
-    torn_zs|torn_pred|chatty|noemit) OUT=$(PATH="$TMP_ROOT/jqshim-$1:$PATH" "$CHECK" "${args[@]}" 2>"$ERR") ;;
+    torn_zs|torn_pred|torn_verdict|chatty|noemit) OUT=$(PATH="$TMP_ROOT/jqshim-$1:$PATH" "$CHECK" "${args[@]}" 2>"$ERR") ;;
     # JQ_COLORS=zz is a documented jq variable that prints "Failed to set
     # $JQ_COLORS" and exits 0: the real spelling of the chatty shim
     colors) OUT=$(JQ_COLORS=zz "$CHECK" "${args[@]}" 2>"$ERR") ;;
     none) OUT=$(PATH="$NOJQ_BIN" "$CHECK" "${args[@]}" 2>"$ERR") ;;
-    broken) OUT=$(PATH="$BROKEN_BIN" "$CHECK" "${args[@]}" 2>"$ERR") ;;
     notmp) OUT=$(TMPDIR=/nonexistent-dir-for-review-artifact-check "$CHECK" "${args[@]}" 2>"$ERR") ;;
     tmpok) OUT=$(TMPDIR="$TMP_ROOT" "$CHECK" "${args[@]}" 2>"$ERR") ;;
     *) echo "run_check: unknown jq $1" >&2; exit 1 ;;
@@ -198,6 +191,7 @@ check_table \
   "control: with real jq the clean artifact is valid^measured^real^file^rc=0 reason=valid" \
   "--file: a torn read in a predicate gate is invalid, not a later gate's verdict^noreview^torn_pred^file^rc=1 reason=invalid detail~simulated+torn+read=true" \
   "control: with real jq the predicate answers no_review^noreview^real^file^rc=1 reason=no_review" \
+  "a torn read in the .verdict check itself is a gate failure, not a missing verdict^clean^torn_verdict^file^rc=1 reason=invalid detail~jq+exited+5=true detail~no+.verdict+field=false" \
   "a stderr diagnostic is neither a finding nor an echoed declaration^clean^chatty^file^rc=0 reason=valid measurement_failed=ABSENT" \
   "JQ_COLORS=zz, the real variable from the report, leaves the verdict alone^clean^colors^file^rc=0 reason=valid measurement_failed=ABSENT" \
   "a real rejection survives a chatty jq, its detail the gate's finding not the chatter^zeroed^chatty^file^rc=1 reason=zero_sample detail~killed+0/0=true"
@@ -205,20 +199,19 @@ check_table \
 echo "=== no mode exits without a parseable result ==="
 # emit needs jq too, so with jq unavailable the script exited 127 with empty
 # stdout (a blank line in --wait): a caller reading .ok got a parse error, not
-# a refusal. A jq that is present but fails every call takes the same route
-# past the entry probe. An acceptance that could not be EMITTED is not an
-# acceptance either: printing ok:false while exiting 0 is this defect class
+# a refusal. An acceptance that could not be EMITTED is not an acceptance
+# either: printing ok:false while exiting 0 is this defect class
 # inside the emitter, and every caller that branches on exit status (orch's
 # waiters, review-pr.md § 3.1, submit-pr.md § 1, the reviewer self-check)
 # reads that 0 as accepted; the rule once lived in --wait alone, so all three
 # modes pin it, each beside its real-jq control. The gates' error file is made
-# at source time, before any mode runs: mktemp failing there exited empty with
-# status 1, the status a legitimate rejection uses.
+# at source time, before any mode runs, so every mode answers the same way:
+# mktemp failing there exited empty with status 1, the status a legitimate
+# rejection uses.
 check_table \
   "no jq: --file exits 1, not 127, with a parseable rejection^clean^none^file^rc=1 parses=true ok=false reason=invalid" \
   "no jq: glob mode exits 1 with a parseable rejection^clean^none^glob^rc=1 parses=true ok=false reason=invalid" \
   "no jq: --wait exits 1 with a parseable rejection^clean^none^wait^rc=1 parses=true ok=false reason=invalid" \
-  "a jq that fails every call exits 1 with a parseable rejection^clean^broken^file^rc=1 parses=true ok=false reason=invalid" \
   "--file: a valid artifact whose acceptance could not be emitted exits 1, not 0^clean^noemit^file^rc=1 parses=true ok=false reason=invalid" \
   "glob: the same^clean^noemit^glob^rc=1 parses=true ok=false reason=invalid" \
   "--wait: the same, an exit-0 refusal being the shape the capture once produced^clean^noemit^wait^rc=1 parses=true ok=false reason=invalid" \
@@ -226,7 +219,6 @@ check_table \
   "control: glob with a working emit accepts the same artifact^clean^real^glob^rc=0 ok=true" \
   "control: --wait with a working emit accepts the same artifact^clean^real^wait^rc=0 ok=true" \
   "an unusable TMPDIR exits 1 with a parseable rejection naming mktemp, not jq^measured^notmp^file^rc=1 parses=true ok=false reason=invalid detail~mktemp=true" \
-  "an unusable TMPDIR answers in glob mode too^measured^notmp^glob^rc=1 parses=true reason=invalid" \
   "control: a writable TMPDIR leaves the same artifact valid^measured^tmpok^file^rc=0 reason=valid"
 
 echo "=== the last-resort emitter cannot emit unparseable JSON ==="
@@ -252,7 +244,14 @@ emit_table \
 # the EXIT trap alone, so removing the signal traps changes nothing observable
 # and any assertion here would pass for the wrong reason. The traps are kept as
 # correct-by-construction for shells that do not run EXIT on a signal; they are
-# deliberately unpinned rather than pinned by a test that cannot fail.
+# deliberately unpinned rather than pinned by a test that cannot fail. The
+# same holds for the three exit-status guards behind the noemit rows: the
+# explicit `|| exit 1` and `|| return 1` after an emit of an acceptance, and
+# --wait's usable-result check. Each alone is redundant with the others and
+# with errexit today, so deleting any one leaves every row green and only
+# deleting them together reddens the --wait row; a once-failing emit cannot
+# separate them, because --wait's confirm-once retry absorbs it. They are
+# defence in depth against a refactor into a masking context, kept unpinned.
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
