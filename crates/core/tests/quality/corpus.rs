@@ -97,13 +97,13 @@ fn commit_guards_is_flagged_where_the_switch_stands_as_code() {
     assert_eq!(result.safety.score, 71);
 }
 
-/// Eight lines of this skill's tests spell `--dangerously-skip-permissions`
+/// Six lines of this skill's tests spell `--dangerously-skip-permissions`
 /// inside a shell string — the value of a `--launch-flags` argument, or the
 /// command line an assertion expects back. Every one of them is the switch
 /// written as code in a file a harness loads, and the rule counts it there
 /// rather than deciding which program the string reaches.
 ///
-/// That is the cost of the reading, pinned to a real tree: eight findings
+/// That is the cost of the reading, pinned to a real tree: six findings
 /// one severity down for a supporting file. A reading that went quiet on
 /// them would be reading an argument list again, and this is where that
 /// fails.
