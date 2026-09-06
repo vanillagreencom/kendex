@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # approval-wait's argument surface: `--resolve-mode` precedence over the
-# process environment, kendex.settings.toml, the dotenv files and the
-# settings-file override, with and without the review-gate engine installed;
+# process environment, kendex.settings.toml, .env.local (a .env file is read by
+# nothing) and the settings-file override, with and without the engine installed;
 # and the parser's own answers (-h, --help, an unknown flag, a missing value)
 # before anything reaches gh. One run and one comparison per row: `observe`
 # reads exactly the fields the row's expect names.
