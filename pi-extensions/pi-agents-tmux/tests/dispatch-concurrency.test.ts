@@ -30,6 +30,12 @@ async function poolLine(count: number, concurrency: number, script: Step[]): Pro
 		(results) => (settled = `results=[${results.join(",")}]`),
 		(error: Error) => (settled = `rejected(${error.message})`),
 	);
+	// A step naming a mapper that never started is a mis-scripted row, not a line.
+	const release = (index: number) => {
+		const r = releases.get(index);
+		if (!r) throw new Error(`script releases ${items[index]}${index} before it started`);
+		return r;
+	};
 	const lines: string[] = [];
 	let seen = 0;
 	const step = async (event: string) => {
@@ -40,10 +46,10 @@ async function poolLine(count: number, concurrency: number, script: Step[]): Pro
 	await step("start");
 	for (const s of script) {
 		if (typeof s === "number") {
-			releases.get(s)?.resolve(`${items[s]}${s}`);
+			release(s).resolve(`${items[s]}${s}`);
 			await step(`${items[s]}${s} done ->`);
 		} else {
-			releases.get(s.throws)?.reject(new Error(`${items[s.throws]} boom`));
+			release(s.throws).reject(new Error(`${items[s.throws]} boom`));
 			await step(`${items[s.throws]}${s.throws} threw ->`);
 		}
 	}
