@@ -46,6 +46,7 @@ pub mod package;
 pub mod parallel;
 pub mod paths;
 pub mod pi_ext;
+pub mod privilege;
 pub mod process;
 pub mod quality;
 pub mod registry;

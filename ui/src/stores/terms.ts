@@ -15,6 +15,21 @@ interface TermsStoreState {
 }
 
 /**
+ * What the About row says the record holds.
+ *
+ * Three answers, not two. A read that has not landed or that failed leaves
+ * nothing known, and saying "not accepted" there would tell a person who
+ * accepted months ago that they did not — about the one row on the page
+ * whose whole job is to be evidence.
+ */
+export function acceptedSummary(state: TermsState | null): string {
+  if (state === null) return "…";
+  const record = state.accepted;
+  if (record === null) return "not accepted";
+  return `version ${record.version}, accepted ${record["accepted-at"].slice(0, 10)}`;
+}
+
+/**
  * Whether to ask about the terms, and what is on record.
  *
  * Both answers come from the backend, which reads them off the same

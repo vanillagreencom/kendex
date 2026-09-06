@@ -313,8 +313,16 @@ fn bootstrap_the_command_record(env: &Env) {
 /// that would be read as the check having something to say. `KENDEX_UI`
 /// is deliberately not consulted: it picks a rendering, and being sent to
 /// a person is a different question from how it is drawn for them.
+///
+/// Nor under `sudo`. `legal::accept` refuses a root write outright, so a
+/// line printed here would be one that could never be answered — and the
+/// person's own next unprivileged run says it and records it. The refusal
+/// and its reasoning are `kendex_core::privilege`'s, beside the command
+/// record above, which stops for the same reason.
 fn announce_the_terms_on_first_run(env: &Env) {
-    if !std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+    if !std::io::IsTerminal::is_terminal(&std::io::stderr())
+        || kendex_core::privilege::acting_as_root()
+    {
         return;
     }
     let Ok(settings) = kendex_core::settings::load(env) else {

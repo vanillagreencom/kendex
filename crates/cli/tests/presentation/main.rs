@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use kendex_core::env::Env;
-#[path = "../pty.rs"]
+#[path = "../support/pty.rs"]
 mod pty;
 #[path = "../../../test_util.rs"]
 mod test_util;

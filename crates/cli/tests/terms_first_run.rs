@@ -9,7 +9,7 @@
 //! terms — a line printed there is a line printed by any run.
 #![cfg(unix)]
 
-#[path = "pty.rs"]
+#[path = "support/pty.rs"]
 mod pty;
 #[path = "../../test_util.rs"]
 mod test_util;
@@ -21,7 +21,7 @@ use kendex_core::env::Env;
 use kendex_core::legal::LEGAL;
 use test_util::rooted;
 
-fn command(home: &Path) -> Command {
+fn command_with(home: &Path, arg: &str) -> Command {
     let mut run = Command::new(env!("CARGO_BIN_EXE_kendex"));
     run.current_dir(home)
         .env_clear()
@@ -29,8 +29,14 @@ fn command(home: &Path) -> Command {
         .env("KENDEX_BACKGROUND_REFRESH", "off")
         .env("KENDEX_UI", "plain")
         .env("PATH", std::env::var("PATH").unwrap_or_default())
-        .arg("list");
+        .arg(arg);
     run
+}
+
+/// `list` is the ordinary verb the cases below run: it has nothing to do
+/// with the terms, so a line printed there is a line printed by any run.
+fn command(home: &Path) -> Command {
+    command_with(home, "list")
 }
 
 /// What a person at a terminal is sent.
@@ -82,6 +88,24 @@ fn the_first_run_says_it_once_and_records_the_version() {
     let second = on_a_terminal(&home);
     assert!(!second.contains(LEGAL.terms_url), "second run: {second:?}");
     assert_eq!(recorded(&home), Some(record));
+}
+
+/// The forms clap answers itself, which is why this runs before the parse:
+/// `--version` and `--help` never reach dispatch, and either is as likely
+/// to be someone's first run as any verb.
+#[test]
+fn the_forms_clap_answers_itself_say_it_too() {
+    for form in ["--version", "--help"] {
+        let tmp = tempfile::tempdir().expect("a home to run in");
+        let home = rooted(&tmp);
+        let sent = pty::sent_to_a_terminal(command_with(&home, form));
+        assert!(sent.contains(LEGAL.terms_url), "{form}: {sent:?}");
+        assert_eq!(
+            recorded(&home).map(|record| record.version),
+            Some(LEGAL.version),
+            "{form}"
+        );
+    }
 }
 
 /// The record carries a version so a later one can ask again. A machine

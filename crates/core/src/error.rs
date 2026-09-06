@@ -159,6 +159,12 @@ pub enum CoreError {
     #[error("settings are busy: another kendex process holds {lock}")]
     SettingsBusy { lock: PathBuf },
 
+    /// A write refused because the run is acting as root. Writing would
+    /// leave a file the invoking account can never write again, so the
+    /// refusal is the whole point: `crate::privilege` holds the reasoning.
+    #[error("kendex is running as root; do this from your own account")]
+    WouldWriteAsRoot,
+
     /// A settings edit that did not go in; the shapes are the module's.
     #[error(transparent)]
     SettingsRefused(#[from] crate::settings_file::SettingsRefusal),

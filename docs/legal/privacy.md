@@ -6,13 +6,13 @@ This policy covers the kendex desktop app, the kendex command-line tool, and ken
 
 ## The app and the CLI collect nothing
 
-There is no telemetry, no analytics, no crash reporting and no install identifier in the desktop app or the command-line tool. We do not know who has kendex installed or what they installed with it.
+There is no telemetry, no analytics, no crash reporting and no install identifier in the desktop app or the command-line tool. We do not know who has kendex installed or what they installed with it. Signing in is the one thing that changes what leaves your machine, and **When you sign in** below says what.
 
 Your projects, packages, settings, lock files and scan results are files on your own computer. kendex reads and writes them there and uploads none of them.
 
 Your acceptance of these documents is recorded in kendex's settings file on your own computer, as the version accepted and the date. It goes nowhere else.
 
-The app and the CLI do make network requests: to kendex.ai for the community directory, to skills.sh for its listings, to GitHub for kendex's own releases, and to whichever host a package's source repository lives on. None of them carries anything about you or your code beyond what any HTTP request carries. A package is fetched from its author's own repository, so that host sees the request and we do not.
+The app and the CLI do make network requests. Signed out, they go to kendex.ai for the community directory and for the skills.sh listings it proxies, to skills.sh for a search you type, to GitHub for kendex's own releases, and to whichever host a package's source repository lives on. None of them carries an account, a credential or an identifier, and none carries your code. What a search sends is the words you typed. A package is fetched from its author's own repository, so that host sees the request and we do not.
 
 ## kendex.ai, signed out
 
@@ -24,6 +24,8 @@ We run no analytics on it: no Google Analytics, no Vercel Analytics, no session 
 
 Signing in is optional. It is needed only to submit a marketplace, manage one you own, or create a collection. Sign-in is through GitHub. We ask GitHub for `read:user` and `user:email` and nothing more, so we cannot read your private code.
 
+Once you are signed in, the app and the CLI do send a credential that names your account: signing in and out, reading who you are, submitting a repository and reading your submissions, and opening a collection link. `kendex login` is what starts that; before it there is nothing to send. A submission also asks GitHub about the repository you named.
+
 We store:
 
 - your account, which is the name, email address and avatar image URL GitHub gives us;
@@ -31,7 +33,7 @@ We store:
 - your session, which is a session token and when it expires;
 - your machine tokens: `kendex login` stores a hash of each token, never the token itself, with what it may do and when it expires, and the same for the short-lived sign-in codes;
 - what you submitted, which is the repository, that you are the submitter, and the result of each index run;
-- your collections, which are a name, a description and their members.
+- your collections, which are a name, a description and their members. Deleting a collection stops its link working and keeps the row.
 
 ## Rate limits and server logs
 

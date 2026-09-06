@@ -18,7 +18,7 @@ import { SETTINGS_SUBTITLE } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/stores/settings";
-import { useTermsStore } from "@/stores/terms";
+import { acceptedSummary, useTermsStore } from "@/stores/terms";
 import { zoom } from "@/stores/zoom";
 
 const THEME_LABELS: Record<Appearance, string> = {
@@ -35,7 +35,7 @@ export function SettingsPage() {
   const [version, setVersion] = useState<Awaited<
     ReturnType<typeof commands.appVersion>
   > | null>(null);
-  const accepted = useTermsStore((s) => s.state?.accepted ?? null);
+  const terms = useTermsStore((s) => s.state);
   const loadTerms = useTermsStore((s) => s.load);
 
   useEffect(() => {
@@ -134,9 +134,7 @@ export function SettingsPage() {
                 <span className="flex items-baseline gap-2">
                   Terms
                   <span className="font-mono text-xs font-normal text-muted-foreground">
-                    {accepted
-                      ? `version ${accepted.version}, accepted ${accepted["accepted-at"].slice(0, 10)}`
-                      : "not accepted"}
+                    {acceptedSummary(terms)}
                   </span>
                 </span>
               }

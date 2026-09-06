@@ -42,7 +42,7 @@ Do not use kendex to publish or install malware, credential stealers, or anythin
 
 ## Changes to these terms
 
-We may change these terms. When we do, we change the version and the date at the top and publish the new text. A change to what you agreed to asks you again in the app and on the command line; a correction that changes nothing you agreed to does not. Continuing to use kendex after a change accepts it.
+We may change these terms. When we do, we change the version and the date at the top and publish the new text. A change to what you agreed to is put in front of you once more — the app asks again, and the command line says so again the next time you run it at a terminal. A correction that changes nothing you agreed to does neither. Continuing to use kendex after a change accepts it.
 
 ## Governing law
 

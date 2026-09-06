@@ -8,6 +8,9 @@
 //! The caller builds the command — its home, its arguments, its
 //! environment — and this wires the terminal into it, so neither suite
 //! inherits the other's rendering variables.
+//!
+//! Under `tests/support/` rather than `tests/`, where cargo's autodiscovery
+//! would compile a file holding no `#[test]` as a test binary of its own.
 #![cfg(unix)]
 
 use std::process::Command;
