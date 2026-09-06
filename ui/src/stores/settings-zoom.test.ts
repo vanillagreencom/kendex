@@ -209,13 +209,13 @@ describe("zoom, on screen", () => {
     expect(dialog().message).toBe("no webview");
   });
 
-  it("puts the size back when the bridge throws, and lets Retry ask again", async () => {
+  it("puts the size back when the window could not be reached, and lets Retry ask again", async () => {
     useSettingsStore.setState({
       settings: { ...settings, zoom: 150 },
       zoom: 150,
     });
     windowAt(150);
-    vi.mocked(commands.windowSetZoom).mockRejectedValue(new Error("no bridge"));
+    vi.mocked(commands.windowSetZoom).mockResolvedValue(failed("no bridge"));
 
     await expect(
       useSettingsStore.getState().setZoom(160),
@@ -225,7 +225,7 @@ describe("zoom, on screen", () => {
     // otherwise write it.
     expect(zoom()).toBe(150);
     expect(dialog().title).toBe("Couldn't change the zoom");
-    expect(dialog().message).toContain("no bridge");
+    expect(dialog().message).toBe("no bridge");
 
     windowTakes();
     dialog().actions[0].onClick();

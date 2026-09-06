@@ -73,7 +73,10 @@ fn bindings_export_the_zoom_range() {
     );
 }
 
-/// The `commands` object, from its opening line to the line that closes it.
+/// The `commands` object, from its opening line to the `};` that closes it.
+/// The generated file carries the events object and every exported type
+/// below that line, so an end matched on a bare closing brace would take
+/// thousands of lines of type declarations into the block with it.
 #[allow(
     clippy::expect_used,
     reason = "a generated file without a commands object is a reader that stopped matching it, and the panic says so"
@@ -83,16 +86,23 @@ fn commands_block(bindings: &str) -> &str {
         .find("export const commands = {")
         .expect("generated bindings declare a commands object");
     let rest = &bindings[start..];
-    let end = rest.find("\n}\n").expect("the commands object closes");
+    let end = rest.find("\n};").expect("the commands object closes");
     &rest[..end]
 }
 
 /// Every command the bindings invoke, paired with whether the `typedError`
 /// fold stands between the bridge and the caller. Read off the generated
-/// file rather than off a list here: an entry reads `=> typedError<…>(
-/// __TAURI_INVOKE…)` where the fold applies and `=> __TAURI_INVOKE…` where it
-/// does not, and the command's own name is the invocation's first argument
-/// either way.
+/// file rather than off a list here, on the two shapes tauri-specta writes:
+/// `typedError<…>(__TAURI_INVOKE…)` for a folded command and
+/// `=> __TAURI_INVOKE…` for one outside the fold. So the character before
+/// the invocation answers it — the wrapper's own open paren, or the space
+/// after the arrow. The command's name is the invocation's first argument,
+/// reached past the generic the call may carry.
+///
+/// Both anchors are one character wide on purpose. tauri-specta writes a
+/// Rust doc comment into the generic itself, `deep_link_take`'s and
+/// `package_meta`'s among them, so a reader that scanned back for the arrow
+/// or forward for the first quoted string would answer off prose.
 #[allow(
     clippy::expect_used,
     reason = "an invocation that does not match this shape is a reader that stopped matching it, and the panic says so"
@@ -104,15 +114,16 @@ fn invoked_commands(bindings: &str) -> Vec<(String, bool)> {
     let mut at = 0;
     while let Some(offset) = block[at..].find(INVOKE) {
         let call = at + offset;
-        let arrow = block[..call]
-            .rfind("=>")
-            .expect("every command entry is an arrow function");
-        let folded = block[arrow..call].contains("typedError");
-        let opened = call
-            + block[call..]
-                .find("(\"")
-                .expect("the invocation names its command")
-            + 2;
+        let folded = block[..call].ends_with('(');
+        let args = call + INVOKE.len();
+        let opened = if block[args..].starts_with('(') {
+            args + 2
+        } else {
+            args + block[args..]
+                .find(">(\"")
+                .expect("an invocation opens on its command name, generic or not")
+                + 3
+        };
         let closed = opened
             + block[opened..]
                 .find('"')
@@ -147,6 +158,16 @@ fn only_the_pinned_commands_bypass_the_transport_fold() {
         .filter(|(_, folded)| !folded)
         .map(|(name, _)| name.as_str())
         .collect();
+    // The block's own count of the wrapper, against the reader's count of
+    // the calls it put behind one. A reader that misread an anchor lands
+    // here rather than in the pin below, where it would read as a command
+    // that changed shape.
+    assert_eq!(
+        invoked.len() - outside.len(),
+        commands_block(&fresh).matches("typedError").count(),
+        "the reader disagrees with the generated file about how many \
+         commands the fold wraps"
+    );
     assert_eq!(
         outside, OUTSIDE_THE_FOLD,
         "a command outside the transport fold rejects to its caller unfolded — \
