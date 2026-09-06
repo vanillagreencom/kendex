@@ -15,9 +15,9 @@ Usage: cache-query.sh <resource> <action> [options]
 
 Issues:
   issues list [--project X | --all-projects | --no-project] [--state Y] [--label Z]
-              [--cycle N|UUID|current|previous|next]
+              [--cycle N|UUID|current|previous|next] [--team X]
               [--updated-since Nd] [--search REGEX] [--max] [--include-archived]
-              [--format=safe|compact|ids|table]
+              [--format=safe|compact|ids|table|raw]
               --all-projects enumerates every project in ONE command (each row
               carries its project name; rows without a project carry ""). Use it
               instead of looping per project — restricted harnesses reject loop
@@ -42,6 +42,8 @@ Comments:
 
 Labels:
   labels list [--team X]
+              Team filtering takes the space form only; --team=X is rejected,
+              as is any other unknown flag.
 
 Attachments:
   attachments list [<issue-ID>]          List cached attachments (all or per-issue)
@@ -51,7 +53,9 @@ Attachments:
 Other:
   initiatives list [--status X]
   initiatives get <ID-or-name>
-  cycles list [--type current|past|upcoming] [--team X] [--limit N]
+  cycles list [--type current|past|upcoming] [--team X|--team=X] [--limit N]
+              --team=X is a cache-only spelling; the live command takes the
+              space form only. Any unknown flag is rejected rather than ignored.
   status                Show cache status/freshness
 
 All output uses the same formatters as live API commands.
@@ -75,11 +79,68 @@ source "$SCRIPT_DIR/../lib/cache-dates.sh"
 source "$SCRIPT_DIR/../lib/attachments.sh"
 
 # =============================================================================
+# SHARED FILTERS
+# =============================================================================
+
+# The jq stage that narrows a cached array to one team, on the `.team.name`
+# every synced record carries. Callers append it to the filter they already
+# hand to jq, so the predicate rides the pass they were making anyway instead
+# of adding a second one; an empty team emits nothing. Issues, labels and
+# cycles all filter by team, and the issues `--cycle` keyword resolves against
+# a cycles array narrowed the same way.
+cache_team_stage() {
+    [[ -n "$1" ]] || return 0
+    # -Rs, not -R: -R emits one JSON string per LINE, so a value carrying a
+    # newline would splice two literals into the program text and jq would fail
+    # to compile, which cache_jq_file reports as a corrupt cache. Slurping is
+    # what the `--arg` binding this replaced did — one literal, matched exactly.
+    # printf, not a here-string, which would append a newline to the value.
+    printf ' | [.[] | select(.team.name == %s)]' "$(printf '%s' "$1" | jq -Rs '.')"
+}
+
+# Refuse a flag the caller's arg loop did not name. Swallowing one returned the
+# whole cache at exit 0 from a request that named a scope, and the caller reads
+# that exit code as the answer. A live twin refuses a flag its own arg loop
+# does not name the same way. --assignee and --created-since are not that case:
+# they are real filters on the live path, and the cache refuses them because it
+# does not implement them rather than accepting and ignoring them.
+cache_unknown_flag() {
+    jq -cn --arg c "$1" --arg n "$2" --arg f "$3" \
+        '{error: ("Unknown flag for cache " + $c + ": " + $f + ". A filter the cache cannot honor must fail, not silently return every " + $n + ". Run \u0027cache " + $c + " --help\u0027.")}' >&2
+}
+
+# Reject a `--team` that names no team. The value is read positionally, so a
+# flag standing last must answer with this file's JSON error shape rather than a
+# set -u abort; and a given-but-empty value must refuse rather than degrade to
+# an unfiltered listing, which is the symptom the deleted consume-and-ignore arm
+# produced and what a workflow interpolating an unresolved $LINEAR_TEAM writes.
+# The live twin builds {team: {name: {eq: ""}}} and matches nothing. All three
+# cache listings take the flag, so all three answer the same way.
+cache_require_team() {
+    linear_require_option_value "$@" || return 1
+    # A flag standing where the value should be. `--team $LINEAR_TEAM --max`
+    # with the variable empty and unquoted collapses to `--team --max`, which
+    # would otherwise bind --max as the team name and swallow the real flag: an
+    # empty listing at rc 0, the silent wrong answer this whole refusal exists
+    # to stop. No Linear team name begins with a dash, so the cause is a missing
+    # value and the message says so.
+    case "$2" in
+    -*)
+        linear_require_option_value "$1"
+        return 1
+        ;;
+    esac
+    [[ -n "$2" ]] && return 0
+    echo '{"error": "--team requires a non-empty team name: an empty value would return every team, not the one named"}' >&2
+    return 1
+}
+
+# =============================================================================
 # ISSUES
 # =============================================================================
 
 cache_list_issues() {
-    local project="" state="" label="" updated_since="" search="" cycle=""
+    local project="" state="" label="" updated_since="" search="" cycle="" team=""
     local include_archived="false" paginate_all="false" limit="75"
     local all_projects="false" no_project="false"
     FORMAT="${DEFAULT_FORMAT}"
@@ -155,7 +216,11 @@ cache_list_issues() {
             FORMAT="${1#--format=}"
             shift
             ;;
-        --team | --assignee | --created-since) shift 2 ;; # consume but ignore for cache
+        --team)
+            cache_require_team "$@" || return 1
+            team="$2"
+            shift 2
+            ;;
         # Boolean on the live path (issues.sh), so it takes no value here
         # either. Consuming one would swallow the following filter flag and
         # return every issue as if that filter had been applied.
@@ -172,10 +237,7 @@ cache_list_issues() {
         # behavior) turned an unimplemented filter such as --no-project into a
         # full unfiltered listing that looked like assigned issues leaking past
         # the filter, inflating every audit worklist that trusted it.
-        -*)
-            echo "{\"error\": \"Unknown flag for cache issues list: $1. A filter the cache cannot honor must fail, not silently return every issue. Run 'cache issues list --help'.\"}" >&2
-            return 1
-            ;;
+        -*) cache_unknown_flag "issues list" "issue" "$1"; return 1 ;;
         *) shift ;;
         esac
     done
@@ -204,6 +266,11 @@ cache_list_issues() {
         state_jq=$(echo "$state" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')
         jq_filter="$jq_filter | [.[] | select(.state.name as \$s | $state_jq | any(. == \$s))]"
     fi
+
+    # Filter by team. sync sends no team filter, so this cache always holds
+    # every team the API key reaches; --team used to be consumed and discarded,
+    # returning that whole workspace from a request that named one team.
+    jq_filter="$jq_filter$(cache_team_stage "$team")"
 
     # Filter by project name or ID
     if [[ -n "$project" ]]; then
@@ -235,7 +302,11 @@ cache_list_issues() {
             local cycles_file="$CACHE_DIR/cycles.json"
             if [[ -f "$cycles_file" ]]; then
                 local all_cycles working
-                all_cycles=$(cache_jq_file "$cycles_file" "[]" '.') || return 1
+                # Narrowed to the same team the issues are, or the keyword
+                # resolves against another team's cycle and the listing comes
+                # back empty at exit 0. `cycles list` narrows in the same
+                # order, team first and then type, so both read one set.
+                all_cycles=$(cache_jq_file "$cycles_file" "[]" ".$(cache_team_stage "$team")") || return 1
                 working=$(cache_working_cycle <<<"$all_cycles")
                 # The helpers answer with no cycle running too — they cut at
                 # today — so these arms hand `working` straight over rather than
@@ -258,8 +329,14 @@ cache_list_issues() {
             # number branch, where the literal word compiles as a jq function
             # call and the failure reads as "this cycle has no issues".
             if [[ -z "$cycle_id" ]]; then
-                jq -cn --arg kw "$cycle" --arg file "$cycles_file" \
-                    '{error: ("--cycle " + $kw + " could not be resolved from " + $file + " — sync the cache (linear.sh sync) or pass a cycle number or UUID")}' >&2
+                # A --team narrows the file first, so an unresolved keyword
+                # there is a team with no cycles at least as often as a stale
+                # cache; naming only the cache sends the caller to re-sync one
+                # that is fine.
+                jq -cn --arg kw "$cycle" --arg file "$cycles_file" --arg team "$team" \
+                    '{error: ("--cycle " + $kw + " could not be resolved from " + $file
+                        + (if $team == "" then "" else " within team " + $team + ", which may hold no cycles" end)
+                        + " — sync the cache (linear.sh sync) or pass a cycle number or UUID")}' >&2
                 return 1
             fi
             ;;
@@ -831,6 +908,7 @@ cache_list_labels() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
         --team)
+            cache_require_team "$@" || return 1
             team="$2"
             shift 2
             ;;
@@ -842,16 +920,16 @@ cache_list_labels() {
             FORMAT="${1#--format=}"
             shift
             ;;
+        # `*) shift ;;` alone swallowed every flag form the arms above do not
+        # name — `--team=X` among them, which the live twin rejects — so a
+        # scoped request returned every team with nothing naming the scope.
+        -*) cache_unknown_flag "labels list" "label" "$1"; return 1 ;;
         *) shift ;;
         esac
     done
 
     local labels
-    labels=$(cache_jq_file "$CACHE_DIR/labels.json" "[]" '.') || return 1
-
-    if [[ -n "$team" ]]; then
-        labels=$(echo "$labels" | jq --arg t "$team" '[.[] | select(.team.name == $t)]')
-    fi
+    labels=$(cache_jq_file "$CACHE_DIR/labels.json" "[]" ".$(cache_team_stage "$team")") || return 1
 
     # Wrap for formatter
     local result
@@ -966,12 +1044,15 @@ cache_list_cycles() {
             shift 2
             ;;
         --team)
+            cache_require_team "$@" || return 1
             team="$2"
             shift 2
             ;;
+        # Normalized onto the arm above rather than bound a second time: a
+        # second binding is a second place for the guard to be missing.
         --team=*)
-            team="${1#--team=}"
-            shift
+            set -- --team "${1#--team=}" "${@:2}"
+            continue
             ;;
         --limit)
             limit="$2"
@@ -985,19 +1066,19 @@ cache_list_cycles() {
             FORMAT="${1#--format=}"
             shift
             ;;
+        # `*) shift ;;` alone swallowed every flag the arms above do not name,
+        # so `cycles list --bogus x` returned every cycle at exit 0 with
+        # nothing in the output naming what it had dropped.
+        -*) cache_unknown_flag "cycles list" "cycle" "$1"; return 1 ;;
         *) shift ;;
         esac
     done
 
-    local cycles
-    cycles=$(cache_jq_file "$CACHE_DIR/cycles.json" "[]" '.') || return 1
-
     # Team first. sync scopes cycles to a team only when one is configured, so
     # with none configured the cache holds every team's, and the type selection
     # below works off whatever set it is handed.
-    if [[ -n "$team" ]]; then
-        cycles=$(echo "$cycles" | jq --arg t "$team" '[.[] | select(.team.name == $t)]')
-    fi
+    local cycles
+    cycles=$(cache_jq_file "$CACHE_DIR/cycles.json" "[]" ".$(cache_team_stage "$team")") || return 1
 
     # Apply type filter (date-based: "current" = most recent started + incomplete)
     local working

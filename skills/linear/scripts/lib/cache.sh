@@ -559,6 +559,7 @@ cache_refresh_issues() {
                 projectMilestone { id name }
                 cycle { id name number }
                 parent { id identifier title }
+                team { name }
                 labels { nodes { name } }
                 priority estimate url
                 createdAt updatedAt archivedAt trashed
