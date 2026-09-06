@@ -60,7 +60,7 @@ Every step runs before the verdict; any other companion failure blocks. The shim
 ## The markdown lanes
 
 - `md-blocks.awk` mode `check` prints md-format's violations, `reflow` the file in the format, `lines` the judged lines with blockquote prefix stripped, the HTML block lines apart, and each heading's text.
-- md-refs runs the `lines` stream through `md-refs.awk`, then resolves in three passes: every selected file's references, the headings of every cited file read from the index whether or not in scope, then the verdict.
+- md-refs runs the `lines` stream through `md-refs.awk`, then resolves in three passes: every selected file's references, the headings of every cited file read from the index whether or not in scope, then the verdict. Its source set joins the first pass through `md-refs.awk -v grammar=text`, fed by `comment-text.sh`; one `git grep` for the section sign over the index names the files that pass opens, so a source tree with no citation costs one search.
 - Both programs are POSIX awk (no interval expressions, no gawk builtins) under `LC_ALL=C`; `mawk` and `gawk --posix` give the same records over the suites' fixtures.
 - The reflow is the check's state machine printing instead of complaining, so a reflowed file passes md-format by construction; `tests/md-reflow.test.sh` proves it over the corpus and proves each rewrite is a fixed point.
 - The batch passes `--staged` to both markdown checks. md-format selects changed documents; md-refs checks all configured documents against the index. `COMMIT_GUARDS_MD_SCOPE=all` makes unflagged checks unconditional.

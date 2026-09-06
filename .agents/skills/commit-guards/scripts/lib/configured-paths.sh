@@ -332,7 +332,7 @@ gg_policy_content() { # FILE — content on stdout; 1 = the commit has no such f
 # blank lines and `#` comments are ignored; a pattern without a reason is a
 # config error. A missing file is an empty list. A `!` pattern CARVES its
 # matches back into the scanned set and beats every exclusion row whatever the
-# order (DEVELOPMENT.md § Excludes format). A row naming a path that begins
+# order (../../DEVELOPMENT.md § Excludes format). A row naming a path that begins
 # with `!` escapes it as `\!foo`, which stays an exclusion.
 gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS and GG_EXCLUDE_CARVES
   local file="$1" line lineno pat reason carve content status=0

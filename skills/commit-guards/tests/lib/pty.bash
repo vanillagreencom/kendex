@@ -2,7 +2,7 @@
 # Running a case AT A TERMINAL. Sourced by terminal-paths.test.sh after
 # lib/harness.bash and by nothing else. Why a terminal-only branch needs a
 # probe like this, and the two rules such a probe follows, are in
-# DEVELOPMENT.md § Probing a terminal-only code path.
+# ../../DEVELOPMENT.md § Probing a terminal-only code path.
 #
 # Declared here rather than inherited from harness.bash, which sets the same:
 # the `|| true` guards below are written for errexit, and a library that needs

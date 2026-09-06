@@ -72,7 +72,7 @@ fi
 
 # `.macroscope/ignore.md` is markdown by extension only. Macroscope documents
 # it as one glob per line with `#` comments and blank lines ignored
-# (references/limits.md § Macroscope cites the page), so an HTML comment there
+# (../references/limits.md § Macroscope cites the page), so an HTML comment there
 # is a pattern matching nothing, the marker included.
 if grep -qF '<!--' "$repo/.macroscope/ignore.md"; then
   bad 'ignore.md carries no HTML comment' \

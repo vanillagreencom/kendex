@@ -490,7 +490,7 @@ table "$QW" \
   'the last sleep is clamped to the remaining budget|open_queued|1 3 4 --json --no-check-probe||elapsed_seconds=4'
 
 echo "=== an unreadable queue answer is an error, never not_queued ==="
-# merge-pr.md § 5 hands the error to an operator, so each shape names itself:
+# ../workflows/merge-pr.md § 5 hands the error to an operator, so each shape names itself:
 # an unreadable body, the GraphQL message GitHub sent, the auth ladder.
 table "$QW" \
   'an empty object body|state:last=open,queue:last=braces|||rc=1 status=error verdict=unknown error~no_readable=true' \

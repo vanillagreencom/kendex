@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# md-refs checks links, section routes, and decision references in markdown.
-# Both callers and targets come from the index. A staged change rechecks all
-# configured documents so target edits cannot leave unchanged callers broken.
-# Fenced code is not read. The grammar is in lib/md-refs.awk.
+# md-refs checks links, section routes, and decision references in markdown,
+# and the `<path>.md § Heading` citations a source file carries in its
+# COMMENT TEXT or a TOML file in its string values. Both callers and targets
+# come from the index. A staged change rechecks all configured documents and
+# source files so target edits cannot leave unchanged callers broken. Fenced
+# code is not read. The grammar is in lib/md-refs.awk; comment text and TOML
+# strings come from the comments lane's extractor, lib/comment-text.sh.
 #
 # Exit codes: 0 clean; 1 dead references; 2 usage/config/collection error.
 set -euo pipefail
@@ -19,11 +22,17 @@ source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/settings.sh"
 # shellcheck source=lib/md-scope.sh
 source "$SCRIPT_DIR/lib/md-scope.sh"
+# shellcheck source=lib/comment-text.sh
+source "$SCRIPT_DIR/lib/comment-text.sh"
 
 # What an agent harness loads, plus the architecture docs those files point
 # at; each name spelled at the root and below it, as the prose lane spells
 # them.
 PATHS_DEFAULT="AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
+# The files whose comment text is read for the same citations: the extractor's
+# own list of what it has a grammar for.
+SOURCE_PATHS_DEFAULT="$GG_COMMENT_PATHS_DEFAULT"
+SECTION_SIGN=$'\302\247'
 BLOCKS_AWK="$SCRIPT_DIR/lib/md-blocks.awk"
 SHAPES_AWK="$SCRIPT_DIR/lib/md-shapes.awk"
 REFS_AWK="$SCRIPT_DIR/lib/md-refs.awk"
@@ -42,18 +51,30 @@ A dead relative link, code-span section or anchor citation, or decision
 reference fails. A link followed by § must start with a heading from its
 target; prose may follow that heading. Fenced code is not read. A path alone
 in a code span is not a citation. Decision IDs are judged only where
-DECISIONS_DIR is tracked.
+DECISIONS_DIR is tracked, and one carrying '§ Heading' is judged against
+that decision's headings too.
 
---staged and --all check every tracked matching document. With neither,
-COMMIT_GUARDS_MD_SCOPE=touched checks that set when any change is staged,
-including a deletion; all checks it unconditionally. Callers and targets
-both resolve against the index. Exclusions apply to the document set.
+A source file is read for the same '<path>.md § Heading' citation in its
+COMMENT TEXT, and a TOML file in its string values as well, resolved as the
+code-span form is. A decision ID there is judged only where it carries a
+'§ Heading'. Nothing else is: outside markdown a link, a bare path and a
+bare ID are prose.
+
+--staged and --all check every tracked matching document and source file.
+With neither, COMMIT_GUARDS_MD_SCOPE=touched checks that set when any change
+is staged, including a deletion; all checks it unconditionally. Callers and
+targets both resolve against the index. Exclusions apply to both sets.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
   COMMIT_GUARDS_MD_REFS_PATHS   space-separated shell globs against the
                                 full repo-relative path, '*' crossing '/'
                                 (default $PATHS_DEFAULT)
+  COMMIT_GUARDS_MD_REFS_SOURCE_PATHS
+                                the same, for the files read for citations
+                                in comment text (default: the extensions in
+                                CHECKS.md § comments); empty is refused, so
+                                name a path or drop the check
   COMMIT_GUARDS_MD_EXCLUDES     exclusion list, pattern<TAB>reason per line
                                 (default $GG_MD_EXCLUDES_DEFAULT)
   COMMIT_GUARDS_MD_SCOPE        touched | all (default $GG_MD_SCOPE_DEFAULT)
@@ -119,19 +140,10 @@ GG_MD_MODE=all
 
 gg_tmpdir
 gg_md_select markdown
-skipped="$GG_WALK_SKIPPED"
-UNMEASURED=""
-[ "$skipped" -eq 0 ] || UNMEASURED="; $skipped matched path(s) not measured"
+SKIPPED="$GG_WALK_SKIPPED"
 SCOPE_DESC="$(gg_md_scope_desc)"
 
-if [ "$GG_MD_COUNT" -eq 0 ]; then
-  if [ "$skipped" -eq 0 ]; then
-    echo "md-refs: OK — no $SCOPE_DESC to judge (COMMIT_GUARDS_MD_REFS_PATHS $GG_PATH_GLOBS_SHOWN)"
-  else
-    echo "md-refs: OK — nothing measurable to judge$UNMEASURED"
-  fi
-  exit 0
-fi
+MD_GLOBS_SHOWN="$GG_PATH_GLOBS_SHOWN"
 
 # The index's paths, one per line, are what a reference may land on. A path
 # holding a newline splits here and can be no link target; that direction
@@ -165,9 +177,111 @@ while IFS= read -r -d '' sha && IFS= read -r -d '' f; do
     || gg_collection_error "could not read the references in $(gg_shown "$f")"
 done <"$GG_TMP/md-files.z"
 
+# Pass one, continued: what each source file cites in its comment text, and
+# a TOML file in its string values too — a manifest's values are its content,
+# where a program's string literals are its data.
+SRC_COUNT=0
+# One file carrying a section sign; 1 when the path was named as unmeasured.
+source_file() { # PATH BLOBFILE
+  local f="$1" blob="$2" want=comments status=0 fam
+  if gg_blob_is_binary "$blob" "$f"; then
+    gg_note_skip "$f" "binary content, not source"
+    return 1
+  fi
+  fam="$(gg_comment_family "$f" "$blob")" || status=$?
+  # The substitution is a subshell, so a collection error inside it ends only
+  # that subshell: its status is carried out here, or an unreadable blob would
+  # read as a path with no grammar.
+  [ "$status" -eq 0 ] || exit "$status"
+  if [ -z "$fam" ]; then
+    gg_note_skip "$f" "no comment grammar for this path (CHECKS.md § comments)"
+    return 1
+  fi
+  [ "$fam" != hash-toml ] || want=strings
+  if ! gg_comment_text "$fam" "$blob" "$f" "$want" >"$GG_TMP/text"; then
+    gg_note_skip "$f" "comment text could not be extracted: $GG_COMMENT_ERROR"
+    return 1
+  fi
+  LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=refs -v grammar=text -v src="$f" \
+    -v id_prefix="$ID_PREFIX" -v id_width="$ID_WIDTH" -- "$GG_TMP/text" >>"$GG_TMP/refs.tsv" \
+    || gg_collection_error "could not read the references in $(gg_shown "$f")"
+}
+gg_md_load_paths md-refs COMMIT_GUARDS_MD_REFS_SOURCE_PATHS "$SOURCE_PATHS_DEFAULT"
+SRC_GLOBS_SHOWN="$GG_PATH_GLOBS_SHOWN"
+
+# One index-wide search names every file that could carry a citation at all,
+# so the walk below reads a blob only for those rather than for every tracked
+# source file — the difference between a handful of reads and thousands on
+# each commit. A file whose bytes do not hold the section sign holds no
+# citation this grammar reads, which is a complete answer for it, so it is
+# counted and never opened; this is where the lane parts company with the
+# blob-by-blob walk the other lanes take. The search runs WITHOUT `-I`,
+# which would drop a file the attributes mark undiffable and a blob holding
+# a NUL, leaving a citation inside one silently unjudged; a carrier whose
+# content really is binary is named below instead.
+sig_status=0
+git grep -l -z --cached -F -e "$SECTION_SIGN" >"$GG_TMP/sig.z" || sig_status=$?
+[ "$sig_status" -le 1 ] || gg_collection_error "could not search the index for citations (git grep exit $sig_status)"
+CARRIERS=$'\n'
+while IFS= read -r -d '' sig_path; do
+  CARRIERS="$CARRIERS$sig_path"$'\n'
+done <"$GG_TMP/sig.z"
+
+gg_require_merged_index
+git ls-files -sz >"$GG_TMP/src-files.z" || gg_collection_error "git ls-files failed"
+GG_WALK_SKIPPED=0
+: >"$GG_TMP/skipped.z"
+while IFS= read -r -d '' rec; do
+  # Record shape: "<mode> <sha> <stage>\t<path>", as gg_walk_configured_paths reads it.
+  f="${rec#*"$GG_TAB"}"
+  gg_matches_path_glob "$f" || continue
+  gg_is_excluded "$f" && continue
+  mode="${rec%% *}"
+  rest="${rec#* }"
+  sha="${rest%% *}"
+  case "$mode" in
+    120000)
+      gg_note_skip "$f" "tracked as a symlink, not source"
+      continue
+      ;;
+    160000)
+      gg_note_skip "$f" "tracked as a submodule gitlink, not source"
+      continue
+      ;;
+  esac
+  case "$f" in
+    # The carrier list separates its paths by newline, so one holding a
+    # newline cannot be looked up in it; named, never quietly passed.
+    *$'\n'*)
+      gg_note_skip "$f" "the path holds a newline, which the carrier list cannot separate"
+      continue
+      ;;
+  esac
+  case "$CARRIERS" in
+    *$'\n'"$f"$'\n'*)
+      gg_read_blob "$sha" "$f" "source file"
+      source_file "$f" "$GG_TMP/blob" || continue
+      ;;
+  esac
+  SRC_COUNT=$((SRC_COUNT + 1))
+done <"$GG_TMP/src-files.z"
+SKIPPED=$((SKIPPED + GG_WALK_SKIPPED))
+UNMEASURED=""
+[ "$SKIPPED" -eq 0 ] || UNMEASURED="; $SKIPPED matched path(s) not measured"
+
+if [ "$GG_MD_COUNT" -eq 0 ] && [ "$SRC_COUNT" -eq 0 ]; then
+  if [ "$SKIPPED" -eq 0 ]; then
+    echo "md-refs: OK — no $SCOPE_DESC to judge (COMMIT_GUARDS_MD_REFS_PATHS $MD_GLOBS_SHOWN; COMMIT_GUARDS_MD_REFS_SOURCE_PATHS $SRC_GLOBS_SHOWN)"
+  else
+    echo "md-refs: OK — nothing measurable to judge$UNMEASURED"
+  fi
+  exit 0
+fi
+
 # Pass two: the headings of every file a citation reaches into, read from
 # the index whether or not the file is in scope.
-LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=targets -v tracked="$GG_TMP/tracked" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/targets" \
+LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=targets -v tracked="$GG_TMP/tracked" \
+  -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/targets" \
   || gg_collection_error "could not resolve the reference targets"
 : >"$GG_TMP/headings.tsv"
 while IFS= read -r target; do
@@ -208,8 +322,9 @@ else
   DEC_NOTE="decision IDs not judged ($DEC_DIR is not tracked)"
 fi
 
+SETS="$GG_MD_COUNT $SCOPE_DESC and $SRC_COUNT source file(s)"
 if [ "$violations" -gt 0 ]; then
-  echo "md-refs: $violations dead reference(s) among $judged in $GG_MD_COUNT $SCOPE_DESC; $DEC_NOTE$UNMEASURED"
+  echo "md-refs: $violations dead reference(s) among $judged in $SETS; $DEC_NOTE$UNMEASURED"
   exit 1
 fi
-echo "md-refs: OK — $judged reference(s) resolve in $GG_MD_COUNT $SCOPE_DESC; $DEC_NOTE$UNMEASURED"
+echo "md-refs: OK — $judged reference(s) resolve in $SETS; $DEC_NOTE$UNMEASURED"

@@ -1,0 +1,1 @@
+- `md-refs` judges a `<path>.md § Heading` citation in a source file's comment text and in a TOML file's strings, as it does in markdown. A decision ID followed by `§` checks that heading too.

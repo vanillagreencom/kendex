@@ -14,7 +14,7 @@
 # outputs are stale against, asserted red. Plus one for absence, asserted on
 # the absence rather than on the worktree copy.
 #
-# The input set is SKILL.md § The render inputs, read from that list rather
+# The input set is ../SKILL.md § The render inputs, read from that list rather
 # than from a copy here. A TOML-only pair is what a generator reading the
 # index for the TOML and the worktree for everything else passes, with the
 # failure the mode exists to close shipping intact.

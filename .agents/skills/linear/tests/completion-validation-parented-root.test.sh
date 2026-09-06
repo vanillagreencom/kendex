@@ -3,7 +3,7 @@
 #
 # completion_expected_state() must not return "Done" for every issue with a parent,
 # so a decomposition child run as the managed top-level session (kept In Review
-# until PR merge per orch start-worktree.md § 5.3) failed validate-completion's
+# until PR merge per ../../orch/workflows/start-worktree.md § 5.3) failed validate-completion's
 # state_ok gate. The lib now keys the expected state on an explicit call-site
 # "role":
 #   - bundle-child : a sub-issue processed under its parent session -> expects Done.

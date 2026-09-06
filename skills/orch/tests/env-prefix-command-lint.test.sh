@@ -2,7 +2,7 @@
 # Under Codex `approval=never` an env-assignment prefix (`VAR=value cmd args`,
 # e.g. `LC_ALL=C tools/test-ci-changes`) is rejected purely for its prefix
 # shape — the inner command is irrelevant. The canonical normalization
-# (references/codex-runtime.md § Env-assignment prefixes) happens where a
+# (../references/codex-runtime.md § Env-assignment prefixes) happens where a
 # required command is ACCEPTED into a workflow: confirm the ambient
 # environment satisfies the precondition, then run the bare command. So no
 # fenced ```bash/```sh command line in the orch or dev docs may open with one.

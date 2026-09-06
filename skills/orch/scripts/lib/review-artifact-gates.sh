@@ -71,7 +71,7 @@ trap 'review_artifact_gate_cleanup; exit 143' TERM
 
 # The rejecting reason and its detail, set by artifact_content_gates. Every
 # rejection carries a detail: a reason with no cause is a dead end for the agent
-# that has to fix it, which review-pr.md § 3.1 spends its one re-delegation on.
+# that has to fix it, which ../../workflows/review-pr.md § 3.1 spends its one re-delegation on.
 review_artifact_reason=""
 review_artifact_detail=""
 
@@ -221,7 +221,7 @@ qa_shaped_incomplete() {
 # prose but unroutable: the orchestrator routes suggestions on `category`
 # (fix -> dev, issue -> audit), so a category-less item matches neither filter
 # and every finding is silently dropped. The required set is derived from
-# reviewer/schemas/review-finding.md § "Item Fields (blockers/suggestions)"
+# ../../../reviewer/schemas/review-finding.md § Item Fields (blockers/suggestions)
 # (all seven marked Required=Yes for both arrays; `category` additionally
 # Required for suggestions, and constrained to {fix,issue} because routing keys
 # on it; `priority` must be a number in 1..4 and `estimate` a number in 1..5
