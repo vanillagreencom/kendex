@@ -26,7 +26,7 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 ## How it works
 
 - kendex installs the hook scripts, and a registry: the list of which hook runs on which event.
-- Before Pi runs a tool, this extension reads the registry for the project and the one for your user account.
+- Before Pi runs a tool, this extension reads the registry for your user account, and the project's own registry once Pi has marked the workspace trusted.
 - Every hook whose matcher fits is given the tool's name and the arguments it was called with.
 - Pi runs the tool only once every one of those hooks has allowed the call.
 
