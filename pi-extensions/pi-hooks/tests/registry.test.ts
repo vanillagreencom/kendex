@@ -637,7 +637,9 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 					writePiConfig(project, { [setting]: on });
 					const carrier = installCarrier();
 					if (listener === SESSION_START_LISTENER) {
-						carrier.handler(SESSION_START_LISTENER)({ type: "session_start", reason: "startup" }, trusted(project));
+						// `resume`: the registered copy covers every source, and the
+						// native report the on leg would otherwise arm is not the subject.
+						carrier.handler(SESSION_START_LISTENER)({ type: "session_start", reason: "resume" }, trusted(project));
 						await grace();
 					} else {
 						await carrier.handler(SETTLED_LISTENER)({}, trusted(project));
@@ -659,7 +661,6 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 	 */
 	test("an untrusted project's hooks run on none of them, and the person's own still answer", async () => {
 		const project = initCleanRustRepo("pi-hooks-untrusted-listeners-");
-		writePiConfig(project, { sessionDriftCheck: false });
 		const log = join(project, "project.log");
 		const agentDir = process.env.PI_CODING_AGENT_DIR!;
 		const globalLog = join(agentDir, "global.log");
@@ -672,7 +673,10 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 			const carrier = installCarrier();
 			await carrier.handler(TOOL_RESULT_LISTENER)(toolResultEvent("bash", { command: "ls" }, "ok"), untrusted);
 			await carrier.handler(SETTLED_LISTENER)({}, untrusted);
-			carrier.handler(SESSION_START_LISTENER)({ type: "session_start", reason: "startup" }, untrusted);
+			// `resume`, which every matcher-less registration covers and the
+			// native drift report leaves alone: an untrusted project's settings
+			// are not read, so nothing else could silence it.
+			carrier.handler(SESSION_START_LISTENER)({ type: "session_start", reason: "resume" }, untrusted);
 			await waitForSent(carrier.sent, 2);
 
 			expect(readLog(log)).toBe("");

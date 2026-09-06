@@ -321,6 +321,23 @@ fn bun_is_required() -> bool {
         && (std::env::var_os("GITHUB_ACTIONS").is_some() || std::env::var_os("CI").is_some())
 }
 
+/// The `bun` an end-to-end case drives the carrier with, or `None` where
+/// the case is allowed to skip: a lane `bun_is_required` names fails here
+/// instead, since a skipped end-to-end case proves nothing.
+// The skip line a `#[test]` body may print without the lint noticing.
+#[allow(clippy::print_stderr)]
+fn carrier_runner() -> Option<std::path::PathBuf> {
+    let bun = bun_on_path();
+    assert!(
+        bun.is_some() || !bun_is_required(),
+        "bun is not on PATH: restore the oven-sh/setup-bun step on the kendex-core leg of the cargo-linux and cargo-macos jobs in .github/workflows/skill-tests.yml, or this case proves nothing"
+    );
+    if bun.is_none() {
+        eprintln!("skipped: bun is not on PATH, so the carrier cannot be run");
+    }
+    bun
+}
+
 /// A hook declared in `kendex.toml` fires under Pi.
 ///
 /// A `[[custom-hooks]]` entry is the case that proves it, because a custom
@@ -331,14 +348,7 @@ fn bun_is_required() -> bool {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_declared_custom_hook_fires_through_the_carrier() {
-    let Some(bun) = bun_on_path() else {
-        assert!(
-            !bun_is_required(),
-            "bun is not on PATH: restore the oven-sh/setup-bun step on the kendex-core leg of the cargo-linux and cargo-macos jobs in .github/workflows/skill-tests.yml, or this case proves nothing"
-        );
-        eprintln!("skipped: bun is not on PATH, so the carrier cannot be run");
-        return;
-    };
+    let Some(bun) = carrier_runner() else { return };
     let w = world();
     register_carrier(&w.project.join(".pi"));
     fs::write(
@@ -405,14 +415,7 @@ fn a_declared_custom_hook_fires_through_the_carrier() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_declared_hook_on_the_other_listeners_fires_through_the_carrier() {
-    let Some(bun) = bun_on_path() else {
-        assert!(
-            !bun_is_required(),
-            "bun is not on PATH: restore the oven-sh/setup-bun step in the cargo-tests job of .github/workflows/skill-tests.yml, or this case proves nothing"
-        );
-        eprintln!("skipped: bun is not on PATH, so the carrier cannot be run");
-        return;
-    };
+    let Some(bun) = carrier_runner() else { return };
     let w = world();
     register_carrier(&w.project.join(".pi"));
     fs::write(
