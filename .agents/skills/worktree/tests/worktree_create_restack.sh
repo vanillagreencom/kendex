@@ -9,9 +9,13 @@
 # delete/recreate). `--restack` must redo the rebase and stop IN the conflict
 # state with guarded continue/skip/abort guidance. A completed supported rewrite must carry
 # an exact, one-worktree push authorization without weakening remote-movement
-# or unexpected-local-divergence rejection. Clean-rebase reuse must keep
-# working unchanged.
+# or unexpected-local-divergence rejection. A sibling suite run under a git
+# hook's exported environment must keep its own sandbox and leave a live
+# authorization alone. Clean-rebase reuse must keep working unchanged.
 set -euo pipefail
+# A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
+# call below at the real repository; -C overrides neither.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
@@ -153,7 +157,10 @@ make_repo() {
   git -C "$repo" config user.name Test
   git -C "$repo" config commit.gpgsign false
   printf 'orig\n' > "$repo/file.txt"
-  git -C "$repo" add file.txt
+  # A second tracked file no rebase in this suite touches, so a test can dirty
+  # the worktree without touching the conflicting path.
+  printf 'orig\n' > "$repo/other.txt"
+  git -C "$repo" add file.txt other.txt
   git -C "$repo" commit -q -m base
   # Pin the historical sibling trees/ base so this file's path assertions stay
   # explicit; default base-dir resolution is covered by worktree_base_dir.sh.
@@ -437,6 +444,178 @@ assert_eq "$chained_push_code" "0" "consecutive clean restacks push with the ori
 assert_eq "$(git --git-dir="$CHAINED_ROOT/origin.git" rev-parse refs/heads/issue-chained-restack)" "$chained_second_head" "consecutive restack push publishes the final rewritten head"
 assert_eq "$(git -C "$CHAINED_WT" config --worktree --get kendex-restack.authorizedHead 2>/dev/null || true)" "" "consecutive restack push consumes authorization"
 
+# --- A real conflict outranks the unstaged arm --------------------------------
+# `git diff --name-only` lists unmerged paths too, so on a conflicted pause both
+# arms of report_paused_restack match and only their order keeps the conflict
+# message. Nothing else in the repo asserts it, so swapping them would ship the
+# wrong cause green.
+PRECEDENCE_ROOT="$TMP_ROOT/precedence"
+make_conflict_pair "$PRECEDENCE_ROOT" issue-precedence
+PRECEDENCE_WT="$PRECEDENCE_ROOT/trees/issue-precedence"
+set +e
+(cd "$PRECEDENCE_ROOT/main" && "$WORKTREE_SCRIPT" create issue-precedence --restack >/dev/null 2>&1)
+(cd "$PRECEDENCE_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-precedence >/dev/null 2>"$PRECEDENCE_ROOT/continue.err")
+precedence_code=$?
+set -e
+precedence_err="$(cat "$PRECEDENCE_ROOT/continue.err")"
+assert_ne "$(git -C "$PRECEDENCE_WT" ls-files -u)" "" "the precedence fixture leaves the index unmerged"
+assert_eq "$precedence_code" "1" "guarded continue over an unresolved conflict exits 1"
+assert_contains "$precedence_err" "Restack stopped on conflicts:" "an unmerged index is reported as a conflict"
+assert_contains "$precedence_err" "file.txt" "the conflict report names the conflicting file"
+assert_not_contains "$precedence_err" "unstaged changes" "an unmerged index is never reported as unstaged changes"
+
+# --- A clean index with unstaged changes is not an unresolved conflict --------
+# Git refuses to continue while a tracked file differs from the index, and says
+# "You must edit all merge conflicts" whatever the real cause. Repeating that
+# against an index with no unmerged paths sends the resolver back to files it
+# already staged, and the empty-commit skip beside it would drop the commit
+# whose conflicts they just resolved.
+UNSTAGED_ROOT="$TMP_ROOT/unstaged"
+make_conflict_pair "$UNSTAGED_ROOT" issue-unstaged
+UNSTAGED_WT="$UNSTAGED_ROOT/trees/issue-unstaged"
+set +e
+(cd "$UNSTAGED_ROOT/main" && "$WORKTREE_SCRIPT" create issue-unstaged --restack >/dev/null 2>&1)
+set -e
+printf 'resolved\n' > "$UNSTAGED_WT/file.txt"
+git -C "$UNSTAGED_WT" add file.txt
+printf 'edited after staging\n' > "$UNSTAGED_WT/other.txt"
+assert_eq "$(git -C "$UNSTAGED_WT" ls-files -u)" "" "the unstaged-change fixture leaves no unmerged index entry"
+set +e
+(cd "$UNSTAGED_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-unstaged >/dev/null 2>"$UNSTAGED_ROOT/continue.err")
+unstaged_code=$?
+set -e
+unstaged_err="$(cat "$UNSTAGED_ROOT/continue.err")"
+assert_eq "$unstaged_code" "1" "guarded continue over unstaged changes exits 1"
+assert_contains "$unstaged_err" "unstaged changes" "the refusal names unstaged changes as the real cause"
+assert_contains "$unstaged_err" "other.txt" "the refusal names the unstaged file"
+assert_not_contains "$unstaged_err" "may be empty" "a clean index is not reported as an empty commit"
+assert_not_contains "$unstaged_err" "restack skip" "a clean index does not offer the skip that would drop the resolved commit"
+assert_rebase_in_progress "$UNSTAGED_WT" "the refused continuation leaves the restack paused"
+assert_eq "$(git -C "$UNSTAGED_WT" config --worktree --get kendex-restack.pending)" "true" "the refused continuation keeps its pending authorization"
+git -C "$UNSTAGED_WT" checkout -- other.txt
+unstaged_out=$(cd "$UNSTAGED_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-unstaged 2>"$UNSTAGED_ROOT/resume.err")
+assert_contains "$unstaged_out" "Completed guarded restack" "discarding the unstaged change resumes the same guarded restack"
+assert_eq "$(cat "$UNSTAGED_WT/file.txt")" "resolved" "the resumed restack keeps the resolution staged before the refusal"
+
+# --- A recorded restack whose Git state is gone still has a guarded exit ------
+# Nothing can continue or abort a rebase that is not running, and every control
+# refuses a missing paused state, so without this the tool's own record can only
+# be unset by hand.
+ORPHAN_ROOT="$TMP_ROOT/orphan"
+make_conflict_pair "$ORPHAN_ROOT" issue-orphan
+ORPHAN_WT="$ORPHAN_ROOT/trees/issue-orphan"
+set +e
+(cd "$ORPHAN_ROOT/main" && "$WORKTREE_SCRIPT" create issue-orphan --restack >/dev/null 2>&1)
+set -e
+orphan_original_head="$(git -C "$ORPHAN_WT" config --worktree --get kendex-restack.originalHead)"
+git -C "$ORPHAN_WT" rebase --abort
+assert_no_rebase_in_progress "$ORPHAN_WT" "the out-of-band abort removed the Git rebase state"
+assert_eq "$(git -C "$ORPHAN_WT" config --worktree --get kendex-restack.pending)" "true" "the tool's own restack record outlives the Git state"
+set +e
+orphan_out=$(cd "$ORPHAN_ROOT/main" && "$WORKTREE_SCRIPT" restack abort issue-orphan 2>"$ORPHAN_ROOT/abort.err")
+orphan_code=$?
+set -e
+assert_eq "$orphan_code" "0" "guarded abort exits 0 when only the tool's record is left"
+assert_contains "$orphan_out" "cleared the recorded restack state" "guarded abort clears a record whose paused rebase is gone"
+assert_eq "$(git -C "$ORPHAN_WT" config --worktree --get-regexp '^kendex-restack\.' || true)" "" "guarded abort leaves no kendex-restack key to unset by hand"
+assert_eq "$(git -C "$ORPHAN_WT" branch --show-current)" "issue-orphan" "guarded abort leaves the worktree on its recorded branch"
+assert_eq "$(git -C "$ORPHAN_WT" rev-parse HEAD)" "$orphan_original_head" "guarded abort leaves the branch at its recorded original head"
+
+# A live paused restack whose HEAD was moved off the base still aborts. continue
+# and skip replay onto that base and must refuse, but abort restores the
+# recorded original head from the paused state's own metadata, and refusing it
+# here left raw git as the only way out.
+MOVED_HEAD_ROOT="$TMP_ROOT/moved-head"
+make_conflict_pair "$MOVED_HEAD_ROOT" issue-moved-head
+MOVED_HEAD_WT="$MOVED_HEAD_ROOT/trees/issue-moved-head"
+moved_head_original="$(git -C "$MOVED_HEAD_WT" rev-parse HEAD)"
+set +e
+(cd "$MOVED_HEAD_ROOT/main" && "$WORKTREE_SCRIPT" create issue-moved-head --restack >/dev/null 2>&1)
+set -e
+git -C "$MOVED_HEAD_WT" checkout -f issue-moved-head >/dev/null 2>&1
+assert_rebase_in_progress "$MOVED_HEAD_WT" "the raw checkout leaves the paused rebase in place"
+set +e
+(cd "$MOVED_HEAD_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-moved-head >/dev/null 2>"$MOVED_HEAD_ROOT/continue.err")
+moved_head_continue_code=$?
+set -e
+assert_eq "$moved_head_continue_code" "1" "guarded continue still refuses a HEAD moved off the recorded base"
+assert_contains "$(cat "$MOVED_HEAD_ROOT/continue.err")" "no longer based on its recorded commits" "the continue refusal names the moved base"
+set +e
+moved_head_out=$(cd "$MOVED_HEAD_ROOT/main" && "$WORKTREE_SCRIPT" restack abort issue-moved-head 2>"$MOVED_HEAD_ROOT/abort.err")
+moved_head_abort_code=$?
+set -e
+assert_eq "$moved_head_abort_code" "0" "guarded abort exits 0 with HEAD moved off the recorded base"
+assert_contains "$moved_head_out" "Aborted guarded restack" "guarded abort reports the restored branch"
+assert_no_rebase_in_progress "$MOVED_HEAD_WT" "guarded abort clears the paused rebase"
+assert_eq "$(git -C "$MOVED_HEAD_WT" rev-parse HEAD)" "$moved_head_original" "guarded abort restores the recorded original head"
+assert_eq "$(git -C "$MOVED_HEAD_WT" config --worktree --get-regexp '^kendex-restack\.' || true)" "" "guarded abort leaves no kendex-restack key to unset by hand"
+
+# `--quit` removes Git's state and leaves the index unmerged, so the reattach
+# fails. The refusal must carry Git's own reason and a next step, and must not
+# force the checkout over a resolver's staged work.
+QUIT_ROOT="$TMP_ROOT/quit"
+make_conflict_pair "$QUIT_ROOT" issue-quit
+QUIT_WT="$QUIT_ROOT/trees/issue-quit"
+set +e
+(cd "$QUIT_ROOT/main" && "$WORKTREE_SCRIPT" create issue-quit --restack >/dev/null 2>&1)
+set -e
+git -C "$QUIT_WT" rebase --quit
+assert_no_rebase_in_progress "$QUIT_WT" "the out-of-band quit removed the Git rebase state"
+assert_ne "$(git -C "$QUIT_WT" ls-files -u)" "" "the quit left the index unmerged"
+set +e
+(cd "$QUIT_ROOT/main" && "$WORKTREE_SCRIPT" restack abort issue-quit >/dev/null 2>"$QUIT_ROOT/abort.err")
+quit_code=$?
+set -e
+quit_err="$(cat "$QUIT_ROOT/abort.err")"
+assert_eq "$quit_code" "1" "an unreattachable worktree refuses instead of forcing the checkout"
+assert_contains "$quit_err" "git: " "the refusal carries Git's own reason"
+assert_contains "$quit_err" "file.txt" "Git's reason names the unmerged path"
+assert_contains "$quit_err" "restack abort" "the refusal names the next step"
+assert_eq "$(git -C "$QUIT_WT" config --worktree --get kendex-restack.pending)" "true" "the refused abort preserves the recorded state"
+assert_ne "$(git -C "$QUIT_WT" ls-files -u)" "" "the refused abort leaves the staged resolution alone"
+
+# A foreign repository carrying the same keys is never written to. The orphan
+# block runs before validate_pending_restack_state, so its own registration
+# check is the only thing containing it.
+FOREIGN_ROOT="$TMP_ROOT/foreign"
+make_conflict_pair "$FOREIGN_ROOT" issue-foreign
+git init -q -b main "$FOREIGN_ROOT/outsider"
+git -C "$FOREIGN_ROOT/outsider" config user.email test@example.com
+git -C "$FOREIGN_ROOT/outsider" config user.name Test
+printf 'outside\n' > "$FOREIGN_ROOT/outsider/file.txt"
+git -C "$FOREIGN_ROOT/outsider" add file.txt
+git -C "$FOREIGN_ROOT/outsider" commit -q -m base
+git -C "$FOREIGN_ROOT/outsider" config extensions.worktreeConfig true
+git -C "$FOREIGN_ROOT/outsider" config --worktree kendex-restack.pending true
+git -C "$FOREIGN_ROOT/outsider" config --worktree kendex-restack.branch main
+git -C "$FOREIGN_ROOT/outsider" config --worktree kendex-restack.originalHead "$(git -C "$FOREIGN_ROOT/outsider" rev-parse HEAD)"
+set +e
+(cd "$FOREIGN_ROOT/main" && "$WORKTREE_SCRIPT" restack abort "$FOREIGN_ROOT/outsider" >/dev/null 2>"$FOREIGN_ROOT/abort.err")
+foreign_code=$?
+set -e
+assert_eq "$foreign_code" "1" "an unregistered repository is refused by the orphan path"
+assert_contains "$(cat "$FOREIGN_ROOT/abort.err")" "not a registered worktree" "the refusal names the containment rule"
+assert_eq "$(git -C "$FOREIGN_ROOT/outsider" config --worktree --get kendex-restack.pending)" "true" "the foreign repository's keys survive"
+
+# A record whose branch no longer matches is refused, not silently dropped.
+MOVED_ORPHAN_ROOT="$TMP_ROOT/orphan-moved"
+make_conflict_pair "$MOVED_ORPHAN_ROOT" issue-orphan-moved
+MOVED_ORPHAN_WT="$MOVED_ORPHAN_ROOT/trees/issue-orphan-moved"
+set +e
+(cd "$MOVED_ORPHAN_ROOT/main" && "$WORKTREE_SCRIPT" create issue-orphan-moved --restack >/dev/null 2>&1)
+set -e
+git -C "$MOVED_ORPHAN_WT" rebase --abort
+printf 'later\n' > "$MOVED_ORPHAN_WT/later.txt"
+git -C "$MOVED_ORPHAN_WT" add later.txt
+git -C "$MOVED_ORPHAN_WT" commit -q -m 'work committed after the restack record'
+set +e
+(cd "$MOVED_ORPHAN_ROOT/main" && "$WORKTREE_SCRIPT" restack abort issue-orphan-moved >/dev/null 2>"$MOVED_ORPHAN_ROOT/abort.err")
+moved_orphan_code=$?
+set -e
+assert_eq "$moved_orphan_code" "1" "a record whose branch moved off its recorded head is refused"
+assert_contains "$(cat "$MOVED_ORPHAN_ROOT/abort.err")" "no longer at its recorded pre-restack commit" "the refusal names why the record cannot be cleared"
+assert_eq "$(git -C "$MOVED_ORPHAN_WT" config --worktree --get kendex-restack.pending)" "true" "the refused abort preserves the recorded state"
+
 # --- Remote movement while conflict resolution is pending fails closed -------
 PENDING_MOVE_ROOT="$TMP_ROOT/pending-move"
 make_conflict_pair "$PENDING_MOVE_ROOT" issue-pending-move
@@ -509,6 +688,34 @@ set -e
 assert_eq "$local_move_code" "1" "unexpected local rewrite is not covered by prior restack authorization"
 assert_eq "$(git --git-dir="$LOCAL_MOVE_ROOT/origin.git" rev-parse refs/heads/issue-local-move)" "$local_move_remote_before" "unexpected local rewrite leaves remote unchanged"
 assert_contains "$(cat "$LOCAL_MOVE_ROOT/push.err")" "not contained in local branch" "unexpected local rewrite reports divergence"
+
+# --- A suite run under a git hook's environment keeps its own sandbox --------
+# A git hook exports GIT_DIR and GIT_INDEX_FILE at the worktree it fires in,
+# and both outrank -C, so a sibling suite run from that context builds its
+# fixtures at that worktree unless it clears them first: it dies at its first
+# fixture, or worse, lands commits there. The battery a restack is verified
+# with runs beside a live authorization, so one is held here across such a
+# run.
+ENV_ROOT="$TMP_ROOT/env-live"
+make_published_clean_pair "$ENV_ROOT" issue-env-live
+ENV_WT="$ENV_ROOT/trees/issue-env-live"
+(cd "$ENV_ROOT/main" && "$WORKTREE_SCRIPT" create issue-env-live --restack >/dev/null 2>"$ENV_ROOT/restack.err")
+env_head="$(git -C "$ENV_WT" rev-parse HEAD)"
+assert_eq "$(git -C "$ENV_WT" config --worktree --get kendex-restack.authorizedHead)" "$env_head" "restack authorizes the live worktree before a suite runs under its environment"
+env_git_dir="$(git -C "$ENV_WT" rev-parse --absolute-git-dir)"
+env_fingerprint() {
+  git -C "$ENV_WT" log --format=%H
+  echo '--'
+  git -C "$ENV_WT" ls-files --stage
+  echo '--'
+  git -C "$ENV_WT" config --worktree --list
+}
+env_before="$(env_fingerprint)"
+env_suite_rc=0
+env GIT_DIR="$env_git_dir" GIT_INDEX_FILE="$env_git_dir/index" \
+  bash "$TEST_DIR/worktree_push_rebase.sh" >"$ENV_ROOT/suite.out" 2>&1 || env_suite_rc=$?
+assert_eq "$env_suite_rc" "0" "a sibling suite passes under an exported git environment"
+assert_eq "$(env_fingerprint)" "$env_before" "that suite left the live worktree's log, index and restack authorization untouched"
 
 # --- Clean-rebase reuse unchanged ----------------------------------------------
 CLEAN_ROOT="$TMP_ROOT/clean"

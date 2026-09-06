@@ -3,6 +3,9 @@
 # an unreachable non-origin remote must not block new-work claims, a reachable
 # secondary remote must still count as ownership, and origin stays required.
 set -euo pipefail
+# A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
+# call below at the real repository; -C overrides neither.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"

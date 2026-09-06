@@ -3,6 +3,9 @@
 # always carry a non-empty worktree path, so command-substitution callers can
 # treat empty output as "no worktree" without also getting exit 0.
 set -euo pipefail
+# A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
+# call below at the real repository; -C overrides neither.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"

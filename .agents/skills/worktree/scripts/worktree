@@ -130,16 +130,21 @@ Actions:
   skip       Skip the current commit in that paused restack (use when the
              commit is already represented by the new base)
   abort      Abort that paused restack, restore the recorded original head,
-             and clear the pending authorization
+             and clear the pending authorization; with the paused restack
+             already gone, clear the record it left behind
 
-Guarded-restack contract: the actions accept only a registered worktree whose
-worktree-local restack authorization, tool-created state token, and Git
-sequencer metadata agree on the exact remote, branch, observed remote OID,
-original head, and target base. continue and skip re-check the remote before
-and after replay, finalize the exact rewritten-head lease when complete, and
-fail closed on missing, stale, or unrelated state. abort requires the same
-matching local state and clears only the pending authorization; remote
-movement does not block it.
+Guarded-restack contract: while a restack is paused, the actions accept only a
+registered worktree whose worktree-local restack authorization, tool-created
+state token, and Git sequencer metadata agree on the exact remote, branch,
+observed remote OID, original head, and target base. continue and skip re-check
+the remote before and after replay, finalize the exact rewritten-head lease when
+complete, and fail closed on missing, stale, or unrelated state. abort requires
+that same state except HEAD's own position, which it restores, and remote
+movement does not block it. With no restack paused there is no sequencer state
+to agree with, so abort takes the record alone: it requires the recorded branch
+to still be at its recorded original head, checks that branch out, clears the
+record, and re-applies worktree setup, refusing and keeping the record when the
+branch has moved or the checkout fails.
 EOF
 }
 
@@ -2601,7 +2606,7 @@ restack_state_refusal() {
 }
 
 validate_pending_restack_state() {
-  local wt="$1" state_dir="" stored_remote="" stored_branch="" stored_expected=""
+  local wt="$1" action="${2:-continue}" state_dir="" stored_remote="" stored_branch="" stored_expected=""
   local original_head="" base_oid="" pending="" state_token="" marker_token=""
   local head_name="" rebase_original="" rebase_onto="" mode="" replay_head=""
 
@@ -2646,16 +2651,17 @@ validate_pending_restack_state() {
   fi
   if [[ "$mode" == replay ]]; then
     # Replay analog of the rebase metadata cross-check: the sequencer's head
-    # is the detach point (the recorded base), HEAD is still detached, and the
-    # branch ref has not moved off the recorded original head — the replay
-    # moves it only after the whole range succeeds.
+    # is the detach point (the recorded base) and the branch ref has not moved
+    # off the recorded original head — the replay moves it only after the whole
+    # range succeeds. Those two pin the state for every action. HEAD being
+    # detached is where continue and skip pick onto, so only they require it.
     if [[ ! -f "$state_dir/head" ]]; then
       restack_state_refusal "$wt" "missing required Git sequencer metadata"
       return 1
     fi
     replay_head="$(head -n 1 "$state_dir/head" 2>/dev/null || true)"
     if [[ "$replay_head" != "$base_oid" ]] || \
-       [[ -n "$(git -C "$wt" branch --show-current 2>/dev/null || true)" ]] || \
+       { [[ "$action" != abort ]] && [[ -n "$(git -C "$wt" branch --show-current 2>/dev/null || true)" ]]; } || \
        [[ "$(git -C "$wt" rev-parse "refs/heads/$stored_branch" 2>/dev/null || true)" != "$original_head" ]]; then
       restack_state_refusal "$wt" "not the replay recorded by the worktree tool"
       return 1
@@ -2674,9 +2680,14 @@ validate_pending_restack_state() {
       return 1
     fi
   fi
+  # continue and skip replay onto the recorded base, so HEAD has to still sit
+  # on it. abort unwinds through Git's own paused state, which the cross-check
+  # above matched against the record, and its post-conditions verify the
+  # restored branch and head: refusing here on HEAD's position alone left the
+  # worktree with no guarded exit.
   if ! git -C "$wt" cat-file -e "${original_head}^{commit}" 2>/dev/null || \
      ! git -C "$wt" cat-file -e "${base_oid}^{commit}" 2>/dev/null || \
-     ! git -C "$wt" merge-base --is-ancestor "$base_oid" HEAD; then
+     { [[ "$action" != abort ]] && ! git -C "$wt" merge-base --is-ancestor "$base_oid" HEAD; }; then
     restack_state_refusal "$wt" "stale or no longer based on its recorded commits"
     return 1
   fi
@@ -2723,18 +2734,85 @@ resolve_restack_worktree() {
 }
 
 report_paused_restack() {
-  local wt="$1" branch="$2" output="$3" conflict_files=""
+  local wt="$1" branch="$2" output="$3" conflict_files="" unstaged_files=""
   [[ -n "$output" ]] && sed 's/^/  git: /' <<<"$output" >&2
   conflict_files="$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null || true)"
+  unstaged_files="$(git -C "$wt" diff --name-only 2>/dev/null || true)"
   if [[ -n "$conflict_files" ]]; then
     echo "Restack stopped on conflicts:" >&2
     sed 's/^/  /' <<<"$conflict_files" >&2
     echo "Resolve and stage each file, then run: $0 restack continue \"$wt\"" >&2
+  elif [[ -n "$unstaged_files" ]]; then
+    # Git refuses to continue while a tracked file differs from the index and
+    # names merge conflicts whatever the real cause. With nothing unmerged,
+    # repeating that sends the resolver back to files already staged, and the
+    # empty-commit skip below would drop the commit they just resolved.
+    echo "Restack stopped on unstaged changes, not on unresolved conflicts:" >&2
+    sed 's/^/  /' <<<"$unstaged_files" >&2
+    echo "Stage or discard them, then run: $0 restack continue \"$wt\"" >&2
   else
     echo "The current replayed commit may be empty; inspect it, then run: $0 restack skip \"$wt\"" >&2
   fi
   echo "To restore the pre-restack branch: $0 restack abort \"$wt\"" >&2
   echo "Recorded branch: $branch" >&2
+}
+
+# The tail both abort paths share: drop the pending authorization, release the
+# claim lock, and re-apply the setup a paused restack un-shadowed. Only the
+# closing message differs.
+finish_guarded_restack_abort() {
+  local wt="$1" done_message="$2"
+  cancel_pending_restack_authorization "$wt"
+  release_issue_claim_lock
+  if ! setup_app_worktree "$wt"; then
+    echo "Warning: Restack was aborted successfully, but worktree setup could not be reapplied. Fix the WORKTREE_* configuration, then run: $0 fix-links '$wt'" >&2
+  fi
+  echo "$done_message"
+}
+
+# Git's paused state can be gone while the tool's own record stands: an
+# out-of-band 'git rebase --abort' or '--quit', or an abort whose restore check
+# refused after Git had already unwound. Nothing can continue or abort a rebase
+# that is not running, and every guarded control refuses a missing paused
+# state, so abort is the only way to drop that record — without it the exit is
+# unsetting the kendex-restack keys by hand. Returns 2 when the record
+# is not orphaned after all, for the caller to hand to the guarded controls.
+abort_orphaned_restack_record() {
+  local wt="$1" branch="" head="" checkout_err=""
+  if ! is_registered_project_worktree "$wt"; then
+    restack_state_refusal "$wt" "not a registered worktree of this repository"
+    return 1
+  fi
+  branch="$(restack_state_get "$wt" branch)"
+  head="$(restack_state_get "$wt" originalHead)"
+  if [[ -z "$branch" || -z "$head" ]]; then
+    restack_state_refusal "$wt" "missing its tool-created authorization"
+    return 1
+  fi
+  acquire_issue_claim_lock "$branch" || return 1
+  # The lock is what makes the precondition durable. A concurrent
+  # 'create <ID> --restack' holds it across the window where it writes the
+  # record and starts the rebase, so a sample taken before the lock can name a
+  # restack that is live by now, and clearing a live restack's record is not a
+  # closed failure. Re-read both under the lock.
+  if restack_engine_in_progress "$wt" || [[ "$(restack_state_get "$wt" pending)" != true ]]; then
+    release_issue_claim_lock
+    return 2
+  fi
+  if [[ "$(git -C "$wt" rev-parse "refs/heads/$branch" 2>/dev/null || true)" != "$head" ]]; then
+    echo "Error: No restack is paused in $wt, and '$branch' is no longer at its recorded pre-restack commit $head; refusing to clear the recorded state." >&2
+    echo "Something rewrote the branch outside the guarded restack; inspect it before retrying." >&2
+    return 1
+  fi
+  if [[ "$(git -C "$wt" branch --show-current 2>/dev/null || true)" != "$branch" ]] && \
+     ! checkout_err="$(git -C "$wt" checkout "$branch" 2>&1)"; then
+    [[ -n "$checkout_err" ]] && sed 's/^/  git: /' <<<"$checkout_err" >&2
+    echo "Error: Could not reattach $wt to '$branch'; the recorded restack state was preserved." >&2
+    echo "A 'rebase --quit' or 'cherry-pick --quit' leaves the conflicted index in place: stage or discard the paths Git names above." >&2
+    echo "Then re-run: $0 restack abort \"$wt\"" >&2
+    return 1
+  fi
+  finish_guarded_restack_abort "$wt" "No restack was paused; cleared the recorded restack state for $branch: $wt"
 }
 
 open_pr_for_branch() {
@@ -3490,12 +3568,18 @@ case "${1:-}" in
     esac
 
     WT_PATH="$(resolve_restack_worktree "$ARG")"
-    validate_pending_restack_state "$WT_PATH" || exit 1
+    if [[ "$ACTION" == abort ]] && [[ "$(restack_state_get "$WT_PATH" pending)" == true ]] && \
+       ! restack_engine_in_progress "$WT_PATH"; then
+      ORPHAN_STATUS=0
+      abort_orphaned_restack_record "$WT_PATH" || ORPHAN_STATUS=$?
+      [[ "$ORPHAN_STATUS" -eq 2 ]] || exit "$ORPHAN_STATUS"
+    fi
+    validate_pending_restack_state "$WT_PATH" "$ACTION" || exit 1
     RESTACK_BRANCH="$(restack_state_get "$WT_PATH" branch)"
     acquire_issue_claim_lock "$RESTACK_BRANCH" || exit 1
     # The first validation gives a useful error without taking a lock. Repeat
     # under the branch claim lock immediately before controlling the rebase.
-    validate_pending_restack_state "$WT_PATH" || exit 1
+    validate_pending_restack_state "$WT_PATH" "$ACTION" || exit 1
     RESTACK_MODE="$(restack_state_get "$WT_PATH" mode)"
 
     if [[ "$ACTION" == abort ]]; then
@@ -3528,12 +3612,7 @@ case "${1:-}" in
           exit 1
         fi
       fi
-      cancel_pending_restack_authorization "$WT_PATH"
-      release_issue_claim_lock
-      if ! setup_app_worktree "$WT_PATH"; then
-        echo "Warning: Restack was aborted successfully, but worktree setup could not be reapplied. Fix the WORKTREE_* configuration, then run: $0 fix-links '$WT_PATH'" >&2
-      fi
-      echo "Aborted guarded restack and restored $RESTACK_BRANCH: $WT_PATH"
+      finish_guarded_restack_abort "$WT_PATH" "Aborted guarded restack and restored $RESTACK_BRANCH: $WT_PATH"
       exit 0
     fi
 
@@ -3571,7 +3650,7 @@ case "${1:-}" in
     fi
 
     if restack_engine_in_progress "$WT_PATH"; then
-      if ! validate_pending_restack_state "$WT_PATH"; then
+      if ! validate_pending_restack_state "$WT_PATH" "$ACTION"; then
         echo "Error: Git changed the paused rebase outside the recorded restack boundary; refusing further control." >&2
         exit 1
       fi

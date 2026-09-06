@@ -21,6 +21,9 @@
 # mkdir mutex on hosts with no flock, reached here by running the guard on a
 # PATH built without flock.
 set -euo pipefail
+# A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
+# call below at the real repository; -C overrides neither.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKTREE_PACKAGE_DIR="$(cd "$TEST_DIR/.." && pwd)"

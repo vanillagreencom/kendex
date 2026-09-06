@@ -11,6 +11,9 @@
 # token binding), and record the same pinned force-with-lease authorization
 # that `worktree push` consumes and the remote lease model fails closed on.
 set -euo pipefail
+# A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
+# call below at the real repository; -C overrides neither.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
@@ -369,6 +372,84 @@ assert_eq "$(git -C "$ABORT_WT" rev-parse HEAD)" "$abort_pre_head" "guarded abor
 assert_eq "$(git -C "$ABORT_WT" branch --show-current)" "issue-replay-abort" "guarded abort reattaches the issue branch"
 assert_eq "$(git -C "$ABORT_WT" status --porcelain)" "" "guarded abort leaves the worktree clean"
 assert_eq "$(git -C "$ABORT_WT" config --worktree --get-regexp '^kendex-restack\.' 2>/dev/null || true)" "" "guarded abort clears pending state without authorization"
+
+# --- A paused replay whose HEAD moved onto the branch still aborts -------------
+# The replay cross-check asserts HEAD is detached. continue and skip pick onto
+# that detach point and still need it; abort does not, and refusing there left
+# no guarded exit. A two-commit branch is what reaches this: a one-commit range
+# never pauses with a second pick outstanding.
+ONBRANCH_ROOT="$TMP_ROOT/onbranch"
+make_conflict_pair "$ONBRANCH_ROOT" issue-replay-onbranch
+ONBRANCH_WT="$ONBRANCH_ROOT/trees/issue-replay-onbranch"
+printf 'second\n' > "$ONBRANCH_WT/second.txt"
+git -C "$ONBRANCH_WT" add second.txt
+git -C "$ONBRANCH_WT" commit -q -m 'second commit'
+onbranch_pre_head="$(git -C "$ONBRANCH_WT" rev-parse HEAD)"
+set +e
+(cd "$ONBRANCH_ROOT/main" && "$WORKTREE_SCRIPT" create issue-replay-onbranch --restack --replay >/dev/null 2>&1)
+set -e
+assert_replay_paused "$ONBRANCH_WT" "the two-commit replay pauses on the first conflict"
+git -C "$ONBRANCH_WT" checkout -f issue-replay-onbranch >/dev/null 2>&1
+assert_eq "$(git -C "$ONBRANCH_WT" branch --show-current)" "issue-replay-onbranch" "the raw checkout moved HEAD onto the branch"
+set +e
+(cd "$ONBRANCH_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-replay-onbranch >/dev/null 2>"$ONBRANCH_ROOT/continue.err")
+onbranch_continue_code=$?
+onbranch_out="$(cd "$ONBRANCH_ROOT/main" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" restack abort issue-replay-onbranch 2>"$ONBRANCH_ROOT/abort.err")"
+onbranch_abort_code=$?
+set -e
+assert_eq "$onbranch_continue_code" "1" "guarded continue still requires the detached replay HEAD"
+assert_contains "$(cat "$ONBRANCH_ROOT/continue.err")" "not the replay recorded by the worktree tool" "the continue refusal names the moved HEAD"
+assert_eq "$onbranch_abort_code" "0" "guarded abort exits 0 with HEAD moved onto the branch"
+assert_contains "$onbranch_out" "Aborted guarded restack" "guarded abort reports the restored branch"
+assert_no_replay_paused "$ONBRANCH_WT" "guarded abort clears the sequencer state"
+assert_eq "$(git -C "$ONBRANCH_WT" rev-parse HEAD)" "$onbranch_pre_head" "guarded abort restores the recorded original head"
+assert_eq "$(git -C "$ONBRANCH_WT" config --worktree --get-regexp '^kendex-restack\.' 2>/dev/null || true)" "" "guarded abort leaves no kendex-restack key to unset by hand"
+
+# `cherry-pick --quit` drops the sequencer and leaves the index unmerged, so the
+# orphan path cannot reattach. It refuses with Git's reason rather than forcing
+# the checkout over the resolver's staged work.
+REPLAY_QUIT_ROOT="$TMP_ROOT/replay-quit"
+make_conflict_pair "$REPLAY_QUIT_ROOT" issue-replay-quit
+REPLAY_QUIT_WT="$REPLAY_QUIT_ROOT/trees/issue-replay-quit"
+set +e
+(cd "$REPLAY_QUIT_ROOT/main" && "$WORKTREE_SCRIPT" create issue-replay-quit --restack --replay >/dev/null 2>&1)
+set -e
+git -C "$REPLAY_QUIT_WT" cherry-pick --quit
+assert_no_replay_paused "$REPLAY_QUIT_WT" "the out-of-band quit removed the sequencer state"
+assert_ne "$(git -C "$REPLAY_QUIT_WT" ls-files -u)" "" "the quit left the index unmerged"
+set +e
+(cd "$REPLAY_QUIT_ROOT/main" && "$WORKTREE_SCRIPT" restack abort issue-replay-quit >/dev/null 2>"$REPLAY_QUIT_ROOT/abort.err")
+replay_quit_code=$?
+set -e
+replay_quit_err="$(cat "$REPLAY_QUIT_ROOT/abort.err")"
+assert_eq "$replay_quit_code" "1" "an unreattachable replay refuses instead of forcing the checkout"
+assert_contains "$replay_quit_err" "git: " "the refusal carries Git's own reason"
+assert_contains "$replay_quit_err" "restack abort" "the refusal names the next step"
+assert_eq "$(git -C "$REPLAY_QUIT_WT" config --worktree --get kendex-restack.pending)" "true" "the refused abort preserves the recorded state"
+
+# --- An orphaned record is cleared from the detached replay base ---------------
+# A replay never moves the branch, so a sequencer state that disappears out of
+# band leaves HEAD detached at the base with the tool's record still standing.
+# The guarded exit has to reattach the recorded branch.
+DETACHED_ROOT="$TMP_ROOT/detached"
+make_conflict_pair "$DETACHED_ROOT" issue-replay-detached
+DETACHED_WT="$DETACHED_ROOT/trees/issue-replay-detached"
+detached_pre_head="$(git -C "$DETACHED_WT" rev-parse HEAD)"
+set +e
+(cd "$DETACHED_ROOT/main" && "$WORKTREE_SCRIPT" create issue-replay-detached --restack --replay >/dev/null 2>&1)
+set -e
+git -C "$DETACHED_WT" cherry-pick --abort
+assert_no_replay_paused "$DETACHED_WT" "the out-of-band cherry-pick abort removed the sequencer state"
+assert_eq "$(git -C "$DETACHED_WT" branch --show-current)" "" "the out-of-band abort leaves HEAD detached at the replay base"
+set +e
+detached_out="$(cd "$DETACHED_ROOT/main" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" restack abort issue-replay-detached 2>"$DETACHED_ROOT/abort.err")"
+detached_code=$?
+set -e
+assert_eq "$detached_code" "0" "guarded abort exits 0 when only the tool's record is left"
+assert_contains "$detached_out" "cleared the recorded restack state" "guarded abort clears the orphaned replay record"
+assert_eq "$(git -C "$DETACHED_WT" branch --show-current)" "issue-replay-detached" "guarded abort reattaches the recorded branch"
+assert_eq "$(git -C "$DETACHED_WT" rev-parse HEAD)" "$detached_pre_head" "guarded abort leaves the branch at its recorded original head"
+assert_eq "$(git -C "$DETACHED_WT" config --worktree --get-regexp '^kendex-restack\.' 2>/dev/null || true)" "" "guarded abort leaves no kendex-restack key to unset by hand"
 
 # --- Remote movement while paused refuses continuation, abort still works ------
 MOVED_ROOT="$TMP_ROOT/moved"
