@@ -20,13 +20,22 @@ function runOneShot(options: { cwd: string; pi: any; runtimeRoot?: string; sessi
 	return runSingleAgent(options.cwd, options.runtimeRoot ?? tempRuntime(), [testAgent()], "reviewer-test", "review code", undefined, undefined, undefined, undefined, options.pi, options.signal, undefined, makeDetails, options.sessionKey);
 }
 
-// The pi bus as one line, in emit order: `needs_completion` carries its reason
-// and whether the payload's snapshot names the run's cwd; `retrying` its reason;
-// `started` is the spawn announcement and is read as the spawn count instead.
-function busLine(emitted: Emitted, cwd: string): string {
-	const names = emitted.filter((event) => event.name !== "subagents:started").map((event) => {
+// The pi bus as one line, in emit order. A `needs_completion` event must carry
+// what the result carries (status, reason, diagnostics, the snapshot's cwd);
+// it prints the fields that differ, or `mirrors-result`. `retrying` prints its reason.
+function busLine(emitted: Emitted, result: SingleResult): string {
+	const names = emitted.map((event) => {
 		const name = event.name.replace(/^subagents:/, "");
-		if (name === "needs_completion") return `needs_completion(${event.payload.reason},${event.payload.cwdSnapshot ? (event.payload.cwdSnapshot.cwd === cwd ? "snapshot" : "wrong-snapshot") : "-"})`;
+		if (name === "needs_completion") {
+			const p = event.payload;
+			const differs = [
+				p.status !== result.status ? "status" : "",
+				p.reason !== result.needsCompletionReason ? "reason" : "",
+				JSON.stringify(p.diagnostics ?? null) !== JSON.stringify(result.diagnostics ?? null) ? "diagnostics" : "",
+				(p.cwdSnapshot?.cwd ?? "-") !== (result.cwdSnapshot?.cwd ?? "-") ? "snapshot" : "",
+			].filter(Boolean);
+			return `needs_completion(${differs.length ? differs.join("+") : "mirrors-result"})`;
+		}
 		if (name === "retrying") return `retrying(${event.payload.reason})`;
 		return name;
 	});
@@ -44,27 +53,32 @@ function diagTags(result: SingleResult): string {
 	return tags.length ? tags.join(",") : "-";
 }
 
-// The classification as one line: spawns and the returned attempt, whether a
-// retry ran on a fresh session, the first attempt's stop reason when there were
-// two, the status and reason, the snapshot, the diagnostics and the bus.
+// The classification as one line: spawns and the returned attempt; when there
+// were two attempts, whether the retry ran on a fresh session and the first
+// attempt's summary as `stop/envelope`; then the status, reason and stop of the
+// returned result, its snapshot, its diagnostics, whether stderr carries text,
+// and the bus.
 function classification(result: SingleResult, emitted: Emitted, spawns: number, cwd: string): string {
 	const attempts = result.attempts;
 	const retry = attempts ? (attempts[0]?.sessionKey !== attempts[1]?.sessionKey ? "fresh-session" : "same-session") : "-";
-	const firstStop = attempts ? `${attempts[0]?.stopReason ?? "-"}` : "-";
+	const first = attempts ? `${attempts[0]?.stopReason ?? "-"}/${attempts[0]?.errorEnvelope ? "envelope" : "-"}` : "-";
 	const snapshot = result.cwdSnapshot ? (result.cwdSnapshot.cwd === cwd ? "cwd" : "other") : "-";
-	return `spawns=${spawns} exit=${result.exitCode} attempt=${result.attempt ?? "-"} retry=${retry} first-stop=${firstStop} status=${result.status ?? "-"} reason=${result.needsCompletionReason ?? "-"} stop=${result.stopReason ?? "-"} snapshot=${snapshot} diags=${diagTags(result)} bus=${busLine(emitted, cwd)}`;
+	return `spawns=${spawns} exit=${result.exitCode} attempt=${result.attempt ?? "-"} retry=${retry} first=${first} status=${result.status ?? "-"} reason=${result.needsCompletionReason ?? "-"} stop=${result.stopReason ?? "-"} snapshot=${snapshot} diags=${diagTags(result)} stderr=${result.stderr ? "text" : "-"} bus=${busLine(emitted, result)}`;
 }
 
 const OVERFLOW_ENVELOPE = `${JSON.stringify({ error: { type: "invalid_request_error", code: "context_length_exceeded" } })}\n`;
 const textEnd = (text: string) => bridgeEvent("agent_end", { content: [{ type: "text", text }] });
 const assistantText = (text: string) => bridgeEvent("message_end", { message: { role: "assistant", content: [{ type: "text", text }] } });
 const EMPTY_END = bridgeEvent("agent_end", { content: [] });
+// An assistant turn that pi ends with an error instead of an error envelope.
+const OVERFLOW_TURN = bridgeEvent("message_end", { message: { role: "assistant", content: [], stopReason: "error", errorMessage: "context_length_exceeded" } });
 const COMPACT = bridgeEvent("session_compact");
 
 type World = { git?: "missing"; pi?: (emitted: Emitted) => any; stream: Array<{ code?: number; stdout?: string }> };
 
-const COMPLETED = "spawns=1 exit=0 attempt=1 retry=- first-stop=- status=- reason=- stop=- snapshot=- diags=- bus=completed";
-const NEEDS_COMPLETION = "spawns=1 exit=0 attempt=1 retry=- first-stop=- status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=cwd diags=- bus=needs_completion(compact-then-empty,snapshot)";
+const COMPLETED = "spawns=1 exit=0 attempt=1 retry=- first=- status=- reason=- stop=- snapshot=- diags=- stderr=- bus=started,completed";
+const NEEDS_COMPLETION = "spawns=1 exit=0 attempt=1 retry=- first=- status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=cwd diags=- stderr=- bus=started,needs_completion(mirrors-result)";
+const RETRIED_OK = "spawns=2 exit=0 attempt=2 retry=fresh-session first=-/envelope status=- reason=- stop=- snapshot=- diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,completed";
 
 // label | the spawn's stdout per attempt (and the world around it) | expect the classification line
 // Every row runs in a fresh git repo, so a needs_completion row's snapshot is the cwd's.
@@ -78,22 +92,24 @@ const endRows: Array<[string, World, string]> = [
 	["an empty agent_end without a compact completes", { stream: [{ stdout: bridgeStdout([EMPTY_END]) }] }, COMPLETED],
 	["a compact with no agent_end (bridge gone) completes", { stream: [{ stdout: bridgeStdout([COMPACT]) }] }, COMPLETED],
 	["a malformed agent_end content is logged and completes", { stream: [{ stdout: bridgeStdout([COMPACT, bridgeEvent("agent_end", { content: "bad-shape" })]) }] },
-		"spawns=1 exit=0 attempt=1 retry=- first-stop=- status=- reason=- stop=- snapshot=- diags=malformed-agent-end bus=completed"],
+		"spawns=1 exit=0 attempt=1 retry=- first=- status=- reason=- stop=- snapshot=- diags=malformed-agent-end stderr=- bus=started,completed"],
 	["a missing git keeps needs_completion without the snapshot", { git: "missing", stream: [{ stdout: bridgeStdout([COMPACT, EMPTY_END]) }] },
-		"spawns=1 exit=0 attempt=1 retry=- first-stop=- status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=- diags=git-failed bus=needs_completion(compact-then-empty,-)"],
+		"spawns=1 exit=0 attempt=1 retry=- first=- status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=- diags=git-failed stderr=- bus=started,needs_completion(mirrors-result)"],
 	["a needs_completion emit that throws is a diagnostic on the result", {
 		pi: (emitted) => ({ getActiveTools: () => [], events: { emit: (name: string, payload: unknown) => {
 			if (name === "subagents:needs_completion") throw new Error("bus disposed");
 			emitted.push({ name, payload });
 		} } }),
 		stream: [{ stdout: bridgeStdout([COMPACT, EMPTY_END]) }],
-	}, "spawns=1 exit=0 attempt=1 retry=- first-stop=- status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=cwd diags=emit-failed bus=none"],
-	["a context overflow envelope retries once on a fresh session", { stream: [{ code: 1, stdout: OVERFLOW_ENVELOPE }, { stdout: bridgeStdout([textEnd("ok after retry")]) }] },
-		"spawns=2 exit=0 attempt=2 retry=fresh-session first-stop=- status=- reason=- stop=- snapshot=- diags=- bus=failed,retrying(context_length_exceeded),completed"],
+	}, "spawns=1 exit=0 attempt=1 retry=- first=- status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=cwd diags=emit-failed stderr=- bus=started"],
+	["a context overflow envelope retries once on a fresh session", { stream: [{ code: 1, stdout: OVERFLOW_ENVELOPE }, { stdout: bridgeStdout([textEnd("ok after retry")]) }] }, RETRIED_OK],
+	["an assistant turn ending in a context-length error retries", { stream: [{ stdout: bridgeStdout([OVERFLOW_TURN]) }, { stdout: bridgeStdout([textEnd("ok after retry")]) }] },
+		"spawns=2 exit=0 attempt=2 retry=fresh-session first=error/envelope status=- reason=- stop=- snapshot=- diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,completed"],
+	["an overflow on the retry too fails, whatever the retry's exit code", { stream: [{ code: 1, stdout: OVERFLOW_ENVELOPE }, { code: 0, stdout: bridgeStdout([OVERFLOW_TURN]) }] },
+		"spawns=2 exit=1 attempt=2 retry=fresh-session first=-/envelope status=- reason=- stop=error snapshot=- diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,failed"],
 	["a compact-then-empty on the retry is needs_completion", { stream: [{ code: 1, stdout: OVERFLOW_ENVELOPE }, { stdout: bridgeStdout([COMPACT, EMPTY_END]) }] },
-		"spawns=2 exit=0 attempt=2 retry=fresh-session first-stop=- status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=cwd diags=- bus=failed,retrying(context_length_exceeded),needs_completion(compact-then-empty,snapshot)"],
-	["a compact-then-empty beside an overflow in the same attempt is the retry's, not needs_completion", { stream: [{ code: 1, stdout: bridgeStdout([COMPACT, EMPTY_END, JSON.parse(OVERFLOW_ENVELOPE)]) }, { stdout: bridgeStdout([textEnd("ok after retry")]) }] },
-		"spawns=2 exit=0 attempt=2 retry=fresh-session first-stop=- status=- reason=- stop=- snapshot=- diags=- bus=failed,retrying(context_length_exceeded),completed"],
+		"spawns=2 exit=0 attempt=2 retry=fresh-session first=-/envelope status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=cwd diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,needs_completion(mirrors-result)"],
+	["a compact-then-empty beside an overflow in the same attempt is the retry's, not needs_completion", { stream: [{ code: 1, stdout: bridgeStdout([COMPACT, EMPTY_END, JSON.parse(OVERFLOW_ENVELOPE)]) }, { stdout: bridgeStdout([textEnd("ok after retry")]) }] }, RETRIED_OK],
 	["overflow wording inside a tool result is not an overflow", { stream: [{ stdout: bridgeStdout([
 		{ type: "tool_execution_end", toolCallId: "call-grep", toolName: "grep", result: { content: [{ type: "text", text: "tests/session-lanes.test.ts: context_length_exceeded detection triggers one retry" }] } },
 		assistantText("Reviewed context_length_exceeded docs/tests; no runtime overflow."),
@@ -139,8 +155,8 @@ test("an aborted run fails with the partial answer flushed to its transcript", a
 		const records = readFileSync(failed?.payload.transcriptPath, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
 		const updates = records.filter((record) => record.event && transcriptEventName(record.event) === "message_update");
 		assert.equal(
-			`spawns=${calls.length} bus=${busLine(emitted, cwd)} status=${failed?.payload.status} updates=${updates.length} buffered=${updates.every((record) => record.buffered === true)} partial=${updates.some((record) => JSON.stringify(record.event).includes("aborted partial"))}`,
-			"spawns=1 bus=failed status=aborted updates=1 buffered=true partial=true",
+			`spawns=${calls.length} bus=${emitted.map((event) => event.name.replace(/^subagents:/, "")).join(",")} status=${failed?.payload.status} updates=${updates.length} buffered=${updates.every((record) => record.buffered === true)} partial=${updates.some((record) => JSON.stringify(record.event).includes("aborted partial"))}`,
+			"spawns=1 bus=started,failed status=aborted updates=1 buffered=true partial=true",
 		);
 	} finally {
 		setSingleAgentSpawnForTests();
@@ -178,7 +194,7 @@ test("the context-overflow detector", () => {
 
 const OK_STDOUT = bridgeStdout([textEnd("ok")]);
 
-type BudgetWorld = { compactor?: "fails" | "truncates"; session?: "absent" | number; settings?: Record<string, unknown> };
+type BudgetWorld = { compactor?: "fails" | "truncates"; key?: string; session?: "absent" | number; settings?: Record<string, unknown> };
 
 // The guard's outcome as one line: spawns, compactor calls, the exit and stop
 // reason, the session mode and whether stderr carries the guard's line.
@@ -187,15 +203,24 @@ function budgetLine(result: SingleResult, spawns: number, compactions: number): 
 }
 
 const TIGHT = { reusedSessionBudgetThreshold: 0.5, reusedSessionContextLimitTokens: 100 };
+const REFUSED = "spawns=0 compactions=0 exit=1 refused=true stop=session_budget_exceeded mode=resumed stderr=guard-line";
+const SPAWNED = "spawns=1 compactions=0 exit=0 refused=false stop=- mode=resumed stderr=-";
 
+// A session estimates at one token per four bytes against the limit; the
+// default limit is 272k tokens and the default threshold 80%, so 870,400 bytes
+// sit exactly on the default line.
 // label | the reused session's size in bytes and the project's budget settings | expect the guard's line
 const budgetRows: Array<[string, BudgetWorld, string]> = [
-	["over the default 80% of the default 272k-token limit is refused before the spawn", { session: 900_000 }, "spawns=0 compactions=0 exit=1 refused=true stop=session_budget_exceeded mode=resumed stderr=guard-line"],
-	["under the default threshold spawns", { session: 800_000 }, "spawns=1 compactions=0 exit=0 refused=false stop=- mode=resumed stderr=-"],
-	["a configured limit decides under the default threshold", { session: 1_000, settings: { reusedSessionContextLimitTokens: 100 } }, "spawns=0 compactions=0 exit=1 refused=true stop=session_budget_exceeded mode=resumed stderr=guard-line"],
-	["a configured threshold decides under a configured limit", { session: 100, settings: { ...TIGHT, reusedSessionBudgetThreshold: 0.2 } }, "spawns=0 compactions=0 exit=1 refused=true stop=session_budget_exceeded mode=resumed stderr=guard-line"],
-	["under a configured threshold spawns", { session: 100, settings: TIGHT }, "spawns=1 compactions=0 exit=0 refused=false stop=- mode=resumed stderr=-"],
-	["an explicit key with no session file yet spawns", { session: "absent", settings: TIGHT }, "spawns=1 compactions=0 exit=0 refused=false stop=- mode=resumed stderr=-"],
+	["one token over the default line is refused before the spawn", { session: 870_404 }, REFUSED],
+	["exactly on the default line spawns", { session: 870_400 }, SPAWNED],
+	["a configured limit decides under the default threshold", { session: 1_000, settings: { reusedSessionContextLimitTokens: 100 } }, REFUSED],
+	["a configured threshold decides under a configured limit", { session: 100, settings: { ...TIGHT, reusedSessionBudgetThreshold: 0.2 } }, REFUSED],
+	["a threshold above 1 is a percentage", { session: 100, settings: { ...TIGHT, reusedSessionBudgetThreshold: 20 } }, REFUSED],
+	["a percentage above 100 clamps to the whole limit", { session: 600, settings: { ...TIGHT, reusedSessionBudgetThreshold: 150 } }, REFUSED],
+	["a zero threshold falls back to the default", { session: 100, settings: { ...TIGHT, reusedSessionBudgetThreshold: 0 } }, SPAWNED],
+	["under a configured threshold spawns", { session: 100, settings: TIGHT }, SPAWNED],
+	["an explicit key with no session file yet spawns", { session: "absent", settings: TIGHT }, SPAWNED],
+	["a one-shot session key is never guarded", { key: "oneshot-fixed", session: 1_000, settings: TIGHT }, "spawns=1 compactions=0 exit=0 refused=false stop=- mode=fresh stderr=-"],
 	["the warn policy spawns with the guard's line on stderr", { session: 1_000, settings: { ...TIGHT, reusedSessionBudgetPolicy: "warn" } }, "spawns=1 compactions=0 exit=0 refused=false stop=- mode=resumed stderr=guard-line"],
 	["compact-then-resume compacts once, then spawns", { compactor: "truncates", session: 1_000, settings: { ...TIGHT, reusedSessionBudgetPolicy: "compact-then-resume" } }, "spawns=1 compactions=1 exit=0 refused=false stop=- mode=resumed stderr=guard-line"],
 	["a failed compaction refuses", { compactor: "fails", session: 1_000, settings: { ...TIGHT, reusedSessionBudgetPolicy: "compact-then-resume" } }, "spawns=0 compactions=1 exit=1 refused=true stop=session_budget_exceeded mode=resumed stderr=guard-line"],
@@ -206,7 +231,8 @@ test("the reused-session budget guard", async () => {
 		const runtimeRoot = tempRuntime();
 		const cwd = tempRuntime();
 		if (world.settings) writeSettings(cwd, world.settings);
-		const session = resolveBgSession(runtimeRoot, "reviewer-test", "reuse");
+		const key = world.key ?? "reuse";
+		const session = resolveBgSession(runtimeRoot, "reviewer-test", key);
 		if (world.session !== "absent") {
 			mkdirSync(dirname(session.path), { recursive: true });
 			writeFileSync(session.path, "x".repeat(world.session ?? 0), "utf8");
@@ -220,7 +246,7 @@ test("the reused-session budget guard", async () => {
 		});
 		const calls = installMockSpawn([{ code: 0, stdout: OK_STDOUT }]);
 		try {
-			const result = await runOneShot({ cwd, pi: mockPiEvents([]), runtimeRoot, sessionKey: "reuse" });
+			const result = await runOneShot({ cwd, pi: mockPiEvents([]), runtimeRoot, sessionKey: key });
 			assert.equal(budgetLine(result, calls.length, compactions), expect, label);
 		} finally {
 			setSessionCompactorForTests();
