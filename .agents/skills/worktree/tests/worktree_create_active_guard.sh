@@ -121,7 +121,17 @@ case "${1:-}:${2:-}" in
     fi
     ;;
   pr:view)
-    printf 'issue-active\n'
+    # `pr view <n> --json <fields> -q <query>`: the stored document is the
+    # field set gh returns, and the query runs over it.
+    shift 3
+    query=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -q | --jq) query="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    jq -r "$query" "${GH_STATE:?}/pr-42.json"
     ;;
 esac
 STUB
@@ -194,6 +204,8 @@ assert_eq "$pr_guard_code" "75" "bare create exits 75 for an open PR without a l
 assert_contains "$pr_guard_err" "open pull request (#42)" "branch guard reports the PR ownership signal"
 assert_path_absent "$WT" "open-PR guard creates no duplicate checkout"
 
+printf '{"headRefName":"issue-active","headRefOid":"%s","isCrossRepository":false}\n' \
+  "$(git -C "$ROOT/main" rev-parse origin/issue-active)" >"$GH_STATE/pr-42.json"
 pr_out="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-active --pr 42)"
 assert_eq "$pr_out" "$WT" "--pr explicitly creates an inspection worktree"
 assert_path_exists "$WT/.git" "explicit PR checkout is a registered worktree"
