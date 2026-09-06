@@ -4,7 +4,7 @@ For people and agents working on kendex itself. Installing and using it starts a
 
 ## Build
 
-Rust at the version in `rust-toolchain.toml`, Node at the version in `.nvmrc`, and git 2.41 or newer, the first git that takes `--attr-source`, which is how kendex materializes a catalog checkout.
+Rust at the version in `rust-toolchain.toml`, Node at the version in `.nvmrc`, and git 2.41 or newer.
 
 ```sh
 cargo build --release -p kendex-cli                     # the kendex command
