@@ -8,7 +8,7 @@
 - Keep native user/project entrypoints separate in search, filters and inspectors, and show settings only for the active manager installation. Trusted OMP project edits can create project settings without changing global values.
 - Manager enable display, edits, resets and recovery use the global setting even for a project-installed manager. Project enable flags are ignored; other manager settings retain project layering.
 - `PI_CODING_AGENT_DIR` is used only when it names a root-anchored path — a drive or UNC share on Windows, a leading `/` on POSIX. Anything else uses `~/.pi/agent`.
-- An `APPEND_SYSTEM.md` write that the vendored `scripts/append-system.mjs` reports on stderr is a failure: the toggle notice and the uninstall message say the block was not written instead of reporting success. A package that declares `pi.appendSystem` but ships no script warns too. On npm uninstall the block is stripped before npm removes the package tree, and a failed uninstall rewrites it.
+- `APPEND_SYSTEM.md` blocks are written by each package's own vendored `scripts/append-system.mjs`, run by the manager under a 10-second bound, instead of by manager code. A package that declares `pi.appendSystem` but ships no script gets no block on enable. On npm uninstall the block is stripped before npm removes the package tree; the former global-directory cleanup backstop after uninstall is gone.
 - `@oh-my-pi/pi-coding-agent` and `@oh-my-pi/pi-utils` (`>=18.1.11`) are optional peer dependencies.
 
 ### 2.0.0
