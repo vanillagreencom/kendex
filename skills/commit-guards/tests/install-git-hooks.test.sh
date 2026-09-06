@@ -498,6 +498,96 @@ git -C "$TMP/wt" add w.py
 OUT=""; RC=0; OUT="$(git -C "$TMP/wt" commit -m "feat: from the worktree" 2>&1)" || RC=$?
 [ "$RC" -ne 0 ] && ok "a linked worktree gets the guard chain too" || bad "worktree commit blocked" "rc=$RC out=$OUT"
 
+echo "=== arming from a linked worktree is refused ==="
+# The hooks directory above is the repository's one directory, and the helper
+# in it names the scripts directory of whichever tree armed it. Armed from a
+# linked worktree it gates every other session in the repository with a tree
+# that goes away when that worktree does, so the installer will not arm from
+# one. The worktree carries its own copy of the package, which is the shape a
+# lane picking up its own package change has.
+mkdir -p "$TMP/wt/.agents/skills"
+cp -R "$R11/.agents/skills/commit-guards" "$TMP/wt/.agents/skills/commit-guards"
+WT_INSTALL="$TMP/wt/.agents/skills/commit-guards/scripts/install-git-hooks"
+# The hooks directory as the refusal renders it: physically resolved, then
+# through the %q every path this package prints goes through. Resolved in its
+# own assignment so a fixture that could not be entered stops the suite: folded
+# into the printf it would yield a bare `/hooks`, which the refusal's own text
+# contains and every case below would then match.
+WT_GIT_PHYS="$(cd "$R11/.git" && pwd -P)"
+WT_HOOKS_SHOWN="$(printf '%q' "$WT_GIT_PHYS/hooks")"
+# Both shims are left commented out, a drift the installer repairs, so a run
+# that did not refuse would rewrite all three files. Re-armed against shims
+# already current it would rewrite only the helper, and the two shim rows
+# below could not go red for any defect.
+sed -i.bak 's|^kendex_gg_h=|#kendex_gg_h=|' \
+  "$R11/.git/hooks/pre-commit" "$R11/.git/hooks/commit-msg"
+rm -f "$R11/.git/hooks/pre-commit.bak" "$R11/.git/hooks/commit-msg.bak"
+grep -qF '#kendex_gg_h=' "$R11/.git/hooks/pre-commit" \
+  && ok "both shims are drifted before the refused run (fixture)" \
+  || bad "worktree fixture drift" "$(cat "$R11/.git/hooks/pre-commit")"
+WT_HELPER_BEFORE="$(cat "$R11/.git/hooks/kendex-guards")"
+WT_PRE_BEFORE="$(cat "$R11/.git/hooks/pre-commit")"
+WT_MSG_BEFORE="$(cat "$R11/.git/hooks/commit-msg")"
+OUT=""; RC=0; OUT="$("$WT_INSTALL" --repo "$TMP/wt" 2>&1)" || RC=$?
+[ "$RC" -ne 0 ] && ok "an install from a linked worktree is refused" \
+  || bad "linked worktree install refused" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"linked work tree"*"$WT_HOOKS_SHOWN"*"from the main checkout"*)
+    ok "and the refusal names the shared hooks directory and the main checkout" ;;
+  *) bad "linked worktree refusal names the directory and the remedy" "$OUT" ;;
+esac
+[ "$WT_HELPER_BEFORE" = "$(cat "$R11/.git/hooks/kendex-guards")" ] \
+  && ok "the shared helper is untouched" || bad "shared helper untouched" "out=$OUT"
+[ "$WT_PRE_BEFORE" = "$(cat "$R11/.git/hooks/pre-commit")" ] \
+  && ok "the shared pre-commit is untouched" || bad "shared pre-commit untouched" "out=$OUT"
+[ "$WT_MSG_BEFORE" = "$(cat "$R11/.git/hooks/commit-msg")" ] \
+  && ok "the shared commit-msg is untouched" || bad "shared commit-msg untouched" "out=$OUT"
+# The must-fail control keeps everything the refused run had — the same
+# repository, the same hooks directory, an installer beside the same package
+# — and takes away only the linkage. A refusal that fired here would be
+# refusing every install rather than this one.
+install_in "$R11"
+[ "$RC" -eq 0 ] && ok "control: the main checkout still arms" \
+  || bad "main checkout still arms" "rc=$RC out=$OUT"
+grep -qF '#kendex_gg_h=' "$R11/.git/hooks/pre-commit" \
+  && bad "main checkout repairs the drift" "$(cat "$R11/.git/hooks/pre-commit")" \
+  || ok "and repairs the drift the refused run left alone"
+# Reading is safe from anywhere, and a worktree asking is the case --check
+# exists for.
+OUT=""; RC=0; OUT="$("$WT_INSTALL" --repo "$TMP/wt" --check 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "control: --check still answers from the linked worktree" \
+  || bad "check from a linked worktree" "rc=$RC out=$OUT"
+
+# The refusal covers a repository that has a main checkout to name. A bare
+# repository with work trees added to it has none — every work tree of it is
+# a linked one — and refusing there would leave it no way to arm at all,
+# which is a worse end for a commit gate than one somebody has to re-arm.
+git -C "$TMP" init -q --bare bare.git
+git -C "$TMP/bare.git" config user.email test@example.com
+git -C "$TMP/bare.git" config user.name test
+git -C "$TMP/bare.git" worktree add -q -b bm "$TMP/bare-wt"
+mkdir -p "$TMP/bare-wt/.agents/skills"
+cp -R "$R11/.agents/skills/commit-guards" "$TMP/bare-wt/.agents/skills/commit-guards"
+OUT=""; RC=0
+OUT="$("$TMP/bare-wt/.agents/skills/commit-guards/scripts/install-git-hooks" \
+  --repo "$TMP/bare-wt" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "a work tree of a bare repository has no main checkout, and arms" \
+  || bad "bare host arms" "rc=$RC out=$OUT"
+[ -x "$TMP/bare.git/hooks/kendex-guards" ] \
+  && ok "and the helper lands in the hooks directory that repository shares" \
+  || bad "bare host helper" "$(ls -1 "$TMP/bare.git/hooks" 2>&1)"
+
+# Under a configured hooks path this installer writes nothing from anywhere,
+# so that skip is the accurate report and the refusal stands behind it.
+git -C "$R11" config core.hooksPath "$TMP/wt-elsewhere"
+OUT=""; RC=0; OUT="$("$WT_INSTALL" --repo "$TMP/wt" 2>&1)" || RC=$?
+git -C "$R11" config --unset core.hooksPath
+case "$RC:$OUT" in
+  0:*skipped*hooksPath*)
+    ok "a configured hooks path reports itself rather than the refusal" ;;
+  *) bad "hooks path skip precedes the refusal" "rc=$RC out=$OUT" ;;
+esac
+
 echo "=== an armed hook git will not execute is not armed ==="
 R14="$(new_repo execbit)"
 install_in "$R14"

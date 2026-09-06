@@ -102,6 +102,16 @@ is outside this verifier's contract: it reads .git/hooks only, whatever the
 configured value resolves to. Failure to measure is never a clean
 measurement. stdout is one summary line: the verdict, and what is wrong.
 
+Installing is refused in a linked work tree. One hooks directory serves the
+main checkout and every linked work tree together, and the helper written
+there names the scripts directory of whichever tree armed it — so an install
+from a work tree gates every session in the repository with that tree's
+scripts, and blocks every commit in it the moment the tree is removed. Run
+the installer from the main checkout. A bare repository with work trees added
+to it has no main checkout, and arms from any of them rather than from
+nowhere. --check and --uninstall answer from any work tree: reading is safe
+anywhere, and disarming is repository-level.
+
 Warnings go to stderr, and so does the core.hooksPath remedy, which the
 summary points at rather than repeats: git's report of where the value is
 set runs to as many lines as git gives.
@@ -186,6 +196,31 @@ if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ] && [ "$MODE" = "install" ]; then
   hooks_path_origins
   echo "commit-guards git hooks: skipped — core.hooksPath is set ($(gg_shown "$CUSTOM_HOOKS"))"
   exit 0
+fi
+
+# Arming from a linked work tree hands the whole repository a transient gate.
+#
+# The hooks directory resolved above is the repository's one directory, and
+# the helper written into it names the scripts directory of the tree that
+# armed it. Armed from a work tree, every other session's commits run that
+# tree's scripts, and the moment the tree is removed every commit in the
+# repository dies on a helper that is not there. Refusing is the only
+# direction that cannot leave the repository gated by something that goes
+# away, and the main checkout is where the arming belongs.
+#
+# Only where there IS a main checkout. A bare clone with work trees added has
+# none, so this refusal would close the last door and leave a repository that
+# can never be gated at all — a worse end than a gate somebody has to re-arm.
+#
+# After the stand-down above, and before the first write below: under a
+# configured hooks path nothing is written from anywhere, so the accurate
+# report is that one, not this one. Nothing between the two writes.
+#
+# Install only. --check reads, and a work tree recognising the helper the
+# main checkout armed is what it is for; --uninstall disarms the repository,
+# which is repository-level consent whoever runs it.
+if [ "$MODE" = "install" ] && [ "$LINKED_WORKTREE" -eq 1 ] && [ "$MAIN_CHECKOUT" -eq 1 ]; then
+  die "refusing to arm from a linked work tree: $(gg_shown "$HOOKS_DIR") is the one hooks directory the main checkout and every linked work tree share, so arming from here would point every commit in the repository at this work tree, and removing the tree would block them all. Run the installer from the main checkout."
 fi
 
 # --check is read-only down to the hooks directory itself.
@@ -496,6 +531,12 @@ uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in
 
 if [ "$MODE" = "check" ]; then
   VERDICT=0
+  # Where the re-arm can be run. From a linked work tree the installer
+  # refuses, so the bare remedy would send the reader round the refusal; a
+  # repository with no main checkout arms from where they stand.
+  REARM_WHERE=""
+  [ "$LINKED_WORKTREE" -eq 1 ] && [ "$MAIN_CHECKOUT" -eq 1 ] \
+    && REARM_WHERE=" from the main checkout"
   # core.hooksPath set at all stands this checker down, which is the rule the
   # install, kendex, and the harness hook already share. Grading a redirected
   # directory means deciding whether foreign shell text reaches our entry
@@ -517,7 +558,7 @@ if [ "$MODE" = "check" ]; then
   check_hooks_dir || VERDICT=$?
   case "$VERDICT" in
     0) echo "commit-guards git hooks: armed — pre-commit and commit-msg gate commits in $(gg_shown "$HOOKS_DIR")" ;;
-    1) echo "commit-guards git hooks: NOT armed — $CHECK_REASONS ($(gg_shown "$HOOKS_DIR")); run 'kendex guard install' (or this installer) to re-arm" ;;
+    1) echo "commit-guards git hooks: NOT armed — $CHECK_REASONS ($(gg_shown "$HOOKS_DIR")); run 'kendex guard install' (or this installer)$REARM_WHERE to re-arm" ;;
     *) echo "commit-guards git hooks: could not determine whether the shims are armed — $CHECK_REASONS" ;;
   esac
   exit "$VERDICT"
