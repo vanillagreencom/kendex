@@ -67,9 +67,12 @@ KEEP='^(commit-guards git hooks: |::warning::install-git-hooks: |::error::|kende
 # checkout, the kept lines only) or hook (the pre-commit shim run from the
 # repository root, the way git runs it, the kept lines only).
 run() { # ENVS ACTION ARG
-  local envs=() rc=0 out="" installer="" filtered=1 dir=""
+  local envs=() rc=0 out="" installer="" filtered=1 dir="" target="$R"
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
-  installer="$R/.agents/skills/commit-guards/scripts/install-git-hooks"
+  # An action ending in -wt runs the installer the linked worktree carries,
+  # against that worktree.
+  case "$2" in *-wt) target="$W" ;; esac
+  installer="$target/.agents/skills/commit-guards/scripts/install-git-hooks"
   [ -x "$installer" ] || installer="$INSTALL"
   # A commit runs from the checkout's physical path, the ordinary layout:
   # reached through a symlink, the helper drops the main-checkout root it
@@ -77,9 +80,13 @@ run() { # ENVS ACTION ARG
   # suite's subject, not this one's.
   dir="$(cd -- "${W:-$R}" && pwd -P)"
   case "$2" in
-    install)
+    install | install-wt)
       filtered=0
-      out="$(env ${envs[@]+"${envs[@]}"} "$installer" --repo "$R" 2>&1)" || rc=$?
+      out="$(env ${envs[@]+"${envs[@]}"} "$installer" --repo "$target" 2>&1)" || rc=$?
+      ;;
+    check-wt)
+      filtered=0
+      out="$(env ${envs[@]+"${envs[@]}"} "$installer" --repo "$target" --check 2>&1)" || rc=$?
       ;;
     uninstall)
       filtered=0
@@ -150,10 +157,11 @@ shape() { # PATH
 # entry git did not put there (a consumer's hook, or a temporary file an
 # install left behind), and core.hooksPath.
 state() {
-  local f="" name="" hp=""
+  local f="" name="" hp="" hooks="$R/.git/hooks"
+  [ -d "$R/.git" ] || hooks="$R/hooks"
   printf 'helper=%s pre-commit=%s commit-msg=%s' \
-    "$(shape "$R/.git/hooks/kendex-guards")" "$(shape "$R/.git/hooks/pre-commit")" "$(shape "$R/.git/hooks/commit-msg")"
-  for f in "$R/.git/hooks"/*; do
+    "$(shape "$hooks/kendex-guards")" "$(shape "$hooks/pre-commit")" "$(shape "$hooks/commit-msg")"
+  for f in "$hooks"/*; do
     [ -e "$f" ] || [ -L "$f" ] || continue
     name="${f##*/}"
     case "$name" in *.sample | kendex-guards | pre-commit | commit-msg) continue ;; esac
@@ -161,7 +169,7 @@ state() {
   done
   if hp="$(git -C "$R" config --get core.hooksPath 2>/dev/null && printf x)"; then
     hp="${hp%x}"
-    printf " hooksPath='%s'" "${hp%$'\n'}"
+    printf " hooksPath='%s'" "$(aliased "${hp%$'\n'}")"
   else
     printf ' hooksPath=<unset>'
   fi
@@ -434,9 +442,41 @@ worktree_of() { # NAME — an armed, seeded repository and a linked worktree to 
 }
 fx_wt_clean() { worktree_of wt-clean; printf 'hello\n' >"$W/w.txt"; git -C "$W" add w.txt; }
 fx_wt_marker() { worktree_of wt-marker; printf '# %s: nope\n' "$FX" >"$W/w.py"; git -C "$W" add w.py; }
+# A linked worktree carrying its own copy of the package, the shape a lane
+# picking up its own package change has; both shims drifted, so a run that
+# did not refuse would rewrite all three files.
+wt_with_package() { # NAME
+  worktree_of "$1"
+  mkdir -p "$W/.agents/skills"
+  cp -R "$R/.agents/skills/commit-guards" "$W/.agents/skills/commit-guards"
+}
+drifted_shims() { edit "$R/.git/hooks/pre-commit" 's|^kendex_gg_h=|#kendex_gg_h=|'; edit "$R/.git/hooks/commit-msg" 's|^kendex_gg_h=|#kendex_gg_h=|'; }
+fx_wt_install() { wt_with_package wt-install; drifted_shims; }
+fx_wt_install_main() { wt_with_package wt-install-main; drifted_shims; }
+fx_wt_check() { wt_with_package wt-check; }
+fx_wt_hookspath() { wt_with_package wt-hookspath; git -C "$R" config core.hooksPath "$TMP/wt-elsewhere"; }
+# A bare repository with a work tree added has no main checkout: every work
+# tree of it is a linked one, and the hooks directory is the bare one.
+fx_bare_host() {
+  R="$TMP/bare-host.git"
+  git -c init.defaultBranch=main init -q --bare "$R"
+  git -C "$R" config user.email test@example.com
+  git -C "$R" config user.name test
+  W="$TMP/bare-host-wt"
+  git -C "$R" worktree add -q -b bm "$W"
+  mkdir -p "$W/.agents/skills"
+  cp -R "$GG_SKILL_TEMPLATE" "$W/.agents/skills/commit-guards"
+  ln -s "$SKILL_DIR/../doc-limits" "$W/.agents/skills/doc-limits"
+}
+DRIFTED="helper=$OURS pre-commit=$X:#!/bin/sh~#@PRE@~@CREATED@ commit-msg=$X:#!/bin/sh~#@MSG@~@CREATED@"
 run_rows \
   "control: a clean commit from a linked worktree passes through the shared shims|fx_wt_clean|$ONE|commit|feat: from the worktree|rc=0 $CHAIN_OK;$MSG_OK feat: from the worktree|" \
-  "a linked worktree gets the guard chain too|fx_wt_marker|$ONE|commit|feat: from the worktree|rc=1 $BLOCKED|"
+  "a linked worktree gets the guard chain too|fx_wt_marker|$ONE|commit|feat: from the worktree|rc=1 $BLOCKED|" \
+  "arming from a linked worktree is refused, and the shared hooks are left as they were|fx_wt_install||install-wt||rc=2 ::error::install-git-hooks: refusing to arm from a linked work tree: <repo>/.git/hooks is the one hooks directory the main checkout and every linked work tree share, so arming from here would point every commit in the repository at this work tree, and removing the tree would block them all. Run the installer from the main checkout.|$DRIFTED hooksPath=<unset>" \
+  "control: the main checkout arms and repairs the drift the refused run left|fx_wt_install_main||install||rc=0 $ARMED|$FRESH" \
+  "control: --check answers from the linked worktree|fx_wt_check||check-wt||rc=0 commit-guards git hooks: armed — pre-commit and commit-msg gate commits in <repo>/.git/hooks|" \
+  "a configured hooks path reports itself before the refusal|fx_wt_hookspath||install-wt||rc=0 ::warning::install-git-hooks: core.hooksPath is set (<root>/wt-elsewhere); this installer writes <repo>/.git/hooks only and will not write behind a configured hooks path, so the guard shims were NOT installed;  core.hooksPath is set.;  \$'local\\tfile:<repo>/.git/config\\t<root>/wt-elsewhere';  Clear the setting at its source, then run kendex guard install.;commit-guards git hooks: skipped — core.hooksPath is set (<root>/wt-elsewhere)|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath='<root>/wt-elsewhere'" \
+  "a work tree of a bare repository has no main checkout, and arms into the bare hooks directory|fx_bare_host||install-wt||rc=0 commit-guards git hooks: pre-commit and commit-msg armed in <repo>/hooks|helper=$X:ours['<root>/bare-host-wt/.agents/skills/commit-guards/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>"
 
 echo "=== uninstall gives the repository back ==="
 uninstalled() { install_over "$1" '#!/bin/sh\necho foreign: mine\nexit 0\n'; "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" --uninstall >/dev/null 2>&1 || true; }
