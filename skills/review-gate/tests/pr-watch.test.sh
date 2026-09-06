@@ -258,6 +258,21 @@ SD_CURRENT="$TMP_ROOT/state/current"; size_state "$SD_CURRENT" lane "$HEAD_A" 21
 SD_STALE="$TMP_ROOT/state/stale";     size_state "$SD_STALE"   lane "$HEAD_B" 214 250
 SD_NOALLOW="$TMP_ROOT/state/noallow"; size_state "$SD_NOALLOW" lane "$HEAD_A" 214 null
 SD_OTHER="$TMP_ROOT/state/other";     size_state "$SD_OTHER"   other-lane "$HEAD_A" 214 250
+# A stated allowance of zero is a real number, not an absent line: the check's
+# delta grammar accepts `0 lines`, which is how a test-only issue states its
+# production budget. Over it, the verdict is what says so.
+SD_ZERO="$TMP_ROOT/state/zero"; size_state "$SD_ZERO" lane "$HEAD_A" 5 0
+jq '.pr.size_check.verdict = "production_over"' "$SD_ZERO/workflow-state-KEN-1.json" > "$SD_ZERO/tmp" \
+  && mv "$SD_ZERO/tmp" "$SD_ZERO/workflow-state-KEN-1.json"
+# A branch inside its production allowance but past its test allowance: the
+# production ratio alone reads clean, so the verdict is the only signal.
+SD_TESTSOVER="$TMP_ROOT/state/testsover"; size_state "$SD_TESTSOVER" lane "$HEAD_A" 214 250
+jq '.pr.size_check.verdict = "tests_over" | .pr.size_check.test_allowance = 120
+    | .pr.size_check.test_lines = 400' "$SD_TESTSOVER/workflow-state-KEN-1.json" > "$SD_TESTSOVER/tmp" \
+  && mv "$SD_TESTSOVER/tmp" "$SD_TESTSOVER/workflow-state-KEN-1.json"
+# `workflow-state init` with no --branch records the empty string, so an empty
+# head ref must never be allowed to key the lookup.
+SD_NOBRANCH="$TMP_ROOT/state/nobranch"; size_state "$SD_NOBRANCH" "" "$HEAD_A" 214 250
 
 # --- fixtures ----------------------------------------------------------------
 # Open-PR listings: number 7 armed, unarmed, unarmed draft, armed draft, two
@@ -267,6 +282,7 @@ OLD='2026-01-01T00:00:00Z'
 P7="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"
 P7U="$(jq -cn --argjson r "$(pr_row 7 open unarmed)" '[$r]')"
 P7UD="$(jq -cn --argjson r "$(pr_row 7 open unarmed true)" '[$r]')"
+P7UNOREF="$(jq -cn --argjson r "$(pr_row 7 open unarmed | jq 'del(.head.ref)')" '[$r]')"
 P7AD="$(jq -cn --argjson r "$(pr_row 7 open armed true)" '[$r]')"
 P78="$(jq -cn --argjson a "$(pr_row 7)" --argjson b "$(pr_row 8)" '[$a,$b]')"
 P7NEW="$(jq -cn --argjson r "$(pr_row 7 open armed false "$NOW")" '[$r]')"
@@ -368,9 +384,14 @@ observe() {
           value="stale@${BASH_REMATCH[1]}"
         elif [[ "$line" =~ size\ ([0-9]+)\ of\ ([0-9]+)\ production\ lines\ added\ \(([0-9]+)%\ of\ the\ allowance\),\ measured\ at\ ([0-9a-f]{8}) ]]; then
           value="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}/${BASH_REMATCH[3]}%@${BASH_REMATCH[4]}"
+        elif [[ "$line" =~ size\ ([0-9]+)\ of\ ([0-9]+)\ production\ lines\ added,\ measured\ at\ ([0-9a-f]{8}) ]]; then
+          value="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}@${BASH_REMATCH[3]}"
         elif [[ "$line" =~ size\ ([0-9]+)\ production\ lines\ added,\ no\ allowance\ stated,\ measured\ at\ ([0-9a-f]{8}) ]]; then
           value="${BASH_REMATCH[1]}/none@${BASH_REMATCH[2]}"
         else value=unparsed; fi
+        # The verdict rides the same line and is matched last, after the
+        # counts above have been read out of BASH_REMATCH.
+        if [[ "$line" =~ submit\ recorded\ ([a-z_]+) ]]; then value="$value!${BASH_REMATCH[1]}"; fi
         ;;
       help_sections)
         value=""
@@ -441,12 +462,16 @@ table \
   "a record of another head reads stale, never as this head's size||ORCH_STATE_DIR=$SD_STALE;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=stale@bbbbbbbb" \
   "another lane's record leaves this branch unavailable||ORCH_STATE_DIR=$SD_OTHER;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=unavailable" \
   "no state directory at all is unavailable||ORCH_STATE_DIR=$TMP_ROOT/state/absent;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=unavailable" \
-  "a record stating no allowance reports the count and no ratio||ORCH_STATE_DIR=$SD_NOALLOW;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=214/none@aaaaaaaa"
+  "a record stating no allowance reports the count and no ratio||ORCH_STATE_DIR=$SD_NOALLOW;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=214/none@aaaaaaaa" \
+  "a stated allowance of zero is reported as the number it is||ORCH_STATE_DIR=$SD_ZERO;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=5/0@aaaaaaaa!production_over" \
+  "a test-allowance breach is named, not hidden by a clean ratio||ORCH_STATE_DIR=$SD_TESTSOVER;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=214/250/85%@aaaaaaaa!tests_over" \
+  "a PR row with no head ref keys nothing and reads unavailable||ORCH_STATE_DIR=$SD_NOBRANCH;STUB_OPEN_PRS=$P7UNOREF;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=unavailable"
 
-echo "=== must-fail controls for the four surfaces above ==="
+echo "=== must-fail controls for the surfaces above ==="
 # Each control fails against a copy of the reducer with the one expression it
 # depends on removed: the call at each disarmed site, the head binding that
-# makes a record current, and the branch binding that makes it this lane's.
+# makes a record current, the branch binding that makes it this lane's, and
+# the guard that stops an empty branch from keying the lookup at all.
 mutant_watch() { # label, sed-expr, anchor — points WATCH_BIN at the mutated copy
   local dir="$TMP_ROOT/mutants/$1"
   mkdir -p "$dir/lib"
@@ -483,6 +508,12 @@ mutant_watch branch-binding \
   '(.branch? // "") == $branch'
 table \
   "must-fail: without the branch binding another lane's record is reported||ORCH_STATE_DIR=$SD_OTHER;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=214/250/85%@aaaaaaaa"
+
+mutant_watch empty-branch-guard \
+  's#if \[ -n "$branch" \]; then#if true; then#' \
+  'if [ -n "$branch" ]; then'
+table \
+  "must-fail: without the empty-branch guard a branchless lane's record is reported||ORCH_STATE_DIR=$SD_NOBRANCH;STUB_OPEN_PRS=$P7UNOREF;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=214/250/85%@aaaaaaaa"
 
 WATCH_BIN="$LIVE_WATCH"
 

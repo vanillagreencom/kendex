@@ -75,8 +75,10 @@ Attention kinds:
                      `pr.size_check`): the production lines it added, the
                      allowance the issue stated and the ratio between them,
                      and the head it measured. A record of any other head
-                     reads `stale`, and no record at all `unavailable` —
-                     read only, never re-measured and refusing nothing
+                     reads `stale`, and no record at all `unavailable`. A
+                     verdict other than pass is named, so a branch over its
+                     test allowance is not read off a passing production
+                     ratio — read only, never re-measured, refusing nothing
   awaiting-stale     no evidence and the head has sat unreviewed longer
                      than the quiet period (PR_REVIEW_WAIT_SECS, default
                      900) — time for a manual re-review trigger or the
@@ -108,8 +110,12 @@ Exit codes:
 
 Env (required): GH_TOKEN (or ambient gh auth), GH_REPO
 Env (optional): ORCH_STATE_DIR — where the disarmed line reads the submit
-size record from, defaulting to tmp/ under the working directory, the same
-resolution every orch workflow-state call uses
+size record from, else tmp/ under the working directory. That is the
+environment fallback orch's workflow-state honours; its --state-dir flag has
+no equivalent here, so a record written under one reads unavailable. The
+record is found by its own branch name, so one directory serving a fleet can
+match a same-named branch in another repo — the head binding then reads that
+record stale rather than as this PR's size
 
 Consumers: orch's workflows treat this as the single state reducer for
 multi-PR watching (orch's approval-wait remains the single-PR foreground
@@ -277,11 +283,17 @@ size_note() { # branch, head -> the annotation, prefixed for the detail
         | if $current != null then
             "size "
             + (if ($current.production_allowance | type) == "number"
-                  and $current.production_allowance > 0
-               then "\($current.production_lines) of \($current.production_allowance) production lines added (\(pct($current.production_lines; $current.production_allowance))% of the allowance)"
+               then "\($current.production_lines) of \($current.production_allowance) production lines added"
+                    + (if $current.production_allowance > 0
+                       then " (\(pct($current.production_lines; $current.production_allowance))% of the allowance)"
+                       else "" end)
                else "\($current.production_lines) production lines added, no allowance stated"
                end)
             + ", measured at \($current.head_sha[0:8])"
+            + (($current.verdict? // "") as $v
+               | if ($v | type) == "string" and $v != "" and $v != "pass"
+                    and $v != "allowance_missing"
+                 then ", submit recorded \($v)" else "" end)
           elif ($records | length) > 0 then
             "size stale: the recorded measurement is of \($records[0].head_sha[0:8]), not this head"
           else
