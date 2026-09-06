@@ -89,3 +89,11 @@ control_expect "E: an unfiltered cycles list still returns every team's cycles"
 control_replace scripts/commands/cache-query.sh 1 \
     '    [[ -n "$1" ]] || return 0' \
     '    : # control: an empty team still emits a stage'
+
+# 10. Bind a flag standing where the value should be, so `--team --max` takes
+#     --max as the team name, swallows the real flag, and answers [] at rc 0.
+control_expect "G: --team followed by another flag does not exit 0"
+control_expect "G: --team followed by another flag is a missing value, not a team named --max"
+control_replace scripts/commands/cache-query.sh 1 \
+    '    -*)' \
+    '    --this-value-never-arrives)'

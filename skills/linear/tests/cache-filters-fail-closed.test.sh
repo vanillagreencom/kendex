@@ -203,6 +203,14 @@ assert_ne "G: a valueless cycles --team does not exit 0" "$last_cycles_rc" 0
 assert_jq "G: a valueless cycles --team answers with a JSON error too" \
   "$last_cycles_out" '.error | test("--team requires a value")'
 
+# Reached by --team $LINEAR_TEAM --max unquoted with the variable empty: the
+# next flag lands where the value should be. Binding it would swallow the real
+# flag and answer [] at rc 0.
+run_output flagval_out flagval_rc msg_issues --team --max --format=ids
+assert_ne "G: --team followed by another flag does not exit 0" "$flagval_rc" 0
+assert_jq "G: --team followed by another flag is a missing value, not a team named --max" \
+  "$flagval_out" '.error | test("--team requires a value")'
+
 # --- H: the cycle keyword resolves inside the requested team ------------------
 # OTHER's cycle starts later, so a team-blind resolution picks it and this
 # returns nothing at rc 0 — a silently empty answer to a well-formed request,

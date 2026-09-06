@@ -118,6 +118,18 @@ cache_unknown_flag() {
 # cache listings take the flag, so all three answer the same way.
 cache_require_team() {
     linear_require_option_value "$@" || return 1
+    # A flag standing where the value should be. `--team $LINEAR_TEAM --max`
+    # with the variable empty and unquoted collapses to `--team --max`, which
+    # would otherwise bind --max as the team name and swallow the real flag: an
+    # empty listing at rc 0, the silent wrong answer this whole refusal exists
+    # to stop. No Linear team name begins with a dash, so the cause is a missing
+    # value and the message says so.
+    case "$2" in
+    -*)
+        linear_require_option_value "$1"
+        return 1
+        ;;
+    esac
     [[ -n "$2" ]] && return 0
     echo '{"error": "--team requires a non-empty team name: an empty value would return every team, not the one named"}' >&2
     return 1
