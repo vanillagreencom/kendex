@@ -162,5 +162,41 @@ run_gg COMMIT_GUARDS_CHECKS=conflict-markers -- all --staged
   && ok "a check outside the staged-scoped set runs unflagged" \
   || bad "unflagged check outside the staged-scoped set" "rc=$RC out=$OUT"
 
+echo "=== the full batch sweeps byte-ceiling over every tracked file; --base scopes it to a branch ==="
+new_repo fullscope
+head -c 2048 /dev/zero | tr '\0' 'a' >"$R/big.txt"
+git -C "$R" add -A
+git -C "$R" commit -qm 'feat: seed'
+run_gg COMMIT_GUARDS_BYTE_CEILING_KB=1 COMMIT_GUARDS_CHECKS=byte-ceiling -- all
+[ "$RC" -eq 1 ] && case "$OUT" in *"commit-guards: byte-ceiling --all"*"oversized file: big.txt"*) true ;; *) false ;; esac \
+  && ok "'all' hands byte-ceiling --all, so a committed oversized file fails the full batch" \
+  || bad "full batch sweeps byte-ceiling" "rc=$RC out=$OUT"
+run_gg COMMIT_GUARDS_BYTE_CEILING_KB=1 COMMIT_GUARDS_CHECKS=byte-ceiling -- all --staged
+[ "$RC" -eq 0 ] && case "$OUT" in *"commit-guards: byte-ceiling --staged"*"0 staged file(s) checked"*) true ;; *) false ;; esac \
+  && ok "control: 'all --staged' hands byte-ceiling --staged and judges only the staged diff" \
+  || bad "staged batch scopes byte-ceiling to the diff" "rc=$RC out=$OUT"
+git -C "$R" tag base
+printf 'x' >>"$R/big.txt"
+git -C "$R" add -A
+git -C "$R" commit -qm 'feat: grow'
+run_gg COMMIT_GUARDS_BYTE_CEILING_KB=1 COMMIT_GUARDS_CHECKS=byte-ceiling -- all --base base
+[ "$RC" -eq 1 ] && case "$OUT" in *"commit-guards: byte-ceiling --base base"*"oversized file grew: big.txt"*) true ;; *) false ;; esac \
+  && ok "'all --base REF' hands byte-ceiling --base REF, so growth since the base fails" \
+  || bad "base batch scopes byte-ceiling to the branch" "rc=$RC out=$OUT"
+run_gg COMMIT_GUARDS_BYTE_CEILING_KB=1 COMMIT_GUARDS_CHECKS=byte-ceiling -- all --base=base
+[ "$RC" -eq 1 ] && ok "--base=REF is the same scope" || bad "--base=REF spelling" "rc=$RC out=$OUT"
+run_gg COMMIT_GUARDS_CHECKS=conflict-markers -- all --base base
+[ "$RC" -eq 0 ] && case "$OUT" in *"conflict-markers --"*) false ;; *) true ;; esac \
+  && ok "a check outside the full-scoped set runs unflagged under --base" \
+  || bad "unflagged check outside the full-scoped set under --base" "rc=$RC out=$OUT"
+run_gg -- all --base
+[ "$RC" -eq 2 ] && ok "'--base' without a ref is exit 2" || bad "--base without a ref" "rc=$RC out=$OUT"
+run_gg -- all --staged --base base
+[ "$RC" -eq 2 ] && ok "'--staged' with '--base' is exit 2 (one scope per batch)" || bad "two scopes refused" "rc=$RC out=$OUT"
+run_gg COMMIT_GUARDS_CHECKS=byte-ceiling -- all --base no-such-ref
+[ "$RC" -eq 2 ] && case "$OUT" in *"did not complete"*) true ;; *) false ;; esac \
+  && ok "an unknown base ref is a check that could not complete (exit 2)" \
+  || bad "unknown base ref fails closed" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

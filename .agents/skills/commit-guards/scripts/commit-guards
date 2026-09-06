@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # commit-guards — dispatcher for the check family:
 #
-#   commit-guards [all]           run every check named by COMMIT_GUARDS_CHECKS
-#   commit-guards [all] --staged  the same batch at commit scope
-#   commit-guards CHECK [ARGS..]  run one check, flags passed through
+#   commit-guards [all]            run every check named by COMMIT_GUARDS_CHECKS
+#                                  over the whole tree
+#   commit-guards [all] --staged   the same batch at commit scope
+#   commit-guards [all] --base REF the same batch over the changes since REF
+#   commit-guards CHECK [ARGS..]   run one check, flags passed through
 #
 # commit-msg reads a message, so it never runs in the batch — the commit-msg
 # hook invokes it directly. Batch aggregation fails closed: exit 2 if ANY
@@ -26,18 +28,24 @@ BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-
 # todo-ban and comments default to the whole index, which is a CI subject:
 # at commit each judges what the commit adds. md-format judges touched
 # documents; md-refs checks every configured document for broken incoming
-# references. byte-ceiling is already staged by default, and the rest read
-# the index by design.
-STAGED_SCOPED_CHECKS="todo-ban md-format md-refs comments"
+# references. The rest read the index by design.
+STAGED_SCOPED_CHECKS="todo-ban byte-ceiling md-format md-refs comments"
+# byte-ceiling is the one batch lane whose bare default is the commit scope,
+# so the full batch names its scope outright: --all with no flag, --base REF
+# when the batch is given one. A batch summary that listed it clean over a
+# scope it never read would be a verdict about nothing.
+FULL_SCOPED_CHECKS="byte-ceiling"
 
 usage() {
   cat <<EOF
-usage: commit-guards [all] [--staged] | CHECK [ARGS...]
+usage: commit-guards [all] [--staged | --base REF] | CHECK [ARGS...]
 
 Checks: $KNOWN_CHECKS
 
 With no argument (or 'all'), runs every check named by
-COMMIT_GUARDS_CHECKS (default: $BATCH_DEFAULT).
+COMMIT_GUARDS_CHECKS (default: $BATCH_DEFAULT) over the whole tree:
+$FULL_SCOPED_CHECKS gets --all, the rest read the index by design.
+--base REF hands $FULL_SCOPED_CHECKS --base REF instead (CI on a PR).
 --staged is passed to: $STAGED_SCOPED_CHECKS.
 Those checks apply their own commit scope. md-refs checks all configured
 documents for broken references, including unchanged callers.
@@ -48,14 +56,15 @@ any check that could not complete.
 EOF
 }
 
-STAGED=0
+SCOPE_MODE="all"
+BASE_REF=""
 if [ $# -ge 1 ]; then
   case "$1" in
     -h | --help)
       usage
       exit 0
       ;;
-    all | --staged) ;;
+    all | --staged | --base | --base=*) ;;
     *)
       CHECK="$1"
       shift
@@ -68,12 +77,26 @@ if [ $# -ge 1 ]; then
 fi
 
 if [ "${1-}" = all ]; then shift; fi
-if [ "${1-}" = --staged ]; then
-  STAGED=1
+SCOPE_FLAGS=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --staged) SCOPE_MODE="staged" ;;
+    --base)
+      [ $# -ge 2 ] || gg_config_error "--base requires a ref"
+      shift
+      SCOPE_MODE="base"
+      BASE_REF="$1"
+      ;;
+    --base=*)
+      SCOPE_MODE="base"
+      BASE_REF="${1#--base=}"
+      ;;
+    *) gg_config_error "'all' takes only --staged or --base REF; invoke a single check to pass flags" ;;
+  esac
+  SCOPE_FLAGS=$((SCOPE_FLAGS + 1))
   shift
-fi
-
-[ $# -eq 0 ] || gg_config_error "'all' takes no arguments beyond --staged; invoke a single check to pass flags"
+done
+[ "$SCOPE_FLAGS" -le 1 ] || gg_config_error "--staged and --base name different scopes; pass one"
 
 gg_repo_root_cd
 CHECKS="$(gg_setting COMMIT_GUARDS_CHECKS "$BATCH_DEFAULT")" || exit 2
@@ -94,15 +117,29 @@ done
 had_violations=0
 had_errors=0
 for c in $CHECKS; do
-  scope=""
-  if [ "$STAGED" -eq 1 ]; then
-    case " $STAGED_SCOPED_CHECKS " in
-      *" $c "*) scope="--staged" ;;
-    esac
-  fi
-  echo "=== commit-guards: $c${scope:+ $scope}"
+  scope=()
+  scope_desc=""
+  case "$SCOPE_MODE" in
+    staged)
+      case " $STAGED_SCOPED_CHECKS " in
+        *" $c "*) scope=(--staged) ;;
+      esac
+      ;;
+    all)
+      case " $FULL_SCOPED_CHECKS " in
+        *" $c "*) scope=(--all) ;;
+      esac
+      ;;
+    base)
+      case " $FULL_SCOPED_CHECKS " in
+        *" $c "*) scope=(--base "$BASE_REF") ;;
+      esac
+      ;;
+  esac
+  [ "${#scope[@]}" -eq 0 ] || scope_desc=" ${scope[*]}"
+  echo "=== commit-guards: $c$scope_desc"
   check_status=0
-  "$SCRIPT_DIR/$c" ${scope:+"$scope"} || check_status=$?
+  "$SCRIPT_DIR/$c" ${scope[@]+"${scope[@]}"} || check_status=$?
   case "$check_status" in
     0) ;;
     1) had_violations=1 ;;

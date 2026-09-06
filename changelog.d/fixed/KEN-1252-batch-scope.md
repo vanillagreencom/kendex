@@ -1,0 +1,1 @@
+- `commit-guards all` runs byte-ceiling over every tracked file, and `all --base REF` over the changes since REF, so the batch summary names a scope it read; the CI `byte-ceiling --base` step goes.

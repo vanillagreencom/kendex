@@ -23,7 +23,7 @@ A tracked file a change puts over `COMMIT_GUARDS_BYTE_CEILING_KB` (KB = 1024 byt
 - `--base REF`: files added, modified or type-changed since the merge-base with REF.
 - `--all`: every tracked file.
 
-A copy is an addition; symlinks and gitlinks are not sized.
+The batch names the scope: `commit-guards all` hands the lane `--all`, `all --base REF` hands `--base REF`, `all --staged` hands `--staged`. A copy is an addition; symlinks and gitlinks are not sized.
 
 ## suppression-ban
 

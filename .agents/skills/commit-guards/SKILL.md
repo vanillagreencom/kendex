@@ -41,8 +41,9 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 # Commit Guards
 
 ```bash
-.agents/skills/commit-guards/scripts/commit-guards              # batch: every enabled repo check
-.agents/skills/commit-guards/scripts/commit-guards all --staged # the same batch at commit scope
+.agents/skills/commit-guards/scripts/commit-guards                   # batch: every enabled check over the whole tree
+.agents/skills/commit-guards/scripts/commit-guards all --staged      # the same batch at commit scope
+.agents/skills/commit-guards/scripts/commit-guards all --base origin/main # the same batch over a branch's changes (CI)
 .agents/skills/commit-guards/scripts/commit-guards todo-ban     # one check by name, flags pass through
 .agents/skills/commit-guards/scripts/md-reflow PATH...          # rewrite markdown to the format md-format judges
 .agents/skills/commit-guards/scripts/install-git-hooks          # arm the git pre-commit/commit-msg shims
