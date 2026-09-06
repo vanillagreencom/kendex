@@ -12,6 +12,7 @@ use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::local_source_root;
 
 use super::{destination, position};
+use crate::engine::desired::skill_canonical;
 
 // Adopting a shared folder through the link a tool reads it by: the
 // boundary that decides what a link may be adopted through, and the ops
@@ -74,13 +75,14 @@ pub(super) fn shared_target(
         env.journal_dir(),
         local_source_root(env, scope),
     ];
-    // A project link reaching the global shared tree names a global
-    // install, which this scope's lock cannot see and which is not this
-    // scope's to capture. At global scope that same tree is where adoption
-    // lands, so it is settled below by the rules that settle a project's
-    // own shared tree — a folder someone wrote there by hand, with tools
-    // linking at it, is a sharing layout to adopt, not one to refuse.
-    if matches!(scope, Scope::Project { .. }) {
+    // The global shared tree holds this skill's own place at global scope
+    // and every other skill's at either scope. The one place adoption
+    // would put THIS skill is the finished shape — a folder written there
+    // by hand with tools linking at it — and is settled below. Every other
+    // name in that tree is a second skill's content, and capturing it
+    // under this name would move it; a project link reaching any of it
+    // names a global install this scope's lock cannot see.
+    if canon(skill_canonical(env, scope, name)) != target {
         ours.push(env.global_skills_dir());
     }
     if ours.into_iter().any(|root| target.starts_with(canon(root))) {

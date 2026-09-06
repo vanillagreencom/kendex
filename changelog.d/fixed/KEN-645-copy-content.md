@@ -1,0 +1,1 @@
+- Forking, diffing or updating a skill installed with `method = "copy"` reads that tool's own copy. It could read a same-named skill out of the shared tree instead, or find nothing at all.

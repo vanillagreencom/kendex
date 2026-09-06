@@ -166,6 +166,38 @@ fn a_global_link_into_the_shared_tree_adopts() {
     .unwrap();
 }
 
+/// Only this skill's own place in the shared tree is the finished shape.
+/// A link at one name pointing at another name's folder there would have
+/// adoption capture that folder under this name and move the original,
+/// taking a second skill's content with it.
+#[cfg(unix)]
+#[test]
+fn a_global_link_across_names_in_the_shared_tree_refuses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let other = env.global_skills_dir().join("other");
+    fs::create_dir_all(&other).unwrap();
+    fs::write(
+        other.join("SKILL.md"),
+        "---\nname: other\ndescription: a second skill\n---\nTheirs.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(env.home.join(".claude/skills")).unwrap();
+    std::os::unix::fs::symlink(&other, env.home.join(".claude/skills/alias")).unwrap();
+
+    let error = adopt(
+        &env,
+        &Scope::Global,
+        ItemKind::Skill,
+        "alias",
+        &[HarnessId::Claude],
+    )
+    .unwrap_err();
+    assert!(matches!(error, CoreError::ForeignSymlink { .. }));
+    assert!(other.join("SKILL.md").is_file());
+}
+
 /// The folder changing between the plan and the apply aborts the whole
 /// transaction: the trash op is bound to the bytes that were captured,
 /// so a stale snapshot can never become "the backup".
