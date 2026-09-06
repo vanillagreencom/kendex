@@ -3,7 +3,7 @@
 # per-line counterpart proven to pass, the bare-allow ratchet fails in all
 # directions (new, grow, loose, stale), --update tightens only, and baseline
 # hygiene is enforced. The index readers this family of checks shares — the
-# per-carrier count among them — are pinned once, in index-reads.test.sh,
+# per-carrier count among them — are pinned once, in lane-readers.test.sh,
 # which drives them through this check.
 #
 # Suppression pragmas appear verbatim in fixtures below: the check is
