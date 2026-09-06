@@ -8,7 +8,7 @@ use super::{answer, out, say};
 
 /// Exit taxonomy, the family contract: 0 clean, 1 violations, 2 the check
 /// could not run. Both nonzero verdicts block a commit. kendex implements
-/// none of the checks — every verb here delegates to the growth-guards
+/// none of the checks — every verb here delegates to the commit-guards
 /// package's own scripts, which is what a repository carries and what runs
 /// when no kendex binary is present.
 #[derive(Subcommand)]

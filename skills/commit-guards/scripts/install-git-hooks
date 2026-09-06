@@ -1,0 +1,549 @@
+#!/usr/bin/env bash
+# install-git-hooks — real git pre-commit / commit-msg shims, so the guard
+# chain runs for every tool that commits, not only the ones with their own
+# hook system.
+#
+#   .git/hooks/kendex-guards   helper this installer owns outright and
+#                              rewrites atomically on every run
+#   .git/hooks/pre-commit      one marked delegating line, created or inserted
+#   .git/hooks/commit-msg      same, passing git's message file through
+#
+# core.hooksPath is deliberately NOT used: it redirects the whole hooks
+# directory and would disable hooks the repo already has.
+#
+# Exit codes: 0 shims in place (or deliberately skipped, stated on stdout);
+# 1 one or more shims could not be installed; 2 usage error. --check is
+# read-only: 0 armed in .git/hooks, 1 drifted, absent, or core.hooksPath set
+# and empty (git hooks off), 2 could not determine — which every
+# core.hooksPath naming a directory is, whatever it resolves to.
+set -euo pipefail
+
+HELPER_NAME="kendex-guards"
+HELPER_MARKER="kendex commit-guards git hooks"
+# Trailing marker on our hook line; only this installer ever writes it, so a
+# foreign hook that merely mentions the helper by name is not mistaken for an
+# install that is already current.
+HOOK_SENTINEL="# kendex-guards-hook"
+# Written into hooks this installer CREATES, so removal can tell them from a
+# consumer's own shebang-only hook, which is indistinguishable by content.
+# It carries the sentinel, so the same filter strips it.
+CREATED_MARKER="# kendex-guards-hook created this file"
+# Whole interpreter names only: '.*sh' would match #!/usr/bin/fish and treat
+# POSIX-sh syntax as runnable by a hook that cannot run it.
+SH_SHEBANG_RE='^#![[:space:]]*([^[:space:]]*/)?(env[[:space:]]+)?(sh|bash|dash|ksh|zsh)([[:space:]]|$)'
+# The stricter half of the same question, for a hook this tool is about to
+# call armed or write into: the interpreter by FULL PATH, and nothing after
+# it. A basename is not an identity — `#!/tmp/fake/sh` can be a copy of
+# /bin/true, and then git runs true, ignores the body, and the hook gates
+# nothing — and an `env` form resolves through PATH, which is no more
+# knowable. An interpreter OPTION is the same failure by another route:
+# `#!/bin/sh` handed the syntax-check flag reads the body and executes none
+# of it, exiting 0 for everything. SH_SHEBANG_RE stays permissive because a
+# repo's own hooks may legitimately carry either; a hook we vouch for may not.
+gg_trusted_interpreter() { # SHEBANG-LINE -> 0 trusted
+  local rest="$1"
+  rest="${rest#\#!}"
+  rest="${rest#"${rest%%[![:blank:]]*}"}"
+  rest="${rest%"${rest##*[![:blank:]]}"}"
+  case "$rest" in
+    /bin/sh | /bin/bash | /bin/dash | /bin/ksh | /bin/zsh) ;;
+    /usr/bin/sh | /usr/bin/bash | /usr/bin/dash | /usr/bin/ksh | /usr/bin/zsh) ;;
+    *) return 1 ;;
+  esac
+  # On the list is not on the disk. `/bin/dash` and `/bin/ksh` are absent
+  # from plenty of hosts, and git answers `cannot exec` for every commit —
+  # clean ones included — rather than running the hook.
+  [ -f "$rest" ] && [ -x "$rest" ]
+}
+GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
+GG_BOOT="${GG_BOOT%x}"
+# The trailing newline from `pwd` terminates its output; anything before it is the path.
+SCRIPT_DIR="${GG_BOOT%$'\n'}"
+# --check's read-only verdict, and the roots every search here uses.
+# shellcheck source=lib/paths.sh
+source "$SCRIPT_DIR/lib/paths.sh"
+# shellcheck source=lib/skill-roots.sh
+source "$SCRIPT_DIR/lib/skill-roots.sh"
+# shellcheck source=lib/helper-body.sh
+source "$SCRIPT_DIR/lib/helper-body.sh"
+# shellcheck source=lib/hook-check.sh
+source "$SCRIPT_DIR/lib/hook-check.sh"
+# shellcheck source=lib/hooks-path.sh
+source "$SCRIPT_DIR/lib/hooks-path.sh"
+
+# Every write below stages a file beside its destination and renames it into
+# place. The in-flight file is named here so an interrupt between the two
+# leaves nothing beside the hook. lib/common.sh is not sourced by this
+# script, so the trap is its own.
+INSTALL_TMP=""
+install_cleanup() {
+  [ -z "${INSTALL_TMP:-}" ] || rm -f -- "$INSTALL_TMP"
+  return 0
+}
+trap install_cleanup EXIT
+
+usage() {
+  cat <<'EOF'
+usage: install-git-hooks [--repo PATH] [--uninstall | --check]
+
+Installs (or repairs) the .git/hooks/pre-commit and .git/hooks/commit-msg
+shims that run the commit-guards chain. Idempotent: re-running is a no-op
+when the install is current. --repo defaults to the current directory.
+
+--uninstall drops the helper and our marked line from each hook, deleting a
+hook file this installer created outright and leaving every other line of a
+consumer's own hook untouched.
+
+--check writes nothing and answers whether the shims are armed: 0 armed,
+1 not armed (drifted, absent, or core.hooksPath set and empty, which
+switches git hooks off), 2 the question could not be answered — an
+unreadable hooks directory, or a core.hooksPath naming a directory, which
+is outside this verifier's contract: it reads .git/hooks only, whatever the
+configured value resolves to. Failure to measure is never a clean
+measurement. stdout is one summary line: the verdict, and what is wrong.
+
+Warnings go to stderr, and so does the core.hooksPath remedy, which the
+summary points at rather than repeats: git's report of where the value is
+set runs to as many lines as git gives.
+
+Exit codes: 0 installed/removed or deliberately skipped; 1 a shim could not
+be installed or removed; 2 usage error. Under --check: the verdict above.
+EOF
+}
+
+die() { # usage/config error
+  echo "::error::install-git-hooks: $*" >&2
+  exit 2
+}
+
+warn() { # MESSAGE
+  echo "::warning::install-git-hooks: $*" >&2
+}
+
+FAILED=0
+# Every "this shim is not armed" lane: the run is marked failed, and the
+# caller returns 0 so the other hook is still attempted.
+hook_warn() { # MESSAGE
+  warn "$*"
+  FAILED=1
+  return 0
+}
+
+REPO="."
+MODE="install"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --uninstall | --check)
+      WANT="${1#--}"
+      [ "$MODE" = "install" ] || [ "$MODE" = "$WANT" ] \
+        || die "--uninstall and --check are mutually exclusive"
+      MODE="$WANT"
+      ;;
+    --repo)
+      [ $# -ge 2 ] || die "--repo requires a path"
+      shift
+      REPO="$1"
+      ;;
+    --repo=*) REPO="${1#--repo=}" ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *) die "unknown argument '$1' (see --help)" ;;
+  esac
+  shift
+done
+
+[ -d "$REPO" ] || die "no such directory: $REPO"
+# A work tree, not merely a git directory: the guards read a staged index and
+# the helper resolves a working-tree root, neither of which a bare repository
+# has — installing there would report hooks that can never run.
+# not-a-path: git answers the word `true`, which has no bytes to lose.
+[ "$(git -C "$REPO" rev-parse --is-inside-work-tree 2>/dev/null || true)" = "true" ] \
+  || die "not inside a git work tree: $REPO"
+
+resolve_roots
+
+# Installing where git does not read would write files nothing runs. Removal
+# still runs: shims in $HOOKS_DIR revive the moment the setting goes away.
+classify_hooks_path_or_stop
+
+gg_project_rel PROJECT_REL "$SCRIPT_DIR" "$REPO_ABS"
+
+if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ] && [ "$MODE" = "install" ]; then
+  if hooks_path_off; then
+    warn "core.hooksPath is set and empty, which switches git hooks off entirely, so the guard shims were NOT installed"
+  else
+    # Not "git ignores $HOOKS_DIR": the value may resolve to that very
+    # directory, and which one git reads is the question this installer
+    # deliberately stopped answering.
+    warn "core.hooksPath is set ($(gg_shown "$CUSTOM_HOOKS")); this installer writes $(gg_shown "$HOOKS_DIR") only and will not write behind a configured hooks path, so the guard shims were NOT installed"
+  fi
+  # One remedy, and it is the one that arms. Telling somebody to wire that
+  # directory by hand prescribes a shape --check has no way to verify, so it
+  # trades a repository that is not gated for one that is gated and can
+  # never say so.
+  hooks_path_origins
+  echo "commit-guards git hooks: skipped — core.hooksPath is set ($(gg_shown "$CUSTOM_HOOKS"))"
+  exit 0
+fi
+
+# --check is read-only down to the hooks directory itself.
+if [ "$MODE" != "check" ]; then
+  mkdir -p -- "$HOOKS_DIR" || die "could not create $(gg_shown "$HOOKS_DIR")"
+fi
+
+write_helper() { # PATH
+  local helper="$1" tmp=""
+  # Non-destructive even against a name collision: never write through a
+  # symlink, never replace a non-regular file, never overwrite content
+  # missing our marker.
+  if [ -L "$helper" ] || { [ -e "$helper" ] && [ ! -f "$helper" ]; }; then
+    warn "$(gg_shown "$helper") exists and is not a regular file; refusing to replace it"
+    return 1
+  fi
+  if [ -f "$helper" ] && ! grep -qF -- "$HELPER_MARKER" "$helper" 2>/dev/null; then
+    warn "$(gg_shown "$helper") exists but was not written by this installer; refusing to overwrite it"
+    return 1
+  fi
+  tmp="$(mktemp "$helper.tmp.XXXXXX")" || return 1
+  INSTALL_TMP="$tmp"
+  # Single-quote the baked path for the generated sh, escaping any quote in it.
+  local sq="'" escaped=""
+  escaped="${SCRIPT_DIR//$sq/$sq\\$sq$sq}"
+  helper_body >"$tmp" || { rm -f -- "$tmp"; return 1; }
+  # mktemp creates 0600; a hook must be readable and executable by whoever
+  # git runs as, which on a shared repository is not only its owner.
+  chmod -- 0755 "$tmp" 2>/dev/null && mv -f -- "$tmp" "$helper" || {
+    rm -f -- "$tmp"
+    return 1
+  }
+}
+
+# The delegating line goes FIRST, right after the shebang: hook content ending
+# in an explicit `exit` would leave an appended guard unreachable. Ours runs,
+# blocks on any nonzero, then falls through to whatever the hook already did —
+# whose own exit status still decides.
+#
+# These bytes are compared exactly to decide whether a hook is current, so
+# changing them marks every already-armed repository drifted until it is
+# re-armed. The remedy the line names is left alone for that reason while
+# `kendex refresh` invokes this installer directly. Keep the remedy stable so
+# refresh does not churn it to another spelling and back.
+# Lines this installer owns, as an ERE — for the repair and the removal,
+# which must agree about what is ours.
+#
+# Byte equality alone is too narrow: a delegate from an older spelling, or
+# one someone commented out to disable it, is still ours and still has to go
+# — leaving it behind stacks a second guard line under the current one, or
+# strands a disabled one that reads as tampering forever. Matching the
+# marker ANYWHERE is too wide: it deletes a consumer's own line that merely
+# mentions it, a comment quoting it among them, and eating somebody else's
+# line is the worse failure of the two.
+#
+# So ownership is the marker CLOSING the line, which is the one thing every
+# spelling this installer has ever written has in common, plus the marker
+# comment it leaves in a file it created. A line that only mentions the
+# marker mid-sentence keeps it and stays.
+#
+# A consumer's own line deliberately ending in this marker is inadvertently
+# claimed, and nothing short of a shell parser could tell the two apart —
+# which is the trade this installer has always made by stamping it.
+gg_owned_lines_re() {
+  printf '%s' '.*'"$HOOK_SENTINEL"'$|^'"$CREATED_MARKER"'$'
+}
+
+call_line() { # HOOK
+  local hook="$1" args=""
+  [ "$hook" = "pre-commit" ] || args=' "$@"'
+  # not-a-path: ends in `hooks`; also the grammar every armed hook matches.
+  printf '%s' 'kendex_gg_h="$(git rev-parse --git-path hooks 2>/dev/null)/'"$HELPER_NAME"'"; [ -x "$kendex_gg_h" ] || { echo "commit-guards: hook helper $kendex_gg_h is missing or not executable; commit blocked (reinstall: kendex guard install)" >&2; exit 2; }; "$kendex_gg_h" '"$hook$args"' || exit $?; '"$HOOK_SENTINEL"
+}
+
+# Line tools terminate their last line, which would permanently add a newline
+# a hook never had. The original EOF state is recorded and re-asserted, so
+# foreign bytes come back exactly as they were.
+ends_with_newline() { # FILE — 0 when the last byte is a newline
+  [ -s "$1" ] || return 1
+  [ -z "$(tail -c 1 "$1")" ]
+}
+
+strip_final_newline() { # FILE — drop one trailing newline byte if present
+  local size=0
+  ends_with_newline "$1" || return 0
+  size="$(wc -c <"$1")" || return 1
+  size="$((size - 1))"
+  dd if="$1" of="$1.trim" bs=1 count="$size" 2>/dev/null || {
+    rm -f -- "$1.trim"
+    return 1
+  }
+  mv -f -- "$1.trim" "$1"
+}
+
+# git ignores a hook without the bit, so one that cannot be restored is a
+# guard that never runs. `--` before the mode: bsd-argv-install has the why.
+ensure_hook_executable() { # HOOK PATH
+  local hook="$1" path="$2"
+  [ -x "$path" ] && return 0
+  chmod -- +x "$path" 2>/dev/null && [ -x "$path" ] && return 0
+  hook_warn "$(gg_shown "$path") is not executable and could not be made so; git ignores it — the $hook guard is NOT armed"
+}
+
+install_hook() { # HOOK
+  local hook="$1" path="$HOOKS_DIR/$1" line="" tmp="" rest="" status=0
+  line="$(call_line "$hook")"
+  # A symlinked hook points at a shared or externally managed target; writing
+  # through it, or materializing a dangling target (which passes `! -e`),
+  # would modify content this install does not own.
+  if [ -L "$path" ]; then
+    hook_warn "$(gg_shown "$path") is a symlink; not modifying its target — the $hook guard is NOT installed"
+    return 0
+  fi
+  if [ ! -e "$path" ]; then
+    printf '#!/bin/sh\n%s\n%s\n' "$line" "$CREATED_MARKER" >"$path" 2>/dev/null || {
+      hook_warn "could not write $(gg_shown "$path") — the $hook guard is NOT installed"
+      return 0
+    }
+    ensure_hook_executable "$hook" "$path"
+    return 0
+  fi
+  if [ ! -f "$path" ]; then
+    hook_warn "$(gg_shown "$path") exists and is not a regular file — the $hook guard is NOT installed"
+    return 0
+  fi
+  # Checked BEFORE the already-current fast path: our line under an
+  # interpreter that cannot run it is not an armed hook, whoever changed the
+  # shebang.
+  if ! head -n 1 "$path" | grep -qE "$SH_SHEBANG_RE"; then
+    hook_warn "$(gg_shown "$path") is not a POSIX-shell script; not modifying it — the $hook guard is NOT installed"
+    return 0
+  fi
+  # The SAME predicate --check applies, so an install cannot report success
+  # that the next `kendex check` calls unverifiable.
+  if ! gg_trusted_interpreter "$(head -n 1 "$path")"; then
+    hook_warn "$(gg_shown "$path") runs under an interpreter that cannot be verified ($(gg_shown "$(head -n 1 "$path")")); not modifying it — the $hook guard is NOT installed. Use a #! naming a shell in /bin or /usr/bin directly."
+    return 0
+  fi
+  # Idempotence keys on the EXACT delegate AT ITS POSITION — line 2, straight
+  # after the shebang. Content alone is not enough: a line that was commented
+  # out, truncated, left by an older version, or moved below hook content that
+  # exits is not an install, and each is rewritten rather than trusted.
+  if [ "$(sed -n '2p' "$path")" = "$line" ]; then
+    ensure_hook_executable "$hook" "$path"
+    return 0
+  fi
+  if [ ! -x "$path" ]; then
+    hook_warn "$(gg_shown "$path") exists but is not executable (a disabled hook); not modifying it — the $hook guard is NOT installed"
+    return 0
+  fi
+  # Read before the filter strips the marker with our line, re-asserted below:
+  # a repair must not turn a hook we created into one that looks foreign.
+  local created=0
+  grep -qxF -- "$CREATED_MARKER" "$path" 2>/dev/null && created=1
+  # Everything but the shebang and our own lines, kept in a FILE: a command
+  # substitution would strip a missing final newline, and the foreign bytes
+  # must come back exactly as they were.
+  rest="$(mktemp "$path.rest.XXXXXX")" || {
+    hook_warn "could not create a temporary file beside $(gg_shown "$path") — the $hook guard is NOT installed"
+    return 0
+  }
+  # Ours, by shape — see gg_owned_lines_re. grep -v exits 1 when it prints
+  # nothing; only >= 2 is a read failure.
+  tail -n +2 "$path" | grep -vE "$(gg_owned_lines_re)" >"$rest" || status=$?
+  if [ "$status" -gt 1 ]; then
+    rm -f -- "$rest"
+    hook_warn "could not read $(gg_shown "$path") — the $hook guard is NOT installed"
+    return 0
+  fi
+  if ! ends_with_newline "$path" && ! strip_final_newline "$rest"; then
+    rm -f -- "$rest"
+    hook_warn "could not preserve the end of $(gg_shown "$path") — the $hook guard is NOT installed"
+    return 0
+  fi
+  # Written back through the existing file, not renamed over it: the hook keeps
+  # its inode, mode, and any links a consumer's tooling holds.
+  tmp="$(mktemp "$path.tmp.XXXXXX")" || {
+    rm -f -- "$rest"
+    hook_warn "could not create a temporary file beside $(gg_shown "$path") — the $hook guard is NOT installed"
+    return 0
+  }
+  INSTALL_TMP="$tmp"
+  # The shebang is re-emitted TERMINATED even when the original file ended at
+  # it, or the delegate would run onto the interpreter line. A shebang cannot
+  # contain a newline, so the command substitution is lossless. It is kept as
+  # written: the file reached this point only by being trusted already.
+  local shebang=""
+  shebang="$(head -n 1 "$path")"
+  if ! cp -p -- "$path" "$tmp" 2>/dev/null || ! {
+    printf '%s\n' "$shebang"
+    printf '%s\n' "$line"
+    if [ "$created" -eq 1 ]; then
+      printf '%s\n' "$CREATED_MARKER"
+    fi
+    cat -- "$rest"
+  } >"$tmp" 2>/dev/null || ! mv -f -- "$tmp" "$path" 2>/dev/null; then
+    rm -f -- "$tmp" "$rest"
+    hook_warn "could not rewrite $(gg_shown "$path") — the $hook guard is NOT installed"
+    return 0
+  fi
+  rm -f -- "$rest"
+  ensure_hook_executable "$hook" "$path"
+}
+
+uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in it
+  local hook="$1" path="$HOOKS_DIR/$1" tmp="" status=0 body=0 sentinel_status=0 created=0
+  local line=""
+  line="$(call_line "$hook")"
+  [ -e "$path" ] || [ -L "$path" ] || return 0
+  if [ -L "$path" ]; then
+    # Only a target that actually carries our line is a problem: leaving it
+    # while the helper goes would block every commit. A target that cannot be
+    # inspected is unknown, and unknown is treated as carrying it.
+    sentinel_status=0
+    grep -qE "$(gg_owned_lines_re)" "$path" 2>/dev/null || sentinel_status=$?
+    if [ "$sentinel_status" -eq 0 ]; then
+      hook_warn "$(gg_shown "$path") is a symlink carrying the guard line; remove it by hand — its target is not ours to edit"
+    elif [ "$sentinel_status" -gt 1 ]; then
+      hook_warn "$(gg_shown "$path") is a symlink whose target could not be read; it was left in place"
+    fi
+    return 0
+  fi
+  [ -f "$path" ] || return 0
+  # grep exit 1 = no sentinel; >= 1 means the file could not be read, and a
+  # managed hook whose content is unknown must not be assumed clean — left
+  # behind with the helper gone it blocks every commit.
+  sentinel_status=0
+  grep -qE "$(gg_owned_lines_re)" "$path" 2>/dev/null || sentinel_status=$?
+  if [ "$sentinel_status" -gt 1 ]; then
+    hook_warn "could not read $(gg_shown "$path") to check for the guard line; it was left in place"
+    return 0
+  fi
+  [ "$sentinel_status" -eq 0 ] || return 0
+  # Read before the filter strips the marker with our line.
+  created=0
+  grep -qxF -- "$CREATED_MARKER" "$path" 2>/dev/null && created=1
+  tmp="$(mktemp "$path.tmp.XXXXXX")" || {
+    hook_warn "could not create a temporary file beside $(gg_shown "$path"); its guard line was left in place"
+    return 0
+  }
+  INSTALL_TMP="$tmp"
+  # Ours, by shape — the same rule the repair uses, so the two cannot
+  # disagree about what belongs to this installer. grep -v exits 1 when it
+  # prints nothing; only >= 2 means the read failed.
+  grep -vE "$(gg_owned_lines_re)" "$path" >"$tmp" || status=$?
+  if [ "$status" -gt 1 ]; then
+    rm -f -- "$tmp"
+    hook_warn "could not read $(gg_shown "$path"); its guard line was left in place"
+    return 0
+  fi
+  if ! ends_with_newline "$path" && ! strip_final_newline "$tmp"; then
+    rm -f -- "$tmp"
+    hook_warn "could not preserve the end of $(gg_shown "$path"); its guard line was left in place"
+    return 0
+  fi
+  # Only a hook this installer CREATED goes away outright; a consumer's own
+  # hook is rewritten without our line, even when nothing but its shebang is
+  # left, because that shebang is theirs.
+  status=0
+  body="$(grep -cvE '^([[:space:]]*|#!.*)$' "$tmp")" || status=$?
+  if [ "$status" -gt 1 ]; then
+    rm -f -- "$tmp"
+    hook_warn "could not inspect $(gg_shown "$path"); its guard line was left in place"
+    return 0
+  fi
+  if [ "$created" -eq 1 ] && [ "$body" -eq 0 ]; then
+    rm -f -- "$tmp" "$path"
+    REMOVED="$REMOVED $hook"
+    return 0
+  fi
+  # The rename is atomic and the temp already carries the hook's own mode, so
+  # no commit can catch the hook half-written.
+  if ! cp -p -- "$path" "$tmp.mode" 2>/dev/null \
+    || ! cat "$tmp" >"$tmp.mode" 2>/dev/null \
+    || ! mv -f -- "$tmp.mode" "$path" 2>/dev/null; then
+    rm -f -- "$tmp" "$tmp.mode"
+    hook_warn "could not rewrite $(gg_shown "$path"); its guard line was left in place"
+    return 0
+  fi
+  rm -f -- "$tmp"
+  REMOVED="$REMOVED $hook"
+}
+
+if [ "$MODE" = "check" ]; then
+  VERDICT=0
+  # core.hooksPath set at all stands this checker down, which is the rule the
+  # install, kendex, and the harness hook already share. Grading a redirected
+  # directory means deciding whether foreign shell text reaches our entry
+  # point when git runs it — reachability, which no reader settles, and which
+  # answered "armed" about repositories that gated nothing every time
+  # somebody wrote a hook nobody had thought of. This package reads the
+  # directory it writes, and says so under every configured value.
+  if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ]; then
+    hooks_path_origins
+    if hooks_path_off; then
+      echo "commit-guards git hooks: NOT armed — core.hooksPath is set and empty, which switches git hooks off, so commits are NOT gated; git's report of where it is set is on stderr"
+      exit 1
+    fi
+    # Where the value sends git is not claimed, because it is not measured:
+    # it may well name $HOOKS_DIR under another spelling.
+    echo "commit-guards git hooks: could not determine whether commits are gated — core.hooksPath is set ($(gg_shown "$CUSTOM_HOOKS")), and a configured hooks path is outside this verifier's contract: it reads $(gg_shown "$HOOKS_DIR") only; git's report of where it is set is on stderr, or read the configured directory yourself"
+    exit 2
+  fi
+  check_hooks_dir || VERDICT=$?
+  case "$VERDICT" in
+    0) echo "commit-guards git hooks: armed — pre-commit and commit-msg gate commits in $(gg_shown "$HOOKS_DIR")" ;;
+    1) echo "commit-guards git hooks: NOT armed — $CHECK_REASONS ($(gg_shown "$HOOKS_DIR")); run 'kendex guard install' (or this installer) to re-arm" ;;
+    *) echo "commit-guards git hooks: could not determine whether the shims are armed — $CHECK_REASONS" ;;
+  esac
+  exit "$VERDICT"
+fi
+
+# Uninstall disarms the repository, and asks nothing about who else is here.
+#
+# It would hunt for a surviving install in another work tree or another
+# nested project and keep the shims for it. Five rounds of review found five
+# holes in that hunt, the last of which — a record of armed projects that
+# only ever grew — left a repository two projects could never disarm at all.
+# Every hole was the same mistake: guessing on someone else's behalf.
+#
+# So consent is repository-level, the level the hooks themselves are at.
+# Every work tree and every nested project shares one hooks directory and one
+# set of shims, and running the installer is what arms them. Running the
+# uninstaller is what disarms them, for the repository, whoever runs it.
+if [ "$MODE" = "uninstall" ]; then
+  REMOVED=""
+  uninstall_hook pre-commit
+  uninstall_hook commit-msg
+  helper="$HOOKS_DIR/$HELPER_NAME"
+  # The helper stays while any of our lines could not go: a delegate left
+  # pointing at a missing helper blocks every commit.
+  if [ "$FAILED" -eq 0 ] \
+    && [ -f "$helper" ] && [ ! -L "$helper" ] \
+    && grep -qF -- "$HELPER_MARKER" "$helper" 2>/dev/null; then
+    rm -f -- "$helper" || {
+      hook_warn "could not remove $(gg_shown "$helper")"
+    }
+  fi
+  if [ "$FAILED" -eq 1 ]; then
+    echo "commit-guards git hooks: removal incomplete — see the warnings above ($(gg_shown "$HOOKS_DIR"))"
+    exit 1
+  fi
+  case "$REMOVED" in
+    *[!\ ]*) echo "commit-guards git hooks: removed from$REMOVED in $(gg_shown "$HOOKS_DIR")" ;;
+    *) echo "commit-guards git hooks: nothing to remove in $(gg_shown "$HOOKS_DIR")" ;;
+  esac
+  exit 0
+fi
+
+if ! write_helper "$HOOKS_DIR/$HELPER_NAME"; then
+  echo "commit-guards git hooks: NOT installed — could not write $(gg_shown "$HOOKS_DIR")/$HELPER_NAME"
+  exit 1
+fi
+install_hook pre-commit
+install_hook commit-msg
+
+if [ "$FAILED" -eq 1 ]; then
+  echo "commit-guards git hooks: incomplete — see the warnings above ($(gg_shown "$HOOKS_DIR"))"
+  exit 1
+fi
+echo "commit-guards git hooks: pre-commit and commit-msg armed in $(gg_shown "$HOOKS_DIR")"

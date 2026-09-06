@@ -68,7 +68,7 @@ fn manifest(project: &Path, catalog: &Path, tools: &str, method: &str, declarati
 }
 
 /// A hand-placed copy sitting where a catalog skill renders.
-const UNMANAGED_SKILL: &str = "---\nname: growth-guards\ndescription: keep it small\nlicense: MIT\nmetadata:\n  author: vanillagreen\n---\nThe copy already there.\n";
+const UNMANAGED_SKILL: &str = "---\nname: commit-guards\ndescription: keep it small\nlicense: MIT\nmetadata:\n  author: vanillagreen\n---\nThe copy already there.\n";
 
 /// Every item a safety block reports a finding against.
 fn flagged_items(listed: &str) -> BTreeSet<String> {
@@ -89,17 +89,17 @@ fn flagged_items(listed: &str) -> BTreeSet<String> {
     found
 }
 
-/// A project declaring two skills on two tools. `growth-guards` already
+/// A project declaring two skills on two tools. `commit-guards` already
 /// sits at both places through absolute links and is out of date by one file;
 /// `tidy` is free to install and has a finding of its own.
 #[allow(clippy::unwrap_used)]
 fn pre_rename_project(home: &Path) -> PathBuf {
     let project = home.join("dev/app");
     let catalog = home.join("catalog");
-    skill(&catalog, "growth-guards", RISKY);
-    fs::create_dir_all(catalog.join("skills/growth-guards/references")).unwrap();
+    skill(&catalog, "commit-guards", RISKY);
+    fs::create_dir_all(catalog.join("skills/commit-guards/references")).unwrap();
     fs::write(
-        catalog.join("skills/growth-guards/references/rules.md"),
+        catalog.join("skills/commit-guards/references/rules.md"),
         "the rules\n",
     )
     .unwrap();
@@ -109,10 +109,10 @@ fn pre_rename_project(home: &Path) -> PathBuf {
         &catalog,
         "[\"claude\", \"codex\"]",
         "copy",
-        "[skills.growth-guards]\nsource = \"cat\"\n\n[skills.tidy]\nsource = \"cat\"\n",
+        "[skills.commit-guards]\nsource = \"cat\"\n\n[skills.tidy]\nsource = \"cat\"\n",
     );
     for tool in [".claude", ".agents"] {
-        let at = project.join(tool).join("skills/growth-guards/references");
+        let at = project.join(tool).join("skills/commit-guards/references");
         fs::create_dir_all(&at).unwrap();
         fs::write(at.parent().unwrap().join("SKILL.md"), UNMANAGED_SKILL).unwrap();
         fs::write(at.join("rules.md"), "the older rules\n").unwrap();
@@ -147,13 +147,13 @@ fn a_blocked_refresh_ends_on_a_ledger_naming_every_outcome_and_its_next_step() {
         "the same conflict was printed once per tool: {printed}"
     );
     assert!(
-        printed.contains("conflict: skill growth-guards for Claude Code, Codex:"),
+        printed.contains("conflict: skill commit-guards for Claude Code, Codex:"),
         "the one line names every tool the conflict blocks: {printed}"
     );
     assert!(
         printed.contains(&format!(
             "  also at {}",
-            kendex_core::paths::slashed(&project.join(".agents/skills/growth-guards"))
+            kendex_core::paths::slashed(&project.join(".agents/skills/commit-guards"))
         )),
         "every position is named, so the reader can act on each: {printed}"
     );
@@ -190,7 +190,7 @@ fn a_blocked_refresh_ends_on_a_ledger_naming_every_outcome_and_its_next_step() {
     // against, so following the pointer finds what the number promised.
     assert_eq!(
         flagged_items(&printed),
-        BTreeSet::from(["growth-guards".to_owned(), "tidy".to_owned()]),
+        BTreeSet::from(["commit-guards".to_owned(), "tidy".to_owned()]),
         "the ledger's count and the block it points at disagree: {printed}"
     );
 }
@@ -544,7 +544,7 @@ fn a_verbose_refresh_says_everything_the_compact_one_does() {
         &["refresh", "-y", "-v", "--scope", "project"],
     ));
     assert!(
-        printed.contains("to keep those files: kendex adopt skill growth-guards"),
+        printed.contains("to keep those files: kendex adopt skill commit-guards"),
         "the verbose listing dropped the way out: {printed}"
     );
     assert!(

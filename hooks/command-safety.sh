@@ -60,7 +60,7 @@ levels=0
 # Registered hook layouts keep the scope's skills one or two directories
 # above hooks. A wider walk can reach executable files outside the install.
 while [ "$levels" -lt 3 ] && [ "$at" != "$root" ] && [ "$at" != / ]; do
-  candidate="$at/skills/growth-guards/scripts/lib"
+  candidate="$at/skills/commit-guards/scripts/lib"
   if [ -e "$candidate/common.sh" ] || [ -L "$candidate/common.sh" ] \
     || [ -e "$candidate/settings.sh" ] || [ -L "$candidate/settings.sh" ]; then
     lib="$candidate"
@@ -72,14 +72,14 @@ while [ "$levels" -lt 3 ] && [ "$at" != "$root" ] && [ "$at" != / ]; do
 done
 if [ -z "$lib" ]; then
   case "$hook_dir" in
-    "$root"/*) lib="$root/.agents/skills/growth-guards/scripts/lib" ;;
+    "$root"/*) lib="$root/.agents/skills/commit-guards/scripts/lib" ;;
   esac
 fi
-[ -f "$lib/common.sh" ] && [ -f "$lib/settings.sh" ] || refuse "the command-safety bundle requires the installed growth-guards settings loader"
+[ -f "$lib/common.sh" ] && [ -f "$lib/settings.sh" ] || refuse "the command-safety bundle requires the installed commit-guards settings loader"
 GG_CHECK=command-safety
-# shellcheck source=../skills/growth-guards/scripts/lib/common.sh
+# shellcheck source=../skills/commit-guards/scripts/lib/common.sh
 source "$lib/common.sh"
-# shellcheck source=../skills/growth-guards/scripts/lib/settings.sh
+# shellcheck source=../skills/commit-guards/scripts/lib/settings.sh
 source "$lib/settings.sh"
 cd -- "$root" || refuse "could not read project settings"
 pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "^$")" || refuse "could not read COMMAND_SAFETY_DENY_PATTERN"

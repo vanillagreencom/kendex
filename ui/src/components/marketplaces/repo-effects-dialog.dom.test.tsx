@@ -42,25 +42,25 @@ const PROJECT = { scope: "project" as const, root: "/home/me/app" };
 
 const guards: Disclosure = {
   declared: {
-    name: "growth-guards",
-    root: "/home/me/app/.agents/skills/growth-guards",
+    name: "commit-guards",
+    root: "/home/me/app/.agents/skills/commit-guards",
     summary: "Arms git hooks, so every commit runs the guard chain.",
     writes: [".git/hooks/pre-commit"],
     installer: "scripts/install-git-hooks",
     uninstaller: "scripts/install-git-hooks --uninstall",
     removal: "run the uninstaller before removing this package",
     notes: ["core.hooksPath is never set."],
-    companions: ["size-ratchet", "preflight"],
+    companions: ["doc-limits", "preflight"],
   },
-  name: "growth-guards",
+  name: "commit-guards",
   summary: "Arms git hooks, so every commit runs the guard chain.",
   writes: [{ path: "/home/me/app/.git/hooks/pre-commit", shared: true }],
   companions: [
-    { name: "size-ratchet", installed: true },
+    { name: "doc-limits", installed: true },
     { name: "preflight", installed: false },
   ],
   notes: ["core.hooksPath is never set."],
-  undo: "run `'.agents/skills/growth-guards/scripts/install-git-hooks' '--uninstall'` from the repository root",
+  undo: "run `'.agents/skills/commit-guards/scripts/install-git-hooks' '--uninstall'` from the repository root",
 };
 
 const show = (queue: Disclosure[], busy = false) => {
@@ -81,14 +81,14 @@ describe("the account a person reads", () => {
   it("carries what changes, where, who takes part, and how to undo it", () => {
     const body = show([guards]);
     const text = body.textContent ?? "";
-    expect(text).toContain(repoEffectsTitle("growth-guards"));
+    expect(text).toContain(repoEffectsTitle("commit-guards"));
     expect(text).toContain(guards.summary);
     // The path as core settled it, never an abbreviation: a guess at the
     // home directory names a location other than the one being authorized.
     expect(text).toContain("/home/me/app/.git/hooks/pre-commit");
     expect(text).not.toContain("~/app");
     expect(text).toContain(REPO_EFFECTS_SHARED_NOTE);
-    expect(text).toContain("size-ratchet");
+    expect(text).toContain("doc-limits");
     expect(text).toContain(COMPANION_INSTALLED);
     expect(text).toContain(COMPANION_NOT_INSTALLED);
     expect(text).toContain("core.hooksPath is never set.");

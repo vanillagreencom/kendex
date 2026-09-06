@@ -1,7 +1,7 @@
 //! Installing the commit guards, end to end on a throwaway repository.
 //!
 //! The package is the engine, so these run its real scripts: the fixture
-//! catalog carries this repository's own copy of growth-guards, and the
+//! catalog carries this repository's own copy of commit-guards, and the
 //! journey is the one a consumer takes — add the package, arm the hooks,
 //! commit the posture, clone it somewhere else, arm there, commit again.
 //! The clone is where the design is proved or not: its gate has to work
@@ -72,11 +72,11 @@ pub fn spoke(output: &std::process::Output) -> String {
 fn the_guards_travel_with_the_repository_and_gate_a_clone() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    offer(&world, "growth-guards");
-    world.run(&["add", "cat", "--skill", "growth-guards", "-y"]);
+    offer(&world, "commit-guards");
+    world.run(&["add", "cat", "--skill", "commit-guards", "-y"]);
 
     // The scripts land in the tree a commit carries.
-    let scripts = world.at(".agents/skills/growth-guards/scripts");
+    let scripts = world.at(".agents/skills/commit-guards/scripts");
     assert!(scripts.join("pre-commit").is_file());
     assert!(read(&scripts.join("install-git-hooks")).contains("install-git-hooks"));
 
@@ -106,7 +106,7 @@ fn the_guards_travel_with_the_repository_and_gate_a_clone() {
     // A clone carries the scripts and no hooks: git never clones those.
     assert!(
         clone
-            .join(".agents/skills/growth-guards/scripts/pre-commit")
+            .join(".agents/skills/commit-guards/scripts/pre-commit")
             .is_file()
     );
     assert!(!clone.join(".git/hooks/kendex-guards").exists());
@@ -129,8 +129,8 @@ fn the_guards_travel_with_the_repository_and_gate_a_clone() {
 fn disarming_before_removal_leaves_the_repository_committable() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    offer(&world, "growth-guards");
-    world.run(&["add", "cat", "--skill", "growth-guards", "-y"]);
+    offer(&world, "commit-guards");
+    world.run(&["add", "cat", "--skill", "commit-guards", "-y"]);
     world.run(&["guard", "install"]);
     assert!(world.at(".git/hooks/kendex-guards").is_file());
 
@@ -142,7 +142,7 @@ fn disarming_before_removal_leaves_the_repository_committable() {
         "the delegating line is gone"
     );
 
-    world.run(&["remove", "growth-guards"]);
+    world.run(&["remove", "commit-guards"]);
     fs::write(world.at("late.txt"), "fine\n").unwrap();
     git_without_kendex(&world.project, &["add", "-A"]);
     let ok = git_without_kendex(&world.project, &["commit", "-m", "feat: after removal"]);
@@ -161,24 +161,24 @@ fn disarming_before_removal_leaves_the_repository_committable() {
 fn removing_the_package_disarms_the_repository_first() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    offer(&world, "growth-guards");
+    offer(&world, "commit-guards");
     world.run(&[
         "add",
         "cat",
         "--skill",
-        "growth-guards",
+        "commit-guards",
         "-y",
         "--allow-repo-effects",
     ]);
     assert!(world.at(".git/hooks/kendex-guards").is_file());
 
-    let out = world.run(&["remove", "growth-guards"]);
+    let out = world.run(&["remove", "commit-guards"]);
     assert!(
-        out.contains("growth-guards: running scripts/install-git-hooks --uninstall"),
+        out.contains("commit-guards: running scripts/install-git-hooks --uninstall"),
         "the removal did not say what it ran:\n{out}"
     );
     assert!(
-        !world.at(".agents/skills/growth-guards").exists(),
+        !world.at(".agents/skills/commit-guards").exists(),
         "the package stayed:\n{out}"
     );
     assert!(
@@ -212,18 +212,18 @@ fn removing_the_package_disarms_the_repository_first() {
 fn removing_from_a_plain_directory_runs_no_uninstaller() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    offer(&world, "growth-guards");
+    offer(&world, "commit-guards");
     fs::remove_dir_all(world.at(".git")).unwrap();
-    let added = world.try_run(&["add", "cat", "--skill", "growth-guards", "-y"]);
+    let added = world.try_run(&["add", "cat", "--skill", "commit-guards", "-y"]);
     assert!(added.status.success(), "{}", spoke(&added));
 
-    let removed = world.try_run(&["remove", "growth-guards"]);
+    let removed = world.try_run(&["remove", "commit-guards"]);
     let out = spoke(&removed);
     assert!(removed.status.success(), "{out}");
     assert!(!out.contains("running scripts/install-git-hooks"), "{out}");
     assert!(out.contains("not inside a git work tree"), "{out}");
     assert!(
-        !world.at(".agents/skills/growth-guards").exists(),
+        !world.at(".agents/skills/commit-guards").exists(),
         "the package stayed:\n{out}"
     );
 }
@@ -236,28 +236,28 @@ fn removing_from_a_plain_directory_runs_no_uninstaller() {
 fn removing_a_copied_package_disarms_the_repository_too() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    offer(&world, "growth-guards");
+    offer(&world, "commit-guards");
     let out = world.run(&[
         "add",
         "cat",
         "--skill",
-        "growth-guards",
+        "commit-guards",
         "-y",
         "--copy",
         "--allow-repo-effects",
     ]);
     assert!(
-        world.at(".claude/skills/growth-guards/SKILL.md").is_file(),
+        world.at(".claude/skills/commit-guards/SKILL.md").is_file(),
         "no copy in the tool's directory:\n{out}"
     );
     assert!(world.at(".git/hooks/kendex-guards").is_file(), "{out}");
 
-    let out = world.run(&["remove", "growth-guards"]);
+    let out = world.run(&["remove", "commit-guards"]);
     assert!(
-        out.contains("growth-guards: running scripts/install-git-hooks --uninstall"),
+        out.contains("commit-guards: running scripts/install-git-hooks --uninstall"),
         "{out}"
     );
-    assert!(!world.at(".claude/skills/growth-guards").exists(), "{out}");
+    assert!(!world.at(".claude/skills/commit-guards").exists(), "{out}");
     assert!(!world.at(".git/hooks/kendex-guards").exists(), "{out}");
     fs::write(world.at("late.txt"), "fine\n").unwrap();
     git_without_kendex(&world.project, &["add", "-A"]);
@@ -278,12 +278,12 @@ fn removing_a_copied_package_disarms_the_repository_too() {
 fn removing_a_disabled_package_disarms_the_repository_too() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    offer(&world, "growth-guards");
+    offer(&world, "commit-guards");
     world.run(&[
         "add",
         "cat",
         "--skill",
-        "growth-guards",
+        "commit-guards",
         "-y",
         "--allow-repo-effects",
     ]);
@@ -293,12 +293,12 @@ fn removing_a_disabled_package_disarms_the_repository_too() {
     // renamed and the shims are left exactly where they were.
     world.declare_no_items(&["claude"]);
     let off_manifest = format!(
-        "{}\n[skills.growth-guards]\nsource = \"cat\"\nenabled = false\n",
+        "{}\n[skills.commit-guards]\nsource = \"cat\"\nenabled = false\n",
         world.manifest()
     );
     fs::write(world.at("kendex.toml"), off_manifest).unwrap();
     let off = world.run(&["apply", "-y"]);
-    let tree = world.at(".agents/skills/growth-guards");
+    let tree = world.at(".agents/skills/commit-guards");
     assert!(
         tree.join("SKILL.md.disabled").is_file() && !tree.join("SKILL.md").exists(),
         "the switch did not rename the declaration:\n{off}"
@@ -308,12 +308,12 @@ fn removing_a_disabled_package_disarms_the_repository_too() {
         "nothing disarms on the switch:\n{off}"
     );
 
-    let out = world.run(&["remove", "growth-guards"]);
+    let out = world.run(&["remove", "commit-guards"]);
     assert!(
-        out.contains("growth-guards: running scripts/install-git-hooks --uninstall"),
+        out.contains("commit-guards: running scripts/install-git-hooks --uninstall"),
         "the removal did not say what it ran:\n{out}"
     );
-    assert!(!world.at(".agents/skills/growth-guards").exists(), "{out}");
+    assert!(!world.at(".agents/skills/commit-guards").exists(), "{out}");
     assert!(
         !world.at(".git/hooks/kendex-guards").exists(),
         "the helper was left behind:\n{out}"
@@ -333,12 +333,12 @@ fn a_failing_uninstaller_keeps_the_package_installed() {
     use std::os::unix::fs::PermissionsExt;
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    offer(&world, "growth-guards");
+    offer(&world, "commit-guards");
     // The catalog's installer, wrapped: everything passes through except
     // the uninstall, which refuses.
     let installer = world
         .catalog
-        .join("skills/growth-guards/scripts/install-git-hooks");
+        .join("skills/commit-guards/scripts/install-git-hooks");
     let real = installer.with_file_name("install-git-hooks.real");
     fs::rename(&installer, &real).unwrap();
     fs::write(
@@ -351,24 +351,24 @@ fn a_failing_uninstaller_keeps_the_package_installed() {
         "add",
         "cat",
         "--skill",
-        "growth-guards",
+        "commit-guards",
         "-y",
         "--allow-repo-effects",
     ]);
     assert!(world.at(".git/hooks/kendex-guards").is_file());
 
-    let removed = world.try_run(&["remove", "growth-guards"]);
+    let removed = world.try_run(&["remove", "commit-guards"]);
     let out = spoke(&removed);
     assert!(!removed.status.success(), "the removal went ahead:\n{out}");
     assert!(out.contains("refusing to disarm"), "{out}");
     assert!(out.contains("exited 1"), "{out}");
     assert!(out.contains("its files stay in place"), "{out}");
     assert!(
-        world.at(".agents/skills/growth-guards").is_dir(),
+        world.at(".agents/skills/commit-guards").is_dir(),
         "the scripts were trashed:\n{out}"
     );
     assert!(
-        world.manifest().contains("[skills.growth-guards]"),
+        world.manifest().contains("[skills.commit-guards]"),
         "the declaration went:\n{}",
         world.manifest()
     );
@@ -386,19 +386,19 @@ fn a_failing_uninstaller_keeps_the_package_installed() {
 fn applying_a_manifest_without_the_package_disarms_first() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    offer(&world, "growth-guards");
+    offer(&world, "commit-guards");
     world.run(&[
         "add",
         "cat",
         "--skill",
-        "growth-guards",
+        "commit-guards",
         "-y",
         "--allow-repo-effects",
     ]);
     assert!(world.at(".git/hooks/kendex-guards").is_file());
 
     assert!(
-        world.manifest().contains("[skills.growth-guards]"),
+        world.manifest().contains("[skills.commit-guards]"),
         "{}",
         world.manifest()
     );
@@ -408,10 +408,10 @@ fn applying_a_manifest_without_the_package_disarms_first() {
 
     let out = world.run(&["apply", "-y"]);
     assert!(
-        out.contains("growth-guards: running scripts/install-git-hooks --uninstall"),
+        out.contains("commit-guards: running scripts/install-git-hooks --uninstall"),
         "{out}"
     );
-    assert!(!world.at(".agents/skills/growth-guards").exists(), "{out}");
+    assert!(!world.at(".agents/skills/commit-guards").exists(), "{out}");
     assert!(!world.at(".git/hooks/kendex-guards").exists(), "{out}");
     fs::write(world.at("late.txt"), "fine\n").unwrap();
     git_without_kendex(&world.project, &["add", "-A"]);
@@ -426,8 +426,8 @@ fn applying_a_manifest_without_the_package_disarms_first() {
 fn check_names_an_unarmed_repository() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    offer(&world, "growth-guards");
-    world.run(&["add", "cat", "--skill", "growth-guards", "-y"]);
+    offer(&world, "commit-guards");
+    world.run(&["add", "cat", "--skill", "commit-guards", "-y"]);
 
     let unarmed = said(&world.try_run(&["check"]));
     assert!(unarmed.contains("commit hooks"), "{unarmed}");

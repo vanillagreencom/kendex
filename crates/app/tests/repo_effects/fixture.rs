@@ -97,8 +97,8 @@ pub fn copy_tree(from: &Path, to: &Path) {
 }
 
 /// A git project subscribed to a catalog that offers the repository's own
-/// growth-guards and size-ratchet packages beside an inert one, plus a
-/// bundle carrying growth-guards, with Claude on the machine.
+/// commit-guards and doc-limits packages beside an inert one, plus a
+/// bundle carrying commit-guards, with Claude on the machine.
 #[allow(clippy::unwrap_used)]
 pub fn fixture() -> Fixture {
     empty_git_config();
@@ -110,7 +110,7 @@ pub fn fixture() -> Fixture {
         .join("../../skills")
         .canonicalize()
         .unwrap();
-    for skill in ["growth-guards", "size-ratchet"] {
+    for skill in ["commit-guards", "doc-limits"] {
         copy_tree(&shipped.join(skill), &catalog.join("skills").join(skill));
     }
     fs::create_dir_all(catalog.join("skills/deploy")).unwrap();
@@ -120,7 +120,7 @@ pub fn fixture() -> Fixture {
     )
     .unwrap();
     // A package whose installer exits clean and writes to both channels —
-    // the shipped shape of growth-guards skipping its work: the summary on
+    // the shipped shape of commit-guards skipping its work: the summary on
     // stdout, the reason and the remedy on stderr.
     let noisy = catalog.join("skills/noisy/scripts");
     fs::create_dir_all(&noisy).unwrap();
@@ -140,7 +140,7 @@ pub fn fixture() -> Fixture {
     fs::set_permissions(noisy.join("arm"), fs::Permissions::from_mode(0o755)).unwrap();
     fs::write(
         catalog.join("kendex.toml"),
-        "[bundles.guards]\ndescription = \"the commit gate\"\nskills = [\"growth-guards\"]\n",
+        "[bundles.guards]\ndescription = \"the commit gate\"\nskills = [\"commit-guards\"]\n",
     )
     .unwrap();
     fs::create_dir_all(home.join(".claude")).unwrap();

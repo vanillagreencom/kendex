@@ -61,7 +61,7 @@ A new or modified check, guard, assertion, or test ships with a must-fail contro
 - **Rust**: make illegal states unrepresentable; exhaustive matches (no `_ =>` over enums you own); enums over strings/sentinels/booleans-with-meaning. A test that hands a temporary path to code that may resolve symlinks binds its canonical root at creation and passes that binding, never the raw path; platform-only test APIs carry a `cfg` and, when the property is portable, a portable twin.
 - **Bash**: check the result of every effectful substitution, in test position too; `--` before path arguments sourced from configuration, argv, or the environment (not paths the script built itself, e.g. `mktemp -d`); no `[A-Za-z]`-class assumptions under arbitrary locales. The `set -euo pipefail` preamble, an unchecked or untrapped `mktemp` and a declaration masking a status are preflight's `fail-open`, `mktemp-trap` and `masked-returns` lanes.
 - In any `pipefail` script, never leave a pipeline unguarded when an early-closing `head` or `grep -q` can stop reading while its producer still writes: the 141 SIGPIPE status aborts the run where `errexit` fires, and in condition position, where it does not, reads as a plain false that drops the result with no error. A must-fail control for one writes its input from the shell, never `cat` reading a file, which pushes several hundred KB before it blocks and passes a buffer-sized fixture either way.
-- Measure a commit header with growth-guards' locale-stable `gg_chars`, never raw `awk length` or `wc -c`.
+- Measure a commit header with commit-guards' locale-stable `gg_chars`, never raw `awk length` or `wc -c`.
 - **TypeScript/JS**: distinguish missing from present-but-falsy (`""`, `0`) at every guard; no `any` at module boundaries. A store selector returns a stable reference: never mint an array, object or Set inside one (a fresh value re-renders forever and blanks the page).
 
 ## Comments and Prose
@@ -74,7 +74,7 @@ Do:
 Don't:
 
 - Comments that repeat the code.
-- History: a temporal marker, a date, an issue id, a review round or a conversation. For an optional audit, see [growth-guards CHECKS.md § comments](../growth-guards/CHECKS.md#comments).
+- History: a temporal marker, a date, an issue id, a review round or a conversation. For an optional audit, see [commit-guards CHECKS.md § comments](../commit-guards/CHECKS.md#comments).
 - Claims broader than what the adjacent code or assertion actually enforces.
 - A numeral counting things outside the sentence. State the property and the command that enumerates it. A numeral bound to something adjacent stays: a list in the same paragraph, a constant a check compares against, one a ratchet owns.
 

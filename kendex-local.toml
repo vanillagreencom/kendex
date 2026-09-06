@@ -234,7 +234,7 @@ harnesses = [
 ]
 enabled = true
 
-[skills.growth-guards]
+[skills.commit-guards]
 source = "."
 harnesses = [
     "claude",
@@ -333,7 +333,7 @@ harnesses = [
 ]
 enabled = true
 
-[skills.size-ratchet]
+[skills.doc-limits]
 source = "."
 harnesses = [
     "claude",

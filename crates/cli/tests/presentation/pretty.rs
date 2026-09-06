@@ -115,7 +115,7 @@ fn nothing_is_said_twice_inside_the_frame() {
     let (_, pretty) = both(&REFRESH);
     let carried = unframed(&pretty);
     for once in [
-        "conflict: skill growth-guards",
+        "conflict: skill commit-guards",
         "to keep those files:",
         "to install what kendex.toml asks for instead:",
         ": refreshed 3 changes",

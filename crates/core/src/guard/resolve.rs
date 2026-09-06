@@ -156,7 +156,7 @@ fn search_roots(repo: &super::Repo) -> Vec<PathBuf> {
 /// there. Under `--separate-git-dir` the git directory lives outside the
 /// checkout entirely, and its parent is then an unrelated directory —
 /// somebody's home, a directory of checkouts — which may hold a
-/// `growth-guards` of its own. A linked worktree would have executed that
+/// `commit-guards` of its own. A linked worktree would have executed that
 /// one: a package this repository never installed, running as its commit
 /// gate.
 ///
@@ -169,7 +169,7 @@ fn search_roots(repo: &super::Repo) -> Vec<PathBuf> {
 /// The ownership test alone answers yes for any directory INSIDE this
 /// repository's work tree, because git resolves upward — so a git directory
 /// at `<worktree>/meta/repo.git` made `<worktree>/meta` the main checkout,
-/// and a `growth-guards` under `<worktree>/meta/.agents/skills` would have
+/// and a `commit-guards` under `<worktree>/meta/.agents/skills` would have
 /// run as this repository's gate. Same repository, wrong root.
 ///
 /// The package's installer asks both questions in the same way, and where

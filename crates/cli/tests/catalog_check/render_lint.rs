@@ -17,7 +17,7 @@ fn command(home: &Path, project: &Path, program: &Path, args: &[&str]) -> Output
         .env("PATH", std::env::var("PATH").unwrap())
         // Include extensionless scripts and hooks. The shipped extractor
         // decides which installed files have a comment grammar.
-        .env("GROWTH_GUARDS_COMMENT_PATHS", "*")
+        .env("COMMIT_GUARDS_COMMENT_PATHS", "*")
         .output()
         .unwrap()
 }
@@ -60,7 +60,7 @@ fn installed_catalog_passes_comment_and_prose_lanes() {
         &project,
         &["add", "catalog", "--all", "--all-harnesses", "--copy", "-y"],
     ));
-    let scripts = project.join(".claude/skills/growth-guards/scripts");
+    let scripts = project.join(".claude/skills/commit-guards/scripts");
     let controls = [
         (
             "comments",
@@ -74,7 +74,7 @@ fn installed_catalog_passes_comment_and_prose_lanes() {
         ),
         (
             "comments",
-            ".claude/skills/growth-guards/scripts/install-git-hooks",
+            ".claude/skills/commit-guards/scripts/install-git-hooks",
             "# Regression history: #2107\n",
         ),
         (

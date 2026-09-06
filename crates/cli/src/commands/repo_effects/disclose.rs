@@ -87,7 +87,7 @@ fn print(disclosure: &Disclosure) {
         // The names and whether each is here, and nothing about what that
         // means. What a companion's presence or absence does is the
         // package's own contract, and kendex stating it here would state
-        // growth-guards' for every package that declares any. A package
+        // commit-guards' for every package that declares any. A package
         // with something to say about its companions says it in `notes`.
     }
     for note in &disclosure.notes {

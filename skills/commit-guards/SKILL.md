@@ -1,0 +1,102 @@
+---
+name: commit-guards
+description: "Load to add, tune, or debug a commit guard lane, its git hooks, or COMMIT_GUARDS_* settings."
+summary: "Commit guards for markers, bytes, suppressions, conflicts, changelog, prose, markdown and commit messages, plus an optional comment audit and git hook shims."
+license: MIT
+user-invocable: true
+metadata:
+  author: vanillagreen
+  source: kendex
+  repository: "https://github.com/vanillagreencom/kendex"
+  bugs: "https://github.com/vanillagreencom/kendex/issues"
+  version: "1.0.0"
+tags: [automation]
+repo-effects:
+  summary: "Arms git pre-commit and commit-msg hooks, so every commit in this repository runs the guard chain, for everyone who commits here, not only for kendex."
+  writes:
+    - ".git/hooks/kendex-guards"
+    - ".git/hooks/pre-commit"
+    - ".git/hooks/commit-msg"
+  installer: "scripts/install-git-hooks"
+  uninstaller: "scripts/install-git-hooks --uninstall"
+  removal: "kendex guard uninstall, or any kendex CLI verb that drops the package (remove, an apply or refresh that takes it away, marketplace unsubscribe --remove-packages) runs the uninstaller before the files go; it drops only the helper and one marked line, leaving any hook you wrote. Deleting the package any other way leaves shims that exec scripts which are gone and fail every commit closed"
+  companions:
+    - "doc-limits"
+    - "preflight"
+  notes:
+    - "A missing companion is announced and skipped, as is a repo-local doc-limits that rejects --staged and preflight on a first commit; every other companion or guard failure blocks the commit."
+    - "Both hooks block on nonzero results; Git's no-verify flag bypasses both for one commit."
+    - "Git does not clone hooks; arm every clone once."
+---
+
+# Commit Guards
+
+```bash
+.agents/skills/commit-guards/scripts/commit-guards              # batch: every enabled repo check
+.agents/skills/commit-guards/scripts/commit-guards all --staged # the same batch at commit scope
+.agents/skills/commit-guards/scripts/commit-guards todo-ban     # one check by name, flags pass through
+.agents/skills/commit-guards/scripts/md-reflow PATH...          # rewrite markdown to the format md-format judges
+.agents/skills/commit-guards/scripts/install-git-hooks          # arm the git pre-commit/commit-msg shims
+.agents/skills/commit-guards/scripts/install-git-hooks --check  # read-only: are the shims still armed?
+```
+
+## The checks
+
+| Check | Verdict |
+|---|---|
+| **todo-ban** | Any work marker (TODO, FIXME, HACK, XXX in comment-marker shapes) in a tracked, non-excluded file fails. No baseline. |
+| **byte-ceiling** | A new tracked file over the configured ceiling fails; an existing oversized file may hold or shrink but may not grow; lockfiles are exempt. |
+| **suppression-ban** | Blanket lint suppressions fail; reasonless Rust dead or unused allows may only tighten against the baseline. |
+| **conflict-markers** | An unresolved merge-conflict marker in a tracked, non-excluded file fails. |
+| **changelog-entries** | Each `COMMIT_GUARDS_CHANGELOG_PATHS` fragment is one Markdown list item in a Keep a Changelog section and at most `COMMIT_GUARDS_CHANGELOG_CAP` characters. |
+| **prose** | A history reference in Markdown named by `COMMIT_GUARDS_PROSE_PATHS` fails; `COMMIT_GUARDS_CHECKS` controls whether the lane runs. |
+| **md-format** | A hard-wrapped paragraph or list item, a missing blank line around a heading, fence or list, or a trailing-double-space break in Markdown named by `COMMIT_GUARDS_MD_PATHS` fails; `md-reflow` is the remedy. |
+| **md-refs** | A relative link, a link followed by `§` and a heading prefix, a `<path>.md § Heading` or `<path>.md#anchor` code-span citation, or a decision ID in Markdown named by `COMMIT_GUARDS_MD_REFS_PATHS` that lands on no tracked file, heading or decision fails. |
+| **comments** | A history reference in the comment text of a source file named by `COMMIT_GUARDS_COMMENT_PATHS` fails: an issue id (`GH_ISSUE_PATTERN`), `#NNN`, or a date. Optional audit; see [CHECKS.md § comments](CHECKS.md#comments). |
+| **commit-msg** | The header must be `type(scope)!: subject` within `COMMIT_GUARDS_SUBJECT_MAX`; a commit touching `COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS` also owes a changelog entry or `[no-changelog]`. |
+
+Full check shapes and scopes: [CHECKS.md](CHECKS.md).
+
+Exit codes: `0` clean, `1` violations, `2` usage, configuration, or collection error. An unmerged entry in a scanned path is a collection error.
+
+## Git hooks
+
+Run `scripts/install-git-hooks [--repo PATH]` to arm the shims.
+
+Pre-commit order: `doc-limits --staged` when installed -> `preflight --staged` when installed -> `commit-guards all --staged` -> `COMMIT_GUARDS_PRE_COMMIT_LOCAL` when configured. `commit-msg` runs the message gate.
+
+Arming and disarming apply to the whole repository. Disarm before removing the skill. Ownership and layering: [README.md § Git hooks](README.md#git-hooks); install mechanics: [DEVELOPMENT.md § Git hook install contract](DEVELOPMENT.md#git-hook-install-contract).
+
+## Configuration
+
+Exclude immutable first-party sources, including applied SQL migrations, from the comments and prose lanes through their shared excludes lists. Keep preflight’s `applied-migration-edited` lane enabled as the authority on migration bytes. Set `PREFLIGHT_MIGRATION_GLOBS` for excluded migration paths outside that lane’s defaults.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `COMMIT_GUARDS_CHECKS` | `todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs` | Batch check list (`commit-msg` never batches). |
+| `COMMIT_GUARDS_TODO_EXCLUDES` | `tools/todo-ban-excludes` | todo-ban exclusion list. |
+| `COMMIT_GUARDS_BYTE_CEILING_KB` | `200` | Byte ceiling in KB. |
+| `COMMIT_GUARDS_BYTE_EXCLUDES` | `tools/byte-ceiling-excludes` | byte-ceiling exclusion list (declared asset trees). |
+| `COMMIT_GUARDS_SUPPRESSION_EXCLUDES` | `tools/suppression-ban-excludes` | suppression-ban exclusion list. |
+| `COMMIT_GUARDS_SUPPRESSION_BASELINE` | `tools/suppression-baseline.tsv` | Bare-allow ratchet baseline. |
+| `COMMIT_GUARDS_CONFLICT_EXCLUDES` | `tools/conflict-markers-excludes` | conflict-markers exclusion list. |
+| `COMMIT_GUARDS_CHANGELOG_CAP` | `200` | Characters per changelog entry. |
+| `COMMIT_GUARDS_CHANGELOG_PATHS` | `changelog.d/*/*.md` | Space-separated globs naming the changelog fragments, matched against the full repo-relative path (`*` crosses `/`). |
+| `COMMIT_GUARDS_CHANGELOG_RECORD` | `CHANGELOG.md` | The collation destination; empty disables collation. |
+| `COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS` | *(empty)* | Globs whose change obliges a changelog entry, judged by `commit-msg`; empty switches the rule off. |
+| `COMMIT_GUARDS_PROSE_PATHS` | `SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md` | Space-separated globs naming the markdown the prose lane scans, matched against the full repo-relative path (`*` crosses `/`). |
+| `COMMIT_GUARDS_MD_PATHS` | `*.md` | Globs naming the markdown md-format and md-reflow take under `--all`. |
+| `COMMIT_GUARDS_MD_REFS_PATHS` | the `COMMIT_GUARDS_PROSE_PATHS` default | Globs naming the markdown md-refs judges under `--all`. |
+| `COMMIT_GUARDS_MD_EXCLUDES` | `tools/md-excludes` | Exclusion list both markdown lanes honour in every scope, and md-reflow under `--staged` and `--all`. |
+| `COMMIT_GUARDS_MD_SCOPE` | `touched` | With neither flag, `touched` runs md-format on staged files and md-refs on all configured documents when anything is staged; `all` checks every matching file. |
+| `DECISIONS_DIR`, `DECISION_ID_PREFIX`, `DECISION_ID_WIDTH` | `docs/decisions`, `D`, `3` | The decider skill's scheme, read by md-refs to judge decision IDs; IDs are not judged where the directory is not tracked. |
+| `COMMIT_GUARDS_COMMENT_PATHS` | the extensions in [CHECKS.md § comments](CHECKS.md#comments) | Space-separated globs naming the source files the comments lane scans, matched against the full repo-relative path (`*` crosses `/`); replaces the default. |
+| `COMMIT_GUARDS_COMMENT_EXCLUDES` | `tools/comments-excludes` | comments exclusion list (generated, vendored, and immutable first-party files). `GH_ISSUE_PATTERN` (the github skill's key) declares the tracker ID shape; empty leaves ID checks inactive. |
+| `COMMIT_GUARDS_COMMENT_REFERENCE_TYPES` | `issue-id issue-number date` | Reference classes the comments lane checks; name at least one type. |
+| `COMMIT_GUARDS_COMMIT_TYPES` | `build chore ci docs feat fix perf refactor revert style test` | Accepted commit types. |
+| `COMMIT_GUARDS_SUBJECT_MAX` | `72` | Characters allowed in a hand-written commit header. |
+| `COMMIT_GUARDS_PRE_COMMIT_LOCAL` | *(empty)* | Repo-root-relative executable the pre-commit shim runs last. |
+
+Settings follow [README.md § Settings](README.md#settings). `COMMIT_GUARDS_SETTINGS_FILE=/dev/null` skips file sources; `COMMIT_GUARDS_CHANGELOG_COLLATE=1` is environment-only, authorizes `--collate` on a clean index and working tree, and lets `commit-msg` count a record change as the release changelog entry.
+
+**Excludes format.** `pattern<TAB>reason` per line (shell glob against the full repo-relative path; `*` crosses `/`); a pattern without a reason is a config error. A pattern opening with `!` carves its matches back into the scanned set, and wins over every exclusion row whatever the order. That is how hand-written source inside an otherwise excluded render tree (`.agents/**` plus `!.agents/skills/my-skill/**`) stays governed. To exclude a path that literally begins with `!`, escape it: `\!foo`. **Baseline format.** `path<TAB>count`, `LC_ALL=C` sorted, unique paths, positive counts. Initial suppression baseline: [CHECKS.md § suppression-ban](CHECKS.md#suppression-ban). Hook install and removal details: [DEVELOPMENT.md](DEVELOPMENT.md).

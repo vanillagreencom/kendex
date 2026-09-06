@@ -49,8 +49,8 @@ skills = [
   "code-quality",
   "docs-writing",
   "deep-research",
-  "growth-guards",
-  "size-ratchet",
+  "commit-guards",
+  "doc-limits",
   "preflight",
 ]
 hooks = [
@@ -133,15 +133,15 @@ hooks = [
   "doc-drift-check",
 ]
 skills = [
-  "growth-guards",
-  "size-ratchet",
+  "commit-guards",
+  "doc-limits",
   "preflight",
 ]
 
 [bundles.command-safety]
 description = "Project-defined shell command restrictions"
 hooks = ["command-safety"]
-skills = ["growth-guards"]
+skills = ["commit-guards"]
 
 # Skill mappings per agent — always loaded into context.
 [agent-skills]

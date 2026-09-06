@@ -132,7 +132,7 @@ pub(super) fn fold_commit_hooks(
                     ),
                     Ok(true) => (
                         Class::Unknown,
-                        relayed("the growth-guards installer", error.to_string()),
+                        relayed("the commit-guards installer", error.to_string()),
                     ),
                     Err(search) => {
                         fold_unknown(checked, "the skills directories", &search);
@@ -211,9 +211,9 @@ fn verdict_of(
         return Some((
             Class::Unknown,
             relayed(
-                "the growth-guards installer",
+                "the commit-guards installer",
                 format!(
-                    "the growth-guards installer exited {} with no verdict, so commit hooks could not be checked — its own words were: {}",
+                    "the commit-guards installer exited {} with no verdict, so commit hooks could not be checked — its own words were: {}",
                     report.code,
                     words_of(report)
                 ),
@@ -242,7 +242,7 @@ fn verdict_of(
                 _ => Class::Unknown,
             },
             relayed(
-                "the growth-guards installer (`kendex guard check` prints it)",
+                "the commit-guards installer (`kendex guard check` prints it)",
                 with_aside(said, &report.stderr),
             ),
         )),
@@ -264,7 +264,7 @@ fn verdict_of(
 /// drive the real package and expect an armed repository to report nothing:
 /// a prefix that stopped matching folds a clean check as could-not-check,
 /// and those go red.
-const SUMMARY: &str = "growth-guards git hooks:";
+const SUMMARY: &str = "commit-guards git hooks:";
 
 /// Whatever the installer put on either stream, for a line that has to
 /// carry words in place of a verdict. Both streams, because a run that
@@ -309,7 +309,7 @@ fn installed_here(env: &Env, scope: &kendex_core::model::Scope) -> bool {
         // choice they already made.
         //
         // And the SKILL of that name, not anything of that name. A name is
-        // not unique across kinds — an agent called growth-guards is a
+        // not unique across kinds — an agent called commit-guards is a
         // legal thing to install — and reading one as consent to a commit
         // gate reports hook drift, every session, at a project that never
         // asked for hooks and has no way to make the report stop.

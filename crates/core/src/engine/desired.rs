@@ -7,7 +7,7 @@ use crate::hash::{hash_bytes, hash_files};
 use crate::lock::Lock;
 use crate::manifest::{ItemDecl, Manifest, Method};
 use crate::model::{HarnessId, ItemKind, Scope};
-use crate::source::{SourceState, find_item};
+use crate::source::{SourceConfig, SourceState, find_item, list_items};
 use crate::source_read::SealedSource;
 
 use super::desired_item::{build, no_harness_note};
@@ -294,7 +294,7 @@ fn compute(
                 state.mark_incomplete();
                 state
                     .notes
-                    .push(format!("{name}: not found in source '{}'", decl.source));
+                    .push(not_offered_note(&sealed, &config, kind, name, &decl.source));
                 continue;
             };
             state.processed.insert((kind, name.clone()));
@@ -383,4 +383,30 @@ impl ItemCtx<'_> {
             .get(&kind)
             .is_some_and(|forks| forks.contains_key(self.name))
     }
+}
+
+/// The note for a declaration the catalog does not carry. It names what the
+/// source does offer of that kind, so a declaration left on a name the
+/// catalog retired reads its remedy in the line that refuses it.
+fn not_offered_note(
+    sealed: &SealedSource,
+    config: &SourceConfig,
+    kind: ItemKind,
+    name: &str,
+    source: &str,
+) -> String {
+    let mut offered = list_items(sealed, config, kind);
+    offered.sort();
+    offered.dedup();
+    if offered.is_empty() {
+        return format!(
+            "{name}: not found in source '{source}', which offers no {}",
+            kind.name()
+        );
+    }
+    format!(
+        "{name}: not found in source '{source}' — its {}s are {}; declare one of those",
+        kind.name(),
+        offered.join(", ")
+    )
 }

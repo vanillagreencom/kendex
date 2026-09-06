@@ -264,7 +264,7 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   # /dev/null is the force-defaults handle: it selects NO settings source at
   # all, the dotenv layer included. Keeping that in one place — here, ahead
   # of every source — is what keeps this loader and the copies vendored from
-  # it (size-ratchet, growth-guards) answering the sentinel identically.
+  # it (doc-limits, commit-guards) answering the sentinel identically.
   if [ "${REVIEW_GATE_SETTINGS_FILE:-}" = "/dev/null" ]; then
     printf '%s' "$default"
     return 0

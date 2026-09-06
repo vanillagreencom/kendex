@@ -25,4 +25,4 @@ The author identifies the document type and reads its rules in [SKILL.md](SKILL.
 ## Settings
 
 - Add repository writing instructions in `kendex.toml` under `[skill-instructions]`. kendex includes them in the installed skill.
-- Set `SIZE_RATCHET_CLASSES` in `kendex.settings.toml` under `[env]` when the project needs different file limits. [../size-ratchet/README.md](../size-ratchet/README.md) § Path classes defines the format.
+- Set `DOC_LIMITS_CLASSES` in `kendex.settings.toml` under `[env]` when the project needs different file limits. [../doc-limits/README.md](../doc-limits/README.md) § Path classes defines the format.

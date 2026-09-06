@@ -1,6 +1,6 @@
 //! The repository a guard verb is standing in.
 //!
-//! Small on purpose. kendex arms hooks through the growth-guards package
+//! Small on purpose. kendex arms hooks through the commit-guards package
 //! and does not reason about them: it needs to know
 //! which repository it is in and where the package's scripts should be run
 //! from. Where the hook files sit, and what "armed" means, belong to the

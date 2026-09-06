@@ -32,5 +32,5 @@ Set these values in `kendex.settings.toml` under `[env]`, in `.kendex/settings.t
 ## Wiring
 
 - Validation: run it ahead of the project's own build, lint and test command.
-- Commit time: where `growth-guards` is installed, its pre-commit chain runs `preflight --staged` itself. Any other hook calls the script with `--staged`; the chain's `GROWTH_GUARDS_PRE_COMMIT_LOCAL` lane runs its executable with no arguments, so wiring preflight there needs a wrapper that adds the flag.
+- Commit time: where `commit-guards` is installed, its pre-commit chain runs `preflight --staged` itself. Any other hook calls the script with `--staged`; the chain's `COMMIT_GUARDS_PRE_COMMIT_LOCAL` lane runs its executable with no arguments, so wiring preflight there needs a wrapper that adds the flag.
 - CI: `preflight --base origin/<default-branch>` on the PR head. The installed skill must be committed: a CI checkout sees tracked files only, never a machine-local `.agents` symlink.

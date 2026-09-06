@@ -101,9 +101,9 @@ new_repo() {
   mkdir -p "$dir"
   git -C "$dir" init -q
   # A script that announces itself if anything runs it. Nothing may.
-  mkdir -p "$dir/.agents/skills/growth-guards/scripts"
-  printf '#!/usr/bin/env bash\necho ran >>"%s"\n' "$RAN_LOG" >"$dir/.agents/skills/growth-guards/scripts/pre-commit"
-  chmod +x "$dir/.agents/skills/growth-guards/scripts/pre-commit"
+  mkdir -p "$dir/.agents/skills/commit-guards/scripts"
+  printf '#!/usr/bin/env bash\necho ran >>"%s"\n' "$RAN_LOG" >"$dir/.agents/skills/commit-guards/scripts/pre-commit"
+  chmod +x "$dir/.agents/skills/commit-guards/scripts/pre-commit"
   printf '%s' "$dir"
 }
 UNARMED="$(new_repo unarmed)"

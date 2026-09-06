@@ -3,13 +3,13 @@
 # shipped checks. The controls below run those checks on the same defects.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
-unset SIZE_RATCHET_CLASSES SIZE_RATCHET_DEFAULT_CLASSES SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE
+unset DOC_LIMITS_CLASSES DOC_LIMITS_DEFAULT_CLASSES DOC_LIMITS_EXCLUDES DOC_LIMITS_SETTINGS_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARD="$(cd "$TEST_DIR/.." && pwd)/guard"
 REPO="$(cd "$TEST_DIR/../.." && pwd)"
-CHANGELOG_ENTRIES="$REPO/.agents/skills/growth-guards/scripts/changelog-entries"
-RATCHET="$REPO/.agents/skills/size-ratchet/scripts/size-ratchet"
+CHANGELOG_ENTRIES="$REPO/.agents/skills/commit-guards/scripts/changelog-entries"
+RATCHET="$REPO/.agents/skills/doc-limits/scripts/doc-limits"
 REAL_GIT="$(command -v git)"
 REAL_AWK="$(command -v awk)"
 TMP="$(mktemp -d)"
@@ -296,8 +296,8 @@ SR_OUT=""
 SR_RC=0
 SR_OUT="$(cd "$R" && "$RATCHET" 2>&1)" || SR_RC=$?
 [ "$SR_RC" -eq 1 ] && case "$SR_OUT" in *"AGENTS.md: 16385 bytes > 16384 bytes"*) true ;; *) false ;; esac \
-  && ok "control: size-ratchet refuses the oversized document guard passed" \
-  || bad "control: size-ratchet refuses the oversized document guard passed" "rc=$SR_RC out=$SR_OUT"
+  && ok "control: doc-limits refuses the oversized document guard passed" \
+  || bad "control: doc-limits refuses the oversized document guard passed" "rc=$SR_RC out=$SR_OUT"
 # The control for the changelog: the package lane that owns fragments
 # refuses both defects, so that silence is a delegation too.
 CE_OUT=""
@@ -712,7 +712,7 @@ printf '[lints]\nworkspace = true\n' >"$R/crates/cli/Cargo.toml"
 printf 'fn first() {}\n' >"$R/crates/core/src/lib.rs"
 printf 'fn first() {}\n' >"$R/crates/cli/src/lib.rs"
 printf '{}\n' >"$R/ui/package.json"
-printf '[env]\nGROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = "crates/* ui/*"\n' >"$R/kendex.settings.toml"
+printf '[env]\nCOMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = "crates/* ui/*"\n' >"$R/kendex.settings.toml"
 cat >"$R/fake-bin/cargo" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail

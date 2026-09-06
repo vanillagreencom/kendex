@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-# The marker the growth-guards installer ends every hook line it writes with.
+# The marker the commit-guards installer ends every hook line it writes with.
 MARKER="# kendex-guards-hook"
 
 # jq is the only reader of the payload, and grep is what reads the marker out of

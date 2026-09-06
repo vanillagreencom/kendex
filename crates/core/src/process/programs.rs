@@ -140,7 +140,7 @@ impl Hardened {
         }
     }
 
-    /// A hook body the growth-guards package ships, run from the repository
+    /// A hook body the commit-guards package ships, run from the repository
     /// root as the commit gate.
     ///
     /// The one child here that deliberately keeps git's redirect variables.
@@ -161,7 +161,7 @@ impl Hardened {
         hardened
     }
 
-    /// A management script the growth-guards package ships — arming,
+    /// A management script the commit-guards package ships — arming,
     /// disarming, or reporting on the shims.
     ///
     /// Not a hook body, so it gets the ordinary scrub. These run git

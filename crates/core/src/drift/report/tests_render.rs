@@ -142,7 +142,7 @@ fn a_manifest_this_build_cannot_read_reads_as_could_not_check() {
 fn a_line_kendex_composed_is_named_in_full() {
     let deep = format!("/private/var/folders/{}/proj/.git/hooks", "d".repeat(200));
     let text = format!(
-        "growth-guards armed the commit hooks, so every commit fails until {deep}/pre-commit, {deep}/commit-msg are dealt with"
+        "commit-guards armed the commit hooks, so every commit fails until {deep}/pre-commit, {deep}/commit-msg are dealt with"
     );
     let mut report = check_report();
     fold(&mut report, "commit hooks", Class::Drift, Text::Own(text));
@@ -212,7 +212,7 @@ fn a_relayed_line_past_the_bound_is_replaced_rather_than_cut() {
     // against `RELAYED_CHARS` grows with it, so raising the bound left this
     // green and the bound unproven. 4000 is the same absolute size the
     // fragment bound is pinned at below.
-    let payload = "the growth-guards installer said something very long. ".repeat(75);
+    let payload = "the commit-guards installer said something very long. ".repeat(75);
     assert_eq!(payload.chars().count(), 4050);
     assert!(
         payload.chars().count() > RELAYED_CHARS,
@@ -223,7 +223,7 @@ fn a_relayed_line_past_the_bound_is_replaced_rather_than_cut() {
         "commit hooks",
         Class::Drift,
         Text::Relayed {
-            producer: "the growth-guards installer".to_owned(),
+            producer: "the commit-guards installer".to_owned(),
             line: payload.clone(),
         },
     );
@@ -234,7 +234,7 @@ fn a_relayed_line_past_the_bound_is_replaced_rather_than_cut() {
         "the reader is not told what happened: {line}"
     );
     assert!(
-        line.contains("the growth-guards installer"),
+        line.contains("the commit-guards installer"),
         "the reader is not told who to ask: {line}"
     );
     // Not one character of it, so no reader can act on a fragment of a
@@ -263,7 +263,7 @@ fn a_relayed_line_past_the_bound_is_replaced_rather_than_cut() {
 fn a_relayed_line_within_the_bound_keeps_its_every_word() {
     let mut report = check_report();
     let verdict = format!(
-        "growth-guards git hooks: NOT armed — {} ({}); run 'kendex guard install' to re-arm",
+        "commit-guards git hooks: NOT armed — {} ({}); run 'kendex guard install' to re-arm",
         "helper kendex-guards was not written by this installer, ".repeat(4),
         "/a/path".repeat(20)
     );
@@ -274,7 +274,7 @@ fn a_relayed_line_within_the_bound_keeps_its_every_word() {
         "commit hooks",
         Class::Unknown,
         Text::Relayed {
-            producer: "the growth-guards installer".to_owned(),
+            producer: "the commit-guards installer".to_owned(),
             line: verdict.clone(),
         },
     );

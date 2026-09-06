@@ -323,7 +323,7 @@ describe("answering", () => {
 // before its scripts go. That is not the second question the dialog asks;
 // it already happened, and the window says so.
 describe("what an install says about a package that left with it", () => {
-  const RAN = "growth-guards: running scripts/install-git-hooks --uninstall";
+  const RAN = "commit-guards: running scripts/install-git-hooks --uninstall";
 
   it("says what the install ran in the repository", async () => {
     vi.mocked(commands.marketplaceInstall).mockResolvedValue({

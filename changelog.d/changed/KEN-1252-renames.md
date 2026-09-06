@@ -1,0 +1,1 @@
+- **Breaking**: `growth-guards` is now `commit-guards` and `size-ratchet` is now `doc-limits`; keys are `COMMIT_GUARDS_*` and `DOC_LIMITS_*`. Rename declarations and keys, then run `kendex apply`.

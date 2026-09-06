@@ -12,7 +12,7 @@ const FRAMED: [&[&str]; 6] = [
     &["add", "{catalog}", "--skill", "tidy", "-y"],
     &[
         "remove",
-        "growth-guards",
+        "commit-guards",
         "--no-sweep",
         "--scope",
         "project",
@@ -29,7 +29,7 @@ const UNFRAMED: [&[&str]; 4] = [
     &["list"],
     &["source", "list"],
     &["init"],
-    &["show", "skill", "growth-guards"],
+    &["show", "skill", "commit-guards"],
 ];
 
 fn ran(ui: &str, args: &[&str]) -> Ran {

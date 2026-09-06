@@ -314,7 +314,7 @@ describe("audit store run() actions", () => {
       data: {
         ...emptyView,
         undone: [
-          "growth-guards: running scripts/install-git-hooks --uninstall",
+          "commit-guards: running scripts/install-git-hooks --uninstall",
         ],
       },
     });
@@ -322,7 +322,7 @@ describe("audit store run() actions", () => {
     await useAuditStore.getState().removeItem(globalScope, "skill", "guards");
 
     expect(toast.message).toHaveBeenCalledWith(
-      "growth-guards: running scripts/install-git-hooks --uninstall",
+      "commit-guards: running scripts/install-git-hooks --uninstall",
     );
   });
 

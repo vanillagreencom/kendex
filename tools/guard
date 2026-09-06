@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # kendex guardrails — the repo-specific rules, run as the last lane of the
-# growth-guards pre-commit chain (GROWTH_GUARDS_PRE_COMMIT_LOCAL). Every rule
-# a shipped package already judges is that package's: size-ratchet caps document
+# commit-guards pre-commit chain (COMMIT_GUARDS_PRE_COMMIT_LOCAL). Every rule
+# a shipped package already judges is that package's: doc-limits caps document
 # bytes, byte-ceiling protects against large files,
 # changelog-entries judges changelog fragments, todo-ban catches work markers, suppression-ban catches blanket
 # allows, conflict-markers catches merge markers, prose keeps history out of
@@ -265,7 +265,7 @@ rust_manifests=()
 ui_changed="$FULL"
 if [ "$FULL" -eq 0 ]; then
   GG_CHECK=guard
-  GUARDS="$TOOLS_DIR/../.agents/skills/growth-guards/scripts"
+  GUARDS="$TOOLS_DIR/../.agents/skills/commit-guards/scripts"
   source "$GUARDS/lib/common.sh"
   gg_tmpdir
   GUARD_TMP="$GG_TMP"
