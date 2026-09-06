@@ -503,9 +503,14 @@ tmux_wait_launched() {
 #   0  a ready, empty composer: re-send the brief
 #   2  the launch took after all: send nothing more
 #   1  neither within the window: the stuck or dead pane the failure exit is for
+# The loop READS before it decides whether it may still nudge, so the Enter of
+# the final pass is observed like every other: a dialog it dismissed or a draft
+# it submitted lands after the last nudge, and testing the budget before the
+# capture would report that lane stuck. At ORCH_TMUX_VERIFY_SECS=1 that is the
+# only Enter there is.
 tmux_wait_composer() {
   local pane="$1" brief="$2" waited=0 screen
-  while (( waited < TMUX_VERIFY_SECS )); do
+  while :; do
     # VISIBLE viewport only (no -S -): readiness is a property of the
     # current screen — a footer buried in scrollback behind a first-run
     # dialog must not read as "composer ready" and send the brief into the
@@ -517,11 +522,11 @@ tmux_wait_composer() {
     screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 1
     lane_launched "$screen" "$brief" && return 2
     grep -Eq -- "$READY_RE" <<<"$screen" && return 0
+    (( waited < TMUX_VERIFY_SECS )) || return 1
     tmux send-keys -t "$pane" Enter || return 1
     sleep 1
     waited=$((waited + 1))
   done
-  return 1
 }
 
 # The last layer before any window opens. A launch whose working directory is
@@ -592,7 +597,7 @@ open_tmux() {
   local composer_rc=0
   tmux_wait_composer "$pane" "$brief" || composer_rc=$?
   if (( composer_rc == 2 )); then
-    echo "'$title' is already working; the launch took (its brief never read as delivered)"
+    echo "Confirmed '$title' launched while waiting for its composer; nothing further sent"
     return 0
   fi
   if (( composer_rc != 0 )); then
