@@ -1194,10 +1194,26 @@ create_issue() {
     require_agent_routing_label "$labels" "$no_agent_label" || return 1
     require_issue_reach "$description" "$priority" "$review_born" || return 1
 
-    # Same rule as the label pre-resolution below, for a refusal that needs no
-    # API call at all: a milestone name with no --project can only be refused,
-    # and refusing it after the upload strands the asset in Linear storage.
-    require_milestone_project "$milestone" "$project" || return 1
+    # Resolve --project and --milestone BEFORE uploading, for the reason the
+    # label pre-resolution below states: each can still refuse — an unknown
+    # project, a milestone name with no project, an ambiguous one, a failed
+    # lookup — and a refusal after the upload strands the asset in Linear
+    # storage with no issue referencing it. The ids they yield are what the
+    # input below carries.
+    local project_id=""
+    if [ -n "$project" ]; then
+        project_id=$(resolve_project_id "$project")
+        if [ -z "$project_id" ]; then
+            return 1
+        fi
+    fi
+    local milestone_id=""
+    if [ -n "$milestone" ]; then
+        milestone_id=$(resolve_milestone_id "$milestone" "$project_id")
+        if [ -z "$milestone_id" ]; then
+            return 1
+        fi
+    fi
 
     # --attach: refuse unreadable paths before any API call, then upload
     # (uploads run only after the routing guard above has passed). Images
@@ -1293,14 +1309,8 @@ create_issue() {
         fi
     fi
 
-    # Handle project (auto-resolves name or UUID). The id outlives this block:
-    # milestone resolution below is scoped to it.
-    local project_id=""
-    if [ -n "$project" ]; then
-        project_id=$(resolve_project_id "$project")
-        if [ -z "$project_id" ]; then
-            return 1
-        fi
+    # Resolved above, before the attachment upload.
+    if [ -n "$project_id" ]; then
         input_parts+=("\"projectId\": \"$project_id\"")
     fi
 
@@ -1348,15 +1358,8 @@ create_issue() {
         input_parts+=("\"parentId\": \"$requested_parent_id\"")
     fi
 
-    # Handle milestone (auto-resolves name or UUID, fail fast on miss). A name
-    # is resolved inside the project resolved above; with none, the argument
-    # check above refused before any upload.
-    if [ -n "$milestone" ]; then
-        local milestone_id
-        milestone_id=$(resolve_milestone_id "$milestone" "$project_id")
-        if [ -z "$milestone_id" ]; then
-            return 1
-        fi
+    # Resolved above, before the attachment upload.
+    if [ -n "$milestone_id" ]; then
         input_parts+=("\"projectMilestoneId\": \"$milestone_id\"")
     fi
 
@@ -1690,7 +1693,6 @@ update_issue() {
     # it is in would move it to satisfy a lookup.
     local issue_project_id
     issue_project_id=$(echo "$issue_result" | jq -r '.issue.project.id // empty')
-    local milestone_scope="${project:-$issue_project_id}"
 
     # Same rule as the label resolution below, applied to the pure argument
     # check: a combination that can only be refused must be refused before any
@@ -1699,7 +1701,24 @@ update_issue() {
         echo '{"error": "Use either --labels <names> or --clear-labels, not both"}' >&2
         return 1
     fi
-    require_milestone_project "$milestone" "$milestone_scope" || return 1
+    # Resolved before the attachment upload below, for the reason the label
+    # resolution states: an unknown project, a milestone name with no project,
+    # an ambiguous one and a failed lookup all still refuse, and a refusal
+    # after the upload strands the asset in Linear storage.
+    local project_id=""
+    if [ -n "$project" ]; then
+        project_id=$(resolve_project_id "$project")
+        if [ -z "$project_id" ]; then
+            return 1
+        fi
+    fi
+    local milestone_id=""
+    if [ -n "$milestone" ]; then
+        milestone_id=$(resolve_milestone_id "$milestone" "${project_id:-$issue_project_id}")
+        if [ -z "$milestone_id" ]; then
+            return 1
+        fi
+    fi
 
     # Resolve --labels BEFORE any attachment upload: an unresolvable label
     # refuses the whole update below, and an upload done first would strand
@@ -1823,14 +1842,8 @@ update_issue() {
         input_parts+=("\"labelIds\": $resolved_label_json")
     fi
 
-    # Handle project (auto-resolves name or UUID). The id outlives this block:
-    # milestone resolution below is scoped to it.
-    local project_id=""
-    if [ -n "$project" ]; then
-        project_id=$(resolve_project_id "$project")
-        if [ -z "$project_id" ]; then
-            return 1
-        fi
+    # Resolved above, before the attachment upload.
+    if [ -n "$project_id" ]; then
         input_parts+=("\"projectId\": \"$project_id\"")
     fi
 
@@ -1870,15 +1883,8 @@ update_issue() {
         input_parts+=("\"parentId\": \"$parent_id\"")
     fi
 
-    # Handle milestone (auto-resolves name or UUID, fail fast on miss). A name
-    # is resolved inside the project this update moves the issue to, or the one
-    # it is already in; with neither it was refused before the upload above.
-    if [ -n "$milestone" ]; then
-        local milestone_id
-        milestone_id=$(resolve_milestone_id "$milestone" "${project_id:-$issue_project_id}")
-        if [ -z "$milestone_id" ]; then
-            return 1
-        fi
+    # Resolved above, before the attachment upload.
+    if [ -n "$milestone_id" ]; then
         input_parts+=("\"projectMilestoneId\": \"$milestone_id\"")
     fi
 

@@ -41,17 +41,18 @@ control_replace scripts/commands/issues.sh 1 \
     '        milestone_id=$(resolve_milestone_id "$milestone" "${project_id:-$issue_project_id}")' \
     '        milestone_id=$(resolve_milestone_id "$milestone" "$project_id")'
 
-# Leave the create's refusal to the resolver, which runs after the upload.
-control_expect "no upload is sent before the create refusal"
+# Leave the create's milestone unresolved where it is hoisted, so the refusal
+# falls back to whatever runs after the upload.
+control_expect "no upload is sent before the create ambiguity refusal"
 control_replace scripts/commands/issues.sh 1 \
-    '    require_milestone_project "$milestone" "$project" || return 1' \
-    '    true'
+    '        milestone_id=$(resolve_milestone_id "$milestone" "$project_id")' \
+    '        milestone_id=deferred-uuid'
 
 # Same for the update's.
-control_expect "no upload is sent before the update refusal"
+control_expect "no upload is sent before the update ambiguity refusal"
 control_replace scripts/commands/issues.sh 1 \
-    '    require_milestone_project "$milestone" "$milestone_scope" || return 1' \
-    '    true'
+    '        milestone_id=$(resolve_milestone_id "$milestone" "${project_id:-$issue_project_id}")' \
+    '        milestone_id=deferred-uuid'
 
 # Scope the update to the issue's own project even when --project names another,
 # so setting a milestone while moving an issue resolves in the project it is
@@ -60,6 +61,7 @@ control_expect "--project wins over the project the issue is already in"
 control_replace scripts/commands/issues.sh 1 \
     '        milestone_id=$(resolve_milestone_id "$milestone" "${project_id:-$issue_project_id}")' \
     '        milestone_id=$(resolve_milestone_id "$milestone" "$issue_project_id")'
+
 
 # Stop treating a UUID as already resolved, so the project requirement reaches
 # a reference that names one milestone on its own.

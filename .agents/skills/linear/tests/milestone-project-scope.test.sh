@@ -202,3 +202,22 @@ run_status update_attach_rc run_linear issues update ISS-2 --milestone Alpha \
 assert_ne "a milestone name refuses the update of an issue in no project" \
   "$update_attach_rc" 0
 assert_file_lacks "no upload is sent before the update refusal" "$CURL_LOG" "fileUpload"
+
+# The ambiguity refusal needs the lookup, not just the arguments, so it is the
+# one that proves the whole resolution runs ahead of the upload.
+: >"$CURL_LOG"
+run_status create_twin_attach_rc run_linear issues create --title t --team TestTeam \
+  --labels agent:rust --priority 3 --description d --project Dup --milestone Twin \
+  --attach "$TMP_ROOT/asset.bin"
+assert_ne "an ambiguous milestone name refuses the create that carries --attach" \
+  "$create_twin_attach_rc" 0
+assert_file_lacks "no upload is sent before the create ambiguity refusal" \
+  "$CURL_LOG" "fileUpload"
+
+: >"$CURL_LOG"
+run_status update_twin_attach_rc run_linear issues update ISS-1 --project Dup \
+  --milestone Twin --attach "$TMP_ROOT/asset.bin"
+assert_ne "an ambiguous milestone name refuses the update that carries --attach" \
+  "$update_twin_attach_rc" 0
+assert_file_lacks "no upload is sent before the update ambiguity refusal" \
+  "$CURL_LOG" "fileUpload"
