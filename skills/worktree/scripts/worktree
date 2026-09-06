@@ -178,8 +178,8 @@ Options:
   --pr NUMBER     Look up the branch from a GitHub PR number (implies --base);
                   with --base, the way to inspect existing remote work whose
                   issue worktree is absent. A fork PR checks out origin's
-                  refs/pull/NUMBER/head as a local branch named after the
-                  contributor's branch, with no upstream
+                  refs/pull/NUMBER/head as local branch fork-pr-NUMBER, with
+                  no upstream
   --reuse         Explicitly reuse an existing issue worktree: refuses a
                   foreign session-guard lease by name (exit 75), refreshes its
                   own lease in place, rebases onto origin/<default>, then
@@ -2837,11 +2837,15 @@ merged_pr_for_branch() {
   return 1
 }
 
-# Sets BASE to the PR's head branch name. A fork PR also sets PR_HEAD_OID:
-# its head branch lives in the contributor's repository, so origin carries no
-# such head and the commit is reachable only through origin's
-# refs/pull/<n>/head. A same-repository PR leaves PR_HEAD_OID empty and
-# takes the plain --base path.
+# Sets BASE to the branch the PR checks out as. A same-repository PR leaves
+# PR_HEAD_OID empty, sets BASE to its head branch name and takes the plain
+# --base path. A fork PR sets PR_HEAD_OID and BASE to fork-pr-<n>: its head
+# branch lives in the contributor's repository, so origin carries no such
+# head and the commit is reachable only through origin's refs/pull/<n>/head.
+# The contributor's branch name is not reused locally; it shares a namespace
+# with the user's own branches (a fork PR opened from `main` would name the
+# main checkout's branch) and with origin's heads (a push from the inspection
+# worktree would land on an unrelated origin branch of that name).
 resolve_pr_head() {
   local pr="$1" output="" name="" oid="" cross=""
   if ! command -v gh >/dev/null 2>&1; then
@@ -2860,7 +2864,11 @@ resolve_pr_head() {
     return 1
   fi
   case "$cross" in
-    true) PR_HEAD_OID="$oid" ;;
+    true)
+      PR_HEAD_OID="$oid"
+      BASE="fork-pr-$pr"
+      return 0
+      ;;
     false) PR_HEAD_OID="" ;;
     *)
       echo "Error: gh reported an isCrossRepository value this cannot read for PR #$pr: '$cross'" >&2
@@ -2895,11 +2903,11 @@ ensure_base_start_point() {
   ensure_fork_branch_resettable "$pr" "$base" "$head_oid"
 }
 
-# A fork PR's local branch survives `remove` while the PR is open, so a
-# second inspection finds it. The fork add resets it to the PR head; that is
-# lossless only when every commit on the stale branch is in the PR head. A
-# branch that diverged (local commits, or another contributor's branch of
-# the same name) is refused by name rather than reset.
+# A fork PR's local branch fork-pr-<n> survives `remove` while the PR is
+# open, so a second inspection finds it. The fork add resets it to the PR
+# head; that is lossless only when every commit on the stale branch is in
+# the PR head. A branch that diverged (commits made in the inspection
+# worktree) is refused by name rather than reset.
 ensure_fork_branch_resettable() {
   local pr="$1" base="$2" head_oid="$3"
   git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/heads/$base" >/dev/null || return 0
@@ -3930,13 +3938,13 @@ case "${1:-}" in
 
       mkdir -p "$TREES_DIR"
       if [[ -n "$PR_HEAD_OID" ]]; then
-        # A fork head has no origin branch to track; the local branch keeps
-        # the contributor's name and no upstream. -B resets the branch a
-        # previous inspection left behind; ensure_fork_branch_resettable has
-        # already refused a branch that reset would lose commits from.
-        # --no-track skips new tracking config, but -B keeps an upstream a
-        # pre-existing branch carried; drop it so a push cannot reach an
-        # unrelated origin branch of the same name.
+        # A fork head has no origin branch to track; the local branch is
+        # fork-pr-<n> with no upstream. -B resets the branch a previous
+        # inspection left behind; ensure_fork_branch_resettable has already
+        # refused a branch that reset would lose commits from. --no-track
+        # skips new tracking config, but -B keeps an upstream a pre-existing
+        # branch carried; drop it so a push cannot reach an origin branch of
+        # that name.
         git -C "$PROJECT_ROOT" worktree add --no-track -B "$BASE" "$WT_PATH" "$PR_HEAD_OID" >/dev/null 2>&1
         if git -C "$WT_PATH" config --get "branch.$BASE.merge" >/dev/null 2>&1; then
           git -C "$WT_PATH" branch --unset-upstream "$BASE" >/dev/null 2>&1 || {

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Tests for `create --pr` against a fork pull request: the head branch lives
 # in the contributor's repository, so origin has no such head and the commit
-# is reachable only through origin's refs/pull/<n>/head. A same-repository PR
-# keeps the tracked origin-branch checkout, and a pull ref that does not
-# deliver the head gh reports refuses before any worktree exists.
+# is reachable only through origin's refs/pull/<n>/head. The worktree branch
+# is fork-pr-<n>, so the contributor's branch name never touches a local or
+# origin branch of the same name. A same-repository PR keeps the tracked
+# origin-branch checkout, and a pull ref that does not deliver the head gh
+# reports refuses before any worktree exists.
 set -euo pipefail
 
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
@@ -93,6 +95,16 @@ git -C "$ROOT/main" branch -q -D feat/same
 git -C "$ROOT/main" push -q origin "main:refs/pull/9/head"
 PHANTOM_OID="$(printf '%040d' 1)"
 
+# A fork PR opened from the fork's own `main`: the head branch name is the
+# main checkout's branch name.
+git -C "$ROOT/fork" checkout -q main
+printf 'fork main fix\n' >"$ROOT/fork/from-main.txt"
+git -C "$ROOT/fork" add from-main.txt
+git -C "$ROOT/fork" commit -q -m 'fork main fix'
+FORK_MAIN_HEAD="$(git -C "$ROOT/fork" rev-parse HEAD)"
+git -C "$ROOT/fork" push -q origin "HEAD:refs/pull/11/head"
+git -C "$ROOT/fork" checkout -q fix/widget-expiry
+
 # gh as it answers `pr view <n> --json <fields> -q <query>`: the stored
 # document is the field set gh returns, and the query runs over it.
 cat >"$ROOT/bin/gh" <<'STUB'
@@ -136,6 +148,7 @@ pr_doc 7 fix/widget-expiry "$FORK_HEAD" true
 pr_doc 8 feat/same "$SAME_HEAD" false
 pr_doc 9 fix/phantom "$PHANTOM_OID" true
 pr_doc 10 fix/no-pull-ref "$FORK_HEAD" true
+pr_doc 11 main "$FORK_MAIN_HEAD" true
 
 echo "=== worktree create --pr on a fork pull request ==="
 
@@ -149,7 +162,8 @@ FORK_WT="$ROOT/trees/issue-fork"
 assert_eq "$fork_code" "0" "fork PR creates a worktree (stderr: $(tr '\n' ' ' <"$ROOT/fork.err"))"
 assert_eq "$fork_out" "$FORK_WT" "fork PR prints the worktree path"
 assert_eq "$(git -C "$FORK_WT" rev-parse HEAD 2>/dev/null || true)" "$FORK_HEAD" "fork worktree HEAD is the PR head commit"
-assert_eq "$(git -C "$FORK_WT" branch --show-current 2>/dev/null || true)" "fix/widget-expiry" "fork worktree branch carries the contributor's branch name"
+assert_eq "$(git -C "$FORK_WT" branch --show-current 2>/dev/null || true)" "fork-pr-7" "fork worktree branch is fork-pr-7, not the contributor's branch name"
+assert_eq "$(git -C "$ROOT/main" rev-parse --verify --quiet refs/heads/fix/widget-expiry || true)" "" "no local branch carries the contributor's branch name"
 set +e
 fork_upstream="$(git -C "$FORK_WT" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)"
 fork_upstream_code=$?
@@ -168,10 +182,26 @@ assert_eq "$same_out" "$SAME_WT" "same-repository PR prints the worktree path"
 assert_eq "$(git -C "$SAME_WT" rev-parse HEAD 2>/dev/null || true)" "$SAME_HEAD" "same-repository worktree HEAD is the origin branch tip"
 assert_eq "$(git -C "$SAME_WT" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)" "origin/feat/same" "same-repository branch tracks its origin branch"
 
-# Inspecting the same fork PR again: `remove` keeps the local branch while the
-# PR is open, the contributor has pushed since, and origin has meanwhile grown
-# an unrelated branch of the same name. The second create resets the stale
-# branch to the new head and still sets no upstream.
+# A fork PR whose head branch is named `main` is inspectable: the local
+# branch is fork-pr-11, so the main checkout's `main` is neither in the way
+# nor reset to the contributor's commit.
+LOCAL_MAIN_BEFORE="$(git -C "$ROOT/main" rev-parse refs/heads/main)"
+set +e
+from_main_out="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-from-main --pr 11 2>"$ROOT/from-main.err")"
+from_main_code=$?
+set -e
+FROM_MAIN_WT="$ROOT/trees/issue-from-main"
+assert_eq "$from_main_code:$from_main_out" "0:$FROM_MAIN_WT" "a fork PR opened from the fork's main creates a worktree (stderr: $(tr '\n' ' ' <"$ROOT/from-main.err"))"
+assert_eq "$(git -C "$FROM_MAIN_WT" rev-parse HEAD 2>/dev/null || true)" "$FORK_MAIN_HEAD" "fork-from-main worktree HEAD is the PR head commit"
+assert_eq "$(git -C "$FROM_MAIN_WT" branch --show-current 2>/dev/null || true)" "fork-pr-11" "fork-from-main worktree branch is fork-pr-11"
+assert_eq "$(git -C "$ROOT/main" rev-parse refs/heads/main)" "$LOCAL_MAIN_BEFORE" "the main checkout's local main is untouched"
+assert_eq "$(git -C "$ROOT/main" branch --show-current)" "main" "the main checkout still has main checked out"
+
+# Inspecting the same fork PR again: `remove` keeps the local fork-pr-7 branch
+# while the PR is open, the contributor has pushed since, and origin has
+# meanwhile grown an unrelated branch under the contributor's branch name.
+# The second create resets the stale branch to the new head and still sets
+# no upstream.
 printf 'fork fix 2\n' >>"$ROOT/fork/fix.txt"
 git -C "$ROOT/fork" commit -q -am 'fork fix 2'
 FORK_HEAD_2="$(git -C "$ROOT/fork" rev-parse HEAD)"
@@ -180,11 +210,11 @@ pr_doc 7 fix/widget-expiry "$FORK_HEAD_2" true
 git -C "$ROOT/main" push -q origin "main:refs/heads/fix/widget-expiry"
 (cd "$ROOT/main" && "$WORKTREE_SCRIPT" remove issue-fork >/dev/null 2>&1) || true # exits 1: the open PR's branch stays
 assert_path_absent "$FORK_WT" "remove clears the fork worktree"
-assert_eq "$(git -C "$ROOT/main" rev-parse --verify --quiet refs/heads/fix/widget-expiry || true)" "$FORK_HEAD" "remove keeps the open PR's local branch at the first head"
+assert_eq "$(git -C "$ROOT/main" rev-parse --verify --quiet refs/heads/fork-pr-7 || true)" "$FORK_HEAD" "remove keeps the open PR's local branch at the first head"
 # The stale branch also carries tracking config pointing at that unrelated
 # origin branch; -B preserves it, so the create must clear it afterwards.
 git -C "$ROOT/main" fetch -q origin
-git -C "$ROOT/main" branch -q --set-upstream-to=origin/fix/widget-expiry fix/widget-expiry
+git -C "$ROOT/main" branch -q --set-upstream-to=origin/fix/widget-expiry fork-pr-7
 set +e
 again_out="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-fork --pr 7 2>"$ROOT/again.err")"
 again_code=$?
@@ -210,7 +240,7 @@ set +e
 diverged_code=$?
 set -e
 assert_eq "$diverged_code" "1" "a diverged local branch refuses the fork checkout with exit 1"
-assert_contains "$(cat "$ROOT/diverged.err")" "Local branch 'fix/widget-expiry' has commits that are not in the head of fork PR #7" "the refusal names the diverged branch"
+assert_contains "$(cat "$ROOT/diverged.err")" "Local branch 'fork-pr-7' has commits that are not in the head of fork PR #7" "the refusal names the diverged branch"
 assert_path_absent "$FORK_WT" "a diverged local branch creates no worktree"
 
 # A fork head the base cannot deliver refuses before any worktree exists:
