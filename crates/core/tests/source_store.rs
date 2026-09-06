@@ -127,7 +127,7 @@ fn install(w: &World, scope: &Scope) {
 #[allow(clippy::unwrap_used)]
 fn rendered(w: &World, scope: &Scope) -> String {
     let path = match scope {
-        Scope::Global => w.env.rendered_skills_dir().join("gh/SKILL.md"),
+        Scope::Global => w.env.global_skills_dir().join("gh/SKILL.md"),
         Scope::Project { root } => root.join(".agents/skills/gh/SKILL.md"),
     };
     fs::read_to_string(path).unwrap()

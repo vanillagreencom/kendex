@@ -22,13 +22,16 @@ impl HarnessAdapter for Codex {
         &[ProjectMarker::Dir(".codex"), ProjectMarker::Dir(".agents")]
     }
 
-    fn global_surfaces(&self, kind: ItemKind, root: &Path, _env: &Env) -> Vec<Surface> {
+    fn global_surfaces(&self, kind: ItemKind, root: &Path, env: &Env) -> Vec<Surface> {
         match kind {
             ItemKind::Agent => vec![Surface::files(root.join("agents"), &["toml"])],
-            ItemKind::Skill => vec![Surface::SubdirPerItem {
-                dir: root.join("skills"),
-                marker: "SKILL.md",
-            }],
+            // `$HOME/.agents/skills` is the only user-level skills location
+            // Codex documents, so it leads here as it does in a project;
+            // `~/.codex/skills` stays on the list for what an older install
+            // left there and for a copy delivery.
+            ItemKind::Skill => {
+                super::shared_first(Some(&env.global_skills_dir()), root.join("skills"))
+            }
             ItemKind::Hook => vec![Surface::Structured {
                 path: root.join("hooks.json"),
                 reader: Reader::HooksObject,

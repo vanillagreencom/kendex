@@ -18,7 +18,7 @@ Global detection: `~/.gemini/settings.json`, the file the CLI writes on its firs
 | Kind | Global | Project | Caps |
 |---|---|---|---|
 | agent | `~/.gemini/agents/*.md` | `.gemini/agents/*.md` | managed, both |
-| skill | `~/.gemini/skills/<name>/SKILL.md` | `.agents/skills/<name>/SKILL.md`, or `.gemini/skills/<name>/SKILL.md` for a copy delivery | managed, both |
+| skill | `~/.agents/skills/<name>/SKILL.md`, or `~/.gemini/skills/<name>/SKILL.md` for a copy delivery | `.agents/skills/<name>/SKILL.md`, or `.gemini/skills/<name>/SKILL.md` for a copy delivery | managed, both |
 | command | `~/.gemini/commands/**/*.toml` | `.gemini/commands/**/*.toml` | managed, both |
 | hook | `~/.gemini/settings.json` → `hooks` | `.gemini/settings.json` → `hooks` | managed, both, enforced |
 | mcp-server | `~/.gemini/settings.json` → `mcpServers` | `.gemini/settings.json` → `mcpServers` | install, remove, refresh both; toggle global only |

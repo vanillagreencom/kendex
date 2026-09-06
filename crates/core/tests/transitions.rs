@@ -128,42 +128,13 @@ fn two_tools_refusing_one_shared_tree_still_applies() {
     apply::execute(&w.env, &after.plan).unwrap();
 }
 
-/// Globally each tool links to one rendered tree. A refusal takes away the
-/// refusing tool's own link and nothing else — trashing the shared tree
-/// would uninstall the skill for every tool that still renders fine.
+/// Two tools pointed at one directory read one physical skill folder, and
+/// globally they read the shared tree as well, so the pair is one surface
+/// group holding one tree. Planning that position twice would fail the
+/// second op and roll the whole apply back.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_refusal_keeps_the_tree_another_tool_still_reads() {
-    let w = world();
-    declare(&w, &w.env.global_manifest_file(), "\"claude\", \"codex\"");
-    let scope = Scope::Global;
-    apply_now(&w.env, &scope);
-
-    let rendered = w.env.rendered_skills_dir().join("big");
-    let claude = w.home.join(".claude/skills/big");
-    let codex = w.home.join(".codex/skills/big");
-    assert_eq!(fs::read_link(&claude).unwrap(), rendered);
-    assert_eq!(fs::read_link(&codex).unwrap(), rendered);
-
-    put(&w.source.join("skills/big/SKILL.md"), &long_description());
-    let report = audit(&w.env, &scope).unwrap();
-    assert_eq!(trashes(&report, &rendered), 0, "{:?}", report.plan.ops);
-    apply::execute(&w.env, &report.plan).unwrap();
-
-    assert!(!codex.exists() && !codex.is_symlink());
-    assert_eq!(fs::read_link(&claude).unwrap(), rendered);
-    assert_eq!(
-        fs::read_to_string(rendered.join("SKILL.md")).unwrap(),
-        long_description()
-    );
-}
-
-/// Two tools pointed at one directory read one physical skill folder, so
-/// they also share the link into the rendered tree. Planning that link twice
-/// fails the second op and rolls the whole apply back.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn two_tools_sharing_one_link_position_still_applies() {
+fn two_tools_sharing_one_root_still_applies() {
     let w = world();
     let shared_root = w.home.join(".codex");
     let env = Env::fake(&w.home, FakeOs::Linux)
@@ -181,10 +152,10 @@ fn two_tools_sharing_one_link_position_still_applies() {
     let report = audit(&env, &scope).unwrap();
     apply::execute(&env, &report.plan).unwrap();
 
-    let link = shared_root.join("skills/big");
-    assert_eq!(
-        fs::read_link(&link).unwrap(),
-        env.rendered_skills_dir().join("big")
-    );
+    let shared = env.global_skills_dir().join("big");
+    assert!(shared.join("SKILL.md").is_file());
+    assert!(!shared.is_symlink());
+    // Both tools read the shared tree, so neither gets a link of its own.
+    assert!(!shared_root.join("skills/big").exists());
     assert!(audit(&env, &scope).unwrap().drift.is_empty());
 }

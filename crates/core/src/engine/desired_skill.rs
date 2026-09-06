@@ -37,13 +37,14 @@ struct Variant {
     refused: bool,
 }
 
-/// The tools that will read this skill without being installed to. Every
-/// harness but Claude Code reads a project's `.agents/skills` tree, so a
-/// skill written there is loaded by tools the person never named — one
-/// definition, counted once, and said out loud so a reader is not surprised
-/// by a tool that has it (matrix §R6).
+/// The tools that will read this skill without being installed to. The
+/// shared `.agents/skills` tree under the scope's root is read by every
+/// harness but Claude Code in a project, and by every one but Claude Code
+/// and Antigravity globally, so a skill written there is loaded by tools the
+/// person never named — one definition, counted once, and said out loud so a
+/// reader is not surprised by a tool that has it (matrix §R6).
 fn cross_read_note(ctx: &ItemCtx, method: Method, state: &mut DesiredState) {
-    if !matches!(ctx.scope, Scope::Project { .. }) || method == Method::Copy {
+    if method == Method::Copy {
         return;
     }
     let shared = skill_canonical(ctx.env, ctx.scope, ctx.name);
@@ -67,8 +68,12 @@ fn cross_read_note(ctx: &ItemCtx, method: Method, state: &mut DesiredState) {
     }
     // The reach is a fact about the directory, not about any one skill, so
     // it is said once however many skills a scope installs.
+    let where_ = match ctx.scope {
+        Scope::Global => "`~/.agents/skills`",
+        Scope::Project { .. } => "`.agents/skills`",
+    };
     let note = format!(
-        "skills: {} read `.agents/skills` too, so what is installed here is already visible to them — one definition, counted once",
+        "skills: {} read {where_} too, so what is installed here is already visible to them — one definition, counted once",
         readers.join(", ")
     );
     if !state.notes.contains(&note) {
@@ -138,8 +143,8 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
 
     // The base tree is the scope's shared location; the group that natively
     // reads it owns it, the first group otherwise. A variant with the base's
-    // bytes links to it; a divergent variant lives at its own surface
-    // (project) or in the per-tool store (global).
+    // bytes links to it; a divergent variant lives at its own surface, which
+    // every group has at either scope.
     let base = skill_canonical(ctx.env, ctx.scope, ctx.name);
     let owner = groups
         .iter()
@@ -160,15 +165,7 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
                 false => (base.clone(), Some(group.native.clone())),
             }
         } else {
-            match ctx.scope {
-                Scope::Project { .. } => (group.native.clone(), None),
-                Scope::Global => (
-                    ctx.env
-                        .rendered_skill_variants_dir(group.members[0].name())
-                        .join(&group.installed),
-                    Some(group.native.clone()),
-                ),
-            }
+            (group.native.clone(), None)
         };
         let artifact = Artifact::Tree {
             canonical,

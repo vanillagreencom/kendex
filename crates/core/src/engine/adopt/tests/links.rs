@@ -99,8 +99,10 @@ fn a_link_at_a_folder_without_the_marker_still_refuses() {
     assert!(elsewhere.join("notes.txt").is_file());
 }
 
-/// A link the user repointed into kendex's own store is not theirs to
-/// adopt: capturing a managed tree under another name would steal it.
+/// A link the user repointed into kendex's own trees is not theirs to
+/// adopt: capturing a managed tree under another name would steal it. The
+/// global shared tree is one of those — kendex renders a global skill into
+/// it, and a project link reaching it names content with a home already.
 #[cfg(unix)]
 #[test]
 fn a_link_into_kendexs_own_trees_refuses() {
@@ -110,7 +112,7 @@ fn a_link_into_kendexs_own_trees_refuses() {
     let scope = Scope::Project {
         root: project.clone(),
     };
-    let managed = env.rendered_skills_dir().join("other");
+    let managed = env.global_skills_dir().join("other");
     fs::create_dir_all(&managed).unwrap();
     fs::write(
         managed.join("SKILL.md"),

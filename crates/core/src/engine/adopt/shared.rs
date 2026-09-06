@@ -68,18 +68,13 @@ pub(super) fn shared_target(
         return Err(refuse());
     }
     let canon = |path: PathBuf| crate::paths::canonical(&path).unwrap_or(path);
-    let mut ours = vec![
-        env.rendered_skills_dir(),
+    let ours = [
+        env.global_skills_dir(),
         env.trash_dir(),
         env.source_cache_dir(),
         env.journal_dir(),
         local_source_root(env, scope),
     ];
-    ours.extend(
-        HarnessId::ALL
-            .iter()
-            .map(|h| env.rendered_skill_variants_dir(h.name())),
-    );
     if ours.into_iter().any(|root| target.starts_with(canon(root))) {
         return Err(refuse());
     }

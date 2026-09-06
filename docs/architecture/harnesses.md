@@ -27,5 +27,5 @@ An adapter owns one harness's paths and rendering, and nothing else. What kendex
 
 - Every capability ships cross-harness through the table; a harness without native support for a kind is marked unsupported, never shimmed.
 - A column exists in the table only if a verb reads it; what a tool's own config holds down (Copilot's `disabledSkills`) is reported per item where it is read, and kendex's own switch still works both ways because it is a rename kendex can undo.
-- Every harness but Claude Code reads a project's `.agents/skills`, so one tree serves them all and copy delivery writes each harness's own directory; no harness caps a SKILL.md body.
+- The shared skills tree is `.agents/skills` under the scope's own root, a project's or the home directory's; every harness but Claude Code reads the project's and every one but Claude Code and Antigravity reads `~/.agents/skills`, so one tree serves them all at either scope, a harness that reads neither gets a link onto it, and copy delivery writes each harness's own directory. No harness caps a SKILL.md body.
 - The drift-relaying hook is first-party, shipped in the binary, offered at project registration, never fetched from a catalog, and still a declared, user-approved per-scope install rendered and removed like any other hook. Enforced by `crates/core/tests/drift_hook_install.rs`.

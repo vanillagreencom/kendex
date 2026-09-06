@@ -16,7 +16,7 @@ Project markers: a `.codex/` or `.agents/` directory.
 | Kind | Global | Project | Caps |
 |---|---|---|---|
 | agent | `~/.codex/agents/*.toml` | `.codex/agents/*.toml` | managed, both |
-| skill | `~/.codex/skills/<name>/SKILL.md` | `.agents/skills/<name>/SKILL.md`, shared with Pi and Antigravity | managed, both |
+| skill | `~/.agents/skills/<name>/SKILL.md`, shared with Pi, OpenCode, Gemini and Copilot; `~/.codex/skills/<name>/SKILL.md` for a copy delivery | `.agents/skills/<name>/SKILL.md`, shared with Pi and Antigravity | managed, both |
 | command | — | — | install, toggle, remove, refresh both; `installs_as: skill` |
 | hook | `~/.codex/hooks.json` | `.codex/hooks.json` | managed, both, enforced |
 | mcp-server | `~/.codex/config.toml` `[mcp_servers.<name>]` | `.codex/config.toml` | managed, both |

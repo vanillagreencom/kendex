@@ -51,21 +51,11 @@ pub(crate) fn skill_content_path(
     canonical.is_dir().then_some(canonical)
 }
 
-/// Whether `path` is a skill tree kendex manages for `name`: the shared
-/// canonical tree, or a per-tool variant under the rendered-variants
-/// directory. Compared canonically so a `..`-laden link cannot dress a
-/// foreign directory up as a managed one.
+/// Whether `path` is a skill tree kendex manages for `name`: the scope's
+/// shared canonical tree. Compared canonically so a `..`-laden link cannot
+/// dress a foreign directory up as a managed one.
 fn managed_skill_tree(env: &Env, scope: &Scope, name: &str, path: &std::path::Path) -> bool {
     let real = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let canonical = skill_canonical(env, scope, name);
-    if real == canonical.canonicalize().unwrap_or(canonical) {
-        return true;
-    }
-    // Variant trees live below the rendered-variants root, one dir per
-    // harness. Any harness's variant of this name is a managed tree.
-    let _ = scope;
-    HarnessId::ALL.iter().any(|h| {
-        let variant = env.rendered_skill_variants_dir(h.name()).join(name);
-        real == variant.canonicalize().unwrap_or(variant)
-    })
+    real == canonical.canonicalize().unwrap_or(canonical)
 }

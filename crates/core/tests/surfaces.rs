@@ -5,7 +5,7 @@
 
 #[path = "../../test_util.rs"]
 mod test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::fs;
 
@@ -125,4 +125,90 @@ fn a_large_skill_is_one_tree_every_surface_links_to() {
     assert_eq!(fs::read_to_string(claude.join("SKILL.md")).unwrap(), body);
 
     assert!(audit(&env, &scope).unwrap().drift.is_empty());
+}
+
+/// A global install lands in `~/.agents/skills`, the tree Codex, OpenCode,
+/// Pi, Gemini and Copilot read there, and nothing is written into a store of
+/// kendex's own. The tools that read it get no link, because they are already
+/// looking at the tree itself; Claude Code, which reads only its own
+/// directory, gets one onto it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_global_skill_lands_in_the_shared_tree_and_only_claude_links_at_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+
+    let source = home.join("catalog");
+    fs::create_dir_all(source.join("skills/gh")).unwrap();
+    fs::write(
+        source.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: github\n---\nBody.\n",
+    )
+    .unwrap();
+    let manifest = env.global_manifest_file();
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest,
+        format!(
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            source_path(&source)
+        ),
+    )
+    .unwrap();
+
+    let report = audit(&env, &Scope::Global).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
+
+    let shared = home.join(".agents/skills/gh");
+    assert!(shared.join("SKILL.md").is_file());
+    assert!(!shared.is_symlink(), "the shared tree holds the bytes");
+    // Codex and Pi read that tree themselves, so a link in their own
+    // directory would be a second position for one definition.
+    assert!(!home.join(".codex/skills/gh").exists());
+    assert!(!home.join(".pi/agent/skills/gh").exists());
+    // Claude Code reads neither shared tree, so its own directory holds a
+    // link — the only harness here that demands one.
+    let claude = home.join(".claude/skills/gh");
+    assert_eq!(fs::read_link(&claude).unwrap(), shared);
+    // Nothing is kept in a store of kendex's own any more. The app's data
+    // root is read off `Env`, never spelled: it is a different path per
+    // platform.
+    let app_data = env.trash_dir().parent().unwrap().to_path_buf();
+    assert!(!app_data.join("rendered").exists());
+}
+
+/// Verify reads a global skill back from the shared tree: a clean install
+/// drifts on nothing, and a tree edited underneath it is reported.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn verify_reads_a_global_skill_from_the_shared_tree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+
+    let source = home.join("catalog");
+    fs::create_dir_all(source.join("skills/gh")).unwrap();
+    fs::write(
+        source.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: github\n---\nBody.\n",
+    )
+    .unwrap();
+    let manifest = env.global_manifest_file();
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest,
+        format!(
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            source_path(&source)
+        ),
+    )
+    .unwrap();
+
+    apply::execute(&env, &audit(&env, &Scope::Global).unwrap().plan).unwrap();
+    assert!(audit(&env, &Scope::Global).unwrap().drift.is_empty());
+
+    fs::write(home.join(".agents/skills/gh/SKILL.md"), "edited\n").unwrap();
+    let drift = audit(&env, &Scope::Global).unwrap().drift;
+    assert!(drift.iter().any(|row| row.name == "gh"), "{drift:?}");
 }
