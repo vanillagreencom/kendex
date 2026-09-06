@@ -112,8 +112,18 @@ DOC=$(document x86_64-unknown-linux-gnu)
   ok "the document names the release and the target it was written for" ||
   bad "the document names the release and the target it was written for" "$(cat "$DOC")"
 
-expect_command=$(sha256sum "$DIST/kendex-x86_64-unknown-linux-gnu" | cut -d' ' -f1)
-expect_app=$(sha256sum "$DIST/kendex_9.9.9_amd64.AppImage" | cut -d' ' -f1)
+# The same pick tools/release-digests makes, for the same reason: macOS ships
+# shasum and no sha256sum, so the expectation this suite compares against has
+# to come from whichever the host has.
+sha256() { # FILE — the file's SHA-256 in lowercase hex
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1"
+  else
+    shasum -a 256 "$1"
+  fi | cut -d' ' -f1
+}
+expect_command=$(sha256 "$DIST/kendex-x86_64-unknown-linux-gnu")
+expect_app=$(sha256 "$DIST/kendex_9.9.9_amd64.AppImage")
 [ "$(field command "$DOC")" = "$expect_command" ] && [ "$(field app "$DOC")" = "$expect_app" ] &&
   ok "each digest is plain SHA-256 over the download it names" ||
   bad "each digest is plain SHA-256 over the download it names" "$(cat "$DOC")"
@@ -137,8 +147,8 @@ printf 'a signature' >"$DIST/kendex_9.9.9_x64-setup.exe.sig"
 run x86_64-pc-windows-msvc 9.9.9
 DOC=$(document x86_64-pc-windows-msvc)
 [ "$RC" -eq 0 ] &&
-  [ "$(field command "$DOC")" = "$(sha256sum "$DIST/kendex-x86_64-pc-windows-msvc.exe" | cut -d' ' -f1)" ] &&
-  [ "$(field app "$DOC")" = "$(sha256sum "$DIST/kendex_9.9.9_x64-setup.exe" | cut -d' ' -f1)" ] &&
+  [ "$(field command "$DOC")" = "$(sha256 "$DIST/kendex-x86_64-pc-windows-msvc.exe")" ] &&
+  [ "$(field app "$DOC")" = "$(sha256 "$DIST/kendex_9.9.9_x64-setup.exe")" ] &&
   ok "the Windows lane measures the .exe command and the installer" ||
   bad "the Windows lane measures the .exe command and the installer" "rc=$RC out=$OUT"
 
@@ -151,7 +161,7 @@ printf 'a disk image' >"$DIST/kendex_9.9.9_aarch64.dmg"
 run aarch64-apple-darwin 9.9.9
 DOC=$(document aarch64-apple-darwin)
 [ "$RC" -eq 0 ] &&
-  [ "$(field app "$DOC")" = "$(sha256sum "$DIST/kendex-aarch64-apple-darwin.app.tar.gz" | cut -d' ' -f1)" ] &&
+  [ "$(field app "$DOC")" = "$(sha256 "$DIST/kendex-aarch64-apple-darwin.app.tar.gz")" ] &&
   ok "the macOS lane measures the archive its updater installs, not the dmg" ||
   bad "the macOS lane measures the archive its updater installs, not the dmg" "rc=$RC out=$OUT"
 

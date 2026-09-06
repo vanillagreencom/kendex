@@ -91,7 +91,13 @@ gg_changelog_blob() { # SHA LABEL — fills $GG_TMP/blob; 1 = not changelog text
   local sha="$1" label="$2" bad
   gg_read_blob "$sha" "$label" changelog
   ! gg_blob_is_binary "$GG_TMP/blob" "$label" || return 1
-  bad="$(LC_ALL=C awk "$GG_UTF8_AWK" <"$GG_TMP/blob")" \
+  # Every NUL becomes \200 before awk reads a byte. An awk that holds a record
+  # as a NUL-terminated C string — the BWK awk macOS ships — otherwise sees a
+  # line that stops at its first NUL, and a blob git calls text for having its
+  # only NUL past the leading sample would be measured as the short prefix
+  # instead of refused. \200 is a stray continuation byte, which the grammar
+  # below already rejects, so the line reports as the invalid UTF-8 it is.
+  bad="$(LC_ALL=C tr '\000' '\200' <"$GG_TMP/blob" | LC_ALL=C awk "$GG_UTF8_AWK")" \
     || gg_collection_error "could not read $(gg_shown "$label") to check its encoding"
   if [ -n "$bad" ]; then
     gg_collection_error "$(gg_shown "$label") line $bad is not valid UTF-8 — text with no character count cannot be measured"

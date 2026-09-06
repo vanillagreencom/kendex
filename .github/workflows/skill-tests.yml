@@ -92,14 +92,24 @@ jobs:
   # never tested. The probe step after it is the leg's must-fail control. The
   # node shards are excluded: nothing in them is bash.
   #
-  # The leg swaps the shell and nothing else on purpose: it installs the GNU
-  # userland the suites are written against — coreutils, sed, grep, awk,
-  # find, diff, and util-linux for flock and setsid, which macOS lacks
-  # outright (workflow-state and lanes take flock with no fallback, and
-  # open-terminal detaches with setsid) or ships as BSD — and asserts each
-  # beside the shell, so a red leg is a Bash 3.2 finding and not a utility
-  # difference. What the suites do on the BSD userland is a property of its
-  # own that this leg does not prove.
+  # THE USERLAND the leg runs on is macOS's own: BSD sed, grep, awk, find, diff
+  # and ps, each asserted below beside the shell. A GNU-only construct in a
+  # suite or in a shipped script therefore reds here rather than passing on a
+  # userland no Mac has.
+  #
+  # FOUR UTILITIES ARE SUPPLIED, and they are the whole list: flock and setsid
+  # from util-linux, timeout and sha256sum from coreutils. macOS ships no
+  # flock, setsid or timeout at all, and carries sha256sum only in recent
+  # releases (26 has /sbin/sha256sum; the runner image's own release decides),
+  # so none of the four is a BSD difference to fix at a site — a script that
+  # must run without one carries its own fallback there (open-terminal falls
+  # back to nohup, workflow-state and lanes to a mkdir mutex, ci-wait's suite
+  # to an unbounded run, release-digests' to shasum). Each of the four is
+  # linked in on its own, never through a package's gnubin directory, so
+  # nothing else in coreutils or util-linux shadows a BSD tool. What needs one
+  # of the four and has no fallback — the worktree lifecycle suite,
+  # container-close's suite — reds on a host without it rather than skipping
+  # into a green.
   skill-suites-shard:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     if: github.event_name != 'push'
@@ -124,19 +134,25 @@ jobs:
       # ---- macOS leg: Bash 3.2 first on PATH, asserted, and its probe -----
       # gnubin goes on PATH before the shell's directory does, so the
       # directory added last, the shell's, is searched first.
-      - name: the GNU userland the suites are written against
+      - name: the four utilities a stock macOS does not reliably carry
         if: matrix.os == 'macos-latest'
         env:
           HOMEBREW_NO_AUTO_UPDATE: '1'
           HOMEBREW_NO_INSTALL_CLEANUP: '1'
         run: |
           set -u
-          brew install coreutils gnu-sed grep gawk findutils diffutils util-linux
+          brew install coreutils util-linux
           prefix="$(brew --prefix)"
-          for f in coreutils gnu-sed grep gawk findutils; do
-            echo "$prefix/opt/$f/libexec/gnubin" >>"$GITHUB_PATH"
-          done
-          echo "$prefix/opt/util-linux/bin" >>"$GITHUB_PATH"
+          dir="$RUNNER_TEMP/supplied"
+          mkdir "$dir"
+          # One link per supplied utility. A whole gnubin or util-linux bin
+          # directory on PATH would put a GNU cut, sort, head, tr, dirname and
+          # basename in front of the BSD ones this leg exists to run against.
+          ln -s "$prefix/opt/util-linux/bin/flock" "$dir/flock"
+          ln -s "$prefix/opt/util-linux/bin/setsid" "$dir/setsid"
+          ln -s "$prefix/opt/coreutils/libexec/gnubin/timeout" "$dir/timeout"
+          ln -s "$prefix/opt/coreutils/libexec/gnubin/sha256sum" "$dir/sha256sum"
+          echo "$dir" >>"$GITHUB_PATH"
 
       - name: /bin/bash first on PATH
         if: matrix.os == 'macos-latest'
@@ -166,14 +182,34 @@ jobs:
           got "the step shell" "$BASH_VERSION"
           got "bash on PATH, $(command -v bash)" "$(version_of bash)"
           got "/usr/bin/env bash" "$(version_of /usr/bin/env bash)"
-          # The utilities the step above installed, resolved the way a suite
-          # resolves them: present, and the GNU one where macOS ships a BSD one.
+          # The four the step above supplied, resolved the way a suite resolves
+          # them: present, or a suite that calls one fails for the wrong reason.
           for c in flock setsid timeout sha256sum; do
-            command -v "$c" || { echo "$c is not on PATH; the suites that call it would fail for the wrong reason"; fail=1; }
+            command -v "$c" || { echo "$c is not on PATH; this leg promises to supply it"; fail=1; }
           done
-          for c in sed grep awk find diff; do
-            "$c" --version 2>/dev/null | head -n 1 | grep -q GNU ||
-              { echo "$c on PATH is $(command -v "$c"), not the GNU one; a suite red there would be a userland difference"; fail=1; }
+          # Everything else is macOS's own. A GNU build here — a package that
+          # linked its gnubin in, a runner image change — would prove the
+          # suites against a userland no Mac has, which is the property this
+          # leg exists to measure. The path is the assertion: under SIP a GNU
+          # build cannot be what /usr/bin or /bin holds, and a Homebrew one
+          # resolves outside both.
+          #
+          # The banner is read for the VENDOR form GNU prints — `sed (GNU sed)`,
+          # `grep (GNU grep)`, `GNU Awk`, `find (GNU findutils)`, `diff (GNU
+          # diffutils)` — and never for the bare word: Apple's grep advertises
+          # itself as `grep (BSD grep, GNU compatible)`, so the word alone reds
+          # this leg on the very build it exists to run against.
+          for c in sed grep awk find diff ps; do
+            resolved="$(command -v "$c")" || resolved=""
+            case "$resolved" in
+              /usr/bin/* | /bin/*) ;;
+              "") echo "$c is not on PATH at all"; fail=1 ;;
+              *) echo "$c on PATH is $resolved, not the one macOS ships"; fail=1 ;;
+            esac
+            if "$c" --version 2>/dev/null | head -n 1 | grep -Eq '\(GNU |^GNU '; then
+              echo "$c on PATH is a GNU build; this leg runs the BSD userland"
+              fail=1
+            fi
           done
           exit "$fail"
 

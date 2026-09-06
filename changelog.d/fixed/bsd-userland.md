@@ -1,0 +1,1 @@
+- The shipped scripts and their suites run on the stock macOS userland, where there is no flock, setsid or timeout and sed, awk, wc, paste, touch, date and mktemp are the BSD ones.

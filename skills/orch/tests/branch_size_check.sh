@@ -101,12 +101,14 @@ printf 'x\ny\n' > "$WT/src/rewritten.txt"   # 50 deleted, 2 added: bills 2
 commit_files implementation
 
 capture split_json run_check "$CHECK_BIN" --json
-assert_eq "$(jq -r '.production_lines, .test_lines' <<<"$split_json" | paste -sd,)" "16,14" \
+# Every paste below names its input as `-`: GNU paste reads stdin when it is
+# given no file operand, BSD paste prints its usage and exits 2.
+assert_eq "$(jq -r '.production_lines, .test_lines' <<<"$split_json" | paste -sd, -)" "16,14" \
   "each is_test rule classifies alone, a name containing 'test' does not, and a rewrite bills only its additions"
-assert_eq "$(jq -r '.production_allowance, .test_allowance, .verdict' <<<"$split_json" | paste -sd,)" \
+assert_eq "$(jq -r '.production_allowance, .test_allowance, .verdict' <<<"$split_json" | paste -sd, -)" \
   "40,20,pass" "the stated line is the production and test allowance"
-assert_eq "$(jq -r '.base_sha, .head_sha' <<<"$split_json" | paste -sd,)" \
-  "$(git -C "$WT" rev-parse main HEAD | paste -sd,)" \
+assert_eq "$(jq -r '.base_sha, .head_sha' <<<"$split_json" | paste -sd, -)" \
+  "$(git -C "$WT" rev-parse main HEAD | paste -sd, -)" \
   "the record is bound to the base and head it measured"
 assert_eq "$("$STATE" --state-dir "$WT/tmp" get KEN-SIZE '.pr.size_check.verdict')" "pass" \
   "the verdict is recorded beside pr.baseline_lines, in no new state file"
@@ -159,7 +161,7 @@ while IFS='|' read -r line want_fields want_rc; do
   set -e
   assert_eq "$row_rc" "$want_rc" "exit for: $line"
   [[ "$want_rc" != 0 ]] || assert_eq \
-    "$(jq -r '.production_allowance, .test_allowance, .verdict' <<<"$row_json" | paste -sd,)" \
+    "$(jq -r '.production_allowance, .test_allowance, .verdict' <<<"$row_json" | paste -sd, -)" \
     "$want_fields" "record for: $line"
 done <<'ROWS'
 **Expected delta**: 250 lines|250,null,pass|0
@@ -178,7 +180,7 @@ set -e
 assert_eq "$missing_rc" "0" "an issue stating no allowance is reported, not refused and not defaulted"
 assert_eq "$([[ "$missing_error" == *"no allowance to judge by"* && "$missing_error" == *"50 production, 14 test"* ]] && echo yes)" \
   "yes" "the report names the missing line and the counts measured"
-assert_eq "$("$STATE" --state-dir "$WT/tmp" get KEN-SIZE '.pr.size_check.verdict, .pr.size_check.production_allowance' | paste -sd,)" \
+assert_eq "$("$STATE" --state-dir "$WT/tmp" get KEN-SIZE '.pr.size_check.verdict, .pr.size_check.production_allowance' | paste -sd, -)" \
   "allowance_missing,null" "the record says nothing was judged and invents no allowance"
 
 # --- Past the production allowance ------------------------------------------
@@ -243,7 +245,7 @@ chmod +x "$GH_STUB/gh"
 "$STATE" --state-dir "$WT/tmp" init issue-77 --worktree "$WT" --branch size >/dev/null
 capture gh_json env PATH="$GH_STUB:$PATH" ORCH_STATE_DIR="$WT/tmp" \
   "$CHECK_BIN" --worktree "$WT" --issue issue-77 --json
-assert_eq "$(jq -r '.production_allowance, .test_allowance, .verdict' <<<"$gh_json" | paste -sd,)" \
+assert_eq "$(jq -r '.production_allowance, .test_allowance, .verdict' <<<"$gh_json" | paste -sd, -)" \
   "50,60,pass" "a GitHub issue body supplies the same allowance"
 
 # --- An issue the tracker cannot give is an environment failure -------------

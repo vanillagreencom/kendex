@@ -96,7 +96,7 @@ stage() {
       none) continue ;;
       *) echo "stage: unknown time $when in $item" >&2; exit 1 ;;
     esac
-    touch -d "@$mtime" "$WT/tmp/$file.json"
+    touch_epoch "$mtime" "$WT/tmp/$file.json"
   done
 }
 

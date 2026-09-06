@@ -652,7 +652,17 @@ open_gui() {
   # carrying arguments — is otherwise substituted in silence.
   [[ -z "${TERMINAL:-}" || "$chosen" == "$TERMINAL" ]] ||
     echo "Warning: \$TERMINAL '$TERMINAL' does not resolve to an executable; launching '$title' with $chosen instead" >&2
-  setsid "${launcher[@]}" </dev/null >/dev/null 2>&1 &
+  # setsid puts the window in its own session so it outlives this script and
+  # its terminal. macOS ships none — it is util-linux — and with stderr
+  # already going to /dev/null the shell's `setsid: command not found` was
+  # swallowed, so the launch never happened and the line below still said it
+  # had. nohup is what every platform has: it detaches the child from the
+  # hangup this script's exit would otherwise deliver.
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "${launcher[@]}" </dev/null >/dev/null 2>&1 &
+  else
+    nohup "${launcher[@]}" </dev/null >/dev/null 2>&1 &
+  fi
   echo "Opened terminal '$title' in $dir"
 }
 

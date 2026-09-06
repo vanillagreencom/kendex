@@ -135,7 +135,13 @@ create_runtime_dir() {
       dir=""
     }
   fi
-  [[ -n "$dir" ]] || dir=$(mktemp -d 2>/dev/null) || die "cannot create runtime directory"
+  # An explicit template rooted at $TMPDIR: a bare `mktemp -d` reads TMPDIR
+  # only on GNU, and BSD mktemp allocates under the OS's per-user temp
+  # directory instead, so this fallback ignored the caller's TMPDIR on macOS.
+  runtime_tmp_root="${TMPDIR:-/tmp}"
+  runtime_tmp_root="${runtime_tmp_root%/}"
+  case "$runtime_tmp_root" in "") runtime_tmp_root="/" ;; /*) ;; *) runtime_tmp_root="./$runtime_tmp_root" ;; esac
+  [[ -n "$dir" ]] || dir=$(mktemp -d "$runtime_tmp_root/second-opinion-runtime.XXXXXX" 2>/dev/null) || die "cannot create runtime directory"
   chmod 700 "$dir" || die "cannot secure runtime directory: $dir"
   printf '%s\n' "$dir"
 }

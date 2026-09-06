@@ -354,7 +354,13 @@ if wait_capture; then
   printf '#!/usr/bin/env bash\nprintf '"'"'%%s\\n'"'"' "$@" > "$OT_ARGV_CAPTURE"\n' > "$BIN/claude"
   chmod +x "$BIN/claude"
   cmd="$(cat "$CAP")"
-  (cd "$globbait" && OT_ARGV_CAPTURE="$TMP_ROOT/argv" PATH="$BIN:$PATH" bash -lc "${cmd##*&& }") >/dev/null 2>&1 || true
+  # PATH is set INSIDE the login shell, not only inherited by it: macOS
+  # /etc/profile runs path_helper, which rebuilds PATH from /etc/paths and
+  # /etc/paths.d and leaves the inherited entries behind them, so an inherited
+  # $BIN prefix does not survive `bash -lc` and a real claude on the host's
+  # login PATH would answer instead of the stub. The launcher still runs the
+  # rendered line through a login shell, which is the shape under test.
+  (cd "$globbait" && OT_ARGV_CAPTURE="$TMP_ROOT/argv" bash -lc "PATH=\"$BIN:\$PATH\"; ${cmd##*&& }") >/dev/null 2>&1 || true
   rm -f "$BIN/claude"
   assert_eq "$(tr '\n' ' ' < "$TMP_ROOT/argv" 2>/dev/null || echo unrun)" "-n CC-737 --model opus[1m] --dangerously-skip-permissions $BRIEF " \
     "the argv claude receives is the flags as given: a same-named file cannot rewrite the model id"

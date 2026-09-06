@@ -287,8 +287,12 @@ _md_body() {
   if [ "$1" = fenced ]; then
     local keep
     keep="$(_md_fenced "$2" | cut -f2)"
-    _md_lines "$2" "$3" | awk -F'\t' -v k="$keep" '
-      BEGIN { n = split(k, a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") keep[a[i]] = 1 }
+    # The list crosses in the environment, never through -v: it holds one line
+    # number per line, and BWK awk — the awk macOS ships — refuses a -v value
+    # carrying a newline outright ("awk: newline in string"), so every fenced
+    # rule died there. ENVIRON is read at runtime and takes the value whole.
+    _md_lines "$2" "$3" | md_keep="$keep" awk -F'\t' '
+      BEGIN { n = split(ENVIRON["md_keep"], a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") keep[a[i]] = 1 }
       ($1 in keep) { print }
     '
   else

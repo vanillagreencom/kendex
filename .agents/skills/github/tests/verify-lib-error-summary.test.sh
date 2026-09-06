@@ -57,7 +57,9 @@ done
 exit 1
 CMD
 chmod +x "$TMP_ROOT/fail.sh"
-assert_ge "$(bash "$TMP_ROOT/fail.sh" | wc -c || true)" 131072 "failing command's error text clears two pipe buffers"
+# BSD wc right-aligns its count in a fixed-width field; assert_ge reads its
+# argument with ^[0-9]+$, which a padded number fails.
+assert_ge "$(bash "$TMP_ROOT/fail.sh" | wc -c | tr -d ' ' || true)" 131072 "failing command's error text clears two pipe buffers"
 
 # run_stack under live errexit, with RESULTS_JSON recovered from an EXIT trap:
 # an aborted run_stack leaves the entry it never wrote missing rather than

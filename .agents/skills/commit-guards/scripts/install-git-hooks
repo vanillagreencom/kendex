@@ -236,7 +236,10 @@ fi
 # and stays refused, the safe direction.
 helper_is_dangling() { # PATH — 0 when the helper's install directory is gone
   local line="" dir=""
-  line="$(sed -n '3p' -- "$1" 2>/dev/null)" || return 1
+  # The helper comes in on stdin, not as an operand: BSD sed has no `--`
+  # end-of-options, so it would open `--` as a second input and exit 1, and
+  # every helper of ours whose install is gone would read as somebody's file.
+  line="$(sed -n '3p' <"$1" 2>/dev/null)" || return 1
   case "$line" in
     "installed_scripts='"*"'") ;;
     *) return 1 ;;

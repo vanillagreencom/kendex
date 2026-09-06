@@ -469,7 +469,10 @@ printf '%s\n' '{"issue_id":"KEN-9","worktree":"","fixed_items":[],"pr_comment_re
 STUB_ARGS_LOG="$mismatch_args_log" STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC" "1" "a state recording another issue id refuses"
 assert_contains "$(cat "$run_err")" "refusing to rewrite another issue" "the issue mismatch is named"
-assert_eq "$(wc -l <"$mismatch_args_log")" "0" "the push never ran against a mismatched issue id"
+# BSD wc right-aligns its count in a fixed-width field, so `$(wc -l <f)` reads
+# "       0" on macOS and "0" on GNU; every count below is compared as a
+# string, so the blanks come off at the measurement.
+assert_eq "$(wc -l <"$mismatch_args_log" | tr -d ' ')" "0" "the push never ran against a mismatched issue id"
 
 other_wt="$TMP_ROOT/other-wt"
 mkdir -p "$other_wt"
@@ -480,7 +483,7 @@ rm -rf "$work" && mkdir -p "$work"
 STUB_ARGS_LOG="$mismatch_args_log" STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC" "1" "a state recording another worktree refuses"
 assert_contains "$(cat "$run_err")" "refusing to rewrite another worktree" "the worktree mismatch is named"
-assert_eq "$(wc -l <"$mismatch_args_log")" "0" "the push never ran against a mismatched worktree"
+assert_eq "$(wc -l <"$mismatch_args_log" | tr -d ' ')" "0" "the push never ran against a mismatched worktree"
 
 echo
 echo "=== a dying stdout cannot lose the map ==="
@@ -563,7 +566,7 @@ numeric_args_log="$TMP_ROOT/numeric-args.log"
 STUB_ARGS_LOG="$numeric_args_log" STUB_PUSH_STDOUT="rebase-map: $numeric_old $numeric_new" \
   run_push "$work" --worktree "$wt" --issue 7
 assert_eq "$RUN_RC" "1" "a bare-numeric issue whose state does not exist fails the landed push"
-assert_eq "$(wc -l <"$numeric_args_log")" "1" \
+assert_eq "$(wc -l <"$numeric_args_log" | tr -d ' ')" "1" \
   "the push itself ran — the failure is reconciliation, not a pre-push refusal"
 assert_contains "$(cat "$run_err")" "State file not found: tmp/workflow-state-7.json" \
   "the failure names the exact key it resolved, not the issue-7 file"

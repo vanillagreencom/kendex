@@ -30,9 +30,14 @@ WORKTREE_PACKAGE_DIR="$(cd "$TEST_DIR/.." && pwd)"
 WORKTREE_SCRIPT="$WORKTREE_PACKAGE_DIR/scripts/worktree"
 GUARD_SCRIPT="$WORKTREE_PACKAGE_DIR/scripts/worktree-session-guard"
 
+# A suite that cannot execute on this host reds. Skipping into a green would
+# report that the lifecycle holds on a platform where nothing here ran, which
+# is the one answer a second platform must never give. macOS ships no flock —
+# it is util-linux — so a stock Mac reds here and says what to install; the
+# macOS CI leg supplies flock for exactly this reason.
 if ! command -v flock >/dev/null 2>&1; then
-  printf 'SKIP: worktree lifecycle integration needs flock(1) for the per-issue claim lock, which is not on PATH\n' >&2
-  exit 0
+  printf 'FAIL: worktree lifecycle integration needs flock(1) for the per-issue claim lock, and this host has none. `create` refuses without it, so nothing below could run. Install flock (util-linux) and re-run.\n' >&2
+  exit 1
 fi
 
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"

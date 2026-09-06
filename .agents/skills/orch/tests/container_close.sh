@@ -40,7 +40,16 @@ esac
 SH
 chmod +x "$TMP_ROOT/bin/gh"
 
-REAL_FLOCK="$(command -v flock)"
+# container-close refuses to run without flock(1), so this suite cannot
+# execute on a host that has none. It says so and reds: under `set -e` the
+# bare `command -v` below died here with no output at all, which reads from
+# the outside like a suite that ran and printed nothing. macOS ships no
+# flock — it is util-linux — so a stock Mac reds here; the macOS CI leg
+# supplies flock for exactly this reason.
+if ! REAL_FLOCK="$(command -v flock)"; then
+  printf 'FAIL: container-close requires flock(1) and this host has none, so nothing below could run. Install flock (util-linux) and re-run.\n' >&2
+  exit 1
+fi
 cat > "$TMP_ROOT/bin/flock" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
