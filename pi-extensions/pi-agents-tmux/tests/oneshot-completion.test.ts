@@ -1,616 +1,230 @@
-// How a one-shot run classifies its end: the context-length retry,
-// compact-then-empty, needs_completion delivery and the reused-session budget.
+// How a one-shot run classifies its end from the bridge stream (compact-then-
+// empty, the context-overflow retry, abort), the overflow detector's grammar,
+// and the reused-session budget guard that runs before the spawn.
 
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS, isContextLengthExceededEnvelope, isContextLengthExceededText, resolveBgSession, setSessionCompactorForTests } from "../extensions/subagent/sessions.js";
-import { runSingleAgent, setGitExecFileForTests, setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
-import type { SubagentDetails } from "../extensions/subagent/types.js";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import test, { after } from "node:test";
-import { cleanupTempRuntimes, tempRuntime, tempGitRepo, writeSettings, testAgent, installMockSpawn, bridgeStdout, bridgeEvent, shapedStreamEvent, transcriptEventName, mockPiEvents, makeDetails } from "./single-agent-fixture.js";
+import { runSingleAgent, setGitExecFileForTests, setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
+import { isContextLengthExceededEnvelope, isContextLengthExceededText, resolveBgSession, setSessionCompactorForTests } from "../extensions/subagent/sessions.js";
+import type { SingleResult } from "../extensions/subagent/types.js";
+import { bridgeEvent, bridgeStdout, cleanupTempRuntimes, installMockSpawn, makeDetails, mockPiEvents, shapedStreamEvent, tempGitRepo, tempRuntime, testAgent, transcriptEventName, writeSettings } from "./single-agent-fixture.js";
 
 after(cleanupTempRuntimes);
 
-test("context_length_exceeded detection triggers one retry with fresh session", async () => {
-	assert.equal(isContextLengthExceededText('Codex error: {"type":"error","error":{"type":"invalid_request_error","code":"context_length_exceeded"}}'), true);
-	assert.equal(isContextLengthExceededText("Input length (265330) exceeds model's maximum context length (262144)."), true);
-	assert.equal(isContextLengthExceededText("Your input exceeds the context window of this model"), true);
-	assert.equal(isContextLengthExceededEnvelope({ type: "turn_end", message: { errorMessage: "context_length_exceeded" } }), true);
-	const calls = installMockSpawn([
-		{ code: 1, stdout: `${JSON.stringify({ error: { type: "invalid_request_error", code: "context_length_exceeded" } })}\n` },
-		{ code: 0, stdout: `${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "ok after retry" }], usage: { input: 1, output: 1, totalTokens: 2 } } })}\n` },
-	]);
-	try {
-		const agent = testAgent();
-		const result = await runSingleAgent(
-			process.cwd(),
-			tempRuntime(),
-			[agent],
-			"reviewer-test",
-			"review code",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			{ getActiveTools: () => [], events: { emit: () => undefined } } as any,
-			undefined,
-			undefined,
-			(results): SubagentDetails => ({ mode: "single", agentScope: "project", projectAgentsDir: null, results }),
-		);
-		assert.equal(calls.length, 2);
-		assert.equal(result.exitCode, 0);
-		assert.equal(result.attempt, 2);
-		assert.equal(result.attempts?.length, 2);
-		assert.notEqual(result.attempts?.[0]?.sessionKey, result.attempts?.[1]?.sessionKey);
-		assert.match(result.attempts?.[0]?.errorEnvelope ?? "", /context_length_exceeded/);
-		assert.match(result.stderr, /retrying once with fresh session/);
-	} finally {
-		setSingleAgentSpawnForTests();
+type Emitted = Array<{ name: string; payload: any }>;
+
+function runOneShot(options: { cwd: string; pi: any; runtimeRoot?: string; sessionKey?: string; signal?: AbortSignal }): Promise<SingleResult> {
+	return runSingleAgent(options.cwd, options.runtimeRoot ?? tempRuntime(), [testAgent()], "reviewer-test", "review code", undefined, undefined, undefined, undefined, options.pi, options.signal, undefined, makeDetails, options.sessionKey);
+}
+
+// The pi bus as one line, in emit order: `needs_completion` carries its reason
+// and whether the payload's snapshot names the run's cwd; `retrying` its reason;
+// `started` is the spawn announcement and is read as the spawn count instead.
+function busLine(emitted: Emitted, cwd: string): string {
+	const names = emitted.filter((event) => event.name !== "subagents:started").map((event) => {
+		const name = event.name.replace(/^subagents:/, "");
+		if (name === "needs_completion") return `needs_completion(${event.payload.reason},${event.payload.cwdSnapshot ? (event.payload.cwdSnapshot.cwd === cwd ? "snapshot" : "wrong-snapshot") : "-"})`;
+		if (name === "retrying") return `retrying(${event.payload.reason})`;
+		return name;
+	});
+	return names.length ? names.join(",") : "none";
+}
+
+// Each diagnostic by the detector that wrote it; an unknown one prints whole.
+function diagTags(result: SingleResult): string {
+	const tags = (result.diagnostics ?? []).map((d) => {
+		if (d.startsWith("compact-then-empty detector skipped malformed agent_end content")) return "malformed-agent-end";
+		if (d.startsWith("cwdSnapshot git failed")) return "git-failed";
+		if (d.startsWith("Failed to emit subagents:needs_completion")) return "emit-failed";
+		return JSON.stringify(d);
+	});
+	return tags.length ? tags.join(",") : "-";
+}
+
+// The classification as one line: spawns and the returned attempt, whether a
+// retry ran on a fresh session, the first attempt's stop reason when there were
+// two, the status and reason, the snapshot, the diagnostics and the bus.
+function classification(result: SingleResult, emitted: Emitted, spawns: number, cwd: string): string {
+	const attempts = result.attempts;
+	const retry = attempts ? (attempts[0]?.sessionKey !== attempts[1]?.sessionKey ? "fresh-session" : "same-session") : "-";
+	const firstStop = attempts ? `${attempts[0]?.stopReason ?? "-"}` : "-";
+	const snapshot = result.cwdSnapshot ? (result.cwdSnapshot.cwd === cwd ? "cwd" : "other") : "-";
+	return `spawns=${spawns} exit=${result.exitCode} attempt=${result.attempt ?? "-"} retry=${retry} first-stop=${firstStop} status=${result.status ?? "-"} reason=${result.needsCompletionReason ?? "-"} stop=${result.stopReason ?? "-"} snapshot=${snapshot} diags=${diagTags(result)} bus=${busLine(emitted, cwd)}`;
+}
+
+const OVERFLOW_ENVELOPE = `${JSON.stringify({ error: { type: "invalid_request_error", code: "context_length_exceeded" } })}\n`;
+const textEnd = (text: string) => bridgeEvent("agent_end", { content: [{ type: "text", text }] });
+const assistantText = (text: string) => bridgeEvent("message_end", { message: { role: "assistant", content: [{ type: "text", text }] } });
+const EMPTY_END = bridgeEvent("agent_end", { content: [] });
+const COMPACT = bridgeEvent("session_compact");
+
+type World = { git?: "missing"; pi?: (emitted: Emitted) => any; stream: Array<{ code?: number; stdout?: string }> };
+
+const COMPLETED = "spawns=1 exit=0 attempt=1 retry=- first-stop=- status=- reason=- stop=- snapshot=- diags=- bus=completed";
+const NEEDS_COMPLETION = "spawns=1 exit=0 attempt=1 retry=- first-stop=- status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=cwd diags=- bus=needs_completion(compact-then-empty,snapshot)";
+
+// label | the spawn's stdout per attempt (and the world around it) | expect the classification line
+// Every row runs in a fresh git repo, so a needs_completion row's snapshot is the cwd's.
+const endRows: Array<[string, World, string]> = [
+	["a compact then an empty agent_end is needs_completion with the cwd's snapshot", { stream: [{ stdout: bridgeStdout([COMPACT, EMPTY_END]) }] }, NEEDS_COMPLETION],
+	["assistant text before the compact does not mask it", { stream: [{ stdout: bridgeStdout([assistantText("pre-compact progress"), COMPACT, EMPTY_END]) }] }, NEEDS_COMPLETION],
+	["a null agent_end content is empty", { stream: [{ stdout: bridgeStdout([COMPACT, bridgeEvent("agent_end", { content: null })]) }] }, NEEDS_COMPLETION],
+	["an omitted agent_end content is empty", { stream: [{ stdout: bridgeStdout([COMPACT, bridgeEvent("agent_end")]) }] }, NEEDS_COMPLETION],
+	["assistant text after the compact completes", { stream: [{ stdout: bridgeStdout([COMPACT, assistantText("post-compact answer"), EMPTY_END]) }] }, COMPLETED],
+	["a compact then a text agent_end completes", { stream: [{ stdout: bridgeStdout([COMPACT, textEnd("ok")]) }] }, COMPLETED],
+	["an empty agent_end without a compact completes", { stream: [{ stdout: bridgeStdout([EMPTY_END]) }] }, COMPLETED],
+	["a compact with no agent_end (bridge gone) completes", { stream: [{ stdout: bridgeStdout([COMPACT]) }] }, COMPLETED],
+	["a malformed agent_end content is logged and completes", { stream: [{ stdout: bridgeStdout([COMPACT, bridgeEvent("agent_end", { content: "bad-shape" })]) }] },
+		"spawns=1 exit=0 attempt=1 retry=- first-stop=- status=- reason=- stop=- snapshot=- diags=malformed-agent-end bus=completed"],
+	["a missing git keeps needs_completion without the snapshot", { git: "missing", stream: [{ stdout: bridgeStdout([COMPACT, EMPTY_END]) }] },
+		"spawns=1 exit=0 attempt=1 retry=- first-stop=- status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=- diags=git-failed bus=needs_completion(compact-then-empty,-)"],
+	["a needs_completion emit that throws is a diagnostic on the result", {
+		pi: (emitted) => ({ getActiveTools: () => [], events: { emit: (name: string, payload: unknown) => {
+			if (name === "subagents:needs_completion") throw new Error("bus disposed");
+			emitted.push({ name, payload });
+		} } }),
+		stream: [{ stdout: bridgeStdout([COMPACT, EMPTY_END]) }],
+	}, "spawns=1 exit=0 attempt=1 retry=- first-stop=- status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=cwd diags=emit-failed bus=none"],
+	["a context overflow envelope retries once on a fresh session", { stream: [{ code: 1, stdout: OVERFLOW_ENVELOPE }, { stdout: bridgeStdout([textEnd("ok after retry")]) }] },
+		"spawns=2 exit=0 attempt=2 retry=fresh-session first-stop=- status=- reason=- stop=- snapshot=- diags=- bus=failed,retrying(context_length_exceeded),completed"],
+	["a compact-then-empty on the retry is needs_completion", { stream: [{ code: 1, stdout: OVERFLOW_ENVELOPE }, { stdout: bridgeStdout([COMPACT, EMPTY_END]) }] },
+		"spawns=2 exit=0 attempt=2 retry=fresh-session first-stop=- status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=cwd diags=- bus=failed,retrying(context_length_exceeded),needs_completion(compact-then-empty,snapshot)"],
+	["a compact-then-empty beside an overflow in the same attempt is the retry's, not needs_completion", { stream: [{ code: 1, stdout: bridgeStdout([COMPACT, EMPTY_END, JSON.parse(OVERFLOW_ENVELOPE)]) }, { stdout: bridgeStdout([textEnd("ok after retry")]) }] },
+		"spawns=2 exit=0 attempt=2 retry=fresh-session first-stop=- status=- reason=- stop=- snapshot=- diags=- bus=failed,retrying(context_length_exceeded),completed"],
+	["overflow wording inside a tool result is not an overflow", { stream: [{ stdout: bridgeStdout([
+		{ type: "tool_execution_end", toolCallId: "call-grep", toolName: "grep", result: { content: [{ type: "text", text: "tests/session-lanes.test.ts: context_length_exceeded detection triggers one retry" }] } },
+		assistantText("Reviewed context_length_exceeded docs/tests; no runtime overflow."),
+		textEnd("done"),
+	]) }] }, COMPLETED],
+];
+
+test("the end of a one-shot run", async () => {
+	for (const [label, world, expect] of endRows) {
+		const cwd = tempGitRepo();
+		const emitted: Emitted = [];
+		const calls = installMockSpawn(world.stream.map((attempt) => ({ code: attempt.code ?? 0, stdout: attempt.stdout })));
+		if (world.git === "missing") {
+			setGitExecFileForTests(((command: string, args: string[], options: any, callback: any) => {
+				void command;
+				void args;
+				const cb = typeof options === "function" ? options : callback;
+				queueMicrotask(() => cb(Object.assign(new Error("spawn git ENOENT"), { code: "ENOENT" }), "", "spawn git ENOENT"));
+				return new EventEmitter() as any;
+			}) as any);
+		}
+		try {
+			const result = await runOneShot({ cwd, pi: world.pi ? world.pi(emitted) : mockPiEvents(emitted) });
+			assert.equal(classification(result, emitted, calls.length, cwd), expect, label);
+		} finally {
+			setGitExecFileForTests();
+			setSingleAgentSpawnForTests();
+		}
 	}
 });
 
-test("default reused-session context limit tracks current Codex backend cap", () => {
-	assert.equal(DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS, 272_000);
-});
-
-test("context_length_exceeded text in normal tool output does not trigger retry", async () => {
-	const stdout = bridgeStdout([
-		{
-			type: "tool_execution_end",
-			toolCallId: "call-grep",
-			toolName: "grep",
-			result: {
-				content: [
-					{ type: "text", text: "tests/session-lanes.test.ts: context_length_exceeded detection triggers one retry" },
-				],
-			},
-		},
-		{
-			type: "message_end",
-			message: {
-				role: "assistant",
-				content: [{ type: "text", text: "Reviewed context_length_exceeded docs/tests; no runtime overflow." }],
-				usage: { input: 1, output: 1, totalTokens: 2 },
-			},
-		},
-	]);
-	const calls = installMockSpawn([{ code: 0, stdout }]);
-	try {
-		const result = await runSingleAgent(
-			process.cwd(),
-			tempRuntime(),
-			[testAgent()],
-			"reviewer-test",
-			"review code",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			{ getActiveTools: () => [], events: { emit: () => undefined } } as any,
-			undefined,
-			undefined,
-			makeDetails,
-		);
-		assert.equal(calls.length, 1);
-		assert.equal(result.exitCode, 0);
-		assert.equal(result.attempt, 1);
-		assert.equal(result.attempts, undefined);
-		assert.equal(result.errorEnvelope, undefined);
-		assert.equal(result.errorMessage, undefined);
-		assert.equal(result.stderr, "");
-	} finally {
-		setSingleAgentSpawnForTests();
-	}
-});
-
-test("aborted oneshot emits failed event with summary", async () => {
-	const emitted: Array<{ name: string; payload: any }> = [];
+test("an aborted run fails with the partial answer flushed to its transcript", async () => {
+	const emitted: Emitted = [];
+	const cwd = tempRuntime();
 	const calls = installMockSpawn([{ code: 0, stdout: bridgeStdout([
 		shapedStreamEvent("top-level", "message_update", { message: { role: "assistant", content: [{ type: "text", text: "aborted partial" }] } }),
 	]) }]);
 	const controller = new AbortController();
 	controller.abort();
 	try {
-		await assert.rejects(
-			runSingleAgent(
-				process.cwd(),
-				tempRuntime(),
-				[testAgent()],
-				"reviewer-test",
-				"review code",
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				mockPiEvents(emitted),
-				controller.signal,
-				undefined,
-				makeDetails,
-			),
-			/Agent was aborted/,
-		);
-		assert.equal(calls.length, 1);
+		await assert.rejects(runOneShot({ cwd, pi: mockPiEvents(emitted), signal: controller.signal }), /Agent was aborted/);
 		const failed = emitted.find((event) => event.name === "subagents:failed");
-		assert.ok(failed);
-		assert.equal(failed.payload.summary, "Agent was aborted before completion.");
-		assert.equal(failed.payload.error, "Agent was aborted");
-		const content = readFileSync(failed.payload.transcriptPath, "utf8");
-		assert.match(content, /message_update/);
-		assert.match(content, /aborted partial/);
-		assert.match(content, /"buffered":true/);
-		const updateRecords = content.trim().split(/\r?\n/).map((line) => JSON.parse(line)).filter((record) => record.event && transcriptEventName(record.event) === "message_update");
-		assert.equal(updateRecords.length, 1);
-	} finally {
-		setSingleAgentSpawnForTests();
-	}
-});
-
-test("session_compact followed by empty agent_end emits synthetic needs_completion", async () => {
-	const cwd = tempGitRepo();
-	const emitted: Array<{ name: string; payload: any }> = [];
-	const calls = installMockSpawn([
-		{ code: 0, stdout: bridgeStdout([bridgeEvent("session_compact"), bridgeEvent("agent_end", { content: [] })]) },
-	]);
-	try {
-		const result = await runSingleAgent(
-			cwd,
-			tempRuntime(),
-			[testAgent()],
-			"reviewer-test",
-			"review code",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			mockPiEvents(emitted),
-			undefined,
-			undefined,
-			makeDetails,
+		const records = readFileSync(failed?.payload.transcriptPath, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
+		const updates = records.filter((record) => record.event && transcriptEventName(record.event) === "message_update");
+		assert.equal(
+			`spawns=${calls.length} bus=${busLine(emitted, cwd)} status=${failed?.payload.status} updates=${updates.length} buffered=${updates.every((record) => record.buffered === true)} partial=${updates.some((record) => JSON.stringify(record.event).includes("aborted partial"))}`,
+			"spawns=1 bus=failed status=aborted updates=1 buffered=true partial=true",
 		);
-		assert.equal(calls.length, 1);
-		assert.equal(result.exitCode, 0);
-		assert.equal(result.status, "needs_completion");
-		assert.equal(result.needsCompletionReason, "compact-then-empty");
-		assert.equal(result.cwdSnapshot?.cwd, cwd);
-		assert.match(result.cwdSnapshot?.head ?? "", /^[0-9a-f]{40}$/);
-		assert.equal(result.cwdSnapshot?.dirty, true);
-		assert.match(result.cwdSnapshot?.status ?? "", /\?\? dirty\.txt/);
-		assert.equal(result.cwdSnapshot?.lastCommit.subject, "initial commit");
-		assert.equal(existsSync(join(cwd, ".git", "index.lock")), false);
-
-		const needsCompletion = emitted.find((event) => event.name === "subagents:needs_completion");
-		assert.ok(needsCompletion);
-		assert.equal(needsCompletion.payload.reason, "compact-then-empty");
-		assert.equal(needsCompletion.payload.status, "needs_completion");
-		assert.equal(needsCompletion.payload.cwdSnapshot?.cwd, cwd);
-		assert.equal(emitted.some((event) => event.name === "subagents:completed" || event.name === "subagents:failed"), false);
 	} finally {
 		setSingleAgentSpawnForTests();
 	}
 });
 
-test("pre-compact assistant text does not mask compact-then-empty", async () => {
-	const emitted: Array<{ name: string; payload: any }> = [];
-	const calls = installMockSpawn([
-		{
-			code: 0,
-			stdout: bridgeStdout([
-				bridgeEvent("message_end", { message: { role: "assistant", content: [{ type: "text", text: "pre-compact progress" }] } }),
-				bridgeEvent("session_compact"),
-				bridgeEvent("agent_end", { content: [] }),
-			]),
-		},
-	]);
-	try {
-		const result = await runSingleAgent(
-			tempRuntime(),
-			tempRuntime(),
-			[testAgent()],
-			"reviewer-test",
-			"review code",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			mockPiEvents(emitted),
-			undefined,
-			undefined,
-			makeDetails,
-		);
-		assert.equal(calls.length, 1);
-		assert.equal(result.status, "needs_completion");
-		assert.equal(result.needsCompletionReason, "compact-then-empty");
-		assert.equal(emitted.some((event) => event.name === "subagents:needs_completion"), true);
-	} finally {
-		setSingleAgentSpawnForTests();
+// label | the text or envelope under test | expect
+const overflowRows: Array<[string, unknown, boolean]> = [
+	["text: the error code as a word", 'Codex error: {"type":"error","error":{"type":"invalid_request_error","code":"context_length_exceeded"}}', true],
+	["text: hyphenated code", "context-length-exceeded", true],
+	["text: exceeds the model's maximum context length with a parenthesised size", "Input length (265330) exceeds model's maximum context length (262144).", true],
+	["text: exceeds maximum context length of N tokens", "Prompt exceeds maximum context length of 200,000 tokens", true],
+	["text: exceeds the context window", "Your input exceeds the context window of this model", true],
+	["text: maximum context length without a size is not an overflow", "This model's maximum context length is large.", false],
+	["text: an ordinary completion", "Reviewed the diff; no findings.", false],
+	["envelope: error.code", { error: { code: "context_length_exceeded" } }, true],
+	["envelope: error.type", { error: { type: "context_length_exceeded" } }, true],
+	["envelope: top-level code", { code: "context_length_exceeded" }, true],
+	["envelope: top-level type", { type: "context_length_exceeded" }, true],
+	["envelope: error as a string", { error: "request failed: context_length_exceeded" }, true],
+	["envelope: errorMessage", { errorMessage: "context_length_exceeded" }, true],
+	["envelope: stopReason", { stopReason: "context_length_exceeded" }, true],
+	["envelope: message.errorMessage", { type: "turn_end", message: { errorMessage: "context_length_exceeded" } }, true],
+	["envelope: message.stopReason", { type: "turn_end", message: { stopReason: "context_length_exceeded" } }, true],
+	["envelope: an ordinary message_end", { type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "ok" }] } }, false],
+	["envelope: the code in a tool result is not read", { type: "tool_execution_end", result: { content: [{ type: "text", text: "context_length_exceeded" }] } }, false],
+];
+
+test("the context-overflow detector", () => {
+	for (const [label, input, expect] of overflowRows) {
+		const actual = typeof input === "string" ? isContextLengthExceededText(input) : isContextLengthExceededEnvelope(input);
+		assert.equal(actual, expect, label);
 	}
 });
 
-test("compact-then-empty detection applies after context retry", async () => {
-	const emitted: Array<{ name: string; payload: any }> = [];
-	const calls = installMockSpawn([
-		{ code: 1, stdout: `${JSON.stringify({ error: { type: "invalid_request_error", code: "context_length_exceeded" } })}\n` },
-		{ code: 0, stdout: bridgeStdout([bridgeEvent("session_compact"), bridgeEvent("agent_end", { content: [] })]) },
-	]);
-	try {
-		const result = await runSingleAgent(
-			tempRuntime(),
-			tempRuntime(),
-			[testAgent()],
-			"reviewer-test",
-			"review code",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			mockPiEvents(emitted),
-			undefined,
-			undefined,
-			makeDetails,
-		);
-		assert.equal(calls.length, 2);
-		assert.equal(result.attempt, 2);
-		assert.equal(result.attempts?.length, 2);
-		assert.equal(result.status, "needs_completion");
-		assert.equal(result.needsCompletionReason, "compact-then-empty");
-		assert.equal(emitted.some((event) => event.name === "subagents:needs_completion"), true);
-		assert.equal(emitted.some((event) => event.name === "subagents:completed"), false);
-	} finally {
-		setSingleAgentSpawnForTests();
-	}
-});
+const OK_STDOUT = bridgeStdout([textEnd("ok")]);
 
-test("compact-then-empty treats null and omitted agent_end content as empty", async () => {
-	for (const data of [{ content: null }, {}]) {
-		const emitted: Array<{ name: string; payload: any }> = [];
-		const calls = installMockSpawn([
-			{ code: 0, stdout: bridgeStdout([bridgeEvent("session_compact"), bridgeEvent("agent_end", data)]) },
-		]);
+type BudgetWorld = { compactor?: "fails" | "truncates"; session?: "absent" | number; settings?: Record<string, unknown> };
+
+// The guard's outcome as one line: spawns, compactor calls, the exit and stop
+// reason, the session mode and whether stderr carries the guard's line.
+function budgetLine(result: SingleResult, spawns: number, compactions: number): string {
+	return `spawns=${spawns} compactions=${compactions} exit=${result.exitCode} refused=${result.refused ?? false} stop=${result.stopReason ?? "-"} mode=${result.sessionMode ?? "-"} stderr=${result.stderr ? "guard-line" : "-"}`;
+}
+
+const TIGHT = { reusedSessionBudgetThreshold: 0.5, reusedSessionContextLimitTokens: 100 };
+
+// label | the reused session's size in bytes and the project's budget settings | expect the guard's line
+const budgetRows: Array<[string, BudgetWorld, string]> = [
+	["over the default 80% of the default 272k-token limit is refused before the spawn", { session: 900_000 }, "spawns=0 compactions=0 exit=1 refused=true stop=session_budget_exceeded mode=resumed stderr=guard-line"],
+	["under the default threshold spawns", { session: 800_000 }, "spawns=1 compactions=0 exit=0 refused=false stop=- mode=resumed stderr=-"],
+	["a configured limit decides under the default threshold", { session: 1_000, settings: { reusedSessionContextLimitTokens: 100 } }, "spawns=0 compactions=0 exit=1 refused=true stop=session_budget_exceeded mode=resumed stderr=guard-line"],
+	["a configured threshold decides under a configured limit", { session: 100, settings: { ...TIGHT, reusedSessionBudgetThreshold: 0.2 } }, "spawns=0 compactions=0 exit=1 refused=true stop=session_budget_exceeded mode=resumed stderr=guard-line"],
+	["under a configured threshold spawns", { session: 100, settings: TIGHT }, "spawns=1 compactions=0 exit=0 refused=false stop=- mode=resumed stderr=-"],
+	["an explicit key with no session file yet spawns", { session: "absent", settings: TIGHT }, "spawns=1 compactions=0 exit=0 refused=false stop=- mode=resumed stderr=-"],
+	["the warn policy spawns with the guard's line on stderr", { session: 1_000, settings: { ...TIGHT, reusedSessionBudgetPolicy: "warn" } }, "spawns=1 compactions=0 exit=0 refused=false stop=- mode=resumed stderr=guard-line"],
+	["compact-then-resume compacts once, then spawns", { compactor: "truncates", session: 1_000, settings: { ...TIGHT, reusedSessionBudgetPolicy: "compact-then-resume" } }, "spawns=1 compactions=1 exit=0 refused=false stop=- mode=resumed stderr=guard-line"],
+	["a failed compaction refuses", { compactor: "fails", session: 1_000, settings: { ...TIGHT, reusedSessionBudgetPolicy: "compact-then-resume" } }, "spawns=0 compactions=1 exit=1 refused=true stop=session_budget_exceeded mode=resumed stderr=guard-line"],
+];
+
+test("the reused-session budget guard", async () => {
+	for (const [label, world, expect] of budgetRows) {
+		const runtimeRoot = tempRuntime();
+		const cwd = tempRuntime();
+		if (world.settings) writeSettings(cwd, world.settings);
+		const session = resolveBgSession(runtimeRoot, "reviewer-test", "reuse");
+		if (world.session !== "absent") {
+			mkdirSync(dirname(session.path), { recursive: true });
+			writeFileSync(session.path, "x".repeat(world.session ?? 0), "utf8");
+		}
+		let compactions = 0;
+		setSessionCompactorForTests(async (request) => {
+			compactions += 1;
+			if (world.compactor === "fails") throw new Error("archive disk full");
+			writeFileSync(request.sessionPath, "", "utf8");
+			return { archivePath: `${request.sessionPath}.archive` };
+		});
+		const calls = installMockSpawn([{ code: 0, stdout: OK_STDOUT }]);
 		try {
-			const result = await runSingleAgent(
-				tempRuntime(),
-				tempRuntime(),
-				[testAgent()],
-				"reviewer-test",
-				"review code",
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				mockPiEvents(emitted),
-				undefined,
-				undefined,
-				makeDetails,
-			);
-			assert.equal(calls.length, 1);
-			assert.equal(result.status, "needs_completion");
-			assert.equal(result.needsCompletionReason, "compact-then-empty");
-			assert.equal(emitted.some((event) => event.name === "subagents:needs_completion"), true);
+			const result = await runOneShot({ cwd, pi: mockPiEvents([]), runtimeRoot, sessionKey: "reuse" });
+			assert.equal(budgetLine(result, calls.length, compactions), expect, label);
 		} finally {
+			setSessionCompactorForTests();
 			setSingleAgentSpawnForTests();
 		}
-	}
-});
-
-test("session_compact followed by text agent_end completes normally", async () => {
-	const emitted: Array<{ name: string; payload: any }> = [];
-	const calls = installMockSpawn([
-		{ code: 0, stdout: bridgeStdout([bridgeEvent("session_compact"), bridgeEvent("agent_end", { content: [{ type: "text", text: "ok" }] })]) },
-	]);
-	try {
-		const result = await runSingleAgent(
-			tempRuntime(),
-			tempRuntime(),
-			[testAgent()],
-			"reviewer-test",
-			"review code",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			mockPiEvents(emitted),
-			undefined,
-			undefined,
-			makeDetails,
-		);
-		assert.equal(calls.length, 1);
-		assert.equal(result.exitCode, 0);
-		assert.notEqual(result.status, "needs_completion");
-		assert.equal(emitted.some((event) => event.name === "subagents:needs_completion"), false);
-		assert.equal(emitted.some((event) => event.name === "subagents:completed"), true);
-	} finally {
-		setSingleAgentSpawnForTests();
-	}
-});
-
-test("empty agent_end without session_compact preserves existing completion behavior", async () => {
-	const emitted: Array<{ name: string; payload: any }> = [];
-	const calls = installMockSpawn([
-		{ code: 0, stdout: bridgeStdout([bridgeEvent("agent_end", { content: [] })]) },
-	]);
-	try {
-		const result = await runSingleAgent(
-			tempRuntime(),
-			tempRuntime(),
-			[testAgent()],
-			"reviewer-test",
-			"review code",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			mockPiEvents(emitted),
-			undefined,
-			undefined,
-			makeDetails,
-		);
-		assert.equal(calls.length, 1);
-		assert.equal(result.exitCode, 0);
-		assert.notEqual(result.status, "needs_completion");
-		assert.equal(emitted.some((event) => event.name === "subagents:needs_completion"), false);
-		assert.equal(emitted.some((event) => event.name === "subagents:completed"), true);
-	} finally {
-		setSingleAgentSpawnForTests();
-	}
-});
-
-test("bridge disconnect after session_compact does not classify compact-then-empty", async () => {
-	const emitted: Array<{ name: string; payload: any }> = [];
-	const calls = installMockSpawn([
-		{ code: 0, stdout: bridgeStdout([bridgeEvent("session_compact")]) },
-	]);
-	try {
-		const result = await runSingleAgent(
-			tempRuntime(),
-			tempRuntime(),
-			[testAgent()],
-			"reviewer-test",
-			"review code",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			mockPiEvents(emitted),
-			undefined,
-			undefined,
-			makeDetails,
-		);
-		assert.equal(calls.length, 1);
-		assert.notEqual(result.status, "needs_completion");
-		assert.equal(emitted.some((event) => event.name === "subagents:needs_completion"), false);
-		assert.equal(emitted.some((event) => event.name === "subagents:completed"), true);
-	} finally {
-		setSingleAgentSpawnForTests();
-	}
-});
-
-test("malformed agent_end content is logged and skipped", async () => {
-	const emitted: Array<{ name: string; payload: any }> = [];
-	const calls = installMockSpawn([
-		{ code: 0, stdout: bridgeStdout([bridgeEvent("session_compact"), bridgeEvent("agent_end", { content: "bad-shape" })]) },
-	]);
-	try {
-		const result = await runSingleAgent(
-			tempRuntime(),
-			tempRuntime(),
-			[testAgent()],
-			"reviewer-test",
-			"review code",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			mockPiEvents(emitted),
-			undefined,
-			undefined,
-			makeDetails,
-		);
-		assert.equal(calls.length, 1);
-		assert.notEqual(result.status, "needs_completion");
-		assert.match(result.diagnostics?.join("\n") ?? "", /malformed agent_end content/);
-		assert.equal(emitted.some((event) => event.name === "subagents:needs_completion"), false);
-		assert.equal(emitted.some((event) => event.name === "subagents:completed"), true);
-	} finally {
-		setSingleAgentSpawnForTests();
-	}
-});
-
-test("missing git binary omits cwdSnapshot but still emits compact-then-empty", async () => {
-	const emitted: Array<{ name: string; payload: any }> = [];
-	const calls = installMockSpawn([
-		{ code: 0, stdout: bridgeStdout([bridgeEvent("session_compact"), bridgeEvent("agent_end", { content: [] })]) },
-	]);
-	setGitExecFileForTests(((command: string, args: string[], options: any, callback: any) => {
-		void command;
-		void args;
-		const cb = typeof options === "function" ? options : callback;
-		queueMicrotask(() => cb(Object.assign(new Error("spawn git ENOENT"), { code: "ENOENT" }), "", "spawn git ENOENT"));
-		return new EventEmitter() as any;
-	}) as any);
-	try {
-		const result = await runSingleAgent(
-			tempRuntime(),
-			tempRuntime(),
-			[testAgent()],
-			"reviewer-test",
-			"review code",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			mockPiEvents(emitted),
-			undefined,
-			undefined,
-			makeDetails,
-		);
-		assert.equal(calls.length, 1);
-		assert.equal(result.status, "needs_completion");
-		assert.equal(result.needsCompletionReason, "compact-then-empty");
-		assert.equal(result.cwdSnapshot, undefined);
-		assert.match(result.diagnostics?.join("\n") ?? "", /cwdSnapshot git failed/);
-		const needsCompletion = emitted.find((event) => event.name === "subagents:needs_completion");
-		assert.ok(needsCompletion);
-		assert.equal(needsCompletion.payload.reason, "compact-then-empty");
-		assert.equal(needsCompletion.payload.cwdSnapshot, undefined);
-		assert.match(needsCompletion.payload.diagnostics?.join("\n") ?? "", /cwdSnapshot git failed/);
-	} finally {
-		setGitExecFileForTests();
-		setSingleAgentSpawnForTests();
-	}
-});
-
-test("needs_completion emit failure is attached to result diagnostics", async () => {
-	const emitted: Array<{ name: string; payload: any }> = [];
-	const calls = installMockSpawn([
-		{ code: 0, stdout: bridgeStdout([bridgeEvent("session_compact"), bridgeEvent("agent_end", { content: [] })]) },
-	]);
-	try {
-		const result = await runSingleAgent(
-			tempGitRepo(),
-			tempRuntime(),
-			[testAgent()],
-			"reviewer-test",
-			"review code",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			{
-				getActiveTools: () => [],
-				events: {
-					emit: (name: string, payload: unknown) => {
-						if (name === "subagents:needs_completion") throw new Error("bus disposed");
-						emitted.push({ name, payload });
-					},
-				},
-			} as any,
-			undefined,
-			undefined,
-			makeDetails,
-		);
-		assert.equal(calls.length, 1);
-		assert.equal(result.status, "needs_completion");
-		assert.match(result.diagnostics?.join("\n") ?? "", /Failed to emit subagents:needs_completion/);
-		assert.equal(emitted.some((event) => event.name === "subagents:needs_completion"), false);
-	} finally {
-		setSingleAgentSpawnForTests();
-	}
-});
-
-test("reused session budget guard refuses over-threshold explicit session by default without spawning", async () => {
-	const runtimeRoot = tempRuntime();
-	const cwd = tempRuntime();
-	const session = resolveBgSession(runtimeRoot, "reviewer-test", "reuse");
-	mkdirSync(dirname(session.path), { recursive: true });
-	writeFileSync(session.path, "x".repeat(900_000), "utf8");
-	const calls = installMockSpawn([{ code: 0 }]);
-	try {
-		const result = await runSingleAgent(
-			cwd,
-			runtimeRoot,
-			[testAgent()],
-			"reviewer-test",
-			"reuse old context",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			{ getActiveTools: () => [], events: { emit: () => undefined } } as any,
-			undefined,
-			undefined,
-			makeDetails,
-			"reuse",
-		);
-		assert.equal(calls.length, 0);
-		assert.equal(result.exitCode, 1);
-		assert.equal(result.stopReason, "session_budget_exceeded");
-		assert.equal(result.sessionMode, "resumed");
-		assert.equal(result.sessionKey, "reuse");
-		assert.match(result.errorMessage ?? "", /Refusing reused session/);
-		assert.match(result.errorMessage ?? "", /exceeds 80% guard threshold/);
-	} finally {
-		setSingleAgentSpawnForTests();
-	}
-});
-
-test("reused session budget guard allows below-threshold explicit session", async () => {
-	const runtimeRoot = tempRuntime();
-	const cwd = tempRuntime();
-	const session = resolveBgSession(runtimeRoot, "reviewer-test", "reuse-small");
-	mkdirSync(dirname(session.path), { recursive: true });
-	writeFileSync(session.path, "small", "utf8");
-	const calls = installMockSpawn([
-		{ code: 0, stdout: `${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "ok" }], usage: { input: 1, output: 1, totalTokens: 2 } } })}\n` },
-	]);
-	try {
-		const result = await runSingleAgent(
-			cwd,
-			runtimeRoot,
-			[testAgent()],
-			"reviewer-test",
-			"reuse small context",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			{ getActiveTools: () => [], events: { emit: () => undefined } } as any,
-			undefined,
-			undefined,
-			makeDetails,
-			"reuse-small",
-		);
-		assert.equal(calls.length, 1);
-		assert.equal(result.exitCode, 0);
-	} finally {
-		setSingleAgentSpawnForTests();
-	}
-});
-
-test("reused session compact-then-resume policy compacts then launches", async () => {
-	const runtimeRoot = tempRuntime();
-	const cwd = tempRuntime();
-	writeSettings(cwd, {
-		reusedSessionBudgetPolicy: "compact-then-resume",
-		reusedSessionBudgetThreshold: 0.5,
-		reusedSessionContextLimitTokens: 100,
-	});
-	const session = resolveBgSession(runtimeRoot, "reviewer-test", "reuse-compact");
-	mkdirSync(dirname(session.path), { recursive: true });
-	writeFileSync(session.path, "x".repeat(1_000), "utf8");
-	let compactCalls = 0;
-	setSessionCompactorForTests(async (request) => {
-		compactCalls += 1;
-		writeFileSync(request.sessionPath, "", "utf8");
-		return { archivePath: `${request.sessionPath}.archive` };
-	});
-	const calls = installMockSpawn([
-		{ code: 0, stdout: `${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "ok" }], usage: { input: 1, output: 1, totalTokens: 2 } } })}\n` },
-	]);
-	try {
-		const result = await runSingleAgent(
-			cwd,
-			runtimeRoot,
-			[testAgent()],
-			"reviewer-test",
-			"compact old context",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			{ getActiveTools: () => [], events: { emit: () => undefined } } as any,
-			undefined,
-			undefined,
-			makeDetails,
-			"reuse-compact",
-		);
-		assert.equal(compactCalls, 1);
-		assert.equal(calls.length, 1);
-		assert.equal(result.exitCode, 0);
-		assert.match(result.stderr, /Compacted reused session/);
-	} finally {
-		setSessionCompactorForTests();
-		setSingleAgentSpawnForTests();
 	}
 });
