@@ -53,15 +53,32 @@ function diagTags(result: SingleResult): string {
 	return tags.length ? tags.join(",") : "-";
 }
 
+// The envelope an attempt recorded (the raw stream line), read back as the
+// overflow it carried: the error code, or the assistant message's error text
+// (top-level or under a bridge event's `data`); anything else prints whole.
+function envelopeTag(raw: string | undefined): string {
+	if (raw === undefined) return "-";
+	try {
+		const parsed = JSON.parse(raw);
+		if (typeof parsed?.error?.code === "string") return `code:${parsed.error.code}`;
+		const message = parsed?.message ?? parsed?.data?.message;
+		if (typeof message?.errorMessage === "string") return `message:${message.errorMessage}`;
+	} catch {
+		/* not JSON: printed whole below */
+	}
+	return JSON.stringify(raw);
+}
+
 // The classification as one line: spawns and the returned attempt; when there
 // were two attempts, their count and whether the retry ran on a fresh session,
-// and the first attempt's summary as `stop/envelope`; then the status, reason and stop of the
+// and the first attempt's summary as `stop/envelope` with the envelope read
+// back by `envelopeTag`; then the status, reason and stop of the
 // returned result, its snapshot, its diagnostics, whether stderr carries text,
 // and the bus.
 function classification(result: SingleResult, emitted: Emitted, spawns: number, cwd: string): string {
 	const attempts = result.attempts;
 	const retry = attempts ? `${attempts.length}/${attempts[0]?.sessionKey !== attempts[1]?.sessionKey ? "fresh-session" : "same-session"}` : "-";
-	const first = attempts ? `${attempts[0]?.stopReason ?? "-"}/${attempts[0]?.errorEnvelope ? "envelope" : "-"}` : "-";
+	const first = attempts ? `${attempts[0]?.stopReason ?? "-"}/${envelopeTag(attempts[0]?.errorEnvelope)}` : "-";
 	const snapshot = result.cwdSnapshot ? (result.cwdSnapshot.cwd === cwd ? "cwd" : "other") : "-";
 	return `spawns=${spawns} exit=${result.exitCode} attempt=${result.attempt ?? "-"} retry=${retry} first=${first} status=${result.status ?? "-"} reason=${result.needsCompletionReason ?? "-"} stop=${result.stopReason ?? "-"} snapshot=${snapshot} diags=${diagTags(result)} stderr=${result.stderr ? "text" : "-"} bus=${busLine(emitted, result)}`;
 }
@@ -78,7 +95,7 @@ type World = { git?: "missing"; pi?: (emitted: Emitted) => any; stream: Array<{ 
 
 const COMPLETED = "spawns=1 exit=0 attempt=1 retry=- first=- status=- reason=- stop=- snapshot=- diags=- stderr=- bus=started,completed";
 const NEEDS_COMPLETION = "spawns=1 exit=0 attempt=1 retry=- first=- status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=cwd diags=- stderr=- bus=started,needs_completion(mirrors-result)";
-const RETRIED_OK = "spawns=2 exit=0 attempt=2 retry=2/fresh-session first=-/envelope status=- reason=- stop=- snapshot=- diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,completed";
+const RETRIED_OK = "spawns=2 exit=0 attempt=2 retry=2/fresh-session first=-/code:context_length_exceeded status=- reason=- stop=- snapshot=- diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,completed";
 
 // label | the spawn's stdout per attempt (and the world around it) | expect the classification line
 // Every row runs in a fresh git repo, so a needs_completion row's snapshot is the cwd's.
@@ -106,11 +123,11 @@ const endRows: Array<[string, World, string]> = [
 	}, "spawns=1 exit=0 attempt=1 retry=- first=- status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=cwd diags=emit-failed stderr=- bus=started"],
 	["a context overflow envelope retries once on a fresh session", { stream: [{ code: 1, stdout: OVERFLOW_ENVELOPE }, { stdout: bridgeStdout([textEnd("ok after retry")]) }] }, RETRIED_OK],
 	["an assistant turn ending in a context-length error retries", { stream: [{ stdout: bridgeStdout([OVERFLOW_TURN]) }, { stdout: bridgeStdout([textEnd("ok after retry")]) }] },
-		"spawns=2 exit=0 attempt=2 retry=2/fresh-session first=error/envelope status=- reason=- stop=- snapshot=- diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,completed"],
+		"spawns=2 exit=0 attempt=2 retry=2/fresh-session first=error/message:context_length_exceeded status=- reason=- stop=- snapshot=- diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,completed"],
 	["an overflow on the retry too fails, whatever the retry's exit code", { stream: [{ code: 1, stdout: OVERFLOW_ENVELOPE }, { code: 0, stdout: bridgeStdout([OVERFLOW_TURN]) }] },
-		"spawns=2 exit=1 attempt=2 retry=2/fresh-session first=-/envelope status=- reason=- stop=error snapshot=- diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,failed"],
+		"spawns=2 exit=1 attempt=2 retry=2/fresh-session first=-/code:context_length_exceeded status=- reason=- stop=error snapshot=- diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,failed"],
 	["a compact-then-empty on the retry is needs_completion", { stream: [{ code: 1, stdout: OVERFLOW_ENVELOPE }, { stdout: bridgeStdout([COMPACT, EMPTY_END]) }] },
-		"spawns=2 exit=0 attempt=2 retry=2/fresh-session first=-/envelope status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=cwd diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,needs_completion(mirrors-result)"],
+		"spawns=2 exit=0 attempt=2 retry=2/fresh-session first=-/code:context_length_exceeded status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=cwd diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,needs_completion(mirrors-result)"],
 	["a compact-then-empty beside an overflow in the same attempt is the retry's, not needs_completion", { stream: [{ code: 1, stdout: bridgeStdout([COMPACT, EMPTY_END, JSON.parse(OVERFLOW_ENVELOPE)]) }, { stdout: bridgeStdout([textEnd("ok after retry")]) }] }, RETRIED_OK],
 	["overflow wording inside a tool result is not an overflow", { stream: [{ stdout: bridgeStdout([
 		{ type: "tool_execution_end", toolCallId: "call-grep", toolName: "grep", result: { content: [{ type: "text", text: "tests/session-lanes.test.ts: context_length_exceeded detection triggers one retry" }] } },
