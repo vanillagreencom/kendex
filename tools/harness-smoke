@@ -1,0 +1,432 @@
+#!/usr/bin/env bash
+# Proves that a package kendex installs actually loads in each supported
+# harness, by the harness's own account. `kendex verify` compares disk with
+# the lock; every skill suite tests a package in isolation. Neither asks the
+# tool that has to read the render, so a render that is well-formed by
+# kendex's rules and rejected by its harness passes both. This check installs
+# a fixture catalog (one skill, one agent, one SessionStart hook, one
+# PreToolUse hook) into a scratch project for every harness, then asks each
+# harness what it loaded through the surface that harness exposes, and reads
+# a marker the hooks write when the harness runs them.
+#
+# One row per harness per question: skill, agent, hook. A row is `pass`,
+# `fail`, `advisory` (the harness runs no hooks; kendex installs text, and
+# the row checks the harness lists that text), or `unanswerable` (this
+# machine or this harness cannot answer, with the reason). Silence is never a
+# pass: a run that says nothing about the package is a fail, a run the
+# harness could not complete is unanswerable with its last line.
+#
+# The scratch projects live under tmp/ in this checkout, one git repository
+# per harness with the fixture installed for that harness alone, so no harness
+# reads them as part of this checkout, no harness answers for another's
+# render, and kendex's project-scope writes land nowhere shared. Per-harness gates the check has to
+# open, each said on its row: Codex runs project hooks only after persisted
+# hook trust, so the exec run carries --dangerously-bypass-hook-trust; Copilot
+# runs repository hooks only for a folder its settings name in
+# `trustedFolders`, so its runs use an isolated COPILOT_HOME that copies the
+# login record and trusts the scratch project; Pi's carrier dispatches only
+# the tool_call listener, so its hook row asks the model for one tool call.
+#
+# Exit 0 when no row failed, 1 when any row failed, 2 when the fixture could
+# not be installed or `kendex verify` refused it. Model-backed rows spend one
+# turn each on claude, codex, pi and copilot, and on cursor when logged in.
+set -euo pipefail
+
+usage() {
+  printf '%s\n' 'usage: tools/harness-smoke [--only h1,h2,...] [--keep] [--dir DIR]' \
+    '  --only    run these harnesses (claude codex opencode cursor pi gemini copilot); the rest print skipped' \
+    '  --keep    leave the scratch project and logs in place' \
+    '  --dir     scratch directory (default: a fresh directory under tmp/)'
+}
+
+HARNESSES="claude codex opencode cursor pi gemini copilot"
+ONLY="$HARNESSES"
+KEEP=0
+DIR=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --only)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      ONLY=$(printf '%s' "$2" | tr ',' ' ')
+      for h in $ONLY; do
+        case " $HARNESSES " in *" $h "*) ;; *)
+          printf 'harness-smoke: unknown harness: %s\n' "$h" >&2; exit 2 ;;
+        esac
+      done
+      shift 2 ;;
+    --keep) KEEP=1; shift ;;
+    --dir)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      DIR=$2; shift 2 ;;
+    -h | --help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+
+for tool in kendex git jq; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    printf 'harness-smoke: %s is required\n' "$tool" >&2
+    exit 2
+  }
+done
+
+ROOT=$(git rev-parse --show-toplevel) || exit 2
+if [ -z "$DIR" ]; then
+  mkdir -p "$ROOT/tmp"
+  DIR=$(mktemp -d "$ROOT/tmp/harness-smoke.XXXXXX") || exit 2
+else
+  mkdir -p "$DIR" || exit 2
+  DIR=$(cd "$DIR" && pwd -P) || exit 2
+fi
+cleanup() {
+  if [ "$KEEP" -eq 1 ]; then
+    printf 'harness-smoke: scratch kept at %s\n' "$DIR"
+  else
+    rm -rf -- "${DIR:?}"
+  fi
+}
+trap cleanup EXIT
+
+CATALOG="$DIR/catalog"
+LOGS="$DIR/logs"
+mkdir -p "$CATALOG/skills/smoke-skill" "$CATALOG/agents" "$CATALOG/hooks" "$LOGS"
+
+# ---- the fixture catalog ---------------------------------------------------
+# Each item answers with a token no harness would emit on its own, and each
+# hook appends the event and its own rendered path to the marker, so a row can
+# tell the harness's copy of the script from a cross-read of another tool's.
+cat >"$CATALOG/kendex.toml" <<'EOF'
+is_source_catalog = true
+
+[marketplace]
+name = "harness-smoke"
+description = "Fixture catalog for tools/harness-smoke"
+author = "kendex"
+license = "MIT"
+EOF
+cat >"$CATALOG/skills/smoke-skill/SKILL.md" <<'EOF'
+---
+name: smoke-skill
+description: "Harness smoke fixture skill: proves a kendex-rendered skill loads."
+---
+
+# Smoke skill
+
+When this skill is invoked, reply with exactly SMOKE-SKILL-LOADED and nothing else.
+EOF
+cat >"$CATALOG/agents/smoke-agent.md" <<'EOF'
+---
+name: smoke-agent
+description: Harness smoke fixture agent; proves a kendex-rendered agent loads.
+---
+
+You are the smoke agent. Reply with exactly SMOKE-AGENT-LOADED and nothing else.
+EOF
+hook_body() { # EVENT — the shared body every fixture hook runs
+  cat <<EOF
+set -euo pipefail
+root=\$(git rev-parse --show-toplevel)
+printf '%s %s\\n' "$1" "\$0" >>"\$root/smoke-fired"
+exit 0
+EOF
+}
+{
+  cat <<'EOF'
+#!/usr/bin/env bash
+# ---
+# name: smoke-session
+# event: SessionStart
+# description: Harness smoke fixture hook; appends its event and path to smoke-fired at the project root when the harness runs it.
+# safety: Writes one file at the project root and nothing else.
+# timeout: 10
+# ---
+EOF
+  hook_body SessionStart
+} >"$CATALOG/hooks/smoke-session.sh"
+{
+  cat <<'EOF'
+#!/usr/bin/env bash
+# ---
+# name: smoke-tool
+# event: PreToolUse
+# description: Harness smoke fixture hook; appends its event and path to smoke-fired at the project root before a tool runs.
+# safety: Writes one file at the project root and nothing else; never refuses a tool.
+# timeout: 10
+# ---
+EOF
+  hook_body PreToolUse
+} >"$CATALOG/hooks/smoke-tool.sh"
+chmod +x "$CATALOG/hooks/smoke-session.sh" "$CATALOG/hooks/smoke-tool.sh"
+
+# ---- one scratch project per harness ---------------------------------------
+# Every harness gets the fixture installed for it alone. Several tools
+# cross-read another tool's directories (Copilot reads .claude/agents and
+# .claude/settings.json, Gemini and Codex read .agents/skills), so an
+# all-harness install would let one harness answer for another's render.
+PROJECT=""
+MARKER=""
+install_for() { # HARNESS — sets PROJECT and MARKER, exits 2 when kendex cannot install or verify
+  PROJECT="$DIR/$1/project"
+  MARKER="$PROJECT/smoke-fired"
+  mkdir -p "$PROJECT/.agents"
+  git -C "$PROJECT" init -q
+  git -C "$PROJECT" config user.email harness-smoke@kendex.invalid
+  git -C "$PROJECT" config user.name harness-smoke
+  git -C "$PROJECT" commit -q --allow-empty -m 'scratch project for tools/harness-smoke'
+  printf 'schema = 6\n' >"$PROJECT/kendex.toml"
+  if ! (cd "$PROJECT" && kendex add "$CATALOG" --skill smoke-skill --agent smoke-agent \
+    --hook smoke-session,smoke-tool --harness "$1" -y) >"$LOGS/$1-kendex-add.log" 2>&1; then
+    printf 'harness-smoke: the fixture did not install for %s; %s says why\n' "$1" "$LOGS/$1-kendex-add.log" >&2
+    KEEP=1
+    exit 2
+  fi
+  if ! (cd "$PROJECT" && kendex verify --scope project) >"$LOGS/$1-kendex-verify.log" 2>&1; then
+    printf 'harness-smoke: kendex verify refused the fixture install for %s; %s says why\n' "$1" "$LOGS/$1-kendex-verify.log" >&2
+    KEEP=1
+    exit 2
+  fi
+  printf 'kendex verify: clean for %s (%s)\n' "$1" "$PROJECT"
+}
+
+# ---- rows ------------------------------------------------------------------
+FAILED=0
+ROWS=""
+row() { # HARNESS QUESTION RESULT EVIDENCE
+  case "$3" in fail) FAILED=1 ;; esac
+  ROWS="$ROWS$(printf '| %s | %s | %s | %s |' "$1" "$2" "$3" "$4")
+"
+  printf '%-8s %-6s %-12s %s\n' "$1" "$2" "$3" "$4"
+}
+have() { command -v "$1" >/dev/null 2>&1; }
+TIMEOUT=""
+have timeout && TIMEOUT="timeout 300"
+# Runs a harness command inside the scratch project with no stdin, both
+# streams to LOGS/NAME.log; OUT holds the text and STATUS the exit code.
+OUT=""
+STATUS=0
+run() { # NAME CMD... — cwd is the scratch project
+  local name=$1
+  shift
+  STATUS=0
+  # shellcheck disable=SC2086 # TIMEOUT is empty or the two words `timeout 300`.
+  OUT=$(cd "$PROJECT" && $TIMEOUT "$@" </dev/null 2>&1) || STATUS=$?
+  printf '%s\n' "$OUT" >"$LOGS/$name.log"
+}
+last_line() { printf '%s\n' "$OUT" | grep -v '^[[:space:]]*$' | tail -n 1; }
+clip() { # TEXT — one evidence cell: leading space and pipes gone, at most 160 characters
+  printf '%s' "$1" | sed -e 's/^[[:space:]]*//' -e 's/|/¦/g' | cut -c1-160
+}
+# Judges OUT against what a loaded package makes the harness say. EXPECT is
+# the harness's yes, REJECT its explicit no; a run that ended non-zero with
+# neither is the harness failing to answer, and an answer with neither is a
+# fail because silence is not a pass.
+judge() { # HARNESS QUESTION EXPECT REJECT COMMAND-TEXT
+  local hit
+  if hit=$(printf '%s\n' "$OUT" | grep -oE -e "$3" | head -n 1) && [ -n "$hit" ]; then
+    row "$1" "$2" pass "$5 said: $(clip "$hit")"
+  elif [ -n "$4" ] && hit=$(printf '%s\n' "$OUT" | grep -E -e "$4" | head -n 1) && [ -n "$hit" ]; then
+    row "$1" "$2" fail "$5 said: $(clip "$hit")"
+  elif [ "$STATUS" -ne 0 ]; then
+    row "$1" "$2" unanswerable "$5 exited $STATUS: $(clip "$(last_line)")"
+  else
+    row "$1" "$2" fail "$5 did not say $3; its last line: $(clip "$(last_line)")"
+  fi
+}
+fired() { # HARNESS EVENT RENDER-PATH COMMAND-TEXT — reads the marker
+  if [ -f "$MARKER" ] && grep -qF -- "$2 $PROJECT/$3" "$MARKER"; then
+    row "$1" hook pass "$4 ran $3 at $2"
+  elif [ "$STATUS" -ne 0 ] && ! printf '%s' "$OUT" | grep -qiE 'hook'; then
+    row "$1" hook unanswerable "$4 exited $STATUS before any hook ran: $(clip "$(last_line)")"
+  else
+    row "$1" hook fail "$4 did not run $3 at $2 (marker: $(cat "$MARKER" 2>/dev/null | tr '\n' ';'))"
+  fi
+}
+# Reads one value out of the JSON a harness printed, into JSON_HIT. A harness
+# that printed no JSON answered nothing the row can read, so the caller fails
+# the row rather than reading an empty extraction as an absent package.
+JSON_HIT=""
+extract() { # JQ-FILTER [JQ-FLAGS...]
+  local filter=$1
+  shift
+  JSON_HIT=""
+  JSON_HIT=$(printf '%s\n' "$OUT" | jq -r "$@" "$filter" 2>/dev/null)
+}
+located() { # HARNESS COMMAND-TEXT JQ-FILTER [JQ-FLAGS...] — a skill row on a listing that carries the skill's path
+  local harness=$1 command=$2
+  shift 2
+  if [ "$STATUS" -ne 0 ]; then
+    row "$harness" skill unanswerable "$command exited $STATUS: $(clip "$(last_line)")"
+  elif ! extract "$@"; then
+    row "$harness" skill fail "$command printed no JSON the row can read: $(clip "$(last_line)")"
+  elif [ "$JSON_HIT" = "$PROJECT/.agents/skills/smoke-skill/SKILL.md" ]; then
+    row "$harness" skill pass "$command lists smoke-skill at $JSON_HIT"
+  else
+    row "$harness" skill fail "$command lists smoke-skill at '${JSON_HIT:-nothing}'"
+  fi
+}
+absent() { # HARNESS — every row of a harness whose CLI is not installed
+  row "$1" skill unanswerable "$2 is not on PATH"
+  row "$1" agent unanswerable "$2 is not on PATH"
+  row "$1" hook unanswerable "$2 is not on PATH"
+}
+skipped() {
+  row "$1" skill skipped "not in --only"
+  row "$1" agent skipped "not in --only"
+  row "$1" hook skipped "not in --only"
+}
+wants() { case " $ONLY " in *" $1 "*) return 0 ;; esac; return 1; }
+
+# Claude Code: a slash invocation expands the skill or answers Unknown
+# command; --agent runs the session as that agent or lists what exists; the
+# SessionStart registration in .claude/settings.json runs the script.
+claude_rows() {
+  have claude || { absent claude claude; return; }
+  install_for claude
+  rm -f -- "$MARKER"
+  run claude-skill claude -p '/smoke-skill'
+  judge claude skill 'SMOKE-SKILL-LOADED' 'Unknown command' 'claude -p /smoke-skill'
+  fired claude SessionStart .claude/hooks/smoke-session.sh 'claude -p'
+  run claude-agent claude -p --agent smoke-agent 'Reply exactly as your agent instructions say.'
+  judge claude agent 'SMOKE-AGENT-LOADED' 'not found' 'claude -p --agent smoke-agent'
+}
+
+# Codex: `debug prompt-input` renders the skills block the model sees, no
+# model turn needed. Agents surface only as spawn_agent roles inside the tool
+# schema, so the model relays them; the same exec turn runs SessionStart,
+# which Codex gates on hook trust the flag stands in for.
+codex_rows() {
+  have codex || { absent codex codex; return; }
+  install_for codex
+  run codex-skill codex debug prompt-input
+  judge codex skill '- smoke-skill: [^(]*\(file: r[0-9]+/smoke-skill/SKILL.md\)' '' 'codex debug prompt-input'
+  rm -f -- "$MARKER"
+  run codex-agent codex exec --ephemeral --dangerously-bypass-hook-trust \
+    'List the custom agent names available to spawn_agent, one per line, nothing else.'
+  judge codex agent '(^|[^a-z-])smoke-agent([^a-z-]|$)' '' 'codex exec (model-relayed spawn_agent roles)'
+  fired codex SessionStart .codex/hooks/smoke-session.sh 'codex exec --dangerously-bypass-hook-trust'
+}
+
+# OpenCode: three debug listings, no model turn. OpenCode runs no hooks;
+# kendex installs the hook as an instruction file plus a config reference,
+# and the row checks the resolved config carries it.
+opencode_rows() {
+  have opencode || { absent opencode opencode; return; }
+  install_for opencode
+  run opencode-skill opencode debug skill
+  located opencode 'opencode debug skill' '.[] | select(.name == "smoke-skill") | .location'
+  run opencode-agent opencode agent list
+  judge opencode agent '^smoke-agent \(subagent\)' '' 'opencode agent list'
+  run opencode-hook opencode debug config
+  if [ "$STATUS" -ne 0 ]; then
+    row opencode hook unanswerable "opencode debug config exited $STATUS: $(clip "$(last_line)")"
+  elif ! extract '.instructions[]?'; then
+    row opencode hook fail "opencode debug config printed no JSON the row can read: $(clip "$(last_line)")"
+  elif printf '%s\n' "$JSON_HIT" | grep -qFx -- '.opencode/instructions/kendex-hook-smoke-session.md'; then
+    row opencode hook advisory 'no hook runs on OpenCode; opencode debug config lists .opencode/instructions/kendex-hook-smoke-session.md'
+  else
+    row opencode hook fail 'no hook runs on OpenCode, and opencode debug config does not list .opencode/instructions/kendex-hook-smoke-session.md'
+  fi
+}
+
+# Cursor: no listing surface for rules or skills, so the model is asked to
+# name what it was given; the hook is a rule, never run.
+cursor_rows() {
+  have cursor-agent || { absent cursor cursor-agent; return; }
+  install_for cursor
+  run cursor-status cursor-agent status
+  if printf '%s' "$OUT" | grep -qi 'not logged in'; then
+    local why='cursor-agent is not logged in (cursor-agent status), and rules and skills have no listing besides the model'
+    row cursor skill unanswerable "$why"
+    row cursor agent unanswerable "$why"
+    row cursor hook unanswerable "no hook runs on Cursor; $why"
+    return
+  fi
+  run cursor-list cursor-agent -p --trust --output-format text \
+    'List the names of every rule and skill available to you, one per line, nothing else.'
+  judge cursor skill '(^|[^a-z-])smoke-skill([^a-z-]|$)' '' 'cursor-agent -p (model-relayed listing)'
+  judge cursor agent '(^|[^a-z-])smoke-agent([^a-z-]|$)' '' 'cursor-agent -p (model-relayed listing)'
+  if printf '%s' "$OUT" | grep -qE 'safety-smoke-session'; then
+    row cursor hook advisory 'no hook runs on Cursor; the model lists the safety-smoke-session rule'
+  elif [ "$STATUS" -ne 0 ]; then
+    row cursor hook unanswerable "cursor-agent -p exited $STATUS: $(clip "$(last_line)")"
+  else
+    row cursor hook fail 'no hook runs on Cursor, and the model did not list the safety-smoke-session rule'
+  fi
+}
+
+# Pi: get_commands over RPC lists every skill as a skill: command with its
+# path. Pi core has no agent surface: .pi/agents/*.md is read by the
+# pi-agents-tmux extension, which lists agents only in its dashboard. The
+# pi-hooks carrier dispatches tool_call alone, so the hook row asks for one
+# tool call; the SessionStart registration is written and never dispatched.
+pi_rows() {
+  have pi || { absent pi pi; return; }
+  install_for pi
+  STATUS=0
+  OUT=$(cd "$PROJECT" && printf '{"id":"1","type":"get_commands"}\n' | $TIMEOUT pi --mode rpc --approve --no-session 2>&1) || STATUS=$?
+  printf '%s\n' "$OUT" >"$LOGS/pi-skill.log"
+  located pi 'pi --mode rpc get_commands' 'fromjson? | select(.type == "response" and .command == "get_commands") | .data.commands[] | select(.name == "skill:smoke-skill") | .sourceInfo.path' -R
+  row pi agent unanswerable 'Pi core has no agent surface; .pi/agents/*.md is read by the pi-agents-tmux extension, which lists agents only in its interactive dashboard'
+  rm -f -- "$MARKER"
+  run pi-hook pi -p --approve --no-session \
+    'Run the shell command true with your bash tool, then reply with exactly: ok'
+  fired pi PreToolUse .pi/kendex/hooks/smoke-tool.sh 'pi -p (one tool call; SessionStart is registered and never dispatched by the carrier)'
+}
+
+# Gemini CLI: `skills list` names project skills with their location. No
+# listing names project agents: --debug prints only an AgentRegistry count,
+# which reads the same with the agent file removed. The SessionStart
+# registration runs before the model is reached, so the hook row stands
+# even where the model call fails; --debug makes Gemini name its hook run,
+# which tells a hook that did not run from a session that never started.
+gemini_rows() {
+  have gemini || { absent gemini gemini; return; }
+  install_for gemini
+  run gemini-skill gemini skills list
+  if printf '%s' "$OUT" | grep -qE '^smoke-skill \[Enabled\]' \
+    && printf '%s' "$OUT" | grep -qF -- "$PROJECT/.agents/skills/smoke-skill/SKILL.md"; then
+    row gemini skill pass "gemini skills list said smoke-skill [Enabled] at $PROJECT/.agents/skills/smoke-skill/SKILL.md"
+  elif printf '%s' "$OUT" | grep -qi 'not trusted'; then
+    row gemini skill fail "gemini skills list skipped the project: $(clip "$(printf '%s\n' "$OUT" | grep -i 'not trusted' | head -n 1)")"
+  elif [ "$STATUS" -ne 0 ]; then
+    row gemini skill unanswerable "gemini skills list exited $STATUS: $(clip "$(last_line)")"
+  else
+    row gemini skill fail 'gemini skills list did not list smoke-skill [Enabled] at the project path'
+  fi
+  row gemini agent unanswerable 'no gemini listing names project agents; gemini --debug prints only an AgentRegistry count, unchanged with the agent file removed'
+  rm -f -- "$MARKER"
+  run gemini-hook gemini -p 'Reply with exactly: ok' --skip-trust --debug
+  fired gemini SessionStart .gemini/hooks/smoke-session.sh 'gemini -p --skip-trust --debug'
+}
+
+# Copilot: `skill list` names repository skills; --agent runs the session as
+# the agent or lists what exists. Repository hooks run only for a folder the
+# settings name in trustedFolders, so the runs use an isolated COPILOT_HOME
+# holding a copy of the login record and that one trust entry.
+copilot_rows() {
+  have copilot || { absent copilot copilot; return; }
+  install_for copilot
+  local home="$DIR/copilot-home" source_home="${COPILOT_HOME:-$HOME/.copilot}"
+  mkdir -p "$home"
+  [ -f "$source_home/config.json" ] && cp "$source_home/config.json" "$home/config.json"
+  jq -n --arg p "$PROJECT" '{trustedFolders: [$p]}' >"$home/settings.json"
+  run copilot-skill env COPILOT_HOME="$home" copilot skill list
+  judge copilot skill '^  smoke-skill - .*' '' 'copilot skill list'
+  rm -f -- "$MARKER"
+  run copilot-agent env COPILOT_HOME="$home" copilot -p 'Reply exactly as your agent instructions say.' --agent smoke-agent --allow-all-tools -s
+  judge copilot agent 'SMOKE-AGENT-LOADED' 'No such agent' 'copilot -p --agent smoke-agent'
+  fired copilot SessionStart .github/hooks/smoke-session.sh 'copilot -p (COPILOT_HOME trusting the scratch project)'
+}
+
+printf '%-8s %-6s %-12s %s\n' harness row result evidence
+for h in $HARNESSES; do
+  if wants "$h"; then "${h}_rows"; else skipped "$h"; fi
+done
+
+printf '\n| harness | row | result | evidence |\n|---|---|---|---|\n%s' "$ROWS"
+printf '\nlogs: %s\n' "$LOGS"
+if [ "$FAILED" -eq 1 ]; then
+  printf 'harness-smoke: a harness did not load a kendex-installed package\n' >&2
+  KEEP=1
+  exit 1
+fi
