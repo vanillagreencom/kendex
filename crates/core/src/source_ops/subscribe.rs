@@ -182,15 +182,14 @@ pub fn install_project_from_personal(
     let project = crate::engine::ops::manifest_for_mutation(env, &scope)?;
     // Redeclaring the same subscription the project already holds is fine; a
     // different repo under a taken alias, or the same repo under another, is
-    // refused before anything is planned.
-    if !project.sources.contains_key(source_name) {
-        let reference = decl
-            .repo
-            .clone()
-            .or_else(|| decl.path.clone())
-            .unwrap_or_default();
-        check_subscription(&project, Some(source_name), &decl, &reference)?;
-    }
+    // refused before anything is planned. Checked whether or not the project
+    // already holds the alias: the taken-alias refusal exists for when it does.
+    let reference = decl
+        .repo
+        .clone()
+        .or_else(|| decl.path.clone())
+        .unwrap_or_default();
+    check_subscription(&project, Some(source_name), &decl, &reference)?;
     // The install reads from this subscription and no other: the context is
     // the subscription itself, so a bare name never wanders to another source.
     let request = crate::engine::ops::AddRequest {

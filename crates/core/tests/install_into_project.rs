@@ -107,3 +107,86 @@ fn installing_into_a_project_is_atomic_with_its_subscription() {
     assert!(manifest.contains("[sources.mkt]"), "{manifest}");
     assert!(manifest.contains("[skills.gh]"), "{manifest}");
 }
+
+/// Subscribes both scopes under the alias `kit`: the project to
+/// `project_repo`, the personal scope to `acme/kit`, synced so a package
+/// from it can install.
+#[allow(clippy::unwrap_used)]
+fn both_scopes_hold_kit(env: &Env, project: &Path, project_repo: &str) {
+    upstream(env.home.as_path(), "acme/kit");
+    if project_repo != "acme/kit" {
+        upstream(env.home.as_path(), project_repo);
+    }
+    let scope = Scope::Project {
+        root: project.to_path_buf(),
+    };
+    let report = source_ops::subscribe(env, &scope, project_repo, Some("kit"))
+        .unwrap()
+        .report;
+    apply::execute(env, &report.plan).unwrap();
+    let report = source_ops::subscribe(env, &Scope::Global, "acme/kit", Some("kit"))
+        .unwrap()
+        .report;
+    apply::execute(env, &report.plan).unwrap();
+    remote::sync(env, "acme/kit", None).unwrap();
+}
+
+/// A project already holding the alias for a different repository is refused
+/// rather than rebound: rebinding would move every item it declared from
+/// that alias. Its manifest stays byte-identical.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_taken_alias_for_another_repo_refuses_the_redirected_install() {
+    let (_tmp, env, project) = fixture();
+    both_scopes_hold_kit(&env, &project, "other/kit");
+    let project_path = project.join("kendex.toml");
+    let before = fs::read(&project_path).unwrap();
+
+    let refused = source_ops::install_project_from_personal(
+        &env,
+        &project,
+        "kit",
+        &ops::AddRequest {
+            skills: vec!["gh".into()],
+            ..ops::AddRequest::default()
+        },
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(kendex_core::error::CoreError::SourceRefInvalid { .. })
+        ),
+        "a taken alias must be refused as SourceRefInvalid, got {refused:?}"
+    );
+    assert_eq!(
+        fs::read(&project_path).unwrap(),
+        before,
+        "a refused install must leave the project manifest byte-identical"
+    );
+}
+
+/// The same alias on the same repository in both scopes is a legitimate
+/// redeclare: the install goes through and the subscription is unchanged.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_same_repo_under_the_same_alias_still_installs() {
+    let (_tmp, env, project) = fixture();
+    both_scopes_hold_kit(&env, &project, "acme/kit");
+    let project_path = project.join("kendex.toml");
+
+    let report = source_ops::install_project_from_personal(
+        &env,
+        &project,
+        "kit",
+        &ops::AddRequest {
+            skills: vec!["gh".into()],
+            ..ops::AddRequest::default()
+        },
+    )
+    .unwrap();
+    apply::execute(&env, &report.plan).unwrap();
+    let manifest = fs::read_to_string(&project_path).unwrap();
+    assert!(manifest.contains("[sources.kit]"), "{manifest}");
+    assert!(manifest.contains("repo = \"acme/kit\""), "{manifest}");
+    assert!(manifest.contains("[skills.gh]"), "{manifest}");
+}
