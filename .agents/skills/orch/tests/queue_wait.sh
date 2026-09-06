@@ -376,6 +376,7 @@ run_wait() {
 }
 
 json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
+needle() { printf '%s' "${1//_/ }"; }
 
 # observe EXPECT — prints the run's value of every `name=` field EXPECT names,
 # in EXPECT's order, so a row compares as one string. Plain names are JSON
@@ -385,7 +386,9 @@ json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 #                     is the fact's only carrier: which read failed, which
 #                     mutation half failed, that the PR may still be queued
 #   stdout            `line` when anything was printed, `empty` otherwise
-#   stdout~<word>     whether the text result names that verdict word
+#   stdout~<text>     whether the text result names that verdict phrase
+#   A `~` needle reads `_` as a space, so a phrase pins whole and a word
+#   inside another (queued in dequeued, readable in unreadable) cannot pass.
 #   help_sections     the --help sections merge-pr.md and pr-merge route an
 #                     agent to, of exit_codes, environment and arm_grace
 #   mutations         the GraphQL mutations issued, in order: `disable`,
@@ -402,9 +405,9 @@ observe() {
     case "$name" in
       rc) value="$RC" ;;
       has_*) value="$(json "has(\"${name#has_}\")")" ;;
-      error~*) value="$(json '.error // ""' | grep -qF -- "${name#error~}" && echo true || echo false)" ;;
+      error~*) value="$(json '.error // ""' | grep -qF -- "$(needle "${name#error~}")" && echo true || echo false)" ;;
       stdout) value="$([[ -n "$OUT" ]] && echo line || echo empty)" ;;
-      stdout~*) value="$(grep -qF -- "${name#stdout~}" <<<"$OUT" && echo true || echo false)" ;;
+      stdout~*) value="$(grep -qF -- "$(needle "${name#stdout~}")" <<<"$OUT" && echo true || echo false)" ;;
       help_sections)
         value=""
         grep -q '^Exit codes:' <<<"$OUT" && value="$value,exit_codes"
@@ -478,8 +481,8 @@ echo "=== an unreadable queue answer is an error, never not_queued ==="
 # merge-pr.md § 5 hands the error to an operator, so each shape names itself:
 # an unreadable body, the GraphQL message GitHub sent, the auth ladder.
 table "$QW" \
-  'an empty object body|state:last=open,queue:last=braces|||rc=1 status=error verdict=unknown error~readable=true' \
-  'an empty body|state:last=open,queue:last=empty|||rc=1 status=error verdict=unknown error~readable=true' \
+  'an empty object body|state:last=open,queue:last=braces|||rc=1 status=error verdict=unknown error~no_readable=true' \
+  'an empty body|state:last=open,queue:last=empty|||rc=1 status=error verdict=unknown error~no_readable=true' \
   'a GraphQL errors array surfaces its message|state:last=open,queue:last=gql_errors|||rc=1 status=error verdict=unknown error~isInMergeQueue=true' \
   'no GitHub auth path exits 3 like the other waiters|open_queued||STUB_GH_DENY_KEYRING=1|rc=3 status=error error~auth=true'
 
@@ -506,7 +509,7 @@ table "$QW" \
   "an errors object is a failed read|open_queued,threads:last=object_errors,$DQ|1 1 4 --json --no-check-probe||verdict=queued mutations=none guard_warned=true" \
   "an errors string is a failed read|open_queued,threads:last=string_errors,$DQ|1 1 4 --json --no-check-probe||verdict=queued mutations=none guard_warned=true" \
   "--no-guard reads no threads and mutates nothing|open_queued,threads:last=late,$DQ|1 1 3 --json --no-check-probe --no-guard||verdict=queued thread_reads=0 mutations=none" \
-  'a failed dequeue half is loud and names the half|open_queued,threads:last=late,dequeue:1=am_ok,dequeue:2=dq_err|||rc=1 verdict=dequeued status=error cause=late_findings_dequeue_failed error~dequeuePullRequest=true error~QUEUED=true mutations=disable,dequeue' \
+  'a failed dequeue half is loud and names the half|open_queued,threads:last=late,dequeue:1=am_ok,dequeue:2=dq_err|||rc=1 verdict=dequeued status=error cause=late_findings_dequeue_failed error~dequeuePullRequest=true error~STILL_QUEUED=true mutations=disable,dequeue' \
   'an errors array on an HTTP 200 disarm is a failed half; the dequeue is still attempted|open_queued,threads:last=late,dequeue:1=am_errs_on_200,dequeue:2=dq_ok|||rc=1 cause=late_findings_dequeue_failed error~disablePullRequestAutoMerge=true mutations=disable,dequeue' \
   'armed but never enqueued disables auto-merge only|open_armed,threads:last=late,dequeue:1=am_ok|||rc=1 verdict=dequeued cause=late_findings mutations=disable' \
   "the final probe at the deadline catches a late thread|open_queued,threads:1=none,threads:last=late,$DQ|1 1 1 --json --no-check-probe||verdict=dequeued polls=1 mutations=disable,dequeue" \
@@ -535,10 +538,10 @@ echo "=== text mode names the verdict on stdout ==="
 # parses; what holds is that every verdict prints its own line, with the same
 # exit code as --json.
 table '1 1 20 --no-check-probe' \
-  'ejected|state:last=open,queue:1=in,queue:last=out|||rc=1 stdout~ejected=true' \
-  "dequeued|open_queued,threads:last=late,$DQ|||rc=1 stdout~dequeued=true" \
-  'queued after one poll|open_queued|1 1 1 --no-check-probe||rc=1 stdout~queued=true' \
-  'queued and stalled|open_queued_head,checkruns:last=c1.0|1 1 8 --no-check-probe||rc=1 stdout~queued=true'
+  'ejected|state:last=open,queue:1=in,queue:last=out|||rc=1 stdout~queue:_ejected=true' \
+  "dequeued|open_queued,threads:last=late,$DQ|||rc=1 stdout~queue:_dequeued=true" \
+  'queued after one poll|open_queued|1 1 1 --no-check-probe||rc=1 stdout~still_queued=true' \
+  'queued and stalled|open_queued_head,checkruns:last=c1.0|1 1 8 --no-check-probe||rc=1 stdout~still_queued=true'
 
 echo "=== argument validation ends in the parser, before any gh call ==="
 # The recording gh stub fails every call, so a case that reached auth or a
@@ -551,8 +554,9 @@ exit 1
 EOF
 chmod +x "$TMP_ROOT/argbin/gh"
 # --help is routed: merge-pr.md and the github skill's pr-merge send an agent
-# to its Verdicts, Exit codes and Environment sections, so those sections are
-# pinned; the verdict vocabulary is the routing lint's.
+# to its Verdicts, Exit codes and Environment sections. Exit codes and
+# Environment are pinned here; the Verdicts vocabulary is the routing lint's
+# (queue-verdict-routing-lint.test.sh).
 arg_rows=(
   'poll_interval past max_wait is a usage error|1 1800 600 --json --no-check-probe|rc=2 stdout=empty gh_calls=0'
   'a non-numeric poll_interval is a usage error|1 abc 600 --json --no-check-probe|rc=2 stdout=empty gh_calls=0'
