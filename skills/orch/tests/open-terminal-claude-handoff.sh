@@ -122,12 +122,17 @@ OT="$REPO/scripts/open-terminal"
 
 # screen NAME — prints one pane capture, by name.
 #   echo       the brief appears ONLY inside the echoed launch command, which
-#              is exactly what a first-run dialog leaves behind: UNDELIVERED
+#              is exactly what a first-run dialog leaves behind: UNDELIVERED.
+#              The response marker under it is deliberate: this screen fails
+#              delivery on the launch-line filter alone
 #   delivered  the brief on its own transcript line, distinct from the echoed
 #              launch command, and the response begun (● transcript marker)
 #   composer   the brief sitting UNSENT in the composer's │-bordered input
-#              box, no transcript activity anywhere: delivery means SUBMITTED,
-#              so this is UNDELIVERED
+#              box: delivery means SUBMITTED, so this is UNDELIVERED. Its
+#              response marker is deliberate too: this screen fails delivery
+#              on the composer-box filter alone
+#   plain      the brief on a plain transcript line with no response marker
+#              anywhere: UNDELIVERED on the activity requirement alone
 #   ready      the main TUI at a ready, EMPTY composer (the '? for shortcuts'
 #              footer is the readiness marker), where a re-send must land
 #   huge       delivered, then a pane larger than a pipe buffer: a
@@ -135,9 +140,10 @@ OT="$REPO/scripts/open-terminal"
 #              and misread the submitted prompt as missing
 screen() {
   case "$1" in
-    echo) printf '%s\n' "\$ claude -n CC-737 --dangerously-skip-permissions '$BRIEF'" '╭─ Enable browser integration? ─╮' '> ' ;;
+    echo) printf '%s\n' "\$ claude -n CC-737 --dangerously-skip-permissions '$BRIEF'" '● Reading workflows/start.md' '╭─ Enable browser integration? ─╮' '> ' ;;
     delivered) printf '%s\n' "> $BRIEF" '● Reading workflows/start.md' ;;
-    composer) printf '%s\n' '╭──────────────────────────────────────────╮' "│ > $BRIEF │" '╰──────────────────────────────────────────╯' '  ? for shortcuts' ;;
+    composer) printf '%s\n' '● Reading workflows/start.md' '╭──────────────────────────────────────────╮' "│ > $BRIEF │" '╰──────────────────────────────────────────╯' '  ? for shortcuts' ;;
+    plain) printf '%s\n' "> $BRIEF" '  ? for shortcuts' ;;
     ready) printf '%s\n' '╭──────────────────────────────────────────╮' '│ >                                         │' '╰──────────────────────────────────────────╯' '  ? for shortcuts' ;;
     huge) screen delivered; awk 'BEGIN { for (i = 0; i < 20000; i++) print "transcript filler line" }' ;;
     *) echo "screen: unknown capture $1" >&2; exit 1 ;;
@@ -147,7 +153,8 @@ screen() {
 # --- harness -----------------------------------------------------------------
 
 # run MODE ENV FLAGS SCREENS — one launch. MODE is gui, github (gui, the
-# github tracker), tmux or tmux-codex; ENV a comma-separated list of
+# github tracker), tmux or tmux-codex; the GUI modes clear TMUX so the suite
+# reads the same inside and outside a tmux session; ENV a comma-separated list of
 # VAR=value pairs or `-`; FLAGS the --launch-flags value or `-` for none;
 # SCREENS the comma-separated captures the tmux stub serves in order, or `-`.
 # OUT, RC, ERR (a file), CAP (the GUI command's capture file) and the tmux
@@ -169,8 +176,8 @@ run() {
     for name in "${names[@]}"; do screen "$name" > "$RUN/screens/$((++i))"; done
   fi
   case "$mode" in
-    gui) args=(--ghostty --harness claude) ;;
-    github) args=(--tracker github --repo acme/widgets --ghostty --harness claude) ;;
+    gui) envs=(TMUX=); args=(--ghostty --harness claude) ;;
+    github) envs=(TMUX=); args=(--tracker github --repo acme/widgets --ghostty --harness claude) ;;
     tmux) envs=(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1); args=(--tmux --harness claude) ;;
     tmux-codex) envs=(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1); args=(--tmux --harness codex) ;;
     *) echo "run: unknown mode $mode" >&2; exit 1 ;;
@@ -199,7 +206,7 @@ wait_capture() {
 }
 
 # observe EXPECT — prints the run's value of every `name=` field EXPECT names,
-# in EXPECT's order (in a needle `+` reads as a space and %e as `=`):
+# in EXPECT's order (in a needle `+` reads as a space):
 #   rc              exit status
 #   out~<text>      whether stdout carries <text>
 #   stderr~<text>   whether stderr carries <text>
@@ -211,13 +218,12 @@ wait_capture() {
 #   resends         how many tmux calls re-sent the brief
 #   fullresends     how many of those were exactly the brief, nothing more
 #   enters          how many bare Enters were sent
-#   pwned           whether the rejected flags' payload ran
 observe() {
   local got="" token name value needle
   set -f
   for token in $1; do
     name="${token%%=*}"
-    needle="${name#*~}"; needle="${needle//+/ }"; needle="${needle//%e/=}"
+    needle="${name#*~}"; needle="${needle//+/ }"
     case "$name" in
       rc) value="$RC" ;;
       out~*) value="$(grep -qF -- "$needle" <<<"$OUT" && echo true || echo false)" ;;
@@ -229,7 +235,6 @@ observe() {
       resends) value="$(grep -cF -- "$RESEND" "$OT_TMUX_LOG" || true)" ;;
       fullresends) value="$(grep -cFx -- "$RESEND" "$OT_TMUX_LOG" || true)" ;;
       enters) value="$(grep -c 'send-keys -t %7 Enter$' "$OT_TMUX_LOG" || true)" ;;
-      pwned) value="$([[ -e "$TMP_ROOT/pwned" ]] && echo true || echo false)" ;;
       *) echo "observe: unknown field $name" >&2; exit 1 ;;
     esac
     got="$got $name=$value"
@@ -265,15 +270,16 @@ launch_table \
   "a second launch renders its own flags, nothing leaking from another launch or a stored default|gui|-|--model sonnet --permission-mode bypassPermissions|-|rc=0 cmd~'--model'+'sonnet'+'--permission-mode'+'bypassPermissions'+'$BRIEFN'=true cmd~'--effort'+'max'=false stderr~WARNING=false" \
   "an unflagged launch renders no model, effort or permission default, and warns it will stall unattended|gui|-|-|-|tail=claude+-n+CC-737+'$BRIEFN' stderr~handoff+autonomy+is+void=true" \
   "a prompting override still launches, rendered as given, and warns loudly|gui|-|--permission-mode plan|-|rc=0 cmd~'--permission-mode'+'plan'+'$BRIEFN'=true stderr~WARNING=true stderr~handoff+autonomy+is+void=true" \
-  "metacharacter launch flags refuse to launch, naming the option, and nothing runs|gui|-|--flag; touch $TMP_ROOT/pwned|-|rc=1 stderr~--launch-flags=true launched=false pwned=false" \
-  "a broken tmux-only verify setting does not abort a GUI launch, which never reads it|gui|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=0 stderr~ORCH_TMUX_VERIFY_SECS=false" \
-  "a bracketed model id is accepted|gui|-|--model opus[1m] --dangerously-skip-permissions|-|rc=0 launched=true"
+  "metacharacter launch flags refuse to launch, naming the option, and nothing runs|gui|-|--flag; touch $TMP_ROOT/pwned|-|rc=1 stderr~--launch-flags=true launched=false" \
+  "a broken tmux-only verify setting does not abort a GUI launch, which never reads it|gui|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=0 stderr~ORCH_TMUX_VERIFY_SECS=false"
 
 # The rendered line is executed by a shell in the launch directory, so a
 # bracketed model id is glob syntax there. With the tokens unquoted, a single
 # same-named file in the worktree rewrites `opus[1m]` to `opus1` and the lane
-# starts on a model nobody chose. Run the command the last row captured for
-# real, with the decoy planted, and read back the argv claude receives.
+# starts on a model nobody chose. Launch with a bracketed model id, run the
+# captured command for real with the decoy planted, and read back the argv
+# claude receives.
+run gui - "--model opus[1m] --dangerously-skip-permissions" -
 if wait_capture; then
   globbait="$TMP_ROOT/globbait"
   mkdir -p "$globbait"
@@ -298,31 +304,35 @@ echo "=== open-terminal claude handoff: tmux brief delivery ==="
 # dialog leaves: the launcher waits for a ready composer, sending one
 # dismissing Enter per dialog pass, types the brief once after readiness
 # (bare Enters: one at launch, one per dialog nudge, one submitting the
-# re-send), and fails the lane loudly if the re-sent brief never shows as
-# submitted. Unsent composer text is not delivery either. Each tmux step is
-# checked: a window never created, or launch keystrokes that failed on a
+# re-send; the verify loop consumes one screen per second before the
+# composer wait begins, so two dialog passes take five echo screens), and fails the lane loudly if the re-sent brief never shows as
+# submitted, or the composer never becomes ready. Unsent composer text is
+# not delivery either, nor a brief with no response begun. Each tmux step is
+# checked, and each failure names its own cause: a window never created, or launch keystrokes that failed on a
 # briefless lane, is a failed lane, never a launched one.
 launch_table \
   "the brief visible on the first pass is delivery: no re-send, the flags sent, scrollback captured|tmux|-|--dangerously-skip-permissions|delivered|rc=0 out~Opened+tmux+window+'CC-737'=true out~Re-delivered=false log~'--dangerously-skip-permissions'+'$BRIEFN'=true log~capture-pane+-pJ+-S+-+-t+%7=true resends=0" \
   "a dialog ate the brief: the launcher waits for a ready composer and re-sends exactly the start command once|tmux|-|-|echo,ready,delivered|rc=0 out~Re-delivered+brief+to+'CC-737'=true resends=1 fullresends=1" \
-  "two dialog screens before readiness: one dismissing Enter per pass, the brief typed once after|tmux|ORCH_TMUX_VERIFY_SECS=2|-|echo,echo,echo,ready,delivered|rc=0 out~Re-delivered+brief+to+'CC-737'=true enters=3 resends=1" \
+  "two dialog passes before readiness: one dismissing Enter per pass, the brief typed once after|tmux|ORCH_TMUX_VERIFY_SECS=3|-|echo,echo,echo,echo,echo,ready,delivered|rc=0 out~Re-delivered+brief+to+'CC-737'=true enters=4 resends=1" \
   "the echoed command alone is not delivery: one re-send, then a loud per-lane failure|tmux|-|-|echo,ready,ready|rc=1 stderr~brief+undelivered+to+'CC-737'=true stderr~handoff+lane(s)+failed=true out~Done:+launched+1=false resends=1" \
   "unsent composer text is not delivery: one re-send, then the failure|tmux|-|-|composer|rc=1 stderr~brief+undelivered+to+'CC-737'=true resends=1" \
+  "the brief on a transcript line with no response begun is not delivery either|tmux|-|-|plain|rc=1 stderr~brief+undelivered+to+'CC-737'=true resends=1" \
+  "a composer that never becomes ready is a failed lane, named as stuck|tmux|-|-|echo,echo|rc=1 stderr~never+reached+a+ready+composer=true out~Done:+launched+1=false" \
   "a huge scrollback with the delivered brief near its start is delivery: no duplicate brief|tmux|-|-|huge|rc=0 resends=0" \
-  "a window that was never created is a failed lane, not a launched one|tmux|OT_TMUX_FAIL=new-window|-|delivered|rc=1 stderr~handoff+lane(s)+failed=true out~Done:+launched+1=false" \
-  "launch keystrokes failing on a briefless lane is a failed lane too|tmux-codex|OT_TMUX_FAIL=send-keys|-|-|rc=1 out~Done:+launched+1=false"
+  "a window that was never created is a failed lane, not a launched one|tmux|OT_TMUX_FAIL=new-window|-|delivered|rc=1 stderr~new-window+failed=true stderr~handoff+lane(s)+failed=true out~Done:+launched+1=false" \
+  "launch keystrokes failing on a briefless lane is a failed lane too|tmux-codex|OT_TMUX_FAIL=send-keys|-|-|rc=1 stderr~send-keys+failed+launching=true out~Done:+launched+1=false"
 
 echo "=== open-terminal claude handoff: the verify timeout ==="
 # ORCH_TMUX_VERIFY_SECS is validated where it is read, and only there: a
 # non-integer or zero is a config error naming the setting, never a
-# zero-pass loop misreported as a delivery failure; a leading zero is base
-# 10, not octal; a runaway or overflow-sized value is clamped loudly rather
+# zero-pass loop misreported as a delivery failure; leading zeros are base
+# 10, not octal, and never inflate the digit count into the clamp; a runaway or overflow-sized value is clamped loudly rather
 # than hanging the launch or wrapping into negative arithmetic and an
 # instant resend. A codex tmux lane never reads it.
 launch_table \
   "a non-integer is a config error naming the setting, not a delivery failure|tmux|ORCH_TMUX_VERIFY_SECS=abc|-|delivered|rc=1 stderr~ORCH_TMUX_VERIFY_SECS=true stderr~brief+undelivered=false" \
   "zero is rejected the same way|tmux|ORCH_TMUX_VERIFY_SECS=0|-|delivered|rc=1 stderr~ORCH_TMUX_VERIFY_SECS=true" \
-  "a leading zero is base 10 and launches|tmux|ORCH_TMUX_VERIFY_SECS=08|-|delivered|rc=0 stderr~value+too+great=false" \
+  "leading zeros are base 10, not octal, and do not count toward the clamp|tmux|ORCH_TMUX_VERIFY_SECS=0000000000000000008|-|delivered|rc=0 stderr~value+too+great=false stderr~clamped=false" \
   "an overflow-sized value is clamped loudly, with no instant resend|tmux|ORCH_TMUX_VERIFY_SECS=10000000000000000000|-|delivered|rc=0 stderr~clamped+to+120=true resends=0" \
   "a runaway value is clamped loudly and still verifies|tmux|ORCH_TMUX_VERIFY_SECS=99999|-|delivered|rc=0 stderr~clamped+to+120=true" \
   "a codex tmux lane never validates the claude-verification timeout|tmux-codex|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=0 stderr~ORCH_TMUX_VERIFY_SECS=false"
