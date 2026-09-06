@@ -129,9 +129,10 @@ observe() {
       rc) value="$RC" ;;
       parses) value="$(printf '%s' "$OUT" | jq -e . >/dev/null 2>&1 && echo true || echo false)" ;;
       detail~*) needle="${name#detail~}"; value="$(json '.detail // ""' | grep -qF -- "${needle//+/ }" && echo true || echo false)" ;;
-      # counted with grep, not a jq regex: a backslash-u control range inside a jq
-      # string is a literal character set and matches the "u" in "null"
-      cntrl) value="$(json '.detail // ""' | LC_ALL=C grep -o '[[:cntrl:]]' | wc -l | tr -d ' ')" ;;
+      # counted on jq's raw output with tr, which sees a newline: a line
+      # reader never does, and a jq regex over a backslash-u control range is
+      # a literal character set that matches the "u" in "null"
+      cntrl) value="$(jq -j '.detail // ""' <<<"$OUT" 2>/dev/null | LC_ALL=C tr -cd '[:cntrl:]' | wc -c | tr -d ' ')" ;;
       *) value="$(json "if has(\"$name\") then .$name else \"ABSENT\" end")"; value="${value// /+}" ;;
     esac
     got="$got $name=$value"
@@ -227,11 +228,13 @@ echo "=== the last-resort emitter cannot emit unparseable JSON ==="
 # details it carries are jq's stderr and mktemp's failure text, exactly the
 # strings full of newlines and tabs that JSON cannot carry raw. Pinned by
 # PARSING the output; a substring check would pass on the broken form. And
-# normalising must not empty the message: the newline row keeps jq's words
-# from both lines and carries no control character.
+# normalising must not empty the message: the newline row pins both lines
+# joined across the former break, so a normaliser that kept the newline as
+# an escape (valid JSON, the break still in the detail) fails on the join
+# and on the count.
 emit_table \
   "a plain message^nothing special here^parses=true ok=false reason=invalid" \
-  "a newline: parses, and both lines survive^jq: error at line 3\\nCannot iterate over null^parses=true ok=false reason=invalid detail~jq:+error+at+line+3=true detail~Cannot+iterate+over+null=true cntrl=0" \
+  "a newline: parses, the two lines joined by a space, no control character left^jq: error at line 3\\nCannot iterate over null^parses=true ok=false reason=invalid detail~jq:+error+at+line+3+Cannot+iterate+over+null=true cntrl=0" \
   "a tab^jq: parse error:\\tunexpected token^parses=true ok=false reason=invalid" \
   "a carriage return^mktemp: failed\\rretrying^parses=true ok=false reason=invalid" \
   "all three plus DEL^a\\nb\\tc\\rd\\177e^parses=true ok=false reason=invalid cntrl=0" \
