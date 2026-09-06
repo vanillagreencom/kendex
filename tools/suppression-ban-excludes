@@ -1,19 +1,5 @@
 # suppression-ban exclusion list — vendored trees only. Hand-written source
 # is never excluded: every lint suppression there states its reason.
-# Format: pattern<TAB>reason (gitignore-style against the repo-relative path; ** crosses /).
-# A `!` pattern carves its matches back into the scanned set and beats every
-# row above or below it — the only way to govern hand-written source that
-# lives inside a tree the render rows exclude.
+# Format and generated-file ownership: skills/commit-guards/SKILL.md.
 
-.agents/**	kendex's render of skills/, whose SOURCE is governed by the rows below
-!.agents/hooks/**	adopted hook scripts: this tree IS the source, so the row above must not cover it
-!.agents/skills/app-deploy/**	in-place skill (kendex-local.toml): this tree IS the source, so the row above must not cover it
-!.agents/skills/kendex-issues/**	in-place skill (kendex-local.toml): this tree IS the source, so the row above must not cover it
-.claude/skills/**	rendered skill links into .agents/skills
-.claude/agents/**	kendex-rendered agent copies, source in agents/
-.claude/hooks/**	kendex-rendered hook copies, source in hooks/
-.codex/agents/**	kendex-rendered agent copies, source in agents/
-.codex/hooks/**	kendex-rendered hook copies, source in hooks/
-.pi/agents/**	kendex-rendered agent copies, source in agents/
-.pi/kendex/hooks/**	kendex-rendered hook copies, source in hooks/
 skills/iced-rs/**	vendored upstream iced source and examples bundled as the skill's API reference — upstream's allows are not this repo's to justify

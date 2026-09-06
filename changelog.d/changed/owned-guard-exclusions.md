@@ -1,0 +1,1 @@
+- Doc-limits and suppression-ban read the render inventory instead of hand-kept ownership rows. An absent inventory excludes nothing; a malformed one refuses.

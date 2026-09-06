@@ -59,6 +59,8 @@ new_repo() { # NAME -> repo path on stdout; seeded, with one file staged
   git -C "$r" -c init.defaultBranch=main init -q
   git -C "$r" config user.email test@example.com
   git -C "$r" config user.name test
+  printf '[]\n' >"$r/.kendex-generated.json"
+  git -C "$r" add .kendex-generated.json
   printf 'hello\n' >"$r/a.txt"
   git -C "$r" add a.txt
   git -C "$r" commit -qm 'feat: seed'

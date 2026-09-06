@@ -3,6 +3,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/settings.sh
 source "$SCRIPT_DIR/lib/settings.sh"
+# shellcheck source=../../commit-guards/scripts/lib/generated-paths.sh
+source "$SCRIPT_DIR/../../commit-guards/scripts/lib/generated-paths.sh"
 TAB="$(printf '\t')"
 NL='
 '
@@ -25,6 +27,8 @@ kendex.settings.toml [env] > default):
   DOC_LIMITS_SETTINGS_FILE    alternate settings file; /dev/null for defaults
 The k suffix means 1024 bytes. Bare line thresholds are not supported.
 --excludes overrides the configured path. Each exclusion is pattern<TAB>reason.
+Generated files are excluded by exact path from .kendex-generated.json.
+The inventory is required; --staged reads its tracked index copy.
 Class selection and exclusions: references/policy.md.
 Exit codes: 0 clean; 1 over-limit documents; 2 usage/config/collection error.
 EOF
@@ -248,8 +252,30 @@ glob_match() { # PATH PATTERN... — 0 when some pattern matches the whole path
   done
   return 1
 }
-is_excluded() { # PATH — 0 when an exclusion glob matches and no `!` row carves it back
-  glob_match "$1" ${EXCLUDE_PATTERNS[@]+"${EXCLUDE_PATTERNS[@]}"} || return 1
+INVENTORY_SOURCE="$(sr_settings_source .kendex-generated.json)" || exit 2
+if [ "$STAGED" -eq 0 ] && [ ! -f "$INVENTORY_SOURCE" ]; then
+  read_index_file_mode .kendex-generated.json
+  if [ -n "$INDEX_FILE_MODE" ]; then
+    git show :0:.kendex-generated.json >"$TMP/generated.json" \
+      || collection_error 'cannot read .kendex-generated.json from the index; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
+    INVENTORY_SOURCE="$TMP/generated.json"
+  fi
+fi
+# An ABSENT inventory is an empty one: a project whose items are all in-place
+# has no renders to record, so the writer produces no file. Excluding nothing
+# is the fail-closed read — every tracked document stays measured. A source
+# that exists as something else, or that cannot be read, still refuses, and so
+# does a present inventory that does not parse.
+if [ ! -e "$INVENTORY_SOURCE" ] && [ ! -L "$INVENTORY_SOURCE" ]; then
+  inventory='[]'
+else
+  inventory="$(cat -- "$INVENTORY_SOURCE")" \
+    || collection_error 'cannot read .kendex-generated.json; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
+fi
+generated_paths_load "$inventory" || exit 2
+is_excluded() { # PATH — inclusion rows override both exclusion sources
+  generated_path_contains "$1" \
+    || glob_match "$1" ${EXCLUDE_PATTERNS[@]+"${EXCLUDE_PATTERNS[@]}"} || return 1
   ! glob_match "$1" ${CARVE_PATTERNS[@]+"${CARVE_PATTERNS[@]}"}
 }
 path_threshold() { # PATH: first matching class, or no limit

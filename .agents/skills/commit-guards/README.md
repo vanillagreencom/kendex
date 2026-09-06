@@ -8,7 +8,7 @@ Repository checks installed as Git hooks. Maintainers use them to check source f
 kendex add vanillagreencom/kendex --skill commit-guards
 ```
 
-Requires Git, awk and standard POSIX tools. Bash 3.2 is supported. Run `kendex guard install` in each fresh clone, then `kendex guard check` to check the hooks.
+Requires Git, awk, jq and standard POSIX tools. Bash 3.2 is supported. Run `kendex guard install` in each fresh clone, then `kendex guard check` to check the hooks.
 
 ## Features
 

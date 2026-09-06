@@ -37,6 +37,8 @@ new_repo() { # NAME — fresh fixture repo in $R, cwd unchanged
   git -C "$R" -c init.defaultBranch=main init -q
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
+  printf '[]\n' >"$R/.kendex-generated.json"
+  git -C "$R" add .kendex-generated.json
 }
 commit_all() { # MESSAGE
   git -C "$R" add -A

@@ -279,8 +279,6 @@ fn the_main_checkout_is_searched_at_the_projects_path() {
     let project = root.join("apps/web");
     std::fs::create_dir_all(project.join(".agents")).unwrap();
     install_package(home, &project, &["commit-guards"]);
-    let install = run(home, &project, "kendex", &["guard", "install"]);
-    assert!(install.status.success(), "{}", said(&install));
 
     // The manifest is committed and the render is not, which is what a
     // linked worktree of such a repository actually contains.
@@ -291,6 +289,8 @@ fn the_main_checkout_is_searched_at_the_projects_path() {
         &root,
         &["commit", "--quiet", "-m", "feat: the project"],
     );
+    let install = run(home, &project, "kendex", &["guard", "install"]);
+    assert!(install.status.success(), "{}", said(&install));
     git_ok(home, &root, &["worktree", "add", "--quiet", "../linked"]);
     let there = home.join("linked/apps/web");
     assert!(

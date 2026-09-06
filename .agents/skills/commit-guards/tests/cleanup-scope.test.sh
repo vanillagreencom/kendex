@@ -33,6 +33,7 @@ new_repo() { # NAME -> repo path on stdout
   git -C "$r" -c init.defaultBranch=main init -q
   git -C "$r" config user.email test@example.com
   git -C "$r" config user.name test
+  printf '[]\n' >"$r/.kendex-generated.json"
   printf 'fn main() {}\n' >"$r/ok.rs"
   # A TRACKED settings source, so the hook lane materializes an index copy
   # into the cache the children inherit.

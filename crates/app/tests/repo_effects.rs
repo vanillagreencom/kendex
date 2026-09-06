@@ -97,17 +97,22 @@ fn a_clean_exit_carries_both_channels() {
     );
 }
 
-/// A companion already in the scope is reported as installed — the one
-/// fact about companions kendex answers rather than the package.
+/// The document check installs its shared reader, while arming remains
+/// a separate choice for the repository owner.
 #[test]
-fn a_companion_already_here_reads_as_installed() {
+fn doc_limits_installs_its_reader_without_arming_the_repository() {
     let f = fixture();
-    let first = install_skills(&f, &["doc-limits"], None);
-    assert!(first.repo_effects.is_empty(), "{:?}", first.repo_effects);
-    let installed = install_skills(&f, &["commit-guards"], None);
+    let installed = install_skills(&f, &["doc-limits"], None);
     let [offer] = installed.repo_effects.shown.as_slice() else {
-        panic!("one offer: {:?}", installed.repo_effects);
+        panic!("one dependency offer: {:?}", installed.repo_effects);
     };
+    assert_eq!(offer.name, "commit-guards");
+    assert!(
+        f.project
+            .join(".agents/skills/commit-guards/scripts/lib/generated-paths.sh")
+            .is_file()
+    );
+    assert!(!f.project.join(".git/hooks/kendex-guards").exists());
     assert!(companion(offer, "doc-limits").installed);
     assert!(!companion(offer, "preflight").installed);
     assert!(!offer.notes.is_empty());

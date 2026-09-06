@@ -11,6 +11,8 @@ mkdir -p "$R/tools"
 git -C "$R" -c init.defaultBranch=main init -q
 git -C "$R" config user.email test@example.com
 git -C "$R" config user.name test
+printf '[]\n' >"$R/.kendex-generated.json"
+git -C "$R" add .kendex-generated.json
 PASS=0
 FAIL=0
 expect() { # EXPECTED-EXIT LABEL: assert the preceding run's result
@@ -79,15 +81,16 @@ run --staged
 expect 1 'removing the exclusion restores the ceiling'
 # The same oversized document must make the assertion fail if the comparison
 # is disabled. Keep the comparison text and remove only its execution.
-mkdir -p "$TMP/mutant/lib"
-cp "$TEST_DIR/../scripts/lib/settings.sh" "$TMP/mutant/lib/settings.sh"
-sed 's/if \[ "\$n" -gt "\$limit" \]; then/if false \&\& [ "$n" -gt "$limit" ]; then/' "$SR" >"$TMP/mutant/doc-limits"
-if cmp -s "$SR" "$TMP/mutant/doc-limits"; then
+mkdir -p "$TMP/mutant/doc-limits/scripts/lib"
+ln -s "$TEST_DIR/../../commit-guards" "$TMP/mutant/commit-guards"
+cp "$TEST_DIR/../scripts/lib/settings.sh" "$TMP/mutant/doc-limits/scripts/lib/settings.sh"
+sed 's/if \[ "\$n" -gt "\$limit" \]; then/if false \&\& [ "$n" -gt "$limit" ]; then/' "$SR" >"$TMP/mutant/doc-limits/scripts/doc-limits"
+if cmp -s "$SR" "$TMP/mutant/doc-limits/scripts/doc-limits"; then
   printf 'mutation did not change the comparison\n' >&2
   exit 1
 fi
-chmod +x "$TMP/mutant/doc-limits"
-SR="$TMP/mutant/doc-limits"
+chmod +x "$TMP/mutant/doc-limits/scripts/doc-limits"
+SR="$TMP/mutant/doc-limits/scripts/doc-limits"
 run --staged
 CONTROL_RC=0
 (FAIL=0; expect 1 'must-fail: disabled comparison'; [ "$FAIL" -eq 0 ]) >"$TMP/control.log" || CONTROL_RC=$?
