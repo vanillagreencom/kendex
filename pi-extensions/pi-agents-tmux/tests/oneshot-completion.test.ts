@@ -54,13 +54,13 @@ function diagTags(result: SingleResult): string {
 }
 
 // The classification as one line: spawns and the returned attempt; when there
-// were two attempts, whether the retry ran on a fresh session and the first
-// attempt's summary as `stop/envelope`; then the status, reason and stop of the
+// were two attempts, their count and whether the retry ran on a fresh session,
+// and the first attempt's summary as `stop/envelope`; then the status, reason and stop of the
 // returned result, its snapshot, its diagnostics, whether stderr carries text,
 // and the bus.
 function classification(result: SingleResult, emitted: Emitted, spawns: number, cwd: string): string {
 	const attempts = result.attempts;
-	const retry = attempts ? (attempts[0]?.sessionKey !== attempts[1]?.sessionKey ? "fresh-session" : "same-session") : "-";
+	const retry = attempts ? `${attempts.length}/${attempts[0]?.sessionKey !== attempts[1]?.sessionKey ? "fresh-session" : "same-session"}` : "-";
 	const first = attempts ? `${attempts[0]?.stopReason ?? "-"}/${attempts[0]?.errorEnvelope ? "envelope" : "-"}` : "-";
 	const snapshot = result.cwdSnapshot ? (result.cwdSnapshot.cwd === cwd ? "cwd" : "other") : "-";
 	return `spawns=${spawns} exit=${result.exitCode} attempt=${result.attempt ?? "-"} retry=${retry} first=${first} status=${result.status ?? "-"} reason=${result.needsCompletionReason ?? "-"} stop=${result.stopReason ?? "-"} snapshot=${snapshot} diags=${diagTags(result)} stderr=${result.stderr ? "text" : "-"} bus=${busLine(emitted, result)}`;
@@ -78,7 +78,7 @@ type World = { git?: "missing"; pi?: (emitted: Emitted) => any; stream: Array<{ 
 
 const COMPLETED = "spawns=1 exit=0 attempt=1 retry=- first=- status=- reason=- stop=- snapshot=- diags=- stderr=- bus=started,completed";
 const NEEDS_COMPLETION = "spawns=1 exit=0 attempt=1 retry=- first=- status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=cwd diags=- stderr=- bus=started,needs_completion(mirrors-result)";
-const RETRIED_OK = "spawns=2 exit=0 attempt=2 retry=fresh-session first=-/envelope status=- reason=- stop=- snapshot=- diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,completed";
+const RETRIED_OK = "spawns=2 exit=0 attempt=2 retry=2/fresh-session first=-/envelope status=- reason=- stop=- snapshot=- diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,completed";
 
 // label | the spawn's stdout per attempt (and the world around it) | expect the classification line
 // Every row runs in a fresh git repo, so a needs_completion row's snapshot is the cwd's.
@@ -91,6 +91,8 @@ const endRows: Array<[string, World, string]> = [
 	["a compact then a text agent_end completes", { stream: [{ stdout: bridgeStdout([COMPACT, textEnd("ok")]) }] }, COMPLETED],
 	["an empty agent_end without a compact completes", { stream: [{ stdout: bridgeStdout([EMPTY_END]) }] }, COMPLETED],
 	["a compact with no agent_end (bridge gone) completes", { stream: [{ stdout: bridgeStdout([COMPACT]) }] }, COMPLETED],
+	["a compact after an empty agent_end, with no further end, completes", { stream: [{ stdout: bridgeStdout([COMPACT, EMPTY_END, COMPACT]) }] }, COMPLETED],
+	["a second compact re-arms the empty-end rule", { stream: [{ stdout: bridgeStdout([COMPACT, assistantText("first answer"), EMPTY_END, COMPACT, EMPTY_END]) }] }, NEEDS_COMPLETION],
 	["a malformed agent_end content is logged and completes", { stream: [{ stdout: bridgeStdout([COMPACT, bridgeEvent("agent_end", { content: "bad-shape" })]) }] },
 		"spawns=1 exit=0 attempt=1 retry=- first=- status=- reason=- stop=- snapshot=- diags=malformed-agent-end stderr=- bus=started,completed"],
 	["a missing git keeps needs_completion without the snapshot", { git: "missing", stream: [{ stdout: bridgeStdout([COMPACT, EMPTY_END]) }] },
@@ -104,11 +106,11 @@ const endRows: Array<[string, World, string]> = [
 	}, "spawns=1 exit=0 attempt=1 retry=- first=- status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=cwd diags=emit-failed stderr=- bus=started"],
 	["a context overflow envelope retries once on a fresh session", { stream: [{ code: 1, stdout: OVERFLOW_ENVELOPE }, { stdout: bridgeStdout([textEnd("ok after retry")]) }] }, RETRIED_OK],
 	["an assistant turn ending in a context-length error retries", { stream: [{ stdout: bridgeStdout([OVERFLOW_TURN]) }, { stdout: bridgeStdout([textEnd("ok after retry")]) }] },
-		"spawns=2 exit=0 attempt=2 retry=fresh-session first=error/envelope status=- reason=- stop=- snapshot=- diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,completed"],
+		"spawns=2 exit=0 attempt=2 retry=2/fresh-session first=error/envelope status=- reason=- stop=- snapshot=- diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,completed"],
 	["an overflow on the retry too fails, whatever the retry's exit code", { stream: [{ code: 1, stdout: OVERFLOW_ENVELOPE }, { code: 0, stdout: bridgeStdout([OVERFLOW_TURN]) }] },
-		"spawns=2 exit=1 attempt=2 retry=fresh-session first=-/envelope status=- reason=- stop=error snapshot=- diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,failed"],
+		"spawns=2 exit=1 attempt=2 retry=2/fresh-session first=-/envelope status=- reason=- stop=error snapshot=- diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,failed"],
 	["a compact-then-empty on the retry is needs_completion", { stream: [{ code: 1, stdout: OVERFLOW_ENVELOPE }, { stdout: bridgeStdout([COMPACT, EMPTY_END]) }] },
-		"spawns=2 exit=0 attempt=2 retry=fresh-session first=-/envelope status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=cwd diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,needs_completion(mirrors-result)"],
+		"spawns=2 exit=0 attempt=2 retry=2/fresh-session first=-/envelope status=needs_completion reason=compact-then-empty stop=needs_completion snapshot=cwd diags=- stderr=text bus=started,failed,retrying(context_length_exceeded),started,needs_completion(mirrors-result)"],
 	["a compact-then-empty beside an overflow in the same attempt is the retry's, not needs_completion", { stream: [{ code: 1, stdout: bridgeStdout([COMPACT, EMPTY_END, JSON.parse(OVERFLOW_ENVELOPE)]) }, { stdout: bridgeStdout([textEnd("ok after retry")]) }] }, RETRIED_OK],
 	["overflow wording inside a tool result is not an overflow", { stream: [{ stdout: bridgeStdout([
 		{ type: "tool_execution_end", toolCallId: "call-grep", toolName: "grep", result: { content: [{ type: "text", text: "tests/session-lanes.test.ts: context_length_exceeded detection triggers one retry" }] } },
@@ -197,36 +199,51 @@ const OK_STDOUT = bridgeStdout([textEnd("ok")]);
 type BudgetWorld = { compactor?: "fails" | "truncates"; key?: string; session?: "absent" | number; settings?: Record<string, unknown> };
 
 // The guard's outcome as one line: spawns, compactor calls, the exit and stop
-// reason, the session mode and whether stderr carries the guard's line.
-function budgetLine(result: SingleResult, spawns: number, compactions: number): string {
-	return `spawns=${spawns} compactions=${compactions} exit=${result.exitCode} refused=${result.refused ?? false} stop=${result.stopReason ?? "-"} mode=${result.sessionMode ?? "-"} stderr=${result.stderr ? "guard-line" : "-"}`;
+// reason, the session mode, whether the result names the requested key, and
+// whether stderr carries the guard's line.
+function budgetLine(result: SingleResult, spawns: number, compactions: number, key: string): string {
+	return `spawns=${spawns} compactions=${compactions} exit=${result.exitCode} refused=${result.refused ?? false} stop=${result.stopReason ?? "-"} mode=${result.sessionMode ?? "-"} key=${result.sessionKey === key ? "key" : result.sessionKey ?? "-"} stderr=${result.stderr ? "guard-line" : "-"}`;
 }
 
 const TIGHT = { reusedSessionBudgetThreshold: 0.5, reusedSessionContextLimitTokens: 100 };
-const REFUSED = "spawns=0 compactions=0 exit=1 refused=true stop=session_budget_exceeded mode=resumed stderr=guard-line";
-const SPAWNED = "spawns=1 compactions=0 exit=0 refused=false stop=- mode=resumed stderr=-";
+const REFUSED = "spawns=0 compactions=0 exit=1 refused=true stop=session_budget_exceeded mode=resumed key=key stderr=guard-line";
+const SPAWNED = "spawns=1 compactions=0 exit=0 refused=false stop=- mode=resumed key=key stderr=-";
 
-// A session estimates at one token per four bytes against the limit; the
-// default limit is 272k tokens and the default threshold 80%, so 870,400 bytes
-// sit exactly on the default line.
+// A session estimates at one token per four bytes, rounded up, against the
+// limit; the default limit is 272k tokens and the default threshold 80%, so
+// 870,400 bytes sit exactly on the default line and one more byte is over it.
 // label | the reused session's size in bytes and the project's budget settings | expect the guard's line
 const budgetRows: Array<[string, BudgetWorld, string]> = [
-	["one token over the default line is refused before the spawn", { session: 870_404 }, REFUSED],
+	["one byte over the default line is refused before the spawn", { session: 870_401 }, REFUSED],
 	["exactly on the default line spawns", { session: 870_400 }, SPAWNED],
 	["a configured limit decides under the default threshold", { session: 1_000, settings: { reusedSessionContextLimitTokens: 100 } }, REFUSED],
 	["a configured threshold decides under a configured limit", { session: 100, settings: { ...TIGHT, reusedSessionBudgetThreshold: 0.2 } }, REFUSED],
 	["a threshold above 1 is a percentage", { session: 100, settings: { ...TIGHT, reusedSessionBudgetThreshold: 20 } }, REFUSED],
 	["a percentage above 100 clamps to the whole limit", { session: 600, settings: { ...TIGHT, reusedSessionBudgetThreshold: 150 } }, REFUSED],
-	["a zero threshold falls back to the default", { session: 100, settings: { ...TIGHT, reusedSessionBudgetThreshold: 0 } }, SPAWNED],
+	["a zero threshold falls back to the default: on the 80% line spawns", { session: 320, settings: { reusedSessionContextLimitTokens: 100, reusedSessionBudgetThreshold: 0 } }, SPAWNED],
+	["a zero threshold falls back to the default: over the 80% line is refused", { session: 324, settings: { reusedSessionContextLimitTokens: 100, reusedSessionBudgetThreshold: 0 } }, REFUSED],
 	["under a configured threshold spawns", { session: 100, settings: TIGHT }, SPAWNED],
 	["an explicit key with no session file yet spawns", { session: "absent", settings: TIGHT }, SPAWNED],
-	["a one-shot session key is never guarded", { key: "oneshot-fixed", session: 1_000, settings: TIGHT }, "spawns=1 compactions=0 exit=0 refused=false stop=- mode=fresh stderr=-"],
-	["the warn policy spawns with the guard's line on stderr", { session: 1_000, settings: { ...TIGHT, reusedSessionBudgetPolicy: "warn" } }, "spawns=1 compactions=0 exit=0 refused=false stop=- mode=resumed stderr=guard-line"],
-	["compact-then-resume compacts once, then spawns", { compactor: "truncates", session: 1_000, settings: { ...TIGHT, reusedSessionBudgetPolicy: "compact-then-resume" } }, "spawns=1 compactions=1 exit=0 refused=false stop=- mode=resumed stderr=guard-line"],
-	["a failed compaction refuses", { compactor: "fails", session: 1_000, settings: { ...TIGHT, reusedSessionBudgetPolicy: "compact-then-resume" } }, "spawns=0 compactions=1 exit=1 refused=true stop=session_budget_exceeded mode=resumed stderr=guard-line"],
+	["a one-shot session key is never guarded", { key: "oneshot-fixed", session: 1_000, settings: TIGHT }, "spawns=1 compactions=0 exit=0 refused=false stop=- mode=fresh key=key stderr=-"],
+	["the warn policy spawns with the guard's line on stderr", { session: 1_000, settings: { ...TIGHT, reusedSessionBudgetPolicy: "warn" } }, "spawns=1 compactions=0 exit=0 refused=false stop=- mode=resumed key=key stderr=guard-line"],
+	["compact-then-resume compacts once, then spawns", { compactor: "truncates", session: 1_000, settings: { ...TIGHT, reusedSessionBudgetPolicy: "compact-then-resume" } }, "spawns=1 compactions=1 exit=0 refused=false stop=- mode=resumed key=key stderr=guard-line"],
+	["a failed compaction refuses", { compactor: "fails", session: 1_000, settings: { ...TIGHT, reusedSessionBudgetPolicy: "compact-then-resume" } }, "spawns=0 compactions=1 exit=1 refused=true stop=session_budget_exceeded mode=resumed key=key stderr=guard-line"],
 ];
 
 test("the reused-session budget guard", async () => {
+	// The user-scope settings layer is read from PI_CODING_AGENT_DIR; a temp dir
+	// keeps the developer's own settings out of the rows.
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = tempRuntime();
+	try {
+		await runBudgetRows();
+	} finally {
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	}
+});
+
+async function runBudgetRows(): Promise<void> {
 	for (const [label, world, expect] of budgetRows) {
 		const runtimeRoot = tempRuntime();
 		const cwd = tempRuntime();
@@ -247,10 +264,10 @@ test("the reused-session budget guard", async () => {
 		const calls = installMockSpawn([{ code: 0, stdout: OK_STDOUT }]);
 		try {
 			const result = await runOneShot({ cwd, pi: mockPiEvents([]), runtimeRoot, sessionKey: key });
-			assert.equal(budgetLine(result, calls.length, compactions), expect, label);
+			assert.equal(budgetLine(result, calls.length, compactions, key), expect, label);
 		} finally {
 			setSessionCompactorForTests();
 			setSingleAgentSpawnForTests();
 		}
 	}
-});
+}
