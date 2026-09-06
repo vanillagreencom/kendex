@@ -43,6 +43,15 @@ source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
+# The composer's prompt marker is `❯` followed by a NON-BREAKING space; a
+# SUBMITTED message is echoed into the transcript as `❯` followed by an
+# ordinary one. That invisible character is the whole discriminator between a
+# draft the operator is still typing and a prompt the TUI accepted, so both are
+# spelled here as escapes rather than typed into the fixture.
+NBSP=$'\xc2\xa0'
+CARET=$'\xe2\x9d\xaf'
+STATUS='  realwd Opus 5 (VG)                    /rc'
+RULE='────────────────────────────────────────'
 BRIEF='/orch start CC-737'
 BRIEFN='/orch+start+CC-737'   # the brief as a needle: `+` reads as a space
 RESEND="send-keys -t %7 -l $BRIEF"
@@ -133,12 +142,17 @@ OT_UNDER_TEST="$OT"
 #              delivery on the launch-line filter alone
 #   delivered  the brief on its own transcript line, distinct from the echoed
 #              launch command, and the response begun (● transcript marker)
-#   composer   the brief sitting UNSENT in the composer's │-bordered input
-#              box: delivery means SUBMITTED, so this is UNDELIVERED. Its
+#   composer   the brief sitting UNSENT in the │-bordered input box an older
+#              TUI drew: delivery means SUBMITTED, so this is UNDELIVERED. Its
 #              response marker is deliberate too: this screen fails delivery
 #              on the composer-box filter alone
-#   plain      the brief on a plain transcript line with no response marker
-#              anywhere: UNDELIVERED on the activity requirement alone
+#   draft      the same, in the shape v2.1.261 actually draws: two rules
+#              around the prompt line, no │ anywhere, and a status bar that
+#              already carries ●. UNDELIVERED, and the only thing separating
+#              it from `delivered` is the non-breaking space after the caret
+#   plain      the brief submitted into the transcript, over a ready composer,
+#              with no response marker anywhere: UNDELIVERED on the activity
+#              requirement alone
 #   working    a turn in flight: the verb, the elapsed time and the streaming
 #              token counter the harness draws only while one runs. The brief
 #              is nowhere but the echoed launch command, the screen a long
@@ -149,20 +163,25 @@ OT_UNDER_TEST="$OT"
 #              hint, no brief and no composer. STUCK: the launcher's failure
 #              exit is what this pane needs, and a predicate keyed on the
 #              spinner would call it launched
-#   ready      the main TUI at a ready, EMPTY composer (the '? for shortcuts'
-#              footer is the readiness marker), where a re-send must land
+#   ready      the main TUI at a ready, EMPTY composer in the shape v2.1.261
+#              draws it, where a re-send must land. Its readiness marker is
+#              the composer's own prompt line: the '? for shortcuts' footer
+#              appeared on 0 of 146 captures of that build
+#   ready-legacy  the same state as an older TUI drew it, on the footer alone
 #   huge       delivered, then a pane larger than a pipe buffer: a
 #              short-circuiting scan would SIGPIPE its upstream under pipefail
 #              and misread the submitted prompt as missing
 screen() {
   case "$1" in
     echo) printf '%s\n' "\$ claude -n CC-737 --dangerously-skip-permissions '$BRIEF'" '● Reading workflows/start.md' '╭─ Enable browser integration? ─╮' '> ' ;;
-    delivered) printf '%s\n' "> $BRIEF" '● Reading workflows/start.md' ;;
+    delivered) printf '%s\n' "$CARET $BRIEF" '● Reading workflows/start.md' ;;
     composer) printf '%s\n' '● Reading workflows/start.md' '╭──────────────────────────────────────────╮' "│ > $BRIEF │" '╰──────────────────────────────────────────╯' '  ? for shortcuts' ;;
-    plain) printf '%s\n' "> $BRIEF" '  ? for shortcuts' ;;
+    plain) printf '%s\n' "$CARET $BRIEF" "$RULE" "$CARET$NBSP" "$RULE" "$STATUS" ;;
+    draft) printf '%s\n' '● Reading workflows/start.md' "$RULE" "$CARET$NBSP$BRIEF" "$RULE" "$STATUS" ;;
     working) printf '%s\n' "\$ claude -n CC-737 '$BRIEF'" '✻ Orchestrating… (3s · ↓ 79 tokens · thinking with high effort)' ;;
     signin) printf '%s\n' '  Select login method' '✻ Opening browser to sign in…' ;;
-    ready) printf '%s\n' '╭──────────────────────────────────────────╮' '│ >                                         │' '╰──────────────────────────────────────────╯' '  ? for shortcuts' ;;
+    ready) printf '%s\n' "$RULE" "$CARET$NBSP" "$RULE" "$STATUS" ;;
+    ready-legacy) printf '%s\n' '╭──────────────────────────────────────────╮' '│ >                                         │' '╰──────────────────────────────────────────╯' '  ? for shortcuts' ;;
     huge) screen delivered; awk 'BEGIN { for (i = 0; i < 20000; i++) print "transcript filler line" }' ;;
     *) echo "screen: unknown capture $1" >&2; exit 1 ;;
   esac
@@ -261,25 +280,24 @@ observe() {
   printf '%s' "${got# }"
 }
 
-# mutant NAME SED — stage open-terminal against a copy of lib/pane-working.sh
-# with SED applied, in a git repo of its own so PROJECT_ROOT still resolves
-# hermetically, and point every following row at it. `pane_working` is what
-# both controls rewrite, and it lives in that lib rather than in the script.
-# The copy is proven to differ from the original first, so a mutation whose
-# anchor moved cannot pass as a silent no-op.
+# mutant NAME FILE SED WHAT — stage open-terminal and its libs in a git repo of
+# its own, so PROJECT_ROOT still resolves hermetically, with SED applied to
+# FILE (a path under scripts/), and point every following row at it. The copy
+# is proven to differ from the original first, so a mutation whose anchor moved
+# cannot pass as a silent no-op.
 mutant() {
-  local name="$1" expr="$2" dir lib
+  local name="$1" file="$2" expr="$3" what="$4" dir src
   dir="$TMP_ROOT/mutants/$name"
-  lib="$dir/scripts/lib/pane-working.sh"
+  src="$SCRIPTS_DIR/$file"
   mkdir -p "$dir/scripts/lib"
   cp "$SRC_OT" "$dir/scripts/open-terminal"
   cp "$SRC_LIB_DIR"/*.sh "$dir/scripts/lib/"
-  sed "$expr" "$SRC_LIB_DIR/pane-working.sh" > "$lib"
-  if cmp -s "$SRC_LIB_DIR/pane-working.sh" "$lib"; then
+  sed "$expr" "$src" > "$dir/scripts/$file"
+  if cmp -s "$src" "$dir/scripts/$file"; then
     FAIL=$((FAIL + 1))
-    printf '  FAIL  control: the %s mutant is byte-identical to pane-working.sh\n' "$name"
+    printf '  FAIL  control: the %s mutant is byte-identical to %s\n' "$name" "$file"
   else
-    pass "control: the $name mutant really rewrites pane_working"
+    pass "control: the $name mutant really rewrites $what"
   fi
   chmod +x "$dir/scripts/open-terminal"
   git -C "$dir" init -q
@@ -365,6 +383,8 @@ launch_table \
   "two dialog passes before readiness: one dismissing Enter per pass, the brief typed once after|tmux|ORCH_TMUX_VERIFY_SECS=3|-|echo,echo,echo,echo,echo,ready,delivered|rc=0 out~Re-delivered+brief+to+'CC-737'=true enters=4 resends=1" \
   "the echoed command alone is not delivery: one re-send, then a loud per-lane failure|tmux|-|-|echo,ready,ready|rc=1 stderr~brief+undelivered+to+'CC-737'=true stderr~handoff+lane(s)+failed=true out~Done:+launched+1=false resends=1" \
   "unsent composer text is not delivery: one re-send, then the failure|tmux|-|-|composer|rc=1 stderr~brief+undelivered+to+'CC-737'=true resends=1" \
+  "a draft in the composer the harness actually draws is not delivery either: one re-send, then the failure|tmux|-|-|draft|rc=1 stderr~brief+undelivered+to+'CC-737'=true resends=1" \
+  "an older TUI's shortcuts footer is still read as ready|tmux|-|-|echo,ready-legacy,delivered|rc=0 out~Re-delivered+brief+to+'CC-737'=true resends=1" \
   "the brief on a transcript line with no response begun is not delivery either|tmux|-|-|plain|rc=1 stderr~brief+undelivered+to+'CC-737'=true resends=1" \
   "a turn in flight is a launched lane whatever its transcript line reads as: no re-send|tmux|-|-|working|rc=0 out~Done:+launched+1=true resends=0 enters=1" \
   "a lane that starts working while the launcher waits for a composer ends the wait launched, nothing typed into it|tmux|-|-|echo,working|rc=0 out~already+working=true resends=0 enters=1" \
@@ -378,7 +398,7 @@ echo "=== the turn-in-flight reading can fail, both ways ==="
 # `pane_working` is the whole of it, so it is the mutation both controls take.
 # Cut it to always-false and the two working rows go back to the false alarm
 # this closed: a healthy mid-turn lane reported as a stuck composer, exit 1.
-mutant working-blind 's/^pane_working() {/pane_working() { return 1;/'
+mutant working-blind lib/pane-working.sh 's/^pane_working() {/pane_working() { return 1;/' pane_working
 launch_table \
   "control: with the turn reading gone, a turn in flight fails as a stuck composer|tmux|-|-|working|rc=1 stderr~never+reached+a+ready+composer=true out~Done:+launched+1=false" \
   "control: and so does a lane that starts working during the composer wait|tmux|-|-|echo,working|rc=1 stderr~never+reached+a+ready+composer=true"
@@ -387,9 +407,22 @@ launch_table \
 # one frame set across every long-running screen, sign-in included, so the
 # stuck lane above reports launched and an unattended login prompt is called a
 # success.
-mutant working-spinner "s/^pane_working() {/pane_working() { grep -q '\xe2\x9c\xbb' <<<\"\$1\" \&\& return 0;/"
+mutant working-spinner lib/pane-working.sh "s/^pane_working() {/pane_working() { grep -q '\xe2\x9c\xbb' <<<\"\$1\" \&\& return 0;/" pane_working
 launch_table \
   "control: keyed on the spinner instead, the sign-in step reports launched|tmux|-|-|signin|rc=0 out~Done:+launched+1=true stderr~never+reached+a+ready+composer=false"
+# The composer read can fail the same two ways. Drop the composer filter and
+# the draft above passes as a submitted prompt: the │ the old filter looks for
+# is on none of the 146 captures of v2.1.261, so nothing else stands between a
+# half-typed brief and a lane called launched.
+mutant composer-blind open-terminal 's/ | grep -Ev -- "\$COMPOSER_RE"//' 'the composer filter'
+launch_table \
+  "control: without the composer filter, a draft the operator is still typing reports launched|tmux|-|-|draft|rc=0 out~Done:+launched+1=true resends=0"
+# Key readiness on the old footer alone and the re-send path goes unreachable:
+# v2.1.261 never draws it, so a dialog that ate the brief can only ever reach
+# the failure exit, never the recovery the launcher exists to perform.
+mutant ready-legacy-only open-terminal 's/^READY_RE=.*/READY_RE="\\? for shortcuts"/' 'the readiness marker'
+launch_table \
+  "control: keyed on the old footer alone, a dialog that ate the brief can never be recovered|tmux|-|-|echo,ready,delivered|rc=1 stderr~never+reached+a+ready+composer=true resends=0"
 unmutate
 
 echo "=== open-terminal claude handoff: the verify timeout ==="

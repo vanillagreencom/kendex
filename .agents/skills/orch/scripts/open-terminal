@@ -387,6 +387,27 @@ start_cmd() {
   esac
 }
 
+# The composer of the main TUI, at column 0: the harness's prompt marker
+# followed by the NON-BREAKING space it pads the input line with. That padding
+# is the whole discriminator, and it is spelled as bytes rather than typed,
+# because the character is invisible in source and a reformat would silently
+# turn it into an ordinary space:
+#
+#   ❯<U+00A0>            the composer, empty or holding an unsent draft
+#   ❯<space>some text    a SUBMITTED message, echoed into the transcript
+#
+# Measured over 146 pane captures of Claude Code v2.1.261: present on 93 of
+# 100 main-TUI screens and on 0 of 45 first-run screens (theme picker, login
+# method, sign-in, paste-code, trust dialog), whose own `❯ 1. …` rows take the
+# ordinary space. oversee-watch's PANE_MARKER_RE deliberately conflates the
+# two; telling them apart is this script's question, not its.
+#
+# The older spelling of readiness, the `? for shortcuts` footer, is kept
+# alongside it: this is another tool's surface, and a lane may be running a
+# build that still draws it.
+COMPOSER_RE=$'^\xe2\x9d\xaf\xc2\xa0'
+READY_RE="$COMPOSER_RE"'|\? for shortcuts'
+
 # The launch took. Two independent proofs, either sufficient.
 #
 # A TURN IN FLIGHT (WORKING_RE, lib/pane-working.sh). A window this script
@@ -398,13 +419,17 @@ start_cmd() {
 #
 # THE BRIEF DELIVERED, which means SUBMITTED, not merely present: the brief
 # echoed in the launch command (`claude -n` line) or sitting unsent in the
-# composer's │-bordered input box is not delivery. That read requires the
-# brief on a plain transcript line (neither of those) AND a transcript-activity
-# marker proving the TUI accepted the prompt: a ●/⏺ response bullet, a ✻/✳
-# spinner or end-of-turn line, or the esc-to-interrupt hint. The conjunction
-# stays: alone, the plain-line read passes on an unsent draft in a composer
-# the harness no longer draws with │, and this is the last check before a lane
-# is called launched.
+# composer is not delivery, so both lines are dropped before the brief is
+# looked for. The composer is dropped by COMPOSER_RE; the │ border an older
+# TUI drew around it is dropped too, for the same reason that spelling is
+# still read as ready. On the shipped v2.1.261 the │ filter matches nothing —
+# the composer is two ──── rules around the prompt line — so COMPOSER_RE is
+# what carries this now.
+# On top of that the read requires a transcript-activity marker proving the
+# TUI accepted the prompt: a ●/⏺ response bullet, a ✻/✳ spinner or end-of-turn
+# line, or the esc-to-interrupt hint. The conjunction stays, as the last check
+# before a lane is called launched: a draft the user is still typing sits on
+# the composer line under a status bar that already carries ●.
 #
 # -J joins wrapped lines so a narrow pane cannot split the brief across a line
 # break and fake an unlaunched screen.
@@ -422,7 +447,7 @@ tmux_lane_launched() {
   # submitted prompt then reads as missing and gets duplicated. grep -v
   # always reads its whole input; the containment checks are bash matches.
   local filtered
-  filtered="$(printf '%s\n' "$screen" | grep -vF 'claude -n' | grep -vF '│')" || true
+  filtered="$(printf '%s\n' "$screen" | grep -vF 'claude -n' | grep -vF '│' | grep -Ev -- "$COMPOSER_RE")" || true
   [[ "$filtered" == *"$brief"* ]] || return 1
   [[ "$screen" == *'●'* || "$screen" == *'⏺'* || "$screen" == *'✻'* ||
      "$screen" == *'✳'* || "$screen" == *'esc to interrupt'* ]]
@@ -464,9 +489,13 @@ tmux_wait_composer() {
     # current screen — a footer buried in scrollback behind a first-run
     # dialog must not read as "composer ready" and send the brief into the
     # dialog again. The turn in flight is the current screen's question too.
+    # READY_RE, not the `? for shortcuts` footer alone: v2.1.261 does not draw
+    # that footer at all, so keyed on it this wait could never return 0 and
+    # the re-send below was unreachable — every consumed brief fell to the
+    # failure exit.
     screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 1
     pane_working "$screen" && return 2
-    [[ "$screen" == *'? for shortcuts'* ]] && return 0
+    grep -Eq -- "$READY_RE" <<<"$screen" && return 0
     tmux send-keys -t "$pane" Enter || return 1
     sleep 1
     waited=$((waited + 1))
