@@ -82,27 +82,34 @@ fx_policy() { # NAME STAGED WORKTREE — tools/ex.tsv committed as STAGED, then 
   [ -z "$3" ] || printf '%s\treason\n' "$3" >"$R/tools/ex.tsv"
 }
 fx_staged_deletion() { fx_policy staged-deletion INDEX ""; git -C "$R" rm -q --cached tools/ex.tsv; }
-fx_never_tracked() { new_repo never-tracked; printf 'seed\n' >"$R/seed.txt"; commit_all base; mkdir -p "$R/tools"; printf 'ONDISK\treason\n' >"$R/tools/ex.tsv"; }
+fx_never_tracked() { new_repo "$1"; printf 'seed\n' >"$R/seed.txt"; commit_all base; mkdir -p "$R/tools"; printf 'ONDISK\treason\n' >"$R/tools/ex.tsv"; }
 fx_unborn() { new_repo unborn-head; mkdir -p "$R/tools"; printf 'ONDISK\treason\n' >"$R/tools/ex.tsv"; }
 fx_glob() { new_repo "$1"; mkdir -p "$R/tools"; printf 'REAL\treason\n' >"$R/tools/exA.tsv"; commit_all base; }
 printf 'not an index\n' >"$ROOT/corrupt.idx"
+# A git that cannot probe HEAD for the file: the probe's failure is never
+# read as "absent from HEAD".
+mkdir -p "$ROOT/git-shim-ls-tree"
+printf '#!/usr/bin/env bash\ncase " $* " in *" ls-tree "*) echo "git ls-tree: simulated failure" >&2; exit 128 ;; esac\nexec "%s" "$@"\n' "$(command -v git)" >"$ROOT/git-shim-ls-tree/git"
+chmod +x "$ROOT/git-shim-ls-tree/git"
 
 echo "=== gg_policy_content ==="
-# label | fixture | snippet | expect
+# label | fixture | shim | snippet | expect
 rows=(
-  "the staged copy governs over an unstaged edit|fx_policy staged-wins INDEX WORKTREE|gg_policy_content tools/ex.tsv|rc=0 INDEX\\treason"
-  "an unreadable index is a collection error, never the worktree copy|fx_policy corrupt INDEX WORKTREE|GIT_INDEX_FILE=$ROOT/corrupt.idx gg_policy_content tools/ex.tsv|rc=2 ::error::probe: could not query the index for tools/ex.tsv (git ls-files exit 128); refusing to treat it as untracked"
-  "a staged deletion governs as absent with the worktree copy present|fx_staged_deletion|gg_policy_content tools/ex.tsv|rc=1"
-  "a never-tracked policy file falls back to the worktree copy|fx_never_tracked|gg_policy_content tools/ex.tsv|rc=0 ONDISK\\treason"
-  "an unborn HEAD carries nothing and does not fail the read|fx_unborn|gg_policy_content tools/ex.tsv|rc=0 ONDISK\\treason"
-  "a glob-shaped path matches only itself|fx_glob glob-path|gg_policy_content 'tools/ex?.tsv'|rc=1"
-  "control: the literal path it names resolves|fx_glob literal-path|gg_policy_content tools/exA.tsv|rc=0 REAL\\treason"
+  "the staged copy governs over an unstaged edit|fx_policy staged-wins INDEX WORKTREE||gg_policy_content tools/ex.tsv|rc=0 INDEX\\treason"
+  "an unreadable index is a collection error, never the worktree copy|fx_policy corrupt INDEX WORKTREE||GIT_INDEX_FILE=$ROOT/corrupt.idx gg_policy_content tools/ex.tsv|rc=2 ::error::probe: could not query the index for tools/ex.tsv (git ls-files exit 128); refusing to treat it as untracked"
+  "a staged deletion governs as absent with the worktree copy present|fx_staged_deletion||gg_policy_content tools/ex.tsv|rc=1"
+  "a never-tracked policy file falls back to the worktree copy|fx_never_tracked never-tracked||gg_policy_content tools/ex.tsv|rc=0 ONDISK\\treason"
+  "a HEAD probe that failed is a collection error, never the worktree copy|fx_never_tracked head-probe|$ROOT/git-shim-ls-tree|gg_policy_content tools/ex.tsv|rc=2 ::error::probe: could not probe HEAD for tools/ex.tsv (git ls-tree exit 128); refusing to treat it as untracked"
+  "an unborn HEAD carries nothing and does not fail the read|fx_unborn||gg_policy_content tools/ex.tsv|rc=0 ONDISK\\treason"
+  "a glob-shaped path matches only itself|fx_glob glob-path||gg_policy_content 'tools/ex?.tsv'|rc=1"
+  "control: the literal path it names resolves|fx_glob literal-path||gg_policy_content tools/exA.tsv|rc=0 REAL\\treason"
 )
 for row in "${rows[@]}"; do
-  IFS='|' read -r label fixture snippet expect <<<"$row"
+  IFS='|' read -r label fixture SHIM snippet expect <<<"$row"
   $fixture
   assert_eq "$label" "$expect" "$(call "$SETTINGS" "$snippet")"
 done
+SHIM=""
 
 # --- gg_require_merged_index -------------------------------------------------
 
