@@ -193,18 +193,43 @@ if [ "$MODE" != "check" ]; then
   mkdir -p -- "$HOOKS_DIR" || die "could not create $(gg_shown "$HOOKS_DIR")"
 fi
 
+# A helper whose baked scripts directory no longer exists was written by an
+# install that is gone: the package moved, was renamed, or was removed
+# without its uninstaller. Line 3 is the one place every helper this
+# installer has ever written names that directory, single-quoted; anything
+# else at the path is somebody's file. A path holding a quote does not parse
+# and stays refused, the safe direction.
+helper_is_dangling() { # PATH — 0 when the helper's install directory is gone
+  local line="" dir=""
+  line="$(sed -n '3p' -- "$1" 2>/dev/null)" || return 1
+  case "$line" in
+    "installed_scripts='"*"'") ;;
+    *) return 1 ;;
+  esac
+  dir="${line#installed_scripts=\'}"
+  dir="${dir%\'}"
+  case "$dir" in
+    "" | *"'"*) return 1 ;;
+  esac
+  [ ! -d "$dir" ]
+}
+
 write_helper() { # PATH
   local helper="$1" tmp=""
   # Non-destructive even against a name collision: never write through a
   # symlink, never replace a non-regular file, never overwrite content
-  # missing our marker.
+  # missing our marker unless it is a helper of ours whose install is gone.
   if [ -L "$helper" ] || { [ -e "$helper" ] && [ ! -f "$helper" ]; }; then
     warn "$(gg_shown "$helper") exists and is not a regular file; refusing to replace it"
     return 1
   fi
   if [ -f "$helper" ] && ! grep -qF -- "$HELPER_MARKER" "$helper" 2>/dev/null; then
-    warn "$(gg_shown "$helper") exists but was not written by this installer; refusing to overwrite it"
-    return 1
+    if helper_is_dangling "$helper"; then
+      warn "$(gg_shown "$helper") was written by an install whose scripts directory is gone; replacing it"
+    else
+      warn "$(gg_shown "$helper") exists but was not written by this installer; refusing to overwrite it"
+      return 1
+    fi
   fi
   tmp="$(mktemp "$helper.tmp.XXXXXX")" || return 1
   INSTALL_TMP="$tmp"

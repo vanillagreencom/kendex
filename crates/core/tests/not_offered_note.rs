@@ -17,13 +17,19 @@ const SKILL: &str = "---\nname: NAME\ndescription: Use NAME.\n---\n\nSteps.\n";
 
 #[allow(clippy::unwrap_used)]
 fn notes_for(declared: &str) -> Vec<String> {
+    notes_for_catalog(declared, &["deploy", "review"])
+}
+
+#[allow(clippy::unwrap_used)]
+fn notes_for_catalog(declared: &str, offered: &[&str]) -> Vec<String> {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();
     let source = home.join("catalog");
-    for name in ["deploy", "review"] {
+    fs::create_dir_all(source.join("skills")).unwrap();
+    for name in offered {
         fs::create_dir_all(source.join("skills").join(name)).unwrap();
         fs::write(
             source.join("skills").join(name).join("SKILL.md"),
@@ -54,6 +60,17 @@ fn a_name_the_catalog_does_not_carry_is_refused_naming_what_it_offers() {
     assert!(
         note.ends_with("its skills are deploy, review; declare one of those"),
         "{note}"
+    );
+}
+
+#[test]
+fn a_catalog_offering_nothing_of_that_kind_says_so() {
+    let notes = notes_for_catalog("retired", &[]);
+    assert!(
+        notes
+            .iter()
+            .any(|note| note == "retired: not found in source 'cat', which offers no skill"),
+        "{notes:?}"
     );
 }
 

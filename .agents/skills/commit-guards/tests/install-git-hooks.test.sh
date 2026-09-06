@@ -445,6 +445,24 @@ FOREIGN="$(cat "$R9/.git/hooks/kendex-guards")"
 install_in "$R9"
 [ "$RC" -eq 1 ] && ok "a foreign file at the helper path aborts the install" || bad "foreign helper aborts" "rc=$RC out=$OUT"
 [ "$FOREIGN" = "$(cat "$R9/.git/hooks/kendex-guards")" ] && ok "the foreign file is left untouched" || bad "foreign helper untouched"
+# A helper an earlier install wrote carries that install's marker and its
+# scripts directory on line 3. With the directory gone, the install is gone
+# and the helper is replaced; with it present, the marker still decides.
+install_in "$R9"
+GONE_DIR="$TMP/install-that-moved/scripts"
+printf '#!/bin/sh\n# Scripts directory of the install that wrote this file.\ninstalled_scripts=%s\n# kendex earlier-package git hooks. Managed by an earlier install.\nexit 0\n' "'$GONE_DIR'" >"$R9/.git/hooks/kendex-guards"
+install_in "$R9"
+[ "$RC" -eq 0 ] && [ "$FRESH" = "$(cat "$R9/.git/hooks/kendex-guards")" ] \
+  && case "$OUT" in *"scripts directory is gone; replacing it"*) true ;; *) false ;; esac \
+  && ok "a helper whose baked install directory is gone is replaced" \
+  || bad "dangling helper replaced" "rc=$RC out=$OUT"
+mkdir -p "$GONE_DIR"
+printf '#!/bin/sh\n# Scripts directory of the install that wrote this file.\ninstalled_scripts=%s\n# kendex earlier-package git hooks.\nexit 0\n' "'$GONE_DIR'" >"$R9/.git/hooks/kendex-guards"
+PRESENT="$(cat "$R9/.git/hooks/kendex-guards")"
+install_in "$R9"
+[ "$RC" -eq 1 ] && [ "$PRESENT" = "$(cat "$R9/.git/hooks/kendex-guards")" ] \
+  && ok "control: an unrecognised helper whose install directory exists is still refused" \
+  || bad "control: present-directory helper refused" "rc=$RC out=$OUT"
 rm "$R9/.git/hooks/kendex-guards"
 mkdir "$R9/.git/hooks/kendex-guards"
 install_in "$R9"
