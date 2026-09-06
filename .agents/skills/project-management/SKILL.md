@@ -22,6 +22,24 @@ tags: [planning]
 <!-- kendex:shared-instructions:start -->
 Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
 <!-- kendex:shared-instructions:end -->
+
+### Project taxonomy
+
+The taxonomy the label preflight in `references/labels.md` validates every final label set against. `surface` names the one place a person meets the work, so app work sorts from package work: a create or a label update whose final set carries no `surface`, or more than one, fails § Validation before any mutation. A label outside these categories is legacy and is not assigned here. The `agent` names themselves stay in `LINEAR_AGENT_LABELS` (`kendex.settings.toml` `[env]`), which is what `issues create` refuses against; this category only maps them onto the contract.
+
+```json
+{
+  "required_categories_for_new_issues": ["agent", "surface"],
+  "categories": {
+    "agent": {"required": true, "exclusive": true, "match": {"prefix": "agent:"}, "forbid_group_labels": true},
+    "surface": {"required": true, "exclusive": true, "labels": ["app", "cli", "skills", "harness", "ci-infra", "docs", "releases"]},
+    "stack": {"required": false, "exclusive": false, "labels": ["rust-core", "iced", "test", "security", "macos", "windows", "linux"]},
+    "classification": {"required": false, "exclusive": false, "labels": ["bug", "feature", "refactor", "design", "chore", "owner-gated", "1.0"]},
+    "workflow": {"required": false, "exclusive": false, "labels": ["research", "needs-research", "baseline", "blocked"]}
+  }
+}
+```
+
 <!-- kendex:project-instructions:end -->
 
 # Project Management
@@ -72,6 +90,7 @@ TPM analysis workflows, each returning JSON per its schema: [tpm-cycle-plan](wor
 - Sync the Linear cache before a workflow's first cache read: `sync --reconcile` in a run that mutates the tracker, `sync --if-stale 15` in a read-only lookup. That sync is the freshness mechanism; a cached read itself enforces presence, so a read that comes back missing halts the workflow and reports the sync failure, never a partial result, a live-only substitute, or a retry against the unsynced cache.
 - Resolve tracker context once per run (audit-issues § 1.2) and route every preflight, fetch, and mutation through it. A GitHub-tracked run must not require Linear installation, sync, or authentication; where GitHub lacks a Linear concept, degrade in a documented note, never silently.
 - Before any issue create or label update, run the label preflight in [references/labels.md](references/labels.md) against the live inventory and project taxonomy; any § Validation failure there halts before mutation.
+- A project declares its taxonomy in its kendex manifest under `[skill-instructions]` for this skill (`kendex.toml`, or `kendex-local.toml` in a source-catalog checkout), which renders it into § Project Instructions above; a project that declares none has no required categories to enforce.
 - In multi-issue analysis, keep verification context per issue. One issue's PR, branch, or resolved path set never scopes another's checks.
 
 ## Scope by Path
