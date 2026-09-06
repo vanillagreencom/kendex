@@ -19,7 +19,7 @@ Project markers: a `.codex/` or `.agents/` directory.
 | skill | `~/.codex/skills/<name>/SKILL.md` | `.agents/skills/<name>/SKILL.md`, shared with Pi and Antigravity | managed, both |
 | command | — | — | install, toggle, remove, refresh both; `installs_as: skill` |
 | hook | `~/.codex/hooks.json` | `.codex/hooks.json` | managed, both, enforced |
-| mcp-server | `~/.codex/config.toml` `[mcp_servers.<name>]` | `.codex/config.toml` | observe only, both |
+| mcp-server | `~/.codex/config.toml` `[mcp_servers.<name>]` | `.codex/config.toml` | managed, both |
 | plugin | `~/.codex/plugins/` cache tree with `.codex-plugin/plugin.json`, toggles in `config.toml` `[plugins]` | — | observe only, global |
 | pi-extension | — | — | unsupported |
 
@@ -29,7 +29,7 @@ Codex removed custom prompts in 0.118 (2026-03), so `~/.codex/prompts` is read b
 
 - Skill description at most 1024 characters; a longer one is refused for this harness alone, naming the skill (`crates/core/src/render/validate/skill.rs`). No body cap.
 - Name rule `Any`; namespace separator `__`.
-- MCP transports: stdio and streamable HTTP, never SSE.
+- MCP transports: stdio and streamable HTTP, never SSE, and an SSE declaration is refused for this harness with that reason. A server is its own `[mcp_servers.<name>]` table, written through a `toml_edit` pass that keeps the file's comments, ordering and other tables (`crates/core/src/configedit/codex_mcp.rs`): `command` and `args` for a stdio server, `url` for a streamable-HTTP one, no `type`. Codex reads an `env` value literally and passes a parent variable through by its own name under `env_vars`, so a catalog `env` table becomes that list, and a `$NAME` reference that would land under another key is refused with the name to use. Switching off writes `enabled = false` on the table and switching on takes it away, so the declaration stays until removal. A project's file loads only once Codex trusts the project, which the TUI grants an undecided local project on first launch; `codex mcp add` writes the user file alone and rewrites its whole `mcp_servers` table, so kendex does not go through it.
 - Agent file: TOML, `<name>.toml`. Fields written: `name`, `nickname_candidates`, `description`, `model`, `model_reasoning_effort`, `sandbox_mode`, and `developer_instructions` as a triple-quoted string carrying the whole prompt (`crates/core/src/render/agent/codex.rs`).
 - Model dialect: every tier resolves to `gpt-6-astra`; an omitted key is Codex's spelling of inherit (`crates/core/src/harness/models.rs`). `model_reasoning_effort` is written as given (`minimal`, `low`, `medium`, `high`, `xhigh`); an absent key takes the model's own default.
 - Permissions: Codex has no tool allowlist. A read-only allowlist caps `sandbox_mode` at `read-only`, any other allowlist at `workspace-write`, and only an explicit Engineer role with no allowlist earns `danger-full-access`; an allowlist always warns that the list itself is not enforced.

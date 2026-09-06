@@ -42,7 +42,7 @@ Installing a package from a git repository needs git 2.41 or newer; kendex refus
 | Skills | ● | ● | ● | ●¹ | ● | ● | ● | ● |
 | Hooks | ● | ● | ●² | ●¹ ² | ●³ | ● | ● | ● |
 | Commands | ● | ●⁴ | ● | ○⁵ | ● | ● | -⁶ | - |
-| MCP servers | ● | ○ | ● | ● | - | ●⁷ | ● | ● |
+| MCP servers | ● | ● | ● | ● | - | ●⁷ | ● | ● |
 | Plugins | ◐ | ○ | ○ | ○ | - | ○ | ◐ | ○ |
 | Pi extensions | - | - | - | - | ● | - | - | - |
 

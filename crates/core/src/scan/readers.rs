@@ -131,7 +131,13 @@ fn mcp_toml(path: &Path) -> Result<Vec<RawEntry>, String> {
         .iter()
         .map(|(name, entry)| RawEntry {
             name: name.clone(),
-            enabled: None,
+            // Codex's own default: on unless the table says otherwise.
+            enabled: Some(
+                entry
+                    .get("enabled")
+                    .and_then(toml::Value::as_bool)
+                    .unwrap_or(true),
+            ),
             description: entry
                 .get("command")
                 .or_else(|| entry.get("url"))
