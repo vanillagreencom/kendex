@@ -345,7 +345,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Empty output from the first, `[PR_BRANCH]` from the second. Otherwise the cause is `dirty tree` or `branch moved`, and a command that exits non-zero fails its own fact as `tree unreadable` or `branch unreadable`: the predicate answers only where it can prove a fact, never from absent output.
 
-   Step 6 runs this predicate WHOLE immediately before the removal and removes only when every part holds. Anything else keeps the worktree and its checked-out branch with the cause the predicate named (a worktree kept on another branch leaves the merged branch to the standalone delete below), and that cause goes in the § 6 `Worktree` row. A fact added to the predicate later is covered without step 6 changing.
+   Step 6 runs this predicate WHOLE immediately before the removal and removes only when every part holds. Anything else keeps the worktree and its checked-out branch with the cause the predicate named (a worktree kept on another branch leaves the merged branch to the standalone delete below), and that cause goes on § 6's worktree line. A fact added to the predicate later is covered without step 6 changing.
 
    **The merged predicate is `worktree cleanup`'s**: ancestry into the repository's default branch, or, when ancestry fails, a pull request merged into that same default branch whose head commit is the local branch's tip. A squash merge leaves no ancestry, so the second proof is the one that applies to every PR landing through the queue, and it is the commit that proves it — a branch carrying commits past its merged PR is unmerged work. `worktree remove` applies the predicate itself when deleting the branch: a nonzero exit after the tree is gone means the branch survived, and the diagnostic names the answer the lookup gave; carry that as `kept` in the § 6 `Branch` row.
 
@@ -391,7 +391,13 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree remove [ISSUE]
    ```
 
-   A foreign-lease refusal from the helper keeps the worktree too; carry its diagnostic into the § 6 `Worktree` row.
+   A foreign-lease refusal from the helper keeps the worktree too; carry its diagnostic onto § 6's worktree line. Where § 4 found an issue worktree, read its path last, whichever way the removal went:
+
+   ```bash
+   ls -d [WORKTREE_PATH]
+   ```
+
+   A `No such file or directory` is the removal; a listed path is a worktree still standing. § 6 is written after this step, never before.
 
 ## 6. Present Results
 
@@ -402,14 +408,15 @@ Use the output as `MAIN_REPO_ROOT`.
 | Field | Value |
 |-------|-------|
 | Branch | [BRANCH_NAME] (deleted / kept) |
-| Worktree | removed / kept — [cause] |
 | Issue Tracker | [ISSUE_ID] → Done (completed by the lane after merge) |
 | Container | [PARENT_ID] → Done / deferred — [pending ids, restorations, or cause] |
 | Base sync | local `[BASE_BRANCH]` → [NEW_SHA] |
 
+Worktree `[WORKTREE_PATH]` gone / standing — [cause]
+
 </output_format>
 
-The `Container` row appears only when § 5 step 2 found a container parent. The `Base sync` row is never omitted. When § 5 step 3 hit a blocking outcome it carries the warning instead of a sha: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`. The `Worktree` row reports `removed`, or `kept — [cause]` — the cause step 4's disposal predicate named, or `foreign lease` from the helper, or `project verification failed` — when step 6 did not remove it (no worktree existed → omit the row). Add a `Review gate` row only when the merge did not proceed on a plain `approved`/`reviewed` verdict — `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
+The `Container` row appears only when § 5 step 2 found a container parent. The `Base sync` row is never omitted. When § 5 step 3 hit a blocking outcome it carries the warning instead of a sha: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`. The worktree line closes the block with step 6's read: `gone`, or `standing — [cause]` — the cause step 4's disposal predicate named, or `foreign lease` from the helper, or `project verification failed`. Omit it only where § 4 found no issue worktree. Add a `Review gate` row only when the merge did not proceed on a plain `approved`/`reviewed` verdict — `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
 
 For `merge-pr all`, add the cross-PR analysis and a merge table:
 
@@ -431,4 +438,4 @@ Legend: ✅ merged  ⏭️ skipped (user)  ❌ skipped (error)
 
 ## 7. Return
 
-The merge is complete once § 5 steps 1-6 have run. A run that handed back at a non-merged verdict reports that verdict and ends; it does not resume.
+The merge is complete once § 5 steps 1-6 have run. A lane at its prompt whose issue worktree still stands, with no cause on § 6's worktree line, has not finished. A run that handed back at a non-merged verdict reports that verdict and ends; it does not resume.
