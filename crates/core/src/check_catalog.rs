@@ -254,6 +254,28 @@ pub fn check_with(
         catalog,
         items: Vec::new(),
     };
+    for bundle in config.bundles.values() {
+        for member in &bundle.members {
+            if crate::source::find_item(sealed, config, member.kind, &member.name).is_none() {
+                report.catalog.push(CheckFinding {
+                    file: crate::manifest::MANIFEST_FILE.to_owned(),
+                    line: None,
+                    kind: "bundle",
+                    name: bundle.name.clone(),
+                    pass: CATALOG_PASS.to_owned(),
+                    severity: "error",
+                    rule: None,
+                    message: format!(
+                        "[bundles.{}] names {} '{}', which the catalog does not offer",
+                        crate::names::shown(&bundle.name),
+                        member.kind.name(),
+                        crate::names::shown(&member.name),
+                    ),
+                    fix: "offer the member in this catalog or remove it from the set".to_owned(),
+                });
+            }
+        }
+    }
     for kind in CHECKED_KINDS {
         for name in crate::source::list_items(sealed, config, kind) {
             match crate::source::find_item(sealed, config, kind, &name) {

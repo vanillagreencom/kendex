@@ -11,6 +11,10 @@ use kendex_core::model::ItemKind;
 use kendex_core::source::index::index;
 use kendex_core::source_read::SealedSource;
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::rooted;
+
 #[allow(clippy::unwrap_used)]
 fn repo() -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
@@ -269,6 +273,48 @@ fn a_bundle_written_in_the_shape_the_reader_reads_is_clean() {
     let sealed = SealedSource::open(&root).unwrap();
     let report = check(&sealed, "repo").unwrap();
     assert_eq!(report.failing(true), 0, "{:?}", report.catalog);
+}
+
+/// Catalog authors can leave renamed or removed items in any member list.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn every_unoffered_bundle_member_is_breakage() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = rooted(&tmp);
+    skill_at(&root, "skills", "gh");
+    fs::write(
+        root.join("kendex.toml"),
+        "[bundles.starter]\nskills = [\"gh\", \"gone-skill\"]\n\
+         agents = [\"gone-agent\"]\nhooks = [\"gone-hook\"]\n\
+         commands = [\"gone-command\"]\nmcp-servers = [\"gone-mcp\"]\n\
+         [bundles.other]\nskills = [\"gh\"]\n",
+    )
+    .unwrap();
+    let sealed = SealedSource::open(&root).unwrap();
+    let report = check(&sealed, "repo").unwrap();
+    let missing = [
+        "gone-agent",
+        "gone-skill",
+        "gone-command",
+        "gone-hook",
+        "gone-mcp",
+    ];
+    assert_eq!(report.catalog.len(), missing.len());
+    assert_eq!(report.tally().breakage, missing.len());
+    assert_eq!(report.failing(false), missing.len());
+    assert_eq!(report.failing(true), missing.len());
+    for (finding, member) in report.catalog.iter().zip(missing) {
+        assert_eq!(finding.name, "starter");
+        assert_eq!(finding.kind, "bundle");
+        assert_eq!(finding.pass, "catalog");
+        assert_eq!(finding.file, "kendex.toml");
+        assert_eq!(finding.severity, "error");
+        assert!(finding.rule.is_none());
+        assert!(finding.message.contains("starter"), "{finding:?}");
+        assert!(finding.message.contains(member), "{finding:?}");
+    }
+    assert_eq!(report.items.len(), 1);
+    assert_eq!(report.items[0].name, "gh");
 }
 
 /// A project's own kendex.toml is both manifest and catalog once `kendex
