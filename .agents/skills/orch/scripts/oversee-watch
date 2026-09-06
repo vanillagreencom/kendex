@@ -202,6 +202,8 @@ source "$SCRIPT_DIR/lib/usage-reset.sh"
 source "$SCRIPT_DIR/lib/lane-claims.sh"
 # shellcheck source=lib/pr-watch-pass.sh
 source "$SCRIPT_DIR/lib/pr-watch-pass.sh"
+# shellcheck source=lib/pane-working.sh
+source "$SCRIPT_DIR/lib/pane-working.sh"
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
 TRACKER="${OVERSEE_WATCH_TRACKER:-$SKILLS_DIR/linear/scripts/linear.sh}"
 WORKFLOW_STATE="${OVERSEE_WATCH_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
@@ -290,9 +292,8 @@ LANE_ASKING_RE='(❯|›) [0-9]+\. |Do you want to|Enter to select|Esc to cancel
 # prints "Usage limit reached" and its out-of-credits wording. `.` stands in
 # for the apostrophe: ASCII in the binaries, typographic once rendered.
 USAGE_LIMIT_RE='You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits|/usage-credits'
-# A turn in flight: the interrupt hint (both harnesses), the hint shown while
-# a foreground shell runs, or the streaming token counter of the status line.
-WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens'
+# A turn in flight is WORKING_RE, in lib/pane-working.sh: open-terminal reads
+# the same question off a launching pane, and one answer serves both.
 # The marker each harness draws at column 0 for a submitted user message
 # echoed into the transcript AND for the composer the lane sits at: Claude
 # Code `❯`, Codex `›`. Spelled as an alternation of literals and NEVER as a

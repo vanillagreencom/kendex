@@ -54,9 +54,10 @@ Options:
                     as another session's claim. A worktree under a lease held
                     by a different owner is still skipped.
 
-On tmux lanes the brief's delivery is verified against the pane and re-sent
+On tmux lanes the launch is verified against the pane and the brief re-sent
 once if a first-run dialog consumed it ($ORCH_TMUX_VERIFY_SECS per pass,
-default 15, positive integer clamped to 120).
+default 15, positive integer clamped to 120). A pane already running a turn
+counts as launched and is not typed into.
 
 Each item's worktree is created here (worktree create, or create --reuse
 under --relaunch when the item's tree already exists). An item whose worktree
@@ -156,6 +157,8 @@ source "$SCRIPT_DIR/lib/kendex-env.sh"
 kendex_load_project_env "$PROJECT_ROOT"
 # shellcheck source=lib/lane-claims.sh
 source "$SCRIPT_DIR/lib/lane-claims.sh"
+# shellcheck source=lib/pane-working.sh
+source "$SCRIPT_DIR/lib/pane-working.sh"
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
 LANES_CLI="${LANES_CLI:-$SCRIPT_DIR/lanes}"
 GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
@@ -384,39 +387,98 @@ start_cmd() {
   esac
 }
 
-# Delivered means SUBMITTED, not merely present: the brief echoed in the
-# launch command (`claude -n` line) or sitting unsent in the composer's
-# │-bordered input box is not delivery. The predicate requires the brief on a
-# plain transcript line (neither of those) AND a transcript-activity marker
-# proving the TUI accepted the prompt: a ●/⏺ response bullet, a ✻/✳ working
-# spinner, or the esc-to-interrupt processing hint. -J joins wrapped lines so
-# a narrow pane cannot split the brief across a line break and fake an
-# undelivered screen.
-tmux_brief_visible() {
+# The composer of the main TUI, at column 0: the harness's prompt marker
+# followed by the NON-BREAKING space it pads the input line with. That padding
+# is the whole discriminator, and it is spelled as bytes rather than typed,
+# because the character is invisible in source and a reformat would silently
+# turn it into an ordinary space:
+#
+#   ❯<U+00A0>            the composer, empty or holding an unsent draft
+#   ❯<space>some text    a SUBMITTED message, echoed into the transcript
+#
+# Measured over 146 pane captures of Claude Code v2.1.261: present on 93 of
+# 100 main-TUI screens and on 0 of 45 first-run screens (theme picker, login
+# method, sign-in, paste-code, trust dialog), whose own `❯ 1. …` rows take the
+# ordinary space. oversee-watch's PANE_MARKER_RE deliberately conflates the
+# two; telling them apart is this script's question, not its.
+#
+# Readiness is the EMPTY composer, which is that line and nothing after it.
+# A composer still holding text is not somewhere to type: `send-keys -l`
+# APPENDS, so typing the brief into a composer that already holds one submits
+# `/orch start CC-737/orch start CC-737`. Its own dismissing Enter submits
+# what is there instead, which is the right recovery when what is there is the
+# brief the launch arrived with — the state this whole path exists for.
+# Measured on the same captures: the empty form is on 35 of 35 idle screens
+# and 57 of 57 mid-turn ones that draw a composer at all, and on 0 draft
+# screens.
+#
+# The older spelling of readiness, the `? for shortcuts` footer, is kept
+# alongside it: this is another tool's surface, and a lane may be running a
+# build that still draws it. That footer says nothing about whether the
+# composer under it is occupied, so the append above is still reachable on
+# such a build, exactly as it was before this marker existed.
+COMPOSER_RE=$'^\xe2\x9d\xaf\xc2\xa0'
+READY_RE="$COMPOSER_RE"'[[:blank:]]*$|\? for shortcuts'
+
+# The launch took. Two independent proofs, either sufficient.
+#
+# A TURN IN FLIGHT (WORKING_RE, lib/pane-working.sh). A window this script
+# opened seconds ago has no work to run but the brief it was launched with,
+# and a first-run dialog that ate that brief leaves the harness parked, never
+# working. This is the half a long brief needs: the TUI wraps, truncates or
+# redraws its transcript line, and the delivery read below then misses a lane
+# that is plainly running — the working lane reported as a failed launch.
+#
+# THE BRIEF DELIVERED, which means SUBMITTED, not merely present: the brief
+# echoed in the launch command (`claude -n` line) or sitting unsent in the
+# composer is not delivery, so both lines are dropped before the brief is
+# looked for. The composer is dropped by COMPOSER_RE; the │ border an older
+# TUI drew around it is dropped too, for the same reason that spelling is
+# still read as ready. On the shipped v2.1.261 the │ filter matches nothing —
+# the composer is two ──── rules around the prompt line — so COMPOSER_RE is
+# what carries this now.
+# Dropping the composer line is the WHOLE of that guard, and it has to be:
+# this read also decides whether the launcher may type, and no
+# transcript-activity marker can be required of it. A turn's first second or
+# two draws a spinner frame this script deliberately does not read and no
+# token counter yet, while the composer is ALREADY EMPTY again — the empty
+# form is on 57 of 57 mid-turn captures. Ask for a marker on top and that
+# window reads as an idle, ready composer, and a second brief goes into a turn
+# that has just begun. The filter is measured instead: on 45 first-run
+# captures nothing survives it, and a draft never does.
+#
+# -J joins wrapped lines so a narrow pane cannot split the brief across a line
+# break and fake an unlaunched screen.
+tmux_lane_launched() {
   local pane="$1" brief="$2" screen
   # -S -: capture from the start of history, not just the visible viewport —
   # a fast response can scroll the submitted prompt out of view before the
   # first poll, and a viewport-only capture would misread that as
   # undelivered and queue a duplicate brief into a running session.
   screen="$(tmux capture-pane -pJ -S - -t "$pane" 2>/dev/null)" || return 1
+  lane_launched "$screen" "$brief"
+}
+
+# The same question against a screen already in hand.
+lane_launched() { # SCREEN BRIEF
+  local screen="$1" brief="$2"
+  pane_working "$screen" && return 0
   # No short-circuiting `grep -q` pipelines over the capture: with -S - a
   # retained pane can exceed a pipe buffer, an early -q match SIGPIPEs the
   # upstream printf, and pipefail turns a FOUND brief into exit 141 — a
   # submitted prompt then reads as missing and gets duplicated. grep -v
   # always reads its whole input; the containment checks are bash matches.
   local filtered
-  filtered="$(printf '%s\n' "$screen" | grep -vF 'claude -n' | grep -vF '│')" || true
-  [[ "$filtered" == *"$brief"* ]] || return 1
-  [[ "$screen" == *'●'* || "$screen" == *'⏺'* || "$screen" == *'✻'* ||
-     "$screen" == *'✳'* || "$screen" == *'esc to interrupt'* ]]
+  filtered="$(printf '%s\n' "$screen" | grep -vF 'claude -n' | grep -vF '│' | grep -Ev -- "$COMPOSER_RE")" || true
+  [[ "$filtered" == *"$brief"* ]]
 }
 
-tmux_verify_brief() {
+tmux_wait_launched() {
   local pane="$1" brief="$2" waited=0
   while (( waited < TMUX_VERIFY_SECS )); do
     sleep 1
     waited=$((waited + 1))
-    tmux_brief_visible "$pane" "$brief" && return 0
+    tmux_lane_launched "$pane" "$brief" && return 0
   done
   return 1
 }
@@ -429,20 +491,44 @@ tmux_verify_brief() {
 # an unattended lane needs) and waits for the main TUI's composer footer.
 # An Enter into an already-ready empty composer is a no-op, so the nudge is
 # safe when the screen is merely slow.
+#
+# A lane that BECOMES launched during the wait is the third state, and the one
+# the nudge must stop for: further keystrokes land inside a running turn, and
+# the brief is already where it needed to go. It ends the wait as a launched
+# lane rather than a stuck one. This is not only a turn starting late: a
+# dismissing Enter into a composer holding the brief SUBMITS it, which is the
+# recovery this path exists to perform, and re-typing the brief after that
+# would run it twice. WORKING_RE reads false for the first second or two of a
+# turn, before streaming starts, so a turn beginning inside the last passes can
+# still take an Enter — harmless in a Claude Code turn, which Enter does not
+# interrupt, and the pass after it stops.
+#   0  a ready, empty composer: re-send the brief
+#   2  the launch took after all: send nothing more
+#   1  neither within the window: the stuck or dead pane the failure exit is for
+# The loop READS before it decides whether it may still nudge, so the Enter of
+# the final pass is observed like every other: a dialog it dismissed or a draft
+# it submitted lands after the last nudge, and testing the budget before the
+# capture would report that lane stuck. At ORCH_TMUX_VERIFY_SECS=1 that is the
+# only Enter there is.
 tmux_wait_composer() {
-  local pane="$1" waited=0 screen
-  while (( waited < TMUX_VERIFY_SECS )); do
+  local pane="$1" brief="$2" waited=0 screen
+  while :; do
     # VISIBLE viewport only (no -S -): readiness is a property of the
     # current screen — a footer buried in scrollback behind a first-run
     # dialog must not read as "composer ready" and send the brief into the
-    # dialog again.
+    # dialog again. The turn in flight is the current screen's question too.
+    # READY_RE, not the `? for shortcuts` footer alone: v2.1.261 does not draw
+    # that footer at all, so keyed on it this wait could never return 0 and
+    # the re-send below was unreachable — every consumed brief fell to the
+    # failure exit.
     screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 1
-    [[ "$screen" == *'? for shortcuts'* ]] && return 0
+    lane_launched "$screen" "$brief" && return 2
+    grep -Eq -- "$READY_RE" <<<"$screen" && return 0
+    (( waited < TMUX_VERIFY_SECS )) || return 1
     tmux send-keys -t "$pane" Enter || return 1
     sleep 1
     waited=$((waited + 1))
   done
-  return 1
 }
 
 # The last layer before any window opens. A launch whose working directory is
@@ -501,14 +587,22 @@ open_tmux() {
   fi
   echo "Opened tmux window '$title' in $dir"
   [[ -n "$brief" ]] || return 0
-  # Delivery verification: a first-run dialog (theme / trust /
+  # Launch verification: a first-run dialog (theme / trust /
   # browser integration) can consume the CLI-arg brief, leaving a healthy TUI
-  # at an empty composer while the launch looks successful. Confirm the brief
-  # actually reached the TUI; if not, re-send it once into the composer and
-  # re-verify; if still absent, fail this lane loudly instead of reporting
-  # success. The Codex kickoff path has the same delivery requirement.
-  tmux_verify_brief "$pane" "$brief" && return 0
-  if ! tmux_wait_composer "$pane"; then
+  # at an empty composer while the launch looks successful. Confirm the launch
+  # took; if it did not, re-send the brief once into the composer and
+  # re-verify; if it still has not, fail this lane loudly instead of reporting
+  # success. Between those sits the lane that is simply already working: it
+  # took, and all that is owed to it is to stop typing. The Codex kickoff path
+  # has the same delivery requirement.
+  tmux_wait_launched "$pane" "$brief" && return 0
+  local composer_rc=0
+  tmux_wait_composer "$pane" "$brief" || composer_rc=$?
+  if (( composer_rc == 2 )); then
+    echo "Confirmed '$title' launched while waiting for its composer; nothing further sent"
+    return 0
+  fi
+  if (( composer_rc != 0 )); then
     echo "Error: '$title' never reached a ready composer (first-run dialog stuck?) — attach and start it manually: $brief" >&2
     return 1
   fi
@@ -516,7 +610,7 @@ open_tmux() {
     echo "Error: tmux send-keys failed re-delivering the brief to '$title'" >&2
     return 1
   fi
-  if tmux_verify_brief "$pane" "$brief"; then
+  if tmux_wait_launched "$pane" "$brief"; then
     echo "Re-delivered brief to '$title' (initial CLI-arg prompt was consumed at boot)"
     return 0
   fi
