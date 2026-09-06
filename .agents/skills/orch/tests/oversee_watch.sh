@@ -32,25 +32,31 @@
 #       named for the first time baselines its standing attention in either
 #       ordering, the context header carries the highest status across repos, a
 #       global failure names its repo, a repeated --repo exits 2 naming the
-#       spelling given, --repo=VALUE is the same option, and a fleet of more
-#       than one repo is told which repo `merged` reads
-#   2.  merged: an --item's PR merged at/after --since fires; a PR merged
-#       BEFORE --since, a non-item branch, and a non-item conventional branch
-#       do not; a fork's PR on the same head branch name does not; item ids
-#       match branches case-insensitively; no --since means no floor; no
-#       --item skips the check with a note; gh stderr noise on success does
-#       not break the JSON parse
+#       spelling given, and --repo=VALUE is the same option
+#   2.  merged: an --item's PR merged at/after --since fires, naming its
+#       repo; a PR merged BEFORE --since, a non-item branch, and a non-item
+#       conventional branch do not; a fork's PR on the same head branch name
+#       does not; item ids match branches case-insensitively; no --since
+#       means no floor; no --item skips the check with a note; gh stderr
+#       noise on success does not break the JSON parse; a PR merged in a
+#       non-first --repo fires, the fork rejection holding per repo, red with
+#       the lookup narrowed to the first repo; a merged item still in --item
+#       is reported once across runs while a further PR on its branch is
+#       news, red with the row never kept
 #   2b. handoff: an --item whose state carries `.handoff` with no
 #       `.resumed_at` fires once, with the record, read from the item's
 #       worktree state (this checkout's when it has no worktree); a state
 #       without the key and a resumed record fire nothing; a re-run before
 #       the relaunch stamps the record fires nothing; the must-fail control
 #       is the emit arm removed
-#   3.  heartbeat after --max-loops with the open PR list
+#   3.  heartbeat after --max-loops with every --repo's open PR list, each
+#       line prefixed with its repo, red with the list narrowed to the first
 #   4.  gh auth failure exits 2; a stale env token falls through to the
 #       project GH_BOT_TOKEN; a failing pr list exits 2 (never a quiet 0)
 #   5.  lanes given outside tmux exit 2
-#   6.  a missing pr-watch.sh is a stderr note, not a failure
+#   6.  a missing pr-watch.sh is a stderr note, not a failure; inside tmux an
+#       --item with no lane window is a stderr note naming the pane checks
+#       skipped, once, and outside tmux or without --item there is none
 #   7.  --help exits 0, names the probe it runs, and states both liveness
 #       rules including the unusable-probe path
 set -euo pipefail
@@ -598,36 +604,6 @@ assert_eq "$rc" "2" "an empty --repo= exits 2" "$err"
 assert_eq "$out" "" "an empty --repo= prints no EVENT" "$err"
 assert_contains "$(cat "$err")" "--repo requires a value" "the parser names the option missing its value"
 
-# 1t. a fleet of more than one repo is told what the checks below the reducer
-# do NOT cover — and the note names only the checks this run actually performs
-new_case prwatch_coverage_note
-err="$TMP_ROOT/e1t1"
-out="$(run_watch -- --repo owner/repo --repo other/repo --item issue-5 2>"$err")" && rc=0 || rc=$?
-assert_contains "$(cat "$err")" \
-  "the reducer covers owner/repo other/repo; the merged check and the heartbeat's open-PR list read owner/repo only" \
-  "a multi-repo fleet is told which repo the merged check reads"
-err="$TMP_ROOT/e1t2"
-out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
-assert_not_contains "$(cat "$err")" "the reducer covers" "a one-repo fleet gets no coverage note"
-
-# no --item: the note must not explain a merged check this run skipped
-err="$TMP_ROOT/e1t3"
-out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
-assert_contains "$(cat "$err")" \
-  "the reducer covers owner/repo other/repo; the heartbeat's open-PR list reads owner/repo only" \
-  "the note drops the merged check when the run skipped it"
-assert_not_contains "$(cat "$err")" "the merged check and" \
-  "a skipped check is never claimed as covered"
-
-# no pr-watch: the note must not claim a reducer this run skipped
-err="$TMP_ROOT/e1t4"
-out="$(run_watch OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/absent-pr-watch.sh" -- --repo owner/repo --repo other/repo --item issue-5 2>"$err")" && rc=0 || rc=$?
-assert_contains "$(cat "$err")" \
-  "the merged check and the heartbeat's open-PR list read owner/repo only" \
-  "the note still names what the merged check reads without the reducer"
-assert_not_contains "$(cat "$err")" "the reducer covers" \
-  "and never claims a reducer that is not installed"
-
 # 1u. the repository resolved from `gh repo view` — the documented default,
 # reached only when no --repo is given — is canonicalized like any other: the
 # merged check matches its owner, pr-watch is handed one spelling, and the
@@ -644,8 +620,8 @@ printf '1' > "$STUB_DIR/prwatch.rc"
 err="$TMP_ROOT/e1u"
 out="$(run_watch -- --no-repo --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "a default-resolved repository exits 0" "$err"
-assert_contains "$out" "EVENT merged 5 issue-5" \
-  "a repository resolved from gh repo view still fires merged" "$err"
+assert_contains "$out" "EVENT merged 5 issue-5 vanillagreencom/kendex" \
+  "a repository resolved from gh repo view still fires merged, naming the repo" "$err"
 assert_eq "$(cat "$STUB_DIR/prwatch.repo")" "vanillagreencom/kendex" \
   "and reaches pr-watch in the canonical spelling" "$err"
 assert_eq "$([[ -f "$STATE_DIR/vanillagreencom_kendex__2026-08-15T09_00_00Z" ]] && echo yes || echo no)" "yes" \
@@ -680,6 +656,7 @@ assert_eq "$(grep -c '^EVENT' <<<"$out")" "2" "both item PRs fire, nothing else"
 
 # busy repo: the item's PR is older than 60 newer merges — a single listing
 # window would drop it; the per-item --head query still finds it
+new_case merged_busy
 err="$TMP_ROOT/e2c"
 jq -n '[range(1; 61) | {number: (100 + .), headRefName: ("noise-" + (.|tostring)), mergedAt: "2026-08-15T12:00:00Z"}] + [{number: 5, headRefName: "issue-5", mergedAt: "2026-08-15T10:00:00Z"}]' > "$STUB_DIR/merged.json"
 out="$(run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
@@ -696,11 +673,17 @@ assert_contains "$(cat "$err")" "no --item given; skipping the merged and handof
 assert_eq "$(grep -c 'merged' "$STUB_DIR/gh.calls" || true)" "0" "no --item never lists merged PRs"
 
 # gh stderr noise on a successful list does not reach the JSON parse
+new_case merged_noisy
+cat > "$STUB_DIR/merged.json" <<'EOF'
+[
+  {"number": 5, "headRefName": "issue-5", "mergedAt": "2026-08-15T10:00:00Z"}
+]
+EOF
 touch "$STUB_DIR/noisy"
 err="$TMP_ROOT/e2d"
 out="$(run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "gh stderr noise on success still exits 0" "$err"
-assert_eq "$out" "EVENT merged 5 issue-5" "gh stderr noise does not corrupt the merged list" "$err"
+assert_eq "$out" "EVENT merged 5 issue-5 owner/repo" "gh stderr noise does not corrupt the merged list" "$err"
 
 # a fork's PR carries the same head branch NAME, and --head matches by name
 new_case merged_fork
@@ -727,6 +710,98 @@ err="$TMP_ROOT/e2f"
 out="$(run_watch -- --repo vanillagreencom/x --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "mixed-case owner exits 0" "$err"
 assert_contains "$out" "EVENT merged 5 issue-5" "an owner login differing only in case still fires merged" "$err"
+
+# the merged lookup runs against EVERY --repo: a consumer-repo PR on the item's
+# branch fires, naming its repo, and a fork's PR on that name in that repo is
+# rejected against that repo's owner. Red when the lookup reads the first
+# --repo alone: the second repo is never asked, and the pass falls through to
+# the heartbeat.
+new_case merged_second_repo
+printf '[]\n' > "$STUB_DIR/merged.owner_repo.json"
+cat > "$STUB_DIR/merged.other_repo.json" <<'EOF'
+[
+  {"number": 77, "headRefName": "issue-5", "headRepositoryOwner": {"login": "other"}, "mergedAt": "2026-08-15T10:00:00Z"},
+  {"number": 78, "headRefName": "issue-5", "headRepositoryOwner": {"login": "forker"}, "mergedAt": "2026-08-15T10:30:00Z"}
+]
+EOF
+err="$TMP_ROOT/e2g"
+out="$(run_watch -- --repo owner/repo --repo other/repo --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "a merge in the second repo exits 0" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT merged 77 issue-5 other/repo" \
+  "an item's PR merged in a non-first --repo is the event, naming that repo" "$err"
+assert_not_contains "$out" "EVENT merged 78" "a fork's PR in the second repo is rejected against that repo's owner" "$err"
+assert_eq "$(grep -c -- '--head issue-5 --state merged' "$STUB_DIR/gh.calls")" "2" \
+  "the one pass asked both repos for the item's branch" "$err"
+
+# The must-fail control: the lookup narrowed to the first --repo. The copy
+# keeps orch's place in a skills tree: its libraries resolve the github skill
+# beside it.
+MERGED_MUTANT_DIR="$TMP_ROOT/merged-mutant"
+mkdir -p "$MERGED_MUTANT_DIR/orch"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$MERGED_MUTANT_DIR/orch/scripts"
+ln -s "$REPO_ROOT/skills/github" "$MERGED_MUTANT_DIR/github"
+sed 's/^    for repo in "${REPOS\[@\]}"; do$/    for repo in "${REPOS[0]}"; do/' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really narrows the merged lookup to the first repo"
+new_case merged_second_repo_mutant
+printf '[]\n' > "$STUB_DIR/merged.owner_repo.json"
+cat > "$STUB_DIR/merged.other_repo.json" <<'EOF'
+[
+  {"number": 77, "headRefName": "issue-5", "headRepositoryOwner": {"login": "other"}, "mergedAt": "2026-08-15T10:00:00Z"}
+]
+EOF
+err="$TMP_ROOT/e2g2"
+out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- --repo owner/repo --repo other/repo --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=2026-08-15T09:00:00Z" \
+  "control: with the lookup on the first repo alone the second repo's merge goes unreported" "$err"
+
+# a merged item still in --item is reported once across runs: the overseer
+# exits on the event and re-runs the watch, and the same PR is not news
+# again; a further PR merged on the same branch is. Red when the row is never
+# kept.
+new_case merged_once_across_runs
+cat > "$STUB_DIR/merged.json" <<'EOF'
+[
+  {"number": 5, "headRefName": "issue-5", "mergedAt": "2026-08-15T10:00:00Z"}
+]
+EOF
+err="$TMP_ROOT/e2h1"
+out="$(run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT merged 5 issue-5 owner/repo" "run 1: the merge is the event" "$err"
+assert_eq "$(grep -c "$(printf 'merged\tissue-5\towner/repo#5')" "$STATE_DIR/owner_repo__2026-08-15T09_00_00Z")" "1" \
+  "the committed baseline keys the delivered PR by item" "$err"
+err="$TMP_ROOT/e2h2"
+out="$(run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=2026-08-15T09:00:00Z" \
+  "run 2: the same merged PR, the item still in --item, is not news again" "$err"
+assert_not_contains "$out" "EVENT merged" "a re-run carries no second merged line" "$err"
+cat > "$STUB_DIR/merged.json" <<'EOF'
+[
+  {"number": 9, "headRefName": "issue-5", "mergedAt": "2026-08-15T11:00:00Z"},
+  {"number": 5, "headRefName": "issue-5", "mergedAt": "2026-08-15T10:00:00Z"}
+]
+EOF
+err="$TMP_ROOT/e2h3"
+out="$(run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$out" "EVENT merged 9 issue-5 owner/repo" "run 3: a further PR on the branch is the event, and the first is not repeated beside it" "$err"
+
+# The must-fail control: the row never kept, so every run reads as the first.
+sed 's/^    state="$(lane_row_set merged "$state" "$item" "$keys")"$/    state="$(lane_row_clear merged "$state" "$item")"/' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really drops the merged row"
+new_case merged_once_across_runs_mutant
+cat > "$STUB_DIR/merged.json" <<'EOF'
+[
+  {"number": 5, "headRefName": "issue-5", "mergedAt": "2026-08-15T10:00:00Z"}
+]
+EOF
+err="$TMP_ROOT/e2h4"
+out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
+err="$TMP_ROOT/e2h5"
+out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT merged 5 issue-5 owner/repo" \
+  "control: with the row dropped the re-run delivers the same merge again" "$err"
 
 
 # --- 2b. handoff -----------------------------------------------------------
@@ -809,8 +884,28 @@ err="$TMP_ROOT/e5"
 out="$(run_watch -- --item issue-9 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "heartbeat exits 0" "$err"
 assert_contains "$out" "EVENT heartbeat" "heartbeat after --max-loops with no event" "$err"
-assert_contains "$out" "issue-9" "open PR list follows the heartbeat" "$err"
+assert_contains "$out" "$(printf 'owner/repo\t9\tissue-9\tfix the thing')" "open PR list follows the heartbeat, each line prefixed with its repo" "$err"
 assert_eq "$(grep -c 'merged' "$STUB_DIR/gh.calls")" "2" "merged check ran once per loop (2 loops)" "$err"
+
+# every --repo's open PRs follow the heartbeat; red with the list narrowed to
+# the first repo
+new_case heartbeat_multi_repo
+printf '9\tissue-9\tfix the thing\n' > "$STUB_DIR/open.owner_repo.txt"
+printf '77\tissue-9\tconsumer side\n' > "$STUB_DIR/open.other_repo.txt"
+err="$TMP_ROOT/e5b"
+out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "a two-repo fleet reaches the heartbeat" "$err"
+assert_contains "$out" "$(printf 'other/repo\t77\tissue-9\tconsumer side')" "the second repo's open PRs follow the heartbeat too" "$err"
+assert_contains "$out" "$(printf 'owner/repo\t9\tissue-9\tfix the thing')" "beside the first repo's" "$err"
+sed 's/^  for repo in "${REPOS\[@\]}"; do$/  for repo in "${REPOS[0]}"; do/' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really narrows the heartbeat's open-PR list to the first repo"
+new_case heartbeat_multi_repo_mutant
+printf '9\tissue-9\tfix the thing\n' > "$STUB_DIR/open.owner_repo.txt"
+printf '77\tissue-9\tconsumer side\n' > "$STUB_DIR/open.other_repo.txt"
+err="$TMP_ROOT/e5c"
+out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+assert_not_contains "$out" "consumer side" "control: with the list on the first repo alone the second repo's PRs are missing" "$err"
 
 # --- 6. auth and listing failures ------------------------------------------
 new_case auth_fail
@@ -857,6 +952,35 @@ assert_eq "$rc" "0" "missing pr-watch still watches (heartbeat)" "$err"
 assert_contains "$out" "EVENT heartbeat" "missing pr-watch reaches the heartbeat" "$err"
 assert_contains "$(cat "$err")" "pr-watch.sh not found" "missing pr-watch is noted once on stderr"
 assert_eq "$(grep -c 'pr-watch.sh not found' "$err")" "1" "note printed exactly once, not per loop"
+
+# --- 8b. inside tmux, --item with no lane window is a note naming the pane
+# checks skipped, once; outside tmux, or with no --item, or with a window,
+# nothing is noted
+NOTE_NO_LANE="no lane window given; skipping the window-gone/lane-exited/usage-limit/lane-asking/idle-after-return checks"
+new_case no_lane_window_note
+err="$TMP_ROOT/e8b1"
+out="$(run_watch -- --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "an --item with no lane window still watches" "$err"
+assert_eq "$(grep -c "$NOTE_NO_LANE" "$err")" "1" "inside tmux the skipped pane checks are named once on stderr"
+assert_contains "$(cat "$err")" "(pr-watch/merged/triage/handoff checks still run)" "and the note says what still runs"
+err="$TMP_ROOT/e8b2"
+out="$(run_watch TMUX= -- --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "outside tmux an --item with no lane window still watches" "$err"
+assert_not_contains "$(cat "$err")" "no lane window given" "outside tmux nothing is noted"
+err="$TMP_ROOT/e8b3"
+out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
+assert_not_contains "$(cat "$err")" "no lane window given" "with no --item the note does not fire"
+err="$TMP_ROOT/e8b4"
+out="$(run_watch -- --item issue-5 gh-1 2>"$err")" && rc=0 || rc=$?
+assert_not_contains "$(cat "$err")" "no lane window given" "with a lane window the note does not fire"
+# The must-fail control: the note deleted.
+sed '/no lane window given; skipping/d' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really deletes the note"
+new_case no_lane_window_note_mutant
+err="$TMP_ROOT/e8b5"
+out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_not_contains "$(cat "$err")" "no lane window given" "control: without the note an --item with no window skips the pane checks in silence"
 
 # --- 9. --help -------------------------------------------------------------
 err="$TMP_ROOT/e9"

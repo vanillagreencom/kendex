@@ -47,7 +47,7 @@ run_watch -- --max-loops 1 gh-1 gh-2 >/dev/null 2>"$TMP_ROOT/asking-merge-a"
 printf '⏺ working on it\n' > "$STUB_DIR/pane-gh-2.txt"
 printf '[{"number":5,"headRefName":"issue-5","mergedAt":"2026-08-15T10:00:00Z"}]\n' > "$STUB_DIR/merged.json"
 out="$(run_watch -- --max-loops 1 --item issue-5 gh-1 gh-2 2>"$TMP_ROOT/asking-merge-b")"
-assert_eq "$(head -1 <<<"$out")" "EVENT merged 5 issue-5" \
+assert_eq "$(head -1 <<<"$out")" "EVENT merged 5 issue-5 owner/repo" \
   "the earlier merge event preempts the ordinary lane event pass"
 printf '[]\n' > "$STUB_DIR/merged.json"
 printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"

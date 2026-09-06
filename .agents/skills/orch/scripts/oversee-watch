@@ -29,7 +29,9 @@ after handling every line with the live fleet in scope.
 
 Events, checked and reported in this order every pass:
   EVENT pr-watch rc=N        new review-gate attention; reducer output follows
-  EVENT merged <PR> <branch> an --item PR merged at or after --since
+  EVENT merged <PR> <branch> <repo>
+                             an --item PR merged at or after --since, in any
+                             --repo
   EVENT triage <item>        an item created at or after --since that is absent
                              from the first repository's persisted baseline
   EVENT window-gone <lane>   the tmux window no longer exists
@@ -66,13 +68,21 @@ Events, checked and reported in this order every pass:
   EVENT idle-after-return <lane>
                              the live harness sits idle on two passes; pane
                              tail follows
-  EVENT heartbeat            --max-loops passes with no event; open PRs follow
+  EVENT heartbeat            --max-loops passes with no event; every --repo's
+                             open PRs follow, each line prefixed with its repo
 
 The latest pr-watch attention lines close the block when any exist and the
 pr-watch event did not open it. Triage
 reads the live tracker list and rebuilds only acknowledged triage keys in the
 first repository's OVERSEE_WATCH_STATE_DIR baseline from kept or canceled
 verdicts. Lane prompts use pane and turn.
+
+A line already delivered is not delivered again by a re-run: merged,
+lane-asking, usage-limit, idle-after-return and handoff are keyed in that
+baseline and repeat only when what they report changes: another PR, a
+different wall or a reset gone by, a different screen, a new record. A
+suppressed line still holds: a walled lane stays walled, and the pass runs on
+to the remaining checks and the heartbeat.
 
 Options:
   --interval SECS     seconds between passes (default 240)
@@ -84,8 +94,9 @@ Options:
                       afresh; LINEAR_TEAM below arms the triage check
   --item ISSUE_ID     live item; repeatable. No values skips merged and
                       handoff with a note
-  --repo OWNER/REPO   repository; repeatable and case-normalized. The reducer
-                      covers all; merged and heartbeat read the first
+  --repo OWNER/REPO   repository; repeatable and case-normalized. Every
+                      check reads all of them; triage and lane rows persist
+                      in the first one's baseline
   LANE_WINDOW...      tmux window names to watch; requires $TMUX. A bare name
                       is a window in the caller's session; `session:window`,
                       tmux's own target form, names one in another session
@@ -101,6 +112,8 @@ Exit codes:
 When pr-watch.sh is installed, oversee-watch runs it with --heal on every pass.
 Gate-stale dispatches PR_WATCH_WRITER_WORKFLOW, so its credential requires
 actions:write. When pr-watch.sh is absent, the step is skipped with one stderr note.
+Inside tmux, an --item with no LANE_WINDOW skips the pane checks with one
+stderr note; outside tmux there is no pane to read and nothing is noted.
 
 Environment:
   LINEAR_TEAM                 team the triage check reads under --since, from
@@ -220,13 +233,18 @@ watch_state_init() {
 # Per-lane rows in the first repository's baseline, beside the reducer's
 # `<pr>\t<kind>` and triage's `triage\t<id>`:
 #   lane-asking<TAB><lane><TAB><fingerprint>
-#   usage-limit<TAB><lane><TAB><first-seen-epoch>|<pane key>|<reset key>
+#   usage-limit<TAB><lane><TAB><first-seen-epoch>|<pane key>|<reported event>|<reset key>
 #   lane-exited<TAB><lane><TAB><pane key>
-#   lane-idle<TAB><lane><TAB><pane key>
+#   lane-idle<TAB><lane><TAB><pane key>|<screen key>[|reported]
 #   handoff<TAB><item><TAB><record checksum>
+#   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
 # The usage-limit value is split apart where the event is emitted, some 200
 # lines below where it is written; the reset key's own layout is
-# usage_reset_key's.
+# usage_reset_key's, and it comes LAST because it carries `|` of its own.
+# The reported columns are what keeps a re-run from delivering a line again:
+# a lane parked on its wall, sitting idle, or an item merged and still in
+# --item read the same on every pass of every run, and the overseer re-runs
+# the watch after every event.
 # Each helper takes the whole baseline blob and returns the answer or the
 # rewritten blob, so a pass mutates a local and commits once.
 # One per-lane row per KIND in the watch state, all laid out above:
@@ -398,12 +416,6 @@ for repo_i in "${!REPOS[@]}"; do
   fi
   repos_seen+="${REPOS[$repo_i]}"$'\n'
 done
-# The reducer covers every --repo; the merged check and the heartbeat's open-PR
-# list are per-item and per-fleet queries against the first, the repo the
-# overseer's own items live in.
-REPO="${REPOS[0]}"
-REPO_OWNER="${REPO%%/*}"
-
 if [[ -x "$PR_WATCH" ]]; then
   :
 else
@@ -420,44 +432,61 @@ else
   [[ -x "$WORKTREE_CLI" ]] \
     || die "worktree CLI not found at $WORKTREE_CLI; the handoff check needs it to name an item's worktree (set WORKTREE_CLI)"
 fi
-if [[ ${#REPOS[@]} -gt 1 ]]; then
-  # Only the checks this run actually performs: the two notes above may have
-  # just reported the reducer or the merged check skipped.
-  if [[ -n "$ITEM_BRANCHES" ]]; then
-    repo_note="the merged check and the heartbeat's open-PR list read $REPO only"
-  else
-    repo_note="the heartbeat's open-PR list reads $REPO only"
-  fi
-  [[ -z "$PR_WATCH" ]] || repo_note="the reducer covers ${REPOS[*]}; $repo_note"
-  echo "oversee-watch: $repo_note" >&2
+# Inside tmux the pane checks are how an item's lane is watched, so a run
+# naming items and no window is told which checks it is not running, as the
+# two notes above say for the reducer and the merged check. Outside tmux there
+# is no pane to read and nothing to note.
+if [[ -n "${TMUX:-}" && -n "$ITEM_BRANCHES" && ${#LANES[@]} -eq 0 ]]; then
+  echo "oversee-watch: no lane window given; skipping the window-gone/lane-exited/usage-limit/lane-asking/idle-after-return checks (pr-watch/merged/triage/handoff checks still run)" >&2
 fi
 
 watch_state_init
 pw_init_state
 
+# Every --repo: a consumer-repo PR merges where the item's work went, under the
+# same branch name, and a fork's PR on that name is rejected per repo. Reported
+# once per PR: the item's `merged` row holds every `<repo>#<number>` already
+# delivered, so a merged item still in --item on a re-run is not news again,
+# while a further PR on the branch, in any repo, is. The rows are committed
+# once, after the lines are out.
 check_merged() {
   [[ -n "$ITEM_BRANCHES" ]] || return 0
-  local errf="$WORK_DIR/merged.err" branch list hit hits=""
-  while IFS= read -r branch; do
-    [[ -n "$branch" ]] || continue
-    list="$(gh pr list --repo "$REPO" --head "$branch" --state merged --limit 10 --json number,headRefName,headRepositoryOwner,mergedAt 2>"$errf")" \
-      || die "gh pr list --state merged failed for $REPO (--head $branch): $(cat "$errf")"
-    # Reject a fork's PR on the same branch name.
-    hit="$(jq -r --arg branch "$branch" --arg owner "$REPO_OWNER" --argjson since "$SINCE_EPOCH" '
-      [ .[]
-        | select(.headRefName | ascii_downcase == $branch)
-        | select(((.headRepositoryOwner.login // "") | ascii_downcase) == $owner)
-        | select(.mergedAt != null)
-        | select((.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= $since)
-        | "EVENT merged \(.number) \(.headRefName)" ]
-      | .[]' <<<"$list" 2>"$errf")" \
-      || die "could not parse gh pr list output for $REPO ($branch): $(cat "$errf")"
-    [[ -z "$hit" ]] || hits+="$hit"$'\n'
-  done <<<"$ITEM_BRANCHES"
-  hits="${hits%$'\n'}"
-  [[ -n "$hits" ]] || return 0
-  printf '%s\n' "$hits"
-  PASS_EVENT=1
+  local errf="$WORK_DIR/merged.err" item branch repo list hit hits prior keys key line state="${PW_SEEN[0]}"
+  for item in "${ITEMS[@]}"; do
+    branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
+    hits=""
+    for repo in "${REPOS[@]}"; do
+      list="$(gh pr list --repo "$repo" --head "$branch" --state merged --limit 10 --json number,headRefName,headRepositoryOwner,mergedAt 2>"$errf")" \
+        || die "gh pr list --state merged failed for $repo (--head $branch): $(cat "$errf")"
+      hit="$(jq -r --arg branch "$branch" --arg owner "${repo%%/*}" --arg repo "$repo" --argjson since "$SINCE_EPOCH" '
+        [ .[]
+          | select(.headRefName | ascii_downcase == $branch)
+          | select(((.headRepositoryOwner.login // "") | ascii_downcase) == $owner)
+          | select(.mergedAt != null)
+          | select((.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= $since)
+          | "\(.number) \(.headRefName) \($repo)" ]
+        | .[]' <<<"$list" 2>"$errf")" \
+        || die "could not parse gh pr list output for $repo ($branch): $(cat "$errf")"
+      [[ -z "$hit" ]] || hits+="$hit"$'\n'
+    done
+    if [[ -z "$hits" ]]; then
+      state="$(lane_row_clear merged "$state" "$item")"
+      continue
+    fi
+    prior="$(lane_row_get merged "$state" "$item")"
+    keys=""
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      key="${line##* }#${line%% *}"
+      keys="${keys:+$keys }$key"
+      grep -qxF -- "$key" <<<"${prior// /$'\n'}" && continue
+      echo "EVENT merged $line"
+      PASS_EVENT=1
+    done <<<"$hits"
+    state="$(lane_row_set merged "$state" "$item" "$keys")"
+  done
+  state="$(lane_row_prune merged "$state" "${ITEMS[@]}")"
+  lane_row_commit "$state"
 }
 
 check_triage() {
@@ -709,7 +738,7 @@ observe_lanes() {
   LANE_OBS=""
   [[ ${#LANES[@]} -gt 0 ]] || return 0
   local existing lane pane below key prefix prior obs pid cmd capture errf i=0 state="${PW_SEEN[0]}"
-  local reset_key
+  local banner reset_key seen_at seen_pane seen_reported seen_key
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
     capture="$(lane_pane_file "$i")"
@@ -758,12 +787,18 @@ observe_lanes() {
     # is a banner the lane has no turn in flight behind is lane_limit_banner's
     # one question, and both consumers ask it — which is as far as a screen
     # can settle it, so the overseer still confirms the tail before acting. A stamp answers for ONE wall on ONE pane, so it carries
-    # the pane identity beside the wall and goes when either changes.
-    reset_key="$(usage_reset_key "$(lane_limit_banner "$below")")"
+    # the pane identity beside the wall and goes when either changes. A
+    # banner naming no reset the grammar reads is stamped too, with an empty
+    # reset key: the row is also where check_lanes records that the wall was
+    # reported, and a wall with no row is one reported on every run.
+    banner="$(lane_limit_banner "$below")"
+    reset_key="$(usage_reset_key "$banner")"
     prior="$(lane_row_get usage-limit "$state" "$lane")"
-    if [[ -n "$reset_key" ]]; then
-      [[ "${prior#*|}" == "$key|$reset_key" ]] \
-        || state="$(lane_row_set usage-limit "$state" "$lane" "$PASS_NOW|$key|$reset_key")"
+    if [[ -n "$banner" ]]; then
+      seen_pane=""; seen_key=""
+      [[ -z "$prior" ]] || IFS='|' read -r seen_at seen_pane seen_reported seen_key <<<"$prior"
+      [[ "$seen_pane" == "$key" && "$seen_key" == "$reset_key" ]] \
+        || state="$(lane_row_set usage-limit "$state" "$lane" "$PASS_NOW|$key||$reset_key")"
     else
       state="$(lane_row_clear usage-limit "$state" "$lane")"
     fi
@@ -778,8 +813,8 @@ check_lanes() {
   # No lane to watch still leaves the items: a handoff is read from state.
   [[ ${#LANES[@]} -gt 0 ]] || { check_handoff; return 0; }
   local lane pane below cmd pid state probe i states="" asking_now="" walled_now="" claims="" claimed pane_key
-  local seen seen_at seen_pane seen_key reset_at reset_utc reset_note event
-  local asking_state fingerprint prior turn_identity idle
+  local seen seen_at seen_pane seen_reported seen_key reset_at reset_utc reset_note event
+  local asking_state fingerprint prior turn_identity idle screen_key
   # One liveness read and one pane capture per lane per pass: a lane's kind is
   # decided from a single observation, never from two screens taken apart. The
   # pid leads the format so a command carrying a space cannot shift the split.
@@ -880,12 +915,10 @@ check_lanes() {
       # time on it and the lane is parked. `resets=` is keyed rather than
       # positional because the config dir before it is optional.
       seen="$(lane_row_get usage-limit "$asking_state" "$lane")"
+      seen_at=""; seen_pane=""; seen_reported=""; seen_key=""
+      [[ -z "$seen" ]] || IFS='|' read -r seen_at seen_pane seen_reported seen_key <<<"$seen"
       reset_at=""
-      if [[ -n "$seen" ]]; then
-        # shellcheck disable=SC2034  # the pane column answers only in observe_lanes
-        IFS='|' read -r seen_at seen_pane seen_key <<<"$seen"
-        reset_at="$(usage_reset_epoch "$seen_key" "$seen_at")"
-      fi
+      [[ -z "$seen_key" ]] || reset_at="$(usage_reset_epoch "$seen_key" "$seen_at")"
       event=usage-limit
       reset_note=""
       reset_utc=""
@@ -894,9 +927,16 @@ check_lanes() {
         reset_note=" resets=$reset_utc"
         [[ "$reset_at" -gt "$PASS_NOW" ]] || event=usage-limit-passed
       fi
+      # The wall was reported on an earlier pass and nothing about it has
+      # changed: the row is observe_lanes's stamp for this pane and this
+      # wall, and the reported column names the event it went out as. The
+      # lane stays walled above; a reset going by turns the event into
+      # usage-limit-passed, which is news once more.
+      if [[ "$seen_reported" == "$event" ]]; then continue; fi
       echo "EVENT $event $lane${claimed:+ $claimed}$reset_note"
       [[ -z "$pane" ]] || pane_tail "$pane"
       PASS_EVENT=1
+      asking_state="$(lane_row_set usage-limit "$asking_state" "$lane" "${seen_at:-$PASS_NOW}|${seen_pane:-$pane_key}|$event|$seen_key")"
     fi
   done
   # A pane keeps its last screen, so neither a stale prompt under a bare shell
@@ -928,8 +968,12 @@ check_lanes() {
   # The round is over and nobody is driving: the harness is up, at its input
   # prompt, with nothing in flight. Two consecutive passes, because the screen
   # between a finished tool call and the next one reads the same; the first is
-  # a `lane-idle` row keyed by the pane, as for lane-exited above. A lane that
-  # is walled, asking, working or exited is not idle and drops its row.
+  # a `lane-idle` row keyed by the pane and the slice below its last turn, as
+  # for lane-exited above. The second pass reports it and marks the row, so a
+  # lane left sitting at the same screen is reported once, however many runs
+  # look at it; a turn taken changes the slice and starts the count over. A
+  # lane that is walled, asking, working or exited is not idle and drops its
+  # row.
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
@@ -948,12 +992,16 @@ check_lanes() {
       continue
     fi
     pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
+    screen_key="${pane_key}|$(printf '%s' "$below" | cksum)"
     prior="$(lane_row_get lane-idle "$asking_state" "$lane")"
-    asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" "$pane_key")"
-    if [[ "$prior" == "$pane_key" ]]; then
+    if [[ "$prior" == "$screen_key|reported" ]]; then continue; fi
+    if [[ "$prior" == "$screen_key" ]]; then
+      asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" "$screen_key|reported")"
       echo "EVENT idle-after-return $lane"
       pane_tail "$pane"
       PASS_EVENT=1
+    else
+      asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" "$screen_key")"
     fi
   done
   # Committed after every asking and idle line is out: a row written ahead of
@@ -961,13 +1009,19 @@ check_lanes() {
   lane_row_commit "$asking_state"
 }
 
+# Every --repo's open PRs, each line prefixed with its repo as the reducer's
+# are, and all of them read before the event line goes out: a repo that
+# cannot be listed is a failed pass, not a heartbeat missing a repo.
 heartbeat() {
-  local errf="$WORK_DIR/open.err" open
-  open="$(gh pr list --repo "$REPO" --state open --limit 50 --json number,headRefName,title \
-    --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' 2>"$errf")" \
-    || die "gh pr list --state open failed for $REPO: $(cat "$errf")"
+  local errf="$WORK_DIR/open.err" repo open open_all=""
+  for repo in "${REPOS[@]}"; do
+    open="$(gh pr list --repo "$repo" --state open --limit 50 --json number,headRefName,title \
+      --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' 2>"$errf")" \
+      || die "gh pr list --state open failed for $repo: $(cat "$errf")"
+    [[ -z "$open" ]] || open_all+="$(pw_prefix "$repo" "$open")"$'\n'
+  done
   echo "EVENT heartbeat loops=$MAX_LOOPS interval=${INTERVAL}s since=${SINCE:-none}"
-  [[ -z "$open" ]] || printf '%s\n' "$open"
+  [[ -z "$open_all" ]] || printf '%s' "$open_all"
   pr_watch_context
   exit 0
 }

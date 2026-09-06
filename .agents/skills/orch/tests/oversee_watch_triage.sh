@@ -126,7 +126,7 @@ tracker_items '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]'
 printf '[{"number":5,"headRefName":"issue-5","mergedAt":"2026-08-15T10:00:00Z"}]\n' > "$STUB_DIR/merged.json"
 run LINEAR_TEAM -- --max-loops 1 --item issue-5
 check "an unset LINEAR_TEAM keeps the watch running and --since still serves the merged check" \
-  "rc=0 first=EVENT+merged+5+issue-5 stderr~LINEAR_TEAM+is+unset+or+empty=true"
+  "rc=0 first=EVENT+merged+5+issue-5+owner/repo stderr~LINEAR_TEAM+is+unset+or+empty=true"
 new_case triage_no_team_reaches_the_triage_check
 tracker_items '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]'
 run LINEAR_TEAM -- --max-loops 1
