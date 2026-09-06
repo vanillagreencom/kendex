@@ -121,7 +121,7 @@ content() { # FILE
   esac
   if [ "$(printf '%s\n' "$raw" | sed 3d)" = "$REF_HELPER" ]; then
     line3="$(printf '%s\n' "$raw" | sed -n 3p)"
-    printf 'ours[%s]' "$(aliased "${line3#installed_scripts=}")"
+    printf 'ours[%s]%s' "$(aliased "${line3#installed_scripts=}")" "$tail"
     return 0
   fi
   raw="${raw//"$PRE_LINE"/@PRE@}"
@@ -177,6 +177,17 @@ stage_marker() { stage b.py "# $TD: finish this\n"; }
 seed() { git -C "$R" commit -q -m "feat: seed" >/dev/null 2>&1 || SEEDS_FAILED="$SEEDS_FAILED ${R##*/}"; }
 foreign() { printf '%b' "$2" >"$R/.git/hooks/$1"; chmod +x "$R/.git/hooks/$1"; }
 settings() { stage kendex.settings.toml "[env]\n$1\n"; }
+# A fixture's edit to a hook is asserted to have changed the file: a sed
+# whose pattern matches nothing leaves the fresh install in place, and every
+# row over it then passes on the unedited guard.
+edit() { # FILE SED-EXPRESSION
+  local before="" after=""
+  before="$(cat -- "$1")"
+  sed -i.bak "$2" "$1"
+  rm -f -- "$1.bak"
+  after="$(cat -- "$1")"
+  [ "$before" != "$after" ] || bad "fixture: ${R##*/}: the edit to ${1##*/} took" "sed matched nothing"
+}
 local_entry() { mkdir -p "$R/tools"; stage tools/local-check "$1"; chmod +x "$R/tools/local-check"; settings 'COMMIT_GUARDS_PRE_COMMIT_LOCAL = "tools/local-check"'; }
 
 # The reference install: the delegate lines the shims carry, pinned once as
@@ -315,16 +326,15 @@ fx_no_helper_hook() { armed no-helper-hook; stage a.txt 'hello\n'; rm "$R/.git/h
 fx_no_skill() { armed no-skill; stage a.txt 'hello\n'; rm -rf -- "${R:?}/.agents/skills/commit-guards"; }
 fx_no_skill_hook() { armed no-skill-hook; stage a.txt 'hello\n'; rm -rf -- "${R:?}/.agents/skills/commit-guards"; }
 fx_armed_hook() { armed armed-hook; stage a.txt 'hello\n'; }
-fx_stale_path() { armed stale-path; stage a.txt 'hello\n'; sed -i.bak "s|^installed_scripts=.*|installed_scripts='$R/gone/scripts'|" "$R/.git/hooks/kendex-guards"; rm -f "$R/.git/hooks/kendex-guards.bak"; }
-fx_stale_path_marker() { armed stale-path-marker; stage_marker; sed -i.bak "s|^installed_scripts=.*|installed_scripts='$R/gone/scripts'|" "$R/.git/hooks/kendex-guards"; rm -f "$R/.git/hooks/kendex-guards.bak"; }
+fx_stale_path() { armed stale-path; stage a.txt 'hello\n'; edit "$R/.git/hooks/kendex-guards" "s|^installed_scripts=.*|installed_scripts='$R/gone/scripts'|"; }
+fx_stale_path_marker() { armed stale-path-marker; stage_marker; edit "$R/.git/hooks/kendex-guards" "s|^installed_scripts=.*|installed_scripts='$R/gone/scripts'|"; }
 fx_baked_first() {
   armed baked-first
   stage a.txt 'hello\n'
   mkdir "$R/baked"
   printf '#!/bin/sh\necho "foreign: baked ran"\nexit 0\n' >"$R/baked/pre-commit"
   chmod +x "$R/baked/pre-commit"
-  sed -i.bak "s|^installed_scripts=.*|installed_scripts='$R/baked'|" "$R/.git/hooks/kendex-guards"
-  rm -f "$R/.git/hooks/kendex-guards.bak"
+  edit "$R/.git/hooks/kendex-guards" "s|^installed_scripts=.*|installed_scripts='$R/baked'|"
 }
 run_rows \
   "a missing helper blocks the commit|fx_no_helper|$ONE|commit|feat: add a|rc=1 $NO_HELPER|" \
@@ -371,7 +381,7 @@ fx_symlinked() { R="$(new_repo symlinked)"; mkdir -p "$TMP/elsewhere"; printf '#
 fx_disabled() { R="$(new_repo disabled)"; printf '#!/bin/sh\nexit 0\n' >"$R/.git/hooks/pre-commit"; }
 fx_python() { R="$(new_repo python)"; foreign pre-commit '#!/usr/bin/env python3\nraise SystemExit(0)\n'; }
 fx_fish() { R="$(new_repo fish)"; foreign pre-commit '#!/usr/bin/fish\necho hi\n'; }
-fx_swapped() { armed swapped; sed -i.bak '1s|.*|#!/usr/bin/fish|' "$R/.git/hooks/pre-commit"; rm -f "$R/.git/hooks/pre-commit.bak"; }
+fx_swapped() { armed swapped; edit "$R/.git/hooks/pre-commit" '1s|.*|#!/usr/bin/fish|'; }
 run_rows \
   "a symlinked hook makes the install incomplete and its target is not written through|fx_symlinked||install||rc=1 $WARN <repo>/.git/hooks/pre-commit is a symlink; not modifying its target — the pre-commit guard is NOT installed;$INCOMPLETE|helper=$OURS pre-commit=symlink-><root>/elsewhere/shared-pre-commit[#!/bin/sh~exit 0] commit-msg=$SHIM_MSG hooksPath=<unset>" \
   "a disabled (non-executable) hook is not appended to|fx_disabled||install||rc=1 $WARN <repo>/.git/hooks/pre-commit exists but is not executable (a disabled hook); not modifying it — the pre-commit guard is NOT installed;$INCOMPLETE|helper=$OURS pre-commit=$RW:#!/bin/sh~exit 0 commit-msg=$SHIM_MSG hooksPath=<unset>" \
@@ -400,11 +410,10 @@ run_rows \
 echo "=== a disabled or displaced delegate is not an install ==="
 fx_commented() {
   armed commented
-  sed -i.bak 's|^kendex_gg_h=|#kendex_gg_h=|' "$R/.git/hooks/pre-commit"
-  rm -f "$R/.git/hooks/pre-commit.bak"
+  edit "$R/.git/hooks/pre-commit" 's|^kendex_gg_h=|#kendex_gg_h=|'
   assert_eq "fixture: the delegate is commented out and still ends in the sentinel" "#$PRE_LINE" "$(sed -n 2p "$R/.git/hooks/pre-commit")"
 }
-fx_commented_marker() { armed commented-marker; sed -i.bak 's|^kendex_gg_h=|#kendex_gg_h=|' "$R/.git/hooks/pre-commit"; rm -f "$R/.git/hooks/pre-commit.bak"; "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true; stage_marker; }
+fx_commented_marker() { armed commented-marker; edit "$R/.git/hooks/pre-commit" 's|^kendex_gg_h=|#kendex_gg_h=|'; "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true; stage_marker; }
 fx_stale_delegate() { armed stale-delegate; foreign commit-msg '#!/bin/sh\nold_delegate_from_a_previous_version  # kendex-guards-hook\necho foreign: mine\n'; }
 fx_moved_delegate() { armed moved-delegate; printf '#!/bin/sh\necho foreign: mine\nexit 0\n%s\n' "$PRE_LINE" >"$R/.git/hooks/pre-commit"; }
 fx_moved_marker() { armed moved-marker; printf '#!/bin/sh\necho foreign: mine\nexit 0\n%s\n' "$PRE_LINE" >"$R/.git/hooks/pre-commit"; "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true; stage_marker; }
