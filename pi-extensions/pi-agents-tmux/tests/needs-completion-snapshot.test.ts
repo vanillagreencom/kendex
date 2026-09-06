@@ -70,8 +70,8 @@ const rows: Array<[string, Entry, string, string]> = [
 		utimesSync(outboxFile, ahead, ahead);
 		const count = await pollPaneCompletions(root, fakePi(emitted));
 		const persisted = (await readTaskRegistry(root))["task-poll-fresh"];
-		return { own: `count=${count} status=${persisted?.status} events=${eventNames(emitted)}`, persisted };
-	}, "count=0 status=running events=none", ABSENT],
+		return { own: `count=${count} status=${persisted?.status} outbox=${existsSync(outboxFile) ? "present" : "gone"} events=${eventNames(emitted)}`, persisted };
+	}, "count=0 status=running outbox=present events=none", ABSENT],
 	["a dispatch failure whose requeue restore fails", async (root, repo) => {
 		const processing = join(root, "processing", "rust", "task-dispatch.md");
 		const source = join(root, "missing-inbox-parent", "rust", "task-dispatch.md");
