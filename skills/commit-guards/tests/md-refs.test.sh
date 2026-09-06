@@ -280,6 +280,10 @@ src_cite "a URL is prose, not a citation into this repository" 0 scripts/link.sh
   $'#!/usr/bin/env bash\n# See https://example.com/guide.md \302\247 Gone for more.\ntrue\n'
 src_cite "a decision ID inside a URL is prose too" 0 scripts/link.sh \
   $'#!/usr/bin/env bash\n# See https://example.com/D404 \302\247 Scope for more.\ntrue\n'
+src_cite "a path in a URL query is prose wherever it sits in the URL" 0 scripts/link.sh \
+  $'#!/usr/bin/env bash\n# See https://example.com/?doc=AGENTS.md \302\247 Gone here.\ntrue\n'
+src_cite "and so is a decision ID in one" 0 scripts/link.sh \
+  $'#!/usr/bin/env bash\n# See https://example.com/?decision=D404 \302\247 Scope here.\ntrue\n'
 src_cite "control: the same path without the scheme is judged" 1 scripts/link.sh \
   $'#!/usr/bin/env bash\n# See AGENTS.md \302\247 Gone for more.\ntrue\n' \
   2 "AGENTS.md has no heading at the start of 'Gone"

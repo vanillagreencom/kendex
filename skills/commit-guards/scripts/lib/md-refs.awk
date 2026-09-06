@@ -178,10 +178,8 @@ function emit_ids(s,   i, p, q, n, before, after, tail, section) {
     while (substr(s, q + n, 1) ~ /^[0-9]$/) n++
     before = (i > 1) ? substr(s, i - 1, 1) : ""
     after = substr(s, q + n, 1)
-    # In plain text a `:` or `/` before the ID glues it to a URL or a path
-    # segment, which is prose there, as it is for a path citation.
     if (n >= id_width && before !~ /^[A-Za-z0-9]$/ && after !~ /^[A-Za-z0-9]$/ \
-        && !(grammar == "text" && (before == ":" || before == "/"))) {
+        && !(grammar == "text" && in_url(s, i))) {
       tail = substr(s, q + n)
       section = (index(tail, SECTION_SEP) == 1) ? rtrim(substr(tail, length(SECTION_SEP) + 1)) : ""
       if (grammar != "text" || section != "") \
@@ -191,10 +189,29 @@ function emit_ids(s,   i, p, q, n, before, after, tail, section) {
   }
 }
 
+# Whether the candidate starting at P sits inside a URL: the whitespace
+# delimited token it belongs to carries a scheme, or opens protocol-relative.
+# is_local() asks this of a markdown destination; outside markdown a link is
+# prose wherever in the URL the citation-shaped text falls, so both the path
+# citation and the decision ID ask it here rather than each testing the one
+# character before itself.
+function in_url(s, p,   start, stop, token) {
+  start = p
+  while (start > 1 && substr(s, start - 1, 1) !~ /[ \t]/) start--
+  stop = p
+  while (stop <= length(s) && substr(s, stop, 1) !~ /[ \t]/) stop++
+  # The WHOLE token, not the part before the candidate: a path walk back
+  # crosses the `//` of a scheme, leaving only `https:` behind it.
+  token = substr(s, start, stop - start)
+  if (index(token, "://") > 0) return 1
+  sub(/^[^\/]*/, "", token)
+  return substr(token, 1, 2) == "//"
+}
+
 # A doc-section citation in plain text: the path token before ` § `, and the
 # rest of the line as the heading the prefix rule judges. A token that is not
 # a markdown path is prose naming a section and cites nothing.
-function emit_text_citation(s,   p, i, j, path, rest, before) {
+function emit_text_citation(s,   p, i, j, path, rest) {
   p = 1
   while (1) {
     i = index(substr(s, p), SECTION_SEP)
@@ -204,14 +221,10 @@ function emit_text_citation(s,   p, i, j, path, rest, before) {
     while (j > 1 && substr(s, j - 1, 1) ~ /^[A-Za-z0-9._\/-]$/) j--
     path = substr(s, j, i - j)
     rest = rtrim(substr(s, i + length(SECTION_SEP)))
-    before = (j > 1) ? substr(s, j - 1, 1) : ""
     # A bare `.md` is what the walk back leaves of a placeholder such as
-    # `<path>.md`, whose brackets end the token; it names no file. A `:`
-    # before the token, or a `//` opening it, is the tail of a URL the walk
-    # back could not cross: is_local() refuses the same shapes in markdown,
-    # and outside it a link is prose.
-    if (path ~ /\.md$/ && path != ".md" && path !~ /\/\.md$/ && path !~ /^\/\// \
-        && before != ":" && rest != "") \
+    # `<path>.md`, whose brackets end the token; it names no file.
+    if (path ~ /\.md$/ && path != ".md" && path !~ /\/\.md$/ && !in_url(s, j) \
+        && rest != "") \
       printf "C\t%s\t%d\t%s\tprefix-section\t%s\t%s\n", src, line_no, path, rest, path SECTION_SEP rest
     p = i + length(SECTION_SEP)
   }
