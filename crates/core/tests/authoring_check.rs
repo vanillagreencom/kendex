@@ -232,7 +232,7 @@ fn every_unreadable_set_body_is_reported_and_costs_the_catalog_nothing() {
     // the fix has to spell out to be actionable.
     const LISTS: &[&str] = &["agents", "skills", "commands", "hooks", "mcp-servers"];
     const REWRITE: &[&str] = &["array of strings"];
-    let rows: [(&str, &str, &[&str]); 6] = [
+    let rows: [(&str, &str, &[&str]); 7] = [
         (
             "[bundles.starter]\nmembers = [\"skill/gh\"]\n",
             "members",
@@ -259,51 +259,106 @@ fn every_unreadable_set_body_is_reported_and_costs_the_catalog_nothing() {
             "`skills`",
             REWRITE,
         ),
+        (
+            "[bundles.starter]\ndescription = 3\nskills = [\"gh\"]\n",
+            "`description`",
+            &["a string"],
+        ),
+    ];
+    // The two shapes that name no set at all: the table under which every
+    // set is declared is itself unreadable, so the finding is the catalog's.
+    let whole_table: [&str; 2] = [
+        "bundles = [\"starter\"]\n",
+        "[[bundles]]\nname = \"starter\"\nskills = [\"gh\"]\n",
     ];
     for (body, named, fix_names) in rows {
-        let (_tmp, root) = repo();
-        skill_at(&root, "skills", "gh");
-        fs::write(
-            root.join("kendex.toml"),
-            format!("{body}\n[bundles.other]\nskills = [\"gh\"]\n"),
-        )
-        .unwrap();
-        let sealed = SealedSource::open(&root).unwrap();
-        let report = check(&sealed, "repo").unwrap();
-        assert!(report.failing(false) >= 1, "the check passed it: {body}");
-        let finding = &report.catalog[0];
-        assert_eq!(finding.severity, "error", "{body}: {}", finding.message);
-        assert!(
-            finding.message.contains(named),
-            "{body}: {}",
-            finding.message
-        );
-        assert!(
-            finding.message.contains("[bundles.starter]"),
-            "{body}: {}",
-            finding.message
-        );
-        for wanted in fix_names {
-            assert!(
-                finding.fix.contains(wanted),
-                "{body}: {wanted}: {}",
-                finding.fix
-            );
-        }
-        let names: Vec<&str> = report.items.iter().map(|item| item.name.as_str()).collect();
-        assert_eq!(
-            names,
-            ["gh"],
-            "{body}: the catalog stopped offering its item"
-        );
-        let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
-        let sets: Vec<String> = kendex_core::source::bundles::offered(&sealed, &config)
-            .unwrap()
-            .iter()
-            .map(|set| set.name.clone())
-            .collect();
-        assert_eq!(sets, ["other"], "{body}: the set beside it went too");
+        a_broken_body_is_that_sets_breakage(body, named, fix_names);
     }
+    for body in whole_table {
+        a_broken_bundles_table_is_the_catalogs_breakage(body);
+    }
+}
+
+/// One row of the table: `body` declares the broken `starter` beside a
+/// readable `other`, so the check has to red it, name the set and `named`,
+/// and leave `other` and the catalog's own item alone.
+#[allow(clippy::unwrap_used)]
+fn a_broken_body_is_that_sets_breakage(body: &str, named: &str, fix_names: &[&str]) {
+    let (_tmp, root) = repo();
+    skill_at(&root, "skills", "gh");
+    fs::write(
+        root.join("kendex.toml"),
+        format!("{body}\n[bundles.other]\nskills = [\"gh\"]\n"),
+    )
+    .unwrap();
+    let sealed = SealedSource::open(&root).unwrap();
+    let report = check(&sealed, "repo").unwrap();
+    assert!(report.failing(false) >= 1, "the check passed it: {body}");
+    let finding = &report.catalog[0];
+    assert_eq!(finding.severity, "error", "{body}: {}", finding.message);
+    assert!(
+        finding.message.contains(named),
+        "{body}: {}",
+        finding.message
+    );
+    assert!(
+        finding.message.contains("[bundles.starter]"),
+        "{body}: {}",
+        finding.message
+    );
+    for wanted in fix_names {
+        assert!(
+            finding.fix.contains(wanted),
+            "{body}: {wanted}: {}",
+            finding.fix
+        );
+    }
+    let names: Vec<&str> = report.items.iter().map(|item| item.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["gh"],
+        "{body}: the catalog stopped offering its item"
+    );
+    let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
+    let sets: Vec<String> = kendex_core::source::bundles::offered(&sealed, &config)
+        .unwrap()
+        .iter()
+        .map(|set| set.name.clone())
+        .collect();
+    assert_eq!(sets, ["other"], "{body}: the set beside it went too");
+}
+
+/// The same for a `bundles` that is not a table: no set in it can be named,
+/// so the finding is the catalog's, every lookup refuses on it rather than
+/// sending the author to fix the name they typed, and nothing derived from
+/// the catalog is swept until it reads. The catalog's own item still offers.
+#[allow(clippy::unwrap_used)]
+fn a_broken_bundles_table_is_the_catalogs_breakage(body: &str) {
+    let (_tmp, root) = repo();
+    skill_at(&root, "skills", "gh");
+    fs::write(root.join("kendex.toml"), body).unwrap();
+    let sealed = SealedSource::open(&root).unwrap();
+    let report = check(&sealed, "repo").unwrap();
+    assert!(report.failing(false) >= 1, "the check passed it: {body}");
+    let finding = &report.catalog[0];
+    assert_eq!(finding.severity, "error", "{body}: {}", finding.message);
+    assert!(
+        finding.message.contains("`bundles` is not a table"),
+        "{body}: {}",
+        finding.message
+    );
+    let names: Vec<&str> = report.items.iter().map(|item| item.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["gh"],
+        "{body}: the catalog stopped offering its item"
+    );
+    let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
+    assert!(config.hides_content(), "{body}: the catalog swept anyway");
+    assert!(
+        kendex_core::source::bundles::find(&sealed, &config, "starter").is_err(),
+        "{body}: the lookup answered no-such-set"
+    );
 }
 
 /// The must-fail counterpart: the same catalog with a table body, known keys
@@ -333,6 +388,11 @@ fn a_bundle_written_in_the_shape_the_reader_reads_is_clean() {
         .map(|member| member.name.as_str())
         .collect();
     assert_eq!(members, ["gh", "linear"], "a member was dropped");
+    assert_eq!(sets[0].description.as_deref(), Some("the basics"));
+    assert!(
+        !config.hides_content(),
+        "a readable catalog stopped sweeping"
+    );
 }
 
 /// Catalog authors can leave renamed or removed items in any member list.

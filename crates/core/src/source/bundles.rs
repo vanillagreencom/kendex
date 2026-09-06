@@ -77,6 +77,9 @@ pub(super) struct UnreadableBundle {
     pub fix: String,
 }
 
+/// The table a catalog's own `kendex.toml` declares its sets under.
+const BUNDLES: &str = "bundles";
+
 /// The one key beside the member lists a set's body may carry.
 const DESCRIPTION: &str = "description";
 
@@ -84,6 +87,19 @@ const DESCRIPTION: &str = "description";
 /// and one no set on offer can carry: members are bare names inside the
 /// catalog that offers them, so a set names no source of its own.
 const INSTALL_DECLARATION: &str = "source";
+
+/// What a catalog's `[bundles]` table declares, read.
+#[derive(Default)]
+pub(super) struct DeclaredBundles {
+    /// The sets on offer, by name.
+    pub offered: BTreeMap<String, CatalogBundle>,
+    /// The sets declared in a shape this reader will not read, by name.
+    pub unreadable: BTreeMap<String, UnreadableBundle>,
+    /// The `[bundles]` table itself written in a shape this reader will not
+    /// read. No set name is known then, so it is the catalog's breakage
+    /// rather than any one set's, and every lookup refuses on it.
+    pub table: Option<UnreadableBundle>,
+}
 
 /// The `[bundles]` table of a catalog's own `kendex.toml`: the sets it
 /// offers, and the ones this reader will not read.
@@ -95,16 +111,26 @@ const INSTALL_DECLARATION: &str = "source";
 /// anything but names is that set's breakage, never the names it has.
 /// One unreadable body costs the other sets and every item nothing to
 /// install; what it costs a removal is [`SourceConfig::hides_content`].
-pub(super) fn declared(
-    table: &toml::Table,
-) -> (
-    BTreeMap<String, CatalogBundle>,
-    BTreeMap<String, UnreadableBundle>,
-) {
+pub(super) fn declared(table: &toml::Table) -> DeclaredBundles {
     let mut bundles = BTreeMap::new();
     let mut unreadable = BTreeMap::new();
-    let Some(declared) = table.get("bundles").and_then(toml::Value::as_table) else {
-        return (bundles, unreadable);
+    let Some(value) = table.get(BUNDLES) else {
+        return DeclaredBundles::default();
+    };
+    let Some(declared) = value.as_table() else {
+        // `[[bundles]]` lands here too: the array-of-tables spelling other
+        // tools use declares no set this reader can name, so there is no
+        // body to hang the problem on and the catalog owns it.
+        return DeclaredBundles {
+            table: Some(UnreadableBundle {
+                problem: format!("`{BUNDLES}` is not a table, so this catalog offers no sets"),
+                fix: format!(
+                    "write each set as `[{BUNDLES}.<name>]`, with a description and its members under one of: {}",
+                    member_list_keys()
+                ),
+            }),
+            ..DeclaredBundles::default()
+        };
     };
     for (name, body) in declared {
         let Some(body) = body.as_table() else {
@@ -140,7 +166,11 @@ pub(super) fn declared(
             }
         }
     }
-    (bundles, unreadable)
+    DeclaredBundles {
+        offered: bundles,
+        unreadable,
+        table: None,
+    }
 }
 
 /// How a set is named back to the author who wrote it, in every problem
@@ -197,12 +227,24 @@ fn read_set(
             members.push(BundleMember { kind, name: member });
         }
     }
+    let description = match body.get(DESCRIPTION) {
+        None => None,
+        // The one key beside the member lists gets their rule: read for
+        // whatever it happens to be is a set that ships with no description
+        // and says nothing about the one that was written.
+        Some(value) => match value.as_str() {
+            Some(text) => Some(crate::names::shown(text)),
+            None => {
+                return Err(UnreadableBundle {
+                    problem: format!("{at} writes `{DESCRIPTION}` as something other than text"),
+                    fix: format!("write `{DESCRIPTION}` as a string, or remove the key"),
+                });
+            }
+        },
+    };
     Ok(CatalogBundle {
         name: name.to_owned(),
-        description: body
-            .get(DESCRIPTION)
-            .and_then(toml::Value::as_str)
-            .map(crate::names::shown),
+        description,
         version: None,
         category: None,
         members,
@@ -231,7 +273,13 @@ pub fn find(
     name: &str,
 ) -> Result<Option<CatalogBundle>> {
     let Some(registry) = &config.plugin_registry else {
-        if let Some(problem) = config.unreadable_bundles.get(name) {
+        // The table is every set's declaration, so a table that will not
+        // read refuses whatever name was asked for.
+        let problem = config
+            .unreadable_bundle_table
+            .as_ref()
+            .or_else(|| config.unreadable_bundles.get(name));
+        if let Some(problem) = problem {
             return Err(crate::error::CoreError::UnreadableBundle {
                 name: name.to_owned(),
                 problem: problem.clone(),

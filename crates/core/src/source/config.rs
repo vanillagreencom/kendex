@@ -36,6 +36,9 @@ pub struct SourceConfig {
     /// by name with the problem. Not offered, and a lookup for one of these
     /// names refuses with the problem rather than answering "no such set".
     pub unreadable_bundles: BTreeMap<String, String>,
+    /// The `[bundles]` table written in a shape the reader will not read, so
+    /// the catalog offers no set and no name is known to refuse under.
+    pub unreadable_bundle_table: Option<String>,
     /// What the catalog says about itself in `[marketplace]`, capped.
     pub marketplace: Option<MarketplaceMeta>,
     /// Set when the source carries a plugin registry: its items live
@@ -71,7 +74,9 @@ impl SourceConfig {
     /// direction, and holding an orphan whose sibling set reads fine is the
     /// visible, recoverable cost of that.
     pub fn hides_content(&self) -> bool {
-        self.mode == CatalogMode::Unusable || !self.unreadable_bundles.is_empty()
+        self.mode == CatalogMode::Unusable
+            || !self.unreadable_bundles.is_empty()
+            || self.unreadable_bundle_table.is_some()
     }
 
     /// What [`SourceConfig::hides_content`] turned on, in the catalog's own
@@ -86,8 +91,14 @@ impl SourceConfig {
         if !self.hides_content() {
             return None;
         }
-        // Each problem opens with the `[bundles.<name>]` it belongs to.
-        let mut hidden: Vec<String> = self.unreadable_bundles.values().cloned().collect();
+        // Each problem opens with the `[bundles.<name>]` it belongs to,
+        // or with `bundles` when the table itself is what will not read.
+        let mut hidden: Vec<String> = self
+            .unreadable_bundle_table
+            .iter()
+            .chain(self.unreadable_bundles.values())
+            .cloned()
+            .collect();
         if self.mode == CatalogMode::Unusable {
             // `unusable` is the only place this mode is set, and it pushes
             // the finding saying why in the same call and then returns, so
@@ -244,14 +255,14 @@ fn read_tables(config: &mut SourceConfig, table: &toml::Table) {
     // A set whose body will not read is dropped and reported, and everything
     // else the catalog offers still installs. What it costs on the removal
     // side is what `hides_content` above says.
-    let (readable, unreadable) = bundles::declared(table);
-    config.bundles = readable;
+    let declared = bundles::declared(table);
+    config.bundles = declared.offered;
     // A plugin-registry catalog's plugins are its sets and this table is
     // dead weight nothing reads, so a body in it is reported and recorded
     // nowhere: what is not in the map cannot be read as this source hiding
     // content, or as a set an install would refuse.
     let offers_them = config.plugin_registry.is_none();
-    for (name, problem) in unreadable {
+    for (name, problem) in declared.unreadable {
         let finding = CatalogFinding::new(
             crate::manifest::MANIFEST_FILE,
             problem.problem.clone(),
@@ -261,6 +272,21 @@ fn read_tables(config: &mut SourceConfig, table: &toml::Table) {
             true => {
                 config.config_findings.push(finding.breaking());
                 config.unreadable_bundles.insert(name, problem.problem);
+            }
+            false => config.config_findings.push(finding),
+        }
+    }
+    // The table itself, when no set in it could even be named.
+    if let Some(problem) = declared.table {
+        let finding = CatalogFinding::new(
+            crate::manifest::MANIFEST_FILE,
+            problem.problem.clone(),
+            problem.fix,
+        );
+        match offers_them {
+            true => {
+                config.config_findings.push(finding.breaking());
+                config.unreadable_bundle_table = Some(problem.problem);
             }
             false => config.config_findings.push(finding),
         }
