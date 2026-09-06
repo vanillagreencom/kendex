@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-web-tools",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "First-party Pi web tools: provider-toggled web search, Exa deep research, content retrieval, and OpenAI native web_search integration.",
   "type": "module",
   "keywords": [

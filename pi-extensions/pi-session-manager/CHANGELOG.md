@@ -2,8 +2,9 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 2.0.1
 
+- Deleting a session removes `~/.pi/agent/kendex/sessions/<id>/` only. The older per-package directories `~/.pi/agent/kendex/{pi-agents-tmux,prompt-stash,pi-output-policy}/sessions/<id>/` are no longer removed with it, and the older `session-manager` status entry is no longer cleared at session start, on resume or on rename.
 - `PI_CODING_AGENT_DIR` is used only when it names a root-anchored path — a drive or UNC share on Windows, a leading `/` on POSIX. Anything else uses `~/.pi/agent`.
 
 ### 2.0.0

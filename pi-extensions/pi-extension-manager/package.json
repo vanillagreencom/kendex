@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-extension-manager",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Pi package manager and settings editor with native oh-my-pi plugin inventory and enable controls.",
   "license": "MIT",
   "keywords": [

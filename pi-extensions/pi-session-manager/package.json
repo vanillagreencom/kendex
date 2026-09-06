@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-session-manager",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Polished Pi session manager overlay for browsing, searching, resuming, renaming, and safely deleting sessions.",
   "license": "MIT",
   "keywords": [

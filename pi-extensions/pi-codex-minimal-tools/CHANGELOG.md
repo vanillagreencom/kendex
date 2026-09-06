@@ -2,8 +2,10 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 2.0.1
 
+- Pi 0.85.1 parity: the SSE transport no longer fails with "Stream closed before response.completed" when the backend closes the stream right after the terminal event without a trailing blank line. The last frame is parsed at end of stream.
+- `gpt-6-astra` replaces `gpt-5.6-sol` in the OpenAI model probe lists and as the model with the 2.5x `priority` service-tier cost multiplier.
 - `PI_CODING_AGENT_DIR` is used only when it names a root-anchored path — a drive or UNC share on Windows, a leading `/` on POSIX. Anything else uses `~/.pi/agent`.
 
 ### 2.0.0

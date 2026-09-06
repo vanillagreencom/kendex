@@ -2,12 +2,14 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 3.0.0
 
 - Detect native oh-my-pi npm/link plugins, including disabled installations, through host-resolved configuration and plugin roots. Open `/kendex:extensions` or `/kendex:extensions:settings` on OMP 18.1.11 or later; Pi keeps `/extensions`. Native package toggles update plugin lock records. OMP updates, uninstall, individual module toggles, project suppression edits and other extensions' settings remain unsupported. Manager settings preserve existing YAML filenames and unknown fields, and malformed settings refuse writes.
 - Keep native user/project entrypoints separate in search, filters and inspectors, and show settings only for the active manager installation. Trusted OMP project edits can create project settings without changing global values.
-- Manager enable display, edits, resets and recovery use the global setting even for a project-installed manager. Project enable flags are ignored; other manager settings retain project layering.
+- **Breaking**: manager enable display, edits, resets and recovery use the global setting even for a project-installed manager. Project enable flags are ignored, so a project that disabled the manager through a project-scoped `enabled` has it follow the global value after this update; other manager settings retain project layering.
 - `PI_CODING_AGENT_DIR` is used only when it names a root-anchored path — a drive or UNC share on Windows, a leading `/` on POSIX. Anything else uses `~/.pi/agent`.
+- `APPEND_SYSTEM.md` blocks are written by each package's own vendored `scripts/append-system.mjs`, run by the manager under a 10-second bound, instead of by manager code. A package that declares `pi.appendSystem` but ships no script gets no block on enable. On npm uninstall the block is stripped before npm removes the package tree; the former global-directory cleanup backstop after uninstall is gone.
+- `@oh-my-pi/pi-coding-agent` and `@oh-my-pi/pi-utils` (`>=18.1.11`) are optional peer dependencies.
 
 ### 2.0.0
 
