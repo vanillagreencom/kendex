@@ -113,11 +113,13 @@ mk 2 hooks/h.sh
 mk 2 .pi/kendex/hooks/h.sh                 # nested render root
 mk 9 .claude/settings.json                 # renders nothing this diff changed
 mk 2 ui/src/stores/settings.ts             # same basename, not its source
+mk 2 README.md                             # a root source has no directory to pair on
+mk 7 .agents/skills/other/README.md        # so this same-basename render is counted
 commit_files renders
 capture mirror_json run_check "$CHECK_BIN" --json
 assert_eq "$(jq -r '.mirror_lines' <<<"$mirror_json")" "11" \
-  "a render pairs with its own source across a changed extension and a nested root"
-assert_eq "$(jq -r '.production_lines' <<<"$mirror_json")" "38" \
+  "a render pairs with its own source across a changed extension and a nested root, never by basename alone"
+assert_eq "$(jq -r '.production_lines' <<<"$mirror_json")" "47" \
   "a render whose source did not change stays in production beside a same-basename source"
 
 PAIR_SCRIPTS="$(mutant_scripts pairing-mutant)"
@@ -126,7 +128,7 @@ assert_eq "$(grep -Fc 'if (rest_stem == s) return 1' "$PAIR_LIB")" "1" \
   "pairing control finds exactly one live match"
 sed -i.bak 's/^      rest_stem = stem_path(rest)$/      rest_stem = stem_path(rest); return 1/' "$PAIR_LIB"
 capture pair_mutant_json run_check "$PAIR_SCRIPTS/branch-size-check" --json
-assert_eq "$(jq -r '.mirror_lines' <<<"$pair_mutant_json")" "20" \
+assert_eq "$(jq -r '.mirror_lines' <<<"$pair_mutant_json")" "27" \
   "must-fail control: without the pairing every render-root path drops out"
 
 # --- A move a size ratchet forced is a rename, not growth -------------------
@@ -135,7 +137,7 @@ git -C "$WT" mv tests/legacy.sh src/moved-out.sh
 printf 'a\nb\nc\n' >> "$WT/src/moved-out.sh"
 commit_files ratchet-move
 capture rename_json run_check "$CHECK_BIN" --json
-assert_eq "$(jq -r '.production_lines' <<<"$rename_json")" "41" \
+assert_eq "$(jq -r '.production_lines' <<<"$rename_json")" "50" \
   "a pure rename bills no lines, and an edited move bills only its additions"
 assert_eq "$(jq -r '.test_lines' <<<"$rename_json")" "14" \
   "a move out of a test directory is classified by the path it landed on"
@@ -167,7 +169,7 @@ missing_error="$(run_check "$CHECK_BIN" 2>&1 >/dev/null)"
 missing_rc=$?
 set -e
 assert_eq "$missing_rc" "0" "an issue stating no allowance is reported, not refused and not defaulted"
-assert_eq "$([[ "$missing_error" == *"no allowance to judge by"* && "$missing_error" == *"41 production, 14 test"* ]] && echo yes)" \
+assert_eq "$([[ "$missing_error" == *"no allowance to judge by"* && "$missing_error" == *"50 production, 14 test"* ]] && echo yes)" \
   "yes" "the report names the missing line and the counts measured"
 assert_eq "$("$STATE" --state-dir "$WT/tmp" get KEN-SIZE '.pr.size_check.verdict, .pr.size_check.production_allowance' | paste -sd,)" \
   "allowance_missing,null" "the record says nothing was judged and invents no allowance"
@@ -181,7 +183,7 @@ prod_error="$(run_check "$CHECK_BIN" 2>&1 >/dev/null)"
 prod_rc=$?
 set -e
 assert_eq "$prod_rc" "3" "a branch past its production allowance is refused before the push"
-assert_eq "$([[ "$prod_error" == *"91 production lines added"* && "$prod_error" == *"allows 40"* ]] && echo yes)" \
+assert_eq "$([[ "$prod_error" == *"100 production lines added"* && "$prod_error" == *"allows 40"* ]] && echo yes)" \
   "yes" "the production refusal prints the count and the allowance"
 assert_eq "$("$STATE" --state-dir "$WT/tmp" get KEN-SIZE '.pr.size_check.verdict')" "production_over" \
   "the refusal is recorded with its reason"

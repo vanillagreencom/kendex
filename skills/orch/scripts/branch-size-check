@@ -16,7 +16,8 @@
 # it adds. They are shown in three parts — production; test, a path under
 # test/, tests/ or __tests__/ or named tests.rs, *test_util.rs, *.test.* or
 # *.spec.*; render mirror, a path under ORCH_SIZE_RENDER_ROOTS whose source
-# changed in the same diff — and only the first two are judged.
+# changed in the same diff — and only the first two are judged. The split is
+# by path: a test module inside a source file counts with its file.
 #
 # The allowance is the issue's own `**Expected delta**` line and nothing else,
 # in one of two forms:

@@ -50,12 +50,10 @@ BRANCH_GROWTH_CURRENT=""
 BRANCH_GROWTH_LIMIT=""
 # The recorded baseline and the headroom over it, in one place: every gate that
 # reads pr.baseline_lines reads it here, so the multiplier moves for all of
-# them or for none. Arguments after the issue are passed to workflow-state
-# ahead of the subcommand, which is how a caller names a state directory.
+# them or for none.
 branch_growth_read_baseline() {
   local script_dir="$1" issue="$2" baseline
-  shift 2
-  baseline="$("$script_dir/workflow-state" ${@+"$@"} get "$issue" '.pr.baseline_lines // "null"')" \
+  baseline="$("$script_dir/workflow-state" get "$issue" '.pr.baseline_lines // "null"')" \
     || branch_growth_fail "workflow state baseline for '$issue' could not be read" || return 1
   [[ "$baseline" =~ ^[1-9][0-9]*$ ]] || {
     branch_growth_fail "workflow state pr.baseline_lines is missing or invalid"
@@ -90,10 +88,13 @@ BRANCH_SIZE_MIRROR=""
 # once, at the source it renders, and the pairing is by path: strip a changed
 # path's leading render-root segment and it is a mirror only when what remains
 # names a source changed in the same diff — equal to that source's path without
-# its final extension, or ending in it at a segment boundary. That last form is
-# what covers a render whose extension differs from its source (a markdown
-# agent rendered as a Codex toml) and a nested render root (a hook rendered
-# under the Pi kendex directory). A render whose own source did not
+# its final extension, or ending in it at a segment boundary when the source
+# path has a directory of its own. The equal form covers a render whose
+# extension differs from its source (a markdown agent rendered as a Codex
+# toml); the suffix form covers a nested render root (a hook rendered under
+# the Pi kendex directory). A root-level source takes only the equal form: by
+# basename alone a root README would pair with every README under every
+# render root. A render whose own source did not
 # change pairs with nothing and is measured in full, and so is a render-only
 # branch.
 branch_size_classified() {
@@ -141,7 +142,7 @@ branch_size_classified() {
       rest_stem = stem_path(rest)
       for (s in source_stem) {
         if (rest_stem == s) return 1
-        if (length(rest_stem) > length(s) \
+        if (index(s, "/") > 0 && length(rest_stem) > length(s) \
             && substr(rest_stem, length(rest_stem) - length(s)) == "/" s) return 1
       }
       return 0
