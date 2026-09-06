@@ -129,7 +129,8 @@ Update Options:
   --assignee <name|me>  Change assignee
   --parent <id>         Set parent issue (convert to sub-issue)
   --remove-parent       Remove parent (convert to top-level issue)
-  --milestone <name|uuid> Set project milestone (a name needs --project; a UUID does not)
+  --milestone <name|uuid> Set project milestone (a name resolves in --project,
+                        else the issue's own project)
   --cycle <id>          Set cycle (sprint) ID
   --clear-cycle         Remove cycle assignment
   --attach <path>       Upload a file to Linear and attach it (repeatable).
@@ -1193,6 +1194,11 @@ create_issue() {
     require_agent_routing_label "$labels" "$no_agent_label" || return 1
     require_issue_reach "$description" "$priority" "$review_born" || return 1
 
+    # Same rule as the label pre-resolution below, for a refusal that needs no
+    # API call at all: a milestone name with no --project can only be refused,
+    # and refusing it after the upload strands the asset in Linear storage.
+    require_milestone_project "$milestone" "$project" || return 1
+
     # --attach: refuse unreadable paths before any API call, then upload
     # (uploads run only after the routing guard above has passed). Images
     # embed into the description; other files become Linear attachments on
@@ -1343,7 +1349,8 @@ create_issue() {
     fi
 
     # Handle milestone (auto-resolves name or UUID, fail fast on miss). A name
-    # is resolved inside the project resolved above; without one it is refused.
+    # is resolved inside the project resolved above; with none, the argument
+    # check above refused before any upload.
     if [ -n "$milestone" ]; then
         local milestone_id
         milestone_id=$(resolve_milestone_id "$milestone" "$project_id")
@@ -1678,6 +1685,12 @@ update_issue() {
     issue_result=$(get_issue "$issue_id" --format=raw)
     local team_name
     team_name=$(echo "$issue_result" | jq -r '.issue.team.name // empty')
+    # The scope a milestone name resolves in when --project is absent: the
+    # issue is already in a project, and asking for --project to name the one
+    # it is in would move it to satisfy a lookup.
+    local issue_project_id
+    issue_project_id=$(echo "$issue_result" | jq -r '.issue.project.id // empty')
+    local milestone_scope="${project:-$issue_project_id}"
 
     # Same rule as the label resolution below, applied to the pure argument
     # check: a combination that can only be refused must be refused before any
@@ -1686,6 +1699,7 @@ update_issue() {
         echo '{"error": "Use either --labels <names> or --clear-labels, not both"}' >&2
         return 1
     fi
+    require_milestone_project "$milestone" "$milestone_scope" || return 1
 
     # Resolve --labels BEFORE any attachment upload: an unresolvable label
     # refuses the whole update below, and an upload done first would strand
@@ -1857,10 +1871,11 @@ update_issue() {
     fi
 
     # Handle milestone (auto-resolves name or UUID, fail fast on miss). A name
-    # is resolved inside the project resolved above; without one it is refused.
+    # is resolved inside the project this update moves the issue to, or the one
+    # it is already in; with neither it was refused before the upload above.
     if [ -n "$milestone" ]; then
         local milestone_id
-        milestone_id=$(resolve_milestone_id "$milestone" "$project_id")
+        milestone_id=$(resolve_milestone_id "$milestone" "${project_id:-$issue_project_id}")
         if [ -z "$milestone_id" ]; then
             return 1
         fi

@@ -1,8 +1,8 @@
-# Drop the scope at both call sites, so the resolver is asked for a milestone
-# name with no project to resolve it in — which is what the two call sites did
-# before, having resolved the project id and then not passed it.
+# Drop the scope at the create call site, so the resolver is asked for a
+# milestone name with no project to resolve it in — which is what both call
+# sites did before, having resolved the project id and then not passed it.
 control_expect "issues create files the issue under the project's own milestone"
-control_replace scripts/commands/issues.sh 2 \
+control_replace scripts/commands/issues.sh 1 \
     '        milestone_id=$(resolve_milestone_id "$milestone" "$project_id")' \
     '        milestone_id=$(resolve_milestone_id "$milestone")'
 
@@ -31,5 +31,24 @@ control_replace scripts/lib/common.sh 3 \
 # Resolve a name with no project rather than refusing it.
 control_expect "the refusal names the missing project"
 control_replace scripts/lib/common.sh 1 \
-    '    if [ -z "$project_id" ]; then' \
-    '    if false; then'
+    '    if [ -z "$milestone_ref" ] || [ -n "$project_scope" ]; then' \
+    '    if true; then'
+
+# Scope the update's name to --project alone, so an issue already in a project
+# is refused unless the caller re-sends the project it is in.
+control_expect "issues update scopes the name to the issue's own project"
+control_replace scripts/commands/issues.sh 1 \
+    '        milestone_id=$(resolve_milestone_id "$milestone" "${project_id:-$issue_project_id}")' \
+    '        milestone_id=$(resolve_milestone_id "$milestone" "$project_id")'
+
+# Leave the create's refusal to the resolver, which runs after the upload.
+control_expect "no upload is sent before the create refusal"
+control_replace scripts/commands/issues.sh 1 \
+    '    require_milestone_project "$milestone" "$project" || return 1' \
+    '    true'
+
+# Same for the update's.
+control_expect "no upload is sent before the update refusal"
+control_replace scripts/commands/issues.sh 1 \
+    '    require_milestone_project "$milestone" "$milestone_scope" || return 1' \
+    '    true'

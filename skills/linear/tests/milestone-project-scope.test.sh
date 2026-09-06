@@ -76,7 +76,16 @@ case "$query" in
   fi
   ;;
 *"issues(filter:"* | *"issue(id:"*)
-  printf '%s' '{"data":{"issue":{"id":"iss-uuid","identifier":"ISS-1","team":{"id":"team-uuid"}}}}___HTTP_CODE___200'
+  # ISS-1 is in a project; ISS-2 is in none, which is the only issue a
+  # milestone name on the update path can still be refused for.
+  if [ "$(jq -r '.variables.id // empty' <<<"$payload")" = "ISS-2" ]; then
+    printf '%s' '{"data":{"issue":{"id":"iss2-uuid","identifier":"ISS-2","team":{"id":"team-uuid"},"project":null}}}___HTTP_CODE___200'
+  else
+    printf '%s' '{"data":{"issue":{"id":"iss-uuid","identifier":"ISS-1","team":{"id":"team-uuid"},"project":{"id":"live-uuid","name":"Dup"}}}}___HTTP_CODE___200'
+  fi
+  ;;
+*"fileUpload"*)
+  printf '%s' '{"data":{"fileUpload":{"success":false}}}___HTTP_CODE___200'
   ;;
 *"issueCreate(input:"*)
   printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"id":"child-uuid","identifier":"CC-900","title":"t","description":"d","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"live-uuid","name":"Dup"},"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"TestTeam"},"labels":{"nodes":[{"name":"agent:rust"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-900","createdAt":"2026-09-02T00:00:00Z","updatedAt":"2026-09-02T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}}}}___HTTP_CODE___200'
@@ -150,3 +159,33 @@ assert_ne "a milestone name without a project refuses the create" "$unscoped_rc"
 assert_file_contains "the refusal names the missing project" "$ERR_FILE" "without a project"
 assert_file_lacks "no milestone lookup is sent without a project to scope it" \
   "$CURL_LOG" "projectMilestones"
+
+# Surface: on update, the issue's own project scopes the name. Asking for
+# --project to name the project the issue is already in would move it to
+# satisfy a lookup.
+: >"$CURL_LOG"
+run_status own_project_rc run_linear issues update ISS-1 --milestone Alpha
+assert_eq "issues update succeeds without --project on an issue that has one" "$own_project_rc" 0
+assert "issues update scopes the name to the issue's own project" \
+  jq -s -e 'any(.[]; (.query | contains("issueUpdate")) and .variables.input.projectMilestoneId == "alpha-here")' \
+  "$CURL_LOG" >/dev/null
+
+# Surface: the refusal is decided from the arguments, so it lands before
+# --attach uploads. A refusal after an upload strands the asset in Linear
+# storage with no issue referencing it.
+printf 'x' >"$TMP_ROOT/asset.bin"
+
+: >"$CURL_LOG"
+run_status create_attach_rc run_linear issues create --title t --team TestTeam \
+  --labels agent:rust --priority 3 --description d --milestone Alpha \
+  --attach "$TMP_ROOT/asset.bin"
+assert_ne "a project-less milestone name refuses the create that carries --attach" \
+  "$create_attach_rc" 0
+assert_file_lacks "no upload is sent before the create refusal" "$CURL_LOG" "fileUpload"
+
+: >"$CURL_LOG"
+run_status update_attach_rc run_linear issues update ISS-2 --milestone Alpha \
+  --attach "$TMP_ROOT/asset.bin"
+assert_ne "a milestone name refuses the update of an issue in no project" \
+  "$update_attach_rc" 0
+assert_file_lacks "no upload is sent before the update refusal" "$CURL_LOG" "fileUpload"
