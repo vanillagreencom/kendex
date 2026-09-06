@@ -17,8 +17,15 @@ ORCH="$REPO_ROOT/skills/orch"
 # shellcheck source=lib/waiter-assertions.sh
 source "$TEST_DIR/lib/waiter-assertions.sh"
 
-# present FILE TOKEN — `yes` when FILE holds TOKEN as a fixed string.
-present() { grep -Fq -- "$2" "$1" && echo yes || echo no; }
+# present FILE TOKEN — `yes` when FILE holds TOKEN as a fixed string; a FILE
+# that does not exist aborts the suite, so a renamed document cannot pass an
+# absence row. A raw fixed-string read also matches inside a fence or an HTML
+# comment, which lib/md.sh's reader excludes; converting these rows to its
+# rule forms needs the heading each command sits under and is follow-up.
+present() {
+  [[ -f "$1" ]] || { printf 'pins: no such file: %s\n' "$1" >&2; exit 1; }
+  grep -Fq -- "$2" "$1" && echo yes || echo no
+}
 
 # pins ROW... — one assertion per row: `label|file|token|yes-or-no`.
 pins() {

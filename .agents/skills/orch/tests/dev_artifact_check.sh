@@ -58,13 +58,15 @@ run_check() {
 json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 
 # observe EXPECT — prints the run's value of every `name=` field EXPECT names,
-# in EXPECT's order. Plain names are JSON result fields (`files` compact);
+# in EXPECT's order. Plain names are JSON result fields (`files` compact); a
+# key the result does not carry reads ABSENT, so `null` means a real null.
 #   rc              exit status
+#   stderr~<text>   whether stderr carries <text> (`+` reads as a space)
 #   help_sections   which of the routed --help sections are present: gates
 #                   (the ordering line), reasons (every ok=false reason the
 #                   check emits), items (the --expect-items confinement)
 observe() {
-  local got="" token name value
+  local got="" token name value needle
   for token in $1; do
     name="${token%%=*}"
     case "$name" in
@@ -77,7 +79,8 @@ observe() {
         grep -qF -- '--expect-items (--file mode only)' <<<"$OUT" && value="$value,items"
         value="${value#,}"; value="${value:-none}"
         ;;
-      *) value="$(json ".$name")" ;;
+      stderr~*) needle="${name#stderr~}"; value="$(grep -qF -- "${needle//+/ }" "$ERR" && echo true || echo false)" ;;
+      *) value="$(json "if has(\"$name\") then .$name else \"ABSENT\" end")" ;;
     esac
     got="$got $name=$value"
   done
@@ -131,7 +134,7 @@ echo "=== round mode: identity by round id, then the scalar gates ==="
 # delegated set to check against refuses rather than falling back.
 receipt_table \
   "no artifact at the round path is missing^none^^^rc=1 ok=false path=null reason=missing" \
-  "a complete implement receipt is valid at its path^impl^^^rc=0 ok=true path=$ARTIFACT reason=valid" \
+  "a complete implement receipt in a non-git worktree is valid at its path, no commit gate, no warning^impl^^^rc=0 ok=true path=$ARTIFACT reason=valid warning=null" \
   "a fix receipt with no delegated set refuses instead of a weaker rule^fix^^^rc=2" \
   "a different requested round resolves a different path^impl^^--worktree $WT --issue $ISSUE --round-id 9999-0^reason=missing" \
   "an internal round_id that differs is a copied file^impl^.round_id=\"OTHER-1\"^^reason=invalid" \
@@ -145,8 +148,7 @@ receipt_table \
   "a missing round_id^impl^del(.round_id)^^reason=invalid" \
   "a missing schema_version^impl^del(.schema_version)^^reason=invalid" \
   "a string schema_version^impl^.schema_version=\"1\"^^reason=invalid" \
-  "a bundled implement with no items is incomplete^impl^.bundled=true^^reason=incomplete" \
-  "a single implement tolerates empty items^impl^^^reason=valid"
+  "a bundled implement with no items is incomplete^impl^.bundled=true^^reason=incomplete"
 
 echo "=== file mode: the items gate and the exact delegated set ==="
 # A fix or bundled receipt needs a non-empty, well-formed items[]; a scalar
@@ -170,10 +172,10 @@ receipt_table \
   "a duplicate n=1 does not cover {1,2}^fix^.items=[{\"n\":1,\"decision\":\"Applied\",\"reasoning\":\"a\"},{\"n\":1,\"decision\":\"Skipped\",\"reasoning\":\"b\"}]^$FILE_ARGS --expect-items 1,2^reason=incomplete" \
   "expect-items rejects an empty reasoning on a matching set^fix^.items=[{\"n\":1,\"decision\":\"Applied\",\"reasoning\":\"\"},{\"n\":2,\"decision\":\"Skipped\",\"reasoning\":\"b\"}]^$FILE_ARGS --expect-items 1,2^reason=incomplete" \
   "expect-items rejects an out-of-enum decision on a matching set^fix^.items=[{\"n\":1,\"decision\":\"Nope\",\"reasoning\":\"a\"},{\"n\":2,\"decision\":\"Skipped\",\"reasoning\":\"b\"}]^$FILE_ARGS --expect-items 1,2^reason=incomplete" \
-  "a valid implement at an explicit path^impl^^$FILE_ARGS^rc=0 reason=valid" \
+  "a valid implement at an explicit path, no validate_note key reads null^impl^^$FILE_ARGS^rc=0 reason=valid validate_note=null" \
   "a matching --round-id in file mode^impl^^$FILE_ARGS --round-id $R^reason=valid" \
   "a mismatched --round-id in file mode^impl^^$FILE_ARGS --round-id NOPE-1^reason=invalid" \
-  "a missing file^none^^--file $WT/tmp/nope.json^rc=1 reason=missing"
+  "a missing file reports the stable shape with null qualifiers^none^^--file $WT/tmp/nope.json^rc=1 reason=missing validate=null validate_note=null"
 
 echo "=== usage errors end in the parser ==="
 receipt_table \
@@ -314,12 +316,11 @@ chmod +x "$GIT_SHIM/git"
 REAL_GIT="$(command -v git)"
 REAL_GIT="$REAL_GIT" PATH="$GIT_SHIM:$PATH" run_check --worktree "$AD" --issue issue-826 --round-id 3-3 --expect-items-from-round
 assert_eq "$(observe "rc=1 reason=comparison_failed")" "rc=1 reason=comparison_failed" "a failed snapshot probe refuses acceptance with its own reason" "$ERR"
-# Control: a copy of the check that misroutes the failure reports the misroute;
-# the copy takes the whole scripts directory because the check sources a lib.
-MUTANT_SCRIPTS="$TMP_ROOT/mutant-scripts"
-mkdir -p "$MUTANT_SCRIPTS"
-cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_SCRIPTS/"
-ROUTING_MUTANT="$MUTANT_SCRIPTS/scripts/dev-artifact-check"
+# Control: a copy of the check that misroutes the failure reports the misroute
+# (copy_scripts takes the whole scripts directory because the check sources a
+# lib).
+MUTANT_SCRIPTS="$(copy_scripts mutant-scripts)"
+ROUTING_MUTANT="$MUTANT_SCRIPTS/dev-artifact-check"
 sed -i.bak 's/emit false "$file" "comparison_failed"/emit false "$file" "unapproved_additions"/' "$ROUTING_MUTANT"
 chmod +x "$ROUTING_MUTANT"
 set +e
@@ -349,7 +350,7 @@ run_check --worktree "$RB" --issue issue-944 --round-id 1-1 --expect-items-from-
 assert_eq "$(observe "ok=false verdict=retry reason=additions_unattributable files=[]")" "ok=false verdict=retry reason=additions_unattributable files=[]" "an orphaned base refuses the round and names no file" "$ERR"
 # Control: without the stop the round is billed the file main merged, which
 # also proves the fixture orphans that base.
-STOP_MUTANT="$MUTANT_SCRIPTS/scripts/dev-artifact-check"
+STOP_MUTANT="$MUTANT_SCRIPTS/dev-artifact-check"
 cp "$CHECK" "$STOP_MUTANT"
 assert_eq "$(grep -cF 'if ! git -C "$repo" merge-base --is-ancestor "$base_sha" HEAD >/dev/null 2>&1; then' "$STOP_MUTANT")" "1" "control finds exactly one orphaned-base stop to remove"
 sed -i.bak 's/if ! git -C "\$repo" merge-base --is-ancestor "\$base_sha" HEAD >\/dev\/null 2>&1; then/if false; then/' "$STOP_MUTANT"
@@ -387,7 +388,7 @@ GART="$GW/tmp/dev-return-$ISSUE-$R.json"
 # `label^jq on the implement receipt^args^expect`
 commit_rows=(
   "a reachable HEAD commit^.commit=\"$HEAD_SHA\"^--worktree $GW --issue $ISSUE --round-id $R^rc=0 reason=valid warning=null"
-  "a fabricated sha^.commit=\"$FAKE_SHA\"^--worktree $GW --issue $ISSUE --round-id $R^rc=1 ok=false reason=commit_unresolvable"
+  "a fabricated sha, named on stderr with no such object^.commit=\"$FAKE_SHA\"^--worktree $GW --issue $ISSUE --round-id $R^rc=1 ok=false reason=commit_unresolvable stderr~$FAKE_SHA=true stderr~no+such+object=true"
   "an orphaned but real commit is valid with a warning^.commit=\"$ORPHAN_SHA\"^--worktree $GW --issue $ISSUE --round-id $R^rc=0 ok=true reason=valid warning=commit_unreachable"
   "a missing commit is the scalar gate first^del(.commit)^--worktree $GW --issue $ISSUE --round-id $R^reason=invalid"
   "commit_unresolvable beats bundled incompleteness^.commit=\"$FAKE_SHA\" | .bundled=true | .items=[]^--worktree $GW --issue $ISSUE --round-id $R^reason=commit_unresolvable"
@@ -400,22 +401,24 @@ for row in "${commit_rows[@]}"; do
   run_check $args
   assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
 done
-receipt_table \
-  "a non-git worktree skips the commit gates^impl^^^reason=valid warning=null"
-
 echo "=== the validation note reaches the orchestrator ==="
 # The check's output is what orch accepts on, so a qualifier stored in the
 # artifact is echoed; the note is optional beside the required verdict, and a
 # wrong-typed or empty note is a malformed receipt.
 NOTE="80/80-on-rerun,first-run-flaked-on-release-tests"
+# A real note carries spaces, a semicolon and parentheses; the echo is by-value
+# through jq --arg, asserted outside the table since expect tokens split on
+# whitespace.
+REAL_NOTE="80/80 on re-run; first run flaked on Rust Tests (release)"
+printf '%s' "$VALID_IMPL" | jq -c --arg n "$REAL_NOTE" '.validate_note=$n' > "$ARTIFACT"
+run_check --file "$ARTIFACT"
+assert_eq "$(json .validate_note)" "$REAL_NOTE" "a note with spaces and punctuation is echoed verbatim" "$ERR"
 receipt_table \
   "a validate_note is echoed with the verdict^impl^.validate_note=\"$NOTE\"^$FILE_ARGS^reason=valid validate=pass validate_note=$NOTE" \
-  "no validate_note key is still valid and reports null^impl^^$FILE_ARGS^reason=valid validate_note=null" \
   "an empty validate_note is invalid^impl^.validate_note=\"\"^$FILE_ARGS^reason=invalid" \
   "a numeric validate_note is invalid^impl^.validate_note=42^$FILE_ARGS^reason=invalid" \
   "a boolean validate_note is invalid^impl^.validate_note=true^$FILE_ARGS^reason=invalid" \
-  "an array validate_note is invalid^impl^.validate_note=[]^$FILE_ARGS^reason=invalid" \
-  "a missing artifact reports null qualifiers^none^^--file $WT/tmp/nope.json^validate=null validate_note=null"
+  "an array validate_note is invalid^impl^.validate_note=[]^$FILE_ARGS^reason=invalid"
 
 echo "=== --wait blocks until an artifact lands or the deadline ==="
 # An (invalid) receipt landing after about two seconds ends a 20-second wait
