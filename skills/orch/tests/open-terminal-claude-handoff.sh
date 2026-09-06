@@ -22,58 +22,31 @@
 # stubs the worktree CLI, gh, ghostty (captures the composed GUI command), and
 # tmux (logs every call; serves scripted capture-pane screens) so no real
 # harness is ever launched.
+#
+# One table: a row names the launch mode, the environment, the --launch-flags
+# value, the screens the tmux stub serves in order, and the facts the launch
+# must show; `observe` reads exactly those facts, so a row fails on the fact
+# it names. The one probe outside the table runs a captured GUI command for
+# real to read back the argv claude receives.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
-
-# The brief ends at the start command; start.md owns completion.
-TC=""
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 SRC_OT="$SCRIPTS_DIR/open-terminal"
 SRC_LIB_DIR="$SCRIPTS_DIR/lib"
+# shellcheck source=lib/waiter-assertions.sh
+source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-PASS=0
-FAIL=0
-
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
-
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  fi
-}
-
-assert_not_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        forbidden substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  else
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  fi
-}
+BRIEF='/orch start CC-737'
+BRIEFN='/orch+start+CC-737'   # the brief as a needle: `+` reads as a space
+RESEND="send-keys -t %7 -l $BRIEF"
 
 # Stub bin: ghostty captures its final argument (the composed `cd ... && claude
 # ...` command open_gui hands to `bash -lc`) into $OT_CAPTURE; gh exits 1 so
-# resolve_repo yields empty without touching the network (the github case
+# resolve_repo yields empty without touching the network (the github row
 # passes --repo explicitly); tmux logs every invocation into $OT_TMUX_LOG and
 # serves capture-pane from numbered screen files in $OT_TMUX_CAPTURES (the
 # highest-numbered file repeats for later calls).
@@ -92,7 +65,7 @@ cat > "$BIN/tmux" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OT_TMUX_LOG"
 # $OT_TMUX_FAIL names one tmux subcommand that fails (after logging), so a
-# case can prove open-terminal checks each tmux step instead of falling
+# row can prove open-terminal checks each tmux step instead of falling
 # through to a success return.
 if [[ -n "${OT_TMUX_FAIL:-}" && "${1:-}" == "$OT_TMUX_FAIL" ]]; then
   exit 1
@@ -137,451 +110,232 @@ exit 1
 EOF
 chmod +x "$STUB"
 
-# Build a temp git repo containing a copy of open-terminal + its libs, so the
-# script's PROJECT_ROOT resolves to this repo. $2 optional settings body.
-make_ot_repo() {
-  local repo="$1" settings="${2:-}"
-  mkdir -p "$repo/scripts/lib"
-  cp "$SRC_OT" "$repo/scripts/open-terminal"
-  cp "$SRC_LIB_DIR"/*.sh "$repo/scripts/lib/"
-  chmod +x "$repo/scripts/open-terminal"
-  git -C "$repo" init -q
-  if [[ -n "$settings" ]]; then
-    printf '%s\n' "$settings" > "$repo/kendex.settings.toml"
+# A temp git repo containing a copy of open-terminal + its libs, so the
+# script's PROJECT_ROOT resolves to this repo.
+REPO="$TMP_ROOT/repo"
+mkdir -p "$REPO/scripts/lib"
+cp "$SRC_OT" "$REPO/scripts/open-terminal"
+cp "$SRC_LIB_DIR"/*.sh "$REPO/scripts/lib/"
+chmod +x "$REPO/scripts/open-terminal"
+git -C "$REPO" init -q
+OT="$REPO/scripts/open-terminal"
+
+# screen NAME — prints one pane capture, by name.
+#   echo       the brief appears ONLY inside the echoed launch command, which
+#              is exactly what a first-run dialog leaves behind: UNDELIVERED.
+#              The response marker under it is deliberate: this screen fails
+#              delivery on the launch-line filter alone
+#   delivered  the brief on its own transcript line, distinct from the echoed
+#              launch command, and the response begun (● transcript marker)
+#   composer   the brief sitting UNSENT in the composer's │-bordered input
+#              box: delivery means SUBMITTED, so this is UNDELIVERED. Its
+#              response marker is deliberate too: this screen fails delivery
+#              on the composer-box filter alone
+#   plain      the brief on a plain transcript line with no response marker
+#              anywhere: UNDELIVERED on the activity requirement alone
+#   ready      the main TUI at a ready, EMPTY composer (the '? for shortcuts'
+#              footer is the readiness marker), where a re-send must land
+#   huge       delivered, then a pane larger than a pipe buffer: a
+#              short-circuiting scan would SIGPIPE its upstream under pipefail
+#              and misread the submitted prompt as missing
+screen() {
+  case "$1" in
+    echo) printf '%s\n' "\$ claude -n CC-737 --dangerously-skip-permissions '$BRIEF'" '● Reading workflows/start.md' '╭─ Enable browser integration? ─╮' '> ' ;;
+    delivered) printf '%s\n' "> $BRIEF" '● Reading workflows/start.md' ;;
+    composer) printf '%s\n' '● Reading workflows/start.md' '╭──────────────────────────────────────────╮' "│ > $BRIEF │" '╰──────────────────────────────────────────╯' '  ? for shortcuts' ;;
+    plain) printf '%s\n' "> $BRIEF" '  ? for shortcuts' ;;
+    ready) printf '%s\n' '╭──────────────────────────────────────────╮' '│ >                                         │' '╰──────────────────────────────────────────╯' '  ? for shortcuts' ;;
+    huge) screen delivered; awk 'BEGIN { for (i = 0; i < 20000; i++) print "transcript filler line" }' ;;
+    *) echo "screen: unknown capture $1" >&2; exit 1 ;;
+  esac
+}
+
+# --- harness -----------------------------------------------------------------
+
+# run MODE ENV FLAGS SCREENS — one launch. MODE is gui, github (gui, the
+# github tracker), tmux or tmux-codex; the GUI modes clear TMUX so the suite
+# reads the same inside and outside a tmux session; ENV a comma-separated list of
+# VAR=value pairs or `-`; FLAGS the --launch-flags value or `-` for none;
+# SCREENS the comma-separated captures the tmux stub serves in order, or `-`.
+# OUT, RC, ERR (a file), CAP (the GUI command's capture file) and the tmux
+# log are what `observe` reads.
+RUN_SEQ=0
+run() {
+  local mode="$1" envspec="$2" flags="$3" screens="$4" args=() envs=() pair i=0 name
+  RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
+  mkdir -p "$RUN/screens"
+  ERR="$RUN/stderr"
+  CAP="$RUN/capture"
+  OT_TMUX_LOG="$RUN/tmux-log"
+  OT_TMUX_COUNT="$RUN/tmux-count"
+  OT_TMUX_CAPTURES="$RUN/screens"
+  : > "$OT_TMUX_LOG"
+  export OT_TMUX_LOG OT_TMUX_COUNT OT_TMUX_CAPTURES
+  if [[ "$screens" != - ]]; then
+    IFS=',' read -ra names <<<"$screens"
+    for name in "${names[@]}"; do screen "$name" > "$RUN/screens/$((++i))"; done
   fi
-  printf '%s\n' "$repo/scripts/open-terminal"
+  case "$mode" in
+    gui) envs=(TMUX=); args=(--ghostty --harness claude) ;;
+    github) envs=(TMUX=); args=(--tracker github --repo acme/widgets --ghostty --harness claude) ;;
+    tmux) envs=(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1); args=(--tmux --harness claude) ;;
+    tmux-codex) envs=(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1); args=(--tmux --harness codex) ;;
+    *) echo "run: unknown mode $mode" >&2; exit 1 ;;
+  esac
+  if [[ "$envspec" != - ]]; then
+    IFS=',' read -ra pairs <<<"$envspec"
+    for pair in "${pairs[@]}"; do envs+=("$pair"); done
+  fi
+  [[ "$flags" == - ]] || args+=(--launch-flags "$flags")
+  if [[ "$mode" == github ]]; then args+=(42); else args+=(cc-737); fi
+  set +e
+  OUT=$(env ${envs[@]+"${envs[@]}"} OT_CAPTURE="$CAP" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" "${args[@]}" 2>"$ERR")
+  RC=$?
+  set -e
 }
 
 # open_gui launches the (stubbed) terminal via `setsid ... &`, so the capture
 # file lands asynchronously after open-terminal itself has exited.
 wait_capture() {
-  local f="$1" i
+  local i
   for i in $(seq 1 50); do
-    [[ -s "$f" ]] && return 0
+    [[ -s "$CAP" ]] && return 0
     sleep 0.1
   done
   return 1
 }
 
-# Fresh tmux stub state (log + capture-call counter + screen dir) per case.
-new_tmux_state() {
-  local name="$1"
-  OT_TMUX_LOG="$TMP_ROOT/$name.tmux-log"
-  OT_TMUX_COUNT="$TMP_ROOT/$name.tmux-count"
-  OT_TMUX_CAPTURES="$TMP_ROOT/$name.screens"
-  : > "$OT_TMUX_LOG"
-  rm -rf "$OT_TMUX_CAPTURES"
-  mkdir -p "$OT_TMUX_CAPTURES"
-  export OT_TMUX_LOG OT_TMUX_COUNT OT_TMUX_CAPTURES
+# observe EXPECT — prints the run's value of every `name=` field EXPECT names,
+# in EXPECT's order (in a needle `+` reads as a space):
+#   rc              exit status
+#   out~<text>      whether stdout carries <text>
+#   stderr~<text>   whether stderr carries <text>
+#   launched        whether the GUI terminal stub was invoked
+#   cmd~<text>      whether the captured GUI command carries <text>, or
+#                   `nocapture` when the stub was never invoked
+#   tail            the captured GUI command after its last `&& `
+#   log~<text>      whether the tmux log carries <text>
+#   resends         how many tmux calls re-sent the brief
+#   fullresends     how many of those were exactly the brief, nothing more
+#   enters          how many bare Enters were sent
+observe() {
+  local got="" token name value needle
+  set -f
+  for token in $1; do
+    name="${token%%=*}"
+    needle="${name#*~}"; needle="${needle//+/ }"
+    case "$name" in
+      rc) value="$RC" ;;
+      out~*) value="$(grep -qF -- "$needle" <<<"$OUT" && echo true || echo false)" ;;
+      stderr~*) value="$(grep -qF -- "$needle" "$ERR" && echo true || echo false)" ;;
+      launched) value="$(wait_capture && echo true || echo false)" ;;
+      cmd~*) if wait_capture; then value="$(grep -qF -- "$needle" "$CAP" && echo true || echo false)"; else value=nocapture; fi ;;
+      tail) if wait_capture; then value="$(cat "$CAP")"; value="${value##*&& }"; value="${value// /+}"; else value=nocapture; fi ;;
+      log~*) value="$(grep -qF -- "$needle" "$OT_TMUX_LOG" && echo true || echo false)" ;;
+      resends) value="$(grep -cF -- "$RESEND" "$OT_TMUX_LOG" || true)" ;;
+      fullresends) value="$(grep -cFx -- "$RESEND" "$OT_TMUX_LOG" || true)" ;;
+      enters) value="$(grep -c 'send-keys -t %7 Enter$' "$OT_TMUX_LOG" || true)" ;;
+      *) echo "observe: unknown field $name" >&2; exit 1 ;;
+    esac
+    got="$got $name=$value"
+  done
+  set +f
+  printf '%s' "${got# }"
 }
 
-REPO="$TMP_ROOT/repo"
-OT="$(make_ot_repo "$REPO")"
-
-# Pane screen where the brief appears ONLY inside the echoed launch command —
-# exactly what a first-run dialog leaves behind. The delivery check must treat
-# this as UNDELIVERED (the filter's failing input).
-ECHO_SCREEN="\$ claude -n CC-737 --dangerously-skip-permissions '/orch start CC-737${TC}'
-╭─ Enable browser integration? ─╮
-> "
-# Pane screen after the brief reached the TUI: the brief is visible on its own
-# transcript line, distinct from the echoed launch command, and the response
-# has begun (● transcript marker).
-DELIVERED_SCREEN="> /orch start CC-737${TC}
-● Reading workflows/start.md"
-# Pane screen where the brief sits UNSENT in the composer's │-bordered input
-# box — visible outside the echoed launch command, but with no transcript
-# activity anywhere. Delivery means SUBMITTED, so this must count as
-# UNDELIVERED.
-COMPOSER_SCREEN="╭──────────────────────────────────────────╮
-│ > /orch start CC-737${TC} │
-╰──────────────────────────────────────────╯
-  ? for shortcuts"
-# Main TUI at a ready, EMPTY composer (the '? for shortcuts' footer is the
-# readiness marker) — where the re-send must land, never in a dialog.
-READY_SCREEN="╭──────────────────────────────────────────╮
-│ >                                         │
-╰──────────────────────────────────────────╯
-  ? for shortcuts"
+# launch_table ROW... — `label|mode|env|flags|screens|expect`, one launch and
+# one assertion per row.
+launch_table() {
+  local row label mode envspec flags screens expect
+  for row in "$@"; do
+    IFS='|' read -r label mode envspec flags screens expect <<<"$row"
+    [[ -n "$expect" ]] || { printf 'launch_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+    run "$mode" "$envspec" "$flags" "$screens"
+    assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
+  done
+}
 
 echo "=== open-terminal claude handoff: per-task launch flags ==="
+# The flags this launch passed are the flags rendered, before the brief, and
+# nothing is carried over from another launch or a stored default: with no
+# --launch-flags the command is exactly what a human would type. A lane whose
+# flags carry no permission bypass warns that handoff autonomy is void; a
+# prompting override still launches. Flags carrying shell metacharacters are
+# rejected before anything launches, since the string is interpolated into a
+# shell-executed launch command; a bracketed model id is an ordinary value.
+# The tmux-only verify timeout is never validated on a GUI launch.
+launch_table \
+  "linear:claude renders the caller's launch flags before the brief, no warning|gui|-|--model opus[1m] --effort max --dangerously-skip-permissions|-|rc=0 cmd~'--model'+'opus[1m]'+'--effort'+'max'+'--dangerously-skip-permissions'+'$BRIEFN'=true stderr~WARNING=false" \
+  "github:claude renders the same|github|-|--effort max --dangerously-skip-permissions|-|rc=0 cmd~'--effort'+'max'+'--dangerously-skip-permissions'+'/orch+start+github+acme/widgets#42'=true" \
+  "a second launch renders its own flags, nothing leaking from another launch or a stored default|gui|-|--model sonnet --permission-mode bypassPermissions|-|rc=0 cmd~'--model'+'sonnet'+'--permission-mode'+'bypassPermissions'+'$BRIEFN'=true cmd~'--effort'+'max'=false stderr~WARNING=false" \
+  "an unflagged launch renders no model, effort or permission default, and warns it will stall unattended|gui|-|-|-|tail=claude+-n+CC-737+'$BRIEFN' stderr~handoff+autonomy+is+void=true" \
+  "a prompting override still launches, rendered as given, and warns loudly|gui|-|--permission-mode plan|-|rc=0 cmd~'--permission-mode'+'plan'+'$BRIEFN'=true stderr~WARNING=true stderr~handoff+autonomy+is+void=true" \
+  "metacharacter launch flags refuse to launch, naming the option, and nothing runs|gui|-|--flag; touch $TMP_ROOT/pwned|-|rc=1 stderr~--launch-flags=true launched=false" \
+  "a broken tmux-only verify setting does not abort a GUI launch, which never reads it|gui|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=0 stderr~ORCH_TMUX_VERIFY_SECS=false"
 
-# Case 1: linear:claude renders the autonomy flag by default.
-CAP1="$TMP_ROOT/cap1"
-set +e
-c1_out=$(OT_CAPTURE="$CAP1" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--model opus[1m] --effort max --dangerously-skip-permissions" cc-737 2>"$TMP_ROOT/c1.err")
-c1_code=$?
-set -e
-assert_eq "$c1_code" "0" "linear:claude launch succeeds"
-if wait_capture "$CAP1"; then
-  c1_cmd="$(cat "$CAP1")"
-  assert_contains "$c1_cmd" "'--model' 'opus[1m]' '--effort' 'max' '--dangerously-skip-permissions' '/orch start CC-737${TC}'" \
-    "linear:claude renders the caller's launch flags before the brief"
-else
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  linear:claude never invoked the terminal stub\n'
-fi
-assert_not_contains "$(cat "$TMP_ROOT/c1.err")" "WARNING" \
-  "flags carrying a permission bypass emit no warning"
-
-# Case 2: github:claude renders the same flag.
-CAP2="$TMP_ROOT/cap2"
-set +e
-c2_out=$(OT_CAPTURE="$CAP2" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tracker github --repo acme/widgets --ghostty --harness claude --launch-flags "--effort max --dangerously-skip-permissions" 42 2>"$TMP_ROOT/c2.err")
-c2_code=$?
-set -e
-assert_eq "$c2_code" "0" "github:claude launch succeeds"
-if wait_capture "$CAP2"; then
-  c2_cmd="$(cat "$CAP2")"
-  assert_contains "$c2_cmd" "'--effort' 'max' '--dangerously-skip-permissions' '/orch start github acme/widgets#42${TC}'" \
-    "github:claude renders the caller's launch flags before the brief"
-else
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  github:claude never invoked the terminal stub\n'
-fi
-
-# Case 3: a different task gets different flags on the same machine — the
-# decision is per launch, so nothing is carried over from case 1 and no
-# settings file participates.
-CAP3="$TMP_ROOT/cap3"
-set +e
-c3_out=$(OT_CAPTURE="$CAP3" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--model sonnet --permission-mode bypassPermissions" cc-737 2>"$TMP_ROOT/c3.err")
-c3_code=$?
-set -e
-assert_eq "$c3_code" "0" "a second launch with different flags succeeds"
-if wait_capture "$CAP3"; then
-  c3_cmd="$(cat "$CAP3")"
-  assert_contains "$c3_cmd" "'--model' 'sonnet' '--permission-mode' 'bypassPermissions' '/orch start CC-737${TC}'" \
-    "the flags this launch passed are the flags rendered"
-  assert_not_contains "$c3_cmd" "'--effort' 'max'" \
-    "no flag leaks in from another launch or a stored default"
-else
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  per-task flags case never invoked the terminal stub\n'
-fi
-assert_not_contains "$(cat "$TMP_ROOT/c3.err")" "WARNING" \
-  "a bypassing permission mode emits no warning"
-
-# Case 3b: with no --launch-flags at all the command is exactly what a human
-# would type — no stored model, effort, or permission default appears.
-CAP3B="$TMP_ROOT/cap3b"
-set +e
-OT_CAPTURE="$CAP3B" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude cc-737 2>"$TMP_ROOT/c3b.err"
-set -e
-if wait_capture "$CAP3B"; then
-  c3b_cmd="$(cat "$CAP3B")"
-  # The launch command must end exactly at the brief: no model, effort, or
-  # permission flag may appear from anywhere but --launch-flags.
-  assert_eq "${c3b_cmd##*&& }" "claude -n CC-737 '/orch start CC-737${TC}'" \
-    "an unflagged launch renders no model, effort, or permission default"
-else
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  unflagged case never invoked the terminal stub\n'
-fi
-assert_contains "$(cat "$TMP_ROOT/c3b.err")" "handoff autonomy is void" \
-  "an unflagged claude lane warns that it will stall unattended"
-
-# Case 4: a prompting override still launches but warns loudly that handoff
-# autonomy is void.
-CAP4="$TMP_ROOT/cap4"
-set +e
-c4_out=$(OT_CAPTURE="$CAP4" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--permission-mode plan" cc-737 2>"$TMP_ROOT/c4.err")
-c4_code=$?
-set -e
-assert_eq "$c4_code" "0" "prompting flags still launch"
-if wait_capture "$CAP4"; then
-  assert_contains "$(cat "$CAP4")" "'--permission-mode' 'plan' '/orch start CC-737${TC}'" \
-    "prompting flags are rendered as given"
-fi
-c4_err="$(cat "$TMP_ROOT/c4.err")"
-assert_contains "$c4_err" "WARNING" "prompting flags warn"
-assert_contains "$c4_err" "handoff autonomy is void" "warning names the voided contract"
-
-echo
-echo "=== open-terminal claude handoff: tmux brief delivery ==="
-
-# Case 5: brief visible in the pane transcript on the first verification pass —
-# no re-send, success.
-new_tmux_state c5
-printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
-set +e
-c5_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude --launch-flags "--dangerously-skip-permissions" cc-737 2>"$TMP_ROOT/c5.err")
-c5_code=$?
-set -e
-assert_eq "$c5_code" "0" "tmux delivered-first-pass exits 0"
-assert_contains "$c5_out" "Opened tmux window 'CC-737'" "tmux window opened"
-assert_not_contains "$c5_out" "Re-delivered" "no re-send when the brief is visible"
-c5_log="$(cat "$OT_TMUX_LOG")"
-assert_contains "$c5_log" "'--dangerously-skip-permissions' '/orch start CC-737${TC}'" \
-  "tmux-sent launch command carries the flags the caller chose"
-assert_contains "$c5_log" "capture-pane" "delivery was verified via capture-pane"
-assert_contains "$c5_log" "capture-pane -pJ -S - -t %7" \
-  "capture includes scrollback (-S -): a fast response scrolling the prompt out of the viewport must not read as undelivered"
-assert_not_contains "$c5_log" "send-keys -t %7 -l /orch start CC-737" \
-  "brief is not re-sent when already delivered"
-
-# Case 6: first capture shows the brief only inside the echoed launch command
-# (dialog ate the arg); the launcher waits for a ready composer, re-sends the
-# brief once, and the next capture shows it in the transcript.
-new_tmux_state c6
-printf '%s\n' "$ECHO_SCREEN" > "$OT_TMUX_CAPTURES/1"
-printf '%s\n' "$READY_SCREEN" > "$OT_TMUX_CAPTURES/2"
-printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/3"
-set +e
-c6_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c6.err")
-c6_code=$?
-set -e
-assert_eq "$c6_code" "0" "tmux re-delivery path exits 0"
-assert_contains "$c6_out" "Re-delivered brief to 'CC-737'" "re-delivery is reported"
-c6_log="$(cat "$OT_TMUX_LOG")"
-c6_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" -- "$OT_TMUX_LOG")"
-assert_eq "$c6_resends" "1" "brief is re-sent exactly once"
-c6_full_resends="$(grep -cFx "send-keys -t %7 -l /orch start CC-737" -- "$OT_TMUX_LOG")"
-assert_eq "$c6_full_resends" "1" "the re-sent brief matches the start command"
-
-# Case 6b: TWO dialog screens before the composer is ready — each
-# wait-composer pass sends one dismissing Enter, and the brief goes in only
-# once the '? for shortcuts' footer appears. Proves brief characters are
-# never typed into a dialog.
-new_tmux_state c6b
-printf '%s\n' "$ECHO_SCREEN" > "$OT_TMUX_CAPTURES/1"
-printf '%s\n' "$ECHO_SCREEN" > "$OT_TMUX_CAPTURES/2"
-printf '%s\n' "$ECHO_SCREEN" > "$OT_TMUX_CAPTURES/3"
-printf '%s\n' "$READY_SCREEN" > "$OT_TMUX_CAPTURES/4"
-printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/5"
-set +e
-c6b_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=2 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c6b.err")
-c6b_code=$?
-set -e
-assert_eq "$c6b_code" "0" "dialog-then-ready path exits 0"
-assert_contains "$c6b_out" "Re-delivered brief to 'CC-737'" "re-delivery after dialog dismissal is reported"
-# Bare Enters: 1 at launch + 1 dialog dismissal nudge + 1 submitting the
-# re-sent brief. The brief itself is typed exactly once, after readiness.
-c6b_enters="$(grep -c "send-keys -t %7 Enter$" -- "$OT_TMUX_LOG" || true)"
-assert_eq "$c6b_enters" "3" "one dismissing Enter per dialog pass, none extra"
-c6b_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" -- "$OT_TMUX_LOG")"
-assert_eq "$c6b_resends" "1" "brief typed exactly once, after the composer is ready"
-
-# Case 7: the brief never leaves the echoed launch line (the TUI reaches a
-# ready composer but the re-sent brief never shows as submitted) — proves
-# the echoed command alone is NOT delivery evidence, and the lane fails
-# loudly with a nonzero exit.
-new_tmux_state c7
-printf '%s\n' "$ECHO_SCREEN" > "$OT_TMUX_CAPTURES/1"
-printf '%s\n' "$READY_SCREEN" > "$OT_TMUX_CAPTURES/2"
-printf '%s\n' "$READY_SCREEN" > "$OT_TMUX_CAPTURES/3"
-set +e
-c7_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c7.err")
-c7_code=$?
-set -e
-assert_eq "$c7_code" "1" "undelivered brief exits nonzero"
-c7_err="$(cat "$TMP_ROOT/c7.err")"
-assert_contains "$c7_err" "brief undelivered to 'CC-737'" "per-lane failure line names the lane"
-assert_contains "$c7_err" "handoff lane(s) failed" "summary reports the failed lane count"
-assert_not_contains "$c7_out" "Done: launched 1" "a failed lane is not counted as launched"
-c7_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" -- "$OT_TMUX_LOG")"
-assert_eq "$c7_resends" "1" "re-send is attempted exactly once before failing"
-
-# Case 8: the brief sitting unsent in the composer box is NOT delivery —
-# submission evidence (transcript activity) is required, so the lane re-sends
-# once and then fails when the screen never advances past the composer.
-new_tmux_state c8
-printf '%s\n' "$COMPOSER_SCREEN" > "$OT_TMUX_CAPTURES/1"
-set +e
-c8_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c8.err")
-c8_code=$?
-set -e
-assert_eq "$c8_code" "1" "composer-only screen exits nonzero"
-assert_contains "$(cat "$TMP_ROOT/c8.err")" "brief undelivered to 'CC-737'" \
-  "unsubmitted composer text is reported undelivered"
-# `|| true` keeps set -e alive when the buggy no-re-send path yields count 0
-# (grep -c still prints the 0 but exits 1).
-c8_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" -- "$OT_TMUX_LOG" || true)"
-assert_eq "$c8_resends" "1" "composer-only screen still gets exactly one re-send"
-
-# Case 8b: a huge retained pane (larger than a pipe buffer) with the
-# delivered brief near the START of history — a short-circuiting `grep -q`
-# scan would SIGPIPE its upstream under pipefail (exit 141) and misread the
-# submitted prompt as missing, duplicating the brief into a running session.
-new_tmux_state c8b
-{ printf '%s\n' "$DELIVERED_SCREEN"; awk 'BEGIN { for (i = 0; i < 20000; i++) print "transcript filler line" }'; } > "$OT_TMUX_CAPTURES/1"
-set +e
-c8b_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c8b.err")
-c8b_code=$?
-set -e
-assert_eq "$c8b_code" "0" "huge scrollback with an early delivered brief exits 0"
-c8b_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" -- "$OT_TMUX_LOG" || true)"
-assert_eq "$c8b_resends" "0" "no duplicate brief is sent into a running session"
-
-echo
-echo "=== open-terminal claude handoff: tmux failure detection ==="
-
-# Case 9: window creation fails — the lane must fail instead of verifying (and
-# counting) a pane that was never created.
-new_tmux_state c9
-printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
-set +e
-c9_out=$(TMUX=stub,1,0 OT_TMUX_FAIL=new-window ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c9.err")
-c9_code=$?
-set -e
-assert_eq "$c9_code" "1" "new-window failure exits nonzero"
-assert_contains "$(cat "$TMP_ROOT/c9.err")" "handoff lane(s) failed" \
-  "new-window failure counts the lane as failed"
-assert_not_contains "$c9_out" "Done: launched 1" \
-  "a window that was never created is not counted as launched"
-
-# Case 10: send-keys fails on a briefless (codex) lane — the empty-brief
-# early return must not count a window whose launch keystrokes failed.
-new_tmux_state c10
-set +e
-c10_out=$(TMUX=stub,1,0 OT_TMUX_FAIL=send-keys ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness codex cc-737 2>"$TMP_ROOT/c10.err")
-c10_code=$?
-set -e
-assert_eq "$c10_code" "1" "send-keys failure exits nonzero on a briefless lane"
-assert_not_contains "$c10_out" "Done: launched 1" \
-  "a lane whose launch keystrokes failed is not counted as launched"
-
-echo
-echo "=== open-terminal claude handoff: config validation ==="
-
-# Case 11: launch flags carrying shell metacharacters are rejected before
-# anything launches — the string is interpolated into a shell-executed launch
-# command, so it must never pass through unvalidated.
-CAP11="$TMP_ROOT/cap11"
-set +e
-c11_out=$(OT_CAPTURE="$CAP11" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--flag; touch $TMP_ROOT/pwned" cc-737 2>"$TMP_ROOT/c11.err")
-c11_code=$?
-set -e
-assert_eq "$c11_code" "1" "metacharacter launch flags refuse to launch"
-assert_contains "$(cat "$TMP_ROOT/c11.err")" "--launch-flags" \
-  "rejection names the offending option"
-if [[ -e "$TMP_ROOT/pwned" || -s "$CAP11" ]]; then
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  rejected launch flags still reached a shell or terminal launch\n'
-else
-  PASS=$((PASS + 1))
-  printf '  ok    nothing was launched with the rejected value\n'
-fi
-
-# Case 11b: a bracketed model id is an ordinary flag value, not a shell hazard.
-CAP11B="$TMP_ROOT/cap11b"
-set +e
-OT_CAPTURE="$CAP11B" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--model opus[1m] --dangerously-skip-permissions" cc-737 2>"$TMP_ROOT/c11b.err"
-c11b_code=$?
-set -e
-assert_eq "$c11b_code" "0" "a bracketed model id is accepted"
-
-# Case 11c: the rendered line is executed by a shell in the launch directory,
-# so a bracketed model id is glob syntax there. With the tokens unquoted, a
-# single same-named file in the worktree rewrites `opus[1m]` to `opus1` and the
-# lane starts on a model nobody chose. Run the captured command for real, with
-# the decoy planted, and read back the argv claude actually receives.
-if wait_capture "$CAP11B"; then
-  c11c_cmd="$(cat "$CAP11B")"
-  c11c_dir="$TMP_ROOT/globbait"
-  mkdir -p "$c11c_dir"
-  : > "$c11c_dir/opus1"
-  cat > "$BIN/claude" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$@" > "$OT_ARGV_CAPTURE"
-EOF
+# The rendered line is executed by a shell in the launch directory, so a
+# bracketed model id is glob syntax there. With the tokens unquoted, a single
+# same-named file in the worktree rewrites `opus[1m]` to `opus1` and the lane
+# starts on a model nobody chose. Launch with a bracketed model id, run the
+# captured command for real with the decoy planted, and read back the argv
+# claude receives.
+run gui - "--model opus[1m] --dangerously-skip-permissions" -
+if wait_capture; then
+  globbait="$TMP_ROOT/globbait"
+  mkdir -p "$globbait"
+  : > "$globbait/opus1"
+  printf '#!/usr/bin/env bash\nprintf '"'"'%%s\\n'"'"' "$@" > "$OT_ARGV_CAPTURE"\n' > "$BIN/claude"
   chmod +x "$BIN/claude"
-  c11c_argv="$TMP_ROOT/c11c.argv"
-  (cd "$c11c_dir" && OT_ARGV_CAPTURE="$c11c_argv" PATH="$BIN:$PATH" bash -lc "${c11c_cmd##*&& }") >/dev/null 2>&1 || true
-  assert_contains "$(cat "$c11c_argv" 2>/dev/null || true)" "opus[1m]" \
-    "the bracketed model id survives the shell that runs the launch command"
-  assert_not_contains "$(cat "$c11c_argv" 2>/dev/null || true)" "opus1" \
-    "a same-named file in the launch directory cannot rewrite the model id"
+  cmd="$(cat "$CAP")"
+  (cd "$globbait" && OT_ARGV_CAPTURE="$TMP_ROOT/argv" PATH="$BIN:$PATH" bash -lc "${cmd##*&& }") >/dev/null 2>&1 || true
   rm -f "$BIN/claude"
+  assert_eq "$(tr '\n' ' ' < "$TMP_ROOT/argv" 2>/dev/null || echo unrun)" "-n CC-737 --model opus[1m] --dangerously-skip-permissions $BRIEF " \
+    "the argv claude receives is the flags as given: a same-named file cannot rewrite the model id"
 else
   FAIL=$((FAIL + 1))
-  printf '  FAIL  bracketed model id case never invoked the terminal stub\n'
+  printf '  FAIL  the bracketed model id row never invoked the terminal stub, so its argv cannot be read\n'
 fi
 
-# Case 12: non-integer ORCH_TMUX_VERIFY_SECS is a clear config error, not a
-# zero-pass verify loop misreported as a delivery failure.
-new_tmux_state c12
-printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
-set +e
-c12_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=abc PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c12.err")
-c12_code=$?
-set -e
-assert_eq "$c12_code" "1" "non-integer verify secs exits nonzero"
-assert_contains "$(cat "$TMP_ROOT/c12.err")" "ORCH_TMUX_VERIFY_SECS" \
-  "verify-secs rejection names the setting"
-assert_not_contains "$(cat "$TMP_ROOT/c12.err")" "brief undelivered" \
-  "config error is not misreported as a delivery failure"
+echo "=== open-terminal claude handoff: tmux brief delivery ==="
+# The brief visible in the transcript on the first verification pass is
+# delivery: no re-send, and the capture includes scrollback (-S -), since a
+# fast response scrolling the prompt out of the viewport must not read as
+# undelivered. The brief only inside the echoed launch command is what a
+# dialog leaves: the launcher waits for a ready composer, sending one
+# dismissing Enter per dialog pass, types the brief once after readiness
+# (bare Enters: one at launch, one per dialog nudge, one submitting the
+# re-send; the verify loop consumes one screen per second before the
+# composer wait begins, so two dialog passes take five echo screens), and fails the lane loudly if the re-sent brief never shows as
+# submitted, or the composer never becomes ready. Unsent composer text is
+# not delivery either, nor a brief with no response begun. Each tmux step is
+# checked, and each failure names its own cause: a window never created, or launch keystrokes that failed on a
+# briefless lane, is a failed lane, never a launched one.
+launch_table \
+  "the brief visible on the first pass is delivery: no re-send, the flags sent, scrollback captured|tmux|-|--dangerously-skip-permissions|delivered|rc=0 out~Opened+tmux+window+'CC-737'=true out~Re-delivered=false log~'--dangerously-skip-permissions'+'$BRIEFN'=true log~capture-pane+-pJ+-S+-+-t+%7=true resends=0" \
+  "a dialog ate the brief: the launcher waits for a ready composer and re-sends exactly the start command once|tmux|-|-|echo,ready,delivered|rc=0 out~Re-delivered+brief+to+'CC-737'=true resends=1 fullresends=1" \
+  "two dialog passes before readiness: one dismissing Enter per pass, the brief typed once after|tmux|ORCH_TMUX_VERIFY_SECS=3|-|echo,echo,echo,echo,echo,ready,delivered|rc=0 out~Re-delivered+brief+to+'CC-737'=true enters=4 resends=1" \
+  "the echoed command alone is not delivery: one re-send, then a loud per-lane failure|tmux|-|-|echo,ready,ready|rc=1 stderr~brief+undelivered+to+'CC-737'=true stderr~handoff+lane(s)+failed=true out~Done:+launched+1=false resends=1" \
+  "unsent composer text is not delivery: one re-send, then the failure|tmux|-|-|composer|rc=1 stderr~brief+undelivered+to+'CC-737'=true resends=1" \
+  "the brief on a transcript line with no response begun is not delivery either|tmux|-|-|plain|rc=1 stderr~brief+undelivered+to+'CC-737'=true resends=1" \
+  "a composer that never becomes ready is a failed lane, named as stuck|tmux|-|-|echo,echo|rc=1 stderr~never+reached+a+ready+composer=true out~Done:+launched+1=false" \
+  "a huge scrollback with the delivered brief near its start is delivery: no duplicate brief|tmux|-|-|huge|rc=0 resends=0" \
+  "a window that was never created is a failed lane, not a launched one|tmux|OT_TMUX_FAIL=new-window|-|delivered|rc=1 stderr~new-window+failed=true stderr~handoff+lane(s)+failed=true out~Done:+launched+1=false" \
+  "launch keystrokes failing on a briefless lane is a failed lane too|tmux-codex|OT_TMUX_FAIL=send-keys|-|-|rc=1 stderr~send-keys+failed+launching=true out~Done:+launched+1=false"
 
-# Case 13: zero is rejected the same way (a zero-second loop never verifies).
-new_tmux_state c13
-printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
-set +e
-c13_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=0 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c13.err")
-c13_code=$?
-set -e
-assert_eq "$c13_code" "1" "zero verify secs exits nonzero"
-assert_contains "$(cat "$TMP_ROOT/c13.err")" "ORCH_TMUX_VERIFY_SECS" \
-  "zero rejection names the setting"
-
-# Case 13b: leading-zero values are base-10, not octal — '08' read as octal
-# errors the arithmetic ("value too great for base") and fails a healthy lane.
-new_tmux_state c13b
-printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
-set +e
-c13b_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=08 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c13b.err")
-c13b_code=$?
-set -e
-assert_eq "$c13b_code" "0" "leading-zero verify secs is base-10 and launches"
-assert_not_contains "$(cat "$TMP_ROOT/c13b.err")" "value too great" \
-  "no octal arithmetic error for '08'"
-
-# Case 13c: an overflow-sized value cannot dodge the clamp into negative
-# arithmetic (zero-pass loops + instant resend).
-new_tmux_state c13c
-printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
-set +e
-c13c_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=10000000000000000000 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c13c.err")
-c13c_code=$?
-set -e
-assert_eq "$c13c_code" "0" "overflow-sized verify secs still launches (clamped)"
-assert_contains "$(cat "$TMP_ROOT/c13c.err")" "clamped to 120" \
-  "overflow-sized value is clamped loudly"
-c13c_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" -- "$OT_TMUX_LOG" || true)"
-assert_eq "$c13c_resends" "0" "no instant resend from a zero-pass verify loop"
-
-# Case 13d: a broken tmux-only setting must not abort a GUI launch that
-# never reads it.
-CAP13D="$TMP_ROOT/cap13d"
-set +e
-c13d_out=$(ORCH_TMUX_VERIFY_SECS=abc OT_CAPTURE="$CAP13D" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude cc-737 2>"$TMP_ROOT/c13d.err")
-c13d_code=$?
-set -e
-assert_eq "$c13d_code" "0" "invalid verify secs does not abort a GUI launch"
-assert_not_contains "$(cat "$TMP_ROOT/c13d.err")" "ORCH_TMUX_VERIFY_SECS" \
-  "GUI launches never validate the tmux-only setting"
-
-# Case 13e: a broken tmux-only setting must not abort a tmux CODEX lane —
-# only Claude verification lanes read the timeout.
-new_tmux_state c13e
-set +e
-c13e_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=abc PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness codex cc-737 2>"$TMP_ROOT/c13e.err")
-c13e_code=$?
-set -e
-assert_eq "$c13e_code" "0" "invalid verify secs does not abort a tmux codex launch"
-assert_not_contains "$(cat "$TMP_ROOT/c13e.err")" "ORCH_TMUX_VERIFY_SECS" \
-  "non-claude tmux launches never validate the claude-verification timeout"
-
-# Case 14: a runaway value is clamped loudly (the lane still verifies)
-# instead of hanging the launch for hours.
-new_tmux_state c14
-printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
-set +e
-c14_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=99999 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c14.err")
-c14_code=$?
-set -e
-assert_eq "$c14_code" "0" "clamped verify secs still launches"
-assert_contains "$(cat "$TMP_ROOT/c14.err")" "clamped to 120" \
-  "runaway verify secs is clamped loudly"
+echo "=== open-terminal claude handoff: the verify timeout ==="
+# ORCH_TMUX_VERIFY_SECS is validated where it is read, and only there: a
+# non-integer or zero is a config error naming the setting, never a
+# zero-pass loop misreported as a delivery failure; leading zeros are base
+# 10, not octal, and never inflate the digit count into the clamp; a runaway or overflow-sized value is clamped loudly rather
+# than hanging the launch or wrapping into negative arithmetic and an
+# instant resend. A codex tmux lane never reads it.
+launch_table \
+  "a non-integer is a config error naming the setting, not a delivery failure|tmux|ORCH_TMUX_VERIFY_SECS=abc|-|delivered|rc=1 stderr~ORCH_TMUX_VERIFY_SECS=true stderr~brief+undelivered=false" \
+  "zero is rejected the same way|tmux|ORCH_TMUX_VERIFY_SECS=0|-|delivered|rc=1 stderr~ORCH_TMUX_VERIFY_SECS=true" \
+  "leading zeros are base 10, not octal, and do not count toward the clamp|tmux|ORCH_TMUX_VERIFY_SECS=0000000000000000008|-|delivered|rc=0 stderr~value+too+great=false stderr~clamped=false" \
+  "an overflow-sized value is clamped loudly, with no instant resend|tmux|ORCH_TMUX_VERIFY_SECS=10000000000000000000|-|delivered|rc=0 stderr~clamped+to+120=true resends=0" \
+  "a runaway value is clamped loudly and still verifies|tmux|ORCH_TMUX_VERIFY_SECS=99999|-|delivered|rc=0 stderr~clamped+to+120=true" \
+  "a codex tmux lane never validates the claude-verification timeout|tmux-codex|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=0 stderr~ORCH_TMUX_VERIFY_SECS=false"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
