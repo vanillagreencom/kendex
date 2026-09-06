@@ -12,10 +12,13 @@
 #
 # 2. The brief (initial '/orch start …' prompt) rides as a CLI arg; first-run
 #    dialogs (theme/trust/browser-integration) consume it, leaving a healthy
-#    TUI at an EMPTY composer. The tmux path must verify delivery by
-#    re-capturing the pane (the brief visible on a line other than the echoed
-#    launch command), re-send the brief once if absent, and emit a per-lane
-#    failure + nonzero exit if still absent.
+#    TUI at an EMPTY composer. The tmux path must verify the launch took by
+#    re-capturing the pane — the brief delivered (on a line other than the
+#    echoed launch command, with a response begun), or a turn in flight —
+#    re-send the brief once if neither shows, and emit a per-lane failure +
+#    nonzero exit if it still does not. A pane running a turn is a launched
+#    lane, reported as launched and never typed into. A first-run dialog is
+#    not, and animating a spinner does not make it one.
 #
 # The test runs a byte-identical copy of open-terminal inside a temp git repo
 # so `git rev-parse --show-toplevel` resolves to a hermetic PROJECT_ROOT, and
@@ -119,6 +122,9 @@ cp "$SRC_LIB_DIR"/*.sh "$REPO/scripts/lib/"
 chmod +x "$REPO/scripts/open-terminal"
 git -C "$REPO" init -q
 OT="$REPO/scripts/open-terminal"
+# Every row runs whatever binary this names; `mutant` repoints it at a copy
+# with the working predicate rewritten, and `unmutate` puts it back.
+OT_UNDER_TEST="$OT"
 
 # screen NAME — prints one pane capture, by name.
 #   echo       the brief appears ONLY inside the echoed launch command, which
@@ -133,6 +139,16 @@ OT="$REPO/scripts/open-terminal"
 #              on the composer-box filter alone
 #   plain      the brief on a plain transcript line with no response marker
 #              anywhere: UNDELIVERED on the activity requirement alone
+#   working    a turn in flight: the verb, the elapsed time and the streaming
+#              token counter the harness draws only while one runs. The brief
+#              is nowhere but the echoed launch command, the screen a long
+#              brief leaves once the TUI has redrawn its transcript line
+#              beyond recognition. LAUNCHED
+#   signin     a first-run sign-in step, animating the same spinner frame a
+#              running turn does and carrying no token counter, no interrupt
+#              hint, no brief and no composer. STUCK: the launcher's failure
+#              exit is what this pane needs, and a predicate keyed on the
+#              spinner would call it launched
 #   ready      the main TUI at a ready, EMPTY composer (the '? for shortcuts'
 #              footer is the readiness marker), where a re-send must land
 #   huge       delivered, then a pane larger than a pipe buffer: a
@@ -144,6 +160,8 @@ screen() {
     delivered) printf '%s\n' "> $BRIEF" '● Reading workflows/start.md' ;;
     composer) printf '%s\n' '● Reading workflows/start.md' '╭──────────────────────────────────────────╮' "│ > $BRIEF │" '╰──────────────────────────────────────────╯' '  ? for shortcuts' ;;
     plain) printf '%s\n' "> $BRIEF" '  ? for shortcuts' ;;
+    working) printf '%s\n' "\$ claude -n CC-737 '$BRIEF'" '✻ Orchestrating… (3s · ↓ 79 tokens · thinking with high effort)' ;;
+    signin) printf '%s\n' '  Select login method' '✻ Opening browser to sign in…' ;;
     ready) printf '%s\n' '╭──────────────────────────────────────────╮' '│ >                                         │' '╰──────────────────────────────────────────╯' '  ? for shortcuts' ;;
     huge) screen delivered; awk 'BEGIN { for (i = 0; i < 20000; i++) print "transcript filler line" }' ;;
     *) echo "screen: unknown capture $1" >&2; exit 1 ;;
@@ -189,7 +207,7 @@ run() {
   [[ "$flags" == - ]] || args+=(--launch-flags "$flags")
   if [[ "$mode" == github ]]; then args+=(42); else args+=(cc-737); fi
   set +e
-  OUT=$(env ${envs[@]+"${envs[@]}"} OT_CAPTURE="$CAP" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" "${args[@]}" 2>"$ERR")
+  OUT=$(env ${envs[@]+"${envs[@]}"} OT_CAPTURE="$CAP" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_UNDER_TEST" "${args[@]}" 2>"$ERR")
   RC=$?
   set -e
 }
@@ -242,6 +260,33 @@ observe() {
   set +f
   printf '%s' "${got# }"
 }
+
+# mutant NAME SED — stage open-terminal against a copy of lib/pane-working.sh
+# with SED applied, in a git repo of its own so PROJECT_ROOT still resolves
+# hermetically, and point every following row at it. `pane_working` is what
+# both controls rewrite, and it lives in that lib rather than in the script.
+# The copy is proven to differ from the original first, so a mutation whose
+# anchor moved cannot pass as a silent no-op.
+mutant() {
+  local name="$1" expr="$2" dir lib
+  dir="$TMP_ROOT/mutants/$name"
+  lib="$dir/scripts/lib/pane-working.sh"
+  mkdir -p "$dir/scripts/lib"
+  cp "$SRC_OT" "$dir/scripts/open-terminal"
+  cp "$SRC_LIB_DIR"/*.sh "$dir/scripts/lib/"
+  sed "$expr" "$SRC_LIB_DIR/pane-working.sh" > "$lib"
+  if cmp -s "$SRC_LIB_DIR/pane-working.sh" "$lib"; then
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  control: the %s mutant is byte-identical to pane-working.sh\n' "$name"
+  else
+    pass "control: the $name mutant really rewrites pane_working"
+  fi
+  chmod +x "$dir/scripts/open-terminal"
+  git -C "$dir" init -q
+  OT_UNDER_TEST="$dir/scripts/open-terminal"
+}
+
+unmutate() { OT_UNDER_TEST="$OT"; }
 
 # launch_table ROW... — `label|mode|env|flags|screens|expect`, one launch and
 # one assertion per row.
@@ -300,7 +345,11 @@ echo "=== open-terminal claude handoff: tmux brief delivery ==="
 # The brief visible in the transcript on the first verification pass is
 # delivery: no re-send, and the capture includes scrollback (-S -), since a
 # fast response scrolling the prompt out of the viewport must not read as
-# undelivered. The brief only inside the echoed launch command is what a
+# undelivered. A turn in flight is the other, independent proof, whether it
+# was running from the first pass or starts while the launcher waits for a
+# composer: launched, no re-send, and no further keystroke into a session that
+# would take it mid-turn. A first-run dialog is not a turn, however it
+# animates. The brief only inside the echoed launch command is what a
 # dialog leaves: the launcher waits for a ready composer, sending one
 # dismissing Enter per dialog pass, types the brief once after readiness
 # (bare Enters: one at launch, one per dialog nudge, one submitting the
@@ -317,10 +366,31 @@ launch_table \
   "the echoed command alone is not delivery: one re-send, then a loud per-lane failure|tmux|-|-|echo,ready,ready|rc=1 stderr~brief+undelivered+to+'CC-737'=true stderr~handoff+lane(s)+failed=true out~Done:+launched+1=false resends=1" \
   "unsent composer text is not delivery: one re-send, then the failure|tmux|-|-|composer|rc=1 stderr~brief+undelivered+to+'CC-737'=true resends=1" \
   "the brief on a transcript line with no response begun is not delivery either|tmux|-|-|plain|rc=1 stderr~brief+undelivered+to+'CC-737'=true resends=1" \
+  "a turn in flight is a launched lane whatever its transcript line reads as: no re-send|tmux|-|-|working|rc=0 out~Done:+launched+1=true resends=0 enters=1" \
+  "a lane that starts working while the launcher waits for a composer ends the wait launched, nothing typed into it|tmux|-|-|echo,working|rc=0 out~already+working=true resends=0 enters=1" \
   "a composer that never becomes ready is a failed lane, named as stuck|tmux|-|-|echo,echo|rc=1 stderr~never+reached+a+ready+composer=true out~Done:+launched+1=false" \
+  "a sign-in step animating a spinner is still a stuck lane, not a working one|tmux|-|-|signin|rc=1 stderr~never+reached+a+ready+composer=true out~Done:+launched+1=false" \
   "a huge scrollback with the delivered brief near its start is delivery: no duplicate brief|tmux|-|-|huge|rc=0 resends=0" \
   "a window that was never created is a failed lane, not a launched one|tmux|OT_TMUX_FAIL=new-window|-|delivered|rc=1 stderr~new-window+failed=true stderr~handoff+lane(s)+failed=true out~Done:+launched+1=false" \
   "launch keystrokes failing on a briefless lane is a failed lane too|tmux-codex|OT_TMUX_FAIL=send-keys|-|-|rc=1 stderr~send-keys+failed+launching=true out~Done:+launched+1=false"
+
+echo "=== the turn-in-flight reading can fail, both ways ==="
+# `pane_working` is the whole of it, so it is the mutation both controls take.
+# Cut it to always-false and the two working rows go back to the false alarm
+# this closed: a healthy mid-turn lane reported as a stuck composer, exit 1.
+mutant working-blind 's/^pane_working() {/pane_working() { return 1;/'
+launch_table \
+  "control: with the turn reading gone, a turn in flight fails as a stuck composer|tmux|-|-|working|rc=1 stderr~never+reached+a+ready+composer=true out~Done:+launched+1=false" \
+  "control: and so does a lane that starts working during the composer wait|tmux|-|-|echo,working|rc=1 stderr~never+reached+a+ready+composer=true"
+# Widen it to the spinner frames — the shape this fix was first written with —
+# and the failure exit stops covering the pane it is for: Claude Code animates
+# one frame set across every long-running screen, sign-in included, so the
+# stuck lane above reports launched and an unattended login prompt is called a
+# success.
+mutant working-spinner "s/^pane_working() {/pane_working() { grep -q '\xe2\x9c\xbb' <<<\"\$1\" \&\& return 0;/"
+launch_table \
+  "control: keyed on the spinner instead, the sign-in step reports launched|tmux|-|-|signin|rc=0 out~Done:+launched+1=true stderr~never+reached+a+ready+composer=false"
+unmutate
 
 echo "=== open-terminal claude handoff: the verify timeout ==="
 # ORCH_TMUX_VERIFY_SECS is validated where it is read, and only there: a
