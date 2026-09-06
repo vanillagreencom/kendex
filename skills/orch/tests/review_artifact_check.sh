@@ -43,6 +43,7 @@ body() {
     qa_inc_agent) printf '{"agent":"external-codex","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"looks fine","qa_metadata":{}}' ;;
     inc_type) printf '{"verdict":"pass","blockers":"none","suggestions":[],"qa_metadata":{}}' ;;
     inc_sugg) printf '{"verdict":"pass","blockers":[],"qa_metadata":{}}' ;;
+    inc_blk) printf '{"verdict":"pass","suggestions":[],"qa_metadata":{}}' ;;
     issue_bad) printf '{"agent":"reviewer-arch","verdict":"pass","blockers":[],"suggestions":[{"title":"Two resolvers coexist","location":"/abs/instrument_link.rs (instrument_name)","detail":"...","severity":"low"}],"qa_metadata":{"arch_review":{"overall_score":8.4,"pass":true}}}' ;;
     compliant) printf '{"verdict":"action_required","blockers":[{"id":1,"title":"t","location":"src/x.rs (`f`)","description":"d","recommendation":"r","priority":1,"estimate":2}],"suggestions":[{"id":1,"title":"t","location":"src/y.rs (`g`)","description":"d","recommendation":"r","priority":3,"estimate":2,"category":"fix"}],"qa_metadata":{}}' ;;
     nocat) printf '{"verdict":"pass","blockers":[],"suggestions":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":3,"estimate":2}],"qa_metadata":{}}' ;;
@@ -256,7 +257,7 @@ table \
   "malformed items without qa_metadata stay tolerant|F@none=noqa_bad|--file %F|reason=valid" \
   "arrays lost: the detail names both arrays as absent and the exempt shape|F@none=qa_inc|--file %F|ok=false reason=incomplete detail~blockers[]+is+absent=true detail~suggestions[]+is+absent=true detail~no+qa_metadata=true" \
   "a null blockers is reported as null, and what an empty review writes|F@none=null_blockers|--file %F|rc=1 reason=incomplete detail~blockers[]+is+null=true detail~writes+[]=true" \
-  "a missing blockers is reported as absent|F@none=inc_sugg|--file %F|detail~blockers[]+is+absent=false detail~suggestions[]+is+absent=true" \
+  "a missing blockers is reported as absent, and the present suggestions is not|F@none=inc_blk|--file %F|rc=1 reason=incomplete detail~blockers[]+is+absent=true detail~suggestions[]+is+absent=false" \
   "an object blockers is reported by type|F@none=obj_blockers|--file %F|rc=1 reason=incomplete detail~blockers[]+is+object,+not+an+array=true detail~writes+[]=true" \
   "a string blockers is reported by type|F@none=str_blockers|--file %F|rc=1 reason=incomplete detail~blockers[]+is+string,+not+an+array=true detail~writes+[]=true" \
   "a number blockers is reported by type|F@none=num_blockers|--file %F|rc=1 reason=incomplete detail~blockers[]+is+number,+not+an+array=true detail~writes+[]=true" \
