@@ -298,19 +298,21 @@ run_wait() {
 }
 
 json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
-needle() { printf '%s' "${1//_/ }"; }
+needle() { printf '%s' "${1//+/ }"; }
 
 # observe EXPECT — prints the run's value of every `name=` field EXPECT names,
 # in EXPECT's order, so a row compares as one string. Plain names are JSON
 # result fields; the derived names read the run's files or the output:
 #   passed / failed / pending   the length of that checks array
 #   check.<name>                the state of that check in any array, or
-#                               absent (`_` in the name reads as a space)
+#                               absent (`+` in the name reads as a space, so
+#                               an identifier's own underscores stay)
 #   count.<name>                how many entries carry that name
 #   out~<text>, stdout~<text>, stderr~<text>
 #                               whether the JSON, stdout or stderr carries
-#                               <text> (`_` reads as a space)
-#   stdout                      `line` when anything was printed, else `empty`
+#                               <text> (`+` reads as a space)
+#   stdout / stderr             `line` when anything was printed, else `empty`
+#   error_named                 whether the JSON error field is a non-empty string
 #   api_user_calls              `gh api user` validations the stub served
 #   checks_polls                `gh pr checks` reads the stub served
 #   repo_arg                    the --repo slug ci-wait passed to gh pr
@@ -335,6 +337,8 @@ observe() {
       out~*|stdout~*) value="$(grep -qF -- "$(needle "${name#*~}")" <<<"$OUT" && echo true || echo false)" ;;
       stderr~*) value="$(grep -qF -- "$(needle "${name#stderr~}")" "$RUN/stderr" && echo true || echo false)" ;;
       stdout) value="$([[ -n "$OUT" ]] && echo line || echo empty)" ;;
+      stderr) value="$([[ -s "$RUN/stderr" ]] && echo line || echo empty)" ;;
+      error_named) value="$(json '(.error | type) == "string" and .error != ""')" ;;
       api_user_calls) value="$(cat "$RUN/api-user-calls" 2>/dev/null || echo 0)" ;;
       checks_polls) value="$(cat "$RUN/checks-polls" 2>/dev/null || echo 0)" ;;
       repo_arg) value="$(cat "$RUN/repo-arg" 2>/dev/null || echo none)" ;;
@@ -394,12 +398,12 @@ echo "=== the auth ladder: env token, keyring, bot token ==="
 # token wins over a project op:// reference without reading it; a valid
 # selected token is validated once and ignores a stale keyring status.
 table "$JSON" \
-  'a stale GH_TOKEN is unset with a warning and the keyring works|||GH_TOKEN=bad-token|rc=0 verdict=pass stderr~unsetting_them=true' \
-  'no env tokens: the keyring works with no warning||||rc=0 verdict=pass stderr~unsetting_them=false' \
-  'stale token, keyring denied, no bot token: exit 3|envlocal=||GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 status=error' \
+  'a stale GH_TOKEN is unset with a warning and the keyring works|||GH_TOKEN=bad-token|rc=0 verdict=pass stderr~unsetting+them=true' \
+  'no env tokens: the keyring works with no warning||||rc=0 verdict=pass stderr~unsetting+them=false' \
+  'stale token, keyring denied, no bot token: exit 3 with a named error|envlocal=||GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 status=error error_named=true' \
   'stale token, keyring denied: .env.local GH_BOT_TOKEN recovers, each token validated once|envlocal=export GH_BOT_TOKEN=ghs_VALIDBOT123||GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1,STUB_GH_VALID_TOKEN=ghs_VALIDBOT123|rc=0 verdict=pass api_user_calls=2' \
   'an inherited GH_BOT_TOKEN wins over the project op:// reference, which is never read|envlocal=export GH_BOT_TOKEN=op://vault/github/bot||GH_BOT_TOKEN=ghs_ENVBOT123,STUB_GH_DENY_KEYRING=1,STUB_GH_VALID_TOKEN=ghs_ENVBOT123|rc=0 verdict=pass op_calls=none' \
-  'a valid selected token validates once and ignores a stale keyring status|||GH_TOKEN=ghs_VALIDUSER123,STUB_GH_VALID_TOKEN=ghs_VALIDUSER123,STUB_GH_AUTH_STATUS_FAIL=1|rc=0 verdict=pass stderr~unsetting_them=false api_user_calls=1'
+  'a valid selected token validates once and ignores a stale keyring status|||GH_TOKEN=ghs_VALIDUSER123,STUB_GH_VALID_TOKEN=ghs_VALIDUSER123,STUB_GH_AUTH_STATUS_FAIL=1|rc=0 verdict=pass stderr~unsetting+them=false api_user_calls=1'
 
 # A hanging keyring auth is bounded: the one case off the virtual clock, since
 # the hang is what is under test (STUB_CLOCK= sends the stub's sleep to the
@@ -423,19 +427,19 @@ table "$JSON" \
   "an EXPECTED check is pending until it clears||$JSON_SHORT|STUB_PR_CHECKS_MODE=expected_once|rc=0 verdict=pass checks_polls=2" \
   'a pass is complete with its checks listed||||rc=0 status=complete verdict=pass passed=1' \
   "checks still in progress at the deadline are a timeout||$JSON_SHORT|STUB_PR_CHECKS_MODE=pending_always|rc=1 status=timeout verdict=pending check.build=IN_PROGRESS" \
-  'no checks registered past the grace window is an error|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=3|rc=1 status=error' \
+  'no checks registered past the grace window is a named error|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=3|rc=1 status=error error_named=true' \
   "no checks registered inside the default grace window stays pending||$JSON_SHORT|STUB_PR_CHECKS_MODE=empty|rc=1 status=timeout verdict=pending" \
   'a settled failing check is a complete fail|||STUB_PR_CHECKS_MODE=failure|rc=1 status=complete verdict=fail check.build=FAILURE' \
-  'an auth failure with --json is a parseable error object|||GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 status=error'
+  'an auth failure with --json is a parseable error object naming its cause|||GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 status=error error_named=true'
 
 echo "=== text mode prints a result line for every terminal status ==="
 # The line beyond its leading words is not a contract anything parses; the
 # leading words are text-only, so a JSON default flip fails these rows.
 table '1 1 30' \
-  'passed||||rc=0 stdout~CI_passed=true' \
-  'failed|||STUB_PR_CHECKS_MODE=failure|rc=1 stdout~CI_failed=true' \
-  'timeout||1 1 5|STUB_PR_CHECKS_MODE=pending_always|rc=1 stdout~CI_timeout=true' \
-  'error|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=3|rc=1 stdout~CI_error=true'
+  'passed||||rc=0 stdout~CI+passed=true' \
+  'failed|||STUB_PR_CHECKS_MODE=failure|rc=1 stdout~CI+failed=true' \
+  'timeout||1 1 5|STUB_PR_CHECKS_MODE=pending_always|rc=1 stdout~CI+timeout=true' \
+  'error|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=3|rc=1 stdout~CI+error=true'
 
 echo "=== the repo slug falls back to the origin URL without its .git suffix ==="
 # When `gh repo view` answers empty, owner/repo comes from the origin URL; the
@@ -451,7 +455,7 @@ echo "=== checks are scoped to the latest run per workflow ==="
 # has only its classifier pending; once the newer run recreates a job by name,
 # that instance replaces the cancelled one.
 table "$JSON" \
-  "a superseded run's cancelled jobs are dropped, the current classifier stays pending||$JSON_SHORT|STUB_PR_CHECKS_MODE=superseded_pending|rc=1 status=timeout verdict=pending failed=0 check.Changes=IN_PROGRESS check.Lint=absent check.Linux_Integration=absent" \
+  "a superseded run's cancelled jobs are dropped, the current classifier stays pending||$JSON_SHORT|STUB_PR_CHECKS_MODE=superseded_pending|rc=1 status=timeout verdict=pending failed=0 check.Changes=IN_PROGRESS check.Lint=absent check.Linux+Integration=absent" \
   'a job the newer run recreated replaces the cancelled one by name|||STUB_PR_CHECKS_MODE=superseded_replaced|rc=0 verdict=pass failed=0 count.Lint=1 check.Lint=SUCCESS out~CANCELLED=false'
 
 echo "=== approval-gated run and status correlation ==="
@@ -460,11 +464,11 @@ echo "=== approval-gated run and status correlation ==="
 # with no fresh substantive run, fails at once when the approved run fails,
 # waits for the replacement status, and passes once it is published.
 table "$JSON" \
-  "an active approved run keeps the stale failure pending; an all-skipped later run does not supersede||$JSON_SHORT|STUB_PR_CHECKS_FIXTURE=$FX/stale-preapproval-active-approved.json,STUB_PR_CHECKS_EXIT=8|rc=1 status=timeout verdict=pending failed=0 check.CI_Required=EXPECTED check.Build=IN_PROGRESS out~SKIPPED=false" \
-  "no fresh substantive run: the pre-approval failure is terminal|||STUB_PR_CHECKS_FIXTURE=$FX/stale-preapproval-no-fresh-run.json,STUB_PR_CHECKS_EXIT=1|rc=1 status=complete verdict=fail check.CI_Required=FAILURE" \
+  "an active approved run keeps the stale failure pending; an all-skipped later run does not supersede||$JSON_SHORT|STUB_PR_CHECKS_FIXTURE=$FX/stale-preapproval-active-approved.json,STUB_PR_CHECKS_EXIT=8|rc=1 status=timeout verdict=pending failed=0 check.CI+Required=EXPECTED check.Build=IN_PROGRESS out~SKIPPED=false" \
+  "no fresh substantive run: the pre-approval failure is terminal|||STUB_PR_CHECKS_FIXTURE=$FX/stale-preapproval-no-fresh-run.json,STUB_PR_CHECKS_EXIT=1|rc=1 status=complete verdict=fail check.CI+Required=FAILURE" \
   "a failed approved run fails at once|||STUB_PR_CHECKS_FIXTURE=$FX/stale-preapproval-fresh-failed.json,STUB_PR_CHECKS_EXIT=1|rc=1 status=complete verdict=fail check.Build=FAILURE" \
-  "approved jobs passed but the aggregate lags: pending to the bounded timeout||$JSON_SHORT|STUB_PR_CHECKS_FIXTURE=$FX/stale-preapproval-status-lag.json,STUB_PR_CHECKS_EXIT=1|rc=1 status=timeout verdict=pending check.CI_Required=EXPECTED" \
-  "the replacement status published against the approved run passes|||STUB_PR_CHECKS_FIXTURE=$FX/approved-status-replaced.json|rc=0 status=complete verdict=pass check.CI_Required=SUCCESS failed=0"
+  "approved jobs passed but the aggregate lags: pending to the bounded timeout||$JSON_SHORT|STUB_PR_CHECKS_FIXTURE=$FX/stale-preapproval-status-lag.json,STUB_PR_CHECKS_EXIT=1|rc=1 status=timeout verdict=pending check.CI+Required=EXPECTED" \
+  "the replacement status published against the approved run passes|||STUB_PR_CHECKS_FIXTURE=$FX/approved-status-replaced.json|rc=0 status=complete verdict=pass check.CI+Required=SUCCESS failed=0"
 
 echo "=== a settled failure attributable only to superseded runs is correlated against the head's Actions runs ==="
 # The rollup can omit a newer same-head run entirely; an active newer
@@ -472,20 +476,20 @@ echo "=== a settled failure attributable only to superseded runs is correlated a
 # failures, a failed one or none at all stays terminal. The query scopes to
 # the current head.
 table "$JSON" \
-  "an active newer sibling keeps the cancelled run's failure pending, queried for the head||$JSON_SHORT|STUB_PR_CHECKS_FIXTURE=$FX/cancelled-review-run-checks.json,STUB_PR_CHECKS_EXIT=1,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-newer-sibling-active.json|rc=1 status=timeout verdict=pending failed=0 check.CI_Required=EXPECTED check.CI_Gate_Publisher=EXPECTED runs_head=$DEFAULT_HEAD" \
-  "a successful newer sibling discards the frozen failures and passes|||STUB_PR_CHECKS_FIXTURE=$FX/cancelled-review-run-status-replaced.json,STUB_PR_CHECKS_EXIT=1,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-newer-sibling-success.json|rc=0 status=complete verdict=pass failed=0 check.CI_Required=SUCCESS" \
-  "a failed newer sibling is terminal at once|||STUB_PR_CHECKS_FIXTURE=$FX/cancelled-review-run-checks.json,STUB_PR_CHECKS_EXIT=1,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-newer-sibling-failure.json|rc=1 status=complete verdict=fail check.CI_Required=FAILURE" \
-  "a cancelled run with no newer sibling fails closed|||STUB_PR_CHECKS_FIXTURE=$FX/cancelled-review-run-checks.json,STUB_PR_CHECKS_EXIT=1,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-cancelled-alone.json|rc=1 status=complete verdict=fail check.CI_Gate_Publisher=FAILURE"
+  "an active newer sibling keeps the cancelled run's failure pending, queried for the head||$JSON_SHORT|STUB_PR_CHECKS_FIXTURE=$FX/cancelled-review-run-checks.json,STUB_PR_CHECKS_EXIT=1,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-newer-sibling-active.json|rc=1 status=timeout verdict=pending failed=0 check.CI+Required=EXPECTED check.CI+Gate+Publisher=EXPECTED runs_head=$DEFAULT_HEAD" \
+  "a successful newer sibling discards the frozen failures and passes|||STUB_PR_CHECKS_FIXTURE=$FX/cancelled-review-run-status-replaced.json,STUB_PR_CHECKS_EXIT=1,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-newer-sibling-success.json|rc=0 status=complete verdict=pass failed=0 check.CI+Required=SUCCESS" \
+  "a failed newer sibling is terminal at once|||STUB_PR_CHECKS_FIXTURE=$FX/cancelled-review-run-checks.json,STUB_PR_CHECKS_EXIT=1,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-newer-sibling-failure.json|rc=1 status=complete verdict=fail check.CI+Required=FAILURE" \
+  "a cancelled run with no newer sibling fails closed|||STUB_PR_CHECKS_FIXTURE=$FX/cancelled-review-run-checks.json,STUB_PR_CHECKS_EXIT=1,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-cancelled-alone.json|rc=1 status=complete verdict=fail check.CI+Gate+Publisher=FAILURE"
 
 echo "=== a rerun attempt under an older run id is current-head work ==="
 # A rerun keeps its original run id and creation time, so no newer id exists;
-# the in-flight attempt keeps the wait pending, its completed success
-# supersedes through its fresher updated_at, its failure stays terminal.
+# the in-flight attempt keeps the wait pending and its completed success
+# supersedes through its fresher updated_at; a failed attempt is terminal by
+# the same arm the failed newer sibling above proves.
 RERUN="STUB_PR_CHECKS_EXIT=1,STUB_HEAD_SHA=$INCIDENT_HEAD"
 table "$JSON" \
-  "an in-flight attempt of an older run keeps the cancelled failure pending||$JSON_SHORT|STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-checks.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-active.json|rc=1 status=timeout verdict=pending failed=0 check.CI_Required=EXPECTED check.CI_Gate_Publisher=EXPECTED runs_head=$INCIDENT_HEAD" \
-  "a successful attempt supersedes through its fresher updated_at|||STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-status-replaced.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-success.json|rc=0 status=complete verdict=pass failed=0 check.CI_Required=SUCCESS" \
-  "a failed attempt is terminal at once|||STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-checks.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json|rc=1 status=complete verdict=fail check.CI_Required=FAILURE"
+  "an in-flight attempt of an older run keeps the cancelled failure pending||$JSON_SHORT|STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-checks.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-active.json|rc=1 status=timeout verdict=pending failed=0 check.CI+Required=EXPECTED check.CI+Gate+Publisher=EXPECTED runs_head=$INCIDENT_HEAD" \
+  "a successful attempt supersedes through its fresher updated_at|||STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-status-replaced.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-success.json|rc=0 status=complete verdict=pass failed=0 check.CI+Required=SUCCESS"
 
 echo "=== the transient-failure retry reads a log past the pipe buffer ==="
 # Under `gh ... | head -200`, head closing after its lines kills gh with
@@ -512,8 +516,11 @@ table "$JSON" \
 
 echo "=== argument validation ends in the parser, before any gh call ==="
 # The recording gh stub fails every call, so a case that reached auth or a
-# poll reads as calls > 0; an unknown flag absorbed into a positional would
-# die under set -u with another status.
+# poll reads as calls > 0. references/gates.md names each script's --help as
+# its authoritative contract, so the help row pins the exit-code table, the
+# no-CI route and the grace knob. The unknown flag follows complete
+# positionals: in a positional slot it would be refused as a non-integer, the
+# same exit, so only that shape proves the flag arm.
 mkdir -p "$TMP_ROOT/argbin"
 cat > "$TMP_ROOT/argbin/gh" <<EOF
 #!/usr/bin/env bash
@@ -522,13 +529,13 @@ exit 1
 EOF
 chmod +x "$TMP_ROOT/argbin/gh"
 arg_rows=(
-  '--help prints usage and exits 0|--help|rc=0 stdout=line gh_calls=0'
-  '-h is the same|-h|rc=0 stdout=line gh_calls=0'
-  'an unknown flag is refused in the parser|492 --timeout 2400|rc=2 stdout=empty gh_calls=0'
-  'a non-integer PR number is a usage error|abc|rc=2 stdout=empty gh_calls=0'
-  'a non-integer poll_interval is a usage error|1 abc 30|rc=2 stdout=empty gh_calls=0'
-  'a non-integer max_wait is a usage error|1 15 abc|rc=2 stdout=empty gh_calls=0'
-  'no arguments is a usage error||rc=2 stdout=empty gh_calls=0'
+  '--help prints the routed contract and exits 0|--help|rc=0 stdout~Exit+codes:=true stdout~no-CI+route=true stdout~CI_WAIT_NO_CHECKS_GRACE=true gh_calls=0'
+  '-h is the same|-h|rc=0 stdout~Exit+codes:=true gh_calls=0'
+  'an unknown flag after complete positionals is refused in the parser|1 1 30 --nope|rc=2 stdout=empty stderr=line gh_calls=0'
+  'a non-integer PR number is a usage error|abc|rc=2 stdout=empty stderr=line gh_calls=0'
+  'a non-integer poll_interval is a usage error|1 abc 30|rc=2 stdout=empty stderr=line gh_calls=0'
+  'a non-integer max_wait is a usage error|1 15 abc|rc=2 stdout=empty stderr=line gh_calls=0'
+  'no arguments is a usage error||rc=2 stdout=empty stderr=line gh_calls=0'
 )
 for row in "${arg_rows[@]}"; do
   IFS='|' read -r label args expect <<<"$row"
