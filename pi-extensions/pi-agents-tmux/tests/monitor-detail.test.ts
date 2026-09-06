@@ -13,8 +13,8 @@ after(cleanupTempRuntimes);
 
 const at = (minute: number) => `2026-05-14T05:${String(minute).padStart(2, "0")}:00.000Z`;
 const SESSION_LABELS = ["Agent", "Session type", "Session #", "Model", "Effort", "Session", "Start", "Latest", "Duration", "Tasks", "Usage", "Pane ID", "Transcript", "SessionKey"];
-// Start and Latest print local wall time; the row pins their presence as `<local>`.
-const LOCAL_TIME = /^[A-Z][a-z]{2} \d{1,2}, \d{2}:\d{2}$/;
+// Start and Latest print local wall time (the year only outside the current one); the row pins their presence as `<local>`.
+const LOCAL_TIME = /^[A-Z][a-z]{2} \d{1,2}(?: \d{4})?, \d{2}:\d{2}$/;
 
 function sessionDetail(records: PaneTaskRecord[], pick: string[], discovery?: { agents: ReturnType<typeof agent>[] }, groupIndex = 0): Record<string, string> {
 	const groups = buildMonitorSessionGroups(records);
@@ -107,10 +107,16 @@ test("the Summary tab's task number", async () => {
 	}
 });
 
-// The Completion tab as `section=first line` pairs plus the item's path and type.
+// The Completion tab as `section=body` pairs (body lines joined by `|`, up to the
+// blank line that ends the section) plus the item's path and type.
 function completionShape(item: { path?: string; type: string; text: string }): string {
 	const lines = item.text.split("\n");
-	const sections = lines.flatMap((line, index) => (/^-{3,}$/.test(lines[index + 1] ?? "") ? [`${line}=${lines[index + 2] ?? ""}`] : []));
+	const sections = lines.flatMap((line, index) => {
+		if (!/^-{3,}$/.test(lines[index + 1] ?? "")) return [];
+		const body: string[] = [];
+		for (let at = index + 2; at < lines.length && lines[at]!.trim() !== ""; at += 1) body.push(lines[at]!);
+		return [`${line}=${body.join("|")}`];
+	});
 	return `path=${item.path ?? ABSENT} type=${item.type} ${sections.join(" | ")}`;
 }
 
@@ -121,7 +127,7 @@ const completionRows: Array<[string, PaneTaskRecord, string]> = [
 	["a completion path adds the JSON section, unreadable here", fullRecord, "path=/tmp/planner-completion.json type=summary Summary=completed planner summary | Files changed=None reported | Validation=None reported | Completion JSON=Completion JSON file could not be read."],
 	["a bg record without a completion file has no JSON section", record("reviewer-doc", "reviewer-doc-1700000120-bg", at(2), { kind: "oneshot", sessionMode: "fresh", summary: "completed reviewer summary" }), `path=${ABSENT} type=summary Summary=completed reviewer summary | Files changed=None reported | Validation=None reported`],
 	["a persisted summary is printed whole", record("reviewer-arch", "reviewer-arch-1700000000-77abfc41", at(0), { summary: longSummary, transcriptPath: "/tmp/reviewer-arch.jsonl" }), `path=${ABSENT} type=summary Summary=${longSummary} | Files changed=None reported | Validation=None reported`],
-	["files and validation are listed", record("rust", "rust-1700000000-11111111", at(0), { summary: "done", filesChanged: ["a.rs", "b.rs"], validation: ["cargo test"] }), `path=${ABSENT} type=summary Summary=done | Files changed=- a.rs | Validation=- cargo test`],
+	["files and validation are listed", record("rust", "rust-1700000000-11111111", at(0), { summary: "done", filesChanged: ["a.rs", "b.rs"], validation: ["cargo test"] }), `path=${ABSENT} type=summary Summary=done | Files changed=- a.rs|- b.rs | Validation=- cargo test`],
 	["a completed record without a summary reads unavailable", record("rust", "rust-1700000000-22222222", at(0), {}), `path=${ABSENT} type=summary Summary=completion summary unavailable; see transcript | Files changed=None reported | Validation=None reported`],
 	["a running record has no summary yet", record("rust", "rust-1700000000-33333333", at(0), { status: "running", completedAt: undefined }), `path=${ABSENT} type=summary Summary=No summary yet. | Files changed=None reported | Validation=None reported`],
 ];
@@ -144,8 +150,8 @@ test("the Transcript tab exists only with a transcript path and reads the file",
 	const missing = await traceViewerItems(record("planner", "planner-1700000120-missing", at(2), { transcriptPath: "/tmp/planner-transcript.jsonl", summary: "s" }), 1);
 	const none = await traceViewerItems(record("planner", "planner-1700000120-none", at(2), { summary: "s" }), 1);
 	assert.deepEqual(
-		[withFile.map((item) => item.label), withFile[2]!.type, withFile[2]!.path, /assistant · done with follow-up/.test(withFile[2]!.text), missing[2]!.text, none.map((item) => item.label)],
-		[["Summary", "Completion", "Transcript"], "transcript", transcript, true, "Transcript file could not be read.", ["Summary", "Completion"]],
+		[withFile.map((item) => item.label), withFile[2]!.type, withFile[2]!.path, /input \(follow-up, extension\) · Please follow up after current turn/.test(withFile[2]!.text), /assistant · done with follow-up/.test(withFile[2]!.text), missing[2]!.text, none.map((item) => item.label)],
+		[["Summary", "Completion", "Transcript"], "transcript", transcript, true, true, "Transcript file could not be read.", ["Summary", "Completion"]],
 	);
 });
 

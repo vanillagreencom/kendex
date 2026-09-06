@@ -25,7 +25,14 @@ function summaryField(item: PaneTaskRecord | undefined): string {
 	return Object.prototype.hasOwnProperty.call(item, "summary") ? JSON.stringify(item.summary) : ABSENT;
 }
 
-// label | transcript lines (none = the path does not exist) | record patch | registry-copy patch | expect `updated result-summary registry-summary`
+// Everything but the summary and the write stamp, for the "nothing else moved" fact.
+function rest(item: PaneTaskRecord | undefined): string {
+	if (!item) return ABSENT;
+	const { summary: _summary, updatedAt: _updatedAt, ...other } = item;
+	return JSON.stringify(other, Object.keys(other).sort());
+}
+
+// label | transcript lines (none = the path does not exist) | record patch | registry-copy patch | expect `updated result-summary registry-summary`; every row also pins that nothing else on either record moved
 const rows: Array<[string, string[] | undefined, Partial<PaneTaskRecord>, Partial<PaneTaskRecord>, string]> = [
 	["a completed record takes the last assistant text", assistantLines, {}, {}, 'true "Final summary\\nwith details" "Final summary\\nwith details"'],
 	["a corrupt transcript changes nothing", ["{not json"], {}, {}, `false ${ABSENT} ${ABSENT}`],
@@ -49,6 +56,7 @@ test("summary backfill from the transcript", async () => {
 
 		const result = await backfillTaskSummaryFromTranscript(runtimeRoot, taskRecord);
 		const stored = (await readTaskRegistry(runtimeRoot))[taskId];
-		assert.equal(`${result.updated} ${summaryField(result.record)} ${summaryField(stored)}`, expect, label);
+		const untouched = rest(result.record) === rest(taskRecord) && rest(stored) === rest(taskRecord) ? "rest-same" : "rest-changed";
+		assert.equal(`${result.updated} ${summaryField(result.record)} ${summaryField(stored)} ${untouched}`, `${expect} rest-same`, label);
 	}
 });

@@ -45,13 +45,14 @@ const INSPECTOR_LABELS = ["Kind", "Scope", "Model", "Effort", "Deny tools", "Col
 
 // The Inspector's first line, its labelled lines (the pane's clock time
 // normalised) and whether the prompt body follows the System Prompt heading.
-function inspector(config: AgentConfig, paneStatuses: Map<string, AgentPaneStatus>): { first: string; lines: Record<string, string>; prompt: boolean } {
+function inspector(config: AgentConfig, paneStatuses: Map<string, AgentPaneStatus>): { first: string; description: string; lines: Record<string, string>; prompt: boolean } {
 	const rendered = renderAgentInspector(config, paneStatuses, uiState(), 120, 40, theme as any).map(stripAnsi);
 	const text = rendered.join("\n");
 	const lines = fields(labelledLines(text), INSPECTOR_LABELS);
 	lines.Pane = lines.Pane!.replace(/\d{2}:\d{2}/, "<clock>");
 	return {
 		first: rendered[0]!.replace(/\s+/g, " ").trim(),
+		description: rendered[2]!.trim(),
 		lines,
 		prompt: /System Prompt\n[\s\S]*Planner system prompt body\./.test(text),
 	};
@@ -71,11 +72,12 @@ const liveWithTask = statuses([["planner", livePaneStatus("planner", { lastTaskA
 
 // label | config | statuses | expect
 const inspectorRows: Array<[string, AgentConfig, Map<string, AgentPaneStatus>, ReturnType<typeof inspector>]> = [
-	["a live pane with a task shows static config only", full, liveWithTask, { first: "Inspector planner", lines: { ...fullLines, Pane: "running (started <clock>)" }, prompt: true }],
-	["a stopped pane", full, statuses([["planner", livePaneStatus("planner", {}, false)]]), { first: "Inspector planner", lines: { ...fullLines, Pane: "stopped" }, prompt: true }],
-	["an unstarted pane", full, statuses([]), { first: "Inspector planner", lines: { ...fullLines, Pane: "not started" }, prompt: true }],
+	["a live pane with a task shows static config only", full, liveWithTask, { first: "Inspector planner", description: "Plans implementation work.", lines: { ...fullLines, Pane: "running (started <clock>)" }, prompt: true }],
+	["a stopped pane", full, statuses([["planner", livePaneStatus("planner", {}, false)]]), { first: "Inspector planner", description: "Plans implementation work.", lines: { ...fullLines, Pane: "stopped" }, prompt: true }],
+	["an unstarted pane", full, statuses([]), { first: "Inspector planner", description: "Plans implementation work.", lines: { ...fullLines, Pane: "not started" }, prompt: true }],
 	["a bg agent with defaults; effort read off the model suffix", agent("scout", false, { systemPrompt: "Planner system prompt body.", model: "openai-codex/gpt-6-astra:xhigh" }), statuses([]), {
 		first: "Inspector scout",
+		description: "scout agent",
 		lines: { Kind: "bg", Scope: "project", Model: "openai-codex/gpt-6-astra", Effort: "xhigh", "Deny tools": "none", Color: "default", "Source path": "scout.md", Pane: ABSENT, "Task ID": ABSENT, Transcript: ABSENT, "Latest Message": ABSENT, "Last task": ABSENT, "Pane session": ABSENT },
 		prompt: true,
 	}],
