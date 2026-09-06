@@ -114,6 +114,7 @@ table() {
   local row label env args expect
   for row in "$@"; do
     IFS='|' read -r label env args expect <<<"$row"
+    [[ -n "$expect" ]] || { printf 'table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
     # shellcheck disable=SC2086
     run_lanes "$env" $args
     assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
@@ -282,6 +283,7 @@ claims_table() {
   local row label panes claims perm args expect
   for row in "$@"; do
     IFS='|' read -r label panes claims perm args expect <<<"$row"
+    [[ -n "$expect" ]] || { printf 'claims_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
     RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"; mkdir -p "$RUN"
     stage_panes "$panes"
     stage_claims "$claims"
