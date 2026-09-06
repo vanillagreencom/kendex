@@ -2892,6 +2892,22 @@ ensure_base_start_point() {
     echo "Error: refs/pull/$pr/head on origin did not deliver commit $head_oid, the head gh reports for PR #$pr" >&2
     return 1
   fi
+  ensure_fork_branch_resettable "$pr" "$base" "$head_oid"
+}
+
+# A fork PR's local branch survives `remove` while the PR is open, so a
+# second inspection finds it. The fork add resets it to the PR head; that is
+# lossless only when every commit on the stale branch is in the PR head. A
+# branch that diverged (local commits, or another contributor's branch of
+# the same name) is refused by name rather than reset.
+ensure_fork_branch_resettable() {
+  local pr="$1" base="$2" head_oid="$3"
+  git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/heads/$base" >/dev/null || return 0
+  if git -C "$PROJECT_ROOT" merge-base --is-ancestor "refs/heads/$base" "$head_oid" 2>/dev/null; then
+    return 0
+  fi
+  echo "Error: Local branch '$base' has commits that are not in the head of fork PR #$pr; delete or rename that branch before inspecting the PR again." >&2
+  return 1
 }
 
 CANDIDATE_BRANCHES=()
@@ -3915,8 +3931,10 @@ case "${1:-}" in
       mkdir -p "$TREES_DIR"
       if [[ -n "$PR_HEAD_OID" ]]; then
         # A fork head has no origin branch to track; the local branch keeps
-        # the contributor's name and no upstream.
-        git -C "$PROJECT_ROOT" worktree add --no-track -b "$BASE" "$WT_PATH" "$PR_HEAD_OID" >/dev/null 2>&1
+        # the contributor's name and no upstream. -B resets the branch a
+        # previous inspection left behind; ensure_fork_branch_resettable has
+        # already refused a branch that reset would lose commits from.
+        git -C "$PROJECT_ROOT" worktree add --no-track -B "$BASE" "$WT_PATH" "$PR_HEAD_OID" >/dev/null 2>&1
       else
         git -C "$PROJECT_ROOT" worktree add --track -b "$BASE" "$WT_PATH" "origin/$BASE" >/dev/null 2>&1 || \
           git -C "$PROJECT_ROOT" worktree add "$WT_PATH" "$BASE" >/dev/null 2>&1
@@ -3938,9 +3956,10 @@ case "${1:-}" in
 
     release_issue_claim_lock
 
-    # Set upstream tracking if remote branch exists
+    # Set upstream tracking if remote branch exists. A fork PR branch keeps
+    # no upstream even when origin has an unrelated branch of the same name.
     CREATED_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
-    if [[ -n "$CREATED_BRANCH" ]]; then
+    if [[ -n "$CREATED_BRANCH" && -z "$PR_HEAD_OID" ]]; then
       _REMOTE="${BOT_REMOTE_NAME:-origin}"
       if git -C "$WT_PATH" rev-parse --verify "$_REMOTE/$CREATED_BRANCH" &>/dev/null; then
         git -C "$WT_PATH" branch --set-upstream-to="$_REMOTE/$CREATED_BRANCH" "$CREATED_BRANCH" >/dev/null 2>&1 || true

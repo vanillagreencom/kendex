@@ -168,6 +168,47 @@ assert_eq "$same_out" "$SAME_WT" "same-repository PR prints the worktree path"
 assert_eq "$(git -C "$SAME_WT" rev-parse HEAD 2>/dev/null || true)" "$SAME_HEAD" "same-repository worktree HEAD is the origin branch tip"
 assert_eq "$(git -C "$SAME_WT" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)" "origin/feat/same" "same-repository branch tracks its origin branch"
 
+# Inspecting the same fork PR again: `remove` keeps the local branch while the
+# PR is open, the contributor has pushed since, and origin has meanwhile grown
+# an unrelated branch of the same name. The second create resets the stale
+# branch to the new head and still sets no upstream.
+printf 'fork fix 2\n' >>"$ROOT/fork/fix.txt"
+git -C "$ROOT/fork" commit -q -am 'fork fix 2'
+FORK_HEAD_2="$(git -C "$ROOT/fork" rev-parse HEAD)"
+git -C "$ROOT/fork" push -q -f origin "HEAD:refs/pull/7/head"
+pr_doc 7 fix/widget-expiry "$FORK_HEAD_2" true
+git -C "$ROOT/main" push -q origin "main:refs/heads/fix/widget-expiry"
+(cd "$ROOT/main" && "$WORKTREE_SCRIPT" remove issue-fork >/dev/null 2>&1) || true # exits 1: the open PR's branch stays
+assert_path_absent "$FORK_WT" "remove clears the fork worktree"
+assert_eq "$(git -C "$ROOT/main" rev-parse --verify --quiet refs/heads/fix/widget-expiry || true)" "$FORK_HEAD" "remove keeps the open PR's local branch at the first head"
+set +e
+again_out="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-fork --pr 7 2>"$ROOT/again.err")"
+again_code=$?
+set -e
+assert_eq "$again_code:$again_out" "0:$FORK_WT" "re-inspecting the fork PR after remove creates the worktree again (stderr: $(tr '\n' ' ' <"$ROOT/again.err"))"
+assert_eq "$(git -C "$FORK_WT" rev-parse HEAD 2>/dev/null || true)" "$FORK_HEAD_2" "re-inspected worktree HEAD is the contributor's new head"
+set +e
+again_upstream="$(git -C "$FORK_WT" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)"
+again_upstream_code=$?
+set -e
+assert_eq "$again_upstream_code:$again_upstream" "128:" "an unrelated origin branch of the same name does not become the upstream"
+
+# A local branch that diverged from the PR head is refused by name, not reset.
+git -C "$FORK_WT" config user.email test@example.com
+git -C "$FORK_WT" config user.name Test
+git -C "$FORK_WT" config commit.gpgsign false
+printf 'local only\n' >"$FORK_WT/local.txt"
+git -C "$FORK_WT" add local.txt
+git -C "$FORK_WT" commit -q -m 'local only'
+(cd "$ROOT/main" && "$WORKTREE_SCRIPT" remove issue-fork >/dev/null 2>&1) || true # exits 1: the open PR's branch stays
+set +e
+(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-fork --pr 7 >"$ROOT/diverged.out" 2>"$ROOT/diverged.err")
+diverged_code=$?
+set -e
+assert_eq "$diverged_code" "1" "a diverged local branch refuses the fork checkout with exit 1"
+assert_contains "$(cat "$ROOT/diverged.err")" "Local branch 'fix/widget-expiry' has commits that are not in the head of fork PR #7" "the refusal names the diverged branch"
+assert_path_absent "$FORK_WT" "a diverged local branch creates no worktree"
+
 # A fork head the base cannot deliver refuses before any worktree exists:
 #   number  issue            message fragment
 rows=(
