@@ -88,10 +88,11 @@ const INSTALL_DECLARATION: &str = "source";
 /// The `[bundles]` table of a catalog's own `kendex.toml`: the sets it
 /// offers, and the ones this reader will not read.
 ///
-/// A set is only ever as real as what comes out of this, so no body KEY is
-/// skipped — a key skipped is a member the set silently loses, which is how
-/// `members = [...]` shipped as four sets that installed nothing. A member
-/// list holding something other than names still reads as the names it has.
+/// A set is only ever as real as what comes out of this, so no body and no
+/// body KEY is skipped — a key skipped is a member the set silently loses,
+/// which is how `members = [...]` shipped as four sets that installed
+/// nothing, and a body skipped is the whole set gone. A member list holding
+/// anything but names is that set's breakage, never the names it has.
 /// One unreadable body costs the other sets and every item nothing to
 /// install; what it costs a removal is [`SourceConfig::hides_content`].
 pub(super) fn declared(
@@ -107,6 +108,16 @@ pub(super) fn declared(
     };
     for (name, body) in declared {
         let Some(body) = body.as_table() else {
+            unreadable.insert(
+                name.clone(),
+                UnreadableBundle {
+                    problem: format!("{} is not a table", at(name)),
+                    fix: format!(
+                        "write it as a table, with a description and its members under one of: {}",
+                        member_list_keys()
+                    ),
+                },
+            );
             continue;
         };
         // One file is both when a project offers what it installs: the
@@ -132,6 +143,12 @@ pub(super) fn declared(
     (bundles, unreadable)
 }
 
+/// How a set is named back to the author who wrote it, in every problem
+/// this reader reports about its body.
+fn at(name: &str) -> String {
+    format!("`[bundles.{}]`", crate::names::shown(name))
+}
+
 /// One `[bundles.<name>]` body as the set it declares: its keys first, so a
 /// body naming a list this reader does not have is reported rather than read
 /// for the lists it does have.
@@ -139,7 +156,7 @@ fn read_set(
     name: &str,
     body: &toml::Table,
 ) -> std::result::Result<CatalogBundle, UnreadableBundle> {
-    let at = format!("`[bundles.{}]`", crate::names::shown(name));
+    let at = at(name);
     for key in body.keys() {
         if key == DESCRIPTION || MEMBER_LISTS.iter().any(|(list, _)| list == key) {
             continue;
@@ -163,14 +180,21 @@ fn read_set(
     }
     let mut members = Vec::new();
     for (list, kind) in MEMBER_LISTS {
-        let Some(names) = body.get(list).and_then(toml::Value::as_array) else {
+        let Some(value) = body.get(list) else {
             continue;
         };
-        for member in names.iter().filter_map(toml::Value::as_str) {
-            members.push(BundleMember {
-                kind,
-                name: member.to_owned(),
+        // All-or-nothing, the rule `[catalog] skills` already gets: a value
+        // that is not an array of names read for the names it happens to
+        // hold is a set that installs fewer members than it was written
+        // with, and says nothing about the ones it dropped.
+        let Some(names) = super::config::string_list(Some(value)) else {
+            return Err(UnreadableBundle {
+                problem: format!("{at} writes `{list}` as something other than a list of names"),
+                fix: format!("write `{list}` as an array of strings, or remove the key"),
             });
+        };
+        for member in names {
+            members.push(BundleMember { kind, name: member });
         }
     }
     Ok(CatalogBundle {

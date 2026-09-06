@@ -297,7 +297,7 @@ fn read_tables(config: &mut SourceConfig, table: &toml::Table) {
 
 /// A list of strings and nothing else — a member of any other type makes
 /// the whole value unreadable rather than a shorter list.
-fn string_list(value: Option<&toml::Value>) -> Option<Vec<String>> {
+pub(super) fn string_list(value: Option<&toml::Value>) -> Option<Vec<String>> {
     let list = value?.as_array()?;
     list.iter().map(|v| v.as_str().map(str::to_owned)).collect()
 }
