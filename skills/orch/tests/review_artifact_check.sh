@@ -50,7 +50,7 @@ body() {
     badblk) printf '{"verdict":"action_required","blockers":[{"id":1,"title":"t","location":"l","recommendation":"r","priority":1,"estimate":2}],"suggestions":[],"qa_metadata":{}}' ;;
     okblk) printf '{"verdict":"action_required","blockers":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":1,"estimate":2}],"suggestions":[],"qa_metadata":{}}' ;;
     badpri) printf '{"verdict":"pass","blockers":[],"suggestions":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":5,"estimate":2,"category":"fix"}],"qa_metadata":{}}' ;;
-    badest) printf '{"verdict":"pass","blockers":[],"suggestions":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":2,"estimate":"2","category":"issue"}],"qa_metadata":{}}' ;;
+    badest) printf '{"verdict":"pass","blockers":[],"suggestions":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":2,"estimate":"2","category":"fix"}],"qa_metadata":{}}' ;;
     badblkpri) printf '{"verdict":"action_required","blockers":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":0,"estimate":3}],"suggestions":[],"qa_metadata":{}}' ;;
     okbound) printf '{"verdict":"pass","blockers":[],"suggestions":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":4,"estimate":5,"category":"fix"}],"qa_metadata":{}}' ;;
     noqa_bad) printf '{"verdict":"pass","suggestions":[{"title":"t","location":"l"}]}' ;;
@@ -169,6 +169,7 @@ table \
   "no artifact at all is missing||$GLOB|rc=1 ok=false path=null reason=missing" \
   "another agent's fresh artifact does not count|review-reviewer-arch-1@after=pass|$GLOB|rc=1 reason=missing" \
   "an artifact older than the boundary is stale and named|$Q-1@before=pass|$GLOB|rc=1 ok=false path=$Q-1.json reason=stale" \
+  "an mtime equal to the boundary is fresh in glob mode too|$Q-1@at=pass|$GLOB|rc=0 ok=true reason=valid" \
   "a fresh artifact without a verdict is invalid and named|$Q-1@before=pass;$Q-2@after=noverdict|$GLOB|rc=1 path=$Q-2.json reason=invalid" \
   "a fresh valid artifact wins over stale and invalid siblings|$Q-1@before=pass;$Q-2@after=noverdict;$Q-3@later=action|$GLOB|rc=0 ok=true path=$Q-3.json reason=valid" \
   "a newest unparseable file falls back to the older fresh valid one|$Q-3@later=action;$Q-4@later2=notjson|$GLOB|rc=0 ok=true path=$Q-3.json reason=valid"
@@ -190,9 +191,9 @@ table \
 
 echo "=== a self-reported no-review artifact is refused, and terminally ==="
 # review_performed=false, or a no-review reason alone, is an admission
-# whatever the verdict; no qa_metadata keeps the existence-plus-verdict
-# tolerance; an empty qa_metadata with the arrays, or review_performed=true,
-# validates. In glob mode the refusal is terminal: no_review is the
+# whatever the verdict (no qa_metadata at all keeps the existence-plus-verdict
+# tolerance the file-mode table proves); an empty qa_metadata with the arrays,
+# or review_performed=true, validates. In glob mode the refusal is terminal: no_review is the
 # reviewer's self-report about THIS run, so an older fresh sibling does not
 # rescue it; a STALE no-review artifact does not block a fresh valid one.
 E=review-reviewer-ext
@@ -200,7 +201,6 @@ table \
   "review_performed=false|F@after=noreview|--file %F|rc=1 ok=false path=review-external-F.json reason=no_review" \
   "a no-review reason alone|F@none=noreview_reason|--file %F|rc=1 reason=no_review" \
   "review_performed=false alone, arrays present, is still no_review|F@none=noreview_flag|--file %F|rc=1 reason=no_review" \
-  "no qa_metadata at all still validates|F@none=pass|--file %F|ok=true reason=valid" \
   "empty qa_metadata with the arrays validates|F@none=qa_ok|--file %F|reason=valid" \
   "review_performed=true validates|F@none=performed|--file %F|reason=valid" \
   "glob: a fresh no-review artifact is refused and named|$E-1@after=noreview|%W reviewer-ext %D|rc=1 path=$E-1.json reason=no_review" \
@@ -243,19 +243,18 @@ echo "=== a qa-shaped artifact must carry usable finding items, and the detail s
 # terminally, and a STALE one does not block a fresh well-formed one.
 T=review-reviewer-item
 table \
-  "the issue's malformed suggestion is incomplete, the detail names the item and the missing category|F@none=issue_bad|--file %F|rc=1 ok=false path=review-external-F.json reason=incomplete detail~suggestions[0]=true detail~category=true" \
+  "the issue's malformed suggestion is incomplete, the detail names the item and the missing category|F@none=issue_bad|--file %F|rc=1 ok=false path=review-external-F.json reason=incomplete detail~suggestions[0]=true detail~missing/invalid+id,+description,+recommendation,+priority,+estimate,+category=true" \
   "a fully compliant artifact is valid and carries no detail key|F@none=compliant|--file %F|ok=true reason=valid detail=ABSENT" \
-  "empty arrays carry no items and stay valid|F@none=qa_ok_noq|--file %F|reason=valid" \
-  "a suggestion missing only category|F@none=nocat|--file %F|rc=1 reason=incomplete detail~category=true" \
+  "a suggestion missing only category|F@none=nocat|--file %F|rc=1 reason=incomplete detail~missing/invalid+category=true" \
   "a category outside fix and issue|F@none=badcatval|--file %F|rc=1 reason=incomplete" \
-  "a blocker missing a base field, named|F@none=badblk|--file %F|rc=1 reason=incomplete detail~blockers[0]=true detail~description=true" \
+  "a blocker missing a base field, named|F@none=badblk|--file %F|rc=1 reason=incomplete detail~blockers[0]=true detail~missing/invalid+description=true" \
   "a blocker without category is valid|F@none=okblk|--file %F|reason=valid" \
-  "a priority outside 1..4, named|F@none=badpri|--file %F|rc=1 reason=incomplete detail~priority=true" \
-  "a string estimate, named|F@none=badest|--file %F|rc=1 detail~estimate=true" \
+  "a priority outside 1..4, named|F@none=badpri|--file %F|rc=1 reason=incomplete detail~missing/invalid+priority=true" \
+  "a string estimate, named|F@none=badest|--file %F|rc=1 reason=incomplete detail~missing/invalid+estimate(not+1..5)=true" \
   "a blocker priority below the range, named on its array|F@none=badblkpri|--file %F|rc=1 detail~blockers[0]=true" \
   "the boundary values priority 4 and estimate 5 are valid|F@none=okbound|--file %F|reason=valid" \
   "malformed items without qa_metadata stay tolerant|F@none=noqa_bad|--file %F|reason=valid" \
-  "arrays lost: the detail names both arrays as absent and the exempt shape|F@none=qa_inc|--file %F|reason=incomplete detail~blockers[]+is+absent=true detail~suggestions[]+is+absent=true detail~no+qa_metadata=true" \
+  "arrays lost: the detail names both arrays as absent and the exempt shape|F@none=qa_inc|--file %F|ok=false reason=incomplete detail~blockers[]+is+absent=true detail~suggestions[]+is+absent=true detail~no+qa_metadata=true" \
   "a null blockers is reported as null, and what an empty review writes|F@none=null_blockers|--file %F|rc=1 reason=incomplete detail~blockers[]+is+null=true detail~writes+[]=true" \
   "a missing blockers is reported as absent|F@none=inc_sugg|--file %F|detail~blockers[]+is+absent=false detail~suggestions[]+is+absent=true" \
   "an object blockers is reported by type|F@none=obj_blockers|--file %F|rc=1 reason=incomplete detail~blockers[]+is+object,+not+an+array=true detail~writes+[]=true" \
@@ -265,7 +264,6 @@ table \
   "a wrong-typed suggestions is reported on its own|F@none=str_sugg|--file %F|detail~suggestions[]+is+string,+not+an+array=true" \
   "chain: a missing verdict names its cause|F@none=chain_noverdict|--file %F|ok=false detail_present=true" \
   "chain: a no-review admission names its cause|F@none=chain_noreview|--file %F|ok=false detail_present=true" \
-  "chain: a qa-shape loss names its cause|F@none=qa_inc|--file %F|ok=false detail_present=true" \
   "chain: a malformed finding item names its cause|F@none=chain_item|--file %F|ok=false detail_present=true" \
   "chain: a bad measurement declaration names its cause|F@none=chain_decl|--file %F|ok=false detail_present=true" \
   "chain: a zero-sample measurement names its cause|F@none=chain_zero|--file %F|ok=false detail_present=true" \
@@ -309,8 +307,8 @@ now_epoch="$(date +%s)"
 ( sleep 2; body qa_ok > "$WT/tmp/review-cyc-20990101-000000.json" ) &
 writer_pid=$!
 run_check %W cyc "$now_epoch" --wait 20 --interval 1
-wait "$writer_pid" 2>/dev/null || true
 elapsed=$(( $(date +%s) - now_epoch ))
+wait "$writer_pid" 2>/dev/null || true
 assert_eq "$(observe "ok=true") polled=$([[ "$elapsed" -ge 1 && "$elapsed" -lt 15 ]] && echo true || echo false)" "ok=true polled=true" "--wait polls past a stale prior-round artifact to the fresh one, neither instantly nor to the deadline (${elapsed}s)" "$ERR"
 
 echo "=== -h and --help answer before any temp-file initialization ==="
