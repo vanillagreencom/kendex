@@ -77,8 +77,9 @@ run() {
 rec() { jq -r "$@" "$OUT" 2>/dev/null || echo UNPARSEABLE; }
 
 # observe EXPECT — prints the run's value of every `name=` field EXPECT names,
-# in EXPECT's order (`+` reads as a space in a needle, and a value's spaces
-# print as `+`):
+# in EXPECT's order (`+` reads as a space in a needle and in a jq path, so a
+# path cannot carry arithmetic or a literal plus, and a value's spaces print
+# as `+`):
 #   rc              exit status
 #   written         `yes` when stdout names an existing file
 #   stderr~<text>   whether stderr carries <text>
@@ -88,6 +89,7 @@ rec() { jq -r "$@" "$OUT" 2>/dev/null || echo UNPARSEABLE; }
 #                   style filters allowed; a missing file reads UNPARSEABLE)
 observe() {
   local got="" token name value needle
+  set -f
   for token in $1; do
     name="${token%%=*}"
     case "$name" in
@@ -100,6 +102,7 @@ observe() {
     esac
     got="$got $name=$value"
   done
+  set +f
   printf '%s' "${got# }"
 }
 
@@ -173,8 +176,9 @@ table \
   "a missing --issue|--worktree $WT --kind implement --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~--issue+is+required=true" \
   "a value flag with no value at the end|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate|rc=2 stderr~--validate+requires+a+value=true" \
   "a missing --worktree|--kind implement --issue i --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~--worktree+is+required=true" \
-  "a nonexistent --worktree|--worktree $TMP_ROOT/nope --kind implement --issue i --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~is+not+a+directory=true" \
+  "a nonexistent --worktree: the writer's own guard, not the base resolver's|--worktree $TMP_ROOT/nope --kind implement --issue i --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~--worktree+path=true" \
   "a bad --validate|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate weird|rc=2 stderr~--validate+must+be+'pass'+or+begin+with+'FAILING:'=true" \
+  "a verdict that only begins with pass, note and all|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass_with_notes --validate-note explained|rc=2 stderr~--validate+must+be+'pass'+or+begin+with+'FAILING:'=true" \
   "a path-unsafe --issue|--worktree $WT --kind implement --issue a/b --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~--issue+'a/b'+must+match=true" \
   "a path-traversal --issue|--worktree $WT --kind implement --issue .. --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~--issue+'..'+must+match=true" \
   "a path-unsafe --round-id|--worktree $WT --kind implement --issue i --round-id a/../b --branch b --commit c --validate pass|rc=2 stderr~--round-id+'a/../b'+must+match=true" \
