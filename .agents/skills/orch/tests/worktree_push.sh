@@ -21,7 +21,9 @@ ARTIFACT_CHECK="$REPO_ROOT/skills/orch/scripts/dev-artifact-check"
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
 
-TMP_ROOT="$(mktemp -d)"
+# Physical: on macOS the temp root sits under /var -> /private/var, and the
+# scripts print the resolved path.
+TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 PASS=0

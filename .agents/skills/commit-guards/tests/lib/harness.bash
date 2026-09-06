@@ -18,7 +18,11 @@ set -euo pipefail
 gg_suite="${0##*/}"
 gg_suite="${gg_suite%.test.sh}"
 
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/gg-${gg_suite}.XXXXXX")" || {
+# The trailing slash macOS puts on TMPDIR is dropped first: a `//` in a
+# fixture path never matches the path a script normalises and prints back.
+gg_tmpdir="${TMPDIR:-/tmp}"
+gg_tmpdir="${gg_tmpdir%/}"
+TMP="$(mktemp -d "$gg_tmpdir/gg-${gg_suite}.XXXXXX")" || {
   echo "harness: could not create a scratch root under ${TMPDIR:-/tmp}" >&2
   exit 2
 }

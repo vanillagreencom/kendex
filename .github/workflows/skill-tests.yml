@@ -91,8 +91,9 @@ jobs:
   #
   # The leg swaps the shell and nothing else on purpose: it installs the GNU
   # userland the suites are written against — coreutils, sed, grep, awk,
-  # find, diff and flock, which macOS lacks outright (workflow-state and
-  # lanes take flock with no fallback) or ships as BSD — and asserts each
+  # find, diff, and util-linux for flock and setsid, which macOS lacks
+  # outright (workflow-state and lanes take flock with no fallback, and
+  # open-terminal detaches with setsid) or ships as BSD — and asserts each
   # beside the shell, so a red leg is a Bash 3.2 finding and not a utility
   # difference. What the suites do on the BSD userland is a property of its
   # own that this leg does not prove.
@@ -126,11 +127,12 @@ jobs:
           HOMEBREW_NO_INSTALL_CLEANUP: '1'
         run: |
           set -u
-          brew install coreutils gnu-sed grep gawk findutils diffutils flock
+          brew install coreutils gnu-sed grep gawk findutils diffutils util-linux
           prefix="$(brew --prefix)"
           for f in coreutils gnu-sed grep gawk findutils; do
             echo "$prefix/opt/$f/libexec/gnubin" >>"$GITHUB_PATH"
           done
+          echo "$prefix/opt/util-linux/bin" >>"$GITHUB_PATH"
 
       - name: /bin/bash first on PATH
         if: matrix.os == 'macos-latest'
@@ -162,7 +164,7 @@ jobs:
           got "/usr/bin/env bash" "$(version_of /usr/bin/env bash)"
           # The utilities the step above installed, resolved the way a suite
           # resolves them: present, and the GNU one where macOS ships a BSD one.
-          for c in flock timeout sha256sum; do
+          for c in flock setsid timeout sha256sum; do
             command -v "$c" || { echo "$c is not on PATH; the suites that call it would fail for the wrong reason"; fail=1; }
           done
           for c in sed grep awk find diff; do
