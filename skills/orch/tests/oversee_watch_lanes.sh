@@ -178,7 +178,7 @@ lane_table() {
     [[ -n "$expect" ]] || { printf 'lane_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
     case "$pass" in
       new) new_case "lane_$((++CASE_SEQ))" ;;
-      cont) rm -f "$STUB_DIR"/pane-*.calls "$STUB_DIR"/cmd-*.calls ;;
+      cont) rm -f "$STUB_DIR"/pane-*.calls "$STUB_DIR"/cmd-*.calls "$STUB_DIR"/pgrep.calls ;;
       *) echo "lane_table: unknown pass $pass in $row" >&2; exit 1 ;;
     esac
     lane "$which"
@@ -210,7 +210,7 @@ lane_table \
   "a login shell (-bash) counts as a bare shell|new|-|login|2|first=EVENT+lane-exited+gh-2" \
   "a shell pane with a child is a live lane, probed once per pass, the harness pane never probed|new|-|fish_child|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false probes=2 probed~9001=false" \
   "a lane whose child probe cannot run stays watched, the note naming the status once per run|new|-|fish_probe2|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false stderr~could+not+list+the+children+of+the+pane+behind+'gh-2'=true stderr~pgrep+-P+exited+2=true notes~could+not+list+the+children=1" \
-  "the note names the fatal status that occurred, never a fixed one|new|-|fish_probe3|2|out~EVENT+lane-exited=false stderr~pgrep+-P+exited+3=true stderr~pgrep+-P+exited+2=false" \
+  "the note names the fatal status that occurred, never a fixed one|new|-|fish_probe3|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false stderr~pgrep+-P+exited+3=true stderr~pgrep+-P+exited+2=false" \
   "control: a bare fish prompt with no child is the event on the second pass|new|fish_prompt|fish|2|first=EVENT+lane-exited+gh-2" \
   "control: a live pane command is not an exit|new|-|codex|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false" \
   "a blank pane does not swallow the event|new|blank|zsh|2|rc=0 first=EVENT+lane-exited+gh-2" \
