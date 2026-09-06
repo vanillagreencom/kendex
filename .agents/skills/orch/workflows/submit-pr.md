@@ -39,13 +39,13 @@ Stop before pushing when the branch is empty (detached HEAD), equals the base br
 
 ### 1.2 Size Check
 
-The branch is scored against the issue once here, before the push — the fix-round tripwire runs at round mint against the branch's own first commit, so a branch that was already grown when the PR opened never meets it.
+The branch's added lines are measured against the allowance its issue states, once, before the push. The fix-round tripwire runs at round mint against the branch's own first commit, so a branch already grown when the PR opened never meets it.
 
 ```bash
-.agents/skills/orch/scripts/branch-size-check --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID]
+.agents/skills/orch/scripts/branch-size-check --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID] --state-dir [WORKTREE_PATH]/tmp
 ```
 
-Exit 0 continues. Exit 3 is a refusal, not a warning: it names the count, the allowance, and — for a test refusal — the Done-when surfaces the allowance was built from. Cut the branch back to the Done-when and re-run it; the cut is a round like any other ([references/finding-disposition.md](../references/finding-disposition.md) § Size tripwire). Exit 2 is an environment failure — the issue could not be read and no baseline is recorded — and is reported, never pushed past. The verdict lands in workflow state `pr.size_check`.
+Exit 0 continues. Exit 3 is a refusal, not a warning: it names the count and the allowance. Cut the branch back to the Done-when and re-run it; the cut is a round like any other, the size tripwire in [references/finding-disposition.md](../references/finding-disposition.md). Adding a size-ratchet exclusion or deleting comments is not a cut. Exit 2 is a usage or environment failure whose message names the cause; report it, never push past it. An `**Expected delta**` line the check cannot parse is one such cause, corrected on the issue. When the issue states no allowance the check judges nothing, exits 0 and reports the counts; carry them into the PR body under `## Size` for the reviewer, never invent an allowance. The verdict lands in workflow state `pr.size_check`, bound to the base and head it measured, so a commit § 1.3 adds means the § 1.2 command runs again before § 2.
 
 ### 1.3 Local Pre-PR Review
 
@@ -119,6 +119,9 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
 
    ## QA Metrics
    [Results from the QA agents that ran — project-configurable.]
+
+   ## Size
+   [The § 1.2 counts, only when the issue states no allowance.]
 
    ## Test Plan
    [validation steps]

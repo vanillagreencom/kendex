@@ -26,7 +26,7 @@
 |-------------|--------|-------|
 | `[ORIGIN_CONTEXT]` | Caller — e.g. `PR review suggestion ([found_by])`, `architecture planning` | Always include provenance |
 | `[REACH]` | `create_fields.reach`, else the caller — the user action, run, check, or shipped producer that arrives at the defect; an owner-directed item names the ask | **Required on every issue** — the rule and what it refuses are [SKILL.md](../SKILL.md) § Disposition; `linear.sh issues create` enforces it |
-| `[N]` in **Expected delta** | Caller — the production lines the issue is expected to take | The submit-time size check (`branch-size-check`) reads it as the branch's production allowance, in place of the estimate. Drop the line when no number is worth stating |
+| `[N]` in **Expected delta** | Caller — the production lines the change is allowed to add; `[N] lines, [M] test lines` allows test lines too | The submit-time size check (`branch-size-check`) reads it as the branch's allowance and nothing else. Drop the line when no number is worth stating; the check then reports the counts for review |
 | `[SYMPTOM]` | Caller — the run, the user, or the red check that already showed the defect | Required on a review-born filing at priority 2, which is the reported tier; drop the line otherwise |
 | `[DESCRIPTION]` | `items[].description` | Use as written |
 | `[REQUIREMENT_*]` | `items[].recommendation` | Use as written — already a `* bullet` list |
