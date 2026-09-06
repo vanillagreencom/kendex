@@ -89,22 +89,7 @@ case "$args" in
       echo "HTTP 500" >&2
       exit 1
     fi
-    if [[ "${STUB_QUEUE_ERRORS:-}" == "yes" ]]; then
-      # gh --jq applies to the full envelope: an errors array beside partial
-      # data must make the jq error() — emulate gh's behavior (nonzero, no
-      # stdout) the way it fails on error().
-      exit 1
-    fi
-    if [[ "${STUB_QUEUE_NULL_ENVELOPE:-}" == "yes" ]]; then
-      # gh --jq evaluates server-side of the stub: emulate by failing the
-      # jq the way gh does on an error() — nonzero with no output.
-      exit 1
-    fi
     if [[ "${STUB_QUEUED:-}" == "yes" ]]; then
-      printf 'queued\n'
-    elif [[ "${STUB_QUEUED_FLAG_ONLY:-}" == "yes" ]]; then
-      # Transitional snapshot: isInMergeQueue true, entry null — must still
-      # read as queued (the OR contract).
       printf 'queued\n'
     else
       printf 'unqueued\n'
@@ -445,30 +430,33 @@ table \
   "a mid-reduction draft conversion skips only the nudge|--heal --awaiting-after 3600|STUB_DRAFT_AFTER=yes;STUB_OPEN_PRS=$P7U;STUB_VERDICT_LINE=$V_AWAITING;STUB_GATE_HISTORY=$G_OK;STUB_HEAD_DATE=$NOW|rc=1 kinds=gate-stale,heal-dispatched"
 
 echo "=== explicit PR arguments ==="
+# A fixture whose predicate line is `unused` ends in an error line of its own
+# once the schema boundary is passed, so each boundary row pins the word only
+# the boundary emits.
 table \
   "a closed PR is skipped silently|9|STUB_PR_9=$PR9CLOSED;STUB_VERDICT_LINE=unused|rc=0 kinds=none" \
   "a zero-padded argument normalizes|09|STUB_PR_9=$PR9CLOSED;STUB_VERDICT_LINE=unused|rc=0 kinds=none" \
-  "a junk response is that PR's error line and the rest still process|5 6|STUB_PR_5=not json at all;STUB_PR_6=$(pr_row 6 closed | jq -c .);STUB_VERDICT_LINE=unused|rc=2 kinds=error" \
-  "a response describing a different PR fails the binding check|9|STUB_PR_9=$(pr_row 7 | jq -c .);STUB_VERDICT_LINE=unused|rc=2 kinds=error" \
+  "a junk response is that PR's error line and the rest still process|5 6|STUB_PR_5=not json at all;STUB_PR_6=$(pr_row 6 closed | jq -c .);STUB_VERDICT_LINE=unused|rc=2 kinds=error detail~well-formed=true" \
+  "a response describing a different PR fails the binding check|9|STUB_PR_9=$(pr_row 7 | jq -c .);STUB_VERDICT_LINE=unused|rc=2 kinds=error detail~well-formed=true" \
   "a state outside the open or closed enum is malformed, never a skip|9|STUB_PR_9=$PR9BOGUS;STUB_VERDICT_LINE=unused|rc=2 kinds=error detail~enum=true" \
-  "a PR object missing reducer fields is malformed|9|STUB_PR_9=$PR9PARTIAL;STUB_VERDICT_LINE=unused|rc=2 kinds=error" \
-  "a non-sha initial head is malformed|9|STUB_PR_9=$PR9NONSHA;STUB_VERDICT_LINE=unused|rc=2 kinds=error" \
-  "an empty auto_merge object is malformed, never silently armed|9|STUB_PR_9=$PR9EMPTYARM;STUB_VERDICT_LINE=unused|rc=2 kinds=error"
+  "a PR object missing reducer fields is malformed|9|STUB_PR_9=$PR9PARTIAL;STUB_VERDICT_LINE=unused|rc=2 kinds=error detail~well-formed=true" \
+  "a non-sha initial head is malformed|9|STUB_PR_9=$PR9NONSHA;STUB_VERDICT_LINE=unused|rc=2 kinds=error detail~well-formed=true" \
+  "an empty auto_merge object is malformed, never silently armed|9|STUB_PR_9=$PR9EMPTYARM;STUB_VERDICT_LINE=unused|rc=2 kinds=error detail~well-formed=true"
 
 echo "=== a broken read is an error, never health ==="
 # Exit 2 with an error line; the word pinned is the one that tells the shape
-# apart from its neighbours with the same kind and exit.
+# apart from its neighbours with the same kind and exit. The queue read's
+# envelope and errors[] guards live inside `gh api --jq`, which the stub
+# never runs, so one failed-read row is all the stub can drive there.
 table \
   "predicate failure||STUB_OPEN_PRS=$P7;STUB_PREDICATE_RC=2;STUB_VERDICT_LINE=unused|rc=2 kinds=error detail~predicate=true" \
   "a zero-exit predicate with no recognizable verdict||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_GARBAGE|rc=2 kinds=error detail~verdict=true" \
-  "a zero-byte PR listing||STUB_OPEN_PRS=emptybytes;STUB_VERDICT_LINE=unused|rc=2 detail~zero=true" \
-  "a non-object listing element||STUB_OPEN_PRS=[42];STUB_VERDICT_LINE=unused|rc=2 detail~malformed=true" \
-  "an empty-object listing element||STUB_OPEN_PRS=[{}];STUB_VERDICT_LINE=unused|rc=2 detail~malformed=true" \
+  "a zero-byte PR listing||STUB_OPEN_PRS=emptybytes;STUB_VERDICT_LINE=unused|rc=2 kinds=none detail~zero=true" \
+  "a non-object listing element||STUB_OPEN_PRS=[42];STUB_VERDICT_LINE=unused|rc=2 kinds=none detail~malformed=true" \
+  "an empty-object listing element||STUB_OPEN_PRS=[{}];STUB_VERDICT_LINE=unused|rc=2 kinds=none detail~malformed=true" \
   "a ghost author reduces threads and names the ghost||STUB_OPEN_PRS=$P7GHOST;STUB_UNRESOLVED=1;STUB_VERDICT_LINE=$V_APPROVED|rc=2 kinds=threads-open,error detail~deleted=true" \
   "a ghost author with nothing else to report names the cause||STUB_OPEN_PRS=$P7GHOST;STUB_VERDICT_LINE=unused|rc=2 kinds=error detail~deleted=true" \
   "a failed queue-membership read||STUB_OPEN_PRS=$P7;STUB_QUEUE_FAIL=yes;STUB_VERDICT_LINE=$V_APPROVED|rc=2 kinds=error detail~merge-queue=true" \
-  "a malformed queue envelope||STUB_QUEUE_NULL_ENVELOPE=yes;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=unused|rc=2 kinds=error detail~merge-queue=true" \
-  "GraphQL errors beside partial queue data||STUB_QUEUE_ERRORS=yes;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=unused|rc=2 kinds=error" \
   "a zero-byte gate-status read||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=emptybytes|rc=2 kinds=error detail~zero=true" \
   "a matching gate row without a state||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_NULL|rc=2 kinds=error detail~malformed=true" \
   "a gate row with a state outside the enum||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_BOGUS|rc=2 kinds=error detail~malformed=true" \
@@ -484,17 +472,17 @@ table \
   "a zero-byte timeline response|--awaiting-after 60|STUB_TIMELINE_EMPTYBYTES=yes;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 kinds=error detail~zero=true" \
   "an unparsable readiness timestamp|--awaiting-after 60|STUB_READY_AT=garbage-timestamp;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 kinds=error" \
   "a future-dated timeline event|--awaiting-after 60|STUB_READY_AT=2030-01-01T00:00:00Z;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 kinds=error detail~unprovable=true" \
-  "a recheck returning no usable sha||STUB_HEAD_AFTER=null;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=2 kinds=error detail~sha=true" \
+  "a recheck returning no usable sha||STUB_HEAD_AFTER=null;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=2 kinds=error detail~usable=true" \
   "a non-sha recheck value is a broken read, never head-moved||STUB_HEAD_AFTER=42;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=2 kinds=error"
 
 echo "=== configuration errors refuse to reduce ==="
 table \
-  "a non-numeric PR_REVIEW_WAIT_SECS||PR_REVIEW_WAIT_SECS=90s;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 detail~PR_REVIEW_WAIT_SECS=true" \
-  "a PR_REVIEW_WAIT_SECS past the integer range||PR_REVIEW_WAIT_SECS=99999999999999999999;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 detail~range=true" \
-  "an --awaiting-after past the integer range|--awaiting-after 99999999999999999999|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 detail~range=true" \
-  "an invalid REVIEW_GATE_THREADS||REVIEW_GATE_THREADS=of;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=unused|rc=2 detail~REVIEW_GATE_THREADS=true" \
-  "an invalid REVIEW_GATE_MODE||REVIEW_GATE_MODE=offf;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=unused|rc=2 detail~REVIEW_GATE_MODE=true" \
-  "an explicitly empty REVIEW_GATE_CONTEXT, in cheap mode too|--no-evaluate|REVIEW_GATE_CONTEXT=;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=unused|rc=2 detail~REVIEW_GATE_CONTEXT=true"
+  "a non-numeric PR_REVIEW_WAIT_SECS||PR_REVIEW_WAIT_SECS=90s;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 kinds=none detail~PR_REVIEW_WAIT_SECS=true" \
+  "a PR_REVIEW_WAIT_SECS past the integer range||PR_REVIEW_WAIT_SECS=99999999999999999999;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 kinds=none detail~range=true" \
+  "an --awaiting-after past the integer range|--awaiting-after 99999999999999999999|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 kinds=none detail~range=true" \
+  "an invalid REVIEW_GATE_THREADS||REVIEW_GATE_THREADS=of;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=unused|rc=2 kinds=none detail~REVIEW_GATE_THREADS=true" \
+  "an invalid REVIEW_GATE_MODE||REVIEW_GATE_MODE=offf;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=unused|rc=2 kinds=none detail~REVIEW_GATE_MODE=true" \
+  "an explicitly empty REVIEW_GATE_CONTEXT, in cheap mode too|--no-evaluate|REVIEW_GATE_CONTEXT=;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=unused|rc=2 kinds=none detail~REVIEW_GATE_CONTEXT=true"
 
 echo "=== --help answers before the GH_REPO requirement ==="
 # The contract callers route to: readable with no environment at all, against
