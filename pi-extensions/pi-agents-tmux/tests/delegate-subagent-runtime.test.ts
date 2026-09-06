@@ -13,12 +13,12 @@ import { setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
 import { removeSettled } from "./remove-settled.js";
 
 type Execute = (toolCallId: string, params: Record<string, unknown>, signal: undefined, onUpdate: undefined, ctx: unknown) => Promise<{ content: Array<{ text?: string }>; isError?: boolean }>;
-type Spawn = { env: NodeJS.ProcessEnv | undefined };
+type Spawn = { args: string[]; env: NodeJS.ProcessEnv | undefined };
 type Agents = Record<string, string[]>;
 
 // Every pane-only marker the parent may carry is set to a sentinel so the
 // success row can read that the child was handed none of them.
-const PARENT_ENV = { PI_BRIDGE_CHILD_ROLE: "bridge-role", PI_BRIDGE_PARENT_SESSION_ID: "bridge-parent", PI_SUBAGENT_PARENT_SESSION_ID: "parent-session" };
+const PARENT_ENV = { PI_BRIDGE_CHILD_ROLE: "bridge-role", PI_BRIDGE_PARENT_SESSION_ID: "bridge-parent", PI_SUBAGENT_CHILD_PANE: "%9", PI_SUBAGENT_PARENT_SESSION_ID: "parent-session" };
 const ENV_KEYS = ["PI_SUBAGENT_CHILD_AGENT", "PI_CODING_AGENT_DIR", ...Object.keys(PARENT_ENV)] as const;
 
 const tempDirs: string[] = [];
@@ -78,8 +78,8 @@ async function installTool(): Promise<Execute | undefined> {
 // A child that announces itself, reports once and exits clean.
 function fakeSpawns(): Spawn[] {
 	const spawns: Spawn[] = [];
-	setSingleAgentSpawnForTests(((_command: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
-		spawns.push({ env: options?.env });
+	setSingleAgentSpawnForTests(((_command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+		spawns.push({ args, env: options?.env });
 		const proc = Object.assign(new EventEmitter(), { killed: false, stderr: new EventEmitter(), stdout: new EventEmitter() });
 		proc.kill = () => ((proc.killed = true), true);
 		queueMicrotask(() => {
@@ -108,8 +108,8 @@ async function settleRegistry(cwd: string): Promise<void> {
 }
 
 // A refusal by the guard that wrote it, any other text printed whole; a
-// dispatch by the identity and markers the child was handed and the report
-// it returned.
+// dispatch by the identity and markers the child was handed, the task it was
+// given (the last spawn argument) and the report it returned.
 const REFUSALS: Array<[string, string]> = [
 	["PI_SUBAGENT_CHILD_AGENT must be set", "no-caller"],
 	["is not in the discovered project inventory", "caller-unknown"],
@@ -128,7 +128,7 @@ function resultLine(result: Awaited<ReturnType<Execute>>, spawns: Spawn[]): stri
 	}
 	const env = spawns[0]?.env ?? {};
 	const markers = Object.keys(PARENT_ENV).filter((key) => key in env);
-	return `spawned:${env.PI_SUBAGENT_CHILD_AGENT} markers=[${markers.join(",")}] spawns=${spawns.length} text=${JSON.stringify(text)}`;
+	return `spawned:${env.PI_SUBAGENT_CHILD_AGENT} markers=[${markers.join(",")}] spawns=${spawns.length} task=${JSON.stringify(spawns[0]?.args.at(-1))} text=${JSON.stringify(text)}`;
 }
 
 async function delegateLine(caller: string | undefined, agents: Agents, params: Record<string, unknown>): Promise<string> {
@@ -149,7 +149,7 @@ async function delegateLine(caller: string | undefined, agents: Agents, params: 
 		if (!result.isError) await settleRegistry(cwd);
 		return resultLine(result, spawns);
 	} catch (error) {
-		return `threw:${(error as Error).constructor.name}`;
+		return `threw:${(error as Error).constructor.name}: ${(error as Error).message}`;
 	} finally {
 		setSingleAgentSpawnForTests();
 		for (const key of ENV_KEYS) {
@@ -167,6 +167,7 @@ const rows: Array<[string, string | undefined, Agents, Record<string, unknown>, 
 	["a root session has no caller identity", undefined, RUST_TO_SCOUT, { agent: "scout", task: "Map." }, "refused:no-caller spawns=0"],
 	["a blank caller identity is none", "  ", RUST_TO_SCOUT, { agent: "scout", task: "Map." }, "refused:no-caller spawns=0"],
 	["a caller not on disk cannot authorize", "ghost-caller", { scout: [] }, { agent: "scout", task: "Recon." }, "refused:caller-unknown spawns=0"],
+	["a caller identity that only extends a discovered name", "scout-2", { rust: [], scout: ["allowed-subagents: rust"] }, { agent: "rust", task: "Recon." }, "refused:caller-unknown spawns=0"],
 	["a caller without an allowlist", "scout", { researcher: [], scout: [] }, { agent: "researcher", task: "Recurse." }, "refused:no-allowlist spawns=0"],
 	["a blank agent parameter", "rust", RUST_TO_SCOUT, { agent: "  ", task: "Real task." }, "refused:no-agent spawns=0"],
 	["a target outside the allowlist", "rust", { ...RUST_TO_SCOUT, researcher: [] }, { agent: "researcher", task: "Do research." }, "refused:not-allowed spawns=0"],
@@ -174,7 +175,7 @@ const rows: Array<[string, string | undefined, Agents, Record<string, unknown>, 
 	["an allowlisted target not on disk", "rust", { rust: ["allowed-subagents: ghost"] }, { agent: "ghost", task: "Ghostly task." }, "refused:target-unknown spawns=0"],
 	["an allowlisted pane target", "rust", { planner: ["pane: true"], rust: ["allowed-subagents: planner"] }, { agent: "planner", task: "Plan a thing." }, "refused:pane-target spawns=0"],
 	["a blank task", "rust", RUST_TO_SCOUT, { agent: "scout", task: "  " }, "refused:no-task spawns=0"],
-	["an allowlisted bg target is spawned as the child with the pane markers stripped", "rust", RUST_TO_SCOUT, { agent: "scout", task: "Map the unknown area." }, 'spawned:scout markers=[] spawns=1 text="scout report"'],
+	["an allowlisted bg target is spawned as the child with the pane markers stripped", "rust", RUST_TO_SCOUT, { agent: "scout", task: "Map the unknown area." }, 'spawned:scout markers=[] spawns=1 task="Task: Map the unknown area." text="scout report"'],
 ];
 
 test("delegate_subagent refuses by guard or spawns the child", async () => {
