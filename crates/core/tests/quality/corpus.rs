@@ -113,9 +113,9 @@ fn orch_is_flagged_where_its_tests_spell_the_permission_switch() {
     let spells = "skills/orch/tests/open-terminal-claude-handoff.sh";
     assert_eq!(
         found(&result),
-        vec![("safety-bypass", Severity::High, spells); 8],
+        vec![("safety-bypass", Severity::High, spells); 6],
         "{:#?}",
         result.findings
     );
-    assert_eq!(result.safety.score, 78);
+    assert_eq!(result.safety.score, 80);
 }
