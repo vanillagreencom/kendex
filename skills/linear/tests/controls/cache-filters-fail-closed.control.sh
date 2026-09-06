@@ -40,20 +40,32 @@ control_replace scripts/commands/cache-query.sh 1 \
     '        -*) cache_unknown_flag "cycles list" "cycle" "$1"; return 1 ;;' \
     '        -*) shift; continue ;; # control: the flag is consumed and ignored'
 
-# 5. Drop the given-but-empty refusal, so `--team ""` degrades to the whole
-#    workspace at rc 0.
+# 5. Accept a given-but-empty team, so `--team ""` degrades to the whole
+#    workspace at rc 0 on all three listings. The guard above it survives, so
+#    the G assertions still answer in the JSON shape and this claims none of
+#    them.
 control_expect "F: --team with an empty value does not exit 0"
 control_expect "F: --team with an empty value refuses instead of returning every team"
+control_expect "F: labels --team with an empty value does not exit 0"
+control_expect "F: labels --team with an empty value refuses too"
+control_expect "F: cycles --team with an empty value does not exit 0"
+control_expect "F: cycles --team with an empty value refuses too"
+control_expect "F: cycles --team= with an empty value does not exit 0"
+control_expect "F: cycles --team= with an empty value refuses too"
 control_replace scripts/commands/cache-query.sh 1 \
-    '    if [[ "$team_given" == "true" && -z "$team" ]]; then' \
-    '    if false; then # control: a given-but-empty team is not refused'
+    '    [[ -n "$2" ]] && return 0' \
+    '    return 0 # control: a given-but-empty team is not refused'
 
 # 6. Drop the missing-value guard, so a valueless `--team` dies on set -u with a
-#    bash unbound-variable message instead of the file's JSON error object.
+#    bash unbound-variable message instead of the file's JSON error object. The
+#    empty-value refusal below reads $2 too, so this reddens the shape on every
+#    listing at once.
 control_expect "G: a valueless --team answers with a JSON error, not a bash abort"
+control_expect "G: a valueless labels --team answers with a JSON error too"
+control_expect "G: a valueless cycles --team answers with a JSON error too"
 control_replace scripts/commands/cache-query.sh 1 \
-    '            linear_require_option_value "$@" || return 1' \
-    '            : # control: $2 is read unguarded'
+    '    linear_require_option_value "$@" || return 1' \
+    '    : # control: $2 is read unguarded'
 
 # 7. Resolve the cycle keyword against every team's cycles again, so
 #    `--team KEN --cycle current` picks OTHER's cycle and prints nothing.

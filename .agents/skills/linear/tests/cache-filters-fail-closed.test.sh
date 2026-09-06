@@ -161,18 +161,47 @@ assert_eq "E: an unfiltered labels list still returns every team's labels" \
 assert_eq "E: an unfiltered cycles list still returns every team's cycles" \
   "$(names "$(run_cycles 2>/dev/null)")" "ken-cycle,other-cycle"
 
-# --- F: a given-but-empty team refuses ---------------------------------------
+# --- F: a given-but-empty team refuses, on every command that takes the flag --
 # Reached by a workflow interpolating --team "$LINEAR_TEAM" with nothing in it.
+# All three listings are checked: one command refusing while its siblings return
+# the workspace is the same fail-open shape, one function over.
 run_output empty_out empty_rc msg_issues --team "" --max --format=ids
 assert_ne "F: --team with an empty value does not exit 0" "$empty_rc" 0
 assert_jq "F: --team with an empty value refuses instead of returning every team" \
   "$empty_out" '.error | test("--team requires a non-empty team name")'
+
+run_output empty_labels_out empty_labels_rc msg_labels --team ""
+assert_ne "F: labels --team with an empty value does not exit 0" "$empty_labels_rc" 0
+assert_jq "F: labels --team with an empty value refuses too" \
+  "$empty_labels_out" '.error | test("--team requires a non-empty team name")'
+
+run_output empty_cycles_out empty_cycles_rc msg_cycles --team ""
+assert_ne "F: cycles --team with an empty value does not exit 0" "$empty_cycles_rc" 0
+assert_jq "F: cycles --team with an empty value refuses too" \
+  "$empty_cycles_out" '.error | test("--team requires a non-empty team name")'
+
+# The inline spelling cycles accepts is normalized onto the space arm, so the
+# same guard reaches it rather than a second binding it could be missing from.
+run_output empty_inline_out empty_inline_rc msg_cycles --team=
+assert_ne "F: cycles --team= with an empty value does not exit 0" "$empty_inline_rc" 0
+assert_jq "F: cycles --team= with an empty value refuses too" \
+  "$empty_inline_out" '.error | test("--team requires a non-empty team name")'
 
 # --- G: --team standing last answers in the file's error shape ----------------
 run_output last_out last_rc msg_issues --max --format=ids --team
 assert_ne "G: a valueless --team does not exit 0" "$last_rc" 0
 assert_jq "G: a valueless --team answers with a JSON error, not a bash abort" \
   "$last_out" '.error | test("--team requires a value")'
+
+run_output last_labels_out last_labels_rc msg_labels --team
+assert_ne "G: a valueless labels --team does not exit 0" "$last_labels_rc" 0
+assert_jq "G: a valueless labels --team answers with a JSON error too" \
+  "$last_labels_out" '.error | test("--team requires a value")'
+
+run_output last_cycles_out last_cycles_rc msg_cycles --team
+assert_ne "G: a valueless cycles --team does not exit 0" "$last_cycles_rc" 0
+assert_jq "G: a valueless cycles --team answers with a JSON error too" \
+  "$last_cycles_out" '.error | test("--team requires a value")'
 
 # --- H: the cycle keyword resolves inside the requested team ------------------
 # OTHER's cycle starts later, so a team-blind resolution picks it and this

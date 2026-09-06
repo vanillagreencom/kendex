@@ -17,7 +17,7 @@ Issues:
   issues list [--project X | --all-projects | --no-project] [--state Y] [--label Z]
               [--cycle N|UUID|current|previous|next] [--team X]
               [--updated-since Nd] [--search REGEX] [--max] [--include-archived]
-              [--format=safe|compact|ids|table]
+              [--format=safe|compact|ids|table|raw]
               --all-projects enumerates every project in ONE command (each row
               carries its project name; rows without a project carry ""). Use it
               instead of looping per project — restricted harnesses reject loop
@@ -90,7 +90,12 @@ source "$SCRIPT_DIR/../lib/attachments.sh"
 # a cycles array narrowed the same way.
 cache_team_stage() {
     [[ -n "$1" ]] || return 0
-    printf ' | [.[] | select(.team.name == %s)]' "$(jq -R '.' <<<"$1")"
+    # -Rs, not -R: -R emits one JSON string per LINE, so a value carrying a
+    # newline would splice two literals into the program text and jq would fail
+    # to compile, which cache_jq_file reports as a corrupt cache. Slurping is
+    # what the `--arg` binding this replaced did — one literal, matched exactly.
+    # printf, not a here-string, which would append a newline to the value.
+    printf ' | [.[] | select(.team.name == %s)]' "$(printf '%s' "$1" | jq -Rs '.')"
 }
 
 # Refuse a flag the caller's arg loop did not name. Swallowing one returned the
@@ -104,13 +109,26 @@ cache_unknown_flag() {
         '{error: ("Unknown flag for cache " + $c + ": " + $f + ". A filter the cache cannot honor must fail, not silently return every " + $n + ". Run \u0027cache " + $c + " --help\u0027.")}' >&2
 }
 
+# Reject a `--team` that names no team. The value is read positionally, so a
+# flag standing last must answer with this file's JSON error shape rather than a
+# set -u abort; and a given-but-empty value must refuse rather than degrade to
+# an unfiltered listing, which is the symptom the deleted consume-and-ignore arm
+# produced and what a workflow interpolating an unresolved $LINEAR_TEAM writes.
+# The live twin builds {team: {name: {eq: ""}}} and matches nothing. All three
+# cache listings take the flag, so all three answer the same way.
+cache_require_team() {
+    linear_require_option_value "$@" || return 1
+    [[ -n "$2" ]] && return 0
+    echo '{"error": "--team requires a non-empty team name: an empty value would return every team, not the one named"}' >&2
+    return 1
+}
+
 # =============================================================================
 # ISSUES
 # =============================================================================
 
 cache_list_issues() {
     local project="" state="" label="" updated_since="" search="" cycle="" team=""
-    local team_given="false"
     local include_archived="false" paginate_all="false" limit="75"
     local all_projects="false" no_project="false"
     FORMAT="${DEFAULT_FORMAT}"
@@ -187,12 +205,8 @@ cache_list_issues() {
             shift
             ;;
         --team)
-            # $2 is read below, so a flag standing last must answer with the
-            # JSON error shape every other failure in this file emits, not a
-            # bash unbound-variable abort under set -u.
-            linear_require_option_value "$@" || return 1
+            cache_require_team "$@" || return 1
             team="$2"
-            team_given="true"
             shift 2
             ;;
         # Boolean on the live path (issues.sh), so it takes no value here
@@ -223,16 +237,6 @@ cache_list_issues() {
 
     if [[ "$no_project" == "true" && ( "$all_projects" == "true" || -n "$project" ) ]]; then
         echo '{"error": "--no-project cannot be combined with --project/--project-id/--all-projects: it selects only issues with no project"}' >&2
-        return 1
-    fi
-
-    # A given-but-empty value refuses rather than degrading to an unfiltered
-    # list. A workflow interpolating an unresolved $LINEAR_TEAM would otherwise
-    # get the whole workspace back from a request that named a scope, which is
-    # the symptom the deleted consume-and-ignore arm produced. The live twin
-    # builds {team: {name: {eq: ""}}} and matches nothing.
-    if [[ "$team_given" == "true" && -z "$team" ]]; then
-        echo '{"error": "--team requires a non-empty team name: an empty value would return every team, not the one named"}' >&2
         return 1
     fi
 
@@ -288,9 +292,8 @@ cache_list_issues() {
                 local all_cycles working
                 # Narrowed to the same team the issues are, or the keyword
                 # resolves against another team's cycle and the listing comes
-                # back empty at exit 0. `cycles list` orders it the same way,
-                # team first and then type, so one file cannot answer "what is
-                # this team's current cycle" two ways.
+                # back empty at exit 0. `cycles list` narrows in the same
+                # order, team first and then type, so both read one set.
                 all_cycles=$(cache_jq_file "$cycles_file" "[]" ".$(cache_team_stage "$team")") || return 1
                 working=$(cache_working_cycle <<<"$all_cycles")
                 # The helpers answer with no cycle running too — they cut at
@@ -314,8 +317,14 @@ cache_list_issues() {
             # number branch, where the literal word compiles as a jq function
             # call and the failure reads as "this cycle has no issues".
             if [[ -z "$cycle_id" ]]; then
-                jq -cn --arg kw "$cycle" --arg file "$cycles_file" \
-                    '{error: ("--cycle " + $kw + " could not be resolved from " + $file + " — sync the cache (linear.sh sync) or pass a cycle number or UUID")}' >&2
+                # A --team narrows the file first, so an unresolved keyword
+                # there is a team with no cycles at least as often as a stale
+                # cache; naming only the cache sends the caller to re-sync one
+                # that is fine.
+                jq -cn --arg kw "$cycle" --arg file "$cycles_file" --arg team "$team" \
+                    '{error: ("--cycle " + $kw + " could not be resolved from " + $file
+                        + (if $team == "" then "" else " within team " + $team + ", which may hold no cycles" end)
+                        + " — sync the cache (linear.sh sync) or pass a cycle number or UUID")}' >&2
                 return 1
             fi
             ;;
@@ -887,6 +896,7 @@ cache_list_labels() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
         --team)
+            cache_require_team "$@" || return 1
             team="$2"
             shift 2
             ;;
@@ -1022,12 +1032,15 @@ cache_list_cycles() {
             shift 2
             ;;
         --team)
+            cache_require_team "$@" || return 1
             team="$2"
             shift 2
             ;;
+        # Normalized onto the arm above rather than bound a second time: a
+        # second binding is a second place for the guard to be missing.
         --team=*)
-            team="${1#--team=}"
-            shift
+            set -- --team "${1#--team=}" "${@:2}"
+            continue
             ;;
         --limit)
             limit="$2"
