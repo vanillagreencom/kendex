@@ -1,603 +1,312 @@
 #!/usr/bin/env bash
-# Tests for review-artifact-check's MEASUREMENT gates: the
-# zero_sample rejection, the perf-payload evidence requirement, the declared
+# Tests for review-artifact-check's MEASUREMENT gates: the zero_sample
+# rejection, the perf-payload evidence requirement, the declared
 # instrument-failure escape, and the rule that a gate which could not run is
 # never read as a clean artifact. Split from review_artifact_check.sh, which
 # owns location, freshness, and finding-shape acceptance.
+#
+# One table per gate, one asserted row per shape. A row's `expect` names the
+# result fields it pins and `observe` reads exactly those, so a row fails on
+# the field it names; a missing key reads ABSENT, so `null` means a real null.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
-
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 CHECK="$REPO_ROOT/skills/orch/scripts/review-artifact-check"
+# shellcheck source=lib/waiter-assertions.sh
+source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-PASS=0
-FAIL=0
-
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
-
-assert_file_contains() {
-  local file="$1" pattern="$2" name="$3"
-  if grep -Fq -- "$pattern" "$file"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        missing pattern: %s\n        file: %s\n' "$name" "$pattern" "$file"
-  fi
-}
-
-assert_substr() {
-  local haystack="$1" needle="$2" name="$3"
-  if [[ "$haystack" == *"$needle"* ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected substring: %s\n        in:                 %s\n' "$name" "$needle" "$haystack"
-  fi
-}
-
-assert_file_not_contains() {
-  local file="$1" pattern="$2" name="$3"
-  if grep -Fq -- "$pattern" "$file"; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        unexpected pattern: %s\n        file: %s\n' "$name" "$pattern" "$file"
-  else
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  fi
-}
-
-# expect_valid <artifact-path> <desc> — accepting-direction assertion that
-# survives a mutant. A bare `out="$("$CHECK" ...)"` aborts the whole run under
-# set -e the moment a guard starts over-rejecting, which truncates the suite
-# instead of naming what broke; the accepting direction is exactly where that
-# matters, because it is what pins WHICH number a guard reads.
-expect_valid() {
-  local path="$1" desc="$2" out rc=0
-  set +e
-  out="$("$CHECK" --file "$path")"
-  rc=$?
-  set -e
-  assert_eq "$rc" "0" "$desc (exits 0)"
-  assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "$desc"
-}
-
-# expect_glob_valid <worktree> <agent> <boundary> <expected-path> <desc>
-expect_glob_valid() {
-  local wt="$1" ag="$2" bound="$3" want="$4" desc="$5" out rc=0
-  set +e
-  out="$("$CHECK" "$wt" "$ag" "$bound")"
-  rc=$?
-  set -e
-  assert_eq "$rc" "0" "$desc (exits 0)"
-  assert_eq "$(jq -r '.path' <<<"$out")" "$want" "$desc"
-}
-
-echo "=== review-artifact-check: measurement gates ==="
-
-worktree="$TMP_ROOT/wt"
-mkdir -p "$worktree/tmp"
-delegated_at=1750000000
-before=$((delegated_at - 100))
-after=$((delegated_at + 100))
-later=$((delegated_at + 200))
+DELEG=1750000000
+BEFORE=$((DELEG - 100))
+AFTER=$((DELEG + 100))
+LATER=$((DELEG + 200))
 REAL_JQ="$(command -v jq)"
-
-# --- zero_sample: a measurement that produced no samples is not a result ---
-# The gate reads the SAMPLE COUNT, never the result. A zero denominator or zero
-# thread count means the instrument selected nothing; a zero numerator means it
-# ran and everything failed, which is the finding SKILL.md calls "never a pass"
-# and must reach the orchestrator intact. The accepting-direction cases below
-# are load-bearing: without them a numerator/denominator swap passes both suites
-# while the gate suppresses exactly the class it exists to promote.
-
-zs_mut="$worktree/tmp/review-external-20260815-010101.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"validated: mutation: killed 0/0; stability: 10/10 at 16 threads"}' > "$zs_mut"
-set +e
-out="$("$CHECK" --file "$zs_mut")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "--file zero-mutant citation exits 1"
-assert_eq "$(jq -r '.ok' <<<"$out")" "false" "--file zero-mutant citation reports ok=false"
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file zero-mutant citation reports reason=zero_sample"
-assert_substr "$(jq -r '.detail' <<<"$out")" "killed 0/0" "--file zero-mutant detail quotes the offending citation"
-assert_substr "$(jq -r '.detail' <<<"$out")" "instrument failure" "--file zero-mutant detail names the rule"
-assert_substr "$(jq -r '.detail' <<<"$out")" "measurement_failed" "--file zero-mutant detail teaches the declaration, not omission"
-
-zs_stab="$worktree/tmp/review-external-20260815-020202.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 3/3; stability: 0/0 at 16 threads"}' > "$zs_stab"
-set +e
-out="$("$CHECK" --file "$zs_stab")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "--file zero-run stability citation exits 1"
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file zero-run stability reports reason=zero_sample"
-assert_substr "$(jq -r '.detail' <<<"$out")" "stability: 0/0" "--file zero-run detail quotes the stability citation"
-
-# elevated parallelism of zero threads is the same instrument failure
-zs_thr="$worktree/tmp/review-external-20260815-030303.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 3/3; stability: 10/10 at 0 threads"}' > "$zs_thr"
-set +e
-out="$("$CHECK" --file "$zs_thr")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "--file zero-thread stability citation exits 1"
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file zero-thread stability reports reason=zero_sample"
-assert_substr "$(jq -r '.detail' <<<"$out")" "zero threads" "--file zero-thread detail names the thread count"
-
-# ACCEPTING DIRECTION — a zero RESULT on a measured run. Both cases fail under a
-# numerator/denominator swap, which is what pins WHICH number the gate reads.
-zs_stab_fail="$worktree/tmp/review-external-20260815-035353.json"
-printf '{"agent":"reviewer-test","verdict":"action_required","summary":"concurrency-sensitive: mutation: killed 3/3; stability: 0/10 at 16 threads"}' > "$zs_stab_fail"
-expect_valid "$zs_stab_fail" "--file stability 0/10 (ten measured runs, none passed) stays valid"
-
-zs_mut_alive="$worktree/tmp/review-external-20260815-036363.json"
-printf '{"agent":"reviewer-test","verdict":"action_required","summary":"mutant survived: mutation: killed 0/3; stability: 10/10 at 16 threads"}' > "$zs_mut_alive"
-expect_valid "$zs_mut_alive" "--file mutation killed 0/3 (three mutants, none killed) stays valid"
-
-# a partial kill on a measured run is likewise the reviewer's to report
-zs_mut_partial="$worktree/tmp/review-external-20260815-037373.json"
-printf '{"agent":"reviewer-test","verdict":"action_required","summary":"mutation: killed 2/3; stability: 9/10 at 16 threads"}' > "$zs_mut_partial"
-expect_valid "$zs_mut_partial" "--file partial kill / partial stability stays valid"
-
-# --- CARRIERS: .summary and .qa_metadata are the artifact's own measurements ---
-# Scanning every string leaf left no honest route for quoting somebody else's
-# zeroed run: the reviewer had to delete its evidence or declare an instrument
-# failure that was not its own. The same text is a rejection in the summary and
-# fine inside the finding it is evidence for — both directions pinned, or the
-# scope is a comment rather than a rule.
-zs_deep="$worktree/tmp/review-external-20260815-040404.json"
-printf '{"agent":"reviewer-test","verdict":"action_required","summary":"s","blockers":[{"id":1,"title":"t","location":"src/x.rs (`f`)","description":"the fixture proves the gate rejects mutation: killed 0/0; stability: 0/0 at 16 threads","recommendation":"r","priority":2,"estimate":2}],"suggestions":[],"qa_metadata":{}}' > "$zs_deep"
-expect_valid "$zs_deep" "--file a zeroed citation QUOTED in a blocker description is out of scope"
-
-zs_deep_sugg="$worktree/tmp/review-external-20260815-041414.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"s","blockers":[],"suggestions":[{"id":1,"title":"t","location":"tests/x.sh","description":"the fixture uses mutation: killed 0/0 as its control","recommendation":"r","priority":3,"estimate":1,"category":"fix"}],"qa_metadata":{}}' > "$zs_deep_sugg"
-expect_valid "$zs_deep_sugg" "--file a zeroed citation quoted in a suggestion is out of scope"
-
-zs_deep_q="$worktree/tmp/review-external-20260815-042424.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"s","blockers":[],"suggestions":[],"questions":[{"id":1,"location":"general","question":"is mutation: killed 0/0 expected here?","draft_response":"d","source":"@x","source_id":"1","source_type":"inline"}],"qa_metadata":{}}' > "$zs_deep_q"
-expect_valid "$zs_deep_q" "--file a zeroed citation quoted in a question is out of scope"
-
-# ...and the SAME text in the artifact's own carriers still rejects, or the
-# scoping would have disarmed the gate rather than aimed it.
-zs_own_summary="$worktree/tmp/review-external-20260815-043434.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"the fixture proves the gate rejects mutation: killed 0/0; stability: 0/0 at 16 threads","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$zs_own_summary"
-set +e
-out="$("$CHECK" --file "$zs_own_summary")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "--file the same text in .summary still exits 1"
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file a citation in .summary is the artifact's own measurement"
-assert_substr "$(jq -r '.detail' <<<"$out")" "blocker or suggestion" "--file the rejection points at the honest route for quoted numbers"
-
-zs_own_qa="$worktree/tmp/review-external-20260815-044444.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"s","blockers":[],"suggestions":[],"qa_metadata":{"test_qa":{"note":"mutation: killed 0/0"}}}' > "$zs_own_qa"
-set +e
-out="$("$CHECK" --file "$zs_own_qa")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "--file a citation nested in qa_metadata still exits 1"
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file qa_metadata is the artifact's own measurement payload"
-
-# whitespace between citation tokens is not one fixed spelling: a citation the
-# reviewer's own formatting wrapped across a newline must still count
-zs_wrap="$worktree/tmp/review-external-20260815-045454.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/\\n0; stability: 10/10 at 16 threads"}' > "$zs_wrap"
-set +e
-out="$("$CHECK" --file "$zs_wrap")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "--file a citation wrapped across a newline still exits 1"
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file newline-wrapped citation reports reason=zero_sample"
-
-zs_wrap2="$worktree/tmp/review-external-20260815-046464.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"stability:\\n0/0 at 16 threads"}' > "$zs_wrap2"
-set +e
-out="$("$CHECK" --file "$zs_wrap2")"
-rc=$?
-set -e
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file newline after 'stability:' still reports zero_sample"
-
-zs_wrap3="$worktree/tmp/review-external-20260815-047474.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"stability: 10/10 at\\n0 threads"}' > "$zs_wrap3"
-set +e
-out="$("$CHECK" --file "$zs_wrap3")"
-rc=$?
-set -e
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "--file newline before a zero thread count still reports zero_sample"
-
-# MUST-FAIL CONTROL, other direction: a real two-number citation still validates
-zs_ok="$worktree/tmp/review-external-20260815-050505.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 3/3; stability: 10/10 at 16 threads"}' > "$zs_ok"
-expect_valid "$zs_ok" "--file a nonzero mutation/stability citation stays valid"
-
-# an artifact citing no measurement at all is untouched by the guard
-zs_none="$worktree/tmp/review-external-20260815-060606.json"
-printf '{"agent":"reviewer-quality","verdict":"pass","summary":"no measurement was needed for this domain"}' > "$zs_none"
-expect_valid "$zs_none" "--file artifact with no measurement citation stays valid"
-
-# --- perf payload: evidence is REQUIRED, absence is not detected shape-by-shape ---
-# Every spelling of "produced nothing" must be refused, or emitting less becomes
-# the cheapest way past the gate. percentiles is a required perf_qa field.
-# zs_perf_case <name> <perf_qa-payload> <expected-reason> [expected-detail-substring]
-# The detail argument is what keeps the rejecting cases honest: several of these
-# shapes are refused by DIFFERENT branches, and asserting only the shared reason
-# lets any one branch be deleted while the suite stays green.
-zs_perf_case() {
-  local name="$1" payload="$2" want="$3" want_detail="${4:-}" path
-  path="$worktree/tmp/review-external-20260815-07$(printf '%04d' "$PERF_N").json"
-  PERF_N=$((PERF_N + 1))
-  printf '{"agent":"reviewer-perf","verdict":"pass","summary":"s","blockers":[],"suggestions":[],"qa_metadata":{"perf_qa":%s}}' "$payload" > "$path"
-  set +e
-  local out
-  out="$("$CHECK" --file "$path")"
-  set -e
-  assert_eq "$(jq -r '.reason' <<<"$out")" "$want" "--file perf payload $name -> $want"
-  if [[ "$want" == "valid" ]]; then
-    assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--file perf payload $name is accepted"
-  fi
-  if [[ -n "$want_detail" ]]; then
-    assert_substr "$(jq -r '.detail' <<<"$out")" "$want_detail" "--file perf payload $name is refused for the right reason"
-  fi
-}
-PERF_N=1
-zs_perf_case "percentiles missing entirely"   '{"regression_pct":0,"regressions":[],"platform":"linux","baseline_sha":"abc"}' zero_sample "declares no percentiles block"
-zs_perf_case "percentiles null"               '{"percentiles":null}'                zero_sample "declares no percentiles block"
-zs_perf_case "percentiles empty object"       '{"percentiles":{}}'                  zero_sample "percentiles is empty"
-zs_perf_case "percentiles empty array"        '{"percentiles":[]}'                  zero_sample "percentiles is empty"
-zs_perf_case "percentiles all-zero numbers"   '{"percentiles":{"p50":0,"p99":0}}'   zero_sample "no measured value above zero"
-zs_perf_case "percentiles zero-valued strings" '{"percentiles":{"p50":"0ms","p99":"0ms"}}' zero_sample "no measured value above zero"
-zs_perf_case "percentiles null leaves"        '{"percentiles":{"p50":null,"p99":null}}'   zero_sample "no measured value above zero"
-zs_perf_case "percentiles a bare string"      '{"percentiles":"none recorded"}'     zero_sample "neither an object nor an array"
-zs_perf_case "perf_qa itself not an object"   '"benchmarks ran"'                    zero_sample "perf_qa is not an object"
-# ACCEPTING DIRECTION: one real measured value is enough, in either container
-zs_perf_case "one real number among zeros"    '{"percentiles":{"p50":0,"p99":4.2}}' valid
-zs_perf_case "percentiles as a populated array" '{"percentiles":[1.5,2.5]}'         valid
-zs_perf_case "no perf_qa payload at all"      'null'                                valid
-
-# --- the declaration: top-level, substantive, and mechanically visible ---
-# The escape must not require adopting the qa shape (that made following the
-# rejection's own instruction dead-end in a second refusal), must not be
-# satisfiable by any single character, and must not read as a plain green.
-zs_declared="$worktree/tmp/review-external-20260815-080808.json"
-printf '{"agent":"reviewer-test","verdict":"action_required","summary":"harness produced nothing: mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":"cargo-mutants selected 0 mutants for the changed file"}' > "$zs_declared"
-set +e
-out="$("$CHECK" --file "$zs_declared")"
-rc=$?
-set -e
-assert_eq "$rc" "0" "--file a declared measurement failure is accepted"
-assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--file a declared measurement failure keeps its zero citation"
-assert_eq "$(jq -r '.reason' <<<"$out")" "valid_undermeasured" "--file a declaration gets its own reason, not a plain valid"
-assert_eq "$(jq -r '.measurement_failed' <<<"$out")" "cargo-mutants selected 0 mutants for the changed file" "--file the declaration is echoed on the result"
-
-# THE DEAD END: an artifact in the tolerant shape (no qa_metadata) that adopts
-# the escape must validate. Reaching the declaration would require adding
-# qa_metadata, which then demanded the finding arrays.
-zs_tolerant="$worktree/tmp/review-external-20260815-080909.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","measurement_failed":"cargo-mutants selected 0 mutants for this module"}' > "$zs_tolerant"
-set +e
-out="$("$CHECK" --file "$zs_tolerant")"
-rc=$?
-set -e
-assert_eq "$rc" "0" "--file the tolerant shape can adopt the escape without adding qa_metadata"
-assert_eq "$(jq -r '.reason' <<<"$out")" "valid_undermeasured" "--file the tolerant-shape declaration is accepted as undermeasured"
-
-zs_declared_perf="$worktree/tmp/review-external-20260815-081818.json"
-printf '{"agent":"reviewer-perf","verdict":"action_required","summary":"s","blockers":[],"suggestions":[],"measurement_failed":"the bench runner emitted no samples for any lane","qa_metadata":{"perf_qa":{"percentiles":{}}}}' > "$zs_declared_perf"
-set +e
-out="$("$CHECK" --file "$zs_declared_perf")"
-set -e
-assert_eq "$(jq -r '.reason' <<<"$out")" "valid_undermeasured" "--file a declared failure also covers an empty perf payload"
-
-# A declaration alongside verdict "pass" is still not a plain green — the reason
-# is what an orchestrator branches on, and it says undermeasured.
-zs_declared_pass="$worktree/tmp/review-external-20260815-082020.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":"cargo-mutants selected 0 mutants for the changed file"}' > "$zs_declared_pass"
-set +e
-out="$("$CHECK" --file "$zs_declared_pass")"
-set -e
-assert_eq "$(jq -r '.reason' <<<"$out")" "valid_undermeasured" "--file verdict pass plus a declaration is never reported as plain valid"
-assert_eq "$(jq -r '.ok' <<<"$out")" "true" "--file verdict pass plus a declaration is still an accepted artifact"
-
-# MUST-FAIL CONTROLS on the escape: it has to SAY something. Any single
-# character would open it.
-# zs_decl_case <name> <json-literal> <expected-reason> [expected-detail-substring]
-# The detail argument is load-bearing: these rejection branches OVERLAP (a null
-# token is also short, bare punctuation is also short), so a verdict-only
-# assertion lets any one of them be deleted while the suite stays green — the
-# message is the only thing that distinguishes which branch answered, and the
-# message is what the reviewer has to act on.
-zs_decl_case() {
-  local name="$1" literal="$2" want="$3" want_detail="${4:-}" path
-  path="$worktree/tmp/review-external-20260815-083$(printf '%03d' "$DECL_N").json"
-  DECL_N=$((DECL_N + 1))
-  printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":%s}' "$literal" > "$path"
-  set +e
-  local out
-  out="$("$CHECK" --file "$path")"
-  set -e
-  assert_eq "$(jq -r '.reason' <<<"$out")" "$want" "--file declaration $name -> $want"
-  # The detail is "<what this branch found> — <the shared requirement>". The
-  # requirement sentence necessarily quotes the very tokens the branches match
-  # on ("null token", "characters", "bare punctuation"), so a needle tested
-  # against the WHOLE string matches the boilerplate and pins nothing. Split on
-  # the first em-dash and test each half against what only it can say.
-  local detail branch bar
-  detail="$(jq -r '.detail // ""' <<<"$out")"
-  branch="${detail%% — *}"
-  bar="${detail#* — }"
-  if [[ "$want" == "invalid_declaration" ]]; then
-    assert_eq "$(jq -r 'has("measurement_failed")' <<<"$out")" "false" "--file declaration $name is not echoed as a real declaration"
-    assert_substr "$bar" "name the instrument" "--file declaration $name is told what a declaration must contain"
-  fi
-  if [[ -n "$want_detail" ]]; then
-    assert_substr "$branch" "$want_detail" "--file declaration $name is refused by the right branch"
-  fi
-}
-DECL_N=1
-zs_decl_case "a single period"        '"."'            invalid_declaration "punctuation only"
-zs_decl_case "n/a"                    '"n/a"'          invalid_declaration "null token"
-zs_decl_case "N/A with punctuation"   '"N/A."'         invalid_declaration "null token"
-zs_decl_case "none"                   '"none"'         invalid_declaration "null token"
-zs_decl_case "unknown"                '"unknown"'      invalid_declaration "null token"
-zs_decl_case "unavailable"            '"unavailable"'  invalid_declaration "null token"
-zs_decl_case "tbd"                    '"tbd"'          invalid_declaration "null token"
-zs_decl_case "bare punctuation"       '"---"'          invalid_declaration "punctuation only"
-zs_decl_case "long bare punctuation"  '"---------------------------"' invalid_declaration "punctuation only"
-zs_decl_case "whitespace only"        '"   "'          invalid_declaration "is blank"
-zs_decl_case "one long word"          '"instrumentfailedbadly"' invalid_declaration "is 1 word(s)"
-# Two words past the 20-character floor: only the word bar can refuse this, so
-# it is what pins the constant. The three-word counterpart is the other side.
-zs_decl_case "two words past the length floor" '"cargo-mutants produced-no-samples-at-all"' invalid_declaration "is 2 word(s)"
-zs_decl_case "three words past the floor"      '"cargo-mutants selected zero-mutants"'      valid_undermeasured
-zs_decl_case "three tiny words"       '"a b c"'        invalid_declaration "is 5 characters"
-zs_decl_case "a boolean"              'true'           invalid_declaration "must be a string"
-zs_decl_case "a number"               '0'              invalid_declaration "must be a string"
-zs_decl_case "an object"              '{"why":"broke"}' invalid_declaration "must be a string"
-zs_decl_case "an array"               '["broke"]'      invalid_declaration "must be a string"
-zs_decl_case "null"                   'null'           zero_sample
-# ...and the accepting direction: a real sentence naming the instrument
-zs_decl_case "a real declaration"     '"cargo-mutants selected 0 mutants"' valid_undermeasured
-
-# The declaration is read in ONE place, so the echoed value and the decision to
-# skip the gate cannot disagree. Walk the boundary either side of the bar.
-zs_boundary() {
-  local literal="$1" want_reason="$2" want_echo="$3" name="$4" path out
-  path="$worktree/tmp/review-external-20260815-084$(printf '%03d' "$DECL_N").json"
-  DECL_N=$((DECL_N + 1))
-  printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":%s}' "$literal" > "$path"
-  set +e
-  out="$("$CHECK" --file "$path")"
-  set -e
-  assert_eq "$(jq -r '.reason' <<<"$out")" "$want_reason" "--file boundary $name reason"
-  assert_eq "$(jq -r '.measurement_failed // "-"' <<<"$out")" "$want_echo" "--file boundary $name echo agrees with the decision"
-}
-# 19 characters, 3 words: one short of the bar. A present-but-inadequate
-# declaration is refused on its OWN terms rather than silently ignored — the
-# reviewer meant to declare something, and dropping it would hide the
-# instrument failure the same way deleting the numbers would.
-zs_boundary '"aa bbbb ccccccccccc"' invalid_declaration - "19 characters"
-# 20 characters, 3 words: exactly the bar
-zs_boundary '"aa bbbb cccccccccccc"' valid_undermeasured "aa bbbb cccccccccccc" "20 characters"
-
-# an artifact with no declaration carries no measurement_failed field
-set +e
-out="$("$CHECK" --file "$zs_ok")"
-set -e
-assert_eq "$(jq -r 'has("measurement_failed")' <<<"$out")" "false" "--file an undeclared artifact carries no measurement_failed field"
-
-# --- the escape suppresses ONE gate, wherever its block sits ---
-# The declaration's blast radius would be a consequence of statement order:
-# hoisting its block to the first step of artifact_content_gates turned
-# `review_performed: false` into an ACCEPTED valid_undermeasured, and a consumer
-# reading the contract saw a legitimate state rather than an anomaly. These
-# assertions state the radius as behavior, so the containment survives any
-# reordering — and they go red the moment the escape short-circuits again.
 DECLARATION='"measurement_failed":"cargo-mutants selected 0 mutants for the changed file"'
 
-zs_radius() {
-  local name="$1" body="$2" want="$3" path out
-  path="$worktree/tmp/review-external-20260816-01$(printf '%04d' "$RADIUS_N").json"
-  RADIUS_N=$((RADIUS_N + 1))
-  printf '%s' "$body" > "$path"
-  set +e
-  out="$("$CHECK" --file "$path")"
-  set -e
-  assert_eq "$(jq -r '.reason' <<<"$out")" "$want" "--file a valid declaration does NOT suppress $name"
-}
-RADIUS_N=1
-zs_radius "the no-review gate" \
-  "{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[],$DECLARATION,\"qa_metadata\":{\"review_performed\":false,\"reason\":\"no_scope_provided\"}}" \
-  no_review
-zs_radius "the finding-item gate" \
-  "{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[{\"title\":\"t\",\"detail\":\"d\"}],$DECLARATION,\"qa_metadata\":{}}" \
-  incomplete
-zs_radius "the qa-shape gate" \
-  "{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",$DECLARATION,\"qa_metadata\":{}}" \
-  incomplete
-zs_radius "the missing-verdict gate" \
-  "{\"agent\":\"r\",\"summary\":\"mutation: killed 0/0\",$DECLARATION}" \
-  invalid
-
-# ...and the ONE gate it does suppress, so the radius is bounded on both sides.
-zs_radius "(control) the zero-sample gate, which it DOES replace" \
-  "{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[],$DECLARATION,\"qa_metadata\":{}}" \
-  valid_undermeasured
-
-# --- glob mode reaches invalid_declaration too, and it is terminal ---
-# The most likely reviewer behavior after a zeroed instrument: reach for the
-# escape, write something under the bar. Falling back handed that reviewer an
-# older artifact and called it valid.
-zs_decl_glob_ok="$worktree/tmp/review-reviewer-decl-20260816-100000.json"
-printf '{"agent":"reviewer-decl","verdict":"pass","summary":"mutation: killed 3/3; stability: 10/10 at 16 threads","blockers":[],"suggestions":[]}' > "$zs_decl_glob_ok"
-zs_decl_glob_bad="$worktree/tmp/review-reviewer-decl-20260816-110000.json"
-printf '{"agent":"reviewer-decl","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":"n/a"}' > "$zs_decl_glob_bad"
-touch -d "@$after" "$zs_decl_glob_ok"
-touch -d "@$later" "$zs_decl_glob_bad"
-set +e
-out="$("$CHECK" "$worktree" reviewer-decl "$delegated_at")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "glob invalid_declaration is terminal, not rescued by an older sibling"
-assert_eq "$(jq -r '.reason' <<<"$out")" "invalid_declaration" "glob terminal invalid_declaration keeps its reason"
-assert_eq "$(jq -r '.path' <<<"$out")" "$zs_decl_glob_bad" "glob terminal invalid_declaration points at the rejected artifact"
-
-touch -d "@$before" "$zs_decl_glob_bad"
-expect_glob_valid "$worktree" reviewer-decl "$delegated_at" "$zs_decl_glob_ok" "a STALE invalid_declaration artifact does not block a fresh measured one"
-touch -d "@$later" "$zs_decl_glob_bad"
-
-# --- a declaration records what it silenced ---
-# The declaration covers whatever the measurement gate would have said,
-# including a perf payload the named instrument has nothing to do with. That is
-# allowed; doing it invisibly is the shape this issue is about.
-zs_sup="$worktree/tmp/review-external-20260817-010101.json"
-printf '{"agent":"reviewer-perf","verdict":"pass","summary":"s","blockers":[],"suggestions":[],"measurement_failed":"cargo-mutants selected 0 mutants for the changed file","qa_metadata":{"perf_qa":{"percentiles":{"p50":0,"p99":0}}}}' > "$zs_sup"
-set +e
-out="$("$CHECK" --file "$zs_sup")"
-rc=$?
-set -e
-assert_eq "$rc" "0" "a declaration still accepts an artifact whose perf payload measured nothing"
-assert_eq "$(jq -r '.reason' <<<"$out")" "valid_undermeasured" "the suppressed-perf artifact is undermeasured, not plain valid"
-assert_substr "$(jq -r '.measurement_suppressed // ""' <<<"$out")" "percentiles carries no measured value above zero" "the result names the perf measurement the mutation declaration silenced"
-
-# a citation silenced by the declaration is recorded the same way
-zs_sup_cite="$worktree/tmp/review-external-20260817-020202.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":"cargo-mutants selected 0 mutants for the changed file"}' > "$zs_sup_cite"
-set +e
-out="$("$CHECK" --file "$zs_sup_cite")"
-set -e
-assert_substr "$(jq -r '.measurement_suppressed // ""' <<<"$out")" "killed 0/0" "the result names the citation the declaration silenced"
-# ...and the recorded finding is the finding, not the rejection's instructions
-assert_eq "$(jq -r '.measurement_suppressed | test("measurement_failed")' <<<"$out")" "false" "the suppression record carries the finding, not remedy text for a rejection that did not happen"
-
-# MUST-FAIL CONTROL: a declaration with nothing to silence records nothing.
-zs_sup_none="$worktree/tmp/review-external-20260817-030303.json"
-printf '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 3/3; stability: 10/10 at 16 threads","blockers":[],"suggestions":[],"measurement_failed":"cargo-mutants selected 0 mutants for the changed file"}' > "$zs_sup_none"
-set +e
-out="$("$CHECK" --file "$zs_sup_none")"
-set -e
-assert_eq "$(jq -r 'has("measurement_suppressed")' <<<"$out")" "false" "a declaration with nothing to silence carries no suppression record"
-assert_eq "$(jq -r '.reason' <<<"$out")" "valid_undermeasured" "that artifact is still undermeasured"
-
-# ...and an artifact with no declaration never carries one either.
-set +e
-out="$("$CHECK" --file "$zs_ok")"
-set -e
-assert_eq "$(jq -r 'has("measurement_suppressed")' <<<"$out")" "false" "an undeclared artifact carries no suppression record"
-
-# --- THE FALLBACK CONTRACT, which is now a single case ---
-# After the qa-shape gate was reclassified, "the gate could not run" is the only
-# content rejection that may be answered by an older sibling — so this one case
-# IS the torn-write half of the disposition rule. It is also the case the rule
-# was written around: reviewer artifacts are written non-atomically, a torn read
-# makes jq fail on THAT file, and the intact sibling beside it is the same
-# review written whole.
+# A jq that fails ONE content gate, and only for a file named torn-newest, so
+# the glob rows exercise the gate's disposition rather than the per-file
+# `.verdict` branch.
 TORN_SHIM="$TMP_ROOT/jqshim-torn"
 mkdir -p "$TORN_SHIM"
-# Fails one CONTENT gate, and only for the newest artifact — so this exercises
-# the gate's disposition rather than the per-file `.verdict` branch.
 printf '#!/usr/bin/env bash\nprog=""; target=""\nfor a in "$@"; do\n  case "$a" in\n    *"gate:no-review"*) prog=1 ;;\n    *torn-newest*) target=1 ;;\n  esac\ndone\nif [ -n "$prog" ] && [ -n "$target" ]; then echo "jq: error: simulated torn read" >&2; exit 5; fi\nexec %s "$@"\n' "$REAL_JQ" > "$TORN_SHIM/jq"
 chmod +x "$TORN_SHIM/jq"
 
-twt="$TMP_ROOT/tornwt"
-mkdir -p "$twt/tmp"
-torn_ok="$twt/tmp/review-torn-20260101-000001.json"
-printf '{"agent":"torn","verdict":"pass","summary":"mutation: killed 3/3; stability: 10/10 at 16 threads","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$torn_ok"
-torn_new="$twt/tmp/review-torn-newest-20260101-000002.json"
-printf '{"agent":"torn","verdict":"pass","summary":"clean","blockers":[],"suggestions":[],"qa_metadata":{}}' > "$torn_new"
-touch -d "@$after" "$torn_ok"
-touch -d "@$later" "$torn_new"
+# body NAME — the artifact bodies the glob rows stage, by name.
+body() {
+  case "$1" in
+    measured) printf '{"agent":"r","verdict":"pass","summary":"mutation: killed 3/3; stability: 10/10 at 16 threads","blockers":[],"suggestions":[]}' ;;
+    zeroed) printf '{"agent":"r","verdict":"pass","summary":"mutation: killed 0/0; stability: 0/0 at 16 threads"}' ;;
+    decl_bad) printf '{"agent":"r","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":"n/a"}' ;;
+    clean) printf '{"agent":"r","verdict":"pass","summary":"clean","blockers":[],"suggestions":[],"qa_metadata":{}}' ;;
+    *) echo "body: unknown name $1" >&2; exit 1 ;;
+  esac
+}
 
-# The torn artifact ALONE is rejected — the fallback is a real answer, not an
-# absence of gating.
-set +e
-out="$(PATH="$TORN_SHIM:$PATH" "$CHECK" --file "$torn_new")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "a gate that could not run rejects the artifact on its own"
-assert_eq "$(jq -r '.reason' <<<"$out")" "invalid" "a gate that could not run reports reason=invalid"
+# --- harness -----------------------------------------------------------------
 
-# ...and in glob mode it falls back to the intact sibling, because THIS file may
-# simply have been read mid-write.
-set +e
-out="$(PATH="$TORN_SHIM:$PATH" "$CHECK" "$twt" torn "$delegated_at")"
-rc=$?
-set -e
-assert_eq "$rc" "0" "glob falls back past a gate that could not run"
-assert_eq "$(jq -r '.ok' <<<"$out")" "true" "glob accepts the intact sibling beside a torn artifact"
-assert_eq "$(jq -r '.path' <<<"$out")" "$torn_ok" "glob fallback selects the intact sibling"
+RUN_SEQ=0
+fresh_run() {
+  RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
+  WT="$RUN/wt"
+  mkdir -p "$WT/tmp"
+  F="$WT/tmp/review-external-F.json"
+  ERR="$RUN/stderr"
+}
 
-# MUST-FAIL CONTROL: with real jq the newest artifact answers for itself, so the
-# fallback above is the shim's doing and not the sibling always winning.
-set +e
-out="$("$CHECK" "$twt" torn "$delegated_at")"
-set -e
-assert_eq "$(jq -r '.path' <<<"$out")" "$torn_new" "with real jq the newest artifact is the answer"
+# run_check ARGS... — OUT is the JSON, RC the exit. %W, %F and %D in ARGS are
+# the staged worktree, the --file target and the delegation boundary.
+run_check() {
+  local args=() a
+  for a in "$@"; do a="${a//%W/$WT}"; a="${a//%F/$F}"; a="${a//%D/$DELEG}"; args+=("$a"); done
+  set +e
+  OUT=$("$CHECK" ${args[@]+"${args[@]}"} 2>"$ERR")
+  RC=$?
+  set -e
+}
 
-# --- the fail-closed default behind the rule ---
-# The predicate is what protects a gate included later that forgets to classify
-# itself. Asserted directly, because every gate present does classify itself so
-# no artifact can reach the default. Run in a child shell: sourcing the lib here
-# would install its own EXIT trap over this suite's and leak $TMP_ROOT.
-disp_out="$(bash -c '
-  source "$1/skills/orch/scripts/lib/review-artifact-gates.sh"
-  for d in torn_write terminal "" typo_write; do
-    review_artifact_disposition="$d"
-    if disposition_allows_fallback; then
-      printf "%s=fallback\n" "${d:-unset}"
-    else
-      printf "%s=terminal\n" "${d:-unset}"
-    fi
+json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
+
+# observe EXPECT — prints the run's value of every `name=` field EXPECT names,
+# in EXPECT's order. Plain names are JSON result fields, their spaces printed
+# as `+`; a key the result does not carry reads ABSENT.
+#   rc               exit status
+#   path             the basename of the reported path, or null
+#   detail~<text>    whether the detail names <text> (`+` reads as a space)
+#   branch~<text>    the half of the detail before the em-dash: what the
+#                    refusing branch found. The half after it is the shared
+#                    requirement, which quotes the very tokens the branches
+#                    match on, so a needle against the whole detail pins
+#                    nothing
+#   bar~<text>       the half after the em-dash: the requirement
+#   silenced~<text>  whether measurement_suppressed names <text>
+observe() {
+  local got="" token name value needle
+  for token in $1; do
+    name="${token%%=*}"
+    case "$name" in
+      rc) value="$RC" ;;
+      path) value="$(json '.path | if . == null then "null" else sub(".*/"; "") end')" ;;
+      detail~*) needle="${name#detail~}"; value="$(json '.detail // ""' | grep -qF -- "${needle//+/ }" && echo true || echo false)" ;;
+      branch~*) needle="${name#branch~}"; value="$(json '.detail // "" | split(" — ")[0]' | grep -qF -- "${needle//+/ }" && echo true || echo false)" ;;
+      bar~*) needle="${name#bar~}"; value="$(json '.detail // "" | split(" — ")[1:] | join(" — ")' | grep -qF -- "${needle//+/ }" && echo true || echo false)" ;;
+      silenced~*) needle="${name#silenced~}"; value="$(json '.measurement_suppressed // ""' | grep -qF -- "${needle//+/ }" && echo true || echo false)" ;;
+      *) value="$(json "if has(\"$name\") then .$name else \"ABSENT\" end")"; value="${value// /+}" ;;
+    esac
+    got="$got $name=$value"
   done
-' _ "$REPO_ROOT" 2>/dev/null)"
-assert_eq "$(printf '%s' "$disp_out" | grep -c .)" "4" "the disposition predicate answered for all four inputs"
-assert_substr "$disp_out" "torn_write=fallback" "an explicit torn_write allows the fallback"
-assert_substr "$disp_out" "terminal=terminal" "an explicit terminal refuses the fallback"
-assert_substr "$disp_out" "unset=terminal" "an UNSET disposition is treated as terminal — a gate that forgets to classify itself fails closed"
-assert_substr "$disp_out" "typo_write=terminal" "an unrecognised disposition is treated as terminal"
+  printf '%s' "${got# }"
+}
 
-# --- glob mode: zero_sample is TERMINAL, not advisory ---
-# On a zero_sample hit the search would record the rejection and keep walking,
-# so any older-but-fresh sibling was returned ok=true — and the reviewer's own
-# prescribed self-check uses boundary 0, which makes every prior artifact fresh.
-zs_glob_ok="$worktree/tmp/review-reviewer-zs-20260815-100000.json"
-printf '{"agent":"reviewer-zs","verdict":"pass","summary":"mutation: killed 3/3; stability: 10/10 at 16 threads"}' > "$zs_glob_ok"
-zs_glob_bad="$worktree/tmp/review-reviewer-zs-20260815-110000.json"
-printf '{"agent":"reviewer-zs","verdict":"pass","summary":"mutation: killed 0/0; stability: 0/0 at 16 threads"}' > "$zs_glob_bad"
-touch -d "@$after" "$zs_glob_ok"
-touch -d "@$later" "$zs_glob_bad"
-set +e
-out="$("$CHECK" "$worktree" reviewer-zs "$delegated_at")"
-rc=$?
-set -e
-assert_eq "$rc" "1" "glob zero-sample is terminal, not rescued by an older sibling"
-assert_eq "$(jq -r '.reason' <<<"$out")" "zero_sample" "glob terminal zero-sample keeps reason=zero_sample"
-assert_eq "$(jq -r '.path' <<<"$out")" "$zs_glob_bad" "glob terminal zero-sample points at the rejected artifact"
+# file_table ROW... — one artifact, one --file run, one assertion per row:
+# `label^body^expect`, `^` so a body may carry any character a JSON string does.
+file_table() {
+  local row label body expect
+  for row in "$@"; do
+    IFS='^' read -r label body expect <<<"$row"
+    [[ -n "$expect" ]] || { printf 'file_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+    fresh_run
+    printf '%s' "$body" > "$F"
+    run_check --file %F
+    assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
+  done
+}
 
-# MUST-FAIL CONTROL: with the zero-sample artifact STALE, the fresh measured one
-# is still the answer — terminal refuses THIS run, not the agent forever.
-touch -d "@$before" "$zs_glob_bad"
-expect_glob_valid "$worktree" reviewer-zs "$delegated_at" "$zs_glob_ok" "a STALE zero-sample artifact does not block a fresh measured one"
+# wrapped_table TEMPLATE ROW... — like file_table, the row's middle field
+# substituted for %s in TEMPLATE (a JSON literal placed in a complete artifact).
+wrapped_table() {
+  local template="$1" row label literal expect
+  shift
+  for row in "$@"; do
+    IFS='^' read -r label literal expect <<<"$row"
+    [[ -n "$expect" ]] || { printf 'wrapped_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+    fresh_run
+    # shellcheck disable=SC2059
+    printf "$template" "$literal" > "$F"
+    run_check --file %F
+    assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
+  done
+}
 
-# the rejection reason is documented where reviewers read the rules
+# glob_table ROW... — a fresh worktree holding the `file@when=body` items the
+# row stages (when one of before, after, later against the boundary), one run
+# in glob mode for agent `r` under the jq the row names (real or torn), one
+# assertion: `label^stage^jq^expect`.
+glob_table() {
+  local row label spec which expect items item file when name mtime
+  for row in "$@"; do
+    IFS='^' read -r label spec which expect <<<"$row"
+    [[ -n "$expect" ]] || { printf 'glob_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+    fresh_run
+    IFS=';' read -ra items <<<"$spec"
+    for item in "${items[@]}"; do
+      file="${item%%@*}"; when="${item#*@}"; when="${when%%=*}"; name="${item#*=}"
+      body "$name" > "$WT/tmp/review-r-$file.json"
+      case "$when" in
+        before) mtime=$BEFORE ;; after) mtime=$AFTER ;; later) mtime=$LATER ;;
+        *) echo "glob_table: unknown time $when in $item" >&2; exit 1 ;;
+      esac
+      touch -d "@$mtime" "$WT/tmp/review-r-$file.json"
+    done
+    case "$which" in
+      real) run_check %W r %D ;;
+      torn) PATH="$TORN_SHIM:$PATH" run_check %W r %D ;;
+      *) echo "glob_table: unknown jq $which" >&2; exit 1 ;;
+    esac
+    assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
+  done
+}
+
+echo "=== zero_sample: a measurement that produced no samples is not a result ==="
+# The gate reads the SAMPLE COUNT, never the result. A zero denominator or zero
+# thread count means the instrument selected nothing; a zero numerator means it
+# ran and everything failed, which is the finding the reviewer skill calls
+# "never a pass" and must reach the orchestrator intact: the accepting rows
+# fail under a numerator/denominator swap, which is what pins WHICH number the
+# gate reads. Only the artifact's own carriers, .summary and .qa_metadata, are
+# measurements; the same text quoted inside a finding is that finding's
+# evidence. Whitespace between citation tokens is not one fixed spelling.
+file_table \
+  "a zero-mutant citation is refused, quoted, and told the declaration^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"validated: mutation: killed 0/0; stability: 10/10 at 16 threads\"}^rc=1 ok=false reason=zero_sample detail~killed+0/0=true detail~instrument+failure=true detail~measurement_failed=true" \
+  "a zero-run stability citation is refused and quoted^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 3/3; stability: 0/0 at 16 threads\"}^rc=1 reason=zero_sample detail~stability:+0/0=true" \
+  "zero threads is the same instrument failure, named^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 3/3; stability: 10/10 at 0 threads\"}^rc=1 reason=zero_sample detail~zero+threads=true" \
+  "stability 0/10, ten measured runs none passed, stays valid^{\"agent\":\"reviewer-test\",\"verdict\":\"action_required\",\"summary\":\"concurrency-sensitive: mutation: killed 3/3; stability: 0/10 at 16 threads\"}^rc=0 reason=valid" \
+  "mutation killed 0/3, three mutants none killed, stays valid^{\"agent\":\"reviewer-test\",\"verdict\":\"action_required\",\"summary\":\"mutant survived: mutation: killed 0/3; stability: 10/10 at 16 threads\"}^rc=0 reason=valid" \
+  "a partial kill and partial stability stay valid^{\"agent\":\"reviewer-test\",\"verdict\":\"action_required\",\"summary\":\"mutation: killed 2/3; stability: 9/10 at 16 threads\"}^rc=0 reason=valid" \
+  "a zeroed citation quoted in a blocker description is out of scope^{\"agent\":\"reviewer-test\",\"verdict\":\"action_required\",\"summary\":\"s\",\"blockers\":[{\"id\":1,\"title\":\"t\",\"location\":\"src/x.rs (\`f\`)\",\"description\":\"the fixture proves the gate rejects mutation: killed 0/0; stability: 0/0 at 16 threads\",\"recommendation\":\"r\",\"priority\":2,\"estimate\":2}],\"suggestions\":[],\"qa_metadata\":{}}^rc=0 reason=valid" \
+  "a zeroed citation quoted in a suggestion is out of scope^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"s\",\"blockers\":[],\"suggestions\":[{\"id\":1,\"title\":\"t\",\"location\":\"tests/x.sh\",\"description\":\"the fixture uses mutation: killed 0/0 as its control\",\"recommendation\":\"r\",\"priority\":3,\"estimate\":1,\"category\":\"fix\"}],\"qa_metadata\":{}}^rc=0 reason=valid" \
+  "a zeroed citation quoted in a question is out of scope^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"questions\":[{\"id\":1,\"location\":\"general\",\"question\":\"is mutation: killed 0/0 expected here?\",\"draft_response\":\"d\",\"source\":\"@x\",\"source_id\":\"1\",\"source_type\":\"inline\"}],\"qa_metadata\":{}}^rc=0 reason=valid" \
+  "the same text in .summary is the artifact's own measurement, and the refusal points at the honest route^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"the fixture proves the gate rejects mutation: killed 0/0; stability: 0/0 at 16 threads\",\"blockers\":[],\"suggestions\":[],\"qa_metadata\":{}}^rc=1 reason=zero_sample detail~blocker+or+suggestion=true" \
+  "a citation nested in qa_metadata is the artifact's own measurement^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"qa_metadata\":{\"test_qa\":{\"note\":\"mutation: killed 0/0\"}}}^rc=1 reason=zero_sample" \
+  "a citation wrapped across a newline still counts^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/\\n0; stability: 10/10 at 16 threads\"}^rc=1 reason=zero_sample" \
+  "a newline after 'stability:' still counts^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"stability:\\n0/0 at 16 threads\"}^reason=zero_sample" \
+  "a newline before a zero thread count still counts^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"stability: 10/10 at\\n0 threads\"}^reason=zero_sample" \
+  "a nonzero mutation and stability citation stays valid^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 3/3; stability: 10/10 at 16 threads\"}^rc=0 reason=valid measurement_failed=ABSENT measurement_suppressed=ABSENT" \
+  "an artifact citing no measurement is untouched by the gate^{\"agent\":\"reviewer-quality\",\"verdict\":\"pass\",\"summary\":\"no measurement was needed for this domain\"}^rc=0 reason=valid"
+
+echo "=== perf payload: evidence is required, absence is not detected shape by shape ==="
+# Every spelling of "produced nothing" is refused, or emitting less becomes the
+# cheapest way past the gate; several shapes are refused by DIFFERENT branches,
+# so each row pins the branch's detail beside the shared reason. One real
+# measured value is enough, in either container.
+wrapped_table '{"agent":"reviewer-perf","verdict":"pass","summary":"s","blockers":[],"suggestions":[],"qa_metadata":{"perf_qa":%s}}' \
+  "percentiles missing entirely^{\"regression_pct\":0,\"regressions\":[],\"platform\":\"linux\",\"baseline_sha\":\"abc\"}^reason=zero_sample detail~declares+no+percentiles+block=true" \
+  "percentiles null^{\"percentiles\":null}^reason=zero_sample detail~declares+no+percentiles+block=true" \
+  "percentiles an empty object^{\"percentiles\":{}}^reason=zero_sample detail~percentiles+is+empty=true" \
+  "percentiles an empty array^{\"percentiles\":[]}^reason=zero_sample detail~percentiles+is+empty=true" \
+  "percentiles all zero numbers^{\"percentiles\":{\"p50\":0,\"p99\":0}}^reason=zero_sample detail~no+measured+value+above+zero=true" \
+  "percentiles zero-valued strings^{\"percentiles\":{\"p50\":\"0ms\",\"p99\":\"0ms\"}}^reason=zero_sample detail~no+measured+value+above+zero=true" \
+  "percentiles null leaves^{\"percentiles\":{\"p50\":null,\"p99\":null}}^reason=zero_sample detail~no+measured+value+above+zero=true" \
+  "percentiles a bare string^{\"percentiles\":\"none recorded\"}^reason=zero_sample detail~neither+an+object+nor+an+array=true" \
+  "perf_qa itself not an object^\"benchmarks ran\"^reason=zero_sample detail~perf_qa+is+not+an+object=true" \
+  "one real number among zeros is accepted^{\"percentiles\":{\"p50\":0,\"p99\":4.2}}^ok=true reason=valid" \
+  "a populated array is accepted^{\"percentiles\":[1.5,2.5]}^ok=true reason=valid" \
+  "no perf_qa payload at all is accepted^null^ok=true reason=valid"
+
+echo "=== the declaration: top-level, substantive, and mechanically visible ==="
+# The escape must not require adopting the qa shape (following the rejection's
+# own instruction dead-ended in a second refusal), must not be satisfiable by
+# any single character, and must not read as a plain green: its reason is what
+# an orchestrator branches on. The rejection branches OVERLAP (a null token is
+# also short, bare punctuation is also short), so each refusing row pins the
+# branch half of the detail; a refused declaration is never echoed as a real
+# one. The declaration is read in ONE place, so the echo and the decision agree
+# either side of the 20-character, 3-word bar.
+wrapped_table '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":%s}' \
+  "a declaration is accepted as undermeasured, never plain valid, and echoed^\"cargo-mutants selected 0 mutants for the changed file\"^rc=0 ok=true reason=valid_undermeasured measurement_failed=cargo-mutants+selected+0+mutants+for+the+changed+file" \
+  "a single period^\".\"^reason=invalid_declaration measurement_failed=ABSENT branch~punctuation+only=true bar~name+the+instrument=true" \
+  "n/a^\"n/a\"^reason=invalid_declaration measurement_failed=ABSENT branch~null+token=true" \
+  "N/A with punctuation^\"N/A.\"^reason=invalid_declaration branch~null+token=true" \
+  "none^\"none\"^reason=invalid_declaration branch~null+token=true" \
+  "unknown^\"unknown\"^reason=invalid_declaration branch~null+token=true" \
+  "unavailable^\"unavailable\"^reason=invalid_declaration branch~null+token=true" \
+  "tbd^\"tbd\"^reason=invalid_declaration branch~null+token=true" \
+  "bare punctuation^\"---\"^reason=invalid_declaration branch~punctuation+only=true" \
+  "long bare punctuation^\"---------------------------\"^reason=invalid_declaration branch~punctuation+only=true" \
+  "whitespace only^\"   \"^reason=invalid_declaration branch~is+blank=true" \
+  "one long word^\"instrumentfailedbadly\"^reason=invalid_declaration branch~is+1+word(s)=true" \
+  "two words past the length floor: only the word bar refuses it^\"cargo-mutants produced-no-samples-at-all\"^reason=invalid_declaration branch~is+2+word(s)=true" \
+  "three words past the floor^\"cargo-mutants selected zero-mutants\"^reason=valid_undermeasured" \
+  "three tiny words: only the length bar refuses them^\"a b c\"^reason=invalid_declaration branch~is+5+characters=true" \
+  "a boolean^true^reason=invalid_declaration branch~must+be+a+string=true" \
+  "a number^0^reason=invalid_declaration branch~must+be+a+string=true" \
+  "an object^{\"why\":\"broke\"}^reason=invalid_declaration branch~must+be+a+string=true" \
+  "an array^[\"broke\"]^reason=invalid_declaration branch~must+be+a+string=true" \
+  "null is no declaration, and the zero citation stands^null^reason=zero_sample" \
+  "19 characters, 3 words: one short of the bar, refused on its own terms and not echoed^\"aa bbbb ccccccccccc\"^reason=invalid_declaration measurement_failed=ABSENT" \
+  "20 characters, 3 words: exactly the bar, and the echo agrees^\"aa bbbb cccccccccccc\"^reason=valid_undermeasured measurement_failed=aa+bbbb+cccccccccccc"
+
+echo "=== the escape suppresses one gate, wherever its block sits ==="
+# The declaration's blast radius would be a consequence of statement order:
+# hoisting its block to the first step once turned `review_performed: false`
+# into an accepted valid_undermeasured. The radius is stated as behaviour, one
+# gate the declaration does not suppress per row, and the one it does. The
+# tolerant shape (no qa_metadata) can adopt the escape without adding the
+# arrays. A declaration covers whatever the measurement gate would have said,
+# a perf payload the named instrument has nothing to do with included; doing
+# so invisibly is the defect, so the result records what it silenced, the
+# finding and not the remedy text of a rejection that did not happen.
+file_table \
+  "the tolerant shape adopts the escape without adding qa_metadata^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",$DECLARATION}^rc=0 reason=valid_undermeasured" \
+  "a declaration also covers an empty perf payload^{\"agent\":\"reviewer-perf\",\"verdict\":\"action_required\",\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"measurement_failed\":\"the bench runner emitted no samples for any lane\",\"qa_metadata\":{\"perf_qa\":{\"percentiles\":{}}}}^reason=valid_undermeasured" \
+  "a declaration does not suppress the no-review gate^{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[],$DECLARATION,\"qa_metadata\":{\"review_performed\":false,\"reason\":\"no_scope_provided\"}}^reason=no_review" \
+  "a declaration does not suppress the finding-item gate^{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[{\"title\":\"t\",\"detail\":\"d\"}],$DECLARATION,\"qa_metadata\":{}}^reason=incomplete" \
+  "a declaration does not suppress the qa-shape gate^{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",$DECLARATION,\"qa_metadata\":{}}^reason=incomplete" \
+  "a declaration does not suppress the missing-verdict gate^{\"agent\":\"r\",\"summary\":\"mutation: killed 0/0\",$DECLARATION}^reason=invalid" \
+  "control: the zero-sample gate is the one it replaces^{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[],$DECLARATION,\"qa_metadata\":{}}^reason=valid_undermeasured" \
+  "the result names the perf measurement a mutation declaration silenced^{\"agent\":\"reviewer-perf\",\"verdict\":\"pass\",\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],$DECLARATION,\"qa_metadata\":{\"perf_qa\":{\"percentiles\":{\"p50\":0,\"p99\":0}}}}^rc=0 reason=valid_undermeasured silenced~percentiles+carries+no+measured+value+above+zero=true" \
+  "the result names the citation a declaration silenced, finding not remedy^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[],$DECLARATION}^silenced~killed+0/0=true silenced~measurement_failed=false" \
+  "control: a declaration with nothing to silence records nothing and is still undermeasured^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 3/3; stability: 10/10 at 16 threads\",\"blockers\":[],\"suggestions\":[],$DECLARATION}^reason=valid_undermeasured measurement_suppressed=ABSENT"
+
+echo "=== glob mode: terminal rejections, and the one fallback ==="
+# zero_sample and invalid_declaration are TERMINAL: recording the rejection
+# and walking on handed the reviewer an older sibling and called it valid, and
+# the reviewer's own prescribed self-check uses boundary 0, which makes every
+# prior artifact fresh. Terminal refuses THIS run, not the agent forever: a
+# stale rejected artifact does not block a fresh measured one. "The gate could
+# not run" is the one content rejection an older sibling may answer, because
+# reviewer artifacts are written non-atomically and a torn read fails jq on
+# THAT file; alone it is still a rejection, and with real jq the newest
+# artifact answers for itself.
+glob_table \
+  "a fresh zero-sample artifact is refused and named, not rescued by an older sibling^ok@after=measured;bad@later=zeroed^real^rc=1 reason=zero_sample path=review-r-bad.json" \
+  "a stale zero-sample artifact does not block a fresh measured one^ok@after=measured;bad@before=zeroed^real^rc=0 path=review-r-ok.json" \
+  "a fresh invalid declaration is refused and named, not rescued by an older sibling^ok@after=measured;bad@later=decl_bad^real^rc=1 reason=invalid_declaration path=review-r-bad.json" \
+  "a stale invalid declaration does not block a fresh measured one^ok@after=measured;bad@before=decl_bad^real^rc=0 path=review-r-ok.json" \
+  "a gate that could not run falls back to the intact sibling^ok@after=measured;torn-newest@later=clean^torn^rc=0 ok=true path=review-r-ok.json" \
+  "control: with real jq the newest artifact answers for itself^ok@after=measured;torn-newest@later=clean^real^rc=0 path=review-r-torn-newest.json"
+
+# The torn artifact ALONE is rejected: the fallback is a real answer, not an
+# absence of gating.
+fresh_run
+body clean > "$WT/tmp/review-r-torn-newest.json"
+PATH="$TORN_SHIM:$PATH" run_check --file "$WT/tmp/review-r-torn-newest.json"
+assert_eq "$(observe "rc=1 reason=invalid")" "rc=1 reason=invalid" "a gate that could not run rejects the artifact on its own" "$ERR"
+
+echo "=== the fail-closed default behind the fallback rule ==="
+# The predicate protects a gate included later that forgets to classify
+# itself; every gate present does, so no artifact reaches the default and it is
+# asserted directly. Run in a child shell: sourcing the lib here would install
+# its own EXIT trap over this suite's and leak $TMP_ROOT.
+for row in "torn_write|fallback" "terminal|terminal" "|terminal" "typo_write|terminal"; do
+  IFS='|' read -r disposition want <<<"$row"
+  got="$(bash -c '
+    source "$1/skills/orch/scripts/lib/review-artifact-gates.sh"
+    review_artifact_disposition="$2"
+    if disposition_allows_fallback; then echo fallback; else echo terminal; fi
+  ' _ "$REPO_ROOT" "$disposition" 2>/dev/null || echo "predicate exited $?")"
+  assert_eq "$got" "$want" "disposition '${disposition:-unset}' -> $want"
+done
+
+echo "=== the rejection reason is documented where reviewers read the rules ==="
 finding_schema="$REPO_ROOT/skills/reviewer/schemas/review-finding.md"
-assert_file_contains "$finding_schema" "zero_sample" "review-finding.md documents the zero_sample rejection"
-assert_file_contains "$finding_schema" "measurement_failed" "review-finding.md documents the declaration escape"
+[[ -f "$finding_schema" ]] || { echo "review-finding.md is gone; the rows below pin nothing" >&2; exit 1; }
+for token in zero_sample measurement_failed; do
+  assert_eq "$(grep -qF -- "$token" "$finding_schema" && echo yes || echo no)" "yes" "review-finding.md names $token"
+done
 
-
+echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
