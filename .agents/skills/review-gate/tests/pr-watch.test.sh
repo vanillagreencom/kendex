@@ -303,6 +303,8 @@ V_THREADS2='verdict=threads-open detail=2 unresolved review threads'
 V_CHANGES='verdict=changes-requested detail=reviewer objects'
 V_AWAITING='verdict=awaiting detail=no evidence'
 V_OFF='verdict=approved detail=review gate disabled by settings (REVIEW_GATE_MODE=off)'
+V_UNTRACKED='verdict=untracked-claim detail=1 tracking claim naming no issue'
+V_UNREASONED='verdict=unreasoned-decline detail=1 decline naming no mechanism'
 V_GARBAGE='garbage output with no verdict'
 # Raw reviewThreads bodies: a cursor that never advances, page one of two
 # (both resolved), page two with one open or one resolved thread, and the
@@ -497,6 +499,30 @@ table "must-fail: without the branch binding another lane's record is reported||
 mutant_watch empty-branch-guard 's#if \[ -n "$branch" \]; then#if true; then#' 'if [ -n "$branch" ]; then'
 table "must-fail: without the empty-branch guard a branchless lane's record is reported||ORCH_STATE_DIR=$SD_NOBRANCH;STUB_OPEN_PRS=$P7UNOREF;STUB_VERDICT_LINE=$V_APPROVED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=disarmed size=214/250/85%@aaaaaaaa"
 
+WATCH_BIN="$LIVE_WATCH"
+
+echo "=== the predicate's disposition verdicts reach the reducer ==="
+# The two thread-disposition verdicts the predicate can return, driven through
+# the reducer arm that consumes each. unreasoned-decline.test.sh decides both
+# terms and stops at the count; these rows are the other half — the verdict
+# named in the kind column, the attention exit, the stale-green companion a
+# green gate over either verdict earns, and the writer dispatch --heal makes
+# of it. A presence grep on the arm stood in for these rows until the suite
+# they belong beside stopped being size-capped; a grep passes on a branch
+# nothing runs.
+table \
+  "unreasoned-decline is its own kind and its own attention||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_UNREASONED;STUB_GATE_HISTORY=$G_PENDING|rc=1 kinds=unreasoned-decline" \
+  "a green gate over it is gate-stale and --heal dispatches the writer at it|--heal|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_UNREASONED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=unreasoned-decline,gate-stale,heal-dispatched dispatches=1" \
+  "untracked-claim is its own kind and its own attention||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_UNTRACKED;STUB_GATE_HISTORY=$G_PENDING|rc=1 kinds=untracked-claim" \
+  "a green gate over it is gate-stale and heals the same way|--heal|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_UNTRACKED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=untracked-claim,gate-stale,heal-dispatched dispatches=1"
+
+# The rows above read a kind column, and a column can be right for the wrong
+# reason: the predicate's verdict word is in the stubbed input, so a reducer
+# that echoed its input would satisfy them. With the kind the unreasoned arm
+# emits misspelled, the first row must read the misspelling and nothing else
+# about the run may move.
+mutant_watch emitted-kind 's| unreasoned-decline "$detail$queued"| unreasoned-declined "$detail$queued"|' ' unreasoned-decline "$detail$queued"'
+table "must-fail: with the emitted kind misspelled the row reads the misspelling||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_UNREASONED;STUB_GATE_HISTORY=$G_PENDING|rc=1 kinds=unreasoned-declined"
 WATCH_BIN="$LIVE_WATCH"
 
 echo "=== the thread walk is paged, summed and bounded ==="

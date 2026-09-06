@@ -16,9 +16,12 @@
 # reply can fall in the seam, which is why `caught_by_either` below reads both
 # counts rather than one.
 #
-# Neither verdict's mapping to a failure status is here: review-writer.test.sh
-# runs both through the writer, w8/w8b for unreasoned-decline and w9/w9b for
-# untracked-claim.
+# Neither verdict's consumers are here, and neither is checked by presence:
+# review-writer.test.sh runs both through the writer, w8/w8b for
+# unreasoned-decline and w9/w9b for untracked-claim, and pr-watch.test.sh
+# runs both through the reducer under `the predicate's disposition verdicts
+# reach the reducer` — the kind column, the attention exit, the stale-green
+# companion and the heal dispatch.
 #
 # The fixtures are tests/corpus/, not literals in here, and adding a label
 # starts there. Each label is paired with the real reason that must
@@ -36,7 +39,6 @@
 # piece and not to the fixture.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WATCH="$SCRIPT_DIR/../scripts/pr-watch.sh"
 PRED="$SCRIPT_DIR/../scripts/review-predicate.sh"
 PASS=0 FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok    $1"; }
@@ -256,16 +258,6 @@ case "$out" in "0 0 "*) ok "a Declined: reply with a naked track-word is never a
 
 out=$(page "$(thread true "$(human 'Tracked: KEN-1')" true)")
 case "$out" in malformed) ok "a 50+-comment thread fails closed as malformed";; *) bad "a 50+-comment thread fails closed as malformed" "$out";; esac
-
-echo "=== the verdict reaches its consumers ==="
-# The writer's mapping is RUN, not grepped: review-writer.test.sh w8/w8b
-# drive this verdict through the writer and assert the failure post and the
-# remedy text. A presence grep would pass on a branch nothing executed.
-#
-# pr-watch's mapping is checked by presence here.
-grep -q 'unreasoned-decline)' "$WATCH" \
-  && ok "pr-watch carries the unreasoned-decline arm" \
-  || bad "pr-watch carries the unreasoned-decline arm" "not referenced"
 
 echo
 echo "--- must-fail probe: the term, reverted ---"
