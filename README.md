@@ -41,23 +41,24 @@ A package on a local path needs no git. On Windows, `kendex guard` runs the comm
 
 | | Claude Code | Codex | OpenCode | Cursor | Pi | Gemini CLI | GitHub Copilot | Antigravity |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| Agents | ● | ● | ● | ●¹ | ● | ● | ● | ● |
+| Agents | ● | ● | ● | ●¹ | ● | ● | ● | ●² |
 | Skills | ● | ● | ● | ●¹ | ● | ● | ● | ● |
-| Hooks | ● | ● | ●² | ●¹ ² | ●³ | ● | ● | ● |
-| Commands | ● | ●⁴ | ● | ○⁵ | ● | ● | -⁶ | - |
-| MCP servers | ● | ● | ● | ● | - | ●⁷ | ● | ● |
+| Hooks | ● | ● | ●³ | ●¹ ³ | ●⁴ | ● | ● | ● |
+| Commands | ● | ●⁵ | ● | ○⁶ | ● | ● | -⁷ | - |
+| MCP servers | ● | ● | ● | ● | - | ●⁸ | ● | ● |
 | Plugins | ◐ | ○ | ○ | ○ | - | ○ | ◐ | ○ |
 | Pi extensions | - | - | - | - | ● | - | - | - |
 
 ● managed · ◐ enable and disable · ○ shown read-only · - not supported.
 
 1. Cursor is managed in projects only.
-2. OpenCode has no hook runtime and Cursor takes a rule rather than a registration, so a hook on either is instructions the model may ignore; a `PreToolUse` hook on `Bash` also sets OpenCode's `permission.bash` to ask.
-3. Pi runs hooks through the `pi-hooks` extension; without it registered they are only instructions.
-4. Codex stores a command as a skill.
-5. Cursor has deprecated slash commands in favour of skills, so a command there is shown and never written.
-6. Copilot CLI reads no command directory of its own; the one it does read is Claude Code's.
-7. Gemini records whether an MCP server is on in one machine-wide file, so a project can declare a server but not switch it off there.
+2. Antigravity reads agents from its own global directory alone, so an agent installs there and never in a project.
+3. OpenCode has no hook runtime and Cursor takes a rule rather than a registration, so a hook on either is instructions the model may ignore; a `PreToolUse` hook on `Bash` also sets OpenCode's `permission.bash` to ask.
+4. Pi runs hooks through the `pi-hooks` extension; without it registered they are only instructions.
+5. Codex stores a command as a skill.
+6. Cursor has deprecated slash commands in favour of skills, so a command there is shown and never written.
+7. Copilot CLI reads no command directory of its own; the one it does read is Claude Code's.
+8. Gemini records whether an MCP server is on in one machine-wide file, so a project can declare a server but not switch it off there.
 
 The full per-tool facts are in [docs/adapters](docs/adapters/README.md).
 

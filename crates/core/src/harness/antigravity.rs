@@ -6,12 +6,12 @@ use crate::hook::{HookSpec, Registration};
 use crate::model::{HarnessId, ItemKind};
 
 /// Antigravity CLI (`agy`). Customizations live under one root per scope,
-/// `~/.gemini/config` and the workspace's `.agents/`, in the same layout:
-/// `agents/<name>.md`, `skills/<name>/SKILL.md`, `rules/*.md`,
-/// `hooks.json`, `mcp_config.json`, `plugins/<name>/plugin.json` (the
-/// CLI's embedded customization guide and
-/// <https://antigravity.google/docs/cli/subagents/>). Settings sit apart
-/// under `~/.gemini/antigravity-cli/`.
+/// `~/.gemini/config` and the workspace's `.agents/`, in the same layout
+/// but for agents: `skills/<name>/SKILL.md`, `rules/*.md`, `hooks.json`,
+/// `mcp_config.json`, `plugins/<name>/plugin.json` at either scope, and
+/// `agents/<name>.md` at the global root alone (the CLI's embedded
+/// customization guide, which names no agent customization type). Settings
+/// sit apart under `~/.gemini/antigravity-cli/`.
 pub struct Antigravity;
 
 /// Antigravity's own hook events, and the fleet event each one answers to
@@ -79,7 +79,6 @@ impl HarnessAdapter for Antigravity {
     /// Antigravity loader is the sole reader of mark a workspace.
     fn project_markers(&self) -> &'static [ProjectMarker] {
         &[
-            ProjectMarker::Dir(".agents/agents"),
             ProjectMarker::Dir(".agents/rules"),
             ProjectMarker::File(".agents/hooks.json"),
             ProjectMarker::File(".agents/mcp_config.json"),
@@ -97,6 +96,9 @@ impl HarnessAdapter for Antigravity {
         // list.
         match kind {
             ItemKind::Skill => vec![Surface::skills(root.join("skills"))],
+            // `agy` reads agents from the global root alone, so a workspace
+            // `agents/` is nothing kendex writes or scans.
+            ItemKind::Agent => vec![],
             other => surfaces(other, &root, None),
         }
     }
@@ -108,7 +110,7 @@ mod tests {
     use crate::env::FakeOs;
 
     #[test]
-    fn both_scopes_share_one_layout_and_the_project_skills_are_the_shared_tree() {
+    fn the_scopes_share_one_layout_but_for_agents_which_the_global_root_holds_alone() {
         let env = Env::fake("/h", FakeOs::Linux);
         let root = Antigravity.default_global_root(&env);
         assert_eq!(root, PathBuf::from("/h/.gemini/config"));
@@ -119,9 +121,10 @@ mod tests {
                 &["md"]
             )]
         );
-        assert_eq!(
-            Antigravity.project_surfaces(ItemKind::Agent, Path::new("/p"), &env),
-            [Surface::files(PathBuf::from("/p/.agents/agents"), &["md"])]
+        assert!(
+            Antigravity
+                .project_surfaces(ItemKind::Agent, Path::new("/p"), &env)
+                .is_empty()
         );
         assert_eq!(
             Antigravity.project_surfaces(ItemKind::Skill, Path::new("/p"), &env),
