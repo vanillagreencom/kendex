@@ -384,6 +384,15 @@ pub(super) fn absorb_ops(
             ),
         });
     }
+    // The other gate `edited_rendering` puts on a skill, asked here for the
+    // same reason: `source_form` gives both spellings of SKILL.md the one
+    // name, so a tree holding both would go into the source as whichever
+    // the write reached last.
+    if kind == ItemKind::Skill && ambiguous_skill_tree(edited) {
+        return Err(CoreError::ForkAmbiguous {
+            name: name.to_owned(),
+        });
+    }
     let Some(decl) = manifest.declared(kind).get(name) else {
         return Err(CoreError::NotDeclared {
             kind,

@@ -1107,3 +1107,41 @@ fn a_sibling_rendering_of_an_absorbed_fork_follows_on_the_next_pass() {
     );
     assert_eq!(audit(&w.env, &w.scope).unwrap().drift, Vec::new());
 }
+
+/// A tree carrying both spellings of SKILL.md is two claims on one source
+/// file. The capture gives them the one name, so absorbing would keep
+/// whichever the write reached last; that tree keeps the edit hold, as it
+/// refuses a fork.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_tree_holding_both_skill_files_is_not_absorbed() {
+    let (w, _) = edited_fork();
+    // Absorb the pending edit, then let the record catch up with the
+    // source it wrote, so what follows is a plain edit and not a source
+    // that moved.
+    resettle(&w);
+    resettle(&w);
+    assert_eq!(audit(&w.env, &w.scope).unwrap().drift, Vec::new());
+
+    let off = w.home.join("app/.agents/skills/gh/SKILL.md.disabled");
+    fs::write(
+        &off,
+        "---\nname: gh\ndescription: mine\n---\nThe other one.\n",
+    )
+    .unwrap();
+    let source_before = fs::read_to_string(fork_source(&w)).unwrap();
+
+    let report = audit(&w.env, &w.scope).unwrap();
+    assert!(report.fork_edits.is_empty(), "{:?}", report.fork_edits);
+    assert!(
+        report
+            .drift
+            .iter()
+            .any(|row| row.cause == Some(DriftCause::LocalEdit)),
+        "{:?}",
+        report.drift
+    );
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert_eq!(fs::read_to_string(fork_source(&w)).unwrap(), source_before);
+    assert!(off.is_file(), "and neither copy was taken");
+}
