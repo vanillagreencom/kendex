@@ -475,6 +475,26 @@ run_pf
 fires "the same fixture staged reads the same way (trap)" "scripts/inerttrap.sh:5: [mktemp-trap]"
 case "$OUT" in *"tests/fresh.test.sh"*) bad "the staged workflow wires the staged suite" "$OUT" ;; *) ok "the staged workflow wires the staged suite" ;; esac
 
+echo "=== a trap on an early line of a large file is still read ==="
+seed bigtrap
+# The trap sits four lines in and the file runs past a pipe buffer below it,
+# so a predicate whose match stops at the first hit leaves its producer
+# writing into a closed pipe: under pipefail that reads as "no trap" and the
+# lane reports a file that cleans up after itself, differently from run to
+# run. 200 KB is the size the report reproduced at.
+{
+  printf '#!/usr/bin/env bash\nset -euo pipefail\nD="$(mktemp -d)"\ntrap %s EXIT\n' "'rm -rf \"\$D\"'"
+  awk 'BEGIN { for (i = 0; i < 4200; i++) print "echo padding line " i " keeps this file past a pipe buffer" }'
+} >"$R/scripts/big.sh"
+run_pf
+clean "a 200 KB new script whose trap is on line 4 is not reported as untrapped"
+
+echo "=== control: the same large file without the trap still fires ==="
+grep -v '^trap ' -- "$R/scripts/big.sh" >"$R/scripts/big.new"
+mv "$R/scripts/big.new" "$R/scripts/big.sh"
+run_pf
+fires "deleting the trap line from the same large file restores the finding" "scripts/big.sh:3: [mktemp-trap] mktemp without an EXIT trap"
+
 echo "=== a temp-path literal is a finding only in a creation call's hands ==="
 seed tmppath
 mkdir -p "$R/src"

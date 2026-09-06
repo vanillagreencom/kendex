@@ -524,12 +524,19 @@ run_shellcheck() { # CONTENT-PATH — gcc-format output on stdout
   fi
 }
 
+# Both readers below take the whole diagnostic before answering, for the
+# reason has_exit_trap does: an awk that exits at the first hit closes the
+# pipe under it, printf takes SIGPIPE, and under pipefail the substitution
+# answers 141. On first_line that status lands on a plain assignment in the
+# caller and errexit ends the run; line_hint's own assignment sits inside a
+# command substitution, where bash inherits no errexit, so the shape there
+# is inert until a caller reads its status.
 line_hint() { # TEXT -> the line number a tool mentions, else 0
   local n
-  n="$(printf '%s' "$1" | awk 'match($0, /line [0-9]+/) { print substr($0, RSTART + 5, RLENGTH - 5); exit }')"
+  n="$(printf '%s' "$1" | awk '!seen && match($0, /line [0-9]+/) { n = substr($0, RSTART + 5, RLENGTH - 5); seen = 1 } END { print n }')"
   case "$n" in "" | *[!0-9]*) printf '0' ;; *) printf '%s' "$n" ;; esac
 }
-first_line() { printf '%s' "$1" | awk 'NF { print; exit }'; }
+first_line() { printf '%s' "$1" | awk 'NF && !seen { s = $0; seen = 1 } END { print s }'; }
 
 JSONC_GLOBS="${PREFLIGHT_JSONC_GLOBS-**/tsconfig*.json **/jsconfig*.json **/.vscode/*.json **/.devcontainer/*.json **/*-color-theme.json}"
 
@@ -575,7 +582,12 @@ MKTEMP_CALL_RE='(^[[:space:]]*|[;(`{&|][[:space:]]*)mktemp([^A-Za-z0-9_.-]|$)'
 # arms nothing.
 TRAP_EXIT_RE='(^[[:space:]]*|[;(`{&|][[:space:]]*)trap[[:space:]].*[[:space:]](EXIT|0)([[:space:]]|;|$)'
 has_exit_trap() { # FILE
-  grep -Ev -- '^[[:space:]]*#' "$1" 2>/dev/null | grep -Eq -- "$TRAP_EXIT_RE"
+  # The match reads its producer to EOF. `grep -q` exits at its first hit,
+  # the upstream grep takes SIGPIPE on its next write, and under pipefail
+  # the pipeline answers 141 — read here as "no trap" — for any file with
+  # more than a pipe buffer left below the trap line. `grep -c` reads to the
+  # end and still exits 1 when nothing matched.
+  grep -Ev -- '^[[:space:]]*#' "$1" 2>/dev/null | grep -Ec -- "$TRAP_EXIT_RE" >/dev/null
 }
 # A directory-CREATING call taking a literal absolute temp path (/tmp,
 # /var/tmp) as (part of) its first argument: mkdtemp/mkdir and their Sync
