@@ -23,7 +23,7 @@ Two greens do NOT mean a review happened. Under `REVIEW_GATE_MODE = "off"` the p
 
 | Verdict | Status | Meaning |
 |---|---|---|
-| `approved` | `success` | Evidence exists for this head; no standing objection; no unresolved threads. Under `REVIEW_GATE_MODE = "off"` the predicate evaluates NO term. Success there means only "gate disabled", stated in the status description. |
+| `approved` | `success` | Evidence exists for this head, or the whole diff sits under `REVIEW_GATE_RENDER_PATHS`; no standing objection; no unresolved threads. Under `REVIEW_GATE_MODE = "off"` the predicate evaluates NO term. Success there means only "gate disabled", stated in the status description. |
 | `awaiting` | `pending` | No review evidence for this head yet. |
 | `threads-open` | `pending` | Evidence exists, but review threads are unresolved. |
 | `changes-requested` | `failure` | A reviewer objects. Red means objection, never a build failure. |

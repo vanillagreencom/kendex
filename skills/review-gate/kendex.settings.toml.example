@@ -98,6 +98,15 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE = ""
 # fails the selftest.
 REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 
+# The render-only lane: the harness render trees this repo commits as
+# kendex output, e.g. ".agents/*;.claude/*;AGENTS.md;kendex.lock.json". A
+# PR whose ENTIRE diff sits under the set is approved with no review
+# evidence; CI still decides the merge. Any file outside the set, or a diff
+# that cannot be enumerated, takes the normal gate path. Not a carry class:
+# the exclusion list does not apply, so list no policy-bearing path here.
+# Empty disables the lane.
+REVIEW_GATE_RENDER_PATHS = ""
+
 # The one-switch gate disable: "enforce" is the full gate; "off" attests
 # approved before any evidence read and merging gates on CI alone. Unknown
 # values are a loud config error — a typo cannot disable a merge gate.

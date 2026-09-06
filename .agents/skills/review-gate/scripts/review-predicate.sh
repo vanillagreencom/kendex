@@ -238,6 +238,34 @@ Carry-forward engine:
       which no such name carries. The refusal runs before any evaluation, so
       a rejected spelling never reaches the matcher.
 
+Render-only lane:
+  REVIEW_GATE_RENDER_PATHS    Path globs (';'-separated; the exclusion
+      grammar and matcher) naming the harness render trees a repo commits
+      as kendex output, e.g. '.agents/*;.claude/*;AGENTS.md;
+      kendex.lock.json'. A PR whose ENTIRE diff — the compare of the PR's
+      base tip against HEAD_SHA, the merge-base diff, bound to the head like
+      every read — sits under the set is approved with NO review evidence: the
+      bytes are kendex output no review re-examines, and the merge still
+      waits on the required CI checks (this gate never reads CI). Empty (the
+      default) disables the lane. Consulted only when no evidence form and
+      no carry opened the evidence term, so a reviewed head pays no diff
+      read. Classification FAILS CLOSED, and every refusal takes the NORMAL
+      gate path (awaiting, unless evidence exists) rather than exit 2 — a
+      lane that cannot decide is a lane that is off: a PR read yielding no
+      full base sha; a compare read that fails, returns zero bytes or
+      malformed pages; a diff of zero files; a list at the compare API's
+      300-file cap (completeness unprovable); a filename with
+      control characters (line-based matching unprovable); a rename whose
+      source is missing or outside the set; any file outside the set. A
+      standing changes-requested and unresolved threads fail closed with the
+      lane as with every evidence form. Not a carry class:
+      REVIEW_GATE_CARRY_FORWARD_EXCLUDE does not apply, the set is judged
+      alone, so a policy-bearing path listed here merges unreviewed. Read
+      from the default-branch checkout like every setting, so the PR under
+      judgment cannot widen it. Configuration errors (exit 2, also under
+      --check-config): an unsupported spelling, an entry naming no literal
+      path ('*/*').
+
 Per-invocation env seams (never settings keys):
   REVIEW_GATE_SETTINGS_FILE         Overrides the settings-file path (tests,
       or a caller resolving settings for a different checkout).
@@ -332,6 +360,7 @@ API_RETRY_DELAY="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit 
 CARRY_FORWARD="$(rg_setting REVIEW_GATE_CARRY_FORWARD "")" || exit 2
 CARRY_EXCLUDE="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE "")" || exit 2
 VENDORED_PATHS="$(rg_setting REVIEW_GATE_VENDORED_PATHS "")" || exit 2
+RENDER_PATHS="$(rg_setting REVIEW_GATE_RENDER_PATHS "")" || exit 2
 GATE_MODE="$(rg_setting REVIEW_GATE_MODE "enforce")" || exit 2
 
 # Configuration errors are exit 2 (no verdict), same contract as a failed
@@ -506,30 +535,56 @@ EOF_PATTERNS
 CARRY_EXCLUDE_PROPHYLACTIC="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "")" || exit 2
 rg_check_patterns REVIEW_GATE_CARRY_FORWARD_EXCLUDE "$CARRY_EXCLUDE"
 rg_check_patterns REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "$CARRY_EXCLUDE_PROPHYLACTIC"
-# The vendored path set is judged by the same grammar and by two rules of
-# its own: no empty set under an enabled class, and no entry without literal
-# path text — an unbounded class by either spelling. Both hold whether or not
-# the class is on, so a set written ahead of enabling it is checked at once.
+# The two path SETS — the vendored carry class's and the render-only
+# lane's — are judged by the same grammar and by one rule of their own: no
+# entry without literal path text, an unbounded set by any spelling. A
+# literal NAME character, not merely one that is not '*': `case` globbing
+# crosses '/', so '*/*' matches nearly every nested path; only a name bounds.
+rg_check_named_paths() { # KEY PACKED_N — exit 2 on an entry naming no path text
+  local vp
+  while IFS= read -r vp; do
+    [ -z "$vp" ] && continue
+    case "$vp" in
+      *[[:alnum:]]*) ;;
+      *)
+        echo "::error::review-predicate: $1 entry '$vp' names no literal path text — '*' crosses '/', so it would match nearly every file; name the render tree" >&2
+        exit 2
+        ;;
+    esac
+  done <<EOF_NAMED_PATHS
+$2
+EOF_NAMED_PATHS
+}
+# The one matcher both path sets read through: shell-style via `case` ('*'
+# crosses '/'), never touching the filesystem — the exclusion list's own
+# loop below matches the same way over the raw value.
+rg_path_in_set() { # FILE PACKED_N — 0 when an entry of the set matches
+  local pat
+  while IFS= read -r pat; do
+    [ -z "$pat" ] && continue
+    case "$1" in
+      $pat) return 0 ;;
+    esac
+  done <<EOF_PATH_SET
+$2
+EOF_PATH_SET
+  return 1
+}
+# The vendored set adds one rule: no empty set under an enabled class. Both
+# rules hold whether or not the class is on, so a set written ahead of
+# enabling it is checked at once.
 rg_check_patterns REVIEW_GATE_VENDORED_PATHS "$VENDORED_PATHS"
 VENDORED_PATHS_N="$(rg_pack "$VENDORED_PATHS" ';')" || rg_pack_failed REVIEW_GATE_VENDORED_PATHS
 if rg_class_enabled vendored && [ -z "$VENDORED_PATHS_N" ]; then
   echo "::error::review-predicate: REVIEW_GATE_CARRY_FORWARD enables 'vendored' but REVIEW_GATE_VENDORED_PATHS names no path — the class carries only what the committed path set names" >&2
   exit 2
 fi
-# A literal NAME character, not merely one that is not '*': `case` globbing
-# crosses '/', so '*/*' matches nearly every nested path; only a name bounds.
-while IFS= read -r vp; do
-  [ -z "$vp" ] && continue
-  case "$vp" in
-    *[[:alnum:]]*) ;;
-    *)
-      echo "::error::review-predicate: REVIEW_GATE_VENDORED_PATHS entry '$vp' names no literal path text — '*' crosses '/', so it would carry nearly every file; name the render tree" >&2
-      exit 2
-      ;;
-  esac
-done <<EOF_VENDORED_PATHS
-$VENDORED_PATHS_N
-EOF_VENDORED_PATHS
+rg_check_named_paths REVIEW_GATE_VENDORED_PATHS "$VENDORED_PATHS_N"
+# The render set enables the lane by being non-empty, so it has no
+# class-over-empty-set rule; the grammar and the literal-text rule apply.
+rg_check_patterns REVIEW_GATE_RENDER_PATHS "$RENDER_PATHS"
+RENDER_PATHS_N="$(rg_pack "$RENDER_PATHS" ';')" || rg_pack_failed REVIEW_GATE_RENDER_PATHS
+rg_check_named_paths REVIEW_GATE_RENDER_PATHS "$RENDER_PATHS_N"
 
 # Comment-reviewer GRAMMAR, validated with every other setting rather than at
 # the moment the evidence loop first reads a pair. A malformed entry is a
@@ -1276,15 +1331,10 @@ EOF_EXCL_FILES
     if rg_class_enabled vendored; then
       while IFS= read -r fn; do
         [ -z "$fn" ] && continue
-        while IFS= read -r pat; do
-          [ -z "$pat" ] && continue
-          case "$fn" in
-            $pat) VENDORED_FILES="$VENDORED_FILES$fn
-"; break ;;
-          esac
-        done <<EOF_VENDORED_PATS
-$VENDORED_PATHS_N
-EOF_VENDORED_PATS
+        if rg_path_in_set "$fn" "$VENDORED_PATHS_N"; then
+          VENDORED_FILES="$VENDORED_FILES$fn
+"
+        fi
       done <<EOF_VENDORED_FILES
 $delta_files
 EOF_VENDORED_FILES
@@ -1332,6 +1382,98 @@ EOF_VENDORED_FILES
   done <<EOF_CARRY
 $carry_candidates
 EOF_CARRY
+fi
+
+# The render-only lane. A repo names the harness render trees it commits as
+# kendex output in REVIEW_GATE_RENDER_PATHS; a PR whose ENTIRE diff sits
+# under that set needs no review evidence, because no review re-examines
+# those bytes, and the merge still waits on the required CI checks (this
+# gate never reads CI). Consulted only when nothing else opened the evidence
+# term, so a reviewed head pays no diff read.
+#
+# THE DIFF IS BOUND TO THE HEAD SHA, like every other read: the PR's own
+# files endpoint returns the diff of whatever the head is at read time,
+# and the writer resolves HEAD_SHA once per converge pass — a push landing
+# between the two would classify head B and post the verdict on A. So the
+# diff is the compare of the PR's base tip against $HEAD_SHA (the merge-base
+# diff GitHub shows, two shas, the carry engine's read); the base tip comes
+# from the PR read and is refused unless it is a full sha.
+#
+# Classification FAILS CLOSED, and every refusal takes the NORMAL gate path
+# rather than exit 2: the lane is a relaxation, so a lane that cannot decide
+# is a lane that is off — a diff read that fails must never leave a head
+# unconverged when the normal path could still judge it. What refuses: a
+# PR read that fails or yields no full base sha; a compare read that fails,
+# returns zero bytes or malformed pages; a diff of zero files (nothing
+# classifies a diff that is not there); a list at the compare API's
+# 300-entry cap (completeness unprovable, the carry engine's posture); a
+# filename with control characters (line-based matching unprovable — the
+# carry engine's rule); a rename whose source is missing or outside the set
+# (a rename INTO the set relocates a file the set never covered); any file
+# outside the set. Changes-requested and unresolved threads fail closed
+# below with the lane as with every evidence form. The exclusion list does
+# not apply: the lane is not a carry, the set is judged alone, and the
+# settings are read from the default-branch checkout so the PR under
+# judgment cannot widen it.
+render_only=0
+render_files=0
+render_refuse() { # REASON — the lane stands down; the normal path decides
+  echo "::warning::render-only lane: $1; taking the normal gate path" >&2
+}
+if [ -n "$RENDER_PATHS_N" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
+   && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ]; then
+  render_out=""
+  render_base=""
+  # Two steps, not a pipe — the compare read's pagination and fail-loud
+  # reasons, with the refusal in place of exit 2. The files list rides
+  # page one only (later pages paginate the commits array). The jq program
+  # answers with ONE leading line — `ok <count>` or `refuse <reason>` — and
+  # then every name the set must cover: each filename, and each source name
+  # a row carries, so a rename is judged by both. A row that is not a
+  # renamed file yet carries a source name is judged by it too, the
+  # vendored class's rule.
+  if ! render_base="$(gh_read "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '.base.sha // ""')"; then
+    render_refuse "could not read PR #$PR_NUMBER for its base sha"
+  elif ! printf '%s' "$render_base" | grep -qxE '[0-9a-f]{40}'; then
+    render_refuse "PR #$PR_NUMBER carries no full base sha ('$render_base')"
+  elif ! render_pages="$(gh_read "repos/$GH_REPO/compare/$render_base...$HEAD_SHA?per_page=100" --paginate)"; then
+    render_refuse "could not read the comparison $render_base...$HEAD_SHA"
+  elif [ -z "$render_pages" ]; then
+    render_refuse "the comparison $render_base...$HEAD_SHA produced zero bytes (broken read)"
+  elif ! render_out="$(jq -rs '
+      if (length == 0) or (any(.[]; type != "object")) or ((.[0].files | type) != "array") then "refuse malformed compare pages"
+      else .[0].files as $files
+        | if ($files | length) == 0 then "refuse an empty diff (zero files)"
+          elif ($files | length) >= 300 then "refuse a file list at the compare API cap of 300 entries (completeness unprovable)"
+          elif any($files[]; ((.filename // "") | type) != "string" or ((.previous_filename // "") | type) != "string") then "refuse a row whose name is not a string"
+          elif any($files[]; (.filename // "") == "") then "refuse a file without a name"
+          elif any($files[]; .status == "renamed" and (.previous_filename // "") == "") then "refuse a rename without a source name"
+          elif any($files[]; ((.filename // "") | test("\\p{Cc}")) or ((.previous_filename // "") | test("\\p{Cc}"))) then "refuse a filename with control characters (line-based matching cannot be proven)"
+          else "ok \($files | length)", ($files[] | (.filename // ""), (.previous_filename // ""))
+          end
+      end' <<<"$render_pages" 2>/dev/null)"; then
+    render_refuse "the comparison $render_base...$HEAD_SHA could not be parsed (malformed pages)"
+  else
+    render_verdict="$(head -n 1 <<<"$render_out")"
+    case "$render_verdict" in
+      "ok "*)
+        render_files="${render_verdict#ok }"
+        render_only=1
+        while IFS= read -r fn; do
+          [ -z "$fn" ] && continue
+          if ! rg_path_in_set "$fn" "$RENDER_PATHS_N"; then
+            render_refuse "'$fn' is outside REVIEW_GATE_RENDER_PATHS"
+            render_only=0
+            break
+          fi
+        done <<EOF_RENDER_NAMES
+$(tail -n +2 <<<"$render_out")
+EOF_RENDER_NAMES
+        ;;
+      "refuse "*) render_refuse "${render_verdict#refuse }" ;;
+      *) render_refuse "the comparison $render_base...$HEAD_SHA could not be classified" ;;
+    esac
+  fi
 fi
 
 # A genuine GraphQL failure must NOT fall through as unresolved threads — fail
@@ -1540,7 +1682,7 @@ while :; do
 done
 fi
 
-echo "PR #$PR_NUMBER head $HEAD_SHA: reviews=$got clean-analysis=$check comment-form=$comment_hits outage-marker=$outageok carried=$carried changes-requested=$cr unresolved-threads=$unresolved untracked-claims=$untracked unreasoned-declines=$unreasoned (threads=$THREADS_MODE)" >&2
+echo "PR #$PR_NUMBER head $HEAD_SHA: reviews=$got clean-analysis=$check comment-form=$comment_hits outage-marker=$outageok carried=$carried render-only=$render_only changes-requested=$cr unresolved-threads=$unresolved untracked-claims=$untracked unreasoned-declines=$unreasoned (threads=$THREADS_MODE)" >&2
 
 if [ "$cr" != "0" ]; then
   echo "verdict=changes-requested detail=standing review changes requested (persists across pushes until re-approval or dismissal)"
@@ -1548,13 +1690,17 @@ elif [ "$untracked" != "0" ]; then
   echo "verdict=untracked-claim detail=$untracked tracking claim(s) name no issue — write Declined: <reason>, or add the tracker/#id"
 elif [ "$unreasoned" != "0" ]; then
   echo "verdict=unreasoned-decline detail=$unreasoned decline(s) name no mechanism — give a passing state, a false premise, or an excluded class with the fact that puts it there"
-elif [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ]; then
+elif [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ] && [ "$render_only" = "0" ]; then
   # One line, no source list. Which sources could open the gate is the repo's
   # own settings (references/settings.md), not a status description GitHub
   # keeps 140 characters of.
   echo "verdict=awaiting detail=no review evidence at $HEAD_SHA yet"
 elif [ "$unresolved" != "0" ]; then
   echo "verdict=threads-open detail=$unresolved unresolved review thread(s)"
+elif [ "$render_only" = "1" ]; then
+  # The lane is SUBSTITUTING for evidence, so the status says so: a reader
+  # sees this PR merged on its diff, not on a review.
+  echo "verdict=approved detail=render-only diff ($render_files file(s) under REVIEW_GATE_RENDER_PATHS); no review evidence required"
 elif [ "$carried" = "1" ]; then
   echo "verdict=approved detail=review evidence at $carry_base carried to head across a $carry_kind"
 elif [ "$outageok" != "0" ] && [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ]; then
