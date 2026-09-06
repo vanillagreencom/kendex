@@ -19,7 +19,9 @@ export function runGit(args: string[], cwd: string): void {
 	}
 }
 
-export function writePiConfig(project: string): void {
+/** `overrides` are merged over the fixture defaults, for a case whose subject
+ * is one setting: a budget a hook has to overrun, a guard toggle turned off. */
+export function writePiConfig(project: string, overrides: Record<string, unknown> = {}): void {
 	mkdirSync(join(project, ".pi"), { recursive: true });
 	writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({
 		kendex: {
@@ -30,6 +32,7 @@ export function writePiConfig(project: string): void {
 						preCommitCheck: true,
 						taskCompletedCheck: false,
 						clippyTimeoutMs: 3000,
+						...overrides,
 					},
 				},
 			},
@@ -90,16 +93,47 @@ export function initRustRepo(prefix: string): string {
 	return dir;
 }
 
-export function installToolCallHandler(): ToolCallHandler {
-	let handler: ToolCallHandler | undefined;
+export type ListenerHandler = (event: Record<string, unknown>, ctx: Record<string, unknown>) => Promise<unknown> | unknown;
+export type SentMessage = { customType: string; content: string; display: boolean };
+/** Both arguments of every `pi.sendMessage` call: the options decide delivery, so they are asserted. */
+export type SentCall = { message: SentMessage; options: Record<string, unknown> | undefined };
+
+/** The carrier installed against a stub Pi: every listener it registered is
+ * callable by name, and every message it sends is recorded in order. One stub,
+ * so a suite cannot model a Pi the other suites do not. */
+export interface Carrier {
+	sent: SentCall[];
+	handler(event: string): ListenerHandler;
+}
+
+/** `onSend` runs after the call is recorded, for a case whose subject is a
+ * channel that fails: Pi's session-bound `pi` throws once the session it was
+ * captured from has been replaced. */
+export function installCarrier(onSend?: (message: SentMessage) => void): Carrier {
+	const handlers = new Map<string, ListenerHandler>();
+	const sent: SentCall[] = [];
 	const pi = {
-		on(event: string, cb: ToolCallHandler) {
-			if (event === "tool_call") handler = cb;
+		on(event: string, cb: ListenerHandler) {
+			handlers.set(event, cb);
+		},
+		sendMessage(message: SentMessage, options?: Record<string, unknown>) {
+			sent.push({ message, options });
+			onSend?.(message);
 		},
 	};
 	piHooks(pi as never);
-	if (!handler) throw new Error("tool_call handler was not registered");
-	return handler;
+	return {
+		sent,
+		handler(event: string): ListenerHandler {
+			const found = handlers.get(event);
+			if (!found) throw new Error(`the carrier registered no ${event} handler`);
+			return found;
+		},
+	};
+}
+
+export function installToolCallHandler(): ToolCallHandler {
+	return installCarrier().handler("tool_call") as ToolCallHandler;
 }
 
 /** The kendex render of a hook, at the project path docs/adapters/pi.md gives
@@ -220,4 +254,13 @@ export function readLog(log: string): string {
  * case that expects a project-scope hook to run has to say so. */
 export function trusted(cwd: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
 	return { cwd, isProjectTrusted: () => true, ...extra };
+}
+
+/**
+ * A `tool_result` event in the shape Pi fires one: `toolName`, the `input` the
+ * call carried, and the `content` blocks the model reads — never absent, which
+ * is why every fixture builds the event here rather than by hand.
+ */
+export function toolResultEvent(toolName: string, input: Record<string, unknown>, text = ""): Record<string, unknown> {
+	return { toolName, input, content: text === "" ? [] : [{ type: "text", text }], isError: false };
 }

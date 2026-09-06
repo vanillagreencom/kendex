@@ -1,6 +1,6 @@
 # @vanillagreen/pi-hooks
 
-A Pi extension that runs hooks installed by kendex. It checks tool calls and can report Rust errors and installation drift to the agent.
+A Pi extension that runs hooks installed by kendex. It checks tool calls, hands hook output to the agent after a tool call, at the end of a turn and at session start, and can report Rust errors and installation drift to the agent.
 
 ## Install
 
@@ -18,6 +18,7 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 
 - Run installed PreToolUse hooks before Pi tool calls.
 - Stop a tool call when a hook refuses it or cannot complete.
+- Run installed PostToolUse, Stop, TaskCompleted and SessionStart hooks and give the agent what they say.
 - Run configured custom hooks.
 - Report clippy errors after Rust edits.
 - Report installation drift when a session starts.
@@ -25,6 +26,16 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 ## How it works
 
 kendex installs hook scripts and a hook registry for Pi. Before a tool call, this extension reads the applicable project and user registries. It gives each matching hook the tool name and arguments. Pi runs the tool only after the hooks allow the call.
+
+The other hook events cannot stop anything in Pi, so the extension delivers what a hook says instead:
+
+| Hook event | Pi listener | What happens with the hook's output |
+| --- | --- | --- |
+| `PostToolUse` | `tool_result` | Appended to the tool result the agent reads. |
+| `Stop`, `TaskCompleted` | `turn_end`, read once per response on `agent_settled` | Sent to the agent once as a message that starts the next turn. A hook's answer to that message runs the hooks again with `stop_hook_active: true` and is not sent back, so a response runs them at most twice. |
+| `SessionStart` | `session_start` | Added to the session's opening context. |
+
+On those three events every matching hook runs. Exit `2` delivers the hook's stderr, exit `0` delivers its stdout, and any other exit status, a timeout or a missing script is reported to the agent as a hook that did not run. A `PostToolUse` matcher is read against the tool name and a `SessionStart` matcher against the source (`startup`, `resume` or `clear`); `Stop` and `TaskCompleted` hooks take no matcher.
 
 ## Settings
 
@@ -34,9 +45,7 @@ Open `/extensions:settings`; settings appear under the **Hooks** tab. Project se
 
 - `enabled`: package toggle; a custom hook has no toggle of its own and rides this one.
 - `blockBareCd`, `blockRepoCopy`, `preCommitCheck`: one toggle per shipped guard.
-- `taskCompletedCheck`, `sessionDriftCheck`: the end-of-turn clippy advisory and the session-start drift report.
+- `taskCompletedCheck`, `sessionDriftCheck`: the end-of-turn clippy advisory and the session-start drift report. These two run natively and are not in the registry; the same setting also turns off a registered `task-completed-check` or `session-drift-check` hook.
 - `hookTimeoutMs`, `clippyTimeoutMs`, `driftCheckTimeoutMs`: the time budgets; a hook past its budget refuses the call.
 
 Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
-
-The extension runs PreToolUse hooks only. Other hook events are not dispatched.

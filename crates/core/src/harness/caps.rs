@@ -243,10 +243,15 @@ pub fn installable(harness: HarnessId) -> bool {
     })
 }
 
-/// The listeners Pi's runtime actually fires, and the registry key each
-/// hook event maps onto. Pi has no per-hook artifact — a carrier package
-/// hosts these native listeners — and an event outside this map cannot
-/// fire on Pi, so it stays honestly unsupported in every label.
+/// The registry key each hook event maps onto, named for the listener Pi
+/// fires. Pi has no per-hook artifact — a carrier package hosts these
+/// native listeners — and an event outside this map cannot fire on Pi, so
+/// it stays honestly unsupported in every label.
+///
+/// The carrier dispatches every key here, and a key on one side alone is a
+/// hook kendex labels enforced with nothing to run it (KEN-941, KEN-1189).
+/// Only `tool_call` gates, and `turn_end` is read on `agent_settled`, which
+/// fires per response rather than per turn: `docs/adapters/pi.md` has both.
 pub fn pi_listener(event: &str) -> Option<&'static str> {
     match event {
         "PreToolUse" => Some("tool_call"),
@@ -356,10 +361,12 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
         (Pi, Agent | Skill) => managed(BOTH),
         // Enforced through the carrier: the pi-hooks extension hosts the
         // native listeners and hook content rides in the registry kendex
-        // renders. The static row says what the mechanism supports; the
-        // surfaces that label an installation read carrier reality through
-        // `pi_ext::carrier::enforcement`, which downgrades to advisory
-        // wherever no settings layer Pi loads registers the carrier.
+        // renders, under every listener `pi_listener` maps an event onto,
+        // all of which the carrier dispatches. The static row says what the
+        // mechanism supports; the surfaces that label an installation read
+        // carrier reality through `pi_ext::carrier::enforcement`, which
+        // downgrades to advisory wherever no settings layer Pi loads
+        // registers the carrier.
         (Pi, Hook) => enforced(managed(BOTH)),
         // A prompt template is one `prompts/<name>.md` per command at either
         // scope, read with the same `description` and `argument-hint` keys

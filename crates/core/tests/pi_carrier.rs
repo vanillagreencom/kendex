@@ -78,6 +78,10 @@ fn scope(world: &World) -> Scope {
     }
 }
 
+/// Every listener kendex renders a registration under, so the case below can
+/// assert the whole set rather than the one key it drives.
+const DISPATCHED: [&str; 4] = ["tool_call", "tool_result", "turn_end", "session_start"];
+
 #[test]
 fn events_map_onto_the_listeners_pi_actually_fires() {
     assert_eq!(pi_listener("PreToolUse"), Some("tool_call"));
@@ -317,6 +321,23 @@ fn bun_is_required() -> bool {
         && (std::env::var_os("GITHUB_ACTIONS").is_some() || std::env::var_os("CI").is_some())
 }
 
+/// The `bun` an end-to-end case drives the carrier with, or `None` where
+/// the case is allowed to skip: a lane `bun_is_required` names fails here
+/// instead, since a skipped end-to-end case proves nothing.
+// The skip line a `#[test]` body may print without the lint noticing.
+#[allow(clippy::print_stderr)]
+fn carrier_runner() -> Option<std::path::PathBuf> {
+    let bun = bun_on_path();
+    assert!(
+        bun.is_some() || !bun_is_required(),
+        "bun is not on PATH: restore the oven-sh/setup-bun step on the kendex-core leg of the cargo-linux and cargo-macos jobs in .github/workflows/skill-tests.yml, or this case proves nothing"
+    );
+    if bun.is_none() {
+        eprintln!("skipped: bun is not on PATH, so the carrier cannot be run");
+    }
+    bun
+}
+
 /// A hook declared in `kendex.toml` fires under Pi.
 ///
 /// A `[[custom-hooks]]` entry is the case that proves it, because a custom
@@ -327,14 +348,7 @@ fn bun_is_required() -> bool {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_declared_custom_hook_fires_through_the_carrier() {
-    let Some(bun) = bun_on_path() else {
-        assert!(
-            !bun_is_required(),
-            "bun is not on PATH: restore the oven-sh/setup-bun step on the kendex-core leg of the cargo-linux and cargo-macos jobs in .github/workflows/skill-tests.yml, or this case proves nothing"
-        );
-        eprintln!("skipped: bun is not on PATH, so the carrier cannot be run");
-        return;
-    };
+    let Some(bun) = carrier_runner() else { return };
     let w = world();
     register_carrier(&w.project.join(".pi"));
     fs::write(
@@ -384,5 +398,81 @@ fn a_declared_custom_hook_fires_through_the_carrier() {
     assert!(
         verdict.contains("\"block\":true") && verdict.contains("ken-941-fired"),
         "the declared hook did not fire: {verdict}"
+    );
+}
+
+/// End to end, KEN-1189: the three listeners `pi_listener` maps events onto
+/// besides `tool_call`. kendex rendered a registration under each and labelled
+/// it enforced while the carrier read one key, so a `PostToolUse`, `Stop`,
+/// `TaskCompleted` or `SessionStart` hook ran nothing — KEN-941's defect, one
+/// event narrower.
+///
+/// `[[custom-hooks]]` entries again, because a custom hook has no file of its
+/// own and exists nowhere but the registry. The render is asserted for all
+/// four listeners; the carrier is driven over `tool_result`, whose handler
+/// returns its answer rather than delivering it out of band, and whose patched
+/// tool result is what the model reads.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_declared_hook_on_the_other_listeners_fires_through_the_carrier() {
+    let Some(bun) = carrier_runner() else { return };
+    let w = world();
+    register_carrier(&w.project.join(".pi"));
+    fs::write(
+        w.project.join("kendex.toml"),
+        concat!(
+            "schema = 6\n\n[install]\nharnesses = [\"pi\"]\n\n",
+            "[[custom-hooks]]\nname = \"e2e-post\"\nevent = \"PostToolUse\"\nmatcher = \"Bash\"\ncommand = \"echo ken-1189-post >&2; exit 2\"\nagents = \"all\"\n\n",
+            "[[custom-hooks]]\nname = \"e2e-stop\"\nevent = \"Stop\"\ncommand = \"echo ken-1189-stop >&2; exit 2\"\nagents = \"all\"\n\n",
+            "[[custom-hooks]]\nname = \"e2e-session\"\nevent = \"SessionStart\"\ncommand = \"echo ken-1189-session; exit 0\"\nagents = \"all\"\n\n",
+            "[[custom-hooks]]\nname = \"e2e-pre\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"exit 0\"\nagents = \"all\"\n",
+        ),
+    )
+    .unwrap();
+
+    let report = audit(&w.env, &scope(&w)).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
+    let registry = fs::read_to_string(w.project.join(".pi/kendex/hooks.json")).unwrap();
+    for listener in DISPATCHED {
+        assert!(
+            registry.contains(listener),
+            "no {listener} registration in the render: {registry}"
+        );
+    }
+
+    // The real carrier, driven the way Pi drives a tool result.
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let carrier = repo.join("pi-extensions/pi-hooks/extensions/hooks.ts");
+    let driver = w.home.join("drive-tool-result.ts");
+    fs::write(
+        &driver,
+        format!(
+            "import piHooks from {carrier};\nlet handler;\npiHooks({{ on(event, callback) {{ if (event === \"tool_result\") handler = callback; }} }});\nconst patch = await handler(\n\t{{ toolName: \"bash\", input: {{ command: \"git push\" }}, content: [{{ type: \"text\", text: \"Everything up-to-date\" }}], isError: false }},\n\t{{ cwd: {project}, isProjectTrusted: () => true }},\n);\nprocess.stdout.write(JSON.stringify(patch ?? null));\n",
+            carrier = serde_json::to_string(&carrier.to_string_lossy()).unwrap(),
+            project = serde_json::to_string(&w.project.to_string_lossy()).unwrap(),
+        ),
+    )
+    .unwrap();
+
+    let run = std::process::Command::new(&bun)
+        .arg("run")
+        .arg(&driver)
+        .current_dir(&w.project)
+        .env("PI_CODING_AGENT_DIR", w.home.join(".pi/agent"))
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "carrier run failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let patch = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        patch.contains("ken-1189-post"),
+        "the declared PostToolUse hook did not reach the tool result: {patch}"
+    );
+    assert!(
+        patch.contains("Everything up-to-date"),
+        "the tool's own result was dropped rather than added to: {patch}"
     );
 }

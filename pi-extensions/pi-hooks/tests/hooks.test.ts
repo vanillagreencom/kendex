@@ -6,17 +6,20 @@ import { dirname, join } from "node:path";
 
 import { runCargo } from "../extensions/cargo.ts";
 import { PROJECT_LOCK_FILE, PROJECT_MARKER_DIRS, projectRoot, readConfig, recordProjectTrust, rootAnchored } from "../extensions/config.ts";
-import piHooks from "../extensions/hooks.ts";
 import {
 	CONFIG_ID,
 	initRustRepo,
+	installCarrier,
 	installToolCallHandler,
+	type ListenerHandler,
 	readLog,
 	registerProjectHook,
 	renderedHookPath,
 	renderStub,
 	renderUserStub,
 	runGit,
+	type SentCall,
+	toolResultEvent,
 	trusted,
 	useIsolatedGitEnv,
 } from "./harness.ts";
@@ -524,29 +527,17 @@ describe("pi-hooks bash guard passthrough", () => {
 	});
 });
 
-type TurnHandler = (event: Record<string, unknown>, ctx: Record<string, unknown>) => Promise<unknown>;
-type SentMessage = { customType: string; content: string; display: boolean };
-/** Both arguments of every `pi.sendMessage` call: the options decide delivery, so they are asserted. */
-type SentCall = { message: SentMessage; options: Record<string, unknown> | undefined };
+type TurnHandler = ListenerHandler;
 type TurnHooks = { onToolResult: TurnHandler; onTurnEnd: TurnHandler; onTurnStart: TurnHandler; sent: SentCall[] };
 
 function installTurnHandlers(): TurnHooks {
-	const handlers = new Map<string, TurnHandler>();
-	const sent: SentCall[] = [];
-	const pi = {
-		on(event: string, cb: TurnHandler) {
-			handlers.set(event, cb);
-		},
-		sendMessage(message: SentMessage, options?: Record<string, unknown>) {
-			sent.push({ message, options });
-		},
+	const carrier = installCarrier();
+	return {
+		onToolResult: carrier.handler("tool_result"),
+		onTurnEnd: carrier.handler("turn_end"),
+		onTurnStart: carrier.handler("turn_start"),
+		sent: carrier.sent,
 	};
-	piHooks(pi as never);
-	const onToolResult = handlers.get("tool_result");
-	const onTurnEnd = handlers.get("turn_end");
-	const onTurnStart = handlers.get("turn_start");
-	if (!onToolResult || !onTurnEnd || !onTurnStart) throw new Error("turn hooks were not registered");
-	return { onToolResult, onTurnEnd, onTurnStart, sent };
 }
 
 /** A project whose settings arm the end-of-turn check the fixtures above leave off. */
@@ -607,7 +598,7 @@ async function onPath(bin: string, run: () => Promise<void>): Promise<void> {
 describe("pi-hooks end-of-turn clippy", () => {
 	/** One turn that edits a `.rs` file, against an already-installed extension. */
 	async function editingTurn(hooks: TurnHooks, project: string, ctx: Record<string, unknown>): Promise<void> {
-		await hooks.onToolResult({ toolName: "edit", input: { path: join(project, "src", "lib.rs") } }, ctx);
+		await hooks.onToolResult(toolResultEvent("edit", { path: join(project, "src", "lib.rs") }), ctx);
 		await hooks.onTurnEnd({}, ctx);
 	}
 
