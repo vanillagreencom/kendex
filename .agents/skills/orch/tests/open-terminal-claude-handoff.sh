@@ -149,7 +149,9 @@ OT_UNDER_TEST="$OT"
 #   draft      the same, in the shape v2.1.261 actually draws: two rules
 #              around the prompt line, no │ anywhere, and a status bar that
 #              already carries ●. UNDELIVERED, and the only thing separating
-#              it from `delivered` is the non-breaking space after the caret
+#              it from `delivered` is the non-breaking space after the caret.
+#              Not somewhere to type either: the composer is OCCUPIED, and
+#              `send-keys -l` would append a second copy of the brief
 #   plain      the brief submitted into the transcript, over a ready composer,
 #              with no response marker anywhere: UNDELIVERED on the activity
 #              requirement alone
@@ -383,7 +385,8 @@ launch_table \
   "two dialog passes before readiness: one dismissing Enter per pass, the brief typed once after|tmux|ORCH_TMUX_VERIFY_SECS=3|-|echo,echo,echo,echo,echo,ready,delivered|rc=0 out~Re-delivered+brief+to+'CC-737'=true enters=4 resends=1" \
   "the echoed command alone is not delivery: one re-send, then a loud per-lane failure|tmux|-|-|echo,ready,ready|rc=1 stderr~brief+undelivered+to+'CC-737'=true stderr~handoff+lane(s)+failed=true out~Done:+launched+1=false resends=1" \
   "unsent composer text is not delivery: one re-send, then the failure|tmux|-|-|composer|rc=1 stderr~brief+undelivered+to+'CC-737'=true resends=1" \
-  "a draft in the composer the harness actually draws is not delivery either: one re-send, then the failure|tmux|-|-|draft|rc=1 stderr~brief+undelivered+to+'CC-737'=true resends=1" \
+  "a brief left sitting in the composer is submitted by the nudge, not typed a second time|tmux|ORCH_TMUX_VERIFY_SECS=2|-|draft,draft,draft,delivered|rc=0 out~Done:+launched+1=true resends=0 enters=2" \
+  "a composer that stays occupied is a failed lane, and never has a second brief typed into it|tmux|-|-|draft|rc=1 stderr~never+reached+a+ready+composer=true resends=0" \
   "an older TUI's shortcuts footer is still read as ready|tmux|-|-|echo,ready-legacy,delivered|rc=0 out~Re-delivered+brief+to+'CC-737'=true resends=1" \
   "the brief on a transcript line with no response begun is not delivery either|tmux|-|-|plain|rc=1 stderr~brief+undelivered+to+'CC-737'=true resends=1" \
   "a turn in flight is a launched lane whatever its transcript line reads as: no re-send|tmux|-|-|working|rc=0 out~Done:+launched+1=true resends=0 enters=1" \
@@ -423,6 +426,12 @@ launch_table \
 mutant ready-legacy-only open-terminal 's/^READY_RE=.*/READY_RE="\\? for shortcuts"/' 'the readiness marker'
 launch_table \
   "control: keyed on the old footer alone, a dialog that ate the brief can never be recovered|tmux|-|-|echo,ready,delivered|rc=1 stderr~never+reached+a+ready+composer=true resends=0"
+# Readiness that does not insist on an EMPTY composer types into an occupied
+# one, and `send-keys -l` appends: the lane is handed
+# `/orch start CC-737/orch start CC-737` and submits it.
+mutant ready-occupied open-terminal 's/^READY_RE=.*/READY_RE="$COMPOSER_RE"/' 'the empty-composer requirement'
+launch_table \
+  "control: readiness without the empty test types a second brief into an occupied composer|tmux|-|-|draft|resends=1"
 unmutate
 
 echo "=== open-terminal claude handoff: the verify timeout ==="

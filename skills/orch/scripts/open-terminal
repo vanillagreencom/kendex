@@ -402,11 +402,23 @@ start_cmd() {
 # ordinary space. oversee-watch's PANE_MARKER_RE deliberately conflates the
 # two; telling them apart is this script's question, not its.
 #
+# Readiness is the EMPTY composer, which is that line and nothing after it.
+# A composer still holding text is not somewhere to type: `send-keys -l`
+# APPENDS, so typing the brief into a composer that already holds one submits
+# `/orch start CC-737/orch start CC-737`. Its own dismissing Enter submits
+# what is there instead, which is the right recovery when what is there is the
+# brief the launch arrived with — the state this whole path exists for.
+# Measured on the same captures: the empty form is on 35 of 35 idle screens
+# and 57 of 57 mid-turn ones that draw a composer at all, and on 0 draft
+# screens.
+#
 # The older spelling of readiness, the `? for shortcuts` footer, is kept
 # alongside it: this is another tool's surface, and a lane may be running a
-# build that still draws it.
+# build that still draws it. That footer says nothing about whether the
+# composer under it is occupied, so the append above is still reachable on
+# such a build, exactly as it was before this marker existed.
 COMPOSER_RE=$'^\xe2\x9d\xaf\xc2\xa0'
-READY_RE="$COMPOSER_RE"'|\? for shortcuts'
+READY_RE="$COMPOSER_RE"'[[:blank:]]*$|\? for shortcuts'
 
 # The launch took. Two independent proofs, either sufficient.
 #
@@ -440,6 +452,12 @@ tmux_lane_launched() {
   # first poll, and a viewport-only capture would misread that as
   # undelivered and queue a duplicate brief into a running session.
   screen="$(tmux capture-pane -pJ -S - -t "$pane" 2>/dev/null)" || return 1
+  lane_launched "$screen" "$brief"
+}
+
+# The same question against a screen already in hand.
+lane_launched() { # SCREEN BRIEF
+  local screen="$1" brief="$2"
   pane_working "$screen" && return 0
   # No short-circuiting `grep -q` pipelines over the capture: with -S - a
   # retained pane can exceed a pipe buffer, an early -q match SIGPIPEs the
@@ -472,18 +490,21 @@ tmux_wait_launched() {
 # An Enter into an already-ready empty composer is a no-op, so the nudge is
 # safe when the screen is merely slow.
 #
-# A lane that starts working during the wait is the third state, and the one
-# the nudge must stop for: further keystrokes land inside a running turn. It
-# ends the wait as a launched lane rather than a stuck one. WORKING_RE reads
-# false for the first second or two of a turn, before streaming starts, so a
-# turn beginning inside the last passes can still take an Enter — harmless in
-# a Claude Code turn, which Enter does not interrupt, and the pass after it
-# stops.
+# A lane that BECOMES launched during the wait is the third state, and the one
+# the nudge must stop for: further keystrokes land inside a running turn, and
+# the brief is already where it needed to go. It ends the wait as a launched
+# lane rather than a stuck one. This is not only a turn starting late: a
+# dismissing Enter into a composer holding the brief SUBMITS it, which is the
+# recovery this path exists to perform, and re-typing the brief after that
+# would run it twice. WORKING_RE reads false for the first second or two of a
+# turn, before streaming starts, so a turn beginning inside the last passes can
+# still take an Enter — harmless in a Claude Code turn, which Enter does not
+# interrupt, and the pass after it stops.
 #   0  a ready, empty composer: re-send the brief
-#   2  a turn in flight: the launch took, send nothing more
+#   2  the launch took after all: send nothing more
 #   1  neither within the window: the stuck or dead pane the failure exit is for
 tmux_wait_composer() {
-  local pane="$1" waited=0 screen
+  local pane="$1" brief="$2" waited=0 screen
   while (( waited < TMUX_VERIFY_SECS )); do
     # VISIBLE viewport only (no -S -): readiness is a property of the
     # current screen — a footer buried in scrollback behind a first-run
@@ -494,7 +515,7 @@ tmux_wait_composer() {
     # the re-send below was unreachable — every consumed brief fell to the
     # failure exit.
     screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 1
-    pane_working "$screen" && return 2
+    lane_launched "$screen" "$brief" && return 2
     grep -Eq -- "$READY_RE" <<<"$screen" && return 0
     tmux send-keys -t "$pane" Enter || return 1
     sleep 1
@@ -569,7 +590,7 @@ open_tmux() {
   # has the same delivery requirement.
   tmux_wait_launched "$pane" "$brief" && return 0
   local composer_rc=0
-  tmux_wait_composer "$pane" || composer_rc=$?
+  tmux_wait_composer "$pane" "$brief" || composer_rc=$?
   if (( composer_rc == 2 )); then
     echo "'$title' is already working; the launch took (its brief never read as delivered)"
     return 0
