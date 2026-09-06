@@ -4,7 +4,7 @@
 use super::AddRequest;
 use crate::error::{CoreError, Result};
 use crate::manifest::{ItemDecl, Manifest};
-use crate::model::{ItemKind, Scope};
+use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::CatalogBundle;
 
 /// Declare one curated set, carried the way the request asked. Asking for
@@ -18,14 +18,13 @@ pub(super) fn declare_bundle(
     request: &AddRequest,
     hold_at: Option<&str>,
 ) -> ItemDecl {
+    let harnesses = declared_harnesses(manifest, &bundle.name, request).map(<[HarnessId]>::to_vec);
     let decl = manifest
         .bundles
         .entry(bundle.name.clone())
         .or_insert_with(|| ItemDecl::from_source(source_name));
     decl.source = source_name.to_owned();
-    if let Some(harnesses) = &request.harnesses {
-        decl.harnesses = Some(harnesses.clone());
-    }
+    decl.harnesses = harnesses;
     if let Some(method) = request.method {
         decl.method = Some(method);
     }
@@ -40,6 +39,29 @@ pub(super) fn declare_bundle(
     }
     manifest.suppressed.retain(|_, held| !held.is_empty());
     declared
+}
+
+/// The tools this set will be declared with once the request is written:
+/// the ones the request names, and the ones the declaration already carries
+/// where it names none.
+///
+/// A request answers only what it says. Asking again for a set that was
+/// installed for one tool, without naming a tool this time, does not widen
+/// it to the scope's defaults — so a refusal that read the request alone
+/// would be answering for a declaration nobody is about to write, and the
+/// plan would then install against a different list than the one it was
+/// judged on.
+fn declared_harnesses<'a>(
+    manifest: &'a Manifest,
+    name: &str,
+    request: &'a AddRequest,
+) -> Option<&'a [HarnessId]> {
+    request.harnesses.as_deref().or_else(|| {
+        manifest
+            .bundles
+            .get(name)
+            .and_then(|decl| decl.harnesses.as_deref())
+    })
 }
 
 // Install-all subsumption, and the one-bundle-per-name rule.
@@ -197,8 +219,12 @@ pub(super) fn resolve_sets(
                     .collect(),
             });
         }
-        if let Some(harnesses) = super::lands::set_lands_nowhere(&offered, request, manifest, scope)
-        {
+        if let Some(harnesses) = super::lands::set_lands_nowhere(
+            &offered,
+            declared_harnesses(manifest, name, request),
+            manifest,
+            scope,
+        ) {
             return Err(CoreError::BundleLandsNowhere {
                 name: name.clone(),
                 source_name: source_name.to_owned(),

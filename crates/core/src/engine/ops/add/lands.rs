@@ -60,24 +60,24 @@ pub(super) fn lands_nowhere(request: &AddRequest, scope: &Scope) -> Option<Strin
 /// will read for each member, so the two cannot disagree about whether a
 /// declaration puts bytes on disk.
 ///
-/// The tools are the ones the request names, or the scope's own list where
-/// it names none — by here that list has already been brought up to date
-/// against the machine, so it is what the plan will read too.
+/// `harnesses` is the list the set will be declared with, which the caller
+/// derives — not the request's own, which answers for a declaration nobody
+/// is about to write. `None` falls back to the scope's list, and by here
+/// that list has already been brought up to date against the machine, so it
+/// is what the plan will read too.
 pub(super) fn set_lands_nowhere(
     offered: &[ItemKind],
-    request: &AddRequest,
+    harnesses: Option<&[HarnessId]>,
     manifest: &Manifest,
     scope: &Scope,
 ) -> Option<Vec<HarnessId>> {
     let lands = offered.iter().any(|kind| {
-        !crate::engine::desired::harnesses_for(request.harnesses.as_deref(), manifest, *kind, scope)
-            .is_empty()
+        !crate::engine::desired::harnesses_for(harnesses, manifest, *kind, scope).is_empty()
     });
     match lands {
         true => None,
         false => Some(crate::engine::desired::requested_or_default(
-            request.harnesses.as_deref(),
-            manifest,
+            harnesses, manifest,
         )),
     }
 }

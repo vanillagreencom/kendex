@@ -320,6 +320,60 @@ fn the_same_set_asked_for_on_claude_installs() {
     assert!(mcp.contains("db-mcp"), "{mcp}");
 }
 
+/// Asking again for a set already installed for one tool, without naming a
+/// tool this time, is judged on the list that set keeps — not on the
+/// scope's defaults, which the declaration does not widen to. Read the
+/// request alone and both directions are wrong: the Pi-only set below is
+/// let through because the scope also lists Claude, and the Claude-only one
+/// is refused because the scope lists only Pi.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_set_already_declared_for_one_tool_is_judged_on_that_tool() {
+    let f = world();
+    let catalog = servers_catalog(&f);
+    manifest_with(&f, &[("cat", &catalog)], "");
+    let held = f.project.join("kendex.toml");
+    let claude_and_pi = fs::read_to_string(&held).unwrap().replace(
+        "harnesses = [\"claude\"]",
+        "harnesses = [\"claude\", \"pi\"]",
+    );
+    fs::write(
+        &held,
+        format!("{claude_and_pi}[bundles.servers]\nsource = \"cat\"\nharnesses = [\"pi\"]\n"),
+    )
+    .unwrap();
+    let before = fs::read_to_string(&held).unwrap();
+
+    let error = ops::add(&f.env, &f.scope, &request("servers")).unwrap_err();
+
+    assert!(
+        matches!(error, CoreError::BundleLandsNowhere { ref name, .. } if name == "servers"),
+        "a set kept on Pi alone was judged on the scope's wider list: {error}"
+    );
+    assert_eq!(
+        fs::read_to_string(&held).unwrap(),
+        before,
+        "a refusal writes nothing"
+    );
+
+    let pi_only = fs::read_to_string(&held)
+        .unwrap()
+        .replace("harnesses = [\"claude\", \"pi\"]", "harnesses = [\"pi\"]")
+        .replace(
+            "[bundles.servers]\nsource = \"cat\"\nharnesses = [\"pi\"]\n",
+            "[bundles.servers]\nsource = \"cat\"\nharnesses = [\"claude\"]\n",
+        );
+    fs::write(&held, pi_only).unwrap();
+
+    add_and_apply(&f, &request("servers"));
+
+    let mcp = fs::read_to_string(f.project.join(".mcp.json")).unwrap();
+    assert!(
+        mcp.contains("db-mcp"),
+        "a set kept on Claude was refused for the scope's Pi-only list: {mcp}"
+    );
+}
+
 /// One `add --bundle <name> --harness <tool>` from that catalog.
 fn for_harness(name: &str, harness: HarnessId) -> ops::AddRequest {
     ops::AddRequest {
