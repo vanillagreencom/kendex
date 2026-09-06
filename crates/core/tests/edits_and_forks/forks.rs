@@ -1059,3 +1059,51 @@ fn an_edit_inside_a_skills_generated_block_is_not_absorbed() {
         "and nothing wrote over it"
     );
 }
+
+/// A fork rendered in two tools and edited in one converges over two
+/// passes: the absorb writes the source, and the sibling rendering is the
+/// next pass's to bring across. Nothing is lost either way — the sibling
+/// is a rendering kendex owns, not bytes anybody typed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_sibling_rendering_of_an_absorbed_fork_follows_on_the_next_pass() {
+    let w = agent_world(
+        "\"claude\", \"gemini\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "",
+    );
+    let claude = rendered(&w, HarnessId::Claude, "rev");
+    let gemini = rendered(&w, HarnessId::Gemini, "rev");
+    edit_body(&claude);
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    edit_line(&claude, "My body.", "What I typed.");
+    let report = audit(&w.env, &w.scope).unwrap();
+    assert_eq!(report.fork_edits.len(), 1, "{:?}", report.fork_edits);
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert!(
+        fs::read_to_string(&gemini).unwrap().contains("My body."),
+        "the sibling still renders what the source held when this pass began"
+    );
+
+    // The source moved, so the sibling is ordinary drift now, and the pass
+    // that reports it is the pass that settles it.
+    let report = audit(&w.env, &w.scope).unwrap();
+    assert!(report.drift.iter().any(|row| row.name == "rev"));
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert!(
+        fs::read_to_string(&gemini)
+            .unwrap()
+            .contains("What I typed.")
+    );
+    assert!(
+        fs::read_to_string(&claude)
+            .unwrap()
+            .contains("What I typed."),
+        "and the rendering that was edited was never written over"
+    );
+    assert_eq!(audit(&w.env, &w.scope).unwrap().drift, Vec::new());
+}
