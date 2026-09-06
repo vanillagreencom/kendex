@@ -41,20 +41,25 @@ git -C "$R" -c init.defaultBranch=main init -q
 
 # One line for a run of the gate inside $R: the exit status, then every
 # printed line in order joined by ';' with the scratch root aliased. ENVS
-# is a comma-separated list of assignments laid over the sentinel. ARGS is
-# the argv, where @MSG@ stands for a file holding the message, the way the
-# hook passes it, and <root> for the scratch root; an empty ARGS feeds the
-# message on stdin. MSG carries %b escapes and gets the trailing newline git
-# leaves on a message file.
+# is a comma-separated list of assignments laid over the sentinel, <root>
+# and <path> in one standing for the scratch root and the caller's PATH.
+# ARGS is the argv, where @MSG@ stands for a file holding the message, the
+# way the hook passes it, and <root> for the scratch root; an empty ARGS or
+# a '-' feeds the message on stdin, and any other ARGS gets a different
+# message there, so a gate reading stdin instead of the file reddens the
+# row. MSG carries %b escapes and gets the trailing newline git leaves on a
+# message file.
 judge() { # ENVS ARGS MSG
-  local envs=() args=() argv rc=0 out
-  [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
+  local envs=() args=() argv rc=0 out i stdin="$3"
+  [ -z "$1" ] || IFS=',' read -ra envs <<<"${1//<root>/$ROOT}"
+  for i in "${!envs[@]}"; do envs[i]="${envs[i]//<path>/$PATH}"; done
   if [ -n "$2" ]; then
     printf '%b\n' "$3" >"$ROOT/msg"
+    [ "$2" = "-" ] || stdin='feat: the stdin message, not the file'
     argv="${2//@MSG@/$ROOT/msg}"
     IFS=' ' read -ra args <<<"${argv//<root>/$ROOT}"
   fi
-  out="$(cd "$R" && printf '%b\n' "$3" |
+  out="$(cd "$R" && printf '%b\n' "$stdin" |
     env COMMIT_GUARDS_SETTINGS_FILE=/dev/null ${envs[@]+"${envs[@]}"} "$CM" ${args[@]+"${args[@]}"} 2>&1)" || rc=$?
   out="${out//"$ROOT"/<root>}"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
@@ -68,6 +73,8 @@ shape_fail() { # HEADER-AS-SHOWN [TYPES] — the whole shape violation
 }
 LEN_TAIL=";  move the detail into the body — the header is the one line every log shows"
 ESC="$(printf '\033')"
+SOH="$(printf '\001')"
+DEL="$(printf '\177')"
 BADBYTES="$(printf 'fix: \377\376 bad bytes')"
 
 run_rows() { # label | env | args | message | expect
@@ -113,11 +120,22 @@ run_rows \
 
 echo "=== the argv the hook contract passes ==="
 run_rows \
-  "a message FILE is read the way the hook passes it||@MSG@|fix(VST-214): ship the check family|rc=0 $OK fix(VST-214): ship the check family" \
+  "a message FILE is read whole, the way the hook passes it||@MSG@|# from the template\n\nfix(VST-214): ship the check family|rc=0 $OK fix(VST-214): ship the check family" \
   "'-' names stdin||-|fix(cli): read from the dash|rc=0 $OK fix(cli): read from the dash" \
   "a missing message file is exit 2, never a pass||<root>/no-such-msg|fix: unread|rc=2 ::error::commit-msg: no such message file: <root>/no-such-msg" \
   "two positional arguments are exit 2||@MSG@ extra|fix: two files|rc=2 ::error::commit-msg: at most one message file (see --help)" \
   "an unknown flag is exit 2||--bogus|fix: flagged|rc=2 ::error::commit-msg: unknown argument --bogus (see --help)"
+usage="$(judge "" --help 'fix: x')"
+assert_eq "--help prints the usage and exits 0" "rc=0 usage: commit-msg [FILE]" "${usage%%;*}"
+
+# A grep that cannot run the header match: the verdict is a measurement
+# that failed, never a pass and never a violation. The shim fails the one
+# call whose pattern opens with the type alternation and runs every other.
+mkdir -p "$ROOT/grep-shim"
+printf '#!/usr/bin/env bash\ncase " $* " in *" -qE ^("*) echo "grep: simulated failure" >&2; exit 2 ;; esac\nexec "%s" "$@"\n' "$(command -v grep)" >"$ROOT/grep-shim/grep"
+chmod +x "$ROOT/grep-shim/grep"
+run_rows \
+  "a grep that cannot run the header match is exit 2, never a verdict|PATH=<root>/grep-shim:<path>||fix: unmatched|rc=2 grep: simulated failure;::error::commit-msg: grep failed matching the header (exit 2)"
 
 echo "=== the type list is configuration, and it is validated ==="
 run_rows \
@@ -149,6 +167,8 @@ run_rows \
 echo "=== every quoted header reaches the reader scrubbed, never raw ==="
 run_rows \
   "the OK line shows a control byte as a replacement, in place|||fix: a subject with ${ESC}[31m in it|rc=0 $OK fix: a subject with ?[31m in it" \
+  "the first control byte is scrubbed|||fix: a subject with ${SOH} in it|rc=0 $OK fix: a subject with ? in it" \
+  "DEL is scrubbed|||fix: a subject with ${DEL} in it|rc=0 $OK fix: a subject with ? in it" \
   "the shape violation quotes the header scrubbed|||no type here ${ESC}[31m at all|rc=1 $(shape_fail 'no type here ?[31m at all')" \
   "the length violation quotes it scrubbed|COMMIT_GUARDS_SUBJECT_MAX=5||fix: a subject with ${ESC}[31m in it|rc=1 $OK fix: a subject with ?[31m in it;commit-msg FAIL header is 31 characters (max 5): fix: a subject with ?[31m in it$LEN_TAIL" \
   "the generated-header notice quotes it scrubbed too|||Revert \"fix: a subject with ${ESC}[31m in it\"|rc=0 $GEN Revert \"fix: a subject with ?[31m in it\""

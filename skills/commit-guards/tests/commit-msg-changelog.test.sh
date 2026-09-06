@@ -101,6 +101,7 @@ fx_copies() { base "$1"; git -C "$R" config diff.renames copies; cp "$R/crates/c
 fx_copies_entry() { fx_copies "$1"; fragment changelog.d/fixed/ken-9.md; git -C "$R" add -A; }
 fx_chmod_fragment() { base "$1"; fragment changelog.d/fixed/old.md "An old entry nobody is rewriting."; commit "chore: park an entry [no-changelog]"; touch_crate chmodded; chmod +x "$R/changelog.d/fixed/old.md"; git -C "$R" add -A; }
 fx_rewrite_fragment() { base "$1"; fragment changelog.d/fixed/old.md "An old entry nobody is rewriting."; commit "chore: park an entry [no-changelog]"; touch_crate edited; fragment changelog.d/fixed/old.md "An old entry, now rewritten."; git -C "$R" add -A; }
+fx_chmod_minus_x() { base "$1"; fragment changelog.d/fixed/old.md "An old entry nobody is rewriting."; chmod +x "$R/changelog.d/fixed/old.md"; commit "chore: park an executable entry [no-changelog]"; touch_crate unchmodded; chmod -x "$R/changelog.d/fixed/old.md"; git -C "$R" add -A; }
 fx_chmod_required() { base "$1"; chmod +x "$R/crates/core/lib.rs"; git -C "$R" add -A; }
 # A link replaced by a regular file: git reports T. Two shapes, the second
 # holding the link target's own bytes so BOTH SIDES CARRY ONE BLOB and a sha
@@ -158,6 +159,7 @@ rows=(
   "the entry written beside a copy is still the entry|fx_copies_entry copies-2||fix(KEN-9): change a crate|rc=0 $OK fix(KEN-9): change a crate"
   "a chmod on an existing fragment is not the entry|fx_chmod_fragment chmod-fragment||fix(KEN-10): change a crate|rc=1 $OK fix(KEN-10): change a crate;$(owed crates/core/lib.rs)"
   "control: rewriting the same fragment is|fx_rewrite_fragment rewrite-fragment||fix(KEN-10): change a crate|rc=0 $OK fix(KEN-10): change a crate"
+  "a chmod the other way, an executable fragment made plain, is not the entry either|fx_chmod_minus_x chmod-minus-x||fix(KEN-10): change a crate|rc=1 $OK fix(KEN-10): change a crate;$(owed crates/core/lib.rs)"
   "a fragment that changed type from a link to a file is a written entry|fx_link_to_file link-to-file||fix(KEN-T): replace a link with a real fragment|rc=0 $OK fix(KEN-T): replace a link with a real fragment"
   "a link becoming a file holding the link target's own bytes is the entry, one blob or not|fx_link_to_file_same_blob same-blob||fix(KEN-11): change a crate|rc=0 $OK fix(KEN-11): change a crate"
   "control: a document becoming a link holding the same bytes is not the entry|fx_file_to_link file-to-link||fix(KEN-11): change a crate|rc=1 $OK fix(KEN-11): change a crate;$(owed crates/core/lib.rs)"

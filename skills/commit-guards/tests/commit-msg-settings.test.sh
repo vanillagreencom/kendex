@@ -66,16 +66,19 @@ shape_fail() { # HEADER TYPES — the whole shape violation, naming the list tha
   printf '%s' "commit-msg FAIL non-conventional header: $1;  expected: type(scope)!: subject — scope and '!' optional; types: $2;  scope accepts uppercase issue keys and issue numbers, e.g. fix(ABC-123): tighten the gate / fix(#123): case-fold IDs;  git-generated headers (Merge/Revert/Reapply, fixup!/squash!/amend!) pass unchanged"
 }
 
-# A git that fails one probe of the committed settings file and nothing
-# else, so the row reads which probe the lane refused to guess past.
-git_shim() { # SUBCOMMAND — exits 71 for SUBCOMMAND over kendex.settings.toml
+# A git that fails one probe and nothing else, so the row reads which
+# probe the lane refused to guess past. The HEAD resolve carries no path,
+# so its refusal names the first source the walk probes.
+git_shim() { # NAME PATTERN — exits 71 for an argv matching PATTERN
   local dir="$ROOT/git-shim-$1"
   mkdir -p "$dir"
-  printf '#!/usr/bin/env bash\ncase " $* " in *" %s "*":(literal)kendex.settings.toml "*) echo "fatal: simulated %s failure" >&2; exit 71 ;; esac\nexec "%s" "$@"\n' "$1" "$1" "$REAL_GIT" >"$dir/git"
+  printf '#!/usr/bin/env bash\ncase " $* " in %s) echo "fatal: simulated %s failure" >&2; exit 71 ;; esac\nexec "%s" "$@"\n' "$2" "$1" "$REAL_GIT" >"$dir/git"
   chmod +x "$dir/git"
 }
-git_shim ls-files
-git_shim ls-tree
+git_shim ls-files '*" ls-files --error-unmatch "*":(literal)kendex.settings.toml "*'
+git_shim ls-files-s '*" ls-files -s "*":(literal)kendex.settings.toml "*'
+git_shim ls-tree '*" ls-tree "*":(literal)kendex.settings.toml "*'
+git_shim rev-parse '*" rev-parse --verify --quiet HEAD "*'
 
 # The out-of-repo source every fixture below can name: a list no committed
 # file carries, so a verdict naming it was read from here.
@@ -108,6 +111,8 @@ DOCS_ONLY="$(shape_fail 'feat: base type' docs)"
 OUTSIDE="$(shape_fail 'feat: base type' 'docs build')"
 LS_FILES="::error::kendex.settings.toml: could not query the index while resolving a setting (git ls-files exit 71); refusing to treat it as untracked"
 LS_TREE="::error::kendex.settings.toml: could not probe HEAD while resolving a setting (git ls-tree exit 71); refusing to treat it as untracked"
+LS_FILES_S="::error::kendex.settings.toml: could not read its index mode while resolving a setting (git ls-files exit 71)"
+REV_PARSE="::error::.kendex/settings.toml: could not resolve HEAD while resolving a setting (git rev-parse exit 71); refusing to treat it as untracked"
 echo "=== which settings source answers in the hook lane ==="
 # label | fixture | shim | env | message | expect
 rows=(
@@ -118,6 +123,8 @@ rows=(
   "the /dev/null sentinel selects no source at all, .env.local included|fx_dotenv_local dotenv-local-2||COMMIT_GUARDS_SETTINGS_FILE=/dev/null|feat: base type|rc=0 $OK feat: base type"
   "control: the committed list refuses feat|fx_committed committed-1|||feat: base type|rc=1 $DOCS_ONLY"
   "a failing index probe is exit 2, never a fall back to the built-in list|fx_committed committed-2|$ROOT/git-shim-ls-files||feat: base type|rc=2 $LS_FILES"
+  "a failing index-mode read is exit 2, never the symlink shape let through|fx_committed committed-5|$ROOT/git-shim-ls-files-s||feat: base type|rc=2 $LS_FILES_S"
+  "a failing HEAD resolve is exit 2, named on the first source probed|fx_committed committed-6|$ROOT/git-shim-rev-parse||feat: base type|rc=2 $REV_PARSE"
   "an absolute source outside the repository is the worktree copy, not a failed probe|fx_committed committed-3||COMMIT_GUARDS_SETTINGS_FILE=<root>/outside-settings.toml|feat: base type|rc=1 $OUTSIDE"
   "a relative source escaping the repository is the worktree copy too|fx_committed committed-4||COMMIT_GUARDS_SETTINGS_FILE=../outside-settings.toml|feat: base type|rc=1 $OUTSIDE"
   "the committed list governs over the loosened worktree copy|fx_loosened loosened-1||COMMIT_GUARDS_SETTINGS_FILE=kendex.settings.toml|feat: base type|rc=1 $DOCS_ONLY"
