@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import test, { after } from "node:test";
@@ -26,7 +26,7 @@ import {
 } from "../extensions/subagent/pane.js";
 import { runSingleAgent, setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
 import { PANE_LAUNCHER_VERSION } from "../extensions/subagent/types.js";
-import { cleanupTempRuntimes, makeDetails, tempRuntime, testAgent } from "./single-agent-fixture.js";
+import { cleanupTempRuntimes, makeDetails, tempRuntime, testAgent, writeSettings } from "./single-agent-fixture.js";
 
 after(cleanupTempRuntimes);
 
@@ -76,6 +76,14 @@ const resolutionRows: Array<[string, Resolution, string]> = [
 	["a package named pi whose string bin is this script re-invokes", () => withEntry(scriptInPackage("cli.js", { name: "pi", bin: "./cli.js" })), SELF],
 	["a bin map whose pi entry is another file falls back", () => withEntry(scriptInPackage("cli.ts", { name: "some-fork-of-pi", bin: { pi: "./cli.js" } })), ON_PATH],
 	["a package named pi whose string bin is another file falls back", () => withEntry(scriptInPackage("cli.ts", { name: "pi", bin: "./cli.js" })), ON_PATH],
+	["an unparseable nearest manifest fails closed under a pi ancestor", () => {
+		const outer = join(tempRuntime(), "pkg");
+		const inner = join(outer, "vendor");
+		mkdirSync(inner, { recursive: true });
+		writeFileSync(join(outer, "package.json"), JSON.stringify({ name: PI_PACKAGE_NAME }));
+		writeFileSync(join(inner, "package.json"), "{ not json");
+		return withEntry(existingScript("cli.ts", inner));
+	}, ON_PATH],
 	["a manifest-less entry dir walks up to pi's manifest", () => {
 		const pkgDir = join(tempRuntime(), "pkg");
 		const srcDir = join(pkgDir, "src");
@@ -110,6 +118,9 @@ const resolutionRows: Array<[string, Resolution, string]> = [
 	}, "cmd=executable args=[-p] child-entry=executable depth=1"],
 	["a separator-free override stays verbatim for PATH resolution", () => ({ alias: {}, runtime: runtime({ env: { [PI_SUBAGENT_ENTRY_ENV]: "pi-custom" } }) }), "cmd=pi-custom args=[-p] child-entry=pi-custom depth=1"],
 	["a blank override is no override", () => ({ alias: {}, runtime: runtime({ env: { [PI_SUBAGENT_ENTRY_ENV]: "  " } }) }), ON_PATH],
+	// The `!isBunVirtualScript` guard itself is only reachable inside a compiled
+	// binary, where the virtual path exists; here the row reaches execPath
+	// through the missing file and the non-runtime execPath.
 	["the compiled binary (bun's virtual argv[1]) re-invokes execPath", () => ({ alias: {}, runtime: runtime({ argv1: "/$bunfs/root/cli.js", execPath: "/usr/lib/pi/pi" }) }), "cmd=/usr/lib/pi/pi args=[-p] child-entry=- depth=1"],
 	["a non-runtime execPath is re-invoked even with a harness argv[1]", () => ({ ...withEntry(existingScript("harness.mjs"), { execPath: "/usr/lib/pi/pi" }) }), "cmd=/usr/lib/pi/pi args=[-p] child-entry=- depth=1"],
 	["node as execPath with no script falls back", () => ({ alias: {}, runtime: runtime({ execPath: "/usr/bin/node" }) }), ON_PATH],
@@ -221,7 +232,7 @@ function captureSpawn(): Array<{ args: string[]; env: NodeJS.ProcessEnv | undefi
 const promptTempDirs = () => readdirSync(tmpdir()).filter((name) => name.startsWith("pi-subagent-"));
 const flag = (args: string[], name: string) => { const at = args.indexOf(name); return at < 0 ? "-" : args[at + 1]; };
 
-type SpawnWorld = { agent?: Partial<AgentConfig>; depth?: string; entry?: (cwd: string) => { alias: Alias; value: string }; parentModel?: string };
+type SpawnWorld = { agent?: Partial<AgentConfig>; depth?: string; entry?: (cwd: string) => { alias: Alias; value: string }; parentModel?: string; parentThinking?: string; settings?: Record<string, unknown> };
 
 // The spawn as one line: spawns, the child's depth and entry vars, the model
 // and thinking flags, or `refused` with what the refusal left behind.
@@ -235,7 +246,8 @@ async function runnerLine(world: SpawnWorld): Promise<string> {
 		const before = promptTempDirs();
 		try {
 			const config = agent(world.agent);
-			await runSingleAgent(root, root, [config], config.name, "recon", undefined, world.parentModel, undefined, undefined, pi, undefined, undefined, makeDetails);
+			if (world.settings) writeSettings(root, world.settings);
+			await runSingleAgent(root, root, [config], config.name, "recon", undefined, world.parentModel, world.parentThinking, undefined, pi, undefined, undefined, makeDetails);
 		} catch (error) {
 			const same = JSON.stringify(promptTempDirs()) === JSON.stringify(before);
 			return `refused=${/recursion guard/.test(String(error))} spawns=${calls.length} prompt-tmp=${same ? "unchanged" : "leaked"} events=${emitted.length ? emitted.join(",") : "none"}`;
@@ -243,7 +255,7 @@ async function runnerLine(world: SpawnWorld): Promise<string> {
 			setSingleAgentSpawnForTests();
 		}
 		const call = calls[0];
-		return `spawns=${calls.length} depth=${call?.env?.[PI_SUBAGENT_DEPTH_ENV] ?? "-"} entry=${aliased(call?.env?.[PI_SUBAGENT_ENTRY_ENV], entry?.alias ?? {})} model=${flag(call?.args ?? [], "--model")} thinking=${flag(call?.args ?? [], "--thinking")}`;
+		return `events=${emitted.length ? emitted.join(",") : "none"} spawns=${calls.length} depth=${call?.env?.[PI_SUBAGENT_DEPTH_ENV] ?? "-"} entry=${aliased(call?.env?.[PI_SUBAGENT_ENTRY_ENV], entry?.alias ?? {})} model=${flag(call?.args ?? [], "--model")} thinking=${flag(call?.args ?? [], "--thinking")}`;
 	});
 }
 
@@ -254,11 +266,14 @@ const relativeOverride = () => {
 
 // label | the parent's env, agent and model | expect the spawn line
 const runnerRows: Array<[string, SpawnWorld, string]> = [
-	["a first-generation parent spawns the child at depth 1", { parentModel: "anthropic/claude-opus-5" }, "spawns=1 depth=1 entry=- model=anthropic/claude-opus-5 thinking=-"],
-	["the child's depth is the parent's plus one", { depth: "1" }, "spawns=1 depth=2 entry=- model=- thinking=-"],
-	["a relative entry override reaches the child resolved", { entry: relativeOverride }, "spawns=1 depth=1 entry=override model=- thinking=-"],
-	["the frontmatter effort becomes the thinking flag", { agent: { effort: "high" }, parentModel: "anthropic/claude-opus-5" }, "spawns=1 depth=1 entry=- model=anthropic/claude-opus-5 thinking=high"],
-	["a model suffix wins over the effort key", { agent: { effort: "high", model: "openai-codex/gpt-6-astra:low" } }, "spawns=1 depth=1 entry=- model=openai-codex/gpt-6-astra:low thinking=low"],
+	["a first-generation parent spawns the child at depth 1", { parentModel: "anthropic/claude-opus-5" }, "events=subagents:started,subagents:completed spawns=1 depth=1 entry=- model=anthropic/claude-opus-5 thinking=-"],
+	["the child's depth is the parent's plus one", { depth: "1" }, "events=subagents:started,subagents:completed spawns=1 depth=2 entry=- model=- thinking=-"],
+	["a relative entry override reaches the child resolved", { entry: relativeOverride }, "events=subagents:started,subagents:completed spawns=1 depth=1 entry=override model=- thinking=-"],
+	["the frontmatter effort becomes the thinking flag", { agent: { effort: "high" }, parentModel: "anthropic/claude-opus-5" }, "events=subagents:started,subagents:completed spawns=1 depth=1 entry=- model=anthropic/claude-opus-5 thinking=high"],
+	["a model suffix wins over the effort key", { agent: { effort: "high", model: "openai-codex/gpt-6-astra:low" } }, "events=subagents:started,subagents:completed spawns=1 depth=1 entry=- model=openai-codex/gpt-6-astra:low thinking=low"],
+	["an effort of off passes no thinking flag", { agent: { effort: "off" }, parentModel: "anthropic/claude-opus-5" }, "events=subagents:started,subagents:completed spawns=1 depth=1 entry=- model=anthropic/claude-opus-5 thinking=-"],
+	["the parent's level is ignored under the frontmatter source", { agent: { effort: "high" }, parentThinking: "low" }, "events=subagents:started,subagents:completed spawns=1 depth=1 entry=- model=- thinking=high"],
+	["the parent's level wins under the parent source", { agent: { effort: "high" }, parentThinking: "low", settings: { subagentThinkingSource: "parent" } }, "events=subagents:started,subagents:completed spawns=1 depth=1 entry=- model=- thinking=low"],
 	// A non-empty systemPrompt creates the prompt tmp dir before the guard
 	// throws, so the refusal has something to clean up.
 	["at the cap the runner refuses before the spawn, cleans its prompt dir and announces nothing", { agent: { systemPrompt: "You are scout." }, depth: String(MAX_SUBAGENT_DEPTH) }, "refused=true spawns=0 prompt-tmp=unchanged events=none"],
@@ -276,12 +291,12 @@ async function launcherLine(world: SpawnWorld): Promise<string> {
 	const cwd = tempRuntime();
 	const entry = world.entry?.(root);
 	return withProcessEnv(world.depth, entry?.value, async () => {
-		const paths = await writeLauncher(root, "parent-session-id", cwd, agent({ pane: true, systemPrompt: "You are iced.", ...world.agent }), world.parentModel, undefined);
+		const paths = await writeLauncher(root, "parent-session-id", cwd, agent({ pane: true, systemPrompt: "You are iced.", ...world.agent }), world.parentModel, world.parentThinking);
 		const script = readFileSync(paths.launcherFile, "utf-8");
 		const depth = script.match(new RegExp(`^export ${PI_SUBAGENT_DEPTH_ENV}=(\\S+)$`, "m"))?.[1] ?? "-";
 		const exported = script.match(new RegExp(`^export ${PI_SUBAGENT_ENTRY_ENV}='([^']*)'$`, "m"))?.[1];
 		const unset = new RegExp(`^unset ${PI_SUBAGENT_ENTRY_ENV}$`, "m").test(script);
-		const entryLine = exported !== undefined ? aliased(exported, entry?.alias ?? {}) : unset ? "unset" : "-";
+		const entryLine = exported !== undefined && unset ? "export+unset" : exported !== undefined ? aliased(exported, entry?.alias ?? {}) : unset ? "unset" : "-";
 		const execAt = script.indexOf("\nexec ");
 		const exportsBeforeExec = execAt > 0 && !/^(export|unset) /m.test(script.slice(execAt));
 		const execLine = script.slice(execAt + 1).split("\n")[0] ?? "";
@@ -296,6 +311,8 @@ const launcherRows: Array<[string, SpawnWorld, string]> = [
 	["a relative entry override is exported resolved", { entry: relativeOverride }, "depth=1 entry=override exports-before-exec=true model=- thinking=-"],
 	["the frontmatter effort becomes the thinking flag", { agent: { effort: "high" }, parentModel: "anthropic/claude-opus-5" }, "depth=1 entry=unset exports-before-exec=true model=anthropic/claude-opus-5 thinking=high"],
 	["a model suffix wins over the effort key", { agent: { effort: "high" }, parentModel: "openai-codex/gpt-6-astra:low" }, "depth=1 entry=unset exports-before-exec=true model=openai-codex/gpt-6-astra:low thinking=low"],
+	["an effort of off passes no thinking flag", { agent: { effort: "off" }, parentModel: "anthropic/claude-opus-5" }, "depth=1 entry=unset exports-before-exec=true model=anthropic/claude-opus-5 thinking=-"],
+	["the parent's selected level wins over the effort key", { agent: { effort: "high" }, parentThinking: "low" }, "depth=1 entry=unset exports-before-exec=true model=- thinking=low"],
 ];
 
 test("what the pane launcher hands the child", async () => {
@@ -338,16 +355,21 @@ test("a resolved relative executable runs from a different delegated cwd", () =>
 		chmodSync(launcherPath, 0o755);
 		return launcherPath;
 	};
-	const ran = () => { const text = readFileSync(marker, "utf-8"); rmSync(marker, { force: true }); return text; };
+	const ran = () => {
+		if (!existsSync(marker)) return "no-marker";
+		const text = readFileSync(marker, "utf-8");
+		rmSync(marker, { force: true });
+		return text;
+	};
 
 	const invocation = getPiInvocation([], runtime({ env: { [PI_SUBAGENT_ENTRY_ENV]: relativeExecutable } }));
 	const direct = spawnSync(invocation.command, invocation.args, { cwd: delegatedCwd });
 	const directLine = `direct=${direct.error ? "error" : direct.status}/${ran()}`;
 	const viaLauncher = spawnSync(launcher("launcher.sh", invocation.command, invocation.args), [], { cwd: delegatedCwd });
-	const launcherLine = `launcher=${viaLauncher.status}/${ran()}`;
+	const viaLauncherLine = `launcher=${viaLauncher.status}/${ran()}`;
 	// Control: the relative form fails command lookup from the delegated cwd.
 	const broken = spawnSync(launcher("launcher-broken.sh", relativeExecutable, []), [], { cwd: delegatedCwd });
-	assert.equal(`${directLine} ${launcherLine} relative=${broken.status}`, "direct=0/ran launcher=0/ran relative=127");
+	assert.equal(`${directLine} ${viaLauncherLine} relative=${broken.status}`, "direct=0/ran launcher=0/ran relative=127");
 });
 
 test("PANE_LAUNCHER_VERSION is bumped when the launcher template changes", () => {
@@ -359,7 +381,8 @@ test("PANE_LAUNCHER_VERSION is bumped when the launcher template changes", () =>
 	const paneSource = readFileSync(join(import.meta.dir, "..", "extensions", "subagent", "pane.ts"), "utf-8");
 	const templateStart = paneSource.indexOf("const script = `#!/usr/bin/env bash");
 	const templateEnd = paneSource.indexOf("`;", templateStart);
-	assert.ok(templateStart > -1 && templateEnd > templateStart);
+	assert.notEqual(templateStart, -1, "launcher template start");
+	assert.ok(templateEnd > templateStart, "launcher template end");
 	const templateDigest = createHash("sha256").update(paneSource.slice(templateStart, templateEnd)).digest("hex").slice(0, 16);
 	assert.equal(`version=${PANE_LAUNCHER_VERSION} template=${templateDigest}`, "version=11 template=38837c68b7dc5b2a");
 });
