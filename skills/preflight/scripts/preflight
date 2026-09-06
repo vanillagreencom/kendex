@@ -33,22 +33,117 @@ usage() {
   cat <<'EOF'
 usage: preflight [--staged | --base REF | --all] [--repo PATH]
 
-Diff-scoped deterministic checks. Default scope is the merge base of HEAD
-and the default branch (origin/HEAD, else origin/main, else main), plus
-non-ignored untracked files; --staged sees only the index.
+Diff-scoped deterministic checks over one change. A line-scoped lane reports
+only on a line the change added, a lane that cannot decide reports nothing,
+and there is no warnings tier.
 
-  --staged      staged changes only (pre-commit scope)
-  --base REF    changes since the merge base of HEAD and REF, plus every
-                non-ignored untracked file (a new file, every line added)
+Scopes:
+  (default)     the merge base of HEAD and the default branch (origin/HEAD,
+                else origin/main, else main), plus every non-ignored
+                untracked file as a new file with every line added. Where
+                none of the three resolves the run is an environment error,
+                never a clean result
+  --staged      the index only (pre-commit scope)
+  --base REF    the merge base of HEAD and REF, plus untracked files
   --all         every tracked file, every line treated as added
   --repo PATH   run against the repository containing PATH (default: cwd)
 
-Lanes: shell-syntax, shellcheck-errors, masked-returns, fail-open,
-unwired-suite, mktemp-trap, hardcoded-temp-path, docs-cited-paths,
-applied-migration-edited, data-syntax.
+Lanes:
+  shell-syntax    a changed shell file bash cannot parse.
+  shellcheck-errors
+                  an error-severity shellcheck finding anywhere in a changed
+                  shell file. Runs only where bash parsed the file, since a
+                  syntax error has already spoken for it.
+  masked-returns  SC2155 or SC2311 on an added line: a declaration whose own
+                  exit status hides the command's.
+  fail-open       three shapes. Mktemp assignment: an =$(mktemp ...)
+                  assignment added to a file that never sets errexit. Strict
+                  mode: a new shell file that does not set -e, -u and
+                  pipefail, unless it is non-executable under a scripts/lib/
+                  tree, where it is sourced and the preamble would set the
+                  calling shell's mode instead. Swallowed status: an added
+                  grep, find, git, jq, diff or cmp at a command position whose
+                  status a trailing || true (or || :) discards. The same text
+                  quoted inside a message is not the shape.
+  unwired-suite   a new suite file no runner invokes. Suites are
+                  tests/*.test.sh, tests/test-*.sh, *.test.ts, *.test.js and
+                  *.test.mjs; a file under a fixtures/ directory is material a
+                  suite reads, never a suite. A runner set that is empty or
+                  that this tool could not read whole leaves the lane quiet.
+  mktemp-trap     a new shell file with an added mktemp invocation and no
+                  trap ... EXIT anywhere in it. The invocation is the word at
+                  a command position, not one named in a comment or a string.
+                  Reported once per file.
+  hardcoded-temp-path
+                  an added directory-creating call whose first argument opens
+                  a path under the /tmp or /var/tmp root: mkdtemp and mkdir
+                  and their Sync variants (JS/TS), mkdtemp, makedirs and mkdir
+                  (Python), create_dir_all (Rust), each with the path quoted,
+                  and a shell mkdir -p at a command position, where the quotes
+                  are optional. The mkdtemp pair always creates, so a quoted
+                  bare root in any of its arguments is the same shape.
+                  Plain mkdir of the bare root is not, since creating a root
+                  that exists is a no-op. Nor is the literal as a value (a
+                  config field, a fixture string, a path nothing creates), a
+                  TMPDIR-derived path, or a commented-out call.
+  docs-cited-paths
+                  in a changed .md file, an added backticked path naming
+                  nothing tracked or on disk, judged only inside a directory
+                  the repo really has and inside the doc's own top-level
+                  directory (a root-level doc owns the repo). In a changed
+                  source file, an added line citing a .md path that names
+                  nothing tracked or on disk; URL spans and quoted strings are
+                  stripped first. Data files (JSON, TOML, YAML, lock) and
+                  test-named files cite paths as working material and are out
+                  of scope.
+  applied-migration-edited
+                  a path the merge base carries, edited, deleted or renamed,
+                  matching a configured migrations glob. Its recorded checksum
+                  no longer matches, so the correction is a new migration and
+                  never an edit here. A mode change moves no text and is not
+                  the shape. The lane is quiet under --all and where no base
+                  resolves.
+  data-syntax     a changed strict .json or .toml file no parser accepts. The
+                  .jsonc file kind declares JSON with comments and is left to
+                  its producer.
 
-Needed checks with unavailable optional tools are reported by lane name.
-The final result lists those lanes without changing the exit status.
+Scope rules:
+  A shell file is *.sh, *.bash, or a file whose first line is a sh or bash
+  shebang. A file whose content git reads as binary contributes no lines to
+  any lane; the whole-file lanes still see its path. A deleted path leaves the
+  change set, and applied-migration-edited reads it from the diff instead.
+  A tests/ or fixtures/ tree sets its own rules: mktemp-trap, the source-file
+  direction of docs-cited-paths, and the strict-mode and swallowed-status
+  shapes of fail-open stand down there. In a test-named source file (tests.rs,
+  *_test.*, *_tests.*, *.test.*, *.spec.*, test_*) only the swallowed-status
+  shape and that same docs-cited-paths direction stand down. The mktemp
+  assignment shape of fail-open is judged in every tree.
+  In an installed-artifact subtree (.agents/ and the harness directories'
+  skills, agents, hooks, rules, instructions, packages and kendex trees)
+  masked-returns, fail-open, unwired-suite, mktemp-trap and the source-file
+  direction of docs-cited-paths stand down. shell-syntax, shellcheck-errors,
+  hardcoded-temp-path, applied-migration-edited and data-syntax stay on. A
+  prompts/ or commands/ tree under a harness directory keeps every lane.
+
+Settings (env > .env.local > .kendex/settings.toml > kendex.settings.toml
+[env] > default):
+  PREFLIGHT_JSONC_GLOBS      .json paths whose producer writes JSON with
+                             comments
+  PREFLIGHT_MIGRATION_GLOBS  the migrations applied-migration-edited freezes
+
+Each replaces its shipped set rather than adding to it. Emptied, the JSONC
+set exempts nothing and every .json file is parsed as strict JSON, while an
+empty migration set leaves applied-migration-edited quiet.
+
+Optional tools: shellcheck for shellcheck-errors and masked-returns, jq for
+JSON, taplo or python3 with tomllib for TOML. A needed lane whose tool is
+unavailable prints as not run and is listed in the final result, which does
+not change the exit status.
+
+Output: one finding per line, path:line: [lane] message, line 0 for a
+whole-file finding, then a result line counting findings and changed files.
+
+Diff construction and the glob grammars: references/lanes.md.
 
 Exit codes: 0 clean; 1 findings; 2 usage/environment error.
 EOF
