@@ -20,6 +20,7 @@ const kit: MarketplaceRow = {
   repoIdentity: "github.com/acme/kit",
   provenance: null,
   path: null,
+  resolvedPath: null,
   rev: null,
   commit: null,
   enabled: true,

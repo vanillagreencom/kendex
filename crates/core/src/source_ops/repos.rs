@@ -13,8 +13,14 @@ pub struct RepoSubscription {
     pub scope: Scope,
     pub name: String,
     /// The declaration's repository, canonical `owner/repo` where it is one
-    /// on GitHub — the key the directory and the blind browse match by.
+    /// on GitHub — the shorthand a blind browse fetches by.
     pub repo_key: Option<String>,
+    /// One string per repository on any host, from
+    /// [`crate::source_ref::repo_identity`] — what the directory join and
+    /// the blind browse match a declaration by. `repo_key` answers only for
+    /// GitHub, so it cannot tell a GitLab or self-hosted declaration from
+    /// no declaration at all.
+    pub repo_identity: String,
 }
 
 /// Every remote subscription across the personal scope and every project,
@@ -43,6 +49,7 @@ pub fn repo_subscriptions(env: &Env) -> Result<Vec<RepoSubscription>> {
                 scope: scope.clone(),
                 name: name.clone(),
                 repo_key: crate::source_ref::owner_repo(repo),
+                repo_identity: crate::source_ref::repo_identity(repo),
             });
         }
     }
@@ -72,16 +79,19 @@ mod tests {
         .unwrap();
 
         let rows = repo_subscriptions(&env).unwrap();
-        let key_of = |name: &str| {
-            rows.iter()
-                .find(|row| row.name == name)
-                .expect(name)
-                .repo_key
-                .clone()
-        };
-        assert_eq!(key_of("https").as_deref(), Some("owner/repo"));
-        assert_eq!(key_of("ssh").as_deref(), Some("owner/repo"));
-        assert_eq!(key_of("elsewhere"), None);
+        let row_of = |name: &str| rows.iter().find(|row| row.name == name).expect(name);
+        assert_eq!(row_of("https").repo_key.as_deref(), Some("owner/repo"));
+        assert_eq!(row_of("ssh").repo_key.as_deref(), Some("owner/repo"));
+        assert_eq!(row_of("elsewhere").repo_key, None);
+        // The key stops at GitHub; the identity names every host, so a
+        // GitLab declaration is matchable rather than indistinguishable
+        // from no declaration.
+        assert_eq!(row_of("https").repo_identity, "github.com/owner/repo");
+        assert_eq!(row_of("ssh").repo_identity, "github.com/owner/repo");
+        assert_eq!(
+            row_of("elsewhere").repo_identity,
+            "git@gitlab.com:owner/repo"
+        );
         assert!(
             rows.iter().all(|row| row.name != "here"),
             "a path is not a repository"

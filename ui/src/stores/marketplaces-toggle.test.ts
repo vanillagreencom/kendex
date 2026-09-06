@@ -35,6 +35,7 @@ const row = (repo: string, repoKey: string | null): MarketplaceRow => ({
   repoIdentity: repoKey ? `github.com/${repoKey}` : repo,
   provenance: repo,
   path: null,
+  resolvedPath: null,
   rev: null,
   commit: null,
   enabled: true,
@@ -91,7 +92,7 @@ describe("a bare repository page's action", () => {
 
     const held = declaredHolder(
       useMarketplacesStore.getState().rows,
-      "acme/kit",
+      "github.com/acme/kit",
     );
     expect(held?.enabled).toBe(false);
     expect(held?.name).toBe("kit");
@@ -141,23 +142,43 @@ describe("a bare repository page's action", () => {
     expect(toast.message).not.toHaveBeenCalled();
   });
 
-  it("stays neutral until the canonical key is known, then matches by it", () => {
+  it("stays neutral until the identity is known, then matches by it", () => {
     const disabled = { ...row("acme/kit", "acme/kit"), enabled: false };
     // The page was opened as "Acme/Kit": before the summary or the directory
-    // row supplies the canonical key, no spelling is compared.
+    // row supplies the identity, no spelling is compared.
     expect(repoAction([disabled], READ_PENDING, null).kind).toBe("checking");
-    expect(repoAction([disabled], READ_LANDED, "acme/kit").kind).toBe(
-      "turn-on",
-    );
+    expect(
+      repoAction([disabled], READ_LANDED, "github.com/acme/kit").kind,
+    ).toBe("turn-on");
   });
 
-  // A key that never arrives is not a key still on its way. `repoKey` is
-  // the GitHub owner/repo and is null on every other host, so waiting on it
-  // leaves a bare GitLab page disabled for as long as it is open. Once the
-  // read has settled the page is told what this build can tell it.
-  it("settles rather than waiting for a key no read will bring", () => {
+  // An identity that never arrives is not one still on its way: a page the
+  // directory does not list waits on its summary, and a failed summary
+  // brings none. Once the list read has settled the page is told what this
+  // build can tell it.
+  it("settles rather than waiting for an identity no read will bring", () => {
     const disabled = { ...row("acme/kit", "acme/kit"), enabled: false };
     expect(repoAction([disabled], READ_LANDED, null).kind).toBe("subscribe");
+  });
+
+  // The identity is core's `repo_identity`, one string per repository on
+  // any host — so a GitLab declaration is found the way a GitHub one is.
+  // `repoKey` is null there, and matching on it would offer a Subscribe the
+  // engine refuses as a duplicate, and never a Turn on for a switched-off
+  // declaration. One declared row and one undeclared repository, so a
+  // comparison that never matches and one that always does each redden a
+  // row.
+  it("matches a non-GitHub repository by identity, declared or not", () => {
+    const gitlab = "https://gitlab.com/acme/kit";
+    const declared = row(gitlab, null);
+    const table: [MarketplaceRow[], string, string][] = [
+      [[declared], gitlab, "refresh"],
+      [[{ ...declared, enabled: false }], gitlab, "turn-on"],
+      [[declared], "https://gitlab.com/acme/other", "subscribe"],
+    ];
+    for (const [rows, identity, kind] of table) {
+      expect(repoAction(rows, READ_LANDED, identity).kind).toBe(kind);
+    }
   });
 
   // Before the first read answers there are no rows to look in, so every
@@ -165,8 +186,12 @@ describe("a bare repository page's action", () => {
   // one this machine already holds — which the engine then refuses as a
   // duplicate, with the person having pressed a button for nothing.
   it("stays neutral while the first read of the list is still out", () => {
-    expect(repoAction([], READ_PENDING, "acme/kit").kind).toBe("checking");
-    expect(repoAction([], READ_LANDED, "acme/kit").kind).toBe("subscribe");
+    expect(repoAction([], READ_PENDING, "github.com/acme/kit").kind).toBe(
+      "checking",
+    );
+    expect(repoAction([], READ_LANDED, "github.com/acme/kit").kind).toBe(
+      "subscribe",
+    );
   });
 
   // A FIRST read that failed leaves no rows at all, so every repository
@@ -174,9 +199,9 @@ describe("a bare repository page's action", () => {
   // then refuses as a duplicate, with the person having pressed a button
   // for nothing.
   it("stays neutral when the first read failed and left no rows", () => {
-    expect(repoAction([], readFailed("offline"), "acme/kit").kind).toBe(
-      "checking",
-    );
+    expect(
+      repoAction([], readFailed("offline"), "github.com/acme/kit").kind,
+    ).toBe("checking");
   });
 
   // A read that failed is not the same: the rows it kept are what this
@@ -184,18 +209,20 @@ describe("a bare repository page's action", () => {
   // about. Holding the page neutral there would leave no way back.
   it("acts on rows a failed read left, rather than going neutral", () => {
     const declared = row("acme/kit", "acme/kit");
-    expect(repoAction([declared], readFailed("offline"), "acme/kit").kind).toBe(
-      "refresh",
-    );
+    expect(
+      repoAction([declared], readFailed("offline"), "github.com/acme/kit").kind,
+    ).toBe("refresh");
   });
 
   it("offers Subscribe only when nothing declares the repository", () => {
     expect(
-      declaredHolder([row("acme/kit", "acme/kit")], "other/repo"),
+      declaredHolder([row("acme/kit", "acme/kit")], "github.com/other/repo"),
     ).toBeNull();
     const enabled = row("acme/kit", "acme/kit");
     const disabled = { ...enabled, name: "old", enabled: false };
-    expect(declaredHolder([disabled, enabled], "acme/kit")?.name).toBe("kit");
+    expect(
+      declaredHolder([disabled, enabled], "github.com/acme/kit")?.name,
+    ).toBe("kit");
   });
 });
 
@@ -206,6 +233,7 @@ describe("a repository page carried on as a subscription", () => {
     const summary = {
       provenance: "acme/kit",
       repoKey: "acme/kit",
+      repoIdentity: "github.com/acme/kit",
       commit: null,
       meta: null,
       mode: "discovered" as const,
@@ -223,6 +251,7 @@ describe("a repository page carried on as a subscription", () => {
           ...summary,
           provenance: "other/repo",
           repoKey: "other/repo",
+          repoIdentity: "github.com/other/repo",
           subscription: { scope: { scope: "global" }, source: "other" },
         },
       },
@@ -254,6 +283,7 @@ describe("a repository page carried on as a subscription", () => {
           // Carried on as the subscription: provenance is its declaration.
           provenance: "git@github.com:acme/kit.git",
           repoKey: "acme/kit",
+          repoIdentity: "github.com/acme/kit",
           commit: null,
           meta: null,
           mode: "discovered",
@@ -288,6 +318,7 @@ describe("a repository page carried on as a subscription", () => {
         [repoKey]: {
           provenance: "acme/kit",
           repoKey: "acme/kit",
+          repoIdentity: "github.com/acme/kit",
           commit: null,
           meta: null,
           mode: "discovered",

@@ -81,9 +81,14 @@ pub fn local_source_root(env: &Env, scope: &Scope) -> PathBuf {
     }
 }
 
-/// Where a declared source's checkout sits on this machine, before asking
-/// whether anything is there.
-fn path_root(env: &Env, scope: &Scope, path: &str) -> PathBuf {
+/// Where a declared folder sits on this machine, before asking whether
+/// anything is there: an absolute path as written, a relative one under the
+/// declaring scope's own root. Rootedness is the platform's answer
+/// (`Path::is_absolute`), so on Windows a POSIX-rooted `/srv/catalog` is
+/// root-relative and joins onto the scope's drive — two scopes on two
+/// drives name two directories, and a surface folding declarations into one
+/// marketplace has to key on this, never on the spelling.
+pub fn path_root(env: &Env, scope: &Scope, path: &str) -> PathBuf {
     if Path::new(path).is_absolute() {
         return PathBuf::from(path);
     }

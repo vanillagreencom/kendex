@@ -26,7 +26,8 @@ export interface SubscribedMarketplace {
 
 /** What makes two declarations the same marketplace, spelled once for
  * every surface that folds them: the card grid, the Projects section, and
- * the page that asks the section which marketplace it is looking at.
+ * the page that asks the section which marketplace it is looking at. Both
+ * halves are core's answer, read off the row and never re-derived here.
  *
  * `repoIdentity` is core's `source_ref::repo_identity` — one string per
  * repository on any host, the same value subscription dedup and update
@@ -39,45 +40,24 @@ export interface SubscribedMarketplace {
  * become `kit` — two unrelated marketplaces in one card, with the Projects
  * section aiming its switch and its Unsubscribe at the wrong subscription.
  *
- * A local folder has no repository, so its path is the identity — but only
- * an absolute one names the same directory from every place. `row.path` is
- * the declaration verbatim, and `source::path_root` resolves a relative one
- * against each scope's own root: `env.home` personally, the project root in
- * a project. So `./catalog` is three different folders across three places
- * under one string, and the scope has to be part of the key. Absolute paths
- * stay shared, because two places naming `/srv/catalog` really are looking
- * at one catalog.
- *
- * That holds for a path spelled in the running platform's own shape, and
- * only there: this reads rootedness from the string, accepting both
- * platforms' shapes, while `path_root` asks `Path::is_absolute`, which
- * answers for one. On Unix `C:/catalog` is re-rooted per scope and keyed
- * here as one folder; a POSIX-rooted path on Windows mirrors it. Core
- * shipping the resolved path would close that.
+ * A local folder has no repository, so the directory it resolves to is the
+ * identity: `resolvedPath` is core's `source::path_root` over the
+ * declaration, an absolute path as written and a relative one under the
+ * declaring scope's own root. So `./catalog` in three places is three
+ * strings, and `/srv/catalog` declared twice is one — where the running
+ * platform reads it as absolute. Which spellings are absolute is that
+ * platform's answer, which is why this reads the resolved path rather than
+ * the declaration: on Windows `/srv/catalog` is root-relative and joins
+ * onto each declaring scope's own drive, so a personal manifest on `C:`
+ * and a project on `D:` name two directories, and core says so.
  *
  * The alias is the last resort for a declaration carrying neither. It
  * usually over-splits, which is harmless — but two scopes declaring such a
  * source under one alias share `row.name`, so it can under-split too;
  * `list_subscriptions` emits those rows rather than skipping them, though
  * they resolve to nothing and offer no packages. */
-export const marketplaceIdentity = (row: MarketplaceRow): string => {
-  if (row.repoIdentity) return row.repoIdentity;
-  if (row.path)
-    return absolutePath(row.path)
-      ? row.path
-      : `${scopeLabel(row.scope)}:${row.path}`;
-  return row.name;
-};
-
-/** A path spelled as rooted: POSIX-rooted, a Windows drive, or a UNC share.
- * Everything else — `./x`, `~/x`, `x/y` — is resolved against the reading
- * scope's own root. Both platforms' shapes are accepted here, so this
- * answers what a path is spelled as, not what the running platform will
- * treat it as; the block above says what that costs. */
-const absolutePath = (path: string): boolean =>
-  path.startsWith("/") ||
-  /^[a-zA-Z]:[\\/]/.test(path) ||
-  path.startsWith("\\\\");
+export const marketplaceIdentity = (row: MarketplaceRow): string =>
+  row.repoIdentity ?? row.resolvedPath ?? row.name;
 
 /** Personal leads, then projects in the order the overview listed them.
  * Total, so a sort cannot be handed -1 for both (a,b) and (b,a): shared

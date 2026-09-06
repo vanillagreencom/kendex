@@ -928,15 +928,23 @@ export type CatalogSummary = {
 	/**
 	 *  What the catalog is, as its declaration spelled it: `owner/repo`
 	 *  only where it was written that way, a full URL where it was not, a
-	 *  path, or `local`. Opaque — `repo_key` below is the folded form.
+	 *  path, or `local`. Opaque — the two fields below are the folded forms.
 	 */
 	provenance: string,
 	/**
-	 *  The canonical `owner/repo` the provenance folds to on GitHub — what
-	 *  a subscription's `repo_key` and a directory row are matched by,
-	 *  however the declaration spells it.
+	 *  The canonical `owner/repo` the repository folds to on GitHub — what
+	 *  a blind browse fetches by and Subscribe is prefilled with. None on
+	 *  every other host.
 	 */
 	repoKey: string | null,
+	/**
+	 *  One string per repository on any host, from
+	 *  [`crate::source_ref::repo_identity`] — what a subscription row's
+	 *  `repo_identity` is matched against, so a page can tell which
+	 *  subscription declares the repository it is looking at wherever it
+	 *  is hosted. None for a folder.
+	 */
+	repoIdentity: string | null,
 	/**  The commit being read, for a remote. */
 	commit: string | null,
 	/**  `[marketplace]` from the catalog's own kendex.toml. */
@@ -1177,10 +1185,17 @@ export type DirectoryPackage = {
 export type DirectoryRow = {
 	repo: string,
 	/**
-	 *  The canonical key a subscription's `repo_key` is compared with, so
-	 *  the row can flip to Subscribed from the live subscription list.
+	 *  The canonical `owner/repo` a blind browse of this row fetches by, and
+	 *  what Subscribe is prefilled with.
 	 */
 	repoKey: string | null,
+	/**
+	 *  One string per repository on any host, from
+	 *  [`crate::source_ref::repo_identity`] — what the live subscription
+	 *  list's own `repo_identity` is compared with, so the row flips to
+	 *  Subscribed however the subscription spells the repository.
+	 */
+	repoIdentity: string,
 	name: string,
 	description: string | null,
 	tags: string[],
@@ -2138,7 +2153,19 @@ export type MarketplaceRow = {
 	 *  marketplace has to key on.
 	 */
 	repoIdentity: string | null,
+	/**  The declared folder, as the person typed it. */
 	path: string | null,
+	/**
+	 *  Where that folder is on this machine, from
+	 *  [`kendex_core::source::path_root`]: the declaration resolved against
+	 *  the place that declares it, slashed. A folder marketplace's
+	 *  identity, the way `repo_identity` is a repository's — two places
+	 *  naming one directory agree here, and two directories never share a
+	 *  string, which the spelling alone cannot promise: rootedness is the
+	 *  running platform's answer, and a POSIX-rooted path on Windows joins
+	 *  onto each declaring scope's own drive.
+	 */
+	resolvedPath: string | null,
 	rev: string | null,
 	/**  The commit the subscription reads right now, when the cache holds one. */
 	commit: string | null,

@@ -12,6 +12,7 @@ const row = (over: Partial<MarketplaceRow> = {}): MarketplaceRow => ({
   repoIdentity: "github.com/acme/kit",
   provenance: "Acme/Kit",
   path: null,
+  resolvedPath: null,
   rev: null,
   commit: null,
   enabled: true,
@@ -58,6 +59,52 @@ describe("what makes two declarations one marketplace", () => {
       }),
     ]);
     expect(groups).toHaveLength(2);
+  });
+});
+
+// A folder's identity is the directory core resolved it to, never the
+// spelling. Which spellings are absolute is the running platform's answer:
+// on Windows `/srv/catalog` is root-relative and joins onto each declaring
+// scope's own drive, so a personal manifest on `C:` and a project on `D:`
+// name two directories under one spelling. Read off the spelling, the two
+// fold into one card whose switch and Unsubscribe aim at the other's
+// subscription; read off the resolved path, one directory declared twice
+// still folds.
+describe("what makes two folder declarations one marketplace", () => {
+  const folder = (
+    scope: Scope,
+    path: string,
+    resolvedPath: string,
+  ): MarketplaceRow =>
+    row({
+      scope,
+      name: "catalog",
+      repo: null,
+      repoKey: null,
+      repoIdentity: null,
+      provenance: resolvedPath,
+      path,
+      resolvedPath,
+    });
+
+  it("keeps one spelling apart where it resolves to two directories", () => {
+    const groups = groupByMarketplace([
+      folder({ scope: "global" }, "/srv/catalog", "C:/srv/catalog"),
+      folder(project("D:/work/beta"), "/srv/catalog", "D:/srv/catalog"),
+    ]);
+    expect(groups.map((group) => group.key)).toEqual([
+      "C:/srv/catalog",
+      "D:/srv/catalog",
+    ]);
+  });
+
+  it("folds two places resolving to one directory", () => {
+    const groups = groupByMarketplace([
+      folder({ scope: "global" }, "/srv/catalog", "/srv/catalog"),
+      folder(project("/work/beta"), "../../srv/catalog", "/srv/catalog"),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].places).toHaveLength(2);
   });
 });
 

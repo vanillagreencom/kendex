@@ -18,6 +18,7 @@ const row = (over: Partial<MarketplaceRow> = {}): MarketplaceRow => ({
   repoIdentity: "github.com/acme/kit",
   provenance: "Acme/Kit",
   path: null,
+  resolvedPath: null,
   rev: null,
   commit: null,
   enabled: true,

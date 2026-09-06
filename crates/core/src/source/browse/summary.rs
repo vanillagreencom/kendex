@@ -28,12 +28,18 @@ pub struct SubscriptionRef {
 pub struct CatalogSummary {
     /// What the catalog is, as its declaration spelled it: `owner/repo`
     /// only where it was written that way, a full URL where it was not, a
-    /// path, or `local`. Opaque — `repo_key` below is the folded form.
+    /// path, or `local`. Opaque — the two fields below are the folded forms.
     pub provenance: String,
-    /// The canonical `owner/repo` the provenance folds to on GitHub — what
-    /// a subscription's `repo_key` and a directory row are matched by,
-    /// however the declaration spells it.
+    /// The canonical `owner/repo` the repository folds to on GitHub — what
+    /// a blind browse fetches by and Subscribe is prefilled with. None on
+    /// every other host.
     pub repo_key: Option<String>,
+    /// One string per repository on any host, from
+    /// [`crate::source_ref::repo_identity`] — what a subscription row's
+    /// `repo_identity` is matched against, so a page can tell which
+    /// subscription declares the repository it is looking at wherever it
+    /// is hosted. None for a folder.
+    pub repo_identity: Option<String>,
     /// The commit being read, for a remote.
     pub commit: Option<String>,
     /// `[marketplace]` from the catalog's own kendex.toml.
@@ -65,11 +71,12 @@ pub fn summary(env: &Env, catalog: &Catalog) -> Result<CatalogSummary> {
         ),
         Catalog::Repo { repo } => {
             let key = super::browsable(repo)?;
+            let identity = crate::source_ref::repo_identity(&key);
             // A readable subscription already holds this repository: the
             // page carries on as it, from its own store and without the
             // network — a spelling that keys a different store entry must
             // not turn an offline open into a failed fetch.
-            if let Some(held) = subscribed_as(env, &key)? {
+            if let Some(held) = subscribed_as(env, &identity)? {
                 (open_held(env, &held)?, None, Some(held))
             } else {
                 let resolution = crate::remote::sync(env, &key, None)?;
@@ -77,7 +84,7 @@ pub fn summary(env: &Env, catalog: &Catalog) -> Result<CatalogSummary> {
                 // The fetch may be the one a never-fetched subscription
                 // under this spelling was waiting for: it is Ready now, and
                 // the page carries on as it rather than offering Subscribe.
-                match subscribed_as(env, &key)? {
+                match subscribed_as(env, &identity)? {
                     Some(held) => (open_held(env, &held)?, warning, Some(held)),
                     None => (super::open_repo(env, key, resolution)?, warning, None),
                 }
@@ -95,7 +102,14 @@ pub fn summary(env: &Env, catalog: &Catalog) -> Result<CatalogSummary> {
         }
     }
     Ok(CatalogSummary {
-        repo_key: crate::source_ref::owner_repo(&browsed.source.provenance),
+        repo_key: browsed
+            .repo
+            .as_deref()
+            .and_then(crate::source_ref::owner_repo),
+        repo_identity: browsed
+            .repo
+            .as_deref()
+            .map(crate::source_ref::repo_identity),
         provenance: browsed.source.provenance.clone(),
         commit: browsed.source.commit.clone(),
         meta: browsed.config.marketplace.clone(),
@@ -144,15 +158,15 @@ pub fn about(env: &Env, catalog: &Catalog) -> Result<CatalogAbout> {
 }
 
 /// The first subscription, personal scope first, that points at this
-/// repository however it spells it and can be read right now. One that is
-/// turned off or never fetched resolves as not Ready and is passed over:
-/// the page just read the repository, and switching onto a subscription
-/// whose content is unreachable would trade that for an empty page. A
-/// manifest that cannot be read fails the summary instead of making its
-/// subscription disappear.
-fn subscribed_as(env: &Env, key: &str) -> Result<Option<SubscriptionRef>> {
+/// repository — matched by identity, so however it spells it — and can be
+/// read right now. One that is turned off or never fetched resolves as not
+/// Ready and is passed over: the page just read the repository, and
+/// switching onto a subscription whose content is unreachable would trade
+/// that for an empty page. A manifest that cannot be read fails the summary
+/// instead of making its subscription disappear.
+fn subscribed_as(env: &Env, identity: &str) -> Result<Option<SubscriptionRef>> {
     for row in crate::source_ops::repo_subscriptions(env)? {
-        if row.repo_key.as_deref() != Some(key) {
+        if row.repo_identity != identity {
             continue;
         }
         let Some(manifest) =

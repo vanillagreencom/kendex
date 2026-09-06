@@ -68,7 +68,17 @@ pub struct MarketplaceRow {
     /// else; this is what a surface folding declarations into one
     /// marketplace has to key on.
     pub repo_identity: Option<String>,
+    /// The declared folder, as the person typed it.
     pub path: Option<String>,
+    /// Where that folder is on this machine, from
+    /// [`kendex_core::source::path_root`]: the declaration resolved against
+    /// the place that declares it, slashed. A folder marketplace's
+    /// identity, the way `repo_identity` is a repository's — two places
+    /// naming one directory agree here, and two directories never share a
+    /// string, which the spelling alone cannot promise: rootedness is the
+    /// running platform's answer, and a POSIX-rooted path on Windows joins
+    /// onto each declaring scope's own drive.
+    pub resolved_path: Option<String>,
     pub rev: Option<String>,
     /// The commit the subscription reads right now, when the cache holds one.
     pub commit: Option<String>,
@@ -136,6 +146,9 @@ pub fn rows(env: &Env, scopes: &[Scope]) -> Result<Vec<MarketplaceRow>, String> 
                     .as_deref()
                     .map(kendex_core::source_ref::repo_identity),
                 repo: row.repo,
+                resolved_path: row.path.as_deref().map(|path| {
+                    kendex_core::paths::slashed(&kendex_core::source::path_root(env, scope, path))
+                }),
                 path: row.path,
                 rev: row.rev,
                 commit: row.commit,

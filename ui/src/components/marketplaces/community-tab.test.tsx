@@ -15,6 +15,7 @@ vi.mock("./skillssh-search", () => ({
 const listed = (over: Partial<DirectoryRow> = {}): DirectoryRow => ({
   repo: "acme/kit",
   repoKey: "acme/kit",
+  repoIdentity: "github.com/acme/kit",
   name: "kit",
   description: null,
   tags: [],

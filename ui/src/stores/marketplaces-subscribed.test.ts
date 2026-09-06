@@ -27,6 +27,7 @@ vi.mock("./scan", () => ({
 const listed: DirectoryRow = {
   repo: "Acme/Kit",
   repoKey: "acme/kit",
+  repoIdentity: "github.com/acme/kit",
   name: "kit",
   description: null,
   tags: [],
@@ -48,6 +49,7 @@ const row = (repo: string, repoKey: string | null): MarketplaceRow => ({
   repoIdentity: repoKey ? `github.com/${repoKey}` : repo,
   provenance: repo,
   path: null,
+  resolvedPath: null,
   rev: null,
   commit: null,
   enabled: true,
@@ -83,7 +85,9 @@ describe("a Community row's Subscribed marker", () => {
       data: [row("https://github.com/Acme/Kit.git", "acme/kit")],
     });
     expect(
-      subscribedKeys(useMarketplacesStore.getState().rows).has("acme/kit"),
+      subscribedKeys(useMarketplacesStore.getState().rows).has(
+        "github.com/acme/kit",
+      ),
     ).toBe(false);
 
     // Subscribe answers with the alias it declared, so a caller that goes
@@ -94,7 +98,25 @@ describe("a Community row's Subscribed marker", () => {
 
     expect(outcome).toEqual({ name: "kit" });
     const held = subscribedKeys(useMarketplacesStore.getState().rows);
-    expect(listed.repoKey !== null && held.has(listed.repoKey)).toBe(true);
+    expect(held.has(listed.repoIdentity)).toBe(true);
+  });
+
+  // The set holds identities, not GitHub keys: a GitLab subscription has
+  // no `repoKey`, and a set built from keys would read it as no
+  // subscription — a card never marked Subscribed for it, and a Subscribe
+  // offered that the engine refuses as a duplicate.
+  it("marks a non-GitHub row Subscribed from its identity", () => {
+    const gitlab = "https://gitlab.com/acme/kit";
+    const live = subscribedKeys([row(gitlab, null)]);
+    expect(
+      rowSubscribed({ repoIdentity: gitlab, subscribed: false }, live),
+    ).toBe(true);
+    expect(
+      rowSubscribed(
+        { repoIdentity: "https://gitlab.com/acme/other", subscribed: true },
+        live,
+      ),
+    ).toBe(false);
   });
 
   // A subscribe plans the whole scope, so its plan can take a package away
