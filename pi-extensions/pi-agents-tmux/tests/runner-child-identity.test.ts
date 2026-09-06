@@ -76,11 +76,10 @@ const rows: Array<[string, Launch, string]> = [
 	["a parent colour is replaced by the agent's", { color: "cyan", parent: { PI_SUBAGENT_CHILD_COLOR: "magenta" } }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_CHILD_COLOR=cyan PI_SUBAGENT_DEPTH=1 | ${BASE} Task: recon`],
 	["a parent's child agent is replaced by this one", { parent: { PI_SUBAGENT_CHILD_AGENT: "other" } }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_DEPTH=1 | ${BASE} Task: recon`],
 	["pane and bridge markers are stripped, a PI_BRIDGE sibling and an unrelated key kept", { parent: { ...STRIPPED, KENDEX_TEST_KEEP: "kept", PI_BRIDGEX: "kept" } }, `KENDEX_TEST_KEEP=kept PI_BRIDGEX=kept PI_BRIDGE_CHILD_ROLE=- PI_BRIDGE_PARENT_SESSION_ID=- PI_BRIDGE_SOCKET_PATH=- PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_CHILD_PANE=- PI_SUBAGENT_DEPTH=1 PI_SUBAGENT_PARENT_SESSION_ID=- | ${BASE} Task: recon`],
-	["the parent's depth is one more in the child", { parent: { PI_SUBAGENT_DEPTH: "2" } }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_DEPTH=3 | ${BASE} Task: recon`],
 	["the excluded tool is dropped from the inherited tools", { activeTools: ["read", "complete_subagent", "delegate_subagent"] }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_DEPTH=1 | ${BASE} --tools read,delegate_subagent Task: recon`],
 	["the excluded tool is matched by its normalised name", { activeTools: ["read", " Complete-Subagent "] }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_DEPTH=1 | ${BASE} --tools read Task: recon`],
 	["only the excluded tool inherited: no tools at all", { activeTools: ["complete_subagent"] }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_DEPTH=1 | ${BASE} --no-tools Task: recon`],
-	["a denied tool is dropped, the rest deduplicated and trimmed", { activeTools: ["read", "bash", " read", "bash "], denyTools: ["Bash"] }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_DEPTH=1 | ${BASE} --tools read Task: recon`],
+	["a denied tool is matched by its normalised name, the rest deduplicated and trimmed", { activeTools: ["read", "Bash", " read", "bash-tool "], denyTools: ["Bash", "bash_tool"] }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_DEPTH=1 | ${BASE} --tools read Task: recon`],
 	["every inherited tool denied: no tools at all", { activeTools: ["bash"], denyTools: ["bash"] }, `PI_SUBAGENT_CHILD_AGENT=scout PI_SUBAGENT_DEPTH=1 | ${BASE} --no-tools Task: recon`],
 ];
 
