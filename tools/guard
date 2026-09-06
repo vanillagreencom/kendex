@@ -306,7 +306,8 @@ if [ "$FULL" -eq 0 ]; then
         manifest="crates/${crate%%/*}/Cargo.toml"
         if [ ! -f "$manifest" ]; then rust_all=1; continue; fi
         seen=0
-        for existing in "${rust_manifests[@]}"; do
+        # Guarded: an empty array is unbound under set -u on Bash 3.2.
+        for existing in ${rust_manifests[@]+"${rust_manifests[@]}"}; do
           [ "$existing" != "$manifest" ] || seen=1
         done
         [ "$seen" -eq 1 ] || rust_manifests+=("$manifest")
@@ -329,7 +330,7 @@ if [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt
     cargo check --workspace --all-targets || say "cargo check failed"
     cargo clippy --workspace --all-targets --quiet -- -D warnings || say "clippy failed"
   else
-    for manifest in "${rust_manifests[@]}"; do
+    for manifest in ${rust_manifests[@]+"${rust_manifests[@]}"}; do
       cargo check --manifest-path "$manifest" --all-targets || say "$manifest failed to compile"
       cargo clippy --manifest-path "$manifest" --all-targets --quiet -- -D warnings || say "$manifest clippy failed"
     done

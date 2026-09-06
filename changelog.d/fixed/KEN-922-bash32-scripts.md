@@ -1,0 +1,1 @@
+- On Bash 3.2, commit-guards admitted an uppercase commit type and refused its own helper on an apostrophe path; second-opinion, verification-scope and tools/guard aborted or misspelt a path.

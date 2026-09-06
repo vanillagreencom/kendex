@@ -43,9 +43,18 @@ chmod +x "$FIXTURE/bin/blocked" "$FIXTURE/bin/gh" "$FIXTURE/bin/codex" \
     "$FIXTURE/.agents/skills/control/scripts/environment-load"
 export HELP_INERT_CALLS="$CALLS"
 
+# The linear CLI's contract is Bash 4 or newer (skills/linear/tests/
+# bash4-runtime-contract.test.sh): under Bash 3 it refuses before serving
+# help, so its rows are out of this suite's reach on that shell.
+LINEAR_SKIPPED=0
 # skill, script, expected output, arguments, expected violation. A dash means no arguments.
 while IFS=$'\t' read -r skill script token args expected; do
     [ -n "$skill" ] || continue
+    if [ "$skill" = linear ] && [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
+        [ "$LINEAR_SKIPPED" -eq 1 ] || printf 'skipping linear rows: its contract is Bash 4 or newer, this is %s\n' "$BASH_VERSION"
+        LINEAR_SKIPPED=1
+        continue
+    fi
     expected="${expected:-clean}"
     rm -f "$MARKER"
     : >"$CALLS"

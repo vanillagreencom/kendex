@@ -49,11 +49,14 @@ echo $$ > "$HANG_PID_FILE"
 trap '' TERM
 while :; do :; done
 T
+# The launcher is told apart inside the trap, not while this file is sourced:
+# Bash 3.2 reports $0 as `bash` at that point, whatever script it is starting.
+# Every other shell disarms itself on its first command.
 cat > "$TMP/launch-window.bashenv" <<'T'
-case "$0" in
-  *mutation-stability)
-    set -T
-    trap '
+set -T
+trap '
+  case "$0" in
+    *mutation-stability)
       if [ "$BASH_COMMAND" = "ACTIVE_PID=\$!" ]; then
         trap - DEBUG
         tries=0
@@ -64,9 +67,10 @@ case "$0" in
         : > "$LAUNCH_WINDOW_SIGNALLED"
         kill -TERM "$$"
       fi
-    ' DEBUG
-    ;;
-esac
+      ;;
+    *) trap - DEBUG ;;
+  esac
+' DEBUG
 T
 git -C "$REPO" add -A
 git -C "$REPO" -c user.email=t@t -c user.name=t commit -qm x

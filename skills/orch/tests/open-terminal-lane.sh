@@ -15,7 +15,9 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 OPEN_TERMINAL="$SCRIPTS_DIR/open-terminal"
 
-TMP_ROOT="$(mktemp -d)"
+# Physical: on macOS the temp root sits under /var -> /private/var, and the
+# scripts print the resolved path.
+TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # shellcheck source=lib/waiter-assertions.sh

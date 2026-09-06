@@ -26,18 +26,22 @@ expect_red 'agents-section orphan' 'the nested clause reds with every flag false
 rm -f "$repo/crates/core/AGENTS.md"
 cp "$BI_FIXTURES/canonical.toml" "$repo/kendex.toml"
 
-# The same nested file under a directory whose NAME is not UTF-8, which is a
-# legal name on every filesystem this runs on. A lossy decode replaces the
+# The same nested file under a directory whose NAME is not UTF-8, a legal
+# name on every Linux filesystem and one APFS refuses, so the case runs where
+# the name can exist and says so where it cannot. A lossy decode replaces the
 # byte: the name still ends `/AGENTS.md` and still passes the nested filter,
 # then addresses a DIFFERENT path on the read. Surrogates round-trip.
 odd="$repo/$(printf 'x\xffy')"
-mkdir -p "$odd"
-printf '# odd\n\n## Code Review Rules\n\nunmanaged\n' > "$odd/AGENTS.md"
-git -C "$repo" add -A >/dev/null 2>&1
-expect_red agents-section 'a nested AGENTS.md under a name that is not UTF-8' \
-  check --repo "$repo"
-rm -rf -- "${odd:?}"
-git -C "$repo" add -A >/dev/null 2>&1
+if mkdir -p "$odd" 2>/dev/null; then
+  printf '# odd\n\n## Code Review Rules\n\nunmanaged\n' > "$odd/AGENTS.md"
+  git -C "$repo" add -A >/dev/null 2>&1
+  expect_red agents-section 'a nested AGENTS.md under a name that is not UTF-8' \
+    check --repo "$repo"
+  rm -rf -- "${odd:?}"
+  git -C "$repo" add -A >/dev/null 2>&1
+else
+  printf '  skip a nested AGENTS.md under a name that is not UTF-8: this filesystem refuses the name\n'
+fi
 
 python3 - "$repo/AGENTS.md" <<'PY'
 import sys

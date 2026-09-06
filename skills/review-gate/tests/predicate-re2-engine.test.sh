@@ -102,9 +102,11 @@ fi
 : >"$work/httpd.log"
 python3 -u -m http.server 0 --bind 127.0.0.1 --directory "$srv" >"$work/httpd.log" 2>&1 &
 server_pid=$!
+# A minute, not ten seconds: the first python3 on a macOS runner takes
+# longer than that to print its banner.
 port=""
 i=0
-while [ "$i" -lt 100 ]; do
+while [ "$i" -lt 600 ]; do
   port="$(sed -n 's/.*port \([0-9][0-9]*\).*/\1/p' "$work/httpd.log" | head -1)"
   [ -n "$port" ] && break
   kill -0 "$server_pid" 2>/dev/null || break

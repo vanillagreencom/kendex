@@ -287,9 +287,11 @@ expect_fail "trailing space after a backslash continuation is a divergence" "$di
 
 sandbox
 dir="$DIR"
-mutate "$dir" "0,/^          set -u\$/{/^          set -u\$/a\\
-          # a shell comment inside the payload
-}"
+# An `s` with an escaped newline, not a `0,/re/` range: that address is GNU
+# sed's, and BSD sed reads it as something else and changes nothing. `@` is
+# the delimiter so `&` never follows `|`, a spelling the portability lint reads.
+mutate "$dir" "s@^          set -u\$@&\\
+          # a shell comment inside the payload@"
 expect_fail "a comment inside a run: payload is a divergence" "$dir" "has diverged from the shipped template"
 
 # The BOUNDARY, stated rather than left to be discovered: comments are

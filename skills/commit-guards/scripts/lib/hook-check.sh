@@ -115,7 +115,9 @@ check_helper_head() { # HEAD -> 0 ours, 1 not
   esac
   inner="${head#"$prefix"}"
   inner="${inner%"$suffix"}"
-  value="${inner//"$esc"/"$sq"}"
+  # The replacement is unquoted: Bash 3.2 keeps the quotes of a quoted one
+  # as literal bytes, and a value rebuilt around them is never ours.
+  value="${inner//"$esc"/$sq}"
   [ "$(gg_shell_quote "$value")" = "$inner" ] || return 1
   gg_same_project_elsewhere "$value"
 }

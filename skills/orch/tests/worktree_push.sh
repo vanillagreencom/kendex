@@ -21,7 +21,9 @@ ARTIFACT_CHECK="$REPO_ROOT/skills/orch/scripts/dev-artifact-check"
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
 
-TMP_ROOT="$(mktemp -d)"
+# Physical: on macOS the temp root sits under /var -> /private/var, and the
+# scripts print the resolved path.
+TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 PASS=0
@@ -326,9 +328,12 @@ for arg in "$@"; do
     ;;
   esac
 done
+# The honest answer is a variable, not a default word: Bash 3.2 keeps the
+# backslash of a `\}` inside `${var:-word}`, which is not JSON.
+honest='{"path":"/x","exists":true}'
 if [[ "$mode" == exists ]]; then
   [[ "${STUB_EXISTS:-}" == fail ]] && exit 7
-  printf '%s\n' "${STUB_EXISTS_JSON:-{\"path\":\"/x\",\"exists\":true\}}"
+  printf '%s\n' "${STUB_EXISTS_JSON:-$honest}"
 fi
 exit 0
 EOF
