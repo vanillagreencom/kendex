@@ -176,6 +176,32 @@ assert_file_contains "$sync_base" 'refs/remotes/origin/$BASE_BRANCH:refs/heads/$
 assert_file_contains "$merge_workflow" '| Base sync |' \
   "merge-pr never omits the Base sync row, so a stale base cannot pass unreported"
 
+# The lane's terminal condition is the removal, so § 5 reads [WORKTREE_PATH]
+# back before § 6 writes the summary. The anchor is that read, not the
+# `worktree remove` call: the call has always been § 5's last step, so a
+# document with no read of the path satisfies the ordering while leaving the
+# lane free to report done at its prompt with its worktree standing. What the
+# summary's worktree line then says is not pinned; § 6's own prose carries it.
+removal_precedes_summary() { # doc
+  local removal summary
+  removal="$(grep -n -m1 -F 'ls -d -- "[WORKTREE_PATH]"' "$1" | cut -d: -f1)"
+  summary="$(grep -n -m1 -F '## 6. Present Results' "$1" | cut -d: -f1)"
+  [[ -n "$removal" && -n "$summary" && "$removal" -lt "$summary" ]]
+}
+if removal_precedes_summary "$merge_workflow"; then
+  pass "merge-pr reads the worktree path back before § 6 writes the summary"
+else
+  fail "merge-pr must read [WORKTREE_PATH] back before § 6 writes the summary"
+fi
+# The must-fail control: a copy the summary heading is reachable first in.
+summary_first="$TMP_ROOT/merge-pr-summary-first.md"
+{ printf '## 6. Present Results\n'; cat "$merge_workflow"; } >"$summary_first"
+if removal_precedes_summary "$summary_first"; then
+  fail "must-fail: a summary heading above that read has to fail the ordering check"
+else
+  pass "must-fail: a summary heading above that read fails the ordering check"
+fi
+
 # A push that rebases rewrites every stored fix SHA. Without reconciliation the
 # PR body cites commits that does not exist; worktree-push owns that remap.
 assert_file_contains "$submit_workflow" 'scripts/worktree-push --worktree' \
