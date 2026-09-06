@@ -211,9 +211,43 @@ echo "$v" | jq -e . >/dev/null 2>&1 || grep -q x <<<"$v"
 echo "$MSG"
 EOF
 printf '{\n  // a comment: this dialect is real and jq is right to reject it\n  "strict": true\n}\n' >"$R/tsconfig.json"
+# Every benign spelling of a command substitution assigned under errexit. The
+# shape is a defect only when a guard below the assignment can never run, so a
+# substitution whose failure is MEANT to end the script, one already sitting in
+# a condition, and one whose status the same line captures are all correct code.
+cat >"$R/scripts/assign.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+# Nothing below tests it: errexit ending the run here is the intended fatal.
+# The test of $STAMP far below is out of the look-ahead window and must stay
+# out — a guard that distant belongs to no assignment, so a wider window turns
+# every deliberate fatal into a finding.
+STAMP="$(date +%s)"
+echo "$STAMP"
+# The fix shape: the status is in a position the shell tests.
+if ! ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || [ -z "$ROOT" ]; then
+  echo "no repository" >&2
+  exit 1
+fi
+# Captured on the same line, so the test below is reachable.
+BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null)" || BRANCH=""
+[ -z "$BRANCH" ] || echo "$BRANCH"
+# Arithmetic expansion opens with the same two characters and runs no command,
+# so a loop counter under its own bound test is not the shape.
+tries=0
+while [ "$tries" -lt 3 ]; do
+  tries=$((tries + 1))
+  if [ "$tries" -gt 2 ]; then
+    break
+  fi
+done
+# Naming the shape is not writing it: HERE="$(cmd)" with [ -z "$HERE" ] under it.
+echo "$ROOT"
+[ -z "$STAMP" ] || echo "still set"
+EOF
 git -C "$R" add -A
 run_pf
-clean "no lane fires on placeholders, URLs, quoted or data-file or test-file doc cites, foreign subtrees, referenced TODOs, strict scripts, wired suites, trapped scratch dirs, captured statuses, here-string, read-to-EOF and OR-list pipeline shapes, the same shapes named in a comment or a string, or JSON-with-comments"
+clean "no lane fires on placeholders, URLs, quoted or data-file or test-file doc cites, foreign subtrees, referenced TODOs, strict scripts, wired suites, trapped scratch dirs, captured statuses, here-string, read-to-EOF and OR-list pipeline shapes, guarded or deliberately fatal command-substitution assignments, the same shapes named in a comment or a string, or JSON-with-comments"
 
 echo "=== control: the same fixture still fails on a real defect ==="
 printf 'And a citation that is dead: `docs/gone.md`.\n' >>"$R/README.md"

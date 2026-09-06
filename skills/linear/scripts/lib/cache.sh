@@ -42,12 +42,26 @@ linear_cache_project_root() {
         return
     fi
 
-    local root
-    root="$(git rev-parse --show-toplevel 2>/dev/null)"
+    # The assignment sits in the condition on purpose (KEN-1193): `git
+    # rev-parse` exits 128 outside a repository, and under `set -e` a bare
+    # assignment carries that status out of the function before this refusal
+    # can print. Each branch above names its own cause, so this one does too.
+    local root=""
+    if ! root="$(git rev-parse --show-toplevel 2>/dev/null)" || [[ -z "$root" ]]; then
+        jq -cn --arg cwd "$PWD" \
+            '{error: ("Could not resolve a cache root: LINEAR_CACHE_ROOT is unset and there is no git repository at: " + $cwd)}' >&2
+        return 1
+    fi
     linear_cache_canonical_existing_dir "$root"
 }
 
-CACHE_PROJECT_ROOT="$(linear_cache_project_root)"
+# In the condition for the same reason (KEN-1193): a bare assignment carries
+# the function's refusal out here, ending the script at that status with the
+# cause on stderr but no exit of this script's own. Every branch above has
+# already said why, so this one adds nothing.
+if ! CACHE_PROJECT_ROOT="$(linear_cache_project_root)"; then
+    exit 1
+fi
 CACHE_DIR="$CACHE_PROJECT_ROOT/.cache/linear"
 
 # The three single-comment helpers below — cache_append_comment,

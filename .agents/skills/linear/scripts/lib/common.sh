@@ -26,8 +26,19 @@ linear_canonical_existing_dir() {
 source "$_LIB_DIR/bash-version.sh"
 linear_require_supported_bash || exit $?
 
-PROJECT_ROOT_RAW="$(git rev-parse --show-toplevel 2>/dev/null)"
-PROJECT_ROOT="$(linear_canonical_existing_dir "$PROJECT_ROOT_RAW")"
+# Both assignments sit in the condition on purpose (KEN-1193): `git rev-parse`
+# exits 128 outside a repository and linear_canonical_existing_dir returns 1 on
+# a path that is not a directory, and under `set -e` a bare assignment carries
+# either status out before any guard below can print. Every subcommand died at
+# a bare 128 with nothing on stdout or stderr. Everything past this line — the
+# cache, the attachment store, the project settings and .env.local — is read
+# from the repository, so the resolution refuses rather than degrading.
+if ! PROJECT_ROOT_RAW="$(git rev-parse --show-toplevel 2>/dev/null)" \
+    || ! PROJECT_ROOT="$(linear_canonical_existing_dir "$PROJECT_ROOT_RAW")"; then
+    jq -cn --arg cwd "$PWD" \
+        '{error: ("Could not resolve a git repository from: " + $cwd + ". Run linear.sh from a checkout of the repository whose Linear workspace you mean.")}' >&2
+    exit 1
+fi
 unset PROJECT_ROOT_RAW
 
 # First 12 hex chars of sha256 — enough to tell two keys apart in a diagnostic
