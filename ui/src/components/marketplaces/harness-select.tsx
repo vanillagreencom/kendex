@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   commands,
   type HarnessId,
@@ -34,7 +34,12 @@ export type Choice = {
 
 /** Whether this choice can be installed. An empty tool list is a choice to
  * install nowhere, which would report success over a plan that wrote
- * nothing; the untouched picker is not that — it is no choice at all. */
+ * nothing; the untouched picker is not that — it is no choice at all.
+ *
+ * The list this reads holds only tools the picker offers: `HarnessSelect`
+ * reconciles it against every answer it gets, so a choice narrowed to
+ * nothing arrives here as an empty list rather than as tools no row shows.
+ * That is what makes this gate and the trigger's label one answer. */
 export function isInstallable(choice: Choice): boolean {
   return choice.harnesses === null || choice.harnesses.length > 0;
 }
@@ -71,12 +76,35 @@ export function HarnessSelect({
   // and the picker is left with no row to tick. Naming no kind is what an
   // empty key means, and the command reads that as every kind.
   const wanted = kinds.join(",");
+  // The choice as it stands when an answer lands, which is not the one the
+  // read was started under: the reconciliation below runs in the answer's
+  // own callback so the rows and the choice reconciled against them reach
+  // the screen in one paint, and it cannot take either as a dependency
+  // without asking the command again on every tick.
+  const latest = useRef({ value, onChange });
+  useEffect(() => {
+    latest.current = { value, onChange };
+  });
 
   useEffect(() => {
     let live = true;
     const asked = wanted === "" ? [] : (wanted.split(",") as ItemKind[]);
     void commands.installTargets(scope, asked).then((r) => {
-      if (live && r.status === "ok") setTargets(r.data);
+      if (!live || r.status !== "ok") return;
+      setTargets(r.data);
+      // The one place the choice is reconciled against what is offered.
+      // A choice made against a wider set of kinds can name a tool this
+      // answer no longer offers; the display drops it either way, and
+      // dropping it from the choice too is what keeps the install gate
+      // reading the same answer the trigger shows. Left in, a narrowing
+      // that empties the picker leaves every Install button pressable
+      // over a plan that would write nothing.
+      const choice = latest.current.value;
+      if (choice.harnesses === null) return;
+      const offers = new Set(r.data.map((t) => t.harness));
+      const kept = choice.harnesses.filter((one) => offers.has(one));
+      if (kept.length !== choice.harnesses.length)
+        latest.current.onChange({ ...choice, harnesses: kept });
     });
     return () => {
       live = false;
@@ -88,7 +116,9 @@ export function HarnessSelect({
   // the one drawn here are the same answer, taken a moment apart. A tool
   // this destination cannot install to is dropped from the display — the
   // rows come from the same filter the install refuses by, so a selection
-  // made before the destination changed cannot survive as a row.
+  // made before the destination changed cannot survive as a row. The
+  // filter still stands over the window before the first answer lands,
+  // where there is nothing yet to reconcile the choice against.
   const offered = new Set(targets.map((t) => t.harness));
   const detected = targets.filter((t) => t.detected).map((t) => t.harness);
   const chosen = (value.harnesses ?? detected).filter((held) =>
