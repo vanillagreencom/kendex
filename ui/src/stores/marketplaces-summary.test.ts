@@ -41,6 +41,7 @@ describe("a repository's summary", () => {
       data: {
         provenance: "acme/kit",
         repoKey: "acme/kit",
+        repoIdentity: "github.com/acme/kit",
         commit: null,
         meta: null,
         mode: "discovered",

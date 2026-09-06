@@ -10,19 +10,26 @@ import { cn } from "@/lib/utils";
 import { useCommunityStore } from "@/stores/community";
 import { repoAction, useMarketplacesStore } from "@/stores/marketplaces";
 
-/** The canonical key for a bare repository, from core rather than from the
- * spelling the page was opened with: the summary's once the fetch lands,
- * the directory listing's until then. Every surface deciding what a bare
- * repository offers reads it here — spelled twice, one of the two settles
- * on a spelling of its own and offers a Subscribe the engine refuses. */
-export function useRepoKey(
+/** How a bare repository is known, from core rather than from the spelling
+ * the page was opened with: the summary's answer once the fetch lands, the
+ * directory listing's until then. `identity` is core's `repo_identity`, the
+ * one string per repository on any host that the live subscription list is
+ * matched by; `key` is the GitHub `owner/repo` a subscription is prefilled
+ * with, null on every other host. Every surface deciding what a bare
+ * repository offers reads both here — spelled twice, one of the two
+ * settles on a spelling of its own and offers a Subscribe the engine
+ * refuses. */
+export function useBrowsedRepo(
   repo: string,
   summary: CatalogSummary | null,
-): string | null {
-  const listedKey = useCommunityStore(
-    (s) => s.directory?.rows.find((r) => r.repo === repo)?.repoKey ?? null,
+): { identity: string | null; key: string | null } {
+  const listed = useCommunityStore(
+    (s) => s.directory?.rows.find((r) => r.repo === repo) ?? null,
   );
-  return summary?.repoKey ?? listedKey;
+  return {
+    identity: summary?.repoIdentity ?? listed?.repoIdentity ?? null,
+    key: summary?.repoKey ?? listed?.repoKey ?? null,
+  };
 }
 
 /** What one place is called among every place the overview knows. The
@@ -56,19 +63,19 @@ export function RepoAction({
   const checkForUpdates = useMarketplacesStore((s) => s.checkForUpdates);
   const busy = useMarketplacesStore((s) => s.busy);
   const load = useMarketplacesStore((s) => s.load);
-  const key = useRepoKey(repo, summary);
-  const { kind, holder } = repoAction(rows, read, key);
+  const { identity, key } = useBrowsedRepo(repo, summary);
+  const { kind, holder } = repoAction(rows, read, identity);
 
   switch (kind) {
     // Nothing to match the repository against yet, for either of two
-    // reasons: no canonical key, or no rows any read produced. Only the
-    // second is the overview's to fix, and `load` is the only thing that
-    // writes `read` — so Try again is offered where pressing it can lift
-    // the state, and a key still on its way keeps the wait it is really
+    // reasons: no identity, or no rows any read produced. Only the second
+    // is the overview's to fix, and `load` is the only thing that writes
+    // `read` — so Try again is offered where pressing it can lift the
+    // state, and an identity still on its way keeps the wait it is really
     // in. A retry that changed nothing visible would be the same dead
     // control under a friendlier word.
     case "checking":
-      return read.status === "failed" && key !== null ? (
+      return read.status === "failed" && identity !== null ? (
         <Button
           size="sm"
           variant="outline"

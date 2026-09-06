@@ -95,6 +95,60 @@ fn a_malformed_manifest_fails_the_directory_subscription_join() {
     ));
 }
 
+/// The join matches by identity, so a subscription spelled as a URL flips
+/// the row the directory lists as `owner/repo`; the row also carries the
+/// identity itself, for the live list the app compares it with later, and
+/// the shorthand a blind browse fetches by.
+#[test]
+fn a_directory_row_is_subscribed_by_identity_however_the_manifest_spells_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = rooted(&dir);
+    let env = env_in(&root);
+    let manifest = env.global_manifest_file();
+    std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    std::fs::write(
+        &manifest,
+        "schema = 6\n[sources.tools]\nrepo = \"https://github.com/Owner/Repo.git\"\n",
+    )
+    .unwrap();
+    let fetch = Canned::new(vec![ok(
+        200,
+        None,
+        &body_with(r#"{"repo":"owner/repo","name":"repo"},{"repo":"owner/other","name":"other"}"#),
+    )]);
+
+    let view = kendex_core::registry::view::directory(&env, &fetch, true).unwrap();
+    let flags: Vec<(&str, &str, Option<&str>, bool)> = view
+        .rows
+        .iter()
+        .map(|row| {
+            (
+                row.repo.as_str(),
+                row.repo_identity.as_str(),
+                row.repo_key.as_deref(),
+                row.subscribed,
+            )
+        })
+        .collect();
+    assert_eq!(
+        flags,
+        vec![
+            (
+                "owner/repo",
+                "github.com/owner/repo",
+                Some("owner/repo"),
+                true
+            ),
+            (
+                "owner/other",
+                "github.com/owner/other",
+                Some("owner/other"),
+                false
+            ),
+        ]
+    );
+}
+
 #[test]
 fn parse_caps_and_drops_unusable_rows() {
     let many_tags: Vec<String> = (0..20).map(|n| format!(r#""t{n}""#)).collect();

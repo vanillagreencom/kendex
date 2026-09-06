@@ -25,6 +25,11 @@ pub(crate) struct Browsed {
     pub(crate) config: SourceConfig,
     /// The subscription's name when there is one — see [`Browsed::owned_here`].
     subscription: Option<String>,
+    /// The repository the catalog is declared as, for a remote: the
+    /// declaration's own spelling for a subscription, the canonical
+    /// `owner/repo` for a blind browse. None for a folder or a reserved
+    /// source. What the summary folds into `repo_key` and `repo_identity`.
+    pub(crate) repo: Option<String>,
 }
 
 /// One scope's records, as every installed-state join reads them: what is
@@ -114,7 +119,12 @@ pub(crate) fn open(env: &Env, catalog: &Catalog) -> Result<Browsed> {
         Catalog::Subscription { scope, source } => {
             let records = records(env, scope)?;
             let resolved = require_ready(env, scope, source, &records.manifest)?;
-            browsed(records, resolved, Some(source.clone()))
+            let repo = records
+                .manifest
+                .sources
+                .get(source)
+                .and_then(|decl| decl.repo.clone());
+            browsed(records, resolved, Some(source.clone()), repo)
         }
         Catalog::Repo { repo } => {
             let key = browsable(repo)?;
@@ -143,16 +153,17 @@ pub(crate) fn open_repo(
     let source = ResolvedSource {
         name: key.clone(),
         root: resolution.root,
-        provenance: key,
+        provenance: key.clone(),
         commit: Some(resolution.commit),
     };
-    browsed(records, source, None)
+    browsed(records, source, None, Some(key))
 }
 
 fn browsed(
     records: Records,
     source: ResolvedSource,
     subscription: Option<String>,
+    repo: Option<String>,
 ) -> Result<Browsed> {
     let sealed = SealedSource::open(&source.root)?;
     let config = source_config_for(&sealed, &source.provenance)?;
@@ -162,6 +173,7 @@ fn browsed(
         sealed,
         config,
         subscription,
+        repo,
     })
 }
 

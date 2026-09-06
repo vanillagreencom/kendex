@@ -297,6 +297,7 @@ describe("the row action on a repository nobody subscribes to", () => {
     // spelling — without it the table cannot tell whether anything already
     // declares the repository, and offers nothing.
     repoKey: "acme/kit",
+    repoIdentity: "github.com/acme/kit",
     name: "kit",
     description: null,
     tags: [],
@@ -316,6 +317,7 @@ describe("the row action on a repository nobody subscribes to", () => {
     repoIdentity: "github.com/acme/kit",
     provenance: repo,
     path: null,
+    resolvedPath: null,
     rev: null,
     commit: null,
     enabled: false,

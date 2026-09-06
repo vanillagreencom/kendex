@@ -34,6 +34,72 @@ fn remote_without_cache_is_pending_not_an_error() {
     ));
 }
 
+/// Rootedness is the platform's answer, not the spelling's. On Windows a
+/// POSIX-rooted declaration is root-relative, so two scopes on two drives
+/// declaring `/srv/catalog` name two directories; a surface keying on the
+/// spelling would fold them into one marketplace.
+#[cfg(windows)]
+#[test]
+fn a_posix_rooted_path_joins_onto_each_scopes_own_drive() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Windows);
+    let on_c = Scope::Project {
+        root: PathBuf::from(r"C:\work\alpha"),
+    };
+    let on_d = Scope::Project {
+        root: PathBuf::from(r"D:\work\beta"),
+    };
+    assert_eq!(
+        path_root(&env, &on_c, "/srv/catalog"),
+        PathBuf::from(r"C:\srv\catalog")
+    );
+    assert_eq!(
+        path_root(&env, &on_d, "/srv/catalog"),
+        PathBuf::from(r"D:\srv\catalog")
+    );
+    assert_eq!(
+        path_root(&env, &on_d, r"E:\srv\catalog"),
+        PathBuf::from(r"E:\srv\catalog"),
+        "a drive-rooted path is absolute and stays as written"
+    );
+}
+
+/// The portable twin: where the platform reads `/srv/catalog` as absolute,
+/// every scope resolves it to the one directory, and only a relative
+/// declaration is re-rooted per scope.
+#[cfg(not(windows))]
+#[test]
+fn an_absolute_path_is_one_directory_from_every_scope() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let alpha = Scope::Project {
+        root: PathBuf::from("/work/alpha"),
+    };
+    let beta = Scope::Project {
+        root: PathBuf::from("/work/beta"),
+    };
+    assert_eq!(
+        path_root(&env, &alpha, "/srv/catalog"),
+        PathBuf::from("/srv/catalog")
+    );
+    assert_eq!(
+        path_root(&env, &alpha, "/srv/catalog"),
+        path_root(&env, &beta, "/srv/catalog")
+    );
+    assert_eq!(
+        path_root(&env, &alpha, "catalog"),
+        PathBuf::from("/work/alpha/catalog")
+    );
+    assert_eq!(
+        path_root(&env, &beta, "catalog"),
+        PathBuf::from("/work/beta/catalog")
+    );
+    assert_eq!(
+        path_root(&env, &Scope::Global, "catalog"),
+        env.home.join("catalog")
+    );
+}
+
 #[test]
 fn path_sources_resolve_relative_to_scope_root() {
     let tmp = tempfile::tempdir().unwrap();

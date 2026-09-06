@@ -30,6 +30,7 @@ const listing: DirectoryView = {
     {
       repo: "acme/kit",
       repoKey: "acme/kit",
+      repoIdentity: "github.com/acme/kit",
       name: "kit",
       description: null,
       tags: [],
@@ -133,6 +134,7 @@ describe("turning a declared repository back on", () => {
     repoIdentity: "github.com/acme/kit",
     provenance: "acme/kit",
     path: null,
+    resolvedPath: null,
     rev: null,
     commit: null,
     enabled: false,
@@ -167,5 +169,52 @@ describe("turning a declared repository back on", () => {
     toggle.mockReset();
     await userEvent.click(turnOn());
     expect(toggle).toHaveBeenCalledWith(holder.scope, "beta-kit", true);
+  });
+});
+
+// A repository on another host has no GitHub key, so the page matches it
+// by the identity the listing and the live list both carry from core. Read
+// off the key, the page would see nothing to match and offer a Subscribe
+// the engine refuses as a duplicate.
+describe("a repository page on another host", () => {
+  const gitlab = "https://gitlab.com/acme/kit";
+  const listedElsewhere: DirectoryView = {
+    ...listing,
+    rows: [
+      { ...listing.rows[0], repo: gitlab, repoKey: null, repoIdentity: gitlab },
+    ],
+  };
+  const holder: MarketplaceRow = {
+    scope: { scope: "project", root: "/w/beta" },
+    name: "kit",
+    repo: gitlab,
+    repoKey: null,
+    repoIdentity: gitlab,
+    provenance: gitlab,
+    path: null,
+    resolvedPath: null,
+    rev: null,
+    commit: null,
+    enabled: false,
+    counts: null,
+    meta: null,
+    mode: null,
+    recordsUnreadable: false,
+  };
+
+  const drawElsewhere = (rows: MarketplaceRow[]) => {
+    useCommunityStore.setState({ directory: listedElsewhere });
+    useMarketplacesStore.setState({ rows, read: READ_LANDED });
+    return mount(
+      <RepoAction repo={gitlab} summary={null} subscribeLabel="Subscribe" />,
+    );
+  };
+
+  it("turns on the declaration that holds it", () => {
+    expect(buttons(drawElsewhere([holder]))).toEqual(["Turn on in beta"]);
+  });
+
+  it("offers Subscribe where nothing declares it", () => {
+    expect(buttons(drawElsewhere([]))).toEqual(["Subscribe"]);
   });
 });

@@ -25,9 +25,14 @@ pub struct DirectoryView {
 #[serde(rename_all = "camelCase")]
 pub struct DirectoryRow {
     pub repo: String,
-    /// The canonical key a subscription's `repo_key` is compared with, so
-    /// the row can flip to Subscribed from the live subscription list.
+    /// The canonical `owner/repo` a blind browse of this row fetches by, and
+    /// what Subscribe is prefilled with.
     pub repo_key: Option<String>,
+    /// One string per repository on any host, from
+    /// [`crate::source_ref::repo_identity`] — what the live subscription
+    /// list's own `repo_identity` is compared with, so the row flips to
+    /// Subscribed however the subscription spells the repository.
+    pub repo_identity: String,
     pub name: String,
     pub description: Option<String>,
     pub tags: Vec<String>,
@@ -48,13 +53,12 @@ pub fn directory(env: &Env, fetch: &dyn Fetch, force_refresh: bool) -> Result<Di
         .into_iter()
         .map(|market| {
             let name = market.name.clone().unwrap_or_else(|| leaf_of(&market.repo));
-            let repo_key = crate::source_ref::owner_repo(&market.repo);
-            let is_subscribed = repo_key
-                .as_ref()
-                .is_some_and(|key| subscribed.contains(key));
+            let repo_identity = crate::source_ref::repo_identity(&market.repo);
+            let is_subscribed = subscribed.contains(&repo_identity);
             DirectoryRow {
+                repo_key: crate::source_ref::owner_repo(&market.repo),
                 repo: market.repo,
-                repo_key,
+                repo_identity,
                 name,
                 description: market.description,
                 tags: market.tags,
@@ -74,12 +78,11 @@ pub fn directory(env: &Env, fetch: &dyn Fetch, force_refresh: bool) -> Result<Di
     })
 }
 
-/// Every repository any scope subscribes to, spelled the one canonical
-/// way.
+/// Every repository any scope subscribes to, by identity.
 fn subscribed_repos(env: &Env) -> Result<BTreeSet<String>> {
     Ok(crate::source_ops::repo_subscriptions(env)?
         .into_iter()
-        .filter_map(|row| row.repo_key)
+        .map(|row| row.repo_identity)
         .collect())
 }
 

@@ -7,6 +7,7 @@ import { DirectoryCard } from "./directory-card";
 const listed = (over: Partial<DirectoryRow> = {}): DirectoryRow => ({
   repo: "Acme/Kit",
   repoKey: "acme/kit",
+  repoIdentity: "github.com/acme/kit",
   name: "kit",
   description: "Skills for the Acme stack.",
   tags: [],

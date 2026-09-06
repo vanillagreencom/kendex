@@ -53,6 +53,7 @@ const BASE: MarketplaceRow = {
   repoIdentity: "github.com/acme/kit",
   provenance: null,
   path: null,
+  resolvedPath: null,
   rev: null,
   commit: null,
   enabled: true,
@@ -115,6 +116,7 @@ describe("the header's links out", () => {
     const listed: DirectoryRow = {
       repo: LISTED_REPO,
       repoKey: null,
+      repoIdentity: "https://gitlab.example/acme/kit",
       name: "Kit",
       description: null,
       tags: [],

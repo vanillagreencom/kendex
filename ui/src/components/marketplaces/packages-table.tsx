@@ -5,7 +5,7 @@ import {
   type PackageEntry,
   PackageRow,
 } from "@/components/marketplaces/package-row";
-import { useRepoKey } from "@/components/marketplaces/repo-action";
+import { useBrowsedRepo } from "@/components/marketplaces/repo-action";
 import {
   Table,
   TableBody,
@@ -95,7 +95,7 @@ export function PackagesTable({
 }) {
   // A bare repository's table is one catalog's; the cross-marketplace tab
   // only ever carries subscriptions. So what the repository offers is
-  // decided once for the table, from the same key and the same
+  // decided once for the table, from the same identity and the same
   // `repoAction` the page header reads — a cell deciding for itself would
   // offer a Subscribe the engine refuses whenever a switched-off
   // subscription already declared the repository. The sentence is said
@@ -110,8 +110,8 @@ export function PackagesTable({
   const summary = useMarketplacesStore(
     (s) => s.summaries[catalogKey({ by: "repo", repo: browsedRepo })] ?? null,
   );
-  const repoKey = useRepoKey(browsedRepo, summary);
-  const { kind } = repoAction(rows, read, repoKey);
+  const { identity } = useBrowsedRepo(browsedRepo, summary);
+  const { kind } = repoAction(rows, read, identity);
   // Only an undeclared repository can be subscribed from a row. A declared
   // one — switched off, or unreadable — is the header's Turn on or
   // Refresh, and a second control here would race it.

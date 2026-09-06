@@ -60,11 +60,15 @@ export const catalogKey = (catalog: Catalog): string =>
     ? marketKey(catalog.scope, catalog.source)
     : JSON.stringify(["repo", catalog.repo]);
 
-/** The repositories the live subscription list holds, by canonical key —
- * what a Community row's Subscribed marker reads, so it flips the moment
- * a subscription lands or goes, wherever that happened. */
+/** The repositories the live subscription list holds, by identity — core's
+ * `repo_identity`, one string per repository on any host, the same value a
+ * directory row and a summary carry. What a Community row's Subscribed
+ * marker reads, so it flips the moment a subscription lands or goes,
+ * wherever that happened. Never `repoKey`: that is the GitHub `owner/repo`
+ * and null everywhere else, so keying on it would read a GitLab or
+ * self-hosted subscription as no subscription at all. */
 export const subscribedKeys = (rows: MarketplaceRow[]): Set<string> =>
-  new Set(rows.flatMap((row) => (row.repoKey ? [row.repoKey] : [])));
+  new Set(rows.flatMap((row) => (row.repoIdentity ? [row.repoIdentity] : [])));
 
 /** The subscription the live list already declares for a repository the
  * page is browsing bare — `summary` left it bare because that subscription
@@ -72,10 +76,10 @@ export const subscribedKeys = (rows: MarketplaceRow[]): Set<string> =>
  * duplicate. An enabled one outranks a disabled one. */
 export const declaredHolder = (
   rows: MarketplaceRow[],
-  repoKey: string,
+  identity: string,
 ): MarketplaceRow | null =>
-  rows.find((row) => row.repoKey === repoKey && row.enabled) ??
-  rows.find((row) => row.repoKey === repoKey) ??
+  rows.find((row) => row.repoIdentity === identity && row.enabled) ??
+  rows.find((row) => row.repoIdentity === identity) ??
   null;
 
 /** A Community row's Subscribed marker. The directory's own flag is only
@@ -83,10 +87,9 @@ export const declaredHolder = (
  * list alone decides, so an unsubscribe clears the marker as surely as a
  * subscribe sets it. */
 export const rowSubscribed = (
-  row: { repoKey: string | null; subscribed: boolean },
+  row: { repoIdentity: string; subscribed: boolean },
   live: Set<string> | null,
-): boolean =>
-  live ? row.repoKey !== null && live.has(row.repoKey) : row.subscribed;
+): boolean => (live ? live.has(row.repoIdentity) : row.subscribed);
 
 /** One curated set's cache and error key, in its own namespace so a set
  * named like a read ("packages") can never land on that read's key.
@@ -196,10 +199,10 @@ export async function openLead(scope: Scope, source: string, lead: string) {
 }
 
 /** What a page browsing a bare repository offers, decided from the live
- * subscription list and the repository's canonical key.
+ * subscription list and the repository's identity.
  *
  * Two things have to be known first, or Subscribe is offered on a guess and
- * a declared repository refuses it. The key, which comes from the
+ * a declared repository refuses it. The identity, which comes from the
  * directory's row or the summary and never from the requested spelling,
  * which may differ in case. And rows some read actually produced: with none,
  * every repository looks undeclared, and a read that has not landed is no
@@ -208,33 +211,30 @@ export async function openLead(scope: Scope, source: string, lead: string) {
  * whatever they were wrong about — so it is the emptiness that holds the
  * page neutral, not the failure.
  *
- * A key that never arrives is a different thing from one still on its way.
- * `repoKey` is the GitHub `owner/repo` and is null on every other host, so
- * a bare GitLab or self-hosted page waits on an answer no read will ever
- * bring: "Checking subscriptions…", disabled, for as long as the page is
- * open. Once the read has settled, that page is told what this build can
- * actually tell it — nothing here declares the repository — and Subscribe
- * is offered. Being wrong there costs a refusal the engine spells out;
- * being permanently pending costs the page its only control. An exact
- * answer needs `repo_identity` carried onto the summary and the directory
- * row. */
+ * An identity that never arrives is a different thing from one still on its
+ * way. A page the directory does not list waits on its summary, and a
+ * summary that failed brings none: once the list read has settled, that
+ * page is told what this build can tell it — nothing here declares the
+ * repository — and Subscribe is offered. Being wrong there costs a refusal
+ * the engine spells out; being permanently pending costs the page its only
+ * control. */
 type RepoActionKind = "checking" | "subscribe" | "turn-on" | "refresh";
 
 export function repoAction(
   rows: MarketplaceRow[],
   read: ReadState,
-  repoKey: string | null,
+  identity: string | null,
 ): { kind: RepoActionKind; holder: MarketplaceRow | null } {
-  // Unanswered: a key a read still out may yet bring, or rows no read has
-  // produced.
-  if (repoKey === null && read.status === "pending") {
+  // Unanswered: an identity a read still out may yet bring, or rows no read
+  // has produced.
+  if (identity === null && read.status === "pending") {
     return { kind: "checking", holder: null };
   }
   if (read.status !== "landed" && rows.length === 0) {
     return { kind: "checking", holder: null };
   }
-  if (repoKey === null) return { kind: "subscribe", holder: null };
-  const holder = declaredHolder(rows, repoKey);
+  if (identity === null) return { kind: "subscribe", holder: null };
+  const holder = declaredHolder(rows, identity);
   if (!holder) return { kind: "subscribe", holder: null };
   return { kind: holder.enabled ? "refresh" : "turn-on", holder };
 }

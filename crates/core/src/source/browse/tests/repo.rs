@@ -84,6 +84,10 @@ fn the_summary_counts_and_names_the_head_and_knows_no_subscription() {
     let first = summary(&env, &repo()).unwrap();
     assert_eq!(first.provenance, REPO);
     assert_eq!(first.repo_key.as_deref(), Some(REPO));
+    assert_eq!(
+        first.repo_identity.as_deref(),
+        Some("github.com/owner/repo")
+    );
     assert!(first.commit.is_some());
     assert_eq!(first.counts.get("skill"), Some(&1));
     assert_eq!(
