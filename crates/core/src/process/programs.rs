@@ -124,6 +124,25 @@ impl Hardened {
         Hardened::new("xdg-mime", owned(args))
     }
 
+    /// The person's login shell, asked what `PATH` is and nothing else.
+    ///
+    /// The one child kendex starts before it knows what `PATH` is, which is
+    /// the whole point of asking: it is spawned by the path `SHELL` names
+    /// rather than resolved on a `PATH` that is wrong by assumption. `-l -c`
+    /// is what a terminal window runs, the startup files and then the
+    /// command, and `printenv` is the spelling every login shell answers the
+    /// same way — in fish `$PATH` is a list, so `echo` would hand back a
+    /// space-separated line rather than a `PATH`.
+    ///
+    /// Startup files are other people's code running before the window
+    /// opens, so the supervision matters more than usual: the caller sets a
+    /// short timeout, `stdin` is already closed so nothing can wait on a
+    /// prompt, and the child leads its own group so a file that starts
+    /// something is ended with it.
+    pub fn login_shell_path(shell: &Path) -> Hardened {
+        Hardened::spawning(shell.as_os_str(), owned(&["-l", "-c", "printenv PATH"]))
+    }
+
     /// One of the package's shell scripts, spawned the way the platform can
     /// actually run it.
     ///

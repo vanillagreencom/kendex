@@ -6,9 +6,9 @@ mod commands;
 mod community;
 pub mod deep_link;
 mod editor;
-// Nothing outside Linux reaches this: the fixes it decides are for GTK
-// and for how the Linux app is packaged.
-#[cfg(target_os = "linux")]
+// Windows does not reach this: what it decides is a GTK backend, a
+// WebKitGTK setting, and the `PATH` a Finder launch does not carry.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod launch_env;
 mod legal;
 pub mod marketplaces;
@@ -210,7 +210,10 @@ pub fn prepare_launch(env: &kendex_core::env::Env) -> Vec<String> {
 }
 
 pub fn run() -> tauri::Result<()> {
-    #[cfg(target_os = "linux")]
+    // First, so every program kendex later runs is looked up on the
+    // corrected `PATH` — the git version probe the first checkout makes
+    // included.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     launch_env::apply();
     use std::io::Write;
     let mut stderr = std::io::stderr();

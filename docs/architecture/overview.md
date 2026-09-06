@@ -59,7 +59,7 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 - Commits walk through the commit-guards package's committed scripts whatever tool makes them; kendex implements no check of its own and `kendex check` relays the package's verdict.
 - kendex never emits a pasteable command line: errors, hints and recovery instructions present the verb and its parameters as data. The one exception is the session-start drift report, whose remedies come from a fixed template set with validated identifiers.
 - The default catalog is `vanillagreencom/kendex`; subscriptions are matched by what a declaration names, never by literal spelling.
-- The Linux app decides its display environment once, before GTK starts, by relaunching itself (`crates/app/src/launch_env.rs`); the environment is never rewritten in place because the workspace forbids `unsafe`.
+- The app decides its launch environment once, before its first spawn, by relaunching (`crates/app/src/launch_env.rs`): the Linux display, the macOS `PATH`. Setting it in place needs `unsafe`, which is banned.
 - A `kendex://` link opens a marketplace or package as the Community tab opens a repository, a read writing no manifest: it comes from a web page (`crates/app/src/deep_link.rs`).
 
 ## Topics
