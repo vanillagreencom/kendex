@@ -44,6 +44,7 @@ mod item_source;
 mod observed;
 mod opencode;
 pub mod ops;
+mod origin;
 mod owned;
 mod plan_pass;
 mod planned;
@@ -208,6 +209,7 @@ pub fn plan_scope(
         &mut ops,
         &mut config_edits,
         &mut new_lock,
+        &mut scope_notes,
     )?;
 
     stale::stale_instruction_rows(env, scope, lock, &new_lock, &mut config_edits)?;
