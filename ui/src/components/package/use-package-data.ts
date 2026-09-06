@@ -65,11 +65,12 @@ export function usePackageData(ref: PackageRef | null): {
   const [meta, setMeta] = useState<PackageMeta_Serialize | null>(null);
   const [files, setFiles] = useState<PackageFile[]>([]);
   const [versions, setVersions] = useState<VersionRow[]>([]);
-  // How each of the two went, kept beside the values: a read that failed
+  // How each of the three went, kept beside the values: a read that failed
   // leaves the same empty page as one that found nothing, and the reason it
   // came back with is the only thing that tells them apart.
   const [record, setRecord] = useState<ReadState>(READ_PENDING);
   const [timeline, setTimeline] = useState<ReadState>(READ_PENDING);
+  const [filesRead, setFilesRead] = useState<ReadState>(READ_PENDING);
   // Whether the newest load is still out. Counted here rather than read off
   // the order below: one ticket covers three answers, and `outstanding` flips
   // on the first of them to land, so it is not this order's question to ask.
@@ -123,6 +124,7 @@ export function usePackageData(ref: PackageRef | null): {
       (response) => {
         if (!lands()) return;
         setFiles(response.status === "ok" ? response.data : []);
+        setFilesRead(readOf(response));
       },
     );
     void settled(commands.packageVersions(ref.scope, ref.kind, ref.name)).then(
@@ -136,7 +138,13 @@ export function usePackageData(ref: PackageRef | null): {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: what a landed update moves, not values `load` closes over
   useEffect(load, [load, commit, written]);
-  return { meta, files, versions, reads: { record, timeline, reading }, load };
+  return {
+    meta,
+    files,
+    versions,
+    reads: { record, timeline, files: filesRead, reading },
+    load,
+  };
 }
 
 /** The diff behind a diff view, fetched when the view asks for one. The

@@ -17,6 +17,10 @@ import {
   OPEN_IN_EDITOR_LABEL,
   OPEN_IN_FILE_BROWSER_LABEL,
   OPEN_IN_LABEL,
+  PACKAGE_FILES_READ_FAILED,
+  PACKAGE_FILES_TITLE,
+  TRY_AGAIN_LABEL,
+  UPDATE_LABEL,
 } from "@/lib/copy";
 import { SAFETY_TAB, SAFETY_VENDOR } from "@/lib/copy-safety";
 import {
@@ -395,6 +399,124 @@ describe("what the package page says instead of Update", () => {
     expect(host.textContent).toContain(EDITED_CANT_UPDATE_NOTE);
     expect(host.textContent).not.toContain(NO_UPDATE_STANDING_NOTE);
     expect(host.textContent).not.toContain(UPDATES_CHECKING);
+  });
+});
+
+// The Overview's file list is the page's third read, and a read that did not
+// land is not a package that ships no files: only a landed read may leave the
+// column empty. The read gates nothing, so it says so where the list would
+// be and offers the read again, while the header's Update stays put.
+describe("the package page's file list", () => {
+  /** A timeline and a record that together earn an Update, so the header
+   *  is what shows whether the file read withholds one. */
+  const openWithUpdate = async () => {
+    vi.mocked(commands.packageVersions).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          id: "b".repeat(40),
+          label: "v2",
+          date: "2026-08-28T12:00:00Z",
+          summary: "newer",
+          installed: false,
+          newerThanInstalled: true,
+        },
+        {
+          id: "a".repeat(40),
+          label: "v1",
+          date: "2026-08-01T12:00:00Z",
+          summary: "what is installed",
+          installed: true,
+          newerThanInstalled: false,
+        },
+      ],
+    });
+    vi.mocked(commands.packageMeta).mockResolvedValue({
+      status: "ok",
+      data: {
+        source: "cat",
+        repo: "o/r",
+        repoUrl: null,
+        rev: null,
+        current: null,
+        installedAt: null,
+        harnesses: ["claude"],
+        enabled: true,
+        fork: null,
+        catalog: null,
+      },
+    });
+    useUpdatesStore.setState({ rows: [updateRow(VG)], read: READ_LANDED });
+    return openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+  };
+
+  /** The Files section's own Try again, apart from the header's. */
+  const filesRetry = (host: HTMLElement) =>
+    Array.from(host.querySelectorAll("button")).filter(
+      (button) =>
+        button.textContent === TRY_AGAIN_LABEL &&
+        button.closest("header") === null,
+    );
+
+  /** A refusal core sent. Pass-through is the property, so the wording is
+   *  one core never uses. */
+  const REFUSED = "REFUSED-BY-CORE: the install directory is gone";
+
+  it("says the read was refused, offers it again, and keeps Update", async () => {
+    vi.mocked(commands.packageFiles).mockResolvedValue({
+      status: "error",
+      error: REFUSED,
+    });
+    const host = await openWithUpdate();
+
+    expect(host.textContent).toContain(PACKAGE_FILES_TITLE);
+    expect(host.textContent).toContain(
+      `${PACKAGE_FILES_READ_FAILED} — ${REFUSED}`,
+    );
+    expect(filesRetry(host)).toHaveLength(1);
+    expect(header(host)).toContain(UPDATE_LABEL);
+    expect(header(host)).not.toContain(REFUSED);
+
+    // The read again lands, and the list takes the note's place.
+    vi.mocked(commands.packageFiles).mockResolvedValue({
+      status: "ok",
+      data: [{ path: "SKILL.md", size: 10, isReadme: false }],
+    });
+    await userEvent.click(filesRetry(host)[0] as HTMLElement);
+    await settle();
+    expect(host.textContent).toContain("SKILL.md");
+    expect(host.textContent).not.toContain(PACKAGE_FILES_READ_FAILED);
+    expect(filesRetry(host)).toHaveLength(0);
+  });
+
+  // A rejection is the transport failing rather than the engine refusing,
+  // and it reaches the page as the same failed read with the message it
+  // was thrown with.
+  it("says the read was rejected, with the reason it was thrown with", async () => {
+    vi.mocked(commands.packageFiles).mockRejectedValue(
+      new Error("REJECTED-BY-TRANSPORT: bridge closed"),
+    );
+    const host = await openWithUpdate();
+
+    expect(host.textContent).toContain(
+      `${PACKAGE_FILES_READ_FAILED} — REJECTED-BY-TRANSPORT: bridge closed`,
+    );
+    expect(filesRetry(host)).toHaveLength(1);
+    expect(header(host)).toContain(UPDATE_LABEL);
+  });
+
+  // The control: a landed read with nothing in it is the one answer that
+  // may leave the column empty, and it draws no heading and no retry.
+  it("draws nothing for a package that ships no files", async () => {
+    vi.mocked(commands.packageFiles).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+    const host = await openWithUpdate();
+
+    expect(host.textContent).not.toContain(PACKAGE_FILES_TITLE);
+    expect(host.textContent).not.toContain(PACKAGE_FILES_READ_FAILED);
+    expect(filesRetry(host)).toHaveLength(0);
   });
 });
 

@@ -18,7 +18,7 @@ import { groupItems, groupScopes, installationAt } from "@/lib/derive";
 import { packageDisplayName } from "@/lib/labels";
 import { usePackageMark } from "@/lib/package-mark";
 import { vendorAt } from "@/lib/package-places";
-import { packageReadNote } from "@/lib/package-read-state";
+import { packageFilesNote, packageReadNote } from "@/lib/package-read-state";
 import {
   packageRequiredBy,
   packageUpdateNote,
@@ -174,11 +174,13 @@ export function PackagePage() {
       meta={meta}
       versions={versions}
       files={files}
+      filesNote={packageFilesNote(reads)}
       installed={installed}
       view={view}
       setView={setView}
       diff={diff}
       busy={mutating}
+      reading={reads.reading}
       onToggle={(enable) =>
         void inEveryScope((scope) =>
           toggle(scope, group.kind, group.name, enable),
