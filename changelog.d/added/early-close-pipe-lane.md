@@ -1,0 +1,1 @@
+- preflight fails an added line piping a shell writer into an early-closing `head` or `grep -q`/`grep -m N`, whose SIGPIPE aborts a `pipefail` script or reads as a false no-match.

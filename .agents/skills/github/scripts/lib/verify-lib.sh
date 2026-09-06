@@ -196,8 +196,15 @@ run_stack() {
             # pipefail puts on this unguarded assignment kills the branch
             # wherever errexit is live. `|| true` covers a no-match,
             # which is a blank summary and not a failure to record one.
+            # The clip keeps the summary out of argv: `grep -m 5` caps the
+            # line COUNT and not the bytes, one minified bundler or linker
+            # line clears MAX_ARG_STRLEN (128KB) on its own, and the kernel
+            # refuses an argv string that long — jq exits 126 with nothing on
+            # stdout, and the record this branch exists to write is the one
+            # lost.
             local error_summary
             error_summary=$(grep -m 5 -E "^error|^Error|FAILED" <<<"$output" | tr '\n' ' ' || true)
+            error_summary="${error_summary:0:2000}"
             RESULTS_JSON=$(echo "$RESULTS_JSON" | jq \
                 --arg name "$name" --argjson dur "$duration" --arg err "$error_summary" \
                 '.builds[$name] = {success: false, duration_seconds: $dur, error: $err}')
@@ -221,9 +228,10 @@ run_stack() {
         else
             end_time=$(date +%s)
             duration=$((end_time - start_time))
-            # Same SIGPIPE shape as the build branch above, same fix.
+            # Same SIGPIPE and argv shapes as the build branch above, same fix.
             local error_summary
             error_summary=$(grep -m 5 -E "^failures:|FAILED|^error|^FAIL" <<<"$output" | tr '\n' ' ' || true)
+            error_summary="${error_summary:0:2000}"
             RESULTS_JSON=$(echo "$RESULTS_JSON" | jq \
                 --arg name "$name" --argjson dur "$duration" --arg err "$error_summary" \
                 '.tests[$name] = {success: false, duration_seconds: $dur, error: $err}')
@@ -346,8 +354,15 @@ verify_prs() {
         else
             end_time=$(date +%s)
             duration=$((end_time - start_time))
+            # `tail` reads a here-string and the summary is clipped before
+            # it reaches argv, the two shapes the run_stack branches above
+            # carry. These two have no `|| true` caller to absorb a failure:
+            # errexit takes verify_prs down before output_results, and
+            # pr-cross-check.sh execs this file, so the whole --verify run
+            # ends with no JSON and no message.
             local error_summary
-            error_summary=$(echo "$output" | tail -5 | tr '\n' ' ')
+            error_summary=$(tail -5 <<<"$output" | tr '\n' ' ')
+            error_summary="${error_summary:0:2000}"
             RESULTS_JSON=$(echo "$RESULTS_JSON" | jq --argjson dur "$duration" --arg err "$error_summary" \
                 '.builds["custom"] = {success: false, duration_seconds: $dur, error: $err}')
             add_issue "high" "custom_verify_failed" "Custom verify failed: $error_summary"
@@ -371,8 +386,11 @@ verify_prs() {
         else
             end_time=$(date +%s)
             duration=$((end_time - start_time))
+            # Same here-string and clip as the branch above, and the same
+            # reason it matters more here than in run_stack.
             local error_summary
-            error_summary=$(echo "$output" | tail -5 | tr '\n' ' ')
+            error_summary=$(tail -5 <<<"$output" | tr '\n' ' ')
+            error_summary="${error_summary:0:2000}"
             RESULTS_JSON=$(echo "$RESULTS_JSON" | jq --argjson dur "$duration" --arg err "$error_summary" \
                 '.builds["custom"] = {success: false, duration_seconds: $dur, error: $err}')
             add_issue "high" "verify_script_failed" "verify.sh failed: $error_summary"

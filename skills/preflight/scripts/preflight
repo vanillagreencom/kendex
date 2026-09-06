@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# preflight — diff-scoped, fail-only checks: fail-open bash, new suites no
-# runner invokes, scratch directories no EXIT trap removes, directories
-# created at literal absolute temp paths, docs citing repo paths that do
-# not exist, source files citing docs that do not exist, edits to a migration
-# a database has already run, malformed JSON/TOML.
+# preflight — diff-scoped, fail-only checks: fail-open bash, pipelines an
+# early-closing reader SIGPIPEs, new suites no runner invokes, scratch
+# directories no EXIT trap removes, directories created at literal absolute
+# temp paths, docs citing repo paths that do not exist, source files citing
+# docs that do not exist, edits to a migration a database has already run,
+# malformed JSON/TOML.
 #
 # Precision before coverage: a lane that cannot decide reports no finding. The
 # line-scoped lanes report only on lines this diff added, so an existing
@@ -65,6 +66,25 @@ Lanes:
                   grep, find, git, jq, diff or cmp at a command position whose
                   status a trailing || true (or || :) discards. The same text
                   quoted inside a message is not the shape.
+  early-close-pipe
+                  an added line in a file that turns pipefail on which pipes
+                  a shell writer into a reader that stops before EOF. The
+                  writer is echo, printf or cat at a command position: line
+                  start, after a list, pipe or group operator, or after the
+                  keyword a condition opens with. The reader is head in any
+                  spelling, or a grep whose flag word carries q or m in
+                  either spelling, at any stage downstream, because an
+                  early-closing stage SIGPIPEs everything above it and not
+                  only the stage it reads from. pipefail reports that as a
+                  141 which aborts the branch under errexit and reads as a
+                  plain no-match in condition position. Not the shape: a
+                  reader fed a here-string or a file, a reader that runs to
+                  the end of its input (tr, sed, wc), a command after ||
+                  rather than after a pipe, or the same text on a comment
+                  line. A pipe inside a quoted message on a line that also
+                  opens with a writer is judged as a pipeline. A file with no
+                  pipefail preamble of its own is out of scope even where a
+                  sourcing caller supplies one.
   unwired-suite   a new suite file no runner invokes. Suites are
                   tests/*.test.sh, tests/test-*.sh, *.test.ts, *.test.js and
                   *.test.mjs; a file under a fixtures/ directory is material a
@@ -112,18 +132,20 @@ Scope rules:
   shebang. A file whose content git reads as binary contributes no lines to
   any lane; the whole-file lanes still see its path. A deleted path leaves the
   change set, and applied-migration-edited reads it from the diff instead.
-  A tests/ or fixtures/ tree sets its own rules: mktemp-trap, the source-file
-  direction of docs-cited-paths, and the strict-mode and swallowed-status
-  shapes of fail-open stand down there. In a test-named source file (tests.rs,
-  *_test.*, *_tests.*, *.test.*, *.spec.*, test_*) only the swallowed-status
-  shape and that same docs-cited-paths direction stand down. The mktemp
-  assignment shape of fail-open is judged in every tree.
+  A tests/ or fixtures/ tree sets its own rules: early-close-pipe,
+  mktemp-trap, the source-file direction of docs-cited-paths, and the
+  strict-mode and swallowed-status shapes of fail-open stand down there. In a
+  test-named source file (tests.rs, *_test.*, *_tests.*, *.test.*, *.spec.*,
+  test_*) only the swallowed-status shape and that same docs-cited-paths
+  direction stand down. The mktemp assignment shape of fail-open is judged in
+  every tree.
   In an installed-artifact subtree (.agents/ and the harness directories'
   skills, agents, hooks, rules, instructions, packages and kendex trees)
-  masked-returns, fail-open, unwired-suite, mktemp-trap and the source-file
-  direction of docs-cited-paths stand down. shell-syntax, shellcheck-errors,
-  hardcoded-temp-path, applied-migration-edited and data-syntax stay on. A
-  prompts/ or commands/ tree under a harness directory keeps every lane.
+  masked-returns, fail-open, early-close-pipe, unwired-suite, mktemp-trap and
+  the source-file direction of docs-cited-paths stand down. shell-syntax,
+  shellcheck-errors, hardcoded-temp-path, applied-migration-edited and
+  data-syntax stay on. A prompts/ or commands/ tree under a harness directory
+  keeps every lane.
 
 Settings (env > .env.local > .kendex/settings.toml > kendex.settings.toml
 [env] > default):
@@ -605,6 +627,29 @@ TMPPATH_CREATE_RE='(mkdtemp|mkdtempSync|mkdir|mkdirSync|makedirs|create_dir_all)
 TMPPATH_CREATE_RE="$TMPPATH_CREATE_RE"'|(mkdtemp|mkdtempSync)[[:space:]]*\([^)]*["'\''`]/(var/)?tmp["'\''`]'
 TMPPATH_CREATE_RE="$TMPPATH_CREATE_RE"'|(^[[:space:]]*|[;(`{&|][[:space:]]*)mkdir[[:space:]]+-p[[:space:]]+["'\'']?/(var/)?tmp/'
 
+# A shell writer piped into a reader that stops before EOF. `head` and the
+# match-counting `grep` forms close the pipe on their own count; the writer
+# then dies of SIGPIPE, and `pipefail` reports the pipeline as 141. Under
+# errexit that kills the branch, and in condition position, where errexit
+# does not fire, it reads as a plain no-match that drops the result with no
+# error. The writer is `echo`/`printf`/`cat` at a command position — line
+# start, after a list, pipe or group operator, or after the keyword a
+# condition opens with — so the same text quoted in a message runs nothing.
+# The reader is any stage downstream, because an early-closing stage
+# SIGPIPEs everything above it, not only the stage it reads from. The fix
+# is to capture whole and window in-shell, or to feed the reader a
+# here-string.
+EARLY_CLOSE_WRITER='(^[[:space:]]*|[;(`{&|][[:space:]]*|(^|[[:space:]])(if|elif|while|until|then|else|do|!)[[:space:]]+)(echo|printf|cat)[[:space:]]'
+# `grep` needs a flag word carrying `q` (quiet, exits at the first match) or
+# `m` (a match cap), in either spelling; `-A5`, `-i` and a pattern that
+# merely contains `-q…` are not the shape. A bare `head` is, in every
+# spelling it takes.
+EARLY_CLOSE_READER='(head([[:space:]]|$)|grep[[:space:]]([^|]*[[:space:]])?(-[A-Za-z]*[qm][A-Za-z0-9]*|--quiet|--silent|--max-count)([[:space:]=]|$))'
+# Every stage between them is a real stage: a `|` whose next non-blank
+# character is another `|` is an OR list, not a pipeline, and the command
+# after it reads its own input.
+EARLY_CLOSE_RE="$EARLY_CLOSE_WRITER"'[^|]*(\|[[:space:]]*[^|[:space:]][^|]*)*\|[[:space:]]*'"$EARLY_CLOSE_READER"
+
 : >"$TMP/tok.ok"
 : >"$TMP/tok.bad"
 
@@ -858,6 +903,7 @@ while IFS= read -r f; do
 
   is_sh=0
   has_ee=0
+  has_pf=0
   has_trap=0
   mktemp_reported=0
   is_shell_path "$f" "$cpath" && is_sh=1
@@ -924,6 +970,7 @@ while IFS= read -r f; do
   fi
   if [ "$is_sh" = 1 ]; then
     file_matches "$cpath" "$ERREXIT_RE" && has_ee=1
+    file_matches "$cpath" "$PIPEFAIL_RE" && has_pf=1
     has_exit_trap "$cpath" && has_trap=1
 
     if ! syntax="$(bash -n -- "$cpath" 2>&1)"; then
@@ -965,7 +1012,7 @@ while IFS= read -r f; do
     # fails open at its first unchecked command. Test trees and fixtures set
     # their own rules.
     if [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$sourced_lib" = 0 ] && [ "$is_new" = 1 ]; then
-      if [ "$has_ee" = 0 ] || ! file_matches "$cpath" "$NOUNSET_RE" || ! file_matches "$cpath" "$PIPEFAIL_RE"; then
+      if [ "$has_ee" = 0 ] || [ "$has_pf" = 0 ] || ! file_matches "$cpath" "$NOUNSET_RE"; then
         emit "$f" 0 fail-open "new shell file without strict mode (set -euo pipefail)"
       fi
     fi
@@ -1043,6 +1090,16 @@ while IFS= read -r f; do
             if [ -n "$swallowed" ]; then
               emit "$f" "$n" fail-open "$swallowed || true swallows exit 2 (unreadable input, broken invocation) — capture the status and treat >1 as failure"
             fi
+          fi
+          ;;
+      esac
+    fi
+
+    if [ "$is_sh" = 1 ] && [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$has_pf" = 1 ]; then
+      case "$content" in
+        *"|"*)
+          if ! is_comment_line "$content" && grep -Eq -- "$EARLY_CLOSE_RE" <<<"$content"; then
+            emit "$f" "$n" early-close-pipe "a shell writer piped into a reader that stops before EOF — pipefail turns the writer's SIGPIPE into a 141 that aborts the branch under errexit, and reads as a plain no-match in condition position; capture whole and window in-shell, or feed the reader a here-string"
           fi
           ;;
       esac

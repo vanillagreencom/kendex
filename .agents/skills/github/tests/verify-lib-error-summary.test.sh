@@ -106,6 +106,29 @@ exit 1
 CMD
 chmod +x "$TMP_ROOT/quiet-fail.sh"
 
+# One matching line past MAX_ARG_STRLEN (131072). `grep -m 5` caps the line
+# COUNT and not the bytes, so a single minified bundler or linker line is the
+# whole summary — and the kernel refuses a jq argv string that long with exit
+# 126, taking the assignment, and under errexit the branch, down with it.
+cat > "$TMP_ROOT/fail-long-line.sh" <<'CMD'
+#!/usr/bin/env bash
+pad=""
+for _ in $(seq 1 200); do
+  pad="$pad$(printf 'x%.0s' {1..1000})"
+done
+printf 'error[E0001]: %s\n' "$pad"
+exit 1
+CMD
+chmod +x "$TMP_ROOT/fail-long-line.sh"
+assert_ge "$(bash "$TMP_ROOT/fail-long-line.sh" | wc -c || true)" 131072 "the single error line clears MAX_ARG_STRLEN on its own"
+
+echo "=== one error line past MAX_ARG_STRLEN is still summarized (KEN-1171) ==="
+results="$(drive "rust|bash $TMP_ROOT/fail-long-line.sh||.")"
+assert_eq "$(jq -r '.builds.rust.success' <<<"$results")" "false" "the oversized build failure is recorded"
+assert_eq "$(jq -r '.builds.rust.error | length' <<<"$results")" "2000" "its summary is clipped to the bytes that reach argv"
+assert_eq "$(jq -r '.builds.rust.error | startswith("error[E0001]: ")' <<<"$results")" "true" "the clip keeps the head of the line, where the diagnostic is"
+assert_eq "$(jq -r '[.issues[] | select(.type == "rust_build_failed")] | length' <<<"$results")" "1" "the oversized build failure raises its issue"
+
 echo "=== a failure matching no pattern is still recorded (KEN-1143) ==="
 results="$(drive "rust|bash $TMP_ROOT/quiet-fail.sh||.")"
 assert_eq "$(jq -r '.builds.rust.success' <<<"$results")" "false" "the unmatched build failure is recorded"
