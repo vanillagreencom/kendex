@@ -25,10 +25,12 @@ function summaryField(item: PaneTaskRecord | undefined): string {
 	return Object.prototype.hasOwnProperty.call(item, "summary") ? JSON.stringify(item.summary) : ABSENT;
 }
 
-// Everything but the summary and the write stamp, for the "nothing else moved" fact.
-function rest(item: PaneTaskRecord | undefined): string {
+// Everything but the summary, for the "nothing else moved" fact; a row that
+// wrote the record also drops the write stamp, a no-op row keeps it.
+function rest(item: PaneTaskRecord | undefined, wrote: boolean): string {
 	if (!item) return ABSENT;
-	const { summary: _summary, updatedAt: _updatedAt, ...other } = item;
+	const { summary: _summary, ...other } = item;
+	if (wrote) delete (other as { updatedAt?: string }).updatedAt;
 	return JSON.stringify(other, Object.keys(other).sort());
 }
 
@@ -53,10 +55,11 @@ test("summary backfill from the transcript", async () => {
 		if (lines) writeFileSync(transcriptPath, lines.join("\n"));
 		const taskRecord = record("reviewer-arch", taskId, "2026-05-14T05:00:00.000Z", { transcriptPath, ...patch });
 		await updateTaskRegistry(runtimeRoot, (records) => { records[taskId] = { ...taskRecord, ...registryPatch }; });
+		const before = (await readTaskRegistry(runtimeRoot))[taskId];
 
 		const result = await backfillTaskSummaryFromTranscript(runtimeRoot, taskRecord);
 		const stored = (await readTaskRegistry(runtimeRoot))[taskId];
-		const untouched = rest(result.record) === rest(taskRecord) && rest(stored) === rest(taskRecord) ? "rest-same" : "rest-changed";
+		const untouched = rest(result.record, result.updated) === rest(before, result.updated) && rest(stored, result.updated) === rest(before, result.updated) ? "rest-same" : "rest-changed";
 		assert.equal(`${result.updated} ${summaryField(result.record)} ${summaryField(stored)} ${untouched}`, `${expect} rest-same`, label);
 	}
 });
