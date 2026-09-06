@@ -61,6 +61,10 @@ for spelling in default-relative default-absolute elsewhere empty; do
   [ -e "$R70/.git/hooks/kendex-guards" ] \
     && bad "installed under core.hooksPath ($spelling)" "out=$OUT" \
     || ok "core.hooksPath set stands the install down ($spelling)"
+  # A deliberate skip, stated on stdout: exit 0, never a failure a caller
+  # such as kendex refresh would report.
+  [ "$RC" -eq 0 ] && ok "and the stand-down is exit 0 ($spelling)" \
+    || bad "the stand-down is exit 0 ($spelling)" "rc=$RC out=$OUT"
   # One remedy, and it is the one that arms. The recipe this would print —
   # wire that directory's hooks to these scripts yourself — prescribed a
   # shape `--check` has no way to verify, so following it left a repository
