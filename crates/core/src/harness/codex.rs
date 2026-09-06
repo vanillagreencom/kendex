@@ -26,9 +26,12 @@ impl HarnessAdapter for Codex {
         match kind {
             ItemKind::Agent => vec![Surface::files(root.join("agents"), &["toml"])],
             // `$HOME/.agents/skills` is the only user-level skills location
-            // Codex documents, so it leads here as it does in a project;
-            // `~/.codex/skills` stays on the list for what an older install
-            // left there and for a copy delivery.
+            // Codex documents, so it leads here as it does in a project.
+            // `~/.codex/skills` stays on the list to read back what an
+            // older install left there. It is also where a copy delivery
+            // writes, being the only directory of Codex's own — and Codex
+            // does not read it, so a global copy is reported installed and
+            // is loaded by nothing.
             ItemKind::Skill => {
                 super::shared_first(Some(&env.global_skills_dir()), root.join("skills"))
             }

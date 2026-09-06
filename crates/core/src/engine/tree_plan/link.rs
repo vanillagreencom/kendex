@@ -182,8 +182,11 @@ fn respell(
 }
 
 /// The tree a link and its target both have to survive being moved inside,
-/// or nothing at global scope — where a harness directory and the app's own
-/// folder share no root a relative path could be read against.
+/// or nothing at global scope. A project link is committed and has to
+/// resolve in every clone, so it is spelled relative to the root the pair
+/// moves inside. Nothing commits a global install, and a home is not a
+/// tree anyone moves, so there the absolute spelling is the one that
+/// reaches.
 fn project_root(scope: &Scope) -> Option<&Path> {
     match scope {
         Scope::Project { root } => Some(root),

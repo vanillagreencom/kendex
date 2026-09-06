@@ -1,8 +1,8 @@
 //! Where a skill's content actually lives for one harness. Every tool
-//! reads the same skill through a different path — its own copied tree, a
-//! link into the shared canonical tree, or a link into its own variant of
-//! it — and an operation that captures or compares bytes has to land on
-//! the tree that tool really reads, never on whichever one shares the name.
+//! reads the same skill through a different path — the shared canonical
+//! tree it reads directly, a link into that tree, or its own copied tree —
+//! and an operation that captures or compares bytes has to land on the
+//! tree that tool really reads, never on whichever one shares the name.
 
 use std::path::PathBuf;
 
@@ -22,11 +22,11 @@ pub(crate) fn skill_content_path(
 ) -> Option<PathBuf> {
     if let Some(dir) = native_dir(env, scope, harness, ItemKind::Skill) {
         let native = dir.join(crate::harness::rendered_name(harness, name));
-        // A real directory here is this tool's own copy (copy method). A
-        // symlink is followed to the tree this tool actually reads — the
-        // shared canonical tree, or its own divergent variant under the
-        // variants directory. Resolving it gives a real directory either
-        // way, never the wrong tool's bytes.
+        // A real directory here is this tool's own tree: its copy, or the
+        // shared tree where this tool reads that itself. A symlink is
+        // followed to the shared canonical tree it reads instead.
+        // Resolving it gives a real directory either way, never the wrong
+        // tool's bytes.
         if native.is_symlink() {
             if let Ok(target) = std::fs::read_link(&native) {
                 let resolved = if target.is_absolute() {
@@ -35,10 +35,10 @@ pub(crate) fn skill_content_path(
                     dir.join(target)
                 };
                 // Only a link into a location kendex itself manages is
-                // followed — the shared canonical tree or this tool's
-                // variant. A foreign link the user pointed elsewhere is
-                // not this skill's content, and reading (then trashing) it
-                // would expose and move whatever it happens to point at.
+                // followed — this scope's shared canonical tree. A foreign
+                // link the user pointed elsewhere is not this skill's
+                // content, and reading (then trashing) it would expose and
+                // move whatever it happens to point at.
                 if resolved.is_dir() && managed_skill_tree(env, scope, name, &resolved) {
                     return Some(resolved);
                 }

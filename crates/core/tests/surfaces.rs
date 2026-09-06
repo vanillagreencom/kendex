@@ -130,11 +130,11 @@ fn a_large_skill_is_one_tree_every_surface_links_to() {
 /// A global install lands in `~/.agents/skills`, the tree Codex, OpenCode,
 /// Pi, Gemini and Copilot read there, and nothing is written into a store of
 /// kendex's own. The tools that read it get no link, because they are already
-/// looking at the tree itself; Claude Code, which reads only its own
-/// directory, gets one onto it.
+/// looking at the tree itself; Claude Code and Antigravity, which read only
+/// their own directories, each get one onto it.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_global_skill_lands_in_the_shared_tree_and_only_claude_links_at_it() {
+fn a_global_skill_lands_in_the_shared_tree_and_only_non_readers_link_at_it() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
@@ -151,7 +151,7 @@ fn a_global_skill_lands_in_the_shared_tree_and_only_claude_links_at_it() {
     fs::write(
         &manifest,
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\", \"antigravity\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )
@@ -167,10 +167,13 @@ fn a_global_skill_lands_in_the_shared_tree_and_only_claude_links_at_it() {
     // directory would be a second position for one definition.
     assert!(!home.join(".codex/skills/gh").exists());
     assert!(!home.join(".pi/agent/skills/gh").exists());
-    // Claude Code reads neither shared tree, so its own directory holds a
-    // link — the only harness here that demands one.
+    // Claude Code and Antigravity read neither shared tree, so each one's
+    // own directory holds a link — the harnesses that demand one, and the
+    // only ones that get one.
     let claude = home.join(".claude/skills/gh");
     assert_eq!(fs::read_link(&claude).unwrap(), shared);
+    let antigravity = home.join(".gemini/config/skills/gh");
+    assert_eq!(fs::read_link(&antigravity).unwrap(), shared);
     // Nothing is kept in a store of kendex's own any more. The app's data
     // root is read off `Env`, never spelled: it is a different path per
     // platform.

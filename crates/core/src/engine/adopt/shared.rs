@@ -32,11 +32,11 @@ pub(super) struct SharedTarget {
 
 /// What a live link may be adopted through. The target must be a real
 /// skill folder — the `SKILL.md` marker is what keeps a link at `$HOME` or
-/// `/etc` refused — and must sit outside kendex's own machinery: the
-/// rendered canonical and variant trees, the trash, the source cache, the
-/// journal, and the local source the capture would write into (a managed
-/// tree is already ours, and capturing it under another name would steal
-/// it; capturing the destination would recurse). Everything is compared
+/// `/etc` refused — and must sit outside kendex's own machinery: the trash,
+/// the source cache, the journal, the local source the capture would write
+/// into, and, from a project, the global shared tree (a managed tree is
+/// already ours, and capturing it under another name would steal it;
+/// capturing the destination would recurse). Everything is compared
 /// resolved by `crate::paths::canonical`, so a `..`-laden link cannot
 /// dress one side up as the other, and a boundary derived from the scope
 /// root is held against a target spelled the way that root was. That rule
@@ -68,13 +68,21 @@ pub(super) fn shared_target(
         return Err(refuse());
     }
     let canon = |path: PathBuf| crate::paths::canonical(&path).unwrap_or(path);
-    let ours = [
-        env.global_skills_dir(),
+    let mut ours = vec![
         env.trash_dir(),
         env.source_cache_dir(),
         env.journal_dir(),
         local_source_root(env, scope),
     ];
+    // A project link reaching the global shared tree names a global
+    // install, which this scope's lock cannot see and which is not this
+    // scope's to capture. At global scope that same tree is where adoption
+    // lands, so it is settled below by the rules that settle a project's
+    // own shared tree — a folder someone wrote there by hand, with tools
+    // linking at it, is a sharing layout to adopt, not one to refuse.
+    if matches!(scope, Scope::Project { .. }) {
+        ours.push(env.global_skills_dir());
+    }
     if ours.into_iter().any(|root| target.starts_with(canon(root))) {
         return Err(refuse());
     }
