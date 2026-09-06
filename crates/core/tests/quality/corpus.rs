@@ -1,7 +1,7 @@
 //! The safety rules over the skills this repository ships, rather than a
 //! fixture built to resemble them.
 //!
-//! `growth-guards` exists to stop the switch that skips a commit's checks,
+//! `commit-guards` exists to stop the switch that skips a commit's checks,
 //! so its README and SKILL.md explain that switch, its hook prints a
 //! message naming it, and its tests seed fixture repositories with it;
 //! `orch` ships a test that spells the switch which turns permission
@@ -77,11 +77,11 @@ fn found(result: &AuditResult) -> Vec<(&str, Severity, &str)> {
 /// switch to git to seed a fixture repository. A shell string is a switch
 /// written into a file a harness loads, and the rule counts it there.
 #[test]
-fn growth_guards_is_flagged_where_the_switch_stands_as_code() {
-    let result = shipped("growth-guards");
-    let helper = "skills/growth-guards/scripts/lib/helper-body.sh";
-    let hook = "skills/growth-guards/scripts/pre-commit";
-    let ran = "skills/growth-guards/tests/commit-msg.test.sh";
+fn commit_guards_is_flagged_where_the_switch_stands_as_code() {
+    let result = shipped("commit-guards");
+    let helper = "skills/commit-guards/scripts/lib/helper-body.sh";
+    let hook = "skills/commit-guards/scripts/pre-commit";
+    let ran = "skills/commit-guards/tests/commit-msg.test.sh";
     assert_eq!(
         found(&result),
         vec![

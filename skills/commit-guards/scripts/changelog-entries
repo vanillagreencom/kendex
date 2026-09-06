@@ -1,0 +1,297 @@
+#!/usr/bin/env bash
+# changelog-entries — validates changelog fragments and combines them at release.
+#
+# FRAGMENTS (COMMIT_GUARDS_CHANGELOG_PATHS, default changelog.d/*/*.md). One
+# entry per file, so two branches never write the same line. Each matched
+# path must be a real text file (a symlink, a gitlink or a binary blob is
+# refused, not skipped), sit directly under a Keep a Changelog section
+# directory, hold exactly one Markdown list item, and that entry must be
+# within the character cap (default 200). One number is the whole length
+# rule: no line counting, so an entry that states its outcome passes however
+# it is wrapped.
+#
+# Ordinary checks judge the fragments. The combined record is read only by
+# --collate, which validates its destination before writing.
+#
+# --collate is that write, and the release commit is its only caller: on a
+# clean verdict it folds the fragments this run just accepted into the
+# record's [Unreleased] section and deletes them (lib/changelog-collate.sh).
+# In this process, off this run's answers, so the sections, the fragment set
+# and the record's boundaries have one spelling rather than a collator's
+# second one that agrees until it does not.
+#
+# A fragment is one entry, so measuring one is joining its lines: CR
+# stripped, whitespace runs collapsed to one space, counted in characters —
+# UTF-8 sequences count once, so an em dash costs what it reads as, and an
+# entry that states its outcome passes however it is wrapped.
+#
+# Content comes from the index, like the other scans. Text that is not valid
+# UTF-8 has no character count to take, so it is a collection error naming
+# the line, never a measurement: git calls such a blob text whenever it
+# carries no NUL, and counting it would read a run of stray bytes as almost
+# no characters at all. Configured paths matching no tracked file are a clean
+# pass: a repository with no changelog has nothing to judge.
+#
+# Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
+set -euo pipefail
+# Pathname expansion off: the configured paths are globs, and splitting them
+# into words would otherwise expand each against the work tree — matching
+# whatever happens to be checked out instead of the tracked paths the scan
+# judges, and matching nothing at all in a sparse or bare checkout.
+set -f
+
+GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
+GG_BOOT="${GG_BOOT%x}"
+# The trailing newline from `pwd` terminates its output; anything before it is the path.
+SCRIPT_DIR="${GG_BOOT%$'\n'}"
+GG_CHECK="changelog-entries"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/settings.sh
+source "$SCRIPT_DIR/lib/settings.sh"
+# shellcheck source=lib/changelog-grammar.sh
+source "$SCRIPT_DIR/lib/changelog-grammar.sh"
+# shellcheck source=lib/changelog-record-scope.sh
+source "$SCRIPT_DIR/lib/changelog-record-scope.sh"
+# shellcheck source=lib/changelog-collate.sh
+source "$SCRIPT_DIR/lib/changelog-collate.sh"
+# The --collate lane rewrites the record in place.
+# shellcheck source=lib/atomic-install.sh
+source "$SCRIPT_DIR/lib/atomic-install.sh"
+
+# The sections a fragment's directory may name, and the test for membership
+# in them, are lib/changelog-grammar.sh's GG_SECTIONS and gg_is_section: the
+# collator writes each fragment beneath the heading its directory names, and
+# has nowhere to put one that names no section.
+
+usage() {
+  cat <<'EOF'
+usage: changelog-entries [--collate]
+
+Checks changelog fragments. --collate also validates its destination.
+
+Fragments (COMMIT_GUARDS_CHANGELOG_PATHS): every matched tracked path must
+be a real text file, sit directly under a section directory (added, changed,
+deprecated, removed, fixed, security), hold exactly one Markdown list item —
+the first non-blank line opens with a hyphen and a space and says something,
+every later line indents under it — and measure within the cap. A symlink, a
+submodule gitlink or a binary blob at a configured path is refused. The
+measurement joins the fragment's lines with CR stripped and whitespace runs
+collapsed to one space, counted in characters.
+
+Ordinary runs do not judge the combined record or its wording.
+
+A tracked path under a fragment root that the globs do not cover is refused
+too — it is a fragment nothing would ever fold in. A root is a pattern's
+leading run of glob-free directories (changelog.d/*/*.md roots at
+changelog.d); a pattern carrying no glob at all names one file and roots
+nowhere, and a README.md directly under a root documents the format rather
+than being an entry.
+
+--collate judges, and on a clean verdict folds every accepted fragment into
+the record's [Unreleased] section under the heading its own section names,
+then deletes the fragment files and the section directory each leaves empty.
+The release caller must set COMMIT_GUARDS_CHANGELOG_COLLATE=1. It refuses,
+writing nothing, when the index or working tree has staged, unstaged or non-ignored untracked changes.
+Collate before changing release files; commit or restore pending edits first.
+The record is replaced whole or not at all.
+
+Tracked content is read from the index; text that is not valid UTF-8 is a
+collection error. Paths matching no tracked file are a clean pass.
+
+Configuration (env > .env.local > .kendex/settings.toml >
+kendex.settings.toml [env] > default):
+  COMMIT_GUARDS_CHANGELOG_CAP     characters per entry  (default 200)
+  COMMIT_GUARDS_CHANGELOG_PATHS   space-separated shell globs against the
+                                  full repo-relative path, '*' crossing
+                                  '/' as in the excludes lists
+                                  (default changelog.d/*/*.md)
+  COMMIT_GUARDS_CHANGELOG_RECORD  the collated record file
+                                  (default CHANGELOG.md; empty = no record
+                                  scope)
+
+COMMIT_GUARDS_CHANGELOG_COLLATE=1 authorizes --collate and lets commit-msg
+count the release record as its required changelog change. Ordinary fragment
+validation does not require it.
+
+Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
+EOF
+}
+
+COLLATE=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    --collate) COLLATE=1 ;;
+    *) gg_config_error "unknown argument $(gg_shown "$1") (see --help)" ;;
+  esac
+  shift
+done
+
+gg_repo_root_cd
+
+CAP="$(gg_setting COMMIT_GUARDS_CHANGELOG_CAP 200)" || exit 2
+gg_positive_int "$CAP" "COMMIT_GUARDS_CHANGELOG_CAP"
+
+# Both scopes, resolved by the library the commit-msg lane reads too — which
+# loads the fragment globs through lib/configured-paths.sh, the same way
+# every lane scoped by a path list does.
+gg_changelog_scopes || exit 2
+PATTERNS="$GG_CHANGELOG_PATTERNS"
+PATTERNS_SHOWN="$GG_CHANGELOG_SHOWN"
+RECORD="$GG_CHANGELOG_RECORD"
+
+gg_tmpdir
+# Every accepted fragment, NUL-terminated as "SECTION<TAB>PATH" in index
+# order: what --collate folds in and what it guards against an unstaged edit.
+# A file and not a variable, because a shell variable cannot hold the NUL that
+# lets a path carrying a newline survive.
+: >"$GG_TMP/frags.z"
+
+checked=0
+violations=0
+RECORD_SHA=""
+RECORD_MODE=""
+
+refuse() { # PATH COMPLAINT [REMEDY]
+  echo "changelog-entries FAIL $(gg_shown "$1") $2"
+  [ $# -lt 3 ] || echo "  $3"
+  violations=$((violations + 1))
+}
+
+# The records and the glob match are the family's walk in spirit, but not its
+# shape: lib/configured-paths.sh names a symlink, a gitlink or a binary blob
+# as unmeasured and reads on, and a fragment tree cannot afford that — a path
+# nothing measures is one the collator would fold in verbatim. Every one of
+# them is a violation here.
+# ls-files -s emits one record per STAGE for an unmerged path, so the walk
+# below would read rival blobs as separate files.
+gg_require_merged_index
+git ls-files -sz >"$GG_TMP/files.z" || gg_collection_error "git ls-files failed"
+
+while IFS= read -r -d '' rec; do
+  # Record shape: "<mode> <sha> <stage>\t<path>".
+  f="${rec#*"$GG_TAB"}"
+  mode="${rec%% *}"
+  rest="${rec#* }"
+  sha="${rest%% *}"
+  if [ -n "$RECORD" ] && [ "$f" = "$RECORD" ]; then
+    RECORD_SHA="$sha"
+    RECORD_MODE="$mode"
+  fi
+  # What is NOT a fragment is settled before anything asks whether a pattern
+  # reaches it, or the answer turns on which pattern shape produced the root.
+  # A README directly under a root documents the format; the configured
+  # record is the file fragments are folded INTO, and a root drawn around it
+  # does not make it a stray in its own tree. Neither is judged as a fragment
+  # and neither is swept.
+  exempt=0
+  if [ -n "$RECORD" ] && [ "$f" = "$RECORD" ]; then
+    exempt=1
+  else
+    for root in $GG_PATH_ROOTS; do
+      case "$f" in
+        "$root"/README.md)
+          exempt=1
+          break
+          ;;
+      esac
+    done
+  fi
+  [ "$exempt" -eq 0 ] || continue
+
+  if ! gg_matches_path_glob "$f"; then
+    under=0
+    for root in $GG_PATH_ROOTS; do
+      case "$f" in
+        "$root"/*)
+          under=1
+          break
+          ;;
+      esac
+    done
+    [ "$under" -eq 1 ] || continue
+    refuse "$f" "is in the fragment tree but is not a fragment" "a fragment matches one of: $PATTERNS_SHOWN"
+    continue
+  fi
+  case "$mode" in
+    120000)
+      refuse "$f" "is tracked as a symlink" "a fragment is a file of its own"
+      continue
+      ;;
+    160000)
+      refuse "$f" "is tracked as a submodule gitlink" "a fragment is a file of its own"
+      continue
+      ;;
+  esac
+  # Which section a fragment belongs to is the configured pattern's answer,
+  # in lib/configured-paths.sh: the pattern's own last two segments say where
+  # the section sits, so a path at another depth is not one that pattern
+  # places. Deriving a depth here as well is how a rule and a root come to
+  # disagree.
+  gg_path_glob_section "$f"
+  sec="$GG_PATH_SECTION"
+  if [ -z "$sec" ] || ! gg_is_section "$sec"; then
+    refuse "$f" "names no section" "a fragment sits where its pattern places it, <section>/<name> at that pattern's own depth — section one of: $GG_SECTIONS"
+    continue
+  fi
+  # The one path into a changelog blob, in lib/changelog-grammar.sh: it reads
+  # the bytes and proves them text this family can measure. Binary is the only
+  # answer left to phrase, and a fragment nothing can read is refused.
+  if ! gg_changelog_blob "$sha" "$f"; then
+    refuse "$f" "holds binary content" "a fragment is the Markdown list item it becomes"
+    continue
+  fi
+  shape="$(LC_ALL=C awk "$GG_SHAPE_AWK" <"$GG_TMP/blob")" \
+    || gg_collection_error "could not read the shape of $(gg_shown "$f")"
+  if [ -n "$shape" ]; then
+    refuse "$f" "$shape"
+    continue
+  fi
+  checked=$((checked + 1))
+  printf '%s\t%s\0' "$sec" "$f" >>"$GG_TMP/frags.z"
+  status=0
+  LC_ALL=C awk "$GG_ENTRY_AWK" <"$GG_TMP/blob" >"$GG_TMP/report" || status=$?
+  [ "$status" -eq 0 ] || gg_collection_error "could not measure the entry in $(gg_shown "$f") (awk exit $status)"
+  while IFS="$GG_TAB" read -r kind a b; do
+    case "$kind" in
+      M)
+        [ "$a" -gt "$CAP" ] || continue
+        echo "changelog-entries FAIL long entry: $(gg_shown "$f") — $a characters (cap $CAP)"
+        # Content, not a name: the awk pass already replaced every C0
+        # control except tab, and DEL; a newline cannot survive a line read,
+        # and %q here would render a legible entry as an escaped blob.
+        echo "  entry: $b"
+        echo "  remedies: state the outcome and stop; a Breaking migration note stays inline, and the reasoning belongs in the commit"
+        violations=$((violations + 1))
+        ;;
+      *) gg_collection_error "unrecognized measurement record $(gg_shown "$kind") while reading $(gg_shown "$f")" ;;
+    esac
+  done <"$GG_TMP/report"
+done <"$GG_TMP/files.z"
+
+# The release operation reads the destination only when it has entries to fold.
+if [ "$COLLATE" -eq 1 ] && [ "$checked" -gt 0 ]; then
+  gg_changelog_record_scope
+fi
+
+if [ "$violations" -gt 0 ]; then
+  echo "changelog-entries: $violations violation(s) — cap $CAP characters, $checked fragment(s) measured"
+  exit 1
+fi
+# Only past the verdict: the fold must never publish a set this run was still
+# going to refuse something from. Its own line is the verdict a release
+# reads — what was folded in and where — so it stands in for the cap report
+# below rather than following it.
+if [ "$COLLATE" -eq 1 ]; then
+  gg_changelog_collate
+  exit 0
+fi
+if [ "$checked" -eq 0 ]; then
+  echo "changelog-entries: OK — no tracked file matches COMMIT_GUARDS_CHANGELOG_PATHS ($PATTERNS_SHOWN)"
+  exit 0
+fi
+echo "changelog-entries: OK — $checked fragment(s) within the cap ($CAP characters)"

@@ -2756,7 +2756,7 @@ export type SafetyTarget = {
 /**
  *  What an installer said, kept by channel.
  * 
- *  Both of them, on a clean exit as much as a failed one. growth-guards
+ *  Both of them, on a clean exit as much as a failed one. commit-guards
  *  exits 0 when `core.hooksPath` is configured and puts its summary on
  *  stdout and the warning, the value it found, and the remedy on stderr —
  *  so stdout alone is the half of the account that does not say what to do.

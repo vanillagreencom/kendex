@@ -2,7 +2,7 @@
 
 Write each consumer change in `changelog.d/<section>/<name>.md`. State its outcome. Put migration instructions in a breaking-change entry.
 
-- Fragment sections, content shape, and length limits are defined in [the changelog check](../skills/growth-guards/CHECKS.md#changelog-entries).
+- Fragment sections, content shape, and length limits are defined in [the changelog check](../skills/commit-guards/CHECKS.md#changelog-entries).
 - Follow [the release procedure](../.agents/skills/app-deploy/SKILL.md) to combine accepted fragments into the pending release section of `CHANGELOG.md`. The collator validates the destination before writing and deletes the fragments after replacement.
 - Ordinary checks permit wording and heading edits in the combined release notes.
 - The `commit-msg` lane requires a fragment for changes under the configured consumer paths. `[no-changelog]` waives it when the change has no consumer effect. A record change counts under the release declaration.

@@ -139,7 +139,7 @@ fn the_packages_own_list_covers_every_harness_skills_surface() {
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 fn package_skill_roots() -> Vec<String> {
     let definition = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../skills/growth-guards/scripts/lib/skill-roots.sh")
+        .join("../../skills/commit-guards/scripts/lib/skill-roots.sh")
         .canonicalize()
         .unwrap();
     let text = std::fs::read_to_string(&definition).unwrap();

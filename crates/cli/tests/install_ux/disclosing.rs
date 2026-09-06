@@ -23,11 +23,11 @@ use super::guarding::{git_without_kendex, offer, spoke};
 fn the_repository_effect_is_disclosed_and_not_applied_without_a_yes() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    offer(&world, "growth-guards");
+    offer(&world, "commit-guards");
     // One declared write outside `.git`, so the block carries both kinds.
     // The shared claim is about the repository's own directory, and a file
     // that lives in this checkout must not be swept into it.
-    let declaration = world.catalog.join("skills/growth-guards/SKILL.md");
+    let declaration = world.catalog.join("skills/commit-guards/SKILL.md");
     let text = fs::read_to_string(&declaration).unwrap();
     let anchor = "    - \".git/hooks/commit-msg\"\n";
     assert!(text.contains(anchor), "the declaration moved");
@@ -36,7 +36,7 @@ fn the_repository_effect_is_disclosed_and_not_applied_without_a_yes() {
         text.replace(anchor, &format!("{anchor}    - \".github/x\"\n")),
     )
     .unwrap();
-    let spoken = world.try_run(&["add", "cat", "--skill", "growth-guards", "-y"]);
+    let spoken = world.try_run(&["add", "cat", "--skill", "commit-guards", "-y"]);
     assert!(spoken.status.success(), "{}", spoke(&spoken));
     let asked = String::from_utf8_lossy(&spoken.stderr).into_owned();
     let composed = String::from_utf8_lossy(&spoken.stdout).into_owned();
@@ -59,7 +59,7 @@ fn the_repository_effect_is_disclosed_and_not_applied_without_a_yes() {
     assert!(out.contains(".git/hooks/pre-commit"), "{out}");
     assert!(out.contains(".git/hooks/commit-msg"), "{out}");
     assert!(
-        out.contains("size-ratchet (not installed)"),
+        out.contains("doc-limits (not installed)"),
         "no companion line:\n{out}"
     );
     assert!(out.contains("to undo:"), "{out}");
@@ -87,7 +87,7 @@ fn the_repository_effect_is_disclosed_and_not_applied_without_a_yes() {
     // Declining the effect still installs the package.
     assert!(
         world
-            .at(".agents/skills/growth-guards/scripts/install-git-hooks")
+            .at(".agents/skills/commit-guards/scripts/install-git-hooks")
             .is_file(),
         "the package did not install:\n{out}"
     );
@@ -121,12 +121,12 @@ fn the_repository_effect_is_disclosed_and_not_applied_without_a_yes() {
 fn the_yes_to_a_repository_effect_is_spent_where_it_is_given() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    offer(&world, "growth-guards");
+    offer(&world, "commit-guards");
     let out = world.run(&[
         "add",
         "cat",
         "--skill",
-        "growth-guards",
+        "commit-guards",
         "-y",
         "--allow-repo-effects",
     ]);
@@ -172,7 +172,7 @@ fn the_yes_to_a_repository_effect_is_spent_where_it_is_given() {
 /// What a person writes into `kendex.toml` to declare the package without
 /// an `add`: where it installs to, and the package itself.
 const DECLARED_BY_HAND: &str =
-    "\n[install]\nharnesses = [\"claude\"]\n\n[skills.growth-guards]\nsource = \"cat\"\n";
+    "\n[install]\nharnesses = [\"claude\"]\n\n[skills.commit-guards]\nsource = \"cat\"\n";
 
 /// A declaration written by hand installs through `kendex apply`, and the
 /// package it installs gets the same account and the same separate yes an
@@ -183,7 +183,7 @@ const DECLARED_BY_HAND: &str =
 fn apply_discloses_a_hand_declared_package_and_waits_for_its_own_yes() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    offer(&world, "growth-guards");
+    offer(&world, "commit-guards");
     fs::write(world.at("kendex.toml"), world.manifest() + DECLARED_BY_HAND).unwrap();
 
     let spoken = world.try_run(&["apply", "-y"]);
@@ -196,7 +196,7 @@ fn apply_discloses_a_hand_declared_package_and_waits_for_its_own_yes() {
     assert!(out.contains("--allow-repo-effects"), "{out}");
     assert!(
         world
-            .at(".agents/skills/growth-guards/scripts/install-git-hooks")
+            .at(".agents/skills/commit-guards/scripts/install-git-hooks")
             .is_file(),
         "the package did not install:\n{out}"
     );
@@ -208,7 +208,7 @@ fn apply_discloses_a_hand_declared_package_and_waits_for_its_own_yes() {
     // The same flag means yes here too, in a repository that never said it.
     let armed = World::new(&["claude"]);
     armed.declare_catalog();
-    offer(&armed, "growth-guards");
+    offer(&armed, "commit-guards");
     fs::write(armed.at("kendex.toml"), armed.manifest() + DECLARED_BY_HAND).unwrap();
     let out = armed.run(&["apply", "-y", "--allow-repo-effects"]);
     assert!(
@@ -223,12 +223,12 @@ fn apply_discloses_a_hand_declared_package_and_waits_for_its_own_yes() {
 fn a_companion_already_here_reads_as_installed() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    offer(&world, "size-ratchet");
-    offer(&world, "growth-guards");
-    world.run(&["add", "cat", "--skill", "size-ratchet", "-y"]);
-    let spoken = world.try_run(&["add", "cat", "--skill", "growth-guards", "-y"]);
+    offer(&world, "doc-limits");
+    offer(&world, "commit-guards");
+    world.run(&["add", "cat", "--skill", "doc-limits", "-y"]);
+    let spoken = world.try_run(&["add", "cat", "--skill", "commit-guards", "-y"]);
     let out = spoke(&spoken);
     assert!(spoken.status.success(), "{out}");
-    assert!(out.contains("size-ratchet (installed)"), "{out}");
+    assert!(out.contains("doc-limits (installed)"), "{out}");
     assert!(out.contains("preflight (not installed)"), "{out}");
 }

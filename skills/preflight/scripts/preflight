@@ -142,7 +142,7 @@ content_of() { # IDX PATH — sets CONTENT; nonzero when there is no content to 
 
 # git calls a blob binary when a NUL falls in its leading 8000 bytes, and no
 # byte past that window changes the verdict. That window is what the
-# growth-guards lanes sample too (GG_BINARY_SAMPLE), so the two halves of this
+# commit-guards lanes sample too (GG_BINARY_SAMPLE), so the two halves of this
 # repository cannot answer one question by two rules. `grep -I` asks a
 # different question: GNU grep answers binary on a NUL anywhere in its first
 # buffer, tens of kilobytes past where git stops looking, so a file git reads
@@ -152,7 +152,7 @@ content_is_binary() { # CONTENT-PATH PATH — 0 when git would call the content 
   local total stripped
   # A read that FAILS is no verdict at all. Skipping it would leave the path
   # inside a clean count no lane ever read, so it is loud instead — the policy
-  # the growth-guards lanes take for this same condition.
+  # the commit-guards lanes take for this same condition.
   total="$(head -c "$BINARY_SAMPLE" -- "$1" | wc -c)" \
     || env_error "could not read $2 to classify its content — refusing to report clean over a file no lane read"
   stripped="$(head -c "$BINARY_SAMPLE" -- "$1" | LC_ALL=C tr -d '\000' | wc -c)" \

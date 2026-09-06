@@ -247,7 +247,7 @@ describe("a Community row's Subscribed marker", () => {
       status: "ok",
       data: {
         undone: [
-          "growth-guards: running scripts/install-git-hooks --uninstall",
+          "commit-guards: running scripts/install-git-hooks --uninstall",
         ],
       },
     });
@@ -261,7 +261,7 @@ describe("a Community row's Subscribed marker", () => {
       .unsubscribe({ scope: "global" }, "kit", false, false);
 
     expect(toast.message).toHaveBeenCalledWith(
-      "growth-guards: running scripts/install-git-hooks --uninstall",
+      "commit-guards: running scripts/install-git-hooks --uninstall",
     );
   });
 

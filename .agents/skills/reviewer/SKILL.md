@@ -48,7 +48,7 @@ Shared contract for every review specialist; each agent's domain and probes live
 - Project decisions and architecture docs outrank generic heuristics. Do not contradict or re-litigate the decisions the delegation lists.
 - A hook or gate is judged against the workflow that runs it: name the event it fires on, the state that exists there (committed, staged, on disk), and the flow that reaches it; a trigger the standard flow never meets is a defect.
 - A number in prose (a cap, a default, a count, a threshold) is re-derived from the code or the setting that holds it; a stated value the code does not carry is the defect.
-- Do not re-verify what deterministic gates already enforce (preflight, size-ratchet, project lint/CI); cite gate output instead of re-deriving it.
+- Do not re-verify what deterministic gates already enforce (preflight, doc-limits, project lint/CI); cite gate output instead of re-deriving it.
 - `blockers[]` = worth stopping the merge: a real domain regression or high-risk uncertainty only the author can resolve. `suggestions[]` = actionable now (`fix`) or worth tracking (`issue`). Cosmetic items belong in neither. `pass` means your domain has no verified blocker in scope.
 
 ## Output Contract

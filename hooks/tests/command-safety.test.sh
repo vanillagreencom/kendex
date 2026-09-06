@@ -6,12 +6,12 @@ mkdir -p "$ROOT/tmp"
 scratch="$(mktemp -d "$ROOT/tmp/command-safety.XXXXXX")" || exit 1
 trap 'rm -rf -- "$scratch"' EXIT
 repo="$scratch/project"
-mkdir -p "$repo/.claude/hooks" "$repo/.agents/skills/growth-guards/scripts"
+mkdir -p "$repo/.claude/hooks" "$repo/.agents/skills/commit-guards/scripts"
 git -C "$repo" init -q
 cp "$ROOT/hooks/command-safety.sh" "$repo/.claude/hooks/command-safety.sh"
-cp -R "$ROOT/skills/growth-guards/scripts/lib" "$repo/.agents/skills/growth-guards/scripts/lib"
+cp -R "$ROOT/skills/commit-guards/scripts/lib" "$repo/.agents/skills/commit-guards/scripts/lib"
 hook="$repo/.claude/hooks/command-safety.sh"
-unset COMMAND_SAFETY_DENY_PATTERN GROWTH_GUARDS_SETTINGS_FILE
+unset COMMAND_SAFETY_DENY_PATTERN COMMIT_GUARDS_SETTINGS_FILE
 
 settings() {
   printf '[env]\n' >"$repo/kendex.settings.toml"
@@ -90,28 +90,28 @@ done
 
 global="$scratch/global/.claude"
 hostile="$scratch/hostile"
-mkdir -p "$global/hooks" "$global/skills/growth-guards/scripts" "$hostile/.agents/skills/growth-guards/scripts/lib"
+mkdir -p "$global/hooks" "$global/skills/commit-guards/scripts" "$hostile/.agents/skills/commit-guards/scripts/lib"
 git -C "$hostile" init -q
 cp "$ROOT/hooks/command-safety.sh" "$global/hooks/command-safety.sh"
-cp -R "$ROOT/skills/growth-guards/scripts/lib" "$global/skills/growth-guards/scripts/lib"
+cp -R "$ROOT/skills/commit-guards/scripts/lib" "$global/skills/commit-guards/scripts/lib"
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "BLOCK_THIS"\n' >"$hostile/kendex.settings.toml"
 hostile_marker="$scratch/hostile-loader-ran"
-printf 'printf ran >"%s"\nreturn 1\n' "$hostile_marker" >"$hostile/.agents/skills/growth-guards/scripts/lib/common.sh"
-cp "$ROOT/skills/growth-guards/scripts/lib/settings.sh" "$hostile/.agents/skills/growth-guards/scripts/lib/settings.sh"
+printf 'printf ran >"%s"\nreturn 1\n' "$hostile_marker" >"$hostile/.agents/skills/commit-guards/scripts/lib/common.sh"
+cp "$ROOT/skills/commit-guards/scripts/lib/settings.sh" "$hostile/.agents/skills/commit-guards/scripts/lib/settings.sh"
 check 0 'git status' 'global delivery prefers its installed loader' "$hostile" "$global/hooks/command-safety.sh"
 [ ! -e "$hostile_marker" ] || { printf 'FAIL global delivery ran the project loader\n'; failed=$((failed + 1)); }
-mv "$global/skills/growth-guards/scripts/lib" "$scratch/absent-global-lib"
+mv "$global/skills/commit-guards/scripts/lib" "$scratch/absent-global-lib"
 check 2 'git status' 'missing global support refuses without a project fallback' "$hostile" "$global/hooks/command-safety.sh"
 [ ! -e "$hostile_marker" ] || { printf 'FAIL missing global support ran the project loader\n'; failed=$((failed + 1)); }
 
 settings
-mkdir -p "$repo/.claude/skills/growth-guards/scripts"
-mv "$repo/.agents/skills/growth-guards/scripts/lib" "$repo/.claude/skills/growth-guards/scripts/lib"
+mkdir -p "$repo/.claude/skills/commit-guards/scripts"
+mv "$repo/.agents/skills/commit-guards/scripts/lib" "$repo/.claude/skills/commit-guards/scripts/lib"
 check 2 'qs -c vshell' 'copy delivery finds the installed dependency'
 check 0 'scripts/validate qml' 'copy delivery allows validation'
-printf 'return 1\n' >"$repo/.claude/skills/growth-guards/scripts/lib/common.sh"
+printf 'return 1\n' >"$repo/.claude/skills/commit-guards/scripts/lib/common.sh"
 check 2 'scripts/validate qml' 'a failed settings loader refuses with the blocking exit code'
-mv "$repo/.claude/skills/growth-guards/scripts/lib" "$scratch/absent-lib"
+mv "$repo/.claude/skills/commit-guards/scripts/lib" "$scratch/absent-lib"
 check 2 'scripts/validate qml' 'missing settings support refuses'
 printf '%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]

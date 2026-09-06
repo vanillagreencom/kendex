@@ -2,7 +2,7 @@
 //!
 //! Almost every package is inert: installing it writes files into the tool
 //! directories and changes nothing else, so the plan preview is the whole
-//! story. A few are not. growth-guards writes into `.git/hooks` and changes
+//! story. A few are not. commit-guards writes into `.git/hooks` and changes
 //! what happens on every commit in the repository, for everyone who commits
 //! there — an effect no line of the plan describes, because the plan only
 //! knows about the skill tree.

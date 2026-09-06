@@ -32,7 +32,7 @@ pub enum Text {
     /// at a time wherever a line is composed AROUND one. This is the case
     /// that has no such line to be composed around: what would be cut is
     /// the sentence itself, and what sits at a sentence's end is the part
-    /// worth having — the growth-guards verdict carries its remedy there,
+    /// worth having — the commit-guards verdict carries its remedy there,
     /// and an io error carries its cause. So this bounds by SUBSTITUTION:
     /// past [`RELAYED_CHARS`] the reader gets kendex's own sentence saying
     /// so, never half of one that reads finished.

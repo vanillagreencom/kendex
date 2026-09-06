@@ -99,7 +99,7 @@ def main(argv=None):
         return 1
     except BotInstructionsError as exc:
         # Could not complete, which is 2 in the exit convention the
-        # growth-guards pre-commit lane reads: 0 clean, 1 findings, 2 the
+        # commit-guards pre-commit lane reads: 0 clean, 1 findings, 2 the
         # check could not answer. Everything a validator can attribute to the
         # repo's own inputs is already a `ValidationFailed` by the time it
         # reaches here (`run._as_finding`), so what arrives as a bare error is

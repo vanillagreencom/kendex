@@ -33,7 +33,7 @@ fn report_dry_run_routes_by_ownership_and_rejects_scope_all() {
         proj.join(".kendex-lock.json"),
         lock_of(
             &proj,
-            r#""agent:orch:claude":{"name":"orch","kind":"agent","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"copy","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x","enabled":true},"skill:size-ratchet:claude":{"name":"size-ratchet","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x","enabled":true}"#,
+            r#""agent:orch:claude":{"name":"orch","kind":"agent","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"copy","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x","enabled":true},"skill:doc-limits:claude":{"name":"doc-limits","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x","enabled":true}"#,
         ),
     )
     .unwrap();
@@ -65,7 +65,7 @@ fn report_dry_run_routes_by_ownership_and_rejects_scope_all() {
         &[
             "report",
             "--skill",
-            "size-ratchet",
+            "doc-limits",
             "--title",
             "T",
             "--body",
@@ -107,7 +107,7 @@ fn report_dry_run_routes_by_ownership_and_rejects_scope_all() {
         &[
             "report",
             "--asset",
-            "size-ratchet",
+            "doc-limits",
             "--title",
             "T",
             "--body",
@@ -129,7 +129,7 @@ fn report_dry_run_routes_by_ownership_and_rejects_scope_all() {
         &[
             "report",
             "--skill",
-            "size-ratchet",
+            "doc-limits",
             "--upstream",
             "someone/else",
             "--title",
@@ -153,7 +153,7 @@ fn report_dry_run_routes_by_ownership_and_rejects_scope_all() {
         &[
             "report",
             "--skill",
-            "size-ratchet",
+            "doc-limits",
             "--upstream",
             "git@github.com:vanillagreencom/kendex.git",
             "--title",

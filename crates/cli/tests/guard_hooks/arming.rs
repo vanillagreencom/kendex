@@ -24,7 +24,7 @@ fn disarming_leaves_a_pre_existing_hook_behind() {
     std::fs::write(&existing, "#!/bin/sh\necho theirs ran\n").unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o755)).unwrap();
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     run(home, &root, "kendex", &["guard", "install"]);
 
     let out = run(home, &root, "kendex", &["guard", "uninstall"]);
@@ -52,7 +52,7 @@ fn check_reports_whether_the_shims_are_armed() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
 
     let unarmed = run(home, &root, "kendex", &["check"]);
     assert_eq!(unarmed.status.code(), Some(1), "{}", said(&unarmed));
@@ -102,7 +102,7 @@ fn a_declared_project_outside_a_repository_has_no_hook_verdict() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
 
     // Same project, minus the repository: the declaration stays, so the
     // fold is reached and has to decide what to say about it.
@@ -132,7 +132,7 @@ fn a_configuration_git_cannot_read_is_not_an_armed_repository() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     let armed = run(home, &root, "kendex", &["guard", "install"]);
     assert!(armed.status.success(), "{}", said(&armed));
 
@@ -168,7 +168,7 @@ fn a_repository_git_refuses_is_could_not_check_not_silence() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     // A config git cannot parse: exit 128 with a complaint that is not
     // "not a git repository".
     std::fs::write(root.join(".git/config"), "[core\nbroken\n").unwrap();
@@ -186,7 +186,7 @@ fn check_is_silent_about_an_undeclared_package_that_armed_nothing() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package_undeclared(&root, &["growth-guards"]);
+    install_package_undeclared(&root, &["commit-guards"]);
 
     let out = run(home, &root, "kendex", &["check"]);
     assert!(!said(&out).contains("commit hooks"), "{}", said(&out));
@@ -204,12 +204,12 @@ fn the_check_verb_relays_the_packages_own_verdict() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
 
     let unarmed = run(home, &root, "kendex", &["guard", "check"]);
     assert_eq!(unarmed.status.code(), Some(1), "{}", said(&unarmed));
     assert!(
-        said(&unarmed).contains("growth-guards git hooks:"),
+        said(&unarmed).contains("commit-guards git hooks:"),
         "the package's own words did not come through: {}",
         said(&unarmed)
     );
@@ -235,7 +235,7 @@ fn a_hook_git_will_not_run_is_not_armed() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     let armed = run(home, &root, "kendex", &["guard", "install"]);
     assert!(armed.status.success(), "{}", said(&armed));
 
@@ -259,10 +259,10 @@ fn a_hook_git_will_not_run_is_not_armed() {
     );
 }
 
-/// An item named growth-guards that is not the skill is not consent.
+/// An item named commit-guards that is not the skill is not consent.
 ///
 /// The lock is keyed by more than a name — an agent may legally be called
-/// `growth-guards` — and reading any enabled entry of that name as "this
+/// `commit-guards` — and reading any enabled entry of that name as "this
 /// project asked for commit hooks" reports drift at a project that never
 /// did, every session, with no way to make it stop short of renaming
 /// somebody else's agent.
@@ -272,12 +272,12 @@ fn an_agent_of_the_same_name_is_not_consent_to_commit_hooks() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    // A project that declares an AGENT called growth-guards and no skill.
+    // A project that declares an AGENT called commit-guards and no skill.
     let agents = home.join("catalog/agents");
     std::fs::create_dir_all(&agents).unwrap();
     std::fs::write(
-        agents.join("growth-guards.md"),
-        "---\nname: growth-guards\ndescription: an agent, not the skill\n\
+        agents.join("commit-guards.md"),
+        "---\nname: commit-guards\ndescription: an agent, not the skill\n\
          model: opus\nrole: engineer\n---\nbody\n",
     )
     .unwrap();
@@ -293,7 +293,7 @@ fn an_agent_of_the_same_name_is_not_consent_to_commit_hooks() {
         home,
         &root,
         "kendex",
-        &["add", "cat", "--agent", "growth-guards", "-y"],
+        &["add", "cat", "--agent", "commit-guards", "-y"],
     );
     assert!(added.status.success(), "{}", said(&added));
 
@@ -319,7 +319,7 @@ fn each_of_the_packages_streams_is_relayed_on_its_own() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     git_ok(home, &root, &["config", "core.hooksPath", ".githooks"]);
 
     let out = run(home, &root, "kendex", &["guard", "install"]);
@@ -327,7 +327,7 @@ fn each_of_the_packages_streams_is_relayed_on_its_own() {
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
 
     assert!(
-        stdout.contains("growth-guards git hooks:"),
+        stdout.contains("commit-guards git hooks:"),
         "the summary line belongs on stdout: {stdout:?} {stderr:?}"
     );
     assert!(
@@ -364,7 +364,7 @@ fn check_relays_the_packages_words_about_a_foreign_hook() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     let armed = run(home, &root, "kendex", &["guard", "install"]);
     assert!(armed.status.success(), "{}", said(&armed));
 
@@ -432,7 +432,7 @@ fn the_packages_exit_two_is_could_not_check_and_its_sentence_survives_whole() {
     let tmp = tempfile::tempdir().unwrap();
     let home = &rooted(&tmp);
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     let armed = run(home, &root, "kendex", &["guard", "install"]);
     assert!(armed.status.success(), "{}", said(&armed));
 
@@ -500,7 +500,7 @@ fn an_installer_that_could_not_run_is_never_relayed_as_a_verdict() {
         .join("a-directory-named-to-outrun-the-three-hundred-character-fragment-bound");
     std::fs::create_dir_all(home).unwrap();
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     let armed = run(home, &root, "kendex", &["guard", "install"]);
     assert!(armed.status.success(), "{}", said(&armed));
 
@@ -510,10 +510,10 @@ fn an_installer_that_could_not_run_is_never_relayed_as_a_verdict() {
 
     // One library file gone. Nothing else changes, and the entry point is
     // still there and still executable, so the search finds it.
-    let lib = root.join(".agents/skills/growth-guards/scripts/lib/hook-check.sh");
+    let lib = root.join(".agents/skills/commit-guards/scripts/lib/hook-check.sh");
     std::fs::remove_file(&lib).unwrap();
     assert!(
-        root.join(".agents/skills/growth-guards/scripts/install-git-hooks")
+        root.join(".agents/skills/commit-guards/scripts/install-git-hooks")
             .is_file()
     );
 
@@ -575,7 +575,7 @@ fn a_declared_package_with_no_render_is_drift_naming_the_render() {
     let tmp = tempfile::tempdir().unwrap();
     let home = &rooted(&tmp);
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     let armed = run(home, &root, "kendex", &["guard", "install"]);
     assert!(armed.status.success(), "{}", said(&armed));
 
@@ -629,7 +629,7 @@ fn an_installer_that_exits_zero_with_no_verdict_is_not_all_clear() {
     let tmp = tempfile::tempdir().unwrap();
     let home = &rooted(&tmp);
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     let armed = run(home, &root, "kendex", &["guard", "install"]);
     assert!(armed.status.success(), "{}", said(&armed));
 
@@ -640,7 +640,7 @@ fn an_installer_that_exits_zero_with_no_verdict_is_not_all_clear() {
     // Cut at the last `}` that closes a function before the script's own
     // work begins. Every earlier boundary behaves the same way; this one is
     // asserted to be a clean parse that says nothing.
-    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    let installer = root.join(".agents/skills/commit-guards/scripts/install-git-hooks");
     let whole = std::fs::read_to_string(&installer).unwrap();
     let cut: Vec<&str> = whole.lines().take(57).collect();
     std::fs::write(&installer, format!("{}\n", cut.join("\n"))).unwrap();
@@ -700,13 +700,13 @@ fn a_wedged_installer_gives_up_inside_the_session_start_bound() {
     let tmp = tempfile::tempdir().unwrap();
     let home = &rooted(&tmp);
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     // Armed for real, so the fold gets past the consent gate and reaches
     // the script.
     let armed = run(home, &root, "kendex", &["guard", "install"]);
     assert!(armed.status.success(), "{}", said(&armed));
 
-    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    let installer = root.join(".agents/skills/commit-guards/scripts/install-git-hooks");
     for script in [
         "#!/usr/bin/env bash\nsleep 60\n",
         "#!/usr/bin/env bash\nsleep 60 &\nexit 0\n",
@@ -758,7 +758,7 @@ fn an_installer_that_outruns_the_session_start_output_bound_is_not_all_clear() {
     let tmp = tempfile::tempdir().unwrap();
     let home = &rooted(&tmp);
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     // Armed for real, so the fold gets past the consent gate and reaches
     // the script.
     let armed = run(home, &root, "kendex", &["guard", "install"]);
@@ -770,7 +770,7 @@ fn an_installer_that_outruns_the_session_start_output_bound_is_not_all_clear() {
 
     // 200 x 1 KiB, past the 64 KiB bound, written a line at a time and
     // ending in the exit a clean verdict carries.
-    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    let installer = root.join(".agents/skills/commit-guards/scripts/install-git-hooks");
     std::fs::write(
         &installer,
         "#!/usr/bin/env bash\nline=$(printf 'x%.0s' {1..1023})\n\

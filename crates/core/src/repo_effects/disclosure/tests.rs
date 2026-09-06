@@ -237,7 +237,7 @@ fn companions_are_answered_from_the_installed_set() {
     let installed: BTreeSet<String> = ["preflight".to_owned()].into_iter().collect();
     let offers = offers(
         &project(tmp.path()),
-        &[declared(&[], &["size-ratchet", "preflight"])],
+        &[declared(&[], &["doc-limits", "preflight"])],
         &installed,
     );
     let companions = &offers.shown[0].companions;
@@ -245,7 +245,7 @@ fn companions_are_answered_from_the_installed_set() {
         companions,
         &[
             Companion {
-                name: "size-ratchet".to_owned(),
+                name: "doc-limits".to_owned(),
                 installed: false
             },
             Companion {

@@ -51,7 +51,7 @@ orch owns every step. kendex-specific parameters:
 - **Delegate to**: `generalist` (shell/docs/skills), `rust` (crates/), `iced` (iced-rs). Tests required; relevant suite green (`bash skills/orch/tests/run-all.sh`, per-skill `tests/*.sh`, `cargo test --workspace`).
 - **Scope is the reported symptom** (dev skill § Engineering Rules, plus its two exceptions: mechanical enablers ride, an armed defect is in scope). Expect the fix to be about the size of its first commit.
 - **Fix direction**: determinism and tooling first, meaning a deletion, a short-circuit, or a script. Added prose last. Skills are instructions, not explanations; `tools/guard` refuses history and reasons in them.
-- **Document size**: follow [size-ratchet policy](../size-ratchet/references/policy.md).
+- **Document size**: follow [doc-limits policy](../doc-limits/references/policy.md).
 - **Review must converge** (orch SKILL.md): a recurring defect class is fixed at its source, never per comment. A round that is only scope, test-coverage, or wording asks ends the review: reply, resolve, push nothing, merge through the gate. Replies are `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: KEN-<n>` (issue created first, since the gate rejects a tracking claim naming no issue). Never `--admin`.
 - **Review the diff yourself** before submit, finding the actual root cause, not a plausible one. A stalled delegate: inspect its worktree, nudge once.
 - Findings and coupled defects disposition per orch `references/finding-disposition.md`. The excluded classes come ahead of the defect fork, one reply form per thread.

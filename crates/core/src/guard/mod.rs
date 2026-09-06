@@ -1,6 +1,6 @@
 //! Commit-time guards — delegated, never reimplemented.
 //!
-//! The checks live in the growth-guards package, written in shell, and they
+//! The checks live in the commit-guards package, written in shell, and they
 //! travel with the repository under `.agents/skills/`. That is the whole
 //! portability property: git runs the shims, the shims run the committed
 //! scripts, and no kendex binary is anywhere in the path at commit time. A
@@ -40,7 +40,7 @@ pub use resolve::SKILL_ROOTS as SEARCH_ROOTS;
 use resolve::{bind, installed_or_err};
 
 /// The package that owns the checks and the git shims.
-pub const SKILL: &str = "growth-guards";
+pub const SKILL: &str = "commit-guards";
 
 /// The installer the package ships, relative to its own directory.
 const INSTALLER: &str = "scripts/install-git-hooks";
@@ -92,7 +92,7 @@ pub const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 const CHECK_OUTPUT_CAP: usize = 64 * 1024;
 
 /// Room for the whole chain, which ends in whatever the repository pointed
-/// `GROWTH_GUARDS_PRE_COMMIT_LOCAL` at — a cold clippy build, in this repo,
+/// `COMMIT_GUARDS_PRE_COMMIT_LOCAL` at — a cold clippy build, in this repo,
 /// and no bound kendex can derive. Half an hour is chosen to be longer than
 /// any commit gate a person would sit through, so the timeout only ever
 /// catches a chain that has hung. Arming and reporting are fast and keep

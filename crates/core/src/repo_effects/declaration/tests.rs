@@ -1,5 +1,5 @@
 use super::*;
-const DECLARED: &str = "---\nname: growth-guards\nrepo-effects:\n  summary: Arms git hooks.\n  writes:\n    - .git/hooks/pre-commit\n  installer: scripts/install-git-hooks\n  uninstaller: scripts/install-git-hooks --uninstall\n---\nbody\n";
+const DECLARED: &str = "---\nname: commit-guards\nrepo-effects:\n  summary: Arms git hooks.\n  writes:\n    - .git/hooks/pre-commit\n  installer: scripts/install-git-hooks\n  uninstaller: scripts/install-git-hooks --uninstall\n---\nbody\n";
 
 #[test]
 fn a_declaration_reads_whole() {
@@ -145,7 +145,7 @@ fn a_written_path_that_escapes_refuses_the_declaration() {
 fn a_path_field_is_a_list_and_every_member_says_something() {
     let not_lists = [
         "  writes: .git/hooks/pre-commit,.git/hooks/commit-msg\n",
-        "  companions: size-ratchet,preflight\n",
+        "  companions: doc-limits,preflight\n",
         "  notes: one,two\n",
     ];
     for field in not_lists {
@@ -178,7 +178,7 @@ fn a_list_with_an_unreadable_member_refuses_the_declaration() {
     let mixed = [
         "  writes:\n    - .git/hooks/pre-commit\n    - a: b\n",
         "  notes:\n    - a real note\n    - a: b\n",
-        "  companions:\n    - size-ratchet\n    - a: b\n",
+        "  companions:\n    - doc-limits\n    - a: b\n",
     ];
     for field in mixed {
         let text = format!("---\nname: x\nrepo-effects:\n  summary: s\n{field}---\nbody\n");

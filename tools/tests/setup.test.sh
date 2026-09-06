@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pins what tools/setup arms: the growth-guards installer writes both shims,
+# Pins what tools/setup arms: the commit-guards installer writes both shims,
 # nothing is spliced in beside them, and the clone then commits through the
 # armed hooks in both directions — one package verdict has to be reachable
 # from a real commit, or the chain is wired to nothing. The refusing direction
@@ -9,7 +9,7 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLS="$(cd "$TEST_DIR/.." && pwd)"
 REPO="$(cd "$TOOLS/.." && pwd)"
-REQUIRED_PATHS="$(sed -n 's/^GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = "\(.*\)"$/\1/p' "$REPO/kendex.settings.toml")"
+REQUIRED_PATHS="$(sed -n 's/^COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = "\(.*\)"$/\1/p' "$REPO/kendex.settings.toml")"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -20,16 +20,16 @@ bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
 [ -n "$REQUIRED_PATHS" ] \
   && ok "kendex.settings.toml names the paths that oblige a changelog entry" \
-  || bad "kendex.settings.toml names the paths that oblige a changelog entry" "GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS is empty"
+  || bad "kendex.settings.toml names the paths that oblige a changelog entry" "COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS is empty"
 
 new_fixture() { # NAME — a clone-shaped repo carrying the package and these tools
   R="$TMP/$1"
-  mkdir -p "$R/.agents/skills/growth-guards" "$R/tools" "$R/crates"
-  cp -R "$REPO/.agents/skills/growth-guards/scripts" "$R/.agents/skills/growth-guards/scripts"
+  mkdir -p "$R/.agents/skills/commit-guards" "$R/tools" "$R/crates"
+  cp -R "$REPO/.agents/skills/commit-guards/scripts" "$R/.agents/skills/commit-guards/scripts"
   cp "$TOOLS/setup" "$R/tools/"
   printf '#!/usr/bin/env bash\necho "repo-local lane ran"\n' >"$R/tools/guard"
   chmod +x "$R/tools/guard"
-  printf '[env]\nGROWTH_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"\nGROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = "%s"\n' \
+  printf '[env]\nCOMMIT_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"\nCOMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = "%s"\n' \
     "$REQUIRED_PATHS" >"$R/kendex.settings.toml"
   printf '# fixture\n\n' >"$R/README.md"
   git -C "$R" init -q
@@ -141,7 +141,7 @@ OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
   && ok "control: setup refuses that clone and prints the remedy" \
   || bad "control: setup refuses that clone and prints the remedy" "rc=$RC out=$OUT"
 # Step one, exactly as the message spells it.
-(cd "$R" && ./.agents/skills/growth-guards/scripts/install-git-hooks --uninstall >/dev/null 2>&1) || true
+(cd "$R" && ./.agents/skills/commit-guards/scripts/install-git-hooks --uninstall >/dev/null 2>&1) || true
 [ -e "$HOOKS/commit-msg" ] && grep -qF 'my own lane' "$HOOKS/commit-msg" \
   && ok "--uninstall leaves a hook still holding the consumer's lane" \
   || bad "--uninstall leaves that hook" "$(cat "$HOOKS/commit-msg" 2>&1)"
@@ -182,7 +182,7 @@ OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
 echo "=== setup never claims armed where git reads hooks elsewhere ==="
 E="$TMP/elsewhere"
 mkdir -p "$E/tools" "$E/other-hooks" "$E/.agents/skills"
-cp -R "$R/.agents/skills/growth-guards" "$E/.agents/skills/growth-guards"
+cp -R "$R/.agents/skills/commit-guards" "$E/.agents/skills/commit-guards"
 cp "$TOOLS/setup" "$E/tools/"
 git -C "$E" init -q
 git -C "$E" config core.hooksPath "$E/other-hooks"

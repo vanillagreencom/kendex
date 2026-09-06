@@ -91,7 +91,7 @@ fn an_existing_hook_keeps_its_content_and_its_verdict() {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     let install = run(home, &root, "kendex", &["guard", "install"]);
     assert!(install.status.success(), "{}", said(&install));
 
@@ -127,7 +127,7 @@ fn the_stand_in_gate_refuses_where_the_package_is_missing() {
 
     let out = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert_eq!(out.status.code(), Some(2), "{}", said(&out));
-    assert!(said(&out).contains("growth-guards"), "{}", said(&out));
+    assert!(said(&out).contains("commit-guards"), "{}", said(&out));
 }
 
 /// With the package installed but no shim armed, the stand-in gate runs the
@@ -138,7 +138,7 @@ fn the_stand_in_gate_runs_the_same_chain_the_shim_would() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     std::fs::write(root.join("b.rs"), work_marker("TO", "DO: not yet")).unwrap();
     git_ok(home, &root, &["add", "-A"]);
 
@@ -155,24 +155,24 @@ fn sibling_gates_join_the_chain_and_absent_ones_announce_themselves() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
 
     let without = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert!(
-        said(&without).contains("size-ratchet not installed"),
+        said(&without).contains("doc-limits not installed"),
         "{}",
         said(&without)
     );
 
-    install_package(home, &root, &["size-ratchet"]);
+    install_package(home, &root, &["doc-limits"]);
     let with = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert!(
-        said(&with).contains("=== pre-commit: size-ratchet"),
+        said(&with).contains("=== pre-commit: doc-limits"),
         "{}",
         said(&with)
     );
     assert!(
-        !said(&with).contains("size-ratchet not installed"),
+        !said(&with).contains("doc-limits not installed"),
         "{}",
         said(&with)
     );
@@ -187,7 +187,7 @@ fn the_message_lane_resolves_a_relative_path_against_the_caller() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     let sub = root.join("sub");
     std::fs::create_dir_all(&sub).unwrap();
     std::fs::write(sub.join("MSG"), "not conventional at all\n").unwrap();
@@ -206,7 +206,7 @@ fn the_message_lane_reads_a_piped_message() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_kendex"))
         .args(["guard", "run", "commit-msg"])
@@ -242,7 +242,7 @@ fn a_linked_worktree_is_served_by_the_main_checkouts_copy() {
     git_ok(home, &root, &["worktree", "add", "--quiet", "../linked"]);
     let linked = home.join("linked");
     assert!(
-        !linked.join(".agents/skills/growth-guards").exists(),
+        !linked.join(".agents/skills/commit-guards").exists(),
         "the linked worktree carries no copy of its own"
     );
 
@@ -278,7 +278,7 @@ fn the_main_checkout_is_searched_at_the_projects_path() {
     let root = repo(home);
     let project = root.join("apps/web");
     std::fs::create_dir_all(project.join(".agents")).unwrap();
-    install_package(home, &project, &["growth-guards"]);
+    install_package(home, &project, &["commit-guards"]);
     let install = run(home, &project, "kendex", &["guard", "install"]);
     assert!(install.status.success(), "{}", said(&install));
 
@@ -300,7 +300,7 @@ fn the_main_checkout_is_searched_at_the_projects_path() {
 
     let out = run(home, &there, "kendex", &["guard", "check"]);
     assert!(
-        !said(&out).contains("no growth-guards skill"),
+        !said(&out).contains("no commit-guards skill"),
         "the main checkout's copy went unfound: {}",
         said(&out)
     );
@@ -312,7 +312,7 @@ fn the_main_checkout_is_searched_at_the_projects_path() {
 /// git resolves upward, so "does this candidate's common git dir match
 /// ours" answers yes about every directory below our own top level. A git
 /// directory at `<checkout>/meta/repo.git` makes the parent `<checkout>/meta`
-/// — inside the work tree, not a checkout root — and a `growth-guards` under
+/// — inside the work tree, not a checkout root — and a `commit-guards` under
 /// it would be resolved as this repository's package. Being the root is the
 /// second test.
 #[test]
@@ -342,7 +342,7 @@ fn a_directory_inside_the_work_tree_is_not_the_main_checkout() {
 
     // The decoy sits where the git directory's parent points, inside the
     // work tree. It is the only copy with an executable script.
-    let decoy = root.join("meta/.agents/skills/growth-guards/scripts");
+    let decoy = root.join("meta/.agents/skills/commit-guards/scripts");
     std::fs::create_dir_all(&decoy).unwrap();
     for lane in ["pre-commit", "commit-msg", "install-git-hooks"] {
         let script = decoy.join(lane);
@@ -358,7 +358,7 @@ fn a_directory_inside_the_work_tree_is_not_the_main_checkout() {
         "a package inside the work tree was resolved as the main checkout's: {said}"
     );
     assert!(
-        said.contains("no growth-guards skill"),
+        said.contains("no commit-guards skill"),
         "the only copy here is the decoy, so nothing should resolve: {said}"
     );
 }
@@ -373,17 +373,17 @@ fn a_broken_copy_does_not_shadow_a_working_one() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     // `.agents/skills` is searched before `skills`, so put the broken copy
     // there and the working one after it.
     std::fs::rename(
-        root.join(".agents/skills/growth-guards"),
+        root.join(".agents/skills/commit-guards"),
         root.join("skills-tmp"),
     )
     .unwrap();
     std::fs::create_dir_all(root.join("skills")).unwrap();
-    std::fs::rename(root.join("skills-tmp"), root.join("skills/growth-guards")).unwrap();
-    let broken = root.join(".agents/skills/growth-guards/scripts");
+    std::fs::rename(root.join("skills-tmp"), root.join("skills/commit-guards")).unwrap();
+    let broken = root.join(".agents/skills/commit-guards/scripts");
     std::fs::create_dir_all(&broken).unwrap();
     for lane in ["pre-commit", "install-git-hooks"] {
         let path = broken.join(lane);
@@ -415,7 +415,7 @@ fn a_path_with_an_apostrophe_resolves_the_same_on_both_sides() {
     std::fs::write(root.join("a.txt"), "hi\n").unwrap();
     git_ok(home, &root, &["add", "-A"]);
     git_ok(home, &root, &["commit", "--quiet", "-m", "feat: base"]);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     let armed = run(home, &root, "kendex", &["guard", "install"]);
     assert!(armed.status.success(), "{}", said(&armed));
 
@@ -463,13 +463,13 @@ fn a_project_below_the_git_toplevel_is_found_where_it_renders() {
     // The project, two levels down, installed there.
     let project = outer.join("apps/web");
     std::fs::create_dir_all(project.join(".agents")).unwrap();
-    install_package(home, &project, &["growth-guards"]);
+    install_package(home, &project, &["commit-guards"]);
     assert!(
-        project.join(".agents/skills/growth-guards").is_dir(),
+        project.join(".agents/skills/commit-guards").is_dir(),
         "the render lands under the project root"
     );
     assert!(
-        !outer.join(".agents/skills/growth-guards").exists(),
+        !outer.join(".agents/skills/commit-guards").exists(),
         "and not at the git top level"
     );
 
@@ -503,8 +503,8 @@ fn a_tampered_helper_does_not_redirect_the_guard_verbs() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
-    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    install_package(home, &root, &["commit-guards"]);
+    let installer = root.join(".agents/skills/commit-guards/scripts/install-git-hooks");
     let armed = run_with(
         home,
         &root,
@@ -561,7 +561,7 @@ fn a_tampered_helper_does_not_redirect_the_guard_verbs() {
 /// `<main>/.git` is the ordinary layout, and the directory holding the
 /// common git dir is the main checkout there. Under `--separate-git-dir` the
 /// git directory lives outside the checkout, so its parent is an unrelated
-/// directory — and one holding a `growth-guards` of its own would have been
+/// directory — and one holding a `commit-guards` of its own would have been
 /// searched and executed as this repository's commit gate.
 ///
 /// Owning it is the test: the candidate's own common git dir must be this
@@ -597,7 +597,7 @@ fn a_package_beside_an_external_git_dir_does_not_govern() {
     git_ok(home, &root, &["config", "user.name", "t"]);
 
     // A decoy beside the git directory, executable and announcing itself.
-    let decoy = outside.join(".agents/skills/growth-guards/scripts");
+    let decoy = outside.join(".agents/skills/commit-guards/scripts");
     std::fs::create_dir_all(&decoy).unwrap();
     let marker = home.join("decoy-ran");
     for lane in ["pre-commit", "commit-msg", "install-git-hooks"] {

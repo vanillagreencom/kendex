@@ -81,7 +81,7 @@ async function withFakeCargo<T>(run: (paths: { bin: string; log: string }) => Pr
 	}
 }
 
-// The marker the growth-guards installer ends its delegating line with, and the
+// The marker the commit-guards installer ends its delegating line with, and the
 // bypass flag. Both assembled: a file carrying the first reads as a shim, and
 // this repository's own hook refuses a command spelling the second out.
 const GG_MARK = "# kendex-" + "guards-hook";

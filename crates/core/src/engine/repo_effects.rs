@@ -37,7 +37,7 @@ use super::set_change::{SetChange, SetDirection};
 ///
 /// The desired state is the whole scope, so reading it offered every
 /// declaring package installed here on every add — `add deploy` armed a
-/// growth-guards whose effect was declined a week earlier. Which trees the
+/// commit-guards whose effect was declined a week earlier. Which trees the
 /// plan WROTE missed a package whose bytes were already correct, which is
 /// routine for a committed render or a cache already at the commit asked
 /// for. The caller's requested-member list disclosed a member the plan held

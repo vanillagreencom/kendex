@@ -135,7 +135,7 @@ fn an_installer_s_output_reaches_the_window_escaped() {
 #[allow(clippy::unwrap_used)]
 fn a_root_this_scope_never_installed_is_refused() {
     let f = fixture();
-    let installed = install_skills(&f, &["growth-guards"], None);
+    let installed = install_skills(&f, &["commit-guards"], None);
     let [offer] = installed.repo_effects.shown.as_slice() else {
         panic!("one offer: {:?}", installed.repo_effects);
     };

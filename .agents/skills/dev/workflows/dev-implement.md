@@ -150,14 +150,14 @@ Update docs when the implementation changes a documented API or architecture.
 
 Before deterministic validation, run `git grep -n -F --untracked --exclude-standard -e <callee> --` for every callee whose call the change deletes, then apply [code-quality § Cleanup](../../code-quality/SKILL.md#cleanup); the build and tests below validate every deletion.
 
-Deterministic gates first — every finding is fixed here, never carried into review. Preflight runs when installed (`test -x .agents/skills/preflight/scripts/preflight`); the size-ratchet gate runs when installed (`test -x .agents/skills/size-ratchet/scripts/size-ratchet`):
+Deterministic gates first — every finding is fixed here, never carried into review. Preflight runs when installed (`test -x .agents/skills/preflight/scripts/preflight`); the doc-limits gate runs when installed (`test -x .agents/skills/doc-limits/scripts/doc-limits`):
 
 ```bash
 .agents/skills/preflight/scripts/preflight --repo [WORKTREE_PATH]
 ```
 
 ```bash
-.agents/skills/size-ratchet/scripts/size-ratchet
+.agents/skills/doc-limits/scripts/doc-limits
 ```
 
 Run the project's full validation once before completion. Its successful result is recorded in the completion artifact for submit to reuse on the same commit. The command is the one `.agents/skills/orch/scripts/orch-env DEV_VALIDATE_CMD ""` prints, run from the worktree root, plus the delegation's required verification commands in their § 2.4 normalized form. An empty value is a validation failure named `DEV_VALIDATE_CMD`, with the note `DEV_VALIDATE_CMD is empty; set it in kendex.settings.toml [env] to the project's full test, lint and typecheck command`; run nothing in its place, and never substitute a documented or guessed command. Failure handling and long-running runs: [dev SKILL.md § Validation](../SKILL.md#validation).

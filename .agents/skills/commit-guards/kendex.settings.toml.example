@@ -1,0 +1,74 @@
+[env]
+
+# COMMIT GUARDS — repo growth checks (commit-guards skill). Nothing below
+# is marked `# required`, so installing this skill writes nothing into
+# <project>/kendex.settings.toml. What an install writes, and when, is
+# kendex's docs/authoring/settings.md. Every COMMIT_GUARDS_* key, and the
+# default it ships, is in the skill's SKILL.md.
+
+# Which checks the batch runs, space separated. The full list and what each
+# one bans is in CHECKS.md; naming a subset is how a project takes the
+# family a lane at a time.
+COMMIT_GUARDS_CHECKS = "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs"
+
+# Kilobytes a single tracked file may reach before byte-ceiling refuses it.
+# Existing files already above it may hold or shrink, but may not grow.
+# Declared asset trees are exempted through COMMIT_GUARDS_BYTE_EXCLUDES.
+COMMIT_GUARDS_BYTE_CEILING_KB = "200"
+
+# The changelog-entries fragment tree: a space-separated list of shell globs
+# against the full repo-relative path (`*` crosses `/`). Each match must be
+# one Markdown list item under a Keep a Changelog section directory, within
+# COMMIT_GUARDS_CHANGELOG_CAP characters. Paths matching no tracked file are
+# a clean pass, so a project with no fragments needs no change here.
+COMMIT_GUARDS_CHANGELOG_PATHS = "changelog.d/*/*.md"
+
+# The collation destination. Ordinary checks permit edits to this document.
+# Empty disables collation.
+COMMIT_GUARDS_CHANGELOG_RECORD = "CHANGELOG.md"
+
+# Paths whose change obliges a changelog entry, checked by the commit-msg
+# lane over the staged file list: a commit touching one must also write a
+# fragment, or the record under COMMIT_GUARDS_CHANGELOG_COLLATE=1 (the
+# release commit collating them), or carry [no-changelog] in its subject.
+# Empty = rule off.
+COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = ""
+
+# Without flags, touched runs md-format on changed documents. It runs md-refs
+# on all configured documents when any change is staged. All runs both checks
+# unconditionally. Explicit --staged retains each lane's own scope.
+COMMIT_GUARDS_MD_SCOPE = "touched"
+
+# The markdown md-format and md-reflow take under --all, and the markdown
+# md-refs judges: space-separated shell globs against the full repo-relative
+# path. COMMIT_GUARDS_MD_EXCLUDES (default tools/md-excludes, pattern<TAB>reason
+# rows) drops vendored or generated markdown from both.
+COMMIT_GUARDS_MD_PATHS = "*.md"
+
+# The markdown md-refs judges under --all: the agent-loaded files and the
+# architecture docs, space-separated shell globs against the full
+# repo-relative path.
+COMMIT_GUARDS_MD_REFS_PATHS = "AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
+
+# The source files the comments lane reads, a space-separated list of shell
+# globs against the full repo-relative path (`*` crosses `/`), replacing the
+# default extension list in CHECKS.md § comments. Add the shapes an
+# extension cannot name (`hooks/* */scripts/*`): a file with no extension
+# takes the grammar its shebang names. Run the optional audit as described
+# in CHECKS.md § comments. Set GH_ISSUE_PATTERN (the github skill's key)
+# to the tracker's own key shape.
+# COMMIT_GUARDS_COMMENT_PATHS = ""
+
+# The comments lane's exclusion list, pattern<TAB>reason rows naming the
+# generated and vendored trees whose comments are not this repository's.
+COMMIT_GUARDS_COMMENT_EXCLUDES = "tools/comments-excludes"
+
+# Reference classes the comments lane checks. Issue IDs need a configured
+# GH_ISSUE_PATTERN; dates and numeric references work without one.
+COMMIT_GUARDS_COMMENT_REFERENCE_TYPES = "issue-id issue-number date"
+
+# Repo-local check the pre-commit shim runs LAST: a repo-root-relative
+# executable following the family exit contract (0 clean, 1 violations,
+# else "could not complete"); any nonzero blocks the commit, and so does a
+# missing or non-executable value. Empty = no repo-local check.
+COMMIT_GUARDS_PRE_COMMIT_LOCAL = ""

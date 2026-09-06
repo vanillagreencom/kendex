@@ -21,7 +21,7 @@ use crate::{git_ok, install_package, install_package_undeclared, repo, run, said
 /// testing the guess. This is the same call `kendex guard install` makes.
 #[allow(clippy::unwrap_used)]
 fn arm_by_hand(root: &std::path::Path) {
-    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    let installer = root.join(".agents/skills/commit-guards/scripts/install-git-hooks");
     let out = std::process::Command::new(&installer)
         .args(["--repo", &root.to_string_lossy()])
         // Run from the fixture: git's own environment reaches this child,
@@ -58,7 +58,7 @@ fn arm_by_hand(root: &std::path::Path) {
 #[allow(clippy::unwrap_used)]
 fn installer_that_announces_itself(root: &std::path::Path, marker: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;
-    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    let installer = root.join(".agents/skills/commit-guards/scripts/install-git-hooks");
     std::fs::write(
         &installer,
         format!(
@@ -92,7 +92,7 @@ fn spaced_fixture() -> tempfile::TempDir {
 /// declares this package.
 ///
 /// The whole trust boundary in one fixture. `.kendex-lock.json` sits under
-/// the work tree, so a repository can ship one declaring growth-guards as
+/// the work tree, so a repository can ship one declaring commit-guards as
 /// an enabled skill — that is what a real install leaves behind, and what
 /// anyone can commit. The hooks directory is the other half, and git clones
 /// it for nobody: with no helper in it, nothing here has been licensed, and
@@ -108,7 +108,7 @@ fn check_runs_nothing_out_of_a_repository_nobody_armed() {
     let root = repo(home);
     // A real install: the lock genuinely declares the package. Nothing is
     // armed, which is the state a fresh clone of such a repository is in.
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     assert!(
         !root.join(".git/hooks/kendex-guards").exists(),
         "the fixture is unarmed"
@@ -144,7 +144,7 @@ fn check_runs_nothing_where_no_project_declared_the_package() {
     let home = &rooted(&tmp);
     let root = repo(home);
     std::fs::write(root.join("kendex.toml"), "schema = 6\n").unwrap();
-    install_package_undeclared(&root, &["growth-guards"]);
+    install_package_undeclared(&root, &["commit-guards"]);
     arm_by_hand(&root);
     assert!(
         root.join(".git/hooks/kendex-guards").is_file(),
@@ -180,7 +180,7 @@ fn the_execution_control_writes_its_marker_when_consent_is_given() {
         home.display()
     );
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     // Consent: the real installer arms the repository, so the helper is
     // there and `kendex check` is licensed to run what it finds.
     arm_by_hand(&root);
@@ -209,7 +209,7 @@ fn an_unarmable_repository_is_never_told_to_run_an_install_that_stands_down() {
     let tmp = tempfile::tempdir().unwrap();
     let home = &rooted(&tmp);
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     git_ok(home, &root, &["config", "core.hooksPath", ".githooks"]);
 
     // The remedy that must not be named, run: it stands down and writes
@@ -252,7 +252,7 @@ fn exit_zero_with_words_that_are_not_a_verdict_is_not_all_clear() {
     let tmp = tempfile::tempdir().unwrap();
     let home = &rooted(&tmp);
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     let armed = run(home, &root, "kendex", &["guard", "install"]);
     assert!(armed.status.success(), "{}", said(&armed));
 
@@ -260,7 +260,7 @@ fn exit_zero_with_words_that_are_not_a_verdict_is_not_all_clear() {
     let clean = run(home, &root, "kendex", &["check"]);
     assert_eq!(clean.status.code(), Some(0), "{}", said(&clean));
 
-    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    let installer = root.join(".agents/skills/commit-guards/scripts/install-git-hooks");
     std::fs::write(&installer, "#!/usr/bin/env bash\necho loading\nexit 0\n").unwrap();
     std::fs::set_permissions(&installer, std::fs::Permissions::from_mode(0o755)).unwrap();
 
@@ -300,7 +300,7 @@ fn a_verdict_that_points_at_stderr_arrives_with_it() {
     let tmp = tempfile::tempdir().unwrap();
     let home = &rooted(&tmp);
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     let armed = run(home, &root, "kendex", &["guard", "install"]);
     assert!(armed.status.success(), "{}", said(&armed));
     assert!(root.join(".git/hooks/kendex-guards").exists());
@@ -336,7 +336,7 @@ fn an_unreadable_hooks_directory_is_could_not_check_not_a_not_armed_claim() {
     let tmp = tempfile::tempdir().unwrap();
     let home = &rooted(&tmp);
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     let armed = run(home, &root, "kendex", &["guard", "install"]);
     assert!(armed.status.success(), "{}", said(&armed));
 
@@ -389,7 +389,7 @@ fn a_skills_directory_it_cannot_read_is_could_not_check_not_a_missing_render() {
     let tmp = tempfile::tempdir().unwrap();
     let home = &rooted(&tmp);
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     let armed = run(home, &root, "kendex", &["guard", "install"]);
     assert!(armed.status.success(), "{}", said(&armed));
 

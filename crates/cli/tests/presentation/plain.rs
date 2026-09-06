@@ -35,16 +35,16 @@ fn the_blocked_refresh_prints_the_lines_scripts_parse() {
     assert_eq!(
         shape,
         vec![
-            "safety: skill growth-guards for Claude Code, Codex scores 75/100",
+            "safety: skill commit-guards for Claude Code, Codex scores 75/100",
             "  [finding]",
-            "  also at <project>/.agents/skills/growth-guards/SKILL.md:5",
+            "  also at <project>/.agents/skills/commit-guards/SKILL.md:5",
             "safety: skill tidy for Claude Code, Codex scores 75/100",
             "  [finding]",
             "  also at <project>/.agents/skills/tidy/SKILL.md:5",
-            "conflict: skill growth-guards for Claude Code, Codex: <project>/.claude/skills/growth-guards already holds files kendex did not write",
-            "  also at <project>/.agents/skills/growth-guards",
+            "conflict: skill commit-guards for Claude Code, Codex: <project>/.claude/skills/commit-guards already holds files kendex did not write",
+            "  also at <project>/.agents/skills/commit-guards",
             "  differs from the catalog in 2 files: SKILL.md, references/rules.md",
-            "  to keep those files: kendex adopt skill growth-guards --harness claude --harness codex",
+            "  to keep those files: kendex adopt skill commit-guards --harness claude --harness codex",
             "  to install what kendex.toml asks for instead: kendex apply --replace-unmanaged",
             "<project>: this changes what is installed",
             "  - install skill tidy for Claude Code — asked for",
@@ -90,7 +90,7 @@ fn nothing_is_said_twice() {
         &["refresh", "-y", "--scope", "project"],
     ));
     for once in [
-        "safety: skill growth-guards",
+        "safety: skill commit-guards",
         "safety: skill tidy",
         "conflict:",
         "to keep those files:",

@@ -219,29 +219,29 @@ DECISIONS_DIR = "docs/decisions"
 # for the same commit; CI runs the full suites independently.
 DEV_VALIDATE_CMD = "tools/guard --full"
 
-# The repo-root executable the guard chain runs last, after size-ratchet,
-# preflight and the growth-guards batch. tools/guard holds this repository's
+# The repo-root executable the guard chain runs last, after doc-limits,
+# preflight and the commit-guards batch. tools/guard holds this repository's
 # own scans and compile checks for changed crates or UI files. Expensive
 # tests, documentation builds and cross-target checks run through DEV_VALIDATE_CMD.
-GROWTH_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"
+COMMIT_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"
 
 # The fragment scope of the changelog-entries lane. The two-segment glob
 # keeps changelog.d/README.md out — its bullets document the format and are
 # not entries. CHANGELOG.md is the lane's other scope,
-# GROWTH_GUARDS_CHANGELOG_RECORD, judged by a different rule: entries there
+# COMMIT_GUARDS_CHANGELOG_RECORD, judged by a different rule: entries there
 # are the collator's, so only lines this commit ADDS under [Unreleased] are
 # refused and the released history no one may rewrite is never measured.
-GROWTH_GUARDS_CHANGELOG_PATHS = "changelog.d/*/*.md"
+COMMIT_GUARDS_CHANGELOG_PATHS = "changelog.d/*/*.md"
 
 # Paths whose change obliges a changelog entry, checked by the commit-msg
 # lane: crates/ and ui/ are what a consumer sees. [no-changelog] in the
 # subject is the escape for a change none of them notices.
-GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = "crates/* ui/*"
+COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = "crates/* ui/*"
 
 # The markdown lanes judge every tracked markdown file, not only the files a
 # commit touches: the tree is reflowed, and tools/md-excludes names the
 # vendored text they leave alone.
-GROWTH_GUARDS_MD_SCOPE = "all"
+COMMIT_GUARDS_MD_SCOPE = "all"
 
 GH_BOT_USERNAME = ""
 GH_VERIFY_CMD = ""

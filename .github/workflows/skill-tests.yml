@@ -68,7 +68,7 @@ jobs:
   # were one `shell` shard whose halves ran serially and bounded every queue
   # run; `pi-claude-bridge` was the node shard's hottest step; `guards` and
   # `linear` were the halves of a `rest` that had grown past ten minutes
-  # (growth-guards 165s and linear 151s of its 582s). The ruleset's required
+  # (commit-guards 165s and linear 151s of its 582s). The ruleset's required
   # context is the AGGREGATOR below — shard names are not, so shards can be
   # rebalanced or extended without touching repo settings. Measured over the
   # ten runs before the split: review-gate 58s, orch 250s, node 101s,
@@ -132,7 +132,7 @@ jobs:
       # culprits instead of showing only the later suites passing. Every shell
       # shard below runs its suites through this one loop.
       # ---- shard: guards — the lints, the executable-bit rule, and the
-      # suites of the guard packages: growth-guards, tools/ and hooks/ ------
+      # suites of the guard packages: commit-guards, tools/ and hooks/ ------
       - name: executable bits on skill tests and scripts
         if: matrix.shard == 'guards'
         run: |
@@ -152,16 +152,16 @@ jobs:
 
       # Document byte ceilings run on every PR and queue event. A failure in
       # an earlier step must not suppress this check.
-      - name: size-ratchet (document byte ceilings)
+      - name: doc-limits (document byte ceilings)
         if: always() && matrix.shard == 'guards'
-        run: skills/size-ratchet/scripts/size-ratchet
+        run: skills/doc-limits/scripts/doc-limits
 
       # Same posture, same reasons. The commit lane runs todo-ban --staged
       # and judges what a commit adds; this scan takes the rest, in every
       # blob git reads as text.
       - name: todo-ban (index-wide work-marker scan)
         if: always() && matrix.shard == 'guards'
-        run: skills/growth-guards/scripts/todo-ban
+        run: skills/commit-guards/scripts/todo-ban
 
       # One scan for Bash 4+ syntax over the roster `tools/bash32-lint --list`
       # prints. bash32-lint.test.sh proves its teeth.
@@ -169,13 +169,13 @@ jobs:
         if: matrix.shard == 'guards'
         run: tools/bash32-lint
 
-      - name: growth-guards, tools and hook suites
+      - name: commit-guards, tools and hook suites
         if: matrix.shard == 'guards'
         run: |
           set -u
           fail=0
           failed=""
-          for t in skills/growth-guards/tests/*.sh tools/tests/*.test.sh hooks/tests/*.sh; do
+          for t in skills/commit-guards/tests/*.sh tools/tests/*.test.sh hooks/tests/*.sh; do
             echo "=== $t"
             if ! bash "$t"; then
               echo "FAILED: $t"
@@ -225,7 +225,7 @@ jobs:
             x="${t#skills/}"
             x="${x%%/*}"
             case "$x" in
-              orch | review-gate | growth-guards | linear | bot-instructions | preflight)
+              orch | review-gate | commit-guards | linear | bot-instructions | preflight)
                 if grep -qF "skills/$x/tests/" "$wf"; then
                   continue
                 fi

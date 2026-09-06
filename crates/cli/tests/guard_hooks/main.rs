@@ -1,6 +1,6 @@
 //! Real commits through the armed shims, against the real package.
 //!
-//! The checks are the growth-guards package's shell scripts, so these
+//! The checks are the commit-guards package's shell scripts, so these
 //! scenarios install this repository's own copy of that package into a
 //! throwaway repo and drive it exactly as a consumer would. `kendex` is
 //! nowhere in a hook's path once the shims are written — the whole point of
@@ -189,7 +189,7 @@ fn repo(home: &Path) -> PathBuf {
 #[allow(clippy::unwrap_used)]
 fn armed_repo(home: &Path) -> PathBuf {
     let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
+    install_package(home, &root, &["commit-guards"]);
     let install = run(home, &root, "kendex", &["guard", "install"]);
     assert!(install.status.success(), "{}", said(&install));
     root

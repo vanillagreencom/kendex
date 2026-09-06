@@ -105,7 +105,7 @@ describe("a bare repository page's action", () => {
       data: {
         sources: [],
         undone: [
-          "growth-guards: running scripts/install-git-hooks --uninstall",
+          "commit-guards: running scripts/install-git-hooks --uninstall",
         ],
       },
     });
@@ -119,7 +119,7 @@ describe("a bare repository page's action", () => {
       .toggle({ scope: "global" }, "kit", false);
 
     expect(toast.message).toHaveBeenCalledWith(
-      "growth-guards: running scripts/install-git-hooks --uninstall",
+      "commit-guards: running scripts/install-git-hooks --uninstall",
     );
   });
 

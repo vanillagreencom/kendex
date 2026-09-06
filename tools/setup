@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Arm the commit guards — run once per clone.
 #
-# The growth-guards installer owns .git/hooks. Its pre-commit line runs the
-# package chain, which ends in tools/guard (GROWTH_GUARDS_PRE_COMMIT_LOCAL);
+# The commit-guards installer owns .git/hooks. Its pre-commit line runs the
+# package chain, which ends in tools/guard (COMMIT_GUARDS_PRE_COMMIT_LOCAL);
 # its commit-msg line runs the package's message gate, which holds every
 # commit-message rule this repo has. There is no repo-local commit-msg lane
 # to splice in beside it.
@@ -27,7 +27,7 @@ ROOT="$(git rev-parse --show-toplevel)" \
   || { echo "setup: not inside a git work tree — the guards could not be armed" >&2; exit 1; }
 cd "$ROOT" || { echo "setup: could not enter $ROOT — the guards could not be armed" >&2; exit 1; }
 
-INSTALLER=.agents/skills/growth-guards/scripts/install-git-hooks
+INSTALLER=.agents/skills/commit-guards/scripts/install-git-hooks
 
 # The installer has already reported, per hook, WHY it did not arm. That report
 # is the only thing that knows which refusal this was, so this points back at

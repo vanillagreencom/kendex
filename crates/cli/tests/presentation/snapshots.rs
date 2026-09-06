@@ -49,16 +49,16 @@ fn shape(setup: &[&str], args: &[&str]) -> Vec<String> {
 /// covers, and one conflict however many tools it blocks.
 fn planned_block() -> Vec<&'static str> {
     vec![
-        "safety: skill growth-guards for Claude Code, Codex scores 75/100",
+        "safety: skill commit-guards for Claude Code, Codex scores 75/100",
         "  [finding]",
-        "  also at <project>/.agents/skills/growth-guards/SKILL.md:5",
+        "  also at <project>/.agents/skills/commit-guards/SKILL.md:5",
         "safety: skill tidy for Claude Code, Codex scores 75/100",
         "  [finding]",
         "  also at <project>/.agents/skills/tidy/SKILL.md:5",
-        "conflict: skill growth-guards for Claude Code, Codex: <project>/.claude/skills/growth-guards already holds files kendex did not write",
-        "  also at <project>/.agents/skills/growth-guards",
+        "conflict: skill commit-guards for Claude Code, Codex: <project>/.claude/skills/commit-guards already holds files kendex did not write",
+        "  also at <project>/.agents/skills/commit-guards",
         "  differs from the catalog in 2 files: SKILL.md, references/rules.md",
-        "  to keep those files: kendex adopt skill growth-guards --harness claude --harness codex",
+        "  to keep those files: kendex adopt skill commit-guards --harness claude --harness codex",
         "  to install what kendex.toml asks for instead: kendex apply --replace-unmanaged",
     ]
 }
@@ -129,7 +129,7 @@ fn verify() {
         vec![
             "! <project>: no install record at <project>/.kendex-lock.json — checking current manifest and render bytes",
             "<project>: 2 items declared and not in the install record",
-            "  - skill growth-guards — kendex apply records it",
+            "  - skill commit-guards — kendex apply records it",
             "  - skill tidy — kendex apply records it",
             "nothing checked",
         ],

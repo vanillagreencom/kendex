@@ -148,7 +148,7 @@ describe("editor store", () => {
       data: {
         ...({} as AuditView_Serialize),
         undone: [
-          "growth-guards: running scripts/install-git-hooks --uninstall",
+          "commit-guards: running scripts/install-git-hooks --uninstall",
         ],
       },
     });
@@ -159,7 +159,7 @@ describe("editor store", () => {
     await useEditorStore.getState().save();
 
     expect(toast.message).toHaveBeenCalledWith(
-      "growth-guards: running scripts/install-git-hooks --uninstall",
+      "commit-guards: running scripts/install-git-hooks --uninstall",
     );
   });
 

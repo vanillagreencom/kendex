@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The exit convention the growth-guards pre-commit lane reads: 0 clean, 1
+# The exit convention the commit-guards pre-commit lane reads: 0 clean, 1
 # findings, 2 could not complete.
 #
 # The silent misreport: a run that could not answer — git would not run, the
