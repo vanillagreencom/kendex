@@ -76,11 +76,12 @@ Lanes:
                   Reported once per file.
   hardcoded-temp-path
                   an added directory-creating call whose first argument opens
-                  a quoted path under the /tmp or /var/tmp root: mkdtemp and
-                  mkdir and their Sync variants (JS/TS), mkdtemp, makedirs and
-                  mkdir (Python), create_dir_all (Rust), and a shell mkdir -p
-                  at a command position. The mkdtemp pair always creates, so a
-                  quoted bare root in any of its arguments is the same shape.
+                  a path under the /tmp or /var/tmp root: mkdtemp and mkdir
+                  and their Sync variants (JS/TS), mkdtemp, makedirs and mkdir
+                  (Python), create_dir_all (Rust), each with the path quoted,
+                  and a shell mkdir -p at a command position, where the quotes
+                  are optional. The mkdtemp pair always creates, so a quoted
+                  bare root in any of its arguments is the same shape.
                   Plain mkdir of the bare root is not, since creating a root
                   that exists is a no-op. Nor is the literal as a value (a
                   config field, a fixture string, a path nothing creates), a

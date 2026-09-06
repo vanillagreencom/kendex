@@ -8,7 +8,7 @@ A checker for changed files in a repository. It detects script errors, broken do
 kendex add vanillagreencom/kendex --skill preflight
 ```
 
-Requires Git, awk and standard POSIX tools. Bash 3.2 is supported. Install shellcheck for its shell checks, jq for JSON checks, and taplo or Python with tomllib for TOML checks. A check whose tool is missing is reported as not run.
+Requires Git, awk and standard POSIX tools. Bash 3.2 is supported. Install shellcheck for its shell checks, jq for JSON checks, and taplo or Python with tomllib for TOML checks. A check that a change needs, whose tool is missing, is reported as not run.
 
 ## Features
 
@@ -19,7 +19,7 @@ Requires Git, awk and standard POSIX tools. Bash 3.2 is supported. Install shell
 
 ## How it works
 
-The checker selects changed files from Git. Each check reads the file types it supports and judges what the change added. Findings identify the file, location and check. Your validation command or Git hook uses the exit result to stop on a finding. Run `preflight --help` for each check, its scope and the exit codes.
+The checker selects changed files from Git. Each check reads the file types it supports. Findings identify the file, location and check. Your validation command or Git hook uses the exit result to stop on a finding. Run `preflight --help` for each check, its scope and the exit codes.
 
 ## Settings
 
