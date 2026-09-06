@@ -950,3 +950,63 @@ fn an_edit_the_source_form_cannot_hold_is_not_absorbed() {
         "and the edit is still the person's"
     );
 }
+
+/// A fork switched off keeps its bytes under the toggled name, and that is
+/// the name an edit to it is read at. An agent renders to one file, so
+/// when it is off the name the plan wants does not exist at all: absorbing
+/// has to capture the bytes the hash actually came from, or a disabled
+/// fork's edit is held forever with nothing able to settle it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_edit_to_a_disabled_fork_is_absorbed_from_the_toggled_name() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    edit_body(&file);
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    let text = fs::read_to_string(&path)
+        .unwrap()
+        .replace("[agents.rev]\n", "[agents.rev]\nenabled = false\n");
+    fs::write(&path, text).unwrap();
+    resettle(&w);
+
+    let off = PathBuf::from(format!("{}.disabled", file.display()));
+    assert!(off.is_file(), "the toggled name holds the bytes");
+    assert!(!file.exists(), "and the wanted name holds none");
+    edit_line(&off, "My body.", "Edited while off.");
+
+    // Switched back on, the plan wants the plain name and nothing is
+    // there yet: the edited bytes are still under the toggled one, which
+    // is where the hash came from and where the capture has to read.
+    let text = fs::read_to_string(&path)
+        .unwrap()
+        .replace("enabled = false\n", "");
+    fs::write(&path, text).unwrap();
+
+    let report = audit(&w.env, &w.scope).unwrap();
+    assert_eq!(report.fork_edits.len(), 1, "{:?}", report.fork_edits);
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert!(
+        fs::read_to_string(captured(&w, "rev"))
+            .unwrap()
+            .contains("Edited while off."),
+        "the source holds what was written while it was off"
+    );
+    // The absorb holds the item, so the switch back on is the next pass's
+    // to make — from the source it just wrote.
+    resettle(&w);
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .contains("Edited while off."),
+        "and the rendering that comes back on is that same content"
+    );
+}

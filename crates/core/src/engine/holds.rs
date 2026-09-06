@@ -55,11 +55,12 @@ pub(super) fn hold_rev_conflict(
 /// sibling, so enabling it plans against a path that does not exist yet;
 /// the sibling is checked too, or an edit made while the item was off
 /// would be overwritten the moment it came back on.
-fn observed_artifact_hash(artifact: &Artifact) -> Option<String> {
+fn observed_artifact_hash(artifact: &Artifact) -> Option<(PathBuf, String)> {
     let here = |p: &std::path::Path| {
         (!p.is_symlink() && p.exists())
             .then(|| crate::hash::hash_tree(p).ok())
             .flatten()
+            .map(|hash| (p.to_path_buf(), hash))
     };
     let path = compared_position(artifact)?;
     here(path).or_else(|| here(&disabled_sibling(path)))
@@ -196,7 +197,7 @@ pub(super) fn hold_local_edit(
     manifest: &crate::manifest::Manifest,
     sink: &mut PlanSink,
 ) -> bool {
-    let (Some(disk), Some(compared)) = (
+    let (Some((read_at, disk)), Some(compared)) = (
         observed_artifact_hash(&item.artifact),
         compared_position(&item.artifact),
     ) else {
@@ -205,9 +206,6 @@ pub(super) fn hold_local_edit(
     let wanted = item.artifact.disk_hash();
     if disk == wanted {
         return false;
-    }
-    if absorb_fork_edit(env, item, scope, lock, manifest, compared, &disk, sink) {
-        return true;
     }
     // Bytes some apply provably wrote *at this location* are never an
     // edit: per-tool variants share and collapse trees, and a command
@@ -218,6 +216,11 @@ pub(super) fn hold_local_edit(
     let here = item.artifact.paths();
     if wrote_here(env, scope, lock, &here, &disk) {
         return false;
+    }
+    if absorb_fork_edit(
+        env, item, scope, lock, manifest, compared, &read_at, &disk, sink,
+    ) {
+        return true;
     }
     let recorded = lock
         .entries
@@ -269,6 +272,14 @@ pub(super) fn hold_local_edit(
 /// of the source that moved, and `apply` and the Library's check agree
 /// with no decision left for either to report.
 ///
+/// Asked after the authorship test, never before it. Bytes an apply
+/// provably wrote at this position are not a hand edit however far they
+/// sit from what is wanted now — a collapsed tree, a per-tool variant, a
+/// command taking its name back — and capturing those into the fork's
+/// source would make one rendering's output another package's content.
+/// Nothing is lost by the order: once the source holds the edit the
+/// rendering matches it, and this pass returns at its first guard.
+///
 /// Writing the source is what makes that true rather than merely recorded,
 /// and it is not optional. `rendered_hash` is the anchor the whole engine
 /// reads as bytes an apply wrote — `wrote_here` here, `removal::edit_holds`
@@ -290,6 +301,7 @@ fn absorb_fork_edit(
     lock: &Lock,
     manifest: &crate::manifest::Manifest,
     compared: &std::path::Path,
+    read_at: &std::path::Path,
     disk: &str,
     sink: &mut PlanSink,
 ) -> bool {
@@ -318,7 +330,7 @@ fn absorb_fork_edit(
     // `rendered_hash` would be the very claim this absorb exists to make
     // true — so it is left to the edit hold, which keeps it and says so.
     let package = (item.kind, item.name.clone());
-    let position = base_position(compared);
+    let position = base_position(read_at);
     match sink.absorbed.get(&package) {
         Some(captured) => {
             if captured != &position {
@@ -333,7 +345,7 @@ fn absorb_fork_edit(
                 item.kind,
                 &item.name,
                 item.harness,
-                compared,
+                read_at,
             ) else {
                 return false;
             };
