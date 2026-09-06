@@ -40,7 +40,7 @@ The other hook events cannot stop anything in Pi, so the extension delivers what
 
 - Every hook whose matcher fits runs on those three events.
 - A hook that exits `2` hands the agent what it wrote to its error output, and one that exits `0` hands over what it wrote to its normal output.
-- Any other exit status, a hook that runs out of time, and a script that is missing are each reported to the agent as a hook that did not run.
+- Any other exit status is reported to the agent as a hook that reached no verdict; a hook that ran out of time, or whose script is missing, is reported as one that did not run.
 - A `PostToolUse` matcher is matched against the tool's name, and a `SessionStart` matcher against why the session started: `startup`, `resume` or `clear`.
 - `Stop` and `TaskCompleted` hooks take no matcher, so both always run.
 
