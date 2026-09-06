@@ -32,7 +32,9 @@ use serde_json::Value;
 
 /// The rendered script prints the file that ran, so a command resolving to
 /// another tree's copy — or to nothing at all — cannot pass for this one.
-const AUDIT_HOOK: &str = "#!/usr/bin/env bash\n# ---\n# name: audit\n# event: PreToolUse\n# matcher: Bash\n# description: log shell commands\n# ---\nprintf '%s\\n' \"$0\"\n";
+/// Antigravity is reached only by a hook that names it, so the line names
+/// every harness here.
+const AUDIT_HOOK: &str = "#!/usr/bin/env bash\n# ---\n# name: audit\n# event: PreToolUse\n# matcher: Bash\n# description: log shell commands\n# harnesses: [codex, gemini, copilot, pi, antigravity]\n# ---\nprintf '%s\\n' \"$0\"\n";
 
 /// Where each harness registers a project hook, and where the JSON it writes
 /// keeps the command: the registry, the path to the command inside it, and the
@@ -61,6 +63,12 @@ const HARNESSES: &[(&str, &str, &[&str], &str)] = &[
         ".pi/kendex/hooks.json",
         &["hooks", "tool_call", "0", "hooks", "0", "command"],
         ".pi/kendex/hooks/audit.sh",
+    ),
+    (
+        "antigravity",
+        ".agents/hooks.json",
+        &["audit", "PreToolUse", "0", "hooks", "0", "command"],
+        ".agents/hooks/audit.sh",
     ),
 ];
 

@@ -208,9 +208,13 @@ fn a_hook_registers_under_its_name_in_the_roots_hooks_json() {
     assert_eq!(group["matcher"], "run_command");
     let entry = &group["hooks"][0];
     assert_eq!(entry["type"], "command");
-    assert_eq!(
-        entry["command"],
-        "bash \"$(git rev-parse --show-toplevel)/.agents/hooks/audit.sh\""
+    // The command finds the script when it runs and names no directory of
+    // this machine's, so a repository can commit the registry it is in.
+    let command = entry["command"].as_str().unwrap();
+    assert!(command.contains("p='.agents/hooks/audit.sh'"), "{command}");
+    assert!(
+        !command.contains(&*f.project.to_string_lossy()),
+        "{command}"
     );
     assert_eq!(entry["timeout"], 10);
     assert_eq!(

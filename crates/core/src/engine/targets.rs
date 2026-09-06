@@ -232,7 +232,7 @@ pub(crate) fn hook_target(
         // either scope, the entries keyed by hook name. The loader reads
         // nothing else from a `hooks/` directory beside it, so the script
         // sits there. Its documented project variable is none, so the
-        // project command resolves through the repo root itself.
+        // project command finds the script itself (`project_command`).
         HarnessId::Antigravity => Some(antigravity_hook(env, scope, name)),
     }
 }
@@ -247,9 +247,7 @@ fn antigravity_hook(env: &Env, scope: &Scope, name: &str) -> HookTarget {
     let path = root.join("hooks").join(format!("{name}.sh"));
     let command = match scope {
         Scope::Global => format!("bash \"{}\"", crate::paths::slashed(&path)),
-        Scope::Project { .. } => {
-            format!("bash \"$(git rev-parse --show-toplevel)/.agents/hooks/{name}.sh\"")
-        }
+        Scope::Project { .. } => project_command(&format!(".agents/hooks/{name}.sh")),
     };
     HookTarget::Script {
         path,

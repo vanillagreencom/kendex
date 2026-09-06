@@ -151,7 +151,7 @@ fn an_antigravity_hook_registers_by_name_in_the_roots_hooks_json() {
         hook_target(&env, &scope, HarnessId::Antigravity, "audit"),
         Some(HookTarget::Script {
             path: PathBuf::from("/p/.agents/hooks/audit.sh"),
-            command: "bash \"$(git rev-parse --show-toplevel)/.agents/hooks/audit.sh\"".into(),
+            command: project_command(".agents/hooks/audit.sh"),
             registry: PathBuf::from("/p/.agents/hooks.json"),
             format: HookFormat::Antigravity,
             feature: None,
