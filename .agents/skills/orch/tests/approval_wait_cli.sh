@@ -38,7 +38,7 @@ chmod +x "$TMP_ROOT/bin/gh"
 # `dotenv` and `dotenvlocal` a `.env` or `.env.local` line per pair. A key
 # listed twice is written twice.
 stage() {
-  local project="$TMP_ROOT/$1" spec="$2" items item kind pairs pair path
+  local project="$TMP_ROOT/$1" spec="$2" items item kind pairs assignments pair path
   rm -f -- "$project/kendex.settings.toml" "$project/alt-settings.toml" "$project/.env" "$project/.env.local" "$project/.kendex/settings.toml"
   [[ -n "$spec" ]] || return 0
   IFS=';' read -ra items <<<"$spec"
@@ -53,8 +53,8 @@ stage() {
       *) echo "stage: unknown file kind $kind" >&2; exit 1 ;;
     esac
     case "$kind" in settings|alt|kendex) printf '[env]\n' > "$path" ;; *) : > "$path" ;; esac
-    IFS=',' read -ra pair <<<"$pairs"
-    for pair in "${pair[@]}"; do
+    IFS=',' read -ra assignments <<<"$pairs"
+    for pair in "${assignments[@]}"; do
       case "$kind" in
         settings|alt|kendex) printf '%s = "%s"\n' "${pair%%=*}" "${pair#*=}" >> "$path" ;;
         *) printf '%s\n' "$pair" >> "$path" ;;
@@ -81,7 +81,8 @@ run() {
 }
 
 # observe EXPECT — prints the run's value of every `name=` field EXPECT names,
-# in EXPECT's order (`+` reads as a space in a needle):
+# in EXPECT's order (`+` reads as a space in a needle, so a literal plus cannot
+# be pinned; no field carries one):
 #   rc              exit status
 #   mode            stdout whole, `EMPTY` when nothing was printed
 #   stdout~<text>   whether stdout carries <text>
@@ -89,6 +90,7 @@ run() {
 #   gh              `called` when the gh stub was reached, else `uncalled`
 observe() {
   local got="" token name value needle
+  set -f
   for token in $1; do
     name="${token%%=*}"
     case "$name" in
@@ -101,6 +103,7 @@ observe() {
     esac
     got="$got $name=$value"
   done
+  set +f
   printf '%s' "${got# }"
 }
 
@@ -147,6 +150,7 @@ resolve_table \
   "a non-off REVIEW_GATE_MODE never narrows here|gate|REVIEW_GATE_MODE=bogus PR_REVIEW_GATE=review||mode=review" \
   "a settings-file REVIEW_GATE_MODE=off applies|gate||settings:REVIEW_GATE_MODE=off,PR_REVIEW_GATE=review|mode=off" \
   "a .env REVIEW_GATE_MODE=off is read by nothing|gate||dotenv:REVIEW_GATE_MODE=off|mode=approval" \
+  "a .env PR_REVIEW_GATE is read by nothing either: the loader skips .env|gate||dotenv:PR_REVIEW_GATE=review|mode=approval" \
   "a parent-environment off still applies beside a dotenv file|gate|REVIEW_GATE_MODE=off|dotenv:REVIEW_GATE_MODE=off|mode=off" \
   "a settings-file off still applies beside a dotenv file|gate||settings:REVIEW_GATE_MODE=off;dotenv:REVIEW_GATE_MODE=off|mode=off" \
   "a .env.local REVIEW_GATE_MODE=off is ignored, the per-key exception|gate||dotenvlocal:REVIEW_GATE_MODE=off|mode=approval" \
@@ -165,6 +169,7 @@ stage gate ""
 for row in \
   "--help prints the contract on stdout, exits 0 and never invokes gh|--help|rc=0 stdout~Usage:+approval-wait=true stdout~Exit+codes:=true stdout~proceeded=true stdout~PR_REVIEW_ON_TIMEOUT=true gh=uncalled" \
   "-h prints usage|-h|rc=0 stdout~Usage:+approval-wait=true" \
+  "a bare help prints usage|help|rc=0 stdout~Usage:+approval-wait=true" \
   "an unknown flag exits 2, is named, and never invokes gh|--bogus-flag|rc=2 stderr~unknown+option=true gh=uncalled" \
   "a missing PR# exits 2 and names the argument||rc=2 stderr~missing+required+<PR#>=true" \
   "--mode without a value exits 2 and names the requirement|1 --mode|rc=2 stderr~requires+a+value=true" \
