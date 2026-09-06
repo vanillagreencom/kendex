@@ -181,6 +181,10 @@ git -C "$ROOT/main" push -q origin "main:refs/heads/fix/widget-expiry"
 (cd "$ROOT/main" && "$WORKTREE_SCRIPT" remove issue-fork >/dev/null 2>&1) || true # exits 1: the open PR's branch stays
 assert_path_absent "$FORK_WT" "remove clears the fork worktree"
 assert_eq "$(git -C "$ROOT/main" rev-parse --verify --quiet refs/heads/fix/widget-expiry || true)" "$FORK_HEAD" "remove keeps the open PR's local branch at the first head"
+# The stale branch also carries tracking config pointing at that unrelated
+# origin branch; -B preserves it, so the create must clear it afterwards.
+git -C "$ROOT/main" fetch -q origin
+git -C "$ROOT/main" branch -q --set-upstream-to=origin/fix/widget-expiry fix/widget-expiry
 set +e
 again_out="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-fork --pr 7 2>"$ROOT/again.err")"
 again_code=$?

@@ -3934,7 +3934,16 @@ case "${1:-}" in
         # the contributor's name and no upstream. -B resets the branch a
         # previous inspection left behind; ensure_fork_branch_resettable has
         # already refused a branch that reset would lose commits from.
+        # --no-track skips new tracking config, but -B keeps an upstream a
+        # pre-existing branch carried; drop it so a push cannot reach an
+        # unrelated origin branch of the same name.
         git -C "$PROJECT_ROOT" worktree add --no-track -B "$BASE" "$WT_PATH" "$PR_HEAD_OID" >/dev/null 2>&1
+        if git -C "$WT_PATH" config --get "branch.$BASE.merge" >/dev/null 2>&1; then
+          git -C "$WT_PATH" branch --unset-upstream "$BASE" >/dev/null 2>&1 || {
+            echo "Error: could not clear the upstream of branch '$BASE' in $WT_PATH" >&2
+            exit 1
+          }
+        fi
       else
         git -C "$PROJECT_ROOT" worktree add --track -b "$BASE" "$WT_PATH" "origin/$BASE" >/dev/null 2>&1 || \
           git -C "$PROJECT_ROOT" worktree add "$WT_PATH" "$BASE" >/dev/null 2>&1
