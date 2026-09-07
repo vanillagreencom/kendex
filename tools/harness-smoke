@@ -5,36 +5,51 @@
 # tool that has to read the render, so a render that is well-formed by
 # kendex's rules and rejected by its harness passes both. This check installs
 # a fixture catalog (one skill, one agent, one SessionStart hook, one
-# PreToolUse hook) into a scratch project for every harness, then asks each
-# harness what it loaded through the surface that harness exposes, and reads
-# a marker the hooks write when the harness runs them.
+# PreToolUse hook, one command, one stdio MCP server, one Pi extension) into
+# a scratch project for every harness, then asks each harness what it loaded
+# through the surface that harness exposes, and reads a marker the hooks, the
+# MCP server and the Pi extension write when the harness runs them.
 #
-# One row per harness per question: skill, agent, hook. A row is `pass`,
+# One row per harness per question, and only for the kinds that harness
+# installs: skill, agent and hook everywhere; command on Claude, Codex,
+# OpenCode, Pi and Gemini; mcp on every harness but Pi; pi-ext on Pi alone.
+# Plugin has no row anywhere — `Plugin` has `install: NONE` on all eight
+# harnesses, so kendex renders no plugin for one to load. A row is `pass`,
 # `fail`, `advisory` (the harness runs no hooks; kendex installs text, and
 # the row checks the harness lists that text), `unanswerable` (this machine
 # or this harness cannot answer, with the reason), or `skipped` (left out by
 # --only). Silence is never a pass: a run that says nothing about the
-# package is a fail, a run the harness could not complete is unanswerable
-# with its last line, and Antigravity, which this check does not ask, gets
-# unanswerable rows rather than none.
+# package is a fail, and a run the harness could not complete is
+# unanswerable with its last line.
 #
 # The scratch projects live under tmp/ in this checkout, one git repository
 # per harness with the fixture installed for that harness alone, so no harness
 # reads them as part of this checkout, no harness answers for another's
 # render, and kendex's project-scope writes land nowhere shared. Per-harness gates the check has to
 # open, each said on its row: Codex runs project hooks only after persisted
-# hook trust, so the exec run carries --dangerously-bypass-hook-trust; Copilot
+# hook trust, so the exec run carries --dangerously-bypass-hook-trust, and it
+# reads a project's `config.toml` only once that project is trusted, so every
+# codex run goes through an isolated CODEX_HOME that trusts the scratch
+# project and keeps `codex exec`'s own trust write out of the real config;
+# a project `.mcp.json` server starts as pending approval on Claude, so its
+# mcp row runs under an isolated CLAUDE_CONFIG_DIR that approves it; Copilot
 # runs repository hooks only for a folder its settings name in
 # `trustedFolders`, so its runs use an isolated COPILOT_HOME that copies the
-# login record and trusts the scratch project; Pi's carrier dispatches only
-# the tool_call listener, so its hook row asks the model for one tool call.
+# login record and trusts the scratch project; Cursor loads a project server
+# only after `cursor-agent mcp enable`, which records the approval under
+# HOME, so its mcp row runs under an isolated HOME; Pi's carrier dispatches
+# only the tool_call listener, so its hook row asks the model for one tool
+# call. Antigravity is the one harness with no config-root knob at all — its
+# root is a fixed `~/.gemini/config` and a copied credential set makes agy
+# hang on its login flow — so its row runs against the operator's real root
+# and leaves one project record and one log file there per run.
 #
 # Exit 0 when every row passed (advisory and skipped included), 1 when any
 # row failed, 2 when the fixture could not be installed or `kendex verify`
 # refused it, 3 when nothing failed but a row was unanswerable, so a harness
-# that died on the render never reads as a clean run. Model turns: two on
-# claude, one each on codex, pi, gemini and copilot, one on cursor when
-# logged in.
+# that died on the render never reads as a clean run. Model turns: three on
+# claude, one each on codex, pi, gemini, copilot and antigravity, one on
+# cursor when logged in.
 set -euo pipefail
 
 usage() {
@@ -68,7 +83,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-for tool in kendex git jq; do
+for tool in kendex git jq node; do
   command -v "$tool" >/dev/null 2>&1 || {
     printf 'harness-smoke: %s is required\n' "$tool" >&2
     exit 2
@@ -93,12 +108,19 @@ trap cleanup EXIT
 
 CATALOG="$DIR/catalog"
 LOGS="$DIR/logs"
-mkdir -p "$CATALOG/skills/smoke-skill" "$CATALOG/agents" "$CATALOG/hooks" "$LOGS"
+SERVER="$DIR/mcp-server.mjs"
+mkdir -p "$CATALOG/skills/smoke-skill" "$CATALOG/agents" "$CATALOG/hooks" \
+  "$CATALOG/commands" "$CATALOG/mcp" "$CATALOG/pi-extensions/smoke-ext/extensions" "$LOGS"
 
 # ---- the fixture catalog ---------------------------------------------------
 # Each item answers with a token no harness would emit on its own, and each
 # hook appends the event and its own rendered path to the marker, so a row can
 # tell the harness's copy of the script from a cross-read of another tool's.
+# The MCP server and the Pi extension append their own line to the same
+# marker when the harness starts them, which is the second proof on the rows
+# whose listing reports a live connection rather than a config reading.
+COMMAND_ANSWER=SMOKE-COMMAND-LOADED
+COMMAND_BODY="Reply with exactly $COMMAND_ANSWER and nothing else."
 cat >"$CATALOG/kendex.toml" <<'EOF'
 is_source_catalog = true
 
@@ -125,6 +147,13 @@ description: Harness smoke fixture agent; proves a kendex-rendered agent loads.
 ---
 
 You are the smoke agent. Reply with exactly SMOKE-AGENT-LOADED and nothing else.
+EOF
+cat >"$CATALOG/commands/smoke-command.md" <<EOF
+---
+description: "Harness smoke fixture command: proves a kendex-rendered command loads."
+---
+
+$COMMAND_BODY
 EOF
 hook_body() { # EVENT — the shared body every fixture hook runs
   cat <<EOF
@@ -162,6 +191,73 @@ EOF
 } >"$CATALOG/hooks/smoke-tool.sh"
 chmod +x "$CATALOG/hooks/smoke-session.sh" "$CATALOG/hooks/smoke-tool.sh"
 
+# The server is a real stdio MCP endpoint, so a harness that starts it gets an
+# `initialize` and a `tools/list` it accepts rather than a process that dies
+# and reads as a broken render. It writes its marker line before anything
+# else, so a start that the harness then rejects still leaves the proof.
+cat >"$SERVER" <<'EOF'
+#!/usr/bin/env node
+import { appendFileSync } from 'node:fs';
+try { appendFileSync(process.cwd() + '/smoke-fired', `McpStart ${process.cwd()}\n`); } catch {}
+let buf = '';
+process.stdin.on('data', (chunk) => {
+  buf += chunk;
+  let cut;
+  while ((cut = buf.indexOf('\n')) >= 0) {
+    const line = buf.slice(0, cut);
+    buf = buf.slice(cut + 1);
+    if (!line.trim()) continue;
+    let msg;
+    try { msg = JSON.parse(line); } catch { continue; }
+    if (msg.id === undefined) continue;
+    let result = {};
+    if (msg.method === 'initialize') {
+      result = {
+        protocolVersion: msg.params?.protocolVersion || '2025-06-18',
+        capabilities: { tools: {} },
+        serverInfo: { name: 'smoke-mcp', version: '1.0.0' },
+      };
+    } else if (msg.method === 'tools/list') {
+      result = { tools: [{
+        name: 'smoke_mcp_loaded',
+        description: 'Returns SMOKE-MCP-LOADED.',
+        inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      }] };
+    } else if (msg.method === 'tools/call') {
+      result = { content: [{ type: 'text', text: 'SMOKE-MCP-LOADED' }] };
+    }
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\n');
+  }
+});
+process.stdin.on('end', () => process.exit(0));
+EOF
+printf 'command = "node"\nargs = ["%s"]\n' "$SERVER" >"$CATALOG/mcp/smoke-mcp.toml"
+
+# The Pi extension is an npm package Pi loads on any start. Its package name
+# is the name the carrier installs under and the name the install record is
+# checked against, so the directory, the package name and the manifest key
+# below are one word.
+cat >"$CATALOG/pi-extensions/smoke-ext/package.json" <<'EOF'
+{
+  "name": "smoke-ext",
+  "version": "1.0.0",
+  "description": "Harness smoke fixture Pi extension; proves a kendex-installed Pi extension loads.",
+  "license": "MIT",
+  "keywords": ["pi-package", "pi"],
+  "pi": { "extensions": ["./extensions/smoke.js"] },
+  "files": ["extensions/", "package.json"],
+  "author": "kendex",
+  "engines": { "node": ">=22.19.0" }
+}
+EOF
+cat >"$CATALOG/pi-extensions/smoke-ext/extensions/smoke.js" <<'EOF'
+import { appendFileSync } from "node:fs";
+try {
+  appendFileSync(process.cwd() + "/smoke-fired", `PiExtension ${process.cwd()}\n`);
+} catch {}
+export default function activate() {}
+EOF
+
 # ---- one scratch project per harness ---------------------------------------
 # Every harness gets the fixture installed for it alone. Several tools
 # cross-read another tool's directories (Copilot reads .claude/agents and
@@ -169,6 +265,24 @@ chmod +x "$CATALOG/hooks/smoke-session.sh" "$CATALOG/hooks/smoke-tool.sh"
 # all-harness install would let one harness answer for another's render.
 PROJECT=""
 MARKER=""
+add_flags() { # HARNESS — the kendex add flags for the kinds it installs
+  # `crates/core/src/harness/caps.rs::capabilities` is the source: a harness
+  # whose `install` is NONE for a kind has no render to ask about, so the
+  # kind is left out here and the harness gets no row for it below.
+  printf '%s' '--skill smoke-skill --agent smoke-agent --hook smoke-session,smoke-tool'
+  case "$1" in
+    claude | codex | opencode | pi | gemini) printf ' %s' '--command smoke-command' ;;
+  esac
+  case "$1" in
+    claude | codex | opencode | cursor | gemini | copilot | antigravity)
+      printf ' %s' '--mcp-server smoke-mcp' ;;
+  esac
+}
+refused() { # HARNESS VERB LOG — the fixture install did not finish
+  printf 'harness-smoke: %s for %s; %s says why\n' "$2" "$1" "$3" >&2
+  KEEP=1
+  exit 2
+}
 install_for() { # HARNESS — sets PROJECT and MARKER, exits 2 when kendex cannot install or verify
   PROJECT="$DIR/$1/project"
   MARKER="$PROJECT/smoke-fired"
@@ -178,16 +292,25 @@ install_for() { # HARNESS — sets PROJECT and MARKER, exits 2 when kendex canno
   git -C "$PROJECT" config user.name harness-smoke
   git -C "$PROJECT" commit -q --allow-empty -m 'scratch project for tools/harness-smoke'
   printf 'schema = 6\n' >"$PROJECT/kendex.toml"
-  if ! (cd "$PROJECT" && kendex add "$CATALOG" --skill smoke-skill --agent smoke-agent \
-    --hook smoke-session,smoke-tool --harness "$1" -y) >"$LOGS/$1-kendex-add.log" 2>&1; then
-    printf 'harness-smoke: the fixture did not install for %s; %s says why\n' "$1" "$LOGS/$1-kendex-add.log" >&2
-    KEEP=1
-    exit 2
+  # shellcheck disable=SC2046 # add_flags emits whole flags to be split.
+  if ! (cd "$PROJECT" && kendex add "$CATALOG" $(add_flags "$1") --harness "$1" -y) \
+    >"$LOGS/$1-kendex-add.log" 2>&1; then
+    refused "$1" 'the fixture did not install' "$LOGS/$1-kendex-add.log"
+  fi
+  if [ "$1" = pi ]; then
+    # `kendex add --pi-extension` refuses by design: a Pi extension is
+    # declared under [pi-extensions] in the scope's manifest and installed by
+    # the update-pi verb, which is the second install verb no other row
+    # touches. `catalog` is the source name kendex derived from $CATALOG's
+    # basename in the add above.
+    printf '\n[pi-extensions.smoke-ext]\nsource = "catalog"\nharnesses = ["pi"]\n' \
+      >>"$PROJECT/kendex.toml"
+    if ! (cd "$PROJECT" && kendex update-pi) >"$LOGS/$1-kendex-update-pi.log" 2>&1; then
+      refused "$1" 'the Pi extension did not install' "$LOGS/$1-kendex-update-pi.log"
+    fi
   fi
   if ! (cd "$PROJECT" && kendex verify --scope project) >"$LOGS/$1-kendex-verify.log" 2>&1; then
-    printf 'harness-smoke: kendex verify refused the fixture install for %s; %s says why\n' "$1" "$LOGS/$1-kendex-verify.log" >&2
-    KEEP=1
-    exit 2
+    refused "$1" 'kendex verify refused the fixture install' "$LOGS/$1-kendex-verify.log"
   fi
   printf 'kendex verify: clean for %s (%s)\n' "$1" "$PROJECT"
 }
@@ -200,7 +323,7 @@ row() { # HARNESS QUESTION RESULT EVIDENCE
   case "$3" in fail) FAILED=1 ;; unanswerable) UNANSWERED=1 ;; esac
   ROWS="$ROWS$(printf '| %s | %s | %s | %s |' "$1" "$2" "$3" "$4")
 "
-  printf '%-11s %-6s %-12s %s\n' "$1" "$2" "$3" "$4"
+  printf '%-11s %-8s %-12s %s\n' "$1" "$2" "$3" "$4"
 }
 have() { command -v "$1" >/dev/null 2>&1; }
 TIMEOUT=""
@@ -221,20 +344,32 @@ run() { # NAME CMD... — cwd is the scratch project
   printf '%s\n' "$OUT" >"$LOGS/$name.log"
 }
 last_line() { grep -v '^[[:space:]]*$' <<<"$OUT" | tail -n 1; }
-clip() { # TEXT — one evidence cell: leading space and pipes gone, at most 160 characters
-  printf '%s' "$1" | sed -e 's/^[[:space:]]*//' -e 's/|/¦/g' | cut -c1-160
+# The redirect is inside the group, so a missing marker takes the shell's own
+# diagnostic with it instead of printing it beside the row's real one.
+marker_text() { { tr '\n' ';' <"$MARKER"; } 2>/dev/null; }
+ESC=$(printf '\033')
+clip() { # TEXT — one evidence cell: colour, leading space and pipes gone, at most 160 characters
+  printf '%s' "$1" | sed -e "s/$ESC\\[[0-9;]*m//g" -e 's/^[[:space:]]*//' -e 's/|/¦/g' | cut -c1-160
 }
 # Judges OUT against what a loaded package makes the harness say. EXPECT is
 # the harness's yes, REJECT its explicit no; a run that ended non-zero with
 # neither is the harness failing to answer, and an answer with neither is a
 # fail because silence is not a pass. A model-relayed row anchors EXPECT to
 # a whole line, because a model asked for names it does not have tends to
-# name the missing thing in its denial.
-judge() { # HARNESS QUESTION EXPECT REJECT COMMAND-TEXT
+# name the missing thing in its denial. MARKER-LINE, where the row has one,
+# is a second and independent proof: the listing says the harness read the
+# render, and the line the fixture itself wrote says the harness started it.
+judge() { # HARNESS QUESTION EXPECT REJECT COMMAND-TEXT [MARKER-LINE]
   local hit
   if hit=$(grep -oE -m 1 -e "$3" <<<"$OUT") && [ -n "$hit" ]; then
     hit=${hit%%$'\n'*}
-    row "$1" "$2" pass "$5 said: $(clip "$hit")"
+    if [ -z "${6:-}" ]; then
+      row "$1" "$2" pass "$5 said: $(clip "$hit")"
+    elif [ -f "$MARKER" ] && grep -qF -- "$6" "$MARKER"; then
+      row "$1" "$2" pass "$5 said: $(clip "$hit"), and the fixture wrote '$6'"
+    else
+      row "$1" "$2" fail "$5 said: $(clip "$hit"), and the fixture never wrote '$6' (marker: $(marker_text))"
+    fi
   elif [ -n "$4" ] && hit=$(grep -E -m 1 -e "$4" <<<"$OUT") && [ -n "$hit" ]; then
     row "$1" "$2" fail "$5 said: $(clip "$hit")"
   elif [ "$STATUS" -ne 0 ]; then
@@ -249,7 +384,7 @@ fired() { # HARNESS EVENT RENDER-PATH COMMAND-TEXT — reads the marker
   elif [ "$STATUS" -ne 0 ] && ! grep -qiE 'hook' <<<"$OUT"; then
     row "$1" hook unanswerable "$4 exited $STATUS before any hook ran: $(clip "$(last_line)")"
   else
-    row "$1" hook fail "$4 did not run $3 at $2 (marker: $(cat "$MARKER" 2>/dev/null | tr '\n' ';'))"
+    row "$1" hook fail "$4 did not run $3 at $2 (marker: $(marker_text))"
   fi
 }
 # Reads one value out of the JSON a harness printed, into JSON_HIT. A harness
@@ -262,85 +397,169 @@ extract() { # JQ-FILTER [JQ-FLAGS...]
   JSON_HIT=""
   JSON_HIT=$(jq -r "$@" "$filter" <<<"$OUT" 2>/dev/null)
 }
-located() { # HARNESS COMMAND-TEXT JQ-FILTER [JQ-FLAGS...] — a skill row on a listing that carries the skill's path
-  local harness=$1 command=$2
-  shift 2
+located() { # HARNESS QUESTION RENDER-PATH COMMAND-TEXT JQ-FILTER [JQ-FLAGS...] — a listing that carries the item's path
+  local harness=$1 question=$2 rendered="$PROJECT/$3" command=$4
+  shift 4
   if [ "$STATUS" -ne 0 ]; then
-    row "$harness" skill unanswerable "$command exited $STATUS: $(clip "$(last_line)")"
+    row "$harness" "$question" unanswerable "$command exited $STATUS: $(clip "$(last_line)")"
   elif ! extract "$@"; then
-    row "$harness" skill fail "$command printed no JSON the row can read: $(clip "$(last_line)")"
-  elif [ "$JSON_HIT" = "$PROJECT/.agents/skills/smoke-skill/SKILL.md" ]; then
-    row "$harness" skill pass "$command lists smoke-skill at $JSON_HIT"
+    row "$harness" "$question" fail "$command printed no JSON the row can read: $(clip "$(last_line)")"
+  elif [ "$JSON_HIT" = "$rendered" ]; then
+    row "$harness" "$question" pass "$command lists it at $JSON_HIT"
   else
-    row "$harness" skill fail "$command lists smoke-skill at '${JSON_HIT:-nothing}'"
+    row "$harness" "$question" fail "$command lists it at '${JSON_HIT:-nothing}'"
   fi
 }
-absent() { # HARNESS — every row of a harness whose CLI is not installed
-  row "$1" skill unanswerable "$2 is not on PATH"
-  row "$1" agent unanswerable "$2 is not on PATH"
-  row "$1" hook unanswerable "$2 is not on PATH"
+holds() { # HARNESS QUESTION RENDER-PATH COMMAND-TEXT MARKER-LINE — a plain-text listing that names the render
+  if ! grep -qF -- "$PROJECT/$3" <<<"$OUT"; then
+    if [ "$STATUS" -ne 0 ]; then
+      row "$1" "$2" unanswerable "$4 exited $STATUS: $(clip "$(last_line)")"
+    else
+      row "$1" "$2" fail "$4 did not name $3; its last line: $(clip "$(last_line)")"
+    fi
+  elif [ -f "$MARKER" ] && grep -qF -- "$5" "$MARKER"; then
+    row "$1" "$2" pass "$4 names $3, and the fixture wrote '$5'"
+  else
+    row "$1" "$2" fail "$4 names $3, and the fixture never wrote '$5' (marker: $(marker_text))"
+  fi
+}
+questions() { # HARNESS — the rows this harness answers, in the order it answers them
+  case "$1" in
+    claude) printf '%s' 'skill hook agent command mcp' ;;
+    opencode | gemini) printf '%s' 'skill agent hook command mcp' ;;
+    codex) printf '%s' 'skill command agent hook mcp' ;;
+    pi) printf '%s' 'skill agent command pi-ext hook' ;;
+    *) printf '%s' 'skill agent hook mcp' ;;
+  esac
+}
+absent() { # HARNESS CLI — every row of a harness whose CLI is not installed
+  local q
+  for q in $(questions "$1"); do row "$1" "$q" unanswerable "$2 is not on PATH"; done
 }
 skipped() {
-  row "$1" skill skipped "not in --only"
-  row "$1" agent skipped "not in --only"
-  row "$1" hook skipped "not in --only"
+  local q
+  for q in $(questions "$1"); do row "$1" "$q" skipped 'not in --only'; done
 }
 wants() { case " $ONLY " in *" $1 "*) return 0 ;; esac; return 1; }
 
-# Claude Code: a slash invocation expands the skill or answers Unknown
-# command; --agent runs the session as that agent or lists what exists; the
-# SessionStart registration in .claude/settings.json runs the script.
+# An isolated config dir per harness that gates the project, holding a copy of
+# the login record and the one entry that opens the gate. The real config dir
+# is read and never written, and nothing here reaches a harness's own state.
+copied_home() { # NAME SOURCE-DIR FILE — prints the isolated dir
+  local home="$DIR/$1"
+  mkdir -p "$home"
+  [ -f "$2/$3" ] && cp "$2/$3" "$home/$3"
+  printf '%s' "$home"
+}
+
+# Claude Code: a slash invocation expands the skill or the command, or answers
+# Unknown command; --agent runs the session as that agent or lists what
+# exists; the SessionStart registration in .claude/settings.json runs the
+# script; `mcp list` reads .mcp.json and starts the server it names.
 claude_rows() {
   have claude || { absent claude claude; return; }
   install_for claude
+  # Every claude run goes through a CLAUDE_CONFIG_DIR of its own. A project
+  # `.mcp.json` server starts as `⏸ Pending approval`, and the approval is
+  # recorded per project in the config dir rather than in the render, so the
+  # mcp row needs one anyway; using it for the -p runs as well keeps a
+  # transcript directory for a dead scratch path out of the real config.
+  local home
+  home=$(copied_home claude-home "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" .credentials.json)
+  jq -n --arg p "$PROJECT" '{hasCompletedOnboarding: true, projects: {($p): {hasTrustDialogAccepted: true, enabledMcpjsonServers: ["smoke-mcp"]}}}' \
+    >"$home/.claude.json"
   rm -f -- "$MARKER"
-  run claude-skill claude -p '/smoke-skill'
+  run claude-skill env CLAUDE_CONFIG_DIR="$home" claude -p '/smoke-skill'
   judge claude skill 'SMOKE-SKILL-LOADED' 'Unknown command' 'claude -p /smoke-skill'
   fired claude SessionStart .claude/hooks/smoke-session.sh 'claude -p'
-  run claude-agent claude -p --agent smoke-agent 'Reply exactly as your agent instructions say.'
+  run claude-agent env CLAUDE_CONFIG_DIR="$home" claude -p --agent smoke-agent \
+    'Reply exactly as your agent instructions say.'
   judge claude agent 'SMOKE-AGENT-LOADED' 'not found' 'claude -p --agent smoke-agent'
+  run claude-command env CLAUDE_CONFIG_DIR="$home" claude -p '/smoke-command'
+  judge claude command "$COMMAND_ANSWER" 'Unknown command' 'claude -p /smoke-command'
+  rm -f -- "$MARKER"
+  run claude-mcp env CLAUDE_CONFIG_DIR="$home" claude mcp list
+  judge claude mcp 'smoke-mcp: .* Connected' 'smoke-mcp: .*(Pending approval|Failed)' \
+    'claude mcp list' "McpStart $PROJECT"
 }
 
 # Codex: `debug prompt-input` renders the skills block the model sees, no
-# model turn needed. Agents surface only as spawn_agent roles inside the tool
-# schema, so the model relays them; the same exec turn runs SessionStart,
+# model turn needed, and a Codex command installs as a skill, so both rows
+# read that one listing. Agents surface only as spawn_agent roles inside the
+# tool schema, so the model relays them; the same exec turn runs SessionStart,
 # which Codex gates on hook trust the flag stands in for.
 codex_rows() {
   have codex || { absent codex codex; return; }
   install_for codex
-  run codex-skill codex debug prompt-input
+  # Every codex run goes through a CODEX_HOME of its own: `codex exec`
+  # persists a trust entry for the directory it ran in, which would leave one
+  # dead scratch path in the real config per run, and Codex reads a project's
+  # `config.toml` only once that project is trusted, which is what the mcp row
+  # needs. The same command against the real CODEX_HOME lists the global
+  # servers and never smoke-mcp, which is the mcp row's must-fail control.
+  local home
+  home=$(copied_home codex-home "${CODEX_HOME:-$HOME/.codex}" auth.json)
+  printf '[projects."%s"]\ntrust_level = "trusted"\n' "$PROJECT" >"$home/config.toml"
+  run codex-skill env CODEX_HOME="$home" codex debug prompt-input
   judge codex skill '- smoke-skill: [^(]*\(file: r[0-9]+/smoke-skill/SKILL.md\)' '' 'codex debug prompt-input'
+  judge codex command '- smoke-command: [^(]*\(file: r[0-9]+/smoke-command/SKILL.md\)' '' \
+    'codex debug prompt-input (a Codex command installs as a skill)'
   rm -f -- "$MARKER"
-  run codex-agent codex exec --ephemeral --dangerously-bypass-hook-trust \
+  run codex-agent env CODEX_HOME="$home" codex exec --ephemeral --dangerously-bypass-hook-trust \
     'List the custom agent names available to spawn_agent, one per line, nothing else.'
   judge codex agent '^smoke-agent$' '' 'codex exec (model-relayed spawn_agent roles)'
   fired codex SessionStart .codex/hooks/smoke-session.sh 'codex exec --dangerously-bypass-hook-trust'
+  # A config reading and not a connection, so there is no marker to pin.
+  run codex-mcp env CODEX_HOME="$home" codex mcp list
+  judge codex mcp '^smoke-mcp .*enabled' '' 'codex mcp list (CODEX_HOME trusting the scratch project)'
 }
 
-# OpenCode: three debug listings, no model turn. OpenCode runs no hooks;
-# kendex installs the hook as an instruction file plus a config reference,
-# and the row checks the resolved config carries it.
+# OpenCode: three debug listings and one mcp listing, no model turn. OpenCode
+# runs no hooks; kendex installs the hook as an instruction file plus a config
+# reference, and the row checks the resolved config carries it — the same
+# resolved config that carries the command's template.
 opencode_rows() {
   have opencode || { absent opencode opencode; return; }
   install_for opencode
   run opencode-skill opencode debug skill
-  located opencode 'opencode debug skill' '.[] | select(.name == "smoke-skill") | .location'
+  located opencode skill .agents/skills/smoke-skill/SKILL.md 'opencode debug skill' \
+    '.[] | select(.name == "smoke-skill") | .location'
   run opencode-agent opencode agent list
   judge opencode agent '^smoke-agent \(subagent\)' '' 'opencode agent list'
-  run opencode-hook opencode debug config
+  run opencode-config opencode debug config
   if [ "$STATUS" -ne 0 ]; then
     row opencode hook unanswerable "opencode debug config exited $STATUS: $(clip "$(last_line)")"
-  elif ! extract '.instructions[]?'; then
-    row opencode hook fail "opencode debug config printed no JSON the row can read: $(clip "$(last_line)")"
-  elif grep -qFx -- '.opencode/instructions/kendex-hook-smoke-session.md' <<<"$JSON_HIT"; then
-    row opencode hook advisory 'no hook runs on OpenCode; opencode debug config lists .opencode/instructions/kendex-hook-smoke-session.md'
+    row opencode command unanswerable "opencode debug config exited $STATUS: $(clip "$(last_line)")"
   else
-    row opencode hook fail 'no hook runs on OpenCode, and opencode debug config does not list .opencode/instructions/kendex-hook-smoke-session.md'
+    if ! extract '.instructions[]?'; then
+      row opencode hook fail "opencode debug config printed no JSON the row can read: $(clip "$(last_line)")"
+    elif grep -qFx -- '.opencode/instructions/kendex-hook-smoke-session.md' <<<"$JSON_HIT"; then
+      row opencode hook advisory 'no hook runs on OpenCode; opencode debug config lists .opencode/instructions/kendex-hook-smoke-session.md'
+    else
+      row opencode hook fail 'no hook runs on OpenCode, and opencode debug config does not list .opencode/instructions/kendex-hook-smoke-session.md'
+    fi
+    if ! extract '.command["smoke-command"].template'; then
+      row opencode command fail "opencode debug config printed no JSON the row can read: $(clip "$(last_line)")"
+    elif [ "$JSON_HIT" = "$COMMAND_BODY" ]; then
+      row opencode command pass 'opencode debug config resolves smoke-command to the rendered template'
+    else
+      row opencode command fail "opencode debug config resolves smoke-command to '${JSON_HIT:-nothing}'"
+    fi
   fi
+  rm -f -- "$MARKER"
+  run opencode-mcp opencode mcp list
+  # The other five statuses opencode can print for a server, so a refusal reads
+  # as the harness's no rather than as silence. None of them holds `connected`.
+  judge opencode mcp 'smoke-mcp.*connected' \
+    'smoke-mcp.*(failed|not initialized|disabled|needs )' \
+    'opencode mcp list' "McpStart $PROJECT"
 }
 
 # Cursor: no listing surface for rules or skills, so the model is asked to
-# name what it was given; the hook is a rule, never run.
+# name what it was given; the hook is a rule, never run. The mcp row needs no
+# login — everything the CLI reads off disk and starts locally answers while
+# cursor-agent is logged out — but it does need the project approval that
+# `mcp enable` records under HOME, so it runs under a HOME of its own.
 cursor_rows() {
   have cursor-agent || { absent cursor cursor-agent; return; }
   install_for cursor
@@ -350,46 +569,68 @@ cursor_rows() {
     row cursor skill unanswerable "$why"
     row cursor agent unanswerable "$why"
     row cursor hook unanswerable "no hook runs on Cursor; $why"
-    return
-  fi
-  run cursor-list cursor-agent -p --trust --output-format text \
-    'List the names of every rule and skill available to you, one per line, nothing else.'
-  judge cursor skill '^smoke-skill$' '' 'cursor-agent -p (model-relayed listing)'
-  judge cursor agent '^smoke-agent$' '' 'cursor-agent -p (model-relayed listing)'
-  if grep -qE '^safety-smoke-session$' <<<"$OUT"; then
-    row cursor hook advisory 'no hook runs on Cursor; the model lists the safety-smoke-session rule'
-  elif [ "$STATUS" -ne 0 ]; then
-    row cursor hook unanswerable "cursor-agent -p exited $STATUS: $(clip "$(last_line)")"
   else
-    row cursor hook fail 'no hook runs on Cursor, and the model did not list the safety-smoke-session rule'
+    run cursor-list cursor-agent -p --trust --output-format text \
+      'List the names of every rule and skill available to you, one per line, nothing else.'
+    judge cursor skill '^smoke-skill$' '' 'cursor-agent -p (model-relayed listing)'
+    judge cursor agent '^smoke-agent$' '' 'cursor-agent -p (model-relayed listing)'
+    if grep -qE '^safety-smoke-session$' <<<"$OUT"; then
+      row cursor hook advisory 'no hook runs on Cursor; the model lists the safety-smoke-session rule'
+    elif [ "$STATUS" -ne 0 ]; then
+      row cursor hook unanswerable "cursor-agent -p exited $STATUS: $(clip "$(last_line)")"
+    else
+      row cursor hook fail 'no hook runs on Cursor, and the model did not list the safety-smoke-session rule'
+    fi
   fi
+  local home="$DIR/cursor-home"
+  mkdir -p "$home"
+  rm -f -- "$MARKER"
+  # Before the approval the same listing says `not loaded (needs approval)`,
+  # which is this row's must-fail control.
+  run cursor-mcp-enable env HOME="$home" cursor-agent mcp enable smoke-mcp
+  run cursor-mcp env HOME="$home" cursor-agent mcp list
+  judge cursor mcp '^smoke-mcp: ready' '^smoke-mcp: not loaded' \
+    'cursor-agent mcp enable, then mcp list' "McpStart $PROJECT"
 }
 
-# Pi: get_commands over RPC lists every skill as a skill: command with its
-# path. Pi core has no agent surface: .pi/agents/*.md is read by the
-# pi-agents-tmux extension, which lists agents only in its dashboard. The
-# pi-hooks carrier dispatches tool_call alone, so the hook row asks for one
-# tool call; the SessionStart registration is written and never dispatched.
+# Pi: get_commands over RPC lists every skill as a skill: command and every
+# prompt template as a command, each with its rendered path, so one RPC run
+# answers both rows and starts the extension that writes its own marker line.
+# Pi core has no agent surface: .pi/agents/*.md is read by the pi-agents-tmux
+# extension, which lists agents only in its dashboard. The pi-hooks carrier
+# dispatches tool_call alone, so the hook row asks for one tool call; the
+# SessionStart registration is written and never dispatched. Pi reads no MCP
+# servers at all, so it gets no mcp row.
 pi_rows() {
   have pi || { absent pi pi; return; }
   install_for pi
+  rm -f -- "$MARKER"
   STATUS=0
   OUT=$(cd "$PROJECT" && printf '{"id":"1","type":"get_commands"}\n' | $TIMEOUT pi --mode rpc --approve --no-session 2>&1) || STATUS=$?
   printf '%s\n' "$OUT" >"$LOGS/pi-skill.log"
-  located pi 'pi --mode rpc get_commands' 'fromjson? | select(.type == "response" and .command == "get_commands") | .data.commands[] | select(.name == "skill:smoke-skill") | .sourceInfo.path' -R
+  located pi skill .agents/skills/smoke-skill/SKILL.md 'pi --mode rpc get_commands' \
+    'fromjson? | select(.type == "response" and .command == "get_commands") | .data.commands[] | select(.name == "skill:smoke-skill") | .sourceInfo.path' -R
   row pi agent unanswerable 'Pi core has no agent surface; .pi/agents/*.md is read by the pi-agents-tmux extension, which lists agents only in its interactive dashboard'
+  located pi command .pi/prompts/smoke-command.md 'pi --mode rpc get_commands' \
+    'fromjson? | select(.type == "response" and .command == "get_commands") | .data.commands[] | select(.name == "smoke-command") | .sourceInfo.path' -R
+  # The marker is deliberately not cleared here: `pi list` starts no session,
+  # so the PiExtension line this row reads is the one the RPC run above left,
+  # which is the same claim — any pi start loads the extension.
+  run pi-ext pi list
+  holds pi pi-ext .pi/packages/smoke-ext 'pi list' "PiExtension $PROJECT"
   rm -f -- "$MARKER"
   run pi-hook pi -p --approve --no-session \
     'Run the shell command true with your bash tool, then reply with exactly: ok'
   fired pi PreToolUse .pi/kendex/hooks/smoke-tool.sh 'pi -p (one tool call; SessionStart is registered and never dispatched by the carrier)'
 }
 
-# Gemini CLI: `skills list` names project skills with their location. No
-# listing names project agents: --debug prints only an AgentRegistry count,
-# which reads the same with the agent file removed. The SessionStart
-# registration runs before the model is reached, so the hook row stands
-# even where the model call fails; --debug makes Gemini name its hook run,
-# which tells a hook that did not run from a session that never started.
+# Gemini CLI: `skills list` names project skills with their location, and
+# `mcp list` starts the server it reads from the render. No listing names
+# project agents: --debug prints only an AgentRegistry count, which reads the
+# same with the agent file removed. The SessionStart registration runs before
+# the model is reached, so the hook row stands even where the model call
+# fails; --debug makes Gemini name its hook run, which tells a hook that did
+# not run from a session that never started.
 gemini_rows() {
   have gemini || { absent gemini gemini; return; }
   install_for gemini
@@ -408,18 +649,23 @@ gemini_rows() {
   rm -f -- "$MARKER"
   run gemini-hook gemini -p 'Reply with exactly: ok' --skip-trust --debug
   fired gemini SessionStart .gemini/hooks/smoke-session.sh 'gemini -p --skip-trust --debug'
+  row gemini command unanswerable 'gemini has no command listing: its four subcommands are mcp, extensions, skills and hooks, and --debug says nothing about .gemini/commands/*.toml. The one model-free enumeration, the availableCommands of an ACP session/new reply, is refused on this account with the migrate-to-Antigravity message that also fails every gemini -p run'
+  rm -f -- "$MARKER"
+  run gemini-mcp gemini mcp list
+  judge gemini mcp '✓ smoke-mcp: .*Connected' 'smoke-mcp: .*Disconnected' 'gemini mcp list' "McpStart $PROJECT"
 }
 
 # Copilot: `skill list` names repository skills; --agent runs the session as
-# the agent or lists what exists. Repository hooks run only for a folder the
-# settings name in trustedFolders, so the runs use an isolated COPILOT_HOME
-# holding a copy of the login record and that one trust entry.
+# the agent or lists what exists; `mcp list` reads .github/mcp.json. Repository
+# hooks run only for a folder the settings name in trustedFolders, so the runs
+# use an isolated COPILOT_HOME holding a copy of the login record and that one
+# trust entry. Copilot CLI reads no command surface of its own, so it gets no
+# command row.
 copilot_rows() {
   have copilot || { absent copilot copilot; return; }
   install_for copilot
-  local home="$DIR/copilot-home" source_home="${COPILOT_HOME:-$HOME/.copilot}"
-  mkdir -p "$home"
-  [ -f "$source_home/config.json" ] && cp "$source_home/config.json" "$home/config.json"
+  local home
+  home=$(copied_home copilot-home "${COPILOT_HOME:-$HOME/.copilot}" config.json)
   jq -n --arg p "$PROJECT" '{trustedFolders: [$p]}' >"$home/settings.json"
   run copilot-skill env COPILOT_HOME="$home" copilot skill list
   judge copilot skill '^  smoke-skill - .*' '' 'copilot skill list'
@@ -427,18 +673,31 @@ copilot_rows() {
   run copilot-agent env COPILOT_HOME="$home" copilot -p 'Reply exactly as your agent instructions say.' --agent smoke-agent --allow-all-tools -s
   judge copilot agent 'SMOKE-AGENT-LOADED' 'No such agent' 'copilot -p --agent smoke-agent'
   fired copilot SessionStart .github/hooks/smoke-session.sh 'copilot -p (COPILOT_HOME trusting the scratch project)'
+  # A config reading, not a connection, so there is no marker to pin.
+  run copilot-mcp env COPILOT_HOME="$home" copilot mcp list
+  judge copilot mcp '^ +smoke-mcp \(local\)' '' 'copilot mcp list'
 }
 
-# Antigravity (the agy CLI) is kendex's eighth harness and outside this
-# check's seven, so its rows say it was asked nothing rather than nothing.
+# Antigravity: the agy CLI reads the shared .agents/skills tree, and a slash
+# invocation in print mode expands the skill. `-p` swallows the next word, so
+# the prompt is attached to it and every other flag comes first. Its agent,
+# hook and MCP registries answer from the global root alone, so asking those
+# three would mean installing the fixture into the operator's own Antigravity
+# configuration; whether agy also reads the project renders kendex writes for
+# them is an open adapter question, so they are unanswerable here rather than
+# asked at a scope that cannot answer.
 antigravity_rows() {
-  local why='outside this check: Antigravity (agy) is not one of the seven harnesses the check asks, so nothing here starts it or reads what it loaded'
-  row antigravity skill unanswerable "$why"
+  have agy || { absent antigravity agy; return; }
+  install_for antigravity
+  run agy-skill agy --dangerously-skip-permissions -p=/smoke-skill
+  judge antigravity skill '^SMOKE-SKILL-LOADED$' '' 'agy -p=/smoke-skill'
+  local why='agy answers for agents, hooks and MCP servers from its global root alone, and this check installs no fixture into the real Antigravity configuration that would answer them; whether agy also reads the project renders kendex writes for them is an open adapter question'
   row antigravity agent unanswerable "$why"
   row antigravity hook unanswerable "$why"
+  row antigravity mcp unanswerable "$why"
 }
 
-printf '%-11s %-6s %-12s %s\n' harness row result evidence
+printf '%-11s %-8s %-12s %s\n' harness row result evidence
 for h in $HARNESSES; do
   if wants "$h"; then "${h}_rows"; else skipped "$h"; fi
 done
