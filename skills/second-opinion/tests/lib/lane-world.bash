@@ -12,7 +12,8 @@
 # words overriding earlier ones (the suite prepends its defaults); `build ROW
 # words...` makes it, `run` prints one line:
 #   rc=N out=<stdout> err=<the parent's own log> relay=<each lane's relayed outcome> art=<the artifact> files=<beside --output, with modes> home=<the artifact home> scratch=<what the sandbox holds> [probe=… state=…]
-# PROBE=1 prints every row's rendered line instead of asserting.
+# SECOND_OPINION_TABLE_PROBE=1 prints every row's rendered line instead of asserting it; a run
+# that asserted no row exits 2, and a row with an empty field is refused.
 
 set -euo pipefail
 
@@ -301,6 +302,8 @@ word() {
     # the single-lane control: roster codex, count 1
     single) W_SINGLE=1 ;;
     fs:dirsize) [[ "$DIR_HAS_SIZE" == true ]] || W_SKIP=dirsize ;;
+    # the world with nothing added
+    -) ;;
     *) echo "UNKNOWN-WORD: $1" >&2; exit 2 ;;
   esac
 }
@@ -590,10 +593,14 @@ unusable_reason() {
 
 # run_table TITLE DEFAULTS ROWS
 run_table() {
-  local title="$1" defaults="$2" rows="$3" n=0 label world rc out err want got
+  local title="$1" defaults="$2" rows="$3" n=0 label world rc out err want got row field
   echo "=== $title ==="
-  while IFS='|' read -r label world rc out err want; do
-    [[ -n "$label$world$rc$out$err$want" ]] || continue
+  while IFS= read -r row; do
+    [[ -n "$row" ]] || continue
+    IFS='|' read -r label world rc out err want <<<"$row"
+    for field in "$label" "$world" "$rc" "$out" "$err" "$want"; do
+      [[ -n "$field" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+    done
     n=$((n + 1))
     # shellcheck disable=SC2086
     build "row-$n" $defaults $world
@@ -606,12 +613,14 @@ run_table() {
       continue
     fi
     got="$(run)"
-    if [[ "${PROBE:-}" == 1 ]]; then
+    # A rendering aid for writing rows; the run is refused after the loop.
+    if [[ "${SECOND_OPINION_TABLE_PROBE:-}" == 1 ]]; then
       printf '%s => %s\n' "$label" "$got"
       continue
     fi
     assert_eq "$got" "rc=$rc out=$out err=$(err_text "$err") $want" "$label"
   done <<<"$rows"
+  [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 }
 
 finish() {

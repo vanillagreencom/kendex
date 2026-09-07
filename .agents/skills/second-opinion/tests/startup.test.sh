@@ -162,20 +162,26 @@ err_word() {
 }
 
 run_table() {
-  local title="$1" rows="$2" n=0 label world argv rc out err got
+  local title="$1" rows="$2" n=0 label world argv rc out err got row field
   echo "=== $title ==="
-  while IFS='|' read -r label world argv rc out err; do
-    [[ -n "$label$world$argv$rc$out$err" ]] || continue
+  while IFS= read -r row; do
+    [[ -n "$row" ]] || continue
+    IFS='|' read -r label world argv rc out err <<<"$row"
+    for field in "$label" "$world" "$argv" "$rc" "$out" "$err"; do
+      [[ -n "$field" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+    done
     n=$((n + 1))
     # shellcheck disable=SC2086
     build "row-$n" $world
     got="$(run "$argv")"
-    if [[ "${PROBE:-}" == 1 ]]; then
+    # A rendering aid for writing rows; the run is refused after the loop.
+    if [[ "${SECOND_OPINION_TABLE_PROBE:-}" == 1 ]]; then
       printf '%s => %s\n' "$label" "$got"
       continue
     fi
     assert_eq "$got" "rc=$rc out=$out err=$(err_text "$err")" "$label"
   done <<<"$rows"
+  [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 }
 
 run_table "the startup" "\

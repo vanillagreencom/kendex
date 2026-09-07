@@ -22,7 +22,7 @@ NONE="calls=claude:0,codex:0,extra:0 art=- files=-"
 
 # label|world|command|rc|out|err|calls art files
 ROWS="
-the default count is one opinion, the first eligible in priority order; none is the declared absence of a model, not a typo||review|0|<out>|single:codex:review:none written|calls=claude:0,codex:1,extra:0 art=external-codex/$OWN files=out
+the default count is one opinion, the first eligible in priority order; none is the declared absence of a model, not a typo|-|review|0|<out>|single:codex:review:none written|calls=claude:0,codex:1,extra:0 art=external-codex/$OWN files=out
 the session's own model is skipped and the next distinct model taken|current:codex|review|0|<out>|same:codex:codex single:claude:review:codex written|calls=claude:1,codex:0,extra:0 art=external-claude/$OWN files=out
 a forced target equal to the session model is refused with no artifact and no CLI spend, naming what the roster would pick|current:claude target:claude count:2|review|1|-|same:claude:claude refused:claude:1 hint:claude:codex|$NONE
 a --target flag refused the same way carries no settings hint|current:codex|review --target codex|1|-|same:codex:codex refused:codex:1|$NONE

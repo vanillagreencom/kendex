@@ -25,7 +25,7 @@ ROWS="
 a non-zero exit with the cause on stderr exits 5, preserves the record with the cause, names it on stderr, and does not retry|rc:1 stdout:- stderr:quota|review|5|-|header:review failed:exit:out:1 cause:stderr preserved:out|calls=1 files=out.failed.json=$FAILED_EXIT_STDERR $CLEAN
 an empty response on a zero exit is the same class, with the empty-response reason|rc:0 stdout:- stderr:quota|review|5|-|header:review failed:empty:out cause:stderr preserved:out|calls=1 files=out.failed.json=failed(returned an empty response on a zero exit — check CLI auth and configuration|claude stderr|quota) $CLEAN
 a timeout is a CLI failure too, with no cause block|sleep:5 timeout:1|review|5|-|header:review failed:timeout:out:1 preserved:out|calls=1 files=out.failed.json=failed(timed out after 1s|-|-) $CLEAN
-a valid response writes the artifact and no sidecar||review|0|<out>|header:review written|calls=1 files=out=review:external-claude:Clean $CLEAN
+a valid response writes the artifact and no sidecar|-|review|0|<out>|header:review written|calls=1 files=out=review:external-claude:Clean $CLEAN
 a failure reported on stdout with an empty stderr names the stdout cause|rc:1 stdout:quota stderr:-|review|5|-|header:review failed:exit:out:1 cause:stdout preserved:out|calls=1 files=out.failed.json=failed(exited with code 1|claude stdout|quota) $CLEAN
 audit carries the no-verdict contract too|rc:1 stdout:- stderr:quota|audit|5|-|header:audit failed:exit:out:1 cause:stderr preserved:out|calls=1 files=out.failed.json=$FAILED_EXIT_STDERR $CLEAN
 a quick-mode CLI failure keeps the generic exit 1 and writes no sidecar|rc:1 stdout:- stderr:quota|quick|1|-|header:quick generic:exit:1|calls=1 files=- $CLEAN
