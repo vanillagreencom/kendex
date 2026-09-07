@@ -87,7 +87,7 @@ The row format, the `!` carve and the `\!` escape are stated in `SKILL.md § Con
 
 ## Probing a terminal-only code path
 
-A headless suite cannot reach a branch that exists only at a tty (`mv` prompts before replacing a write-denied destination only there). `gg_pty_run CAP SCRIPT_FILE` in `tests/lib/pty.bash` runs a bash script with fds 0, 1 and 2 on a pseudo-terminal, picking the `script` grammar from `uname`; a host whose `script` answers neither form is a red naming the spawner, not a skip. Its states are enumerated above the function and nowhere else. `tests/terminal-paths.test.sh` is the worked example; its `pty_call` is the wrapper a new case copies.
+A headless suite cannot reach a branch that exists only at a tty (`mv` prompts before replacing a write-denied destination only there). `gg_pty_run CAP SCRIPT_FILE` in `tests/lib/pty.bash` runs a bash script with fds 0, 1 and 2 on a pseudo-terminal, picking the `script` grammar from `uname`; a host whose `script` answers neither form is a red naming the spawner, not a skip. Its states are enumerated above the function and nowhere else. `tests/terminal-paths.test.sh` is the worked example; its `pty_line` runs one session body and `install_line` is the wrapper an install case copies.
 
 - Stdin is `/dev/null`, so a prompt is answered by EOF.
 - A time cap on both sides: after `CAP` seconds the caller kills the session's process group, then the spawner's; the session holds the same deadline over itself a few seconds later.
