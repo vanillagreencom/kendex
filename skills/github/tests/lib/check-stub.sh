@@ -2,8 +2,11 @@
 # Shared harness for the pr-merge and ci-classify-refusal suites: the PASS/
 # FAIL counters and assert helpers, a scratch repo, and the `gh` stub that
 # serves every fixture through STUB_* variables (and logs argv to
-# STUB_CALL_LOG when set). Sourced, never run — CI's suite glob picks up
-# skills/*/tests/*.sh only, so this file lives one level down.
+# STUB_CALL_LOG when set; the state lookup's failures through
+# STUB_STATE_STDERR, STUB_STATE_EXIT, STUB_STATE_SILENT_FAIL, STUB_PR_MISSING
+# and STUB_STATE_FAIL_ONCE, a marker path the first lookup of a run creates).
+# Sourced, never run — CI's suite glob picks up skills/*/tests/*.sh only, so
+# this file lives one level down.
 #
 # After sourcing: $TMPDIR holds bin/gh and repo/, and is removed on exit.
 # The suite prints its own pass/fail summary from $PASS/$FAIL.
@@ -141,6 +144,23 @@ case "${1:-}" in
         case "${2:-}" in
             view)
                 if [[ "$*" == *"--json state,mergedAt"* ]]; then
+                    if [[ -n "${STUB_STATE_STDERR:-}" ]]; then
+                        printf '%s\n' "$STUB_STATE_STDERR" >&2
+                        exit "${STUB_STATE_EXIT:-1}"
+                    fi
+                    if [[ "${STUB_STATE_SILENT_FAIL:-false}" == "true" ]]; then
+                        exit "${STUB_STATE_EXIT:-1}"
+                    fi
+                    # Transient failure: only the first lookup of a run fails.
+                    if [[ -n "${STUB_STATE_FAIL_ONCE:-}" && ! -f "$STUB_STATE_FAIL_ONCE" ]]; then
+                        : >"$STUB_STATE_FAIL_ONCE"
+                        echo "error connecting to api.github.com" >&2
+                        exit 1
+                    fi
+                    if [[ "${STUB_PR_MISSING:-false}" == "true" ]]; then
+                        echo "no pull requests found" >&2
+                        exit 1
+                    fi
                     jq -cn \
                         --arg state "${STUB_STATE:-OPEN}" \
                         --arg merged_at "${STUB_MERGED_AT:-}" \
@@ -160,7 +180,7 @@ case "${1:-}" in
                     exit 0
                 fi
                 if [[ "$*" == *"--json mergeable"* ]]; then
-                    echo "MERGEABLE"
+                    echo "${STUB_MERGEABLE:-MERGEABLE}"
                     exit 0
                 fi
                 if [[ "$*" == *"--json reviewDecision,latestReviews"* ]]; then
