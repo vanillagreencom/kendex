@@ -13,8 +13,8 @@ import { useUpdatesStore } from "@/stores/updates";
 /** How every package on screen stands in every place it is installed.
  *
  *  Built once for the whole table rather than per row: reading a place's
- *  customizations walks its whole manifest, and the mark, the fork badges
- *  and the legend all ask the same question of the same rows. */
+ *  customizations walks its whole manifest, and the fork badges and the
+ *  edited facet ask the same question of the same rows. */
 export function useLibraryStandings(groups: ItemGroup[]): {
   standingsFor: (group: ItemGroup) => PlaceStanding[];
   /** Whether the package's installed files were edited on disk in any
@@ -27,7 +27,14 @@ export function useLibraryStandings(groups: ItemGroup[]): {
   const saved = useEditorStore((s) => s.saved);
   const savedSettings = useEditorStore((s) => s.savedSettings);
   const updateRows = useUpdatesStore((s) => s.rows);
-  const updatesLoaded = useUpdatesStore((s) => s.read.status === "landed");
+  // Rows kept from before a failed re-check are last-known, and Home
+  // still draws its edited row from them: a link from that row must land
+  // on those packages, not on a skeleton waiting for a read that failed.
+  const updatesLoaded = useUpdatesStore(
+    (s) =>
+      s.read.status === "landed" ||
+      (s.read.status === "failed" && s.rows.length > 0),
+  );
   const places = useMemo(
     () => placesSource(saved, updateRows, updatesLoaded, savedSettings),
     [saved, updateRows, updatesLoaded, savedSettings],

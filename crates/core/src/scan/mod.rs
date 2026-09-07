@@ -98,14 +98,22 @@ impl std::fmt::Display for ScanWarning {
 
 /// Say a warning once per file. Several surfaces read one file — Claude's
 /// settings.json is a hook surface and a plugin surface, `~/.claude.json`
-/// is the MCP surface of the personal scope and of every project — and a
-/// file that cannot be read fails every one of them the same way. The
-/// first surface to say so names the file; a second saying of the same
-/// path and problem is the same fact, and dropped.
+/// is the MCP surface of the personal scope and of every project, and a
+/// skill under `.agents/skills` is read again through each tool's link to
+/// it — and a file that cannot be read fails every one of them the same
+/// way. The first surface to say so names the file, under the spelling it
+/// read; a second saying of the same file and problem is the same fact,
+/// and dropped. Files are the same when they resolve to one place, so a
+/// link and its target count once; a path that cannot be resolved is
+/// compared as spelled.
 pub(crate) fn push_warning(warnings: &mut Vec<ScanWarning>, warning: ScanWarning) {
+    let resolved = |path: &std::path::Path| {
+        crate::paths::canonical(path).unwrap_or_else(|_| path.to_path_buf())
+    };
+    let file = resolved(&warning.path);
     let said = warnings
         .iter()
-        .any(|known| known.path == warning.path && known.problem == warning.problem);
+        .any(|known| known.problem == warning.problem && resolved(&known.path) == file);
     if !said {
         warnings.push(warning);
     }
