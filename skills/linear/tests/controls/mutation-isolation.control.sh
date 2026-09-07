@@ -42,7 +42,7 @@ control_replace tests/must-fail-controls.sh 1 \
 # 7. The snapshot that guard measures against. Compared with the source
 #    instead, a suite writing inside its own copy is reported as its control
 #    editing outside a mutation.
-control_expect "a suite's residue is not read as the control's edit"
+control_expect "the residue a suite writes in its own copy is not read as the edit of its control"
 control_replace tests/must-fail-controls.sh 1 \
 	'	if ! diff -rq "$snapshot" "$root" >/dev/null 2>&1; then' \
 	'	if ! diff -rq "$SKILL_DIR" "$root" >/dev/null 2>&1; then'
