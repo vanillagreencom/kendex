@@ -32,7 +32,7 @@ export const MOVE_FILES_YOURSELF =
 // both exits disclose it in the same sentence — either button's label only
 // names the files on the row it sits on.
 export const ALSO_APPLIES =
-  " Anything else ready in this project is applied too.";
+  " Anything else waiting to be installed in this project goes in too.";
 // The confirmation names the move, which is what the button runs, in the
 // words the control that opened it used. A title asking whether to keep
 // files reads as a choice about preservation, and a reader who agreed to

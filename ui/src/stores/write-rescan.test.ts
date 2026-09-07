@@ -14,6 +14,7 @@ import { ADOPTABLE } from "@/lib/adoptable";
 import { emptyDraft } from "@/lib/editor-draft";
 import { READ_LANDED } from "@/lib/read-state";
 import { rescansSettled } from "@/lib/rescan";
+import { addSessionNote } from "@/lib/session-note";
 import { useAuditStore } from "./audit";
 import { useEditorStore } from "./editor";
 import { useMarketplacesStore } from "./marketplaces";
@@ -243,30 +244,12 @@ describe("a write that reaches repo_effects and is refused", () => {
 
   // The drift hook is applied before the command can answer either way, so
   // its refusal comes back with the hook already on disk.
-  it("reads the machine again behind a drift-report install", async () => {
-    const { toast } = await import("sonner");
-    vi.mocked(commands.registerProject).mockResolvedValue({
-      status: "ok",
-      data: { settings: { projects: ["/home/me/app"] }, base: null } as never,
-    });
-    await useSettingsStore.getState().registerProject("/home/me/app");
-    await rescansSettled();
-    // The registration's own read is not what this case is about.
-    vi.mocked(commands.scanMachine).mockClear();
-    vi.mocked(commands.auditAll).mockClear();
-
+  it("reads the machine again behind a start-of-session note install", async () => {
     vi.mocked(commands.installDriftHook).mockResolvedValue({
       status: "error",
       error: "the hook folder is read-only",
     });
-    // The offer is the toast's own action: pressed, as a person presses it.
-    const offer = vi.mocked(toast.success).mock.calls.at(-1)?.[1]?.action;
-    if (typeof offer !== "object" || offer === null || !("onClick" in offer))
-      throw new Error("the registration offered no drift report to install");
-    offer.onClick(null as never);
-    // The handler answers nothing to await — a toast action returns void —
-    // so the queue is drained before asking what the reads did.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await addSessionNote("/home/me/app", "app");
     await rescansSettled();
 
     expect(commands.installDriftHook).toHaveBeenCalled();

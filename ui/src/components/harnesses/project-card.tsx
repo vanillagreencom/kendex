@@ -26,6 +26,7 @@ export function ProjectCard({
   action,
   unmanaged,
   onUnmanaged,
+  note,
 }: {
   name: string;
   subtitle: string;
@@ -53,6 +54,10 @@ export function ProjectCard({
    *  the place, which is not zero and must not read as it. */
   unmanaged?: number | null;
   onUnmanaged?: () => void;
+  /** A line about this place that is neither a count nor a fault: the
+   *  start-of-session note's standing, with its one button. Under the
+   *  counts because it is about the place, not about what is installed. */
+  note?: ReactNode;
 }) {
   return (
     <Card
@@ -106,6 +111,7 @@ export function ProjectCard({
           </button>
         ) : null}
       </div>
+      {note}
     </Card>
   );
 }

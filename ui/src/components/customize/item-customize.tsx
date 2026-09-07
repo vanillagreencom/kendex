@@ -30,6 +30,7 @@ import {
 import { setInstruction } from "@/lib/editor-draft";
 import { scopeName } from "@/lib/labels";
 import { scopeKey } from "@/lib/scope";
+import { rowsKnown } from "@/lib/updates-read-state";
 import { openInventory, useEditorStore } from "@/stores/editor";
 import { useUpdatesStore } from "@/stores/updates";
 
@@ -65,7 +66,7 @@ export function ItemCustomize({
   } = useEditorStore();
   const inventory = useEditorStore(openInventory);
   const rows = useUpdatesStore((s) => s.rows);
-  const updatesLoaded = useUpdatesStore((s) => s.read.status === "landed");
+  const updatesLoaded = useUpdatesStore(rowsKnown);
 
   const mine = itemCustomization(draft, kind, name);
   // The row this agent renders with when it has none of its own, resolved

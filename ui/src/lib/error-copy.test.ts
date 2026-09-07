@@ -117,10 +117,10 @@ describe("the lead line", () => {
       "record of what it installed",
     );
     expect(PROBLEM_LEADS["manifest-outdated"]?.(PLACE)).toContain(
-      "declares what it wants installed",
+      "lists what it wants installed",
     );
     expect(PROBLEM_LEADS["manifest-invalid"]?.(PLACE)).toContain(
-      "declares what it wants installed",
+      "lists what it wants installed",
     );
   });
 

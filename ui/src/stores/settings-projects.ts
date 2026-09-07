@@ -2,7 +2,7 @@
 // and the actions that add, drop and find them.
 import { toast } from "sonner";
 import { type AppSettings, commands, type SettingsRead } from "@/bindings";
-import { rescanEverything, writingRepo } from "@/lib/rescan";
+import { rescanEverything } from "@/lib/rescan";
 import { useProblemsStore } from "./problems";
 
 interface ProjectFields {
@@ -21,57 +21,17 @@ export interface ProjectsSlice {
  *  for the next whole-file save. The hold comes from the store so every
  *  settings-holding reply shares one ticket order: a reply older than the
  *  newest one held is dropped, wherever it came from. */
-export function projectActions(
-  get: () => ProjectFields,
-  ordered: {
-    ticket: () => number;
-    hold: (read: SettingsRead, at: number) => void;
-  },
-): ProjectsSlice {
+export function projectActions(ordered: {
+  ticket: () => number;
+  hold: (read: SettingsRead, at: number) => void;
+}): ProjectsSlice {
   return {
     registerProject: async (path) => {
-      const before = get().settings?.projects ?? [];
       const at = ordered.ticket();
       const response = await commands.registerProject(path);
       if (response.status === "ok") {
         ordered.hold(response.data, at);
-        // Registration is where the drift report is offered: agents in this
-        // project start blind until the session-start hook is installed. An
-        // offer, never an auto-install — it injects into agent context.
-        const root =
-          (response.data.settings.projects ?? []).find(
-            (p) => !before.includes(p),
-          ) ?? path;
-        toast.success(`Added ${path.split("/").pop()}`, {
-          action: {
-            label: "Add session drift report",
-            // The hook is applied before the command can answer either way,
-            // so a refusal comes back with it already on disk: the machine
-            // is read again whatever it said, on `lib/rescan.ts`'s rule.
-            onClick: () => {
-              void writingRepo(async () => {
-                const result = await commands.installDriftHook({
-                  scope: "project",
-                  root,
-                });
-                if (result.status === "ok") {
-                  // False: the scope had other pending changes, so only the
-                  // declaration landed — nothing is applied unseen.
-                  toast.success(
-                    result.data
-                      ? "Drift report installed"
-                      : "Drift report added — run kendex apply in that project to install it",
-                  );
-                } else {
-                  useProblemsStore.getState().showError({
-                    title: "Couldn't install the drift report",
-                    message: result.error,
-                  });
-                }
-              });
-            },
-          },
-        });
+        toast.success(`Added ${path.split("/").pop()}`);
         await rescanEverything();
         return true;
       }

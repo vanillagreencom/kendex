@@ -5,6 +5,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AddProjectDialog } from "@/components/harnesses/add-project-dialog";
 import { ProjectCard } from "@/components/harnesses/project-card";
 import { ScanFolderDialog } from "@/components/harnesses/scan-folder-dialog";
+import { SessionNoteRow } from "@/components/harnesses/session-note-row";
 import { Button } from "@/components/ui/button";
 import { unmanagedCount } from "@/lib/audit-counts";
 import {
@@ -17,6 +18,7 @@ import {
 import { type ItemPlace, installedCountByKind } from "@/lib/derive";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { sameScope } from "@/lib/scope";
+import { sessionNoteState } from "@/lib/session-note";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount, useAuditStore } from "@/stores/audit";
 import { useCommitOfferStore } from "@/stores/commit-offer";
@@ -83,6 +85,20 @@ export function ProjectList() {
       views.find((v) => sameScope(v.scope, scope)),
       auditFailure,
     );
+  // The start-of-session note's line, or nothing while no read can say.
+  const noteRow = (root: string, name: string) => {
+    const state = result
+      ? sessionNoteState(
+          result.items,
+          views.find((v) => sameScope(v.scope, { scope: "project", root })),
+          auditFailure,
+          root,
+        )
+      : null;
+    return state ? (
+      <SessionNoteRow name={name} root={root} state={state} />
+    ) : null;
+  };
   const { settings, registerProject, unregisterProject, discoverProjects } =
     useSettingsStore();
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
@@ -145,6 +161,11 @@ export function ProjectList() {
                 onKindClick={(kind) => goToLibrary({ ...place, kind })}
                 unmanaged={notManaged(scope)}
                 onUnmanaged={() => goToUnmanaged(scope)}
+                // Not drawn until the scan and the audit have answered for
+                // this place: a card saying the note is off before either
+                // was read would be claiming a state the app has not
+                // checked.
+                note={noteRow(root, name)}
                 action={
                   <Button
                     variant="ghost"

@@ -1,10 +1,12 @@
 import type { MouseEvent } from "react";
 
 /** What answers a click before the surface may: any real control, plus a
- *  tooltip popup, which counts wherever the browser draws it because React
- *  sends its clicks back through the surface that owns it. */
+ *  tooltip popup or a dialog and its backdrop, which count wherever the
+ *  browser draws them because React sends a portal's clicks back through
+ *  the surface that owns it. A dialog opened from a card is read, not a
+ *  request to leave the page; its backdrop is pressed to close it. */
 const CONTROLS =
-  'a, button, input, select, textarea, [role="button"], [data-slot="tooltip-content"]';
+  'a, button, input, select, textarea, [role="button"], [data-slot="tooltip-content"], [data-slot="dialog-content"], [data-slot="dialog-overlay"]';
 
 /**
  * Whether a click on a whole-surface shortcut — a project card, a Library

@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { EditorInventory, Scope, ScopeSettings } from "@/bindings";
 import { ItemCustomize } from "@/components/customize/item-customize";
 import { CUSTOMIZED_MARK, skillsInherited } from "@/lib/copy-customize";
-import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
+import { READ_LANDED, READ_PENDING, readFailed } from "@/lib/read-state";
+import { sameScope } from "@/lib/scope";
 import { useEditorStore } from "@/stores/editor";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount } from "@/test/dom";
@@ -114,6 +115,23 @@ describe("the place chips", () => {
   it("marks nothing where no place holds anything", () => {
     seed({ "/work/vg": empty, "/work/hyprtrade": empty });
     expect(markedPlaces(tab())).toEqual([]);
+  });
+
+  // A fork is a fact the update rows carry. A re-check that failed keeps
+  // the rows it had, and the Library and the package header read them as
+  // last-known; a chip that went plain here would answer differently
+  // about the same place.
+  it("keeps a fork's mark after a failed re-check that kept its rows", () => {
+    seed({ "/work/vg": empty, "/work/hyprtrade": empty });
+    const forkedAt = rows.map((row) => ({
+      ...row,
+      forked: sameScope(row.scope, HYPR),
+    }));
+    useUpdatesStore.setState({
+      rows: forkedAt as never,
+      read: readFailed("offline"),
+    });
+    expect(markedPlaces(tab())).toEqual(["hyprtrade"]);
   });
 
   /// The manifest draft beside them already moves these chips before a
