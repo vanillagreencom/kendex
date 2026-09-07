@@ -320,21 +320,31 @@ fn a_skill_read_through_a_link_is_warned_about_once() {
         "---\nname: reviewer\ntags: [tests]\n---\nbody\n",
     )
     .unwrap();
-    fs::create_dir_all(project.join(".claude/skills")).unwrap();
-    std::os::unix::fs::symlink(
-        "../../.agents/skills/reviewer",
-        project.join(".claude/skills/reviewer"),
-    )
-    .unwrap();
+    let link = project.join(".claude/skills/reviewer");
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink("../../.agents/skills/reviewer", &link).unwrap();
 
     let result = scan_scopes(&env, &BTreeMap::new(), &[Scope::Project { root: project }]);
 
+    // Both spellings were read — the dedupe is what leaves one warning,
+    // not a scan that never followed the link.
+    let spellings: Vec<_> = result
+        .items
+        .iter()
+        .filter(|item| item.kind == ItemKind::Skill && item.name == "reviewer")
+        .map(|item| item.path.clone())
+        .collect();
+    assert!(
+        spellings.contains(&real) && spellings.contains(&link),
+        "{spellings:?}"
+    );
     let about: Vec<_> = result
         .warnings
         .iter()
         .filter(|w| matches!(w.problem, ScanProblem::UnknownTag { .. }))
         .collect();
     assert_eq!(about.len(), 1, "{about:?}");
+    assert!(about[0].path == real || about[0].path == link, "{about:?}");
 }
 
 /// One file, several surfaces, one warning: Claude's settings.json is

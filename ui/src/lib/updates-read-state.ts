@@ -35,6 +35,19 @@ const unsettled = (state: PageState): boolean =>
 /** Whether work the writes exclude is already out: a check building its
  *  report, or a write about to commit under it. One write at a time is what
  *  lets the store's `busy` be a flag rather than a count of who is in. */
+/** Whether the update rows can be read as last-known facts: a read that
+ *  landed, or a failed re-check that kept the rows it had. One rule for
+ *  every reader of the per-place facts — the Library, the package header
+ *  and the Customize page — so a fork or an edit is never a fact on one
+ *  page and unknown on the next. A read still on its way, or a first
+ *  read that failed with nothing kept, has nothing to read. */
+export const rowsKnown = (state: {
+  read: { status: string };
+  rows: unknown[];
+}): boolean =>
+  state.read.status === "landed" ||
+  (state.read.status === "failed" && state.rows.length > 0);
+
 export const workOut = (state: { busy: boolean; checking: boolean }): boolean =>
   state.busy || state.checking;
 

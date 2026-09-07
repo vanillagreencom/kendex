@@ -26,12 +26,10 @@ const placeWord = (scopes: Scope[]): string =>
 
 /** The mark for one package: which places hold changes, out of how many.
  *
- *  One rule wherever it is drawn. A Library row and the package's own
- *  header ask the same question about the same package, so a header that
- *  answered only for the place its page was opened at would have the app
- *  contradicting itself — "3 of 3 places" on the row, "Customized in
- *  hyprtrade" on the page, both true by their own rule and neither saying
- *  which question it answered.
+ *  One rule for the one surface that draws it, the package page's header,
+ *  and it answers for the package over every place, not for the place the
+ *  page happened to open at: "Customized in hyprtrade" would be true by
+ *  that place's rule and silent about the rest.
  *
  *  Names the place while there is one to name — "Customized in vg" says
  *  more than "1 of 3 places" and is the answer to the question actually

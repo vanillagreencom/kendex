@@ -53,9 +53,9 @@ describe("packageMark", () => {
   });
 });
 
-// A Library row saying "3 of 3 places" while the package's own header says
-// "Customized in hyprtrade" is two answers to different questions, with
-// nothing on either telling the reader so.
+// A header saying "3 of 3 places" for one package and "Customized in
+// hyprtrade" for the same package opened from another place is two answers
+// to different questions, with nothing on either telling the reader so.
 describe("one rule wherever the mark is drawn", () => {
   it("answers the same for a package however the page was opened at it", () => {
     const standings = [mine(HYPR), mine(KENDEX), mine(VG)];

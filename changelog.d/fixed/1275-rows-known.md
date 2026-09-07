@@ -1,0 +1,1 @@
+- The package header and the Customize page read the rows a failed update re-check kept, as the Library and Home do, so a fork or edit is never shown on one page and unknown on the next.

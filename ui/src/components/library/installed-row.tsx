@@ -86,8 +86,7 @@ export function InstalledRow({
             <span className="flex items-center gap-1.5">
               {/* The keyboard's one way into the row: a row is not
                   focusable, so without a real control here the row's
-                  default open — and any package without a fork badge or
-                  mark — is mouse-only. No selection guard here: a
+                  default open — and any package without a fork badge — is mouse-only. No selection guard here: a
                   completed click on a button is always intent, and the
                   row's own guard declines the drags. */}
               <button

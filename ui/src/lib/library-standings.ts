@@ -7,6 +7,7 @@ import {
 } from "@/lib/customized-places";
 import type { ItemGroup } from "@/lib/derive";
 import { groupScopes } from "@/lib/derive";
+import { rowsKnown } from "@/lib/updates-read-state";
 import { useEditorStore } from "@/stores/editor";
 import { useUpdatesStore } from "@/stores/updates";
 
@@ -27,14 +28,7 @@ export function useLibraryStandings(groups: ItemGroup[]): {
   const saved = useEditorStore((s) => s.saved);
   const savedSettings = useEditorStore((s) => s.savedSettings);
   const updateRows = useUpdatesStore((s) => s.rows);
-  // Rows kept from before a failed re-check are last-known, and Home
-  // still draws its edited row from them: a link from that row must land
-  // on those packages, not on a skeleton waiting for a read that failed.
-  const updatesLoaded = useUpdatesStore(
-    (s) =>
-      s.read.status === "landed" ||
-      (s.read.status === "failed" && s.rows.length > 0),
-  );
+  const updatesLoaded = useUpdatesStore(rowsKnown);
   const places = useMemo(
     () => placesSource(saved, updateRows, updatesLoaded, savedSettings),
     [saved, updateRows, updatesLoaded, savedSettings],

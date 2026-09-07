@@ -2,7 +2,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ObservedItem, Scope } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
-import { READ_LANDED, READ_PENDING, readFailed } from "@/lib/read-state";
+import {
+  READ_LANDED,
+  READ_PENDING,
+  type ReadState,
+  readFailed,
+} from "@/lib/read-state";
 import { useEditorStore } from "@/stores/editor";
 import { NO_FILTERS, useLibraryViewStore } from "@/stores/library-view";
 import { useNavStore } from "@/stores/nav";
@@ -133,31 +138,32 @@ describe("the Library narrowed to packages edited on disk", () => {
       cell.querySelector("button")?.textContent?.trim(),
     );
 
-  it("shows the edited package and drops the rest", () => {
-    useLibraryViewStore.setState({ ...NO_FILTERS, edited: "edited" });
-    expect(names(mount(<InstalledView />))).toEqual(["gh"]);
-  });
+  // Shaped input over one surface: what the updates read has said decides
+  // whether the facet can answer. Landed and failed-with-rows are known
+  // (Home draws its edited row from those rows); pending and a failed
+  // first read that kept nothing have counted nothing, so the table holds
+  // its skeleton rather than claiming no package is edited.
+  const reads: [string, ReadState, unknown[], string[], boolean][] = [
+    ["landed", READ_LANDED, rows, ["gh"], false],
+    ["pending", READ_PENDING, [], [], true],
+    ["failed with rows kept", readFailed("no network"), rows, ["gh"], false],
+    ["failed with nothing kept", readFailed("no network"), [], [], true],
+  ];
 
-  // Before the updates read lands nothing has been counted: an empty
-  // table there would claim no package is edited.
-  it("holds the skeleton until the updates read says which are edited", () => {
-    useUpdatesStore.setState({ rows: [], read: READ_PENDING });
-    useLibraryViewStore.setState({ ...NO_FILTERS, edited: "edited" });
-    const host = mount(<InstalledView />);
-    expect(names(host).filter((name) => name !== undefined)).toEqual([]);
-    expect(host.querySelector('[data-slot="skeleton"]')).not.toBeNull();
-  });
-
-  // A failed re-check keeps the last rows, and Home's edited row is
-  // drawn from them; the link from that row lands on those packages.
-  it("keeps the edited packages a failed re-check left behind", () => {
-    useUpdatesStore.setState({
-      rows: rows as never,
-      read: readFailed("no network"),
-    });
-    useLibraryViewStore.setState({ ...NO_FILTERS, edited: "edited" });
-    expect(names(mount(<InstalledView />))).toEqual(["gh"]);
-  });
+  it.each(reads)(
+    "answers for a %s read",
+    (_name, read, kept, expected, skeleton) => {
+      useUpdatesStore.setState({ rows: kept as never, read });
+      useLibraryViewStore.setState({ ...NO_FILTERS, edited: "edited" });
+      const host = mount(<InstalledView />);
+      expect(names(host).filter((name) => name !== undefined)).toEqual(
+        expected,
+      );
+      expect(host.querySelector('[data-slot="skeleton"]') !== null).toBe(
+        skeleton,
+      );
+    },
+  );
 
   it("shows every package when the facet is off", () => {
     useLibraryViewStore.setState({ ...NO_FILTERS });

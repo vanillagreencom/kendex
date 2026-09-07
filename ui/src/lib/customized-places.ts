@@ -200,11 +200,11 @@ export interface CustomizedHere {
   customization: ItemCustomization;
 }
 
-/** Every package customized at one place, by the rule the Library's mark
- *  reads. Candidates come from wherever each fact is recorded (the
+/** Every package customized at one place, by the rule the package
+ *  header's mark reads. Candidates come from wherever each fact is recorded (the
  *  manifest's overlay and forks tables, and this place's update rows),
  *  and each is put to {@link placeStandings}, so this list and the mark
- *  on a Library row cannot answer differently about the same package. */
+ *  on a package header cannot answer differently about the same package. */
 export function customizedHere(
   source: PlacesSource,
   scope: Scope,

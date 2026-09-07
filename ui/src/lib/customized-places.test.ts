@@ -351,7 +351,7 @@ describe("customizedHere", () => {
   // The Library marks a hand-edited package "Customized in vg"; the page
   // headed "Customized packages" for vg has to list it, or the mark leads
   // to a page that denies it.
-  it("lists a hand-edit-only package the Library row marks", () => {
+  it("lists a hand-edit-only package the package header marks", () => {
     const s = source({
       manifests: { "/work/vg": empty() },
       rows: [row(VG, { blockedByLocalEdit: true })],
