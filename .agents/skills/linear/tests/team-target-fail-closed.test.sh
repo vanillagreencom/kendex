@@ -106,7 +106,8 @@ wire() {
       | select(($p | map(tostring) | any(test("team"; "i")))
           or $p == ["name"] or $p == ["input", "body"] or $p == ["input", "title"])
       | "\($p | map(tostring) | join("."))=\($v | getpath($p) | tojson)"]
-      + (if (.query | test("team[[:space:]]*:")) then ["inline-team"] else [] end);
+      + (if (.query | test("team[A-Za-z]*[[:space:]]*:"; "i")) then ["inline-team"] else [] end)
+      + (if (tostring | test("claude"; "i")) then ["guessed-name"] else [] end);
     "\(op)(\(shown | join(",")))"' "$CURL_LOG" | paste -sd, -
 }
 
@@ -141,6 +142,7 @@ run() {
   out) printf 'rc=%s calls=%s %s' "$rc" "$calls" "$(printf '%s\n' "$out" | head -1)" ;;
   wire) printf 'rc=%s calls=%s wire=%s' "$rc" "$calls" "$(wire)" ;;
   err) printf 'rc=%s calls=%s wire=%s%s' "$rc" "$calls" "$(wire)" "${err:+ $err}" ;;
+  *) printf 'UNKNOWN-VIEW:%s' "$view" ;;
   esac
 }
 
@@ -206,6 +208,7 @@ expected() {
   settings-refused)
     printf 'rc=1 calls=0 wire= ::error::<project>/kendex.settings.toml: DUP is assigned more than once in [env] (each key must be unique in the table)'
     ;;
+  *) printf 'UNKNOWN-SPEC:%s' "$spec" ;;
   esac
 }
 
@@ -236,8 +239,7 @@ a --team=CC title on create is free text|none|-|err|issues create --title "--tea
 the issues comment redirect makes no call|none|-|err|issues comment TEAM-1 --body "--team=CC"|redirect
 a blank configured value stays unset|blank|-|err|issues create --title "Blank team"|refused
 an exported empty LINEAR_TEAM shadows the project file and refuses|Configured||err|issues create --title "Empty export"|refused
-issues create --help needs no team|none|-|out|issues create --help|help
-issues update --help needs no team|none|-|out|issues update --help|help
+issues --help needs no team, whatever the action (issues answers it before the gate)|none|-|out|issues update --help|help
 the --help of a guarded action passes the dispatcher gate to its own parser|none|-|err|cycles update --help|ok-parse
 an explicit --team resolves that team and creates under it|none|-|err|issues create --title "Explicit target" --team Explicit|ok GetTeam(name="Explicit"),CreateIssue(input.title="Explicit target",input.teamId="team-uuid")
 a configured LINEAR_TEAM is the team resolved|Configured|-|err|issues create --title "Configured target"|ok GetTeam(name="Configured"),CreateIssue(input.title="Configured target",input.teamId="team-uuid")
