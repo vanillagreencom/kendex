@@ -72,7 +72,8 @@ fx_resolving() { root resolving; put link-target.settings.toml '[env]\nCOMMIT_GU
 fx_env_dir() { root "$1"; mkdir -p "$R/.env.local"; } # NAME
 fx_env_dangling() { root env-dangling; ln -s missing.env "$R/.env.local"; }
 dotenv() { root "$1"; shift; put .env.local "$*\n"; } # NAME LINE... — .env.local holds the rejoined words
-ERR_DUP='::error::kendex.settings.toml: COMMIT_GUARDS_TP is assigned more than once in [env] (each key must be unique in the table)'
+fx_nested_dup() { root nested-dup; put .kendex/settings.toml '[env]\nCOMMIT_GUARDS_TP = "a"\nCOMMIT_GUARDS_TP = "b"\n'; }
+ERR_DUP='::error::.kendex/settings.toml: COMMIT_GUARDS_TP is assigned more than once in [env] (each key must be unique in the table)'
 NOT_REGULAR='settings source exists but is not a regular file (directory, FIFO, socket or device); a source is skipped only when it is absent'
 NOT_RESOLVING='settings source is a symlink that does not resolve (dangling target, cycle, or over-long chain); a source is skipped only when it is absent'
 
@@ -103,7 +104,7 @@ run_rows \
   "an assignment under an UNRELATED table is ignored|toml unrelated-table [notes]\nCOMMIT_GUARDS_TP = \"elsewhere\"\n||rc=0 value=dflt" \
   "control: the same assignment inside [env] resolves|toml in-env [env]\nCOMMIT_GUARDS_TP = \"in-env\"\n||rc=0 value=in-env" \
   "a trailing comment is dropped from the decoded value, a quote inside it included|toml comment [env]\nCOMMIT_GUARDS_TP = \"kept\" # a \"quoted\" comment\n||rc=0 value=kept" \
-  "a key assigned twice inside [env] is a config error, naming the key|toml dup [env]\nCOMMIT_GUARDS_TP = \"a\"\nCOMMIT_GUARDS_TP = \"b\"\n||rc=1 value= err=$ERR_DUP" \
+  "a key assigned twice inside [env] is a config error naming the key, in the nested file under a good root file|fx_nested_dup||rc=1 value= err=$ERR_DUP" \
   "a backslash in the value is a config error, never decoded|fx_backslash||rc=1 value= err=::error::kendex.settings.toml: unsupported syntax for COMMIT_GUARDS_TP (expected a single-line basic string, no double quote and no backslash: COMMIT_GUARDS_TP = \"value\")" \
   "a commented [env] header is a config error naming its line, not an invisible table|toml header [env] # comment\nCOMMIT_GUARDS_TP = \"hidden\"\n||rc=1 value= err=::error::kendex.settings.toml:1: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)" \
   "a leading byte-order mark is a config error, not a misread first line|fx_bom||rc=1 value= err=::error::kendex.settings.toml: file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" \

@@ -10,7 +10,8 @@
 # a fixture builds the repository, the check runs with ARGS under ENVS, and
 # a row pins the exit status with every line printed, so the hit, the
 # remedy, the counts and the scope named are one pin; the run repeats once
-# in the same repository and a second verdict that differs is shown. The
+# in the same repository and a second verdict that differs is shown (a
+# tripwire: the check writes no state, so no row has a positive case). The
 # settings ladder's own shapes are settings-precedence.test.sh's.
 set -euo pipefail
 
@@ -109,7 +110,8 @@ fx_edit_over() { grown edit-over 1; put seed.bin 5; }
 fx_edit_under() { grown edit-under 1; put seed.bin 1 x; } # the same size with other bytes
 fx_untouched() { grown untouched 5; }
 fx_shrink() { grown shrink 5; put seed.bin 4; }
-fx_grow() { grown grow 5; put seed.bin 5; printf 'x' >>"$R/seed.bin"; git -C "$R" add -A; }
+fx_grow() { grown "${1:-grow}" 5; put seed.bin 5; printf 'x' >>"$R/seed.bin"; git -C "$R" add -A; } # [NAME]
+fx_grow_prior() { fx_grow grow-prior; }
 fx_hold() { grown hold 5; put seed.bin 5 y; }
 fx_rename() { grown "$1" 5; git -C "$R" mv seed.bin moved.bin; } # NAME
 fx_rename_beside() { fx_rename rename-beside; cp "$R/moved.bin" "$R/second-copy.bin"; printf 'x' >>"$R/second-copy.bin"; git -C "$R" add -A; }
@@ -144,8 +146,13 @@ feature() { # NAME ACTION — a feature branch over the legacy file: shrink, gro
   esac
 }
 fx_all_symlink() { repo all-symlink; put old.bin 1; ln -s old.bin "$R/alias"; git -C "$R" add -A; commit; }
-fx_unmerged() { # an add/add conflict: the index carries stages 2 and 3 for one path
-  repo unmerged
+gitlink() { # NAME STAGE — a committed 1 KB file, then a gitlink at mod: staged only, or committed
+  repo "$1"; put ok.bin 1; commit
+  git -C "$R" update-index --add --cacheinfo "160000,$(git -C "$R" rev-parse HEAD),mod"
+  [ "$2" = staged ] || commit gitlink
+}
+fx_unmerged() { # NAME — an add/add conflict: the index carries stages 2 and 3 for one path
+  repo "$1"
   put base.bin 1; commit
   git -C "$R" checkout -qb theirs; put clash.bin 1 a; commit
   git -C "$R" checkout -q main; put clash.bin 1 b; commit
@@ -153,6 +160,7 @@ fx_unmerged() { # an add/add conflict: the index carries stages 2 and 3 for one 
 }
 run_rows \
   "staged mode passes with nothing staged: the legacy file is untouched|legacy legacy-staged|$C=1||rc=0 $(ok 0)" \
+  "--staged spelled out is the same scope, not a sweep|legacy legacy-staged-flag|$C=1|--staged|rc=0 $(ok 0)" \
   "--all fails on the legacy oversized file, naming the sweep|legacy legacy-all|$C=1|--all|rc=1 $(over old.bin 4096 4 1);$(failed 1 1 1 "$SWEEP")" \
   "--base main permits a legacy oversized file to shrink|feature base-shrink shrink|$C=1|--base main|rc=0 $(ok 1 "$(since main)")" \
   "--base main rejects growth from the merge-base size|feature base-grow grow|$C=1|--base main|rc=1 $(grew old.bin 4096 5120 5 1);$(failed 1 1 1 "$(since main)")" \
@@ -160,13 +168,16 @@ run_rows \
   "--base=REF is the same mode|feature base-eq add|$C=1|--base=main|rc=1 $(over feat.bin 2048 2 1);$(failed 1 1 1 "$(since main)")" \
   "--base judges from the merge-base: a legacy file main shrank after the branch point is not the branch's growth|feature base-main-moves main-moves|$C=1|--base main|rc=0 $(ok 1 "$(since main)")" \
   "--all does not size a tracked symlink: one file checked beside it|fx_all_symlink|$C=1|--all|rc=0 $(ok 1 "$SWEEP")" \
+  "--all does not size a committed gitlink either: it carries a commit id, not content|gitlink gitlink-all committed|$C=1|--all|rc=0 $(ok 1 "$SWEEP")" \
+  "a staged gitlink is not sized content|gitlink gitlink-staged staged|$C=1||rc=0 $(ok 0)" \
   "control: --base main on main itself has no additions|legacy base-self|$C=1|--base main|rc=0 $(ok 0 "$(since main)")" \
   "an unknown --base ref is exit 2, naming it|legacy base-unknown|$C=1|--base no-such-ref|rc=2 ${ERR}--base ref 'no-such-ref' does not name a commit" \
   "--base without a ref is exit 2|legacy base-bare|$C=1|--base|rc=2 ${ERR}--base requires a ref" \
-  "an unmerged index is refused rather than measured around: the conflict's addition would vanish from the record set|fx_unmerged|$C=1||rc=2 clash.bin;${ERR}the index carries 1 unmerged path(s) (listed above) and a --cached scan skips them silently — finish or abort the merge, then re-run"
+  "an unmerged index is refused rather than measured around: the conflict's addition would vanish from the record set|fx_unmerged unmerged-staged|$C=1||rc=2 clash.bin;${ERR}the index carries 1 unmerged path(s) (listed above) and a --cached scan skips them silently — finish or abort the merge, then re-run" \
+  "--all refuses it too, where ls-files would size one blob per stage|fx_unmerged unmerged-all|$C=1|--all|rc=2 clash.bin;${ERR}the index carries 1 unmerged path(s) (listed above) and a --cached scan skips them silently — finish or abort the merge, then re-run"
 
 echo "=== lockfiles are exempt by basename; declared asset trees by an excludes row with a reason ==="
-fx_lock() { repo "$1"; put package-lock.json 2; } # NAME
+fx_lock() { repo "$1"; put "${2:-package-lock.json}" 2; } # NAME [PATH]
 fx_lock_twin() { fx_lock lock-twin; cp "$R/package-lock.json" "$R/data.json"; git -C "$R" add -A; }
 fx_lock_suffix() { repo lock-suffix; put not-package-lock.json 2; }
 asset() { repo "$1"; put assets/demo.gif 2; } # NAME
@@ -175,12 +186,14 @@ fx_no_reason() { asset no-reason; excludes 'assets/*\n'; }
 fx_excludes_flag() { asset "$1"; mkdir -p "$R/conf"; printf 'assets/*\tdemo media\n' >"$R/conf/excludes"; git -C "$R" add -A; }
 run_rows \
   "an oversized package-lock.json passes and is not counted: the built-in lockfile exemption|fx_lock lock|$C=1||rc=0 $(ok 0)" \
+  "a nested lockfile is exempt too: the basename is what is judged|fx_lock lock-nested ui/package-lock.json|$C=1||rc=0 $(ok 0)" \
   "control: the same bytes as data.json fail, the exemption is the basename|fx_lock_twin|$C=1||rc=1 $(over data.json 2048 2 1);$(failed 1 1)" \
   "control: a basename that only ends in a lockfile's name is not exempt|fx_lock_suffix|$C=1||rc=1 $(over not-package-lock.json 2048 2 1);$(failed 1 1)" \
   "control: an asset fails without an excludes row|asset asset-bare|$C=1||rc=1 $(over assets/demo.gif 2048 2 1);$(failed 1 1)" \
   "an excludes row exempts the declared tree; the list itself is a staged file and is counted|fx_excluded|$C=1||rc=0 $(ok 1)" \
   "a pattern without a reason is exit 2 naming the line|fx_no_reason|$C=1||rc=2 ${ERR}$EXCL:1: expected 'pattern<TAB>reason' (every exclusion carries its justification)" \
   "--excludes FILE names the list, and the remedy names it too|fx_excludes_flag excludes-flag|$C=1|--excludes conf/excludes|rc=0 $(ok 1)" \
+  "the equals form of --excludes names the same list|fx_excludes_flag excludes-eq|$C=1|--excludes=conf/excludes|rc=0 $(ok 1)" \
   "control: without the flag the same repository fails on the asset, and the remedy names the default list|fx_excludes_flag excludes-default|$C=1||rc=1 $(over assets/demo.gif 2048 2 1);$(failed 1 2)"
 
 echo "=== the ceiling resolves through the settings ladder and is validated ==="
@@ -201,11 +214,19 @@ REAL_GIT="$(command -v git)"
 mkdir -p "$TMP/git-shim"
 printf '#!/usr/bin/env bash\nif [ "${1:-}" = cat-file ] && [ "${2:-}" = -s ]; then echo "fatal: simulated object read failure" >&2; exit 128; fi\nexec %q "$@"\n' "$REAL_GIT" >"$TMP/git-shim/git"
 chmod +x "$TMP/git-shim/git"
-SHA2K="$(head -c 2048 /dev/zero | git hash-object --stdin)"
+# Hashed outside any repository: the fixtures are sha1 by default, and a
+# host checkout under another object format must not answer for them.
+SHA2K="$(cd "$TMP" && head -c 2048 /dev/zero | git hash-object --stdin)"
+SHA5K="$(cd "$TMP" && head -c 5120 /dev/zero | git hash-object --stdin)"
+# A git whose `cat-file -s` fails for the 5 KB blob alone: the prior of a grown file.
+mkdir -p "$TMP/git-shim-prior"
+printf '#!/usr/bin/env bash\nif [ "${1:-}" = cat-file ] && [ "${2:-}" = -s ] && [ "${3:-}" = %s ]; then echo "fatal: simulated object read failure" >&2; exit 128; fi\nexec %q "$@"\n' "$SHA5K" "$REAL_GIT" >"$TMP/git-shim-prior/git"
+chmod +x "$TMP/git-shim-prior/git"
 measure() { repo "$1"; put big.bin 2; } # NAME
 run_rows \
   "control: without the shim the oversized staged file fails|measure measure-real|$C=1||rc=1 $(over big.bin 2048 2 1);$(failed 1 1)" \
-  "an unmeasurable blob is exit 2 naming the blob and the file, with no verdict line, git's own words ahead of it|measure measure-shim|PATH=$TMP/git-shim:$PATH,$C=1||rc=2 fatal: simulated object read failure;${ERR}cannot read blob $SHA2K for 'big.bin' — its size is unmeasurable, refusing to skip it"
+  "an unmeasurable blob is exit 2 naming the blob and the file, with no verdict line, git's own words ahead of it|measure measure-shim|PATH=$TMP/git-shim:$PATH,$C=1||rc=2 fatal: simulated object read failure;${ERR}cannot read blob $SHA2K for 'big.bin' — its size is unmeasurable, refusing to skip it" \
+  "an unmeasurable PRIOR blob is exit 2 too: the tighten-only baseline is not guessed|fx_grow_prior|PATH=$TMP/git-shim-prior:$PATH,$C=1||rc=2 fatal: simulated object read failure;${ERR}cannot read prior blob $SHA5K for 'seed.bin' — its size is unmeasurable, refusing to skip it"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
