@@ -707,15 +707,22 @@ copilot_rows() {
 antigravity_rows() {
   have agy || { absent antigravity agy; return; }
   install_for antigravity
-  local home startup
+  local home startup q
   home="$DIR/agy-home"
-  mkdir -p "$home"
-  if [ -d "$HOME/.gemini" ]; then
-    cp -a "$HOME/.gemini" "$home/.gemini"
-  else
-    local q
+  # `~/.gemini` alone is Gemini CLI's root too; the settings directory under
+  # it is agy's own, so it is what proves a login worth copying.
+  if ! [ -d "$HOME/.gemini/antigravity-cli" ]; then
     for q in $(questions antigravity); do
-      row antigravity "$q" unanswerable 'agy has no ~/.gemini to copy: not logged in on this machine'
+      row antigravity "$q" unanswerable 'agy has no ~/.gemini/antigravity-cli to copy: not logged in on this machine'
+    done
+    return
+  fi
+  mkdir -p "$home"
+  # The source is live state another agy session may be writing, so a copy
+  # that fails is three unanswerable rows, never a dead run.
+  if ! cp -a "$HOME/.gemini" "$home/.gemini" 2>"$LOGS/agy-home-copy.log"; then
+    for q in $(questions antigravity); do
+      row antigravity "$q" unanswerable "copying ~/.gemini into an isolated HOME failed: $(clip "$(tail -n 1 "$LOGS/agy-home-copy.log")")"
     done
     return
   fi
