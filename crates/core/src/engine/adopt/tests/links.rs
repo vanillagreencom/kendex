@@ -70,70 +70,6 @@ fn a_shared_skill_folder_adopts_the_target_and_keeps_every_tool_reading() {
     assert_eq!(after.drift, vec![]);
 }
 
-/// "Somewhere kendex has no business touching": a folder that is not a
-/// skill at all. The marker is the boundary — no SKILL.md, no adopt.
-#[cfg(unix)]
-#[test]
-fn a_link_at_a_folder_without_the_marker_still_refuses() {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = Env::fake(tmp.path(), FakeOs::Linux);
-    let project = tmp.path().join("app");
-    let scope = Scope::Project {
-        root: project.clone(),
-    };
-    let elsewhere = tmp.path().join("documents");
-    fs::create_dir_all(&elsewhere).unwrap();
-    fs::write(elsewhere.join("notes.txt"), "private").unwrap();
-    fs::create_dir_all(project.join(".claude/skills")).unwrap();
-    std::os::unix::fs::symlink(&elsewhere, project.join(".claude/skills/documents")).unwrap();
-
-    let error = adopt(
-        &env,
-        &scope,
-        ItemKind::Skill,
-        "documents",
-        &[HarnessId::Claude],
-    )
-    .unwrap_err();
-    assert!(matches!(error, CoreError::ForeignSymlink { .. }));
-    assert!(project.join(".claude/skills/documents").is_symlink());
-    assert!(elsewhere.join("notes.txt").is_file());
-}
-
-/// A project link reaching the global shared tree is not this scope's to
-/// adopt: what sits there is a global install, which the project's lock
-/// cannot see, and capturing it under another name would steal it.
-#[cfg(unix)]
-#[test]
-fn a_project_link_into_the_global_tree_refuses() {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = Env::fake(tmp.path(), FakeOs::Linux);
-    let project = tmp.path().join("app");
-    let scope = Scope::Project {
-        root: project.clone(),
-    };
-    let managed = env.global_skills_dir().join("other");
-    fs::create_dir_all(&managed).unwrap();
-    fs::write(
-        managed.join("SKILL.md"),
-        "---\nname: other\ndescription: managed elsewhere\n---\nManaged.\n",
-    )
-    .unwrap();
-    fs::create_dir_all(project.join(".claude/skills")).unwrap();
-    std::os::unix::fs::symlink(&managed, project.join(".claude/skills/stolen")).unwrap();
-
-    let error = adopt(
-        &env,
-        &scope,
-        ItemKind::Skill,
-        "stolen",
-        &[HarnessId::Claude],
-    )
-    .unwrap_err();
-    assert!(matches!(error, CoreError::ForeignSymlink { .. }));
-    assert!(managed.join("SKILL.md").is_file());
-}
-
 /// The same folder at the scope it belongs to is a sharing layout, not a
 /// refusal. `~/.agents/skills/<name>` is where a global install lands and
 /// where a person building this by hand puts the real folder, because
@@ -184,51 +120,21 @@ fn a_global_link_into_the_shared_tree_adopts() {
     );
 }
 
-/// Only this skill's own place in the shared tree is the finished shape.
-/// A link at one name pointing at another name's folder there would have
-/// adoption capture that folder under this name and move the original,
-/// taking a second skill's content with it.
-#[cfg(unix)]
-#[test]
-fn a_global_link_across_names_in_the_shared_tree_refuses() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let env = Env::fake(&home, FakeOs::Linux);
-    let other = env.global_skills_dir().join("other");
-    fs::create_dir_all(&other).unwrap();
-    fs::write(
-        other.join("SKILL.md"),
-        "---\nname: other\ndescription: a second skill\n---\nTheirs.\n",
-    )
-    .unwrap();
-    fs::create_dir_all(env.home.join(".claude/skills")).unwrap();
-    std::os::unix::fs::symlink(&other, env.home.join(".claude/skills/alias")).unwrap();
-
-    let error = adopt(
-        &env,
-        &Scope::Global,
-        ItemKind::Skill,
-        "alias",
-        &[HarnessId::Claude],
-    )
-    .unwrap_err();
-    assert!(matches!(error, CoreError::ForeignSymlink { .. }));
-    assert!(other.join("SKILL.md").is_file());
-}
-
 /// The folder changing between the plan and the apply aborts the whole
 /// transaction: the trash op is bound to the bytes that were captured,
 /// so a stale snapshot can never become "the backup".
 #[cfg(unix)]
 #[test]
 fn a_target_that_changed_after_planning_fails_the_apply() {
+    // Rooted: the stale path the rollback names is the canonical one.
     let tmp = tempfile::tempdir().unwrap();
-    let env = Env::fake(tmp.path(), FakeOs::Linux);
-    let project = tmp.path().join("app");
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let project = home.join("app");
     let scope = Scope::Project {
         root: project.clone(),
     };
-    let shared = tmp.path().join("shared/browser");
+    let shared = home.join("shared/browser");
     fs::create_dir_all(&shared).unwrap();
     fs::write(
         shared.join("SKILL.md"),
@@ -248,7 +154,15 @@ fn a_target_that_changed_after_planning_fails_the_apply() {
     .unwrap();
     fs::write(shared.join("SKILL.md"), "changed under the plan").unwrap();
 
-    assert!(crate::apply::execute(&env, &plan).is_err());
+    let failed = crate::apply::execute(&env, &plan).unwrap_err();
+    assert!(
+        matches!(
+            &failed,
+            CoreError::RolledBack { cause, .. }
+                if matches!(&**cause, CoreError::PlanStale { path } if path == &shared)
+        ),
+        "{failed:?}"
+    );
     assert!(
         shared.join("SKILL.md").is_file(),
         "the folder stays where it was"
@@ -256,88 +170,169 @@ fn a_target_that_changed_after_planning_fails_the_apply() {
     assert!(project.join(".claude/skills/browser").is_symlink());
 }
 
-/// An absolute name is not a name. `PathBuf::join` throws away the root it
-/// is joined onto, so the position adoption reads becomes the absolute
-/// path itself — a directory outside every kendex root, captured into the
-/// local source and then trashed. Refused before a path is derived.
+/// One row per link adoption may not follow, each leaving the link and
+/// what it points at exactly where they were and nothing in the trash. A
+/// folder that is not a skill at all: the marker is the boundary — no
+/// SKILL.md, no adopt. A project link reaching the global shared tree:
+/// what sits there is a global install, which the project's lock cannot
+/// see, and capturing it under another name would steal it. A global link
+/// at one name pointing at another name's folder in the shared tree, and
+/// a project link at one name into its shared tree at another: each names
+/// a second skill that already has a home, and adopting through it would
+/// capture that folder under this name and move the original, taking the
+/// second skill's content with it. Only this skill's own place in the
+/// shared tree is the finished shape, which
+/// `a_global_link_into_the_shared_tree_adopts` and
+/// `a_link_at_this_items_own_home_is_adopted` keep.
+#[cfg(unix)]
 #[test]
-fn an_absolute_name_captures_and_trashes_nothing() {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = Env::fake(tmp.path(), FakeOs::Linux);
-    let project = tmp.path().join("app");
-    let scope = Scope::Project {
-        root: project.clone(),
-    };
-    let outside = tmp.path().join("elsewhere/notes");
-    fs::create_dir_all(&outside).unwrap();
-    fs::write(outside.join("SKILL.md"), "somebody else's files").unwrap();
-    fs::create_dir_all(project.join(".claude/skills")).unwrap();
+fn a_link_into_a_folder_that_is_not_this_skills_own_refuses() {
+    /// The link a tool holds, the folder it points at, and a file in
+    /// that folder with the bytes it must still hold.
+    type Plant = fn(&Env, &Path) -> (PathBuf, PathBuf, PathBuf, &'static str);
+    let rows: [(&str, bool, Plant); 4] = [
+        ("a folder without the marker", false, |_, project| {
+            let elsewhere = project.parent().unwrap().join("documents");
+            fs::create_dir_all(&elsewhere).unwrap();
+            fs::write(elsewhere.join("notes.txt"), "private").unwrap();
+            let link = project.join(".claude/skills/documents");
+            (
+                link,
+                elsewhere.clone(),
+                elsewhere.join("notes.txt"),
+                "private",
+            )
+        }),
+        (
+            "a project link into the global tree",
+            false,
+            |env, project| {
+                let managed = env.global_skills_dir().join("other");
+                fs::create_dir_all(&managed).unwrap();
+                fs::write(managed.join("SKILL.md"), "Managed.\n").unwrap();
+                let link = project.join(".claude/skills/stolen");
+                (
+                    link,
+                    managed.clone(),
+                    managed.join("SKILL.md"),
+                    "Managed.\n",
+                )
+            },
+        ),
+        (
+            "a global link across names in the shared tree",
+            true,
+            |env, home| {
+                let other = env.global_skills_dir().join("other");
+                fs::create_dir_all(&other).unwrap();
+                fs::write(other.join("SKILL.md"), "Theirs.\n").unwrap();
+                let link = home.join(".claude/skills/alias");
+                (link, other.clone(), other.join("SKILL.md"), "Theirs.\n")
+            },
+        ),
+        (
+            "a project link into its shared tree at another name",
+            false,
+            |_, project| {
+                let other = project.join(".agents/skills/browser");
+                fs::create_dir_all(&other).unwrap();
+                fs::write(other.join("SKILL.md"), "Theirs.\n").unwrap();
+                let link = project.join(".claude/skills/handmade");
+                (link, other.clone(), other.join("SKILL.md"), "Theirs.\n")
+            },
+        ),
+    ];
+    for (label, global, plant) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        let (scope, root) = match global {
+            true => (Scope::Global, home.clone()),
+            false => {
+                let project = home.join("app");
+                (
+                    Scope::Project {
+                        root: project.clone(),
+                    },
+                    project,
+                )
+            }
+        };
+        let (link, target, kept, body) = plant(&env, &root);
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let name = link.file_name().unwrap().to_str().unwrap();
 
-    let refused = adopt(
-        &env,
-        &scope,
-        ItemKind::Skill,
-        outside.to_str().unwrap(),
-        &[HarnessId::Claude],
-    )
-    .unwrap_err();
+        let refused = adopt(&env, &scope, ItemKind::Skill, name, &[HarnessId::Claude]).unwrap_err();
 
-    assert!(
-        matches!(refused, CoreError::AdoptNameUnusable { .. }),
-        "{refused:?}"
-    );
-    assert!(outside.join("SKILL.md").is_file());
-    assert!(!project.join(".kendex-local").exists());
-    assert!(trash_is_empty(&env));
-    // The offer a surface would draw says the same thing.
-    assert!(!can_keep_for(
-        &env,
-        &scope,
-        ItemKind::Skill,
-        outside.to_str().unwrap(),
-        HarnessId::Claude
-    ));
+        match &refused {
+            CoreError::ForeignSymlink {
+                target: at,
+                points_to,
+            } => {
+                assert_eq!(at, &link, "{label}");
+                assert_eq!(points_to, &target, "{label}");
+            }
+            other => panic!("{label}: expected the foreign-symlink refusal, got {other:?}"),
+        }
+        assert!(link.is_symlink(), "{label}");
+        assert_eq!(fs::read_to_string(&kept).unwrap(), body, "{label}");
+        assert!(trash_is_empty(&env), "{label}");
+    }
 }
 
-/// A `..`-shaped name climbs out of the tool's skills directory: the old
+/// One row per name that is not a name, refused before a path is derived
+/// and captured and trashed nothing, with the offer a surface would draw
+/// saying the same thing. An absolute name: `PathBuf::join` throws away
+/// the root it is joined onto, so the position adoption reads becomes the
+/// absolute path itself — a directory outside every kendex root. A
+/// `..`-shaped name climbs out of the tool's skills directory: the old
 /// join put the position at `.claude/notes`, one step above where skills
-/// live, and the capture would have moved and trashed it.
+/// live. The refusal carries the name and the reason `names::item_problem`
+/// gives, whose rows are pinned in `names.rs`.
 #[test]
-fn a_traversal_name_captures_and_trashes_nothing() {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = Env::fake(tmp.path(), FakeOs::Linux);
-    let project = tmp.path().join("app");
-    let scope = Scope::Project {
-        root: project.clone(),
-    };
-    let climbed = project.join(".claude/notes");
-    fs::create_dir_all(&climbed).unwrap();
-    fs::write(climbed.join("SKILL.md"), "not an item kendex was given").unwrap();
-    fs::create_dir_all(project.join(".claude/skills")).unwrap();
+fn a_name_that_is_not_a_name_captures_and_trashes_nothing() {
+    /// The folder the name would have reached, and the name as asked.
+    type Plant = fn(&Path, &Path) -> (PathBuf, String);
+    let rows: [(&str, Plant); 2] = [
+        ("an absolute name", |tmp, _| {
+            let outside = tmp.join("elsewhere/notes");
+            (outside.clone(), outside.to_str().unwrap().to_owned())
+        }),
+        ("a traversal name", |_, project| {
+            (project.join(".claude/notes"), "../notes".to_owned())
+        }),
+    ];
+    for (label, plant) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        let project = home.join("app");
+        let scope = Scope::Project {
+            root: project.clone(),
+        };
+        let (reached, name) = plant(&home, &project);
+        fs::create_dir_all(&reached).unwrap();
+        fs::write(reached.join("SKILL.md"), "not an item kendex was given").unwrap();
+        fs::create_dir_all(project.join(".claude/skills")).unwrap();
 
-    let refused = adopt(
-        &env,
-        &scope,
-        ItemKind::Skill,
-        "../notes",
-        &[HarnessId::Claude],
-    )
-    .unwrap_err();
+        let refused =
+            adopt(&env, &scope, ItemKind::Skill, &name, &[HarnessId::Claude]).unwrap_err();
 
-    assert!(
-        matches!(refused, CoreError::AdoptNameUnusable { .. }),
-        "{refused:?}"
-    );
-    assert!(climbed.join("SKILL.md").is_file());
-    assert!(!project.join(".kendex-local").exists());
-    assert!(trash_is_empty(&env));
-    assert!(!can_keep_for(
-        &env,
-        &scope,
-        ItemKind::Skill,
-        "../notes",
-        HarnessId::Claude
-    ));
+        match &refused {
+            CoreError::AdoptNameUnusable { name: shown, .. } => {
+                assert_eq!(shown, &crate::names::shown(&name), "{label}");
+            }
+            other => panic!("{label}: expected the unusable-name refusal, got {other:?}"),
+        }
+        assert!(reached.join("SKILL.md").is_file(), "{label}");
+        assert!(!project.join(".kendex-local").exists(), "{label}");
+        assert!(trash_is_empty(&env), "{label}");
+        assert!(
+            !can_keep_for(&env, &scope, ItemKind::Skill, &name, HarnessId::Claude),
+            "{label}"
+        );
+    }
 }
 
 /// A namespaced skill sits at the tool's rendered spelling — one directory
@@ -398,44 +393,6 @@ fn a_namespaced_skill_is_adopted_at_its_rendered_position() {
     assert!(!project.join(".claude/skills/data-science").exists());
     let after = audit(&env, &scope).unwrap();
     assert_eq!(after.drift, vec![]);
-}
-
-/// A link at one name pointing into the shared tree at another names a
-/// second skill that already has a home. Adopting through it would rename
-/// that one under this name, taking its content with it.
-#[cfg(unix)]
-#[test]
-fn a_link_into_the_shared_tree_at_another_name_refuses() {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = Env::fake(tmp.path(), FakeOs::Linux);
-    let project = tmp.path().join("app");
-    let scope = Scope::Project {
-        root: project.clone(),
-    };
-    let other = project.join(".agents/skills/browser");
-    fs::create_dir_all(&other).unwrap();
-    fs::write(other.join("SKILL.md"), "---\nname: browser\n---\nTheirs.\n").unwrap();
-    fs::create_dir_all(project.join(".claude/skills")).unwrap();
-    std::os::unix::fs::symlink(&other, project.join(".claude/skills/handmade")).unwrap();
-
-    let refused = adopt(
-        &env,
-        &scope,
-        ItemKind::Skill,
-        "handmade",
-        &[HarnessId::Claude],
-    )
-    .unwrap_err();
-
-    assert!(
-        matches!(refused, CoreError::ForeignSymlink { .. }),
-        "{refused:?}"
-    );
-    assert_eq!(
-        fs::read_to_string(other.join("SKILL.md")).unwrap(),
-        "---\nname: browser\n---\nTheirs.\n"
-    );
-    assert!(trash_is_empty(&env));
 }
 
 /// The same link pointing at this item's own home is the finished shape —

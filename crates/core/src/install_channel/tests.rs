@@ -89,92 +89,96 @@ fn app_image(path: &str) -> AppInstall {
     AppInstall::AppImage(Some(PathBuf::from(path)))
 }
 
+/// One row per Linux AppImage the desktop shell can find itself in: the
+/// path it is judged by, the host facts the probe answers, and the channel.
+/// A file the person can replace updates in place; a system-owned one names
+/// the package that put it there, on every distro that reads as Arch (`ID`
+/// or `ID_LIKE`, unquoted and whole) and as unknown elsewhere, even where a
+/// root-owned machine could write the file; `/usr/local` is a hand install;
+/// with two helpers on `PATH` paru wins, and with none the command is
+/// helper-neutral prose. A process that is not running from an image has
+/// nothing to judge.
 #[test]
-fn an_appimage_the_person_owns_updates_in_place() {
+fn for_app_names_the_channel_of_each_appimage_layout() {
     let home = "/home/pat/.local/share/kendex/kendex.AppImage";
-    let probe = Fake::default().replaceable(home);
-    assert_eq!(for_app(&app_image(home), &probe), InstallChannel::Direct);
-}
-
-#[test]
-fn an_appimage_in_a_directory_that_refuses_writes_is_unknown() {
-    let elsewhere = "/opt/kendex/kendex.AppImage";
-    assert_eq!(
-        for_app(&app_image(elsewhere), &Fake::default()),
-        InstallChannel::Unknown
-    );
-}
-
-#[test]
-fn a_linux_app_launched_outside_an_appimage_is_unknown() {
-    assert_eq!(
-        for_app(&AppInstall::AppImage(None), &Fake::default()),
-        InstallChannel::Unknown
-    );
-}
-
-/// A root-owned machine can write anywhere; the package still owns the file.
-#[test]
-fn a_packaged_appimage_names_its_package_even_where_the_file_is_writable() {
-    let probe = Fake::default()
-        .replaceable(PACKAGED_APP_IMAGE)
-        .os_release(ARCH)
-        .on_path("paru");
-    assert_eq!(
-        for_app(&app_image(PACKAGED_APP_IMAGE), &probe),
-        aur("paru -S kendex-bin")
-    );
-}
-
-#[test]
-fn usr_local_is_a_hand_install_not_a_package() {
     let local = "/usr/local/lib/kendex/kendex.AppImage";
-    let probe = Fake::default().replaceable(local).os_release(ARCH);
-    assert_eq!(for_app(&app_image(local), &probe), InstallChannel::Direct);
-}
-
-#[test]
-fn an_arch_derivative_naming_arch_in_id_like_is_recognised() {
-    let probe = Fake::default().os_release(CACHYOS).on_path("yay");
-    assert_eq!(
-        for_app(&app_image(PACKAGED_APP_IMAGE), &probe),
-        aur("yay -S kendex-bin")
-    );
-}
-
-#[test]
-fn a_package_owned_path_on_an_unrecognised_distro_is_unknown() {
-    for probe in [
-        Fake::default().os_release(DEBIAN),
-        Fake::default(),
-        Fake::default().os_release("ID=archlinux\n"),
-    ] {
-        assert_eq!(
-            for_app(&app_image(PACKAGED_APP_IMAGE), &probe),
-            InstallChannel::Unknown
-        );
+    let rows: Vec<(&str, AppInstall, Fake, InstallChannel)> = vec![
+        (
+            "an image the person owns",
+            app_image(home),
+            Fake::default().replaceable(home),
+            InstallChannel::Direct,
+        ),
+        (
+            "an image in a directory that refuses writes",
+            app_image("/opt/kendex/kendex.AppImage"),
+            Fake::default(),
+            InstallChannel::Unknown,
+        ),
+        (
+            "launched outside an image",
+            AppInstall::AppImage(None),
+            Fake::default(),
+            InstallChannel::Unknown,
+        ),
+        (
+            "the packaged image on a root-writable machine",
+            app_image(PACKAGED_APP_IMAGE),
+            Fake::default()
+                .replaceable(PACKAGED_APP_IMAGE)
+                .os_release(ARCH)
+                .on_path("paru"),
+            aur("paru -S kendex-bin"),
+        ),
+        (
+            "a hand install under /usr/local",
+            app_image(local),
+            Fake::default().replaceable(local).os_release(ARCH),
+            InstallChannel::Direct,
+        ),
+        (
+            "an Arch derivative naming arch in ID_LIKE",
+            app_image(PACKAGED_APP_IMAGE),
+            Fake::default().os_release(CACHYOS).on_path("yay"),
+            aur("yay -S kendex-bin"),
+        ),
+        (
+            "the packaged path on Debian",
+            app_image(PACKAGED_APP_IMAGE),
+            Fake::default().os_release(DEBIAN),
+            InstallChannel::Unknown,
+        ),
+        (
+            "the packaged path with no os-release",
+            app_image(PACKAGED_APP_IMAGE),
+            Fake::default(),
+            InstallChannel::Unknown,
+        ),
+        (
+            "the packaged path where ID only starts with arch",
+            app_image(PACKAGED_APP_IMAGE),
+            Fake::default().os_release("ID=archlinux\n"),
+            InstallChannel::Unknown,
+        ),
+        (
+            "Arch with no AUR helper on PATH",
+            app_image(PACKAGED_APP_IMAGE),
+            Fake::default().os_release(ARCH),
+            aur("update kendex-bin with your AUR helper"),
+        ),
+        (
+            "Arch with both helpers on PATH",
+            app_image(PACKAGED_APP_IMAGE),
+            Fake::default()
+                .os_release(ARCH)
+                .on_path("yay")
+                .on_path("paru"),
+            aur("paru -S kendex-bin"),
+        ),
+    ];
+    for (label, install, probe, expected) in rows {
+        assert_eq!(for_app(&install, &probe), expected, "{label}");
     }
-}
-
-#[test]
-fn with_no_aur_helper_the_command_is_helper_neutral_prose() {
-    let probe = Fake::default().os_release(ARCH);
-    assert_eq!(
-        for_app(&app_image(PACKAGED_APP_IMAGE), &probe),
-        aur("update kendex-bin with your AUR helper")
-    );
-}
-
-#[test]
-fn paru_wins_over_yay_when_both_are_installed() {
-    let probe = Fake::default()
-        .os_release(ARCH)
-        .on_path("yay")
-        .on_path("paru");
-    assert_eq!(
-        for_app(&app_image(PACKAGED_APP_IMAGE), &probe),
-        aur("paru -S kendex-bin")
-    );
 }
 
 #[test]
@@ -256,15 +260,6 @@ fn a_brew_linked_cli_is_brews_to_upgrade_however_it_was_reached() {
     }
 }
 
-/// A real binary at the same place Homebrew would have linked one stays
-/// ours to replace: following the link is what decides, not the prefix.
-#[test]
-fn a_plain_binary_in_usr_local_bin_is_still_a_direct_install() {
-    let exe = "/usr/local/bin/kendex";
-    let probe = Fake::default().replaceable(exe);
-    assert_eq!(for_cli(Path::new(exe), &probe), InstallChannel::Direct);
-}
-
 /// The same name reached through a link into a package's tree belongs to
 /// that package, on the app side as much as the command's. The image is
 /// resolved as the variant is built, so what reaches `for_app` is the file.
@@ -289,29 +284,53 @@ fn an_appimage_reached_through_a_link_belongs_to_whatever_it_points_at() {
     assert_eq!(for_app(&install, &probe), aur("paru -S kendex-bin"));
 }
 
+/// One row per place the command can be found: a plain binary at the very
+/// place Homebrew would have linked one is still ours (following the link is
+/// what decides, not the prefix); a binary in a directory the person can
+/// write updates itself and one they cannot is unknown; a system-owned one
+/// names whichever AUR package put it there, `kendex-bin` where that
+/// package's image is on the machine and `kendex` where only the command is.
 #[test]
-fn a_cli_in_a_writable_user_directory_updates_itself() {
-    let exe = "/home/pat/.local/bin/kendex";
-    let probe = Fake::default().replaceable(exe);
-    assert_eq!(for_cli(Path::new(exe), &probe), InstallChannel::Direct);
-    assert_eq!(
-        for_cli(Path::new(exe), &Fake::default()),
-        InstallChannel::Unknown
-    );
-}
-
-/// The prebuilt package ships both halves, so a machine carrying its
-/// AppImage is told to update that package rather than the CLI-only one.
-#[test]
-fn the_packaged_cli_names_whichever_package_put_it_there() {
-    let exe = Path::new("/usr/bin/kendex");
-    let both = Fake::default()
-        .os_release(ARCH)
-        .on_path("paru")
-        .present(PACKAGED_APP_IMAGE);
-    assert_eq!(for_cli(exe, &both), aur("paru -S kendex-bin"));
-    let cli_only = Fake::default().os_release(ARCH).on_path("paru");
-    assert_eq!(for_cli(exe, &cli_only), aur("paru -S kendex"));
+fn for_cli_names_the_channel_of_each_binary_layout() {
+    let user = "/home/pat/.local/bin/kendex";
+    let rows: [(&str, &str, Fake, InstallChannel); 5] = [
+        (
+            "a plain binary in /usr/local/bin",
+            "/usr/local/bin/kendex",
+            Fake::default().replaceable("/usr/local/bin/kendex"),
+            InstallChannel::Direct,
+        ),
+        (
+            "a binary the person can replace",
+            user,
+            Fake::default().replaceable(user),
+            InstallChannel::Direct,
+        ),
+        (
+            "a binary the person cannot replace",
+            user,
+            Fake::default(),
+            InstallChannel::Unknown,
+        ),
+        (
+            "the packaged command beside the packaged image",
+            "/usr/bin/kendex",
+            Fake::default()
+                .os_release(ARCH)
+                .on_path("paru")
+                .present(PACKAGED_APP_IMAGE),
+            aur("paru -S kendex-bin"),
+        ),
+        (
+            "the packaged command alone",
+            "/usr/bin/kendex",
+            Fake::default().os_release(ARCH).on_path("paru"),
+            aur("paru -S kendex"),
+        ),
+    ];
+    for (label, exe, probe, expected) in rows {
+        assert_eq!(for_cli(Path::new(exe), &probe), expected, "{label}");
+    }
 }
 
 /// Anything a resolver read off the machine — a distro name, an os-release
@@ -353,99 +372,119 @@ fn in_place_replacement_is_refused_off_a_direct_install() {
             "this install came from {AUR_HELPER}; update it with: paru -S kendex-bin"
         ))
     );
-    assert!(InstallChannel::Unknown.allow_replacement().is_err());
+    assert_eq!(
+        InstallChannel::Unknown.allow_replacement(),
+        Err("kendex cannot tell how this copy was installed, so it will not replace it".to_owned())
+    );
 }
 
-/// A running AppImage: the runtime mounts it and both variables point at
-/// that mount, which is where the executable is.
+/// One row per environment the AppImage runtime can leave behind. Both
+/// `APPIMAGE` and `APPDIR` are exported into the environment every child
+/// gets, so a deb launched from a terminal that came out of an image
+/// carries a stranger's pair; only an executable living inside `APPDIR`
+/// says this process is the bundle. With no executable to place, a bare
+/// variable keeps a genuine bundle from being demoted. An exported-but-empty
+/// `APPDIR` is every path's prefix and reads as unset, blank as much as
+/// empty and with no executable to place as much as with one, and a
+/// prefix that matches as a string but not as a path is no prefix.
 #[test]
-fn a_mounted_appimage_is_recognised_by_where_it_runs_from() {
-    assert!(in_appimage(
-        Some(OsStr::new("/home/me/kendex.AppImage")),
-        Some(OsStr::new("/tmp/.mount_kendexAbc")),
-        Some(Path::new("/tmp/.mount_kendexAbc/usr/bin/kendex-app"))
-    ));
-    assert!(!in_appimage(
-        None,
-        None,
-        Some(Path::new("/usr/bin/kendex-app"))
-    ));
-}
-
-/// The other half of the inherited-variable problem: the runtime exports
-/// APPIMAGE into the same environment every child gets, so it says no more
-/// about this process than APPDIR does.
-#[test]
-fn a_stray_appimage_does_not_make_this_an_appimage() {
-    let installed = Path::new("/usr/bin/kendex-app");
-    assert!(!in_appimage(
-        Some(OsStr::new("/home/me/other.AppImage")),
-        None,
-        Some(installed)
-    ));
-    assert!(!in_appimage(
-        Some(OsStr::new("/home/me/other.AppImage")),
-        Some(OsStr::new("/tmp/.mount_otherXyz")),
-        Some(installed)
-    ));
-}
-
-/// Neither variable can be measured against a path we do not have, and a
-/// genuine bundle is not worth demoting to half size over it.
-#[test]
-fn a_bundle_that_cannot_read_its_own_path_is_still_a_bundle() {
-    assert!(in_appimage(
-        Some(OsStr::new("/home/me/kendex.AppImage")),
-        None,
-        None
-    ));
-    assert!(in_appimage(
-        None,
-        Some(OsStr::new("/home/me/kendex.AppDir")),
-        None
-    ));
-    assert!(!in_appimage(None, None, None));
-}
-
-/// An exported-but-empty APPDIR is every path's prefix, so it has to be
-/// read as unset rather than as a directory containing everything.
-#[test]
-fn an_empty_appdir_is_not_a_directory_this_lives_in() {
-    for empty in ["", "   "] {
-        assert!(
-            !in_appimage(
-                None,
-                Some(OsStr::new(empty)),
-                Some(Path::new("/usr/bin/kendex-app"))
+fn in_appimage_reads_the_pair_against_where_this_process_runs() {
+    let mounted = "/tmp/.mount_kendexAbc/usr/bin/kendex-app";
+    let installed = "/usr/bin/kendex-app";
+    let extracted = "/home/me/kendex.AppDir";
+    type Row = (
+        &'static str,
+        Option<&'static str>,
+        Option<&'static str>,
+        Option<&'static str>,
+        bool,
+    );
+    let rows: [Row; 13] = [
+        (
+            "running from the mount",
+            Some("/home/me/kendex.AppImage"),
+            Some("/tmp/.mount_kendexAbc"),
+            Some(mounted),
+            true,
+        ),
+        (
+            "no variables, an installed binary",
+            None,
+            None,
+            Some(installed),
+            false,
+        ),
+        (
+            "a stray image, no dir",
+            Some("/home/me/other.AppImage"),
+            None,
+            Some(installed),
+            false,
+        ),
+        (
+            "a stray pair around an installed binary",
+            Some("/home/me/other.AppImage"),
+            Some("/tmp/.mount_otherXyz"),
+            Some(installed),
+            false,
+        ),
+        (
+            "an image and no executable to place",
+            Some("/home/me/kendex.AppImage"),
+            None,
+            None,
+            true,
+        ),
+        (
+            "a dir and no executable to place",
+            None,
+            Some(extracted),
+            None,
+            true,
+        ),
+        ("nothing at all", None, None, None, false),
+        ("an empty dir", None, Some(""), Some(installed), false),
+        ("a blank dir", None, Some("   "), Some(installed), false),
+        (
+            "running inside the extracted dir",
+            None,
+            Some(extracted),
+            Some("/home/me/kendex.AppDir/usr/bin/kendex-app"),
+            true,
+        ),
+        (
+            "a stray dir around an installed binary",
+            None,
+            Some(extracted),
+            Some(installed),
+            false,
+        ),
+        (
+            "a dir that is only a string prefix",
+            None,
+            Some(extracted),
+            Some("/home/me/kendex.AppDirectory/usr/bin/kendex-app"),
+            false,
+        ),
+        (
+            "a blank dir and no executable to place",
+            None,
+            Some("   "),
+            None,
+            false,
+        ),
+    ];
+    for (label, appimage, appdir, exe, expected) in rows {
+        assert_eq!(
+            in_appimage(
+                appimage.map(OsStr::new),
+                appdir.map(OsStr::new),
+                exe.map(Path::new)
             ),
-            "{empty:?}"
+            expected,
+            "{label}"
         );
     }
-}
-
-/// Every AppImage's AppRun exports APPDIR and everything it starts
-/// inherits it, so a deb launched from a terminal that came out of one
-/// carries a stranger's APPDIR. It only speaks for this process when
-/// this process lives inside it.
-#[test]
-fn a_stray_appdir_does_not_make_this_an_appimage() {
-    let extracted = OsStr::new("/home/me/kendex.AppDir");
-    assert!(in_appimage(
-        None,
-        Some(extracted),
-        Some(Path::new("/home/me/kendex.AppDir/usr/bin/kendex-app"))
-    ));
-    assert!(!in_appimage(
-        None,
-        Some(extracted),
-        Some(Path::new("/usr/bin/kendex-app"))
-    ));
-    // A prefix that only matches as a string, not as a path.
-    assert!(!in_appimage(
-        None,
-        Some(extracted),
-        Some(Path::new("/home/me/kendex.AppDirectory/usr/bin/kendex-app"))
-    ));
 }
 
 /// The variable alone never names this process's own install: a deb or a

@@ -24,29 +24,6 @@ fn identical_bytes_compare_equal_and_a_changed_byte_does_not() {
     assert_eq!(changed.differing_total, 1);
 }
 
-/// Anything that is not a plain readable file of its own is no answer.
-/// An "identical" claim off an unread side is what this arm prevents.
-#[test]
-#[allow(clippy::expect_used)]
-fn of_file_refuses_a_link_a_directory_and_an_absent_path() {
-    let dir = tmp();
-    let real = dir.path().join("real.md");
-    std::fs::write(&real, b"body\n").expect("write");
-    // The link arm needs a link, and only a platform that hands them out
-    // without a privilege can make one in a test. The directory and absent
-    // arms are the same everywhere and stay.
-    #[cfg(unix)]
-    {
-        let link = dir.path().join("link.md");
-        std::os::unix::fs::symlink(&real, &link).expect("symlink");
-        assert!(of_file(&link, b"body\n").is_none(), "a link is not read");
-    }
-    let folder = dir.path().join("folder");
-    std::fs::create_dir(&folder).expect("mkdir");
-    assert!(of_file(&folder, b"body\n").is_none());
-    assert!(of_file(&dir.path().join("gone.md"), b"body\n").is_none());
-}
-
 #[test]
 #[allow(clippy::expect_used)]
 fn a_tree_names_every_side_that_only_one_holds() {
@@ -92,148 +69,230 @@ fn two_names_that_render_alike_stay_two_files() {
     assert_eq!(compared.differing.len(), 2, "{:?}", compared.differing);
 }
 
-/// Both bounds hold on their own, and they multiply: five hundred files at
-/// eight megabytes each is four gigabytes of reading for one position.
+/// One row per path `of_file` gives no answer for. Anything that is not
+/// a plain readable file of its own is no answer, and an "identical" claim
+/// off an unread side is what this arm prevents: a link, a directory, an
+/// absent path, and a file bigger than the bound. The link row needs a
+/// link, and only a platform that hands them out without a privilege can
+/// make one in a test.
 #[test]
 #[allow(clippy::expect_used)]
-fn a_tree_past_the_cumulative_budget_gives_no_answer() {
-    let dir = tmp();
-    let root = dir.path().join("wide");
-    std::fs::create_dir_all(&root).expect("mkdir");
-    // Each file is well under MAX_BYTES and the count is well under
-    // MAX_ENTRIES; together they cross the budget.
-    let chunk = vec![b'x'; usize::try_from(MAX_BYTES).expect("bound fits")];
-    let each = MAX_TOTAL_BYTES / MAX_BYTES;
-    for n in 0..each {
-        std::fs::write(root.join(format!("f{n}")), &chunk).expect("write");
+fn of_file_gives_no_answer_off_anything_but_a_plain_readable_file() {
+    /// The path to read and the bytes to compare it against.
+    type Plant = fn(&Path) -> (PathBuf, Vec<u8>);
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut rows: Vec<(&str, Plant)> = vec![
+        ("a directory", |dir| {
+            let folder = dir.join("folder");
+            std::fs::create_dir(&folder).expect("mkdir");
+            (folder, b"body\n".to_vec())
+        }),
+        ("an absent path", |dir| {
+            (dir.join("gone.md"), b"body\n".to_vec())
+        }),
+        ("a file bigger than the bound", |dir| {
+            let bytes = vec![b'x'; usize::try_from(MAX_BYTES).expect("bound fits") + 1];
+            let path = dir.join("big.bin");
+            std::fs::write(&path, &bytes).expect("write");
+            (path, bytes)
+        }),
+    ];
+    #[cfg(unix)]
+    rows.push(("a link", |dir| {
+        let real = dir.join("real.md");
+        std::fs::write(&real, b"body\n").expect("write");
+        let link = dir.join("link.md");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+        (link, b"body\n".to_vec())
+    }));
+    for (label, plant) in rows {
+        let dir = tmp();
+        let (path, bytes) = plant(dir.path());
+        assert!(of_file(&path, &bytes).is_none(), "{label}");
     }
-    assert!(
-        of_tree(&root, &[]).is_some(),
-        "the budget itself still reads"
-    );
-    std::fs::write(root.join("one-more"), b"x").expect("write");
-    assert!(of_tree(&root, &[]).is_none(), "past the budget, no answer");
 }
 
-/// The position belongs to somebody else. A link inside it would aim the
-/// read at a file nothing about this item chose, so the tree is refused
-/// whole rather than read through it.
-///
-/// Proven where a test can make a link without a privilege.
-#[cfg(unix)]
-#[test]
-#[allow(clippy::expect_used)]
-fn a_link_inside_the_tree_refuses_the_whole_comparison() {
-    let dir = tmp();
-    let outside = dir.path().join("outside.md");
-    std::fs::write(&outside, b"elsewhere\n").expect("write");
-    let root = dir.path().join("skill");
-    std::fs::create_dir_all(&root).expect("mkdir");
-    std::fs::write(root.join("SKILL.md"), b"same\n").expect("write");
-    let wanted = vec![(PathBuf::from("SKILL.md"), b"same\n".to_vec())];
-    assert!(of_tree(&root, &wanted).is_some(), "the plain tree compares");
-    std::os::unix::fs::symlink(&outside, root.join("linked.md")).expect("symlink");
-    assert!(of_tree(&root, &wanted).is_none(), "a link stops the answer");
+/// A directory a row's tree needs put back after the read.
+#[derive(Default)]
+struct Held {
+    #[cfg_attr(
+        not(unix),
+        allow(dead_code, reason = "set only by the permission-bit row")
+    )]
+    restore: Option<PathBuf>,
 }
 
-/// A folder the walk cannot enumerate must refuse the answer. Skipped, it
-/// would leave a partial tree comparing as whole, which is what "identical
-/// to the catalog" is printed from.
-///
-/// The unreadable folder is made with permission bits, so this runs where
-/// permission bits are the access control.
-#[cfg(unix)]
+/// One row per tree `of_tree` gives no answer for, each with the tree at
+/// the bound still reading where the bound is the point. Neither bound is
+/// a rendered item's shape, and a position past one is unread rather than
+/// assumed equal: the entry bound counts folders too, the per-file bound
+/// holds inside a tree as well, and the two multiply into a cumulative
+/// budget (five hundred files at eight megabytes each is four gigabytes
+/// of reading for one position). A link that loops back into its own tree
+/// stops at the same depth `hash_tree` uses rather than running until the
+/// stack does. The position belongs to somebody else, so a link inside it
+/// would aim the read at a file nothing about this item chose, and the
+/// tree is refused whole rather than read through it. A folder the walk
+/// cannot enumerate must refuse the answer: skipped, it would leave a
+/// partial tree comparing as whole, which is what "identical to the
+/// catalog" is printed from. Something that is neither file nor directory
+/// is nobody's to read; the third thing an entry can be here is a Unix
+/// socket. The link, permission-bit and socket rows run where a test can
+/// make those without a privilege.
 #[test]
-#[allow(clippy::expect_used)]
-fn a_folder_that_will_not_enumerate_refuses_rather_than_dropping_out() {
-    let dir = tmp();
-    let root = dir.path().join("skill");
-    let hidden = root.join("locked");
-    std::fs::create_dir_all(&hidden).expect("mkdir");
-    std::fs::write(root.join("SKILL.md"), b"same\n").expect("write");
-    std::fs::write(hidden.join("inner.md"), b"same\n").expect("write");
-    let wanted = vec![(PathBuf::from("SKILL.md"), b"same\n".to_vec())];
-    assert!(
-        of_tree(&root, &wanted).is_some(),
-        "readable, so it compares"
-    );
-
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&hidden, std::fs::Permissions::from_mode(0o000)).expect("chmod");
-    let refused = of_tree(&root, &wanted).is_none();
-    std::fs::set_permissions(&hidden, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-    assert!(
-        refused,
-        "a folder that will not enumerate compared as whole"
-    );
-}
-
-/// Neither bound is a rendered item's shape, and a position past one is
-/// unread rather than assumed equal. Folders count too: a tree wide in
-/// directories is as much of a read as one wide in files.
-#[test]
-#[allow(clippy::expect_used)]
-fn a_tree_with_more_entries_than_the_bound_gives_no_answer() {
-    let dir = tmp();
-    let root = dir.path().join("wide");
-    std::fs::create_dir_all(&root).expect("mkdir");
-    for n in 0..MAX_ENTRIES - 1 {
-        std::fs::write(root.join(format!("f{n}")), b"x").expect("write");
+#[allow(clippy::expect_used, clippy::too_many_lines)]
+fn of_tree_gives_no_answer_past_a_bound_or_off_an_entry_it_will_not_read() {
+    /// The tree at the bound, still readable, with the differing total
+    /// and shown-name count the at-bound read carries where a row pins
+    /// them; then the one step past it.
+    type Build = fn(&Path) -> Held;
+    struct Row {
+        label: &'static str,
+        wanted: Vec<(PathBuf, Vec<u8>)>,
+        at_bound: Option<Build>,
+        at_bound_counts: Option<(u32, usize)>,
+        past: Build,
     }
-    let compared = of_tree(&root, &[]).expect("the bound itself still reads");
-    assert_eq!(compared.differing_total, MAX_ENTRIES as u32 - 1);
-    assert_eq!(
-        compared.differing.len(),
-        SHOWN_DIFFERING,
-        "the row carries at most SHOWN_DIFFERING names"
-    );
+    #[cfg_attr(not(unix), allow(unused_variables))]
+    let skill = || vec![(PathBuf::from("SKILL.md"), b"same\n".to_vec())];
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut rows = vec![
+        Row {
+            label: "past the cumulative budget",
+            wanted: vec![],
+            at_bound: Some(|root| {
+                // Each file is well under MAX_BYTES and the count is well
+                // under MAX_ENTRIES; together they cross the budget.
+                let chunk = vec![b'x'; usize::try_from(MAX_BYTES).expect("bound fits")];
+                for n in 0..MAX_TOTAL_BYTES / MAX_BYTES {
+                    std::fs::write(root.join(format!("f{n}")), &chunk).expect("write");
+                }
+                Held::default()
+            }),
+            at_bound_counts: None,
+            past: |root| {
+                std::fs::write(root.join("one-more"), b"x").expect("write");
+                Held::default()
+            },
+        },
+        Row {
+            label: "more entries than the bound",
+            wanted: vec![],
+            at_bound: Some(|root| {
+                for n in 0..MAX_ENTRIES - 1 {
+                    std::fs::write(root.join(format!("f{n}")), b"x").expect("write");
+                }
+                Held::default()
+            }),
+            at_bound_counts: Some((MAX_ENTRIES as u32 - 1, SHOWN_DIFFERING)),
+            past: |root| {
+                std::fs::create_dir(root.join("one-more")).expect("mkdir");
+                Held::default()
+            },
+        },
+        Row {
+            label: "a file bigger than the bound inside the tree",
+            wanted: vec![],
+            at_bound: None,
+            at_bound_counts: None,
+            past: |root| {
+                let bytes = vec![b'x'; usize::try_from(MAX_BYTES).expect("bound fits") + 1];
+                std::fs::write(root.join("big.bin"), &bytes).expect("write");
+                Held::default()
+            },
+        },
+        Row {
+            label: "deeper than the bound",
+            wanted: vec![],
+            at_bound: None,
+            at_bound_counts: None,
+            past: |root| {
+                let mut at = root.to_path_buf();
+                for _ in 0..=crate::hash::MAX_DEPTH {
+                    at = at.join("d");
+                }
+                std::fs::create_dir_all(&at).expect("mkdir");
+                std::fs::write(at.join("SKILL.md"), b"deep\n").expect("write");
+                Held::default()
+            },
+        },
+    ];
+    #[cfg(unix)]
+    rows.extend([
+        Row {
+            label: "a link inside the tree",
+            wanted: skill(),
+            at_bound: Some(|root| {
+                std::fs::write(root.join("SKILL.md"), b"same\n").expect("write");
+                Held::default()
+            }),
+            at_bound_counts: None,
+            past: |root| {
+                let outside = root.parent().expect("parent").join("outside.md");
+                std::fs::write(&outside, b"elsewhere\n").expect("write");
+                std::os::unix::fs::symlink(&outside, root.join("linked.md")).expect("symlink");
+                Held::default()
+            },
+        },
+        Row {
+            label: "a folder that will not enumerate",
+            wanted: skill(),
+            at_bound: Some(|root| {
+                std::fs::create_dir_all(root.join("locked")).expect("mkdir");
+                std::fs::write(root.join("SKILL.md"), b"same\n").expect("write");
+                std::fs::write(root.join("locked/inner.md"), b"same\n").expect("write");
+                Held::default()
+            }),
+            at_bound_counts: None,
+            past: |root| {
+                use std::os::unix::fs::PermissionsExt;
+                let hidden = root.join("locked");
+                std::fs::set_permissions(&hidden, std::fs::Permissions::from_mode(0o000))
+                    .expect("chmod");
+                Held {
+                    restore: Some(hidden),
+                }
+            },
+        },
+        Row {
+            label: "an entry that is neither file nor directory",
+            wanted: vec![],
+            at_bound: None,
+            at_bound_counts: None,
+            past: |root| {
+                // The listener can go; its socket stays in the tree.
+                drop(std::os::unix::net::UnixListener::bind(root.join("sock")).expect("socket"));
+                Held::default()
+            },
+        },
+    ]);
 
-    std::fs::create_dir(root.join("one-more")).expect("mkdir");
-    assert!(of_tree(&root, &[]).is_none(), "a folder counts as an entry");
-}
-
-#[test]
-#[allow(clippy::expect_used)]
-fn a_file_bigger_than_the_bound_gives_no_answer() {
-    let dir = tmp();
-    let bytes = vec![b'x'; usize::try_from(MAX_BYTES).expect("bound fits") + 1];
-    let path = dir.path().join("big.bin");
-    std::fs::write(&path, &bytes).expect("write");
-    assert!(of_file(&path, &bytes).is_none(), "too large to read");
-
-    let root = dir.path().join("skill");
-    std::fs::create_dir_all(&root).expect("mkdir");
-    std::fs::write(root.join("big.bin"), &bytes).expect("write");
-    assert!(of_tree(&root, &[]).is_none(), "and inside a tree as well");
-}
-
-/// A link that loops back into its own tree stops at the same depth
-/// `hash_tree` uses rather than running until the stack does.
-#[test]
-#[allow(clippy::expect_used)]
-fn a_tree_deeper_than_the_bound_gives_no_answer() {
-    let dir = tmp();
-    let root = dir.path().join("deep");
-    let mut at = root.clone();
-    for _ in 0..=crate::hash::MAX_DEPTH {
-        at = at.join("d");
+    for row in rows {
+        let label = row.label;
+        let dir = tmp();
+        let root = dir.path().join("skill");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        if let Some(at_bound) = row.at_bound {
+            let _held = at_bound(&root);
+            let compared = of_tree(&root, &row.wanted)
+                .unwrap_or_else(|| panic!("{label}: the bound itself still reads"));
+            if let Some((total, shown)) = row.at_bound_counts {
+                assert_eq!(compared.differing_total, total, "{label}");
+                assert_eq!(
+                    compared.differing.len(),
+                    shown,
+                    "{label}: the row carries at most SHOWN_DIFFERING names"
+                );
+            }
+        }
+        #[cfg_attr(not(unix), allow(unused_variables))]
+        let held = (row.past)(&root);
+        let answer = of_tree(&root, &row.wanted);
+        #[cfg(unix)]
+        if let Some(path) = &held.restore {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        }
+        assert!(answer.is_none(), "{label}: past the bound, no answer");
     }
-    std::fs::create_dir_all(&at).expect("mkdir");
-    std::fs::write(at.join("SKILL.md"), b"deep\n").expect("write");
-    assert!(of_tree(&root, &[]).is_none());
-}
-
-/// Something that is neither file nor directory is nobody's to read. The
-/// third thing a filesystem entry can be here is a Unix socket, so this
-/// runs where sockets live in the filesystem.
-#[cfg(unix)]
-#[test]
-#[allow(clippy::expect_used)]
-fn an_entry_that_is_neither_file_nor_directory_stops_the_answer() {
-    let dir = tmp();
-    let root = dir.path().join("skill");
-    std::fs::create_dir_all(&root).expect("mkdir");
-    let socket = std::os::unix::net::UnixListener::bind(root.join("sock")).expect("socket");
-    assert!(of_tree(&root, &[]).is_none());
-    drop(socket);
 }
