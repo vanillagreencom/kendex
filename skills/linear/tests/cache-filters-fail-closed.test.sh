@@ -22,7 +22,11 @@
 #
 # `issues list --team=X` is NOT asserted here: it already reached the
 # fail-closed arm before this change (the deleted arm named `--team`, not
-# `--team=`), and `cache-issues-no-project.test.sh` § C owns that arm.
+# `--team=`), and `cache-issues-no-project.test.sh` § C owns that arm. Two
+# more surfaces the table leaves out are owned elsewhere: the value the cycles
+# `--team=X` normalisation forwards (cache-cycles-team-filter.test.sh) and the
+# resolved `--cycle` keyword applied as a predicate
+# (cache-date-comparison-utc.test.sh).
 #
 # Fully offline — pure cache read, no curl needed.
 
@@ -157,7 +161,7 @@ H: --team KEN --cycle current resolves KEN cycle, not OTHER|issues|--team KEN --
 '
 
 while IFS='|' read -r label cmd args spec; do
-  [ -n "$label" ] || continue
+  [ -n "$label$cmd$args$spec" ] || continue
   eval "set -- $args"
   # shellcheck disable=SC2086  # the spec's fields are its words
   assert_eq "$label" "$(run "$cmd" "$@")" "$(expected $spec)"

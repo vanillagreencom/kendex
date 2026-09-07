@@ -1,9 +1,8 @@
-# One mutation per behaviour the suite claims, and every expectation below is
-# what that arm reddens with ALL of them applied — the harness applies the
-# roster at once (KEN-1177). Arms 1 and 8 remove the issues and labels team
-# stages outright, so arm 9 is the only one the E assertions for those two can
-# still reach; its expectation names the cycles one, the read no other arm
-# touches.
+# One mutation per behaviour the suite claims, each on its own copy. Arms 1
+# and 8 remove the issues and labels team stages outright, so arm 9 names the
+# cycles read for the unfiltered listing; arms 11 and 12 narrow the issues and
+# labels reads when no team is asked for, which is what their unfiltered rows
+# refuse.
 
 # 1. Neutralize the team stage `cache issues list --team` composes into its
 #    filter. The flag is still bound and still exits 0, so every team's issues
@@ -88,3 +87,16 @@ control_expect "G: --team followed by another flag is a missing value, not a tea
 control_replace scripts/commands/cache-query.sh 1 \
     '    -*)' \
     '    --this-value-never-arrives)'
+
+# 11. Narrow the issues read to KEN when no team is asked for, so the unfiltered
+#     listing loses OTHER's issue while every filtered row still answers.
+control_expect "E: an unfiltered issues list still returns every team"
+control_replace scripts/commands/cache-query.sh 1 \
+    '    jq_filter="$jq_filter$(cache_team_stage "$team")"' \
+    '    jq_filter="$jq_filter$(cache_team_stage "${team:-KEN}")" # control: narrowed unasked'
+
+# 12. The same for the labels read.
+control_expect "E: an unfiltered labels list still returns every team"
+control_replace scripts/commands/cache-query.sh 1 \
+    '    labels=$(cache_jq_file "$CACHE_DIR/labels.json" "[]" ".$(cache_team_stage "$team")") || return 1' \
+    '    labels=$(cache_jq_file "$CACHE_DIR/labels.json" "[]" ".$(cache_team_stage "${team:-KEN}")") || return 1 # control: narrowed unasked'
