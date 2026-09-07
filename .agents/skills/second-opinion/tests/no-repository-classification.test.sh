@@ -91,6 +91,10 @@ case "$err" in
   *"could not resolve a repository at"*) ok "the refusal names the directory it looked in" ;;
   *) bad "the refusal names the directory it looked in" "err=$err" ;;
 esac
+case "$err" in
+  *"unknown argument"*) bad "it refuses above option parsing rather than degrading into it" "err=$err" ;;
+  *) ok "it refuses above option parsing rather than degrading into it" ;;
+esac
 # Read the quoted line alone: without the anchor the needle also matches the
 # shell's own unredirected "command not found", which is what stderr carries
 # when the refusal quotes nothing at all.
@@ -105,6 +109,50 @@ if [ -z "$out" ]; then
 else
   bad "the refusal prints nothing on stdout" "out=$out"
 fi
+
+# A linked worktree whose marker points at a gone target answers
+# `not a git repository: (null)` — the same three words as the absent-repository
+# case, from a checkout that DOES carry settings. Lanes here run out of linked
+# worktrees, so a pruned or moved main checkout produces exactly this.
+mkdir -p "$TMP_ROOT/wtmain"
+git init -q "$TMP_ROOT/wtmain"
+git -C "$TMP_ROOT/wtmain" config user.email test@example.com
+git -C "$TMP_ROOT/wtmain" config user.name test
+printf 'x\n' >"$TMP_ROOT/wtmain/f"
+git -C "$TMP_ROOT/wtmain" add f
+git -C "$TMP_ROOT/wtmain" -c commit.gpgsign=false commit -qm init
+git -C "$TMP_ROOT/wtmain" worktree add -q -b wt "$TMP_ROOT/wtlinked"
+mkdir -p "$TMP_ROOT/wtlinked/skills"
+cp -R "$REPO_ROOT/skills/second-opinion" "$TMP_ROOT/wtlinked/skills/second-opinion"
+# Break the marker the way a pruned or relocated main checkout does.
+rm -rf -- "${TMP_ROOT:?}/wtmain/.git/worktrees"
+
+marker_diag=$(LC_ALL=C git -C "$TMP_ROOT/wtlinked" rev-parse --show-toplevel 2>&1) || true
+case "$marker_diag" in
+  *"not a git repository"*) ok "a broken worktree marker still says 'not a git repository'" ;;
+  *) bad "a broken worktree marker still says 'not a git repository'" "diag=$marker_diag" ;;
+esac
+
+status=0
+out=$(LC_ALL=C "$TMP_ROOT/wtlinked/skills/second-opinion/scripts/second-opinion" \
+  --mode no-such-mode 2>"$TMP_ROOT/marker.err") || status=$?
+err=$(cat "$TMP_ROOT/marker.err")
+# Status alone proves nothing here: the unparseable argument would exit 1 too.
+# The refusal happens at the lookup, ABOVE option parsing, so never reaching
+# the parser is what separates refusing from degrading.
+if [ "$status" -eq 1 ]; then
+  ok "a broken worktree marker exits 1"
+else
+  bad "a broken worktree marker exits 1" "status=$status err=$err"
+fi
+case "$err" in
+  *"unknown argument"*) bad "it refuses above option parsing rather than degrading into it" "err=$err" ;;
+  *) ok "it refuses above option parsing rather than degrading into it" ;;
+esac
+case "$err" in
+  *"could not resolve a repository at"*) ok "that refusal names the directory too" ;;
+  *) bad "that refusal names the directory too" "err=$err" ;;
+esac
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

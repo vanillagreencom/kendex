@@ -285,8 +285,13 @@ readonly -a ORIGINAL_ARGS
 # because the message being read is translated.
 if ! PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"; then
   _git_diag="$(LC_ALL=C git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>&1 >/dev/null)" || :
+  # The parenthetical is what separates "there is no repository above me" from
+  # "there is one and it is broken": a linked worktree whose marker points at a
+  # gone or unreadable target answers `not a git repository: (null)`, and that
+  # checkout DOES carry settings, so it must refuse rather than degrade. Any
+  # message this does not recognise refuses too.
   case "$_git_diag" in
-    *"not a git repository"*) PROJECT_ROOT="" ;;
+    *"not a git repository (or any of the parent directories)"*) PROJECT_ROOT="" ;;
     *)
       echo "second-opinion: could not resolve a repository at $SCRIPT_DIR" >&2
       echo "  git said: ${_git_diag#fatal: }" >&2
