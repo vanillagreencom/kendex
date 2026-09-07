@@ -25,13 +25,15 @@ impl HarnessAdapter for Codex {
     fn global_surfaces(&self, kind: ItemKind, root: &Path, env: &Env) -> Vec<Surface> {
         match kind {
             ItemKind::Agent => vec![Surface::files(root.join("agents"), &["toml"])],
-            // `$HOME/.agents/skills` is the only user-level skills location
-            // Codex documents, so it leads here as it does in a project.
-            // `~/.codex/skills` stays on the list to read back what an
-            // older install left there. It is also where a copy delivery
-            // writes, being the only directory of Codex's own — and Codex
-            // does not read it, so a global copy is reported installed and
-            // is loaded by nothing.
+            // Codex reads three skill roots at user level: the shared
+            // `$HOME/.agents/skills`, `<root>/skills`, and
+            // `<root>/skills/.system`, where it stages the skills it ships.
+            // The shared tree leads, as it does in a project, because one
+            // definition there is seen by every tool that reads it.
+            // `<root>/skills` stays on the list because Codex reads it too:
+            // it holds what an older install left, and it is the only one
+            // of the three that is Codex's alone, so it is where a copy
+            // delivery writes.
             ItemKind::Skill => {
                 super::shared_first(Some(&env.global_skills_dir()), root.join("skills"))
             }

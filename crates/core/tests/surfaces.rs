@@ -225,3 +225,52 @@ fn verify_reads_a_global_skill_from_the_shared_tree() {
     let drift = audit(&env, &Scope::Global).unwrap().drift;
     assert!(drift.iter().any(|row| row.name == "gh"), "{drift:?}");
 }
+
+/// A global copy for Codex writes the one root that is Codex's alone.
+/// Codex reads three skill roots at user level: the shared
+/// `~/.agents/skills`, `~/.codex/skills`, and `~/.codex/skills/.system`,
+/// where it stages the skills it ships. A copy is a tree only one tool
+/// reads, so it goes to the second of those — read by Codex, and by
+/// nothing else. Leaving the shared tree untouched is what separates a
+/// copy from the install above, which writes that tree and nothing else.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_global_copy_for_codex_writes_the_directory_only_codex_reads() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+
+    let source = home.join("catalog");
+    fs::create_dir_all(source.join("skills/gh")).unwrap();
+    let body = "---\nname: gh\ndescription: github\n---\nBody.\n";
+    fs::write(source.join("skills/gh/SKILL.md"), body).unwrap();
+    let manifest = env.global_manifest_file();
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest,
+        format!(
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            source_path(&source)
+        ),
+    )
+    .unwrap();
+
+    let report = audit(&env, &Scope::Global).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
+
+    let own = home.join(".codex/skills/gh");
+    assert!(
+        own.join("SKILL.md").is_file(),
+        "the copy lands in the root only Codex reads"
+    );
+    assert!(!own.is_symlink(), "a copy is a tree, not a link");
+    assert_eq!(fs::read_to_string(own.join("SKILL.md")).unwrap(), body);
+    // The half that must fail if the delivery stopped being per-tool: the
+    // shared tree every one of these tools reads is left alone, so this is
+    // a copy and not the shared install under another name.
+    assert!(
+        !home.join(".agents/skills/gh").exists(),
+        "a copy writes no shared tree"
+    );
+    assert!(audit(&env, &Scope::Global).unwrap().drift.is_empty());
+}
