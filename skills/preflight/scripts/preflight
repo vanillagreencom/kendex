@@ -625,10 +625,12 @@ has_exit_trap() { # FILE
 # the builtin's own status becomes the command's and masks the substitution's,
 # so the script survives and the guard below does run. SC2155 names that
 # masking, and the masked-returns lane owns it rather than this one.
+# Only a double quote, or none: inside single quotes `$(cmd)` is literal text,
+# no command runs and no status can end anything.
 # The trailing `[^(]` is what keeps arithmetic expansion out: `$((n + 1))` also
 # opens with `$(`, and it runs no command and carries no status, so a loop
 # counter — the commonest line in this repo's own tooling — is not the shape.
-SUBST_ASSIGN_RE='^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=["'\'']?\$\([^(]'
+SUBST_ASSIGN_RE='^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*="?\$\([^(]'
 # The guard the assignment was written to reach: a test naming the assigned
 # variable on one of the lines just below. It is the whole finding — a
 # variable nothing below tests belongs to a command whose failure is MEANT to

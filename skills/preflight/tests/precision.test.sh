@@ -260,7 +260,12 @@ echo "$ROOT"
 # stands and is not this lane's shape.
 FATAL="$(date +%s)"
 # if [ -z "$FATAL" ]; then exit 1; fi
-echo "$FATAL"
+# Single quotes make it literal text: no command runs, so nothing can end here.
+LITERAL='$(date +%s)'
+if [ -z "$LITERAL" ]; then
+  exit 1
+fi
+echo "$FATAL $LITERAL"
 [ -z "$STAMP" ] || echo "still set"
 EOF
 git -C "$R" add -A
