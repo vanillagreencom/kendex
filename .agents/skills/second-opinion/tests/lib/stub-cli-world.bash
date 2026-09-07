@@ -101,6 +101,7 @@ chmod +x "$STUB"
 # A CLI that echoes its prompt back.
 cat >"$TMP_ROOT/bin/echo-cli" <<'SH'
 #!/usr/bin/env bash
+printf 'call\n' >>"$STUB_COUNTER"
 cat
 SH
 chmod +x "$TMP_ROOT/bin/echo-cli"
@@ -200,13 +201,13 @@ prepare() {
     link-parent) mkdir -p "$WORK/tmp"; ln -s "$ROW/ghost" "$WORK/tmp/link-parent" ;;
     # a pre-existing home with a tracked, curated .gitignore
     curated)
-      mkdir -p "$WORK/pre-existing"
+      mkdir -p "$WORK/pre-existing"; chmod 755 "$WORK/pre-existing"
       printf 'build/\n' >"$WORK/pre-existing/.gitignore"
       git -C "$WORK" add -f pre-existing/.gitignore
       git -C "$WORK" -c commit.gpgsign=false commit -q -m pre
       ;;
-    plain) mkdir -p "$WORK/pre-existing" ;;
-    dangling-ignore) mkdir -p "$WORK/pre-existing"; ln -s "$ROW/attacker-target" "$WORK/pre-existing/.gitignore" ;;
+    plain) mkdir -p "$WORK/pre-existing"; chmod 755 "$WORK/pre-existing" ;;
+    dangling-ignore) mkdir -p "$WORK/pre-existing"; chmod 755 "$WORK/pre-existing"; ln -s "$ROW/attacker-target" "$WORK/pre-existing/.gitignore" ;;
     *) echo "UNKNOWN-PREPARE: $1" >&2; exit 2 ;;
   esac
 }
@@ -256,6 +257,8 @@ build() {
   WORK="$ROW/work"
   ROW_TMP="$ROW/tmp"
   mkdir -p "$WORK" "$ROW/out" "$ROW_TMP" "$ROW/fakehome"
+  # the fixture's own directories at a fixed mode, whatever the umask here
+  chmod 755 "$WORK" "$ROW/out" "$ROW_TMP" "$ROW/fakehome"
   git -C "$WORK" init -q
   git -C "$WORK" config user.email test@example.com
   git -C "$WORK" config user.name test
@@ -427,16 +430,23 @@ home() {
 # The porcelain lines the run added to the reviewed tree (the fixture's own
 # are the baseline), mktemp suffixes dropped; `-` when none.
 dirty() {
-  local lines
-  lines="$(git -C "$WORK" status --porcelain -uall 2>/dev/null | grep -vxF -f "$ROW/porcelain-before" | sed 's/\.[A-Za-z0-9]\{6\}$//' | paste -s -d ',' -)"
+  local status lines
+  status="$(git -C "$WORK" status --porcelain -uall 2>/dev/null)" || { printf '<git-failed>'; return; }
+  lines="$(printf '%s\n' "$status" | grep -vxF -f "$ROW/porcelain-before" | sed 's/\.[A-Za-z0-9]\{6\}$//' | paste -s -d ',' -)"
   printf '%s' "${lines:--}"
+}
+
+# The regular files under a directory; `absent` when the directory itself is gone.
+file_count() {
+  [[ -d "$1" ]] || { printf 'absent'; return; }
+  find "$1" -type f | wc -l | tr -d ' '
 }
 
 # Fixed probes: what must not appear anywhere.
 paths() {
   local out=""
-  out="$out tmp=$(find "$ROW_TMP" -type f 2>/dev/null | wc -l | tr -d ' ')"
-  [[ -z "$W_DASHTMP" ]] || out="$out dashtmp=$(find "$ROW/dashrun/-dashtmp" -type f 2>/dev/null | wc -l | tr -d ' ')"
+  out="$out tmp=$(file_count "$ROW_TMP")"
+  [[ -z "$W_DASHTMP" ]] || out="$out dashtmp=$(file_count "$ROW/dashrun/-dashtmp")"
   [[ ! -e "$WORK/~" && ! -e "$WORK/~someuser" ]] || out="$out tilde-dir=present"
   [[ ! -e "$ROW/ghost" ]] || out="$out ghost=present"
   [[ ! -e "$ROW/outside" ]] || out="$out outside=present"

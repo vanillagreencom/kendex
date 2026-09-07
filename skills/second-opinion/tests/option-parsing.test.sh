@@ -14,7 +14,7 @@ NONE="calls=0 files=- home=absent tmp=0 dirty=-"
 
 # label|world|argv|rc|out|err|calls files home tmp dirty
 ROWS="
-dash-leading --prompt and --cwd in the = form are accepted and the prompt reaches the CLI intact|cwd:dash|quick --prompt=-dash-prompt.txt --cwd=-dashcwd|0|prompt-echoed|header:quick|$NONE
+dash-leading --prompt and --cwd in the = form are accepted and the prompt reaches the CLI intact|cwd:dash|quick --prompt=-dash-prompt.txt --cwd=-dashcwd|0|prompt-echoed|header:quick|calls=1 files=- home=absent tmp=0 dirty=-
 --timeout followed by --output does not swallow it: a parse error, and the caller's file at that path is untouched|plant:report|review --timeout --output @out|1|-|requires:--timeout|calls=0 files=out=mine home=absent tmp=0 dirty=-
 --prompt followed by a flag is rejected||review --prompt --range HEAD|1|-|requires:--prompt|$NONE
 --prompt at the end of argv is rejected||review --prompt|1|-|requires:--prompt|$NONE
