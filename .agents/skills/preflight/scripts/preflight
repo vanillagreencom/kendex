@@ -630,8 +630,12 @@ guard_tests_var() { # FILE LINE VAR — 0 when a line just below tests VAR
   # -q` stops at its first match and closes the pipe, and under pipefail
   # sed's SIGPIPE makes the pipeline 141 — in this condition position a
   # match would then read as no match and the finding would be dropped.
+  # Read through stdin so the path is never an operand: BSD sed rejects `--`
+  # outright ("illegal option"), and the nonzero status it exits with reached
+  # the `|| return 1` below, so on macOS this answered "no guard" every time
+  # and the lane silently never fired.
   local window=""
-  window="$(sed -n "$(($2 + 1)),$(($2 + 4))p" -- "$1" 2>/dev/null)" || return 1
+  window="$(sed -n "$(($2 + 1)),$(($2 + 4))p" <"$1" 2>/dev/null)" || return 1
   grep -Eq -- "(\[\[?|test)[[:space:]][^]]*\\\$\{?$3([^A-Za-z0-9_]|\$)" <<<"$window"
 }
 # A directory-CREATING call taking a literal absolute temp path (/tmp,
