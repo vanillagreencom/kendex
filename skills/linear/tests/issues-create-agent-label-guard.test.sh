@@ -7,6 +7,12 @@
 # kendex.settings.toml [env]), a bare `issues create` must refuse before any
 # API call, with an actionable error naming the TPM pipeline and the
 # --no-agent-label escape hatch. Projects with no declaration are unaffected.
+#
+# One table. A row names the declared taxonomy and the create's arguments and
+# pins what came back as one line: the exit status, every logged operation
+# with the label it resolved or the labels the create carried, then stderr
+# whole, so a refusal is pinned on its entire line and a create on the labels
+# that reached it.
 
 set -euo pipefail
 
@@ -57,142 +63,100 @@ esac
 SH
 chmod +x "$PROJECT/bin/curl"
 
-OUT=""
-ERR=""
-RC=0
+# --- the renderer -------------------------------------------------------------
+# Every logged payload as `Operation(path=value,...)`: a lookup's name (as
+# JSON, so a stray space shows) and the create's title and labelIds.
+wire() {
+  jq -r '
+    def op: (.query | capture("^[[:space:]]*(query|mutation)[[:space:]]+(?<n>[A-Za-z_]+)").n)
+      // (.query | capture("\\{[[:space:]]*(?<n>[A-Za-z_]+)").n);
+    def shown: [(.variables // {}) as $v | $v | paths(scalars) as $p
+      | select($p == ["name"] or $p == ["input", "title"] or ($p[0:2] == ["input", "labelIds"]))
+      | "\($p | map(tostring) | join("."))=\($v | getpath($p) | tojson)"];
+    "\(op)(\(shown | join(",")))"' "$CURL_LOG" | paste -sd, -
+}
 
-# Run the CLI inside the temp project with LINEAR_TEAM and LINEAR_AGENT_LABELS
-# absent from the process environment (parent env wins over project files).
-run_linear() {
+# run TAXONOMY VIEW ARGS... — `issues create ARGS` in the project whose
+# settings declare TAXONOMY (`none`: no LINEAR_AGENT_LABELS key; `empty`: the
+# key with no value; else the declared list), with LINEAR_TEAM and
+# LINEAR_AGENT_LABELS absent from the process (parent env wins over project
+# files). VIEW `err` renders the wire and stderr; `out` the first stdout line.
+run() {
+  local taxonomy="$1" view="$2" rc=0 out err
+  shift 2
+  case "$taxonomy" in
+  none) printf '[env]\nLINEAR_TEAM = "Configured"\n' >"$PROJECT/kendex.settings.toml" ;;
+  empty) printf '[env]\nLINEAR_TEAM = "Configured"\nLINEAR_AGENT_LABELS = ""\n' >"$PROJECT/kendex.settings.toml" ;;
+  *) printf '[env]\nLINEAR_TEAM = "Configured"\nLINEAR_AGENT_LABELS = "%s"\n' "$taxonomy" >"$PROJECT/kendex.settings.toml" ;;
+  esac
   : >"$CURL_LOG"
-  RC=0
-  OUT="$(cd "$PROJECT" && env -u LINEAR_TEAM -u LINEAR_AGENT_LABELS \
-    PATH="$PROJECT/bin:$PATH" \
-    LINEAR_API_KEY=test-token \
-    CURL_LOG="$CURL_LOG" \
-    bash "$LINEAR" "$@" 2>"$ERR_FILE")" || RC=$?
-  ERR="$(cat "$ERR_FILE")"
+  out="$(cd "$PROJECT" && env -u LINEAR_TEAM -u LINEAR_AGENT_LABELS PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY=test-token \
+    CURL_LOG="$CURL_LOG" bash "$LINEAR" issues create "$@" 2>"$TMP_ROOT/err")" || rc=$?
+  err="$(paste -sd';' "$TMP_ROOT/err")"
+  case "$view" in
+  out) printf 'rc=%s calls=%s %s' "$rc" "$(wc -l <"$CURL_LOG" | tr -d ' ')" "$(printf '%s\n' "$out" | head -1)" ;;
+  err) printf 'rc=%s wire=%s%s' "$rc" "$(wire)" "${err:+ $err}" ;;
+  esac
 }
 
-set_settings() {
-  # $1: LINEAR_AGENT_LABELS value ("" = key present but empty)
-  printf '[env]\nLINEAR_TEAM = "Configured"\nLINEAR_AGENT_LABELS = "%s"\n' "$1" \
-    >"$PROJECT/kendex.settings.toml"
+# --- the expected lines --------------------------------------------------------
+# expected SPEC — from the row's spec:
+#   unrouted DECLARED       the bare-create refusal, listing DECLARED
+#   unknown NAMES~DECLARED  the typo refusal for NAMES against DECLARED
+#   unresolved NAME         the hard failure of a declared label Linear lacks,
+#                           after the resolver's own warning
+#   created WIRE            exit 0, the team lookup then exactly WIRE, nothing
+#                           on stderr
+#   created WIRE warn NAME  the same, with the warn-and-skip lines for NAME
+#   help                    one help document, no call
+TEAM='GetTeam(name="Configured")'
+warned() { printf "Warning: Label not found: '%s';" "$1"; }
+expected() {
+  local spec="$1"
+  case "$spec" in
+  unrouted\ *)
+    printf 'rc=1 wire= {"error":"Refusing to create an unrouted issue: this project declares an agent-label taxonomy (LINEAR_AGENT_LABELS in kendex.settings.toml [env]) and no agent:* label was supplied. An issue created without one gets no agent routing - the create would print a URL and look like success while the issue sits invisible to every agent. Route tracked issue creation through the TPM pipeline (project-management skill), which owns labels, project, priority, and relations. Direct create is for exceptions only: pass --labels with one of [%s], or --no-agent-label for a deliberate bare create (e.g. intake mirroring)."}' "${spec#unrouted }" ;;
+  unknown\ *)
+    spec="${spec#unknown }"
+    printf 'rc=1 wire= {"error":"Unknown agent label(s): %s - not in this project declared agent-label set (LINEAR_AGENT_LABELS in kendex.settings.toml [env]): %s. Label resolution silently skips unknown names, so this would create an issue that is invisible to agent routing. Fix the label name, or pass --no-agent-label for a deliberate bare create."}' "${spec%%~*}" "${spec#*~}" ;;
+  unresolved\ *)
+    spec="${spec#unresolved }"
+    printf 'rc=1 wire=%s,GetLabel(name="%s") %s{"error":"Agent label failed to resolve in Linear: %s - refusing to create an issue that would look routed but is not. Create the label in Linear (or fix LINEAR_AGENT_LABELS), then retry."}' "$TEAM" "$spec" "$(warned "$spec")" "$spec" ;;
+  created\ *\ warn\ *)
+    spec="${spec#created }"
+    printf "rc=0 wire=%s,%s %sSkipped label '%s' — not found; the create proceeds without it" "$TEAM" "${spec% warn *}" "$(warned "${spec##* warn }")" "${spec##* warn }" ;;
+  created\ *) printf 'rc=0 wire=%s,%s' "$TEAM" "${spec#created }" ;;
+  help) printf 'rc=0 calls=0 Issue Operations' ;;
+  esac
 }
 
-set_settings_no_taxonomy_key() {
-  printf '[env]\nLINEAR_TEAM = "Configured"\n' >"$PROJECT/kendex.settings.toml"
-}
+# --- the table ------------------------------------------------------------------
+# label|taxonomy|view|args|expect
+# The declared taxonomy is split on commas and spaces; the supplied labels on
+# commas only (a label name may hold a space), so `bug, agent:rust` reaches
+# the guard and the resolver trimmed.
+ROWS='
+bare create is refused|agent:generalist, agent:rust|err|--title "Unrouted follow-up"|unrouted agent:generalist, agent:rust
+a create with only non-agent labels is refused|agent:generalist, agent:rust|err|--title "Unrouted follow-up" --labels "bug,docs"|unrouted agent:generalist, agent:rust
+a typoed agent label is refused, naming it and the declared set|agent:generalist, agent:rust|err|--title Typo --labels "agent:generalst"|unknown agent:generalst~agent:generalist, agent:rust
+a declared agent label passes and every label resolves onto the create|agent:generalist, agent:rust|err|--title Routed --labels "bug,agent:rust"|created GetLabel(name="bug"),GetLabel(name="agent:rust"),CreateIssue(input.title="Routed",input.labelIds.0="label-uuid",input.labelIds.1="label-uuid")
+a declared agent label passes through --label|agent:generalist, agent:rust|err|--title "Routed single" --label "agent:generalist"|created GetLabel(name="agent:generalist"),CreateIssue(input.title="Routed single",input.labelIds.0="label-uuid")
+--no-agent-label permits a deliberate bare create|agent:generalist, agent:rust|err|--title "Intake mirror" --no-agent-label|created CreateIssue(input.title="Intake mirror")
+--no-agent-label permits a non-agent-labeled create|agent:generalist, agent:rust|err|--title "Intake mirror" --no-agent-label --labels bug|created GetLabel(name="bug"),CreateIssue(input.title="Intake mirror",input.labelIds.0="label-uuid")
+no declaration: a bare create is unaffected|none|err|--title "Bare repo create"|created CreateIssue(input.title="Bare repo create")
+no declaration: an unresolvable agent label warn-skips|none|err|--title "Undeclared skip" --labels "agent:ghost"|created GetLabel(name="agent:ghost"),CreateIssue(input.title="Undeclared skip") warn agent:ghost
+an empty declaration: a bare create is unaffected|empty|err|--title "Empty declaration create"|created CreateIssue(input.title="Empty declaration create")
+comma-space labels reach the guard and the resolver trimmed|agent:generalist, agent:rust|err|--title "Natural input" --labels "bug, agent:rust"|created GetLabel(name="bug"),GetLabel(name="agent:rust"),CreateIssue(input.title="Natural input",input.labelIds.0="label-uuid",input.labelIds.1="label-uuid")
+a declared label missing in Linear hard-fails the create|agent:generalist, agent:rust, agent:ghost|err|--title "Stale declared label" --labels "agent:ghost"|unresolved agent:ghost
+--help never trips the guard|agent:generalist, agent:rust|out|--help|help
+'
 
-api_calls() {
-  wc -l <"$CURL_LOG" | tr -d ' '
-}
+while IFS='|' read -r label taxonomy view args spec; do
+  [ -n "$label$taxonomy$view$args$spec" ] || continue
+  eval "set -- $args"
+  assert_eq "$label" "$(run "$taxonomy" "$view" "$@")" "$(expected "$spec")"
+done <<<"$ROWS"
 
-assert_refused_bare() {
-  local label="$1"
-  assert_ne "$label is refused" "$RC" 0
-  assert_contains "$label refusal mentions agent labels" "$ERR" "agent"
-  assert_contains "$label refusal names LINEAR_AGENT_LABELS" "$ERR" "LINEAR_AGENT_LABELS"
-  assert_contains "$label refusal routes to the TPM pipeline" "$ERR" "project-management"
-  assert_contains "$label refusal names the --no-agent-label escape hatch" "$ERR" "--no-agent-label"
-  assert_contains "$label refusal lists the declared agent labels" "$ERR" "agent:rust"
-  assert_eq "$label refuses before any API call" "$(api_calls)" "0"
-}
-
-assert_created() {
-  local label="$1"
-  assert_eq "$label exits zero" "$RC" 0
-  assert "$label reaches issueCreate" \
-    jq -s -e 'any(.[]; .query | contains("issueCreate"))' "$CURL_LOG"
-}
-
-echo "=== declared taxonomy: bare create refuses before any API call ==="
-
-set_settings "agent:generalist, agent:rust"
-
-run_linear issues create --title "Unrouted follow-up"
-assert_refused_bare "bare create"
-
-run_linear issues create --title "Unrouted follow-up" --labels "bug,docs"
-assert_refused_bare "create with only non-agent labels"
-
-echo "=== declared taxonomy: an unknown agent:* label refuses (typo guard) ==="
-
-# resolve_label_id warns and SKIPS unresolved labels, so a typoed agent label
-# would otherwise create an unrouted issue that looks routed.
-run_linear issues create --title "Typo" --labels "agent:generalst"
-assert_ne "a typoed agent label is refused" "$RC" 0
-assert_contains "the typo refusal names the unknown label" "$ERR" "agent:generalst"
-assert_contains "the typo refusal names the declared set" "$ERR" "LINEAR_AGENT_LABELS"
-assert_eq "a typoed agent label attempts no API call" "$(api_calls)" "0"
-
-echo "=== declared taxonomy: a declared agent label passes ==="
-
-run_linear issues create --title "Routed" --labels "bug,agent:rust"
-assert_created "create with declared agent label"
-assert "every label resolves onto the create" \
-  jq -s -e 'any(.[]; (.query | contains("issueCreate")) and (.variables.input.labelIds | length == 2))' "$CURL_LOG"
-
-run_linear issues create --title "Routed single" --label "agent:generalist"
-assert_created "create with --label agent label"
-
-echo "=== declared taxonomy: --no-agent-label permits a deliberate bare create ==="
-
-run_linear issues create --title "Intake mirror" --no-agent-label
-assert_created "bare create with --no-agent-label"
-
-run_linear issues create --title "Intake mirror" --no-agent-label --labels "bug"
-assert_created "non-agent-labeled create with --no-agent-label"
-
-echo "=== no declaration: bare creates are unaffected ==="
-
-set_settings_no_taxonomy_key
-run_linear issues create --title "Bare repo create"
-assert_created "bare create with no LINEAR_AGENT_LABELS key"
-
-# Undeclared repos also keep the historical warn-and-skip for EVERY label,
-# including an unresolvable agent:* one — the hard-fail applies only under a
-# declared taxonomy.
-run_linear issues create --title "Undeclared skip" --labels "agent:ghost"
-assert_created "unresolvable agent label warn-skips when no taxonomy is declared"
-
-set_settings ""
-run_linear issues create --title "Empty declaration create"
-assert_created "bare create with empty LINEAR_AGENT_LABELS"
-
-echo "=== declared taxonomy: comma-space labels normalize for guard AND resolver ==="
-
-# Natural input "bug, agent:rust": the guard must accept it AND the resolver
-# must receive the TRIMMED names — an untrimmed " agent:rust" misses Linear's
-# eq filter and is silently skipped, recreating the unrouted-but-looks-routed
-# create the guard exists to prevent.
-set_settings "agent:generalist, agent:rust"
-run_linear issues create --title "Natural input" --labels "bug, agent:rust"
-assert_created "create with comma-space labels"
-assert "the resolver receives the trimmed agent label" \
-  jq -s -e 'any(.[]; .variables.name == "agent:rust")' "$CURL_LOG"
-assert_not "the resolver never receives an untrimmed label name" \
-  jq -s -e 'any(.[]; .variables.name == " agent:rust")' "$CURL_LOG"
-assert "both normalized labels resolve onto the create" \
-  jq -s -e 'any(.[]; (.query | contains("issueCreate")) and (.variables.input.labelIds | length == 2))' "$CURL_LOG"
-
-echo "=== declared taxonomy: a declared label missing in Linear hard-fails the create ==="
-
-# The guard's promise is routed-or-refused: a label that passes the declared
-# set but fails to resolve (declared in settings, deleted in Linear) must fail
-# the create, never warn-and-skip into an unrouted issue.
-set_settings "agent:generalist, agent:rust, agent:ghost"
-run_linear issues create --title "Stale declared label" --labels "agent:ghost"
-assert_ne "a declared label missing in Linear fails the create" "$RC" 0
-assert_contains "the hard-fail names the unresolvable label" "$ERR" "agent:ghost"
-assert_not "issueCreate is never reached with an unresolvable agent label" \
-  jq -s -e 'any(.[]; .query | contains("issueCreate"))' "$CURL_LOG"
-
-echo "=== help never trips the guard ==="
-
-set_settings "agent:generalist, agent:rust"
-run_linear issues create --help
-assert_eq "issues create --help exits zero" "$RC" 0
-assert_contains "issues create --help documents --no-agent-label" "$OUT" "--no-agent-label"
-assert_eq "issues create --help issues no API call" "$(api_calls)" "0"
-
+# The help document names the escape hatch.
+assert_contains "issues create --help documents --no-agent-label" \
+  "$(cd "$PROJECT" && bash "$LINEAR" issues create --help)" "--no-agent-label"
