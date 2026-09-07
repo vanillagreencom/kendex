@@ -288,7 +288,7 @@ word() {
     mode:deny) W_SKIP=mode ;;
     # the mktemp shim with a directory planted where the claude lane's stderr
     # capture wants a file
-    capture:blocked) W_SHIM=1 ;;
+    capture:blocked) W_SHIM=1; W_SKIP=mode ;;
     # a previous run's 0644 lane family beside --output, and a caller's file
     stale:family) W_STALE=1 ;;
     # the single-lane control: roster codex, count 1
@@ -357,13 +357,15 @@ build() {
     printf 'my own notes\n' >"$OUT.codex.json.notes"
   fi
   if [[ "$W_HOME" == ro ]]; then mkdir -p "$ROW/ro-home"; chmod 555 "$ROW/ro-home"; fi
-  if [[ -n "$W_SHIM" ]]; then mkdir -p "$ROW/fixed-scratch/lane-claude.stderr"; fi
+  # unreadable as well as unwritable: BSD sed reads a directory as empty
+  # where GNU sed refuses it, so the replay's own refusal needs the mode
+  if [[ -n "$W_SHIM" ]]; then mkdir -p "$ROW/fixed-scratch/lane-claude.stderr"; chmod 000 "$ROW/fixed-scratch/lane-claude.stderr"; fi
 }
 
 alias_text() {
   sed -e "s|$OUT|<out>|g" -e "s|$ROW/out|<outdir>|g" -e "s|$HOME_DIR|<home>|g" -e "s|$WORK|<work>|g" \
     -e "s|$SCRATCH|<scratch>|g" -e "s|$ROW/fixed-scratch|<scratch>|g" -e "s|$ROW/ro-home|<ro-home>|g" -e "s|$ROW|<row>|g" -e "s|$TMP_ROOT|<root>|g" \
-    -e 's|-dashed\.json|<out>|g' -e "s|rm: cannot remove '\(.*\)': |rm: \1: |" \
+    -e 's|-dashed\.json|<out>|g' -e "s|rm: cannot remove '\(.*\)': |rm: \1: |" -e 's|\(rm: .*\): is a directory$|\1: Is a directory|' \
     -e 's/(jq: error (at <stdin>:[0-9]*): /(jq: error: /' -e 's/(jq: parse error: \(.*\) at line [0-9]*, column [0-9]*)/(jq: parse error: \1)/' \
     -e 's/;/\\;/g' | mktemp_wildcard | paste -s -d ';' -
 }
@@ -395,6 +397,9 @@ parent_log() {
     case "$line" in
       "{") in_json=1; json="{" ;;
       "["*|"→ cmd:"*|"→ Response received"*) ;;
+      # BSD rm reports every ancestor of an entry it could not remove; GNU rm
+      # only the entry
+      "rm: "*": Directory not empty") ;;
       "→ second-opinion:"*) printf '%s\n' "${line% cwd=*}" ;;
       *) printf '%s\n' "$line" ;;
     esac
