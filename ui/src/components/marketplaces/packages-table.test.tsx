@@ -28,7 +28,7 @@ import { subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
 import { safetyKey } from "@/stores/preinstall-safety";
 import { useProvenanceStore } from "@/stores/provenance";
-import { mount as mountTree } from "@/test/dom";
+import { mount as mountTree, roomIs } from "@/test/dom";
 import { PackagesTable } from "./packages-table";
 
 // Static rendering reads a zustand store's initial snapshot, so the score
@@ -537,4 +537,81 @@ describe("re-sorting a marketplace's packages", () => {
     });
     expect(names()).toEqual(["review", "apply"]);
   });
+});
+
+// The table's room is the page's, and a marketplace catalogue is wider than
+// most windows: below about 1400 logical px the columns used to run off the
+// right edge behind an overflow nothing drew, leaving the reader a Name and
+// no way to know a Safety or a Status was ever there.
+describe("the columns a narrow table keeps", () => {
+  const heads = (host: HTMLElement): string[] =>
+    [...host.querySelectorAll("thead th")].map(
+      (cell) => cell.textContent?.trim() ?? "",
+    );
+
+  const entry: PackageEntry = {
+    catalog,
+    recordsUnreadable: false,
+    row: { ...row, tags: ["review"], updatedAt: "2026-08-30T12:00:00Z" },
+  };
+
+  // Both pages the table serves: the Marketplaces tab, which names each
+  // row's marketplace, and one marketplace's own Packages tab, which names
+  // where each package landed instead.
+  const PAGES = [
+    {
+      page: "the Marketplaces tab",
+      table: <PackagesTable entries={[entry]} showMarketplace />,
+      wide: [
+        "Name",
+        "Kind",
+        "For",
+        "Marketplace",
+        "Last updated",
+        "Safety",
+        "Status",
+      ],
+    },
+    {
+      page: "a marketplace's Packages tab",
+      table: (
+        <PackagesTable
+          entries={[entry]}
+          showMarketplace={false}
+          subscription={{ catalog, repo: "a/b" }}
+        />
+      ),
+      wide: [
+        "Name",
+        "Kind",
+        "For",
+        "Last updated",
+        "Safety",
+        "Installed in",
+        "Status",
+      ],
+    },
+  ];
+
+  for (const { page, table, wide } of PAGES) {
+    it(`keeps Name, Kind, Safety and Status on ${page}`, () => {
+      stub.scores = {};
+      useProvenanceStore.setState({ loaded: true, rows: [] });
+      roomIs(700);
+      const host = mountTree(table);
+      expect(heads(host)).toEqual(["Name", "Kind", "Safety", "Status"]);
+      // Reachable, not merely present: the dot's words are what a reader
+      // gets from the row, and the Status cell still offers the install.
+      expect(trigger(host.innerHTML)).toContain(SAFETY_DOT_UNCHECKED);
+      expect(host.textContent ?? "").toContain("Install");
+    });
+
+    it(`gives every column back on ${page} once there is room`, () => {
+      stub.scores = {};
+      useProvenanceStore.setState({ loaded: true, rows: [] });
+      roomIs(1400);
+      const host = mountTree(table);
+      expect(heads(host)).toEqual(wide);
+    });
+  }
 });

@@ -70,3 +70,71 @@ export function mount(
  *  resolves on the microtask queue, and the state it sets is not on
  *  screen until that has drained. */
 export const settle = (): Promise<void> => act(async () => {});
+
+// jsdom lays nothing out and ships no ResizeObserver, so a component that
+// sizes itself from its own room gets neither. This fills the gap: an
+// observed element reports the width [roomIs] last set, and re-reports it
+// when that changes, the way a resize does. The width starts at zero —
+// what an element nothing has laid out reports — so a test that never sets
+// one sees exactly what the unmeasured case renders.
+//
+// It reports from inside `observe`, where a real ResizeObserver delivers
+// even its first observation on a later task. That is what keeps these
+// tests synchronous, and it is also why no test here can see the frame a
+// browser draws before the first observation lands. A component that must
+// be right on that frame reads its own width and does not wait.
+const observing = new Map<ResizeObserverCallback, Set<Element>>();
+let room = 0;
+
+function report(
+  callback: ResizeObserverCallback,
+  targets: Iterable<Element>,
+): void {
+  const entries = [...targets].map(
+    (target) =>
+      ({
+        target,
+        contentRect: { width: room, height: 0 } as DOMRectReadOnly,
+      }) as ResizeObserverEntry,
+  );
+  if (entries.length > 0)
+    callback(entries, undefined as unknown as ResizeObserver);
+}
+
+class StubResizeObserver implements ResizeObserver {
+  private readonly targets = new Set<Element>();
+
+  constructor(private readonly callback: ResizeObserverCallback) {
+    observing.set(callback, this.targets);
+  }
+
+  observe(target: Element): void {
+    this.targets.add(target);
+    report(this.callback, [target]);
+  }
+
+  unobserve(target: Element): void {
+    this.targets.delete(target);
+  }
+
+  disconnect(): void {
+    this.targets.clear();
+    observing.delete(this.callback);
+  }
+}
+
+globalThis.ResizeObserver = StubResizeObserver;
+
+/** Report `width` as the room every observed element has, and tell the
+ *  observers, the way a browser does when the window changes size. */
+export function roomIs(width: number): void {
+  room = width;
+  act(() => {
+    for (const [callback, targets] of observing) report(callback, targets);
+  });
+}
+
+afterEach(() => {
+  observing.clear();
+  room = 0;
+});
