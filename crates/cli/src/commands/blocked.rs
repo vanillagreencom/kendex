@@ -282,47 +282,52 @@ mod tests {
         }
     }
 
-    /// A position is an identity, and the escape the `ui` seam prints it
-    /// through is not injective: a path holding a real newline and one
-    /// holding the two characters that spell its escape reach the screen
-    /// alike. Deduplicated here, on the paths themselves, both survive to
-    /// be printed — one of two real places would otherwise be dropped
-    /// before the seam ever saw it.
+    /// The other places a row is blocked at, one row per shape. A position
+    /// is an identity, and the escape the `ui` seam prints it through is not
+    /// injective: a path holding a real newline and one holding the two
+    /// characters that spell its escape reach the screen alike, so they are
+    /// deduplicated here, on the paths themselves, and both survive to be
+    /// printed. A tree read through a harness-native link is blocked at two
+    /// positions and has one row, so the position carried beside the row is
+    /// named too. The same place under two tools is one place, said once.
     #[test]
-    fn two_positions_that_render_alike_are_both_named() {
-        let head = row(HarnessId::Claude, "/a/head");
-        let real = row(HarnessId::Codex, "/a/one\ntwo");
-        let literal = row(HarnessId::Cursor, "/a/one\\ntwo");
-        let places = also_at(&head, &[&real, &literal]);
-        assert_eq!(
-            places,
-            vec!["/a/one\ntwo".to_owned(), "/a/one\\ntwo".to_owned()],
-            "two real places rendered alike were printed as one"
-        );
-    }
-
-    /// A tree read through a harness-native link is blocked at two
-    /// positions and has one row. A listing naming only the row's own
-    /// leaves the reader a place they cannot go to, and the take-over
-    /// under it empties both.
-    #[test]
-    fn a_position_carried_beside_a_row_is_named_too() {
-        let mut first = row(HarnessId::Claude, "/a/.agents/skills/deploy");
-        first.also_in_the_way = vec!["/a/.claude/skills/deploy".to_owned()];
-        assert_eq!(
-            also_at(&first, &[]),
-            vec!["/a/.claude/skills/deploy".to_owned()]
-        );
-    }
-
-    /// The same place under two tools is one place, said once.
-    #[test]
-    fn one_place_reached_twice_is_named_once() {
-        let first = row(HarnessId::Claude, "/a/shared");
-        let same = row(HarnessId::Codex, "/a/shared");
-        let other = row(HarnessId::Cursor, "/a/other");
-        let another = row(HarnessId::Pi, "/a/other");
-        let places = also_at(&first, &[&same, &other, &another]);
-        assert_eq!(places, vec!["/a/other".to_owned()]);
+    fn also_at_names_every_other_place_once() {
+        type Row = (&'static str, DriftRow, Vec<DriftRow>, Vec<&'static str>);
+        let carried = {
+            let mut first = row(HarnessId::Claude, "/a/.agents/skills/deploy");
+            first.also_in_the_way = vec!["/a/.claude/skills/deploy".to_owned()];
+            first
+        };
+        let rows: [Row; 3] = [
+            (
+                "two positions that render alike are both named",
+                row(HarnessId::Claude, "/a/head"),
+                vec![
+                    row(HarnessId::Codex, "/a/one\ntwo"),
+                    row(HarnessId::Cursor, "/a/one\\ntwo"),
+                ],
+                vec!["/a/one\ntwo", "/a/one\\ntwo"],
+            ),
+            (
+                "a position carried beside the row is named too",
+                carried,
+                vec![],
+                vec!["/a/.claude/skills/deploy"],
+            ),
+            (
+                "one place reached twice is named once",
+                row(HarnessId::Claude, "/a/shared"),
+                vec![
+                    row(HarnessId::Codex, "/a/shared"),
+                    row(HarnessId::Cursor, "/a/other"),
+                    row(HarnessId::Pi, "/a/other"),
+                ],
+                vec!["/a/other"],
+            ),
+        ];
+        for (what, first, others, expected) in rows {
+            let others: Vec<&DriftRow> = others.iter().collect();
+            assert_eq!(also_at(&first, &others), expected, "{what}");
+        }
     }
 }

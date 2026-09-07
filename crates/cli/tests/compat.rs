@@ -253,79 +253,83 @@ fn update_over_a_local_feed_refuses_a_command_it_cannot_verify() {
         false => assert!(!said.contains("desktop app"), "{said}"),
     }
 
-    // Same version → no-op without --force.
-    let same = fs::read_to_string(home.join("feed.json"))
-        .unwrap()
-        .replace("9.9.9", env!("CARGO_PKG_VERSION"));
-    fs::write(home.join("feed.json"), same).unwrap();
-    let output = kendex_in(
-        home,
-        home,
-        &["update"],
-        &[("KENDEX_UPDATE_FEED", file_url(&home.join("feed.json")))],
+    // What the feed says against what is installed, one row per feed: the
+    // same version is a no-op without --force; an older one is refused; a
+    // newer one with nothing for this target points at its release page;
+    // and --force reports the comparison it made, never that something is
+    // available. Each row: the feed, the arguments, whether the run
+    // succeeds, the clause the stream it answers on carries, and the ones
+    // it must not.
+    type Row = (
+        &'static str,
+        String,
+        &'static [&'static str],
+        bool,
+        &'static str,
+        &'static [&'static str],
     );
-    assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).contains("already up to date"));
-
-    let older = fs::read_to_string(home.join("feed.json"))
-        .unwrap()
-        .replace(env!("CARGO_PKG_VERSION"), "0.1.0");
-    fs::write(home.join("feed.json"), older).unwrap();
-    let output = kendex_in(
-        home,
-        home,
-        &["update"],
-        &[("KENDEX_UPDATE_FEED", file_url(&home.join("feed.json")))],
-    );
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("older than installed"));
-
-    fs::write(
-        home.join("feed.json"),
-        r#"{"schema":1,"version":"99.0.0","assets":{}}"#,
-    )
-    .unwrap();
-    let output = kendex_in(
-        home,
-        home,
-        &["update"],
-        &[("KENDEX_UPDATE_FEED", file_url(&home.join("feed.json")))],
-    );
-    assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).contains("releases/tag/v99.0.0"));
-
-    fs::write(
-        home.join("feed.json"),
-        format!(
-            r#"{{"version":"{}","assets":{{}}}}"#,
-            env!("CARGO_PKG_VERSION")
+    let version = env!("CARGO_PKG_VERSION");
+    let rows: [Row; 5] = [
+        (
+            "the same version",
+            format!(r#"{{"schema":1,"version":"{version}","assets":{{}}}}"#),
+            &["update"],
+            true,
+            "already up to date",
+            &["is available"],
         ),
-    )
-    .unwrap();
-    let output = kendex_in(
-        home,
-        home,
-        &["update", "--force"],
-        &[("KENDEX_UPDATE_FEED", file_url(&home.join("feed.json")))],
-    );
-    let current = String::from_utf8_lossy(&output.stdout);
-    assert!(output.status.success());
-    assert!(current.contains("unchanged") && !current.contains("is available"));
-
-    fs::write(
-        home.join("feed.json"),
-        r#"{"schema":1,"version":"0.1.0","assets":{}}"#,
-    )
-    .unwrap();
-    let output = kendex_in(
-        home,
-        home,
-        &["update", "--force"],
-        &[("KENDEX_UPDATE_FEED", file_url(&home.join("feed.json")))],
-    );
-    let older = String::from_utf8_lossy(&output.stdout);
-    assert!(output.status.success());
-    assert!(older.contains("is newer") && !older.contains("is available"));
+        (
+            "an older version",
+            r#"{"schema":1,"version":"0.1.0","assets":{}}"#.to_owned(),
+            &["update"],
+            false,
+            "older than installed",
+            &[],
+        ),
+        (
+            "a newer version with nothing for this target",
+            r#"{"schema":1,"version":"99.0.0","assets":{}}"#.to_owned(),
+            &["update"],
+            true,
+            "releases/tag/v99.0.0",
+            &[],
+        ),
+        (
+            "the same version, forced",
+            format!(r#"{{"version":"{version}","assets":{{}}}}"#),
+            &["update", "--force"],
+            true,
+            "unchanged",
+            &["is available"],
+        ),
+        (
+            "an older version, forced",
+            r#"{"schema":1,"version":"0.1.0","assets":{}}"#.to_owned(),
+            &["update", "--force"],
+            true,
+            "is newer",
+            &["is available"],
+        ),
+    ];
+    for (what, feed, args, succeeds, clause, never) in rows {
+        fs::write(home.join("feed.json"), feed).unwrap();
+        let output = kendex_in(
+            home,
+            home,
+            args,
+            &[("KENDEX_UPDATE_FEED", file_url(&home.join("feed.json")))],
+        );
+        assert_eq!(output.status.success(), succeeds, "{what}: {output:?}");
+        let stream = if succeeds {
+            String::from_utf8_lossy(&output.stdout)
+        } else {
+            String::from_utf8_lossy(&output.stderr)
+        };
+        assert!(stream.contains(clause), "{what}: {stream}");
+        for clause in never {
+            assert!(!stream.contains(clause), "{what}: {stream}");
+        }
+    }
 }
 
 /// A half-updated machine is the one state this command must never leave,

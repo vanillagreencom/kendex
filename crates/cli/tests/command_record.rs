@@ -122,10 +122,16 @@ fn the_forms_clap_answers_itself_record_the_command_too() {
 
         kendex(&home, &[form]);
 
-        assert!(
-            kendex_core::command_update::recorded_command(&env).is_some(),
-            "{form} left the command unrecorded at {}",
-            env.installed_command_file().display()
+        let recorded = kendex_core::command_update::recorded_command(&env).unwrap_or_else(|| {
+            panic!(
+                "{form} left the command unrecorded at {}",
+                env.installed_command_file().display()
+            )
+        });
+        assert_eq!(
+            recorded.path,
+            std::fs::canonicalize(env!("CARGO_BIN_EXE_kendex")).unwrap(),
+            "{form}: the record names a file other than the one that ran"
         );
     }
 }

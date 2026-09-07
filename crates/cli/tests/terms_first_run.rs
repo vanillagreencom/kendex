@@ -70,24 +70,68 @@ fn write_settings(home: &Path, version: u32, accepted_at: &str) {
     .expect("settings written");
 }
 
-/// The first run says it and records the version; the second says nothing
-/// and leaves the record where it is.
+/// Whether a run at a terminal says it, by what the record already holds.
+/// Nothing on record is the first run: it says it once and records the
+/// version, so the next run finds the current record and says nothing. A
+/// record from an older version is asked again and moves up, because the
+/// record carries a version so a later one can ask. A current record is the
+/// acceptance working, not the line being broken: the run is silent and the
+/// date already there is not moved by it. One row per prior record.
 #[test]
-fn the_first_run_says_it_once_and_records_the_version() {
-    let tmp = tempfile::tempdir().expect("a home to run in");
-    // The canonical root, and the same spelling handed to the run: a
-    // settings path read back under another spelling reads an empty file.
-    let home = rooted(&tmp);
+fn a_terminal_is_told_once_per_version_of_the_terms() {
+    type Row = (
+        &'static str,
+        Option<(u32, &'static str)>,
+        bool,
+        Option<&'static str>,
+    );
+    let rows: [Row; 3] = [
+        ("nothing on record", None, true, None),
+        (
+            "an older version on record",
+            Some((LEGAL.version - 1, "2020-01-01T00:00:00Z")),
+            true,
+            None,
+        ),
+        (
+            "the current version on record",
+            Some((LEGAL.version, "2026-09-06T00:00:00Z")),
+            false,
+            Some("2026-09-06T00:00:00Z"),
+        ),
+    ];
+    for (what, prior, says, date_kept) in rows {
+        let tmp = tempfile::tempdir().expect("a home to run in");
+        // The canonical root, and the same spelling handed to the run: a
+        // settings path read back under another spelling reads an empty file.
+        let home = rooted(&tmp);
+        if let Some((version, accepted_at)) = prior {
+            write_settings(&home, version, accepted_at);
+        }
 
-    let first = on_a_terminal(&home);
-    assert!(first.contains(LEGAL.terms_url), "first run: {first:?}");
-    assert!(first.contains(LEGAL.privacy_url), "first run: {first:?}");
-    let record = recorded(&home).expect("the first run records");
-    assert_eq!(record.version, LEGAL.version);
+        let sent = on_a_terminal(&home);
 
-    let second = on_a_terminal(&home);
-    assert!(!second.contains(LEGAL.terms_url), "second run: {second:?}");
-    assert_eq!(recorded(&home), Some(record));
+        assert_eq!(sent.contains(LEGAL.terms_url), says, "{what}: {sent:?}");
+        assert_eq!(sent.contains(LEGAL.privacy_url), says, "{what}: {sent:?}");
+        let record = recorded(&home).unwrap_or_else(|| panic!("{what}: nothing recorded"));
+        assert_eq!(record.version, LEGAL.version, "{what}");
+        if let Some(date) = date_kept {
+            assert_eq!(record.accepted_at, date, "{what}: the date was moved");
+        }
+        if says {
+            // The next run finds the record and says nothing.
+            let again = on_a_terminal(&home);
+            assert!(
+                !again.contains(LEGAL.terms_url),
+                "{what}, second run: {again:?}"
+            );
+            assert_eq!(
+                recorded(&home),
+                Some(record),
+                "{what}: the second run moved the record"
+            );
+        }
+    }
 }
 
 /// The forms clap answers itself, which is why this runs before the parse:
@@ -108,43 +152,6 @@ fn the_forms_clap_answers_itself_say_it_too() {
     }
 }
 
-/// The record carries a version so a later one can ask again. A machine
-/// holding an older acceptance is told, and its record moves up.
-#[test]
-fn a_record_from_an_older_version_is_asked_again() {
-    let tmp = tempfile::tempdir().expect("a home to run in");
-    // The canonical root, and the same spelling handed to the run: a
-    // settings path read back under another spelling reads an empty file.
-    let home = rooted(&tmp);
-    write_settings(&home, LEGAL.version - 1, "2020-01-01T00:00:00Z");
-
-    let sent = on_a_terminal(&home);
-    assert!(sent.contains(LEGAL.terms_url), "{sent:?}");
-    assert_eq!(
-        recorded(&home).map(|record| record.version),
-        Some(LEGAL.version)
-    );
-}
-
-/// Saying nothing is the acceptance working, not the line being broken:
-/// with the current version on record the run is silent, and the date
-/// already there is not moved by it.
-#[test]
-fn a_current_record_is_not_asked_again() {
-    let tmp = tempfile::tempdir().expect("a home to run in");
-    // The canonical root, and the same spelling handed to the run: a
-    // settings path read back under another spelling reads an empty file.
-    let home = rooted(&tmp);
-    write_settings(&home, LEGAL.version, "2026-09-06T00:00:00Z");
-
-    let sent = on_a_terminal(&home);
-    assert!(!sent.contains(LEGAL.terms_url), "{sent:?}");
-    assert_eq!(
-        recorded(&home).map(|record| record.accepted_at),
-        Some("2026-09-06T00:00:00Z".to_owned())
-    );
-}
-
 /// A pipe has no reader. `kendex check`'s whole contract with the session
 /// hooks is an exit code over a quiet stderr, so a notice written there
 /// would be read as the check having something to say — and the person
@@ -163,5 +170,8 @@ fn a_run_nobody_is_watching_says_nothing_and_records_nothing() {
 
     let sent = on_a_terminal(&home);
     assert!(sent.contains(LEGAL.terms_url), "{sent:?}");
-    assert!(recorded(&home).is_some());
+    assert_eq!(
+        recorded(&home).map(|record| record.version),
+        Some(LEGAL.version)
+    );
 }

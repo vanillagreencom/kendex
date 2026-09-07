@@ -87,77 +87,67 @@ fn direct(env: &Env, feed_url: &str, installed: &Path) -> CliResult {
     )
 }
 
-/// The binding must reject a binary the release key really signed when a
-/// feed offers it for a release it does not belong to. The
-/// signature checks out — it is a genuine one over exactly these bytes —
-/// and the download is still refused, because this release published a
-/// different hash for its command.
+/// A release that is not the one it claims installs nothing and leaves the
+/// command alone. A binary signed for another release; a document signed
+/// but naming another platform's digests, or an older release's (nothing
+/// here can forge one, so what refuses them is the release and target they
+/// name); a channel serving no document, or one nothing signed, which is
+/// never fallen back from onto the signature by itself. One row per shape;
+/// the refusal's own words name the release or target only where they can.
 #[test]
-fn a_signed_binary_from_another_release_is_refused() {
-    let dir = tempfile::tempdir().unwrap();
-    let (env, feed_url, installed) = a_release_is_out(&dir);
-    std::fs::write(dir.path().join("new-command"), ANOTHER_RELEASE).unwrap();
-    std::fs::write(
-        dir.path().join("new-command.sig"),
-        ANOTHER_RELEASE_SIGNATURE,
-    )
-    .unwrap();
-
-    let refused = direct(&env, &feed_url, &installed).unwrap_err().to_string();
-
-    assert!(
-        refused.contains("the kendex command hashes to"),
-        "{refused}"
-    );
-    assert_eq!(std::fs::read(&installed).unwrap(), INSTALLED);
-    assert!(!staged_path(&installed).exists());
-}
-
-/// The two ways a feed can point this target at a release that is not the
-/// one it claims: serve another platform's digests, or an older
-/// release's. Both documents are genuinely signed — nothing here can forge
-/// one — so what refuses them is the release and target they name.
-#[test]
-fn digests_for_another_target_or_another_release_are_refused() {
-    for (document, signature, why) in [
+fn a_release_that_is_not_the_one_it_claims_installs_nothing() {
+    type Break = fn(&std::path::Path);
+    type Row = (&'static str, Break, Option<&'static str>);
+    let rows: [Row; 5] = [
         (
-            OTHER_TARGET_DIGESTS,
-            OTHER_TARGET_DIGESTS_SIGNATURE,
-            "aarch64-apple-darwin",
+            "a binary signed for another release",
+            |dir| {
+                std::fs::write(dir.join("new-command"), ANOTHER_RELEASE).unwrap();
+                std::fs::write(dir.join("new-command.sig"), ANOTHER_RELEASE_SIGNATURE).unwrap();
+            },
+            Some("the kendex command hashes to"),
         ),
-        (OLDER_DIGESTS, OLDER_DIGESTS_SIGNATURE, "5.0.0"),
-    ] {
+        (
+            "digests for another target",
+            |dir| publishes(dir, OTHER_TARGET_DIGESTS, OTHER_TARGET_DIGESTS_SIGNATURE),
+            Some("aarch64-apple-darwin"),
+        ),
+        (
+            "digests for an older release",
+            |dir| publishes(dir, OLDER_DIGESTS, OLDER_DIGESTS_SIGNATURE),
+            Some("5.0.0"),
+        ),
+        (
+            "no digests document at all",
+            |dir| std::fs::remove_file(dir.join(format!("digests-{TEST_TARGET}.json"))).unwrap(),
+            None,
+        ),
+        (
+            "a digests document nothing signed",
+            |dir| {
+                std::fs::write(
+                    dir.join(format!("digests-{TEST_TARGET}.json.sig")),
+                    "not a signature",
+                )
+                .unwrap()
+            },
+            None,
+        ),
+    ];
+    for (what, break_, names) in rows {
         let dir = tempfile::tempdir().unwrap();
         let (env, feed_url, installed) = a_release_is_out(&dir);
-        publishes(dir.path(), document, signature);
+        break_(dir.path());
 
-        let refused = direct(&env, &feed_url, &installed).unwrap_err().to_string();
+        let refused = direct(&env, &feed_url, &installed)
+            .expect_err(what)
+            .to_string();
 
-        assert!(refused.contains(why), "{refused}");
-        assert_eq!(std::fs::read(&installed).unwrap(), INSTALLED, "{why}");
-        assert!(!staged_path(&installed).exists(), "{why}");
-    }
-}
-
-/// An update finds the release's statement or installs nothing: a channel
-/// serving no document, or one nothing signed, leaves the command alone
-/// rather than falling back on the signature by itself.
-#[test]
-fn a_release_that_publishes_no_verifiable_digests_installs_nothing() {
-    for missing in [true, false] {
-        let dir = tempfile::tempdir().unwrap();
-        let (env, feed_url, installed) = a_release_is_out(&dir);
-        let name = format!("digests-{TEST_TARGET}.json");
-        match missing {
-            true => std::fs::remove_file(dir.path().join(&name)).unwrap(),
-            false => {
-                std::fs::write(dir.path().join(format!("{name}.sig")), "not a signature").unwrap()
-            }
+        if let Some(named) = names {
+            assert!(refused.contains(named), "{what}: {refused}");
         }
-
-        assert!(direct(&env, &feed_url, &installed).is_err(), "{missing}");
-        assert_eq!(std::fs::read(&installed).unwrap(), INSTALLED, "{missing}");
-        assert!(!staged_path(&installed).exists(), "{missing}");
+        assert_eq!(std::fs::read(&installed).unwrap(), INSTALLED, "{what}");
+        assert!(!staged_path(&installed).exists(), "{what}");
     }
 }
 

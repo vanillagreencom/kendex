@@ -38,138 +38,87 @@ fn report_dry_run_routes_by_ownership_and_rejects_scope_all() {
     )
     .unwrap();
 
-    let upstream = kendex_in(
-        home,
-        &proj,
-        &[
-            "report",
-            "--agent",
-            "orch",
-            "--title",
-            "T",
-            "--body",
-            "B",
-            "--dry-run",
-        ],
-        &[],
+    // One row per selector: the ownership the dry run settles on, the
+    // clauses it prints and the ones it must not. Naming a kind lets the
+    // lock resolve it, so `--asset doc-limits` stamps the label and the
+    // body marker `--skill` would. A named upstream the lock never recorded
+    // is not proof of ownership. A subscription spells the upstream however
+    // it likes, and the report still files at the one place gh accepts:
+    // `owner/repo`, never the URL.
+    type Row = (
+        &'static str,
+        &'static [&'static str],
+        &'static str,
+        &'static [&'static str],
+        &'static [&'static str],
     );
-    assert!(upstream.status.success());
-    let text = String::from_utf8_lossy(&upstream.stderr);
-    assert!(text.contains("ownership: kendex"), "{text}");
-    assert!(text.contains("--repo vanillagreencom/kendex"), "{text}");
-    assert!(text.contains("--label skills"), "{text}");
-
-    let skill = kendex_in(
-        home,
-        &proj,
-        &[
-            "report",
-            "--skill",
-            "doc-limits",
-            "--title",
-            "T",
-            "--body",
-            "B",
-            "--dry-run",
-        ],
-        &[],
-    );
-    assert!(skill.status.success());
-    let text = String::from_utf8_lossy(&skill.stderr);
-    assert!(text.contains("ownership: kendex"), "{text}");
-    assert!(text.contains("--repo vanillagreencom/kendex"), "{text}");
-    assert!(text.contains("--label skills"), "{text}");
-
-    let local = kendex_in(
-        home,
-        &proj,
-        &[
-            "report",
-            "--asset",
-            "mystery",
-            "--title",
-            "T",
-            "--body",
-            "B",
-            "--dry-run",
-        ],
-        &[],
-    );
-    let text = String::from_utf8_lossy(&local.stderr);
-    assert!(text.contains("ownership: project-local"), "{text}");
-    assert!(!text.contains("--label"), "{text}");
-
-    // Naming a kind lets the lock resolve it: the label and the body marker
-    // are the ones `--skill` would stamp.
-    let asset = kendex_in(
-        home,
-        &proj,
-        &[
-            "report",
-            "--asset",
-            "doc-limits",
-            "--title",
-            "T",
-            "--body",
-            "B",
-            "--dry-run",
-        ],
-        &[],
-    );
-    assert!(asset.status.success());
-    let text = String::from_utf8_lossy(&asset.stderr);
-    assert!(text.contains("ownership: kendex"), "{text}");
-    assert!(text.contains("--label skills"), "{text}");
-    assert!(text.contains("kind=skill"), "{text}");
-
-    // A named upstream the lock never recorded is not proof of ownership.
-    let forked = kendex_in(
-        home,
-        &proj,
-        &[
-            "report",
-            "--skill",
-            "doc-limits",
-            "--upstream",
-            "someone/else",
-            "--title",
-            "T",
-            "--body",
-            "B",
-            "--dry-run",
-        ],
-        &[],
-    );
-    assert!(forked.status.success());
-    let text = String::from_utf8_lossy(&forked.stderr);
-    assert!(text.contains("ownership: project-local"), "{text}");
-    assert!(!text.contains("someone/else"), "{text}");
-
-    // A subscription spells the upstream however it likes, and the report
-    // still files at the one place gh accepts: `owner/repo`, never the URL.
-    let spelled = kendex_in(
-        home,
-        &proj,
-        &[
-            "report",
-            "--skill",
-            "doc-limits",
-            "--upstream",
-            "git@github.com:vanillagreencom/kendex.git",
-            "--title",
-            "T",
-            "--body",
-            "B",
-            "--dry-run",
-        ],
-        &[],
-    );
-    assert!(spelled.status.success());
-    let text = String::from_utf8_lossy(&spelled.stderr);
-    assert!(text.contains("ownership: kendex"), "{text}");
-    assert!(text.contains("target: vanillagreencom/kendex"), "{text}");
-    assert!(text.contains("--repo vanillagreencom/kendex"), "{text}");
-    assert!(!text.contains("git@github.com"), "{text}");
+    let rows: [Row; 6] = [
+        (
+            "a locked agent",
+            &["--agent", "orch"],
+            "ownership: kendex",
+            &["--repo vanillagreencom/kendex", "--label skills"],
+            &[],
+        ),
+        (
+            "a locked skill",
+            &["--skill", "doc-limits"],
+            "ownership: kendex",
+            &["--repo vanillagreencom/kendex", "--label skills"],
+            &[],
+        ),
+        (
+            "an asset nothing recorded",
+            &["--asset", "mystery"],
+            "ownership: project-local",
+            &[],
+            &["--label"],
+        ),
+        (
+            "an asset the lock resolves to a kind",
+            &["--asset", "doc-limits"],
+            "ownership: kendex",
+            &["--label skills", "kind=skill"],
+            &[],
+        ),
+        (
+            "an upstream the lock never recorded",
+            &["--skill", "doc-limits", "--upstream", "someone/else"],
+            "ownership: project-local",
+            &[],
+            &["someone/else"],
+        ),
+        (
+            "an upstream spelled as a git URL",
+            &[
+                "--skill",
+                "doc-limits",
+                "--upstream",
+                "git@github.com:vanillagreencom/kendex.git",
+            ],
+            "ownership: kendex",
+            &[
+                "target: vanillagreencom/kendex",
+                "--repo vanillagreencom/kendex",
+            ],
+            &["git@github.com"],
+        ),
+    ];
+    for (what, selector, ownership, said, never) in rows {
+        let mut args = vec!["report"];
+        args.extend_from_slice(selector);
+        args.extend_from_slice(&["--title", "T", "--body", "B", "--dry-run"]);
+        let output = kendex_in(home, &proj, &args, &[]);
+        assert!(output.status.success(), "{what}");
+        let text = String::from_utf8_lossy(&output.stderr);
+        assert!(text.contains(ownership), "{what}: {text}");
+        for clause in said {
+            assert!(text.contains(clause), "{what}: missing {clause}: {text}");
+        }
+        for clause in never {
+            assert!(!text.contains(clause), "{what}: carries {clause}: {text}");
+        }
+    }
 
     let rejected = kendex_in(
         home,

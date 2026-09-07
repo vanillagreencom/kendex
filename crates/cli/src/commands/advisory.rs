@@ -367,66 +367,104 @@ mod tests {
             .collect()
     }
 
-    /// The reason the key exists: two renderings a reader cannot tell
-    /// apart are one block naming both tools, each finding under its own
-    /// harness root.
+    /// Which renderings fold into one block. The key exists because two
+    /// renderings a reader cannot tell apart are one block naming both
+    /// tools, each finding under its own harness root; nothing a block
+    /// leaves out may split one (quality has its own surfaces, a deduction
+    /// is a working of the score, not a line); and every printed part is
+    /// identity: the finding, the skipped line's count and first reason,
+    /// the citation's subtext (the catalog's own bytes print a line, a
+    /// rewritten rendering cannot), the item's name and kind. One row per
+    /// field made to differ.
     #[test]
-    fn renderings_that_print_alike_are_one_block() {
-        let rows = [skill(Claude, PIPES, &[]), skill(Codex, PIPES, &[])];
-        assert_eq!(blocks(&rows), [[Claude, Codex]]);
-    }
-
-    /// Nothing a block leaves out may split one: quality has its own
-    /// surfaces, and a deduction is a working of the score, not a line.
-    #[test]
-    fn what_the_block_never_prints_does_not_split_it() {
-        let mut other = skill(Codex, PIPES, &[]);
-        other.advisory.quality = Some(QualityScore {
-            score: 60,
-            dimensions: Vec::new(),
-            anti_patterns: Vec::new(),
-            penalty_percent: 100,
-        });
-        other.advisory.safety.deductions = vec![Deduction {
-            rule: "rce".to_owned(),
-            location: "SKILL.md:12".to_owned(),
-            severity: Severity::Critical,
-            points: 25,
-            repeat: false,
-        }];
-        let rows = [skill(Claude, PIPES, &[]), other];
-        assert_eq!(blocks(&rows), [[Claude, Codex]]);
-    }
-
-    /// Equal scores are not equal readings: folding these would print one
-    /// block over two different things the rules found.
-    #[test]
-    fn equal_scores_with_different_findings_stay_two_blocks() {
-        let rows = [
-            skill(Claude, PIPES, &[]),
-            skill(Codex, "this line overrides the agent", &[]),
+    fn renderings_fold_into_one_block_only_when_every_printed_part_agrees() {
+        let quality_and_deductions = {
+            let mut other = skill(Codex, PIPES, &[]);
+            other.advisory.quality = Some(QualityScore {
+                score: 60,
+                dimensions: Vec::new(),
+                anti_patterns: Vec::new(),
+                penalty_percent: 100,
+            });
+            other.advisory.safety.deductions = vec![Deduction {
+                rule: "rce".to_owned(),
+                location: "SKILL.md:12".to_owned(),
+                severity: Severity::Critical,
+                points: 25,
+                repeat: false,
+            }];
+            other
+        };
+        type Row = (&'static str, Vec<ItemSafety>, Vec<Vec<HarnessId>>);
+        let rows: [Row; 8] = [
+            (
+                "alike",
+                vec![skill(Claude, PIPES, &[]), skill(Codex, PIPES, &[])],
+                vec![vec![Claude, Codex]],
+            ),
+            (
+                "quality and deductions, which the block never prints",
+                vec![skill(Claude, PIPES, &[]), quality_and_deductions],
+                vec![vec![Claude, Codex]],
+            ),
+            (
+                "a different finding under equal scores",
+                vec![
+                    skill(Claude, PIPES, &[]),
+                    skill(Codex, "this line overrides the agent", &[]),
+                ],
+                vec![vec![Claude], vec![Codex]],
+            ),
+            (
+                "a different skipped count",
+                vec![
+                    skill(Claude, PIPES, &[NOTHING_TO_READ]),
+                    skill(Codex, PIPES, &[NOTHING_TO_READ, NOTHING_TO_READ]),
+                ],
+                vec![vec![Claude], vec![Codex]],
+            ),
+            (
+                "a different first skipped reason",
+                vec![
+                    skill(Claude, PIPES, &[NOTHING_TO_READ]),
+                    skill(Codex, PIPES, &["this entry could not be read"]),
+                ],
+                vec![vec![Claude], vec![Codex]],
+            ),
+            (
+                "a different citation: verbatim beside rewritten",
+                vec![
+                    sourced(Claude, PIPES, &[], true),
+                    sourced(Codex, PIPES, &[], false),
+                ],
+                vec![vec![Claude], vec![Codex]],
+            ),
+            (
+                "a different item name",
+                vec![
+                    skill(Claude, PIPES, &[]),
+                    ItemSafety {
+                        name: "release".to_owned(),
+                        ..skill(Codex, PIPES, &[])
+                    },
+                ],
+                vec![vec![Claude], vec![Codex]],
+            ),
+            (
+                "a different item kind",
+                vec![
+                    skill(Claude, PIPES, &[]),
+                    ItemSafety {
+                        kind: ItemKind::Agent,
+                        ..skill(Cursor, PIPES, &[])
+                    },
+                ],
+                vec![vec![Claude], vec![Cursor]],
+            ),
         ];
-        assert_eq!(blocks(&rows), [[Claude], [Codex]]);
-    }
-
-    /// The skipped line prints a count, so the count is identity.
-    #[test]
-    fn a_different_skipped_count_stays_two_blocks() {
-        let rows = [
-            skill(Claude, PIPES, &[NOTHING_TO_READ]),
-            skill(Codex, PIPES, &[NOTHING_TO_READ, NOTHING_TO_READ]),
-        ];
-        assert_eq!(blocks(&rows), [[Claude], [Codex]]);
-    }
-
-    /// The skipped line prints the first reason and no other.
-    #[test]
-    fn a_different_first_skipped_reason_stays_two_blocks() {
-        let rows = [
-            skill(Claude, PIPES, &[NOTHING_TO_READ]),
-            skill(Codex, PIPES, &["this entry could not be read"]),
-        ];
-        assert_eq!(blocks(&rows), [[Claude], [Codex]]);
+        for (what, rows, expected) in rows {
+            assert_eq!(blocks(&rows), expected, "{what}");
+        }
     }
 
     /// Every shape `also_at` names and the one it must not, a message
@@ -466,104 +504,87 @@ mod tests {
         );
     }
 
-    /// Two renderings can find the same thing and still be cited
-    /// differently: one is the catalog's own bytes and prints a line, the
-    /// other was rewritten on the way in and cannot. Folding them would
-    /// let whichever row came first decide the other's subtext.
+    /// What a finding is cited as, by where it sits. A place inside a
+    /// rendered tree is a position only a catalog tree holds: a command a
+    /// harness stores as a skill is one catalog FILE rendered into a tree,
+    /// so the citation is that file, never a `/SKILL.md` joined onto it.
+    /// Switching a skill off parks its `SKILL.md` under `SKILL.md.disabled`,
+    /// a spelling that is kendex's, so the citation names the file the
+    /// catalog holds, and the rename is undone for that one file only (a
+    /// catalog may ship a file whose own name ends that way). A
+    /// sub-location is a label on the artifact, not a path inside it, and
+    /// rejoins a catalog file as it would a tree. One row per place.
     #[test]
-    fn a_different_citation_stays_two_blocks() {
-        let rows = [
-            sourced(Claude, PIPES, &[], true),
-            sourced(Codex, PIPES, &[], false),
+    fn a_finding_is_cited_at_the_catalog_file_that_holds_it() {
+        type Row = (
+            &'static str,
+            ItemKind,
+            &'static str,
+            &'static str,
+            CatalogSource,
+            (&'static str, Option<u32>),
+        );
+        let rows: [Row; 4] = [
+            (
+                "a file rendered into a tree is the file",
+                ItemKind::Command,
+                "/home/one/.claude/skills/ship",
+                "/home/one/.claude/skills/ship/SKILL.md",
+                CatalogSource {
+                    path: "commands/ship.md".to_owned(),
+                    verbatim: false,
+                    tree: false,
+                },
+                ("commands/ship.md", None),
+            ),
+            (
+                "a parked rendering is the file the catalog holds",
+                ItemKind::Skill,
+                "/home/one/.claude/skills/deploy",
+                "/home/one/.claude/skills/deploy/SKILL.md.disabled",
+                CatalogSource {
+                    path: "skills/deploy".to_owned(),
+                    verbatim: true,
+                    tree: true,
+                },
+                ("skills/deploy/SKILL.md", Some(12)),
+            ),
+            (
+                "only the parked skill file has its rename undone",
+                ItemKind::Skill,
+                "/home/one/.claude/skills/deploy",
+                "/home/one/.claude/skills/deploy/references/old.disabled",
+                CatalogSource {
+                    path: "skills/deploy".to_owned(),
+                    verbatim: true,
+                    tree: true,
+                },
+                ("skills/deploy/references/old.disabled", Some(12)),
+            ),
+            (
+                "a sub-location rejoins a catalog file",
+                ItemKind::Hook,
+                "/home/one/.claude/settings.json",
+                "/home/one/.claude/settings.json (command)",
+                CatalogSource {
+                    path: "hooks/guard.sh".to_owned(),
+                    verbatim: true,
+                    tree: false,
+                },
+                ("hooks/guard.sh (command)", Some(12)),
+            ),
         ];
-        assert_eq!(blocks(&rows), [[Claude], [Codex]]);
-    }
-
-    /// A place inside a rendered tree is a position only a catalog tree
-    /// holds. A command a harness stores as a skill is one catalog FILE
-    /// rendered into a tree, so the citation is that file — never a
-    /// `/SKILL.md` joined onto it, which names nothing.
-    #[test]
-    fn a_file_rendered_into_a_tree_is_cited_as_the_file() {
-        let mut row = skill(Claude, PIPES, &[]);
-        row.kind = ItemKind::Command;
-        row.name = "ship".to_owned();
-        row.targets[0].location = "/home/one/.claude/skills/ship".to_owned();
-        row.advisory.findings[0].location = "/home/one/.claude/skills/ship/SKILL.md".to_owned();
-        row.source = Some(CatalogSource {
-            path: "commands/ship.md".to_owned(),
-            verbatim: false,
-            tree: false,
-        });
-
-        assert_eq!(
-            cited(&row.advisory.findings[0], &row.targets, row.source.as_ref()),
-            ("commands/ship.md".to_owned(), None),
-        );
-    }
-
-    /// Switching a skill off parks its rendered `SKILL.md` under
-    /// `SKILL.md.disabled`. That spelling is kendex's, not the catalog's,
-    /// so the citation names the file the catalog actually holds.
-    #[test]
-    fn a_parked_rendering_is_cited_at_the_file_the_catalog_holds() {
-        let mut row = skill(Claude, PIPES, &[]);
-        row.advisory.findings[0].location =
-            "/home/one/.claude/skills/deploy/SKILL.md.disabled".to_owned();
-
-        assert_eq!(
-            cited(&row.advisory.findings[0], &row.targets, row.source.as_ref()).0,
-            "skills/deploy/SKILL.md",
-        );
-    }
-
-    /// The rename is undone for the one file that takes it, and for no
-    /// other: a catalog may ship a file whose own name ends that way,
-    /// and cutting the suffix off it would name nothing.
-    #[test]
-    fn only_the_parked_skill_file_has_its_rename_undone() {
-        let mut row = skill(Claude, PIPES, &[]);
-        row.advisory.findings[0].location =
-            "/home/one/.claude/skills/deploy/references/old.disabled".to_owned();
-
-        assert_eq!(
-            cited(&row.advisory.findings[0], &row.targets, row.source.as_ref()).0,
-            "skills/deploy/references/old.disabled",
-        );
-    }
-
-    /// A sub-location is a label on the artifact, not a path inside it,
-    /// so it rejoins a catalog file the same way it would a tree.
-    #[test]
-    fn a_sub_location_rejoins_a_catalog_file() {
-        let mut row = skill(Claude, PIPES, &[]);
-        row.kind = ItemKind::Hook;
-        row.targets[0].location = "/home/one/.claude/settings.json".to_owned();
-        row.advisory.findings[0].location = "/home/one/.claude/settings.json (command)".to_owned();
-        row.source = Some(CatalogSource {
-            path: "hooks/guard.sh".to_owned(),
-            verbatim: true,
-            tree: false,
-        });
-
-        assert_eq!(
-            cited(&row.advisory.findings[0], &row.targets, row.source.as_ref()).0,
-            "hooks/guard.sh (command)",
-        );
-    }
-
-    /// A block names its item, so one reading over two items is two.
-    #[test]
-    fn a_different_item_stays_two_blocks() {
-        let renamed = ItemSafety {
-            name: "release".to_owned(),
-            ..skill(Codex, PIPES, &[])
-        };
-        let retyped = ItemSafety {
-            kind: ItemKind::Agent,
-            ..skill(Cursor, PIPES, &[])
-        };
-        let rows = [skill(Claude, PIPES, &[]), renamed, retyped];
-        assert_eq!(blocks(&rows), [[Claude], [Codex], [Cursor]]);
+        for (what, kind, target, location, source, (path, line)) in rows {
+            let mut row = skill(Claude, PIPES, &[]);
+            row.kind = kind;
+            row.targets[0].location = target.to_owned();
+            row.advisory.findings[0].location = location.to_owned();
+            row.source = Some(source);
+            assert_eq!(
+                cited(&row.advisory.findings[0], &row.targets, row.source.as_ref()),
+                (path.to_owned(), line),
+                "{what}"
+            );
+        }
     }
 }

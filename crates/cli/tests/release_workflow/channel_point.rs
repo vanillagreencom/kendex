@@ -296,31 +296,6 @@ impl Fixture {
     }
 }
 
-/// The fixture links Cargo's finished executable into `dist` instead of
-/// copying it. A copy opens the staged inode for writing, and a sibling's
-/// fork can inherit that descriptor before the guard execs the same inode.
-#[cfg(unix)]
-#[test]
-#[allow(clippy::unwrap_used)]
-fn fixture_stages_the_built_cli_as_a_symbolic_link() {
-    let fixture = Fixture::new(Channel::Empty, &STAGED);
-    let staged = fixture.root.join("dist").join(compare_binary());
-
-    assert!(
-        fs::symlink_metadata(&staged)
-            .unwrap()
-            .file_type()
-            .is_symlink(),
-        "the staged CLI is not a symbolic link: {}",
-        staged.display()
-    );
-    assert_eq!(
-        fs::canonicalize(staged).unwrap(),
-        fs::canonicalize(env!("CARGO_BIN_EXE_kendex")).unwrap(),
-        "the staged CLI does not resolve to Cargo's built executable"
-    );
-}
-
 /// One run against a channel in this state, with the release's whole output
 /// staged.
 #[cfg(unix)]

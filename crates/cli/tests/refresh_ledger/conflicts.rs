@@ -6,42 +6,6 @@ use std::fs;
 
 use super::*;
 
-/// The comparison is what makes the choice trivial or not: files in the way
-/// that are byte-for-byte the catalog's cost the reader nothing to keep.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn files_identical_to_the_catalog_say_adopting_them_is_safe() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let project = home.join("dev/app");
-    let catalog = home.join("catalog");
-    skill(&catalog, "gamma", "Body.\n");
-    let body = fs::read_to_string(catalog.join("skills/gamma/SKILL.md")).unwrap();
-    manifest(
-        &project,
-        &catalog,
-        "[\"claude\"]",
-        "symlink",
-        "[skills.gamma]\nsource = \"cat\"\n",
-    );
-    fs::create_dir_all(project.join(".claude/skills/gamma")).unwrap();
-    fs::write(project.join(".claude/skills/gamma/SKILL.md"), &body).unwrap();
-
-    let printed = said(&kendex(
-        home,
-        &project,
-        &["apply", "--plan", "--scope", "project"],
-    ));
-    assert!(
-        printed.contains("identical to the catalog — adopt is safe"),
-        "content that matches the catalog says so, beside the adopt offer: {printed}"
-    );
-    assert!(
-        !printed.contains("differs from the catalog"),
-        "identical content must never read as differing: {printed}"
-    );
-}
-
 /// The same content, where adoption cannot act. Nothing may promise an
 /// adopt line that was never printed — not the comparison above the row,
 /// not the ledger below it.
@@ -128,84 +92,100 @@ fn a_differing_name_reaches_the_terminal_escaped() {
     );
 }
 
-/// A one-file item is compared like any other. The plan holds its bytes at
-/// the moment it refuses, so the row says whether they match.
+/// How the files in the way compare with the catalog, one row per
+/// shape, pinned as the one comparison line the conflict prints. Files
+/// byte-for-byte the catalog's cost the reader nothing to keep, and say
+/// so beside the adopt offer rather than reading as differing; a one-file
+/// item is compared like any other, the plan holding its bytes at the
+/// moment it refuses; and beyond the first three, differing files are
+/// counted rather than listed, the count taken from the total rather
+/// than from the names that survived the bound. Each row: the method,
+/// the declaration, what is planted in the catalog and in the way, and
+/// the line.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_single_file_item_says_how_it_compares() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let project = home.join("dev/app");
-    let catalog = home.join("catalog");
-    fs::create_dir_all(catalog.join("agents")).unwrap();
-    let body = "---\nname: rust\ndescription: writes rust\n---\nUpstream.\n";
-    fs::write(catalog.join("agents/rust.md"), body).unwrap();
-    manifest(
-        &project,
-        &catalog,
-        "[\"claude\"]",
-        "copy",
-        "[agents.rust]\nsource = \"cat\"\n",
+fn a_conflict_says_how_the_files_in_the_way_compare_with_the_catalog() {
+    type Plant = fn(&Path, &Path);
+    type Row = (
+        &'static str,
+        &'static str,
+        &'static str,
+        Plant,
+        &'static str,
     );
-    let at = project.join(".claude/agents");
-    fs::create_dir_all(&at).unwrap();
-    fs::write(at.join("rust.md"), "By hand.\n").unwrap();
-
-    let printed = said(&kendex(
-        home,
-        &project,
-        &["apply", "--plan", "--scope", "project"],
-    ));
-    assert!(
-        printed.contains("differs from the catalog in 1 file: rust.md"),
-        "a one-file item says which file differs: {printed}"
-    );
-}
-
-/// Beyond the first three, differing files are counted rather than listed,
-/// and the count is of all of them.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn more_differing_files_than_are_named_are_counted() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let project = home.join("dev/app");
-    let catalog = home.join("catalog");
-    skill(&catalog, "wide", "Body.\n");
-    // Past the bound the row itself carries, so the printed count has to
-    // come from the total rather than from the names that survived it.
-    for n in 0..40 {
-        fs::write(
-            catalog.join(format!("skills/wide/ref{n:02}.md")),
-            format!("catalog {n}\n"),
-        )
-        .unwrap();
-    }
-    manifest(
-        &project,
-        &catalog,
-        "[\"claude\"]",
-        "copy",
-        "[skills.wide]\nsource = \"cat\"\n",
-    );
-    let at = project.join(".claude/skills/wide");
-    fs::create_dir_all(&at).unwrap();
-    fs::write(at.join("SKILL.md"), "By hand.\n").unwrap();
-    for n in 0..40 {
-        fs::write(at.join(format!("ref{n:02}.md")), format!("mine {n}\n")).unwrap();
-    }
-
-    let printed = said(&kendex(
-        home,
-        &project,
-        &["apply", "--plan", "--scope", "project"],
-    ));
-    assert!(
-        printed.contains(
-            "differs from the catalog in 41 files: SKILL.md, ref00.md, ref01.md, and 38 more"
+    let rows: [Row; 3] = [
+        (
+            "identical files",
+            "symlink",
+            "[skills.gamma]\nsource = \"cat\"\n",
+            |catalog, project| {
+                skill(catalog, "gamma", "Body.\n");
+                let body = fs::read_to_string(catalog.join("skills/gamma/SKILL.md")).unwrap();
+                fs::create_dir_all(project.join(".claude/skills/gamma")).unwrap();
+                fs::write(project.join(".claude/skills/gamma/SKILL.md"), body).unwrap();
+            },
+            "identical to the catalog — adopt is safe",
         ),
-        "the first three are named and every other one counted: {printed}"
-    );
+        (
+            "a one-file item",
+            "copy",
+            "[agents.rust]\nsource = \"cat\"\n",
+            |catalog, project| {
+                fs::create_dir_all(catalog.join("agents")).unwrap();
+                fs::write(
+                    catalog.join("agents/rust.md"),
+                    "---\nname: rust\ndescription: writes rust\n---\nUpstream.\n",
+                )
+                .unwrap();
+                let at = project.join(".claude/agents");
+                fs::create_dir_all(&at).unwrap();
+                fs::write(at.join("rust.md"), "By hand.\n").unwrap();
+            },
+            "differs from the catalog in 1 file: rust.md",
+        ),
+        (
+            "more differing files than are named",
+            "copy",
+            "[skills.wide]\nsource = \"cat\"\n",
+            |catalog, project| {
+                skill(catalog, "wide", "Body.\n");
+                let at = project.join(".claude/skills/wide");
+                fs::create_dir_all(&at).unwrap();
+                fs::write(at.join("SKILL.md"), "By hand.\n").unwrap();
+                // Past the bound the row itself carries.
+                for n in 0..40 {
+                    fs::write(
+                        catalog.join(format!("skills/wide/ref{n:02}.md")),
+                        format!("catalog {n}\n"),
+                    )
+                    .unwrap();
+                    fs::write(at.join(format!("ref{n:02}.md")), format!("mine {n}\n")).unwrap();
+                }
+            },
+            "differs from the catalog in 41 files: SKILL.md, ref00.md, ref01.md, and 38 more",
+        ),
+    ];
+    for (shape, method, declaration, plant, line) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let home = home.as_path();
+        let project = home.join("dev/app");
+        let catalog = home.join("catalog");
+        manifest(&project, &catalog, "[\"claude\"]", method, declaration);
+        plant(&catalog, &project);
+
+        let printed = said(&kendex(
+            home,
+            &project,
+            &["apply", "--plan", "--scope", "project"],
+        ));
+        let compared: Vec<&str> = printed
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.contains("the catalog"))
+            .collect();
+        assert_eq!(compared, [line], "{shape}: {printed}");
+    }
 }
 
 /// The place a conflict names comes off a path a person chose, and reaches

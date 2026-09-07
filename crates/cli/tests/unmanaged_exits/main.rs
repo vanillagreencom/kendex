@@ -7,7 +7,7 @@
 
 #[path = "../../../test_util.rs"]
 mod test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -156,61 +156,145 @@ fn link_at(path: &Path, target: &Path) {
     std::os::unix::fs::symlink(target, path).unwrap();
 }
 
-/// One item blocked for two tools, each holding its own copy. One offer
-/// naming both, because keeping them one command at a time lands each
-/// tool's copy in the local source on top of the last and leaves the
-/// declaration pinned to the first.
+/// Which way out is printed for files already at an item's place, and that
+/// following it keeps them. One row per shape: two tools each holding a
+/// copy are kept by one offer naming both, because keeping them one
+/// command at a time lands each tool's copy in the local source on top of
+/// the last and leaves the declaration pinned to the first; adoption reads
+/// one tool's position, and left unsaid it reads Claude Code's, so a
+/// conflict on any other tool names the tool it is blocked for; one folder
+/// shared by hand (a real folder at one tool's place, the other reading it
+/// through a link somebody made) is one answer whichever method the
+/// declaration names, named for every tool adoption can act through rather
+/// than the tool a row happens to be about, the folder measured like any
+/// other content and never offered the replacement (the files are not at
+/// the link's position, and writing over it breaks the sharing); and a
+/// folder somewhere neither tool would look is reached through the one
+/// tool whose own place is the link, since naming the other, which has
+/// nothing there, would error on the spot. Each row: the tools declared,
+/// the method, what is planted, the place the reader is told about, the
+/// offer word for word, whether the scope-wide replacement is offered
+/// beside it, and the places that must read the kept files afterwards.
 #[test]
-#[allow(clippy::unwrap_used)]
-fn two_tools_holding_one_item_are_kept_by_one_offer() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let project = project_with(home, "[\"claude\", \"codex\"]", "copy");
-    folder_at(&project.join(".claude/skills/deploy"), "Mine.");
-    folder_at(&project.join(".agents/skills/deploy"), "Mine.");
-
-    let planned = plan(home, &project);
-    assert_eq!(
-        offer(&planned),
-        "kendex adopt skill deploy --harness claude --harness codex"
+#[allow(
+    clippy::unwrap_used,
+    clippy::too_many_lines,
+    reason = "one table: five planted layouts, each followed as printed"
+)]
+fn the_offer_that_keeps_the_files_is_the_one_that_settles_them() {
+    type Plant = fn(&Path, &Path);
+    type Row = (
+        &'static str,
+        &'static str,
+        &'static str,
+        Plant,
+        &'static str,
+        &'static str,
+        bool,
+        &'static [&'static str],
     );
+    const EVERY_TOOL: &str = "kendex adopt skill deploy --harness claude --harness codex \
+         --harness opencode --harness cursor --harness pi --harness gemini --harness copilot \
+         --harness antigravity";
+    let rows: [Row; 5] = [
+        (
+            "two tools, each holding a copy",
+            "[\"claude\", \"codex\"]",
+            "copy",
+            |_, project| {
+                folder_at(&project.join(".claude/skills/deploy"), "By hand.");
+                folder_at(&project.join(".agents/skills/deploy"), "By hand.");
+            },
+            ".claude/skills/deploy",
+            "kendex adopt skill deploy --harness claude --harness codex",
+            true,
+            &[".claude/skills/deploy", ".agents/skills/deploy"],
+        ),
+        (
+            "one tool blocked, not Claude Code",
+            "[\"opencode\"]",
+            "copy",
+            |_, project| folder_at(&project.join(".opencode/skills/deploy"), "By hand."),
+            ".opencode/skills/deploy",
+            "kendex adopt skill deploy --harness opencode",
+            true,
+            &[".opencode/skills/deploy"],
+        ),
+        (
+            "one folder shared by hand, copy declared",
+            "[\"claude\", \"codex\"]",
+            "copy",
+            |_, project| {
+                let folder = project.join(".claude/skills/deploy");
+                folder_at(&folder, "By hand.");
+                link_at(&project.join(".agents/skills/deploy"), &folder);
+            },
+            ".claude/skills/deploy",
+            EVERY_TOOL,
+            false,
+            &[".claude/skills/deploy", ".agents/skills/deploy"],
+        ),
+        (
+            "one folder shared by hand, symlink declared",
+            "[\"claude\", \"codex\"]",
+            "symlink",
+            |_, project| {
+                let folder = project.join(".claude/skills/deploy");
+                folder_at(&folder, "By hand.");
+                link_at(&project.join(".agents/skills/deploy"), &folder);
+            },
+            ".claude/skills/deploy",
+            EVERY_TOOL,
+            false,
+            &[".claude/skills/deploy", ".agents/skills/deploy"],
+        ),
+        (
+            "the folder outside every tool, linked at one",
+            "[\"claude\", \"codex\"]",
+            "symlink",
+            |home, project| {
+                let elsewhere = home.join("shared/deploy");
+                folder_at(&elsewhere, "By hand.");
+                link_at(&project.join(".agents/skills/deploy"), &elsewhere);
+            },
+            "shared/deploy",
+            "kendex adopt skill deploy --harness codex --harness opencode --harness cursor \
+             --harness pi --harness gemini --harness copilot --harness antigravity",
+            false,
+            &[".claude/skills/deploy", ".agents/skills/deploy"],
+        ),
+    ];
+    for (shape, tools, method, plant, named, want, replaceable, kept_at) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let home = home.as_path();
+        let project = project_with(home, tools, method);
+        plant(home, &project);
 
-    follow(home, &project, &planned);
-    settled(
-        home,
-        &project,
-        &[".claude/skills/deploy", ".agents/skills/deploy"],
-        "Mine.",
-        &[],
-    );
-}
+        let planned = plan(home, &project);
+        assert!(
+            planned.contains(named),
+            "{shape}: the place the reader decides about is not named: {planned}"
+        );
+        assert!(
+            planned.contains("differs from the catalog in 1 file: SKILL.md"),
+            "{shape}: the folder was never compared with the install it blocks: {planned}"
+        );
+        assert_eq!(
+            planned.contains("--replace-unmanaged"),
+            replaceable,
+            "{shape}: {planned}"
+        );
+        assert_eq!(offer(&planned), want, "{shape}: {planned}");
 
-/// Adoption reads one tool's position, and left unsaid it reads Claude
-/// Code's. A conflict on any other tool would direct the reader at a
-/// place that is not the one blocked — so the offer names the tool, and
-/// following it settles the item.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn one_tool_blocked_is_kept_through_the_tool_that_is_blocked() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let project = project_with(home, "[\"opencode\"]", "copy");
-    folder_at(&project.join(".opencode/skills/deploy"), "The one before.");
-
-    let planned = plan(home, &project);
-    assert_eq!(
-        offer(&planned),
-        "kendex adopt skill deploy --harness opencode"
-    );
-
-    follow(home, &project, &planned);
-    settled(
-        home,
-        &project,
-        &[".opencode/skills/deploy"],
-        "The one before.",
-        &[],
-    );
+        follow(home, &project, &planned);
+        settled(home, &project, kept_at, "By hand.", &[]);
+        let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
+        assert!(
+            !manifest.contains("[skills.deploy]\nsource = \"local\"\nharnesses"),
+            "{shape}: a tool that was blocked a moment ago lost the skill:\n{manifest}"
+        );
+    }
 }
 
 /// An item can be blocked for one tool and edited under another, and the two
@@ -258,7 +342,6 @@ fn hand_made_files_beside_an_edited_install_keep_their_offer() {
 }
 
 mod refusals;
-mod shared;
 
 /// The other exit on the same shape. An edit beside the hand-made files is
 /// a decision of its own — it never takes the take-over away, and the
@@ -296,37 +379,5 @@ fn hand_made_files_beside_an_edited_install_are_still_replaceable() {
     assert!(
         after.contains("edited on disk"),
         "the edit is still its own decision: {after}"
-    );
-}
-
-/// The hand-made sharing layout again, with the copy method: one real
-/// folder at one tool's place and the other reading it through a link.
-/// It is one folder, so the two rows are one answer — not two copies to
-/// choose between.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_folder_shared_by_hand_is_kept_whichever_method_is_declared() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let project = project_with(home, "[\"claude\", \"codex\"]", "copy");
-    let folder = project.join(".claude/skills/deploy");
-    folder_at(&folder, "Shared by hand.");
-    link_at(&project.join(".agents/skills/deploy"), &folder);
-
-    let planned = plan(home, &project);
-    assert_eq!(
-        offer(&planned),
-        "kendex adopt skill deploy --harness claude --harness codex --harness opencode \
-         --harness cursor --harness pi --harness gemini --harness copilot --harness antigravity",
-        "{planned}"
-    );
-
-    follow(home, &project, &planned);
-    settled(
-        home,
-        &project,
-        &[".claude/skills/deploy", ".agents/skills/deploy"],
-        "Shared by hand.",
-        &[],
     );
 }
