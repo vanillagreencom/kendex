@@ -154,11 +154,15 @@ fn a_cached_pin_resolves_offline_and_an_uncached_one_is_a_hard_error() {
     assert!(offline.warning.is_none());
 
     let error = sync(&f.env, REPO, Some(&never_fetched)).unwrap_err();
-    let CoreError::PinUnavailable { pin, .. } = &error else {
+    let CoreError::PinUnavailable { repo, pin, reason } = &error else {
         panic!("expected a pin error, got {error}");
     };
-    assert_eq!(pin, &never_fetched);
-    assert!(error.to_string().contains(&never_fetched));
+    assert_eq!(
+        (repo.as_str(), pin.as_str()),
+        (REPO, never_fetched.as_str())
+    );
+    // The reason is git's own account of the fetch, not ours to pin.
+    assert!(!reason.is_empty(), "{error}");
 }
 
 /// A tag that moved upstream is followed on the next refresh, and the
@@ -451,14 +455,15 @@ fn a_commit_id_of_no_known_object_format_is_refused() {
 
     let error = store::publish(&f.env, &key, &mirror, abbreviated).unwrap_err();
 
-    let refusal = error.to_string();
-    assert!(
-        refusal.starts_with(&format!("materializing {abbreviated} failed:")),
-        "the refusal names something other than what kendex declined: {refusal}"
-    );
-    assert!(
-        refusal.contains("attribute source"),
-        "refused for some other reason: {refusal}"
+    // Refused by kendex, before any git call: the command named is the
+    // materialization, and the reason is this module's own.
+    let CoreError::GitFailed { command, stderr } = &error else {
+        panic!("{error:?}");
+    };
+    assert_eq!(command, &format!("materializing {abbreviated}"));
+    assert_eq!(
+        stderr,
+        "no object format has ids of 7 characters, so the attribute source this checkout must be written under cannot be named"
     );
     assert!(!store::checkout_dir(&f.env, &key, abbreviated).exists());
 }

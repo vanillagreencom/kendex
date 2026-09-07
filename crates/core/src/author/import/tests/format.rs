@@ -12,6 +12,7 @@ use std::fs;
 
 use super::{entry, file_item, find, seeded, target};
 use crate::author::import::{ImportSelection, apply, inventory};
+use crate::error::CoreError;
 use crate::lock;
 use crate::model::{HarnessId, ItemKind, Scope};
 
@@ -29,78 +30,110 @@ fn selection(name: &str, destination: &str) -> ImportSelection {
     }
 }
 
-/// The unmanaged door, which is the silent one: both names refused before
-/// a byte is written, and the markdown agent beside it still offered.
+/// One row per door bytes that are not the markdown a catalog stores can
+/// arrive at: the unmanaged scan, which is the silent one (Codex keeps
+/// its agents as TOML); a file parked at `.claude/agents/<name>.md`,
+/// offered by its extension alone, whose bytes are not text — the reason
+/// says which of the two it is; and a local catalog already holding TOML
+/// at `agents/<name>.md`, judged by the same rule as any other origin
+/// because every read goes through `offered`, so re-importing from it
+/// cannot carry the breakage into another package.
+///
+/// The candidate is listed, so the person sees kendex found it, with no
+/// hash to select and the reason where the hash would be, and the place
+/// is a path and nothing else. Apply refuses under the candidate's own
+/// name, where a copy would land the bytes in a `.md` slot the catalog
+/// check calls clean, and under another one, where the rename would
+/// otherwise refuse only at apply with no way to finish it — the same
+/// words both times, and nothing written. The markdown agent in the same
+/// scan is untouched: this excludes a format, not a kind.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn an_agent_in_another_format_is_not_offered_under_either_name() {
-    let (tmp, env, scope) = seeded();
-    let Scope::Project { root } = &scope else {
-        unreachable!()
-    };
-    file_item(
-        &root.join(".codex/agents"),
-        "codexer.toml",
-        "name = \"codexer\"\ndescription = \"about codexer\"\n",
-    );
-    let scopes = [scope.clone()];
-    let target = target(&env, &tmp, "mine-codex");
-    let candidates = inventory(&env, &scopes).unwrap();
+fn bytes_a_catalog_cannot_store_are_listed_without_a_hash_and_refused_under_either_name() {
+    type Row<'a> = (&'a str, &'a str, &'a [u8], Option<&'a str>, &'a str);
+    let local = format!("{}/agents", crate::source::LOCAL_SOURCE_DIR);
+    let rows: [Row<'_>; 3] = [
+        (
+            ".codex/agents",
+            "codexer.toml",
+            b"name = \"codexer\"\ndescription = \"about codexer\"\n",
+            None,
+            "it has no frontmatter, and a catalog stores an agent as markdown",
+        ),
+        (
+            ".claude/agents",
+            "binary.md",
+            &[0xff, 0xfe, b'\n'],
+            None,
+            "the file is not text, and a catalog stores an agent as markdown",
+        ),
+        (
+            local.as_str(),
+            "poisoned.md",
+            b"name = \"poisoned\"\ndescription = \"about poisoned\"\n",
+            Some("local"),
+            "it has no frontmatter, and a catalog stores an agent as markdown",
+        ),
+    ];
+    for (dir, file, bytes, locked, problem) in rows {
+        let (tmp, env, scope) = seeded();
+        let Scope::Project { root } = &scope else {
+            unreachable!()
+        };
+        let name = file.split_once('.').unwrap().0;
+        fs::create_dir_all(root.join(dir)).unwrap();
+        fs::write(root.join(dir).join(file), bytes).unwrap();
+        if let Some(source) = locked {
+            let path = lock::lock_path(&env, &scope);
+            let mut held = lock::load(&path).unwrap();
+            held.entries.insert(
+                lock::entry_key(ItemKind::Agent, name, HarnessId::Claude),
+                entry(ItemKind::Agent, name, source, source),
+            );
+            lock::save(&path, &held).unwrap();
+        }
+        let scopes = [scope.clone()];
+        let target = target(&env, &tmp, "mine-unstorable");
+        let candidates = inventory(&env, &scopes).unwrap();
 
-    // Listed, so the person sees kendex found it, with no hash to select
-    // and the reason where the hash would be.
-    let codexer = find(&candidates, "codexer");
-    assert!(
-        codexer.origins.iter().all(|origin| origin.hash.is_empty()),
-        "nothing selectable: {:?}",
-        codexer.origins
-    );
-    let refused = &codexer.origins[0];
-    assert!(
-        refused.locations[0].contains("codexer.toml"),
-        "the place is a path and nothing else: {:?}",
-        refused.locations
-    );
-    let problem = refused.problem.as_deref().unwrap_or_default();
-    assert!(problem.contains("it has no frontmatter"), "{problem}");
-    assert!(
-        problem.contains("a catalog stores an agent as markdown"),
-        "{problem}"
-    );
-
-    // The markdown agent in the same scan is untouched by the rule: this
-    // excludes a format, not a kind.
-    assert!(
-        !find(&candidates, "drifter").origins[0].hash.is_empty(),
-        "{:?}",
-        find(&candidates, "drifter").origins
-    );
-
-    // Both paths: under its own name, where a copy would land TOML in a
-    // `.md` slot the catalog check calls clean, and under another one,
-    // where the rename would refuse at apply.
-    for chosen in [
-        selection("codexer", "codexer"),
-        selection("codexer", "settled"),
-    ] {
-        let destination = chosen.destination.clone();
-        let message = apply(&env, &scopes, &target, &[chosen])
-            .unwrap_err()
-            .to_string();
-        assert!(
-            message.contains("has no bytes kendex can import"),
-            "{destination}: {message}"
+        let place = crate::paths::slashed(&root.join(dir).join(file));
+        let listed: Vec<(Vec<&str>, &str, Option<&str>)> = find(&candidates, name)
+            .origins
+            .iter()
+            .map(|origin| {
+                (
+                    origin.locations.iter().map(String::as_str).collect(),
+                    origin.hash.as_str(),
+                    origin.problem.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            listed,
+            [(vec![place.as_str()], "", Some(problem))],
+            "{file}"
         );
-        assert!(message.contains("codexer.toml"), "{destination}: {message}");
         assert!(
-            message.contains("it has no frontmatter"),
-            "and why, rather than a change nobody made — {destination}: {message}"
+            !find(&candidates, "drifter").origins[0].hash.is_empty(),
+            "{file}: the markdown agent beside it is still offered"
+        );
+
+        for destination in [name, "elsewhere"] {
+            let error = apply(&env, &scopes, &target, &[selection(name, destination)]).unwrap_err();
+            let CoreError::Authoring { message } = &error else {
+                panic!("{file} as {destination}: {error:?}");
+            };
+            assert_eq!(
+                message,
+                &format!("agent '{name}' has no bytes kendex can import: {place} — {problem}"),
+                "{file} as {destination}"
+            );
+        }
+        assert!(
+            target.join("agents").symlink_metadata().is_err(),
+            "{file}: a refused apply writes nothing at all"
         );
     }
-    assert!(
-        !target.join("agents").exists(),
-        "a refused apply writes nothing at all"
-    );
 }
 
 /// The other door: an agent installs as the file its harness reads, so the
@@ -140,10 +173,10 @@ fn the_edited_copy_of_a_marketplace_agent_is_judged_by_the_same_rule() {
         .iter()
         .partition(|origin| !origin.hash.is_empty());
     assert_eq!(offered.len(), 1, "{:?}", agentic.origins);
-    assert!(
-        offered[0].locations[0].contains("agents/agentic.md"),
-        "the catalog's own markdown is what stays offerable: {:?}",
-        offered[0].locations
+    assert_eq!(
+        offered[0].locations,
+        ["cat:agents/agentic.md"],
+        "the catalog's own markdown is what stays offerable"
     );
     // The TOML is claimed twice — as the edited copy of the marketplace
     // agent, and by the unmanaged scan of an install the lock does not
@@ -158,18 +191,15 @@ fn the_edited_copy_of_a_marketplace_agent_is_judged_by_the_same_rule() {
         "{:?}",
         agentic.origins
     );
-    assert!(
-        refused[0].locations[0].contains("agentic.toml"),
-        "{:?}",
-        refused[0].locations
+    assert_eq!(
+        refused[0].locations,
+        [crate::paths::slashed(
+            &root.join(".codex/agents/agentic.toml")
+        )]
     );
-    assert!(
-        refused[0]
-            .problem
-            .as_deref()
-            .is_some_and(|problem| problem.contains("a catalog stores an agent as markdown")),
-        "{:?}",
-        refused[0].problem
+    assert_eq!(
+        refused[0].problem.as_deref(),
+        Some("it has no frontmatter, and a catalog stores an agent as markdown")
     );
 
     // And the markdown half really does import, so the rule took away the
@@ -181,10 +211,9 @@ fn the_edited_copy_of_a_marketplace_agent_is_judged_by_the_same_rule() {
         ..selection("agentic", "agentic")
     };
     apply(&env, &scopes, &target, &[chosen]).unwrap();
-    assert!(
-        fs::read_to_string(target.join("agents/agentic.md"))
-            .unwrap()
-            .contains("name: agentic"),
+    assert_eq!(
+        fs::read_to_string(target.join("agents/agentic.md")).unwrap(),
+        "---\nname: agentic\ndescription: about agentic\n---\nAgent body.\n"
     );
 
     // A hash matching nothing, on a candidate that still holds a usable
@@ -196,125 +225,12 @@ fn the_edited_copy_of_a_marketplace_agent_is_judged_by_the_same_rule() {
         license_confirmed: true,
         ..selection("agentic", "agentic")
     };
-    let message = apply(&env, &scopes, &target, &[stale])
-        .unwrap_err()
-        .to_string();
-    assert!(message.contains("changed since the preview"), "{message}");
-    assert!(!message.contains("agentic.toml"), "{message}");
-    assert!(
-        !message.contains("has no bytes kendex can import"),
-        "{message}"
-    );
-}
-
-/// Bytes that are not text carry no frontmatter either, and the reason
-/// says which of the two it is. A file parked at `.claude/agents/<name>.md`
-/// is offered by its extension alone, so this is the shape that would
-/// otherwise land raw bytes in a catalog under a name the check calls
-/// clean.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn an_agent_whose_bytes_are_not_text_is_not_offered() {
-    let (tmp, env, scope) = seeded();
-    let Scope::Project { root } = &scope else {
-        unreachable!()
+    let error = apply(&env, &scopes, &target, &[stale]).unwrap_err();
+    let CoreError::Authoring { message } = &error else {
+        panic!("{error:?}");
     };
-    let dir = root.join(".claude/agents");
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("binary.md"), [0xff, 0xfe, b'\n']).unwrap();
-    let scopes = [scope.clone()];
-    let target = target(&env, &tmp, "mine-binary-agent");
-    let candidates = inventory(&env, &scopes).unwrap();
-
-    let binary = find(&candidates, "binary");
-    assert!(
-        binary.origins.iter().all(|origin| origin.hash.is_empty()),
-        "nothing selectable: {:?}",
-        binary.origins
-    );
-    assert!(
-        binary.origins[0]
-            .problem
-            .as_deref()
-            .is_some_and(|problem| problem.contains("the file is not text")),
-        "{:?}",
-        binary.origins[0].problem
-    );
-
-    let message = apply(&env, &scopes, &target, &[selection("binary", "binary")])
-        .unwrap_err()
-        .to_string();
-    assert!(
-        message.contains("has no bytes kendex can import"),
-        "{message}"
-    );
-    assert!(message.contains("binary.md"), "{message}");
-    assert!(message.contains("the file is not text"), "{message}");
-    assert!(!target.join("agents").exists());
-}
-
-/// A local catalog can already hold TOML at `agents/<name>.md`, and
-/// re-importing from it would carry the breakage into another package.
-/// Judged by the same
-/// rule as any other origin, because every read goes through `offered`.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_local_catalog_already_holding_toml_is_not_offered_on() {
-    let (tmp, env, scope) = seeded();
-    let Scope::Project { root } = &scope else {
-        unreachable!()
-    };
-    let toml = "name = \"poisoned\"\ndescription = \"about poisoned\"\n";
-    file_item(
-        &root.join(crate::source::LOCAL_SOURCE_DIR).join("agents"),
-        "poisoned.md",
-        toml,
-    );
-    let path = lock::lock_path(&env, &scope);
-    let mut held = lock::load(&path).unwrap();
-    held.entries.insert(
-        lock::entry_key(ItemKind::Agent, "poisoned", HarnessId::Claude),
-        entry(ItemKind::Agent, "poisoned", "local", "local"),
-    );
-    lock::save(&path, &held).unwrap();
-
-    let scopes = [scope.clone()];
-    let target = target(&env, &tmp, "mine-poisoned");
-    let candidates = inventory(&env, &scopes).unwrap();
-
-    let poisoned = find(&candidates, "poisoned");
-    assert!(
-        poisoned
-            .origins
-            .iter()
-            .any(|origin| matches!(origin.group, crate::author::import::CandidateGroup::Own)),
-        "the local catalog is the origin under test: {:?}",
-        poisoned.origins
-    );
-    assert!(
-        poisoned.origins.iter().all(|origin| origin.hash.is_empty()),
-        "nothing selectable: {:?}",
-        poisoned.origins
-    );
-    assert!(
-        poisoned.origins[0]
-            .problem
-            .as_deref()
-            .is_some_and(|problem| problem.contains("it has no frontmatter")),
-        "{:?}",
-        poisoned.origins[0].problem
-    );
-
-    let message = apply(&env, &scopes, &target, &[selection("poisoned", "poisoned")])
-        .unwrap_err()
-        .to_string();
-    assert!(
-        message.contains("has no bytes kendex can import"),
-        "{message}"
-    );
-    assert!(message.contains("poisoned.md"), "{message}");
-    assert!(
-        !target.join("agents").exists(),
-        "a refused apply writes nothing at all"
+    assert_eq!(
+        message,
+        "the bytes of agent 'agentic' changed since the preview — re-open the import to re-preview"
     );
 }
