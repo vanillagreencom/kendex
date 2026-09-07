@@ -60,7 +60,7 @@ staged_on_fragment() { # NAME
   printf 'fn one() {}\n' >"$R/crates/core/lib.rs"
   printf -- '- A fix consumers see.\n' >"$R/changelog.d/fixed/ken-1.md"
   git -C "$R" add -A
-  git -C "$R" commit -qm 'fix(KEN-1): change a crate' >/dev/null 2>&1
+  git -C "$R" commit -qm 'fix(KEN-1): change a crate' >/dev/null 2>&1 || true
   # The hook judged that commit too: a fixture whose seed was refused would
   # amend the base commit, whose header waives the entry.
   [ "$(git -C "$R" log -1 --format=%s)" = 'fix(KEN-1): change a crate' ] \
@@ -105,6 +105,14 @@ else
   assert_eq "must-fail: a message VALUE spelling the flag does not widen the base" \
     "rc=1 commit-msg FAIL non-conventional header: --amend;  expected: type(scope)!: subject — scope and '!' optional; types: build chore ci docs feat fix perf refactor revert style test;  scope accepts uppercase issue keys and issue numbers, e.g. fix(ABC-123): tighten the gate / fix(#123): case-fold IDs;  git-generated headers (Merge/Revert/Reapply, fixup!/squash!/amend!) pass unchanged;$OWED" \
     "$(commit --mess '--amend')"
+  # MUST-FAIL: a message merely CONTAINING the flag. The argv is read
+  # NUL-delimited so this stays one argument; a scan joining argv with spaces
+  # (what `ps` would give) would read the flag out of it and excuse the
+  # commit with the fragment the previous one carries.
+  staged_on_fragment mention
+  assert_eq "must-fail: a message CONTAINING the flag is not the flag" \
+    "rc=1 $(header 'fix(KEN-2): wire the --amend path');$OWED" \
+    "$(commit -m 'fix(KEN-2): wire the --amend path')"
 fi
 
 echo "=== which argv is an amend: the NUL-delimited bytes the kernel would hold ==="
@@ -129,7 +137,10 @@ argv_rows \
   "the flag behind a value-taking option is that option's value|git commit --mess --amend|no" \
   "the flag behind a clustered short option ending in -m is its value|git commit -am --amend|no" \
   "a flag behind a no-value option is the flag|git commit --no-edit --amend|yes" \
+  "a flag behind a short valueless option is the flag|git commit -a --amend|yes" \
+  "an option carrying its own value is read as swallowing: the conservative miss the scan accepts|git commit --message=x --amend|no" \
   "--no-amend after the flag withdraws it|git commit --amend --no-amend|no" \
+  "--no-amend before the flag does not withdraw it: the last word wins|git commit --no-amend --amend|yes" \
   "git's abbreviation of the flag is the flag|git commit --ame|yes" \
   "a bare -- stops the scan: the flag behind it is a path|git commit -- lib.rs --amend|no" \
   "the wrapper's arguments ahead of commit are skipped: -c never reads as swallowing|git -c core.editor=true commit --amend|yes" \
