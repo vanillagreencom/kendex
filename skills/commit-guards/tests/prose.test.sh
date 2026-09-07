@@ -1,346 +1,227 @@
 #!/usr/bin/env bash
-# Pins for scripts/prose: a history reference in agent-loaded markdown fails,
-# the same reference outside the configured paths does not, the path list is
-# replaceable and validated, and ordinary wording passes.
-# Every green assertion is paired with a control that proves it
-# can fail. The index readers this family of checks shares are pinned once,
-# in index-reads.test.sh and lane-readers.test.sh.
+# Pins for scripts/prose, the history-reference scan over agent-loaded
+# markdown: a calendar date or an issue number in a scoped file fails naming
+# file:line and the remedy, ordinary wording and decision IDs pass, the path
+# list is the harness-loaded names (the architecture docs join under
+# COMMIT_GUARDS_MD_SCOPE=all), replaceable and validated, the markdown
+# excludes carve paths out, and a scoped path that is not markdown is named
+# rather than counted clean. Two tables: one line of SKILL.md judged, and
+# the runs over a built repository. A row runs the scan once and pins the
+# exit status with every line printed, so the hit, its line, the remedy,
+# the counts and the path list shown are one pin. The index readers this
+# family shares are index-reads.test.sh and lane-readers.test.sh.
 set -euo pipefail
-
+# No globbing: a row's ARGS column is word-split into the scan's arguments.
+set -f
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 PROSE="$SKILL_DIR/scripts/prose"
+# shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
-
-# Hermetic: a leaked setting would mask every case below.
-unset COMMIT_GUARDS_PROSE_PATHS \
-  COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
+# Hermetic: a leaked setting would mask every row below.
+unset COMMIT_GUARDS_PROSE_PATHS COMMIT_GUARDS_MD_EXCLUDES COMMIT_GUARDS_MD_SCOPE COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
 FAIL=0
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
+assert_eq() { # LABEL EXPECT ACTUAL
+  if [ "$2" = "$3" ]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$1"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        want: %s\n        got:  %s\n' "$1" "$2" "$3"
+  fi
+}
 
-new_repo() { # NAME — fresh fixture repo in $R
+# One line for a run in the row's repository: the exit status, then every
+# line printed, in order, joined by ';'. ENVS is a comma-separated list of
+# assignments; ARGS are passed through.
+R=""
+run() { # ENVS ARGS
+  local envs=() rc=0 out=""
+  [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
+  # shellcheck disable=SC2086
+  out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$PROSE" $2 2>&1)" || rc=$?
+  printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
+}
+
+# Fixture vocabulary. Every fixture builds its own repository and stages
+# what it wrote; a name used twice is refused.
+repo() { # NAME
   R="$TMP/$1"
+  [ ! -e "$R" ] || { echo "harness: fixture $1 already exists" >&2; exit 2; }
   mkdir -p "$R"
   git -C "$R" -c init.defaultBranch=main init -q
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
 }
+put() { mkdir -p "$R/$(dirname "$1")"; printf '%b' "$2" >"$R/$1"; git -C "$R" add -A; } # PATH CONTENT (printf %b), staged
+SEEDED='Seeded 2026-08-12.\n'
 
-run_prose() { # [args...] — run in $R; sets OUT and RC
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && "$PROSE" "$@" 2>&1)" || RC=$?
+# The lines the scan prints, as functions of what a row put in.
+PATHS_CORE="SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md"
+PATHS_ALL="$PATHS_CORE docs/architecture/*.md"
+REMEDY="  remedies: state the rule that holds now and delete the story; the date and the issue number belong in the commit that made the change"
+ERR="::error::prose: "
+hit() { printf 'prose FAIL history reference: %s:%s:%s;%s' "$1" "$2" "$3" "$REMEDY"; } # PATH LINE TEXT
+skip() { printf 'prose: not measured: %s — %s' "$1" "$2"; } # PATH REASON
+unmeasured() { printf '; %s matched path(s) not measured' "$1"; } # N
+clean() { printf 'prose: OK — no history references in %s scanned file(s)%s' "$1" "${2-}"; } # SCANNED [UNMEASURED]
+failed() { printf 'prose: %s history reference(s) in %s scanned file(s) — paths %s%s' "$1" "$2" "${3:-$PATHS_CORE}" "${4-}"; } # HITS SCANNED [PATHS] [UNMEASURED]
+nomatch() { printf 'prose: OK — no tracked file matches COMMIT_GUARDS_PROSE_PATHS (%s)' "$1"; } # PATHS
+NONE="prose: OK — nothing measurable to scan"
+
+# Table one: SKILL.md holds LINE in a fresh repository, scanned under the
+# default scope.
+ROW=0
+line_rows() { # label | line | expect
+  local row label line expect
+  for row in "$@"; do
+    IFS='|' read -r label line expect <<<"$row"
+    ROW=$((ROW + 1))
+    R=""
+    repo "line-$ROW"
+    put SKILL.md "$line\n"
+    assert_eq "$label" "$expect" "$(run '' '')"
+  done
 }
 
-# A tracked file with one line of content, staged.
-put() { # PATH LINE
-  mkdir -p "$R/$(dirname "$1")"
-  printf '%s\n' "$2" >"$R/$1"
-  git -C "$R" add -A
+echo "=== a date or an issue number fails naming file:line and the remedy; ordinary wording passes ==="
+line_rows \
+  "control: agent-loaded markdown with no history passes, and the verdict says how many files it read|Run the installer from the repository root.|rc=0 $(clean 1)" \
+  "a calendar date fails, naming file:line, carrying the remedy, counting hits and files, and showing the path list|The ratchet baseline was seeded 2026-08-12.|rc=1 $(hit SKILL.md 1 'The ratchet baseline was seeded 2026-08-12.');$(failed 1 1)" \
+  "ordinary wording passes: previously|The previously saved value stays available.|rc=0 $(clean 1)" \
+  "ordinary wording passes: no longer|The lock is no longer held after return.|rc=0 $(clean 1)" \
+  "ordinary wording passes: incident|The incident handler writes a report.|rc=0 $(clean 1)" \
+  "ordinary wording passes: existing, reverted|The existing code handles a reverted transaction.|rc=0 $(clean 1)" \
+  "ordinary wording passes: timestamp, at the time|The timestamp records the value at the time of the read.|rc=0 $(clean 1)" \
+  "a three-digit issue number fails|Closed by #228 upstream.|rc=1 $(hit SKILL.md 1 'Closed by #228 upstream.');$(failed 1 1)" \
+  "a four-digit reference glued to a filename fails|See spec.md#1204 for the shape.|rc=1 $(hit SKILL.md 1 'See spec.md#1204 for the shape.');$(failed 1 1)" \
+  "a five-digit run and a two-digit run both pass|The colour token is #12345 and the port is #12.|rc=0 $(clean 1)" \
+  "a CSS hex colour opening with digits is not an issue reference|Swatches #123abc, #1234ab, #0088cc and #3366ff are colours.|rc=0 $(clean 1)" \
+  "all-digit shorthand still fails: #900 is also how issue 900 is written|The brand red is #900 and the accent is #369.|rc=1 $(hit SKILL.md 1 'The brand red is #900 and the accent is #369.');$(failed 1 1)" \
+  "control: a reference followed by punctuation or a space still fails, one hit per line|Landed in #1204) and #228, per #999.|rc=1 $(hit SKILL.md 1 'Landed in #1204) and #228, per #999.');$(failed 1 1)" \
+  "an ATX heading is not an issue reference|### Heading with 4 words|rc=0 $(clean 1)" \
+  "a decision ID, a code-span D042 § Context and a four-digit ID all pass|Decided in D042; the reason is in \`D042 § Context\`, and D1234 is the same kind.|rc=0 $(clean 1)" \
+  "control: the same digits after '#' are still an issue reference|Decided in #042.|rc=1 $(hit SKILL.md 1 'Decided in #042.');$(failed 1 1)" \
+  "two hits on two lines are two lines and one count each|First 2026-08-12.\nSecond #228.|rc=1 $(hit SKILL.md 1 'First 2026-08-12.');$(hit SKILL.md 2 'Second #228.');$(failed 2 1)"
+
+# Table two: FIXTURE (a function and its words) builds the repository; the
+# scan runs with ARGS under ENVS.
+run_rows() { # label | fixture | envs | args | expect
+  local row label fx envs args expect words
+  for row in "$@"; do
+    IFS='|' read -r label fx envs args expect <<<"$row"
+    R=""
+    read -ra words <<<"$fx"
+    "${words[@]}"
+    assert_eq "$label" "$expect" "$(run "$envs" "$args")"
+  done
 }
 
-echo "=== control: agent-loaded markdown with no history passes ==="
-new_repo clean
-put SKILL.md 'Run the installer from the repository root.'
-run_prose
-[ "$RC" -eq 0 ] && case "$OUT" in *"prose: OK — no history references in 1 scanned file(s)"*) true ;; *) false ;; esac \
-  && ok "a clean SKILL.md passes, and the verdict says how many files it read" \
-  || bad "clean SKILL.md passes" "rc=$RC out=$OUT"
-
-echo "=== a date fails, naming file:line and the remedy ==="
-put SKILL.md 'The ratchet baseline was seeded 2026-08-12.'
-run_prose
-[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: SKILL.md:1:"*) true ;; *) false ;; esac \
-  && ok "a calendar date in SKILL.md fails, naming file:line" \
-  || bad "a date fails" "rc=$RC out=$OUT"
-case "$OUT" in *"state the rule that holds now and delete the story"*) ok "the diagnostic carries the remediation" ;; *) bad "diagnostic carries the remediation" "$OUT" ;; esac
-case "$OUT" in *"prose: 1 history reference(s) in 1 scanned file(s)"*) ok "the summary counts hits and scanned files" ;; *) bad "summary counts hits and files" "$OUT" ;; esac
-
-echo "=== ordinary wording passes ==="
-for line in 'The previously saved value stays available.' 'The lock is no longer held after return.' 'The incident handler writes a report.' 'The existing code handles a reverted transaction.' 'The timestamp records the value at the time of the read.'; do
-  put SKILL.md "$line"
-  run_prose
-  [ "$RC" -eq 0 ] && case "$OUT" in *"no history references in 1 scanned file(s)"*) true ;; *) false ;; esac \
-    && ok "ordinary wording passes: $line" || bad "ordinary wording" "rc=$RC out=$OUT"
+echo "=== scope: each default name is scanned, the architecture docs under scope all, and nothing else ==="
+SCOPED="SKILL.md AGENTS.md CLAUDE.md skills/dev/SKILL.md skills/dev/AGENTS.md skills/dev/CLAUDE.md workflows/ship.md skills/dev/workflows/ship.md agents/rust.md .claude/agents/rust.md"
+ARCH="docs/architecture/overview.md docs/architecture/topic.md"
+UNSCOPED="README.md CHECKS.md docs/design.md CHANGELOG.md skills/dev/references/api.md notes/workflows.md"
+scoped() { repo "scoped-${1//\//_}"; put "$1" "$SEEDED"; } # PATH — the one tracked file, seeded
+fx_arch() { repo "$1"; put SKILL.md 'clean\n'; put docs/architecture/overview.md "$SEEDED"; }
+fx_unscoped() { # every scoped path clean, every unscoped one seeded
+  local f
+  repo unscoped
+  for f in $SCOPED; do put "$f" 'clean\n'; done
+  for f in $UNSCOPED; do put "$f" 'Seeded 2026-08-12, reverted in #1204.\n'; done
+}
+rows=()
+for f in $SCOPED; do
+  rows+=("$f is in the default scope|scoped $f|COMMIT_GUARDS_MD_SCOPE=all||rc=1 $(hit "$f" 1 'Seeded 2026-08-12.');$(failed 1 1 "$PATHS_ALL")")
 done
-
-echo "=== issue numbers: three and four digits fail, other runs do not ==="
-put SKILL.md 'Closed by #228 upstream.'
-run_prose
-[ "$RC" -eq 1 ] && ok "a three-digit issue number fails" || bad "three-digit number fails" "rc=$RC out=$OUT"
-put SKILL.md 'See spec.md#1204 for the shape.'
-run_prose
-[ "$RC" -eq 1 ] && ok "a four-digit reference glued to a filename fails" || bad "glued four-digit reference fails" "rc=$RC out=$OUT"
-put SKILL.md 'The colour token is #12345 and the port is #12.'
-run_prose
-[ "$RC" -eq 0 ] && ok "a five-digit run and a two-digit run both pass" \
-  || bad "five- and two-digit runs pass" "rc=$RC out=$OUT"
-put SKILL.md 'Swatches #123abc, #1234ab, #0088cc and #3366ff are colours.'
-run_prose
-[ "$RC" -eq 0 ] && ok "a CSS hex colour opening with digits is not an issue reference" \
-  || bad "hex colours pass" "rc=$RC out=$OUT"
-put SKILL.md 'The brand red is #900 and the accent is #369.'
-run_prose
-[ "$RC" -eq 1 ] && ok "all-digit shorthand still fails: #900 is also how issue 900 is written" \
-  || bad "all-digit shorthand fails" "rc=$RC out=$OUT"
-put SKILL.md 'Landed in #1204) and #228, per #999.'
-run_prose
-[ "$RC" -eq 1 ] && ok "control: a reference followed by punctuation or a space still fails" \
-  || bad "control: real references still fail" "rc=$RC out=$OUT"
-put SKILL.md '### Heading with 4 words'
-run_prose
-[ "$RC" -eq 0 ] && ok "an ATX heading is not an issue reference" || bad "ATX heading passes" "rc=$RC out=$OUT"
-
-echo "=== a decision ID is a citation, not history ==="
-put SKILL.md 'Decided in D042; the reason is in `D042 § Context`, and D1234 is the same kind.'
-run_prose
-[ "$RC" -eq 0 ] && ok "D042, a code-span D042 § Context and a four-digit ID all pass" \
-  || bad "decision IDs pass" "rc=$RC out=$OUT"
-put SKILL.md 'Decided in #042.'
-run_prose
-[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: SKILL.md:1:"*) true ;; *) false ;; esac \
-  && ok "control: the same digits after '#' are still an issue reference" || bad "control: #042 fails" "rc=$RC out=$OUT"
-
-echo "=== scope: each default name is scanned, and nothing else is ==="
-new_repo scope
-put SKILL.md 'clean'
-for f in SKILL.md AGENTS.md CLAUDE.md skills/dev/SKILL.md skills/dev/AGENTS.md skills/dev/CLAUDE.md workflows/ship.md skills/dev/workflows/ship.md agents/rust.md .claude/agents/rust.md docs/architecture/overview.md docs/architecture/topic.md; do
-  put "$f" 'Seeded 2026-08-12.'
-  COMMIT_GUARDS_MD_SCOPE=all run_prose
-  [ "$RC" -eq 1 ] && case "$OUT" in *"history reference: $f:1:"*) true ;; *) false ;; esac \
-    && ok "$f is in the default scope" || bad "$f is in the default scope" "rc=$RC out=$OUT"
-  put "$f" 'clean'
+for f in $ARCH; do
+  rows+=("$f is in the scope-all list|scoped $f|COMMIT_GUARDS_MD_SCOPE=all||rc=1 $(hit "$f" 1 'Seeded 2026-08-12.');$(failed 1 1 "$PATHS_ALL")")
 done
-put docs/architecture/overview.md 'Seeded 2026-08-12.'
-run_prose
-[ "$RC" -eq 0 ] && ok "under COMMIT_GUARDS_MD_SCOPE=touched the architecture docs are not yet in scope" \
-  || bad "architecture docs wait for scope all" "rc=$RC out=$OUT"
-COMMIT_GUARDS_MD_SCOPE=all run_prose
-[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: docs/architecture/overview.md:1:"*) true ;; *) false ;; esac \
-  && ok "control: under scope all the same file fails" || bad "control: scope all scans architecture docs" "rc=$RC out=$OUT"
-put docs/architecture/overview.md 'clean'
-run_prose
-[ "$RC" -eq 0 ] && ok "control: with every scoped file clean, the scan passes" \
-  || bad "control: scoped files clean" "rc=$RC out=$OUT"
-for f in README.md CHECKS.md docs/design.md CHANGELOG.md skills/dev/references/api.md notes/workflows.md; do
-  put "$f" 'Seeded 2026-08-12, reverted in #1204.'
-done
-run_prose
-# The count is asserted with the status: a scan that matched NOTHING also
-# exits 0, and would satisfy a bare rc check while proving nothing.
-[ "$RC" -eq 0 ] && case "$OUT" in *"prose: OK — no history references in 10 scanned file(s)"*) true ;; *) false ;; esac \
-  && ok "README, CHECKS, docs, CHANGELOG, references and a workflows-named file keep their history, with the ten scoped files still read" \
-  || bad "out-of-scope files keep their history" "rc=$RC out=$OUT"
+run_rows "${rows[@]}" \
+  "under COMMIT_GUARDS_MD_SCOPE=touched the architecture docs are not yet in scope|fx_arch arch-touched|||rc=0 $(clean 1)" \
+  "control: under scope all the same file fails|fx_arch arch-all|COMMIT_GUARDS_MD_SCOPE=all||rc=1 $(hit docs/architecture/overview.md 1 'Seeded 2026-08-12.');$(failed 1 2 "$PATHS_ALL")" \
+  "README, CHECKS, docs, CHANGELOG, references and a workflows-named file keep their history, with the ten scoped files still read|fx_unscoped|||rc=0 $(clean 10)" \
+  "an unknown scope is exit 2, quoting it|fx_arch scope-unknown|COMMIT_GUARDS_MD_SCOPE=sometimes||rc=2 ${ERR}COMMIT_GUARDS_MD_SCOPE must be 'touched' or 'all', got 'sometimes'"
 
 echo "=== the markdown excludes list carves a vendored skill out ==="
-new_repo excluded
-put SKILL.md 'clean'
-put .agents/skills/vendored/SKILL.md 'Seeded 2026-08-12.'
-run_prose
-[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: .agents/skills/vendored/SKILL.md:1:"*) true ;; *) false ;; esac \
-  && ok "control: a vendored skill is scanned before it is excluded" || bad "control: vendored skill scanned" "rc=$RC out=$OUT"
-mkdir -p "$R/tools"
-printf '.agents/skills/vendored/**\tthird-party skill pinned by hash\n' >"$R/tools/md-excludes"
-git -C "$R" add tools/md-excludes
-run_prose
-[ "$RC" -eq 0 ] && ok "an excludes row carves the vendored skill out of the prose scan" \
-  || bad "excludes row honoured" "rc=$RC out=$OUT"
-git -C "$R" rm -qf tools/md-excludes
+vendored() { repo "$1"; put SKILL.md 'clean\n'; put .agents/skills/vendored/SKILL.md "$SEEDED"; }
+fx_excluded() { vendored excluded; put tools/md-excludes '.agents/skills/vendored/**\tthird-party skill pinned by hash\n'; }
+run_rows \
+  "control: a vendored skill is scanned before it is excluded|vendored vendored-scanned|||rc=1 $(hit .agents/skills/vendored/SKILL.md 1 'Seeded 2026-08-12.');$(failed 1 2)" \
+  "an excludes row carves the vendored skill out of the prose scan|fx_excluded|||rc=0 $(clean 1)"
 
-echo "=== COMMIT_GUARDS_PROSE_PATHS REPLACES the list (and that is provable) ==="
-new_repo override
-put SKILL.md 'Seeded 2026-08-12.'
-put docs/design.md 'Seeded 2026-08-12.'
-run_prose
-[ "$RC" -eq 1 ] && case "$OUT" in *"docs/design.md"*) false ;; *"SKILL.md:1:"*) true ;; *) false ;; esac \
-  && ok "control: the default list catches SKILL.md and leaves docs/design.md alone" \
-  || bad "control: default list scope" "rc=$RC out=$OUT"
-OUT="$(cd "$R" && COMMIT_GUARDS_PROSE_PATHS='docs/*.md' "$PROSE" 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 1 ] && case "$OUT" in *"SKILL.md:1:"*) false ;; *"docs/design.md:1:"*) true ;; *) false ;; esac \
-  && ok "the override replaces the list: docs/design.md fails and SKILL.md is no longer scanned" \
-  || bad "override replaces the list" "rc=$RC out=$OUT"
-printf '[env]\nCOMMIT_GUARDS_PROSE_PATHS = "docs/*.md"\n' >"$R/kendex.settings.toml"
-git -C "$R" add -A
-run_prose
-[ "$RC" -eq 1 ] && case "$OUT" in *"SKILL.md:1:"*) false ;; *"docs/design.md:1:"*) true ;; *) false ;; esac \
-  && ok "the same override resolves from kendex.settings.toml [env]" \
-  || bad "override resolves from settings" "rc=$RC out=$OUT"
-rm "$R/kendex.settings.toml"
-git -C "$R" add -A
-
-echo "=== a list matching nothing is a clean pass that scans nothing ==="
-OUT="$(cd "$R" && COMMIT_GUARDS_PROSE_PATHS='no/such/*.md' "$PROSE" 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 0 ] && case "$OUT" in *"no tracked file matches COMMIT_GUARDS_PROSE_PATHS"*) true ;; *) false ;; esac \
-  && ok "a list matching no tracked file passes, naming the list" \
-  || bad "unmatched list passes naming the list" "rc=$RC out=$OUT"
-case "$OUT" in *"history reference"*) bad "an unmatched list must scan nothing, not the whole repository" "$OUT" ;; *) ok "the unmatched list scanned nothing (the planted files stayed unread)" ;; esac
-
-echo "=== path-list validation fails loud ==="
-OUT="$(cd "$R" && COMMIT_GUARDS_PROSE_PATHS=' ' "$PROSE" 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"names no path"*) true ;; *) false ;; esac \
-  && ok "an empty path list is exit 2" || bad "empty path list is exit 2" "rc=$RC out=$OUT"
-OUT="$(cd "$R" && COMMIT_GUARDS_PROSE_PATHS='/etc/SKILL.md' "$PROSE" 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"must be repo-root-relative"*) true ;; *) false ;; esac \
-  && ok "an absolute path is exit 2" || bad "absolute path is exit 2" "rc=$RC out=$OUT"
-OUT="$(cd "$R" && COMMIT_GUARDS_PROSE_PATHS='../outside/*.md' "$PROSE" 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"escapes the repository"*) true ;; *) false ;; esac \
-  && ok "a path escaping the repository is exit 2" || bad "escaping path is exit 2" "rc=$RC out=$OUT"
-run_prose --no-such-flag
-[ "$RC" -eq 2 ] && ok "unknown flag is exit 2" || bad "unknown flag is exit 2" "rc=$RC out=$OUT"
-run_prose --help
-[ "$RC" -eq 0 ] && case "$OUT" in *"usage: prose"*) true ;; *) false ;; esac \
-  && ok "--help prints usage at exit 0" || bad "--help prints usage" "rc=$RC out=$OUT"
+echo "=== COMMIT_GUARDS_PROSE_PATHS replaces the list, and is validated ==="
+override() { repo "$1"; put SKILL.md "$SEEDED"; put docs/design.md "$SEEDED"; }
+fx_settings() { override settings; put kendex.settings.toml '[env]\nCOMMIT_GUARDS_PROSE_PATHS = "docs/*.md"\n'; }
+run_rows \
+  "control: the default list catches SKILL.md and leaves docs/design.md alone|override default|||rc=1 $(hit SKILL.md 1 'Seeded 2026-08-12.');$(failed 1 1)" \
+  "the override replaces the list: docs/design.md fails and SKILL.md is no longer scanned|override env|COMMIT_GUARDS_PROSE_PATHS=docs/*.md||rc=1 $(hit docs/design.md 1 'Seeded 2026-08-12.');$(failed 1 1 'docs/*.md')" \
+  "the same override resolves from kendex.settings.toml [env]|fx_settings|||rc=1 $(hit docs/design.md 1 'Seeded 2026-08-12.');$(failed 1 1 'docs/*.md')" \
+  "a list matching no tracked file passes naming the list, and scans nothing|override nomatch|COMMIT_GUARDS_PROSE_PATHS=no/such/*.md||rc=0 $(nomatch 'no/such/*.md')" \
+  "an empty path list is exit 2|override empty|COMMIT_GUARDS_PROSE_PATHS= ||rc=2 ${ERR}COMMIT_GUARDS_PROSE_PATHS names no path — name at least one, or drop this check from COMMIT_GUARDS_CHECKS" \
+  "an absolute path is exit 2|override absolute|COMMIT_GUARDS_PROSE_PATHS=/etc/SKILL.md||rc=2 ${ERR}prose path must be repo-root-relative, got absolute: /etc/SKILL.md" \
+  "a path escaping the repository is exit 2|override escaping|COMMIT_GUARDS_PROSE_PATHS=../outside/*.md||rc=2 ${ERR}prose path escapes the repository or normalizes empty: ../outside/*.md" \
+  "an unknown flag is exit 2, quoting it|override unknown-flag||--no-such-flag|rc=2 ${ERR}unknown argument '--no-such-flag' (see --help)"
+assert_eq "--help prints usage at exit 0" "rc=0 usage: prose" "$(run '' --help | LC_ALL=C cut -d';' -f1)"
 
 echo "=== a configured path that is not markdown is named, never counted clean ==="
-new_repo unmeasurable
-put notes/target.md 'Seeded 2026-08-12.'
-put skills/dev/SKILL.md 'Seeded 2026-08-12.'
-run_prose
-[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: skills/dev/SKILL.md:1:"*) true ;; *) false ;; esac \
-  && ok "control: the same content as a REGULAR file at the scoped path fails" \
-  || bad "control: regular file at the scoped path fails" "rc=$RC out=$OUT"
-# `git grep --cached` SKIPS a symlink index entry outright — it never reads
-# through to the target, and spends no status and no stderr doing it — so a
-# scoped path tracked as a symlink is content this lane cannot measure. It is
-# NAMED and kept out of the scanned count, never folded into a clean total.
-# notes/target.md is out of the default scope, so nothing else reaches it:
-# the same bytes that just failed as a regular file are now unread, and the
-# run has to say so.
-rm "$R/skills/dev/SKILL.md"
-ln -s ../../notes/target.md "$R/skills/dev/SKILL.md"
-git -C "$R" add -A
-[ "$(git -C "$R" ls-files -s skills/dev/SKILL.md | cut -d' ' -f1)" = "120000" ] \
-  && ok "fixture: the scoped path really is tracked as a symlink" \
-  || bad "fixture: scoped path tracked as a symlink" "$(git -C "$R" ls-files -s skills/dev/SKILL.md)"
-OUT="$(cd "$R" && git grep --cached -n -I -E '2026' -- 'skills/dev/SKILL.md' 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 1 ] && [ -z "$OUT" ] \
-  && ok "fixture: a bare --cached grep over the symlink entry finds nothing at all" \
-  || bad "fixture: bare grep over the symlink entry finds nothing" "rc=$RC out=$OUT"
-run_prose
-[ "$RC" -eq 0 ] && case "$OUT" in *"not measured: skills/dev/SKILL.md"*"tracked as a symlink"*) true ;; *) false ;; esac \
-  && ok "a scoped symlink is named as unmeasured, not silently dropped" \
-  || bad "scoped symlink named as unmeasured" "rc=$RC out=$OUT"
-case "$OUT" in
-  *"scanned file(s)"*) bad "an unmeasured link must not produce a clean scanned-file verdict" "$OUT" ;;
-  *) ok "no clean scanned-file verdict covers the unread link" ;;
-esac
-# Every matched path was skipped, so the globs DID match: telling the reader
-# nothing matched would send them to widen a glob that was already right.
-case "$OUT" in
-  *"no tracked file matches"*) bad "a run whose every match was skipped must not report as no match" "$OUT" ;;
-  *) ok "no 'nothing matched' line over a path that matched and was skipped" ;;
-esac
-case "$OUT" in
-  *"1 matched path(s) not measured"*) ok "the skip is counted in the verdict, not silent" ;;
-  *) bad "the skip is counted in the verdict" "$OUT" ;;
-esac
-
-# Two scoped links chained to one tracked file, a shape this lane must not
-# refuse: a root CLAUDE.md tracked as a link to AGENTS.md, and a
-# .claude/CLAUDE.md linking back to the root. The lane names each link and
-# measures the one tracked file there is.
-echo "=== a chain of scoped links commits, with the links named ==="
-new_repo dualharness
-put AGENTS.md 'clean'
-ln -s AGENTS.md "$R/CLAUDE.md"
-mkdir -p "$R/.claude"
-ln -s ../CLAUDE.md "$R/.claude/CLAUDE.md"
-git -C "$R" add -A
-run_prose
-[ "$RC" -eq 0 ] && case "$OUT" in *"no history references in 1 scanned file(s)"*) true ;; *) false ;; esac \
-  && ok "a repo whose CLAUDE.md links to AGENTS.md and back exits 0" \
-  || bad "chained link shape exits 0" "rc=$RC out=$OUT"
-case "$OUT" in *"not measured: CLAUDE.md"*) ok "the root link is named as unmeasured" ;; *) bad "root link named" "$OUT" ;; esac
-case "$OUT" in *"not measured: .claude/CLAUDE.md"*) ok "the rendered link is named as unmeasured" ;; *) bad "rendered link named" "$OUT" ;; esac
-# The control: the file both links point at is tracked and scoped, so a
-# reference planted in it still fails, naming AGENTS.md.
-put AGENTS.md 'Seeded 2026-08-12.'
-run_prose
-[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: AGENTS.md:1:"*) true ;; *) false ;; esac \
-  && ok "control: a reference in the file the links point at still fails, naming it" \
-  || bad "control: the linked-to file still fails" "rc=$RC out=$OUT"
-
-# A gitlink at a scoped path: mode 160000 carries a commit id, not markdown.
-new_repo gitlink
-put SKILL.md 'clean'
-git -C "$R" commit -qm base
-SUB_SHA="$(git -C "$R" rev-parse HEAD)"
-git -C "$R" update-index --add --cacheinfo "160000,$SUB_SHA,vendor/AGENTS.md"
-[ "$(git -C "$R" ls-files -s vendor/AGENTS.md | cut -d' ' -f1)" = "160000" ] \
-  && ok "fixture: the scoped path really is tracked as a gitlink" \
-  || bad "fixture: scoped path tracked as a gitlink" "$(git -C "$R" ls-files -s vendor/AGENTS.md)"
-run_prose
-[ "$RC" -eq 0 ] && case "$OUT" in *"not measured: vendor/AGENTS.md"*"submodule gitlink"*) true ;; *) false ;; esac \
-  && ok "a gitlink at a scoped path is named as unmeasured, not read as markdown" \
-  || bad "gitlink named as unmeasured" "rc=$RC out=$OUT"
-
-# Binary content: `git grep -I` drops such a blob with no status and no
-# stderr, so the classification pass has to catch it first.
-new_repo binaryblob
-printf 'Seeded 2026-08-12.\n' >"$R/AGENTS.md"
-git -C "$R" add -A
-run_prose
-[ "$RC" -eq 1 ] && ok "control: the same reference in TEXT fails" \
-  || bad "control: reference in text fails" "rc=$RC out=$OUT"
-printf 'lead\000Seeded 2026-08-12.\n' >"$R/AGENTS.md"
-git -C "$R" add -A
-run_prose
-[ "$RC" -eq 0 ] && case "$OUT" in *"not measured: AGENTS.md"*"binary content"*) true ;; *) false ;; esac \
-  && ok "a binary blob at a scoped path is named as unmeasured" \
-  || bad "binary blob named as unmeasured" "rc=$RC out=$OUT"
-case "$OUT" in
-  *"no history references in"*) bad "no clean file-count verdict may cover a blob the lane never read" "$OUT" ;;
-  *) ok "no clean file-count verdict covers the unread blob" ;;
-esac
-
-echo "=== the glob list is matched against the INDEX, not the work tree ==="
-# `set -f` in the script is what this pins. Without it the configured
-# patterns are pathname-expanded against the WORK TREE before matching, so a
-# tracked file missing from the checkout drops out of the scan silently —
-# and a sparse or bare checkout loses the whole list.
-new_repo indexglob
-put workflows/a.md 'clean'
-put workflows/b.md 'Seeded 2026-08-12.'
-run_prose
-[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: workflows/b.md:1:"*) true ;; *) false ;; esac \
-  && ok "control: both tracked workflows are scanned while both sit in the work tree" \
-  || bad "control: both workflows scanned" "rc=$RC out=$OUT"
-rm "$R/workflows/b.md"   # still in the index; gone from the checkout
-run_prose
-[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: workflows/b.md:1:"*) true ;; *) false ;; esac \
-  && ok "a tracked file absent from the work tree is still scanned (the glob never touches the checkout)" \
-  || bad "index glob survives a missing work-tree file" "rc=$RC out=$OUT"
+fx_regular() { repo regular; put notes/target.md "$SEEDED"; put skills/dev/SKILL.md "$SEEDED"; }
+fx_symlink() { repo symlink; put notes/target.md "$SEEDED"; mkdir -p "$R/skills/dev"; ln -s ../../notes/target.md "$R/skills/dev/SKILL.md"; git -C "$R" add -A; }
+# Two scoped links chained to one tracked file: a root CLAUDE.md linking to
+# AGENTS.md, and a .claude/CLAUDE.md linking back to the root.
+chain() { repo "$1"; put AGENTS.md "$2"; ln -s AGENTS.md "$R/CLAUDE.md"; mkdir -p "$R/.claude"; ln -s ../CLAUDE.md "$R/.claude/CLAUDE.md"; git -C "$R" add -A; } # NAME AGENTS-CONTENT
+fx_chain_clean() { chain chain-clean 'clean\n'; }
+fx_chain_seeded() { chain chain-seeded "$SEEDED"; }
+fx_gitlink() { # a gitlink at a scoped path: mode 160000 carries a commit id, not markdown
+  repo gitlink
+  put SKILL.md 'clean\n'
+  git -C "$R" commit -qm base
+  git -C "$R" update-index --add --cacheinfo "160000,$(git -C "$R" rev-parse HEAD),vendor/AGENTS.md"
+}
+fx_binary() { repo binary; put AGENTS.md 'lead\0000Seeded 2026-08-12.\n'; }
+fx_index_both() { repo "$1"; put workflows/a.md 'clean\n'; put workflows/b.md "$SEEDED"; }
+fx_index_glob() { fx_index_both index-glob; rm "$R/workflows/b.md"; } # b.md still in the index, gone from the checkout
+run_rows \
+  "control: the same content as a REGULAR file at the scoped path fails|fx_regular|||rc=1 $(hit skills/dev/SKILL.md 1 'Seeded 2026-08-12.');$(failed 1 1)" \
+  "a scoped symlink is named as unmeasured and counted apart: no clean verdict, no 'nothing matched' line|fx_symlink|||rc=0 $(skip skills/dev/SKILL.md 'tracked as a symlink, not markdown');$NONE$(unmeasured 1)" \
+  "a repo whose CLAUDE.md links to AGENTS.md and back exits 0, naming both links|fx_chain_clean|||rc=0 $(skip .claude/CLAUDE.md 'tracked as a symlink, not markdown');$(skip CLAUDE.md 'tracked as a symlink, not markdown');$(clean 1 "$(unmeasured 2)")" \
+  "control: a reference in the file the links point at still fails, naming it|fx_chain_seeded|||rc=1 $(skip .claude/CLAUDE.md 'tracked as a symlink, not markdown');$(skip CLAUDE.md 'tracked as a symlink, not markdown');$(hit AGENTS.md 1 'Seeded 2026-08-12.');$(failed 1 1 "$PATHS_CORE" "$(unmeasured 2)")" \
+  "a gitlink at a scoped path is named as unmeasured, not read as markdown|fx_gitlink|||rc=0 $(skip vendor/AGENTS.md 'tracked as a submodule gitlink, not markdown');$(clean 1 "$(unmeasured 1)")" \
+  "a binary blob at a scoped path is named as unmeasured, with no clean file count over it|fx_binary|||rc=0 $(skip AGENTS.md 'binary content, not markdown');$NONE$(unmeasured 1)" \
+  "control: both tracked workflows are scanned while both sit in the work tree|fx_index_both index-both|||rc=1 $(hit workflows/b.md 1 'Seeded 2026-08-12.');$(failed 1 2)" \
+  "a tracked file absent from the work tree is still scanned: the glob is matched against the index|fx_index_glob|||rc=1 $(hit workflows/b.md 1 'Seeded 2026-08-12.');$(failed 1 2)"
+# The premise of the symlink skip: `git grep --cached` finds nothing at all
+# in a symlink index entry, spending no status and no stderr on it.
+fx_symlink_premise() { repo symlink-premise; put notes/target.md "$SEEDED"; mkdir -p "$R/skills/dev"; ln -s ../../notes/target.md "$R/skills/dev/SKILL.md"; git -C "$R" add -A; }
+fx_symlink_premise
+assert_eq "fixture: a bare --cached grep over the symlink entry finds nothing" "rc=1 mode=120000" \
+  "$(cd "$R" && git grep --cached -n -I -E '2026' -- skills/dev/SKILL.md >/dev/null 2>&1; printf 'rc=%s mode=%s' "$?" "$(git ls-files -s skills/dev/SKILL.md | cut -d' ' -f1)")"
 
 echo "=== the skill's own shipped markdown does not trip the lane ==="
-new_repo self
-mkdir -p "$R/skills/commit-guards"
-for doc in SKILL.md README.md CHECKS.md DEVELOPMENT.md; do
-  cp "$SKILL_DIR/$doc" "$R/skills/commit-guards/$doc"
-done
-git -C "$R" add -A
-run_prose
-[ "$RC" -eq 0 ] && ok "the shipped SKILL.md scans clean beside its unscanned siblings" \
-  || bad "shipped SKILL.md scans clean" "rc=$RC out=$OUT"
-# Control: the scan still fires in this repo when a real reference appears.
-put skills/commit-guards/workflows/ship.md 'Seeded 2026-08-12.'
-run_prose
-[ "$RC" -eq 1 ] && case "$OUT" in *"skills/commit-guards/SKILL.md"*) false ;; *"workflows/ship.md:1:"*) true ;; *) false ;; esac \
-  && ok "control: a planted reference fails while the shipped SKILL.md stays unnamed" \
-  || bad "control: planted reference fails, SKILL.md unnamed" "rc=$RC out=$OUT"
+fx_shipped() { # NAME — the four shipped documents
+  local doc
+  repo "$1"
+  mkdir -p "$R/skills/commit-guards"
+  for doc in SKILL.md README.md CHECKS.md DEVELOPMENT.md; do
+    cp "$SKILL_DIR/$doc" "$R/skills/commit-guards/$doc"
+  done
+  git -C "$R" add -A
+}
+fx_shipped_planted() { fx_shipped shipped-planted; put skills/commit-guards/workflows/ship.md "$SEEDED"; }
+run_rows \
+  "the shipped SKILL.md scans clean beside its unscanned siblings|fx_shipped shipped|||rc=0 $(clean 1)" \
+  "control: a planted reference fails while the shipped SKILL.md stays unnamed|fx_shipped_planted|||rc=1 $(hit skills/commit-guards/workflows/ship.md 1 'Seeded 2026-08-12.');$(failed 1 2)"
 
 echo "=== the shared glob loader refuses a caller running without set -f ==="
 COMMON="$SKILL_DIR/scripts/lib/common.sh"
-OUT="$(cd "$R" && GG_CHECK=probe bash -c 'set -euo pipefail; set +f; . "$1"; gg_load_path_globs "*.md" probe PROBE_KEY' _ "$COMMON" 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"pathname expansion is on"*) true ;; *) false ;; esac \
-  && ok "the loader exits 2 when the caller left pathname expansion on" \
-  || bad "loader refuses without set -f" "rc=$RC out=$OUT"
-OUT="$(cd "$R" && GG_CHECK=probe bash -c 'set -euo pipefail; set -f; . "$1"; gg_load_path_globs "*.md" probe PROBE_KEY; printf %s "$GG_PATH_GLOBS"' _ "$COMMON" 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 0 ] && [ "$OUT" = "*.md" ] \
-  && ok "control: under set -f the same call loads the glob unexpanded" \
-  || bad "control: loader works under set -f" "rc=$RC out=$OUT"
+probe() { # FLAG — the loader called from a shell with pathname expansion set by FLAG
+  local rc=0 out=""
+  out="$(cd "$R" && GG_CHECK=probe bash -c 'set -euo pipefail; set '"$1"'f; . "$1"; gg_load_path_globs "*.md" probe PROBE_KEY; printf %s "$GG_PATH_GLOBS"' _ "$COMMON" 2>&1)" || rc=$?
+  printf 'rc=%s %s' "$rc" "$out"
+}
+assert_eq "the loader exits 2 when the caller left pathname expansion on" "rc=2 ${ERR/prose/probe}gg_load_path_globs: pathname expansion is on; the caller must run under 'set -f' or the configured globs resolve against the work tree instead of matching the index" "$(probe +)"
+assert_eq "control: under set -f the same call loads the glob unexpanded" "rc=0 *.md" "$(probe -)"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
