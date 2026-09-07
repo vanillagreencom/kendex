@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ObservedItem, Scope } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
-import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
+import { READ_LANDED, READ_PENDING, readFailed } from "@/lib/read-state";
 import { useEditorStore } from "@/stores/editor";
 import { NO_FILTERS, useLibraryViewStore } from "@/stores/library-view";
 import { useNavStore } from "@/stores/nav";
@@ -33,16 +33,18 @@ const installed = (scope: Scope): ObservedItem =>
 // Customized in both places.
 const mine = { schema: 1, install: {}, "skill-instructions": { gh: "mine" } };
 
-const markOf = (host: HTMLElement) =>
+const customizedText = (host: HTMLElement) =>
   [...host.querySelectorAll("tbody tr")]
     .map((row) => row.textContent ?? "")
-    .find((text) => text.includes("Customized"));
+    .filter((text) => text.includes("Customized"));
 
-// A row's mark answers for the package, so the Where filter may decide
-// which rows are on screen and never what one of them says. Read from the
-// filtered groups, this row would say "Customized in vg" while the
-// package's own page names both places.
-describe("the Library's mark under a Where filter", () => {
+// The list says nothing about customization. A package customized in two
+// places renders no "Customized in" line in any state — the line used to
+// appear on hover through a CSS class, so the control is that no element
+// carries the words at all — no legend above the table, and a kind icon
+// in the same muted colour as every other row's. The package page's
+// header is where the fact is said (package-header.test.tsx).
+describe("a customized package in the Library list", () => {
   beforeEach(() => {
     vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
     vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
@@ -59,23 +61,22 @@ describe("the Library's mark under a Where filter", () => {
       } as never,
     });
     useLibraryViewStore.setState({ ...NO_FILTERS });
+    useNavStore.setState({ libraryScope: "all", search: "" });
   });
 
-  const shown = (scope: "all" | { project: string }) => {
-    useNavStore.setState({ libraryScope: scope, search: "" });
-    return markOf(mount(<InstalledView />));
-  };
-
-  it("says the same thing narrowed to one project as it does unnarrowed", () => {
-    const everywhere = shown("all");
-    expect(everywhere).toContain("2 of 2 projects");
-
-    const narrowed = shown({ project: "/work/vg" });
-    expect(narrowed).toContain("2 of 2 projects");
-    expect(narrowed).toContain("Customized in vg and hyprtrade");
+  it("carries no mark, no legend and no customized colour", () => {
+    const host = mount(<InstalledView />);
+    expect(host.querySelectorAll("tbody tr")).toHaveLength(1);
+    expect(customizedText(host)).toEqual([]);
+    expect(host.textContent).not.toContain("Customized");
+    expect(host.textContent).not.toContain("As the author wrote it");
+    expect(host.querySelector(".text-customized")).toBeNull();
+    expect(host.querySelector("tbody svg")?.getAttribute("class")).toContain(
+      "text-muted-foreground",
+    );
   });
 
-  // The filter still decides which rows are on screen.
+  // The Where filter still decides which rows are on screen.
   it("still narrows the table to the place asked for", () => {
     useNavStore.setState({ libraryScope: { project: "/work/vg" }, search: "" });
     const host = mount(<InstalledView />);
@@ -145,6 +146,17 @@ describe("the Library narrowed to packages edited on disk", () => {
     const host = mount(<InstalledView />);
     expect(names(host).filter((name) => name !== undefined)).toEqual([]);
     expect(host.querySelector('[data-slot="skeleton"]')).not.toBeNull();
+  });
+
+  // A failed re-check keeps the last rows, and Home's edited row is
+  // drawn from them; the link from that row lands on those packages.
+  it("keeps the edited packages a failed re-check left behind", () => {
+    useUpdatesStore.setState({
+      rows: rows as never,
+      read: readFailed("no network"),
+    });
+    useLibraryViewStore.setState({ ...NO_FILTERS, edited: "edited" });
+    expect(names(mount(<InstalledView />))).toEqual(["gh"]);
   });
 
   it("shows every package when the facet is off", () => {

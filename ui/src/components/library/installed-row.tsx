@@ -27,18 +27,10 @@ import {
   kindLabel,
   scopeName,
 } from "@/lib/labels";
-import type { PlaceMark } from "@/lib/place-marks";
 import { scopeKey } from "@/lib/scope";
 import { placeName } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
 import { originLabel, originTitle } from "@/stores/provenance";
-
-/** How the customization mark reads once the name cell is hovered or
- *  focused: one type step under the package name, muted and otherwise
- *  unstyled. The package header states the same fact in the same words,
- *  so neither styles it. */
-const MARK_ON_HOVER =
-  "mt-0.5 hidden text-xs text-muted-foreground group-hover/name:block group-focus-within/name:block";
 
 const STATUS_TONES: Record<GroupStatus, "good" | "warning" | "critical"> = {
   active: "good",
@@ -49,22 +41,17 @@ const STATUS_TONES: Record<GroupStatus, "good" | "warning" | "critical"> = {
 export function InstalledRow({
   group,
   origin,
-  mark,
   forkedIn,
   onOpen,
 }: {
   group: ItemGroup;
   origin: Origin | null;
-  /** What this package holds where, and the place a click on it opens.
-   *  Null where no place holds anything of the reader's. */
-  mark: PlaceMark | null;
   /** The places whose copy is the reader's own fork. A fork belongs to the
    *  place it was made in, like every other per-place fact. */
   forkedIn: Scope[];
   onOpen: (scope?: Scope) => void;
 }) {
   const Icon = kindIcon(group.kind);
-  const customized = mark !== null;
   const displayName =
     group.kind === "hook" ? hookDisplayName(group.name) : group.name;
   const vendor = groupVendor(group);
@@ -88,18 +75,12 @@ export function InstalledRow({
     >
       {/* Cells are nowrap by default; the description is the one column that
           wants to wrap rather than run out of the row and get cut mid-word. */}
-      <TableCell className="group/name max-w-[22rem] font-medium whitespace-normal">
+      <TableCell className="max-w-[22rem] font-medium whitespace-normal">
         <span className="flex items-start gap-2">
-          {/* The one place colour says something other than "which tool":
-              the Library's legend names it, and the row still says so in
-              words for anyone who cannot see the difference. */}
+          {/* The list says nothing about customization: whether a package
+              is changed, and where, is the package page's to say. */}
           <span className="mt-0.5 shrink-0">
-            <Icon
-              className={cn(
-                "size-4",
-                customized ? "text-customized" : "text-muted-foreground",
-              )}
-            />
+            <Icon className="size-4 text-muted-foreground" />
           </span>
           <span className="min-w-0">
             <span className="flex items-center gap-1.5">
@@ -137,29 +118,6 @@ export function InstalledRow({
                 </Badge>
               ) : null}
             </span>
-            {/* On demand, not at rest: the description is what a reader
-                scans a row for, and a permanent line above it would push
-                the description down on every customized package to answer
-                a question few rows are being asked. The coloured icon
-                still says a package is customized at rest; the words say
-                where. Keyboard reaches it too — the mark is focusable
-                where it opens a place, and focus reveals the cell the
-                same as a pointer. */}
-            {mark?.goTo ? (
-              <button
-                type="button"
-                onClick={() => onOpen(mark.goTo ?? undefined)}
-                className={cn(MARK_ON_HOVER, "text-left hover:underline")}
-              >
-                {mark.label}
-              </button>
-            ) : mark ? (
-              // Several places, so the mark names no one destination.
-              // Sending it to the row's primary place would open somewhere
-              // the label never mentioned, and possibly one holding nothing
-              // of the reader's.
-              <span className={MARK_ON_HOVER}>{mark.label}</span>
-            ) : null}
             {group.description ? (
               <span
                 className={cn(

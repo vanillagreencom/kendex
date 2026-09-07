@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Scope } from "@/bindings";
 import { FORKED_BADGE_LABEL } from "@/lib/copy";
 import { groupItems } from "@/lib/derive";
-import type { PlaceMark } from "@/lib/place-marks";
 import { mount as mountTree } from "@/test/dom";
 import { InstalledRow } from "./installed-row";
 
@@ -27,44 +26,19 @@ const item = (scope: Scope) => ({
 
 const group = groupItems([item(VG), item(HYPR)] as never)[0];
 
-const render = (mark: PlaceMark | null, forkedIn: Scope[] = []) =>
+const render = (forkedIn: Scope[] = []) =>
   renderToStaticMarkup(
     <InstalledRow
       group={group}
       origin={null}
-      mark={mark}
       forkedIn={forkedIn}
       onOpen={() => {}}
     />,
   );
 
-describe("the row's customized mark", () => {
-  it("is a way into the place it names", () => {
-    const shown = render({
-      label: "Customized in vg · 1 of 2 places",
-      goTo: VG,
-      why: "settings",
-    });
-    expect(shown).toContain("Customized in vg · 1 of 2 places");
-    expect(shown).toMatch(/<button[^>]*>Customized in vg/);
-  });
-
-  // Naming two places and opening a third — the row's primary, which may
-  // hold nothing of the reader's — sends them somewhere the label never
-  // mentioned.
-  it("offers no destination when it names more than one place", () => {
-    const shown = render({
-      label: "Customized in vg and hyprtrade · 2 of 2 places",
-      goTo: null,
-      why: null,
-    });
-    expect(shown).toContain("Customized in vg and hyprtrade");
-    expect(shown).not.toMatch(/<button[^>]*>Customized/);
-  });
-
+describe("the row's fork badge", () => {
   it("names the place each fork belongs to", () => {
-    const shown = render(null, [VG]);
-    expect(shown).toContain("in vg");
+    expect(render([VG])).toContain("in vg");
   });
 });
 
@@ -126,21 +100,6 @@ describe("opening a package from its Library row", () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 
-  it("opens the mark's own place from its button, and only that", async () => {
-    const { host, onOpen } = mount([], {
-      label: "Customized in vg · 1 of 2 places",
-      goTo: VG,
-      why: "settings",
-    });
-    const markButton = Array.from(host.querySelectorAll("button")).find((b) =>
-      b.textContent?.startsWith("Customized"),
-    );
-    if (!markButton) throw new Error("no mark button rendered");
-    await userEvent.click(markButton);
-    expect(onOpen).toHaveBeenCalledTimes(1);
-    expect(onOpen).toHaveBeenCalledWith(VG);
-  });
-
   it("opens the fork's own place from its badge, and only that", async () => {
     const { host, onOpen } = mount([VG]);
     const badge = Array.from(host.querySelectorAll("button")).find((b) =>
@@ -153,45 +112,13 @@ describe("opening a package from its Library row", () => {
   });
 });
 
-// The mark answers a question most rows are not being asked, and a
-// permanent line above the description would push the description down
-// on every customized package to answer it. It is drawn on demand: the
-// cell that shows it and the mark that hides until then have to be the
-// same pair, so both halves are read here.
-describe("where the row's mark is drawn", () => {
-  const nameCell = (host: HTMLElement) => {
-    const cell = host.querySelector("td");
-    if (!cell) throw new Error("the row has no name cell");
-    return cell;
-  };
-
-  const CUSTOMIZED: PlaceMark = {
-    label: "Customized in vg · 1 of 2 places",
-    goTo: VG,
-    why: "settings",
-  };
-
-  // The description is what a reader scans a row for. With the mark out of
-  // the resting row, the description is what follows the name — not a
-  // third line pushed down by a fact nobody asked for.
-  it("leaves the description under the name at rest", () => {
-    const { host } = mount([], CUSTOMIZED);
-
-    const stacked = nameCell(host).querySelector("span > span:last-child");
-    const resting = Array.from(stacked?.children ?? [])
-      .filter((node) => !node.className.includes("hidden"))
-      .map((node) => node.textContent);
-    expect(resting).toEqual(["gh", "about gh"]);
-  });
-});
-
 // Whether a click reaches the row, and what a keypress lands on, are
 // questions about a live DOM that static markup cannot answer.
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const mount = (forkedIn: Scope[] = [], mark: PlaceMark | null = null) => {
+const mount = (forkedIn: Scope[] = []) => {
   const onOpen = vi.fn();
   // A table host, so the row is mounted inside the structure it renders
   // for rather than under a div.
@@ -200,7 +127,6 @@ const mount = (forkedIn: Scope[] = [], mark: PlaceMark | null = null) => {
       <InstalledRow
         group={group}
         origin={null}
-        mark={mark}
         forkedIn={forkedIn}
         onOpen={onOpen}
       />

@@ -34,12 +34,12 @@ describe("PackageHeader", () => {
     expect(render(null)).not.toContain("Customized");
   });
 
-  // The Library row marks a customized package by colouring its kind icon
-  // and putting the mark under the name in that colour. The header says
-  // the same thing the same way rather than in a pill of its own.
-  it("marks it the way the Library row does, not with a badge", () => {
+  // The header is the one place that says a package is customized: the
+  // kind icon takes the colour and the words sit under the name, not in
+  // a pill of their own.
+  it("marks it with the icon colour and the words, not with a badge", () => {
     const shown = render(mark);
-    // The kind icon takes the customized colour, as it does on the row.
+    // The kind icon takes the customized colour.
     expect(shown).toContain("translate-y-[0.1875rem] text-customized");
     // And the words are plain text, not a pill.
     expect(shown).not.toContain("badge");
