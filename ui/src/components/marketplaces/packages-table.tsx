@@ -51,10 +51,14 @@ const EMPTY: ProvenanceRow[] = [];
 // column toward its content: the tags stack a badge to a line and the row
 // grows by a third. That is a squashed table rather than a cut one, but it
 // is not a designed width, so a column goes rather than shrinks. Under the
-// first sum there is no column left to give, and the name cell lowers its
-// own ceiling instead so the four that stay fit the narrowest window
-// kendex opens.
-const NAME_ROOM = 352; // `max-w-[22rem]` on the name cell
+// first sum there is nothing left to give, so the name's ceiling is the
+// one that makes the four kept columns fit the narrowest window kendex
+// opens beside the widest control the Status column carries.
+//
+// A ceiling caps what a column asks for, not what it may have: wherever
+// the table has room to spare, the name takes it, so the ceiling shows
+// only at a rung's own width.
+const NAME_ROOM = 288; // `max-w-72` on the name cell
 const KEPT_ROOM = NAME_ROOM + 112 + 80 + 128; // Name, Kind, Safety, Status
 const OPTIONAL_ROOM: Record<keyof PackageColumns, number> = {
   marketplace: 160,
@@ -113,9 +117,14 @@ function useRoom(ref: RefObject<HTMLElement | null>): number | null {
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
+    // Read once here, before the browser paints. A ResizeObserver reports
+    // even its first observation on a later task, so left to it alone the
+    // table draws every column once at whatever width it has — which at a
+    // narrow one is the cut this fixes, on screen for a frame.
+    const measured = (width: number) => setRoom(width > 0 ? width : null);
+    measured(element.getBoundingClientRect().width);
     const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? 0;
-      setRoom(width > 0 ? width : null);
+      measured(entries[0]?.contentRect.width ?? 0);
     });
     observer.observe(element);
     return () => observer.disconnect();

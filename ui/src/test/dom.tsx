@@ -72,12 +72,17 @@ export function mount(
 export const settle = (): Promise<void> => act(async () => {});
 
 // jsdom lays nothing out and ships no ResizeObserver, so a component that
-// sizes itself from its own room gets neither. This is the browser's
-// contract filled in: observing an element reports a width at once, as a
-// browser does on the first observation, and [roomIs] re-reports it the way
-// a resize would. The width starts at zero — what an element that has not
-// been laid out reports — so a test that never sets one sees exactly what
-// the unmeasured case renders.
+// sizes itself from its own room gets neither. This fills the gap: an
+// observed element reports the width [roomIs] last set, and re-reports it
+// when that changes, the way a resize does. The width starts at zero —
+// what an element nothing has laid out reports — so a test that never sets
+// one sees exactly what the unmeasured case renders.
+//
+// It reports from inside `observe`, where a real ResizeObserver delivers
+// even its first observation on a later task. That is what keeps these
+// tests synchronous, and it is also why no test here can see the frame a
+// browser draws before the first observation lands. A component that must
+// be right on that frame reads its own width and does not wait.
 const observing = new Map<ResizeObserverCallback, Set<Element>>();
 let room = 0;
 

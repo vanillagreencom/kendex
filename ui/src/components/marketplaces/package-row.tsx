@@ -102,24 +102,13 @@ export function PackageRow({
   };
 
   const updated = row.updatedAt ? Date.parse(row.updatedAt) : Number.NaN;
-  const onlyKept =
-    !columns.tags &&
-    !columns.marketplace &&
-    !columns.updated &&
-    !columns.places;
-
   return (
     <TableRow className="cursor-pointer" onClick={open}>
       {/* The one column with no width of its own, so without a ceiling a
           long summary sets the whole table's, pushes every other column
           past the right edge, and leaves the reader a name and nothing
-          else. Same measure the Library's name column takes — except in
-          the state where every optional column is already gone and the
-          name is the only room left to give, where it asks for less so
-          the four that stay fit the narrowest window kendex opens. A
-          ceiling caps what the column asks for, not what it may have:
-          where the table has room to spare the name still takes it. */}
-      <TableCell className={onlyKept ? "max-w-72" : "max-w-[22rem]"}>
+          else. `packages-table.tsx` sets the number and says what by. */}
+      <TableCell className="max-w-72">
         <div className="flex min-w-0 items-center gap-2.5">
           <Icon className="size-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
