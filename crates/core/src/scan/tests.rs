@@ -275,6 +275,34 @@ fn an_unreadable_config_names_its_tool_kind_path_and_problem_shape() {
     }
 }
 
+/// The TOML surface has its own parser and its own shape: Codex's
+/// config.toml that does not parse is said as invalid TOML, by Codex.
+#[test]
+fn a_malformed_toml_config_is_said_as_invalid_toml() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let env = Env::fake(home, FakeOs::Linux);
+    let config = home.join(".codex/config.toml");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(&config, "[mcp_servers\n").unwrap();
+
+    let result = scan_scopes(&env, &BTreeMap::new(), &[Scope::Global]);
+
+    let warning = result
+        .warnings
+        .iter()
+        .find(|w| w.path == config)
+        .expect("nothing said the file was malformed");
+    assert_eq!(
+        (warning.harness, warning.kind),
+        (HarnessId::Codex, ItemKind::McpServer)
+    );
+    assert!(
+        matches!(warning.problem, ScanProblem::InvalidToml { .. }),
+        "{warning}"
+    );
+}
+
 /// One file, several surfaces, one warning: Claude's settings.json is
 /// read for hooks and again for plugins, and an empty one would otherwise
 /// be said twice — two rows on Home and two units of the footer's count

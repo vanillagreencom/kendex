@@ -4,7 +4,7 @@ import type { ObservedItem, Scope } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
 import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
 import { useEditorStore } from "@/stores/editor";
-import { useLibraryViewStore } from "@/stores/library-view";
+import { NO_FILTERS, useLibraryViewStore } from "@/stores/library-view";
 import { useNavStore } from "@/stores/nav";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
@@ -58,12 +58,7 @@ describe("the Library's mark under a Where filter", () => {
         warnings: [],
       } as never,
     });
-    useLibraryViewStore.setState({
-      kind: "any",
-      harness: "any",
-      tag: "any",
-      from: "any",
-    });
+    useLibraryViewStore.setState({ ...NO_FILTERS });
   });
 
   const shown = (scope: "all" | { project: string }) => {
@@ -97,22 +92,30 @@ describe("the Library narrowed to packages edited on disk", () => {
     name: "orch",
     path: "/work/vg/.claude/skills/orch",
   };
-  const editedRow = {
-    kind: "skill",
-    name: "gh",
-    scope: VG,
-    blockedByLocalEdit: true,
-    editedHarnesses: ["claude"],
-  };
+  // orch has a row too, unedited: the facet must turn on the edit flag,
+  // not on whether the updates read spoke about the package at all.
+  const rows = [
+    {
+      kind: "skill",
+      name: "gh",
+      scope: VG,
+      blockedByLocalEdit: true,
+      editedHarnesses: ["claude"],
+    },
+    {
+      kind: "skill",
+      name: "orch",
+      scope: VG,
+      blockedByLocalEdit: false,
+      editedHarnesses: [],
+    },
+  ];
 
   beforeEach(() => {
     vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
     vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
     useEditorStore.setState({ saved: {} });
-    useUpdatesStore.setState({
-      rows: [editedRow as never],
-      read: READ_LANDED,
-    });
+    useUpdatesStore.setState({ rows: rows as never, read: READ_LANDED });
     useScanStore.setState({
       result: {
         harnesses: [],
@@ -130,13 +133,7 @@ describe("the Library narrowed to packages edited on disk", () => {
     );
 
   it("shows the edited package and drops the rest", () => {
-    useLibraryViewStore.setState({
-      kind: "any",
-      harness: "any",
-      tag: "any",
-      from: "any",
-      edited: "edited",
-    });
+    useLibraryViewStore.setState({ ...NO_FILTERS, edited: "edited" });
     expect(names(mount(<InstalledView />))).toEqual(["gh"]);
   });
 
@@ -144,26 +141,14 @@ describe("the Library narrowed to packages edited on disk", () => {
   // table there would claim no package is edited.
   it("holds the skeleton until the updates read says which are edited", () => {
     useUpdatesStore.setState({ rows: [], read: READ_PENDING });
-    useLibraryViewStore.setState({
-      kind: "any",
-      harness: "any",
-      tag: "any",
-      from: "any",
-      edited: "edited",
-    });
+    useLibraryViewStore.setState({ ...NO_FILTERS, edited: "edited" });
     const host = mount(<InstalledView />);
     expect(names(host).filter((name) => name !== undefined)).toEqual([]);
     expect(host.querySelector('[data-slot="skeleton"]')).not.toBeNull();
   });
 
   it("shows every package when the facet is off", () => {
-    useLibraryViewStore.setState({
-      kind: "any",
-      harness: "any",
-      tag: "any",
-      from: "any",
-      edited: "any",
-    });
+    useLibraryViewStore.setState({ ...NO_FILTERS });
     expect(names(mount(<InstalledView />))).toEqual(["gh", "orch"]);
   });
 });
