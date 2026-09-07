@@ -125,6 +125,39 @@ git -C "$R" add -A
 run_pf
 fires "a condition piping echo into grep -q fails as early-close-pipe" "scripts/existing.sh:3: [early-close-pipe] a shell writer piped into a reader that stops before EOF"
 
+echo "=== lane fail-open: a bare command-substitution assignment under errexit ==="
+seed bareassign
+# The guard sits at the far edge of the look-ahead window: the assignment is
+# on line 3 and the test of $ROOT on line 7, four lines below it. A narrower
+# window stops finding this. The assignment is bare on purpose — a `readonly`
+# or `local` in front would mask the substitution's status and the script
+# would survive, which is the masked-returns lane's shape, not this one's.
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'set -euo pipefail\n'
+  printf 'ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"\n'
+  printf 'log() {\n'
+  printf '  printf "%%s\\n" "$1" >&2\n'
+  printf '}\n'
+  printf 'if [ -z "$ROOT" ]; then\n'
+  printf '  log "not inside a repository"\n'
+  printf '  exit 1\n'
+  printf 'fi\n'
+  printf 'INNER="$(cd "$ROOT" && git rev-parse HEAD 2>/dev/null)"\n'
+  printf 'if [ -z "$INNER" ]; then\n'
+  printf '  exit 1\n'
+  printf 'fi\n'
+  printf 'echo "$ROOT $INNER"\n'
+} >"$R/scripts/bare.sh"
+git -C "$R" add -A
+run_pf
+fires "an assignment whose guard errexit kills first fails as fail-open" \
+  "scripts/bare.sh:3: [fail-open] bare command-substitution assignment under errexit"
+# An operator INSIDE the substitution captures nothing, so it must not read as
+# the same-line status capture that makes the fix shape exempt.
+fires "an operator inside the substitution does not exempt the assignment" \
+  "scripts/bare.sh:11: [fail-open] bare command-substitution assignment under errexit"
+
 echo "=== lane mktemp-trap: a new script whose scratch nothing removes ==="
 seed scratch
 printf '#!/usr/bin/env bash\nset -euo pipefail\nD="$(mktemp -d)"\necho "$D"\n' >"$R/scripts/scratch.sh"

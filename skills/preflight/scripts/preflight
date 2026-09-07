@@ -490,6 +490,12 @@ is_shell_path() { # PATH CONTENT-PATH — extension, else a sh/bash shebang
 # as enabled can only cost a finding, while missing one would invent a
 # fail-open report against a script that is in fact strict.
 ERREXIT_RE='^[[:space:]]*set[[:space:]].*(-[a-zA-Z]*e|-o[[:space:]]+errexit)'
+# `set +e` (or `+o errexit`) anywhere in the file: inside such a window a bare
+# assignment does not end the script and the guard below it does run, and this
+# lane reads whole files rather than shell state, so it cannot tell which side
+# of the window a line sits on. Precision before coverage — a file that turns
+# errexit back off is left alone.
+NOERREXIT_RE='^[[:space:]]*set[[:space:]].*(\+[a-zA-Z]*e|\+o[[:space:]]+errexit)'
 NOUNSET_RE='^[[:space:]]*set[[:space:]].*(-[a-zA-Z]*u|-o[[:space:]]+nounset)'
 PIPEFAIL_RE='^[[:space:]]*set[[:space:]].*pipefail'
 file_matches() { grep -Eq -- "$2" "$1" 2>/dev/null; }
@@ -610,6 +616,42 @@ has_exit_trap() { # FILE
   # more than a pipe buffer left below the trap line. `grep -c` reads to the
   # end and still exits 1 when nothing matched.
   grep -Ev -- '^[[:space:]]*#' "$1" 2>/dev/null | grep -Ec -- "$TRAP_EXIT_RE" >/dev/null
+}
+# A bare `VAR="$(cmd)"`: the assignment standing alone as the whole command.
+# Under errexit the substitution's own status escapes from the assignment, so
+# the script dies on that line. `if ! VAR=...` and a same-line `||` put the
+# status somewhere the shell tests, which is the fix rather than the shape.
+# A `local`/`declare`/`export`/`readonly`/`typeset` in front is NOT the shape:
+# the builtin's own status becomes the command's and masks the substitution's,
+# so the script survives and the guard below does run. SC2155 names that
+# masking, and the masked-returns lane owns it rather than this one.
+# Only a double quote, or none: inside single quotes `$(cmd)` is literal text,
+# no command runs and no status can end anything.
+# The trailing `[^(]` is what keeps arithmetic expansion out: `$((n + 1))` also
+# opens with `$(`, and it runs no command and carries no status, so a loop
+# counter — the commonest line in this repo's own tooling — is not the shape.
+SUBST_ASSIGN_RE='^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*="?\$\([^(]'
+# The guard the assignment was written to reach: a test naming the assigned
+# variable on one of the lines just below. It is the whole finding — a
+# variable nothing below tests belongs to a command whose failure is MEANT to
+# end the run, and errexit is then doing its job. Four lines because a guard
+# is written directly under the assignment it guards.
+guard_tests_var() { # FILE LINE VAR — 0 when a line just below tests VAR
+  # The window is captured whole rather than piped into the reader: `grep
+  # -q` stops at its first match and closes the pipe, and under pipefail
+  # sed's SIGPIPE makes the pipeline 141 — in this condition position a
+  # match would then read as no match and the finding would be dropped.
+  # Read through stdin so the path is never an operand: BSD sed rejects `--`
+  # outright ("illegal option"), and the nonzero status it exits with reached
+  # the `|| return 1` below, so on macOS this answered "no guard" every time
+  # and the lane silently never fired.
+  local window=""
+  window="$(sed -n "$(($2 + 1)),$(($2 + 4))p" <"$1" 2>/dev/null)" || return 1
+  # Comment lines go first: a guard written in a comment runs nothing, so a
+  # deliberately fatal assignment with an example guard under it is not the
+  # shape. grep exits 1 on an all-comment window, which is no guard either.
+  window="$(grep -Ev -- '^[[:space:]]*#' <<<"$window")" || return 1
+  grep -Eq -- "(\[\[?|test)[[:space:]][^]]*\\\$\{?$3([^A-Za-z0-9_]|\$)" <<<"$window"
 }
 # A directory-CREATING call taking a literal absolute temp path (/tmp,
 # /var/tmp) as (part of) its first argument: mkdtemp/mkdir and their Sync
@@ -903,6 +945,7 @@ while IFS= read -r f; do
 
   is_sh=0
   has_ee=0
+  has_noee=0
   has_pf=0
   has_trap=0
   mktemp_reported=0
@@ -970,6 +1013,7 @@ while IFS= read -r f; do
   fi
   if [ "$is_sh" = 1 ]; then
     file_matches "$cpath" "$ERREXIT_RE" && has_ee=1
+    file_matches "$cpath" "$NOERREXIT_RE" && has_noee=1
     file_matches "$cpath" "$PIPEFAIL_RE" && has_pf=1
     has_exit_trap "$cpath" && has_trap=1
 
@@ -1047,6 +1091,37 @@ while IFS= read -r f; do
 
     if [ "$is_sh" = 1 ] && [ "$vendored_mirror" = 0 ] && [ "$has_ee" = 0 ] && printf '%s' "$content" | grep -Eq -- "$MKTEMP_ASSIGN"; then
       emit "$f" "$n" fail-open "unchecked mktemp in a file without errexit — a failed mktemp leaves the variable empty and the script runs on"
+    fi
+
+    # The mirror shape, in a file that DOES set errexit: a bare assignment
+    # carries the substitution's own status out, so the script dies on the
+    # assignment and the guard written under it never runs. `git rev-parse`
+    # outside a repository is the live one — eight sites each exited at its
+    # bare 128 with nothing on either stream (KEN-1166, KEN-1193).
+    # No comment-line test: the regex anchors the variable name at the start
+    # of the line, so a `#` in front of the shape already fails to match.
+    if [ "$is_sh" = 1 ] && [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] \
+      && [ "$has_ee" = 1 ] && [ "$has_noee" = 0 ]; then
+      case "$content" in
+        *'$('*)
+          # The operator is a status capture only OUTSIDE the substitution, so
+          # the skip reads the tail past the last `)`: `VAR="$(cmd)" || VAR=""`
+          # is the fix shape and stays out, while `VAR="$(cd "$d" && cmd)"` —
+          # whose inner operator captures nothing — is judged like any other.
+          case "${content##*)}" in
+            *'||'* | *'&&'*) ;;
+            *)
+              if grep -Eq -- "$SUBST_ASSIGN_RE" <<<"$content"; then
+                assign_var="${content#"${content%%[![:space:]]*}"}"
+                assign_var="${assign_var%%=*}"
+                if guard_tests_var "$cpath" "$n" "$assign_var"; then
+                  emit "$f" "$n" fail-open "bare command-substitution assignment under errexit — its status ends the script here, so the test of \$$assign_var below never runs; move the assignment into the condition"
+                fi
+              fi
+              ;;
+          esac
+          ;;
+      esac
     fi
 
     # The literal prefilters keep the regex passes off the lines that cannot

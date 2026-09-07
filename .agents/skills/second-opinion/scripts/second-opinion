@@ -268,8 +268,42 @@ readonly SCRIPT_DIR FOREGROUND_CAP_IN_CALLER_ENV FOREGROUND_CAP_WAS_IN_CALLER_EN
   CURRENT_MODEL_IS_SESSION_SCOPED CURRENT_MODEL_IN_CALLER_ENV
 readonly -a ORIGINAL_ARGS
 # Resolved only after help is answered: help must not require a git
-# checkout around the installed script.
-PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
+# checkout around the installed script. The assignment sits in the condition
+# (KEN-1193): outside a repository `git rev-parse` exits 128 and under `set -e`
+# a bare assignment carries that status out, ending the run before anything
+# below it.
+#
+# Only ONE failure means there is nothing to load. An install outside a
+# repository has no project configuration, and kendex_load_project_env already
+# treats an empty root as exactly that. Every other nonzero status — git's
+# dubious-ownership refusal on a checkout owned by another uid, which is the
+# normal shape of a mounted workspace, or no git on PATH — comes from a
+# checkout that DOES carry kendex.settings.toml and .env.local. Degrading
+# there would run the review on built-in defaults with the project's own
+# model and command settings silently ignored, so it refuses instead and
+# quotes git's own account rather than guessing at the cause. LC_ALL=C
+# because the message being read is translated.
+if ! PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"; then
+  _git_diag="$(LC_ALL=C git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>&1 >/dev/null)" || :
+  # The parenthetical is what separates "there is no repository above me" from
+  # "there is one and it is broken". Git names the parents it searched two ways
+  # — the parent directories, or the parents up to a mount point when discovery
+  # stops at a filesystem boundary — and both are the absence. A `.git` that
+  # points nowhere gets the same three words WITHOUT a parenthetical
+  # (`not a git repository: (null)`), and that is a repository git could not
+  # read, from a checkout that does carry settings, so it refuses. Any message
+  # this does not recognise refuses too. hooks/block-worktree-refresh.sh splits
+  # the same diagnostic the same way.
+  case "$_git_diag" in
+    *"not a git repository (or any"*) PROJECT_ROOT="" ;;
+    *)
+      echo "second-opinion: could not resolve a repository at $SCRIPT_DIR" >&2
+      echo "  git said: ${_git_diag#fatal: }" >&2
+      exit 1
+      ;;
+  esac
+  unset _git_diag
+fi
 # Source project config/secrets. .env.local overrides public settings; the
 # caller's own environment (set or set-but-empty) outranks every project file —
 # kendex_load_project_env snapshots and re-asserts it.

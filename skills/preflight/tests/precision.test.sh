@@ -114,6 +114,19 @@ echo "=== benign patterns across every lane stay clean ==="
 seed benign
 # mktemp is fine under errexit; a new script that declares strict mode is fine.
 printf '#!/usr/bin/env bash\nset -euo pipefail\nTMP="$(mktemp -d)"\ntrap %s EXIT\necho "$TMP"\n' "'rm -rf \"\$TMP\"'" >"$R/scripts/strict.sh"
+# Inside a `set +e` window a bare assignment ends nothing and the guard below
+# it does run, so a file that turns errexit back off is not judged at all.
+cat >"$R/scripts/window.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+set +e
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+set -e
+if [ -z "$ROOT" ]; then
+  exit 1
+fi
+echo "$ROOT"
+EOF
 # A test-tree script sets its own rules — including the fixture path it cites.
 printf '#!/usr/bin/env bash\n# fixture: docs/gone.md\necho helper\n' >"$R/tests/helper.sh"
 # Every benign doc-citation shape a source file can carry.
@@ -211,9 +224,53 @@ echo "$v" | jq -e . >/dev/null 2>&1 || grep -q x <<<"$v"
 echo "$MSG"
 EOF
 printf '{\n  // a comment: this dialect is real and jq is right to reject it\n  "strict": true\n}\n' >"$R/tsconfig.json"
+# Every benign spelling of a command substitution assigned under errexit. The
+# shape is a defect only when a guard below the assignment can never run, so a
+# substitution whose failure is MEANT to end the script, one already sitting in
+# a condition, and one whose status the same line captures are all correct code.
+cat >"$R/scripts/assign.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+# Nothing below tests it: errexit ending the run here is the intended fatal.
+# The test of $STAMP far below is out of the look-ahead window and must stay
+# out — a guard that distant belongs to no assignment, so a wider window turns
+# every deliberate fatal into a finding.
+STAMP="$(date +%s)"
+echo "$STAMP"
+# The fix shape: the status is in a position the shell tests.
+if ! ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || [ -z "$ROOT" ]; then
+  echo "no repository" >&2
+  exit 1
+fi
+# Captured on the same line, so the test below is reachable.
+BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null)" || BRANCH=""
+[ -z "$BRANCH" ] || echo "$BRANCH"
+# Arithmetic expansion opens with the same two characters and runs no command,
+# so a loop counter under its own bound test is not the shape.
+tries=0
+while [ "$tries" -lt 3 ]; do
+  tries=$((tries + 1))
+  if [ "$tries" -gt 2 ]; then
+    break
+  fi
+done
+# Naming the shape is not writing it: HERE="$(cmd)" with [ -z "$HERE" ] under it.
+echo "$ROOT"
+# A guard written in a comment runs nothing, so the deliberate fatal above it
+# stands and is not this lane's shape.
+FATAL="$(date +%s)"
+# if [ -z "$FATAL" ]; then exit 1; fi
+# Single quotes make it literal text: no command runs, so nothing can end here.
+LITERAL='$(date +%s)'
+if [ -z "$LITERAL" ]; then
+  exit 1
+fi
+echo "$FATAL $LITERAL"
+[ -z "$STAMP" ] || echo "still set"
+EOF
 git -C "$R" add -A
 run_pf
-clean "no lane fires on placeholders, URLs, quoted or data-file or test-file doc cites, foreign subtrees, referenced TODOs, strict scripts, wired suites, trapped scratch dirs, captured statuses, here-string, read-to-EOF and OR-list pipeline shapes, the same shapes named in a comment or a string, or JSON-with-comments"
+clean "no lane fires on placeholders, URLs, quoted or data-file or test-file doc cites, foreign subtrees, referenced TODOs, strict scripts, wired suites, trapped scratch dirs, captured statuses, here-string, read-to-EOF and OR-list pipeline shapes, guarded or deliberately fatal command-substitution assignments, the same shapes named in a comment or a string, or JSON-with-comments"
 
 echo "=== control: the same fixture still fails on a real defect ==="
 printf 'And a citation that is dead: `docs/gone.md`.\n' >>"$R/README.md"
