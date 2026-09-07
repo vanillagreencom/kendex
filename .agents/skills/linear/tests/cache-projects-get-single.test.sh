@@ -8,7 +8,7 @@
 # and `cache projects get "<name>" | jq -r '.id'` read two ids. The cache
 # command must prefer the live project when the name also matches a canceled one.
 #
-# This locks in the cache spelling of the rule SKILL.md § Option Behavior
+# This locks in the cache spelling of the rule ../SKILL.md § Option Behavior
 # states for a name that selects one project:
 #   A. A name matching a live project and its canceled twin returns exactly one
 #      object, the live one, in both formats — so `| jq -r '.id'` reads one id.

@@ -146,7 +146,7 @@ e_len="$("$WS" --state-dir "$sd6" get KEN-5 '.escalated_items | length')"
   || bad "escalating a fixed item leaves it in one bucket" "fixed=$f_len escalated=$e_len"
 
 # Round three fixes the escalated item: the escalated entry goes. This is the
-# direction review.md § 4 and a standalone fix round reach, neither of which
+# direction ../workflows/review.md § 4 and a standalone fix round reach, neither of which
 # excludes escalated items from the round.
 jq -n --arg l "$LOC" --arg d "$DESC" '{description: $d, location: $l, commit: "def456a", source: "review"}' > "$ENTRY"
 "$WS" --state-dir "$sd6" update KEN-5 --slurpfile item "$ENTRY" "$STEP6_FIXED" >/dev/null

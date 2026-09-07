@@ -53,7 +53,7 @@ repo-effects:
 | **changelog-entries** | Each `COMMIT_GUARDS_CHANGELOG_PATHS` fragment is one Markdown list item in a Keep a Changelog section and at most `COMMIT_GUARDS_CHANGELOG_CAP` characters. |
 | **prose** | A history reference in Markdown named by `COMMIT_GUARDS_PROSE_PATHS` fails; `COMMIT_GUARDS_CHECKS` controls whether the lane runs. |
 | **md-format** | A hard-wrapped paragraph or list item, a missing blank line around a heading, fence or list, or a trailing-double-space break in Markdown named by `COMMIT_GUARDS_MD_PATHS` fails; `md-reflow` is the remedy. |
-| **md-refs** | A relative link, a link followed by `§` and a heading prefix, a `<path>.md § Heading` or `<path>.md#anchor` code-span citation, or a decision ID in Markdown named by `COMMIT_GUARDS_MD_REFS_PATHS` that lands on no tracked file, heading or decision fails. |
+| **md-refs** | A relative link, a link followed by `§` and a heading prefix, a `<path>.md § Heading` or `<path>.md#anchor` code-span citation, or a decision ID in Markdown named by `COMMIT_GUARDS_MD_REFS_PATHS` that lands on no tracked file, heading or decision fails. The `§` citation is judged the same way in the comment text of a source file named by `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS`, and in a TOML file's string literals, its quoted keys included. |
 | **comments** | A history reference in the comment text of a source file named by `COMMIT_GUARDS_COMMENT_PATHS` fails: an issue id (`GH_ISSUE_PATTERN`), `#NNN`, or a date. Optional audit; see [CHECKS.md § comments](CHECKS.md#comments). |
 | **commit-msg** | The header must be `type(scope)!: subject` within `COMMIT_GUARDS_SUBJECT_MAX`; a commit touching `COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS` also owes a changelog entry or `[no-changelog]`. |
 
@@ -89,6 +89,7 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 | `COMMIT_GUARDS_PROSE_PATHS` | `SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md` | Space-separated globs naming the markdown the prose lane scans, matched against the full repo-relative path (`*` crosses `/`). |
 | `COMMIT_GUARDS_MD_PATHS` | `*.md` | Globs naming the markdown md-format and md-reflow take under `--all`. |
 | `COMMIT_GUARDS_MD_REFS_PATHS` | the `COMMIT_GUARDS_PROSE_PATHS` default | Globs naming the markdown md-refs judges under `--all`. |
+| `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS` | the `COMMIT_GUARDS_COMMENT_PATHS` default | Globs naming the source files md-refs reads for `§` citations in comment text. |
 | `COMMIT_GUARDS_MD_EXCLUDES` | `tools/md-excludes` | Exclusion list both markdown lanes honour in every scope, and md-reflow under `--staged` and `--all`. |
 | `COMMIT_GUARDS_MD_SCOPE` | `touched` | With neither flag, `touched` runs md-format on staged files and md-refs on all configured documents when anything is staged; `all` checks every matching file. |
 | `DECISIONS_DIR`, `DECISION_ID_PREFIX`, `DECISION_ID_WIDTH` | `docs/decisions`, `D`, `3` | The decider skill's scheme, read by md-refs to judge decision IDs; IDs are not judged where the directory is not tracked. |

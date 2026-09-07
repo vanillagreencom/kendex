@@ -203,7 +203,7 @@ echo "=== no mode exits without a parseable result ==="
 # a refusal. An acceptance that could not be EMITTED is not an acceptance
 # either: printing ok:false while exiting 0 is this defect class
 # inside the emitter, and every caller that branches on exit status (orch's
-# waiters, review-pr.md § 3.1, submit-pr.md § 1, the reviewer self-check)
+# waiters, ../workflows/review-pr.md § 3.1, ../workflows/submit-pr.md § 1, the reviewer self-check)
 # reads that 0 as accepted; the rule once lived in --wait alone, so all three
 # modes pin it, each beside its real-jq control. The gates' error file is made
 # at source time, before any mode runs, so every mode answers the same way:

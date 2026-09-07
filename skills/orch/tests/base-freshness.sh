@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Behavioral tests for base-freshness — the start-worktree.md § 1 review-cycle
+# Behavioral tests for base-freshness — the ../workflows/start-worktree.md § 1 review-cycle
 # gate. A reused worktree can sit many commits behind origin, and a review
 # cycle with no fetch on that path evaluates a stale base. The helper must
 # FETCH origin (a

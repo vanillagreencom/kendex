@@ -39,10 +39,8 @@ source "$SCRIPT_DIR/lib/staged-lines.sh"
 # shellcheck source=lib/comment-text.sh
 source "$SCRIPT_DIR/lib/comment-text.sh"
 
-# Every extension the extractor has a grammar for, spelled once here and
-# once in the table in CHECKS.md § comments. Two spellings of each name
-# because `*` crosses `/` but never stands in for the separator.
-PATHS_DEFAULT="*.rs *.go *.c *.h *.cc *.cpp *.hpp *.java *.kt *.kts *.swift *.wgsl *.js *.mjs *.cjs *.jsx *.ts *.tsx *.css *.scss *.less *.sh *.bash *.zsh *.py *.rb *.toml *.yml *.yaml *.sql *.lua *.html *.htm *.xml *.svg *.vue *.svelte Makefile */Makefile *.mk Dockerfile */Dockerfile"
+# The extractor's own list of the extensions it has a grammar for.
+PATHS_DEFAULT="$GG_COMMENT_PATHS_DEFAULT"
 EXCLUDES_DEFAULT="tools/comments-excludes"
 REFERENCE_TYPES_DEFAULT="issue-id issue-number date"
 

@@ -80,7 +80,7 @@ offbranch() { grep "$2" "$1" | grep -v 'ok == true' | wc -l | tr -d ' '; }
 echo "=== review-artifact-check: what the orchestrator workflows relay ==="
 
 # --- valid_undermeasured is named at every site that consumes the check ---
-# The weaker "the file contains the word" form passed while submit-pr.md § 1
+# The weaker "the file contains the word" form passed while ../workflows/submit-pr.md § 1
 # had the clause hanging off its `ok == false` sentence, which is why the
 # assertion is about the CONTEXT of each mention, not the token.
 assert_eq "$(offbranch "$REVIEW_PR" valid_undermeasured)" "0" \

@@ -51,8 +51,8 @@ jobs:
   # This repository is the package's source, so the candidate's own checker
   # judges the candidate's renders: a change to the renderer or the derivation
   # is judged by itself. The trusted default-branch checker is the consumer
-  # rule (SKILL.md § A pull request changing its own review); here it would
-  # report drift by construction on every such change. Code review covers the
+  # rule (../../skills/bot-instructions/SKILL.md § A pull request changing its own review); here it
+  # would report drift by construction on every such change. Code review covers the
   # checker, and the review gate holds every policy path.
   bot-instructions:
     name: Bot instructions

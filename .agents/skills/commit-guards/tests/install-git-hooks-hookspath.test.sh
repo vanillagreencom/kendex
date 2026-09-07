@@ -129,7 +129,7 @@ case "$OUT" in
   *) bad "no stand-down statement" "$OUT" ;;
 esac
 # Recovery output is data, never a command line to paste
-# (docs/architecture/overview.md § Decisions). The script cannot infer a command
+# (the architecture decision on recovery output). The script cannot infer a command
 # that is correct for every repository configuration.
 case "$OUT" in
   *"config --unset"* | *"--unset-all"* | *"git -C"*)
@@ -187,7 +187,7 @@ check_in "$R80"
   || bad "unset re-arms" "rc=$RC out=$OUT"
 
 echo "=== the stand-down is a statement, git's report, and one sentence ==="
-# docs/architecture/overview.md § Decisions: recovery output presents its parameters as data,
+# The architecture decision on recovery output: it presents its parameters as data,
 # never a command line to paste. Three prior shapes of this remedy each
 # composed a command and each was wrong about a configuration nobody here
 # can see. What is printed now is git's own report, unedited, and a sentence

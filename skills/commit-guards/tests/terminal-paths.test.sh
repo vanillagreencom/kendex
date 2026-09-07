@@ -4,7 +4,7 @@
 # exactly as `mv -f` does — which is how a prompting install shipped green.
 # Each case here runs under a pseudo-terminal. What a call sets is in
 # lib/pty.bash; the rules such a probe follows, and why, are in
-# DEVELOPMENT.md § Probing a terminal-only code path.
+# ../DEVELOPMENT.md § Probing a terminal-only code path.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

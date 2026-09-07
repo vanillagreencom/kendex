@@ -2,7 +2,9 @@
 # Pins for scripts/md-refs: a relative link lands on a tracked path and a
 # heading it has; a code-span citation names a tracked file and a heading
 # it has; a decision ID names a tracked decision file, judged only where the
-# decisions directory is tracked; fenced code is never read; the scopes and
+# decisions directory is tracked, and its heading where the citation names
+# one; the same section citation is judged in a source file's comment text
+# and a TOML file's string literals; fenced code is never read; the scopes and
 # the path list are md-format's. Every green assertion is paired with a
 # control that proves it can fail.
 set -euo pipefail
@@ -12,7 +14,7 @@ SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 MDR="$SKILL_DIR/scripts/md-refs"
 . "$TEST_DIR/lib/harness.bash"
 
-unset COMMIT_GUARDS_MD_REFS_PATHS COMMIT_GUARDS_MD_EXCLUDES COMMIT_GUARDS_MD_SCOPE COMMIT_GUARDS_SETTINGS_FILE \
+unset COMMIT_GUARDS_MD_REFS_PATHS COMMIT_GUARDS_MD_REFS_SOURCE_PATHS COMMIT_GUARDS_MD_EXCLUDES COMMIT_GUARDS_MD_SCOPE COMMIT_GUARDS_SETTINGS_FILE \
   DECISIONS_DIR DECISION_ID_PREFIX DECISION_ID_WIDTH 2>/dev/null || true
 
 PASS=0
@@ -122,10 +124,11 @@ cite "a citation in a fence is not read" 0 $'```\n`docs/nope.md § X`\n```\n'
 echo "=== decision IDs: judged only where the decisions directory is tracked ==="
 cite "with no tracked decisions directory, an ID is not judged and the verdict says so" 0 $'Decided in D042.\n'
 case "$OUT" in *"decision IDs not judged (docs/decisions is not tracked)"*) ok "the verdict names the untracked directory" ;; *) bad "verdict names untracked dir" "$OUT" ;; esac
-put docs/decisions/D001-first.md $'# D001\n'
+put docs/decisions/D001-first.md $'# D001\n\n## Context\n'
 put docs/decisions/INDEX.md $'| D001 |\n'
 cite "a cited ID with a tracked file passes, in prose and in a code span" 0 $'Decided in D001; see `D001 § Context`.\n'
 case "$OUT" in *"decision IDs judged against docs/decisions"*) ok "the verdict names the directory judged against" ;; *) bad "verdict names judged dir" "$OUT" ;; esac
+cite "an ID citing a heading its decision does not have fails" 1 $'See `D001 § Rationale`.\n' 1 "docs/decisions/D001-first.md has no heading at the start of 'Rationale"
 cite "a cited ID with no tracked file fails" 1 $'Decided in D042.\n' 1 "D042: no tracked decision file docs/decisions/D042-*.md"
 cite "a shorter digit run, a glued letter and a colour are not IDs" 0 $'D42, MD001, D001x, #001 and 3D001 are not decisions.\n'
 cite "an ID in fenced code is not read" 0 $'```\nD042\n```\n'
@@ -210,6 +213,117 @@ cite "an exclamation mark ends a numbered section prefix" 0 $'[guide](guide.md) 
 cite "a missing child cannot resolve to a punctuated number" 1 $'[guide](guide.md) § 4.1.2 describes setup.\n' 1 "has no heading at the start"
 put guide.md $'# Guide\n\n## `snake_case`\n'
 cite "code spans resolve with symmetric normalization" 0 $'[guide](guide.md) § `snake_case`.\n'
+
+echo "=== citations in comment text and in TOML strings ==="
+new_repo source
+put docs/architecture/plugins.md $'# Plugins\n\n## Invariants\n'
+put AGENTS.md $'# A\n\n## Rules\n'
+
+# PATH holds CONTENT for this one case; assert the --all verdict, and on a
+# dead citation the line and message fragment named. The file goes again
+# afterwards, so one case's planted citation cannot decide the next.
+src_cite() { # LABEL EXPECT-RC PATH CONTENT [LINE MESSAGE-FRAGMENT]
+  local label="$1" want="$2" path="$3" content="$4" line="${5-}" msg="${6-}"
+  put "$path" "$content"
+  run_refs --all
+  git -C "$R" rm -q --cached "$path"
+  rm -f "$R/$path"
+  if [ "$RC" -ne "$want" ]; then
+    bad "$label" "rc=$RC want=$want out=$OUT"
+    return
+  fi
+  if [ "$want" -eq 1 ]; then
+    case "$OUT" in
+      *"dead reference: $path:$line: "*"$msg"*) ok "$label" ;;
+      *) bad "$label" "expected $path:$line: ...$msg in: $OUT" ;;
+    esac
+  else
+    ok "$label"
+  fi
+}
+
+src_cite "a citation in comment text resolves" 0 bin/helper.sh \
+  $'#!/usr/bin/env bash\n# The rule is docs/architecture/plugins.md § Invariants, not this file.\ntrue\n'
+src_cite "a comment citing a heading the target does not have is dead" 1 bin/helper.sh \
+  $'#!/usr/bin/env bash\n# The rule is docs/architecture/plugins.md § Gone, not this file.\ntrue\n' \
+  2 "docs/architecture/plugins.md has no heading at the start of 'Gone"
+src_cite "a citation in a TOML string resolves" 0 kendex.toml $'note = "AGENTS.md § Rules apply here"\n'
+src_cite "a TOML string citing a heading the target does not have is dead" 1 kendex.toml \
+  $'note = "AGENTS.md § Gone"\n' 1 "AGENTS.md has no heading at the start of 'Gone"
+src_cite "a string literal outside a manifest is not judged" 0 src/lib.rs \
+  $'fn f() -> &\'static str { "AGENTS.md \302\247 Gone" }\n'
+src_cite "control: the same citation in that file's comment is judged" 1 src/lib.rs \
+  $'// AGENTS.md \302\247 Gone\nfn f() {}\n' 1 "AGENTS.md has no heading at the start of 'Gone"
+put docs/decisions/D008-scope.md $'# D008\n\n## Scope\n'
+src_cite "a decision citation in comment text checks the heading" 0 scripts/smoke.sh \
+  $'#!/usr/bin/env bash\n# What this covers is D008 § Scope.\ntrue\n'
+src_cite "a decision citing a heading it does not have is dead" 1 scripts/smoke.sh \
+  $'#!/usr/bin/env bash\n# What this covers is D008 § Reach.\ntrue\n' \
+  2 "docs/decisions/D008-scope.md has no heading at the start of 'Reach"
+src_cite "a bare decision ID in a comment is prose, not a citation" 0 scripts/smoke.sh \
+  $'#!/usr/bin/env bash\n# Superseded by D999, which does not exist.\ntrue\n'
+printf '*.svg %sdiff\n' '-' >"$R/.gitattributes"
+git -C "$R" add .gitattributes
+src_cite "a text file the attributes mark undiffable is still read" 1 icon.svg \
+  $'<!-- AGENTS.md \302\247 Gone -->\n' 1 "AGENTS.md has no heading at the start of 'Gone"
+# A NUL cannot travel through src_cite: bash truncates $'...' at one.
+printf '\001\000\002 AGENTS.md \302\247 Gone\n' >"$R/blob.h"
+git -C "$R" add blob.h
+run_refs --all
+git -C "$R" rm -q --cached blob.h
+rm -f "$R/blob.h"
+[ "$RC" -eq 0 ] && case "$OUT" in *"not measured: blob.h"*"binary content"*) true ;; *) false ;; esac \
+  && ok "a binary blob at a source path is named, never counted clean" \
+  || bad "binary carrier named" "rc=$RC out=$OUT"
+
+src_cite "a URL is prose, not a citation into this repository" 0 scripts/link.sh \
+  $'#!/usr/bin/env bash\n# See https://example.com/guide.md \302\247 Gone for more.\ntrue\n'
+src_cite "a decision ID inside a URL is prose too" 0 scripts/link.sh \
+  $'#!/usr/bin/env bash\n# See https://example.com/D404 \302\247 Scope for more.\ntrue\n'
+src_cite "a path in a URL query is prose wherever it sits in the URL" 0 scripts/link.sh \
+  $'#!/usr/bin/env bash\n# See https://example.com/?doc=AGENTS.md \302\247 Gone here.\ntrue\n'
+src_cite "and so is a decision ID in one" 0 scripts/link.sh \
+  $'#!/usr/bin/env bash\n# See https://example.com/?decision=D404 \302\247 Scope here.\ntrue\n'
+src_cite "control: the same path without the scheme is judged" 1 scripts/link.sh \
+  $'#!/usr/bin/env bash\n# See AGENTS.md \302\247 Gone for more.\ntrue\n' \
+  2 "AGENTS.md has no heading at the start of 'Gone"
+# A carrier the extractor cannot read is an incomplete scan, never a pass:
+# the block comment below never closes, and the file holds a section sign.
+put src/broken.c $'/* AGENTS.md \302\247 Gone\nint main(void) { return 0; }\n'
+run_refs --all
+[ "$RC" -eq 2 ] && case "$OUT" in *"scan incomplete"*"1 carrier(s) could not be read"*) true ;; *) false ;; esac \
+  && ok "a carrier the extractor cannot read is exit 2, never a clean verdict" \
+  || bad "unreadable carrier fails closed" "rc=$RC out=$OUT"
+# The same carrier as the only measurable file: the empty-set answer must not
+# reach the exit 0 ahead of the incomplete scan.
+OUT="$(cd "$R" && COMMIT_GUARDS_MD_REFS_PATHS='no/such/*.md' "$MDR" --all 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"scan incomplete"*) true ;; *) false ;; esac \
+  && ok "an unreadable carrier beats the empty-set fast path" \
+  || bad "empty set hides an unread carrier" "rc=$RC out=$OUT"
+git -C "$R" rm -q --cached src/broken.c
+rm -f "$R/src/broken.c"
+
+# The walk's own skip branches, each over a path that carries a live citation
+# so a silent drop would read as a pass.
+put target.sh $'#!/usr/bin/env bash\n# AGENTS.md \302\247 Gone\ntrue\n'
+ln -s target.sh "$R/link.sh"
+git -C "$R" add link.sh
+run_refs --all
+[ "$RC" -eq 1 ] && case "$OUT" in *"not measured: link.sh"*"tracked as a symlink"*) true ;; *) false ;; esac \
+  && ok "a symlink at a source path is named, and its target still judged" \
+  || bad "symlink at a source path" "rc=$RC out=$OUT"
+git -C "$R" rm -q --cached link.sh target.sh
+rm -f "$R/link.sh" "$R/target.sh"
+printf '#!/usr/bin/env bash\n# AGENTS.md \302\247 Gone\ntrue\n' >"$R/one"$'\n'"two.sh"
+git -C "$R" add -A
+run_refs --all
+[ "$RC" -eq 0 ] && case "$OUT" in *"not measured: "*"holds a newline"*) true ;; *) false ;; esac \
+  && ok "a path holding a newline is named, never quietly passed" \
+  || bad "newline path named" "rc=$RC out=$OUT"
+git -C "$R" rm -q --cached -- "one"$'\n'"two.sh"
+rm -f "$R/one"$'\n'"two.sh"
+git -C "$R" rm -q --cached .gitattributes
+rm -f "$R/.gitattributes"
 
 echo "=== scopes: touched, --staged, --all ==="
 new_repo scopes

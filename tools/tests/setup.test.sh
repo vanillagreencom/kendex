@@ -24,8 +24,10 @@ bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
 new_fixture() { # NAME — a clone-shaped repo carrying the package and these tools
   R="$TMP/$1"
-  mkdir -p "$R/.agents/skills/commit-guards" "$R/tools" "$R/crates"
-  cp -R "$REPO/.agents/skills/commit-guards/scripts" "$R/.agents/skills/commit-guards/scripts"
+  mkdir -p "$R/.agents/skills" "$R/tools" "$R/crates"
+  # The whole package, as an install delivers it: its scripts cite its own
+  # documents, and md-refs judges those citations in the commit chain below.
+  cp -R "$REPO/.agents/skills/commit-guards" "$R/.agents/skills/commit-guards"
   cp "$TOOLS/setup" "$R/tools/"
   printf '#!/usr/bin/env bash\necho "repo-local lane ran"\n' >"$R/tools/guard"
   chmod +x "$R/tools/guard"

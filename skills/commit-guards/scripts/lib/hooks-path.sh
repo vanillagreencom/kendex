@@ -135,7 +135,7 @@ hooks_path_off() { # -> 0 when hooks are switched off
 
 # The stand-down text: one statement, git's own report, one sentence.
 #
-# docs/architecture/overview.md § Decisions rules it: recovery instructions present their
+# The architecture decision on recovery output rules it: instructions present their
 # parameters as data, never a pasteable command line. A composed command has
 # to be right about `--unset-all`, about a second file the winning value
 # shadows, and about `include.path`, which git reports under the INCLUDING

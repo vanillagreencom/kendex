@@ -6,20 +6,28 @@
 # The scanner is a character walk with code, string, block-comment and
 # heredoc-body states carried across lines. A quoted shell command
 # substitution saves its outer string while its shell body is scanned. It
-# emits one
-# "line<TAB>text" record per line of comment text and nothing for code or
-# a string literal. A file that ends in any state but code is not
-# extractable: every comment after the opener would otherwise be swallowed
-# and the file counted clean. It is not a parser: what it does not model is
-# stated in CHECKS.md § comments, and the controls in tests/comments.test.sh
-# hold each stated limit to its statement.
+# emits one "line<TAB>text" record per line of comment text and nothing for
+# code or a string literal. WANT=strings adds one record per line of every
+# string literal's body too, for a caller that judges a manifest's values;
+# the walk is the same either way, so there is one extractor. A file that
+# ends in any state but code is not extractable: every comment after the
+# opener would otherwise be swallowed and the file counted clean. It is not
+# a parser: what it does not model is stated in ../../CHECKS.md § comments,
+# and the controls in tests/comments.test.sh hold each stated limit to its
+# statement.
 #
 # Bash 3.2-safe, like its parent; the awk inside is POSIX awk — no interval
 # expressions, no gensub, no IGNORECASE.
 
+# Every extension the extractor has a grammar for, spelled once here and
+# once in the table in ../../CHECKS.md § comments. Two spellings of each name
+# because `*` crosses `/` but never stands in for the separator. The lanes
+# that scan source files read it as their default path list.
+GG_COMMENT_PATHS_DEFAULT="*.rs *.go *.c *.h *.cc *.cpp *.hpp *.java *.kt *.kts *.swift *.wgsl *.js *.mjs *.cjs *.jsx *.ts *.tsx *.css *.scss *.less *.sh *.bash *.zsh *.py *.rb *.toml *.yml *.yaml *.sql *.lua *.html *.htm *.xml *.svg *.vue *.svelte Makefile */Makefile *.mk Dockerfile */Dockerfile"
+
 # The grammar a path takes: its extension first, and for a path with none
 # the interpreter its shebang names. Prints nothing for a path this lane has
-# no grammar for. The table this spells is CHECKS.md § comments.
+# no grammar for. The table this spells is ../../CHECKS.md § comments.
 gg_comment_family() { # PATH BLOBFILE — family token on stdout, empty when none
   local path="$1" blob="$2" base ext first
   base="${path##*/}"
@@ -67,9 +75,12 @@ gg_comment_family() { # PATH BLOBFILE — family token on stdout, empty when non
 # The comment text of one file under one grammar, as "line<TAB>text"
 # records. A block comment spanning lines emits one record per line. A
 # shebang on line 1 of a hash-family file is not a comment. PATH is the
-# name a diagnostic gives the file; FILE is the blob it reads.
-gg_comment_text() { # FAMILY FILE PATH — records on stdout
-  local fam="$1" file="$2" path="$3" status=0 reason
+# name a diagnostic gives the file; FILE is the blob it reads. WANT
+# `strings` adds each string literal's body to the records, per line as a
+# block comment is; anything else, including nothing, keeps to comments.
+gg_comment_text() { # FAMILY FILE PATH [WANT] — records on stdout
+  local fam="$1" file="$2" path="$3" want="${4:-comments}" status=0 reason want_str=0
+  [ "$want" != strings ] || want_str=1
   GG_COMMENT_ERROR=""
   local base=c rust=0 tmpl=0 shell=0 esc_single=1 triple=0 str_multi=0
   case "$fam" in
@@ -90,7 +101,8 @@ gg_comment_text() { # FAMILY FILE PATH — records on stdout
   # The apostrophe arrives as a variable: the program is a single-quoted
   # literal, and not every awk reads a hex escape.
   LC_ALL=C awk -v fam="$base" -v rust="$rust" -v tmpl="$tmpl" -v shell="$shell" \
-    -v esc_single="$esc_single" -v triple="$triple" -v str_multi="$str_multi" -v sq="'" '
+    -v esc_single="$esc_single" -v triple="$triple" -v str_multi="$str_multi" \
+    -v want_str="$want_str" -v sq="'" '
   function word(ch) { return ch ~ /[A-Za-z0-9_]/ }
   # Whether S ends inside an arithmetic `((`: more openers than closers.
   function in_arith(s,   n, k) {
@@ -99,7 +111,7 @@ gg_comment_text() { # FAMILY FILE PATH — records on stdout
     return n > gsub(/\)\)/, "", s)
   }
   BEGIN {
-    st = "code"; d = ""; e = 0; m = 0; pend = ""; hdw = ""; hds = 0; opened = 0; subn = 0
+    st = "code"; d = ""; e = 0; m = 0; pend = ""; hdw = ""; hds = 0; opened = 0; subn = 0; sbeg = 1
     if (fam == "c") { bo = "/*"; bc = "*/"; lead = "//"; cls = "[\"" sq "/" (tmpl ? "`" : "") "]" }
     else if (fam == "cblock") { bo = "/*"; bc = "*/"; lead = ""; cls = "[\"" sq "/]" }
     else if (fam == "hash") { bo = ""; bc = ""; lead = "#"; cls = "[\"" sq "#" (shell ? "<()\\\\" : "") "]" }
@@ -137,11 +149,15 @@ gg_comment_text() { # FAMILY FILE PATH — records on stdout
           subn++
           subdepth[subn] = 1; subd[subn] = d; sube[subn] = e; subm[subn] = m
           subopened[subn] = opened; subscls[subn] = scls; substart[subn] = NR
+          subsbeg[subn] = sbeg
           st = "code"; i += 2; continue
         }
         if (c == "$") { i++; continue }
         if (e && c == "\\") { i += 2; continue }
-        if (substr(line, i, length(d)) == d) { st = "code"; i += length(d); continue }
+        if (substr(line, i, length(d)) == d) {
+          if (want_str) print NR "\t" substr(line, sbeg, i - sbeg)
+          st = "code"; i += length(d); continue
+        }
         i++; continue
       }
       rest = substr(line, i)
@@ -171,8 +187,12 @@ gg_comment_text() { # FAMILY FILE PATH — records on stdout
         if (subdepth[subn] == 0) {
           st = "str"; d = subd[subn]; e = sube[subn]; m = subm[subn]
           opened = subopened[subn]; scls = subscls[subn]
+          # The substitution is part of the literal, so its body resumes where
+          # the literal began, not after the `)`.
+          sbeg = (subsbeg[subn] > 0) ? subsbeg[subn] : 1
           delete subdepth[subn]; delete subd[subn]; delete sube[subn]; delete subm[subn]
           delete subopened[subn]; delete subscls[subn]; delete substart[subn]
+          delete subsbeg[subn]
           subn--
         }
         i++; continue
@@ -236,8 +256,11 @@ gg_comment_text() { # FAMILY FILE PATH — records on stdout
         if (shell && i > 1 && substr(line, i - 1, 1) == "$") e = 1
       }
       scls = "[" c "\\\\" ((shell && c == "\"") ? "$" : "") "]"
-      st = "str"; opened = NR; i += length(d)
+      st = "str"; opened = NR; i += length(d); sbeg = i
     }
+    # A literal still open at the line end contributes the rest of the line,
+    # and the next line contributes from its start, as a block comment does.
+    if (want_str && st == "str") { print NR "\t" substr(line, sbeg); sbeg = 1 }
     if (pend != "") { st = "heredoc"; hdw = pend; pend = ""; opened = NR }
     else if (st == "str" && !m) st = "code"
   }

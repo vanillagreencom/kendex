@@ -9,7 +9,7 @@
 # either project depending on sync order. Team KEN carries such a twin today:
 # "Review Gate & CI" is live in one project and canceled in another.
 #
-# This locks in the cache spelling of the rule SKILL.md § Option Behavior
+# This locks in the cache spelling of the rule ../SKILL.md § Option Behavior
 # states for a name that selects one project, for the `list-dependencies`
 # command:
 #   A. A name matching a live project and its canceled twin returns exactly one

@@ -306,7 +306,7 @@ out="$(run_queue_wait -- 1 1 20 --no-check-probe 2>"$err")" && rc=0 || rc=$?
 assert_contains "$out" "conflicting" "the plain line names the verdict" "$err"
 assert_contains "$out" "restacked" "the plain line names the remedy" "$err"
 
-# The remedy is a ROUTE, not a short restatement of one. merge-pr.md § 5
+# The remedy is a ROUTE, not a short restatement of one. ../workflows/merge-pr.md § 5
 # step 1 fixes the restack order — disarm, dequeue, and only then push,
 # because an armed PR re-enqueues itself the moment its requirements go
 # green — and guard_fire enforces that same order here. A line restating a
