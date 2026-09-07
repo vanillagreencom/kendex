@@ -103,7 +103,7 @@ line_rows \
   "control: a reference followed by punctuation or a space still fails, one hit per line|Landed in #1204) and #228, per #999.|rc=1 $(hit SKILL.md 1 'Landed in #1204) and #228, per #999.');$(failed 1 1)" \
   "a reference ending its line still fails|Landed in #1204|rc=1 $(hit SKILL.md 1 'Landed in #1204');$(failed 1 1)" \
   "ordinary wording passes: a bare year and a year-month|The 2026 roadmap and the 2026-08 window.|rc=0 $(clean 1)" \
-  "an ATX heading whose text is a number is not an issue reference|#### 1204 items|rc=0 $(clean 1)" \
+  "an ATX heading whose text is a number, to the end of the line, is not an issue reference|#### 1204|rc=0 $(clean 1)" \
   "a decision ID, a code-span D042 § Context and a four-digit ID all pass|Decided in D042; the reason is in \`D042 § Context\`, and D1234 is the same kind.|rc=0 $(clean 1)" \
   "control: the same digits after '#' are still an issue reference|Decided in #042.|rc=1 $(hit SKILL.md 1 'Decided in #042.');$(failed 1 1)" \
   "two hits on two lines are two lines and one count each|First 2026-08-12.\nSecond #228.|rc=1 $(hit SKILL.md 1 'First 2026-08-12.');$(hit SKILL.md 2 'Second #228.');$(failed 2 1)"
