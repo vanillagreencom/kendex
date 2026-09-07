@@ -416,36 +416,44 @@ fn an_inherited_ssh_command_keeps_its_options() {
 }
 
 /// One row per shape a run can outlive its timeout in, every one ended
-/// inside the bound with nothing it spawned left running: a direct child
-/// that hangs; a hung grandchild under a waiting child, which is a hung
+/// inside the bound with nothing it spawned left running: a program with
+/// no children at all; a direct child that hangs; a hung grandchild under a waiting child, which is a hung
 /// `ssh` under `git`, where killing only the process we hold leaves it
 /// running long past the deadline with a reader thread blocked on the
 /// pipe it still owns; and a grandchild holding the pipes behind a child
 /// that returned its status at once, where waiting on the child alone
 /// declared the run over and then blocked in collection for the
-/// grandchild's whole run, with no deadline anywhere near it. Each script
-/// writes a marker after a second the timeout does not allow, so a
-/// marker on disk afterwards is a process that outlived the kill.
+/// grandchild's whole run, with no deadline anywhere near it. Every
+/// script but the first writes a marker after a second the timeout does
+/// not allow, so a marker on disk afterwards is a process that outlived
+/// the kill.
 #[cfg(unix)]
 #[test]
 fn a_run_that_outlives_its_timeout_is_ended_with_everything_it_spawned() {
     let rows = [
-        ("a hung child", "sleep 1; : > MARKER"),
+        ("a program with no children", "/bin/sleep", None),
+        ("a hung child", "/bin/sh", Some("sleep 1; : > MARKER")),
         (
             "a hung grandchild under a waiting child",
-            "(sleep 1; : > MARKER) & wait",
+            "/bin/sh",
+            Some("(sleep 1; : > MARKER) & wait"),
         ),
         (
             "a grandchild holding the pipes",
-            "(sleep 1; : > MARKER) & exit 0",
+            "/bin/sh",
+            Some("(sleep 1; : > MARKER) & exit 0"),
         ),
     ];
-    for (label, script) in rows {
+    for (label, program, script) in rows {
         let tmp = tempfile::tempdir().unwrap();
         let marker = tmp.path().join("outlived");
-        let script = script.replace("MARKER", &marker.display().to_string());
+        let script = script.map(|script| script.replace("MARKER", &marker.display().to_string()));
+        let args: Vec<&str> = match &script {
+            Some(script) => vec!["-c", script],
+            None => vec!["5"],
+        };
         let started = Instant::now();
-        let error = Hardened::program("/bin/sh", &["-c", &script])
+        let error = Hardened::program(program, &args)
             .timeout(Duration::from_millis(200))
             .run()
             .unwrap_err();

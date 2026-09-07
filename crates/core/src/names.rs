@@ -293,6 +293,9 @@ mod tests {
     /// legal.
     #[test]
     fn path_hostile_shapes_are_named_with_the_reason() {
+        // The cap itself, so the rows below measure against a number
+        // this file states rather than against the producer's own.
+        assert_eq!(MAX_SEGMENT, 100);
         let long = "x".repeat(MAX_SEGMENT + 1);
         let too_long = format!(
             "`{long}` is {} bytes and a name may be {MAX_SEGMENT}",

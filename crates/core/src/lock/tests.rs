@@ -547,8 +547,8 @@ fn a_project_lock_is_never_written_claiming_another_tree() {
     assert!(
         matches!(
             &refused,
-            CoreError::LockOutsideProject { key, recorded, root: named, .. }
-                if key == "skill:gh:claude" && recorded == &elsewhere && named == &crate::paths::canonical(&root).unwrap()
+            CoreError::LockOutsideProject { path: at, key, recorded, root: named }
+                if at == &path && key == "skill:gh:claude" && recorded == &elsewhere && named == &crate::paths::canonical(&root).unwrap()
         ),
         "{refused:?}"
     );
@@ -578,7 +578,11 @@ fn a_relatively_named_project_lock_reads_as_the_directory_it_names() {
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(matches!(
         parse_text(Path::new(LOCK_FILE), &text),
-        Err(CoreError::LockOutsideProject { .. })
+        Err(CoreError::LockOutsideProject { path: at, key, recorded, root })
+            if at == Path::new(LOCK_FILE)
+                && key == "skill:gh:claude"
+                && recorded == elsewhere
+                && root == here
     ));
 
     // Written under another root, so it rebases — onto the directory the
