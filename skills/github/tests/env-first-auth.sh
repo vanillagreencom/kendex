@@ -51,6 +51,11 @@ if [[ "\${1:-}" == "read" && "\${2:-}" == "op://vault/github/bot" ]]; then
   printf '%s\n' 'ghs_RESOLVED123'
   exit 0
 fi
+# A vault item pointing at the wrong field: op answers, with no token in it.
+if [[ "\${1:-}" == "read" && "\${2:-}" == "op://vault/github/garbage" ]]; then
+  printf '%s\n' 'this-is-not-a-github-token'
+  exit 0
+fi
 exit 1
 EOF
 chmod +x "$TMP_ROOT/bin/op"
@@ -139,21 +144,31 @@ exit 1
 EOF
 chmod +x "$TMP_ROOT/bin/gh"
 
-load_token() {
+# load_via <lib> <call> [NAME=value...]: <call> in a fresh shell that
+# sourced <lib>, under the given environment, from the project directory.
+load_via() {
+  local lib="$1" call="$2"
+  shift 2
   (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env "$@" bash -c '
     set -euo pipefail
-    source "'"$REPO_ROOT"'/skills/github/scripts/lib/github-api.sh"
-    load_bot_token
+    source "'"$REPO_ROOT"'/skills/github/scripts/lib/'"$lib"'"
+    '"$call"'
   ')
 }
+load_token() { load_via github-api.sh load_bot_token "$@"; }
+# The default ladder, as the orch waiters read it through their own lib.
+load_default() { load_via gh-auth.sh 'kendex_github_load_token "$PWD"' "$@"; }
 
 # --- the token-precedence table ------------------------------------------------
 # Which token each entry point ends up using, and whether resolving it called
 # `op`. A row is `label|world|entry|rc|out|op`:
 #   world  `file:<name>` the project .env.local (see project_file), `env:N=V`
-#          the caller's environment, `keyring` a gh that accepts keyring auth
-#   entry  token (load_bot_token through the library), label-add and
-#          label-remove (the command scripts directly), or router:<subcommand>
+#          the caller's environment, `keyring` a gh that accepts keyring auth,
+#          `settings:dup` a kendex.settings.toml the loader refuses
+#   entry  token (load_bot_token through the library), default
+#          (kendex_github_load_token's default ladder, the orch waiters' path),
+#          label-add and label-remove (the command scripts directly), or
+#          router:<subcommand>
 #   out    the entry point's stdout, reduced: a token as it stands, a pr-view
 #          answer as `pr=<number>`, an error answer as `status=<status>`
 #   op     how many times the row called `op`
@@ -172,28 +187,35 @@ project_file() {
 
 W_ENV=()
 W_FILE=-
+W_SETTINGS=0
 build_world() {
   local w
   W_ENV=()
   W_FILE=-
+  W_SETTINGS=0
   for w in "$@"; do
     case "$w" in
       file:*) W_FILE="${w#file:}" ;;
       env:*) W_ENV+=("${w#env:}") ;;
       keyring) W_ENV+=("STUB_KEYRING_OK=1") ;;
+      settings:dup) W_SETTINGS=1 ;;
       -) ;;
       *) echo "UNKNOWN-WORD: $w" >&2; exit 2 ;;
     esac
   done
-  rm -f "$TMP_ROOT/repo/.env.local" "$TMP_ROOT/op.calls"
+  rm -f "$TMP_ROOT/repo/.env.local" "$TMP_ROOT/repo/kendex.settings.toml" "$TMP_ROOT/op.calls"
   [[ "$W_FILE" == - ]] || project_file "$W_FILE" >"$TMP_ROOT/repo/.env.local"
+  [[ "$W_SETTINGS" == 0 ]] || printf '[env]\nDUP = "a"\nDUP = "b"\n' >"$TMP_ROOT/repo/kendex.settings.toml"
 }
 
 run_entry() {
   local entry="$1" rc=0 out
   local -a cmd
-  if [[ "$entry" == token ]]; then
-    out=$(load_token ${W_ENV[@]+"${W_ENV[@]}"} 2>/dev/null) || rc=$?
+  case "$entry" in
+    token) out=$(load_token ${W_ENV[@]+"${W_ENV[@]}"} 2>/dev/null) || rc=$? ;;
+    default) out=$(load_default ${W_ENV[@]+"${W_ENV[@]}"} 2>/dev/null) || rc=$? ;;
+  esac
+  if [[ "$entry" == token || "$entry" == default ]]; then
     printf 'rc=%s out=%s op=%s' "$rc" "$(out_text "$out")" "$(op_calls)"
     return
   fi
@@ -271,8 +293,13 @@ a project op reference resolves when no environment token exists|file:bot-op|tok
 a direct project token beats an inherited op reference, which is never resolved|file:bot-file env:GH_TOKEN=op://vault/github/main|token|0|ghs_FILEBOT123|0
 a resolved name later in the ladder beats an unresolved one before it|file:no-token env:GH_TOKEN=op://vault/github/user env:GITHUB_TOKEN=gho_DIRECT456|token|0|gho_DIRECT456|0
 a reference op cannot resolve leaves the bot token unconfigured, never a raw op:// value, having tried once|file:no-token env:GH_BOT_TOKEN=op://vault/github/missing|token|0|-|1
+the default ladder reads GITHUB_TOKEN when it is the only name set|file:no-token env:GITHUB_TOKEN=gho_ONLYTHIS456|default|0|gho_ONLYTHIS456|0
+a refused settings file does not discard the token the environment supplied|file:no-token settings:dup env:GH_TOKEN=ghp_GOODENV111|default|0|ghp_GOODENV111|0
+an op reference in the environment still lets the file's direct token win, unresolved|file:bot-file env:GH_TOKEN=op://vault/github/user|default|0|ghs_FILEBOT123|0
+a vault value that is not a token is refused, never handed on|file:no-token env:GH_TOKEN=op://vault/github/garbage|default|1|-|1
+the default ladder takes GH_TOKEN over GH_BOT_TOKEN, where the bot loader takes the bot|file:no-token env:GH_TOKEN=ghp_USER123 env:GH_BOT_TOKEN=ghs_BOT123|default|0|ghp_USER123|0
 "
-rm -f "$TMP_ROOT/repo/.env.local"
+rm -f "$TMP_ROOT/repo/.env.local" "$TMP_ROOT/repo/kendex.settings.toml"
 
 # The op-retry project-env load stays best-effort (|| true) for token
 # ABSENCE, but its stderr is open: a refused settings load must surface the
