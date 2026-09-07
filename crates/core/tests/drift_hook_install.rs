@@ -106,3 +106,38 @@ fn the_drift_hook_installs_as_a_declared_item_and_is_idempotent() {
     let plan = drift::hook::install_plan(&w.env, &w.scope).unwrap();
     assert!(plan.is_empty(), "{plan:?}");
 }
+
+// A yes to the note is a yes to it running. Switched off from the
+// Library, the declaration stays and nothing renders; installing again
+// must flip the switch rather than plan nothing and report success.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn installing_over_a_switched_off_declaration_switches_it_back_on() {
+    let w = world();
+    declare(
+        &w,
+        "",
+        &format!(
+            "[hooks.{}]\nsource = \"local\"\nenabled = false\n",
+            drift::hook::HOOK_NAME
+        ),
+    );
+
+    let plan = drift::hook::install_plan(&w.env, &w.scope).unwrap();
+    assert!(
+        plan.ops
+            .iter()
+            .any(|op| matches!(op.op, apply::Op::WriteManifest { .. })),
+        "the switched-off declaration is rewritten: {plan:?}"
+    );
+    apply::execute(&w.env, &plan).unwrap();
+
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    assert!(loaded.hooks.get(drift::hook::HOOK_NAME).unwrap().enabled);
+
+    // And once on, installing again plans nothing.
+    let plan = drift::hook::install_plan(&w.env, &w.scope).unwrap();
+    assert!(plan.is_empty(), "{plan:?}");
+}

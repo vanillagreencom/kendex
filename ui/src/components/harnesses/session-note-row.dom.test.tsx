@@ -18,6 +18,7 @@ import {
 import { rescansSettled } from "@/lib/rescan";
 import { useProblemsStore } from "@/stores/problems";
 import { mount, settle } from "@/test/dom";
+import { ProjectCard } from "./project-card";
 import { SessionNoteRow } from "./session-note-row";
 
 vi.mock("@/bindings", () => ({
@@ -114,6 +115,36 @@ describe("the start-of-session note on a project's card", () => {
     await sayYes(row("off"));
     expect(toast.success).toHaveBeenCalledWith(sessionNoteWaiting("acme"));
     expect(toast.success).not.toHaveBeenCalledWith(sessionNoteAdded("acme"));
+  });
+
+  // The card opens the Library on a click in its empty space, and React
+  // sends a portal's clicks back through the tree that owns it: reading
+  // the dialog, or pressing its backdrop to close it, must not be a
+  // request to leave the page.
+  it("does not open the card behind it from a click in the dialog", async () => {
+    const onOpen = vi.fn();
+    const host = mount(
+      <ProjectCard
+        name="acme"
+        subtitle={ROOT}
+        path={ROOT}
+        counts={[]}
+        emptyLabel="Nothing from kendex yet."
+        onOpen={onOpen}
+        onKindClick={() => {}}
+        note={<SessionNoteRow name="acme" root={ROOT} state="off" />}
+      />,
+    );
+    await act(async () => button(host, ADD_SESSION_NOTE_LABEL)?.click());
+    await settle();
+    for (const slot of ["dialog-title", "dialog-content", "dialog-overlay"]) {
+      const target = document.body.querySelector<HTMLElement>(
+        `[data-slot="${slot}"]`,
+      );
+      if (!target) throw new Error(`no ${slot} on screen`);
+      await act(async () => target.click());
+    }
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
   it("puts a refusal in the problems dialog under the note's own title", async () => {

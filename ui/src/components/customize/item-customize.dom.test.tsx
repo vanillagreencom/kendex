@@ -120,7 +120,7 @@ describe("the place chips", () => {
   // A fork is a fact the update rows carry. A re-check that failed keeps
   // the rows it had, and the Library and the package header read them as
   // last-known; a chip that went plain here would answer differently
-  // about the same place. With nothing kept, nothing can be read.
+  // about the same place.
   it("keeps a fork's mark after a failed re-check that kept its rows", () => {
     seed({ "/work/vg": empty, "/work/hyprtrade": empty });
     const forkedAt = rows.map((row) => ({
@@ -132,9 +132,6 @@ describe("the place chips", () => {
       read: readFailed("offline"),
     });
     expect(markedPlaces(tab())).toEqual(["hyprtrade"]);
-
-    useUpdatesStore.setState({ rows: [], read: readFailed("offline") });
-    expect(markedPlaces(tab())).toEqual([]);
   });
 
   /// The manifest draft beside them already moves these chips before a

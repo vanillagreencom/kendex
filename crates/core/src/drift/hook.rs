@@ -133,24 +133,38 @@ pub fn install_plan(env: &Env, scope: &Scope) -> Result<Plan> {
         });
     }
 
-    if !manifest.hooks.contains_key(HOOK_NAME) {
-        manifest.hooks.insert(
-            HOOK_NAME.to_owned(),
-            ItemDecl {
-                source: LOCAL_SOURCE_NAME.to_owned(),
-                // Only harnesses that execute hooks: advisory drift prose
-                // on a tool that cannot run the check is worse than none.
-                // Pi executes through the pi-hooks carrier — same script,
-                // same kill-switch, fire-and-forget into session start.
-                harnesses: Some(vec![HarnessId::Claude, HarnessId::Pi]),
-                method: None,
-                rev: None,
-                enabled: true,
-            },
-        );
+    // A yes to the note is a yes to it running. A declaration switched off
+    // from the Library renders nothing and audits clean, so a plan that
+    // only declared would leave the switch as it is and report success
+    // over a note that never fires.
+    let description = match manifest.hooks.get_mut(HOOK_NAME) {
+        None => {
+            manifest.hooks.insert(
+                HOOK_NAME.to_owned(),
+                ItemDecl {
+                    source: LOCAL_SOURCE_NAME.to_owned(),
+                    // Only harnesses that execute hooks: advisory drift prose
+                    // on a tool that cannot run the check is worse than none.
+                    // Pi executes through the pi-hooks carrier — same script,
+                    // same kill-switch, fire-and-forget into session start.
+                    harnesses: Some(vec![HarnessId::Claude, HarnessId::Pi]),
+                    method: None,
+                    rev: None,
+                    enabled: true,
+                },
+            );
+            Some("declare the drift hook in kendex.toml")
+        }
+        Some(decl) if !decl.enabled => {
+            decl.enabled = true;
+            Some("switch the drift hook back on in kendex.toml")
+        }
+        Some(_) => None,
+    };
+    if let Some(description) = description {
         let path = crate::manifest::manifest_path(env, &scope);
         ops.push(PlannedOp {
-            description: "declare the drift hook in kendex.toml".into(),
+            description: description.into(),
             op: Op::WriteManifest {
                 pre: Pre::observed(&path)?,
                 path,

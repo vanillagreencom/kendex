@@ -12,7 +12,11 @@ import { commands } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { unmanagedHereLabel } from "@/lib/copy";
-import { SESSION_NOTE_LABEL, SESSION_NOTE_ON } from "@/lib/copy-session-note";
+import {
+  SESSION_NOTE_LABEL,
+  SESSION_NOTE_ON,
+  SESSION_NOTE_WAITING,
+} from "@/lib/copy-session-note";
 import { kindLabel } from "@/lib/labels";
 import { READ_LANDED } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
@@ -179,6 +183,61 @@ describe("the start-of-session note on a project's card", () => {
     const acme = cards.find((el) => el.textContent?.startsWith("acme"));
     expect(acme?.textContent).toContain(SESSION_NOTE_ON);
     expect(personal?.textContent).not.toContain(SESSION_NOTE_LABEL);
+  });
+
+  // Declared and nothing rendered is the audit's to say: the install ran
+  // with other changes pending, so only the declaration landed. A card
+  // reading the scan alone would say off, with a button that re-runs an
+  // install already declared.
+  it("says the note is waiting from the audit's missing row", async () => {
+    useSettingsStore.setState({
+      settings: { projects: ["/work/acme"] } as never,
+    });
+    useAuditStore.setState({
+      views: [
+        view(ACME, [
+          {
+            kind: "hook",
+            name: "kendex-drift",
+            harness: "claude",
+            state: "missing",
+            detail: "not registered yet",
+            scope: ACME,
+          },
+        ]),
+      ],
+    });
+    const host = mount(<ProjectList />);
+    await settle();
+    expect(host.textContent).toContain(SESSION_NOTE_WAITING);
+  });
+
+  // The audit reads every place over seconds, and a cold start can fail
+  // it outright. "Off" at first paint would claim a state the app has not
+  // checked, on a card whose note may be declared and waiting.
+  it("says nothing about the note until the audit has answered for the place", async () => {
+    useSettingsStore.setState({
+      settings: { projects: ["/work/acme"] } as never,
+    });
+    useAuditStore.setState({ views: [view({ scope: "global" }, [])] });
+    const host = mount(<ProjectList />);
+    await settle();
+    expect(host.textContent).toContain("acme");
+    expect(host.textContent).not.toContain(SESSION_NOTE_LABEL);
+  });
+
+  // Before the scan has answered there is nothing to say either: a card
+  // that may already run the hook must not offer to add it.
+  it("says nothing about the note until the scan has answered", async () => {
+    useSettingsStore.setState({
+      settings: { projects: ["/work/acme"] } as never,
+    });
+    useScanStore.setState({ scanning: true, result: null, error: null });
+    useAuditStore.setState({ views: [view(ACME, [])] });
+    const host = mount(<ProjectList />);
+    await settle();
+    expect(host.textContent).toContain("acme");
+    expect(host.textContent).not.toContain(SESSION_NOTE_LABEL);
   });
 });
 

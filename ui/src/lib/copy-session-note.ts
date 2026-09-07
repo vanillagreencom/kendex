@@ -14,11 +14,11 @@ export const SESSION_NOTE_LABEL = "Start-of-session note";
 export const SESSION_NOTE_WHAT =
   "When a coding agent starts a session in this project, kendex leaves it a short note saying whether any installed file no longer matches its source. When everything matches, nothing is left.";
 
-/** What changes on disk when the button is pressed. Claude Code and Pi
- *  are the harnesses that run hooks; `drift::hook::install_plan` declares
- *  it for those two and no other. */
+/** What changes on disk when the button is pressed: the script and the
+ *  declaration `drift::hook::install_plan` writes, and the render that
+ *  follows into each harness that runs hooks, Claude Code and Pi. */
 export const SESSION_NOTE_CHANGES =
-  "This adds one hook entry to the project's settings for Claude Code and for Pi. kendex keeps it up to date like anything else it installs, and you can remove it from the Library.";
+  "This writes a small script into the project, adds a hook entry to its settings for Claude Code and for Pi, and lists the note in the project's kendex file so kendex keeps it up to date like anything else it installs. You can remove it from the Library.";
 
 export const ADD_SESSION_NOTE_LABEL = "Add the note";
 export const addSessionNoteTitle = (project: string): string =>
@@ -30,9 +30,11 @@ export const SESSION_NOTE_OFF =
   "Agents starting a session here are not told when an installed file no longer matches its source.";
 export const SESSION_NOTE_ON =
   "Agents starting a session here are told when an installed file no longer matches its source.";
-/** The hook was declared and nothing was rendered: the project had other
- *  changes waiting, and a yes to the note is not a yes to those. The one
- *  way to put them in is the terminal, so the sentence names the command. */
+/** The hook is declared and not in place: the project had other changes
+ *  waiting and a yes to the note is not a yes to those, or something is in
+ *  the way of the registration. The one way to put them in, and to be
+ *  told what is in the way, is the terminal, so the sentence names the
+ *  command. */
 export const SESSION_NOTE_WAITING =
   "The note is set up but not in place yet. This project has other changes waiting, and it goes in with them when you run kendex apply in that folder.";
 

@@ -85,6 +85,20 @@ export function ProjectList() {
       views.find((v) => sameScope(v.scope, scope)),
       auditFailure,
     );
+  // The start-of-session note's line, or nothing while no read can say.
+  const noteRow = (root: string, name: string) => {
+    const state = result
+      ? sessionNoteState(
+          result.items,
+          views.find((v) => sameScope(v.scope, { scope: "project", root })),
+          auditFailure,
+          root,
+        )
+      : null;
+    return state ? (
+      <SessionNoteRow name={name} root={root} state={state} />
+    ) : null;
+  };
   const { settings, registerProject, unregisterProject, discoverProjects } =
     useSettingsStore();
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
@@ -147,18 +161,11 @@ export function ProjectList() {
                 onKindClick={(kind) => goToLibrary({ ...place, kind })}
                 unmanaged={notManaged(scope)}
                 onUnmanaged={() => goToUnmanaged(scope)}
-                // Not drawn until the scan has answered: a card saying the
-                // note is off before anything was read would be claiming a
-                // state the app has not checked.
-                note={
-                  result ? (
-                    <SessionNoteRow
-                      name={name}
-                      root={root}
-                      state={sessionNoteState(result.items, views, root)}
-                    />
-                  ) : null
-                }
+                // Not drawn until the scan and the audit have answered for
+                // this place: a card saying the note is off before either
+                // was read would be claiming a state the app has not
+                // checked.
+                note={noteRow(root, name)}
                 action={
                   <Button
                     variant="ghost"
