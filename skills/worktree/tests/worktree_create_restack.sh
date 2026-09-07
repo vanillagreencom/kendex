@@ -1,17 +1,11 @@
 #!/usr/bin/env bash
-# Tests for `worktree create` reuse rebase-conflict recovery.
-#
-# When `create` reuses an existing worktree and the rebase onto origin/<default>
-# conflicts, the default path aborts the rebase — so the worktree is clean and
-# there is no conflict state left to "resolve manually". The error must be
-# truthful and actionable: list the conflicting files (captured before the
-# abort) and name the two supported recovery paths (`--restack` or
-# delete/recreate). `--restack` must redo the rebase and stop IN the conflict
-# state with guarded continue/skip/abort guidance. A completed supported rewrite must carry
-# an exact, one-worktree push authorization without weakening remote-movement
-# or unexpected-local-divergence rejection. A sibling suite run under a git
-# hook's exported environment must keep its own sandbox and leave a live
-# authorization alone. Clean-rebase reuse must keep working unchanged.
+# `worktree create --reuse/--restack` over a rebase conflict, the guarded
+# restack controls that follow a pause, and the push authorization a completed
+# restack leaves behind: one table, a row per scenario. A row's fixture is a
+# word list of steps that builds a fresh main+origin pair with its issue
+# worktree and drives it to the state under test; the command then runs from
+# the main checkout, and the row pins its exit status, its stdout, the tool's
+# own stderr, and the worktree's state afterwards.
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
@@ -47,107 +41,20 @@ assert_eq() {
   fi
 }
 
-assert_ne() {
-  local got="$1" unwanted="$2" name="$3"
-  if [[ "$got" != "$unwanted" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected value to differ from: %s\n' "$name" "$unwanted"
-  fi
-}
+# --- fixtures -----------------------------------------------------------------
+# Every row's world lives under its own ROOT: the main checkout at ROOT/main,
+# the bare origin at ROOT/origin.git, the issue worktree at ROOT/trees/topic.
 
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  fi
-}
-
-assert_not_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        unwanted substring present: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  else
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  fi
-}
-
-assert_path_exists() {
-  local path="$1" name="$2"
-  if [[ -e "$path" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        missing path: %s\n' "$name" "$path"
-  fi
-}
-
-assert_is_ancestor() {
-  local repo="$1" ancestor="$2" descendant="$3" name="$4"
-  if git -C "$repo" merge-base --is-ancestor "$ancestor" "$descendant"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        %s is not an ancestor of %s\n' "$name" "$ancestor" "$descendant"
-  fi
-}
-
-rebase_state_exists() {
-  local wt="$1" state path
-  for state in rebase-merge rebase-apply; do
-    path="$(git -C "$wt" rev-parse --git-path "$state" 2>/dev/null)" || continue
-    [[ "$path" == /* ]] || path="$wt/$path"
-    if [[ -d "$path" ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
-rebase_state_dir() {
-  local wt="$1" state path
-  for state in rebase-merge rebase-apply; do
-    path="$(git -C "$wt" rev-parse --git-path "$state" 2>/dev/null)" || continue
-    [[ "$path" == /* ]] || path="$wt/$path"
-    if [[ -d "$path" ]]; then
-      printf '%s\n' "$path"
-      return 0
-    fi
-  done
-  return 1
-}
-
-assert_rebase_in_progress() {
-  local wt="$1" name="$2"
-  if rebase_state_exists "$wt"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        no rebase-merge/rebase-apply state in: %s\n' "$name" "$wt"
-  fi
-}
-
-assert_no_rebase_in_progress() {
-  local wt="$1" name="$2"
-  if rebase_state_exists "$wt"; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        rebase state still present in: %s\n' "$name" "$wt"
-  else
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  fi
-}
+ISSUE=topic
+ROOT=""
+MAIN=""
+WT=""
+PRE=""        # the branch tip the world was built with, before any tool step
+BASE=""       # origin/main at the end of the fixture
+END=""        # HEAD at the end of the fixture
+EXTERNAL=""   # a commit an outsider pushed to the remote branch
+UNEXPECTED="" # a local rewrite no restack authorized
+RESTACKED=""  # the head a completed restack authorized before a rewrite replaced it
 
 make_repo() {
   local repo="$1"
@@ -156,590 +63,397 @@ make_repo() {
   git -C "$repo" config user.email test@example.com
   git -C "$repo" config user.name Test
   git -C "$repo" config commit.gpgsign false
-  printf 'orig\n' > "$repo/file.txt"
-  # A second tracked file no rebase in this suite touches, so a test can dirty
-  # the worktree without touching the conflicting path.
-  printf 'orig\n' > "$repo/other.txt"
+  printf 'orig\n' >"$repo/file.txt"
+  # A second tracked file no rebase here touches, so a step can dirty the
+  # worktree without touching the conflicting path.
+  printf 'orig\n' >"$repo/other.txt"
   git -C "$repo" add file.txt other.txt
   git -C "$repo" commit -q -m base
-  # Pin the historical sibling trees/ base so this file's path assertions stay
-  # explicit; default base-dir resolution is covered by worktree_base_dir.sh.
-  printf 'WORKTREE_BASE_DIR="../trees"\n' > "$repo/.env.local"
+  printf 'WORKTREE_BASE_DIR="../trees"\n' >"$repo/.env.local"
 }
 
-# Build a main+origin pair whose issue worktree diverges from origin/main on
-# the same line of file.txt, so a reuse rebase genuinely conflicts.
-make_conflict_pair() {
-  local root="$1" issue="$2"
-  make_repo "$root/main"
-  git init -q --bare "$root/origin.git"
-  git -C "$root/main" remote add origin "$root/origin.git"
-  git -C "$root/main" push -q -u origin main
-  # Create through the script so reuse exercises the script's own worktree.
-  (cd "$root/main" && "$WORKTREE_SCRIPT" create "$issue" >/dev/null 2>&1)
-  local wt="$root/trees/$issue"
-  printf 'feature\n' > "$wt/file.txt"
-  git -C "$wt" add file.txt
-  git -C "$wt" commit -q -m 'feature edit'
-  printf 'main-side\n' > "$root/main/file.txt"
-  git -C "$root/main" add file.txt
-  git -C "$root/main" commit -q -m 'main edit'
-  git -C "$root/main" push -q origin main
+# A main+origin pair whose issue worktree was created through the script.
+make_pair() {
+  make_repo "$MAIN"
+  git init -q --bare "$ROOT/origin.git"
+  git -C "$MAIN" remote add origin "$ROOT/origin.git"
+  git -C "$MAIN" push -q -u origin main
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" >/dev/null 2>&1)
 }
 
-make_published_clean_pair() {
-  local root="$1" issue="$2"
-  make_repo "$root/main"
-  git init -q --bare "$root/origin.git"
-  git -C "$root/main" remote add origin "$root/origin.git"
-  git -C "$root/main" push -q -u origin main
-  (cd "$root/main" && "$WORKTREE_SCRIPT" create "$issue" >/dev/null 2>&1)
-  local wt="$root/trees/$issue"
-  printf 'feature\n' > "$wt/feature.txt"
-  git -C "$wt" add feature.txt
-  git -C "$wt" commit -q -m 'feature edit'
-  git -C "$wt" push -q origin "HEAD:refs/heads/$issue"
-  printf 'advanced\n' > "$root/main/main-advanced.txt"
-  git -C "$root/main" add main-advanced.txt
-  git -C "$root/main" commit -q -m 'advance main'
-  git -C "$root/main" push -q origin main
+commit_main() {
+  local file="$1" content="$2"
+  printf '%s\n' "$content" >"$MAIN/$file"
+  git -C "$MAIN" add "$file"
+  git -C "$MAIN" commit -q -m "main: $file"
+  git -C "$MAIN" push -q origin main
 }
 
-# Build the production-shaped case: the first local commit is
-# already represented (with further edits) on main, so resolving its conflict
-# to current-main bytes makes it empty; a later refresh-only commit must still
-# replay after the guarded skip.
-make_merged_then_refresh_pair() {
-  local root="$1" issue="$2"
-  make_repo "$root/main"
-  git init -q --bare "$root/origin.git"
-  git -C "$root/main" remote add origin "$root/origin.git"
-  git -C "$root/main" push -q -u origin main
-  (cd "$root/main" && "$WORKTREE_SCRIPT" create "$issue" >/dev/null 2>&1)
-  local wt="$root/trees/$issue"
-  printf 'already merged\n' > "$wt/file.txt"
-  git -C "$wt" add file.txt
-  git -C "$wt" commit -q -m 'already merged generated edit'
-  printf 'refresh only\n' > "$wt/refresh-only.txt"
-  git -C "$wt" add refresh-only.txt
-  git -C "$wt" commit -q -m 'refresh generated assets'
-  git -C "$wt" push -q origin "HEAD:refs/heads/$issue"
-  printf 'already merged plus main follow-up\n' > "$root/main/file.txt"
-  git -C "$root/main" add file.txt
-  git -C "$root/main" commit -q -m 'merge equivalent and follow up'
-  git -C "$root/main" push -q origin main
+commit_wt() {
+  local file="$1" content="$2"
+  printf '%s\n' "$content" >"$WT/$file"
+  git -C "$WT" add "$file"
+  git -C "$WT" commit -q -m "wt: $file"
 }
+
+tool() {
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" "$@" >/dev/null 2>&1) || true
+}
+
+remote_oid() {
+  git --git-dir="$ROOT/origin.git" rev-parse -q --verify "refs/heads/$ISSUE" 2>/dev/null || true
+}
+
+# An outsider's commit on top of the remote branch: the tree it already has,
+# a parent the local branch never saw as a tip.
+external_commit() {
+  local old="" tree=""
+  old="$(remote_oid)"
+  tree="$(git --git-dir="$ROOT/origin.git" rev-parse "${old}^{tree}")"
+  GIT_AUTHOR_NAME=External GIT_AUTHOR_EMAIL=external@example.com \
+    GIT_COMMITTER_NAME=External GIT_COMMITTER_EMAIL=external@example.com \
+    git --git-dir="$ROOT/origin.git" commit-tree "$tree" -p "$old" -m 'external movement'
+}
+
+paused_state_dir() {
+  local state path
+  for state in rebase-merge rebase-apply; do
+    path="$(git -C "$WT" rev-parse --git-path "$state" 2>/dev/null)" || continue
+    [[ "$path" == /* ]] || path="$WT/$path"
+    if [[ -d "$path" ]]; then
+      printf '%s\n' "$path"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# The step vocabulary. The first word of a fixture builds the world; the
+# rest drive it.
+step() {
+  case "$1" in
+    # The issue worktree and origin/main edit the same line of file.txt, so
+    # a reuse rebase genuinely conflicts.
+    conflict)
+      make_pair
+      commit_wt file.txt feature
+      commit_main file.txt main-side
+      ;;
+    # The issue branch is published and main advanced on a file it never
+    # touched: a reuse rebase is clean.
+    clean)
+      make_pair
+      commit_wt feature.txt feature
+      git -C "$WT" push -q origin "HEAD:refs/heads/$ISSUE"
+      commit_main main-advanced.txt advanced
+      ;;
+    # The first issue commit is already represented on main with a further
+    # edit, so resolving it to main's bytes makes it empty; a refresh-only
+    # commit follows it.
+    merged)
+      make_pair
+      commit_wt file.txt 'already merged'
+      commit_wt refresh-only.txt 'refresh only'
+      git -C "$WT" push -q origin "HEAD:refs/heads/$ISSUE"
+      commit_main file.txt 'already merged plus main follow-up'
+      ;;
+    # An unpublished branch with one commit behind an advanced main.
+    plain)
+      make_pair
+      commit_wt fix.txt fix
+      commit_main main-advanced.txt advanced
+      ;;
+    publish) git -C "$WT" push -q origin "HEAD:refs/heads/$ISSUE" ;;
+    restack) tool create "$ISSUE" --restack ;;
+    reuse) tool create "$ISSUE" --reuse ;;
+    continue) tool restack continue "$ISSUE" ;;
+    skip) tool restack skip "$ISSUE" ;;
+    push) tool push "$ISSUE" ;;
+    resolve)
+      printf 'resolved\n' >"$WT/file.txt"
+      git -C "$WT" add file.txt
+      ;;
+    resolve-main)
+      cp "$MAIN/file.txt" "$WT/file.txt"
+      git -C "$WT" add file.txt
+      ;;
+    # The record of a paused restack from before token binding.
+    unbind)
+      git -C "$WT" config --worktree --unset-all kendex-restack.pending
+      git -C "$WT" config --worktree --unset-all kendex-restack.stateToken
+      rm -f "$(paused_state_dir)/kendex-restack-token"
+      ;;
+    tamper-token) printf 'tampered\n' >"$(paused_state_dir)/kendex-restack-token" ;;
+    wrong-branch) git -C "$WT" config --worktree kendex-restack.branch unrelated-branch ;;
+    advance-main) commit_main main-advanced-twice.txt 'advanced twice' ;;
+    dirty-other) printf 'edited after staging\n' >"$WT/other.txt" ;;
+    raw-abort) git -C "$WT" rebase --abort ;;
+    raw-quit) git -C "$WT" rebase --quit ;;
+    raw-checkout) git -C "$WT" checkout -f "$ISSUE" >/dev/null 2>&1 ;;
+    commit-later) commit_wt later.txt later ;;
+    move-remote)
+      EXTERNAL="$(external_commit)"
+      git --git-dir="$ROOT/origin.git" update-ref "refs/heads/$ISSUE" "$EXTERNAL"
+      ;;
+    local-rewrite)
+      RESTACKED="$(git -C "$WT" rev-parse HEAD)"
+      UNEXPECTED="$(git -C "$WT" commit-tree "$(git -C "$WT" rev-parse 'origin/main^{tree}')" -p origin/main -m 'unexpected local rewrite')"
+      git -C "$WT" reset -q --hard "$UNEXPECTED"
+      ;;
+    bad-mkdirs) printf 'WORKTREE_MKDIRS="../outside"\n' >>"$MAIN/.env.local" ;;
+    # A repository outside this one carrying the tool's keys; the row's
+    # target and state are the outsider.
+    foreign)
+      WT="$ROOT/outsider"
+      git init -q -b main "$WT"
+      git -C "$WT" config user.email test@example.com
+      git -C "$WT" config user.name Test
+      printf 'outside\n' >"$WT/file.txt"
+      git -C "$WT" add file.txt
+      git -C "$WT" commit -q -m base
+      git -C "$WT" config extensions.worktreeConfig true
+      git -C "$WT" config --worktree kendex-restack.pending true
+      git -C "$WT" config --worktree kendex-restack.branch main
+      git -C "$WT" config --worktree kendex-restack.originalHead "$(git -C "$WT" rev-parse HEAD)"
+      PRE="$(git -C "$WT" rev-parse HEAD)"
+      ;;
+    *)
+      echo "UNKNOWN-STEP: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+build() {
+  local word
+  ROOT="$TMP_ROOT/$1"
+  shift
+  MAIN="$ROOT/main"
+  WT="$ROOT/trees/$ISSUE"
+  PRE="" BASE="" END="" EXTERNAL="" UNEXPECTED="" RESTACKED=""
+  for word in "$@"; do
+    step "$word"
+    [[ -n "$PRE" ]] || PRE="$(git -C "$WT" rev-parse HEAD)"
+  done
+  BASE="$(git -C "$MAIN" rev-parse origin/main)"
+  END="$(git -C "$WT" rev-parse HEAD)"
+}
+
+# --- rendering ------------------------------------------------------------------
+
+oid_name() {
+  local oid="$1"
+  if [[ -z "$oid" ]]; then printf -- '-'
+  elif [[ "$oid" == "$PRE" ]]; then printf 'pre'
+  elif [[ "$oid" == "$BASE" ]]; then printf 'base'
+  elif [[ -n "$EXTERNAL" && "$oid" == "$EXTERNAL" ]]; then printf 'external'
+  elif [[ -n "$UNEXPECTED" && "$oid" == "$UNEXPECTED" ]]; then printf 'unexpected'
+  elif [[ -n "$RESTACKED" && "$oid" == "$RESTACKED" ]]; then printf 'restacked'
+  elif [[ "$oid" == "$(git -C "$WT" rev-parse HEAD)" ]]; then printf 'head'
+  elif [[ "$oid" == "$END" ]]; then printf 'end'
+  else printf '%s' "$oid"
+  fi
+}
+
+# Paths and commits by their names. Git's own push report (the remote's
+# path, the ref line, the rejection, its hint) is not the tool's clause and
+# is dropped; the lines the tool relays from git under its "git:" prefix
+# collapse to one marker, their wording being git's.
+alias_text() {
+  sed \
+    -e "s|$WT|<wt>|g" \
+    -e "s|$ROOT|<root>|g" \
+    -e "s|$WORKTREE_SCRIPT|<worktree>|g" \
+    -e "s|$PRE|<pre>|g" \
+    -e "s|$BASE|<base>|g" \
+    -e "s|${EXTERNAL:-NONE}|<external>|g" \
+    -e "s|${UNEXPECTED:-NONE}|<unexpected>|g" \
+    -e '/^To <root>\/origin\.git$/d' \
+    -e '/^error: failed to push/d' \
+    -e '/^hint: /d' \
+    -e "/^branch '.*' set up to track/d" \
+    -e '/^ [!*+] /d' \
+    -e '/^   [0-9a-f][0-9a-f]*\.\.[0-9a-f][0-9a-f]* /d' \
+    -e 's/^  git: .*/  git:.../' |
+    awk 'BEGIN { prev = "" } { if ($0 == "  git:..." && prev == $0) next; prev = $0; print }' |
+    paste -s -d ';' -
+}
+
+worktree_head() {
+  local head
+  head="$(git -C "$WT" rev-parse HEAD)"
+  if [[ "$head" == "$PRE" ]]; then printf 'pre'
+  elif [[ "$head" == "$BASE" ]]; then printf 'base'
+  elif [[ "$head" == "$END" ]]; then printf 'end'
+  elif git -C "$WT" merge-base --is-ancestor "$BASE" "$head"; then printf 'rebased'
+  else printf 'other'
+  fi
+}
+
+restack_keys() {
+  local marker="" key value out=""
+  marker="$(head -n 1 "$(paused_state_dir)/kendex-restack-token" 2>/dev/null || true)"
+  while IFS=' ' read -r key value; do
+    [[ -n "$key" ]] || continue
+    key="${key#kendex-restack.}"
+    case "$key" in
+      expectedremoteoid) key=expected; value="$(oid_name "$value")" ;;
+      originalhead) key=orig; value="$(oid_name "$value")" ;;
+      baseoid) key=base; value="$(oid_name "$value")" ;;
+      authorizedhead) key=authorized; value="$(oid_name "$value")" ;;
+      statetoken)
+        key=token
+        if [[ -n "$marker" && "$marker" == "$value" ]]; then value=bound; else value=unbound; fi
+        ;;
+    esac
+    out="$out,$key:$value"
+  done <<<"$(git -C "$WT" config --worktree --get-regexp '^kendex-restack\.' 2>/dev/null || true)"
+  printf '%s' "${out:-,-}" | cut -c2-
+}
+
+state() {
+  local engine=none branch ahead dirty tree file
+  paused_state_dir >/dev/null && engine=rebase
+  branch="$(git -C "$WT" branch --show-current)"
+  ahead="$(git -C "$WT" rev-list --count "$BASE..HEAD" 2>/dev/null || true)"
+  dirty="$(git -C "$WT" status --porcelain | paste -s -d ',' -)"
+  tree="$(git -C "$WT" ls-tree --name-only HEAD | paste -s -d ',' -)"
+  file="$(git -C "$WT" cat-file -p HEAD:file.txt | paste -s -d '/' -)"
+  printf 'engine=%s branch=%s head=%s ahead=%s dirty=%s tree=%s file=%s restack=%s remote=%s' \
+    "$engine" "${branch:-detached}" "$(worktree_head)" "${ahead:--}" "${dirty:--}" "$tree" "$file" \
+    "$(restack_keys)" "$(oid_name "$(remote_oid)")"
+}
+
+# The command runs from the main checkout; @outsider names the foreign
+# repository's path.
+run() {
+  local -a argv
+  local rc=0 i
+  read -r -a argv <<<"$1"
+  for i in "${!argv[@]}"; do
+    [[ "${argv[i]}" == @outsider ]] && argv[i]="$ROOT/outsider"
+  done
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  printf 'rc=%s out=%s err=%s %s' "$rc" \
+    "$(alias_text <"$ROOT/out")" "$(alias_text <"$ROOT/err")" "$(state)"
+}
+
+# --- the expected text ----------------------------------------------------------
+# Each spec word expands to the tool's whole message for that terminal path.
+
+paused_block() {
+  printf '%s' "Error: Rebase onto origin/main stopped on conflicts in <wt>.;Conflicting files:;  $1;The rebase is paused in the worktree so the conflicts can be resolved:;  1. Edit each conflicting file to remove the conflict markers.;  2. git -C \"<wt>\" add <file>    (each resolved file);  3. <worktree> restack continue \"<wt>\"    (repeat if it stops again);     If the resolved commit is empty: <worktree> restack skip \"<wt>\";To back out instead: <worktree> restack abort \"<wt>\""
+}
+
+aborted_block() {
+  printf '%s' "Error: Rebase onto origin/main failed for <wt> (conflicts).;Conflicting files:;  $1;The rebase was aborted; the worktree is back on its pre-rebase state with no conflicts left to resolve.;Recovery options:;  1. Redo the rebase and stop in the conflict state to resolve it:;       <worktree> create topic --restack;  2. Discard local divergence and recreate fresh from origin/main:;       <worktree> remove topic && <worktree> create topic"
+}
+
+refusal() {
+  printf '%s' "Error: Restack state for $1 is $2; refusing to run a rebase control command.;Only an exact paused state created by 'worktree create <ID> --restack' can be continued, skipped, or aborted."
+}
+
+restore_lines() {
+  printf '%s' "To restore the pre-restack branch: <worktree> restack abort \"<wt>\";Recorded branch: topic"
+}
+
+err_text() {
+  local spec="$1"
+  case "$spec" in
+    *+*) printf '%s;%s' "$(err_text "${spec%%+*}")" "$(err_text "${spec#*+}")" ;;
+    skip-rebase) printf '%s' "→ origin/main already contained in topic; skipping rebase" ;;
+    -) printf '' ;;
+    paused) paused_block file.txt ;;
+    aborted) aborted_block file.txt ;;
+    refusal:*) refusal '<wt>' "${spec#refusal:}" ;;
+    conflicts) printf '%s' "  git:...;Restack stopped on conflicts:;  file.txt;Resolve and stage each file, then run: <worktree> restack continue \"<wt>\";$(restore_lines)" ;;
+    unstaged) printf '%s' "  git:...;Restack stopped on unstaged changes, not on unresolved conflicts:;  other.txt;Stage or discard them, then run: <worktree> restack continue \"<wt>\";$(restore_lines)" ;;
+    orphan-moved) printf '%s' "Error: No restack is paused in <wt>, and 'topic' is no longer at its recorded pre-restack commit <pre>; refusing to clear the recorded state.;Something rewrote the branch outside the guarded restack; inspect it before retrying." ;;
+    unreattachable) printf '%s' "  git:...;Error: Could not reattach <wt> to 'topic'; the recorded restack state was preserved.;A 'rebase --quit' or 'cherry-pick --quit' leaves the conflicted index in place: stage or discard the paths Git names above.;Then re-run: <worktree> restack abort \"<wt>\"" ;;
+    remote-moved) printf '%s' "Error: Remote 'origin/topic' changed while the supported restack was paused; refusing to continue or skip.;Abort the guarded restack before reconciling the moved remote." ;;
+    setup-warning) printf '%s' "Error: invalid WORKTREE_MKDIRS entry '../outside'. Use a worktree-relative path without '.', '..', absolute, backslash, or glob metacharacter components.;Warning: Restack was aborted successfully, but worktree setup could not be reapplied. Fix the WORKTREE_* configuration, then run: <worktree> fix-links '<wt>'" ;;
+    lease-rejected) printf '%s' "Error: Push rejected. Remote 'origin/topic' may have changed since the force-with-lease expectation; fetch and rebase/merge before retrying." ;;
+    not-contained) printf '%s' "Error: Remote 'origin/topic' points at <pre>, which is not contained in local branch 'topic'.;Fetch and rebase/merge 'origin/topic' before using worktree push." ;;
+    *) printf 'UNKNOWN-ERR-SPEC:%s' "$spec" ;;
+  esac
+}
+
+out_text() {
+  case "$1" in
+    -) printf '' ;;
+    wt) printf '<wt>' ;;
+    completed) printf 'Completed guarded restack for topic: <wt>' ;;
+    aborted) printf 'Aborted guarded restack and restored topic: <wt>' ;;
+    cleared) printf 'No restack was paused; cleared the recorded restack state for topic: <wt>' ;;
+    *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
+  esac
+}
+
+# --- the rows ---------------------------------------------------------------------
+# label|fixture|command|rc|out|err|state
+ROWS='--reuse over a conflict aborts the rebase and names both recovery paths|conflict|create topic --reuse|1|-|aborted|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt,other.txt file=feature restack=- remote=-
+--restack over a published branch pauses in the conflict with a bound token|conflict publish|create topic --restack|1|-|paused|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt,other.txt file=main-side restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:bound remote=pre
+--restack over an unpublished branch pauses with no remote lease|conflict|create topic --restack|1|-|paused|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt,other.txt file=main-side restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:bound remote=-
+a paused restack from before token binding is refused|conflict publish restack unbind|restack continue topic|1|-|refusal:missing its tool-created pending marker|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt,other.txt file=main-side restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base remote=pre
+a tampered sequencer token is refused|conflict publish restack tamper-token|restack continue topic|1|-|refusal:missing its matching tool-created state token|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt,other.txt file=main-side restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:unbound remote=pre
+a record naming another branch is refused|conflict publish restack wrong-branch|restack skip topic|1|-|refusal:not the rebase recorded by the worktree tool|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt,other.txt file=main-side restack=remote:origin,branch:unrelated-branch,expected:pre,orig:pre,base:base,pending:true,token:bound remote=pre
+continue over an unresolved conflict reports the conflict, not unstaged changes|conflict restack|restack continue topic|1|-|conflicts|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt,other.txt file=main-side restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:bound remote=-
+continue over a clean index with unstaged changes names them and offers no skip|conflict restack resolve dirty-other|restack continue topic|1|-|unstaged|engine=rebase branch=detached head=base ahead=0 dirty=M  file.txt, M other.txt tree=file.txt,other.txt file=main-side restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:bound remote=-
+continue completes the resolved restack and authorizes its exact head|conflict publish restack resolve|restack continue topic|0|completed|-|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt,other.txt file=resolved restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre
+an unpublished completion leaves no push authorization|conflict restack resolve|restack continue topic|0|completed|-|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt,other.txt file=resolved restack=- remote=-
+push after a completed restack publishes the head with the original lease|conflict publish restack resolve continue|push topic|0|-|skip-rebase|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt,other.txt file=resolved restack=- remote=head
+a completed restack cannot be controlled again|conflict publish restack resolve continue push|restack continue topic|1|-|refusal:missing a paused rebase|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt,other.txt file=resolved restack=- remote=head
+skip over a resolved conflict drops that commit and completes|conflict publish restack resolve|restack skip topic|0|completed|-|engine=none branch=topic head=base ahead=0 dirty=- tree=file.txt,other.txt file=main-side restack=remote:origin,branch:topic,expected:pre,authorized:base remote=pre
+skip drops the represented commit and replays the refresh-only commit|merged restack resolve-main|restack skip topic|0|completed|-|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt,other.txt,refresh-only.txt file=already merged plus main follow-up restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre
+abort restores the pre-restack branch and clears the record|conflict publish restack|restack abort topic|0|aborted|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt,other.txt file=feature restack=- remote=pre
+a clean restack authorizes its rewritten head|clean|create topic --restack|0|wt|-|engine=none branch=topic head=rebased ahead=1 dirty=- tree=feature.txt,file.txt,main-advanced.txt,other.txt file=orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre
+a second clean restack rewrites the authorized head and keeps the lease|clean restack advance-main|create topic --restack|0|wt|-|engine=none branch=topic head=rebased ahead=1 dirty=- tree=feature.txt,file.txt,main-advanced-twice.txt,main-advanced.txt,other.txt file=orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre
+continue on a record whose rebase was aborted by hand is refused|conflict restack raw-abort|restack continue topic|1|-|refusal:missing a paused rebase|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt,other.txt file=feature restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:unbound remote=-
+abort on a record whose rebase was aborted by hand clears the record|conflict restack raw-abort|restack abort topic|0|cleared|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt,other.txt file=feature restack=- remote=-
+abort on a record whose branch moved after the hand abort is refused|conflict restack raw-abort commit-later|restack abort topic|1|-|orphan-moved|engine=none branch=topic head=end ahead=2 dirty=- tree=file.txt,later.txt,other.txt file=feature restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:unbound remote=-
+continue with HEAD checked out off the recorded base is refused|conflict restack raw-checkout|restack continue topic|1|-|refusal:stale or no longer based on its recorded commits|engine=rebase branch=topic head=pre ahead=1 dirty=- tree=file.txt,other.txt file=feature restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:bound remote=-
+abort with HEAD checked out off the recorded base restores the branch|conflict restack raw-checkout|restack abort topic|0|aborted|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt,other.txt file=feature restack=- remote=-
+abort after a hand quit refuses to force the checkout over the unmerged index|conflict restack raw-quit|restack abort topic|1|-|unreattachable|engine=none branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt,other.txt file=main-side restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:unbound remote=-
+a foreign repository carrying the keys is refused and untouched|conflict foreign|restack abort @outsider|1|-|refusal:not a registered worktree of this repository|engine=none branch=main head=pre ahead=- dirty=- tree=file.txt file=outside restack=pending:true,branch:main,orig:pre remote=-
+remote movement while paused refuses continue and leaves the remote alone|conflict publish restack resolve move-remote|restack continue topic|1|-|remote-moved|engine=rebase branch=detached head=base ahead=0 dirty=M  file.txt tree=file.txt,other.txt file=main-side restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:bound remote=external
+abort succeeds under a setup config that no longer applies|conflict publish restack resolve move-remote bad-mkdirs|restack abort topic|0|aborted|setup-warning|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt,other.txt file=feature restack=- remote=external
+remote movement after authorization fails the exact lease|clean reuse move-remote|push topic|1|-|skip-rebase+lease-rejected|engine=none branch=topic head=end ahead=1 dirty=- tree=feature.txt,file.txt,main-advanced.txt,other.txt file=orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=external
+a local rewrite is not covered by prior authorization|clean reuse local-rewrite|push topic|1|-|not-contained|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt,main-advanced.txt,other.txt file=orig restack=remote:origin,branch:topic,expected:pre,authorized:restacked remote=pre
+clean reuse rebases onto the advanced main and prints the path|plain|create topic --reuse|0|wt|-|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt,fix.txt,main-advanced.txt,other.txt file=orig restack=- remote=-
+--restack with nothing to rebase is a no-op|plain reuse|create topic --restack|0|wt|-|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt,fix.txt,main-advanced.txt,other.txt file=orig restack=- remote=-
+'
 
 echo "=== worktree create reuse rebase-conflict recovery ==="
+n=0
+while IFS='|' read -r label fixture command rc out err want_state; do
+  [[ -n "$label$fixture$command$rc$out$err$want_state" ]] || continue
+  n=$((n + 1))
+  # shellcheck disable=SC2086
+  build "row-$n" $fixture
+  assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
+done <<<"$ROWS"
 
-# --- Default path: abort, truthful and actionable error ------------------------
-DEFAULT_ROOT="$TMP_ROOT/default"
-make_conflict_pair "$DEFAULT_ROOT" issue-default
-DEFAULT_WT="$DEFAULT_ROOT/trees/issue-default"
-default_pre_head="$(git -C "$DEFAULT_WT" rev-parse HEAD)"
-set +e
-(
-  cd "$DEFAULT_ROOT/main" && \
-    "$WORKTREE_SCRIPT" create issue-default --reuse >"$DEFAULT_ROOT/create.out" 2>"$DEFAULT_ROOT/create.err"
-)
-default_code=$?
-set -e
-default_err="$(cat "$DEFAULT_ROOT/create.err")"
-assert_eq "$default_code" "1" "default reuse with conflict exits 1"
-assert_contains "$default_err" "Conflicting files:" "default error reports captured conflict list"
-assert_contains "$default_err" "file.txt" "default error names the conflicting file"
-assert_not_contains "$default_err" "Resolve manually" "default error does not claim a conflict state the abort erased"
-assert_contains "$default_err" "aborted" "default error says the rebase was aborted"
-assert_contains "$default_err" "--restack" "default error names the --restack recovery path"
-assert_contains "$default_err" "remove issue-default" "default error names the delete/recreate recovery path"
-assert_no_rebase_in_progress "$DEFAULT_WT" "default reuse leaves no rebase in progress"
-assert_eq "$(git -C "$DEFAULT_WT" rev-parse HEAD)" "$default_pre_head" "default reuse restores pre-rebase HEAD"
-assert_eq "$(git -C "$DEFAULT_WT" status --porcelain)" "" "default reuse leaves the worktree clean"
-
-# --- --restack: stop in the conflict state with continue/abort guidance --------
-RESTACK_ROOT="$TMP_ROOT/restack"
-make_conflict_pair "$RESTACK_ROOT" issue-restack
-RESTACK_WT="$RESTACK_ROOT/trees/issue-restack"
-git -C "$RESTACK_WT" push -q origin HEAD:refs/heads/issue-restack
-restack_remote_before="$(git --git-dir="$RESTACK_ROOT/origin.git" rev-parse refs/heads/issue-restack)"
-set +e
-(
-  cd "$RESTACK_ROOT/main" && \
-    "$WORKTREE_SCRIPT" create issue-restack --restack >"$RESTACK_ROOT/create.out" 2>"$RESTACK_ROOT/create.err"
-)
-restack_code=$?
-set -e
-restack_err="$(cat "$RESTACK_ROOT/create.err")"
-assert_eq "$restack_code" "1" "--restack reuse with conflict exits 1"
-assert_rebase_in_progress "$RESTACK_WT" "--restack leaves the rebase paused in the conflict state"
-assert_eq "$(git -C "$RESTACK_WT" diff --name-only --diff-filter=U)" "file.txt" "--restack leaves file.txt unmerged for resolution"
-assert_contains "$restack_err" "file.txt" "--restack error names the conflicting file"
-assert_contains "$restack_err" "add <file>" "--restack error documents per-file staging"
-assert_contains "$restack_err" "restack continue" "--restack error documents the guarded continue command"
-assert_contains "$restack_err" "restack skip" "--restack error documents the guarded empty-commit skip command"
-assert_contains "$restack_err" "restack abort" "--restack error documents the guarded abort escape hatch"
-assert_not_contains "$restack_err" "rebase --continue" "--restack no longer prescribes a policy-rejected raw continue command"
-assert_not_contains "$restack_err" "rebase --abort" "--restack no longer prescribes a policy-rejected raw abort command"
-
-RESTACK_STATE_DIR="$(rebase_state_dir "$RESTACK_WT")"
-assert_eq "$(cat "$RESTACK_STATE_DIR/kendex-restack-token")" "$(git -C "$RESTACK_WT" config --worktree --get kendex-restack.stateToken)" "published paused restack binds config to the Git sequencer state"
-
-# A state from before token binding is not authorized. Restore the current
-# markers after the refusal so the documented recovery path remains the control.
-restack_state_token="$(git -C "$RESTACK_WT" config --worktree --get kendex-restack.stateToken)"
-git -C "$RESTACK_WT" config --worktree --unset-all kendex-restack.pending
-git -C "$RESTACK_WT" config --worktree --unset-all kendex-restack.stateToken
-rm -f "$RESTACK_STATE_DIR/kendex-restack-token"
-set +e
-(cd "$RESTACK_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-restack >/dev/null 2>"$RESTACK_ROOT/pre-token.err")
-pre_token_code=$?
-set -e
-assert_eq "$pre_token_code" "1" "a paused restack without token binding is refused"
-assert_contains "$(cat "$RESTACK_ROOT/pre-token.err")" "pending marker" "the refusal names the missing authorization"
-git -C "$RESTACK_WT" config --worktree kendex-restack.pending true
-git -C "$RESTACK_WT" config --worktree kendex-restack.stateToken "$restack_state_token"
-printf '%s\n' "$restack_state_token" >"$RESTACK_STATE_DIR/kendex-restack-token"
-
-# The documented recovery path must actually work end to end.
-printf 'resolved\n' > "$RESTACK_WT/file.txt"
-git -C "$RESTACK_WT" add file.txt
-resolved_out=$(cd "$RESTACK_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-restack 2>"$RESTACK_ROOT/resolved.err")
-assert_contains "$resolved_out" "Completed guarded restack" "guarded continue completes the resolved restack"
-assert_is_ancestor "$RESTACK_WT" origin/main HEAD "resolved restack branch contains origin/main"
-assert_eq "$(cat "$RESTACK_WT/file.txt")" "resolved" "resolved restack keeps the manual resolution"
-assert_eq "$(git -C "$RESTACK_WT" config --worktree --get kendex-restack.expectedRemoteOid)" "$restack_remote_before" "resolved restack preserves the exact pre-rewrite remote lease"
-assert_eq "$(git -C "$RESTACK_WT" config --worktree --get kendex-restack.authorizedHead)" "$(git -C "$RESTACK_WT" rev-parse HEAD)" "resolved restack authorizes only its exact rewritten head"
-
-set +e
-(
-  cd "$RESTACK_ROOT/main" && \
-    "$WORKTREE_SCRIPT" push issue-restack >"$RESTACK_ROOT/push.out" 2>"$RESTACK_ROOT/push.err"
-)
-restack_push_code=$?
-set -e
-assert_eq "$restack_push_code" "0" "resolved supported restack pushes with its exact force-with-lease"
-assert_eq "$(git --git-dir="$RESTACK_ROOT/origin.git" rev-parse refs/heads/issue-restack)" "$(git -C "$RESTACK_WT" rev-parse HEAD)" "resolved restack push publishes the rewritten head"
-assert_eq "$(git -C "$RESTACK_WT" config --worktree --get kendex-restack.authorizedHead 2>/dev/null || true)" "" "successful push consumes restack authorization"
-
-# A completed restack cannot be controlled again after its sequencer state is
-# gone.
-set +e
-(cd "$RESTACK_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-restack >/dev/null 2>"$RESTACK_ROOT/missing-state.err")
-missing_state_code=$?
-set -e
-assert_eq "$missing_state_code" "1" "guarded continue rejects missing rebase state"
-assert_contains "$(cat "$RESTACK_ROOT/missing-state.err")" "missing a paused rebase" "missing-state rejection is explicit"
-
-# Unpublished branches have no remote OID. The pending marker and state token
-# bind their recovery, then disappear without force-push authorization.
-UNPUBLISHED_ROOT="$TMP_ROOT/unpublished"
-make_conflict_pair "$UNPUBLISHED_ROOT" issue-unpublished
-UNPUBLISHED_WT="$UNPUBLISHED_ROOT/trees/issue-unpublished"
-set +e
-(cd "$UNPUBLISHED_ROOT/main" && "$WORKTREE_SCRIPT" create issue-unpublished --restack >/dev/null 2>"$UNPUBLISHED_ROOT/restack.err")
-unpublished_restack_code=$?
-set -e
-assert_eq "$unpublished_restack_code" "1" "unpublished restack pauses on conflict"
-assert_eq "$(git -C "$UNPUBLISHED_WT" config --worktree --get kendex-restack.pending)" "true" "unpublished paused restack records an explicit pending marker"
-UNPUBLISHED_STATE_DIR="$(rebase_state_dir "$UNPUBLISHED_WT")"
-assert_eq "$(cat "$UNPUBLISHED_STATE_DIR/kendex-restack-token")" "$(git -C "$UNPUBLISHED_WT" config --worktree --get kendex-restack.stateToken)" "unpublished paused restack binds config to the Git sequencer state"
-printf 'resolved unpublished\n' > "$UNPUBLISHED_WT/file.txt"
-git -C "$UNPUBLISHED_WT" add file.txt
-unpublished_out="$(cd "$UNPUBLISHED_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-unpublished 2>"$UNPUBLISHED_ROOT/continue.err")"
-assert_contains "$unpublished_out" "Completed guarded restack" "guarded continue completes an unpublished restack"
-assert_eq "$(git -C "$UNPUBLISHED_WT" config --worktree --get-regexp '^kendex-restack\.' 2>/dev/null || true)" "" "unpublished completion clears pending state without force-push authorization"
-assert_is_ancestor "$UNPUBLISHED_WT" origin/main HEAD "unpublished guarded result contains current main"
-
-# --- Already-merged empty commit followed by refresh-only commit ------------
-MERGED_REFRESH_ROOT="$TMP_ROOT/merged-refresh"
-make_merged_then_refresh_pair "$MERGED_REFRESH_ROOT" issue-merged-refresh
-MERGED_REFRESH_WT="$MERGED_REFRESH_ROOT/trees/issue-merged-refresh"
-merged_refresh_remote_before="$(git --git-dir="$MERGED_REFRESH_ROOT/origin.git" rev-parse refs/heads/issue-merged-refresh)"
-set +e
-(cd "$MERGED_REFRESH_ROOT/main" && "$WORKTREE_SCRIPT" create issue-merged-refresh --restack >/dev/null 2>"$MERGED_REFRESH_ROOT/restack.err")
-merged_refresh_restack_code=$?
-set -e
-assert_eq "$merged_refresh_restack_code" "1" "merged-commit restack pauses on the represented edit"
-assert_rebase_in_progress "$MERGED_REFRESH_WT" "merged-commit restack has a real paused rebase"
-cp "$MERGED_REFRESH_ROOT/main/file.txt" "$MERGED_REFRESH_WT/file.txt"
-git -C "$MERGED_REFRESH_WT" add file.txt
-merged_refresh_skip_out="$(cd "$MERGED_REFRESH_ROOT/main" && "$WORKTREE_SCRIPT" restack skip issue-merged-refresh 2>"$MERGED_REFRESH_ROOT/skip.err")"
-assert_contains "$merged_refresh_skip_out" "Completed guarded restack" "guarded skip drops the represented commit and completes the refresh replay"
-assert_no_rebase_in_progress "$MERGED_REFRESH_WT" "guarded skip finishes the rebase"
-assert_eq "$(cat "$MERGED_REFRESH_WT/file.txt")" "already merged plus main follow-up" "guarded skip preserves exact current-main bytes"
-assert_eq "$(cat "$MERGED_REFRESH_WT/refresh-only.txt")" "refresh only" "guarded skip replays the later refresh-only commit"
-assert_is_ancestor "$MERGED_REFRESH_WT" origin/main HEAD "merged-refresh result contains current main"
-assert_eq "$(git -C "$MERGED_REFRESH_WT" config --worktree --get kendex-restack.expectedRemoteOid)" "$merged_refresh_remote_before" "merged-refresh result preserves the exact pre-rewrite remote lease"
-assert_eq "$(git -C "$MERGED_REFRESH_WT" config --worktree --get kendex-restack.authorizedHead)" "$(git -C "$MERGED_REFRESH_WT" rev-parse HEAD)" "merged-refresh result authorizes only the exact rewritten head"
-(cd "$MERGED_REFRESH_ROOT/main" && "$WORKTREE_SCRIPT" push issue-merged-refresh >/dev/null 2>"$MERGED_REFRESH_ROOT/push.err")
-assert_eq "$(git --git-dir="$MERGED_REFRESH_ROOT/origin.git" rev-parse refs/heads/issue-merged-refresh)" "$(git -C "$MERGED_REFRESH_WT" rev-parse HEAD)" "merged-refresh exact-lease push publishes the refresh-only result"
-
-# --- Wrong or missing tool authorization fails closed ------------------------
-WRONG_STATE_ROOT="$TMP_ROOT/wrong-state"
-make_conflict_pair "$WRONG_STATE_ROOT" issue-wrong-state
-WRONG_STATE_WT="$WRONG_STATE_ROOT/trees/issue-wrong-state"
-git -C "$WRONG_STATE_WT" push -q origin HEAD:refs/heads/issue-wrong-state
-set +e
-(cd "$WRONG_STATE_ROOT/main" && "$WORKTREE_SCRIPT" create issue-wrong-state --restack >/dev/null 2>"$WRONG_STATE_ROOT/restack.err")
-wrong_state_restack_code=$?
-set -e
-assert_eq "$wrong_state_restack_code" "1" "wrong-state fixture starts from a tool-created paused restack"
-WRONG_STATE_DIR="$(rebase_state_dir "$WRONG_STATE_WT")"
-printf 'tampered\n' > "$WRONG_STATE_DIR/kendex-restack-token"
-set +e
-(cd "$WRONG_STATE_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-wrong-state >/dev/null 2>"$WRONG_STATE_ROOT/token.err")
-wrong_token_code=$?
-set -e
-assert_eq "$wrong_token_code" "1" "guarded continue rejects an unauthorized sequencer token"
-assert_contains "$(cat "$WRONG_STATE_ROOT/token.err")" "matching tool-created state token" "unauthorized token rejection names the missing binding"
-assert_rebase_in_progress "$WRONG_STATE_WT" "unauthorized token rejection leaves the rebase untouched"
-git -C "$WRONG_STATE_WT" config --worktree --get kendex-restack.stateToken > "$WRONG_STATE_DIR/kendex-restack-token"
-git -C "$WRONG_STATE_WT" config --worktree kendex-restack.branch unrelated-branch
-set +e
-(cd "$WRONG_STATE_ROOT/main" && "$WORKTREE_SCRIPT" restack skip issue-wrong-state >/dev/null 2>"$WRONG_STATE_ROOT/skip.err")
-wrong_state_code=$?
-set -e
-assert_eq "$wrong_state_code" "1" "guarded skip rejects mismatched recorded branch state"
-assert_contains "$(cat "$WRONG_STATE_ROOT/skip.err")" "not the rebase recorded by the worktree tool" "wrong-state rejection names the metadata mismatch"
-assert_rebase_in_progress "$WRONG_STATE_WT" "wrong-state rejection does not control the unrelated rebase"
-git -C "$WRONG_STATE_WT" config --worktree kendex-restack.branch issue-wrong-state
-(cd "$WRONG_STATE_ROOT/main" && "$WORKTREE_SCRIPT" restack abort issue-wrong-state >/dev/null)
-assert_no_rebase_in_progress "$WRONG_STATE_WT" "guarded abort works after restoring exact recorded state"
-
-# --- Consecutive clean restacks preserve the exact authorization chain -------
-CHAINED_ROOT="$TMP_ROOT/chained-restack"
-make_published_clean_pair "$CHAINED_ROOT" issue-chained-restack
-CHAINED_WT="$CHAINED_ROOT/trees/issue-chained-restack"
-chained_remote_before="$(git --git-dir="$CHAINED_ROOT/origin.git" rev-parse refs/heads/issue-chained-restack)"
-(cd "$CHAINED_ROOT/main" && "$WORKTREE_SCRIPT" create issue-chained-restack --restack >/dev/null 2>"$CHAINED_ROOT/first-restack.err")
-chained_first_head="$(git -C "$CHAINED_WT" rev-parse HEAD)"
-assert_eq "$(git -C "$CHAINED_WT" config --worktree --get kendex-restack.authorizedHead)" "$chained_first_head" "first clean restack authorizes its rewritten head"
-
-printf 'advanced twice\n' > "$CHAINED_ROOT/main/main-advanced-twice.txt"
-git -C "$CHAINED_ROOT/main" add main-advanced-twice.txt
-git -C "$CHAINED_ROOT/main" commit -q -m 'advance main again'
-git -C "$CHAINED_ROOT/main" push -q origin main
-set +e
-(
-  cd "$CHAINED_ROOT/main" && \
-    "$WORKTREE_SCRIPT" create issue-chained-restack --restack >"$CHAINED_ROOT/second-restack.out" 2>"$CHAINED_ROOT/second-restack.err"
-)
-chained_second_code=$?
-set -e
-chained_second_head="$(git -C "$CHAINED_WT" rev-parse HEAD)"
-assert_eq "$chained_second_code" "0" "second clean restack accepts the preserved exact-match authorization"
-assert_ne "$chained_second_head" "$chained_first_head" "second clean restack rewrites the previously authorized head"
-assert_is_ancestor "$CHAINED_WT" origin/main HEAD "second clean restack contains the latest origin/main"
-assert_eq "$(git -C "$CHAINED_WT" config --worktree --get kendex-restack.expectedRemoteOid)" "$chained_remote_before" "consecutive restacks retain the original exact remote lease"
-assert_eq "$(git -C "$CHAINED_WT" config --worktree --get kendex-restack.authorizedHead)" "$chained_second_head" "second clean restack authorizes only its rewritten head"
-
-set +e
-(
-  cd "$CHAINED_ROOT/main" && \
-    "$WORKTREE_SCRIPT" push issue-chained-restack >"$CHAINED_ROOT/push.out" 2>"$CHAINED_ROOT/push.err"
-)
-chained_push_code=$?
-set -e
-assert_eq "$chained_push_code" "0" "consecutive clean restacks push with the original exact lease"
-assert_eq "$(git --git-dir="$CHAINED_ROOT/origin.git" rev-parse refs/heads/issue-chained-restack)" "$chained_second_head" "consecutive restack push publishes the final rewritten head"
-assert_eq "$(git -C "$CHAINED_WT" config --worktree --get kendex-restack.authorizedHead 2>/dev/null || true)" "" "consecutive restack push consumes authorization"
-
-# --- A real conflict outranks the unstaged arm --------------------------------
-# `git diff --name-only` lists unmerged paths too, so on a conflicted pause both
-# arms of report_paused_restack match and only their order keeps the conflict
-# message. Nothing else in the repo asserts it, so swapping them would ship the
-# wrong cause green.
-PRECEDENCE_ROOT="$TMP_ROOT/precedence"
-make_conflict_pair "$PRECEDENCE_ROOT" issue-precedence
-PRECEDENCE_WT="$PRECEDENCE_ROOT/trees/issue-precedence"
-set +e
-(cd "$PRECEDENCE_ROOT/main" && "$WORKTREE_SCRIPT" create issue-precedence --restack >/dev/null 2>&1)
-(cd "$PRECEDENCE_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-precedence >/dev/null 2>"$PRECEDENCE_ROOT/continue.err")
-precedence_code=$?
-set -e
-precedence_err="$(cat "$PRECEDENCE_ROOT/continue.err")"
-assert_ne "$(git -C "$PRECEDENCE_WT" ls-files -u)" "" "the precedence fixture leaves the index unmerged"
-assert_eq "$precedence_code" "1" "guarded continue over an unresolved conflict exits 1"
-assert_contains "$precedence_err" "Restack stopped on conflicts:" "an unmerged index is reported as a conflict"
-assert_contains "$precedence_err" "file.txt" "the conflict report names the conflicting file"
-assert_not_contains "$precedence_err" "unstaged changes" "an unmerged index is never reported as unstaged changes"
-
-# --- A clean index with unstaged changes is not an unresolved conflict --------
-# Git refuses to continue while a tracked file differs from the index, and says
-# "You must edit all merge conflicts" whatever the real cause. Repeating that
-# against an index with no unmerged paths sends the resolver back to files it
-# already staged, and the empty-commit skip beside it would drop the commit
-# whose conflicts they just resolved.
-UNSTAGED_ROOT="$TMP_ROOT/unstaged"
-make_conflict_pair "$UNSTAGED_ROOT" issue-unstaged
-UNSTAGED_WT="$UNSTAGED_ROOT/trees/issue-unstaged"
-set +e
-(cd "$UNSTAGED_ROOT/main" && "$WORKTREE_SCRIPT" create issue-unstaged --restack >/dev/null 2>&1)
-set -e
-printf 'resolved\n' > "$UNSTAGED_WT/file.txt"
-git -C "$UNSTAGED_WT" add file.txt
-printf 'edited after staging\n' > "$UNSTAGED_WT/other.txt"
-assert_eq "$(git -C "$UNSTAGED_WT" ls-files -u)" "" "the unstaged-change fixture leaves no unmerged index entry"
-set +e
-(cd "$UNSTAGED_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-unstaged >/dev/null 2>"$UNSTAGED_ROOT/continue.err")
-unstaged_code=$?
-set -e
-unstaged_err="$(cat "$UNSTAGED_ROOT/continue.err")"
-assert_eq "$unstaged_code" "1" "guarded continue over unstaged changes exits 1"
-assert_contains "$unstaged_err" "unstaged changes" "the refusal names unstaged changes as the real cause"
-assert_contains "$unstaged_err" "other.txt" "the refusal names the unstaged file"
-assert_not_contains "$unstaged_err" "may be empty" "a clean index is not reported as an empty commit"
-assert_not_contains "$unstaged_err" "restack skip" "a clean index does not offer the skip that would drop the resolved commit"
-assert_rebase_in_progress "$UNSTAGED_WT" "the refused continuation leaves the restack paused"
-assert_eq "$(git -C "$UNSTAGED_WT" config --worktree --get kendex-restack.pending)" "true" "the refused continuation keeps its pending authorization"
-git -C "$UNSTAGED_WT" checkout -- other.txt
-unstaged_out=$(cd "$UNSTAGED_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-unstaged 2>"$UNSTAGED_ROOT/resume.err")
-assert_contains "$unstaged_out" "Completed guarded restack" "discarding the unstaged change resumes the same guarded restack"
-assert_eq "$(cat "$UNSTAGED_WT/file.txt")" "resolved" "the resumed restack keeps the resolution staged before the refusal"
-
-# --- A recorded restack whose Git state is gone still has a guarded exit ------
-# Nothing can continue or abort a rebase that is not running, and every control
-# refuses a missing paused state, so without this the tool's own record can only
-# be unset by hand.
-ORPHAN_ROOT="$TMP_ROOT/orphan"
-make_conflict_pair "$ORPHAN_ROOT" issue-orphan
-ORPHAN_WT="$ORPHAN_ROOT/trees/issue-orphan"
-set +e
-(cd "$ORPHAN_ROOT/main" && "$WORKTREE_SCRIPT" create issue-orphan --restack >/dev/null 2>&1)
-set -e
-orphan_original_head="$(git -C "$ORPHAN_WT" config --worktree --get kendex-restack.originalHead)"
-git -C "$ORPHAN_WT" rebase --abort
-assert_no_rebase_in_progress "$ORPHAN_WT" "the out-of-band abort removed the Git rebase state"
-assert_eq "$(git -C "$ORPHAN_WT" config --worktree --get kendex-restack.pending)" "true" "the tool's own restack record outlives the Git state"
-set +e
-orphan_out=$(cd "$ORPHAN_ROOT/main" && "$WORKTREE_SCRIPT" restack abort issue-orphan 2>"$ORPHAN_ROOT/abort.err")
-orphan_code=$?
-set -e
-assert_eq "$orphan_code" "0" "guarded abort exits 0 when only the tool's record is left"
-assert_contains "$orphan_out" "cleared the recorded restack state" "guarded abort clears a record whose paused rebase is gone"
-assert_eq "$(git -C "$ORPHAN_WT" config --worktree --get-regexp '^kendex-restack\.' || true)" "" "guarded abort leaves no kendex-restack key to unset by hand"
-assert_eq "$(git -C "$ORPHAN_WT" branch --show-current)" "issue-orphan" "guarded abort leaves the worktree on its recorded branch"
-assert_eq "$(git -C "$ORPHAN_WT" rev-parse HEAD)" "$orphan_original_head" "guarded abort leaves the branch at its recorded original head"
-
-# A live paused restack whose HEAD was moved off the base still aborts. continue
-# and skip replay onto that base and must refuse, but abort restores the
-# recorded original head from the paused state's own metadata, and refusing it
-# here left raw git as the only way out.
-MOVED_HEAD_ROOT="$TMP_ROOT/moved-head"
-make_conflict_pair "$MOVED_HEAD_ROOT" issue-moved-head
-MOVED_HEAD_WT="$MOVED_HEAD_ROOT/trees/issue-moved-head"
-moved_head_original="$(git -C "$MOVED_HEAD_WT" rev-parse HEAD)"
-set +e
-(cd "$MOVED_HEAD_ROOT/main" && "$WORKTREE_SCRIPT" create issue-moved-head --restack >/dev/null 2>&1)
-set -e
-git -C "$MOVED_HEAD_WT" checkout -f issue-moved-head >/dev/null 2>&1
-assert_rebase_in_progress "$MOVED_HEAD_WT" "the raw checkout leaves the paused rebase in place"
-set +e
-(cd "$MOVED_HEAD_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-moved-head >/dev/null 2>"$MOVED_HEAD_ROOT/continue.err")
-moved_head_continue_code=$?
-set -e
-assert_eq "$moved_head_continue_code" "1" "guarded continue still refuses a HEAD moved off the recorded base"
-assert_contains "$(cat "$MOVED_HEAD_ROOT/continue.err")" "no longer based on its recorded commits" "the continue refusal names the moved base"
-set +e
-moved_head_out=$(cd "$MOVED_HEAD_ROOT/main" && "$WORKTREE_SCRIPT" restack abort issue-moved-head 2>"$MOVED_HEAD_ROOT/abort.err")
-moved_head_abort_code=$?
-set -e
-assert_eq "$moved_head_abort_code" "0" "guarded abort exits 0 with HEAD moved off the recorded base"
-assert_contains "$moved_head_out" "Aborted guarded restack" "guarded abort reports the restored branch"
-assert_no_rebase_in_progress "$MOVED_HEAD_WT" "guarded abort clears the paused rebase"
-assert_eq "$(git -C "$MOVED_HEAD_WT" rev-parse HEAD)" "$moved_head_original" "guarded abort restores the recorded original head"
-assert_eq "$(git -C "$MOVED_HEAD_WT" config --worktree --get-regexp '^kendex-restack\.' || true)" "" "guarded abort leaves no kendex-restack key to unset by hand"
-
-# `--quit` removes Git's state and leaves the index unmerged, so the reattach
-# fails. The refusal must carry Git's own reason and a next step, and must not
-# force the checkout over a resolver's staged work.
-QUIT_ROOT="$TMP_ROOT/quit"
-make_conflict_pair "$QUIT_ROOT" issue-quit
-QUIT_WT="$QUIT_ROOT/trees/issue-quit"
-set +e
-(cd "$QUIT_ROOT/main" && "$WORKTREE_SCRIPT" create issue-quit --restack >/dev/null 2>&1)
-set -e
-git -C "$QUIT_WT" rebase --quit
-assert_no_rebase_in_progress "$QUIT_WT" "the out-of-band quit removed the Git rebase state"
-assert_ne "$(git -C "$QUIT_WT" ls-files -u)" "" "the quit left the index unmerged"
-set +e
-(cd "$QUIT_ROOT/main" && "$WORKTREE_SCRIPT" restack abort issue-quit >/dev/null 2>"$QUIT_ROOT/abort.err")
-quit_code=$?
-set -e
-quit_err="$(cat "$QUIT_ROOT/abort.err")"
-assert_eq "$quit_code" "1" "an unreattachable worktree refuses instead of forcing the checkout"
-assert_contains "$quit_err" "git: " "the refusal carries Git's own reason"
-assert_contains "$quit_err" "file.txt" "Git's reason names the unmerged path"
-assert_contains "$quit_err" "restack abort" "the refusal names the next step"
-assert_eq "$(git -C "$QUIT_WT" config --worktree --get kendex-restack.pending)" "true" "the refused abort preserves the recorded state"
-assert_ne "$(git -C "$QUIT_WT" ls-files -u)" "" "the refused abort leaves the staged resolution alone"
-
-# A foreign repository carrying the same keys is never written to. The orphan
-# block runs before validate_pending_restack_state, so its own registration
-# check is the only thing containing it.
-FOREIGN_ROOT="$TMP_ROOT/foreign"
-make_conflict_pair "$FOREIGN_ROOT" issue-foreign
-git init -q -b main "$FOREIGN_ROOT/outsider"
-git -C "$FOREIGN_ROOT/outsider" config user.email test@example.com
-git -C "$FOREIGN_ROOT/outsider" config user.name Test
-printf 'outside\n' > "$FOREIGN_ROOT/outsider/file.txt"
-git -C "$FOREIGN_ROOT/outsider" add file.txt
-git -C "$FOREIGN_ROOT/outsider" commit -q -m base
-git -C "$FOREIGN_ROOT/outsider" config extensions.worktreeConfig true
-git -C "$FOREIGN_ROOT/outsider" config --worktree kendex-restack.pending true
-git -C "$FOREIGN_ROOT/outsider" config --worktree kendex-restack.branch main
-git -C "$FOREIGN_ROOT/outsider" config --worktree kendex-restack.originalHead "$(git -C "$FOREIGN_ROOT/outsider" rev-parse HEAD)"
-set +e
-(cd "$FOREIGN_ROOT/main" && "$WORKTREE_SCRIPT" restack abort "$FOREIGN_ROOT/outsider" >/dev/null 2>"$FOREIGN_ROOT/abort.err")
-foreign_code=$?
-set -e
-assert_eq "$foreign_code" "1" "an unregistered repository is refused by the orphan path"
-assert_contains "$(cat "$FOREIGN_ROOT/abort.err")" "not a registered worktree" "the refusal names the containment rule"
-assert_eq "$(git -C "$FOREIGN_ROOT/outsider" config --worktree --get kendex-restack.pending)" "true" "the foreign repository's keys survive"
-
-# A record whose branch no longer matches is refused, not silently dropped.
-MOVED_ORPHAN_ROOT="$TMP_ROOT/orphan-moved"
-make_conflict_pair "$MOVED_ORPHAN_ROOT" issue-orphan-moved
-MOVED_ORPHAN_WT="$MOVED_ORPHAN_ROOT/trees/issue-orphan-moved"
-set +e
-(cd "$MOVED_ORPHAN_ROOT/main" && "$WORKTREE_SCRIPT" create issue-orphan-moved --restack >/dev/null 2>&1)
-set -e
-git -C "$MOVED_ORPHAN_WT" rebase --abort
-printf 'later\n' > "$MOVED_ORPHAN_WT/later.txt"
-git -C "$MOVED_ORPHAN_WT" add later.txt
-git -C "$MOVED_ORPHAN_WT" commit -q -m 'work committed after the restack record'
-set +e
-(cd "$MOVED_ORPHAN_ROOT/main" && "$WORKTREE_SCRIPT" restack abort issue-orphan-moved >/dev/null 2>"$MOVED_ORPHAN_ROOT/abort.err")
-moved_orphan_code=$?
-set -e
-assert_eq "$moved_orphan_code" "1" "a record whose branch moved off its recorded head is refused"
-assert_contains "$(cat "$MOVED_ORPHAN_ROOT/abort.err")" "no longer at its recorded pre-restack commit" "the refusal names why the record cannot be cleared"
-assert_eq "$(git -C "$MOVED_ORPHAN_WT" config --worktree --get kendex-restack.pending)" "true" "the refused abort preserves the recorded state"
-
-# --- Remote movement while conflict resolution is pending fails closed -------
-PENDING_MOVE_ROOT="$TMP_ROOT/pending-move"
-make_conflict_pair "$PENDING_MOVE_ROOT" issue-pending-move
-PENDING_MOVE_WT="$PENDING_MOVE_ROOT/trees/issue-pending-move"
-git -C "$PENDING_MOVE_WT" push -q origin HEAD:refs/heads/issue-pending-move
-set +e
-(cd "$PENDING_MOVE_ROOT/main" && "$WORKTREE_SCRIPT" create issue-pending-move --restack >/dev/null 2>"$PENDING_MOVE_ROOT/restack.err")
-pending_restack_code=$?
-set -e
-assert_eq "$pending_restack_code" "1" "pending-movement setup pauses the supported restack"
-printf 'resolved\n' > "$PENDING_MOVE_WT/file.txt"
-git -C "$PENDING_MOVE_WT" add file.txt
-pending_move_old_oid="$(git --git-dir="$PENDING_MOVE_ROOT/origin.git" rev-parse refs/heads/issue-pending-move)"
-pending_move_old_tree="$(git --git-dir="$PENDING_MOVE_ROOT/origin.git" rev-parse "${pending_move_old_oid}^{tree}")"
-pending_move_external="$(GIT_AUTHOR_NAME=External GIT_AUTHOR_EMAIL=external@example.com GIT_COMMITTER_NAME=External GIT_COMMITTER_EMAIL=external@example.com git --git-dir="$PENDING_MOVE_ROOT/origin.git" commit-tree "$pending_move_old_tree" -p "$pending_move_old_oid" -m 'external pending movement')"
-git --git-dir="$PENDING_MOVE_ROOT/origin.git" update-ref refs/heads/issue-pending-move "$pending_move_external"
-set +e
-(cd "$PENDING_MOVE_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-pending-move >/dev/null 2>"$PENDING_MOVE_ROOT/continue.err")
-pending_move_code=$?
-set -e
-assert_eq "$pending_move_code" "1" "remote movement during conflict resolution refuses guarded continuation"
-assert_contains "$(cat "$PENDING_MOVE_ROOT/continue.err")" "changed while the supported restack was paused" "pending remote movement reports the invalidated continuation"
-assert_rebase_in_progress "$PENDING_MOVE_WT" "rejected stale continuation leaves the rebase paused"
-assert_eq "$(git --git-dir="$PENDING_MOVE_ROOT/origin.git" rev-parse refs/heads/issue-pending-move)" "$pending_move_external" "pending remote movement remains untouched"
-printf 'WORKTREE_MKDIRS="../outside"\n' >>"$PENDING_MOVE_ROOT/main/.env.local"
-set +e
-(cd "$PENDING_MOVE_ROOT/main" && "$WORKTREE_SCRIPT" restack abort issue-pending-move >"$PENDING_MOVE_ROOT/abort.out" 2>"$PENDING_MOVE_ROOT/abort.err")
-pending_abort_code=$?
-set -e
-assert_eq "$pending_abort_code" "0" "guarded abort remains successful when setup config becomes invalid"
-assert_contains "$(cat "$PENDING_MOVE_ROOT/abort.err")" "Restack was aborted successfully" "guarded abort reports post-abort setup failure separately"
-assert_no_rebase_in_progress "$PENDING_MOVE_WT" "guarded abort remains available after remote movement"
-
-# --- Remote movement after authorization still fails the exact lease ---------
-REMOTE_MOVE_ROOT="$TMP_ROOT/remote-move"
-make_published_clean_pair "$REMOTE_MOVE_ROOT" issue-remote-move
-REMOTE_MOVE_WT="$REMOTE_MOVE_ROOT/trees/issue-remote-move"
-(cd "$REMOTE_MOVE_ROOT/main" && "$WORKTREE_SCRIPT" create issue-remote-move --reuse >/dev/null 2>"$REMOTE_MOVE_ROOT/create.err")
-remote_move_old_oid="$(git --git-dir="$REMOTE_MOVE_ROOT/origin.git" rev-parse refs/heads/issue-remote-move)"
-remote_move_old_tree="$(git --git-dir="$REMOTE_MOVE_ROOT/origin.git" rev-parse "${remote_move_old_oid}^{tree}")"
-remote_move_external="$(GIT_AUTHOR_NAME=External GIT_AUTHOR_EMAIL=external@example.com GIT_COMMITTER_NAME=External GIT_COMMITTER_EMAIL=external@example.com git --git-dir="$REMOTE_MOVE_ROOT/origin.git" commit-tree "$remote_move_old_tree" -p "$remote_move_old_oid" -m 'external movement')"
-git --git-dir="$REMOTE_MOVE_ROOT/origin.git" update-ref refs/heads/issue-remote-move "$remote_move_external"
-set +e
-(
-  cd "$REMOTE_MOVE_ROOT/main" && \
-    "$WORKTREE_SCRIPT" push issue-remote-move >"$REMOTE_MOVE_ROOT/push.out" 2>"$REMOTE_MOVE_ROOT/push.err"
-)
-remote_move_code=$?
-set -e
-assert_eq "$remote_move_code" "1" "remote movement after restack authorization rejects the push"
-assert_eq "$(git --git-dir="$REMOTE_MOVE_ROOT/origin.git" rev-parse refs/heads/issue-remote-move)" "$remote_move_external" "exact lease preserves the externally advanced remote"
-assert_contains "$(cat "$REMOTE_MOVE_ROOT/push.err")" "force-with-lease expectation" "remote movement reports exact-lease rejection"
-
-# --- An unrelated local rewrite cannot reuse prior restack authorization ------
-LOCAL_MOVE_ROOT="$TMP_ROOT/local-move"
-make_published_clean_pair "$LOCAL_MOVE_ROOT" issue-local-move
-LOCAL_MOVE_WT="$LOCAL_MOVE_ROOT/trees/issue-local-move"
-(cd "$LOCAL_MOVE_ROOT/main" && "$WORKTREE_SCRIPT" create issue-local-move --reuse >/dev/null 2>"$LOCAL_MOVE_ROOT/create.err")
-local_move_tree="$(git -C "$LOCAL_MOVE_WT" rev-parse "origin/main^{tree}")"
-local_move_unexpected="$(git -C "$LOCAL_MOVE_WT" commit-tree "$local_move_tree" -p origin/main -m 'unexpected local rewrite')"
-git -C "$LOCAL_MOVE_WT" reset -q --hard "$local_move_unexpected"
-local_move_remote_before="$(git --git-dir="$LOCAL_MOVE_ROOT/origin.git" rev-parse refs/heads/issue-local-move)"
-set +e
-(
-  cd "$LOCAL_MOVE_ROOT/main" && \
-    "$WORKTREE_SCRIPT" push issue-local-move >"$LOCAL_MOVE_ROOT/push.out" 2>"$LOCAL_MOVE_ROOT/push.err"
-)
-local_move_code=$?
-set -e
-assert_eq "$local_move_code" "1" "unexpected local rewrite is not covered by prior restack authorization"
-assert_eq "$(git --git-dir="$LOCAL_MOVE_ROOT/origin.git" rev-parse refs/heads/issue-local-move)" "$local_move_remote_before" "unexpected local rewrite leaves remote unchanged"
-assert_contains "$(cat "$LOCAL_MOVE_ROOT/push.err")" "not contained in local branch" "unexpected local rewrite reports divergence"
-
-# --- A suite run under a git hook's environment keeps its own sandbox --------
 # A git hook exports GIT_DIR and GIT_INDEX_FILE at the worktree it fires in,
 # and both outrank -C, so a sibling suite run from that context builds its
 # fixtures at that worktree unless it clears them first: it dies at its first
 # fixture, or worse, lands commits there. The battery a restack is verified
 # with runs beside a live authorization, so one is held here across such a
 # run.
-ENV_ROOT="$TMP_ROOT/env-live"
-make_published_clean_pair "$ENV_ROOT" issue-env-live
-ENV_WT="$ENV_ROOT/trees/issue-env-live"
-(cd "$ENV_ROOT/main" && "$WORKTREE_SCRIPT" create issue-env-live --restack >/dev/null 2>"$ENV_ROOT/restack.err")
-env_head="$(git -C "$ENV_WT" rev-parse HEAD)"
-assert_eq "$(git -C "$ENV_WT" config --worktree --get kendex-restack.authorizedHead)" "$env_head" "restack authorizes the live worktree before a suite runs under its environment"
-env_git_dir="$(git -C "$ENV_WT" rev-parse --absolute-git-dir)"
+build env-live clean restack
+env_git_dir="$(git -C "$WT" rev-parse --absolute-git-dir)"
 env_fingerprint() {
-  git -C "$ENV_WT" log --format=%H
+  git -C "$WT" log --format=%H
   echo '--'
-  git -C "$ENV_WT" ls-files --stage
+  git -C "$WT" ls-files --stage
   echo '--'
-  git -C "$ENV_WT" config --worktree --list
+  git -C "$WT" config --worktree --list
 }
 env_before="$(env_fingerprint)"
 env_suite_rc=0
 env GIT_DIR="$env_git_dir" GIT_INDEX_FILE="$env_git_dir/index" \
-  bash "$TEST_DIR/worktree_push_rebase.sh" >"$ENV_ROOT/suite.out" 2>&1 || env_suite_rc=$?
+  bash "$TEST_DIR/worktree_push_rebase.sh" >"$ROOT/suite.out" 2>&1 || env_suite_rc=$?
 assert_eq "$env_suite_rc" "0" "a sibling suite passes under an exported git environment"
 assert_eq "$(env_fingerprint)" "$env_before" "that suite left the live worktree's log, index and restack authorization untouched"
-
-# --- Clean-rebase reuse unchanged ----------------------------------------------
-CLEAN_ROOT="$TMP_ROOT/clean"
-make_repo "$CLEAN_ROOT/main"
-git init -q --bare "$CLEAN_ROOT/origin.git"
-git -C "$CLEAN_ROOT/main" remote add origin "$CLEAN_ROOT/origin.git"
-git -C "$CLEAN_ROOT/main" push -q -u origin main
-(cd "$CLEAN_ROOT/main" && "$WORKTREE_SCRIPT" create issue-clean >/dev/null 2>&1)
-CLEAN_WT="$CLEAN_ROOT/trees/issue-clean"
-printf 'fix\n' > "$CLEAN_WT/fix.txt"
-git -C "$CLEAN_WT" add fix.txt
-git -C "$CLEAN_WT" commit -q -m 'review fix'
-printf 'advanced\n' > "$CLEAN_ROOT/main/main-advanced.txt"
-git -C "$CLEAN_ROOT/main" add main-advanced.txt
-git -C "$CLEAN_ROOT/main" commit -q -m 'advance main'
-git -C "$CLEAN_ROOT/main" push -q origin main
-clean_pre_head="$(git -C "$CLEAN_WT" rev-parse HEAD)"
-clean_out=$(cd "$CLEAN_ROOT/main" && "$WORKTREE_SCRIPT" create issue-clean --reuse 2>"$CLEAN_ROOT/create.err")
-assert_eq "$clean_out" "$CLEAN_WT" "clean reuse still prints the worktree path"
-assert_ne "$(git -C "$CLEAN_WT" rev-parse HEAD)" "$clean_pre_head" "clean reuse rebased HEAD onto advanced origin/main"
-assert_path_exists "$CLEAN_WT/main-advanced.txt" "clean reuse pulled in the advanced main content"
-assert_is_ancestor "$CLEAN_WT" origin/main HEAD "clean reuse contains origin/main after rebase"
-restack_noop_out=$(cd "$CLEAN_ROOT/main" && "$WORKTREE_SCRIPT" create issue-clean --restack 2>"$CLEAN_ROOT/restack-noop.err")
-assert_eq "$restack_noop_out" "$CLEAN_WT" "--restack is a no-op when no rebase conflict occurs"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
