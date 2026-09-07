@@ -1,165 +1,107 @@
 #!/usr/bin/env bash
-# Tests for the script's timeout handling: the built-in default is
-# 1080s, a caller env override wins, --timeout 0 is refused, and a host
-# without a timeout binary warns and still runs.
+# The CLI launch's time limit: the built-in default, the caller's override
+# by environment and by flag, a zero refused (to GNU timeout it means no
+# limit), and a host without a timeout binary, which warns, launches the CLI
+# directly under the runtime's process-group wrapper and still writes the
+# review. What the launch does to the CLI's process tree is
+# process-tree.test.sh's.
 #
-# What the launch does to the CLI's process tree is process-tree.test.sh's,
-# which builds a CLI with a child of its own and asserts the whole tree goes.
+# The script runs from a hermetic copy of the skill: the checkout's own
+# settings name a timeout, which would stand in for the built-in default. A
+# recording shim named `timeout` sits first on PATH and hands its arguments
+# to the real binary (or runs the command where a host has none), so a row
+# pins the argv the launch executed and not only the line it logged.
+#
+# A row is `label|world|argv|rc|out|err|state`; the world's words are the stub
+# world's (lib/stub-cli-world.bash) plus:
+#   notimeout  a PATH with timeout and gtimeout hidden
+# The state adds:
+#   limit=<N>s  the header's timeout
+#   launch=<the cmd lines>  the timeout binary as `timeout`, the runtime as
+#     `runtime`, its stderr capture as `<stderr>`, the CLI as `claude`
+#   exec=<the argv the shim received>  aliased the same way; `-` when no
+#     timeout ran
 
-set -euo pipefail
+# shellcheck source=lib/stub-cli-world.bash
+. "$(dirname "${BASH_SOURCE[0]}")/lib/stub-cli-world.bash"
 
-# Declare this session as having no model (none), so the cross-model
-# guard neither depends on nor is defeated by the harness running the tests.
-export SECOND_OPINION_CURRENT_MODEL=none
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-# shellcheck source=lib/path-farm.bash
-. "$SCRIPT_DIR/lib/path-farm.bash"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
-
-# --- Deterministic harness-free session -------------------------------------
-# A positively detected single-model harness now beats any contradicting
-# declaration, whatever its source — so a suite cannot neutralize the
-# harness that runs it by exporting an identity. It has to actually not have
-# one. This `ps` stand-in reports the first parent as init, so the ancestor walk
-# finds nothing and the declared identity below is what the script uses. It also
-# makes these suites independent of where they run: same result under Claude
-# Code, under Codex, and in CI.
-_PSBIN="$TMP_ROOT/psbin"
-mkdir -p "$_PSBIN"
-cat > "$_PSBIN/ps" <<'PSSH'
+# The hermetic copy: a repository of its own, no settings file.
+PROJ="$TMP_ROOT/proj"
+mkdir -p "$PROJ/skills"
+git init -q "$PROJ"
+cp -R "$SKILL_DIR" "$PROJ/skills/second-opinion"
+HERMETIC="$PROJ/skills/second-opinion/scripts/second-opinion"
+# The recording shim: its argv appended to the row's record, then the real
+# binary; a host with neither (a stock Mac) runs the command after the four
+# leading arguments. The farm below hides it again.
+REAL_TIMEOUT="$(command -v timeout || command -v gtimeout || true)"
+TBIN="$TMP_ROOT/tbin"
+mkdir -p "$TBIN"
+cat >"$TBIN/timeout" <<SH
 #!/usr/bin/env bash
-mode=""; while [[ $# -gt 0 ]]; do case "$1" in -o) mode="$2"; shift 2 ;; *) shift ;; esac; done
-case "$mode" in ppid=) printf '1\n' ;; comm=) printf 'bash\n' ;; esac
-PSSH
-chmod +x "$_PSBIN/ps"
-PATH="$_PSBIN:$PATH"
-export PATH
-# The process tree is only half the signal; the environment markers are the
-# other half, and this session's are inherited. Drop them too.
-unset CLAUDECODE CLAUDE_CODE CLAUDE_PROJECT_DIR CODEX_SANDBOX \
-      CODEX_SANDBOX_NETWORK_DISABLED PI_CODING_AGENT_DIR OPENCODE \
-      CURSOR_AGENT CURSOR_TRACE_ID
-
-# Hermetic copy: the script resolves PROJECT_ROOT from its own location and
-# loads that project's settings files, so running the in-repo copy leaks the
-# repository's committed kendex.settings.toml (e.g. SECOND_OPINION_TIMEOUT)
-# into a test that pins the BUILT-IN default. Copy the skill to
-# a temp root with no git repo and no settings so only defaults + caller env
-# apply.
-mkdir -p "$TMP_ROOT/proj/skills"
-git init -q "$TMP_ROOT/proj"
-cp -R "$REPO_ROOT/skills/second-opinion" "$TMP_ROOT/proj/skills/second-opinion"
-SECOND_OPINION="$TMP_ROOT/proj/skills/second-opinion/scripts/second-opinion"
-
-mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/work"
-
-# The scope gate needs a git worktree with a non-empty diff, so
-# review runs use `--range HEAD` over an uncommitted change.
-WORK="$TMP_ROOT/work"
-git -C "$WORK" init -q
-git -C "$WORK" config user.email test@example.com
-git -C "$WORK" config user.name test
-printf 'hello\n' > "$WORK/file.txt"
-git -C "$WORK" add file.txt
-git -C "$WORK" -c commit.gpgsign=false commit -q -m init
-printf 'world\n' >> "$WORK/file.txt"
-
-cat > "$TMP_ROOT/bin/codex" <<'SH'
-#!/usr/bin/env bash
-cat >/dev/null
-printf '%s\n' '{"agent":"external-codex","verdict":"pass","summary":"ok","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}'
+printf '%s\\n' "\$*" >>"\$TIMEOUT_RECORD"
+[[ -z "$REAL_TIMEOUT" ]] || exec "$REAL_TIMEOUT" "\$@"
+shift 4
+exec "\$@"
 SH
-chmod +x "$TMP_ROOT/bin/codex"
+chmod +x "$TBIN/timeout"
+PATH="$TBIN:$PATH"
+export PATH
+TIMEOUT_BIN="$TBIN/timeout"
 
-assert_contains() {
-  local file="$1" expected="$2" label="$3"
-  if grep -Fq "$expected" "$file"; then
-    printf 'PASS: %s\n' "$label"
-  else
-    printf 'FAIL: %s\n  expected to find: %s\n  in: %s\n' "$label" "$expected" "$file" >&2
-    sed -n '1,80p' "$file" >&2 || true
-    exit 1
-  fi
-}
-
-default_stderr="$TMP_ROOT/default.stderr"
-resolved_timeout="$(command -v timeout || command -v gtimeout || true)"
-PATH="$TMP_ROOT/bin:$PATH" \
-  SECOND_OPINION_TARGET=codex \
-  SECOND_OPINION_CODEX_CMD=codex \
-  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$default_stderr"
-
-assert_contains "$default_stderr" "timeout=1080s" "default timeout resolves to documented 1080s"
-if [[ -n "$resolved_timeout" ]]; then
-  assert_contains "$default_stderr" "cmd: $resolved_timeout --foreground -k 30 1080s " "launch log includes resolved default timeout"
-  assert_contains "$default_stderr" "second-opinion-runtime group-run" "launch log includes CLI process-group ownership"
-else
-  assert_contains "$default_stderr" "cmd: direct " "launch log names direct default execution"
-  assert_contains "$default_stderr" "second-opinion-runtime group-run" "direct execution still owns the CLI process group"
-fi
-
-override_stderr="$TMP_ROOT/override.stderr"
-PATH="$TMP_ROOT/bin:$PATH" \
-  SECOND_OPINION_TARGET=codex \
-  SECOND_OPINION_CODEX_CMD=codex \
-  SECOND_OPINION_TIMEOUT=7 \
-  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$override_stderr"
-
-assert_contains "$override_stderr" "timeout=7s" "caller timeout override wins"
-if [[ -n "$resolved_timeout" ]]; then
-  assert_contains "$override_stderr" "cmd: $resolved_timeout --foreground -k 30 7s " "launch log includes resolved override timeout"
-  if ! grep -Eq -- '--foreground -k 30 7s .*group-run .* codex$' "$override_stderr"; then
-    sed -n '1,80p' "$override_stderr" >&2 || true
-    printf 'FAIL: override launch puts codex last, after the timeout and group-run arguments\n' >&2
-    exit 1
-  fi
-  printf 'PASS: override launch puts codex last, after the timeout and group-run arguments\n'
-else
-  assert_contains "$override_stderr" "cmd: direct " "launch log names direct override execution"
-fi
-
-# GNU timeout reads 0 as "no limit at all", so --timeout 0 must be refused
-# rather than silently disabling the deadline.
-zero_stderr="$TMP_ROOT/zero.stderr"
-zero_rc=0
-PATH="$TMP_ROOT/bin:$PATH" \
-  SECOND_OPINION_TARGET=codex \
-  SECOND_OPINION_CODEX_CMD=codex \
-  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --timeout 0 >/dev/null 2>"$zero_stderr" || zero_rc=$?
-if [[ $zero_rc -eq 0 ]]; then
-  printf 'FAIL: --timeout 0 must exit non-zero\n' >&2
-  exit 1
-fi
-assert_contains "$zero_stderr" "must be a positive integer" "--timeout 0 is refused"
-
-# A host without timeout/gtimeout (stock macOS) still runs the review — with a
-# warning, not a refusal. Hide both binaries behind a symlink farm of the rest
-# of PATH.
+# A PATH without timeout or gtimeout; the rows that need it are skipped out
+# loud where the farm cannot be built.
 NOTIMEOUT="$TMP_ROOT/notimeout"
 path_farm_without "$NOTIMEOUT" timeout gtimeout
+NOTIMEOUT_OK=true
+if PATH="$NOTIMEOUT" command -v timeout >/dev/null 2>&1 || PATH="$NOTIMEOUT" command -v gtimeout >/dev/null 2>&1 \
+  || ! PATH="$NOTIMEOUT" command -v git >/dev/null 2>&1; then
+  NOTIMEOUT_OK=false
+fi
 
-notimeout_stderr="$TMP_ROOT/notimeout.stderr"
-PATH="$TMP_ROOT/bin:$NOTIMEOUT" \
-  SECOND_OPINION_TARGET=codex \
-  SECOND_OPINION_CODEX_CMD=codex \
-  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$notimeout_stderr"
+suite_reset() {
+  W_SCRIPT="$HERMETIC"
+  W_ENV+=("TIMEOUT_RECORD=$ROW/timeout-argv")
+}
 
-assert_contains "$notimeout_stderr" "run without a time limit" "missing timeout binary warns instead of refusing"
-assert_contains "$notimeout_stderr" "cmd: direct " "missing timeout binary logs direct execution"
-assert_contains "$notimeout_stderr" "second-opinion-runtime group-run" "missing timeout binary still owns the CLI process group"
-assert_contains "$notimeout_stderr" "Response received" "review still runs without a timeout binary"
+suite_word() {
+  case "$1" in
+    notimeout) W_ENV+=("PATH=$TMP_ROOT/psbin:$TMP_ROOT/bin:$NOTIMEOUT") ;;
+    *) echo "UNKNOWN-WORD: $1" >&2; exit 2 ;;
+  esac
+}
 
-notimeout_override_stderr="$TMP_ROOT/notimeout-override.stderr"
-PATH="$TMP_ROOT/bin:$NOTIMEOUT" \
-  SECOND_OPINION_TARGET=codex \
-  SECOND_OPINION_CODEX_CMD=codex \
-  SECOND_OPINION_TIMEOUT=7 \
-  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null \
-    2>"$notimeout_override_stderr"
-assert_contains "$notimeout_override_stderr" "timeout=7s" \
-  "missing-timeout mode preserves the caller override"
-assert_contains "$notimeout_override_stderr" "cmd: direct " \
-  "missing-timeout override uses direct execution"
+suite_err_word() {
+  case "$1" in
+    no-timeout) printf 'Warning: no timeout or gtimeout on PATH — external CLI calls will run without a time limit\n' ;;
+    *) printf 'UNKNOWN-ERR-SPEC:%s\n' "$1" ;;
+  esac
+}
+
+launch_text() {
+  sed -e "s|^$TIMEOUT_BIN |timeout |" -e "s|$HERMETIC-runtime|runtime|" -e "s|$ROW_TMP/[^ ]*|<stderr>|" -e "s|$STUB\$|claude|" | paste -s -d ';' -
+}
+extra_state() {
+  local limit launch exec=""
+  limit="$(sed -n 's/^→ second-opinion: .* timeout=\([^ ]*\)$/\1/p' "$ROW/stderr" | head -n 1)"
+  launch="$(sed -n 's/^→ cmd: //p' "$ROW/stderr" | launch_text)"
+  [[ ! -f "$ROW/timeout-argv" ]] || exec="$(launch_text <"$ROW/timeout-argv")"
+  printf ' limit=%s launch=%s exec=%s' "${limit:--}" "${launch:--}" "${exec:--}"
+}
+
+OK="0|<out>|header:review written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=-"
+NONE="0|<out>|no-timeout header:review written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=-"
+WRAP="runtime group-run <stderr> claude"
+rows="\
+the built-in default is 1080s, run under timeout in the foreground with a 30s kill grace, the CLI last|-|review|$OK limit=1080s launch=timeout --foreground -k 30 1080s $WRAP exec=--foreground -k 30 1080 $WRAP
+the caller's environment overrides the default|timeout:7|review|$OK limit=7s launch=timeout --foreground -k 30 7s $WRAP exec=--foreground -k 30 7 $WRAP
+the flag overrides the environment|timeout:7|review --timeout 9|$OK limit=9s launch=timeout --foreground -k 30 9s $WRAP exec=--foreground -k 30 9 $WRAP
+a zero is refused before the header: to GNU timeout it means no limit at all|-|review --timeout 0|1|-|timeout-invalid|calls=0 files=- home=absent tmp=0 dirty=- limit=- launch=- exec=-
+"
+[[ "$NOTIMEOUT_OK" == false ]] || rows="${rows}\
+no timeout binary: a warning, a direct launch under the same wrapper, the review still written|notimeout|review|$NONE limit=1080s launch=direct $WRAP exec=-
+no timeout binary keeps the caller's override in the header|notimeout timeout:7|review|$NONE limit=7s launch=direct $WRAP exec=-
+"
+[[ "$NOTIMEOUT_OK" == true ]] || printf '  skip  the no-timeout rows (no PATH with git but without timeout)\n'
+run_table "the launch's time limit" "" "$rows"
+finish
