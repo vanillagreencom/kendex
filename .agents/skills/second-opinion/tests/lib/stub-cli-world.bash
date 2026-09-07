@@ -1,9 +1,11 @@
 # shellcheck shell=bash
 # The world of the single-lane record suites (cli-failure-gate, artifact-home,
-# output-clearing, option-parsing): the shipped script driven against a fake
-# `claude` CLI whose exit code, streams, delay and side effects the row names,
-# a reviewed repository built per row, a per-row TMPDIR so a leftover is
-# visible, and a `ps` that hides the harness. Sourced, never run as a suite:
+# output-clearing, option-parsing, response-gate): the shipped script driven
+# against a fake `claude` CLI whose exit code, streams, delay, second-call
+# response and side effects the row names, a reviewed repository built per
+# row, a per-row TMPDIR so a leftover is visible, a `ps` that hides the
+# harness, and a `date` whose ISO stamp always reads one fixed time (CLOCK)
+# so a stamp the script takes from the wall clock is a value a row can pin. Sourced, never run as a suite:
 # the runners glob tests/*.sh, so the subdirectory and the .bash name keep this
 # file out of every run.
 #
@@ -71,6 +73,15 @@ mode=""; while [[ $# -gt 0 ]]; do case "$1" in -o) mode="$2"; shift 2 ;; *) shif
 case "$mode" in ppid=) printf '1\n' ;; comm=) printf 'bash\n' ;; esac
 PSSH
 chmod +x "$TMP_ROOT/psbin/ps"
+# The wall clock the script stamps with reads a fixed time; the runtime's
+# deadline arithmetic (`date +%s`) keeps the real one.
+CLOCK=2026-01-02T03:04:05Z
+cat >"$TMP_ROOT/psbin/date" <<SH
+#!/usr/bin/env bash
+[[ "\$*" == "-u +%Y-%m-%dT%H:%M:%SZ" ]] || exec "$(command -v date)" "\$@"
+printf '%s\\n' "$CLOCK"
+SH
+chmod +x "$TMP_ROOT/psbin/date"
 
 # A PATH with git but without jq, for the row that runs without the sweep.
 NOJQ_BIN="$TMP_ROOT/nojq"
@@ -80,16 +91,21 @@ if PATH="$NOJQ_BIN" command -v jq >/dev/null 2>&1 || ! PATH="$NOJQ_BIN" command 
   NOJQ_OK=false
 fi
 
-# The fake CLI: STUB_RC, STUB_STDOUT, STUB_STDERR, STUB_SLEEP, and two
-# mid-run side effects (a directory locked read-only once the script's own
-# temp files exist; an entry planted at a record path after the pre-flight
-# clearing). Appends a line per invocation (lanes run concurrently).
+# The fake CLI: STUB_RC, STUB_STDOUT, STUB_STDERR, STUB_SLEEP, STUB_STDOUT2
+# (what the second call prints instead), STUB_PROMPT_DIR (each call's prompt
+# kept as prompt-N.txt; both single-lane only, since the counter is shared
+# across lanes), and two mid-run side effects (a directory locked
+# read-only once the script's own temp files exist; an entry planted at a
+# record path after the pre-flight clearing). Appends a line per invocation
+# (lanes run concurrently).
 mkdir -p "$TMP_ROOT/bin"
 STUB="$TMP_ROOT/bin/claude"
 cat >"$STUB" <<'SH'
 #!/usr/bin/env bash
 printf 'call\n' >>"$STUB_COUNTER"
-cat >/dev/null
+n=$(wc -l <"$STUB_COUNTER" | tr -d ' ')
+if [[ -n "${STUB_PROMPT_DIR:-}" ]]; then cat >"$STUB_PROMPT_DIR/prompt-$n.txt"; else cat >/dev/null; fi
+[[ "$n" -lt 2 || -z "${STUB_STDOUT2:-}" ]] || STUB_STDOUT="$STUB_STDOUT2"
 [[ -n "${STUB_LOCK_DIR:-}" ]] && chmod 0500 "$STUB_LOCK_DIR"
 [[ -n "${STUB_PLANT_DIR:-}" ]] && mkdir -p "$STUB_PLANT_DIR"
 [[ "${STUB_SLEEP:-0}" != "0" ]] && sleep "$STUB_SLEEP"
@@ -112,10 +128,16 @@ STALE='{"agent":"external-claude","timestamp":"2020-01-01T00:00:00Z","verdict":"
 FOREIGN='{"agent":"reviewer-correctness","timestamp":"2026-01-01T00:00:00Z","verdict":"pass","summary":"internal review","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}'
 ANON='{"timestamp":"2026-01-01T00:00:00Z","verdict":"pass","summary":"no agent at all","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}'
 SIDECARS="raw.txt retry.txt failed.json noreview.json incomplete.json"
+# shellcheck disable=SC2016 # a location in backticks, as the schema shows it
+BLOCKER='{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"action_required","summary":"One blocker found","blockers":[{"id":1,"title":"Null deref in parser","location":"src/parse.rs (`parse`)","description":"pointer may be null","recommendation":"guard it","priority":1,"estimate":2}],"suggestions":[],"questions":[],"qa_metadata":{}}'
+PROSE_DELIVERED='My review is complete; the final JSON verdict was already delivered above.'
+PROSE_SQL='I found a critical SQL injection in login(); the JSON verdict was already delivered above.'
+PROSE_PREVIOUSLY='As I said, the review is done and the JSON was provided previously.'
 
 # --- the world -----------------------------------------------------------------
 ROW="" WORK="" OUT="" HOME_DIR="" ROW_TMP=""
-W_OUTPUT="" W_RC="" W_STDOUT="" W_STDERR="" W_SLEEP="" W_LOCK="" W_PLANT=""
+W_OUTPUT="" W_RC="" W_STDOUT="" W_STDOUT2="" W_STDERR="" W_SLEEP="" W_LOCK="" W_PLANT="" W_CAPTURE="" W_DIFF=""
+HEAD_SHA=""
 W_HOME="" W_FAKEHOME="" W_UNSET_HOME="" W_CWD="" W_NOJQ="" W_DASHTMP="" W_SKIP="" W_TARGET=""
 W_ENV=()
 W_UNSET=()
@@ -127,6 +149,20 @@ stdout_of() {
     quota) printf '%s' "$QUOTA" ;;
     stale) printf '%s' "$STALE" ;;
     answer) printf 'ANSWER' ;;
+    # the response shapes the gate sorts: a blocker; prose claiming an earlier
+    # turn; the review inside a json fence; a self-reported no-review, and
+    # one that says it reviewed; no qa_metadata; the finding arrays lost;
+    # blockers as a string
+    blocker) printf '%s' "$BLOCKER" ;;
+    prose:delivered) printf '%s\n' "$PROSE_DELIVERED" ;;
+    prose:sql) printf '%s\n' "$PROSE_SQL" ;;
+    prose:previously) printf '%s\n' "$PROSE_PREVIOUSLY" ;;
+    fenced) printf 'Here is my review of the changes:\n\n%s\n%s\n%s\n' '```json' "$GOOD" '```' ;;
+    noreview) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"No review performed","blockers":[],"suggestions":[],"questions":["Which diff, branch, or PR should be reviewed?"],"qa_metadata":{"review_performed":false,"reason":"no_scope_provided"}}' ;;
+    performed) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"Reviewed the diff, no issues","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{"review_performed":true}}' ;;
+    noqa) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"Nothing to evaluate","blockers":[],"suggestions":[],"questions":[]}' ;;
+    truncated) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"Reviewed the diff, one issue noted"}' ;;
+    blockers-string) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"ok","blockers":"none","suggestions":[],"questions":[],"qa_metadata":{}}' ;;
     agent-null) printf '{"agent":null,"timestamp":"2020-01-01T00:00:00Z","verdict":"pass","summary":"provider text","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}' ;;
     agent-foreign) printf '{"agent":"someone-elses-reviewer","timestamp":"2020-01-01T00:00:00Z","verdict":"pass","summary":"provider text","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}' ;;
     -) printf '' ;;
@@ -220,6 +256,12 @@ word() {
     output:*) W_OUTPUT="${1#output:}" ;;
     rc:*) W_RC="${1#rc:}" ;;
     stdout:*) W_STDOUT="${1#stdout:}" ;;
+    # what the second call prints; `-` for the first response again
+    stdout2:*) W_STDOUT2="${1#stdout2:}" ;;
+    # every call's prompt kept under the row
+    capture) W_CAPTURE=1 ;;
+    # the reviewed repository with nothing uncommitted: an empty --range HEAD
+    diff:empty) W_DIFF=empty ;;
     stderr:quota) W_STDERR="$QUOTA" ;;
     stderr:-) W_STDERR="" ;;
     sleep:*) W_SLEEP="${1#sleep:}" ;;
@@ -266,14 +308,16 @@ build() {
   git -C "$WORK" add file.txt
   git -C "$WORK" -c commit.gpgsign=false commit -q -m init
   git -C "$WORK" checkout -q -b scope-branch
-  printf 'world\n' >>"$WORK/file.txt"
+  HEAD_SHA="$(git -C "$WORK" rev-parse HEAD)"
   OUT="$ROW/out/review.json"
-  W_OUTPUT=out W_RC=0 W_STDOUT=good W_STDERR="" W_SLEEP=0 W_LOCK="" W_PLANT=""
+  W_OUTPUT=out W_RC=0 W_STDOUT=good W_STDOUT2="" W_STDERR="" W_SLEEP=0 W_LOCK="" W_PLANT="" W_CAPTURE="" W_DIFF=""
   W_HOME="" W_FAKEHOME="" W_UNSET_HOME="" W_CWD="" W_NOJQ="" W_DASHTMP="" W_SKIP="" W_TARGET=claude
   W_ENV=()
   W_UNSET=()
   W_PLANTS=()
   for w in "$@"; do word "$w"; done
+  [[ "$W_DIFF" == empty ]] || printf 'world\n' >>"$WORK/file.txt"
+  [[ -z "$W_CAPTURE" ]] || mkdir -p "$ROW/prompts"
   case "$W_OUTPUT" in
     out|-) ;;
     dir) mkdir -p "$OUT" ;;
@@ -331,7 +375,7 @@ alias_text() {
   local out_re
   out_re="$(printf '%s' "$OUT" | sed 's/[][\.*^$]/\\&/g')"
   sed -e "s|$out_re|<out>|g" -e "s|$ROW/out|<outdir>|g" -e "s|$ROW/work-link|<work-link>|g" -e "s|$WORK|<work>|g" \
-    -e "s|$ROW_TMP|<tmp>|g" -e "s|$ROW/fakehome|<home>|g" -e "s|$ROW|<row>|g" -e "s|$TMP_ROOT|<root>|g" \
+    -e "s|$ROW_TMP|<tmp>|g" -e "s|$ROW/fakehome|<home>|g" -e "s|$ROW|<row>|g" -e "s|$TMP_ROOT|<root>|g" -e "s|$HEAD_SHA|<head>|g" \
     -e "s|$QUOTA|<quota>|g" -e "s|$SECOND_OPINION: line [0-9]*:|<script>: line *:|g" \
     -e "s|rm: cannot remove '\(.*\)': |rm: \1: |" -e "s|mkdir: cannot create directory [‘']\(.*\)[’']: |mkdir: \1: |" \
     -e 's/;/\\;/g' | mktemp_wildcard | paste -s -d ';' -
@@ -340,8 +384,8 @@ alias_text() {
 # A mktemp suffix on a temp name becomes `*`. Extended syntax, and the end of
 # the line as its own expression: BSD sed's basic syntax has no alternation.
 mktemp_wildcard() {
-  sed -E -e 's/(tmp|failed|second-opinion)\.[A-Za-z0-9]{6}([^A-Za-z0-9])/\1.*\2/g' \
-    -e 's/(tmp|failed|second-opinion)\.[A-Za-z0-9]{6}$/\1.*/'
+  sed -E -e 's/(tmp|failed|raw|retry|second-opinion)\.[A-Za-z0-9]{6}([^A-Za-z0-9])/\1.*\2/g' \
+    -e 's/(tmp|failed|raw|retry|second-opinion)\.[A-Za-z0-9]{6}$/\1.*/'
 }
 
 # The record log: what the gate, the home resolution and the clearing wrote,
@@ -382,10 +426,13 @@ content_class() {
     "$ANON") printf 'anon' ;;
     "MY "*|MINE) printf 'mine' ;;
     "PREVIOUS ANSWER") printf 'previous' ;;
+    "$PROSE_DELIVERED") printf 'prose:delivered' ;;
+    "$PROSE_SQL") printf 'prose:sql' ;;
+    "$PROSE_PREVIOUSLY") printf 'prose:previously' ;;
     ANSWER) printf 'answer' ;;
     "{"*)
       jq -r 'if .error then "failed(" + (.reason // "?") + "|" + ((.cause_source // "") | if . == "" then "-" else . end) + "|" + (if (.cause // "") | test("hit your usage limit") then "quota" elif (.cause // "") == "" then "-" else "other" end) + ")"
-             elif .agent then "review:" + ((.agent // "null") | tostring) + ":" + ((.summary // "?") | if startswith("Union of ") then "union" else . end) else "json:" + (.summary // "?") end' "$f" 2>/dev/null || printf 'json?'
+             elif .agent then "review:" + ((.agent // "null") | tostring) + ":" + ((.summary // "?") | if startswith("Union of ") then "union" else . end) + (if .qa_metadata.review_performed? == false then ":" + ((.qa_metadata.reason // "-") | tostring) else "" end) else "json:" + (.summary // "?") end' "$f" 2>/dev/null || printf 'json?'
       ;;
     "") printf 'empty' ;;
     *) printf '%s' "$first" ;;
@@ -467,6 +514,8 @@ run() {
   env_args=(LC_ALL=C PATH="$path" TMPDIR="$tmpdir" STUB_COUNTER="$ROW/counter" SECOND_OPINION_CURRENT_MODEL=none SECOND_OPINION_CLAUDE_CMD="$STUB"
     STUB_RC="$W_RC" STUB_STDOUT="$(stdout_of "$W_STDOUT")" STUB_STDERR="$W_STDERR" STUB_SLEEP="$W_SLEEP")
   [[ -z "$W_TARGET" ]] || env_args+=(SECOND_OPINION_TARGET="$W_TARGET")
+  [[ -z "$W_STDOUT2" ]] || env_args+=(STUB_STDOUT2="$(stdout_of "$W_STDOUT2")")
+  [[ -z "$W_CAPTURE" ]] || env_args+=(STUB_PROMPT_DIR="$ROW/prompts")
   [[ -z "$W_LOCK" ]] || env_args+=(STUB_LOCK_DIR="$ROW_TMP")
   [[ -z "$W_PLANT" ]] || env_args+=(STUB_PLANT_DIR="$OUT.failed.json")
   [[ -z "$W_HOME" ]] || env_args+=(SECOND_OPINION_ARTIFACT_DIR="$W_HOME")
@@ -480,9 +529,12 @@ run() {
     env_args+=(SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/echo-cli")
   fi
   (cd "$cwd" && env ${W_UNSET[@]+"${W_UNSET[@]}"} "${env_args[@]}" ${W_ENV[@]+"${W_ENV[@]}"} "$SECOND_OPINION" "${argv[@]}" >"$ROW/stdout" 2>"$ROW/stderr") || rc=$?
-  printf 'rc=%s out=%s err=%s calls=%s files=%s home=%s %s' "$rc" "$(stdout_text)" "$(record_log <"$ROW/stderr" | alias_text)" \
-    "$(wc -l <"$ROW/counter" | tr -d ' ')" "$(files)" "$(home)" "$(paths)"
+  printf 'rc=%s out=%s err=%s calls=%s files=%s home=%s %s%s' "$rc" "$(stdout_text)" "$(record_log <"$ROW/stderr" | alias_text)" \
+    "$(wc -l <"$ROW/counter" | tr -d ' ')" "$(files)" "$(home)" "$(paths)" "$(extra_state)"
 }
+
+# A suite's own state after the fixed probes, ` key=value...` or nothing.
+extra_state() { :; }
 
 stdout_text() {
   local text
