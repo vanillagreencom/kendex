@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Tests for env-first GitHub token loading.
+# env-first GitHub token loading: which token each entry point ends up using
+# and whether resolving it called `op` (one table), then the loader's own
+# refusals, the prologue sanitizer's bound, and the two exit-125 collisions.
 set -euo pipefail
 
 # The invoking shell's real auth env must not reach the cases below — every
@@ -33,17 +35,6 @@ assert_contains() {
   else
     FAIL=$((FAIL + 1))
     printf '  FAIL  %s\n        wanted: %s\n        got:    %s\n' "$name" "$needle" "$haystack"
-  fi
-}
-
-assert_file_missing() {
-  local path="$1" name="$2"
-  if [[ ! -e "$path" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        unexpected file: %s\n' "$name" "$path"
   fi
 }
 
@@ -156,133 +147,132 @@ load_token() {
   ')
 }
 
-echo "=== github env-first auth loading ==="
+# --- the token-precedence table ------------------------------------------------
+# Which token each entry point ends up using, and whether resolving it called
+# `op`. A row is `label|world|entry|rc|out|op`:
+#   world  `file:<name>` the project .env.local (see project_file), `env:N=V`
+#          the caller's environment, `keyring` a gh that accepts keyring auth
+#   entry  token (load_bot_token through the library), label-add and
+#          label-remove (the command scripts directly), or router:<subcommand>
+#   out    the entry point's stdout, reduced: a token as it stands, a pr-view
+#          answer as `pr=<number>`, an error answer as `status=<status>`
+#   op     how many times the row called `op`
+project_file() {
+  case "$1" in
+    bot-op) printf 'GH_BOT_TOKEN=op://vault/github/bot\n' ;;
+    user-op) printf 'GH_TOKEN=op://vault/github/user\n' ;;
+    user-op+bot-op) printf 'GH_TOKEN=op://vault/github/user\nGH_BOT_TOKEN=op://vault/github/bot\n' ;;
+    bot-router) printf 'GH_BOT_TOKEN=ghs_ROUTERBOT123\n' ;;
+    bot-file) printf 'GH_BOT_TOKEN=ghs_FILEBOT123\n' ;;
+    no-token) printf '# no GitHub token\n' ;;
+    -) ;;
+    *) echo "UNKNOWN-FILE: $1" >&2; exit 2 ;;
+  esac
+}
 
-cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
-GH_BOT_TOKEN=op://vault/github/bot
-ENVEOF
-rm -f "$TMP_ROOT/op.calls"
-output=$(load_token GH_TOKEN=ghp_ENV123)
-assert_eq "$output" "ghp_ENV123" "resolved GH_TOKEN wins over .env.local"
-assert_file_missing "$TMP_ROOT/op.calls" "resolved GH_TOKEN does not trigger op"
+W_ENV=()
+W_FILE=-
+build_world() {
+  local w
+  W_ENV=()
+  W_FILE=-
+  for w in "$@"; do
+    case "$w" in
+      file:*) W_FILE="${w#file:}" ;;
+      env:*) W_ENV+=("${w#env:}") ;;
+      keyring) W_ENV+=("STUB_KEYRING_OK=1") ;;
+      -) ;;
+      *) echo "UNKNOWN-WORD: $w" >&2; exit 2 ;;
+    esac
+  done
+  rm -f "$TMP_ROOT/repo/.env.local" "$TMP_ROOT/op.calls"
+  [[ "$W_FILE" == - ]] || project_file "$W_FILE" >"$TMP_ROOT/repo/.env.local"
+}
 
-rm -f "$TMP_ROOT/op.calls"
-output=$(load_token GITHUB_TOKEN=gho_ENV456)
-assert_eq "$output" "gho_ENV456" "resolved GITHUB_TOKEN wins over .env.local"
-assert_file_missing "$TMP_ROOT/op.calls" "resolved GITHUB_TOKEN does not trigger op"
+run_entry() {
+  local entry="$1" rc=0 out
+  local -a cmd
+  if [[ "$entry" == token ]]; then
+    out=$(load_token ${W_ENV[@]+"${W_ENV[@]}"} 2>/dev/null) || rc=$?
+    printf 'rc=%s out=%s op=%s' "$rc" "$(out_text "$out")" "$(op_calls)"
+    return
+  fi
+  case "$entry" in
+    label-add) cmd=("$REPO_ROOT/skills/github/scripts/commands/label-add.sh" 42 test-label) ;;
+    label-remove) cmd=("$REPO_ROOT/skills/github/scripts/commands/label-remove.sh" 42 test-label) ;;
+    router:pr-edit-body) cmd=("$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" pr-edit-body 42 --body-file "$TMP_ROOT/pr-body.md") ;;
+    router:pr-view) cmd=("$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" pr-view --json "number,state") ;;
+    router:bot-token) cmd=("$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" bot-token --format=text) ;;
+    router:*) cmd=("$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" "${entry#router:}" 42 test-label) ;;
+    *) echo "UNKNOWN-ENTRY: $entry" >&2; exit 2 ;;
+  esac
+  out=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env ${W_ENV[@]+"${W_ENV[@]}"} "${cmd[@]}" 2>/dev/null) ) || rc=$?
+  printf 'rc=%s out=%s op=%s' "$rc" "$(out_text "$out")" "$(op_calls)"
+}
 
-rm -f "$TMP_ROOT/op.calls"
-output=$(load_token GH_BOT_TOKEN=ghs_ENVBOT789)
-assert_eq "$output" "ghs_ENVBOT789" "resolved GH_BOT_TOKEN wins before project files"
-assert_file_missing "$TMP_ROOT/op.calls" "resolved GH_BOT_TOKEN does not trigger op"
+# A JSON answer renders as its own field; anything else stands as it is.
+out_text() {
+  local number status
+  number="$(jq -r '.number // empty' <<<"$1" 2>/dev/null || true)"
+  [[ -z "$number" ]] || { printf 'pr=%s' "$number"; return; }
+  status="$(jq -r '.status // empty' <<<"$1" 2>/dev/null || true)"
+  [[ -z "$status" ]] || { printf 'status=%s' "$status"; return; }
+  printf '%s' "${1:--}"
+}
+# BSD wc right-aligns its count in a fixed-width field, so the blanks come off.
+op_calls() {
+  [[ -f "$TMP_ROOT/op.calls" ]] || { printf '0'; return; }
+  wc -l <"$TMP_ROOT/op.calls" | tr -d ' '
+}
 
-rm -f "$TMP_ROOT/op.calls"
-output=$(load_token GH_TOKEN=ghp_USER123 GH_BOT_TOKEN=ghs_BOT123)
-assert_eq "$output" "ghs_BOT123" "explicit GH_BOT_TOKEN wins for bot-token loader"
-assert_file_missing "$TMP_ROOT/op.calls" "explicit GH_BOT_TOKEN with GH_TOKEN does not trigger op"
-
-rm -f "$TMP_ROOT/op.calls"
-output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" GH_BOT_TOKEN=ghs_ROUTERBOT123 "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" bot-token --format=text)
-assert_eq "$output" "configured" "github.sh router preserves resolved GH_BOT_TOKEN"
-assert_file_missing "$TMP_ROOT/op.calls" "github.sh router does not trigger op for resolved GH_BOT_TOKEN"
-
-rm -f "$TMP_ROOT/op.calls"
-output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" GH_BOT_TOKEN=ghs_ROUTERBOT123 GITHUB_TOKEN=gho_OTHERUSER "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" pr-view --json number,state)
-assert_eq "$(jq -r .number <<<"$output")" "42" "github.sh router promotes GH_BOT_TOKEN over GITHUB_TOKEN"
-assert_file_missing "$TMP_ROOT/op.calls" "github.sh router avoids op when GH_BOT_TOKEN beats GITHUB_TOKEN"
-
-cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
-GH_TOKEN=op://vault/github/user
-GH_BOT_TOKEN=op://vault/github/bot
-ENVEOF
-rm -f "$TMP_ROOT/op.calls"
-output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" GH_BOT_TOKEN=ghs_ROUTERBOT123 "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" pr-view --json number,state)
-assert_eq "$(jq -r .number <<<"$output")" "42" "github.sh router uses inherited GH_BOT_TOKEN over local GH_TOKEN"
-assert_file_missing "$TMP_ROOT/op.calls" "github.sh router avoids op when inherited GH_BOT_TOKEN is resolved"
-
-cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
-GH_BOT_TOKEN=op://vault/github/bot
-ENVEOF
-rm -f "$TMP_ROOT/op.calls"
-output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" GH_TOKEN=op://vault/github/user GITHUB_TOKEN=gho_DIRECT456 "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" pr-view --json number,state)
-assert_eq "$(jq -r .number <<<"$output")" "42" "github.sh router uses direct GITHUB_TOKEN over unresolved GH_TOKEN"
-assert_file_missing "$TMP_ROOT/op.calls" "github.sh router does not resolve stale GH_TOKEN when direct GITHUB_TOKEN exists"
-
-cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
-GH_TOKEN=op://vault/github/user
-ENVEOF
-rm -f "$TMP_ROOT/op.calls"
-output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" STUB_KEYRING_OK=1 "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" pr-view --json number,state)
-assert_eq "$(jq -r .number <<<"$output")" "42" "github.sh router falls back to keyring for unresolved GH_TOKEN"
-# The blanks come off every count below: BSD wc right-aligns its number in a
-# fixed-width field, so `$(wc -l <f)` reads "       1" on macOS and "1" on
-# GNU, and these are compared as strings.
-assert_eq "$(wc -l <"$TMP_ROOT/op.calls" | tr -d ' ')" "1" "unresolved GH_TOKEN attempts op once before keyring fallback"
-
-rm -f "$TMP_ROOT/op.calls"
-(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" STUB_KEYRING_OK=1 GH_TOKEN=op://vault/github/user "$REPO_ROOT/skills/github/scripts/commands/label-add.sh" 42 test-label >/dev/null)
-assert_eq "$(wc -l <"$TMP_ROOT/op.calls" | tr -d ' ')" "1" "label-add falls back to keyring for unresolved GH_TOKEN"
-
-rm -f "$TMP_ROOT/op.calls"
-(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" STUB_KEYRING_OK=1 GITHUB_TOKEN=op://vault/github/user "$REPO_ROOT/skills/github/scripts/commands/label-remove.sh" 42 test-label >/dev/null)
-assert_eq "$(wc -l <"$TMP_ROOT/op.calls" | tr -d ' ')" "1" "label-remove falls back to keyring for unresolved GITHUB_TOKEN"
-
-cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
-GH_BOT_TOKEN=ghs_ROUTERBOT123
-ENVEOF
-rm -f "$TMP_ROOT/op.calls"
-output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" "$REPO_ROOT/skills/github/scripts/commands/label-add.sh" 42 test-label)
-assert_eq "$output" "updated" "direct label-add loads project GH_BOT_TOKEN"
-assert_file_missing "$TMP_ROOT/op.calls" "direct label-add project direct token avoids op"
-
-rm -f "$TMP_ROOT/op.calls"
-output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" "$REPO_ROOT/skills/github/scripts/commands/label-remove.sh" 42 test-label)
-assert_eq "$output" "updated" "direct label-remove loads project GH_BOT_TOKEN"
-assert_file_missing "$TMP_ROOT/op.calls" "direct label-remove project direct token avoids op"
-
-rm -f "$TMP_ROOT/op.calls"
-output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" label-add 42 test-label)
-assert_eq "$output" "updated" "github.sh router loads project GH_BOT_TOKEN for label-add"
-assert_file_missing "$TMP_ROOT/op.calls" "label-add project direct token avoids op"
-
-rm -f "$TMP_ROOT/op.calls"
-output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" label-remove 42 test-label)
-assert_eq "$output" "updated" "github.sh router loads project GH_BOT_TOKEN for label-remove"
-assert_file_missing "$TMP_ROOT/op.calls" "label-remove project direct token avoids op"
-
-cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
-# no GitHub token
-ENVEOF
-rm -f "$TMP_ROOT/op.calls"
-set +e
-output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" STUB_KEYRING_OK=1 GH_BOT_TOKEN=ghs_BADBOT "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" pr-view --json number,state 2>/dev/null)
-rc=$?
-set -e
-assert_eq "$rc" "3" "github.sh preserves selected GH_BOT_TOKEN instead of keyring fallback"
-assert_eq "$(jq -r .status <<<"$output")" "auth_error" "selected bad GH_BOT_TOKEN reports auth error"
-assert_file_missing "$TMP_ROOT/op.calls" "selected direct GH_BOT_TOKEN does not trigger op"
+run_table() {
+  local title="$1" rows="$2" n=0 label world entry rc out op got row field
+  echo "=== $title ==="
+  while IFS= read -r row; do
+    [[ -n "$row" ]] || continue
+    IFS='|' read -r label world entry rc out op <<<"$row"
+    for field in "$label" "$world" "$entry" "$rc" "$out" "$op"; do
+      [[ -n "$field" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+    done
+    n=$((n + 1))
+    # shellcheck disable=SC2086
+    build_world $world
+    got="$(run_entry "$entry")"
+    # A rendering aid for writing rows; the run is refused after the loop.
+    if [[ "${GITHUB_TABLE_PROBE:-}" == 1 ]]; then
+      printf '%s => %s\n' "$label" "$got"
+      continue
+    fi
+    assert_eq "$got" "rc=$rc out=$out op=$op" "$label"
+  done <<<"$rows"
+  [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
+}
 
 printf '%s\n' 'body text' >"$TMP_ROOT/pr-body.md"
-rm -f "$TMP_ROOT/op.calls"
-output=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" STUB_KEYRING_OK=1 GH_TOKEN=op://vault/github/user "$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" pr-edit-body 42 --body-file "$TMP_ROOT/pr-body.md")
-assert_eq "$output" "updated" "github.sh pr-edit-body falls back to keyring for unresolved GH_TOKEN"
-assert_eq "$(wc -l <"$TMP_ROOT/op.calls" | tr -d ' ')" "1" "pr-edit-body unresolved GH_TOKEN attempts op once"
-
-cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
-GH_BOT_TOKEN=op://vault/github/bot
-ENVEOF
-rm -f "$TMP_ROOT/op.calls"
-output=$(load_token)
-assert_eq "$output" "ghs_RESOLVED123" "project op reference resolves when no env token exists"
-assert_eq "$(wc -l <"$TMP_ROOT/op.calls" | tr -d ' ')" "1" "project op reference calls op once"
-
-cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
-GH_BOT_TOKEN=ghs_FILEBOT123
-ENVEOF
-rm -f "$TMP_ROOT/op.calls"
-output=$(load_token GH_TOKEN=op://vault/github/main)
-assert_eq "$output" "ghs_FILEBOT123" "unresolved env token allows direct project token"
-assert_file_missing "$TMP_ROOT/op.calls" "direct project token avoids op for inherited op reference"
+run_table "which token wins, and what it costs" "\
+a resolved GH_TOKEN beats an op reference in the project file, without calling op|file:bot-op env:GH_TOKEN=ghp_ENV123|token|0|ghp_ENV123|0
+a resolved GITHUB_TOKEN does too|file:bot-op env:GITHUB_TOKEN=gho_ENV456|token|0|gho_ENV456|0
+a resolved GH_BOT_TOKEN does too|file:bot-op env:GH_BOT_TOKEN=ghs_ENVBOT789|token|0|ghs_ENVBOT789|0
+the bot token outranks the user token for the bot loader|file:bot-op env:GH_TOKEN=ghp_USER123 env:GH_BOT_TOKEN=ghs_BOT123|token|0|ghs_BOT123|0
+the router reports a resolved GH_BOT_TOKEN configured|file:bot-op env:GH_BOT_TOKEN=ghs_ROUTERBOT123|router:bot-token|0|configured|0
+the router promotes GH_BOT_TOKEN over GITHUB_TOKEN|file:bot-op env:GH_BOT_TOKEN=ghs_ROUTERBOT123 env:GITHUB_TOKEN=gho_OTHERUSER|router:pr-view|0|pr=42|0
+an inherited GH_BOT_TOKEN outranks the project's own GH_TOKEN reference|file:user-op+bot-op env:GH_BOT_TOKEN=ghs_ROUTERBOT123|router:pr-view|0|pr=42|0
+a direct GITHUB_TOKEN outranks an unresolved GH_TOKEN, which is never resolved|file:bot-op env:GH_TOKEN=op://vault/github/user env:GITHUB_TOKEN=gho_DIRECT456|router:pr-view|0|pr=42|0
+an unresolved GH_TOKEN is attempted once, then the keyring answers|file:user-op keyring|router:pr-view|0|pr=42|1
+label-add takes the same fallback|file:user-op keyring env:GH_TOKEN=op://vault/github/user|label-add|0|updated|1
+label-remove takes it for GITHUB_TOKEN too|file:user-op keyring env:GITHUB_TOKEN=op://vault/github/user|label-remove|0|updated|1
+pr-edit-body takes it through the router|file:no-token keyring env:GH_TOKEN=op://vault/github/user|router:pr-edit-body|0|updated|1
+a direct project token reaches label-add without op|file:bot-router|label-add|0|updated|0
+and label-remove|file:bot-router|label-remove|0|updated|0
+and label-add through the router|file:bot-router|router:label-add|0|updated|0
+and label-remove through the router|file:bot-router|router:label-remove|0|updated|0
+a selected GH_BOT_TOKEN gh rejects is an auth error, not a keyring fallback|file:no-token keyring env:GH_BOT_TOKEN=ghs_BADBOT|router:pr-view|3|status=auth_error|0
+a project op reference resolves when no environment token exists|file:bot-op|token|0|ghs_RESOLVED123|1
+a direct project token beats an inherited op reference, which is never resolved|file:bot-file env:GH_TOKEN=op://vault/github/main|token|0|ghs_FILEBOT123|0
+a resolved name later in the ladder beats an unresolved one before it|file:no-token env:GH_TOKEN=op://vault/github/user env:GITHUB_TOKEN=gho_DIRECT456|token|0|gho_DIRECT456|0
+a reference op cannot resolve leaves the bot token unconfigured, never a raw op:// value, having tried once|file:no-token env:GH_BOT_TOKEN=op://vault/github/missing|token|0|-|1
+"
+rm -f "$TMP_ROOT/repo/.env.local"
 
 # The op-retry project-env load stays best-effort (|| true) for token
 # ABSENCE, but its stderr is open: a refused settings load must surface the
