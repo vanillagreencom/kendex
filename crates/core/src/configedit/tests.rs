@@ -241,17 +241,17 @@ fn gemini_context_file_keeps_unrelated_keys_and_refuses_another_shape() {
 }
 "#;
     let once = edit.apply(start).unwrap();
-    assert!(once.starts_with("{\n  \"theme\": \"Dark\",\n  \"context\": {\n    \"loadMemoryFromIncludeDirectories\": true,\n    \"fileName\": [\n"), "{once}");
-    assert!(
-        once.ends_with(
-            "  \"mcpServers\": {\n    \"gh\": {\n      \"command\": \"gh-mcp\"\n    }\n  }\n}\n"
-        ),
-        "{once}"
+    assert_eq!(
+        once,
+        "{\n  \"theme\": \"Dark\",\n  \"context\": {\n    \"loadMemoryFromIncludeDirectories\": true,\n    \"fileName\": [\n      \"GEMINI.md\",\n      \"AGENTS.md\"\n    ]\n  },\n  \"mcpServers\": {\n    \"gh\": {\n      \"command\": \"gh-mcp\"\n    }\n  }\n}\n"
     );
     assert_eq!(edit.apply(&once).unwrap(), once);
 
     let refused = edit.apply(r#"{"context": {"fileName": 3}}"#).unwrap_err();
-    assert!(refused.contains("context.fileName"), "{refused}");
+    assert_eq!(refused, "context.fileName is neither a string nor a list");
+    // A file that is not JSON is refused in the reader's own words,
+    // passed through whole: nothing here wraps or rewrites them.
     let unparseable = edit.apply("{ not json").unwrap_err();
-    assert!(!unparseable.is_empty());
+    let readers = serde_json::from_str::<serde_json::Value>("{ not json").unwrap_err();
+    assert_eq!(unparseable, readers.to_string());
 }

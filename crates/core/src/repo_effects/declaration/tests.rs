@@ -1,228 +1,198 @@
 use super::*;
 const DECLARED: &str = "---\nname: commit-guards\nrepo-effects:\n  summary: Arms git hooks.\n  writes:\n    - .git/hooks/pre-commit\n  installer: scripts/install-git-hooks\n  uninstaller: scripts/install-git-hooks --uninstall\n---\nbody\n";
 
+/// A block with a summary and the field text given, in a package body.
+fn block(field: &str) -> String {
+    format!("---\nname: x\nrepo-effects:\n  summary: s\n{field}---\nbody\n")
+}
+
+/// Every declaration that reads, whole. A summary alone is a
+/// declaration, and an explicit null is an absent field, not a shape
+/// kendex cannot read; the ordinary written paths read, `.git/` included,
+/// which is the whole point of the mapping the refusals below guard; a
+/// script path that leaves the package is dropped, so nothing outside it
+/// is ever resolved as an installer.
 #[test]
 fn a_declaration_reads_whole() {
-    let effects = declared(DECLARED).expect("declared");
-    assert_eq!(effects.summary, "Arms git hooks.");
-    assert_eq!(effects.writes, [".git/hooks/pre-commit"]);
-    assert_eq!(
-        effects.installer.as_deref(),
-        Some("scripts/install-git-hooks")
-    );
+    let summary_only = RepoEffects {
+        summary: "s".to_owned(),
+        writes: Vec::new(),
+        installer: None,
+        uninstaller: None,
+        removal: None,
+        notes: Vec::new(),
+        companions: Vec::new(),
+    };
+    let rows = [
+        (
+            DECLARED.to_owned(),
+            RepoEffects {
+                summary: "Arms git hooks.".to_owned(),
+                writes: vec![".git/hooks/pre-commit".to_owned()],
+                installer: Some("scripts/install-git-hooks".to_owned()),
+                uninstaller: Some("scripts/install-git-hooks --uninstall".to_owned()),
+                removal: None,
+                notes: Vec::new(),
+                companions: Vec::new(),
+            },
+        ),
+        (block(""), summary_only.clone()),
+        (block("  writes: ~\n  installer: ~\n"), summary_only.clone()),
+        (
+            block("  writes:\n    - .git/hooks/pre-commit\n    - ./tools/guard\n"),
+            RepoEffects {
+                writes: vec![
+                    ".git/hooks/pre-commit".to_owned(),
+                    "./tools/guard".to_owned(),
+                ],
+                ..summary_only.clone()
+            },
+        ),
+        (
+            block("  writes:\n    - .git/hooks/pre-commit\n"),
+            RepoEffects {
+                writes: vec![".git/hooks/pre-commit".to_owned()],
+                ..summary_only.clone()
+            },
+        ),
+        (block("  installer: /bin/sh\n"), summary_only.clone()),
+        (
+            block("  installer: ../../elsewhere/run\n"),
+            summary_only.clone(),
+        ),
+        (
+            block("  installer: scripts/../../run\n"),
+            summary_only.clone(),
+        ),
+    ];
+    for (text, read) in rows {
+        assert_eq!(
+            declaration(&text),
+            Declaration::Effects(read.clone()),
+            "{text}"
+        );
+        assert_eq!(declared(&text), Some(read), "{text}");
+    }
 }
 
-#[test]
-fn a_package_declaring_nothing_reads_as_nothing() {
-    assert!(declared("---\nname: deploy\n---\nbody\n").is_none());
-    assert!(declared("no frontmatter at all\n").is_none());
-}
-
-/// Absent and unreadable are the same `None` to a caller that arms an
-/// effect and different answers to one that undoes it: the first package
-/// has no uninstaller, the second may have one kendex could not read, and
+/// Every package that declares nothing, or declares something kendex
+/// cannot read, one row per shape, and which of the two it is. Absent
+/// and unreadable are the same `None` to a caller that arms an effect
+/// and different answers to one that undoes it: the first package has
+/// no uninstaller, the second may have one kendex could not read, and
 /// removing the second as though it were the first strands whatever it
 /// armed.
+///
+/// Unreadable: broken YAML, so the key is never even looked for; a block
+/// that is not a block; frontmatter that opens and never closes; the key
+/// with its colon lost, which is the key written wrong and never a
+/// package with nothing to declare; a summary missing, since the
+/// disclosure is made of it and without one there is nothing to show
+/// and nothing to authorize. A field of the wrong shape refuses the
+/// whole declaration, one shape per field because the fail-open
+/// (`unwrap_or_default` reading a `writes:` map as empty while the
+/// installer went on writing) was per field; a key kendex does not know
+/// (`writse:`) is a key it did not read. A written path that leaves the
+/// repository is not a written path: these are mapped onto real
+/// locations, so a `..` hop or an absolute path names somewhere else,
+/// and one that climbed out of the git directory and back in would have
+/// been announced as shared by every work tree. A path field is a list
+/// and only a list — a comma is a character a filename may contain, so a
+/// comma-split scalar read `.git/hooks/a,b` as two files that do not
+/// exist — every member says something, and a list with a member kendex
+/// cannot read is not a shorter list, because a short list of written
+/// paths reads as the complete account it is not.
 #[test]
-fn an_unreadable_declaration_is_not_an_absent_one() {
-    assert_eq!(
-        declaration(DECLARED),
-        Declaration::Effects(declared(DECLARED).expect("declared"))
-    );
-    for absent in ["---\nname: deploy\n---\nbody\n", "no frontmatter at all\n"] {
-        assert_eq!(
-            declaration(absent),
+fn a_declaration_that_will_not_read_is_unreadable_and_absent_stays_absent() {
+    let rows = [
+        (
+            "---\nname: deploy\n---\nbody\n".to_owned(),
             Declaration::Absent,
-            "a package that declares nothing: {absent}"
-        );
-    }
-    let unreadable = [
-        // The block is there and its YAML is broken — the whole
-        // frontmatter fails to parse, so the key is never even looked for.
-        "---\nname: x\nrepo-effects:\n  summary: s\n installer: \"scripts/run\n---\nbody\n",
-        // The block is there and is not a block.
-        "---\nname: x\nrepo-effects: arms things\n---\nbody\n",
-        // The block is there and one field will not read.
-        "---\nname: x\nrepo-effects:\n  summary: s\n  writes:\n    a: b\n---\nbody\n",
-        // Frontmatter that opens and never closes is frontmatter kendex
-        // could not read, whatever it says.
-        "---\nname: x\nrepo-effects:\n  summary: s\n  uninstaller: scripts/off\nbody\n",
-        // The key lost its colon, so the whole block was ignored as a line
-        // carrying no key. Nothing else in the frontmatter fails, and the
-        // package still has the uninstaller it declared.
-        "---\nname: x\nrepo-effects\n  summary: s\n  uninstaller: scripts/off\n---\nbody\n",
-    ];
-    for text in unreadable {
-        assert_eq!(
-            declaration(text),
+        ),
+        ("no frontmatter at all\n".to_owned(), Declaration::Absent),
+        (
+            "---\nname: x\nrepo-effects:\n  summary: s\n installer: \"scripts/run\n---\nbody\n"
+                .to_owned(),
             Declaration::Unreadable,
-            "read as an answer about the package: {text}"
-        );
-        assert!(
-            declared(text).is_none(),
-            "arming reads it as nothing: {text}"
-        );
-    }
-}
-
-/// A summary is what the disclosure is made of; without one there is
-/// nothing to show, so there is nothing to authorize either.
-#[test]
-fn a_declaration_without_a_summary_is_not_a_declaration() {
-    let text = "---\nname: x\nrepo-effects:\n  writes:\n    - .git/hooks/pre-commit\n---\n";
-    assert!(declared(text).is_none());
-}
-
-/// A field kendex could not read is not a field with nothing in it.
-///
-/// `unwrap_or_default` could not tell "absent" from "present and not a
-/// list", so a `writes:` written as a map — an easy thing to do by hand
-/// — disclosed no written paths while the installer went on writing
-/// them. One shape per field, because the fail-open was per field.
-#[test]
-fn a_field_of_the_wrong_shape_refuses_the_whole_declaration() {
-    let wrong = [
-        "  writes:\n    a: b\n",
-        "  notes:\n    a: b\n",
-        "  companions:\n    a: b\n",
-        "  installer:\n    - scripts/run\n",
-        "  uninstaller:\n    a: b\n",
-        "  removal:\n    - by hand\n",
-        // A key kendex does not know is a key it did not read: `writse:`
-        // is a package declaring what it writes and a block naming none
-        // of it, with the installer writing it regardless.
-        "  writse:\n    - .git/hooks/pre-commit\n",
+        ),
+        (
+            "---\nname: x\nrepo-effects: arms things\n---\nbody\n".to_owned(),
+            Declaration::Unreadable,
+        ),
+        (
+            "---\nname: x\nrepo-effects:\n  summary: s\n  uninstaller: scripts/off\nbody\n"
+                .to_owned(),
+            Declaration::Unreadable,
+        ),
+        (
+            "---\nname: x\nrepo-effects\n  summary: s\n  uninstaller: scripts/off\n---\nbody\n"
+                .to_owned(),
+            Declaration::Unreadable,
+        ),
+        (
+            "---\nname: x\nrepo-effects:\n  writes:\n    - .git/hooks/pre-commit\n---\n".to_owned(),
+            Declaration::Unreadable,
+        ),
+        (block("  writes:\n    a: b\n"), Declaration::Unreadable),
+        (block("  notes:\n    a: b\n"), Declaration::Unreadable),
+        (block("  companions:\n    a: b\n"), Declaration::Unreadable),
+        (
+            block("  installer:\n    - scripts/run\n"),
+            Declaration::Unreadable,
+        ),
+        (block("  uninstaller:\n    a: b\n"), Declaration::Unreadable),
+        (
+            block("  removal:\n    - by hand\n"),
+            Declaration::Unreadable,
+        ),
+        (
+            block("  writse:\n    - .git/hooks/pre-commit\n"),
+            Declaration::Unreadable,
+        ),
+        (
+            block("  writes:\n    - \".git/../../elsewhere/hook\"\n"),
+            Declaration::Unreadable,
+        ),
+        (
+            block("  writes:\n    - \"/etc/profile\"\n"),
+            Declaration::Unreadable,
+        ),
+        (
+            block("  writes:\n    - \"../outside\"\n"),
+            Declaration::Unreadable,
+        ),
+        (
+            block("  writes:\n    - \"./.git/hooks/../../../x\"\n"),
+            Declaration::Unreadable,
+        ),
+        (
+            block("  writes: .git/hooks/pre-commit,.git/hooks/commit-msg\n"),
+            Declaration::Unreadable,
+        ),
+        (
+            block("  companions: doc-limits,preflight\n"),
+            Declaration::Unreadable,
+        ),
+        (block("  notes: one,two\n"), Declaration::Unreadable),
+        (
+            block("  writes:\n    - .git/hooks/pre-commit\n    - \"   \"\n"),
+            Declaration::Unreadable,
+        ),
+        (
+            block("  writes:\n    - .git/hooks/pre-commit\n    - a: b\n"),
+            Declaration::Unreadable,
+        ),
+        (
+            block("  notes:\n    - a real note\n    - a: b\n"),
+            Declaration::Unreadable,
+        ),
+        (
+            block("  companions:\n    - doc-limits\n    - a: b\n"),
+            Declaration::Unreadable,
+        ),
     ];
-    for field in wrong {
-        let text = format!("---\nname: x\nrepo-effects:\n  summary: s\n{field}---\nbody\n");
-        assert!(
-            declared(&text).is_none(),
-            "a malformed field was read as empty: {field}"
-        );
-    }
-}
-
-/// A written path that leaves the repository is not a written path.
-///
-/// These strings are mapped onto real locations for the block, so a
-/// `..` hop or an absolute path names somewhere else — and one that
-/// climbed out of the git directory and back in would have been
-/// announced as shared by every work tree of the repository.
-#[test]
-fn a_written_path_that_escapes_refuses_the_declaration() {
-    let escaping = [
-        ".git/../../elsewhere/hook",
-        "/etc/profile",
-        "../outside",
-        "./.git/hooks/../../../x",
-    ];
-    for path in escaping {
-        let text = format!(
-            "---\nname: x\nrepo-effects:\n  summary: s\n  writes:\n    - \"{path}\"\n---\nbody\n"
-        );
-        assert!(
-            declared(&text).is_none(),
-            "an escaping written path was accepted: {path}"
-        );
-    }
-
-    // The ordinary ones still read, `.git/` included — that is the
-    // whole point of the mapping this guards.
-    let good = "---\nname: x\nrepo-effects:\n  summary: s\n  writes:\n    - .git/hooks/pre-commit\n    - ./tools/guard\n---\nbody\n";
-    let effects = declared(good).expect("contained paths read");
-    assert_eq!(effects.writes.len(), 2);
-}
-
-/// A path field is a list, and only a list.
-///
-/// The reader these grew from also took a scalar and split it on commas.
-/// Every one of these fields is a list of PATHS, and a comma is a
-/// character a filename may contain — so `.git/hooks/a,b` would have
-/// been read as two files that do not exist, in the block a person
-/// authorizes. And a member that trims to nothing is dropped by that
-/// same reader, which comes back as a shorter list.
-#[test]
-fn a_path_field_is_a_list_and_every_member_says_something() {
-    let not_lists = [
-        "  writes: .git/hooks/pre-commit,.git/hooks/commit-msg\n",
-        "  companions: doc-limits,preflight\n",
-        "  notes: one,two\n",
-    ];
-    for field in not_lists {
-        let text = format!("---\nname: x\nrepo-effects:\n  summary: s\n{field}---\nbody\n");
-        assert!(
-            declared(&text).is_none(),
-            "a comma-separated scalar was read as a list: {field}"
-        );
-    }
-
-    let empty_member = "---\nname: x\nrepo-effects:\n  summary: s\n  writes:\n    - .git/hooks/pre-commit\n    - \"   \"\n---\nbody\n";
-    assert!(
-        declared(empty_member).is_none(),
-        "a member that says nothing came back as a shorter list"
-    );
-
-    // A real list of one still reads, which is what the rule is for.
-    let good = "---\nname: x\nrepo-effects:\n  summary: s\n  writes:\n    - .git/hooks/pre-commit\n---\nbody\n";
-    assert_eq!(declared(good).expect("a list reads").writes.len(), 1);
-}
-
-/// A list with a member kendex cannot read is not a shorter list.
-///
-/// `string_list` drops what it cannot read, so a `writes:` with one map
-/// among its paths came back short — and a short list of written paths
-/// is worse than none, because it reads as the complete account it is
-/// not.
-#[test]
-fn a_list_with_an_unreadable_member_refuses_the_declaration() {
-    let mixed = [
-        "  writes:\n    - .git/hooks/pre-commit\n    - a: b\n",
-        "  notes:\n    - a real note\n    - a: b\n",
-        "  companions:\n    - doc-limits\n    - a: b\n",
-    ];
-    for field in mixed {
-        let text = format!("---\nname: x\nrepo-effects:\n  summary: s\n{field}---\nbody\n");
-        assert!(
-            declared(&text).is_none(),
-            "a list came back short instead of refusing: {field}"
-        );
-    }
-
-    // And a list of scalars is still a list of scalars.
-    let good = "---\nname: x\nrepo-effects:\n  summary: s\n  writes:\n    - .git/hooks/pre-commit\n    - .git/hooks/commit-msg\n---\nbody\n";
-    let effects = declared(good).expect("a list of paths is readable");
-    assert_eq!(effects.writes.len(), 2);
-}
-
-/// Absent stays absent. The refusal above must not turn every package
-/// that declares only a summary into one kendex cannot read.
-#[test]
-fn an_absent_field_is_absent_and_the_declaration_stands() {
-    let text = "---\nname: x\nrepo-effects:\n  summary: s\n---\nbody\n";
-    let effects = declared(text).expect("a summary alone is a declaration");
-    assert_eq!(effects.summary, "s");
-    assert!(effects.writes.is_empty());
-    assert!(effects.notes.is_empty());
-    assert!(effects.companions.is_empty());
-    assert_eq!(effects.installer, None);
-    assert_eq!(effects.uninstaller, None);
-    assert_eq!(effects.removal, None);
-
-    // An explicit null is absent too, not a shape kendex cannot read.
-    let nulls =
-        "---\nname: x\nrepo-effects:\n  summary: s\n  writes: ~\n  installer: ~\n---\nbody\n";
-    let effects = declared(nulls).expect("an explicit null is absent");
-    assert!(effects.writes.is_empty());
-    assert_eq!(effects.installer, None);
-}
-
-/// A path that leaves the package is dropped, so nothing outside it is
-/// ever resolved as an installer.
-#[test]
-fn an_escaping_script_path_is_dropped() {
-    for path in ["/bin/sh", "../../elsewhere/run", "scripts/../../run"] {
-        let text = format!("---\nname: x\nrepo-effects:\n  summary: s\n  installer: {path}\n---\n");
-        let effects = declared(&text).expect("declared");
-        assert_eq!(effects.installer, None, "{path} was accepted");
+    for (text, read) in rows {
+        assert_eq!(declaration(&text), read, "{text}");
+        assert_eq!(declared(&text), None, "arming reads it as nothing: {text}");
     }
 }

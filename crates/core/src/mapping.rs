@@ -300,112 +300,120 @@ mod tests {
         }
     }
 
-    // An agent that reaches its base agent's row renders from that row:
-    // the exact-name question would call it undeclared and put the
-    // upstream list back over the person's removals.
+    /// One row per way a declaration and the upstream assignment meet,
+    /// pinning the whole answer. An agent that reaches its base agent's
+    /// row renders from that row: the exact-name question would call it
+    /// undeclared and put the upstream list back over the person's
+    /// removals. A skill the person removed from the upstream assignment
+    /// stays removed while an addition upstream made since the recorded
+    /// set merges in; with no recorded set (a lost cache) nothing is
+    /// resurrected and nothing is added. A fork rebinds the agent to the
+    /// local source, which holds the agent and none of the catalog skills
+    /// it was assigned: the declaration resolves against the scope, so
+    /// what the agent rendered with before the fork is what it renders
+    /// with after. A skill nothing in reach offers comes back unresolved
+    /// beside the ones that resolved, so a caller can tell the two apart
+    /// instead of reading a short list as the whole answer.
     #[test]
-    fn a_reviewer_agent_renders_from_the_row_it_reaches() {
-        let manifest = declaring(&[("rust", &["dev"])]);
-        let result = effective_skills(
-            "reviewer-rust",
-            Some(Role::Reviewer),
-            &manifest,
-            &SourceConfig::default(),
-            &available(),
-            &[],
-            None,
+    fn a_declaration_renders_what_it_reaches_and_reports_the_rest() {
+        let engineer = ["dev", "github", "rust", "rust-perf", "worktree"];
+        let list = |skills: &[&str]| skills.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        type Row<'a> = (
+            &'a str,
+            Option<Role>,
+            &'a [(&'a str, &'a [&'a str])],
+            bool,
+            Option<&'a [&'a str]>,
+            EffectiveSkills,
         );
-        assert_eq!(result.effective, ["dev"]);
-    }
-
-    #[test]
-    fn user_removals_stay_removed_while_upstream_additions_merge() {
-        let mut manifest = Manifest {
-            schema: MANIFEST_SCHEMA,
-            ..Manifest::default()
-        };
-        // The user removed "worktree" from the upstream assignment.
-        manifest
-            .agent_skills
-            .insert("rust".into(), vec!["dev".into(), "github".into()]);
-        let source = SourceConfig::default();
-
-        // Upstream later gains "rust-perf" (recorded set predates it).
-        let recorded = ["dev", "github", "rust", "worktree"].map(str::to_owned);
-        let result = effective_skills(
-            "rust",
-            Some(Role::Engineer),
-            &manifest,
-            &source,
-            &available(),
-            &[],
-            Some(&recorded),
-        );
-        assert_eq!(result.manifest_additions, ["rust-perf"]);
-        assert_eq!(result.effective, ["dev", "github", "rust-perf"]);
-        assert!(!result.effective.contains(&"worktree".to_owned()));
-    }
-
-    #[test]
-    fn cache_loss_never_resurrects_removals() {
-        let mut manifest = Manifest {
-            schema: MANIFEST_SCHEMA,
-            ..Manifest::default()
-        };
-        manifest
-            .agent_skills
-            .insert("rust".into(), vec!["dev".into()]);
-        let result = effective_skills(
-            "rust",
-            Some(Role::Engineer),
-            &manifest,
-            &SourceConfig::default(),
-            &available(),
-            &[],
-            None,
-        );
-        assert_eq!(result.effective, ["dev"]);
-        assert!(result.manifest_additions.is_empty());
-    }
-
-    /// A fork rebinds the agent to the local source, which holds the agent
-    /// and none of the catalog skills it was assigned. The declaration
-    /// resolves against the scope, so what the agent rendered with before
-    /// the fork is what it renders with after.
-    #[test]
-    fn a_declaration_resolves_against_the_scope_its_own_source_never_held() {
-        let manifest = declaring(&[("rust", &["dev", "github"])]);
-        let local: Vec<String> = Vec::new();
-        let result = effective_skills(
-            "rust",
-            Some(Role::Engineer),
-            &manifest,
-            &SourceConfig::default(),
-            &local,
-            &available(),
-            None,
-        );
-        assert_eq!(result.effective, ["dev", "github"]);
-        assert!(result.unresolved.is_empty());
-    }
-
-    /// A skill nothing in reach offers is reported alongside the ones that
-    /// resolved, so a caller can tell the two apart instead of reading a
-    /// short list as the whole answer.
-    #[test]
-    fn a_skill_no_source_offers_comes_back_unresolved() {
-        let manifest = declaring(&[("rust", &["dev", "gone"])]);
-        let local: Vec<String> = Vec::new();
-        let result = effective_skills(
-            "rust",
-            Some(Role::Engineer),
-            &manifest,
-            &SourceConfig::default(),
-            &local,
-            &available(),
-            None,
-        );
-        assert_eq!(result.effective, ["dev"]);
-        assert_eq!(result.unresolved, ["gone"]);
+        let rows: [Row<'_>; 5] = [
+            (
+                "reviewer-rust",
+                Some(Role::Reviewer),
+                &[("rust", &["dev"])],
+                true,
+                None,
+                EffectiveSkills {
+                    effective: list(&["dev"]),
+                    upstream_now: list(&["dev", "rust", "rust-perf"]),
+                    manifest_additions: Vec::new(),
+                    unresolved: Vec::new(),
+                },
+            ),
+            // The user removed "worktree"; upstream later gained "rust-perf",
+            // which the recorded set predates.
+            (
+                "rust",
+                Some(Role::Engineer),
+                &[("rust", &["dev", "github"])],
+                true,
+                Some(&["dev", "github", "rust", "worktree"]),
+                EffectiveSkills {
+                    effective: list(&["dev", "github", "rust-perf"]),
+                    upstream_now: list(&engineer),
+                    manifest_additions: list(&["rust-perf"]),
+                    unresolved: Vec::new(),
+                },
+            ),
+            (
+                "rust",
+                Some(Role::Engineer),
+                &[("rust", &["dev"])],
+                true,
+                None,
+                EffectiveSkills {
+                    effective: list(&["dev"]),
+                    upstream_now: list(&engineer),
+                    manifest_additions: Vec::new(),
+                    unresolved: Vec::new(),
+                },
+            ),
+            (
+                "rust",
+                Some(Role::Engineer),
+                &[("rust", &["dev", "github"])],
+                false,
+                None,
+                EffectiveSkills {
+                    effective: list(&["dev", "github"]),
+                    upstream_now: Vec::new(),
+                    manifest_additions: Vec::new(),
+                    unresolved: Vec::new(),
+                },
+            ),
+            (
+                "rust",
+                Some(Role::Engineer),
+                &[("rust", &["dev", "gone"])],
+                false,
+                None,
+                EffectiveSkills {
+                    effective: list(&["dev"]),
+                    upstream_now: Vec::new(),
+                    manifest_additions: Vec::new(),
+                    unresolved: list(&["gone"]),
+                },
+            ),
+        ];
+        for (agent, role, declared, own_source_offers, recorded, answer) in rows {
+            // The agent's own source either offers the catalog skills or,
+            // after a fork to the local source, none of them, with the
+            // scope holding them instead.
+            let (available, in_scope) = match own_source_offers {
+                true => (available(), Vec::new()),
+                false => (Vec::new(), available()),
+            };
+            let recorded = recorded.map(&list);
+            let result = effective_skills(
+                agent,
+                role,
+                &declaring(declared),
+                &SourceConfig::default(),
+                &available,
+                &in_scope,
+                recorded.as_deref(),
+            );
+            assert_eq!(result, answer, "{agent} declaring {declared:?}");
+        }
     }
 }

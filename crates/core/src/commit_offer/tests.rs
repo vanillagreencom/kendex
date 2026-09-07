@@ -561,7 +561,6 @@ fn a_path_with_metacharacters_commits_itself_and_nothing_it_would_match() {
         BTreeSet::from(["docs/a[b].md".to_owned()])
     );
     assert!(repo.status().contains("?? docs/ab.md"), "{}", repo.status());
-    assert_eq!(pathspec::Spec::LITERAL, "--literal-pathspecs");
 }
 
 /// A hook's refusal reaches the person whole and in order, and the index

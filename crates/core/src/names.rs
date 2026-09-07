@@ -284,28 +284,53 @@ mod tests {
         assert_eq!(split("gh"), None);
     }
 
+    /// One row per hostile shape, and the reason it is refused with. A
+    /// name that is a directory, climbs, or has more than one `/`;
+    /// nothing at all, or an empty half; a Windows device name, a
+    /// trailing dot Windows drops, a leading `-` a shell reads as a flag,
+    /// a backslash no filename may hold, a `$` or backtick a shell would
+    /// expand; and a segment past the length cap, with the cap itself
+    /// legal.
     #[test]
     fn path_hostile_shapes_are_named_with_the_reason() {
-        for name in [
-            "..",
-            "../etc",
-            "a/../b",
-            "a/b/c",
-            "",
-            "a/",
-            "/b",
-            "nul",
-            "com1.md",
-            "trailing.",
-            "-flag",
-            "back\\slash",
-            "x$(id)",
-            "a`id`b",
-        ] {
-            assert!(item_problem(name).is_some(), "{name} should be refused");
+        let long = "x".repeat(MAX_SEGMENT + 1);
+        let too_long = format!(
+            "`{long}` is {} bytes and a name may be {MAX_SEGMENT}",
+            MAX_SEGMENT + 1
+        );
+        let rows = [
+            ("..", "`..` names a directory, not an item"),
+            ("../etc", "`..` names a directory, not an item"),
+            (
+                "a/../b",
+                "`a/../b` has more than one `/` — a name is either a plain name or `<plugin>/<item>`",
+            ),
+            (
+                "a/b/c",
+                "`a/b/c` has more than one `/` — a name is either a plain name or `<plugin>/<item>`",
+            ),
+            ("", "a name cannot be empty"),
+            ("a/", "a name cannot be empty"),
+            ("/b", "a name cannot be empty"),
+            ("nul", "`nul` is a reserved device name on Windows"),
+            ("com1.md", "`com1.md` is a reserved device name on Windows"),
+            (
+                "trailing.",
+                "`trailing.` ends in a dot or a space, which Windows silently drops",
+            ),
+            ("-flag", "`-flag` starts with `-`, which reads as a flag"),
+            (
+                "back\\slash",
+                "`back\\slash` holds `\\`, which no filename may",
+            ),
+            ("x$(id)", "`x$(id)` holds `$`, which a shell would expand"),
+            ("a`id`b", "`a`id`b` holds ```, which a shell would expand"),
+            (long.as_str(), too_long.as_str()),
+        ];
+        for (name, reason) in rows {
+            assert_eq!(item_problem(name).as_deref(), Some(reason), "{name}");
         }
-        assert!(item_problem(&"x".repeat(MAX_SEGMENT + 1)).is_some());
-        assert!(item_problem(&"x".repeat(MAX_SEGMENT)).is_none());
+        assert_eq!(item_problem(&"x".repeat(MAX_SEGMENT)), None);
     }
 
     /// A right-to-left override or a zero-width space would let one

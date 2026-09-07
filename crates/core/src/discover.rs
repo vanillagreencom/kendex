@@ -111,57 +111,57 @@ fn walk(dir: &Path, depth: usize, found: &mut BTreeSet<PathBuf>) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn finds_marked_projects_and_skips_noise() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        fs::create_dir_all(root.join("a/.claude")).unwrap();
-        fs::create_dir_all(root.join("b/sub")).unwrap();
-        fs::write(root.join("b/sub/kendex.toml"), "").unwrap();
-        fs::create_dir_all(root.join("node_modules/fake/.claude")).unwrap();
-        fs::create_dir_all(root.join("plain")).unwrap();
-
-        let found = discover_projects(root).unwrap();
-        let names: Vec<_> = found
+    /// What a walk from `root` finds, as paths relative to it, in the
+    /// order they come back.
+    fn found_under(root: &Path) -> Vec<PathBuf> {
+        let canonical = crate::paths::canonical(root).unwrap();
+        discover_projects(root)
+            .unwrap()
             .iter()
-            .map(|p| {
-                p.strip_prefix(crate::paths::canonical(root).unwrap())
-                    .unwrap()
-                    .to_path_buf()
-            })
-            .collect();
-        assert_eq!(names, [PathBuf::from("a"), PathBuf::from("b/sub")]);
+            .map(|project| project.strip_prefix(&canonical).unwrap().to_path_buf())
+            .collect()
     }
 
+    /// One row per tree shape, and the projects a walk from its root
+    /// finds. A marker directory or file marks a project; a bare
+    /// `.github` does not, only one holding Copilot instructions; noise
+    /// such as `node_modules` is skipped; a project root is not descended
+    /// into; both marker generations mark; and nothing deeper than the
+    /// depth limit is found.
     #[test]
-    fn gemini_and_copilot_repos_are_projects_but_a_bare_github_dir_is_not() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        fs::create_dir_all(root.join("g/.gemini")).unwrap();
-        fs::create_dir_all(root.join("c/.github")).unwrap();
-        fs::write(root.join("c/.github/copilot-instructions.md"), "").unwrap();
-        fs::create_dir_all(root.join("plain/.github/workflows")).unwrap();
-
-        let found = discover_projects(root).unwrap();
-        let names: Vec<_> = found
-            .iter()
-            .map(|p| {
-                p.strip_prefix(crate::paths::canonical(root).unwrap())
-                    .unwrap()
-            })
-            .collect();
-        assert_eq!(names, [Path::new("c"), Path::new("g")]);
-    }
-
-    #[test]
-    fn a_project_root_is_not_descended_into() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        fs::create_dir_all(root.join("proj/.claude")).unwrap();
-        fs::create_dir_all(root.join("proj/nested/.claude")).unwrap();
-
-        let found = discover_projects(&root.join("proj")).unwrap();
-        assert_eq!(found.len(), 1);
+    fn a_walk_finds_every_marked_project_and_nothing_else() {
+        type Row<'a> = (&'a [&'a str], &'a [&'a str], &'a [&'a str]);
+        let rows: [Row<'_>; 5] = [
+            (
+                &["a/.claude", "b/sub", "node_modules/fake/.claude", "plain"],
+                &["b/sub/kendex.toml"],
+                &["a", "b/sub"],
+            ),
+            (
+                &["g/.gemini", "c/.github", "plain/.github/workflows"],
+                &["c/.github/copilot-instructions.md"],
+                &["c", "g"],
+            ),
+            (&["proj/.claude", "proj/nested/.claude"], &[], &["proj"]),
+            (
+                &["new", "newlock"],
+                &["new/kendex.toml", "newlock/.kendex-lock.json"],
+                &["new", "newlock"],
+            ),
+            (&["1/2/3/4/5/6/.claude"], &[], &[]),
+        ];
+        for (dirs, files, projects) in rows {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path();
+            for dir in dirs {
+                fs::create_dir_all(root.join(dir)).unwrap();
+            }
+            for file in files {
+                fs::write(root.join(file), "").unwrap();
+            }
+            let expected: Vec<PathBuf> = projects.iter().map(PathBuf::from).collect();
+            assert_eq!(found_under(root), expected, "{dirs:?} {files:?}");
+        }
     }
 
     #[test]
@@ -187,42 +187,5 @@ mod tests {
             project_root_from(&home.join("dev"), home).unwrap(),
             crate::paths::canonical(home).unwrap()
         );
-    }
-
-    #[test]
-    fn both_marker_generations_mark_projects_and_win_at_home() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        fs::create_dir_all(root.join("new")).unwrap();
-        fs::write(root.join("new/kendex.toml"), "").unwrap();
-        fs::create_dir_all(root.join("newlock")).unwrap();
-        fs::write(root.join("newlock/.kendex-lock.json"), "{}").unwrap();
-
-        let found = discover_projects(root).unwrap();
-        let names: Vec<_> = found
-            .iter()
-            .map(|p| {
-                p.strip_prefix(crate::paths::canonical(root).unwrap())
-                    .unwrap()
-            })
-            .collect();
-        assert_eq!(names, [Path::new("new"), Path::new("newlock")]);
-
-        let home = root;
-        fs::create_dir_all(home.join("dev")).unwrap();
-        fs::write(home.join(".kendex-lock.json"), "{}").unwrap();
-        assert_eq!(
-            project_root_from(&home.join("dev"), home).unwrap(),
-            crate::paths::canonical(home).unwrap()
-        );
-    }
-
-    #[test]
-    fn depth_limit_holds() {
-        let tmp = tempfile::tempdir().unwrap();
-        let deep = tmp.path().join("1/2/3/4/5/6");
-        fs::create_dir_all(deep.join(".claude")).unwrap();
-        let found = discover_projects(tmp.path()).unwrap();
-        assert!(found.is_empty());
     }
 }

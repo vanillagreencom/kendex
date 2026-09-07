@@ -7,11 +7,27 @@ fn child_env(hardened: &Hardened) -> HashMap<&OsStr, Option<&OsStr>> {
     hardened.command.get_envs().collect()
 }
 
+/// Every git call drops the variables that redirect it to another
+/// repository, index or attribute source, never prompts, runs ssh in
+/// batch mode, and settles `protocol.ext.allow=never` on its own command
+/// line ahead of the caller's words. Named here setting by setting,
+/// rather than read off the constants the constructor reads, so that a
+/// setting dropped from a constant is a failure here and not a shorter
+/// list that agrees with itself.
 #[test]
 fn git_runs_without_redirecting_environment_and_without_prompts() {
     let hardened = Hardened::git(&["status"], None);
     let env = child_env(&hardened);
-    for variable in GIT_REDIRECTS {
+    for variable in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_NAMESPACE",
+        "GIT_ATTR_SOURCE",
+    ] {
         assert_eq!(
             env.get(OsStr::new(variable)),
             Some(&None),
@@ -29,11 +45,14 @@ fn git_runs_without_redirecting_environment_and_without_prompts() {
             .ends_with("-oBatchMode=yes")
     );
     let args: Vec<_> = hardened.command.get_args().collect();
-    let settled: Vec<_> = PINNED
-        .iter()
-        .flat_map(|setting| [OsStr::new("-c"), OsStr::new(setting)])
-        .collect();
-    assert_eq!(&args[..settled.len()], settled.as_slice());
+    assert_eq!(
+        &args[..3],
+        [
+            OsStr::new("-c"),
+            OsStr::new("protocol.ext.allow=never"),
+            OsStr::new("status")
+        ]
+    );
 }
 
 /// A repository holding `one\ntwo\n` that asks for CRLF in its working
@@ -396,26 +415,53 @@ fn an_inherited_ssh_command_keeps_its_options() {
     );
 }
 
-/// A hung `ssh` under `git` is a grandchild. Killing only the process we
-/// hold leaves it running long past the deadline, with a reader thread
-/// blocked on the pipe it still owns.
+/// One row per shape a run can outlive its timeout in, every one ended
+/// inside the bound with nothing it spawned left running: a direct child
+/// that hangs; a hung grandchild under a waiting child, which is a hung
+/// `ssh` under `git`, where killing only the process we hold leaves it
+/// running long past the deadline with a reader thread blocked on the
+/// pipe it still owns; and a grandchild holding the pipes behind a child
+/// that returned its status at once, where waiting on the child alone
+/// declared the run over and then blocked in collection for the
+/// grandchild's whole run, with no deadline anywhere near it. Each script
+/// writes a marker after a second the timeout does not allow, so a
+/// marker on disk afterwards is a process that outlived the kill.
 #[cfg(unix)]
 #[test]
-fn a_timeout_takes_the_whole_process_tree_with_it() {
-    let tmp = tempfile::tempdir().unwrap();
-    let marker = tmp.path().join("grandchild-ran");
-    let script = format!("(sleep 1; : > {}) & wait", marker.display());
-    let error = Hardened::program("/bin/sh", &["-c", &script])
-        .timeout(Duration::from_millis(200))
-        .run()
-        .unwrap_err();
-    let CoreError::Io { source, .. } = error else {
-        panic!("timeout must report as an io error");
-    };
-    assert_eq!(source.kind(), io::ErrorKind::TimedOut);
+fn a_run_that_outlives_its_timeout_is_ended_with_everything_it_spawned() {
+    let rows = [
+        ("a hung child", "sleep 1; : > MARKER"),
+        (
+            "a hung grandchild under a waiting child",
+            "(sleep 1; : > MARKER) & wait",
+        ),
+        (
+            "a grandchild holding the pipes",
+            "(sleep 1; : > MARKER) & exit 0",
+        ),
+    ];
+    for (label, script) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let marker = tmp.path().join("outlived");
+        let script = script.replace("MARKER", &marker.display().to_string());
+        let started = Instant::now();
+        let error = Hardened::program("/bin/sh", &["-c", &script])
+            .timeout(Duration::from_millis(200))
+            .run()
+            .unwrap_err();
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{label}: collection ran past the bound: {:?}",
+            started.elapsed()
+        );
+        let CoreError::Io { source, .. } = error else {
+            panic!("{label}: a timeout must report as an io error, got {error:?}");
+        };
+        assert_eq!(source.kind(), io::ErrorKind::TimedOut, "{label}");
 
-    std::thread::sleep(Duration::from_millis(1500));
-    assert!(!marker.exists(), "a grandchild outlived the timeout");
+        std::thread::sleep(Duration::from_millis(1500));
+        assert!(!marker.exists(), "{label}: a process outlived the timeout");
+    }
 }
 
 #[test]
@@ -489,24 +535,6 @@ fn a_hostile_core_worktree_cannot_reach_outside_the_cache() {
 
 #[cfg(unix)]
 #[test]
-fn a_call_that_outlives_its_timeout_is_killed() {
-    let started = Instant::now();
-    let error = Hardened::program("/bin/sleep", &["5"])
-        .timeout(Duration::from_millis(200))
-        .run()
-        .unwrap_err();
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "waited too long"
-    );
-    let CoreError::Io { source, .. } = error else {
-        panic!("timeout must report as an io error");
-    };
-    assert_eq!(source.kind(), io::ErrorKind::TimedOut);
-}
-
-#[cfg(unix)]
-#[test]
 fn a_child_reading_stdin_gets_nothing_instead_of_waiting() {
     let output = Hardened::program("/bin/cat", &[])
         .timeout(Duration::from_secs(5))
@@ -531,33 +559,6 @@ fn output_past_the_cap_is_an_error_not_a_memory_hole() {
         .run()
         .unwrap();
     assert_eq!(under.stdout, b"hello");
-}
-
-/// A descendant holding the pipes does not get to outlive the timeout.
-///
-/// `sleep 5 & exit 0` is a direct child that returns its status at once and
-/// a grandchild that keeps stdout and stderr open behind it. Waiting on the
-/// child alone declared the run over and then blocked in collection for the
-/// grandchild's whole five seconds, with no deadline anywhere near it — the
-/// caller's bound bought nothing. Ended inside the bound, this is a timeout
-/// like any other.
-#[cfg(unix)]
-#[test]
-fn a_descendant_holding_the_pipes_does_not_outlive_the_timeout() {
-    let started = Instant::now();
-    let error = Hardened::program("/bin/sh", &["-c", "sleep 5 & exit 0"])
-        .timeout(Duration::from_millis(200))
-        .run()
-        .unwrap_err();
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "collection ran past the bound: {:?}",
-        started.elapsed()
-    );
-    let CoreError::Io { source, .. } = error else {
-        panic!("timeout must report as an io error");
-    };
-    assert_eq!(source.kind(), io::ErrorKind::TimedOut);
 }
 
 /// The producer `registry/client.rs` reads to tell a request that never

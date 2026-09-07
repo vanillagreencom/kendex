@@ -102,62 +102,65 @@ mod tests {
         assert_eq!(pi_package_name("odd"), "odd");
     }
 
+    /// One row per spec shape a settings file can carry, and the entry
+    /// it lists: a local package with a `package.json` beside it gets its
+    /// own description and directory; a relative spec with no folder
+    /// falls back to the spec; an npm spec is untouched by local
+    /// resolution.
     #[test]
-    fn a_local_pi_package_gets_its_own_description_and_directory() {
-        let tmp = tempfile::tempdir().unwrap();
-        let settings = tmp.path().join("settings.json");
-        std::fs::create_dir_all(tmp.path().join("packages/@vg/caveman")).unwrap();
-        std::fs::write(
-            tmp.path().join("packages/@vg/caveman/package.json"),
-            r#"{"description": "Native Pi caveman communication mode"}"#,
-        )
-        .unwrap();
-        std::fs::write(&settings, r#"{"packages": ["./packages/@vg/caveman"]}"#).unwrap();
+    fn a_settings_entry_lists_as_its_name_description_and_directory() {
+        let rows = [
+            (
+                "./packages/@vg/caveman",
+                Some((
+                    "packages/@vg/caveman",
+                    r#"{"description": "Native Pi caveman communication mode"}"#,
+                )),
+                "caveman",
+                "Native Pi caveman communication mode",
+                Some("packages/@vg/caveman"),
+            ),
+            (
+                "./packages/pi-tmux",
+                None,
+                "pi-tmux",
+                "./packages/pi-tmux",
+                None,
+            ),
+            (
+                "npm:@vanillagreen/pi-hooks@1.2.0",
+                None,
+                "@vanillagreen/pi-hooks",
+                "npm:@vanillagreen/pi-hooks@1.2.0",
+                None,
+            ),
+        ];
+        for (spec, folder, name, description, source_path) in rows {
+            let tmp = tempfile::tempdir().unwrap();
+            let settings = tmp.path().join("settings.json");
+            if let Some((dir, package_json)) = folder {
+                std::fs::create_dir_all(tmp.path().join(dir)).unwrap();
+                std::fs::write(tmp.path().join(dir).join("package.json"), package_json).unwrap();
+            }
+            std::fs::write(&settings, format!(r#"{{"packages": ["{spec}"]}}"#)).unwrap();
 
-        let entries = pi_packages(&settings).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(
-            entries[0].description.as_deref(),
-            Some("Native Pi caveman communication mode")
-        );
-        assert_eq!(
-            entries[0].source_path.as_deref(),
-            Some(tmp.path().join("packages/@vg/caveman").as_path())
-        );
-    }
-
-    #[test]
-    fn a_relative_pi_package_with_no_folder_falls_back_to_the_spec() {
-        let tmp = tempfile::tempdir().unwrap();
-        let settings = tmp.path().join("settings.json");
-        std::fs::write(&settings, r#"{"packages": ["./packages/pi-tmux"]}"#).unwrap();
-
-        let entries = pi_packages(&settings).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(
-            entries[0].description.as_deref(),
-            Some("./packages/pi-tmux")
-        );
-        assert_eq!(entries[0].source_path, None);
-    }
-
-    #[test]
-    fn an_npm_pi_package_is_unaffected_by_local_resolution() {
-        let tmp = tempfile::tempdir().unwrap();
-        let settings = tmp.path().join("settings.json");
-        std::fs::write(
-            &settings,
-            r#"{"packages": ["npm:@vanillagreen/pi-hooks@1.2.0"]}"#,
-        )
-        .unwrap();
-
-        let entries = pi_packages(&settings).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].name, "@vanillagreen/pi-hooks");
-        assert_eq!(
-            entries[0].description.as_deref(),
-            Some("npm:@vanillagreen/pi-hooks@1.2.0")
-        );
-        assert_eq!(entries[0].source_path, None);
+            let entries = pi_packages(&settings).unwrap();
+            let listed: Vec<(&str, Option<&str>, Option<&Path>)> = entries
+                .iter()
+                .map(|entry| {
+                    (
+                        entry.name.as_str(),
+                        entry.description.as_deref(),
+                        entry.source_path.as_deref(),
+                    )
+                })
+                .collect();
+            let source_path = source_path.map(|rel| tmp.path().join(rel));
+            assert_eq!(
+                listed,
+                [(name, Some(description), source_path.as_deref())],
+                "{spec}"
+            );
+        }
     }
 }
