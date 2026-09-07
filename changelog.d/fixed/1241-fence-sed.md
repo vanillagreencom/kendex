@@ -1,0 +1,1 @@
+- The second-opinion review reads a JSON verdict inside a code fence on macOS, where the fence extraction printed two sed errors on every run and never matched.
