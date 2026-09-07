@@ -363,6 +363,7 @@ describe("the findings behind a row's score", () => {
         name: "gh",
         targets: [{ harness: "claude", location: "" }],
         scope: { scope: "global" },
+        source: null,
         findings: [
           {
             rule: "dangerous-commands",

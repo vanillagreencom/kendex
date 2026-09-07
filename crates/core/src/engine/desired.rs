@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+use specta::Type;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -34,12 +36,10 @@ pub struct Desired {
     /// provenance clash.
     pub recorded_fork: bool,
     pub hash: String,
-    /// Where the catalog holds this item, `/`-spelled and relative to the
-    /// catalog root — what the safety rules read, and what a plan's
-    /// advisory rows name. `None` for an installation no catalog file
-    /// backs: a plugin switch, a hook whose command the declaration
-    /// itself carries.
-    pub source_path: Option<String>,
+    /// The catalog file this rendering came from. `None` for an
+    /// installation no catalog file backs: a plugin switch, a hook whose
+    /// command the declaration itself carries.
+    pub source: Option<CatalogSource>,
     pub upstream_skills: Option<Vec<String>>,
     /// Set where deriving the place again could name another one — a
     /// command stored as a skill, a skill's tree and link — so the lock
@@ -48,6 +48,26 @@ pub struct Desired {
     /// Every reason this installation is wanted, derived fresh each pass.
     pub reasons: BTreeSet<crate::lock::Reason>,
     pub artifact: Artifact,
+}
+
+/// Where a rendering's bytes came from in the catalog, and whether the
+/// rendering is those bytes unchanged.
+///
+/// A plan scores what it would write, and writing is not always copying:
+/// an agent is restated in each tool's own words, a skill can carry the
+/// instructions the project adds to it. The path is worth citing either
+/// way — it is a file the reader can open while the destination does not
+/// exist yet, and `check --catalog` names the same one — but a line read
+/// off the rendering is a line of that file only where the two are the
+/// same bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogSource {
+    /// The item's path within the catalog, `/`-spelled.
+    pub path: String,
+    /// Whether the rendering is the catalog's bytes unchanged, which is
+    /// what makes a line read off the rendering a line of `path`.
+    pub verbatim: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -383,10 +403,20 @@ impl ItemCtx<'_> {
         self.reasons.get(&harness).cloned().unwrap_or_default()
     }
 
-    /// Where the catalog holds this item, as every surface that cites a
-    /// source location spells it.
-    pub(super) fn source_path(&self) -> String {
-        self.sealed.catalog_path(self.item_path)
+    /// The catalog file this item's renderings come from, and whether
+    /// `artifact` is that file's own bytes. The comparison is by hash
+    /// against the shape the catalog holds — a tree for a directory, a
+    /// file otherwise — so a rendering that changes the shape (a command
+    /// wrapped into a skill tree) reads as changed, which it is.
+    pub(super) fn source(&self, artifact: &Artifact) -> Result<CatalogSource> {
+        let catalog = match self.sealed.is_dir(self.item_path) {
+            true => hash_files(&self.sealed.collect_skill_tree(self.item_path)?),
+            false => hash_bytes(&self.sealed.read(self.item_path)?),
+        };
+        Ok(CatalogSource {
+            path: self.sealed.catalog_path(self.item_path),
+            verbatim: catalog == artifact.disk_hash(),
+        })
     }
 
     pub(super) fn recorded_fork(&self, kind: ItemKind) -> bool {

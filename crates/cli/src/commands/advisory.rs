@@ -1,7 +1,7 @@
 //! One advisory block, in the one shape every verb that scores content
 //! prints it, and the key that decides when two rows share one.
 
-use kendex_core::engine::{EngineReport, ItemSafety, SafetyTarget};
+use kendex_core::engine::{CatalogSource, EngineReport, ItemSafety, SafetyTarget};
 use kendex_core::model::ItemKind;
 use kendex_core::quality::Finding;
 
@@ -14,7 +14,10 @@ pub fn print_safety(report: &EngineReport) {
         print_advisory(
             row.kind,
             &row.name,
-            ScoredAt::Targets(&targets),
+            ScoredAt::Planned {
+                targets: &targets,
+                source: row.source.as_ref(),
+            },
             &row.advisory,
         );
     }
@@ -141,8 +144,12 @@ fn also_at(finding: &Finding, targets: &[SafetyTarget]) -> Vec<String> {
 /// hand-building a subject string, so every score line is worded the same
 /// way.
 pub enum ScoredAt<'a> {
-    /// The harness renderings whose audit results share this block.
-    Targets(&'a [kendex_core::engine::SafetyTarget]),
+    /// The harness renderings whose audit results share this block, and
+    /// the catalog file they were rendered from where one backs them.
+    Planned {
+        targets: &'a [kendex_core::engine::SafetyTarget],
+        source: Option<&'a CatalogSource>,
+    },
     /// The item's own path within the catalog. Empty for a repository
     /// that is one skill: its path is the catalog, so there is no segment
     /// to name and the score line leaves it out.
@@ -168,9 +175,10 @@ pub fn print_advisory(
     at: ScoredAt<'_>,
     advisory: &kendex_core::quality::AuditResult,
 ) {
-    let (targets, at) = match at {
-        ScoredAt::Targets(targets) => (
+    let (targets, source, at) = match at {
+        ScoredAt::Planned { targets, source } => (
             targets,
+            source,
             format!(
                 " for {}",
                 targets
@@ -180,8 +188,8 @@ pub fn print_advisory(
                     .join(", ")
             ),
         ),
-        ScoredAt::CatalogPath("") => (&[][..], String::new()),
-        ScoredAt::CatalogPath(path) => (&[][..], format!(" at {}", path)),
+        ScoredAt::CatalogPath("") => (&[][..], None, String::new()),
+        ScoredAt::CatalogPath(path) => (&[][..], None, format!(" at {}", path)),
     };
     say(&format!(
         "safety: {} {}{at} scores {}/100",
@@ -194,10 +202,11 @@ pub fn print_advisory(
         // no place to name; the claim still prints, without empty parens.
         // `PATH:LINE` is composed here and nowhere earlier: this is the end
         // of the line, where nothing has to read it back.
-        let at = match (finding.location.is_empty(), finding.line) {
+        let (place, line) = cited(finding, targets, source);
+        let at = match (place.is_empty(), line) {
             (true, _) => String::new(),
-            (false, None) => format!(" ({})", finding.location),
-            (false, Some(line)) => format!(" ({}:{line})", finding.location),
+            (false, None) => format!(" ({})", place),
+            (false, Some(line)) => format!(" ({}:{line})", place),
         };
         say(&format!(
             "  [{}] {}{at}",
@@ -209,6 +218,44 @@ pub fn print_advisory(
         }
     }
     print_skipped(advisory);
+}
+
+/// Where this finding is cited, and at which line of it.
+///
+/// A plan scores what it would write, and prints before it writes any of
+/// it: the destination the rule fired in is a file the reader cannot open
+/// yet, so the citation is the catalog file those bytes came from — the
+/// same one `check --catalog` names for the same content. The finding's
+/// own location is left alone, because that is what places it among the
+/// renderings this block covers.
+///
+/// The line survives only where the rendering is the catalog file's own
+/// bytes. Writing is not always copying — an agent is restated in each
+/// tool's own words, a skill can carry the instructions the project adds
+/// to it — and a line counted in a rewrite is a line of no file at all.
+///
+/// Everything else keeps what the rules said: an installed reading, and a
+/// row no catalog file backs, are already at a place a reader can open.
+fn cited(
+    finding: &Finding,
+    targets: &[SafetyTarget],
+    source: Option<&CatalogSource>,
+) -> (String, Option<u32>) {
+    let unchanged = || (finding.location.clone(), finding.line);
+    let Some(source) = source else {
+        return unchanged();
+    };
+    let root = targets.first().map_or("", |at| at.location.as_str());
+    let Some(place) = within(&finding.location, root) else {
+        return unchanged();
+    };
+    // A repository that is one skill has no path inside itself, so the
+    // place is the whole citation and joins to nothing.
+    let path = match source.path.is_empty() {
+        true => place.trim_start_matches('/').to_owned(),
+        false => format!("{}{place}", source.path),
+    };
+    (path, finding.line.filter(|_| source.verbatim))
 }
 
 /// The rules that apply to this kind and had no bytes to read here.
@@ -249,6 +296,10 @@ mod tests {
                 location: root.clone(),
             }],
             scope: Scope::Global,
+            source: Some(CatalogSource {
+                path: "skills/deploy".to_owned(),
+                verbatim: true,
+            }),
             advisory: AuditResult {
                 findings: vec![Finding {
                     rule: "rce".to_owned(),

@@ -178,42 +178,60 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
             files: variant.files.clone(),
             link,
         };
-        // Where the tree and the link landed goes on the record. A tool's
-        // directory moves between kendex versions, and a pass that derived
-        // the place again would name one this install never wrote — the
-        // link it did write is then findable only through the record.
-        let emitted = Some(EmittedArtifact {
+        push_installs(ctx, state, group, artifact, enabled, method)?;
+    }
+    Ok(())
+}
+
+/// One rendering as the installation every member of its group wants.
+///
+/// The tree is one set of bytes however many tools read it, so the two
+/// things derived from those bytes — where they landed, and where they
+/// came from — are derived once here and shared across the members.
+fn push_installs(
+    ctx: &ItemCtx,
+    state: &mut DesiredState,
+    group: &SurfaceGroup,
+    artifact: Artifact,
+    enabled: bool,
+    method: Method,
+) -> Result<()> {
+    // Where the tree and the link landed goes on the record. A tool's
+    // directory moves between kendex versions, and a pass that derived
+    // the place again would name one this install never wrote — the
+    // link it did write is then findable only through the record.
+    let emitted = Some(EmittedArtifact {
+        kind: ItemKind::Skill,
+        name: group.installed.clone(),
+        paths: artifact.paths(),
+    });
+    let source = Some(ctx.source(&artifact)?);
+    for harness in &group.members {
+        state.items.push(Desired {
+            key: entry_key(ItemKind::Skill, ctx.name, *harness),
             kind: ItemKind::Skill,
-            name: group.installed.clone(),
-            paths: artifact.paths(),
+            name: ctx.name.to_owned(),
+            harness: *harness,
+            enabled,
+            method,
+            source_name: ctx.decl.source.clone(),
+            provenance: ctx.provenance.to_owned(),
+            source_commit: ctx.source_commit.map(str::to_owned),
+            recorded_fork: ctx.recorded_fork(ItemKind::Skill),
+            hash: installation_hash(
+                ctx.sealed,
+                ctx.item_path,
+                ctx.manifest,
+                ItemKind::Skill,
+                ctx.name,
+                *harness,
+            )?,
+            source: source.clone(),
+            upstream_skills: None,
+            emitted: emitted.clone(),
+            reasons: ctx.reasons_for(*harness),
+            artifact: artifact.clone(),
         });
-        for harness in &group.members {
-            state.items.push(Desired {
-                key: entry_key(ItemKind::Skill, ctx.name, *harness),
-                kind: ItemKind::Skill,
-                name: ctx.name.to_owned(),
-                harness: *harness,
-                enabled,
-                method,
-                source_name: ctx.decl.source.clone(),
-                provenance: ctx.provenance.to_owned(),
-                source_commit: ctx.source_commit.map(str::to_owned),
-                recorded_fork: ctx.recorded_fork(ItemKind::Skill),
-                hash: installation_hash(
-                    ctx.sealed,
-                    ctx.item_path,
-                    ctx.manifest,
-                    ItemKind::Skill,
-                    ctx.name,
-                    *harness,
-                )?,
-                source_path: Some(ctx.source_path()),
-                upstream_skills: None,
-                emitted: emitted.clone(),
-                reasons: ctx.reasons_for(*harness),
-                artifact: artifact.clone(),
-            });
-        }
     }
     Ok(())
 }

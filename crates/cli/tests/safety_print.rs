@@ -34,6 +34,12 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
 /// given by the caller.
 #[allow(clippy::unwrap_used)]
 fn declared(home: &Path, body: &str) -> std::path::PathBuf {
+    declared_with(home, body, "")
+}
+
+/// The same project, plus whatever the caller appends to its manifest.
+#[allow(clippy::unwrap_used)]
+fn declared_with(home: &Path, body: &str, extra: &str) -> std::path::PathBuf {
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();
     let catalog = home.join("catalog");
@@ -46,7 +52,31 @@ fn declared(home: &Path, body: &str) -> std::path::PathBuf {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n{extra}",
+            source_path(&catalog)
+        ),
+    )
+    .unwrap();
+    project
+}
+
+/// A project declaring one agent for Codex, whose catalog file is
+/// markdown and whose rendering is TOML.
+#[allow(clippy::unwrap_used)]
+fn declared_agent(home: &Path, body: &str) -> std::path::PathBuf {
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".codex")).unwrap();
+    let catalog = home.join("catalog");
+    fs::create_dir_all(catalog.join("agents")).unwrap();
+    fs::write(
+        catalog.join("agents/scout.md"),
+        format!("---\nname: scout\ndescription: looks around\n---\n{body}"),
+    )
+    .unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n\n[agents.scout]\nsource = \"cat\"\n",
             source_path(&catalog)
         ),
     )
@@ -141,17 +171,32 @@ fn add_apply_and_refresh_print_the_same_block() {
     assert_eq!(block(&refreshed), expected, "refresh differs from add");
 }
 
-/// The subtext on a planned row names the catalog file the rules read.
-///
-/// A preview prints before anything is written, so the install
-/// destination it used to name is a file that does not exist yet: a
-/// reader who follows the location finds nothing there.
+/// The place a finding's subtext names, without the parentheses.
+#[allow(clippy::unwrap_used)]
+fn cited(printed: &str) -> Vec<String> {
+    finding_lines(printed)
+        .iter()
+        .map(|line| {
+            let at = line
+                .rfind(" (")
+                .unwrap_or_else(|| panic!("no location as subtext: {printed}"));
+            line[at + 2..line.len() - 1].to_owned()
+        })
+        .collect()
+}
+
+/// A rendering that is the catalog file's own bytes is cited at that file
+/// and that line — the same place `check --catalog` names for the same
+/// content, which is the whole point of the two surfaces sharing a
+/// format. The preview writes nothing, so the destination it used to name
+/// does not exist while the reader is reading it.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_preview_names_the_catalog_file_it_read() {
+fn a_verbatim_render_cites_the_catalog_file_and_its_line() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let project = declared(&home, RISKY);
+    let catalog = home.join("catalog");
 
     // No `-y` and no terminal: the plan and its advisory block print,
     // then the write refuses. This is the state the subtext is read in.
@@ -165,42 +210,7 @@ fn a_preview_names_the_catalog_file_it_read() {
         !project.join(".claude/skills/deploy/SKILL.md").exists(),
         "the preview wrote the file it cites: {printed}"
     );
-
-    let findings = finding_lines(&printed);
-    assert_eq!(findings.len(), 1, "{printed}");
-    assert!(
-        findings[0].contains("(skills/deploy/SKILL.md:"),
-        "the subtext does not name the catalog file: {printed}"
-    );
-    assert!(
-        !findings[0].contains(".claude/skills/deploy"),
-        "the subtext names the destination, which does not exist yet: {printed}"
-    );
-}
-
-/// `check --catalog` and a write verb mean the same thing by the
-/// parenthesised path: one file, one location, whichever surface reads it.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn the_catalog_check_and_a_write_verb_cite_one_location() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let project = declared(&home, RISKY);
-    let catalog = home.join("catalog");
-
-    // The subtext each surface prints, taken off the same finding line.
-    let cited = |output: &Output| -> Vec<String> {
-        let printed = String::from_utf8_lossy(&output.stderr).into_owned();
-        finding_lines(&printed)
-            .iter()
-            .map(|line| {
-                let at = line
-                    .rfind(" (")
-                    .unwrap_or_else(|| panic!("no location as subtext: {printed}"));
-                line[at + 2..line.len() - 1].to_owned()
-            })
-            .collect()
-    };
+    assert_eq!(cited(&printed), ["skills/deploy/SKILL.md:5"], "{printed}");
 
     let checked = kendex(
         &home,
@@ -208,12 +218,56 @@ fn the_catalog_check_and_a_write_verb_cite_one_location() {
         &["check", "--catalog", catalog.to_str().unwrap()],
     );
     assert!(checked.status.success(), "{checked:?}");
-    let applied = kendex(&home, &project, &["apply", "-y"]);
-    assert!(applied.status.success(), "{applied:?}");
+    let authoring = String::from_utf8_lossy(&checked.stderr).into_owned();
+    assert_eq!(
+        cited(&authoring),
+        cited(&printed),
+        "the two surfaces cite different places: {authoring}"
+    );
+}
 
-    let expected = cited(&checked);
-    assert_eq!(expected.len(), 1, "the check found nothing to compare");
-    assert_eq!(cited(&applied), expected, "apply cites another place");
+/// A rendering the project changed is cited at the catalog file with no
+/// line: the rule counted its line in bytes that file does not hold, and
+/// a number that indexes nothing is worse than none.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_rewritten_render_cites_the_catalog_file_without_a_line() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = declared_with(
+        &home,
+        RISKY,
+        "\n[skill-instructions]\ndeploy = \"Team note.\"\n",
+    );
+
+    let preview = kendex(&home, &project, &["apply"]);
+    assert!(!preview.status.success(), "{preview:?}");
+    let printed = String::from_utf8_lossy(&preview.stderr).into_owned();
+    assert_eq!(cited(&printed), ["skills/deploy/SKILL.md"], "{printed}");
+}
+
+/// The citation says where the bytes came from; it never says how to read
+/// them. A Codex agent is TOML rendered out of a markdown catalog file,
+/// and reading that TOML as markdown would take a flag inside backticks
+/// for quotation and drop the finding — the score is what pins it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_codex_agent_keeps_its_score_under_a_catalog_citation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = declared_agent(
+        &home,
+        "Run it with `claude --dangerously-skip-permissions` when prompts get noisy.\n",
+    );
+
+    let preview = kendex(&home, &project, &["apply"]);
+    assert!(!preview.status.success(), "{preview:?}");
+    let printed = String::from_utf8_lossy(&preview.stderr).into_owned();
+    assert!(
+        printed.contains("safety: agent scout for Codex scores 75/100"),
+        "the finding was read away: {printed}"
+    );
+    assert_eq!(cited(&printed), ["agents/scout.md"], "{printed}");
 }
 
 /// A clean package still says what it scored. A clean row going silent

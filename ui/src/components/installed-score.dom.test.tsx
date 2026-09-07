@@ -39,6 +39,7 @@ const scored = (
   name: "gh",
   targets: [{ harness: "claude", location: "" }],
   scope: GLOBAL,
+  source: null,
   findings,
   skipped: [],
   safety: { score, deductions: [] },

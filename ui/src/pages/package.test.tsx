@@ -252,6 +252,7 @@ const scoredView: AuditView = {
       name: "gh",
       targets: [{ harness: "claude", location: "" }],
       scope: VG,
+      source: null,
       findings: [
         {
           rule: "dangerous-commands",
@@ -731,6 +732,7 @@ describe("the package page's safety tab", () => {
               name: "gh",
               targets: [{ harness: "claude", location: "" }],
               scope: HYPR,
+              source: null,
               findings: [],
               skipped: [],
               safety: { score: 12, deductions: [] },

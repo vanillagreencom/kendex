@@ -34,6 +34,14 @@ pub struct ItemSafety {
     /// Groups equal plan content; installed rows describe one scan.
     pub targets: Vec<SafetyTarget>,
     pub scope: Scope,
+    /// The catalog file these renderings came from, where one does. A
+    /// finding's own `location` is where the rule fired in the bytes that
+    /// were read — the rendering, at its destination — and that is what
+    /// places it among `targets`. This is where those bytes came from,
+    /// which is what a preview cites: the destination does not exist
+    /// until the plan is applied. `None` for a row no catalog file backs,
+    /// and for an installed row, whose bytes are the artifact itself.
+    pub source: Option<super::desired::CatalogSource>,
     /// Flattened, so every reader of a serialized row — the app, the CLI,
     /// a fixture — sees `safety`, `quality`, `findings` and `skipped` at
     /// the top level, the same paths `PackageSafety` serves them at.
@@ -63,11 +71,11 @@ fn run_with(
     let mut rows: Vec<ItemSafety> = Vec::new();
     let mut input_rows: HashMap<(String, String), usize> = HashMap::new();
     for item in &state.items {
-        let (input, destination) = input_for(item);
+        let input = input_for(item);
         let input_key = (item.name.clone(), input.content_hash());
         let target = SafetyTarget {
             harness: item.harness,
-            location: destination,
+            location: input.location.clone(),
         };
         if let Some(&row) = input_rows.get(&input_key) {
             rows[row].targets.push(target);
@@ -80,6 +88,7 @@ fn run_with(
             name: item.name.clone(),
             targets: vec![target],
             scope: scope.clone(),
+            source: item.source.clone(),
             advisory: audit(input),
         });
         input_rows.insert(input_key, row);

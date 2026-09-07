@@ -144,6 +144,10 @@ pub(super) fn desired_agent(
         if !loadable(ctx, state, harness, &installed, &rendered) {
             continue;
         }
+        let artifact = Artifact::File {
+            path: written_at(&native, harness, ctx.name, enabled),
+            bytes: rendered.text.into_bytes(),
+        };
         state.items.push(Desired {
             key: entry_key(ItemKind::Agent, ctx.name, harness),
             kind: ItemKind::Agent,
@@ -163,14 +167,11 @@ pub(super) fn desired_agent(
                 ctx.name,
                 harness,
             )?,
-            source_path: Some(ctx.source_path()),
+            source: Some(ctx.source(&artifact)?),
             upstream_skills: Some(skills.upstream_now.clone()),
             emitted: None,
             reasons: ctx.reasons_for(harness),
-            artifact: Artifact::File {
-                path: written_at(&native, harness, ctx.name, enabled),
-                bytes: rendered.text.into_bytes(),
-            },
+            artifact,
         });
     }
     Ok(())
