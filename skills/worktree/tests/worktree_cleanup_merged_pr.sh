@@ -1,41 +1,24 @@
 #!/usr/bin/env bash
-# `cleanup` and `remove` against squash-merged branches.
+# `cleanup` and `remove` against squash-merged branches: one table, a row per
+# scenario. A squash merge rewrites the branch into a separate commit, so
+# ancestry reports every merged worktree as pending and the forge's merged
+# pull request is the only proof left; a lookup that cannot answer is not a
+# merge, a pull request merged elsewhere (another base, a fork, a redirected
+# repository) is not a merge here, and a branch whose tip is not the head the
+# pull request merged is kept with its work.
 #
-# Every PR in this fleet lands by squash through the merge queue, so the merged
-# branch is rewritten into a separate commit and is an ancestor of nothing. Ancestry
-# alone therefore reports every merged worktree as pending, and the old cleanup
-# loop said nothing at all about the ones it declined to collect. What is under
-# test:
-#
-#   * a squash-merged branch is collected on the forge's merged-PR proof;
-#   * a branch with no merged PR is KEPT and named as unmerged;
-#   * a lookup that cannot answer — gh failing, gh missing — keeps the worktree
-#     and names that too, because an unanswered lookup is not a merge;
-#   * gh's stderr chatter never becomes part of the answer, and chatter on
-#     stdout is an unreadable answer rather than a row that did not match;
-#   * a worktree cleanup can prove nothing about — detached HEAD, or a branch
-#     whose ref is gone from the main checkout — is named, never passed over,
-#     and a listing that fails outright exits nonzero instead of reporting the
-#     empty sweep as a clean one;
-#   * `remove` distinguishes a lookup that could not answer from a branch
-#     proven unmerged, because one is a retry and the other is a decision;
-#   * a branch whose tip is NOT the head the pull request merged is kept, with
-#     its follow-up commits and uncommitted files intact. One branch name serves
-#     every worktree an issue ever had, so matching on the name alone handed an
-#     stale merged record to unrelated work and force-deleted it;
-#   * a pull request merged into some other base is not a merge into the
-#     default branch, so it collects nothing; nor is a fork's pull request,
-#     nor an answer from whatever repository a GH_REPO redirect points at;
-#   * `remove` deletes a squash-merged branch and still keeps an unmerged one,
-#     a moved-on one, and one merged only into its own tracking upstream —
-#     `git branch -d` accepts that last case and does not decide anything.
+# A row's fixture is a word list of steps building a fresh checkout with an
+# issue worktree at trees/topic; the gh column is the answer the stub gives;
+# the command runs from the main checkout; the row pins the exit status,
+# stdout, stderr whole and what is left (the worktree, its index, the branch
+# tip, a second worktree where the row has one).
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKTREE_SCRIPT="$(cd "$TEST_DIR/.." && pwd)/scripts/worktree"
+WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
 
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -43,35 +26,15 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 PASS=0
 FAIL=0
 
-pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
-
 assert_eq() {
   local got="$1" want="$2" name="$3"
   if [[ "$got" == "$want" ]]; then
-    pass "$name"
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
   else
     FAIL=$((FAIL + 1))
     printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
   fi
-}
-
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    pass "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  fi
-}
-
-assert_path_exists() {
-  [[ -e "$1" ]] && pass "$2" || fail "$2 (missing: $1)"
-}
-
-assert_path_absent() {
-  [[ ! -e "$1" ]] && pass "$2" || fail "$2 (still exists: $1)"
 }
 
 # `gh pr list --state merged --head <branch> --base <default>` answers from
@@ -84,15 +47,13 @@ assert_path_absent() {
 # query asked for merged pull requests on the base it names, a cross-repository
 # row is answered only when the query did not ask to exclude them, and a query
 # carrying a GH_REPO redirect is answered for that OTHER repository. Dropping
-# any of them from the implementation has to fail a scenario here.
+# any of them from the implementation has to fail a row here.
 #
 # GH_FAIL=1 makes the query fail the way a network or auth error does.
 # GH_STDERR_NOISE=1 prints gh's routine chatter on stderr beside a good answer.
 # GH_NOISE=1 puts that chatter on STDOUT, where it contaminates the answer.
-make_gh_stub() {
-  local bin="$1"
-  mkdir -p "$bin"
-  cat >"$bin/gh" <<'STUB'
+mkdir -p "$TMP_ROOT/bin"
+cat >"$TMP_ROOT/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -uo pipefail
 if [[ "${GH_FAIL:-0}" == "1" ]]; then
@@ -122,7 +83,7 @@ for arg in "$@"; do
   prev="$arg"
 done
 # An unfiltered query is not the query under test: answer nothing rather than
-# letting a scenario pass on a filter the implementation stopped sending.
+# letting a row pass on a filter the implementation stopped sending.
 [[ "$state" == "merged" ]] || exit 0
 # A redirected query answers for the repository it was pointed at, not this
 # checkout. GH_REDIRECT_OID is that other repository's same-named branch.
@@ -143,21 +104,12 @@ while read -r want want_base oid number cross; do
 done <<<"${GH_MERGED_PRS:-}"
 exit 0
 STUB
-  chmod +x "$bin/gh"
-}
+chmod +x "$TMP_ROOT/bin/gh"
+export PATH="$TMP_ROOT/bin:$PATH"
 
-branch_tip() {
-  git -C "$1/main" rev-parse --verify "refs/heads/$2"
-}
-
-# A git that fails `worktree list` and passes everything else through, for
-# driving the enumeration failure. Lives in its own directory so only the
-# scenario that prepends it is affected.
-make_failing_git_stub() {
-  local bin="$1" real_git
-  real_git="$(command -v git)"
-  mkdir -p "$bin"
-  cat >"$bin/git" <<STUB
+# A git that fails `worktree list` and passes everything else through.
+mkdir -p "$TMP_ROOT/failgit"
+cat >"$TMP_ROOT/failgit/git" <<STUB
 #!/usr/bin/env bash
 set -uo pipefail
 prev=""
@@ -168,502 +120,251 @@ for arg in "\$@"; do
   fi
   prev="\$arg"
 done
-exec "$real_git" "\$@"
+exec "$(command -v git)" "\$@"
 STUB
-  chmod +x "$bin/git"
-}
+chmod +x "$TMP_ROOT/failgit/git"
 
-make_repo() {
-  local root="$1"
-  mkdir -p "$root/main"
-  git -C "$root/main" init -q -b main
-  git -C "$root/main" config user.email test@example.com
-  git -C "$root/main" config user.name Test
-  git -C "$root/main" config commit.gpgsign false
-  printf 'base\n' >"$root/main/base.txt"
-  git -C "$root/main" add base.txt
-  git -C "$root/main" commit -q -m base
-  printf 'WORKTREE_BASE_DIR="../trees"\n' >"$root/main/.env"
-  git init -q --bare "$root/origin.git"
-  git -C "$root/main" remote add origin "$root/origin.git"
-  git -C "$root/main" push -q -u origin main
-}
-
-# A branch with one commit of its own, checked out in its own worktree. Nothing
-# lands on main, so it is unmerged by both proofs until the caller squashes it.
-add_branch_tree() {
-  local root="$1" name="$2"
-  git -C "$root/main" worktree add -q -b "$name" "$root/trees/$name" main
-  printf '%s\n' "$name" >"$root/trees/$name/$name.txt"
-  git -C "$root/trees/$name" add "$name.txt"
-  git -C "$root/trees/$name" commit -q -m "$name: work"
-}
-
-# Land the branch's content on main as a separate commit, exactly as a squash merge
-# does: the branch tip stays outside main's history forever.
-squash_onto_main() {
-  local root="$1" name="$2"
-  printf '%s\n' "$name" >"$root/main/$name.txt"
-  git -C "$root/main" add "$name.txt"
-  git -C "$root/main" commit -q -m "$name: work (squashed)"
-  git -C "$root/main" push -q origin main
-}
-
-echo "=== cleanup collects a squash-merged worktree ==="
-
-ROOT="$TMP_ROOT/squash"
-make_repo "$ROOT"
-make_gh_stub "$ROOT/bin"
-export PATH="$ROOT/bin:$PATH"
-
-add_branch_tree "$ROOT" "issue-merged"
-add_branch_tree "$ROOT" "issue-open"
-squash_onto_main "$ROOT" "issue-merged"
-
-MERGED_TREE="$ROOT/trees/issue-merged"
-OPEN_TREE="$ROOT/trees/issue-open"
-
-# Ancestry must genuinely fail here, or the test proves nothing about the PR
-# lookup: it would pass on the ancestry arm alone.
-if git -C "$ROOT/main" merge-base --is-ancestor issue-merged origin/main; then
-  fail "precondition: the squashed branch must NOT be an ancestor of origin/main"
-else
-  pass "precondition: the squashed branch is not an ancestor of origin/main"
-fi
-
-GH_MERGED_PRS="issue-merged main $(branch_tip "$ROOT" issue-merged) 4242"
-export GH_MERGED_PRS
-squash_code=0
-squash_out=$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$ROOT/squash.err") || squash_code=$?
-squash_err="$(cat "$ROOT/squash.err")"
-
-assert_eq "$squash_code" "0" "cleanup exits 0"
-assert_contains "$squash_out" "Cleaned: $MERGED_TREE" "cleanup collects the squash-merged worktree"
-assert_path_absent "$MERGED_TREE" "the squash-merged worktree is gone"
-if git -C "$ROOT/main" show-ref --verify --quiet refs/heads/issue-merged; then
-  fail "cleanup deletes the squash-merged branch"
-else
-  pass "cleanup deletes the squash-merged branch"
-fi
-
-echo "=== cleanup names the worktree it keeps ==="
-
-assert_path_exists "$OPEN_TREE" "the unmerged worktree survives"
-assert_contains "$squash_err" "Skipped (branch 'issue-open' is not merged" \
-  "cleanup reports the unmerged worktree instead of passing over it silently"
-assert_contains "$squash_err" "$OPEN_TREE" "the unmerged skip names the path"
-
-echo "=== an unanswerable lookup keeps the worktree ==="
-
-fail_code=0
-fail_out=$(cd "$ROOT/main" && GH_FAIL=1 "$WORKTREE_SCRIPT" cleanup 2>"$ROOT/fail.err") || fail_code=$?
-fail_err="$(cat "$ROOT/fail.err")"
-
-assert_eq "$fail_code" "0" "a failed lookup is a kept worktree, not a cleanup error"
-assert_path_exists "$OPEN_TREE" "a failed lookup never removes the worktree"
-assert_contains "$fail_err" "could not be determined" \
-  "cleanup says the merge status could not be determined"
-assert_contains "$fail_err" "issue-open" "the unanswerable skip names the branch"
-if grep -qF "Cleaned:" <<<"$fail_out"; then
-  fail "a failed lookup collects nothing"
-else
-  pass "a failed lookup collects nothing"
-fi
-
-echo "=== an unreadable answer keeps the worktree ==="
-
-# gh chatter on STDOUT lands in the answer itself. Nothing in a response this
-# cannot parse may authorize a delete, so an unreadable row is exit 2, the same
-# arm as a failed query — never a row that simply did not match.
-noise_out_code=0
-noise_out_out=$(cd "$ROOT/main" && GH_NOISE=1 "$WORKTREE_SCRIPT" cleanup 2>"$ROOT/noiseout.err") || noise_out_code=$?
-noise_out_err="$(cat "$ROOT/noiseout.err")"
-
-assert_eq "$noise_out_code" "0" "an unreadable answer is a kept worktree, not a cleanup error"
-assert_path_exists "$OPEN_TREE" "an unreadable answer never removes the worktree"
-assert_contains "$noise_out_err" "gh returned a row this cannot read" \
-  "cleanup names the row it could not read"
-if grep -qF "Cleaned:" <<<"$noise_out_out"; then
-  fail "an unreadable answer collects nothing"
-else
-  pass "an unreadable answer collects nothing"
-fi
-
-echo "=== a missing gh keeps the worktree ==="
-
-# A PATH holding every tool the script reaches for EXCEPT gh. Dropping the real
-# PATH wholesale would fail for the wrong reason (no git), and shadowing gh is
-# impossible — `command -v` answers from PATH alone. `bash` and `sh` are on the
-# list so a shebang resolved through PATH keeps working: this script's is
-# absolute today, and a scenario that died at exec would otherwise look like a
-# scenario that reached the gh probe.
-NOGH_BIN="$ROOT/bin-nogh"
-mkdir -p "$NOGH_BIN"
+# A PATH holding every tool the script reaches for EXCEPT gh: shadowing gh is
+# impossible, `command -v` answers from PATH alone. bash and sh are on the
+# list so a shebang resolved through PATH keeps working.
+mkdir -p "$TMP_ROOT/nogh"
 for tool in bash sh git grep sed awk cat cut tr sort uniq wc head tail find ln rm rmdir \
             mkdir mv cp ls readlink realpath dirname basename mktemp date id \
-            hostname ps kill sleep touch chmod stat printf env flock jq; do
+            hostname ps kill sleep touch chmod stat printf env flock jq paste; do
   tool_path="$(command -v "$tool" 2>/dev/null || true)"
-  [[ -n "$tool_path" ]] && ln -sf "$tool_path" "$NOGH_BIN/$tool"
+  [[ -n "$tool_path" ]] && ln -sf "$tool_path" "$TMP_ROOT/nogh/$tool"
 done
-if command -v gh >/dev/null 2>&1 && PATH="$NOGH_BIN" command -v gh >/dev/null 2>&1; then
-  fail "precondition: the gh-free PATH must not resolve gh"
-else
-  pass "precondition: the gh-free PATH does not resolve gh"
-fi
-# The script must still RUN under that PATH. Without this, an exec failure
-# (127) would satisfy every "the worktree survived" assertion below while
-# never reaching the code under test.
-nogh_runs=0
-(cd "$ROOT/main" && PATH="$NOGH_BIN" "$WORKTREE_SCRIPT" --help >/dev/null 2>&1) || nogh_runs=$?
-assert_eq "$nogh_runs" "0" "precondition: the script executes under the gh-free PATH"
 
-nogh_code=0
-nogh_out=$(cd "$ROOT/main" && PATH="$NOGH_BIN" \
-  "$WORKTREE_SCRIPT" cleanup 2>"$ROOT/nogh.err") || nogh_code=$?
-nogh_err="$(cat "$ROOT/nogh.err")"
+# --- fixtures -----------------------------------------------------------------
 
-assert_eq "$nogh_code" "0" "a missing gh is a kept worktree, not a cleanup error"
-assert_path_exists "$OPEN_TREE" "a missing gh never removes the worktree"
-assert_contains "$nogh_err" "gh is not installed" "cleanup names the missing gh"
-if grep -qF "Cleaned:" <<<"$nogh_out"; then
-  fail "a missing gh collects nothing"
-else
-  pass "a missing gh collects nothing"
-fi
+ROOT=""
+MAIN=""
+WT=""
+OTHER=""
+TIP=""     # topic's tip at the end of the fixture
+MERGED=""  # the tip the squash merge landed, when a later commit moved past it
+ROW_PATH=""
+ROW_ENV=()
 
-echo "=== a worktree with no branch to prove is named, not passed over ==="
+make_repo() {
+  mkdir -p "$MAIN"
+  git -C "$MAIN" init -q -b main
+  git -C "$MAIN" config user.email test@example.com
+  git -C "$MAIN" config user.name Test
+  git -C "$MAIN" config commit.gpgsign false
+  printf 'base\n' >"$MAIN/base.txt"
+  git -C "$MAIN" add base.txt
+  git -C "$MAIN" commit -q -m base
+  printf 'WORKTREE_BASE_DIR="../trees"\n' >"$MAIN/.env.local"
+  git init -q --bare "$ROOT/origin.git"
+  git -C "$MAIN" remote add origin "$ROOT/origin.git"
+  git -C "$MAIN" push -q -u origin main
+}
 
-# Detached HEAD is reachable in this tool: a paused restack replay leaves the
-# worktree that way (worktree_restack_replay.sh). The arm exists so the help's
-# "every skip is reported" holds for a worktree cleanup can prove nothing about.
-git -C "$OPEN_TREE" checkout -q --detach
-det_code=0
-det_out=$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$ROOT/detached.err") || det_code=$?
-det_err="$(cat "$ROOT/detached.err")"
+# A branch with one commit of its own, checked out in its own worktree.
+# Nothing lands on main, so it is unmerged by both proofs until squashed.
+add_branch_tree() {
+  local name="$1"
+  git -C "$MAIN" worktree add -q -b "$name" "$ROOT/trees/$name" main
+  printf '%s\n' "$name" >"$ROOT/trees/$name/$name.txt"
+  git -C "$ROOT/trees/$name" add "$name.txt"
+  git -C "$ROOT/trees/$name" commit -q -m "$name: work"
+}
 
-assert_eq "$det_code" "0" "cleanup exits 0 with a detached worktree present"
-assert_path_exists "$OPEN_TREE" "the detached worktree survives"
-assert_contains "$det_err" "no branch checked out" "cleanup names the detached HEAD as the reason"
-assert_contains "$det_err" "$OPEN_TREE" "the detached skip names the path"
-if grep -qF "Cleaned:" <<<"$det_out"; then
-  fail "a detached worktree is collected by nothing"
-else
-  pass "a detached worktree is collected by nothing"
-fi
+step() {
+  case "$1" in
+    tree)
+      make_repo
+      add_branch_tree topic
+      ;;
+    # Land the branch's content on main as a separate commit, exactly as a
+    # squash merge does: the branch tip stays outside main's history forever.
+    squash)
+      printf 'topic\n' >"$MAIN/topic.txt"
+      git -C "$MAIN" add topic.txt
+      git -C "$MAIN" commit -q -m 'topic: work (squashed)'
+      git -C "$MAIN" push -q origin main
+      MERGED="$(git -C "$MAIN" rev-parse refs/heads/topic)"
+      if ! git -C "$MAIN" cat-file -e origin/main:topic.txt; then
+        echo "FIXTURE: the squash did not land on origin/main" >&2
+        exit 2
+      fi
+      # Ancestry must genuinely fail, or a row proves nothing about the
+      # pull-request lookup: it would pass on the ancestry arm alone.
+      if git -C "$MAIN" merge-base --is-ancestor topic origin/main; then
+        echo "FIXTURE: the squashed branch is an ancestor of origin/main" >&2
+        exit 2
+      fi
+      ;;
+    other) add_branch_tree other; OTHER="$ROOT/trees/other" ;;
+    follow-up)
+      printf 'follow-up\n' >"$WT/followup.txt"
+      git -C "$WT" add followup.txt
+      git -C "$WT" commit -q -m 'topic: follow-up work'
+      ;;
+    scratch) printf 'uncommitted\n' >"$WT/scratch.txt" ;;
+    detach) git -C "$WT" checkout -q --detach ;;
+    drop-ref) git -C "$MAIN" update-ref -d refs/heads/topic ;;
+    # `git branch -d` accepts a branch merged into its configured upstream;
+    # the tracking it sets is what the row's remove must not decide on.
+    upstream)
+      git -C "$WT" push -q -u origin topic
+      if ! git -C "$MAIN" branch --format='%(refname:short) %(upstream:short)' | grep -qx 'topic origin/topic'; then
+        echo "FIXTURE: the pushed branch does not track origin/topic" >&2
+        exit 2
+      fi
+      ;;
+    *)
+      echo "UNKNOWN-STEP: $1" >&2
+      exit 2
+      ;;
+  esac
+}
 
-echo "=== a worktree whose branch ref is gone is named too ==="
+build() {
+  local word
+  ROOT="$TMP_ROOT/$1"
+  shift
+  MAIN="$ROOT/main"
+  WT="$ROOT/trees/topic"
+  OTHER="" TIP="" MERGED="" ROW_PATH="$PATH"
+  ROW_ENV=()
+  for word in "$@"; do step "$word"; done
+  TIP="$(git -C "$MAIN" rev-parse --verify --quiet refs/heads/topic || true)"
+  [[ -n "$MERGED" && "$MERGED" != "$TIP" ]] || MERGED=""
+}
 
-git -C "$OPEN_TREE" checkout -q issue-open
-git -C "$ROOT/main" update-ref -d refs/heads/issue-open
-noref_code=0
-noref_out=$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$ROOT/noref.err") || noref_code=$?
-noref_err="$(cat "$ROOT/noref.err")"
+# The gh column: what the stub answers, as environment for the run.
+gh_env() {
+  case "$1" in
+    none) ;;
+    merged) ROW_ENV=("GH_MERGED_PRS=topic main $TIP 42") ;;
+    merged-old) ROW_ENV=("GH_MERGED_PRS=topic main $MERGED 42") ;;
+    side-base) ROW_ENV=("GH_MERGED_PRS=topic feature-x $TIP 42") ;;
+    fork) ROW_ENV=("GH_MERGED_PRS=topic main $TIP 42 1") ;;
+    redirect) ROW_ENV=("GH_REPO=someone-else/other-repo" "GH_REDIRECT_OID=$TIP") ;;
+    fail) ROW_ENV=("GH_FAIL=1") ;;
+    noise-out) ROW_ENV=("GH_NOISE=1") ;;
+    noise-err) ROW_ENV=("GH_STDERR_NOISE=1" "GH_MERGED_PRS=topic main $TIP 42") ;;
+    no-gh) ROW_PATH="$TMP_ROOT/nogh" ;;
+    failing-git) ROW_PATH="$TMP_ROOT/failgit:$PATH" ;;
+    *)
+      echo "UNKNOWN-GH-SPEC: $1" >&2
+      exit 2
+      ;;
+  esac
+}
 
-assert_eq "$noref_code" "0" "cleanup exits 0 with a ref-less worktree present"
-assert_path_exists "$OPEN_TREE" "the ref-less worktree survives"
-assert_contains "$noref_err" "has no ref in the main checkout" \
-  "cleanup names the missing branch ref as the reason"
-if grep -qF "Cleaned:" <<<"$noref_out"; then
-  fail "a ref-less worktree is collected by nothing"
-else
-  pass "a ref-less worktree is collected by nothing"
-fi
+# --- rendering ------------------------------------------------------------------
 
-echo "=== gh chatter on stderr does not disable the proof ==="
+# Paths and commits by their names; a literal semicolon is escaped before the
+# lines are joined on it.
+alias_text() {
+  sed -e "s|$WT|<wt>|g" -e "s|${OTHER:-NONE}|<other>|g" -e "s|$MAIN|<main>|g" \
+    -e "s|$WORKTREE_SCRIPT|<worktree>|g" -e "s|${TIP:-NONE}|<tip>|g" -e "s|${MERGED:-NONE}|<merged>|g" \
+    -e 's/;/\\;/g' |
+    paste -s -d ';' -
+}
 
-# gh writes its update notice and auth warnings to stderr. Folded into the
-# answer they are read as pull-request rows: a branch with NO merged pull
-# request then looks like one whose rows simply did not match, and the skip
-# blames the wrong cause. The streams stay separate so the empty answer is
-# still empty.
-NOISE_ROOT="$TMP_ROOT/noise"
-make_repo "$NOISE_ROOT"
-add_branch_tree "$NOISE_ROOT" "issue-noise"
-add_branch_tree "$NOISE_ROOT" "issue-noise-open"
-squash_onto_main "$NOISE_ROOT" "issue-noise"
+state() {
+  local tree=absent dirty="-" branch=absent other="-" oid=""
+  if [[ -e "$WT" ]]; then
+    tree=present
+    dirty="$(git -C "$WT" status --porcelain | paste -s -d ',' -)"
+  fi
+  oid="$(git -C "$MAIN" rev-parse --verify --quiet refs/heads/topic || true)"
+  if [[ -n "$oid" && "$oid" == "$TIP" ]]; then branch=tip
+  elif [[ -n "$oid" ]]; then branch="$oid"
+  fi
+  if [[ -n "$OTHER" ]]; then
+    other=absent
+    [[ -e "$OTHER" ]] && other=present
+  fi
+  printf 'tree=%s dirty=%s branch=%s other=%s' "$tree" "${dirty:--}" "$branch" "$other"
+}
 
-GH_MERGED_PRS="issue-noise main $(branch_tip "$NOISE_ROOT" issue-noise) 31"
-export GH_MERGED_PRS
-noise_code=0
-noise_out=$(cd "$NOISE_ROOT/main" && GH_STDERR_NOISE=1 \
-  "$WORKTREE_SCRIPT" cleanup 2>"$NOISE_ROOT/noise.err") || noise_code=$?
-noise_err="$(cat "$NOISE_ROOT/noise.err")"
+run() {
+  local -a argv
+  local rc=0 i
+  read -r -a argv <<<"$1"
+  for i in "${!argv[@]}"; do
+    [[ "${argv[i]}" == @topic ]] && argv[i]="$WT"
+  done
+  (cd "$MAIN" && env PATH="$ROW_PATH" ${ROW_ENV[@]+"${ROW_ENV[@]}"} "$WORKTREE_SCRIPT" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  printf 'rc=%s out=%s err=%s %s' "$rc" "$(alias_text <"$ROOT/out")" "$(alias_text <"$ROOT/err")" "$(state)"
+}
 
-assert_eq "$noise_code" "0" "cleanup exits 0 with gh chatter on stderr"
-assert_contains "$noise_out" "Cleaned: $NOISE_ROOT/trees/issue-noise" \
-  "the proof still reads its answer past gh's stderr chatter"
-assert_contains "$noise_err" "Skipped (branch 'issue-noise-open' is not merged" \
-  "gh chatter is not counted as a pull-request row for a branch that has none"
-if grep -qF "could not be determined" <<<"$noise_err"; then
-  fail "gh chatter is not mistaken for an unreadable answer"
-else
-  pass "gh chatter is not mistaken for an unreadable answer"
-fi
+# --- the expected text ----------------------------------------------------------
 
-echo "=== a branch past its merged pull request is kept ==="
+UNMERGED='not an ancestor of origin/main, and no pull request merged into main carries this branch name'
+MOVED='carries work past its merged pull request (merged under this name: #42\; none has this tip <tip> as its head)'
+UNDETERMINED='  A lookup that cannot answer never authorizes a removal\; restore the gh query and re-run cleanup.'
+MANUAL='  After verifying it is safe, delete manually with: git -C "<main>" branch -D "topic"'
 
-# The data-loss case the name-only match allowed. One branch name serves every
-# worktree an issue ever had, so a merged record from a prior PR would match
-# a branch whose tip is newer work: cleanup force-removed the tree and ran
-# branch -D, leaving the follow-up commit reachable from no ref.
-MOVED_ROOT="$TMP_ROOT/moved"
-make_repo "$MOVED_ROOT"
-add_branch_tree "$MOVED_ROOT" "issue-moved"
-MERGED_OID="$(branch_tip "$MOVED_ROOT" issue-moved)"
-squash_onto_main "$MOVED_ROOT" "issue-moved"
+skip() { printf 'Skipped (%s): %s' "$1" "$2"; }
+drop() { printf '  Drop it explicitly with: <worktree> remove "%s"' "$1"; }
+kept() { printf '%s' "Error: Removed worktree but could not delete local branch 'topic'.;  Remaining branch: topic;  Worktree path removed/pruned: <wt>;  $1;$MANUAL"; }
 
-MOVED_TREE="$MOVED_ROOT/trees/issue-moved"
-printf 'follow-up\n' >"$MOVED_TREE/followup.txt"
-git -C "$MOVED_TREE" add followup.txt
-git -C "$MOVED_TREE" commit -q -m "issue-moved: follow-up work"
-FOLLOWUP_OID="$(branch_tip "$MOVED_ROOT" issue-moved)"
-printf 'uncommitted\n' >"$MOVED_TREE/scratch.txt"
+out_text() {
+  case "$1" in
+    -) printf '' ;;
+    cleaned) printf 'Cleaned: <wt>' ;;
+    removed) printf 'Removed: <wt>' ;;
+    *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
+  esac
+}
 
-# The stub still reports the merged PR under this branch NAME, carrying the head
-# it actually merged. Only the commit compare can tell the two apart.
-export GH_MERGED_PRS="issue-moved main $MERGED_OID 100"
-moved_code=0
-moved_out=$(cd "$MOVED_ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$MOVED_ROOT/moved.err") || moved_code=$?
-moved_err="$(cat "$MOVED_ROOT/moved.err")"
+err_text() {
+  case "$1" in
+    -) printf '' ;;
+    other-unmerged) skip "branch 'other' is not merged — $UNMERGED" '<other>' ;;
+    unmerged) skip "branch 'topic' is not merged — $UNMERGED" '<wt>' ;;
+    moved) skip "branch 'topic' is not merged — not an ancestor of origin/main, and $MOVED" '<wt>' ;;
+    undetermined:*) printf '%s;%s' "$(skip "merge status of branch 'topic' could not be determined: ${1#undetermined:}" '<wt>')" "$UNDETERMINED" ;;
+    detached) printf '%s;%s' "$(skip 'no branch checked out — detached HEAD, so there is nothing to prove merged' '<wt>')" "$(drop '<wt>')" ;;
+    no-ref) printf '%s;%s' "$(skip "branch 'topic' has no ref in the main checkout" '<wt>')" "$(drop '<wt>')" ;;
+    enumeration-failed) printf '%s' "fatal: not a git repository (stubbed failure);Error: 'git -C \"<main>\" worktree list --porcelain -z' failed (exit 128).;  No worktree was inspected and none was collected\; this is not a clean sweep." ;;
+    deleted) printf "Deleted branch 'topic' — squash-merged in pull request #42." ;;
+    kept-unmerged) kept "Not merged into origin/main, and no pull request merged into main carries this branch name" ;;
+    kept-moved) kept "Not merged into origin/main, and $MOVED" ;;
+    kept-undetermined:*) kept "Merged-pull-request lookup could not answer: ${1#kept-undetermined:}" ;;
+    *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
+  esac
+}
 
-assert_eq "$moved_code" "0" "cleanup exits 0 with a moved-on branch present"
-assert_path_exists "$MOVED_TREE" "the worktree with work past the merge survives"
-assert_path_exists "$MOVED_TREE/scratch.txt" "the uncommitted file survives"
-assert_contains "$moved_err" "is not merged" \
-  "an identity mismatch reads as not merged, not as a failed lookup"
-assert_contains "$moved_err" "carries work past its merged pull request" \
-  "cleanup names the moved-on branch as the reason it kept the worktree"
-if grep -qF "Cleaned:" <<<"$moved_out"; then
-  fail "cleanup collects nothing when the tip is not the merged head"
-else
-  pass "cleanup collects nothing when the tip is not the merged head"
-fi
-if [[ "$(branch_tip "$MOVED_ROOT" issue-moved)" == "$FOLLOWUP_OID" ]]; then
-  pass "the follow-up commit is still reachable from the branch"
-else
-  fail "the follow-up commit is still reachable from the branch"
-fi
+# --- the rows ---------------------------------------------------------------------
+# label|fixture|gh|command|rc|out|err|state
+ROWS='
+cleanup collects the squash-merged worktree on the merged pull request and names the one it keeps|tree squash other|merged|cleanup|0|cleaned|other-unmerged|tree=absent dirty=- branch=absent other=present
+a lookup that fails keeps the worktree and says the status could not be determined|tree squash|fail|cleanup|0|-|undetermined:gh: could not reach api.github.com |tree=present dirty=- branch=tip other=-
+gh chatter on stdout is an unreadable answer, not a row that did not match|tree squash|noise-out|cleanup|0|-|undetermined:gh returned a row this cannot read: A new release of gh is available: 2.40.0 -> 2.63.2|tree=present dirty=- branch=tip other=-
+a missing gh keeps the worktree and is named|tree squash|no-gh|cleanup|0|-|undetermined:gh is not installed|tree=present dirty=- branch=tip other=-
+a detached worktree is named, not passed over|tree detach|none|cleanup|0|-|detached|tree=present dirty=- branch=tip other=-
+a worktree whose branch ref is gone is named|tree drop-ref|none|cleanup|0|-|no-ref|tree=present dirty=A  base.txt,A  topic.txt branch=absent other=-
+gh chatter on stderr neither disables the proof nor counts as a row|tree squash other|noise-err|cleanup|0|cleaned|other-unmerged|tree=absent dirty=- branch=absent other=present
+a branch past its merged pull request is kept with its work|tree squash follow-up scratch|merged-old|cleanup|0|-|moved|tree=present dirty=?? scratch.txt branch=tip other=-
+a pull request merged into another base collects nothing|tree|side-base|cleanup|0|-|unmerged|tree=present dirty=- branch=tip other=-
+a fork pull request does not vouch for this branch|tree|fork|cleanup|0|-|unmerged|tree=present dirty=- branch=tip other=-
+a GH_REPO redirect does not answer for this checkout|tree|redirect|cleanup|0|-|unmerged|tree=present dirty=- branch=tip other=-
+a failed enumeration is not a clean sweep|tree|failing-git|cleanup|1|-|enumeration-failed|tree=present dirty=- branch=tip other=-
+remove keeps a branch past its merged pull request|tree squash follow-up scratch|merged-old|remove @topic|1|removed|kept-moved|tree=absent dirty=- branch=tip other=-
+remove deletes a squash-merged branch on the merged pull request|tree squash|merged|remove @topic|0|removed|deleted|tree=absent dirty=- branch=absent other=-
+remove keeps an unmerged branch|tree|none|remove @topic|1|removed|kept-unmerged|tree=absent dirty=- branch=tip other=-
+remove keeps a branch merged only into its own upstream|tree upstream|none|remove @topic|1|removed|kept-unmerged|tree=absent dirty=- branch=tip other=-
+remove tells an unanswered lookup apart from a proven-unmerged branch|tree squash|fail|remove @topic|1|removed|kept-undetermined:gh: could not reach api.github.com |tree=absent dirty=- branch=tip other=-
+'
 
-echo "=== remove keeps a branch past its merged pull request ==="
+echo "=== cleanup and remove against squash-merged branches ==="
+n=0
+while IFS='|' read -r label fixture gh command rc out err want_state; do
+  [[ -n "$label$fixture$gh$command$rc$out$err$want_state" ]] || continue
+  n=$((n + 1))
+  # shellcheck disable=SC2086
+  build "row-$n" $fixture
+  gh_env "$gh"
+  assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
+done <<<"$ROWS"
 
-movedrm_code=0
-movedrm_out=$(cd "$MOVED_ROOT/main" && "$WORKTREE_SCRIPT" remove "$MOVED_TREE" 2>"$MOVED_ROOT/movedrm.err") || movedrm_code=$?
-movedrm_err="$(cat "$MOVED_ROOT/movedrm.err")"
-
-assert_eq "$movedrm_code" "1" "remove exits nonzero rather than force-deleting a moved-on branch"
-assert_contains "$movedrm_err" "carries work past its merged pull request" \
-  "remove names the moved-on branch as the reason it kept it"
-if [[ "$(branch_tip "$MOVED_ROOT" issue-moved)" == "$FOLLOWUP_OID" ]]; then
-  pass "remove leaves the follow-up commit reachable"
-else
-  fail "remove leaves the follow-up commit reachable"
-fi
-: "${movedrm_out:=}"
-
-echo "=== remove deletes a squash-merged branch ==="
-
-RM_ROOT="$TMP_ROOT/remove"
-make_repo "$RM_ROOT"
-add_branch_tree "$RM_ROOT" "issue-rm"
-squash_onto_main "$RM_ROOT" "issue-rm"
-
-GH_MERGED_PRS="issue-rm main $(branch_tip "$RM_ROOT" issue-rm) 77"
-export GH_MERGED_PRS
-rm_code=0
-rm_out=$(cd "$RM_ROOT/main" && "$WORKTREE_SCRIPT" remove "$RM_ROOT/trees/issue-rm" 2>"$RM_ROOT/rm.err") || rm_code=$?
-rm_err="$(cat "$RM_ROOT/rm.err")"
-
-assert_eq "$rm_code" "0" "remove exits 0 on a squash-merged branch"
-assert_contains "$rm_out" "Removed: $RM_ROOT/trees/issue-rm" "remove removed the worktree"
-assert_contains "$rm_err" "squash-merged in pull request #77" "remove names the proof it used"
-if git -C "$RM_ROOT/main" show-ref --verify --quiet refs/heads/issue-rm; then
-  fail "remove deletes the squash-merged branch"
-else
-  pass "remove deletes the squash-merged branch"
-fi
-
-echo "=== remove keeps an unmerged branch ==="
-
-add_branch_tree "$RM_ROOT" "issue-keep"
-export GH_MERGED_PRS=""
-keep_code=0
-keep_out=$(cd "$RM_ROOT/main" && "$WORKTREE_SCRIPT" remove "$RM_ROOT/trees/issue-keep" 2>"$RM_ROOT/keep.err") || keep_code=$?
-keep_err="$(cat "$RM_ROOT/keep.err")"
-
-assert_eq "$keep_code" "1" "remove still exits nonzero when the branch is not merged"
-assert_contains "$keep_err" "Remaining branch: issue-keep" "remove names the branch it kept"
-assert_contains "$keep_err" "Not merged into origin/main, and no pull request merged into main" \
-  "remove says which proof failed and how"
-if git -C "$RM_ROOT/main" show-ref --verify --quiet refs/heads/issue-keep; then
-  pass "remove leaves the unmerged branch alone"
-else
-  fail "remove leaves the unmerged branch alone"
-fi
-: "${keep_out:=}"
-
-echo "=== remove keeps a branch merged only into its own upstream ==="
-
-# `git branch -d` deletes a branch merged into its configured UPSTREAM, and
-# `worktree push` sets one, so every pushed branch satisfied it however far it
-# was from the default branch. It decided nothing here now: the branch goes on
-# ancestry into the default branch or on the merged-PR proof, and on nothing
-# else.
-add_branch_tree "$RM_ROOT" "issue-pushed"
-git -C "$RM_ROOT/trees/issue-pushed" push -q -u origin issue-pushed
-if git -C "$RM_ROOT/main" merge-base --is-ancestor issue-pushed origin/main; then
-  fail "precondition: the pushed branch must NOT be merged into the default branch"
-else
-  pass "precondition: the pushed branch is not merged into the default branch"
-fi
-if git -C "$RM_ROOT/main" branch --format='%(refname:short) %(upstream:short)' \
-     | grep -qx "issue-pushed origin/issue-pushed"; then
-  pass "precondition: the pushed branch tracks an upstream branch -d would accept"
-else
-  fail "precondition: the pushed branch tracks an upstream branch -d would accept"
-fi
-
-pushed_code=0
-pushed_out=$(cd "$RM_ROOT/main" && "$WORKTREE_SCRIPT" remove "$RM_ROOT/trees/issue-pushed" 2>"$RM_ROOT/pushed.err") || pushed_code=$?
-pushed_err="$(cat "$RM_ROOT/pushed.err")"
-
-assert_eq "$pushed_code" "1" "remove exits nonzero on a branch merged only into its upstream"
-assert_contains "$pushed_err" "Remaining branch: issue-pushed" "remove names the branch it kept"
-if git -C "$RM_ROOT/main" show-ref --verify --quiet refs/heads/issue-pushed; then
-  pass "the branch merged only into its upstream survives remove"
-else
-  fail "the branch merged only into its upstream survives remove"
-fi
-: "${pushed_out:=}"
-
-echo "=== a pull request merged into another base does not count ==="
-
-# --base is a guard on a forced delete: work merged into a feature branch has
-# not reached the default branch, and its worktree is not collectable.
-BASE_ROOT="$TMP_ROOT/otherbase"
-make_repo "$BASE_ROOT"
-add_branch_tree "$BASE_ROOT" "issue-sidebase"
-GH_MERGED_PRS="issue-sidebase feature-x $(branch_tip "$BASE_ROOT" issue-sidebase) 55"
-export GH_MERGED_PRS
-sidebase_code=0
-sidebase_out=$(cd "$BASE_ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$BASE_ROOT/sidebase.err") || sidebase_code=$?
-sidebase_err="$(cat "$BASE_ROOT/sidebase.err")"
-
-assert_eq "$sidebase_code" "0" "cleanup exits 0 with a side-base merge present"
-assert_path_exists "$BASE_ROOT/trees/issue-sidebase" "a pull request merged elsewhere never collects the worktree"
-assert_contains "$sidebase_err" "is not merged" "cleanup names the side-base branch as unmerged"
-if grep -qF "Cleaned:" <<<"$sidebase_out"; then
-  fail "a pull request merged into another base collects nothing"
-else
-  pass "a pull request merged into another base collects nothing"
-fi
-
-echo "=== a fork's pull request does not vouch for this branch ==="
-
-# A cross-repository pull request is someone else's merge into someone else's
-# base. Answering with it would let a fork carrying the same branch name and
-# commit authorize a delete here.
-FORK_ROOT="$TMP_ROOT/fork"
-make_repo "$FORK_ROOT"
-add_branch_tree "$FORK_ROOT" "issue-fork"
-GH_MERGED_PRS="issue-fork main $(branch_tip "$FORK_ROOT" issue-fork) 61 1"
-export GH_MERGED_PRS
-fork_code=0
-fork_out=$(cd "$FORK_ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$FORK_ROOT/fork.err") || fork_code=$?
-fork_err="$(cat "$FORK_ROOT/fork.err")"
-
-assert_eq "$fork_code" "0" "cleanup exits 0 with only a fork's merged pull request"
-assert_path_exists "$FORK_ROOT/trees/issue-fork" "a fork's pull request never collects the worktree"
-assert_contains "$fork_err" "is not merged" "cleanup names the fork-only branch as unmerged"
-if grep -qF "Cleaned:" <<<"$fork_out"; then
-  fail "a fork's pull request collects nothing"
-else
-  pass "a fork's pull request collects nothing"
-fi
-
-echo "=== a GH_REPO redirect does not answer for this checkout ==="
-
-# gh reads GH_REPO and GITHUB_REPOSITORY from the environment, and a session
-# that inherited either would be asking a DIFFERENT repository whether this
-# branch is merged. Another repository's same-named branch at the same commit
-# must not authorize a delete here.
-REDIR_ROOT="$TMP_ROOT/redirect"
-make_repo "$REDIR_ROOT"
-add_branch_tree "$REDIR_ROOT" "issue-redirect"
-GH_MERGED_PRS=""
-export GH_MERGED_PRS
-GH_REDIRECT_OID="$(branch_tip "$REDIR_ROOT" issue-redirect)"
-export GH_REDIRECT_OID
-redir_code=0
-redir_out=$(cd "$REDIR_ROOT/main" && GH_REPO="someone-else/other-repo" \
-  "$WORKTREE_SCRIPT" cleanup 2>"$REDIR_ROOT/redirect.err") || redir_code=$?
-redir_err="$(cat "$REDIR_ROOT/redirect.err")"
-
-assert_eq "$redir_code" "0" "cleanup exits 0 under a GH_REPO redirect"
-assert_path_exists "$REDIR_ROOT/trees/issue-redirect" \
-  "another repository's merged pull request never collects the worktree"
-assert_contains "$redir_err" "is not merged" "cleanup names the branch as unmerged under a redirect"
-if grep -qF "Cleaned:" <<<"$redir_out"; then
-  fail "a redirected lookup collects nothing"
-else
-  pass "a redirected lookup collects nothing"
-fi
-unset GH_REDIRECT_OID
-
-echo "=== a failed enumeration is not a clean sweep ==="
-
-# Process substitution discards the command's exit status, so a failing
-# `worktree list` would leave the candidate set empty and cleanup reported
-# success having inspected nothing.
-ENUM_ROOT="$TMP_ROOT/enum"
-make_repo "$ENUM_ROOT"
-add_branch_tree "$ENUM_ROOT" "issue-enum"
-make_failing_git_stub "$ENUM_ROOT/failgit"
-enum_code=0
-enum_out=$(cd "$ENUM_ROOT/main" && PATH="$ENUM_ROOT/failgit:$PATH" \
-  "$WORKTREE_SCRIPT" cleanup 2>"$ENUM_ROOT/enum.err") || enum_code=$?
-enum_err="$(cat "$ENUM_ROOT/enum.err")"
-
-if [[ "$enum_code" -ne 0 ]]; then
-  pass "cleanup exits nonzero when it could not enumerate worktrees"
-else
-  fail "cleanup exits nonzero when it could not enumerate worktrees (got 0)"
-fi
-assert_contains "$enum_err" "worktree list --porcelain -z' failed" \
-  "cleanup names the enumeration command that failed"
-assert_contains "$enum_err" "this is not a clean sweep" \
-  "cleanup says the run inspected nothing rather than implying success"
-assert_path_exists "$ENUM_ROOT/trees/issue-enum" "a failed enumeration removes nothing"
-if grep -qF "Cleaned:" <<<"$enum_out"; then
-  fail "a failed enumeration collects nothing"
-else
-  pass "a failed enumeration collects nothing"
-fi
-
-echo "=== remove tells an unanswered lookup apart from a proven-unmerged branch ==="
-
-# The operator has to be able to act on the difference: a branch that is not
-# merged is a decision, a lookup that could not run is a retry.
-add_branch_tree "$RM_ROOT" "issue-down"
-squash_onto_main "$RM_ROOT" "issue-down"
-down_code=0
-down_out=$(cd "$RM_ROOT/main" && GH_FAIL=1 \
-  "$WORKTREE_SCRIPT" remove "$RM_ROOT/trees/issue-down" 2>"$RM_ROOT/down.err") || down_code=$?
-down_err="$(cat "$RM_ROOT/down.err")"
-
-assert_eq "$down_code" "1" "remove exits nonzero when the lookup could not answer"
-assert_contains "$down_err" "Merged-pull-request lookup could not answer" \
-  "remove says the lookup could not answer rather than calling the branch unmerged"
-if grep -qF "Not merged into origin/main" <<<"$down_err"; then
-  fail "an unanswered lookup is not reported as a proven-unmerged branch"
-else
-  pass "an unanswered lookup is not reported as a proven-unmerged branch"
-fi
-if git -C "$RM_ROOT/main" show-ref --verify --quiet refs/heads/issue-down; then
-  pass "remove keeps the branch when the lookup could not answer"
-else
-  fail "remove keeps the branch when the lookup could not answer"
-fi
-: "${down_out:=}"
-
-printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+echo
+printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
