@@ -108,6 +108,8 @@ fixture_create() {
 
 step() {
   case "$1" in
+    # The bare world: the checkout and its origin, nothing else.
+    -) ;;
     wt) fixture_create topic ;;
     # The topic branch has a commit of its own and is published.
     push)
@@ -334,7 +336,7 @@ err_text() {
   esac
 }
 
-# label|fixture|command|rc|out|err|state
+# label|fixture (- for the bare world)|command|rc|out|err|state
 ROWS='
 a published, locked, PR-backed worktree refuses implicit reuse with every signal and moves nothing|wt push advance open-pr lock|create topic|75|-|implicit:topic:clean,up,pr,lock|main=main@end/clean cfg=true trees=topic:reg@topic@pre branches=topic dirty=-
 --reuse rebases the owned branch onto the advanced main|wt push advance open-pr|create topic --reuse|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@topic@on-end branches=topic dirty=-
@@ -350,14 +352,14 @@ BOT_NAME/<id> on the remote is a candidate|remote:robot/topic bot|create topic|7
 a failed PR query is uncertainty: nothing is created|fail-gh|create topic|1|-|gh-fail|main=main@end/clean cfg=- trees= branches=- dirty=-
 a failed final fetch stops before any mutation|fail-fetch|create topic|1|-|fetch-fail|main=main@end/clean cfg=- trees= branches=- dirty=-
 an unreachable origin stops before the claim lock|bad-origin|create topic|1|-|remote-fail|main=main@end/clean cfg=- trees= branches=- dirty=-
---help prints usage and creates nothing||create --help|0|usage|-|main=main@end/clean cfg=- trees= branches=- dirty=-
--h prints usage and creates nothing||create -h|0|usage|-|main=main@end/clean cfg=- trees= branches=- dirty=-
-an option-looking issue id is refused before it becomes a path||create --bogus|1|-|unknown-option|main=main@end/clean cfg=- trees= branches=- dirty=-
-an unknown flag after the id creates neither branch nor worktree||create topic --bogus|1|-|unknown-option|main=main@end/clean cfg=- trees= branches=- dirty=-
-a positional branch name is accepted beside the id||create topic custom-branch-name|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@custom-branch-name@end branches=custom-branch-name dirty=-
---base <default> with no prior work checks out a new issue branch on origin/<default>||create topic --base main|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
---base origin/<default> does the same||create topic --base origin/main|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
-a positional work branch named as the default branch is refused loudly||create topic main|1|-|default-branch|main=main@end/clean cfg=- trees= branches=- dirty=-
+--help prints usage and creates nothing|-|create --help|0|usage|-|main=main@end/clean cfg=- trees= branches=- dirty=-
+-h prints usage and creates nothing|-|create -h|0|usage|-|main=main@end/clean cfg=- trees= branches=- dirty=-
+an option-looking issue id is refused before it becomes a path|-|create --bogus|1|-|unknown-option|main=main@end/clean cfg=- trees= branches=- dirty=-
+an unknown flag after the id creates neither branch nor worktree|-|create topic --bogus|1|-|unknown-option|main=main@end/clean cfg=- trees= branches=- dirty=-
+a positional branch name is accepted beside the id|-|create topic custom-branch-name|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@custom-branch-name@end branches=custom-branch-name dirty=-
+--base <default> with no prior work checks out a new issue branch on origin/<default>|-|create topic --base main|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
+--base origin/<default> does the same|-|create topic --base origin/main|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
+a positional work branch named as the default branch is refused loudly|-|create topic main|1|-|default-branch|main=main@end/clean cfg=- trees= branches=- dirty=-
 --base <default> for an owned issue still refuses, naming the issue worktree (the registered worktree stops it before --base is read; the row guards the composite #1034 regression)|wt|create topic --base main|75|-|implicit:topic:clean,noup|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
 the topic branch checked out in the main checkout blocks the id without offering --reuse|main-checkout|create topic|75|-|main-checkout|main=topic@end/clean cfg=- trees= branches=topic dirty=-
 a local branch literally named origin/<default> keeps its ownership checks|local:origin/main|create topic origin/main|75|-|dup:origin/main:local|main=main@end/clean cfg=- trees= branches=origin/main dirty=-
@@ -367,17 +369,24 @@ a non-default --base of an unclaimed remote branch checks that branch out|remote
 
 echo "=== create against active work ==="
 n=0
-while IFS='|' read -r label fixture command rc out err want_state; do
-  [[ -n "$label$fixture$command$rc$out$err$want_state" ]] || continue
+while IFS= read -r row; do
+  [[ -n "$row" ]] || continue
+  IFS='|' read -r label fixture command rc out err want_state <<<"$row"
+  for field in "$label" "$fixture" "$command" "$rc" "$out" "$err" "$want_state"; do
+    [[ -n "$field" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+  done
   n=$((n + 1))
   # shellcheck disable=SC2086
   build "row-$n" $fixture
-  if [[ "${PROBE:-}" == 1 ]]; then
+  # A rendering aid for writing rows: prints what each row produces instead of
+  # asserting it. A run that asserted no row is refused after the loop.
+  if [[ "${WORKTREE_TABLE_PROBE:-}" == 1 ]]; then
     printf '%s => %s\n' "$label" "$(run "$command")"
     continue
   fi
   assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
+[[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 
 # --- the concurrent claim -------------------------------------------------------
 # Two claimers both pass their read-only preliminary discovery (the gh stub
