@@ -1,6 +1,6 @@
 ---
 name: code-quality
-description: "Load before writing or modifying code."
+description: "Load for any coding or development task in any repository: writing, changing, fixing, refactoring, or testing code or scripts in any language."
 summary: "Code-authoring standards for dev agents: correctness over convenience, no fail-open branches, comment rules, over-engineering limits, prove-your-guards, test shape."
 license: MIT
 user-invocable: true
