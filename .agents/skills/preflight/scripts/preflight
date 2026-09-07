@@ -86,10 +86,12 @@ Lanes:
                   pipefail preamble of its own is out of scope even where a
                   sourcing caller supplies one.
   unwired-suite   a new suite file no runner invokes. Suites are
-                  tests/*.test.sh, tests/test-*.sh, *.test.ts, *.test.js and
-                  *.test.mjs; a file under a fixtures/ directory is material a
-                  suite reads, never a suite. A runner set that is empty or
-                  that this tool could not read whole leaves the lane quiet.
+                  tests/*.test.sh, tests/test-*.sh, a shell file with a
+                  test-<name> basename and no extension, *.test.ts, *.test.js
+                  and *.test.mjs; a file under a fixtures/ directory is
+                  material a suite reads, never a suite. A runner set that is
+                  empty or that this tool could not read whole leaves the
+                  lane quiet.
   mktemp-trap     a new shell file with an added mktemp invocation and no
                   trap ... EXIT anywhere in it. The invocation is the word at
                   a command position, not one named in a comment or a string.
@@ -132,7 +134,8 @@ Scope rules:
   shebang. A file whose content git reads as binary contributes no lines to
   any lane; the whole-file lanes still see its path. A deleted path leaves the
   change set, and applied-migration-edited reads it from the diff instead.
-  A tests/ or fixtures/ tree sets its own rules: early-close-pipe,
+  The test tree sets its own rules: a tests/ or fixtures/ tree, and a suite
+  as unwired-suite defines one, wherever it lives. early-close-pipe,
   mktemp-trap, the source-file direction of docs-cited-paths, and the
   strict-mode and swallowed-status shapes of fail-open stand down there. In a
   test-named source file (tests.rs, *_test.*, *_tests.*, *.test.*, *.spec.*,
@@ -756,14 +759,28 @@ swallowed_cmd() { # LINE -> command name on stdout
     }'
 }
 
-# A file whose only purpose is to be run by a runner. Fixtures are material
-# a suite reads, never a suite themselves.
-is_suite_path() { # PATH
+# The test tree sets its own rules, and this is its one grammar. A suite is
+# a file whose only purpose is to be run by a runner: tests/*.test.sh,
+# tests/test-*.sh, a shell file with a test-<name> basename and no
+# extension wherever it lives, *.test.ts, *.test.js and *.test.mjs.
+# Material is what a suite reads: anything under a fixtures/ directory, and
+# the rest of a tests/ tree. Returns 1 outside the test tree; otherwise sets
+# TEST_TREE_ROLE to suite or material.
+test_tree_role() { # PATH IS_SHELL(0|1)
+  TEST_TREE_ROLE=""
   case "/$1" in
-    */fixtures/*) return 1 ;;
+    */fixtures/*) TEST_TREE_ROLE=material; return 0 ;;
   esac
   case "/$1" in
-    */tests/*.test.sh | */tests/test-*.sh | *.test.ts | *.test.js | *.test.mjs) return 0 ;;
+    */tests/*.test.sh | */tests/test-*.sh | *.test.ts | *.test.js | *.test.mjs) TEST_TREE_ROLE=suite; return 0 ;;
+  esac
+  if [ "$2" = 1 ]; then
+    case "${1##*/}" in
+      test-*) case "${1##*/}" in *.*) ;; *) TEST_TREE_ROLE=suite; return 0 ;; esac ;;
+    esac
+  fi
+  case "/$1" in
+    */tests/*) TEST_TREE_ROLE=material; return 0 ;;
   esac
   return 1
 }
@@ -866,9 +883,10 @@ suite_is_wired() { # SUITE-PATH
     [ "$r" != "$p" ] || continue
     case "$tok" in
       *"*"*)
-        # Only a glob naming a file shape is wiring. A path filter spelled
-        # `*/*` matches every suite in the repo and invokes none of them.
-        case "${tok##*/}" in *.*) ;; *) continue ;; esac
+        # Only a glob naming a file shape is wiring: an extension, or the
+        # test-<name> prefix of an extensionless suite. A path filter
+        # spelled `*/*` matches every suite in the repo and invokes none.
+        case "${tok##*/}" in *.* | test-*) ;; *) continue ;; esac
         case "$p" in $tok) return 0 ;; esac
         if [ "${r%/*}" = "$dir" ]; then
           case "$base" in ${tok##*/}) return 0 ;; esac
@@ -908,9 +926,7 @@ while IFS= read -r f; do
   mktemp_reported=0
   is_shell_path "$f" "$cpath" && is_sh=1
   own_rules=0
-  case "/$f" in
-    */tests/* | */fixtures/*) own_rules=1 ;;
-  esac
+  test_tree_role "$f" "$is_sh" && own_rules=1
   is_new=0
   if [ "$MODE" = "all" ] || grep -qxF -- "$f" "$TMP/newfiles.list"; then is_new=1; fi
   # A file under a scripts/lib/ tree with no executable bit cannot be run or
@@ -1009,8 +1025,9 @@ while IFS= read -r f; do
     fi
 
     # A new script that never turns on errexit, nounset and pipefail
-    # fails open at its first unchecked command. Test trees and fixtures set
-    # their own rules.
+    # fails open at its first unchecked command. The test tree sets its own
+    # rules (test_tree_role): a suite may observe a status errexit would
+    # abort on.
     if [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$sourced_lib" = 0 ] && [ "$is_new" = 1 ]; then
       if [ "$has_ee" = 0 ] || [ "$has_pf" = 0 ] || ! file_matches "$cpath" "$NOUNSET_RE"; then
         emit "$f" 0 fail-open "new shell file without strict mode (set -euo pipefail)"
@@ -1018,7 +1035,7 @@ while IFS= read -r f; do
     fi
   fi
 
-  if [ "$is_new" = 1 ] && [ "$vendored_mirror" = 0 ] && is_suite_path "$f" && ! suite_is_wired "$f"; then
+  if [ "$is_new" = 1 ] && [ "$vendored_mirror" = 0 ] && [ "$TEST_TREE_ROLE" = suite ] && ! suite_is_wired "$f"; then
     emit "$f" 0 unwired-suite "new suite is not invoked by any runner"
   fi
 
