@@ -149,6 +149,10 @@ fx_self_planted() { fx_self self-planted; put planted.txt "$OPEN HEAD\n"; }
 asset() { repo "$1"; put ok.rs 'fn main() {}\n'; put asset.png "\0211PNG\r\n\0032\n\0000\0000\n$OPEN HEAD\n"; } # NAME
 fx_asset_planted() { asset asset-planted; put planted.txt "$CLOSE theirs\n"; }
 fx_asset_text() { repo asset-text; put ok.rs 'fn main() {}\n'; put asset.png "\0211PNG\r\n\0032\n\n$OPEN HEAD\n"; }
+# Premise: the self rows read a clean verdict, which an empty repository
+# also gives, so the fixture must be shown to track the script.
+fx_self self-premise
+assert_eq "premise: the self fixture tracks the shipped script" "scripts/conflict-markers" "$(git -C "$R" ls-files scripts)"
 run_rows \
   "the shipped script, tracked, scans clean: its patterns are interval-built|fx_self self|||rc=0 $(clean)" \
   "control: a planted marker fails while the script stays unnamed|fx_self_planted|||rc=1 $(hit planted.txt 1 "$OPEN HEAD");$(failed 1)" \
