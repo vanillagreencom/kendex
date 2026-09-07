@@ -654,9 +654,10 @@ fn a_lock_naming_another_version_is_refused_in_both_directions() {
     let error = load_lock(&path).unwrap_err();
     assert!(matches!(error, CoreError::LockCorrupt { .. }), "{error}");
     assert!(error.to_string().contains("install fresh"), "{error}");
+    let error = audit(&w.env, &w.scope).unwrap_err();
     assert!(
-        audit(&w.env, &w.scope).is_err(),
-        "and nothing plans past it"
+        matches!(error, CoreError::LockCorrupt { .. }),
+        "and nothing plans past it: {error:?}"
     );
 
     renumber(LOCK_VERSION + 1);

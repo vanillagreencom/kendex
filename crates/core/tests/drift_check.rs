@@ -122,80 +122,89 @@ fn row<'a>(rows: &'a [updates::UpdateRow], name: &str) -> &'a updates::UpdateRow
         .unwrap_or_else(|| panic!("no row for {name}: {rows:?}"))
 }
 
+/// A commit pin is a hold on everything it reaches, one row per route: a
+/// source-level pin holds every package the source carries; a pinned
+/// bundle holds its members; a pinned parent holds its dependencies. Each
+/// row: what the upstream holds, the source's extra lines, the declaration
+/// (both given the first commit), and the package the report must hold.
+/// The control follows the first row: a tracking selector is not a pin, so
+/// the same declaration on a branch name follows and must not read as held.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_package_from_a_commit_pinned_source_reports_held() {
+fn a_commit_pin_holds_every_package_it_reaches() {
+    type Upstream = fn(&Path);
+    type Declare = fn(&str) -> (String, String);
+    let rows: [(&str, Upstream, Declare, &str); 3] = [
+        (
+            "a source-level pin",
+            |upstream| write_skill(upstream, "gh", "One."),
+            |first| {
+                (
+                    format!("rev = \"{first}\"\n"),
+                    "[skills.gh]\nsource = \"cat\"\n".to_owned(),
+                )
+            },
+            "gh",
+        ),
+        (
+            "a pinned bundle",
+            |upstream| {
+                write_skill(upstream, "member", "One.");
+                fs::write(
+                    upstream.join("kendex.toml"),
+                    "[bundles.kit]\ndescription = \"a set\"\nskills = [\"member\"]\n",
+                )
+                .unwrap();
+            },
+            |first| {
+                (
+                    String::new(),
+                    format!("[bundles.kit]\nsource = \"cat\"\nrev = \"{first}\"\n"),
+                )
+            },
+            "member",
+        ),
+        (
+            "a pinned parent",
+            |upstream| {
+                write_skill(upstream, "dep", "Dep.");
+                write_skill_with(
+                    upstream,
+                    "parent",
+                    "Parent.",
+                    "dependencies:\n  required: [dep]\n",
+                );
+            },
+            |first| {
+                (
+                    String::new(),
+                    format!("[skills.parent]\nsource = \"cat\"\nrev = \"{first}\"\n"),
+                )
+            },
+            "dep",
+        ),
+    ];
+    for (what, upstream, declaration, held) in rows {
+        let w = world();
+        upstream(&w.upstream);
+        let first = commit(&w.upstream, "one");
+        let (source_extra, declared) = declaration(&first);
+        declare(&w, &source_extra, &declared);
+        sync_and_apply(&w);
+
+        let report = updates::updates(&w.env, &w.scope).unwrap();
+        assert!(row(&report.rows, held).pinned, "{what}: {report:?}");
+    }
+
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
-    let first = commit(&w.upstream, "one");
-    declare(
-        &w,
-        &format!("rev = \"{first}\"\n"),
-        "[skills.gh]\nsource = \"cat\"\n",
-    );
-    sync_and_apply(&w);
-
-    let report = updates::updates(&w.env, &w.scope).unwrap();
-    assert!(
-        row(&report.rows, "gh").pinned,
-        "a source-level pin is a hold on everything it carries"
-    );
-
-    // A tracking selector is not a pin: the same declaration on a branch
-    // name follows, and must not read as held.
+    commit(&w.upstream, "one");
     declare(&w, "rev = \"main\"\n", "[skills.gh]\nsource = \"cat\"\n");
-    let report = updates::updates(&w.env, &w.scope).unwrap();
-    assert!(!row(&report.rows, "gh").pinned);
-}
-
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_pin_reaching_a_member_through_a_bundle_reports_held() {
-    let w = world();
-    write_skill(&w.upstream, "member", "One.");
-    fs::write(
-        w.upstream.join("kendex.toml"),
-        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"member\"]\n",
-    )
-    .unwrap();
-    let first = commit(&w.upstream, "one");
-    declare(
-        &w,
-        "",
-        &format!("[bundles.kit]\nsource = \"cat\"\nrev = \"{first}\"\n"),
-    );
     sync_and_apply(&w);
-
     let report = updates::updates(&w.env, &w.scope).unwrap();
     assert!(
-        row(&report.rows, "member").pinned,
-        "a pinned bundle holds its members: {report:?}"
-    );
-}
-
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_pin_reaching_a_dependency_through_its_parent_reports_held() {
-    let w = world();
-    write_skill(&w.upstream, "dep", "Dep.");
-    write_skill_with(
-        &w.upstream,
-        "parent",
-        "Parent.",
-        "dependencies:\n  required: [dep]\n",
-    );
-    let first = commit(&w.upstream, "one");
-    declare(
-        &w,
-        "",
-        &format!("[skills.parent]\nsource = \"cat\"\nrev = \"{first}\"\n"),
-    );
-    sync_and_apply(&w);
-
-    let report = updates::updates(&w.env, &w.scope).unwrap();
-    assert!(
-        row(&report.rows, "dep").pinned,
-        "a pinned parent holds its dependencies: {report:?}"
+        !row(&report.rows, "gh").pinned,
+        "a tracking selector is not a pin: {report:?}"
     );
 }
 

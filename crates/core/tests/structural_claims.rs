@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use kendex_core::apply;
 use kendex_core::engine::{audit, ops};
 use kendex_core::env::{Env, FakeOs};
+use kendex_core::error::CoreError;
 use kendex_core::model::Scope;
 
 struct World {
@@ -173,7 +174,11 @@ fn corrupt_state_fails_closed_instead_of_defaulting() {
 
     // Damaged lock: the audit refuses rather than planning against nothing.
     fs::write(w.project.join(".kendex-lock.json"), "{torn").unwrap();
-    assert!(audit(&w.env, &scope).is_err(), "a corrupt lock must refuse");
+    let error = audit(&w.env, &scope).unwrap_err();
+    assert!(
+        matches!(error, CoreError::LockCorrupt { .. }),
+        "a corrupt lock must refuse: {error:?}"
+    );
     fs::remove_file(w.project.join(".kendex-lock.json")).unwrap();
 
     // Damaged app settings: the observed scoring pass and the plan's
@@ -183,19 +188,25 @@ fn corrupt_state_fails_closed_instead_of_defaulting() {
     let settings = w.env.settings_file();
     fs::create_dir_all(settings.parent().unwrap()).unwrap();
     fs::write(&settings, "not = [valid").unwrap();
+    let error = kendex_core::engine::observed_rows(&w.env, &scope).unwrap_err();
     assert!(
-        kendex_core::engine::observed_rows(&w.env, &scope).is_err(),
-        "corrupt settings must fail the audit closed"
+        matches!(&error, CoreError::TomlParse { path, .. } if *path == settings),
+        "corrupt settings must fail the audit closed: {error:?}"
     );
+    let error = audit(&w.env, &scope).unwrap_err();
     assert!(
-        audit(&w.env, &scope).is_err(),
-        "corrupt settings must fail the plan closed"
+        matches!(&error, CoreError::TomlParse { path, .. } if *path == settings),
+        "corrupt settings must fail the plan closed: {error:?}"
     );
     fs::remove_file(&settings).unwrap();
 
     // Damaged manifest: same refusal.
     fs::write(w.project.join("kendex.toml"), "schema = [broken").unwrap();
-    assert!(audit(&w.env, &scope).is_err());
+    let error = audit(&w.env, &scope).unwrap_err();
+    assert!(
+        matches!(&error, CoreError::TomlParse { path, .. } if *path == w.project.join("kendex.toml")),
+        "{error:?}"
+    );
 }
 
 /// `add` mutates nothing user-visible before validation
@@ -223,7 +234,11 @@ fn add_writes_nothing_before_validation_and_confirmation() {
         optional: vec!["no-such-extra".into()],
         ..Default::default()
     };
-    assert!(ops::add(&w.env, &scope, &bad).is_err());
+    let error = ops::add(&w.env, &scope, &bad).unwrap_err();
+    assert!(
+        matches!(&error, CoreError::NoSuchOptional { name, .. } if name == "no-such-extra"),
+        "{error:?}"
+    );
     assert_eq!(
         fs::read_to_string(w.project.join("kendex.toml")).unwrap(),
         manifest_text,

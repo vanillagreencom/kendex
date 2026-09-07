@@ -10,107 +10,212 @@ use kendex_core::error::CoreError;
 
 use super::*;
 
-/// A person who tightens a generated file by hand states something the
-/// local source has no key for and the manifest is not being written from.
-/// Forking anyway would hand them back the tools they took away, so the
-/// fork refuses and writes nothing.
+/// A hand edit the fork cannot carry refuses before writing anything, one
+/// row per edit, the refusal's own `problem` naming what it stopped on. A
+/// person who tightens a generated file by hand states something the local
+/// source has no key for and the manifest is not being written from, so
+/// forking would hand back the tools they took away: a widened deny list;
+/// an allowlist written into a file that stated none (what the fork would
+/// give back is every tool outside it, so the refusal names the allowlist);
+/// frontmatter that will not parse, which is not a file stating nothing
+/// (what the person took away cannot be read, so it cannot be proven
+/// carried either), whether a key stated twice or a block that opens and
+/// never ends; a deleted colour (an override states what a value is and
+/// never that there is none); a Pi allowlist override the renderer cannot
+/// express, which the updates report already marks unforkable; a hook
+/// written into the file (no override table holds one, a hook being a
+/// custom-hooks entry with a selector rather than a field); and the same
+/// hook moved to gate the call before it runs, since a hook is its scope as
+/// well as its command and a reading that compares commands alone would
+/// let the fork restore the looser gate. Afterwards nothing is captured and
+/// the manifest records no fork.
 #[test]
-#[allow(clippy::unwrap_used)]
-fn a_hand_tightened_deny_refuses_the_fork_and_writes_nothing() {
-    let w = agent_world(
-        "\"claude\"",
-        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
-        "",
-        "",
+#[allow(clippy::unwrap_used, clippy::too_many_lines)]
+fn a_hand_edit_the_fork_cannot_carry_refuses_and_names_it() {
+    type Edit = fn(&World, &std::path::Path);
+    type Row = (
+        &'static str,
+        &'static str,
+        HarnessId,
+        &'static str,
+        &'static str,
+        Edit,
+        &'static [&'static str],
     );
-    let file = rendered(&w, HarnessId::Claude, "rev");
-    let text = fs::read_to_string(&file).unwrap();
-    fs::write(
-        &file,
-        text.replace(
-            "disallowedTools: Agent, AskUserQuestion",
-            "disallowedTools: Agent, AskUserQuestion, Bash, WebFetch",
+    let rows: [Row; 8] = [
+        (
+            "a hand-tightened deny list",
+            "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+            HarnessId::Claude,
+            "",
+            "",
+            |_, file| {
+                edit_line(
+                    file,
+                    "disallowedTools: Agent, AskUserQuestion",
+                    "disallowedTools: Agent, AskUserQuestion, Bash, WebFetch",
+                );
+            },
+            &["Bash", "WebFetch"],
         ),
-    )
-    .unwrap();
-
-    let refused =
-        fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap_err();
-    let said = refused.to_string();
-    assert!(
-        matches!(refused, CoreError::ForkWidensAccess { .. }),
-        "{refused:?}"
-    );
-    assert!(
-        said.contains("Bash") && said.contains("WebFetch") && said.contains("nothing was written"),
-        "the refusal names what it stopped on: {said}"
-    );
-    assert!(!captured(&w, "rev").exists(), "nothing was written");
-    assert!(!manifest_text(&w).contains("[forks.agent.rev]"));
-}
-
-/// The same refusal from the other direction: a hand-written allowlist
-/// to a file that stated none. What the fork would give back is every
-/// tool outside it, so the refusal names the allowlist instead.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_hand_added_allowlist_refuses_the_fork() {
-    let w = agent_world(
-        "\"claude\"",
-        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
-        "",
-        "",
-    );
-    let file = rendered(&w, HarnessId::Claude, "rev");
-    let text = fs::read_to_string(&file).unwrap();
-    fs::write(
-        &file,
-        text.replace("disallowedTools:", "tools: Read, Grep\ndisallowedTools:"),
-    )
-    .unwrap();
-
-    let refused =
-        fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap_err();
-    let said = refused.to_string();
-    assert!(
-        matches!(refused, CoreError::ForkWidensAccess { .. }),
-        "{refused:?}"
-    );
-    assert!(said.contains("Read, Grep"), "{said}");
-    assert!(!captured(&w, "rev").exists(), "nothing was written");
-}
-
-/// Frontmatter that will not parse is not the same answer as frontmatter
-/// stating nothing. What the person took away cannot be read, so it cannot
-/// be proven carried either, and the fork refuses rather than guess.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn an_unreadable_frontmatter_refuses_the_fork() {
-    let w = agent_world(
-        "\"claude\"",
-        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
-        "",
-        "",
-    );
-    let file = rendered(&w, HarnessId::Claude, "rev");
-    let text = fs::read_to_string(&file).unwrap();
-    fs::write(
-        &file,
-        text.replace(
-            "disallowedTools:",
-            "tools: Read\ntools: Grep\ndisallowedTools:",
+        (
+            "a hand-added allowlist",
+            "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+            HarnessId::Claude,
+            "",
+            "",
+            |_, file| {
+                edit_line(
+                    file,
+                    "disallowedTools:",
+                    "tools: Read, Grep\ndisallowedTools:",
+                )
+            },
+            &["Read, Grep"],
         ),
-    )
-    .unwrap();
+        (
+            "a key stated twice",
+            "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+            HarnessId::Claude,
+            "",
+            "",
+            |_, file| {
+                edit_line(
+                    file,
+                    "disallowedTools:",
+                    "tools: Read\ntools: Grep\ndisallowedTools:",
+                );
+            },
+            &["cannot be read"],
+        ),
+        (
+            "a deleted colour",
+            "---\nname: rev\ndescription: agent rev\ncolor: blue\n---\nUpstream body.\n",
+            HarnessId::Claude,
+            "",
+            "",
+            |_, file| {
+                let rendering = fs::read_to_string(file).unwrap();
+                assert!(rendering.contains("color: blue"), "{rendering}");
+                let without: String = rendering
+                    .lines()
+                    .filter(|line| !line.starts_with("color:"))
+                    .map(|line| format!("{line}\n"))
+                    .collect();
+                fs::write(file, without).unwrap();
+            },
+            &["deleted", "color"],
+        ),
+        (
+            "a Pi allowlist the renderer cannot express",
+            "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+            HarnessId::Pi,
+            "",
+            "",
+            |w, file| {
+                edit_line(file, "deny-tools:", "deny-tools: Bash,");
+                let manifest = format!(
+                    "{}\n[agent-frontmatter.pi]\nrev = {{ allow-tools = [\"Read\"] }}\n",
+                    manifest_text(w)
+                );
+                fs::write(manifest::manifest_path(&w.env, &w.scope), manifest).unwrap();
+                let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
+                let row = report
+                    .rows
+                    .iter()
+                    .find(|row| row.kind == ItemKind::Agent && row.name == "rev")
+                    .unwrap();
+                assert_eq!(row.forkable_harness, None, "{row:?}");
+            },
+            &["the access settings its Pi renderer rejected: Pi cannot express a tool allowlist"],
+        ),
+        (
+            "a hand-written hook",
+            "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+            HarnessId::Claude,
+            "",
+            "",
+            |_, file| {
+                edit_line(
+                    file,
+                    "disallowedTools:",
+                    "hooks:\n  PreToolUse:\n    \"Bash\":\n      - type: command\n        command: \"./guard.sh\"\ndisallowedTools:",
+                );
+            },
+            &["./guard.sh"],
+        ),
+        (
+            "a hook moved to a tighter event",
+            "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+            HarnessId::Claude,
+            "",
+            "[[custom-hooks]]\nevent = \"PostToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\nagents = \"rev\"\n",
+            |_, file| {
+                // The same command, moved to gate the call before it runs
+                // instead of reporting on it afterwards.
+                edit_line(file, "PostToolUse:", "PreToolUse:");
+            },
+            &["PreToolUse", "Bash", "./guard.sh"],
+        ),
+        (
+            "an unterminated frontmatter block",
+            "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+            HarnessId::Claude,
+            "",
+            "[agent-frontmatter.claude]\nrev = { deny-tools = [\"Bash\"] }\n",
+            |_, file| {
+                let text = fs::read_to_string(file).unwrap();
+                assert!(
+                    deny_line(&text, "disallowedTools:").contains("Bash"),
+                    "the block the edit leaves unterminated is the one stating the denies: {text}"
+                );
+                assert_eq!(
+                    times(&text, "---"),
+                    2,
+                    "the rendering opens and closes exactly one block: {text}"
+                );
+                let mut lines: Vec<&str> = text.lines().collect();
+                let closer = lines.iter().rposition(|line| line.trim() == "---").unwrap();
+                lines.remove(closer);
+                fs::write(
+                    file,
+                    lines
+                        .iter()
+                        .map(|line| format!("{line}\n"))
+                        .collect::<String>(),
+                )
+                .unwrap();
+            },
+            &["unterminated frontmatter"],
+        ),
+    ];
+    for (what, agent, harness, catalog, project, edit, names) in rows {
+        let harnesses = format!("\"{}\"", harness.name());
+        let w = agent_world(&harnesses, agent, catalog, project);
+        let file = rendered(&w, harness, "rev");
+        edit(&w, &file);
 
-    let refused =
-        fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap_err();
-    assert!(
-        matches!(refused, CoreError::ForkWidensAccess { .. }),
-        "{refused:?}"
-    );
-    assert!(refused.to_string().contains("cannot be read"), "{refused}");
-    assert!(!captured(&w, "rev").exists(), "nothing was written");
+        let refused = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", harness).unwrap_err();
+
+        let CoreError::ForkWidensAccess { name, problem } = &refused else {
+            panic!("{what}: {refused:?}");
+        };
+        assert_eq!(name, "rev", "{what}");
+        for clause in names {
+            assert!(
+                problem.contains(clause),
+                "{what}: {clause:?} missing from {problem:?}"
+            );
+        }
+        assert!(
+            !captured(&w, "rev").exists(),
+            "{what}: something was written"
+        );
+        assert!(
+            !manifest_text(&w).contains("[forks.agent.rev]"),
+            "{what}: the manifest records a fork"
+        );
+    }
 }
 
 /// A person who changes a setting in the generated file changed something
@@ -156,12 +261,11 @@ fn a_settings_edit_rides_into_the_manifest_and_a_description_edit_does_not() {
 
 /// Deleting a rendered key is an edit in the restrictive direction, and
 /// the fork must not answer it by putting the publisher's value back. An
-/// override states what a value is and never that there is none, so only
-/// an effort can be cleared; everything else refuses, naming what was
-/// deleted.
+/// effort can be cleared, since every renderer reads `none` as no effort
+/// (the keys nothing can clear are rows of the refusals table above).
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_deleted_setting_is_carried_where_it_can_be_and_refused_where_it_cannot() {
+fn a_deleted_effort_is_carried_as_cleared() {
     let w = agent_world(
         "\"claude\"",
         "---\nname: rev\ndescription: agent rev\nmodel: sonnet\neffort: high\ncolor: blue\n---\nUpstream body.\n",
@@ -187,33 +291,6 @@ fn a_deleted_setting_is_carried_where_it_can_be_and_refused_where_it_cannot() {
         !settled.lines().any(|line| line.starts_with("effort:")),
         "a cleared effort must not come back: {settled}"
     );
-
-    // A colour cannot: nothing in the override table says there is none.
-    let w = agent_world(
-        "\"claude\"",
-        "---\nname: rev\ndescription: agent rev\ncolor: blue\n---\nUpstream body.\n",
-        "",
-        "",
-    );
-    let file = rendered(&w, HarnessId::Claude, "rev");
-    let rendering = fs::read_to_string(&file).unwrap();
-    let without_color: String = rendering
-        .lines()
-        .filter(|line| !line.starts_with("color:"))
-        .map(|line| format!("{line}\n"))
-        .collect();
-    fs::write(&file, &without_color).unwrap();
-    let refused =
-        fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap_err();
-    assert!(
-        matches!(refused, CoreError::ForkWidensAccess { .. }),
-        "{refused:?}"
-    );
-    assert!(
-        refused.to_string().contains("deleted") && refused.to_string().contains("color"),
-        "the refusal names the deleted setting: {refused}"
-    );
-    assert!(!captured(&w, "rev").exists(), "nothing was written");
 }
 
 /// Pi's allowed-subagents governs which child agents this one may invoke,
@@ -298,157 +375,6 @@ fn a_deleted_pi_delegation_list_survives_the_fork() {
         deny_line(&settled, "deny-tools:").contains("delegate_subagent"),
         "and the delegation tool goes with it: {settled}"
     );
-}
-
-/// A person can add a Pi allowlist override after tightening the installed file.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_pi_allowlist_that_cannot_render_refuses_the_fork() {
-    let w = agent_world(
-        "\"pi\"",
-        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
-        "",
-        "",
-    );
-    let file = rendered(&w, HarnessId::Pi, "rev");
-    edit_line(&file, "deny-tools:", "deny-tools: Bash,");
-    let manifest = format!(
-        "{}\n[agent-frontmatter.pi]\nrev = {{ allow-tools = [\"Read\"] }}\n",
-        manifest_text(&w)
-    );
-    fs::write(manifest::manifest_path(&w.env, &w.scope), manifest).unwrap();
-    let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
-    let row = report
-        .rows
-        .iter()
-        .find(|row| row.kind == ItemKind::Agent && row.name == "rev")
-        .unwrap();
-    assert_eq!(row.forkable_harness, None, "{row:?}");
-    let refused = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Pi).unwrap_err();
-    assert!(refused.to_string().contains(
-        "the access settings its Pi renderer rejected: Pi cannot express a tool allowlist"
-    ));
-}
-
-/// A hook written into a Claude agent file gates tool use from inside that
-/// file. No override table holds one — a hook is a custom-hooks entry with
-/// a selector, not a field — so a hook the fork would not run again is a
-/// restriction it cannot carry, and it refuses.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_hand_written_hook_refuses_the_fork() {
-    let w = agent_world(
-        "\"claude\"",
-        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
-        "",
-        "",
-    );
-    let file = rendered(&w, HarnessId::Claude, "rev");
-    let text = fs::read_to_string(&file).unwrap();
-    fs::write(
-        &file,
-        text.replace(
-            "disallowedTools:",
-            "hooks:\n  PreToolUse:\n    \"Bash\":\n      - type: command\n        command: \"./guard.sh\"\ndisallowedTools:",
-        ),
-    )
-    .unwrap();
-
-    let refused =
-        fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap_err();
-    assert!(
-        matches!(refused, CoreError::ForkWidensAccess { .. }),
-        "{refused:?}"
-    );
-    assert!(
-        refused.to_string().contains("./guard.sh"),
-        "the refusal names the hook it stopped on: {refused}"
-    );
-    assert!(!captured(&w, "rev").exists(), "nothing was written");
-}
-
-/// A hook is its scope as well as its command. Tightening the scope by
-/// hand: the same command moved to a different event, or onto a broader
-/// matcher — leaves the command alone, so a reading that compares commands
-/// sees no difference and lets the fork restore the looser gate.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_hand_tightened_hook_scope_refuses_the_fork() {
-    let w = agent_world(
-        "\"claude\"",
-        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
-        "",
-        "[[custom-hooks]]\nevent = \"PostToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\nagents = \"rev\"\n",
-    );
-    let file = rendered(&w, HarnessId::Claude, "rev");
-    let text = fs::read_to_string(&file).unwrap();
-    assert!(text.contains("PostToolUse:"), "{text}");
-    // The same command, moved to gate the call before it runs instead of
-    // reporting on it afterwards.
-    fs::write(&file, text.replace("PostToolUse:", "PreToolUse:")).unwrap();
-
-    let refused =
-        fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap_err();
-    assert!(
-        matches!(refused, CoreError::ForkWidensAccess { .. }),
-        "{refused:?}"
-    );
-    let said = refused.to_string();
-    assert!(
-        said.contains("PreToolUse") && said.contains("Bash") && said.contains("./guard.sh"),
-        "the refusal names the gate whole, not just its command: {said}"
-    );
-    assert!(!captured(&w, "rev").exists(), "nothing was written");
-}
-
-/// The other reading `split` reports the same error for. A block that
-/// opens and never ends is frontmatter that will not read, not a file
-/// stating nothing: whatever the person restricted in it cannot be read
-/// back, so it cannot be proven carried either, and the fork refuses
-/// rather than proceed on an empty reading of a file full of denies.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn an_unterminated_frontmatter_refuses_the_fork() {
-    let w = agent_world(
-        "\"claude\"",
-        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
-        "",
-        "[agent-frontmatter.claude]\nrev = { deny-tools = [\"Bash\"] }\n",
-    );
-    let file = rendered(&w, HarnessId::Claude, "rev");
-    let text = fs::read_to_string(&file).unwrap();
-    assert!(
-        deny_line(&text, "disallowedTools:").contains("Bash"),
-        "the block the edit leaves unterminated is the one stating the denies: {text}"
-    );
-    assert_eq!(
-        times(&text, "---"),
-        2,
-        "the rendering opens and closes exactly one block: {text}"
-    );
-    let mut lines: Vec<&str> = text.lines().collect();
-    let closer = lines.iter().rposition(|line| line.trim() == "---").unwrap();
-    lines.remove(closer);
-    fs::write(
-        &file,
-        lines
-            .iter()
-            .map(|line| format!("{line}\n"))
-            .collect::<String>(),
-    )
-    .unwrap();
-
-    let refused =
-        fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap_err();
-    assert!(
-        matches!(refused, CoreError::ForkWidensAccess { .. }),
-        "{refused:?}"
-    );
-    assert!(
-        refused.to_string().contains("unterminated frontmatter"),
-        "the refusal names why the file could not be read: {refused}"
-    );
-    assert!(!captured(&w, "rev").exists(), "nothing was written");
 }
 
 /// The reading on the other side of that split, which stays a fork rather

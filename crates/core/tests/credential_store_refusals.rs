@@ -91,70 +91,73 @@ fn stored() -> SignIn {
     }
 }
 
-#[track_caller]
-fn names_the_store(error: &CoreError, cause: &str) {
-    assert!(
-        matches!(error, CoreError::CredentialStoreUnavailable { .. }),
-        "a keychain refusal is not a registry outage: {error:?}"
-    );
-    let shown = error.to_string();
-    assert!(
-        !shown.contains("community directory"),
-        "the user is sent to check a working network: {shown}"
-    );
-    assert!(
-        shown.contains(cause),
-        "the call that refused is unnamed: {shown}"
-    );
-    assert!(
-        shown.contains("the keyring is locked"),
-        "the reason the OS gave is dropped: {shown}"
-    );
-}
-
+/// Every call the store makes, refused, one row per call and per place
+/// the keychain refuses: with no keychain at all (refusing before an entry
+/// exists, the only way to reach `entry()`'s refusal) every call is the
+/// store's own outage, and with an entry built each call names itself.
 #[test]
-fn no_keychain_at_all_refuses_every_call_as_the_store() {
-    let _held = held();
-    install(true);
+fn every_refused_call_names_the_store_and_the_call() {
+    type Call = fn() -> CoreError;
+    let rows: [(&str, bool, Call, &str); 6] = [
+        (
+            "save, no keychain",
+            true,
+            || KeyringStore.save(&stored()).expect_err("save refuses"),
+            "no keychain answered",
+        ),
+        (
+            "load, no keychain",
+            true,
+            || KeyringStore.load().expect_err("load refuses"),
+            "no keychain answered",
+        ),
+        (
+            "clear, no keychain",
+            true,
+            || KeyringStore.clear().expect_err("clear refuses"),
+            "no keychain answered",
+        ),
+        (
+            "save refused",
+            false,
+            || KeyringStore.save(&stored()).expect_err("save refuses"),
+            "the sign-in was refused",
+        ),
+        (
+            "load refused",
+            false,
+            || KeyringStore.load().expect_err("load refuses"),
+            "the stored sign-in could not be read",
+        ),
+        (
+            "clear refused",
+            false,
+            || KeyringStore.clear().expect_err("clear refuses"),
+            "the removal was refused",
+        ),
+    ];
+    for (what, at_build, call, cause) in rows {
+        let _held = held();
+        install(at_build);
 
-    for error in [
-        KeyringStore.save(&stored()).expect_err("save refuses"),
-        KeyringStore.load().expect_err("load refuses"),
-        KeyringStore.clear().expect_err("clear refuses"),
-    ] {
-        names_the_store(&error, "no keychain answered");
+        let error = call();
+
+        assert!(
+            matches!(error, CoreError::CredentialStoreUnavailable { .. }),
+            "{what}: a keychain refusal is not a registry outage: {error:?}"
+        );
+        let shown = error.to_string();
+        assert!(
+            !shown.contains("community directory"),
+            "{what}: the user is sent to check a working network: {shown}"
+        );
+        assert!(
+            shown.contains(cause),
+            "{what}: the call that refused is unnamed: {shown}"
+        );
+        assert!(
+            shown.contains("the keyring is locked"),
+            "{what}: the reason the OS gave is dropped: {shown}"
+        );
     }
-}
-
-#[test]
-fn a_refused_write_names_the_store() {
-    let _held = held();
-    install(false);
-
-    names_the_store(
-        &KeyringStore.save(&stored()).expect_err("save refuses"),
-        "the sign-in was refused",
-    );
-}
-
-#[test]
-fn a_refused_read_names_the_store() {
-    let _held = held();
-    install(false);
-
-    names_the_store(
-        &KeyringStore.load().expect_err("load refuses"),
-        "the stored sign-in could not be read",
-    );
-}
-
-#[test]
-fn a_refused_removal_names_the_store() {
-    let _held = held();
-    install(false);
-
-    names_the_store(
-        &KeyringStore.clear().expect_err("clear refuses"),
-        "the removal was refused",
-    );
 }

@@ -237,65 +237,166 @@ fn create_writes_the_plan_registers_and_checks_clean() {
     assert!(again.to_string().contains("already exists"), "{again}");
 }
 
-/// `nope/..` names no folder of its own. Left unrefused it is a create
-/// into the directory the command was run in, and the failure path's
-/// removal then takes that directory with it.
+/// A request `create` refuses before writing anything, one row per
+/// destination, the `Authoring` message naming what it stopped on and the
+/// tree afterwards untouched. `nope/..` names no folder of its own, and
+/// left unrefused it is a create into the directory the command was run
+/// in, which the failure path's removal would then take with it. A folder
+/// is made inside one that is already there, and a containing folder that
+/// is not gets a refusal naming it rather than being brought into being
+/// (`CreateRequest.dir` requires its parent to exist). A link whose target
+/// is gone answers `exists` with false, and the failure path's
+/// `remove_dir_all` would delete the link itself; asked of the three
+/// spellings that reach one place, because they do not all resolve alike
+/// (`made` stops at the link, `made/` and `made/.` send the kernel
+/// through it and answer NotFound, so a guard on the caller's spelling
+/// passes for the last two while the build and the removal work on the
+/// place all three name). A name no harness accepts is refused before
+/// the folder exists.
 #[test]
-#[allow(clippy::unwrap_used)]
-fn a_path_whose_last_component_is_not_a_name_refuses_and_writes_nothing() {
-    let (tmp, env) = fake();
-    let work = tmp.path().join("work");
-    fs::create_dir_all(work.join("sub")).unwrap();
-    fs::write(work.join("keep.txt"), "somebody's file").unwrap();
-    fs::write(work.join("sub/also.txt"), "and another").unwrap();
+#[allow(
+    clippy::unwrap_used,
+    clippy::too_many_lines,
+    reason = "one table: six destinations refused by one create call, each row a layout of its own"
+)]
+fn a_request_create_refuses_writes_nothing_and_names_why() {
+    type Plant = fn(&Path) -> (CreateRequest, Vec<String>);
+    type Left = fn(&Path);
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut rows: Vec<(&str, Plant, Left)> = vec![
+        (
+            "a last component that is not a name",
+            |root| {
+                let work = root.join("work");
+                fs::create_dir_all(work.join("sub")).unwrap();
+                fs::write(work.join("keep.txt"), "somebody's file").unwrap();
+                fs::write(work.join("sub/also.txt"), "and another").unwrap();
+                (
+                    request(&work.join("nope/.."), License::Mit),
+                    vec!["not a creatable folder path".to_owned()],
+                )
+            },
+            |root| {
+                let work = root.join("work");
+                assert_eq!(
+                    fs::read_to_string(work.join("keep.txt")).unwrap(),
+                    "somebody's file"
+                );
+                assert_eq!(
+                    fs::read_to_string(work.join("sub/also.txt")).unwrap(),
+                    "and another"
+                );
+                assert!(
+                    !work.join("kendex.toml").exists(),
+                    "something was scaffolded"
+                );
+            },
+        ),
+        (
+            "a containing folder that does not exist",
+            |root| {
+                let work = root.join("work");
+                fs::create_dir_all(&work).unwrap();
+                (
+                    request(&work.join("absent/made"), License::Mit),
+                    vec![
+                        "is not a folder that exists".to_owned(),
+                        work.join("absent").display().to_string(),
+                    ],
+                )
+            },
+            |root| {
+                assert!(
+                    !root.join("work/absent").exists(),
+                    "part of the chain was brought into being"
+                );
+            },
+        ),
+        (
+            "a name no harness accepts",
+            |root| {
+                let mut bad = request(&root.join("bad"), License::NoneYet);
+                bad.name = "My Marketplace!".to_owned();
+                (
+                    bad,
+                    vec!["'My Marketplace!' cannot name a marketplace".to_owned()],
+                )
+            },
+            |root| {
+                assert!(
+                    !root.join("bad").exists(),
+                    "a refused create wrote its folder"
+                )
+            },
+        ),
+    ];
+    #[cfg(unix)]
+    rows.extend([
+        (
+            "a dangling link, spelled `made`",
+            (|root| dangling(root, "made")) as Plant,
+            (|root| {
+                assert!(
+                    root.join("made").is_symlink(),
+                    "the link somebody made is gone"
+                )
+            }) as Left,
+        ),
+        (
+            "a dangling link, spelled `made/`",
+            |root| dangling(root, "made/"),
+            |root| {
+                assert!(
+                    root.join("made").is_symlink(),
+                    "the link somebody made is gone"
+                )
+            },
+        ),
+        (
+            "a dangling link, spelled `made/.`",
+            |root| dangling(root, "made/."),
+            |root| {
+                assert!(
+                    root.join("made").is_symlink(),
+                    "the link somebody made is gone"
+                )
+            },
+        ),
+    ]);
+    for (what, plant, left) in rows {
+        let (tmp, env) = fake();
+        let (asked, clauses) = plant(tmp.path());
 
-    let refused = author::create(&env, &request(&work.join("nope/.."), License::Mit)).unwrap_err();
-    assert!(
-        refused.to_string().contains("not a creatable folder path"),
-        "{refused}"
-    );
-    assert_eq!(
-        fs::read_to_string(work.join("keep.txt")).unwrap(),
-        "somebody's file"
-    );
-    assert_eq!(
-        fs::read_to_string(work.join("sub/also.txt")).unwrap(),
-        "and another"
-    );
-    assert!(!work.join("kendex.toml").exists(), "nothing was scaffolded");
-    assert!(
-        author::list(&env).unwrap().is_empty(),
-        "nothing was registered"
-    );
+        let refused = author::create(&env, &asked).unwrap_err();
+
+        let kendex_core::error::CoreError::Authoring { message } = &refused else {
+            panic!("{what}: {refused:?}");
+        };
+        for clause in &clauses {
+            assert!(
+                message.contains(clause),
+                "{what}: {clause:?} missing from {message:?}"
+            );
+        }
+        left(tmp.path());
+        assert!(
+            author::list(&env).unwrap().is_empty(),
+            "{what}: something was registered"
+        );
+    }
 }
 
-/// A folder is made inside one that is already there, and a containing
-/// folder that is not gets a refusal naming it rather than being brought
-/// into being. `CreateRequest.dir` requires its parent to exist.
-#[test]
+/// A link whose target is gone, at the destination, asked for under one
+/// spelling; the refusal reads as an existing folder.
+#[cfg(unix)]
 #[allow(clippy::unwrap_used)]
-fn a_containing_folder_that_does_not_exist_refuses_and_makes_nothing() {
-    let (tmp, env) = fake();
-    let work = tmp.path().join("work");
-    fs::create_dir_all(&work).unwrap();
-
-    let refused = author::create(&env, &request(&work.join("absent/made"), License::Mit))
-        .unwrap_err()
-        .to_string();
-
-    assert!(refused.contains("is not a folder that exists"), "{refused}");
-    assert!(
-        refused.contains(&work.join("absent").display().to_string()),
-        "the refusal names the folder that is missing: {refused}"
-    );
-    assert!(
-        !work.join("absent").exists(),
-        "no part of the chain was brought into being"
-    );
-    assert!(
-        author::list(&env).unwrap().is_empty(),
-        "nothing was registered"
-    );
+fn dangling(root: &Path, spelling: &str) -> (CreateRequest, Vec<String>) {
+    let link = root.join("made");
+    std::os::unix::fs::symlink(root.join("nowhere-at-all"), &link).unwrap();
+    (
+        request(&root.join(spelling), License::Mit),
+        vec!["already exists".to_owned()],
+    )
 }
 
 /// A parent that exists and cannot be traversed is not an absent one.
@@ -330,40 +431,6 @@ fn a_parent_that_cannot_be_reached_is_not_reported_as_missing() {
         refused.contains(&locked.join("inner").display().to_string()),
         "the refusal names the parent it could not reach: {refused}"
     );
-}
-
-/// A link whose target is gone answers `exists` with false, and the
-/// failure path's `remove_dir_all` deletes the link itself.
-///
-/// Asked of the three spellings that reach one place, because they do not
-/// all resolve alike: `made` stops at the link, while `made/` and
-/// `made/.` send the kernel through it and answer NotFound. A guard on
-/// the caller's spelling passes for the last two while the build and the
-/// removal work on the place all three name.
-#[cfg(unix)]
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_dangling_link_at_the_destination_refuses_in_every_spelling() {
-    for spelling in ["made", "made/", "made/."] {
-        let (tmp, env) = fake();
-        let link = tmp.path().join("made");
-        std::os::unix::fs::symlink(tmp.path().join("nowhere-at-all"), &link).unwrap();
-
-        let asked = tmp.path().join(spelling);
-        let refused = author::create(&env, &request(&asked, License::Mit)).unwrap_err();
-        assert!(
-            refused.to_string().contains("already exists"),
-            "{spelling}: {refused}"
-        );
-        assert!(
-            link.is_symlink(),
-            "{spelling}: the link somebody made is still there"
-        );
-        assert!(
-            author::list(&env).unwrap().is_empty(),
-            "{spelling}: nothing was registered"
-        );
-    }
 }
 
 /// A registry that refuses after the build takes the folder back, and
@@ -432,17 +499,6 @@ fn a_registry_refusal_after_the_build_removes_only_the_folder_it_made() {
     );
     assert!(work.join("sub").is_dir(), "nothing else was removed");
     assert!(other.is_dir(), "and nothing of anybody else's");
-}
-
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_name_no_harness_accepts_refuses_before_any_write() {
-    let (tmp, env) = fake();
-    let dir = tmp.path().join("bad");
-    let mut bad = request(&dir, License::NoneYet);
-    bad.name = "My Marketplace!".to_owned();
-    assert!(author::create(&env, &bad).is_err());
-    assert!(!dir.exists(), "a refused create must write nothing");
 }
 
 struct NoNetwork;

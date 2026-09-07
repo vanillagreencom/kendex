@@ -293,7 +293,10 @@ fn what_kendex_already_looks_after_is_never_adopted() {
         &[kendex_core::model::HarnessId::Claude],
     );
 
-    assert!(refused.is_err(), "an installation was captured as a fork");
+    assert!(
+        matches!(refused, Err(kendex_core::error::CoreError::AlreadyManaged { ref name, .. }) if name == "deploy"),
+        "an installation was captured as a fork: {refused:?}"
+    );
     assert!(
         fs::read_to_string(w.home.join("app/kendex.toml"))
             .unwrap()

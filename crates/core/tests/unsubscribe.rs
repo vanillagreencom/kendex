@@ -8,10 +8,11 @@ mod test_util;
 use test_util::source_path;
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use kendex_core::engine::detach;
 use kendex_core::env::{Env, FakeOs};
+use kendex_core::error::CoreError;
 use kendex_core::manifest::{self, ManifestFile};
 use kendex_core::model::{ItemKind, Scope};
 use kendex_core::{apply, source_ops};
@@ -125,7 +126,11 @@ fn removing_an_unreachable_source_refuses() {
     apply_now(&env, &scope);
     // Make the catalog unreadable by removing it.
     fs::remove_dir_all(&catalog).unwrap();
-    assert!(detach::remove(&env, &scope, "cat", false).is_err());
+    let error = detach::remove(&env, &scope, "cat", false).unwrap_err();
+    assert!(
+        matches!(&error, CoreError::SourceMissing { name, .. } if name == "cat"),
+        "{error:?}"
+    );
     // The subscription is untouched by the refusal.
     assert!(manifest_of(&env, &scope).sources.contains_key("cat"));
 }
@@ -164,52 +169,63 @@ fn keeping_a_sources_packages_detaches_them_to_local() {
     );
 }
 
-/// Detach refuses while a package is edited — keeping it from source form would
-/// silently drop the edit.
+/// Detach refuses while a package is edited, naming it: keeping it from
+/// source form would silently drop the edit. One row per artifact: a
+/// skill's file, and a hook script (detach compares the installed script
+/// to what apply wrote, so keeping from source form cannot silently revert
+/// a hook the user changed by hand).
 #[test]
 #[allow(clippy::unwrap_used)]
 fn keeping_an_edited_package_refuses_naming_it() {
-    let (_tmp, env, scope, catalog) = world("[skills.gh]\nsource = \"cat\"\n", "");
-    skill(&catalog, "gh", "the gh skill");
-    apply_now(&env, &scope);
-    // Edit the installed skill by hand.
-    let installed = scope_skill(&scope, "gh").join("SKILL.md");
-    let edited = fs::read_to_string(&installed).unwrap() + "\nhand edit\n";
-    fs::write(&installed, edited).unwrap();
+    type Plant = fn(&Path);
+    type Installed = fn(&Path) -> PathBuf;
+    let rows: [(&str, &str, Plant, Installed, &str); 2] = [
+        (
+            "a skill",
+            "[skills.gh]\nsource = \"cat\"\n",
+            |catalog| skill(catalog, "gh", "the gh skill"),
+            |root| root.join(".claude/skills/gh/SKILL.md"),
+            "skill gh",
+        ),
+        (
+            "a hook",
+            "[hooks.guard]\nsource = \"cat\"\n",
+            |catalog| {
+                fs::create_dir_all(catalog.join("hooks")).unwrap();
+                fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+                fs::write(
+                    catalog.join("hooks/guard.sh"),
+                    "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: check\n# ---\nexit 0\n",
+                )
+                .unwrap();
+            },
+            |root| root.join(".claude/hooks/guard.sh"),
+            "hook guard",
+        ),
+    ];
+    for (what, declaration, plant, installed, named) in rows {
+        let (_tmp, env, scope, catalog) = world(declaration, "");
+        plant(&catalog);
+        apply_now(&env, &scope);
+        let Scope::Project { root } = &scope else {
+            unreachable!()
+        };
+        let file = installed(root);
+        assert!(file.exists(), "{what}: not installed");
+        let edited = fs::read_to_string(&file).unwrap() + "\nhand edit\n";
+        fs::write(&file, edited).unwrap();
 
-    let err = detach::source(&env, &scope, "cat").unwrap_err();
-    assert!(format!("{err}").contains("gh"), "{err}");
-    // The subscription is untouched.
-    assert!(manifest_of(&env, &scope).sources.contains_key("cat"));
-}
+        let error = detach::source(&env, &scope, "cat").unwrap_err();
 
-/// An edited hook script is caught too: detach compares the installed script to
-/// what apply wrote, so keeping from source form cannot silently revert a hook
-/// the user changed by hand.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn keeping_an_edited_hook_refuses() {
-    let (_tmp, env, scope, catalog) = world("[hooks.guard]\nsource = \"cat\"\n", "");
-    fs::create_dir_all(catalog.join("hooks")).unwrap();
-    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
-    fs::write(
-        catalog.join("hooks/guard.sh"),
-        "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: check\n# ---\nexit 0\n",
-    )
-    .unwrap();
-    apply_now(&env, &scope);
-
-    // Find and edit the installed hook script.
-    let Scope::Project { root } = &scope else {
-        unreachable!()
-    };
-    let installed = root.join(".claude/hooks/guard.sh");
-    assert!(installed.exists(), "hook installed");
-    fs::write(&installed, "#!/usr/bin/env bash\necho tampered\n").unwrap();
-
-    let err = detach::source(&env, &scope, "cat").unwrap_err();
-    assert!(format!("{err}").contains("guard"), "{err}");
-    assert!(manifest_of(&env, &scope).sources.contains_key("cat"));
+        let CoreError::DetachEdited { names } = &error else {
+            panic!("{what}: {error:?}");
+        };
+        assert_eq!(names, &[named.to_owned()], "{what}");
+        assert!(
+            manifest_of(&env, &scope).sources.contains_key("cat"),
+            "{what}: the subscription was touched"
+        );
+    }
 }
 
 /// A member another marketplace's bundle still carries is not in the closure:
