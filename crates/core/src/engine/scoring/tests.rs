@@ -145,6 +145,7 @@ fn desired_document(
         Some(crate::engine::desired::CatalogSource {
             path: format!("{}s/{name}.md", kind.name()),
             verbatim: true,
+            tree: false,
         }),
     )
 }

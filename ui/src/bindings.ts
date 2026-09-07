@@ -964,6 +964,14 @@ export type CatalogSource = {
 	 *  what makes a line read off the rendering a line of `path`.
 	 */
 	verbatim: boolean,
+	/**
+	 *  Whether the catalog holds this item as a directory. A place inside
+	 *  a rendering maps back onto `path` only where the catalog has a
+	 *  tree to hold it: a single file rendered into a tree — a command a
+	 *  harness stores as a skill — has no `/SKILL.md` inside itself, and
+	 *  joining one on would name a path that does not exist.
+	 */
+	tree: boolean,
 };
 
 export type CatalogSummary = {

@@ -68,6 +68,12 @@ pub struct CatalogSource {
     /// Whether the rendering is the catalog's bytes unchanged, which is
     /// what makes a line read off the rendering a line of `path`.
     pub verbatim: bool,
+    /// Whether the catalog holds this item as a directory. A place inside
+    /// a rendering maps back onto `path` only where the catalog has a
+    /// tree to hold it: a single file rendered into a tree — a command a
+    /// harness stores as a skill — has no `/SKILL.md` inside itself, and
+    /// joining one on would name a path that does not exist.
+    pub tree: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -409,13 +415,15 @@ impl ItemCtx<'_> {
     /// file otherwise — so a rendering that changes the shape (a command
     /// wrapped into a skill tree) reads as changed, which it is.
     pub(super) fn source(&self, artifact: &Artifact) -> Result<CatalogSource> {
-        let catalog = match self.sealed.is_dir(self.item_path) {
+        let tree = self.sealed.is_dir(self.item_path);
+        let catalog = match tree {
             true => hash_files(&self.sealed.collect_skill_tree(self.item_path)?),
             false => hash_bytes(&self.sealed.read(self.item_path)?),
         };
         Ok(CatalogSource {
             path: self.sealed.catalog_path(self.item_path),
             verbatim: catalog == artifact.disk_hash(),
+            tree,
         })
     }
 

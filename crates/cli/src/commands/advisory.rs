@@ -75,20 +75,25 @@ struct PrintedFinding {
 }
 
 fn safety_block(row: &ItemSafety) -> SafetyBlock {
-    let root = row.targets.first().map_or("", |at| at.location.as_str());
     let advisory = &row.advisory;
     SafetyBlock {
         score: advisory.safety.score,
         findings: advisory
             .findings
             .iter()
-            .map(|finding| PrintedFinding {
-                severity: finding.severity.name(),
-                message: finding.message.clone(),
-                location: within(&finding.location, root)
-                    .unwrap_or(&finding.location)
-                    .to_owned(),
-                line: finding.line,
+            .map(|finding| {
+                // Exactly what the line will say. Two renderings of one
+                // item can agree on every finding and still be cited
+                // differently — one a verbatim copy, the other rewritten
+                // — and folding those would let the first row decide
+                // whether the other's line prints.
+                let (location, line) = cited(finding, &row.targets, row.source.as_ref());
+                PrintedFinding {
+                    severity: finding.severity.name(),
+                    message: finding.message.clone(),
+                    location,
+                    line,
+                }
             })
             .collect(),
         skipped: advisory
@@ -249,11 +254,19 @@ fn cited(
     let Some(place) = within(&finding.location, root) else {
         return unchanged();
     };
-    // A repository that is one skill has no path inside itself, so the
-    // place is the whole citation and joins to nothing.
-    let path = match source.path.is_empty() {
-        true => place.trim_start_matches('/').to_owned(),
-        false => format!("{}{place}", source.path),
+    // A place inside a rendered tree is a position the catalog holds only
+    // where the catalog is a tree too. A single file a harness stores as
+    // a skill is rendered into one, and joining `/SKILL.md` onto the file
+    // would name a path nobody can open. A sub-location — a hook's
+    // ` (command)`, an entry's ` (entry)` — is a label on the same
+    // artifact and rejoins whatever shape the catalog holds it in.
+    let inside_a_tree = place.starts_with('/');
+    let path = match (inside_a_tree && !source.tree, source.path.is_empty()) {
+        (true, _) => source.path.clone(),
+        // A repository that is one skill has no path inside itself, so
+        // the place is the whole citation and joins to nothing.
+        (false, true) => place.trim_start_matches('/').to_owned(),
+        (false, false) => format!("{}{place}", source.path),
     };
     (path, finding.line.filter(|_| source.verbatim))
 }
@@ -287,6 +300,11 @@ mod tests {
     /// What a block prints is the caller's, what it does not is fixed
     /// here, so a split or a fold names the printed part that caused it.
     fn skill(harness: HarnessId, message: &str, skipped: &[&str]) -> ItemSafety {
+        sourced(harness, message, skipped, true)
+    }
+
+    /// The same rendering, saying whether it is the catalog's own bytes.
+    fn sourced(harness: HarnessId, message: &str, skipped: &[&str], verbatim: bool) -> ItemSafety {
         let root = format!("/home/one/.{}/skills/deploy", harness.name());
         ItemSafety {
             kind: ItemKind::Skill,
@@ -298,7 +316,8 @@ mod tests {
             scope: Scope::Global,
             source: Some(CatalogSource {
                 path: "skills/deploy".to_owned(),
-                verbatim: true,
+                verbatim,
+                tree: true,
             }),
             advisory: AuditResult {
                 findings: vec![Finding {
@@ -430,6 +449,62 @@ mod tests {
         assert!(
             also_at(&row.advisory.findings[0], &targets).is_empty(),
             "a place outside the rendering claims no other position"
+        );
+    }
+
+    /// Two renderings can find the same thing and still be cited
+    /// differently: one is the catalog's own bytes and prints a line, the
+    /// other was rewritten on the way in and cannot. Folding them would
+    /// let whichever row came first decide the other's subtext.
+    #[test]
+    fn a_different_citation_stays_two_blocks() {
+        let rows = [
+            sourced(Claude, PIPES, &[], true),
+            sourced(Codex, PIPES, &[], false),
+        ];
+        assert_eq!(blocks(&rows), [[Claude], [Codex]]);
+    }
+
+    /// A place inside a rendered tree is a position only a catalog tree
+    /// holds. A command a harness stores as a skill is one catalog FILE
+    /// rendered into a tree, so the citation is that file — never a
+    /// `/SKILL.md` joined onto it, which names nothing.
+    #[test]
+    fn a_file_rendered_into_a_tree_is_cited_as_the_file() {
+        let mut row = skill(Claude, PIPES, &[]);
+        row.kind = ItemKind::Command;
+        row.name = "ship".to_owned();
+        row.targets[0].location = "/home/one/.claude/skills/ship".to_owned();
+        row.advisory.findings[0].location = "/home/one/.claude/skills/ship/SKILL.md".to_owned();
+        row.source = Some(CatalogSource {
+            path: "commands/ship.md".to_owned(),
+            verbatim: false,
+            tree: false,
+        });
+
+        assert_eq!(
+            cited(&row.advisory.findings[0], &row.targets, row.source.as_ref()),
+            ("commands/ship.md".to_owned(), None),
+        );
+    }
+
+    /// A sub-location is a label on the artifact, not a path inside it,
+    /// so it rejoins a catalog file the same way it would a tree.
+    #[test]
+    fn a_sub_location_rejoins_a_catalog_file() {
+        let mut row = skill(Claude, PIPES, &[]);
+        row.kind = ItemKind::Hook;
+        row.targets[0].location = "/home/one/.claude/settings.json".to_owned();
+        row.advisory.findings[0].location = "/home/one/.claude/settings.json (command)".to_owned();
+        row.source = Some(CatalogSource {
+            path: "hooks/guard.sh".to_owned(),
+            verbatim: true,
+            tree: false,
+        });
+
+        assert_eq!(
+            cited(&row.advisory.findings[0], &row.targets, row.source.as_ref()).0,
+            "hooks/guard.sh (command)",
         );
     }
 
