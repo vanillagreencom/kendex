@@ -98,32 +98,6 @@ fn one_warning_names_every_tool_reworded_for_the_harness() {
 }
 
 #[test]
-fn code_links_and_skill_paths_keep_every_byte() {
-    let body = concat!(
-        "```\nuse the Read tool\n```\n",
-        "~~~md\nuse the Read tool\n~~~\n",
-        "````\n```\nuse the Read tool\n```\n````\n",
-        "Run `use the Read tool` verbatim.\n",
-        "See [the Read tool](https://example.com/the-Read-tool).\n",
-        "- dev: .agents/skills/dev/SKILL.md — read it with the Read tool\n",
-    );
-    for harness in [HarnessId::Codex, HarnessId::Opencode, HarnessId::Cursor] {
-        let (text, warnings) = rewrite_prose(body, harness);
-        assert_eq!(text, body, "{harness:?} rewrote protected text");
-        assert!(
-            warnings.is_empty(),
-            "{harness:?} warned about protected text"
-        );
-    }
-}
-
-#[test]
-fn an_unclosed_fence_protects_the_rest_of_the_body() {
-    let body = "```\nuse the Read tool\nstill fenced: the Bash tool\n";
-    assert_eq!(rewrite(body, HarnessId::Opencode), body);
-}
-
-#[test]
 fn unknown_and_mcp_references_pass_through_with_one_warning_each() {
     let body =
         "Call the mcp__github__search tool, the SendMessage tool, the mcp__github__search tool.\n";
@@ -157,87 +131,76 @@ fn a_tool_codex_has_no_word_for_is_reported_not_guessed_at() {
     assert!(warnings[0].message.contains("`TodoWrite`"));
 }
 
-/// A fenced block nested in a list item is indented four spaces — the shape
-/// most real skills use. Reading that as prose rewrites a sample the agent
-/// was told to copy verbatim.
-///
-/// Four spaces at the top level is the other reading of the same indent,
-/// and markdown's: with no list marker to hang off, the run opens an
+/// Four spaces at the top level, with no list marker to hang off, open an
 /// indented code block and the backticks are its first line of text. So
-/// the fence closes nothing and the line below it is prose. Both are
-/// pinned, because they are one rule seen from two columns.
+/// the fence closes nothing and the line below it is prose — the other
+/// reading of the indent `an_indented_fence` pins below, one rule seen
+/// from two columns.
 #[test]
-fn an_indented_fence_is_still_a_fence() {
-    let body = "1. Run this:\n\n    ```sh\n    use the Bash tool\n    ```\n\nDone.\n";
-    for harness in [HarnessId::Codex, HarnessId::Opencode, HarnessId::Cursor] {
-        let (text, warnings) = rewrite_prose(body, harness);
-        assert_eq!(text, body, "{harness:?} rewrote an indented block");
-        assert!(warnings.is_empty(), "{harness:?} warned: {warnings:?}");
-    }
+fn a_top_level_indented_fence_opens_nothing() {
     assert_eq!(
         rewrite("    ```\nuse the Read tool\n", HarnessId::Opencode),
         "    ```\nuse the read tool\n"
     );
 }
 
-/// A run of backticks may close on a later line, and a reader asked one
-/// line at a time sees the opener meet nothing and calls the line prose.
-/// The rewrite then edits bytes the author quoted for an agent to copy.
+/// One row per markdown shape the rewrite must read as not prose: the
+/// body comes back byte for byte on every harness that has words of its
+/// own, and nothing warns. Fenced code, tilde fences, a fence nested in a
+/// fence, inline code, a link's text and target, and a skill path keep
+/// every byte. An unclosed fence protects the rest of the body. A fenced
+/// block nested in a list item is indented four spaces — the shape most
+/// real skills use — and reading that as prose rewrites a sample the
+/// agent was told to copy verbatim. A run of backticks may close on a
+/// later line, and a reader asked one line at a time sees the opener meet
+/// nothing and calls the line prose; a span clipped at a line's start
+/// opens on content, not on a backtick, so a containment test that wants
+/// the name strictly inside the span lets through the one that begins the
+/// line; a line the span crosses whole carries no delimiter of its own and
+/// is covered end to end. Markdown reads nothing inside a raw HTML block:
+/// a fence there is three literal backticks, and prose tight under a
+/// wrapper keeps Claude's words with no warning naming it — the whole of
+/// what the Changed entry promises, which a fixture carrying a fence or a
+/// backtick cannot pin, since narrowing the HTML arm to blocks that hold
+/// code marks would leave those green. Four spaces open a code block with
+/// no fence to mark it. And prose about tools is never a reference.
 #[test]
-fn a_span_that_closes_on_a_later_line_quotes_both_lines() {
-    let body = "Paste `use the Read tool\n--dry-run` into the prompt.\n";
-    for harness in [HarnessId::Codex, HarnessId::Opencode, HarnessId::Cursor] {
-        let (text, warnings) = rewrite_prose(body, harness);
-        assert_eq!(text, body, "{harness:?} rewrote inside a code span");
-        assert!(warnings.is_empty(), "{harness:?} warned: {warnings:?}");
-    }
-}
-
-/// A span clipped at a line's start opens on content, not on a backtick,
-/// so a containment test that wants the name strictly inside the span
-/// lets through the one that begins the line. Both shapes reach the same
-/// byte: the name at column 0 of a continuation line.
-#[test]
-fn a_reference_at_column_zero_of_a_continuation_line_is_inside_the_span() {
-    for body in [
+fn a_sample_or_prose_about_tools_keeps_every_byte_on_every_harness() {
+    let rows: [&str; 18] = [
+        concat!(
+            "```\nuse the Read tool\n```\n",
+            "~~~md\nuse the Read tool\n~~~\n",
+            "````\n```\nuse the Read tool\n```\n````\n",
+            "Run `use the Read tool` verbatim.\n",
+            "See [the Read tool](https://example.com/the-Read-tool).\n",
+            "- dev: .agents/skills/dev/SKILL.md — read it with the Read tool\n",
+        ),
+        "```\nuse the Read tool\nstill fenced: the Bash tool\n",
+        "1. Run this:\n\n    ```sh\n    use the Bash tool\n    ```\n\nDone.\n",
+        "Paste `use the Read tool\n--dry-run` into the prompt.\n",
         "Paste `run\nRead tool now` here.\n",
         "Paste `x\nRead tool` now\n",
-    ] {
-        for harness in [HarnessId::Codex, HarnessId::Opencode, HarnessId::Cursor] {
-            let (text, warnings) = rewrite_prose(body, harness);
-            assert_eq!(text, body, "{harness:?} rewrote inside a code span");
-            assert!(warnings.is_empty(), "{harness:?} warned: {warnings:?}");
-        }
-    }
-}
-
-/// A line the span crosses whole carries no delimiter of its own, so it is
-/// covered end to end and every reference on it is a byte of the sample.
-#[test]
-fn a_line_a_span_crosses_whole_is_covered_end_to_end() {
-    let body = "Paste `one\nuse the Read tool\ntwo` here.\n";
-    for harness in [HarnessId::Codex, HarnessId::Opencode, HarnessId::Cursor] {
-        let (text, warnings) = rewrite_prose(body, harness);
-        assert_eq!(text, body, "{harness:?} rewrote a line a span crosses");
-        assert!(warnings.is_empty(), "{harness:?} warned: {warnings:?}");
-    }
-}
-
-/// Markdown reads nothing inside a raw HTML block: a fence there is three
-/// literal backticks. A reader that took those lines for prose would find
-/// no marks on the sample and rewrite straight through it — the tight
-/// forms, where no blank line has ended the block.
-#[test]
-fn a_sample_inside_a_raw_html_block_keeps_every_byte() {
-    for body in [
+        "Paste `one\nuse the Read tool\ntwo` here.\n",
         "<details>\n<summary>x</summary>\n```sh\nuse the Read tool\n```\n</details>\n",
         "<!--\n```\nuse the Read tool\n```\n-->\n",
         "<div>\nRun `use the Read tool` verbatim.\n</div>\n",
-    ] {
+        "<div>\nUse the Read tool here.\n</div>\n",
+        "<details>\nUse the Read tool here.\n</details>\n",
+        "<br>\nUse the Read tool here.\n",
+        "Then run:\n\n    use the Read tool --dry-run\n",
+        "Pick the right tool for the job.\n",
+        "Prefer the dedicated tools over shell commands.\n",
+        "The toolkit is yours.\n",
+        "the Read toolbox\n",
+    ];
+    for body in rows {
         for harness in [HarnessId::Codex, HarnessId::Opencode, HarnessId::Cursor] {
             let (text, warnings) = rewrite_prose(body, harness);
-            assert_eq!(text, body, "{harness:?} rewrote inside raw HTML");
-            assert!(warnings.is_empty(), "{harness:?} warned: {warnings:?}");
+            assert_eq!(text, body, "{harness:?} rewrote {body:?}");
+            assert!(
+                warnings.is_empty(),
+                "{harness:?} warned about {body:?}: {warnings:?}"
+            );
         }
     }
 }
@@ -256,25 +219,6 @@ fn prose_a_blank_line_below_a_wrapper_is_still_prose() {
     );
 }
 
-/// The cost of reading a raw HTML block as markup, on a line carrying no
-/// code mark at all: prose tight under a wrapper keeps Claude's words and
-/// no warning names it. That is the whole of what the Changed entry
-/// promises, and a fixture carrying a fence or a backtick cannot pin it —
-/// narrowing the HTML arm to blocks that hold code marks would leave those
-/// green and revert this.
-#[test]
-fn prose_tight_under_a_wrapper_is_left_in_claudes_words() {
-    for body in [
-        "<div>\nUse the Read tool here.\n</div>\n",
-        "<details>\nUse the Read tool here.\n</details>\n",
-        "<br>\nUse the Read tool here.\n",
-    ] {
-        let (text, warnings) = rewrite_prose(body, HarnessId::Opencode);
-        assert_eq!(text, body, "rewrote prose inside raw HTML: {body:?}");
-        assert!(warnings.is_empty(), "warned: {warnings:?}");
-    }
-}
-
 /// The converse, and the reading main did not have: a fence line inside an
 /// HTML block opens no fence, because markdown never read it as one. So
 /// the blank line below it ends the block rather than the fence, and what
@@ -285,18 +229,6 @@ fn a_fence_inside_a_raw_html_block_opens_nothing() {
         rewrite("<div>\n```\n\nuse the Read tool\n", HarnessId::Opencode),
         "<div>\n```\n\nuse the read tool\n"
     );
-}
-
-/// Four spaces open a code block with no fence to mark it, so a reader
-/// watching for fences finds none and rewrites the sample.
-#[test]
-fn an_indented_code_block_is_a_code_block() {
-    let body = "Then run:\n\n    use the Read tool --dry-run\n";
-    for harness in [HarnessId::Codex, HarnessId::Opencode, HarnessId::Cursor] {
-        let (text, warnings) = rewrite_prose(body, harness);
-        assert_eq!(text, body, "{harness:?} rewrote an indented block");
-        assert!(warnings.is_empty(), "{harness:?} warned: {warnings:?}");
-    }
 }
 
 /// A table cell is a leaf block of its own, so a backtick in one cell and
@@ -315,20 +247,6 @@ fn backticks_in_two_table_cells_do_not_pair_across_the_boundary() {
         rewrite(body, HarnessId::Opencode),
         "| how | when |\n|---|---|\n| `git log | use the read tool` |\n"
     );
-}
-
-#[test]
-fn prose_about_tools_is_never_mistaken_for_a_reference() {
-    for body in [
-        "Pick the right tool for the job.\n",
-        "Prefer the dedicated tools over shell commands.\n",
-        "The toolkit is yours.\n",
-        "the Read toolbox\n",
-    ] {
-        let (text, warnings) = rewrite_prose(body, HarnessId::Codex);
-        assert_eq!(text, body);
-        assert!(warnings.is_empty(), "{body} warned");
-    }
 }
 
 #[test]

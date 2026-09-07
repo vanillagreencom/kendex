@@ -9,8 +9,14 @@ fn splits_on_exact_terminator_lines_only() {
     let (yaml, body) = split("---\nname: x\n---\nBody --- dashes\n").unwrap();
     assert_eq!(yaml, "name: x\n");
     assert_eq!(body, "Body --- dashes\n");
-    assert!(split("---\nname: x\n----broken\n").is_err());
-    assert!(split("no frontmatter").is_err());
+    assert_eq!(
+        split("---\nname: x\n----broken\n"),
+        Err("unterminated frontmatter".to_owned())
+    );
+    assert_eq!(
+        split("no frontmatter"),
+        Err("file has no frontmatter".to_owned())
+    );
     // Trailing whitespace on either marker is tolerated.
     let (yaml, _) = split("--- \nname: x\n---  \nBody\n").unwrap();
     assert_eq!(yaml, "name: x\n");
@@ -56,14 +62,6 @@ fn plain_inline_values_are_taken_verbatim_like_harness_loaders_do() {
 }
 
 #[test]
-fn strict_keys_get_no_salvage() {
-    assert!(parse_tolerant("tools: *x\n").is_err());
-    assert!(parse_tolerant("role: *alias\n").is_err());
-    let broken_block = "description: |bad\n  content\n";
-    assert!(parse_tolerant(broken_block).is_err());
-}
-
-#[test]
 fn absent_empty_and_csv_lists_stay_distinct() {
     let parsed = parse_tolerant("tools:\nother: Read, Grep , \n").unwrap();
     assert_eq!(
@@ -76,26 +74,76 @@ fn absent_empty_and_csv_lists_stay_distinct() {
     assert_eq!(flow.map.string_list("tools").unwrap(), Vec::<String>::new());
 }
 
+/// One row per YAML the parsers refuse, and the refusal: the whole
+/// message where the parser composes it, and the key it names where the
+/// YAML library's own words follow. A strict key gets no salvage: an anchor
+/// under `tools` or `role`, and a broken block scalar, are refused
+/// outright. Adversarial YAML is refused by name: aliases, a duplicate
+/// key, nesting past the depth bound, a document past the byte bound,
+/// more nodes than the bound, complex keys, and multiple documents.
 #[test]
-fn adversarial_yaml_is_refused() {
-    assert!(parse("a: &x 1\nb: *x\n").unwrap_err().contains("alias"));
-    assert!(
-        parse_tolerant("a: 1\na: 2\n")
-            .unwrap_err()
-            .contains("duplicate")
-    );
+fn a_yaml_the_parsers_refuse_is_named_by_what_it_did() {
     let deep = format!("a: {}{}", "[".repeat(40), "]".repeat(40));
-    assert!(parse_tolerant(&deep).unwrap_err().contains("deeper"));
     let big = format!("a: {}\n", "x".repeat(MAX_YAML_BYTES));
-    assert!(parse_tolerant(&big).unwrap_err().contains("bytes"));
     let many = "k: [".to_owned() + &"a,".repeat(MAX_NODES + 1) + "]";
-    assert!(parse_tolerant(&many).unwrap_err().contains("nodes"));
-    assert!(
-        parse("? [a, b]\n: c\n")
-            .unwrap_err()
-            .contains("complex keys")
-    );
-    assert!(parse("a: 1\n---\nb: 2\n").unwrap_err().contains("multiple"));
+    let rows: [(&str, bool, &str, bool); 10] = [
+        ("tools: *x\n", true, "`tools`: ", false),
+        ("role: *alias\n", true, "`role`: ", false),
+        (
+            "description: |bad\n  content\n",
+            true,
+            "`description`: ",
+            false,
+        ),
+        (
+            "a: &x 1\nb: *x\n",
+            false,
+            "YAML aliases are not accepted in frontmatter",
+            true,
+        ),
+        ("a: 1\na: 2\n", true, "duplicate frontmatter key `a`", true),
+        (
+            &deep,
+            true,
+            "`a`: frontmatter nests deeper than 16 levels",
+            true,
+        ),
+        (
+            &big,
+            true,
+            "frontmatter is 65540 bytes — the limit is 65536",
+            true,
+        ),
+        (
+            &many,
+            true,
+            "`k`: frontmatter exceeds 4096 YAML nodes",
+            true,
+        ),
+        (
+            "? [a, b]\n: c\n",
+            false,
+            "YAML complex keys are not accepted in frontmatter",
+            true,
+        ),
+        (
+            "a: 1\n---\nb: 2\n",
+            false,
+            "multiple YAML documents in frontmatter",
+            true,
+        ),
+    ];
+    for (yaml, tolerant, refusal, whole) in rows {
+        let refused = match tolerant {
+            true => parse_tolerant(yaml).map(drop),
+            false => parse(yaml).map(drop),
+        }
+        .unwrap_err();
+        match whole {
+            true => assert_eq!(refused, refusal, "{yaml:?}"),
+            false => assert!(refused.starts_with(refusal), "{yaml:?}: {refused}"),
+        }
+    }
 }
 
 #[test]

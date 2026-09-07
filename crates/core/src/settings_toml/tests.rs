@@ -61,34 +61,6 @@ fn nothing_inside_a_multiline_value_is_structure() {
     }
 }
 
-/// A multiline that opens and closes on one line never carries.
-#[test]
-fn a_multiline_closed_on_its_own_line_leaves_the_next_line_alone() {
-    assert_eq!(
-        keys("A = \"\"\"one line\"\"\"\nMODE = \"real\"\n"),
-        vec!["A".to_owned(), "MODE".to_owned()]
-    );
-    // Three to five quotes end it: the extras are content.
-    assert_eq!(
-        keys("A = \"\"\"say \"\"\"\"\"\nMODE = \"real\"\n"),
-        vec!["A".to_owned(), "MODE".to_owned()]
-    );
-}
-
-/// A backslash escapes the delimiter in a basic string and does not in a
-/// literal one, so the two close in different places.
-#[test]
-fn an_escaped_delimiter_does_not_close_a_basic_string() {
-    assert_eq!(
-        keys("A = \"\"\"\n\\\"\"\"\n\"\"\"\nMODE = \"real\"\n"),
-        vec!["A".to_owned(), "MODE".to_owned()]
-    );
-    assert_eq!(
-        keys("A = '''\n\\'''\nMODE = \"real\"\n"),
-        vec!["A".to_owned(), "MODE".to_owned()]
-    );
-}
-
 /// TOML reads all three spellings as one key. Seeding beside any of them
 /// would put the key in the file twice; only the bare one is a name a
 /// shell exports, and both facts travel together.
@@ -197,17 +169,6 @@ fn a_span_covers_the_value_and_only_where_one_is_readable() {
     }
 }
 
-/// An unterminated single-line string ends with its line rather than
-/// swallowing the rest of the file — which is also what the grep-shaped
-/// shell loaders do with one.
-#[test]
-fn an_unterminated_single_line_string_does_not_carry() {
-    assert_eq!(
-        keys("A = \"oops\nMODE = \"real\"\n"),
-        vec!["A".to_owned(), "MODE".to_owned()]
-    );
-}
-
 /// Rows carry their own bytes back: `raw` re-emits the line terminator and
 /// nothing else, which is what every byte-faithful splice re-emits.
 #[test]
@@ -311,61 +272,79 @@ fn an_array_carries_across_lines_and_nests() {
     assert_eq!(keys(text), vec!["LIST".to_owned(), "MODE".to_owned()]);
 }
 
-/// A header's own brackets balance, so the line after one is structure
-/// again — for a plain table and for an array of tables alike.
+/// One row per line shape that leaves nothing open, so the `MODE`
+/// assignment below it reads as itself: the keys the text declares, and
+/// where a row is about the line's own kind, that kind at its index. A
+/// multiline that opens and closes on one line never carries, and three
+/// to five quotes end it with the extras as content. A backslash escapes
+/// the delimiter in a basic string and does not in a literal one, so the
+/// two close in different places. An unterminated single-line string ends
+/// with its line rather than swallowing the rest of the file — which is
+/// also what the grep-shaped shell loaders do with one. A header's own
+/// brackets balance, for a plain table and an array of tables alike. An
+/// inline table that closes on its own line leaves nothing open, and what
+/// it held reaches no decision: the assignment's `=` is the first one
+/// outside a string, and only a line-leading `[` is a table. Every scalar
+/// is one token with nothing structural in it. A stray `]` cannot take
+/// the depth below zero: an unbalanced file is not TOML, and underflowing
+/// would read everything after it as one value.
 #[test]
-fn a_table_header_leaves_nothing_open() {
-    for header in ["[env]", "[a.b]", "[[items]]", "[env] # note"] {
-        let text = format!("{header}\nMODE = \"real\"\n");
-        assert_eq!(kinds(&text)[0], Line::Table, "{header}");
-        assert_eq!(keys(&text), vec!["MODE".to_owned()], "{header}");
-    }
-}
-
-/// An inline table that closes on its own line leaves nothing open, so the
-/// line below it is structure again. What it held reaches no decision: the
-/// assignment's `=` is the first one outside a string, and only a
-/// line-leading `[` is a table.
-#[test]
-fn a_closed_inline_table_does_not_reach_the_line_below_it() {
-    let text = "[env]\nA = { b = [1], c = \"x\" }\nMODE = \"real\"\n";
-    assert_eq!(keys(text), vec!["A".to_owned(), "MODE".to_owned()]);
-    assert_eq!(
-        kinds(text)[2],
-        Line::Assignment {
-            key: "MODE ",
-            value: " \"real\"",
-            value_at: 6,
-        }
+fn a_line_that_leaves_nothing_open_lets_the_next_line_read_as_itself() {
+    let a_mode: &[&str] = &["A", "MODE"];
+    let mode: &[&str] = &["MODE"];
+    type Row = (
+        &'static str,
+        &'static [&'static str],
+        Option<(usize, Line<'static>)>,
     );
-}
-
-/// Every scalar is one token with nothing structural in it, so a line
-/// holding one leaves nothing open and the next line reads as itself.
-#[test]
-fn a_scalar_leaves_nothing_open() {
-    for scalar in [
-        "1",
-        "-0.5",
-        "true",
-        "1979-05-27T07:32:00Z",
-        "07:32:00",
-        "0xdead_beef",
-    ] {
-        let text = format!("[env]\nA = {scalar}\nMODE = \"real\"\n");
-        assert_eq!(
-            keys(&text),
-            vec!["A".to_owned(), "MODE".to_owned()],
-            "{scalar}"
-        );
+    let rows: [Row; 17] = [
+        ("A = \"\"\"one line\"\"\"\nMODE = \"real\"\n", a_mode, None),
+        ("A = \"\"\"say \"\"\"\"\"\nMODE = \"real\"\n", a_mode, None),
+        (
+            "A = \"\"\"\n\\\"\"\"\n\"\"\"\nMODE = \"real\"\n",
+            a_mode,
+            None,
+        ),
+        ("A = '''\n\\'''\nMODE = \"real\"\n", a_mode, None),
+        ("A = \"oops\nMODE = \"real\"\n", a_mode, None),
+        ("[env]\nMODE = \"real\"\n", mode, Some((0, Line::Table))),
+        ("[a.b]\nMODE = \"real\"\n", mode, Some((0, Line::Table))),
+        ("[[items]]\nMODE = \"real\"\n", mode, Some((0, Line::Table))),
+        (
+            "[env] # note\nMODE = \"real\"\n",
+            mode,
+            Some((0, Line::Table)),
+        ),
+        (
+            "[env]\nA = { b = [1], c = \"x\" }\nMODE = \"real\"\n",
+            a_mode,
+            Some((
+                2,
+                Line::Assignment {
+                    key: "MODE ",
+                    value: " \"real\"",
+                    value_at: 6,
+                },
+            )),
+        ),
+        ("[env]\nA = 1\nMODE = \"real\"\n", a_mode, None),
+        ("[env]\nA = -0.5\nMODE = \"real\"\n", a_mode, None),
+        ("[env]\nA = true\nMODE = \"real\"\n", a_mode, None),
+        (
+            "[env]\nA = 1979-05-27T07:32:00Z\nMODE = \"real\"\n",
+            a_mode,
+            None,
+        ),
+        ("[env]\nA = 07:32:00\nMODE = \"real\"\n", a_mode, None),
+        ("[env]\nA = 0xdead_beef\nMODE = \"real\"\n", a_mode, None),
+        ("]\n[env]\nMODE = \"real\"\n", mode, None),
+    ];
+    for (text, expected, kind) in rows {
+        assert_eq!(keys(text), expected, "{text:?}");
+        if let Some((at, kind)) = kind {
+            assert_eq!(kinds(text)[at], kind, "{text:?}");
+        }
     }
-}
-
-/// A stray `]` cannot take the depth below zero: an unbalanced file is not
-/// TOML, and underflowing would read everything after it as one value.
-#[test]
-fn an_unbalanced_bracket_does_not_swallow_the_file() {
-    assert_eq!(keys("]\n[env]\nMODE = \"real\"\n"), vec!["MODE".to_owned()]);
 }
 
 /// One header parse for everyone, carrying the facts each caller needs:

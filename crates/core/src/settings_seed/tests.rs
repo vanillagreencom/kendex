@@ -325,116 +325,152 @@ fn entry_keys(entries: &[EnvEntry]) -> Vec<&str> {
     entries.iter().map(|entry| entry.key.as_str()).collect()
 }
 
-/// A value TOML lets span lines is seeded whole. Stopping at the line
-/// carrying the `=` would write `BLOB = """` with nothing under it: the
-/// string never closes, every key seeded after it falls inside it, and the
-/// consumer's file stops parsing from there down.
+/// One row per value TOML lets span lines or hold structure, seeded whole:
+/// one entry rather than one per line the value holds, its comment still
+/// only the comment, the whole assignment spelled as the template spells
+/// it, nothing to note, and the seeded file parsing back to the value the
+/// template declares. Stopping at the line carrying the `=` would write
+/// `BLOB = """` with nothing under it: the string never closes, every key
+/// seeded after it falls inside it, and the consumer's file stops parsing
+/// from there down. An inline table that closes is an ordinary complete
+/// value, on one line or across several — treated as line-local it was
+/// refused, and worse, the lines holding it read as structure, so `a = 1`
+/// beneath `MAP = {` seeded as a key of its own that the template never
+/// declared. A completeness rule that refused every brace would be as
+/// wrong as one that accepted every brace.
 #[test]
-fn a_value_spanning_lines_is_seeded_whole() {
-    for value in [
-        "\"\"\"\nsome text\n\"\"\"",
-        "'''\nsome text\n'''",
-        "[\n  \"a\",\n  \"b\",\n]",
-    ] {
-        let template = format!("[env]\n# A blob.\nBLOB = {value}\n\n# How deep.\nDEPTH = \"2\"\n");
+fn a_value_that_spans_lines_or_holds_structure_is_seeded_whole() {
+    let rows: [(&str, &str); 11] = [
+        ("BLOB", "\"\"\"\nsome text\n\"\"\""),
+        ("BLOB", "'''\nsome text\n'''"),
+        ("BLOB", "[\n  \"a\",\n  \"b\",\n]"),
+        ("MAP", "{ a = 1 }"),
+        ("MAP", "{ a = { b = 1 } }"),
+        ("MAP", "{ a = \"}\" }"),
+        ("MAP", "{ a = [1, 2] }"),
+        ("MAP", "{\na = 1\n}"),
+        ("MAP", "{ items = [\n  1,\n] }"),
+        ("MAP", "{\n  a = { b = 1 },\n}"),
+        ("MAP", "{\n  a = \"\"\"\n  text\n  \"\"\",\n}"),
+    ];
+    for (key, value) in rows {
+        let template =
+            format!("[env]\n# A value.\n{key} = {value}\n\n# How deep.\nDEPTH = \"2\"\n");
         let entries = extract_env_entries(&template);
-        assert_eq!(entry_keys(&entries), ["BLOB", "DEPTH"], "{value}");
-        // The value's continuation lines are the assignment's, and the
-        // comment above it is still only the comment.
-        assert_eq!(entries[0].comment, ["# A blob."], "{value}");
-        // The whole assignment, spelled as the template spells it.
-        assert_eq!(entries[0].assignment, format!("BLOB = {value}"), "{value}");
+        assert_eq!(entry_keys(&entries), [key, "DEPTH"], "{value}");
+        assert_eq!(entries[0].comment, ["# A value."], "{value}");
+        assert_eq!(entries[0].assignment, format!("{key} = {value}"), "{value}");
         assert!(entries[0].complete(), "{value}");
 
         let shipped = seeded(&template, "review");
-        let (text, added) = merge(None, &shipped, &all(&shipped)).expect("both are missing");
-        assert_eq!(added, ["BLOB", "DEPTH"], "{value}");
-        // Spelled as the template spells it, and closed: the seeded file
-        // parses, and BLOB reads back as the value the template declares.
         assert!(
-            text.contains(&format!("BLOB = {value}\n")),
+            seed_notes(&shipped, &nothing(&shipped), &all(&shipped)).is_empty(),
+            "{value}"
+        );
+        let (text, added) = merge(None, &shipped, &all(&shipped)).expect("both are missing");
+        assert_eq!(added, [key, "DEPTH"], "{value}");
+        assert!(
+            text.contains(&format!("{key} = {value}\n")),
             "{value}: {text}"
         );
         let want: toml::Table = template.parse().expect("the template parses");
         let got: toml::Table = text
             .parse()
             .unwrap_or_else(|error| panic!("{value}: seeded file must parse: {error}\n{text}"));
-        assert_eq!(got["env"]["BLOB"], want["env"]["BLOB"], "{value}");
+        assert_eq!(got["env"][key], want["env"][key], "{value}");
         assert_eq!(got["env"]["DEPTH"], want["env"]["DEPTH"], "{value}");
     }
 }
 
-/// A value nothing closes is not a multiline value: there is no complete
-/// text to copy, and writing the opening line alone is the corruption
-/// itself. Seeding writes nothing for that key — and says so, naming it.
-/// A silent drop would leave a key nobody finds until a script reads it.
+/// One row per value nothing closes. There is no complete text to copy,
+/// and writing the opening line alone is the corruption itself, so
+/// seeding writes nothing for that key — and says so, naming the key and
+/// who ships it, with no particular delimiter named, since the note is
+/// one sentence for every form. A silent drop would leave a key nobody
+/// finds until a script reads it. Closing and being finished are
+/// different questions: a single-line string ends with its line by
+/// definition, so `TOKEN = "` carries nothing onto the next line and is
+/// still unfinished, and read off the absence of a carry it would seed.
+/// An inline table the file never closes is refused like any other
+/// container: the carry runs to the end and nothing completes it. Where
+/// the file goes on, the complete keys around the refused one still seed
+/// and the seeded file still parses.
 #[test]
-fn a_value_nothing_closes_is_refused_by_name() {
-    let template = "[env]\n# How deep.\nDEPTH = \"2\"\n\n# A blob.\nBLOB = \"\"\"\nsome text\n";
-    let entries = extract_env_entries(template);
-    assert_eq!(entry_keys(&entries), ["DEPTH", "BLOB"]);
-    assert!(!entries[1].complete(), "{entries:?}");
-    assert!(entries[1].assignment.is_empty(), "{entries:?}");
+fn a_value_nothing_closes_is_refused_by_name_and_seeds_nothing() {
+    let rows: [(&str, &str, Option<&[&str]>); 10] = [
+        (
+            "[env]\n# How deep.\nDEPTH = \"2\"\n\n# A blob.\nBLOB = \"\"\"\nsome text\n",
+            "BLOB",
+            Some(&["DEPTH"]),
+        ),
+        ("[env]\n# A blob.\nBLOB = \"\"\"\n", "BLOB", None),
+        ("[env]\n# A token.\nTOKEN = \"\n", "TOKEN", None),
+        (
+            "[env]\n# A token.\nTOKEN = \"\n\n# How deep.\nDEPTH = \"2\"\n",
+            "TOKEN",
+            Some(&["DEPTH"]),
+        ),
+        ("[env]\n# A token.\nTOKEN = \"", "TOKEN", None),
+        ("[env]\n# A map.\nMAP = {\n", "MAP", None),
+        // The key below an open table is inside it, so nothing is complete.
+        (
+            "[env]\n# A map.\nMAP = { a = 1,\n\n# How deep.\nDEPTH = \"2\"\n",
+            "MAP",
+            None,
+        ),
+        ("[env]\n# A map.\nMAP = { a = { b = 1 }\n", "MAP", None),
+        ("[env]\n# A map.\nMAP = {", "MAP", None),
+        ("[env]\n# A list.\nLIST = [\n", "LIST", None),
+    ];
+    for (template, key, added) in rows {
+        let entries = extract_env_entries(template);
+        let entry = entries
+            .iter()
+            .find(|entry| entry.key == key)
+            .unwrap_or_else(|| panic!("{template:?}: {entries:?}"));
+        assert!(!entry.complete(), "{template:?}: {entries:?}");
+        assert!(entry.assignment.is_empty(), "{template:?}");
 
-    let shipped = seeded(template, "review");
-    let (text, added) = merge(None, &shipped, &all(&shipped)).expect("DEPTH is missing");
-    assert_eq!(added, ["DEPTH"]);
-    assert!(
-        !text.contains("BLOB"),
-        "no part of it may be written:\n{text}"
+        let shipped = seeded(template, "review");
+        let written = merge(None, &shipped, &all(&shipped));
+        assert_eq!(
+            written
+                .as_ref()
+                .map(|(_, added)| added.iter().map(String::as_str).collect::<Vec<_>>()),
+            added.map(<[&str]>::to_vec),
+            "{template:?}: {written:?}"
+        );
+        if let Some((text, _)) = &written {
+            assert!(
+                !text.contains(key),
+                "{template:?}: nothing may be written for it: {text}"
+            );
+            text.parse::<toml::Table>()
+                .unwrap_or_else(|e| panic!("{template:?}: seeded file must parse: {e}\n{text}"));
+        }
+        let notes = unterminated_notes(&shipped);
+        assert_eq!(notes.len(), 1, "{template:?}: {notes:?}");
+        let said = format!(
+            "{SETTINGS_FILE} {key}: review's template never finishes this value — it opens something that is never closed — so there is no complete default to seed and nothing was written for this key"
+        );
+        assert!(notes[0].starts_with(&said), "{template:?}: {notes:?}");
+    }
+}
+
+/// Where another skill ships the same key whole, that one is seeded and
+/// nothing is reported: there is nothing for a person to do.
+#[test]
+fn a_key_another_skill_ships_whole_is_seeded_and_nothing_is_reported() {
+    let shipped = seeded(
+        "[env]\n# How deep.\nDEPTH = \"2\"\n\n# A blob.\nBLOB = \"\"\"\nsome text\n",
+        "review",
     );
-    text.parse::<toml::Table>().expect("the seeded file parses");
-
-    let notes = unterminated_notes(&shipped);
-    assert_eq!(notes.len(), 1, "{notes:?}");
-    assert!(notes[0].contains("BLOB"), "the key is named: {notes:?}");
-    assert!(notes[0].contains("review"), "and who ships it: {notes:?}");
-
-    // Where another skill ships the same key whole, that one is seeded
-    // and nothing is reported: there is nothing for a person to do.
     let whole = seeded("[env]\n# A blob.\nBLOB = \"ok\"\n", "other");
     let both: Vec<SeededEnv> = shipped.iter().cloned().chain(whole).collect();
     assert!(unterminated_notes(&both).is_empty(), "{both:?}");
     let (text, added) = merge(None, &both, &all(&both)).expect("both are missing");
     assert_eq!(added, ["DEPTH", "BLOB"]);
     assert!(text.contains("BLOB = \"ok\""), "{text}");
-}
-
-/// Closing and being finished are different questions, and the shape that
-/// proves it is the one closest to what this all exists to prevent: a
-/// single-line string ends with its line by definition, so `TOKEN = "`
-/// carries nothing onto the next line and is still unfinished. Read
-/// completeness off the absence of a carry and it seeds, putting an
-/// unterminated line in the consumer's file — the exact outcome refused
-/// everywhere else here.
-#[test]
-fn a_one_line_value_left_unterminated_is_refused_by_name() {
-    for template in [
-        "[env]\n# A token.\nTOKEN = \"\n",
-        // With the file continuing under it, and with no terminator.
-        "[env]\n# A token.\nTOKEN = \"\n\n# How deep.\nDEPTH = \"2\"\n",
-        "[env]\n# A token.\nTOKEN = \"",
-    ] {
-        let entries = extract_env_entries(template);
-        assert!(!entries[0].complete(), "{template:?}: {entries:?}");
-        assert!(entries[0].assignment.is_empty(), "{template:?}");
-
-        let shipped = seeded(template, "review");
-        let written = merge(None, &shipped, &all(&shipped));
-        assert!(
-            !written
-                .as_ref()
-                .is_some_and(|(text, _)| text.contains("TOKEN")),
-            "{template:?}: nothing may be written for it: {written:?}"
-        );
-        if let Some((text, _)) = &written {
-            text.parse::<toml::Table>()
-                .unwrap_or_else(|e| panic!("{template:?}: seeded file must parse: {e}\n{text}"));
-        }
-        let notes = unterminated_notes(&shipped);
-        assert_eq!(notes.len(), 1, "{template:?}: {notes:?}");
-        assert!(notes[0].contains("TOKEN"), "{template:?}: {notes:?}");
-    }
 }
 
 /// One key, one winner, and everyone has to name it. A broken template
@@ -466,71 +502,12 @@ fn a_broken_declaration_before_a_valid_one_never_becomes_the_owner() {
     );
 
     // And the notes: a broken declaration is not a competing default that
-    // lands, so nothing claims the broken skill's value was written.
-    for note in seed_notes(&shipped, &nothing(&shipped), &all(&shipped)) {
-        assert!(!note.contains("broken's is the one written"), "{note}");
-    }
-}
-
-/// An inline table the file never closes is refused like any other
-/// container the file never closes: the carry runs to the end and nothing
-/// completes it. Completeness comes off the grammar's own split rather
-/// than a rule per form, so this needs no case of its own.
-#[test]
-fn an_inline_table_left_open_is_refused_by_name() {
-    for template in [
-        "[env]\n# A map.\nMAP = {\n",
-        "[env]\n# A map.\nMAP = { a = 1,\n\n# How deep.\nDEPTH = \"2\"\n",
-        "[env]\n# A map.\nMAP = { a = { b = 1 }\n",
-        "[env]\n# A map.\nMAP = {",
-    ] {
-        let entries = extract_env_entries(template);
-        assert!(!entries[0].complete(), "{template:?}: {entries:?}");
-
-        let shipped = seeded(template, "review");
-        let written = merge(None, &shipped, &all(&shipped));
-        assert!(
-            !written
-                .as_ref()
-                .is_some_and(|(text, _)| text.contains("MAP")),
-            "{template:?}: nothing may be written for it: {written:?}"
-        );
-        if let Some((text, _)) = &written {
-            text.parse::<toml::Table>()
-                .unwrap_or_else(|e| panic!("{template:?}: must parse: {e}\n{text}"));
-        }
-        let notes = unterminated_notes(&shipped);
-        assert_eq!(notes.len(), 1, "{template:?}: {notes:?}");
-        assert!(notes[0].contains("MAP"), "{template:?}: {notes:?}");
-    }
-}
-
-/// The other half: an inline table that closes is an ordinary complete
-/// value and seeds like any other. A completeness rule that refused every
-/// brace would be as wrong as one that accepted every brace.
-#[test]
-fn an_inline_table_that_closes_seeds_like_any_other_value() {
-    for value in [
-        "{ a = 1 }",
-        "{ a = { b = 1 } }",
-        "{ a = \"}\" }",
-        "{ a = [1, 2] }",
-    ] {
-        let template = format!("[env]\n# A map.\nMAP = {value}\n");
-        let entries = extract_env_entries(&template);
-        assert!(entries[0].complete(), "{value}: {entries:?}");
-        assert_eq!(entries[0].assignment, format!("MAP = {value}"), "{value}");
-
-        let shipped = seeded(&template, "review");
-        assert!(unterminated_notes(&shipped).is_empty(), "{value}");
-        let (text, added) = merge(None, &shipped, &all(&shipped)).expect("MAP is missing");
-        assert_eq!(added, ["MAP"], "{value}");
-        let want: toml::Table = template.parse().expect("the template parses");
-        let got: toml::Table = text
-            .parse()
-            .unwrap_or_else(|e| panic!("{value}: seeded file must parse: {e}\n{text}"));
-        assert_eq!(got["env"]["MAP"], want["env"]["MAP"], "{value}");
-    }
+    // lands, and the key has a complete default, so there is no note at
+    // all — nothing claims the broken skill's value was written.
+    assert_eq!(
+        seed_notes(&shipped, &nothing(&shipped), &all(&shipped)),
+        Vec::<String>::new()
+    );
 }
 
 /// Two kinds of newline meet in a seeded block and only one of them is the
@@ -613,64 +590,6 @@ fn an_incomplete_declaration_is_not_a_default_to_disagree_with() {
     );
 }
 
-/// The refusal fires for every form the grammar can leave open, so it may
-/// not name a subset of them. Naming "a string or an array" sent somebody
-/// whose inline table was unclosed to the wrong part of their template,
-/// and any list goes stale the moment the enumerated grammar grows.
-#[test]
-fn the_refusal_names_the_key_and_no_particular_delimiter() {
-    for (template, key) in [
-        ("[env]\n# A.\nTOKEN = \"\n", "TOKEN"),
-        ("[env]\n# A.\nMAP = {\n", "MAP"),
-        ("[env]\n# A.\nLIST = [\n", "LIST"),
-        ("[env]\n# A.\nBLOB = \"\"\"\n", "BLOB"),
-    ] {
-        let notes = unterminated_notes(&seeded(template, "review"));
-        assert_eq!(notes.len(), 1, "{template:?}: {notes:?}");
-        assert!(notes[0].contains(key), "the key is named: {notes:?}");
-        for named in ["string", "array", "inline table", "quote", "bracket"] {
-            assert!(
-                !notes[0].contains(named),
-                "{template:?}: names {named}, which is only true of some: {notes:?}"
-            );
-        }
-    }
-}
-
-/// An inline table spanning lines is a value like any other under the spec
-/// this workspace parses with. Treated as line-local it was refused, and
-/// worse: the lines holding it read as structure, so `a = 1` beneath
-/// `MAP = {` seeded as a key of its own that the template never declared.
-#[test]
-fn an_inline_table_spanning_lines_is_seeded_whole() {
-    for value in [
-        "{\na = 1\n}",
-        "{ items = [\n  1,\n] }",
-        "{\n  a = { b = 1 },\n}",
-        "{\n  a = \"\"\"\n  text\n  \"\"\",\n}",
-    ] {
-        let template = format!("[env]\n# A map.\nMAP = {value}\n");
-        let entries = extract_env_entries(&template);
-        // One entry, not one per line the value happens to hold.
-        assert_eq!(entry_keys(&entries), ["MAP"], "{value}");
-        assert!(entries[0].complete(), "{value}: {entries:?}");
-        assert_eq!(entries[0].assignment, format!("MAP = {value}"), "{value}");
-
-        let shipped = seeded(&template, "review");
-        assert!(
-            seed_notes(&shipped, &nothing(&shipped), &all(&shipped)).is_empty(),
-            "{value}"
-        );
-        let (text, added) = merge(None, &shipped, &all(&shipped)).expect("MAP is missing");
-        assert_eq!(added, ["MAP"], "{value}");
-        let want: toml::Table = template.parse().expect("the template parses");
-        let got: toml::Table = text
-            .parse()
-            .unwrap_or_else(|e| panic!("{value}: seeded file must parse: {e}\n{text}"));
-        assert_eq!(got["env"]["MAP"], want["env"]["MAP"], "{value}");
-    }
-}
-
 /// A key beneath a multiline value belongs to the value, and one beneath a
 /// closed one belongs to the file. Both directions, because reading the
 /// first as structure is what invented a declaration.
@@ -683,7 +602,7 @@ fn a_key_under_an_inline_table_belongs_to_whichever_owns_its_line() {
     let (text, added) = merge(None, &shipped, &all(&shipped)).expect("both are missing");
     assert_eq!(added, ["MAP", "DEPTH"]);
     let got: toml::Table = text.parse().expect("the seeded file parses");
-    assert!(got["env"]["MAP"].get("a").is_some(), "{text}");
+    assert_eq!(got["env"]["MAP"]["a"], toml::Value::Integer(1), "{text}");
     assert!(
         got["env"].get("a").is_none(),
         "a is MAP's, not the table's: {text}"
