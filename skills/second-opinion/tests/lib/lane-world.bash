@@ -132,16 +132,23 @@ echo "$1" >&2
 exit "$2"
 SH
 
-# lane-reap <response> <scratch> [<home> <agent>]: answers, then removes every
-# directory under the sandboxed TMPDIR (the parent's promise: it creates exactly
-# one and everything in it is disposable). With a home and an agent it first
-# waits for that lane's review, so the clearing lands after the sibling wrote
-# and before the parent reaped.
+# lane-reap <response> <scratch> [<home> <agent>]: answers, waits for both
+# lanes' captures to exist (the sibling's child opens its own after this one
+# started, so a clearing before that would cost it the capture, not the
+# replay), then removes every directory under the sandboxed TMPDIR (the
+# parent's promise: it creates exactly one and everything in it is
+# disposable). With a home and an agent it also waits for that lane's review,
+# so the clearing lands after the sibling wrote and before the parent reaped.
 cat >"$BIN/lane-reap" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 cat >/dev/null
 cat "$1"
+scratch="$2"
+captures() { [[ -n "$(find "$scratch" -mindepth 2 -maxdepth 2 -name 'lane-codex.stderr' 2>/dev/null)" && -n "$(find "$scratch" -mindepth 2 -maxdepth 2 -name 'lane-claude.stderr' 2>/dev/null)" ]]; }
+waited=0
+while ! captures && [[ $waited -lt 300 ]]; do sleep 0.1; waited=$((waited + 1)); done
+captures || { echo "handshake never happened: a lane's capture never appeared" >&2; exit 1; }
 [[ $# -lt 4 ]] || "$(dirname "$0")/lane-wait-review" "$3" "$4" >/dev/null
 find "$2" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
 SH
