@@ -4,7 +4,9 @@
 # audit run joins the no-verdict class: exit 5, the partial output and the
 # CLI's own cause preserved as <output>.failed.json (or a record in the
 # artifact home without --output), the cause echoed on stderr from whichever
-# stream carried it; challenge and quick keep the generic exit 1. Record
+# stream carried it; a CLI that died to a signal is a kill, exit 6, the signal
+# named in the record and the report; challenge and quick keep the generic
+# exit 1. Record
 # placement never changes the outcome: a home that cannot be created or
 # written falls back to system temp loudly, and when nothing is writable the
 # cause is reported inline with the exit class kept. One table, a row per
@@ -26,6 +28,7 @@ a non-zero exit with the cause on stderr exits 5, preserves the record with the 
 an empty response on a zero exit is the same class, with the empty-response reason|rc:0 stdout:- stderr:quota|review|5|-|header:review failed:empty:out cause:stderr preserved:out|calls=1 files=out.failed.json=failed(returned an empty response on a zero exit — check CLI auth and configuration|claude stderr|quota) $CLEAN
 a timeout is a CLI failure too, with no cause block|sleep:5 timeout:1|review|5|-|header:review failed:timeout:out:1 preserved:out|calls=1 files=out.failed.json=failed(timed out after 1s|-|-) $CLEAN
 a valid response writes the artifact and no sidecar|-|review|0|<out>|header:review written|calls=1 files=out=review:external-claude:Clean $CLEAN
+a CLI that dies to a signal is a kill, not a refusal: exit 6, the record and the report name the signal, its last words are the cause|stdout:- stderr:killed signal:TERM|review|6|-|header:review killed:out:SIGTERM:143 cause:stderr:killed preserved:out|calls=1 files=out.failed.json=killed(was killed by SIGTERM (exit 143)|claude stderr|other) $CLEAN
 a failure reported on stdout with an empty stderr names the stdout cause|rc:1 stdout:quota stderr:-|review|5|-|header:review failed:exit:out:1 cause:stdout preserved:out|calls=1 files=out.failed.json=failed(exited with code 1|claude stdout|quota) $CLEAN
 audit carries the no-verdict contract too|rc:1 stdout:- stderr:quota|audit|5|-|header:audit failed:exit:out:1 cause:stderr preserved:out|calls=1 files=out.failed.json=$FAILED_EXIT_STDERR $CLEAN
 a quick-mode CLI failure keeps the generic exit 1 and writes no sidecar|rc:1 stdout:- stderr:quota|quick|1|-|header:quick generic:exit:1|calls=1 files=- $CLEAN
