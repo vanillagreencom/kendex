@@ -48,7 +48,13 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
         read_at,
     } = published(of)?;
     let around = Around {
-        skills: carry.as_ref().map(AgentCarry::skills).unwrap_or_default(),
+        skills: crate::engine::desired_agent::required_skills(
+            env,
+            scope,
+            harness,
+            manifest,
+            &carry.as_ref().map(AgentCarry::skills).unwrap_or_default(),
+        ),
         overrides,
         launch: merged_instructions(&manifest.agent_launch_instructions, name),
         additional: merged_instructions(&manifest.agent_additional_instructions, name),
@@ -225,7 +231,7 @@ fn crlf(body: &str) -> bool {
 }
 
 struct Around<'a> {
-    skills: Vec<String>,
+    skills: Vec<crate::render::agent::RequiredSkill>,
     overrides: FrontmatterOverrides,
     launch: Option<String>,
     additional: Option<String>,

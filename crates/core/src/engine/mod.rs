@@ -15,7 +15,7 @@ mod config_edits;
 mod copilot;
 pub mod deps;
 pub mod desired;
-mod desired_agent;
+pub(crate) mod desired_agent;
 mod desired_command;
 mod desired_custom_hooks;
 mod desired_item;

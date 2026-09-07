@@ -48,6 +48,9 @@ fn cross_read_note(ctx: &ItemCtx, method: Method, state: &mut DesiredState) {
         return;
     }
     let shared = skill_canonical(ctx.env, ctx.scope, ctx.name);
+    // The name the shared tree lists it under, which is what each reader's
+    // loader is held to.
+    let installed = crate::harness::canonical_name(ctx.name);
     let readers: Vec<String> = HarnessId::ALL
         .into_iter()
         .filter(|harness| !ctx.harnesses.contains(harness))
@@ -60,6 +63,16 @@ fn cross_read_note(ctx: &ItemCtx, method: Method, state: &mut DesiredState) {
             adapter
                 .detect(ctx.env, &adapter.default_global_root(ctx.env))
                 .is_some()
+        })
+        // Reading the directory is not enough to be shown what is in it.
+        // A name this loader will not take — capitals or an underscore
+        // where names must be lower-kebab — makes the tree invisible
+        // there, and counting that tool as already having the skill would
+        // be counting a definition it cannot load.
+        .filter(|harness| {
+            crate::render::validate::validate_name(*harness, &installed)
+                .iter()
+                .all(|finding| !finding.is_breakage())
         })
         .map(|harness| harness.display_name().to_owned())
         .collect();

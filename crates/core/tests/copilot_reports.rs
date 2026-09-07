@@ -195,6 +195,36 @@ fn a_skill_installed_for_another_tool_is_noted_as_visible_to_copilot() {
     );
 }
 
+/// The same note, over a name that reader's loader will not take. Copilot
+/// keys a skill on a lowercase-hyphen slug, so `Deploy` is unloadable
+/// there rather than renamed — counting Copilot as already having the
+/// definition would be counting one it cannot read. The test above is the
+/// pair: the same install under a plain name does name Copilot, so this
+/// cannot pass by the note having gone silent.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_cross_read_note_skips_a_loader_that_would_reject_the_name() {
+    let f = fixture("\"claude\"", "[skills.Deploy]\nsource = \"cat\"\n");
+    let source = f.env.home.join("catalog/skills/Deploy");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(
+        source.join("SKILL.md"),
+        "---\nname: Deploy\ndescription: Ship it\n---\n\nSteps.\n",
+    )
+    .unwrap();
+
+    let report = apply_now(&f);
+    assert!(f.project.join(".agents/skills/Deploy/SKILL.md").is_file());
+    assert!(
+        !report
+            .notes
+            .iter()
+            .any(|note| note.contains("GitHub Copilot")),
+        "Copilot cannot load `Deploy`: {:?}",
+        report.notes
+    );
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_model_the_repository_will_not_run_is_named() {

@@ -64,7 +64,10 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
         push(format!("color: {}", yaml_scalar(color)));
     }
     if !agent.skills.is_empty() {
-        push(format!("skills: {}", yaml_scalar(&agent.skills.join(", "))));
+        push(format!(
+            "skills: {}",
+            yaml_scalar(&super::RequiredSkill::names(&agent.skills).join(", "))
+        ));
     }
     if !agent.custom_hooks.is_empty() {
         push("hooks:".to_owned());
@@ -175,7 +178,10 @@ mod tests {
             source,
             harness: HarnessId::Claude,
             scope,
-            skills: vec!["dev".into(), "rust-perf".into()],
+            skills: vec![
+                crate::render::agent::linked_skill("dev", HarnessId::Claude, scope),
+                crate::render::agent::linked_skill("rust-perf", HarnessId::Claude, scope),
+            ],
             overrides: FrontmatterOverrides::default(),
             permissions: PermissionIntent::Unspecified,
             launch_instructions: Some("start here".into()),

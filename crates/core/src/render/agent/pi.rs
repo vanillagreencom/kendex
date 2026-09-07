@@ -177,8 +177,7 @@ fn body(agent: &EffectiveAgent, warnings: &mut Vec<crate::render::RenderWarning>
     warnings.extend(reworded);
     out.push_str(&prose);
     out.push('\n');
-    let skill_root = super::skill_root(HarnessId::Pi, agent.scope);
-    if let Some(skills) = skills_prose(agent, skill_root) {
+    if let Some(skills) = skills_prose(agent) {
         out.push_str(&format!("\n{skills}"));
     }
     if let Some(hooks) = hooks_prose(agent) {
@@ -328,7 +327,11 @@ mod tests {
             root: "/tmp/proj".into(),
         };
         let mut agent = effective(&source, &scope);
-        agent.skills = vec!["dev".into()];
+        agent.skills = vec![crate::render::agent::linked_skill(
+            "dev",
+            HarnessId::Pi,
+            &scope,
+        )];
         agent.overrides = FrontmatterOverrides {
             model: Some("inherit".into()),
             allowed_subagents: Some(vec!["scout".into(), " Scout ".into(), "researcher".into()]),

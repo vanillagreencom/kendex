@@ -1,0 +1,1 @@
+- A command installed as a skill no longer warns that another tool offers it when that tool's loader would reject the installed name.

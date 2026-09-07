@@ -1,6 +1,6 @@
 use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, hooks_prose, skills_prose};
 use crate::harness::models::resolve_model;
-use crate::model::{HarnessId, Scope};
+use crate::model::HarnessId;
 use crate::render::permission::PermissionIntent;
 use crate::render::vocab::{antigravity_tool_name, rewrite_prose};
 use crate::render::{RenderWarning, yaml_quoted, yaml_scalar};
@@ -84,11 +84,7 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     // The frontmatter's `skills:` list names paths under the customization
     // root; kendex does not yet write it, so skills and hooks travel as
     // prose the agent's own instructions carry.
-    let skill_root = match agent.scope {
-        Scope::Global => "~/.gemini/config/skills",
-        Scope::Project { .. } => ".agents/skills",
-    };
-    if let Some(skills) = skills_prose(agent, skill_root) {
+    if let Some(skills) = skills_prose(agent) {
         body.push_str(&format!("\n{skills}"));
     }
     if let Some(hooks) = hooks_prose(agent) {
@@ -108,6 +104,7 @@ mod tests {
     use super::super::{SourceAgent, parse_source_agent};
     use super::*;
     use crate::manifest::FrontmatterOverrides;
+    use crate::model::Scope;
 
     fn source(model: &str) -> SourceAgent {
         parse_source_agent(&format!(
@@ -121,7 +118,11 @@ mod tests {
             source,
             harness: HarnessId::Antigravity,
             scope,
-            skills: vec!["dev".into()],
+            skills: vec![crate::render::agent::linked_skill(
+                "dev",
+                HarnessId::Antigravity,
+                scope,
+            )],
             overrides: FrontmatterOverrides::default(),
             permissions: PermissionIntent::Unspecified,
             launch_instructions: None,

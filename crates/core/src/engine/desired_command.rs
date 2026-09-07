@@ -158,11 +158,22 @@ fn as_skill(
     // surface declarations the write used, never a list spelled here:
     // saying "Pi" while three more tools also read it is the surprise this
     // warning exists to prevent.
+    //
+    // Reading the directory is not enough to be offered what is in it. A
+    // loader that rejects this tree — an emitted name carrying `__` is
+    // unloadable wherever names must be lower-kebab — offers nothing, and
+    // naming that tool here would warn about a command nobody can reach.
     let also: Vec<&str> = HarnessId::ALL
         .into_iter()
         .filter(|other| *other != harness)
         .filter(|other| {
             native_dir(ctx.env, ctx.scope, *other, ItemKind::Skill).as_ref() == Some(&dir)
+        })
+        .filter(|other| {
+            refusal_reason(&crate::render::validate::validate_skill_tree(
+                *other, ctx.name, &name, &files,
+            ))
+            .is_none()
         })
         .map(HarnessId::display_name)
         .collect();
