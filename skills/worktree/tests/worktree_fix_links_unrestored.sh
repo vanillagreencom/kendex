@@ -186,7 +186,11 @@ state() {
     elif [[ -d "$path" ]]; then printf '%s/,' "${path#./}"
     else printf '%s:%s,' "${path#./}" "$(head -1 "$path")"; fi
   done | sed 's/,$//')"
-  status="$(git -C "$WT" status --short 2>/dev/null | paste -s -d ',' -)" || status='<git-failed>'
+  if status="$(git -C "$WT" status --short 2>/dev/null)"; then
+    status="$(paste -s -d ',' - <<<"$status")"
+  else
+    status='<git-failed>'
+  fi
   printf 'wt=%s status=%s' "${entries:--}" "${status:--}"
 }
 

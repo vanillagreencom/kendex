@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# `worktree remove`: the table below. The Codex-hook block after it is another
-# surface that moves to its own suite as that is reshaped.
+# `worktree remove`: one table.
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
@@ -23,74 +22,6 @@ assert_eq() {
   else
     FAIL=$((FAIL + 1))
     printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
-
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  fi
-}
-
-assert_path_exists() {
-  local path="$1" name="$2"
-  if [[ -e "$path" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        missing path: %s\n' "$name" "$path"
-  fi
-}
-
-assert_git_worktree() {
-  local path="$1" name="$2"
-  if git -C "$path" rev-parse --git-dir >/dev/null 2>&1; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        not a git worktree: %s\n' "$name" "$path"
-  fi
-}
-
-assert_symlink_target() {
-  local path="$1" want="$2" name="$3"
-  if [[ -L "$path" && "$(readlink "$path")" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    local got="<missing>"
-    [[ -e "$path" || -L "$path" ]] && got="$(readlink "$path" 2>/dev/null || printf '<not symlink>')"
-    printf '  FAIL  %s\n        expected symlink target: %s\n        got:                     %s\n' "$name" "$want" "$got"
-  fi
-}
-
-assert_branch_exists() {
-  local repo="$1" branch="$2" name="$3"
-  if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        missing branch: %s\n' "$name" "$branch"
-  fi
-}
-
-assert_branch_absent() {
-  local repo="$1" branch="$2" name="$3"
-  if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        branch still exists: %s\n' "$name" "$branch"
-  else
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
   fi
 }
 
@@ -280,49 +211,6 @@ while IFS='|' read -r label fixture args rc out err want_state; do
   want_state="${want_state//LINKS/$LINKS}"
   assert_eq "$(run_remove "$args")" "rc=$rc out=$(remove_out "$out") err=$(remove_err "$err") $want_state" "$label"
 done <<<"$REMOVE_ROWS"
-
-# Codex Desktop owns worktree lifecycle. codex-setup applies project setup to
-# an already-created app worktree; codex-cleanup is a non-destructive hook and
-# leaves worktree/branch deletion to the app.
-CODEX_ROOT="$TMP_ROOT/codex"
-make_repo "$CODEX_ROOT/main"
-mkdir -p "$CODEX_ROOT/main/config"
-printf 'local-config\n' > "$CODEX_ROOT/main/config/local.txt"
-printf 'copied-config\n' > "$CODEX_ROOT/main/copied.txt"
-cat > "$CODEX_ROOT/main/.env.local" <<'ENV'
-WORKTREE_SYMLINKS=".env.local config/local.txt"
-WORKTREE_COPIES="copied.txt"
-WORKTREE_MKDIRS="tmp/cache"
-BOT_NAME="Codex Bot"
-BOT_EMAIL="codex@example.com"
-ENV
-git -C "$CODEX_ROOT/main" worktree add -q -b issue-codex "$CODEX_ROOT/trees/issue-codex" main
-codex_setup_out=$(cd "$CODEX_ROOT/main" && "$WORKTREE_SCRIPT" codex-setup "$CODEX_ROOT/trees/issue-codex")
-assert_eq "$codex_setup_out" "Configured Codex worktree: $CODEX_ROOT/trees/issue-codex" "codex-setup reports configured worktree"
-assert_symlink_target "$CODEX_ROOT/trees/issue-codex/.env.local" "$CODEX_ROOT/main/.env.local" "codex-setup links .env.local"
-assert_symlink_target "$CODEX_ROOT/trees/issue-codex/config/local.txt" "$CODEX_ROOT/main/config/local.txt" "codex-setup links configured file"
-assert_path_exists "$CODEX_ROOT/trees/issue-codex/tmp/cache" "codex-setup creates configured mkdir"
-assert_eq "$(cat "$CODEX_ROOT/trees/issue-codex/copied.txt")" "copied-config" "codex-setup copies configured file"
-assert_eq "$(git -C "$CODEX_ROOT/trees/issue-codex" config --worktree user.name)" "Codex Bot" "codex-setup configures worktree user.name"
-assert_eq "$(git -C "$CODEX_ROOT/trees/issue-codex" config --worktree user.email)" "codex@example.com" "codex-setup configures worktree user.email"
-codex_cleanup_out=$(cd "$CODEX_ROOT/main" && "$WORKTREE_SCRIPT" codex-cleanup "$CODEX_ROOT/trees/issue-codex")
-assert_eq "$codex_cleanup_out" "Codex cleanup hook complete; app owns worktree deletion: $CODEX_ROOT/trees/issue-codex" "codex-cleanup reports app-owned deletion"
-assert_symlink_target "$CODEX_ROOT/trees/issue-codex/.env.local" "$CODEX_ROOT/main/.env.local" "codex-cleanup leaves configured symlink intact"
-assert_git_worktree "$CODEX_ROOT/trees/issue-codex" "codex-cleanup leaves worktree for app deletion"
-assert_branch_exists "$CODEX_ROOT/main" "issue-codex" "codex-cleanup leaves branch for app deletion"
-assert_eq "$(git -C "$CODEX_ROOT/trees/issue-codex" status --short)" "" "codex-cleanup leaves worktree clean"
-
-CODEX_BRANCH_ROOT="$TMP_ROOT/codex-branch"
-make_repo "$CODEX_BRANCH_ROOT/main"
-cat > "$CODEX_BRANCH_ROOT/main/.env.local" <<'ENV'
-WORKTREE_MKDIRS="tmp"
-ENV
-git -C "$CODEX_BRANCH_ROOT/main" worktree add -q -b app-managed-branch "$CODEX_BRANCH_ROOT/trees/app-managed" main
-codex_branch_out=$(cd "$CODEX_BRANCH_ROOT/main" && "$WORKTREE_SCRIPT" codex-branch CC-999 "$CODEX_BRANCH_ROOT/trees/app-managed")
-assert_eq "$codex_branch_out" "Codex worktree branch ready: cc-999 ($CODEX_BRANCH_ROOT/trees/app-managed)" "codex-branch reports normalized branch"
-assert_eq "$(git -C "$CODEX_BRANCH_ROOT/trees/app-managed" branch --show-current)" "cc-999" "codex-branch renames app branch to issue branch"
-assert_branch_absent "$CODEX_BRANCH_ROOT/main" "app-managed-branch" "codex-branch removes old app branch name"
-assert_path_exists "$CODEX_BRANCH_ROOT/trees/app-managed/tmp" "codex-branch reapplies setup after branch normalization"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
