@@ -1,6 +1,6 @@
 # kendex
 
-Desktop app and thin CLI (Rust + Tauri + React) for managing AI coding-harness customizations: agents, skills, hooks, commands, MCP servers, plugins and Pi extensions across a global scope and per-project scopes. This repository is also the default catalog every kendex install subscribes to (`agents/`, `skills/`, `hooks/`, `pi-extensions/`).
+Desktop app and thin CLI (Rust + Tauri + React) for managing AI coding-harness customizations: agents, skills, hooks, commands, MCP servers, plugins and Pi extensions across a global scope and per-project scopes. This repository is also the default catalog every kendex install subscribes to (`agents/`, `skills/`, `hooks/`, `commands/`, `pi-extensions/`).
 
 ## Commands
 
