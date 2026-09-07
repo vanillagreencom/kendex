@@ -225,9 +225,6 @@ pub fn print_advisory(
     print_skipped(advisory);
 }
 
-/// The suffix a switched-off rendering is parked under.
-const PARKED: &str = ".disabled";
-
 /// Where this finding is cited, and at which line of it.
 ///
 /// A plan scores what it would write, and prints before it writes any of
@@ -264,11 +261,20 @@ fn cited(
     // ` (command)`, an entry's ` (entry)` — is a label on the same
     // artifact and rejoins whatever shape the catalog holds it in.
     let inside_a_tree = place.starts_with('/');
-    // The parked suffix is kendex's own: switching an item off renames
-    // its rendered file, and no catalog holds that spelling. It comes off
-    // before the join for the same reason the rules read a parked file as
-    // the markdown it is.
-    let place = place.strip_suffix(PARKED).unwrap_or(place);
+    // Switching a skill off renames exactly one file, and no catalog
+    // holds the parked spelling, so the rename is undone before the
+    // join. Only that file: a catalog is free to ship a
+    // `references/old.disabled` of its own, and that is its real name.
+    // The pair is the renderer's, read from it rather than respelled.
+    let [named, parked] = kendex_core::render::skill::NAME_FILES;
+    let undone;
+    let place = match place.strip_suffix(parked) {
+        Some(head) => {
+            undone = format!("{head}{named}");
+            undone.as_str()
+        }
+        None => place,
+    };
     let path = match (inside_a_tree && !source.tree, source.path.is_empty()) {
         (true, _) => source.path.clone(),
         // A repository that is one skill has no path inside itself, so
@@ -508,6 +514,21 @@ mod tests {
         assert_eq!(
             cited(&row.advisory.findings[0], &row.targets, row.source.as_ref()).0,
             "skills/deploy/SKILL.md",
+        );
+    }
+
+    /// The rename is undone for the one file that takes it, and for no
+    /// other: a catalog may ship a file whose own name ends that way,
+    /// and cutting the suffix off it would name nothing.
+    #[test]
+    fn only_the_parked_skill_file_has_its_rename_undone() {
+        let mut row = skill(Claude, PIPES, &[]);
+        row.advisory.findings[0].location =
+            "/home/one/.claude/skills/deploy/references/old.disabled".to_owned();
+
+        assert_eq!(
+            cited(&row.advisory.findings[0], &row.targets, row.source.as_ref()).0,
+            "skills/deploy/references/old.disabled",
         );
     }
 

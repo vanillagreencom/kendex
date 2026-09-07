@@ -18,7 +18,7 @@ const SKILL_FILE: &str = "SKILL.md";
 /// itself is the one — no list to consult. The enabled spelling is first
 /// and the switched-off one second, which is what `Rendered::disable`
 /// renames between rather than spelling either name again.
-pub(crate) const NAME_FILES: [&str; 2] = [SKILL_FILE, "SKILL.md.disabled"];
+pub const NAME_FILES: [&str; 2] = [SKILL_FILE, "SKILL.md.disabled"];
 
 /// Whether this file of a skill's tree is one of them.
 pub(crate) fn carries_name(rel: &Path) -> bool {
