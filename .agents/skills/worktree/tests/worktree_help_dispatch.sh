@@ -64,8 +64,9 @@ alias_text() {
 }
 
 # stdout: its first line, then the lines opening the loader's precedence
-# claim, the second usage line path and exists share, and check's contract
-# (help is prose; those are the lines the table pins). Then stderr whole,
+# claim, the second usage line path and exists share, the hook help's index
+# lines naming the claude hooks, and check's contract (help is prose; those
+# are the lines the table pins). Then stderr whole,
 # then whether the checkout's .env.local ran.
 run() {
   local -a argv
@@ -86,7 +87,7 @@ run() {
   rm -f "$TMP_ROOT/env-executed"
   (cd "$cwd" && env LC_ALL=C ${env_words[@]+"${env_words[@]}"} "$WORKTREE_SCRIPT" "${argv[@]}" >"$TMP_ROOT/out" 2>"$TMP_ROOT/err") || rc=$?
   out="$(head -1 "$TMP_ROOT/out")"
-  said="$(grep -E '^(Configuration \(loaded|\.kendex/settings\.toml|parent environment beats|       worktree exists|Pre-create git state check)' "$TMP_ROOT/out" | paste -s -d ';' - || true)"
+  said="$(grep -E '^(Configuration \(loaded|\.kendex/settings\.toml|parent environment beats|       worktree exists|       worktree claude-(setup|cleanup)|Pre-create git state check)' "$TMP_ROOT/out" | paste -s -d ';' - || true)"
   printf 'rc=%s out=%s says=%s err=%s env=%s' "$rc" "${out:--}" "${said:--}" "$(alias_text <"$TMP_ROOT/err")" \
     "$([[ -e "$TMP_ROOT/env-executed" ]] && printf sourced || printf -)"
 }
@@ -100,6 +101,7 @@ err_text() {
     no-repo) printf '%s' 'Error: could not resolve a git repository from: <norepo>;  git said: not a git repository (or any of the parent directories): .git;  Run it from a checkout of the repository you mean:;    cd <main checkout> && .agents/skills/worktree/scripts/worktree <command>' ;;
     no-git) printf '%s' 'Error: could not resolve a git repository from: <tests>;  git said: <worktree>: line <n>: git: command not found;  Run it from a checkout of the repository you mean:;    cd <main checkout> && .agents/skills/worktree/scripts/worktree <command>' ;;
     check-arg) printf 'Error: check takes no arguments — it inspects the main checkout' ;;
+    unknown-command) printf '%s' 'Usage: <worktree> create|restack|list|remove|cleanup [--stale]|path|exists|check|push|fix-links|repair-links|codex-setup|codex-branch|codex-cleanup|claude-setup|claude-cleanup [ID|/path] [options];Run: <worktree> --help' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
@@ -109,6 +111,7 @@ says_text() {
     -) printf -- '-' ;;
     precedence) printf 'Configuration (loaded lowest to highest: kendex.settings.toml [env], then;.kendex/settings.toml [env], then .env.local — later wins, and explicit;parent environment beats every project file; use .env.local for secrets or' ;;
     path-exists) printf '%s' '       worktree exists <ID>' ;;
+    hooks-index) printf '%s' '       worktree claude-setup   [PATH];       worktree claude-cleanup [PATH]' ;;
     check) printf '%s' 'Pre-create git state check of the MAIN checkout (JSON: uncommitted,' ;;
     *) printf 'UNKNOWN-SAYS-SPEC:%s' "$1" ;;
   esac
@@ -130,14 +133,15 @@ exists -h prints help, not an issue lookup^repo^-^exists -h^0^Usage: worktree pa
 push --help^repo^-^push --help^0^Usage: worktree push [ID|/path] [--set-upstream|-u] [--no-rebase]^-^-^-
 fix-links --help^repo^-^fix-links --help^0^Usage: worktree fix-links [ID|/path]^-^-^-
 repair-links --help points at the fix-links contract^repo^-^repair-links --help^0^repair-links is the git-hook-driven variant of fix-links; the shared contract is under: worktree fix-links --help^-^-^-
-the five hook commands share the app-hook help^repo^-^codex-setup --help^0^Usage: worktree codex-setup    [PATH]^-^-^-
-codex-branch --help^repo^-^codex-branch --help^0^Usage: worktree codex-setup    [PATH]^-^-^-
-codex-cleanup --help^repo^-^codex-cleanup --help^0^Usage: worktree codex-setup    [PATH]^-^-^-
-claude-setup --help^repo^-^claude-setup --help^0^Usage: worktree codex-setup    [PATH]^-^-^-
-claude-cleanup --help^repo^-^claude-cleanup --help^0^Usage: worktree codex-setup    [PATH]^-^-^-
+the five hook commands share the app-hook help, which indexes both claude hooks^repo^-^codex-setup --help^0^Usage: worktree codex-setup    [PATH]^hooks-index^-^-
+codex-branch --help^repo^-^codex-branch --help^0^Usage: worktree codex-setup    [PATH]^hooks-index^-^-
+codex-cleanup --help^repo^-^codex-cleanup --help^0^Usage: worktree codex-setup    [PATH]^hooks-index^-^-
+claude-setup --help^repo^-^claude-setup --help^0^Usage: worktree codex-setup    [PATH]^hooks-index^-^-
+claude-cleanup --help^repo^-^claude-cleanup --help^0^Usage: worktree codex-setup    [PATH]^hooks-index^-^-
 --help after a positional prints the remove help^repo^-^remove CC-1 --help^0^Usage: worktree remove [ID|/path]^-^-^-
 --help after a flag prints the cleanup help^repo^-^cleanup --stale --help^0^Usage: worktree cleanup [--stale] [--ttl-minutes N]^-^-^-
 -h after a positional prints the push help^repo^-^push some-id -h^0^Usage: worktree push [ID|/path] [--set-upstream|-u] [--no-rebase]^-^-^-
+an unknown command is refused after the config loads, with the usage index naming every command^repo^-^definitely-not-a-command^1^-^-^unknown-command^sourced
 list --help needs no repository^norepo^-^list --help^0^Usage: worktree list^-^-^-
 path --help needs no repository^norepo^-^path --help^0^Usage: worktree path <ID>^path-exists^-^-
 exists --help needs no repository^norepo^-^exists --help^0^Usage: worktree path <ID>^path-exists^-^-
