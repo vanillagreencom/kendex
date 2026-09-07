@@ -44,12 +44,14 @@ control_replace scripts/commands/issues.sh 1 \
 
 # Leave the create's milestone unresolved where it is hoisted, so the refusal
 # falls back to whatever runs after the upload.
+control_expect "a project-less name refuses the create before its upload"
 control_expect "an ambiguous name refuses the create before its upload"
 control_replace scripts/commands/issues.sh 1 \
     '        milestone_id=$(resolve_milestone_id "$milestone" "$project_id")' \
     '        milestone_id=deferred-uuid'
 
 # Same for the update's.
+control_expect "a name refuses the update of an issue in no project before its upload"
 control_expect "an ambiguous name refuses the update before its upload"
 control_replace scripts/commands/issues.sh 1 \
     '        milestone_id=$(resolve_milestone_id "$milestone" "${project_id:-$issue_project_id}")' \
@@ -77,3 +79,10 @@ control_expect "an unreadable --attach path refuses before any lookup"
 control_replace scripts/commands/issues.sh 2 \
     '        attach_preflight_files "${attach_paths[@]}" || return 1' \
     '        true'
+
+# Read the UUID grammar as lowercase only, so an uppercase UUID is looked up
+# as a name.
+control_expect "an uppercase UUID is a UUID too"
+control_replace scripts/lib/common.sh 1 \
+    '    [[ "$1" =~ $LINEAR_UUID_PATTERN ]]' \
+    '    [[ "$1" =~ ^[0-9a-f-]+$ ]]'

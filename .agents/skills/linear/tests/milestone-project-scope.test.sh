@@ -110,9 +110,9 @@ chmod +x "$PROJECT/bin/curl"
 
 # --- the renderer -------------------------------------------------------------
 # Every payload the fake curl logged, as `Operation(key=value,...)`: the named
-# operation, with the lookup's name and projectId, the mutation's
-# projectMilestoneId, and `upload` for a file upload, so the order of a
-# refusal against an upload is on the line.
+# operation, with the lookup's name and projectId and the mutation's
+# projectMilestoneId; a file upload is its bare `FileUpload()`, so the order
+# of a refusal against an upload is on the line.
 wire() {
   jq -r '
     def op: (.query | capture("^[[:space:]]*(query|mutation)[[:space:]]+(?<n>[A-Za-z_]+)").n)
@@ -169,6 +169,7 @@ an unmatched name reports a miss, not an API failure|$CREATE --project Dup --mil
 a milestone name with no project to scope it is refused before any lookup|$CREATE --milestone Alpha|1||unscoped:Alpha
 issues update scopes the name to the issue own project|issues update ISS-1 --milestone Alpha|0|GetIssue(),GetMilestone(name=Alpha,projectId=old-uuid),UpdateIssue(input.projectMilestoneId=alpha-old)|-
 a milestone UUID needs no project and no lookup|issues update ISS-2 --milestone 11111111-2222-3333-4444-555555555555|0|GetIssue(),UpdateIssue(input.projectMilestoneId=11111111-2222-3333-4444-555555555555)|-
+an uppercase UUID is a UUID too|issues update ISS-2 --milestone 11111111-2222-3333-4444-5555555555AA|0|GetIssue(),UpdateIssue(input.projectMilestoneId=11111111-2222-3333-4444-5555555555AA)|-
 a project-less name refuses the create before its upload|$CREATE --milestone Alpha --attach $TMP_ROOT/asset.bin|1||unscoped:Alpha
 a name refuses the update of an issue in no project before its upload|issues update ISS-2 --milestone Alpha --attach $TMP_ROOT/asset.bin|1|GetIssue()|unscoped:Alpha
 an unreadable --attach path refuses before any lookup|$CREATE --project Dup --milestone Alpha --attach $TMP_ROOT/nope.bin|1||unreadable:nope.bin
