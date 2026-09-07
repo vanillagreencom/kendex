@@ -226,6 +226,7 @@ fx_inv_object() { badinv inv-object '{}\n'; }
 fx_inv_two() { badinv inv-two '[] []\n'; }
 fx_inv_empty_path() { badinv inv-empty-path '[""]\n'; }
 fx_inv_newline() { badinv inv-newline '["a\\nb"]\n'; }
+fx_inv_nul() { badinv inv-nul '["a\\u0000b"]\n'; }
 fx_inv_number() { badinv inv-number '[1]\n'; }
 run_rows \
   "the inventoried render is left out of the blanket lanes and the ratchet|fx_inv|||rc=0 $OK|-" \
@@ -244,6 +245,7 @@ run_rows \
   "two documents are refused|fx_inv_two|||rc=2 jq: error (at <stdin>:1): expected one inventory;$ERR_INV|-" \
   "an empty path is refused|fx_inv_empty_path|||rc=2 jq: error (at <stdin>:1): expected an array of paths without newline or NUL;$ERR_INV|-" \
   "a path carrying a newline is refused|fx_inv_newline|||rc=2 jq: error (at <stdin>:1): expected an array of paths without newline or NUL;$ERR_INV|-" \
+  "a path carrying a NUL is refused|fx_inv_nul|||rc=2 jq: error (at <stdin>:1): expected an array of paths without newline or NUL;$ERR_INV|-" \
   "a non-string entry is refused|fx_inv_number|||rc=2 jq: error (at <stdin>:1): expected an array of paths without newline or NUL;$ERR_INV|-"
 
 SECTION=index
@@ -275,6 +277,7 @@ SECTION=hygiene
 echo "=== baseline hygiene is enforced, not repaired silently ==="
 pair() { file "$1" a.rs "${DEAD}fn f() {}\n"; put b.rs "${DEAD}fn f() {}\n"; base "$2"; } # NAME ROWS
 fx_unsorted() { pair unsorted 'b.rs\t1\na.rs\t1\n'; }
+fx_unsorted_update() { pair unsorted-update 'b.rs\t1\na.rs\t1\n'; }
 fx_duplicate() { pair duplicate 'a.rs\t1\na.rs\t2\nb.rs\t1\n'; }
 fx_word() { pair word 'a.rs\tnope\n'; }
 fx_zero() { pair zero 'a.rs\t0\nb.rs\t1\n'; }
@@ -282,6 +285,7 @@ fx_no_tab() { pair no-tab 'a.rs 1\nb.rs\t1\n'; }
 fx_well_formed() { pair well-formed 'a.rs\t1\nb.rs\t1\n'; }
 run_rows \
   "an unsorted baseline is a config error naming the sort|fx_unsorted|||rc=2 ${ERR}$BASE: rows must be LC_ALL=C sorted (LC_ALL=C sort -o $BASE $BASE)|-" \
+  "--update judges the work-tree baseline it would rewrite by the same rule, and writes nothing|fx_unsorted_update||--update|rc=2 ${ERR}$BASE: rows must be LC_ALL=C sorted (LC_ALL=C sort -o $BASE $BASE)|baseline=b.rs	1~a.rs	1" \
   "a duplicate path is a config error naming it|fx_duplicate|||rc=2 a.rs;${ERR}$BASE: duplicate path row(s) above|-" \
   "a non-numeric count is a malformed row, named with its line|fx_word|||rc=2 1:a.rs	nope;${ERR}$BASE: malformed row(s) above (expected 'path<TAB>count' with a positive count)|-" \
   "a zero count is malformed too: a row is a positive count or no row|fx_zero|||rc=2 1:a.rs	0;${ERR}$BASE: malformed row(s) above (expected 'path<TAB>count' with a positive count)|-" \
