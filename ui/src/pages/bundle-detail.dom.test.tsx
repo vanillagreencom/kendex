@@ -68,6 +68,25 @@ async function toolBox(host: HTMLElement, tool: string) {
   return row?.querySelector<HTMLInputElement>('input[type="checkbox"]');
 }
 
+/** The tool picker's trigger, whose label is the choice as the page reads
+ *  it: the same value both Install buttons are gated on. */
+function toolTrigger(host: HTMLElement): HTMLButtonElement | undefined {
+  return [...host.querySelectorAll("button")].find((button) =>
+    button.textContent?.includes("Install for"),
+  );
+}
+
+/** Tick a tool row and close the picker over it, so the next click lands
+ *  on the page rather than on the open menu. */
+async function tickTool(host: HTMLElement, tool: string) {
+  const box = await toolBox(host, tool);
+  if (!box) throw new Error(`no ${tool} row rendered`);
+  await userEvent.click(box);
+  await settle();
+  await userEvent.keyboard("{Escape}");
+  await settle();
+}
+
 const starter: BundleDetail = {
   name: "starter",
   description: "the six things to begin with",
@@ -79,6 +98,13 @@ const starter: BundleDetail = {
   collision: null,
   recordsUnreadable: false,
 };
+
+/** The bar's own button, whatever count it currently reads. */
+function installSelected(host: HTMLElement): HTMLButtonElement | undefined {
+  return [...host.querySelectorAll("button")].find((button) =>
+    button.textContent?.startsWith("Install 1 selected"),
+  );
+}
 
 /** Install all, whatever it currently reads. */
 function installAll(host: HTMLElement): HTMLButtonElement | undefined {
@@ -209,6 +235,66 @@ describe("the curated set page", () => {
     await settle();
 
     expect(installAll(host)?.disabled).toBe(true);
+  });
+
+  // Which tools are offered is a fact about the kinds being installed, and
+  // ticking a member narrows them. A choice made while the picker was
+  // wider can name a tool the narrowed answer no longer offers; it is not
+  // an answer here, and neither button may act on it — "Install all"
+  // declares every kind, so nothing refuses it and it would report success
+  // having written nothing. The tick is reversible, so the narrowing is
+  // too: the tool comes back on offer and the choice comes back with it,
+  // rather than the install quietly landing on fewer tools than the reader
+  // picked.
+  it("holds both buttons back on a choice the narrowed picker dropped", async () => {
+    // Cursor takes a skill at project scope only, so this set's one member
+    // drops it from the answer the moment that member is ticked.
+    vi.mocked(commands.installTargets).mockImplementation(
+      async (_scope, kinds) => ({
+        status: "ok",
+        data: [
+          { harness: "claude", detected: true, sharesTheUniversalTree: true },
+          ...(kinds.length === 0
+            ? [
+                {
+                  harness: "cursor" as const,
+                  detected: false,
+                  sharesTheUniversalTree: true,
+                },
+              ]
+            : []),
+        ],
+      }),
+    );
+    const host = mount(<BundleDetailPage />);
+    await settle();
+
+    // Chosen against every kind, which is what nothing ticked asks about.
+    await tickTool(host, harnessName("cursor"));
+    await tickTool(host, harnessName("claude"));
+    expect(toolTrigger(host)?.textContent).toContain(harnessName("cursor"));
+    expect(installAll(host)?.disabled).toBe(false);
+
+    const box = host.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    if (!box) throw new Error("no member checkbox rendered");
+    await userEvent.click(box);
+    await settle();
+
+    expect(commands.installTargets).toHaveBeenLastCalledWith(HOME, ["skill"]);
+    expect(toolTrigger(host)?.textContent).toContain(
+      "No tools — pick at least one",
+    );
+    expect(installAll(host)?.disabled).toBe(true);
+    expect(installSelected(host)?.disabled).toBe(true);
+
+    // Untick it and the picker is wide again, so the pick it narrowed away
+    // is an answer once more.
+    await userEvent.click(box);
+    await settle();
+
+    expect(commands.installTargets).toHaveBeenLastCalledWith(HOME, []);
+    expect(toolTrigger(host)?.textContent).toContain(harnessName("cursor"));
+    expect(installAll(host)?.disabled).toBe(false);
   });
 
   // A destination whose read fails is the one state the picker has to

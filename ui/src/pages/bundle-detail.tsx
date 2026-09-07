@@ -159,7 +159,10 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
             // This installs with whatever the bar's tool picker last
             // answered, so a picker emptied by hand holds it back the same
             // way it holds back the bar's own button: an install to no tool
-            // reports success over a plan that wrote nothing.
+            // reports success over a plan that wrote nothing. Emptied by a
+            // tick counts too — ticking a member narrows which tools are
+            // offered, and the picker drops a chosen tool the narrowed
+            // answer no longer holds.
             <Button
               disabled={
                 busy || !detail || recordsUnknown || !isInstallable(choice)

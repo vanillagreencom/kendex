@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   commands,
   type HarnessId,
@@ -34,7 +34,14 @@ export type Choice = {
 
 /** Whether this choice can be installed. An empty tool list is a choice to
  * install nowhere, which would report success over a plan that wrote
- * nothing; the untouched picker is not that — it is no choice at all. */
+ * nothing; the untouched picker is not that — it is no choice at all.
+ *
+ * A tool list here names only tools the picker's last answer offered:
+ * `HarnessSelect` narrows the reader's pick to that answer before handing
+ * it back, so a pick the answer holds nothing of arrives as an empty list
+ * rather than as tools no row shows. That is what makes this gate and the
+ * trigger's label one answer about a chosen list. The untouched picker is
+ * the state neither of them is about. */
 export function isInstallable(choice: Choice): boolean {
   return choice.harnesses === null || choice.harnesses.length > 0;
 }
@@ -70,37 +77,73 @@ export function HarnessSelect({
   // `ItemKind` has no variant for, so the command refuses the whole call
   // and the picker is left with no row to tick. Naming no kind is what an
   // empty key means, and the command reads that as every kind.
-  const wanted = kinds.join(",");
+  const asking = kinds.join(",");
+  // The choice as it stands when an answer lands, which is not the one the
+  // read was started under: the narrowing below runs in the answer's own
+  // callback so the rows and the choice narrowed to them reach the screen
+  // in one paint, and it cannot take either as a dependency without asking
+  // the command again on every tick.
+  const latest = useRef({ value, onChange });
+  // What the reader actually picked, kept apart from the narrowed list the
+  // install is sent. Which tools are offered is a fact about the kinds
+  // being installed, and those change while the page is open — so the pick
+  // is answered against each new set rather than overwritten by the first
+  // one to narrow it, and a tool a narrowing hid comes back when the set
+  // widens again instead of being dropped from the install unremarked.
+  const wanted = useRef<HarnessId[] | null>(null);
+  useEffect(() => {
+    latest.current = { value, onChange };
+    // Put back to no choice at all — what a destination change does — and
+    // the pick goes with it: it was an answer about the place before.
+    if (value.harnesses === null) wanted.current = null;
+  });
 
   useEffect(() => {
     let live = true;
-    const asked = wanted === "" ? [] : (wanted.split(",") as ItemKind[]);
+    const asked = asking === "" ? [] : (asking.split(",") as ItemKind[]);
     void commands.installTargets(scope, asked).then((r) => {
-      if (live && r.status === "ok") setTargets(r.data);
+      if (!live || r.status !== "ok") return;
+      setTargets(r.data);
+      // The one place a pick is answered against what is offered, so the
+      // install gate and the trigger's label read one list. A pick made
+      // against a wider set of kinds can name a tool this answer no longer
+      // offers; left in, a narrowing that holds none of the picked tools
+      // leaves every Install button pressable over a trigger reading "No
+      // tools" and a plan that would write nothing.
+      const choice = latest.current.value;
+      const picked = wanted.current;
+      if (picked === null || choice.harnesses === null) return;
+      const offers = new Set(r.data.map((t) => t.harness));
+      const kept = picked.filter((one) => offers.has(one));
+      if (kept.join(",") !== choice.harnesses.join(","))
+        latest.current.onChange({ ...choice, harnesses: kept });
     });
     return () => {
       live = false;
     };
-  }, [scope, wanted]);
+  }, [scope, asking]);
 
   // Untouched, the picker shows what this machine has and sends nothing:
   // detection is re-read at install time, so the engine's own answer and
-  // the one drawn here are the same answer, taken a moment apart. A tool
-  // this destination cannot install to is dropped from the display — the
-  // rows come from the same filter the install refuses by, so a selection
-  // made before the destination changed cannot survive as a row.
-  const offered = new Set(targets.map((t) => t.harness));
+  // the one drawn here are the same answer, taken a moment apart. Both
+  // lists come from the answer in hand — detection is a column of it, and
+  // a picked list was narrowed to it above — so a tool this destination
+  // cannot install to has no row here and is in neither.
   const detected = targets.filter((t) => t.detected).map((t) => t.harness);
-  const chosen = (value.harnesses ?? detected).filter((held) =>
-    offered.has(held),
-  );
+  const chosen = value.harnesses ?? detected;
+  // Every pick goes through here: it is the reader's answer, kept as such,
+  // and the list the install is sent is that answer narrowed to what the
+  // destination offers.
+  const pick = (harnesses: HarnessId[]) => {
+    wanted.current = harnesses;
+    onChange({ ...value, harnesses });
+  };
   const toggle = (harness: HarnessId) =>
-    onChange({
-      ...value,
-      harnesses: chosen.includes(harness)
+    pick(
+      chosen.includes(harness)
         ? chosen.filter((held) => held !== harness)
         : [...chosen, harness],
-    });
+    );
   const label =
     chosen.length === 0
       ? "No tools — pick at least one"
@@ -148,25 +191,11 @@ export function HarnessSelect({
           <Button
             variant="outline"
             size="sm"
-            onClick={() =>
-              onChange({
-                ...value,
-                harnesses: targets.map((t) => t.harness),
-              })
-            }
+            onClick={() => pick(targets.map((t) => t.harness))}
           >
             All tools
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              onChange({
-                ...value,
-                harnesses: detected,
-              })
-            }
-          >
+          <Button variant="outline" size="sm" onClick={() => pick(detected)}>
             Just what I have
           </Button>
         </div>
