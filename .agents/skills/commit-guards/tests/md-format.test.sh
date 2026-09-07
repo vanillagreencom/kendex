@@ -121,6 +121,7 @@ shape_rows \
   "a trailing double space fails|Line one  \n\nLine two\n|rc=1 $(viol doc.md 1 'a trailing-double-space line break; join the lines instead');$(failed 1 1)" \
   "a trailing double space on a list item fails|- item  \n- next\n|rc=1 $(viol doc.md 1 'a trailing-double-space line break; join the lines instead');$(failed 1 1)" \
   "a hard wrap inside a blockquote fails|> quoted\n> continued\n|rc=1 $(viol doc.md 2 "$WRAP");$(failed 1 1)" \
+  "a #hashtag line is a paragraph, not a heading: the line under it is its wrap|#tag one\nwrapped\n|rc=1 $(viol doc.md 2 "$WRAP");$(failed 1 1)" \
   "a lazy continuation of a quoted paragraph fails|> quoted\ncontinued\n|rc=1 $(viol doc.md 2 "$WRAP");$(failed 1 1)" \
   "a CRLF line is the file's one violation: nothing past its first line is judged|Line one\r\nLine two\r\n|rc=1 $(viol doc.md 1 'a CRLF line ending; the format is LF, and the file is not judged past this line');$(failed 1 1)" \
   "two wraps are two violations, each on its own line|One\ntwo\n\nThree\nfour\n|rc=1 $(viol doc.md 2 "$WRAP");$(viol doc.md 5 "$WRAP");$(failed 2 1)"
@@ -147,7 +148,6 @@ shape_rows \
   "reference definitions stack without blank lines|Para\n\n[a]: https://x\n[b]: https://y\n|rc=0 $(clean 1)" \
   "a thematic break is a boundary|Para\n\n---\n\nPara\n|rc=0 $(clean 1)" \
   "a blockquote paragraph on one line passes|> one line\n\n> another\n|rc=0 $(clean 1)" \
-  "a #hashtag line is a paragraph, not a heading|#tag one\n|rc=0 $(clean 1)" \
   "a file without a trailing newline passes|Para|rc=0 $(clean 1)"
 
 echo "=== a construct with no end is a collection error naming the opener, not a pass ==="
@@ -177,6 +177,9 @@ fx_staged_edit() { seeded staged-edit; put wrapped.md 'Wrapped text. More.\n'; p
 fx_committed_wrap() { seeded committed-wrap; put wrapped.md 'Wrapped text. More.\n'; put clean.md "$WRAPPED"; commit fix; } # both committed, clean.md wrapped
 fx_all_clean() { seeded all-clean; put wrapped.md 'Wrapped text. More.\n'; commit fix; }
 fx_touched_staged() { seeded touched-staged; put clean.md 'Wrapped\nagain.\n'; }
+# The deletion row's verdict is the no-match line: a deletion that never
+# happened reads the same. What the row guards is the staged walk's
+# --diff-filter=AMT, which a D would turn into a read of a null sha.
 fx_deletion() { seeded deletion; git -C "$R" rm -q clean.md; }
 fx_settings_all() { seeded settings-all; put kendex.settings.toml '[env]\nCOMMIT_GUARDS_MD_SCOPE = "all"\n'; }
 run_rows \
