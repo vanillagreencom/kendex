@@ -115,14 +115,21 @@ fn a_genuinely_signed_document_for_another_release_or_target_is_refused() {
 }
 
 /// A document nothing signed is not the release's, whatever it says, and
-/// neither is one whose bytes moved after it was signed.
+/// neither is one whose bytes moved after it was signed. Each is the
+/// signature refusal, by the head this crate composes; what follows the
+/// head, and the whole reason for moved bytes, is minisign's own account
+/// and not ours to pin.
 #[test]
 fn a_document_the_release_key_does_not_cover_is_refused() {
     let tampered = PUBLISHED.replace("9.9.9", "9.9.8");
-    for (document, signature) in [
-        (PUBLISHED, ""),
-        (PUBLISHED, "not a signature"),
-        (tampered.as_str(), PUBLISHED_SIGNATURE),
+    for (document, signature, head) in [
+        (PUBLISHED, "", "the signature is not minisign: "),
+        (
+            PUBLISHED,
+            "not a signature",
+            "the signature is not base64: ",
+        ),
+        (tampered.as_str(), PUBLISHED_SIGNATURE, ""),
     ] {
         let refused = ReleaseDigests::for_release(
             TEST_KEY,
@@ -130,8 +137,15 @@ fn a_document_the_release_key_does_not_cover_is_refused() {
             signature.as_bytes(),
             "9.9.8",
             TARGET,
+        )
+        .unwrap_err();
+        let CoreError::UpdateSignatureRefused { why } = &refused else {
+            panic!("{document} under '{signature}': {refused:?}");
+        };
+        assert!(
+            why.starts_with(head),
+            "{document} under '{signature}': {why}"
         );
-        assert!(refused.is_err(), "{document} under '{signature}'");
     }
 }
 

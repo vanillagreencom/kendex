@@ -98,7 +98,16 @@ fn packages_listed_for_a_plain_discovered_marketplace() {
     assert_eq!(gh.tags, vec![Tag::Review]);
     assert_eq!(gh.state, InstallState::Available);
     assert_eq!(gh.collision, None);
-    assert!(rows.iter().any(|row| row.name == "extra"));
+    // The `.claude/skills` copy is offered like the plain one, as a
+    // skill with nothing installed and nothing colliding.
+    let extra = rows
+        .iter()
+        .find(|row| row.name == "extra")
+        .expect("extra listed");
+    assert_eq!(
+        (extra.kind, extra.state, extra.collision.as_deref()),
+        (ItemKind::Skill, InstallState::Available, None)
+    );
 }
 
 /// The manifest decides which source resolves at all, so an unreadable one
@@ -217,6 +226,19 @@ fn six_member_catalog(catalog: &Path) {
     .unwrap();
 }
 
+/// Every member of a set as (kind, name, state), by name: the order the
+/// detail lists them in is the member-list constant's, not what these
+/// cases are about.
+fn members(detail: &BundleDetail) -> Vec<(ItemKind, &str, InstallState)> {
+    let mut members: Vec<_> = detail
+        .members
+        .iter()
+        .map(|member| (member.kind, member.name.as_str(), member.state))
+        .collect();
+    members.sort_by_key(|(_, name, _)| *name);
+    members
+}
+
 const SIX: [(ItemKind, &str); 6] = [
     (ItemKind::Skill, "gh"),
     (ItemKind::Skill, "extra"),
@@ -242,25 +264,27 @@ fn bundle_detail_derives_partly_installed_and_full() {
     assert_eq!(partly.total_members, 6);
     assert_eq!(partly.installed_members, 2);
     assert_eq!(partly.description.as_deref(), Some("six things"));
-    let state_of = |detail: &BundleDetail, name: &str| {
-        detail
-            .members
+    let with = |installed: usize| -> Vec<(ItemKind, &str, InstallState)> {
+        let mut members: Vec<_> = SIX
             .iter()
-            .find(|member| member.name == name)
-            .map(|member| member.state)
-            .expect("member listed")
+            .enumerate()
+            .map(|(at, (kind, name))| {
+                let state = match at < installed {
+                    true => InstallState::Installed,
+                    false => InstallState::Available,
+                };
+                (*kind, *name, state)
+            })
+            .collect();
+        members.sort_by_key(|(_, name, _)| *name);
+        members
     };
-    assert_eq!(state_of(&partly, "gh"), InstallState::Installed);
-    assert_eq!(state_of(&partly, "guard"), InstallState::Available);
+    assert_eq!(members(&partly), with(2));
 
     save_lock(&env, &scope, &SIX);
     let full = bundle(&env, &cat(&scope), "starter", None).unwrap();
     assert_eq!(full.installed_members, 6);
-    assert!(
-        full.members
-            .iter()
-            .all(|member| member.state == InstallState::Installed)
-    );
+    assert_eq!(members(&full), with(6));
 }
 
 /// The Bundles tab lists what the catalog declares, not what its offered
@@ -368,16 +392,13 @@ fn a_bundle_member_the_catalog_no_longer_carries_is_a_row_not_an_error() {
 
     let detail = bundle(&env, &cat(&scope), "starter", None).unwrap();
     assert_eq!(detail.total_members, 2);
-    let state_of = |name: &str| {
-        detail
-            .members
-            .iter()
-            .find(|member| member.name == name)
-            .map(|member| member.state)
-            .expect("member listed")
-    };
-    assert_eq!(state_of("gone"), InstallState::NotOffered);
-    assert_eq!(state_of("gh"), InstallState::Available);
+    assert_eq!(
+        members(&detail),
+        [
+            (ItemKind::Skill, "gh", InstallState::Available),
+            (ItemKind::Skill, "gone", InstallState::NotOffered),
+        ]
+    );
 }
 
 /// A member the user removed shows as their own choice, not as available —
@@ -401,16 +422,13 @@ fn a_member_the_user_removed_shows_removed_by_you() {
     let (env, scope) = project(tmp.path(), &manifest);
 
     let detail = bundle(&env, &cat(&scope), "starter", None).unwrap();
-    let state_of = |name: &str| {
-        detail
-            .members
-            .iter()
-            .find(|member| member.name == name)
-            .map(|member| member.state)
-            .expect("member listed")
-    };
-    assert_eq!(state_of("extra"), InstallState::RemovedByYou);
-    assert_ne!(state_of("gh"), InstallState::RemovedByYou);
+    assert_eq!(
+        members(&detail),
+        [
+            (ItemKind::Skill, "extra", InstallState::RemovedByYou),
+            (ItemKind::Skill, "gh", InstallState::Available),
+        ]
+    );
 }
 
 /// A declared package with findings is still on offer: nothing anywhere

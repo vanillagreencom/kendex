@@ -127,45 +127,36 @@ fn a_tag_list_decodes_to_its_tags_and_keeps_the_rest_for_the_warning() {
 /// letter from correct, so the warning says which letter — printing the
 /// whole vocabulary makes the reader do that work. Nothing close means no
 /// guess, since naming a tag it plainly is not would send the reader to
-/// fix the wrong thing; that arm ends in the vocabulary, which is
-/// `tags::ALL_TAGS`'s to list and is not pinned here. Several bad words
-/// are counted rather than all listed. Nothing unknown is nothing to warn
+/// fix the wrong thing; that arm lists the whole vocabulary, in its
+/// order, pinned here as the fifteen names rather than built from
+/// `tags::ALL_TAGS`, which the warning reads too. Several bad words are
+/// counted rather than all listed. Nothing unknown is nothing to warn
 /// about.
 #[test]
 fn the_unknown_tag_warning_names_the_nearest_tag_or_the_vocabulary() {
-    /// The whole warning, or everything of it up to the vocabulary.
-    enum Warning {
-        Whole(&'static str),
-        Prefix(&'static str),
-        None,
-    }
     let rows = [
         (
             "tags: [tests]",
-            Warning::Whole("`tests` is not a tag — did you mean `testing`?"),
+            Some("`tests` is not a tag — did you mean `testing`?"),
         ),
         (
             "tags: [wizardry]",
-            Warning::Prefix("`wizardry` is not a tag — the tags are "),
+            Some(
+                "`wizardry` is not a tag — the tags are review, testing, debugging, refactoring, planning, research, docs, security, performance, git, release, data, ui, integration, automation",
+            ),
         ),
         (
             "tags: [tests, wizardry, sorcery]",
-            Warning::Whole("`tests` is not a tag — did you mean `testing`? (and 2 others)"),
+            Some("`tests` is not a tag — did you mean `testing`? (and 2 others)"),
         ),
-        ("tags: [review]", Warning::None),
+        ("tags: [review]", None),
     ];
     for (body, warning) in rows {
-        let got = frontmatter(body).unknown_warning();
-        match warning {
-            Warning::Whole(whole) => assert_eq!(got.as_deref(), Some(whole), "{body}"),
-            Warning::Prefix(prefix) => {
-                assert!(
-                    got.as_deref().is_some_and(|w| w.starts_with(prefix)),
-                    "{body}: {got:?}"
-                );
-            }
-            Warning::None => assert_eq!(got, None, "{body}"),
-        }
+        assert_eq!(
+            frontmatter(body).unknown_warning().as_deref(),
+            warning,
+            "{body}"
+        );
     }
 }
 
