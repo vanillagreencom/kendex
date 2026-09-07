@@ -54,13 +54,20 @@ run() { # ENVS SHIM
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 # The record after the run: the name of the text it equals byte for byte
-# (SEED is what the fixture committed), or a diff against the one the row
-# named. cmp, not a substitution: that would drop a trailing blank line.
+# (SEED is the file the fixture committed, kept beside the repository since
+# a shell variable cannot hold every byte a record can), or a diff against
+# the one the row named. cmp, not a substitution: that would drop a trailing
+# blank line.
 record() { # NAME
-  if cmp -s <(printf '%s' "${!1}") "$R/CHANGELOG.md"; then printf '%s' "$1"; else diff <(printf '%s' "${!1}") "$R/CHANGELOG.md" || true; fi
+  local want="$R.seed"
+  [ "$1" = SEED ] || want="$TMP/want-$1"
+  [ "$1" = SEED ] || printf '%s' "${!1}" >"$want"
+  if cmp -s "$want" "$R/CHANGELOG.md"; then printf '%s' "$1"; else diff "$want" "$R/CHANGELOG.md" || true; fi
 }
 # What is left under the fragment tree, sorted and joined by '~', with any
-# staging file beside the record; '-' when nothing.
+# staging file beside the record; '-' when nothing. Line-oriented, so a path
+# carrying a newline is shown as two: the one row with such a path leaves
+# nothing behind.
 left() {
   local out
   out="$(cd "$R" && { find changelog.d -mindepth 1 2>/dev/null; ls -d CHANGELOG.md.* 2>/dev/null; } | LC_ALL=C sort | LC_ALL=C paste -sd '~' -)"
@@ -83,7 +90,6 @@ RECORD='# Changelog
 
 - A released entry.
 '
-SEED=""
 repo() { # NAME [RECORD]
   R="$TMP/$1"
   [ ! -e "$R" ] || { echo "harness: fixture $1 already exists" >&2; exit 2; }
@@ -91,12 +97,13 @@ repo() { # NAME [RECORD]
   git -C "$R" -c init.defaultBranch=main init -q
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
-  SEED="${2:-$RECORD}"
-  printf '%s' "$SEED" >"$R/CHANGELOG.md"
+  printf '%s' "${2:-$RECORD}" >"$R/CHANGELOG.md"
   printf 'Release input.\n' >"$R/release-input.txt"
+  reseed
   git -C "$R" add -A
   git -C "$R" commit -qm 'chore: seed'
 }
+reseed() { cp -- "$R/CHANGELOG.md" "$R.seed"; } # the record as it stands is the row's SEED
 frag() { mkdir -p "$R/changelog.d/$1"; printf '%b' "$3" >"$R/changelog.d/$1/$2"; git -C "$R" add -A -- changelog.d; git -C "$R" commit -qm 'chore: prepare release input'; } # SECTION NAME CONTENT (printf %b)
 pending() { repo "$1"; frag fixed pending.md '- Folded in.\n'; } # NAME — one fragment, ready to fold
 shim() { mkdir -p "$TMP/shim-$1"; printf '%b' "$2" >"$TMP/shim-$1/$1"; chmod +x "$TMP/shim-$1/$1"; } # NAME BODY
@@ -178,6 +185,10 @@ fx_two_headings() { repo two-headings "$(printf '%s\n## [Unreleased]\n' "$RECORD
 fx_open_fence() { repo open-fence "$(printf '%s\n```\nopen\n' "$RECORD")"; frag fixed pending.md '- Folded in.\n'; }
 fx_untracked_record() { repo untracked-record; git -C "$R" rm -q --cached CHANGELOG.md; printf '/CHANGELOG.md\n' >"$R/.gitignore"; git -C "$R" add .gitignore; git -C "$R" commit -qm 'chore: untrack'; frag fixed pending.md '- Folded in.\n'; }
 fx_scope_off() { pending scope-off; }
+fx_symlink_record() { pending symlink-record; mv "$R/CHANGELOG.md" "$R/real.md"; ln -s real.md "$R/CHANGELOG.md"; git -C "$R" add -A; git -C "$R" commit -qm 'chore: link'; }
+# A NUL in the record: written with printf's own escape, since no shell
+# variable carries the byte.
+fx_nul_record() { pending nul-record; printf '%s\0' "$RECORD" >"$R/CHANGELOG.md"; reseed; git -C "$R" add -A; git -C "$R" commit -qm 'chore: nul'; }
 fx_bad_beside() { pending bad-beside; frag fixed bad.md 'Prose, not a list item.\n'; }
 run_rows \
   "a heading that is not a section refuses, naming it and the sections|fx_misspelled|||rc=1 $(refused "names 'Add' under [Unreleased], which is not a Keep a Changelog section" "section one of: $SECTIONS")|SEED|$ONE" \
@@ -186,6 +197,8 @@ run_rows \
   "an unclosed fence is the same class|fx_open_fence|||rc=2 ${ERR}CHANGELOG.md leaves a code fence unclosed — the [Unreleased] section cannot be located|SEED|$ONE" \
   "a record git does not track is refused: nothing measured it|fx_untracked_record|||rc=2 ${ERR}CHANGELOG.md is not tracked; commit the collation destination first|SEED|$ONE" \
   "the record scope off leaves the fold nowhere to write|fx_scope_off|COMMIT_GUARDS_CHANGELOG_RECORD=||rc=2 ${ERR}no collation destination: COMMIT_GUARDS_CHANGELOG_RECORD is empty|SEED|$ONE" \
+  "a record tracked as a symlink is not a destination|fx_symlink_record|||rc=2 ${ERR}CHANGELOG.md is not a regular collation destination|SEED|$ONE" \
+  "a record carrying a NUL is binary, not a destination|fx_nul_record|||rc=2 ${ERR}CHANGELOG.md holds binary content; collation needs text|SEED|$ONE" \
   "a fragment the judge refuses stops the run as its own refusal, and the acceptable one beside it is neither folded nor deleted|fx_bad_beside|||rc=1 changelog-entries FAIL changelog.d/fixed/bad.md does not open with a list marker — a fragment is the Markdown list item it becomes, opening with a hyphen and a space;changelog-entries: 1 violation(s) — cap 200 characters, 1 fragment(s) measured|SEED|changelog.d/fixed~changelog.d/fixed/bad.md~changelog.d/fixed/pending.md"
 
 echo "=== every guarantee of the fold, on one record and one exact expected output ==="
@@ -342,18 +355,20 @@ TAIL_OUT='# Changelog
 fx_tail() { repo tail "$TAIL_IN"; frag added ken-1.md '- Folded in at the end of the file.\n'; }
 fx_newline_name() { repo newline-name; frag fixed $'a\nb.md' '- Folded in.\n'; }
 fx_readme() { repo readme; mkdir -p "$R/changelog.d"; printf 'The format.\n' >"$R/changelog.d/README.md"; git -C "$R" add -A; git -C "$R" commit -qm 'chore: readme'; frag fixed pending.md '- Folded in.\n'; }
-fx_nothing() { repo nothing; }
+fx_nothing() { repo nothing "$(printf '%s' "$RECORD" | sed 's/^## \[Unreleased\]$/## Unreleased/')"; }
 fx_mv_fails() { pending mv-fails; }
-fx_rm_fails() { pending rm-fails; }
+fx_rm_fails() { pending rm-fails; frag fixed 'a b.md' '- Folded in, first by filename.\n'; }
+FOLDED2="${FOLDED/- Folded in./- Folded in, first by filename.
+- Folded in.}"
 run_rows \
   "every section in Keep a Changelog order, filename order within one, two headings collapsed, the lead trimmed, a newline-less fragment normalized|fx_all|||rc=0 $(folded 7 entries)|ALL_OUT|-" \
   "a heading further down is split at its own line numbers, losing no preamble|fx_moved|||rc=0 $(folded 1 entry)|MOVED_OUT|-" \
   "a section that ends with the file is folded into with no separator after it|fx_tail|||rc=0 $(folded 1 entry)|TAIL_OUT|-" \
   "a fragment whose name carries a newline is folded in and removed like any other|fx_newline_name|||rc=0 $(folded 1 entry)|FOLDED|-" \
   "the format's README is neither folded nor swept, and its directory stays|fx_readme|||rc=0 $(folded 1 entry)|FOLDED|changelog.d/README.md" \
-  "nothing to fold is a stated no-op|fx_nothing|||rc=0 changelog-entries: no fragments — nothing to collate|SEED|-" \
+  "nothing to fold is a stated no-op that reads no destination: a record with no heading passes|fx_nothing|||rc=0 changelog-entries: no fragments — nothing to collate|SEED|-" \
   "a rename that fails is a loud refusal carrying what mv said, the record byte-identical, no staging file, the fragment kept|fx_mv_fails||mv|rc=2 ${ERR}could not replace the collated changelog at CHANGELOG.md (mv: refused by the test stub) — inspect the file before trusting it|SEED|$ONE" \
-  "a fragment that survives its delete is named, after the record was replaced|fx_rm_fails||rm|rc=2 rm: refused by the test stub;${ERR}CHANGELOG.md is collated, but these fragments survived and would fold in a second time — delete them by hand:;  changelog.d/fixed/pending.md|FOLDED|$ONE"
+  "every fragment that survives its delete is named, escaped, after the record was replaced|fx_rm_fails||rm|rc=2 rm: refused by the test stub;rm: refused by the test stub;${ERR}CHANGELOG.md is collated, but these fragments survived and would fold in a second time — delete them by hand:;  changelog.d/fixed/a\\ b.md;  changelog.d/fixed/pending.md|FOLDED2|changelog.d/fixed~changelog.d/fixed/a b.md~changelog.d/fixed/pending.md"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
