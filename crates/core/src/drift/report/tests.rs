@@ -125,6 +125,32 @@ fn held_only_and_ignored_only_drift_stays_silent() {
     assert_eq!(render_plain(&report), "");
 }
 
+/// Every section as its title and lines, each line as its class and
+/// typed remedy. The line's sentence is a diagnostic whose wording is
+/// authoring guidance, not a pin; what it must carry is the package
+/// name, asserted apart.
+type Sectioned<'a> = Vec<(&'a str, Vec<(Class, Option<&'a Remedy>)>)>;
+
+fn sections(report: &CheckReport) -> Sectioned<'_> {
+    report
+        .sections
+        .iter()
+        .map(|section| {
+            (
+                section.title.as_str(),
+                section
+                    .lines
+                    .iter()
+                    .map(|line| (line.class, line.remedy.as_ref()))
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+/// One package per classification, each landing in its own section with
+/// its own typed remedy, drift sections in their fixed order, every line
+/// naming its package.
 #[test]
 fn each_classification_lands_in_its_section_with_its_remedy() {
     let tmp = tempfile::tempdir().unwrap();
@@ -157,28 +183,38 @@ fn each_classification_lands_in_its_section_with_its_remedy() {
     let report = check(&env, std::slice::from_ref(&scope));
     assert_eq!(report.status, CheckStatus::Drift);
     assert_eq!(report.status.exit_code(), 1);
+    let refresh = Remedy::Refresh { global: false };
+    let fork = Remedy::Fork {
+        kind: ItemKind::Skill,
+        name: "edited-one".to_owned(),
+        global: false,
+    };
+    let remove = Remedy::Remove {
+        name: "gone-one".to_owned(),
+        global: false,
+    };
+    assert_eq!(
+        sections(&report),
+        [
+            ("stale", vec![(Class::Drift, Some(&refresh))]),
+            ("edited by hand", vec![(Class::Drift, Some(&fork))]),
+            (
+                "gone from their source",
+                vec![(Class::Drift, Some(&remove))]
+            ),
+            ("mixed installs", vec![(Class::Drift, Some(&refresh))]),
+        ]
+    );
+    let lines = report.sections.iter().flat_map(|section| &section.lines);
+    for (line, name) in lines.zip(["stale-one", "edited-one", "gone-one", "mixed-one"]) {
+        assert!(line.text.contains(&format!("'{name}'")), "{}", line.text);
+    }
+    // Drift before suggestions: the stale section renders before the age
+    // line.
     let text = render_plain(&report);
-    assert!(text.contains("stale:"), "{text}");
-    assert!(
-        text.contains("'stale-one' has a newer version on its source — fix: kendex refresh"),
-        "{text}"
-    );
-    assert!(
-        text.contains("'edited-one'") && text.contains("fix: kendex fork skill edited-one"),
-        "{text}"
-    );
-    assert!(
-        text.contains("'gone-one'") && text.contains("fix: kendex remove gone-one"),
-        "{text}"
-    );
-    assert!(
-        text.contains("mixed installs:") && text.contains("'mixed-one'"),
-        "{text}"
-    );
-    // Drift before suggestions: stale section renders before the age line.
     let stale_at = text.find("stale:").unwrap();
     let age_at = text.find("(checked against sources").unwrap();
-    assert!(stale_at < age_at);
+    assert!(stale_at < age_at, "{text}");
 }
 
 #[test]
@@ -197,9 +233,14 @@ fn edited_outranks_stale_for_one_package() {
         }],
     );
 
-    let text = render_plain(&check(&env, std::slice::from_ref(&scope)));
-    assert!(text.contains("edited by hand:"), "{text}");
-    assert!(!text.contains("stale:"), "one package, one line: {text}");
+    let report = check(&env, std::slice::from_ref(&scope));
+    let titles: Vec<&str> = report
+        .sections
+        .iter()
+        .map(|section| section.title.as_str())
+        .collect();
+    assert_eq!(titles, ["edited by hand"], "one package, one line");
+    assert_eq!(report.sections[0].lines.len(), 1);
 }
 
 #[test]

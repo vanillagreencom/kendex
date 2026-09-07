@@ -1,11 +1,11 @@
-//! What a copy taken under another name declares: the rename itself, the
-//! kinds carrying no name anything keys on, and the refusals that decide
-//! before the first byte is written.
+//! What a copy taken under another name declares: the rename itself and
+//! the kinds carrying no name anything keys on. The refusals that decide
+//! before the first byte is written are rows of the parent's table.
 
 use std::fs;
 use std::path::Path;
 
-use super::{file_item, find, raw_skill, seeded, selection, target};
+use super::{file_item, find, seeded, selection, target};
 use crate::author::import::{apply, inventory};
 use crate::model::Scope;
 
@@ -25,19 +25,165 @@ fn checked(target: &Path) -> (usize, Vec<String>) {
     (check.tally().items, breakage)
 }
 
-/// A copy taken under another name has to declare that name: a skill copied
-/// verbatim under a renamed destination lands a SKILL.md calling it
-/// something else, which the catalog check reports as breakage — run here
-/// over what the import wrote, so this holds only as long as it does.
-///
-/// Both shapes: the flat rename, and the nested destination it was
-/// reported against.
+/// What a copy taken under another name lands, one row per file form. A
+/// copy has to declare the name it lands under: a skill copied verbatim
+/// under a renamed destination would land a SKILL.md calling it something
+/// else, which the catalog check reports as breakage. So the file that
+/// declares the name is rewritten on its name line and nothing else
+/// changes — the flat rename and the nested destination it was reported
+/// against; an agent's own file, which carries the name its tool answers
+/// to; a parked agent, whose content sits at `<name>.md.disabled`, a
+/// suffix that is not a format at all, so the bytes are asked rather
+/// than the filename; a Cursor rule, `.mdc` with frontmatter, which
+/// lands in the catalog's markdown slot declaring the destination
+/// because what decides is the format, not the extension it wears. The
+/// rest of a skill's tree is a copy: a rewrite reaching a body file would
+/// refuse the whole import, since a file with no frontmatter has no line
+/// to carry a name, and a skill with a references/ directory could not be
+/// imported under another name at all. A command, a hook and an MCP
+/// server carry no name anything keys on and are copied byte for byte —
+/// real candidates, the last two reaching the wizard through a lock entry
+/// pointing at the local source.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_renamed_skill_declares_its_destination_and_leaves_the_catalog_whole() {
+#[allow(clippy::too_many_lines, reason = "one row per file form")]
+fn a_renamed_copy_declares_its_destination_and_a_name_less_kind_is_copied_verbatim() {
+    type Row = (
+        Option<(&'static str, &'static str, &'static str)>,
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static [(&'static str, &'static str)],
+    );
+    let rows: [Row; 8] = [
+        (
+            None,
+            "stray",
+            "renamed",
+            "skills/renamed",
+            &[
+                (
+                    "skills/renamed/SKILL.md",
+                    "---\nname: renamed\ndescription: about stray\n---\nunmanaged bytes\n",
+                ),
+                (
+                    "skills/renamed/references/notes.md",
+                    "Body file. No frontmatter here.\n",
+                ),
+            ],
+        ),
+        (
+            None,
+            "mine",
+            "group/deep",
+            "skills/group/deep",
+            &[(
+                "skills/group/deep/SKILL.md",
+                "---\nname: deep\ndescription: about mine\n---\nmy own bytes\n",
+            )],
+        ),
+        (
+            None,
+            "drifter",
+            "settled",
+            "agents/settled.md",
+            &[(
+                "agents/settled.md",
+                "---\nname: settled\ndescription: about drifter\n---\nAgent body.\n",
+            )],
+        ),
+        (
+            Some((
+                ".claude/agents",
+                "parked.md.disabled",
+                "---\nname: parked\ndescription: about parked\n---\nAgent body.\n",
+            )),
+            "parked",
+            "roused",
+            "agents/roused.md",
+            &[(
+                "agents/roused.md",
+                "---\nname: roused\ndescription: about parked\n---\nAgent body.\n",
+            )],
+        ),
+        (
+            Some((
+                ".cursor/rules",
+                "ruler.mdc",
+                "---\ndescription: about ruler\nalwaysApply: false\n---\nRule body.\n",
+            )),
+            "ruler",
+            "measured",
+            "agents/measured.md",
+            &[(
+                "agents/measured.md",
+                "---\nname: measured\ndescription: about ruler\nalwaysApply: false\n---\nRule body.\n",
+            )],
+        ),
+        (
+            None,
+            "note",
+            "memo",
+            "commands/memo.md",
+            &[(
+                "commands/memo.md",
+                "---\ndescription: a note\n---\nCommand body.\n",
+            )],
+        ),
+        (
+            None,
+            "watcher",
+            "sentry",
+            "hooks/sentry.sh",
+            &[(
+                "hooks/sentry.sh",
+                "#!/bin/sh\n# ---\n# name: watcher\n# event: SessionStart\n# ---\necho watching\n",
+            )],
+        ),
+        (
+            None,
+            "server",
+            "relay",
+            "mcp/relay.toml",
+            &[("mcp/relay.toml", "command = \"serve\"\nargs = []\n")],
+        ),
+    ];
+    for (planted, name, destination, written, landed) in rows {
+        let (tmp, env, scope) = seeded();
+        let Scope::Project { root } = &scope else {
+            unreachable!()
+        };
+        if let Some((dir, file, bytes)) = planted {
+            file_item(&root.join(dir), file, bytes);
+        }
+        let scopes = [scope.clone()];
+        let target = target(&env, &tmp, "mine-renamed");
+        let candidates = inventory(&env, &scopes).unwrap();
+        let mut chosen = selection(find(&candidates, name), false);
+        chosen.destination = destination.to_owned();
+
+        let outcome = apply(&env, &scopes, &target, &[chosen]).unwrap();
+        assert_eq!(outcome.written, [written], "{name}");
+        for (rel, bytes) in landed {
+            assert_eq!(
+                fs::read_to_string(target.join(rel)).unwrap(),
+                *bytes,
+                "{name} as {destination}: {rel}"
+            );
+        }
+    }
+}
+
+/// The catalog check reads what a rename wrote as whole: run here over
+/// the import, so this holds only as long as it does. And the bytes on
+/// disk are what the same selection would write again, so a repeated
+/// import is already present rather than someone else's.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_renamed_import_passes_the_catalog_check_and_repeats_as_already_present() {
     let (tmp, env, scope) = seeded();
-    let scopes = [scope.clone()];
-    let target = target(&env, &tmp, "mine-renamed");
+    let scopes = [scope];
+    let target = target(&env, &tmp, "mine-checked");
     fs::write(
         target.join("kendex.toml"),
         "[marketplace]\nname = \"mine\"\n",
@@ -48,39 +194,14 @@ fn a_renamed_skill_declares_its_destination_and_leaves_the_catalog_whole() {
     flat.destination = "renamed".to_owned();
     let mut nested = selection(find(&candidates, "mine"), false);
     nested.destination = "group/deep".to_owned();
-
     let selections = [flat, nested];
 
     let outcome = apply(&env, &scopes, &target, &selections).unwrap();
     assert_eq!(outcome.written, ["skills/renamed", "skills/group/deep"]);
-
-    let flat_md = fs::read_to_string(target.join("skills/renamed/SKILL.md")).unwrap();
-    assert!(flat_md.contains("name: renamed"), "{flat_md}");
-    assert!(
-        flat_md.contains("unmanaged bytes") && flat_md.contains("description: about stray"),
-        "only the name line changes: {flat_md}"
-    );
-    // The rest of the tree is a copy. A rewrite reaching a body file would
-    // refuse the whole import, because a file with no frontmatter has no
-    // line to carry a name, so a skill with a references/ directory could
-    // not be imported under another name at all.
-    let Scope::Project { root } = &scope else {
-        unreachable!()
-    };
-    assert_eq!(
-        fs::read(target.join("skills/renamed/references/notes.md")).unwrap(),
-        fs::read(root.join(".claude/skills/stray/references/notes.md")).unwrap(),
-        "the tree's body files are copied, not declared",
-    );
-    let nested_md = fs::read_to_string(target.join("skills/group/deep/SKILL.md")).unwrap();
-    assert!(nested_md.contains("name: deep"), "{nested_md}");
-
     let (items, breakage) = checked(&target);
     assert_eq!(items, 2, "the check read both imported trees");
     assert_eq!(breakage, Vec::<String>::new());
 
-    // The bytes on disk are what the same selection would write again, so
-    // a repeated import is already present rather than someone else's.
     let again = apply(&env, &scopes, &target, &selections).unwrap();
     assert_eq!(
         again.already_present,
@@ -120,71 +241,6 @@ fn an_import_that_keeps_the_leaf_copies_the_bytes_untouched() {
     );
 }
 
-/// The rename is decided with every other refusal, before the first byte:
-/// bytes no name can be written into refuse the whole apply rather than
-/// land a copy that still answers to the old name.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_rename_no_declaration_can_carry_refuses_and_writes_nothing() {
-    let (tmp, env, scope) = seeded();
-    let scopes = [scope];
-    let target = target(&env, &tmp, "mine-uncarried");
-    let candidates = inventory(&env, &scopes).unwrap();
-    let mut renamed = selection(find(&candidates, "bare"), false);
-    renamed.destination = "clothed".to_owned();
-    let selections = [selection(find(&candidates, "mine"), false), renamed];
-
-    let message = apply(&env, &scopes, &target, &selections)
-        .unwrap_err()
-        .to_string();
-    assert!(message.contains("it has no frontmatter"), "{message}");
-    assert!(message.contains("'clothed'"), "{message}");
-    assert!(
-        message.contains("still call itself 'bare'"),
-        "and what the copy would have answered to: {message}"
-    );
-    assert!(
-        !target.join("skills").exists(),
-        "a refused apply writes nothing at all"
-    );
-}
-
-/// The refusal spells the names it quotes rather than replaying them. A
-/// candidate name is read off a directory on disk, so it can hold anything
-/// a filesystem accepts — a bidi override included — and the inventory
-/// keeps illegal spellings on purpose, so the wizard can offer them under
-/// a legal destination. That offer is the path into this refusal, and a
-/// raw override reaching a terminal is the terminal's to obey.
-///
-/// The name carries U+202E, the right-to-left override that would let one
-/// package read as another. It is the threat `names::shown` exists for,
-/// and unlike a control character it is a filename every platform this
-/// runs on will create, so the fixture is the same on all three.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_refusal_escapes_the_candidate_name_it_quotes() {
-    let (tmp, env, scope) = seeded();
-    let Scope::Project { root } = &scope else {
-        unreachable!()
-    };
-    raw_skill(
-        &root.join(".claude/skills"),
-        "ba\u{202e}re",
-        "No frontmatter at all.\n",
-    );
-    let scopes = [scope.clone()];
-    let target = target(&env, &tmp, "mine-escaped");
-    let candidates = inventory(&env, &scopes).unwrap();
-    let mut renamed = selection(find(&candidates, "ba\u{202e}re"), false);
-    renamed.destination = "clothed".to_owned();
-
-    let message = apply(&env, &scopes, &target, &[renamed])
-        .unwrap_err()
-        .to_string();
-    assert!(message.contains("ba\\u{202e}re"), "{message}");
-    assert!(!message.contains('\u{202e}'), "{message:?}");
-}
-
 /// A namespaced candidate landing under its own name is no rename. What a
 /// file inside an item declares is the leaf — it knows nothing of the
 /// namespace it is installed under — so `kit/gadget` copied to
@@ -217,94 +273,6 @@ fn a_namespaced_candidate_kept_under_its_own_name_is_no_rename() {
         fs::read_to_string(target.join("agents/kit/gadget.md")).unwrap(),
         declared,
     );
-}
-
-/// Bytes that are not text carry no declaration either, and the refusal
-/// says so rather than landing a copy whose name line is a replacement
-/// character. A skill's tree is read as bytes, so nothing upstream has
-/// asked whether its declaration is text.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_rename_of_bytes_that_are_not_text_refuses() {
-    let (tmp, env, scope) = seeded();
-    let Scope::Project { root } = &scope else {
-        unreachable!()
-    };
-    let dir = root.join(".claude/skills/binary");
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("SKILL.md"), [0xff, 0xfe, b'\n']).unwrap();
-    let scopes = [scope.clone()];
-    let target = target(&env, &tmp, "mine-binary");
-    let candidates = inventory(&env, &scopes).unwrap();
-    let mut renamed = selection(find(&candidates, "binary"), false);
-    renamed.destination = "textual".to_owned();
-    // A selection that would have been written first, so the folder
-    // staying empty is the refusal beating the copy rather than there
-    // being nothing to copy.
-    let selections = [selection(find(&candidates, "mine"), false), renamed];
-
-    let message = apply(&env, &scopes, &target, &selections)
-        .unwrap_err()
-        .to_string();
-    assert!(message.contains("the file is not text"), "{message}");
-    assert!(
-        !target.join("skills").exists(),
-        "a refused apply writes nothing at all"
-    );
-}
-
-/// What every other kind does under a rename, as a fixture rather than a
-/// claim in a comment.
-///
-/// An agent's own file carries the name its tool answers to, so a renamed
-/// agent declares its destination. The other three carry no name anything
-/// keys on and are copied byte for byte.
-///
-/// All three are real candidates: a hook and an MCP server reach the
-/// wizard through a lock entry pointing at the local source, which is how
-/// they are seeded here.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_renamed_agent_declares_its_destination_and_the_name_less_kinds_are_copied_verbatim() {
-    let (tmp, env, scope) = seeded();
-    let scopes = [scope.clone()];
-    let target = target(&env, &tmp, "mine-kinds");
-    let candidates = inventory(&env, &scopes).unwrap();
-    let renamed_to = |name: &str, destination: &str| {
-        let mut chosen = selection(find(&candidates, name), false);
-        chosen.destination = destination.to_owned();
-        chosen
-    };
-    let selections = [
-        renamed_to("drifter", "settled"),
-        renamed_to("note", "memo"),
-        renamed_to("watcher", "sentry"),
-        renamed_to("server", "relay"),
-    ];
-
-    apply(&env, &scopes, &target, &selections).unwrap();
-
-    let written = fs::read_to_string(target.join("agents/settled.md")).unwrap();
-    assert!(written.contains("name: settled"), "{written}");
-    assert!(
-        written.contains("description: about drifter") && written.contains("Agent body."),
-        "only the name line changes: {written}"
-    );
-    let Scope::Project { root } = &scope else {
-        unreachable!()
-    };
-    let local = root.join(crate::source::LOCAL_SOURCE_DIR);
-    for (landed, origin) in [
-        ("commands/memo.md", root.join(".claude/commands/note.md")),
-        ("hooks/sentry.sh", local.join("hooks/watcher.sh")),
-        ("mcp/relay.toml", local.join("mcp/server.toml")),
-    ] {
-        assert_eq!(
-            fs::read(target.join(landed)).unwrap(),
-            fs::read(&origin).unwrap(),
-            "{landed} is a copy, not a declaration",
-        );
-    }
 }
 
 /// An illegal namespace is not a rename. The inventory keeps illegal names
@@ -350,70 +318,5 @@ fn an_illegal_namespace_over_the_same_leaf_is_no_rename() {
     assert_eq!(
         fs::read_to_string(target.join("agents/good/kept.md")).unwrap(),
         declared,
-    );
-}
-
-/// A parked agent keeps its content at `<name>.md.disabled`, so the file
-/// the bytes come from ends in a suffix that is not a format at all. The
-/// bytes are the frontmatter they always were, so it renames like any
-/// other agent — which is the whole reason the bytes are asked rather than
-/// the filename.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_renamed_parked_agent_declares_its_destination() {
-    let (tmp, env, scope) = seeded();
-    let Scope::Project { root } = &scope else {
-        unreachable!()
-    };
-    file_item(
-        &root.join(".claude/agents"),
-        "parked.md.disabled",
-        "---\nname: parked\ndescription: about parked\n---\nAgent body.\n",
-    );
-    let scopes = [scope.clone()];
-    let target = target(&env, &tmp, "mine-parked");
-    let candidates = inventory(&env, &scopes).unwrap();
-    let mut renamed = selection(find(&candidates, "parked"), false);
-    renamed.destination = "roused".to_owned();
-
-    apply(&env, &scopes, &target, &[renamed]).unwrap();
-
-    let written = fs::read_to_string(target.join("agents/roused.md")).unwrap();
-    assert!(written.contains("name: roused"), "{written}");
-    assert!(
-        written.contains("description: about parked") && written.contains("Agent body."),
-        "only the name line changes: {written}"
-    );
-}
-
-/// What decides is the format, not the extension it wears. A Cursor rule
-/// is `.mdc` and carries frontmatter, so it is renamed like any other
-/// agent: it lands in the catalog's markdown slot declaring the
-/// destination, and refusing it would take away a rename that worked.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_renamed_cursor_agent_declares_its_destination() {
-    let (tmp, env, scope) = seeded();
-    let Scope::Project { root } = &scope else {
-        unreachable!()
-    };
-    file_item(
-        &root.join(".cursor/rules"),
-        "ruler.mdc",
-        "---\ndescription: about ruler\nalwaysApply: false\n---\nRule body.\n",
-    );
-    let scopes = [scope.clone()];
-    let target = target(&env, &tmp, "mine-cursor");
-    let candidates = inventory(&env, &scopes).unwrap();
-    let mut renamed = selection(find(&candidates, "ruler"), false);
-    renamed.destination = "measured".to_owned();
-
-    apply(&env, &scopes, &target, &[renamed]).unwrap();
-
-    let written = fs::read_to_string(target.join("agents/measured.md")).unwrap();
-    assert!(written.contains("name: measured"), "{written}");
-    assert!(
-        written.contains("description: about ruler") && written.contains("Rule body."),
-        "only the name line changes: {written}"
     );
 }

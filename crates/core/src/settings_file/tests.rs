@@ -203,14 +203,15 @@ fn an_edit_on_an_unreadable_key_refuses_and_names_the_lines() {
         Path::new("/w/kendex.settings.toml"),
     )
     .unwrap_err();
-    let CoreError::SettingsRefused(SettingsRefusal::Ambiguous { lines, .. }) = &refused else {
+    let CoreError::SettingsRefused(SettingsRefusal::Ambiguous {
+        path, key, lines, ..
+    }) = &refused
+    else {
         panic!("{refused:?}");
     };
-    assert_eq!(lines, &[2, 3]);
-    assert!(refused.to_string().contains("lines 2, 3"), "{refused}");
-    assert!(
-        refused.to_string().contains("/w/kendex.settings.toml"),
-        "{refused}"
+    assert_eq!(
+        (path.as_path(), key.as_str(), lines.as_slice()),
+        (Path::new("/w/kendex.settings.toml"), "MODE", &[2, 3][..])
     );
 }
 
@@ -426,15 +427,13 @@ fn two_edits_on_one_key_agree_or_the_save_refuses() {
 
     let differing = [set("noise", "MODE", "mine"), set("other", "MODE", "theirs")];
     let refused = apply_edits(FILE, &differing, &templates, Path::new("/w/f.toml")).unwrap_err();
-    let CoreError::SettingsRefused(SettingsRefusal::Contested { key, wanted, .. }) = &refused
+    let CoreError::SettingsRefused(SettingsRefusal::Contested { key, by, wanted }) = &refused
     else {
         panic!("{refused:?}");
     };
     assert_eq!(key, "MODE");
+    assert_eq!(by, &["noise".to_owned(), "other".to_owned()]);
     assert_eq!(wanted, &["mine".to_owned(), "theirs".to_owned()]);
-    // And nothing is written: the file is not half-saved.
-    assert!(refused.to_string().contains("noise"), "{refused}");
-    assert!(refused.to_string().contains("other"), "{refused}");
 
     // A reset resolves against each skill's own default, so two resets on
     // one key disagree exactly when the skills ship different defaults.
