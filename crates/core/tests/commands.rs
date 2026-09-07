@@ -280,3 +280,59 @@ fn harnesses_that_only_read_commands_get_nothing_written() {
         assert!(!f.project.join(dir).exists(), "{dir} was written to");
     }
 }
+
+/// The cross-read warning names a tool only when that tool's loader would
+/// take the tree. Reading the directory is not enough: a name carrying
+/// `__` is unloadable where names must be lower-kebab, so OpenCode and
+/// Copilot are offered nothing and naming them would warn about a command
+/// nobody can reach. Pi takes any name, so it is named.
+///
+/// The pair is the same warning over a plain name, which those loaders do
+/// take — without it the assertion would pass on a warning that had simply
+/// stopped naming anyone.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_cross_read_warning_skips_a_loader_that_would_reject_the_name() {
+    let rejecting = ["OpenCode", "GitHub Copilot"];
+
+    let f = fixture(
+        "\"codex\"",
+        "[skills.ship]\nsource = \"cat\"\n\n[commands.ship]\nsource = \"cat\"\n",
+    );
+    add_skill(&f, "ship", "The real skill.");
+    let reach = cross_read_warning(&f);
+    assert!(
+        reach.contains("ship__command"),
+        "the collision fallback is what is installed: {reach}"
+    );
+    assert!(reach.contains("Pi"), "Pi takes any name: {reach}");
+    for tool in rejecting {
+        assert!(
+            !reach.contains(tool),
+            "{tool} rejects a `__` name and cannot offer it: {reach}"
+        );
+    }
+
+    let plain = fixture("\"codex\"", "[commands.ship]\nsource = \"cat\"\n");
+    let reach = cross_read_warning(&plain);
+    for tool in rejecting {
+        assert!(
+            reach.contains(tool),
+            "{tool} reads the tree and takes a plain name: {reach}"
+        );
+    }
+}
+
+/// The one warning that says which other tools are offered the command.
+#[allow(clippy::unwrap_used)]
+fn cross_read_warning(f: &Fixture) -> String {
+    let report = audit(&f.env, &f.scope).unwrap();
+    let found: Vec<String> = report
+        .warnings
+        .iter()
+        .filter(|w| w.message.contains("also read"))
+        .map(|w| w.message.clone())
+        .collect();
+    assert_eq!(found.len(), 1, "{:?}", report.warnings);
+    found.into_iter().next().unwrap()
+}

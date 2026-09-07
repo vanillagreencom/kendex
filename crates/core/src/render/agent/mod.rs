@@ -1,4 +1,4 @@
-use crate::manifest::{CustomHook, FrontmatterOverrides, HookAgents, Manifest};
+use crate::manifest::{CustomHook, FrontmatterOverrides, HookAgents, Manifest, Method};
 use crate::model::{HarnessId, ItemKind, Scope};
 
 use super::permission::PermissionIntent;
@@ -15,6 +15,36 @@ mod source;
 
 pub use source::{Role, SourceAgent, default_pane, parse_source_agent};
 
+/// One skill an agent requires, with the delivery that decides where it
+/// was written. The method rides with the name because a scope's default
+/// is not the answer: a declaration sets its own, and an agent naming two
+/// skills delivered two ways reads them from two directories.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequiredSkill {
+    pub name: String,
+    pub method: Method,
+}
+
+impl RequiredSkill {
+    /// The names alone, for a harness whose own frontmatter field takes a
+    /// list of them and resolves the place itself.
+    pub fn names(skills: &[Self]) -> Vec<&str> {
+        skills.iter().map(|skill| skill.name.as_str()).collect()
+    }
+}
+
+/// A name delivered the scope's own default way. Every installation
+/// resolves the real method through `desired_agent::required_skills`; this
+/// is for naming a skill where the delivery is not what is under test.
+impl From<&str> for RequiredSkill {
+    fn from(name: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            method: Method::default(),
+        }
+    }
+}
+
 /// Everything a per-harness generator needs, already merged. `permissions`
 /// is the effective intent — source `tools:` narrowed by manifest overrides;
 /// renderers read it, never `overrides.deny_tools` directly.
@@ -23,7 +53,7 @@ pub struct EffectiveAgent<'a> {
     pub source: &'a SourceAgent,
     pub harness: HarnessId,
     pub scope: &'a Scope,
-    pub skills: Vec<String>,
+    pub skills: Vec<RequiredSkill>,
     pub overrides: FrontmatterOverrides,
     pub permissions: PermissionIntent,
     pub launch_instructions: Option<String>,
@@ -246,20 +276,43 @@ pub fn file_name(harness: HarnessId, agent_name: &str) -> String {
 }
 
 /// Skills prose section for harnesses without a native skills field.
-/// Where an agent is told to read its required skills: the directory the
-/// install writes for this harness at this scope.
+/// Where an agent is told to read its required skills: the directory this
+/// skill's own delivery wrote, for this harness at this scope.
 ///
 /// One owner, because five renderers each spelling it is five chances to
-/// name a place the install stopped writing. Every tool but Claude Code
-/// and Antigravity reads the shared tree, so that is where their skills
-/// are; those two read only their own directory and are linked into it.
-/// A `method = "copy"` delivery writes each tool's own directory instead,
-/// which this does not distinguish — the prose has never said so, at
-/// either scope.
-pub fn skill_root(harness: HarnessId, scope: &Scope) -> &'static str {
-    match scope {
-        Scope::Project { .. } => ".agents/skills",
-        Scope::Global => match harness {
+/// name a place the install stopped writing. A symlink delivery writes the
+/// shared tree, which every tool but Claude Code and Antigravity reads;
+/// those two read only their own directory and are linked into it. A copy
+/// is a tree only one tool reads, so it is written in that tool's own
+/// directory and nowhere else — a different answer at both scopes, and the
+/// one an agent must be given or it is sent to a path nothing wrote.
+///
+/// The copy answers are the adapters' own `own_dir`, held to it by
+/// `the_copy_roots_are_the_places_a_copy_delivery_writes`.
+pub fn skill_root(harness: HarnessId, scope: &Scope, method: Method) -> &'static str {
+    match (method, scope) {
+        (Method::Copy, Scope::Project { .. }) => match harness {
+            HarnessId::Claude => ".claude/skills",
+            HarnessId::Cursor => ".cursor/skills",
+            HarnessId::Gemini => ".gemini/skills",
+            HarnessId::Copilot => ".github/skills",
+            HarnessId::Opencode => ".opencode/skills",
+            HarnessId::Codex | HarnessId::Pi | HarnessId::Antigravity => ".agents/skills",
+        },
+        (Method::Copy, Scope::Global) => match harness {
+            HarnessId::Claude => "~/.claude/skills",
+            HarnessId::Codex => "~/.codex/skills",
+            HarnessId::Pi => "~/.pi/agent/skills",
+            HarnessId::Gemini => "~/.gemini/skills",
+            HarnessId::Copilot => "~/.copilot/skills",
+            HarnessId::Antigravity => "~/.gemini/config/skills",
+            HarnessId::Opencode => "~/.config/opencode/skills",
+            // Cursor holds no global skills at all, so nothing is written
+            // and the shared tree is the only honest thing to name.
+            HarnessId::Cursor => "~/.agents/skills",
+        },
+        (Method::Symlink, Scope::Project { .. }) => ".agents/skills",
+        (Method::Symlink, Scope::Global) => match harness {
             HarnessId::Claude => "~/.claude/skills",
             HarnessId::Antigravity => "~/.gemini/config/skills",
             _ => "~/.agents/skills",
@@ -267,13 +320,15 @@ pub fn skill_root(harness: HarnessId, scope: &Scope) -> &'static str {
     }
 }
 
-pub fn skills_prose(agent: &EffectiveAgent, skill_root_hint: &str) -> Option<String> {
+pub fn skills_prose(agent: &EffectiveAgent) -> Option<String> {
     if agent.skills.is_empty() {
         return None;
     }
     let mut out = String::from("## Required Skills\n\nRead each before acting:\n\n");
     for skill in &agent.skills {
-        out.push_str(&format!("- {skill}: {skill_root_hint}/{skill}/SKILL.md\n"));
+        let root = skill_root(agent.harness, agent.scope, skill.method);
+        let name = &skill.name;
+        out.push_str(&format!("- {name}: {root}/{name}/SKILL.md\n"));
     }
     Some(out)
 }
@@ -468,19 +523,19 @@ mod tests {
     }
 
     /// The path an agent is told to read a skill from is the one the
-    /// install writes. Globally that is the shared tree for every tool
-    /// that reads it, and its own directory for the two that do not; a
-    /// project's is the shared tree for all of them. A renderer naming a
-    /// tool's own global directory would send the agent to a path the
-    /// default delivery no longer creates.
+    /// install writes. Under the default symlink delivery that is the
+    /// shared tree for every tool that reads it, and its own directory for
+    /// the two that do not; a project's is the shared tree for all of
+    /// them. A renderer naming a tool's own global directory would send
+    /// the agent to a path this delivery no longer creates.
     #[test]
-    fn an_agent_reads_its_skills_from_the_place_the_install_writes() {
+    fn an_agent_reads_a_linked_skill_from_the_shared_tree() {
         let project = Scope::Project {
             root: std::path::PathBuf::from("/p"),
         };
         for harness in HarnessId::ALL {
             assert_eq!(
-                skill_root(harness, &project),
+                skill_root(harness, &project, Method::Symlink),
                 ".agents/skills",
                 "{harness:?} in a project"
             );
@@ -493,18 +548,53 @@ mod tests {
             HarnessId::Copilot,
         ] {
             assert_eq!(
-                skill_root(harness, &Scope::Global),
+                skill_root(harness, &Scope::Global, Method::Symlink),
                 "~/.agents/skills",
                 "{harness:?} reads the shared global tree"
             );
         }
         assert_eq!(
-            skill_root(HarnessId::Claude, &Scope::Global),
+            skill_root(HarnessId::Claude, &Scope::Global, Method::Symlink),
             "~/.claude/skills"
         );
         assert_eq!(
-            skill_root(HarnessId::Antigravity, &Scope::Global),
+            skill_root(HarnessId::Antigravity, &Scope::Global, Method::Symlink),
             "~/.gemini/config/skills"
+        );
+    }
+
+    /// The other delivery, which the shared tree is the wrong answer for.
+    /// A copy is a tree only one tool reads, written in that tool's own
+    /// directory, so an agent is sent there instead — at both scopes. The
+    /// must-fail half is the pair: wherever a copy writes somewhere other
+    /// than the linked delivery, naming the linked place would be naming a
+    /// path this install never wrote.
+    #[test]
+    fn an_agent_reads_a_copied_skill_from_the_directory_only_that_tool_reads() {
+        let project = Scope::Project {
+            root: std::path::PathBuf::from("/p"),
+        };
+        assert_eq!(
+            skill_root(HarnessId::Claude, &project, Method::Copy),
+            ".claude/skills"
+        );
+        assert_eq!(
+            skill_root(HarnessId::Codex, &Scope::Global, Method::Copy),
+            "~/.codex/skills"
+        );
+        // Both differ from what the linked delivery answers, which is the
+        // must-fail half: a `skill_root` that ignored the method would
+        // return the shared tree here and send the agent to a path a copy
+        // never wrote. The whole matrix is held to the adapters' own
+        // `own_dir` by `the_copy_roots_are_the_places_a_copy_delivery_writes`
+        // in `tests/agent_skill_roots.rs`.
+        assert_ne!(
+            skill_root(HarnessId::Claude, &project, Method::Copy),
+            skill_root(HarnessId::Claude, &project, Method::Symlink)
+        );
+        assert_ne!(
+            skill_root(HarnessId::Codex, &Scope::Global, Method::Copy),
+            skill_root(HarnessId::Codex, &Scope::Global, Method::Symlink)
         );
     }
 }

@@ -161,8 +161,7 @@ fn instructions(
     warnings.extend(reworded);
     out.push_str(&prose);
     out.push('\n');
-    let skill_root = super::skill_root(HarnessId::Codex, agent.scope);
-    if let Some(skills) = skills_prose(agent, skill_root) {
+    if let Some(skills) = skills_prose(agent) {
         out.push_str(&format!("\n{skills}"));
     }
     if let Some(hooks) = hooks_prose(agent) {

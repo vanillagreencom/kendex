@@ -62,8 +62,7 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     body.push('\n');
     // Neither skills nor hooks are agent frontmatter fields, so both travel
     // as prose the agent's own instructions carry (matrix §2).
-    let skill_root = super::skill_root(HarnessId::Copilot, agent.scope);
-    if let Some(skills) = skills_prose(agent, skill_root) {
+    if let Some(skills) = skills_prose(agent) {
         body.push_str(&format!("\n{skills}"));
     }
     if let Some(hooks) = hooks_prose(agent) {

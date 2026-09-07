@@ -64,7 +64,10 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
         push(format!("color: {}", yaml_scalar(color)));
     }
     if !agent.skills.is_empty() {
-        push(format!("skills: {}", yaml_scalar(&agent.skills.join(", "))));
+        push(format!(
+            "skills: {}",
+            yaml_scalar(&super::RequiredSkill::names(&agent.skills).join(", "))
+        ));
     }
     if !agent.custom_hooks.is_empty() {
         push("hooks:".to_owned());
