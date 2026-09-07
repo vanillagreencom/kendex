@@ -992,6 +992,11 @@ qodo_best_practices = false
 qodo_review_md = false
 macroscope = false
 
+# The declined append carries kendex's review-gate and commit-chain boundaries, so the
+# copilot render runs past the package's two-page default.
+[bot-instructions.budgets]
+copilot_chars = 7000
+
 [bot-instructions.exclusions]
 derive_render = true
 
@@ -1028,6 +1033,10 @@ Do not raise Windows-only resolution issues involving PATHEXT or `.cmd` shims wi
 For project-owned formats, follow `skills/dev/SKILL.md` § Engineering Rules. Its compatibility rule does not apply to readers of another tool's state.
 
 A short refusal list is not a complete grammar. A finding about its matches must show a fail-open path, data loss, or a security defect on input a shipped producer emits. Reword a refused value instead of extending the list.
+
+Do not report a race between two invocations of kendex on one machine, or a repository state change a person makes in another terminal while their own prompt waits; the commit offer re-derives its set immediately before the commit.
+
+A command or skill body under `commands/` or `skills/` is copied verbatim to every harness by `crates/core/src/render`, and an agent body under `agents/` reaches every harness but Claude through its vocabulary rewrite there; a harness-specific placeholder, argument or frontmatter gap is a renderer finding, never a package edit.
 '''
 
 [[bot-instructions.surface]]

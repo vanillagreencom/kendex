@@ -96,11 +96,11 @@ Mark a finding as blocking only if it must stop the merge. Mark other findings a
 
 ### no-preferences
 
-Do not report style, wording, naming, or comment preferences. Do not request speculative changes to a path that already fails closed. Leave formatting and lint to CI. Request a test only when the diff changes behavior that no test exercises. Name that behavior in one comment.
+Do not report style, wording, naming, or comment preferences. Do not request speculative changes to a path that already fails closed. Leave formatting and lint to CI. Request a test only when the diff changes behavior that no test exercises. Name that behavior in one comment. Request a tighter assertion only when the row's named claim can regress without it reddening; an incidental finding the fixture also produces, or a state pin restating a refusal the exit status carries, is not a gap. Do not ask a script to copy a verb another file owns, such as an ancestor walk or a parser; name the owner and ask for a call to it or an escalation, since a second copy is a twin.
 
 ### declined
 
-Read the PR's decline replies and the repo's instruction files before reporting a finding. Do not repeat a finding class that a stated decline or a documented accepted trade-off already answers. Reopen it only when the relevant code has changed. Report a gap only after establishing that nothing already covers it: a required CI context, a shipped hook, the file's own stated contract, or the platform's documentation.
+Read the PR's decline replies and the repo's instruction files before reporting a finding. Do not repeat a finding class that a stated decline or a documented accepted trade-off already answers. Reopen it only when the relevant code has changed. Report a gap only after establishing that nothing already covers it: a required CI context, a shipped hook, the file's own stated contract, or the platform's documentation. Before reporting an output as missing or hard-coded, read the full line and the lines it prints; a value already emitted there answers the finding. Before reporting coverage or a reference as missing on a branch, check main and the sibling PRs the body names; a series lands its halves in separate PRs and a branch cut from an earlier main lacks the sibling's files by construction.
 
 ### reply-contract
 
