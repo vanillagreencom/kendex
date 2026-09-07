@@ -59,10 +59,10 @@ fx_helper_foreign() { armed helper-foreign; printf '#!/bin/sh\nexit 0\n' >"$R/.g
 fx_helper_noexec() { armed helper-noexec; chmod -x "$R/.git/hooks/kendex-guards"; }
 fx_helper_stub() { armed helper-stub; foreign kendex-guards "$STUB"; }
 fx_helper_stub_commit() { armed helper-stub-commit; foreign kendex-guards "$STUB"; stage_marker; }
-# The head names this checkout's own scripts directory, and a scripts
-# directory whose lane programs are not runnable is not recognised as this
-# project's, so the verdict is unverifiable before the lane check that would
-# have said "blocked rather than guarded" is reached.
+# From the checkout that armed the repository the head names this checkout's
+# own scripts directory, and a scripts directory whose lane programs are not
+# runnable is not recognised as this project's, so the verdict is
+# unverifiable; the lane verdict below is reached from another checkout.
 fx_lane_missing() { armed lane-missing; rm "$R/.agents/skills/commit-guards/scripts/pre-commit"; }
 fx_drift_and_unknown() { armed drift-and-unknown; foreign kendex-guards "$STUB"; rm "$R/.git/hooks/pre-commit"; }
 run_rows \
@@ -73,7 +73,7 @@ run_rows \
   "a helper without its execute bit blocks every commit, so it is not armed|fx_helper_noexec||check||rc=1 ${NA}helper kendex-guards is not executable (commits are blocked, not guarded)$REARM|helper=$HELPER_NOEXEC pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
   "a marker-carrying stub in place of the helper is unverifiable, not armed|fx_helper_stub||check||rc=2 $CND$UNVERIFIED|helper=$X:#!/bin/sh~# kendex commit-guards git hooks~exit 0 pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
   "and that stub really does let a violation through every guard|fx_helper_stub_commit|$ONE|commit|feat: add b|rc=0|" \
-  "a helper whose pre-commit program is gone is never armed|fx_lane_missing||check||rc=2 $CND$UNVERIFIED|" \
+  "from the arming checkout, a scripts directory whose pre-commit program is gone is unverifiable|fx_lane_missing||check||rc=2 $CND$UNVERIFIED|" \
   "a provably missing shim outranks an unverifiable helper, and both are named|fx_drift_and_unknown||check||rc=1 $NA$UNVERIFIED; pre-commit is missing$REARM|"
 
 echo "=== the hooks directory itself ==="
@@ -94,7 +94,9 @@ if [ "$(id -u)" != "0" ]; then
     "an unreadable helper is could-not-determine|fx_helper_unreadable||check||rc=2 ${CND}helper kendex-guards could not be read|helper=-wx------:unreadable pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
     "an unreadable hook is could-not-determine|fx_pre_unreadable||check||rc=2 ${CND}pre-commit could not be read|helper=$OURS pre-commit=-wx------:unreadable commit-msg=$SHIM_MSG hooksPath=<unset>"
 else
-  ok "the three unreadable rows are skipped (running as root)"
+  # One line per assertion the rows would have made, so the tally is the
+  # same under every user.
+  for skipped in 1 2 3 4 5; do ok "unreadable row $skipped skipped (running as root)"; done
 fi
 
 echo "=== an interpreter this check cannot vouch for: install refuses, --check is unverifiable ==="
@@ -139,20 +141,28 @@ echo "=== one repository, one helper: another checkout of this project reads it,
 # hooks as unverifiable. A second project inside the repository stands at
 # another place in the same checkout, and reading A's helper as B's consent
 # would run B's own lanes as the repository's gate.
-fx_wt_unarmed() { # a repository whose render is committed, armed, then a linked worktree of it
-  R="$(new_repo wt-unarmed)"
+worktree_of() { # NAME — a repository whose render is committed, armed, then a linked worktree of it
+  R="$(new_repo "$1")"
   git -C "$R" add -A
   seed
   "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true
-  W="$TMP/wt-unarmed-wt"
-  git -C "$R" worktree add -q -b wt "$W"
-  rm "$R/.git/hooks/pre-commit"
+  W="$TMP/$1-wt"
+  git -C "$R" worktree add -q -b "wt-$1" "$W"
 }
+fx_wt_unarmed() { worktree_of wt-unarmed; rm "$R/.git/hooks/pre-commit"; }
+# From a linked worktree the head names the main checkout's scripts
+# directory, whose lanes run, so the helper is ours; the lane verdict then
+# reads the worktree's own render, the checkout --check was asked about.
+fx_wt_lane_gone() { worktree_of wt-lane-gone; rm "$W/.agents/skills/commit-guards/scripts/pre-commit"; }
+fx_wt_lane_noexec() { worktree_of wt-lane-noexec; chmod -x "$W/.agents/skills/commit-guards/scripts/commit-msg"; }
+LANES="/.agents/skills/commit-guards/scripts"
 fx_two_projects() { armed two-projects; mkdir "$R/sub"; cp -R "$R/.agents" "$R/sub/.agents"; W="$R/sub"; }
 NOTOURS=""
 fx_other_repo() { armed other-repo; NOTOURS="$(new_repo not-ours)"; rebake "'$NOTOURS/.agents/skills/commit-guards/scripts'"; }
 run_rows \
   "an unarmed verdict from a linked worktree sends the reader to the main checkout, where the installer does not refuse|fx_wt_unarmed||check-wt||rc=1 ${NA}pre-commit is missing$REARM_WT|" \
+  "a worktree whose pre-commit program is gone is not armed: every commit would be blocked|fx_wt_lane_gone||check-wt||rc=1 ${NA}pre-commit is missing from <repo>-wt$LANES, so every commit is blocked rather than guarded$REARM_WT|" \
+  "a worktree whose commit-msg program lost its execute bit is not armed either|fx_wt_lane_noexec||check-wt||rc=1 ${NA}commit-msg in <repo>-wt$LANES is not executable, so every commit is blocked rather than guarded$REARM_WT|" \
   "project B does not read project A's helper as its own consent|fx_two_projects||check-wt||rc=2 $CND$UNVERIFIED|" \
   "the same layout in another repository is not this project's|fx_other_repo||check||rc=2 $CND$UNVERIFIED|"
 

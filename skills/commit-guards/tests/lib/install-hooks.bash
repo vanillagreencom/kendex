@@ -35,6 +35,10 @@ new_repo() { # NAME -> repo path on stdout
   local r="$TMP/$1"
   # A name used twice would link the doc-limits skill into the real skill
   # directory of the checkout under test, so a reuse is refused outright.
+  # The exit runs inside the caller's command substitution and fires the
+  # scratch root's EXIT trap; every caller is a plain assignment under
+  # errexit, so the suite ends there, and a caller wrapped in a condition
+  # would have to stop by itself.
   [ ! -e "$r" ] || { echo "harness: fixture $1 already exists" >&2; exit 2; }
   mkdir -p "$r/.agents/skills"
   git -C "$r" -c init.defaultBranch=main init -q
