@@ -42,7 +42,7 @@ control_replace tests/must-fail-controls.sh 1 \
 # 7. The snapshot that guard measures against. Compared with the source
 #    instead, a suite writing inside its own copy is reported as its control
 #    editing outside a mutation.
-control_expect "a suite's residue is not read as the control's edit"
+control_expect "the residue a suite writes in its own copy is not read as the edit of its control"
 control_replace tests/must-fail-controls.sh 1 \
 	'	if ! diff -rq "$snapshot" "$root" >/dev/null 2>&1; then' \
 	'	if ! diff -rq "$SKILL_DIR" "$root" >/dev/null 2>&1; then'
@@ -69,3 +69,30 @@ control_expect "the prefix report names the assertion the mutation did not redde
 control_replace tests/must-fail-controls.sh 1 \
 	'			if ! grep -qxF -- "$want" "$WORK/$stem.fails.$k"; then' \
 	'			if ! grep -qF -- "$want" "$WORK/$stem.fails.$k"; then'
+
+# 11. The check for a control file. Without it the run reaches the control's
+#     source and dies there, a different verdict.
+control_expect "a suite with no control file is reported missing"
+control_replace tests/must-fail-controls.sh 1 \
+	'	if [[ ! -f "$control" ]]; then' \
+	'	if false; then'
+
+# 12. The green check on the unmutated copy. Without it a suite already red
+#     satisfies every mutation that names the assertion it is red on.
+control_expect "a suite failing from its unmutated copy proves nothing under mutation"
+control_replace tests/must-fail-controls.sh 1 \
+	'	if ! timeout "$SUITE_TIMEOUT" bash "$root/tests/$suite" >/dev/null 2>&1; then' \
+	'	if false; then'
+
+# 13. The verdict on a control that counted no mutation.
+control_expect "a control declaring no mutation changed nothing"
+control_replace tests/must-fail-controls.sh 1 \
+	'	if [[ "$mutations" -eq 0 ]]; then' \
+	'	if false; then'
+
+# 14. The verdict on a mutation that did not apply; the copy is then unchanged,
+#     which the NOOP check reports instead.
+control_expect "a mutation whose line the file lacks did not apply"
+control_replace tests/must-fail-controls.sh 1 \
+	'		if ! apply_control "$root" "$k"; then' \
+	'		if ! apply_control "$root" "$k" 2>/dev/null && false; then'
