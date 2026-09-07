@@ -99,6 +99,16 @@ hits=$(scan '#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?\b|rgba?\(|hsla?\(' '^ui/src/.*\.ts
   say "raw color literal in UI code — use theme tokens; color lives in the stylesheet"
 }
 
+# One run scoping: skills/github/scripts/lib/ci-run-correlation.sh holds the
+# scope_current_run and the jq taxonomy (def bucket, def runid) that orch
+# ci-wait and the GitHub commands source. A caller carrying its own copy is
+# the drift the library ended; the scan reads the spelling those files use.
+hits=$(scan '^scope_current_run\(\)|def (bucket|runid):' '^(skills/orch/scripts/ci-wait|skills/github/scripts/commands/[^/]+\.sh)$')
+[ -n "$hits" ] && {
+  show "$hits"
+  say "a caller carries its own scope_current_run or def bucket/def runid — source skills/github/scripts/lib/ci-run-correlation.sh instead"
+}
+
 # One hardened constructor builds every external process (invariant 13);
 # a per-call-site discipline misses call sites. crates/app is out of scope:
 # it has two sanctioned raw spawns, neither a hardened tool invocation —
