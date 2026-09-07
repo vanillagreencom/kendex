@@ -48,7 +48,7 @@ fn fixture(declarations: &str) -> Fixture {
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
     let project = home.join("dev/app");
-    fs::create_dir_all(project.join(".agents/agents")).unwrap();
+    fs::create_dir_all(project.join(".agents")).unwrap();
     fs::create_dir_all(home.join(".gemini/config")).unwrap();
 
     let source = home.join("catalog");
@@ -85,6 +85,30 @@ fn fixture(declarations: &str) -> Fixture {
         project,
         _tmp: tmp,
     }
+}
+
+/// The same catalog declared at the global scope: Antigravity's global
+/// customization root is the one `agy` scans at startup.
+#[allow(clippy::unwrap_used)]
+fn declare_globally(f: &Fixture, declarations: &str) {
+    let manifest = f.env.global_manifest_file();
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    let source = f.env.home.join("catalog");
+    fs::write(
+        &manifest,
+        format!(
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"antigravity\"]\nmethod = \"symlink\"\n\n{declarations}",
+            source_path(&source)
+        ),
+    )
+    .unwrap();
+}
+
+#[allow(clippy::unwrap_used)]
+fn apply_globally(f: &Fixture) -> EngineReport {
+    let report = audit(&f.env, &Scope::Global).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
+    report
 }
 
 #[allow(clippy::unwrap_used)]
@@ -128,13 +152,16 @@ fn drift(f: &Fixture) -> Vec<(String, kendex_core::engine::DriftState)> {
         .collect()
 }
 
+/// `agy` lists an agent from `~/.gemini/config/agents/` and from nowhere
+/// else, so the global root is the whole of the agent surface.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn an_agent_installs_in_the_loaders_tier_and_toggles_by_rename() {
-    let f = fixture("[agents.rust]\nsource = \"cat\"\n");
-    apply_now(&f);
+fn an_agent_installs_under_the_global_root_and_toggles_by_rename() {
+    let f = fixture("");
+    declare_globally(&f, "[agents.rust]\nsource = \"cat\"\n");
+    apply_globally(&f);
 
-    let file = f.project.join(".agents/agents/rust.md");
+    let file = f.env.home.join(".gemini/config/agents/rust.md");
     let text = fs::read_to_string(&file).unwrap();
     assert!(
         text.starts_with(
@@ -143,19 +170,40 @@ fn an_agent_installs_in_the_loaders_tier_and_toggles_by_rename() {
         "{text}"
     );
     assert!(text.contains("Use the grep_search tool."), "{text}");
-    assert!(is_clean(&f));
+    assert!(audit(&f.env, &Scope::Global).unwrap().drift.is_empty());
 
-    toggle(&f, "rust", false);
+    let names = ["rust".to_owned()];
+    let report = ops::toggle(&f.env, &Scope::Global, &names, None, false).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(!file.exists());
-    let parked = f.project.join(".agents/agents/rust.md.disabled");
+    let parked = f.env.home.join(".gemini/config/agents/rust.md.disabled");
     assert_eq!(fs::read_to_string(&parked).unwrap(), text);
-    assert!(is_clean(&f));
+    assert!(audit(&f.env, &Scope::Global).unwrap().drift.is_empty());
 
-    toggle(&f, "rust", true);
+    let report = ops::toggle(&f.env, &Scope::Global, &names, None, true).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(file.is_file() && !parked.exists());
 
-    remove(&f, "rust");
+    let report = ops::remove(&f.env, &Scope::Global, &names, None, false).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(!file.exists() && !parked.exists());
+}
+
+/// The same declaration in a project installs nothing, and says so: `agy`
+/// 1.1.27 reads no workspace `agents/` directory, so a render there would
+/// report an install the tool never acts on.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_project_agent_installs_nothing_and_the_report_says_why() {
+    let f = fixture("[agents.rust]\nsource = \"cat\"\n");
+    let report = apply_now(&f);
+    assert!(
+        report.notes.iter().any(|note| note
+            == "agent rust: Antigravity cannot hold one at this scope — nothing was installed"),
+        "{:?}",
+        report.notes
+    );
+    assert!(!f.project.join(".agents/agents/rust.md").exists());
 }
 
 /// The project's `.agents/skills` is the one tree Antigravity, Codex and
@@ -399,20 +447,8 @@ fn a_server_is_declared_in_mcp_config_json_and_toggles_on_the_entry() {
 #[allow(clippy::unwrap_used)]
 fn a_global_server_lands_under_the_customization_root() {
     let f = fixture("");
-    let manifest = f.env.global_manifest_file();
-    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
-    let source = f.env.home.join("catalog");
-    fs::write(
-        &manifest,
-        format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"antigravity\"]\nmethod = \"symlink\"\n\n[mcp-servers.gh]\nsource = \"cat\"\n",
-            source_path(&source)
-        ),
-    )
-    .unwrap();
-
-    let report = audit(&f.env, &Scope::Global).unwrap();
-    apply::execute(&f.env, &report.plan).unwrap();
+    declare_globally(&f, "[mcp-servers.gh]\nsource = \"cat\"\n");
+    apply_globally(&f);
 
     let config = f.env.home.join(".gemini/config/mcp_config.json");
     assert_eq!(json(&config)["mcpServers"]["gh"]["command"], "gh-mcp");

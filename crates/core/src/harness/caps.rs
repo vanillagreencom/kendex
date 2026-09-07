@@ -422,11 +422,16 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
         },
         (Copilot, PiExtension) => unsupported(),
 
-        // Agents load from `agents/*.md` and skills from the shared tree at
-        // either scope. Hooks run from `hooks.json` at either scope, the
-        // loader honouring the `decision` a command writes; plugins are read
-        // and never written.
-        (Antigravity, Agent | Skill) => managed(BOTH),
+        // Agents load from the global root's `agents/*.md` alone: the CLI's
+        // customization guide names five customization types and no agent
+        // among them, and `agy` 1.1.27 lists an agent only from
+        // `~/.gemini/config/agents/`, never from a project
+        // `.agents/agents/*.md`, workspace attached or not. Skills load from
+        // the shared tree at either scope. Hooks run from `hooks.json` at
+        // either scope, the loader honouring the `decision` a command
+        // writes; plugins are read and never written.
+        (Antigravity, Agent) => managed(GLOBAL),
+        (Antigravity, Skill) => managed(BOTH),
         (Antigravity, Hook) => enforced(managed(BOTH)),
         (Antigravity, Command) => unsupported(),
         // `mcp_config.json` under either root, `mcpServers.<name>` with a
