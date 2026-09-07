@@ -22,6 +22,9 @@
 #   - a control that edits its copy outside a numbered mutation is UNGATED:
 #     that edit rides every pass uncounted, and a suite writing a scratch file
 #     inside its own copy is not that
+#   - a suite with no control file is MISSING, one failing from its unmutated
+#     copy is UNSTAGED, a control declaring no mutation is NOOP, and a
+#     mutation whose line the file lacks is BADCTRL
 #
 # One table. A row names the fixture, the control it writes, the cap, and the
 # run's verdict block whole: the exit status, every verdict line the runner
@@ -43,11 +46,15 @@ assert_tmpdir TMP
 # a failed claim the way tests/lib/assert.sh does, since that prefix is what
 # the runner reads a mutation's failures out of.
 # `fixture ROOT residue` makes the suite's own run write a scratch file inside
-# its copy of the skill, the way a cache or lock suite does.
+# its copy of the skill, the way a cache or lock suite does; `fixture ROOT
+# broken` ships a value the suite fails on before any mutation.
 fixture() {
     local root="$1" mode="${2:-}"
     mkdir -p "$root/scripts" "$root/tests/controls"
     printf 'A=1\n' >"$root/scripts/a.sh"
+    if [ "$mode" = broken ]; then
+        printf 'A=2\n' >"$root/scripts/a.sh"
+    fi
     if [ "$mode" = residue ]; then
         # shellcheck disable=SC2016  # the expansion belongs to the written script
         printf 'A=1\n: >"$(dirname "${BASH_SOURCE[0]}")/.alpha-scratch"\n' \
@@ -79,6 +86,7 @@ SUITE
 # every mutation against the file as it ships.
 control() {
     local body
+    # shellcheck disable=SC2016  # the ungated expansion belongs to the written control
     case "$1" in
     # Neither mutation reddens the other's assertion.
     clean) body='control_expect "a is one"
@@ -129,6 +137,25 @@ control_expect "c is one"' ;;
     # and names the shorter: a substring match would read that as proof.
     prefix) body='control_expect "a is one"
 control_replace scripts/e.sh 1 '"'"'E=1'"'"' '"'"'E=2'"'"'' ;;
+    # No control file for alpha; a second suite with its own control keeps
+    # the roster non-empty, which is where a missing control is a verdict
+    # rather than the runner refusing an empty directory.
+    missing)
+        cat >"$2/tests/beta.test.sh" <<'SUITE'
+#!/usr/bin/env bash
+D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+. "$D/../scripts/b.sh"
+if [ "$B" != 1 ]; then echo "FAIL: b is one" >&2; exit 1; fi
+SUITE
+        printf '%s\n' 'control_expect "b is one"' \
+            "control_replace scripts/b.sh 1 'B=1' 'B=2'" >"$2/tests/controls/beta.control.sh"
+        return 0 ;;
+    # A control that declares no mutation.
+    empty) body='# nothing declared' ;;
+    # A mutation whose line the file does not hold.
+    badctrl) body='control_expect "a is one"
+control_replace scripts/a.sh 1 '"'"'A=7'"'"' '"'"'A=2'"'"'' ;;
     esac
     printf '%s\n' "$body" >"$2/tests/controls/alpha.control.sh"
 }
@@ -146,7 +173,7 @@ run() {
     else
         CONTROL_TIMEOUT="$3" bash "$root/tests/must-fail-controls.sh" >"$root.log" 2>&1 || rc=$?
     fi
-    printf 'rc=%s;%s' "$rc" "$(grep -E '^(ok|WRONG|SHARED|NOEXPECT|GREEN|TIMEOUT|UNGATED|UNSTAGED|ORPHAN) |controls, ' "$root.log" | tr -s ' ' | paste -sd';' -)"
+    printf 'rc=%s;%s' "$rc" "$(grep -E '^(ok|WRONG|SHARED|NOEXPECT|GREEN|TIMEOUT|UNGATED|UNSTAGED|ORPHAN|MISSING|NOOP|BADCTRL) |controls, ' "$root.log" | tr -s ' ' | paste -sd';' -)"
 }
 
 # --- the table -----------------------------------------------------------------
@@ -162,6 +189,10 @@ the ungated report says what it refuses|plain|ungated|-|rc=1;UNGATED alpha.test.
 the residue a suite writes in its own copy is not read as the edit of its control|residue|clean|-|rc=0;ok alpha.test.sh;1 controls, 0 failing, 0 orphaned
 the trailing report names the expectation nothing claims|plain|trailing|-|rc=1;NOEXPECT alpha.test.sh an expectation follows the last mutation and names none: c is one;1 controls, 1 failing, 0 orphaned
 the prefix report names the assertion the mutation did not redden|plain|prefix|-|rc=1;WRONG alpha.test.sh mutation 1 did not redden: a is one;1 controls, 1 failing, 0 orphaned
+a suite with no control file is reported missing|plain|missing|-|rc=1;MISSING alpha.test.sh no controls/alpha.control.sh;ok beta.test.sh;2 controls, 1 failing, 0 orphaned
+a suite failing from its unmutated copy proves nothing under mutation|broken|clean|-|rc=1;UNSTAGED alpha.test.sh suite fails from an unmutated copy;1 controls, 1 failing, 0 orphaned
+a control declaring no mutation changed nothing|plain|empty|-|rc=1;NOOP alpha.test.sh control changed nothing;1 controls, 1 failing, 0 orphaned
+a mutation whose line the file lacks did not apply|plain|badctrl|-|rc=1;BADCTRL alpha.test.sh mutation 1 did not apply cleanly;1 controls, 1 failing, 0 orphaned
 '
 
 while IFS='|' read -r label fix ctl cap expect; do
