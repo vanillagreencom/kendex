@@ -225,6 +225,9 @@ pub fn print_advisory(
     print_skipped(advisory);
 }
 
+/// The suffix a switched-off rendering is parked under.
+const PARKED: &str = ".disabled";
+
 /// Where this finding is cited, and at which line of it.
 ///
 /// A plan scores what it would write, and prints before it writes any of
@@ -261,6 +264,11 @@ fn cited(
     // ` (command)`, an entry's ` (entry)` — is a label on the same
     // artifact and rejoins whatever shape the catalog holds it in.
     let inside_a_tree = place.starts_with('/');
+    // The parked suffix is kendex's own: switching an item off renames
+    // its rendered file, and no catalog holds that spelling. It comes off
+    // before the join for the same reason the rules read a parked file as
+    // the markdown it is.
+    let place = place.strip_suffix(PARKED).unwrap_or(place);
     let path = match (inside_a_tree && !source.tree, source.path.is_empty()) {
         (true, _) => source.path.clone(),
         // A repository that is one skill has no path inside itself, so
@@ -485,6 +493,21 @@ mod tests {
         assert_eq!(
             cited(&row.advisory.findings[0], &row.targets, row.source.as_ref()),
             ("commands/ship.md".to_owned(), None),
+        );
+    }
+
+    /// Switching a skill off parks its rendered `SKILL.md` under
+    /// `SKILL.md.disabled`. That spelling is kendex's, not the catalog's,
+    /// so the citation names the file the catalog actually holds.
+    #[test]
+    fn a_parked_rendering_is_cited_at_the_file_the_catalog_holds() {
+        let mut row = skill(Claude, PIPES, &[]);
+        row.advisory.findings[0].location =
+            "/home/one/.claude/skills/deploy/SKILL.md.disabled".to_owned();
+
+        assert_eq!(
+            cited(&row.advisory.findings[0], &row.targets, row.source.as_ref()).0,
+            "skills/deploy/SKILL.md",
         );
     }
 
