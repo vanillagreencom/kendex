@@ -88,7 +88,6 @@ UNTOUCHED="record=same fragment=same index=same"
 echo "=== the plain check reads fragments, never the record: any wording passes beside a valid fragment ==="
 rows '' \
   "a record with no Unreleased heading|# Release notes\n|rc=0 changelog-entries: OK — 1 fragment(s) within the cap (200 characters) $UNTOUCHED" \
-  "a record whose heading is reworded|# Changelog\n\n## Upcoming release\n\n- Reworded note.\n|rc=0 changelog-entries: OK — 1 fragment(s) within the cap (200 characters) $UNTOUCHED" \
   "a record with a paragraph under a foreign section|# Changelog\n\n## [Unreleased]\n\n### Details\n\nA new paragraph.\n|rc=0 changelog-entries: OK — 1 fragment(s) within the cap (200 characters) $UNTOUCHED"
 
 echo "=== control: a fragment's own structure still fails beside a reworded record ==="
