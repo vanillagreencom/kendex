@@ -1,5 +1,6 @@
 use super::*;
 use crate::env::FakeOs;
+use crate::test_util::rooted;
 use std::path::{Path, PathBuf};
 
 fn env_in(dir: &Path) -> Env {
@@ -44,12 +45,15 @@ fn assert_stale(error: &CoreError, at: &Path) {
 /// left exactly as the outside writer left them.
 #[test]
 fn a_refusal_part_way_through_rolls_back_what_ran_before_it() {
+    // Rooted: the stale path a refusal names is the canonical one, and a
+    // temp path on macOS is spelled through /var.
     let tmp = tempfile::tempdir().unwrap();
-    let env = env_in(tmp.path());
-    let target = tmp.path().join("a/file.md");
+    let root = rooted(&tmp);
+    let env = env_in(&root);
+    let target = root.join("a/file.md");
     fs::create_dir_all(target.parent().unwrap()).unwrap();
     fs::write(&target, "before").unwrap();
-    let second = tmp.path().join("b/new.md");
+    let second = root.join("b/new.md");
 
     let plan = plan(
         Scope::Global,
@@ -261,8 +265,9 @@ fn a_refused_op_rolls_back_naming_its_cause_and_leaves_the_bytes() {
 
     for (label, cause, plant) in rows {
         let tmp = tempfile::tempdir().unwrap();
-        let env = env_in(tmp.path());
-        let Some(planted) = plant(tmp.path()) else {
+        let root = rooted(&tmp);
+        let env = env_in(&root);
+        let Some(planted) = plant(&root) else {
             continue;
         };
         let plan = plan(
@@ -294,7 +299,7 @@ fn a_refused_op_rolls_back_naming_its_cause_and_leaves_the_bytes() {
         match planted.left {
             Some(bytes) => assert_eq!(fs::read_to_string(&planted.at).unwrap(), bytes, "{label}"),
             None => assert!(
-                !tmp.path().join(".claude").exists(),
+                !root.join(".claude").exists(),
                 "{label}: a refused write left the chain it would have needed"
             ),
         }

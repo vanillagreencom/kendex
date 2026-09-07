@@ -126,13 +126,15 @@ fn a_global_link_into_the_shared_tree_adopts() {
 #[cfg(unix)]
 #[test]
 fn a_target_that_changed_after_planning_fails_the_apply() {
+    // Rooted: the stale path the rollback names is the canonical one.
     let tmp = tempfile::tempdir().unwrap();
-    let env = Env::fake(tmp.path(), FakeOs::Linux);
-    let project = tmp.path().join("app");
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let project = home.join("app");
     let scope = Scope::Project {
         root: project.clone(),
     };
-    let shared = tmp.path().join("shared/browser");
+    let shared = home.join("shared/browser");
     fs::create_dir_all(&shared).unwrap();
     fs::write(
         shared.join("SKILL.md"),

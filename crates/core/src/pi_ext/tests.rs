@@ -407,7 +407,9 @@ fn find_by_package_name_answers_for_each_catalog_shape() {
 
     for (label, plant) in rows {
         let tmp = tempfile::tempdir().unwrap();
-        let (catalog, name, answer) = plant(&tmp.path().canonicalize().unwrap());
+        // The catalog's one spelling, which is what a refusal names the
+        // base by (no `\\?\` prefix on Windows).
+        let (catalog, name, answer) = plant(&crate::paths::canonical(tmp.path()).unwrap());
         let sealed = crate::source_read::SealedSource::open(&catalog).unwrap();
         let found = find_by_package_name(&sealed, name);
         match (&answer, found) {
