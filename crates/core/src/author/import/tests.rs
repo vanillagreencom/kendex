@@ -362,7 +362,7 @@ fn every_refusal_names_its_cause_and_the_folder_shows_what_it_left() {
                 said: Said::Around {
                     head: format!(
                         "writing {} failed (",
-                        target.join("skills/blocked/here/SKILL.md").display()
+                        target.join("skills").join("blocked/here").join("SKILL.md").display()
                     ),
                     tail: "). These are partly or wholly in the folder now: skills/mine, skills/blocked/here. Remove them before importing again.".to_owned(),
                 },
@@ -396,7 +396,7 @@ fn every_refusal_names_its_cause_and_the_folder_shows_what_it_left() {
                 ],
                 said: Said::Whole(format!(
                     "'mine' and 'mine/nested' both land at {} — give one of them a different destination name",
-                    target.join("skills/mine").display()
+                    target.join("skills").join("mine").display()
                 )),
                 leaves: vec![("skills", None)],
             }
@@ -417,7 +417,7 @@ fn every_refusal_names_its_cause_and_the_folder_shows_what_it_left() {
                 ],
                 said: Said::Whole(format!(
                     "{} already holds different bytes than 'stray' — rename the import destination or remove the existing file first",
-                    target.join("skills/stray").display()
+                    target.join("skills").join("stray").display()
                 )),
                 leaves: vec![
                     ("skills/mine", None),

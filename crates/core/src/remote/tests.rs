@@ -463,7 +463,10 @@ fn a_commit_id_of_no_known_object_format_is_refused() {
     assert_eq!(command, &format!("materializing {abbreviated}"));
     assert_eq!(
         stderr,
-        "no object format has ids of 7 characters, so the attribute source this checkout must be written under cannot be named"
+        &format!(
+            "no object format has ids of {} characters, so the attribute source this checkout must be written under cannot be named",
+            abbreviated.len()
+        )
     );
     assert!(!store::checkout_dir(&f.env, &key, abbreviated).exists());
 }

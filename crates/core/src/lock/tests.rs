@@ -103,10 +103,11 @@ fn recording(path: &Path, key: &str, emitted: &Path, wrote_it: Option<&Path>) {
 
 /// What a record's version gets it: read, refused as a record this build
 /// cannot read (its `LockCorrupt` message, or the JSON reader's own words
-/// where the text is not JSON), or refused as a future kendex's.
+/// passed through whole where the text is not JSON), or refused as a
+/// future kendex's.
 enum Gate {
     Loads,
-    Corrupt(Option<String>),
+    Corrupt(String),
     TooNew(i64),
 }
 
@@ -128,10 +129,13 @@ enum Gate {
 fn only_a_record_naming_this_builds_version_loads() {
     let ahead = i64::from(LOCK_VERSION) + 1;
     let older = |version: i64| {
-        Gate::Corrupt(Some(format!(
+        Gate::Corrupt(format!(
             "it is a version {version} record, and this kendex writes version {LOCK_VERSION}"
-        )))
+        ))
     };
+    let readers_words = serde_json::from_str::<serde_json::Value>("{not json")
+        .unwrap_err()
+        .to_string();
     let rows: [(String, Gate); 8] = [
         (format!(r#"{{"version":{LOCK_VERSION},"root":ROOT,"entries":{{}}}}"#), Gate::Loads),
         (
@@ -146,12 +150,12 @@ fn only_a_record_naming_this_builds_version_loads() {
         ),
         (
             r#"{"root":ROOT,"entries":{}}"#.to_owned(),
-            Gate::Corrupt(Some(
+            Gate::Corrupt(
                 "it names no version, so nothing here can say what shape it is".to_owned(),
-            )),
+            ),
         ),
         (format!(r#"{{"version":{ahead},"root":ROOT,"entries":{{}}}}"#), Gate::TooNew(ahead)),
-        ("{not json".to_owned(), Gate::Corrupt(None)),
+        ("{not json".to_owned(), Gate::Corrupt(readers_words)),
     ];
     for (record, gate) in rows {
         let tmp = tempfile::tempdir().unwrap();
@@ -169,10 +173,7 @@ fn only_a_record_naming_this_builds_version_loads() {
                 for refused in [load_file(&path).unwrap_err(), load(&path).unwrap_err()] {
                     match &refused {
                         CoreError::LockCorrupt { path: at, message } => {
-                            assert_eq!(at, &path, "{label}");
-                            if let Some(why) = &why {
-                                assert_eq!(message, why, "{label}");
-                            }
+                            assert_eq!((at, message), (&path, &why), "{label}");
                         }
                         other => panic!("{label}: expected a corrupt lock, got {other:?}"),
                     }
@@ -358,17 +359,17 @@ fn a_record_a_project_cannot_call_its_own_is_refused() {
                 Refused::Outside("skill:gh:claude", wrote_it.clone(), wrote_it),
             )
         }),
+        // The root as the record spells it, canonical, so the refusal
+        // names the containment clause on every platform: where the temp
+        // path is not canonical (macOS's /var), a record spelling it
+        // otherwise takes the rejoin path and names the spelling it has.
         ("a position under another tree", |tmp| {
-            let root = tmp.join("here");
+            let root = crate::paths::canonical(&tmp.join("here")).unwrap();
             let elsewhere = tmp.join("there/.agents/skills/gh");
             (
                 elsewhere.clone(),
                 Some(root.clone()),
-                Refused::Outside(
-                    "skill:gh:claude",
-                    elsewhere,
-                    crate::paths::canonical(&root).unwrap(),
-                ),
+                Refused::Outside("skill:gh:claude", elsewhere, root),
             )
         }),
         ("no project named", |tmp| {
@@ -392,8 +393,8 @@ fn a_record_a_project_cannot_call_its_own_is_refused() {
             Refused::Outside(key, recorded, named) => assert!(
                 matches!(
                     &got,
-                    CoreError::LockOutsideProject { key: k, recorded: r, root: n, .. }
-                        if k == key && r == &recorded && n == &named
+                    CoreError::LockOutsideProject { path: at, key: k, recorded: r, root: n }
+                        if at == &path && k == key && r == &recorded && n == &named
                 ),
                 "{label}: {got:?}"
             ),
