@@ -17,7 +17,19 @@ fn blocking(findings: &[Finding]) -> Vec<&Finding> {
     findings.iter().filter(|f| f.is_breakage()).collect()
 }
 
-/// Findings are joined for `contains` assertions on message and fix alike.
+/// Whether some finding's message carries the fragment: the clause the
+/// check emits, read apart from the fix beside it.
+fn said(findings: &[Finding], fragment: &str) -> bool {
+    findings.iter().any(|f| f.message.contains(fragment))
+}
+
+/// Whether some finding's fix carries the value: read only where a fix
+/// spells something computed, never for its wording.
+fn fixed(findings: &[Finding], value: &str) -> bool {
+    findings.iter().any(|f| f.remediation.contains(value))
+}
+
+/// Findings joined for a failure's diagnostic.
 fn spoken(findings: &[Finding]) -> String {
     findings
         .iter()
@@ -71,55 +83,156 @@ fn every_finding_carries_a_fix() {
     }
 }
 
+/// One row per rendering a harness would refuse or query, and what the
+/// findings say: one message fragment per breakage finding in order, one
+/// per advisory finding in order, and the values the remediations carry
+/// where a fix spells something computed (a name, the accepted set). The
+/// `Finding` carries no rule code, so the message fragment a row pins is
+/// the clause only that check emits; a remedy's wording is not pinned. A
+/// Codex agent must parse as TOML and carry its keys, and name a sandbox
+/// Codex knows. An OpenCode agent must declare a mode and permissions it
+/// can read, a `provider/model` id, and a lowercase-kebab name of at most
+/// 64 characters, which the fix spells. A Claude agent must answer to the
+/// name it installs under. Cursor rule keys outside the three are
+/// folklore, and only advice.
 #[test]
-fn codex_agents_must_parse_as_toml_and_carry_their_keys() {
-    let broken = validate_agent(HarnessId::Codex, "rust", "name = \"rust\ndescription = 1\n");
-    assert_eq!(blocking(&broken).len(), 1);
-    assert!(spoken(&broken).contains("does not parse"), "{broken:?}");
-
-    let bare = validate_agent(HarnessId::Codex, "rust", "name = \"\"\nother = \"x\"\n");
-    let said = spoken(&bare);
-    assert_eq!(blocking(&bare).len(), 3, "{said}");
-    for key in ["`name`", "`description`", "`developer_instructions`"] {
-        assert!(said.contains(key), "{said}");
+#[allow(clippy::too_many_lines)]
+fn a_rendering_a_harness_would_refuse_is_named_with_what_it_got_wrong() {
+    struct Row {
+        harness: HarnessId,
+        name: &'static str,
+        text: String,
+        breakage: &'static [&'static str],
+        advice: &'static [&'static str],
+        remedy: &'static [&'static str],
     }
-}
-
-#[test]
-fn an_unknown_codex_sandbox_is_refused_and_the_fix_lists_the_real_ones() {
-    let text = CODEX_AGENT.replace("workspace-write", "yolo");
-    let findings = validate_agent(HarnessId::Codex, "rust", &text);
-    assert_eq!(blocking(&findings).len(), 1);
-    let said = spoken(&findings);
-    assert!(said.contains("not a sandbox Codex knows"), "{said}");
-    assert!(said.contains("danger-full-access"), "{said}");
-}
-
-#[test]
-fn opencode_agents_must_declare_a_mode_and_permissions_it_can_read() {
-    let text = OPENCODE_AGENT.replace("mode: subagent", "mode: helper");
-    let findings = validate_agent(HarnessId::Opencode, "rust", &text);
-    assert_eq!(blocking(&findings).len(), 1);
-    assert!(spoken(&findings).contains("`mode: helper`"), "{findings:?}");
-
-    let text = OPENCODE_AGENT.replace("bash: deny", "bash: maybe");
-    let findings = validate_agent(HarnessId::Opencode, "rust", &text);
-    let said = spoken(&findings);
-    assert_eq!(blocking(&findings).len(), 1, "{said}");
-    assert!(said.contains("permission `bash`"), "{said}");
-    assert!(said.contains("allow, ask, deny"), "{said}");
-
-    let findings = validate_agent(HarnessId::Opencode, "rust", "no frontmatter here\n");
-    assert_eq!(blocking(&findings).len(), 1);
-    assert!(spoken(&findings).contains("there is none"), "{findings:?}");
-}
-
-#[test]
-fn a_bare_opencode_model_is_refused_with_the_shape_named() {
-    let text = OPENCODE_AGENT.replace("anthropic/claude", "opus");
-    let findings = validate_agent(HarnessId::Opencode, "rust", &text);
-    assert_eq!(blocking(&findings).len(), 1, "{findings:?}");
-    assert!(spoken(&findings).contains("provider/model"), "{findings:?}");
+    let rows = [
+        Row {
+            harness: HarnessId::Codex,
+            name: "rust",
+            text: "name = \"rust\ndescription = 1\n".to_owned(),
+            breakage: &["does not parse"],
+            advice: &[],
+            remedy: &[],
+        },
+        Row {
+            harness: HarnessId::Codex,
+            name: "rust",
+            text: "name = \"\"\nother = \"x\"\n".to_owned(),
+            breakage: &["`name`", "`description`", "`developer_instructions`"],
+            advice: &[],
+            remedy: &[],
+        },
+        Row {
+            harness: HarnessId::Codex,
+            name: "rust",
+            text: CODEX_AGENT.replace("workspace-write", "yolo"),
+            breakage: &["not a sandbox Codex knows"],
+            advice: &[],
+            remedy: &["danger-full-access"],
+        },
+        Row {
+            harness: HarnessId::Opencode,
+            name: "rust",
+            text: OPENCODE_AGENT.replace("mode: subagent", "mode: helper"),
+            breakage: &["`mode: helper`"],
+            advice: &[],
+            remedy: &[],
+        },
+        Row {
+            harness: HarnessId::Opencode,
+            name: "rust",
+            text: OPENCODE_AGENT.replace("bash: deny", "bash: maybe"),
+            breakage: &["permission `bash`"],
+            advice: &[],
+            remedy: &["allow, ask, deny"],
+        },
+        Row {
+            harness: HarnessId::Opencode,
+            name: "rust",
+            text: "no frontmatter here\n".to_owned(),
+            breakage: &["there is none"],
+            advice: &[],
+            remedy: &[],
+        },
+        Row {
+            harness: HarnessId::Opencode,
+            name: "rust",
+            text: OPENCODE_AGENT.replace("anthropic/claude", "opus"),
+            breakage: &["provider/model"],
+            advice: &[],
+            remedy: &[],
+        },
+        Row {
+            harness: HarnessId::Claude,
+            name: "rust",
+            text: CLAUDE_AGENT.replace("name: rust", "name: rustacean"),
+            breakage: &["calls itself `rustacean`"],
+            advice: &[],
+            remedy: &["`rustacean`"],
+        },
+        Row {
+            harness: HarnessId::Claude,
+            name: "rust",
+            text: CLAUDE_AGENT.replace("name: rust\n", ""),
+            breakage: &["has no name"],
+            advice: &[],
+            remedy: &[],
+        },
+        Row {
+            harness: HarnessId::Cursor,
+            name: "rust",
+            text: CURSOR_RULE.replace("alwaysApply: false", "agentRequested: true\nmode: auto"),
+            breakage: &[],
+            advice: &["`agentRequested:`", "`mode:`"],
+            remedy: &[],
+        },
+        Row {
+            harness: HarnessId::Opencode,
+            name: "My_Skill",
+            text: OPENCODE_AGENT.to_owned(),
+            breakage: &["will not load `My_Skill`"],
+            advice: &[],
+            remedy: &["`my-skill`"],
+        },
+        Row {
+            harness: HarnessId::Opencode,
+            name: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            text: OPENCODE_AGENT.to_owned(),
+            breakage: &["65 characters"],
+            advice: &[],
+            remedy: &[],
+        },
+        Row {
+            harness: HarnessId::Opencode,
+            name: "code-review-2",
+            text: OPENCODE_AGENT.to_owned(),
+            breakage: &[],
+            advice: &[],
+            remedy: &[],
+        },
+    ];
+    for row in rows {
+        let label = format!("{} {}", row.harness.name(), row.name);
+        let findings = validate_agent(row.harness, row.name, &row.text);
+        let (breakage, advice): (Vec<_>, Vec<_>) =
+            findings.iter().partition(|finding| finding.is_breakage());
+        assert_eq!(breakage.len(), row.breakage.len(), "{label}: {findings:?}");
+        for (finding, fragment) in breakage.iter().zip(row.breakage) {
+            assert!(finding.message.contains(fragment), "{label}: {finding:?}");
+        }
+        assert_eq!(advice.len(), row.advice.len(), "{label}: {findings:?}");
+        for (finding, fragment) in advice.iter().zip(row.advice) {
+            assert!(finding.message.contains(fragment), "{label}: {finding:?}");
+        }
+        let remedies: Vec<&str> = findings.iter().map(|f| f.remediation.as_str()).collect();
+        for value in row.remedy {
+            assert!(
+                remedies.iter().any(|r| r.contains(value)),
+                "{label}: {remedies:?}"
+            );
+        }
+    }
 }
 
 /// One control per harness with an effort key: a level outside the
@@ -169,7 +282,12 @@ fn an_effort_level_the_harness_does_not_accept_is_refused() {
             harness.name(),
             spoken(&refused)
         );
-        assert!(spoken(&refused).contains(bad), "{}", harness.name());
+        assert!(
+            said(&refused, bad),
+            "{}: {}",
+            harness.name(),
+            spoken(&refused)
+        );
     }
 }
 
@@ -227,52 +345,6 @@ fn a_model_of_the_wrong_shape_for_the_harness_is_refused() {
 }
 
 #[test]
-fn claude_agents_must_answer_to_the_name_they_install_under() {
-    let findings = validate_agent(HarnessId::Claude, "rust", CLAUDE_AGENT);
-    assert!(findings.is_empty());
-
-    let text = CLAUDE_AGENT.replace("name: rust", "name: rustacean");
-    let findings = validate_agent(HarnessId::Claude, "rust", &text);
-    let said = spoken(&findings);
-    assert_eq!(blocking(&findings).len(), 1, "{said}");
-    assert!(said.contains("calls itself `rustacean`"), "{said}");
-    assert!(said.contains("declare the agent as `rustacean`"), "{said}");
-
-    let text = CLAUDE_AGENT.replace("name: rust\n", "");
-    let findings = validate_agent(HarnessId::Claude, "rust", &text);
-    assert_eq!(blocking(&findings).len(), 1);
-    assert!(spoken(&findings).contains("has no name"), "{findings:?}");
-}
-
-#[test]
-fn cursor_rule_keys_outside_the_three_are_folklore() {
-    let text = CURSOR_RULE.replace("alwaysApply: false", "agentRequested: true\nmode: auto");
-    let findings = validate_agent(HarnessId::Cursor, "rust", &text);
-    assert!(blocking(&findings).is_empty(), "{findings:?}");
-    let said = spoken(&findings);
-    assert!(said.contains("`agentRequested:`"), "{said}");
-    assert!(said.contains("`mode:`"), "{said}");
-    assert!(said.contains("folklore"), "{said}");
-}
-
-#[test]
-fn opencode_names_must_be_lowercase_kebab_and_the_fix_spells_one() {
-    let findings = validate_agent(HarnessId::Opencode, "My_Skill", OPENCODE_AGENT);
-    let said = spoken(&findings);
-    assert_eq!(blocking(&findings).len(), 1, "{said}");
-    assert!(said.contains("will not load `My_Skill`"), "{said}");
-    assert!(said.contains("declare it as `my-skill`"), "{said}");
-
-    let long = "a".repeat(65);
-    let findings = validate_agent(HarnessId::Opencode, &long, OPENCODE_AGENT);
-    let said = spoken(&findings);
-    assert_eq!(blocking(&findings).len(), 1, "{said}");
-    assert!(said.contains("65 characters"), "{said}");
-
-    assert!(validate_agent(HarnessId::Opencode, "code-review-2", OPENCODE_AGENT).is_empty());
-}
-
-#[test]
 fn other_harnesses_refuse_names_that_leave_their_own_directory() {
     let legal = validate_agent(
         HarnessId::Claude,
@@ -289,7 +361,7 @@ fn other_harnesses_refuse_names_that_leave_their_own_directory() {
             &skill_tree(&format!("---\nname: {name}\ndescription: d\n---\n")),
         );
         assert!(
-            spoken(&findings).contains("points out of the directory"),
+            said(&findings, "points out of the directory"),
             "{name}: {findings:?}"
         );
     }
@@ -299,7 +371,7 @@ fn other_harnesses_refuse_names_that_leave_their_own_directory() {
 fn a_skill_tree_must_carry_a_skill_md_that_names_its_own_directory() {
     let missing = validate_skill_tree(HarnessId::Claude, "gh", "gh", &[]);
     assert_eq!(blocking(&missing).len(), 1);
-    assert!(spoken(&missing).contains("no SKILL.md"), "{missing:?}");
+    assert!(said(&missing, "no SKILL.md"), "{missing:?}");
 
     let mismatch = validate_skill_tree(
         HarnessId::Claude,
@@ -307,10 +379,9 @@ fn a_skill_tree_must_carry_a_skill_md_that_names_its_own_directory() {
         "gh",
         &skill_tree("---\nname: github\ndescription: d\n---\n"),
     );
-    let said = spoken(&mismatch);
-    assert_eq!(blocking(&mismatch).len(), 1, "{said}");
-    assert!(said.contains("calls the skill `github`"), "{said}");
-    assert!(said.contains("set `name: gh`"), "{said}");
+    assert_eq!(blocking(&mismatch).len(), 1, "{mismatch:?}");
+    assert!(said(&mismatch, "calls the skill `github`"), "{mismatch:?}");
+    assert!(fixed(&mismatch, "`name: gh`"), "{mismatch:?}");
 
     // An item that carries its plugin installs under a name no catalog file
     // knows and no declaration can spell, so the fix has to be about the
@@ -321,9 +392,8 @@ fn a_skill_tree_must_carry_a_skill_md_that_names_its_own_directory() {
         "data-science__eda",
         &skill_tree("---\nname: eda\ndescription: d\n---\n"),
     );
-    let said = spoken(&derived);
-    assert!(!said.contains("declare the skill as"), "{said}");
-    assert!(said.contains("frontmatter"), "{said}");
+    assert!(!fixed(&derived, "declare the skill as"), "{derived:?}");
+    assert!(fixed(&derived, "frontmatter"), "{derived:?}");
 
     let no_description = validate_skill_tree(
         HarnessId::Claude,
@@ -332,7 +402,10 @@ fn a_skill_tree_must_carry_a_skill_md_that_names_its_own_directory() {
         &skill_tree("---\nname: gh\n---\nBody.\n"),
     );
     assert!(blocking(&no_description).is_empty(), "{no_description:?}");
-    assert!(spoken(&no_description).contains("no description"));
+    assert!(
+        said(&no_description, "no description"),
+        "{no_description:?}"
+    );
 
     // A disabled tree parks the same content under `.disabled`.
     let disabled = vec![(
@@ -350,13 +423,12 @@ fn a_skill_whose_description_runs_past_codexs_limit_is_refused_there_and_install
     );
     let files = skill_tree(&body);
     let codex = validate_skill_tree(HarnessId::Codex, "gh", "gh", &files);
-    let said = spoken(&codex);
-    assert_eq!(blocking(&codex).len(), 1, "{said}");
+    assert_eq!(blocking(&codex).len(), 1, "{codex:?}");
     assert!(
-        said.contains("`gh`'s description is 1025 characters"),
-        "{said}"
+        said(&codex, "`gh`'s description is 1025 characters"),
+        "{codex:?}"
     );
-    assert!(said.contains("past 1024"), "{said}");
+    assert!(said(&codex, "past 1024"), "{codex:?}");
     assert!(validate_skill_tree(HarnessId::Claude, "gh", "gh", &files).is_empty());
 
     // Exactly at the limit is fine, and the body's length is nobody's

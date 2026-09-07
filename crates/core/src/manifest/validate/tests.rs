@@ -57,315 +57,115 @@ matcher = "Bash"
     }
 }
 
-/// The one schema this build reads. Anything else — an older number, a
-/// newer one, no number at all — is the same finding, so the editor
-/// rejects exactly what a file read does.
+/// One row per manifest, and every finding it gets as (location, problem)
+/// in order, so a row pins what was found, where, and that nothing else
+/// was. The location discriminates a finding; the fix beside it is
+/// authoring guidance, so every row asserts each finding carries one and
+/// none pins its wording. Only the current schema validates: an
+/// older number, a newer one, and no number at all are one finding, so
+/// the editor rejects exactly what a file read does. A known override key
+/// under a harness that never renders it is a setting the author believes
+/// is in force and is not. A plugin segment is only a name for the kinds
+/// a marketplace catalog offers: a hook, a server or a Pi extension named
+/// with a `/` would install into a directory nothing ever cleans up, so it
+/// is refused where it is written. A revision belongs to a repository, and
+/// a key nobody reads is a typo the user should hear about rather than a
+/// setting that quietly does nothing. An event no harness fires is a hook
+/// that would install cleanly and then never run — nothing downstream
+/// reads the name, so this is the only place it can be caught. A custom
+/// hook's identity and parity fields are each checked, and the clean one
+/// beside them gets nothing. The safety-decision tables schema 6 retired
+/// are stray keys like any other; an older file carrying them never
+/// reaches here, since the schema below current is refused at the read.
 #[test]
-fn only_the_current_schema_validates() {
-    let body = "[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n";
-    let located = |text: &str| -> Vec<String> {
-        validate(&parse(text))
-            .iter()
-            .map(|f| f.location.clone())
-            .collect()
-    };
-    assert_eq!(
-        located(&format!("schema = 6\n{body}")),
-        Vec::<String>::new()
-    );
-    assert_eq!(located(&format!("schema = 5\n{body}")), ["schema"]);
-    assert_eq!(located(&format!("schema = 7\n{body}")), ["schema"]);
-    assert_eq!(located(body), ["schema"]);
-}
-
-/// A known override key under a harness that never renders it is a
-/// setting the author believes is in force and is not.
-#[test]
-fn an_override_a_harness_never_renders_is_a_finding() {
-    let table = parse(
-        r#"schema = 6
-[agent-frontmatter.gemini.rust]
-effort = "high"
-model = "inherit"
-[agent-frontmatter.claude.rust]
-effort = "high"
-[agent-frontmatter.cursor.rust]
-color = "red"
-[agent-frontmatter.antigravity.rust]
-effort = "high"
-model = "opus"
-"#,
-    );
-    let findings = validate(&table);
-    let locations: Vec<_> = findings.iter().map(|f| f.location.as_str()).collect();
-    assert!(
-        locations.contains(&"agent-frontmatter.gemini.rust.effort"),
-        "{locations:?}"
-    );
-    assert!(
-        locations.contains(&"agent-frontmatter.cursor.rust.color"),
-        "{locations:?}"
-    );
-    assert!(
-        !locations.contains(&"agent-frontmatter.gemini.rust.model"),
-        "{locations:?}"
-    );
-    assert!(
-        !locations.contains(&"agent-frontmatter.claude.rust.effort"),
-        "{locations:?}"
-    );
-    assert!(
-        locations.contains(&"agent-frontmatter.antigravity.rust.effort"),
-        "{locations:?}"
-    );
-    assert!(
-        !locations.contains(&"agent-frontmatter.antigravity.rust.model"),
-        "{locations:?}"
-    );
-}
-
-#[test]
-fn a_clean_manifest_validates_empty() {
-    let table = parse(
-        r#"
-schema = 6
-[sources.kendex]
-repo = "vanillagreencom/kendex"
-[skills.github]
-source = "kendex"
-[agents.local-one]
-source = "local"
-[hooks.guard]
-source = "kendex"
-[mcp-servers.gh]
-source = "kendex"
-[plugins."fmt@main"]
-enabled = false
-harness = "copilot"
-"#,
-    );
-    assert_eq!(validate(&table), Vec::new());
-}
-
-/// A plugin segment is only a name for the kinds a marketplace catalog
-/// offers. A hook or a server named with a `/` would install into a
-/// directory nothing ever cleans up, so it is refused where it is written.
-#[test]
-fn only_the_kinds_a_catalog_offers_may_carry_a_plugin_segment() {
-    let table = parse(
-        r#"
-schema = 6
-[sources.market]
-repo = "owner/market"
-[skills."tools/eda"]
-source = "market"
-[agents."tools/reviewer"]
-source = "market"
-[commands."tools/report"]
-source = "market"
-[pi-extensions."@scope/pkg"]
-source = "market"
-"#,
-    );
-    assert_eq!(validate(&table), Vec::new());
-
-    let table = parse(
-        r#"
-schema = 6
-[sources.market]
-repo = "owner/market"
-[hooks."tools/guard"]
-source = "market"
-[mcp-servers."tools/gh"]
-source = "market"
-[pi-extensions."tools/ext"]
-source = "market"
-"#,
-    );
-    let findings = validate(&table);
-    let located: Vec<&str> = findings.iter().map(|f| f.location.as_str()).collect();
-    for location in [
-        "hooks.tools/guard",
-        "mcp-servers.tools/gh",
-        "pi-extensions.tools/ext",
-    ] {
-        assert!(located.contains(&location), "{located:?}");
+#[allow(clippy::too_many_lines)]
+fn every_manifest_defect_is_located_with_nothing_else_said() {
+    let kendex = "[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n";
+    let schema = ("schema", "missing or unsupported schema version");
+    let rows: Vec<(String, Vec<(&str, &str)>)> = vec![
+        (format!("schema = 6\n{kendex}"), vec![]),
+        (format!("schema = 5\n{kendex}"), vec![schema]),
+        (format!("schema = 7\n{kendex}"), vec![schema]),
+        (kendex.to_owned(), vec![schema]),
+        (
+            "schema = 6\n[agent-frontmatter.gemini.rust]\neffort = \"high\"\nmodel = \"inherit\"\n[agent-frontmatter.claude.rust]\neffort = \"high\"\n[agent-frontmatter.cursor.rust]\ncolor = \"red\"\n[agent-frontmatter.antigravity.rust]\neffort = \"high\"\nmodel = \"opus\"\n".to_owned(),
+            vec![
+                ("agent-frontmatter.antigravity.rust.effort", "antigravity renders no `effort`, so this override changes nothing"),
+                ("agent-frontmatter.cursor.rust.color", "cursor renders no `color`, so this override changes nothing"),
+                ("agent-frontmatter.gemini.rust.effort", "gemini renders no `effort`, so this override changes nothing"),
+            ],
+        ),
+        (
+            "schema = 6\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n[skills.github]\nsource = \"kendex\"\n[agents.local-one]\nsource = \"local\"\n[hooks.guard]\nsource = \"kendex\"\n[mcp-servers.gh]\nsource = \"kendex\"\n[plugins.\"fmt@main\"]\nenabled = false\nharness = \"copilot\"\n".to_owned(),
+            vec![],
+        ),
+        (
+            "schema = 6\n[sources.market]\nrepo = \"owner/market\"\n[skills.\"tools/eda\"]\nsource = \"market\"\n[agents.\"tools/reviewer\"]\nsource = \"market\"\n[commands.\"tools/report\"]\nsource = \"market\"\n[pi-extensions.\"@scope/pkg\"]\nsource = \"market\"\n".to_owned(),
+            vec![],
+        ),
+        (
+            "schema = 6\n[sources.market]\nrepo = \"owner/market\"\n[hooks.\"tools/guard\"]\nsource = \"market\"\n[mcp-servers.\"tools/gh\"]\nsource = \"market\"\n[pi-extensions.\"tools/ext\"]\nsource = \"market\"\n".to_owned(),
+            vec![
+                ("hooks.tools/guard", "`tools/guard` holds `/`, which no filename may"),
+                ("mcp-servers.tools/gh", "`tools/gh` holds `/`, which no filename may"),
+                ("pi-extensions.tools/ext", "`tools/ext` holds `/`, which no filename may"),
+            ],
+        ),
+        (
+            "schema = 6\n[sources.pinned]\nrepo = \"owner/repo\"\nrev = \"v1.2.0\"\n".to_owned(),
+            vec![],
+        ),
+        (
+            "schema = 6\n[sources.local-path]\npath = \"../catalog\"\nrev = \"v1.2.0\"\n[sources.typo]\nrepo = \"owner/repo\"\nrevision = \"v1\"\n[sources.wrong-type]\nrepo = \"owner/repo\"\nrev = 12\n".to_owned(),
+            vec![
+                ("sources.local-path", "only a repo has revisions"),
+                ("sources.typo", "unknown key 'revision'"),
+                ("sources.wrong-type", "rev must be a string"),
+            ],
+        ),
+        (
+            "schema = 6\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\n[[custom-hooks]]\nevent = \"PreToolUSe\"\ncommand = \"./guard.sh\"\n".to_owned(),
+            vec![("custom-hooks[1].event", "no harness fires 'PreToolUSe'")],
+        ),
+        (
+            "schema = 6\n[hooks.guard]\nsource = \"local\"\n[[custom-hooks]]\nname = \"guard\"\nevent = \"PreToolUse\"\ncommand = \"./a.sh\"\n[[custom-hooks]]\nname = \"Bad Name\"\nevent = \"Stop\"\ncommand = \"./b.sh\"\ntimeout = 0\nharnesses = [\"claude\", \"emacs\"]\ntypo-key = 1\n[[custom-hooks]]\nname = \"twice\"\nevent = \"Stop\"\ncommand = \"./c.sh\"\n[[custom-hooks]]\nname = \"twice\"\nevent = \"Stop\"\ncommand = \"./d.sh\"\n".to_owned(),
+            vec![
+                ("custom-hooks[0].name", "'guard' is already an installed hook"),
+                ("custom-hooks[1]", "unknown key 'typo-key'"),
+                ("custom-hooks[1].name", "'Bad Name' is not a usable hook name"),
+                ("custom-hooks[1].timeout", "timeout must be whole seconds, 1 to 3600"),
+                ("custom-hooks[1].harnesses", "unknown harness 'emacs'"),
+                ("custom-hooks[3].name", "'twice' names two custom hooks"),
+            ],
+        ),
+        (
+            "schema = 6\n[[custom-hooks]]\nname = \"guard-pretooluse\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\ntimeout = 30\nharnesses = [\"claude\"]\nagents = \"all\"\n".to_owned(),
+            vec![],
+        ),
+        (
+            "schema = 6\n[sources.market]\nrepo = \"owner/market\"\n[skills.deploy]\nsource = \"market\"\n[safety-overrides.\"skill:deploy:claude\"]\nreview-hash = \"abc\"\n[safety-reviews.\"skill:deploy:claude\"]\nreview-hash = \"abc\"\n".to_owned(),
+            vec![
+                ("safety-overrides", "unknown table or key"),
+                ("safety-reviews", "unknown table or key"),
+            ],
+        ),
+    ];
+    for (manifest, expected) in rows {
+        let found = validate(&parse(&manifest));
+        assert!(
+            found.iter().all(|finding| !finding.fix.is_empty()),
+            "{manifest}: {found:?}"
+        );
+        let findings: Vec<(String, String)> = found
+            .into_iter()
+            .map(|finding| (finding.location, finding.problem))
+            .collect();
+        let expected: Vec<(String, String)> = expected
+            .into_iter()
+            .map(|(location, problem)| (location.to_owned(), problem.to_owned()))
+            .collect();
+        assert_eq!(findings, expected, "{manifest}");
     }
-    for finding in &findings {
-        assert!(finding.fix.contains("without a `/`"), "{finding}");
-    }
-}
-
-/// A revision belongs to a repository, and a key nobody reads is a typo
-/// the user should hear about rather than a setting that quietly does
-/// nothing.
-#[test]
-fn a_source_revision_is_a_string_on_a_repo_and_stray_keys_are_findings() {
-    let table = parse(
-        r#"
-schema = 6
-[sources.pinned]
-repo = "owner/repo"
-rev = "v1.2.0"
-"#,
-    );
-    assert_eq!(validate(&table), Vec::new());
-
-    let table = parse(
-        r#"
-schema = 6
-[sources.local-path]
-path = "../catalog"
-rev = "v1.2.0"
-[sources.typo]
-repo = "owner/repo"
-revision = "v1"
-[sources.wrong-type]
-repo = "owner/repo"
-rev = 12
-"#,
-    );
-    let findings = validate(&table);
-    let problems: Vec<&str> = findings.iter().map(|f| f.problem.as_str()).collect();
-    assert!(
-        problems.contains(&"only a repo has revisions"),
-        "{problems:?}"
-    );
-    assert!(problems.contains(&"unknown key 'revision'"), "{problems:?}");
-    assert!(problems.contains(&"rev must be a string"), "{problems:?}");
-    for finding in &findings {
-        assert!(finding.fix.contains("rev"), "{finding}");
-    }
-}
-
-/// An event no harness fires is a hook that would install cleanly and then
-/// never run — nothing downstream reads the name, so this is the only place
-/// it can be caught.
-#[test]
-fn a_custom_hook_event_must_be_one_a_harness_fires() {
-    let table: toml::Table = r#"
-schema = 1
-[[custom-hooks]]
-event = "PreToolUse"
-command = "./guard.sh"
-[[custom-hooks]]
-event = "PreToolUSe"
-command = "./guard.sh"
-"#
-    .parse()
-    .unwrap();
-
-    let findings = validate(&table);
-    let event = findings
-        .iter()
-        .find(|f| f.location == "custom-hooks[1].event")
-        .expect("the typo should be reported");
-    assert!(event.problem.contains("PreToolUSe"), "{event:?}");
-    assert!(event.fix.contains("PreToolUse"), "{event:?}");
-    assert!(
-        !findings
-            .iter()
-            .any(|f| f.location.starts_with("custom-hooks[0]")),
-        "{findings:?}"
-    );
-}
-
-#[test]
-fn custom_hook_identity_and_parity_fields_are_checked() {
-    let table: toml::Table = r#"
-schema = 1
-[hooks.guard]
-source = "local"
-[[custom-hooks]]
-name = "guard"
-event = "PreToolUse"
-command = "./a.sh"
-[[custom-hooks]]
-name = "Bad Name"
-event = "Stop"
-command = "./b.sh"
-timeout = 0
-harnesses = ["claude", "emacs"]
-typo-key = 1
-[[custom-hooks]]
-name = "twice"
-event = "Stop"
-command = "./c.sh"
-[[custom-hooks]]
-name = "twice"
-event = "Stop"
-command = "./d.sh"
-"#
-    .parse()
-    .unwrap();
-
-    let findings = validate(&table);
-    let at = |loc: &str| {
-        findings
-            .iter()
-            .find(|f| f.location == loc)
-            .unwrap_or_else(|| panic!("expected a finding at {loc}: {findings:?}"))
-    };
-    assert!(
-        at("custom-hooks[0].name")
-            .problem
-            .contains("installed hook")
-    );
-    assert!(at("custom-hooks[1].name").problem.contains("Bad Name"));
-    assert!(at("custom-hooks[1].timeout").problem.contains("1 to 3600"));
-    assert!(at("custom-hooks[1].harnesses").problem.contains("emacs"));
-    assert!(at("custom-hooks[1]").problem.contains("typo-key"));
-    assert!(at("custom-hooks[3].name").problem.contains("names two"));
-    assert!(
-        !findings
-            .iter()
-            .any(|f| f.location.starts_with("custom-hooks[2]")),
-        "{findings:?}"
-    );
-}
-
-#[test]
-fn a_clean_named_custom_hook_validates_empty() {
-    let table: toml::Table = r#"
-schema = 6
-[[custom-hooks]]
-name = "guard-pretooluse"
-event = "PreToolUse"
-matcher = "Bash"
-command = "./guard.sh"
-timeout = 30
-harnesses = ["claude"]
-agents = "all"
-"#
-    .parse()
-    .unwrap();
-    assert_eq!(validate(&table), Vec::new());
-}
-
-/// The safety-decision tables schema 6 retired are stray keys like any
-/// other: a record put back by hand is named with the remove-it fix, never
-/// dropped in silence. An older file carrying them never reaches here —
-/// the schema below current is refused at the read.
-#[test]
-fn retired_safety_tables_are_stray_keys_on_a_current_file() {
-    let body = r#"
-[sources.market]
-repo = "owner/market"
-[skills.deploy]
-source = "market"
-[safety-overrides."skill:deploy:claude"]
-review-hash = "abc"
-[safety-reviews."skill:deploy:claude"]
-review-hash = "abc"
-"#;
-    let findings = validate(&parse(&format!("schema = 6\n{body}")));
-    let located: Vec<&str> = findings.iter().map(|f| f.location.as_str()).collect();
-    assert_eq!(
-        located,
-        ["safety-overrides", "safety-reviews"],
-        "{findings:?}"
-    );
-    assert!(findings.iter().all(|f| f.fix.starts_with("remove it")));
 }
 
 /// Every part of a finding is escaped, because the refusal that carries

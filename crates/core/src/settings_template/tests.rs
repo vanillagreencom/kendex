@@ -41,36 +41,6 @@ fn a_file_that_does_not_parse_is_one_finding() {
 }
 
 #[test]
-fn an_assignment_outside_env_is_located() {
-    let found = located("# Why.\nDEPTH = \"2\"\n\n[env]\n# Why.\nOTHER = \"1\"\n");
-    assert_eq!(found, [(2, "DEPTH is assigned outside [env]".to_owned())]);
-}
-
-#[test]
-fn a_second_env_header_is_located() {
-    let found = located("[env]\n# Why.\nA = \"1\"\n\n[env]\n# Why.\nB = \"2\"\n");
-    assert_eq!(
-        found,
-        [(
-            5,
-            "a second [env] header; the first is on line 1".to_owned()
-        )]
-    );
-}
-
-#[test]
-fn a_key_with_no_comment_block_is_located() {
-    let found = located("[env]\n# Why.\nA = \"1\"\n\nB = \"2\"\n");
-    assert_eq!(found, [(5, "B has no comment block above it".to_owned())]);
-}
-
-#[test]
-fn a_blank_line_cuts_a_comment_off_its_key() {
-    let found = located("[env]\n# Why.\n\nA = \"1\"\n");
-    assert_eq!(found, [(4, "A has no comment block above it".to_owned())]);
-}
-
-#[test]
 fn a_value_that_is_not_a_plain_quoted_string_is_located() {
     let refused = [
         "[env]\n# Why.\nA = 2\n",
@@ -90,20 +60,6 @@ fn a_value_that_is_not_a_plain_quoted_string_is_located() {
             "{text:?}"
         );
     }
-}
-
-#[test]
-fn a_duplicate_key_is_located() {
-    // Across tables: valid TOML, and exactly what seeding's file-wide
-    // presence check trips over.
-    let found = located("[other]\n# Why.\nA = \"1\"\n\n[env]\n# Why.\nA = \"2\"\n");
-    assert_eq!(
-        found,
-        [
-            (3, "A is assigned outside [env]".to_owned()),
-            (7, "A is assigned again; it is already on line 3".to_owned()),
-        ]
-    );
 }
 
 #[test]
@@ -354,18 +310,6 @@ fn a_template_with_no_env_table_is_located() {
 }
 
 #[test]
-fn a_header_shaped_wrong_is_not_also_reported_as_an_absent_table() {
-    let found = located("[env] # the table\n# How long to wait.\nWAIT = \"900\"\n");
-    assert_eq!(
-        found,
-        [(
-            1,
-            "this is not a table header the settings loaders read".to_owned()
-        )]
-    );
-}
-
-#[test]
 fn an_independent_toml_error_is_reported_beside_the_scan_finding() {
     // The value on line 3 is a shape the loaders refuse; line 5 is a
     // separate syntax error the scan reads past. Fixing one and coming
@@ -380,44 +324,100 @@ fn an_independent_toml_error_is_reported_beside_the_scan_finding() {
     );
 }
 
+/// One row per template defect the scan locates, and the whole finding
+/// list it reports: every finding's line and problem, in order, so a row
+/// pins both that the defect was found and that nothing else was said. A
+/// defect the parser also sees is reported once, by the scan, which names
+/// the key where the parser would only say "duplicate key": a key
+/// assigned again, a second `[env]` header, a value that is not a
+/// readable string, and a header shaped wrong, which is not also reported
+/// as an absent table. An assignment outside `[env]` and a duplicate
+/// across tables (valid TOML, and exactly what seeding's file-wide
+/// presence check trips over) are each located. A key needs a comment
+/// block above it, and a blank line cuts a comment off its key. Both
+/// defects on one line are both reported: being told about one, fixing
+/// it, and only then hearing about the other is the round trip every
+/// both-defects rule here exists to prevent, and deleting the first
+/// `WAIT` to be told the second was never a readable value is the same
+/// trip.
 #[test]
-fn one_defect_the_parser_also_sees_is_reported_once() {
-    // Every shape where the scan and the parser land on the same line: the
-    // scan names the key, the parser would only say "duplicate key".
-    for text in [
-        "[env]\n# Why.\nWAIT = \"900\"\n# Again.\nWAIT = \"600\"\n",
-        "[env]\n# Why.\nA = \"1\"\n\n[env]\n# Why.\nB = \"2\"\n",
-        "[env]\n# A path.\nWAIT = \"base\".tsv\n",
-        "[env][env]\n# Why.\nWAIT = \"900\"\n",
-    ] {
-        let found = located(text);
-        assert_eq!(found.len(), 1, "{text:?} -> {found:?}");
-        assert!(
-            !found[0].1.starts_with("this is not valid TOML:"),
-            "{text:?} -> {found:?}"
-        );
+fn every_template_defect_is_located_with_nothing_else_said() {
+    let not_a_string = |key: &str| {
+        format!("{key}'s default is not a one-line double-quoted string free of \" and \\")
+    };
+    let rows: [(&str, Vec<(u32, String)>); 11] = [
+        (
+            "# Why.\nDEPTH = \"2\"\n\n[env]\n# Why.\nOTHER = \"1\"\n",
+            vec![(2, "DEPTH is assigned outside [env]".to_owned())],
+        ),
+        (
+            "[env]\n# Why.\nA = \"1\"\n\n[env]\n# Why.\nB = \"2\"\n",
+            vec![(
+                5,
+                "a second [env] header; the first is on line 1".to_owned(),
+            )],
+        ),
+        (
+            "[env]\n# Why.\nA = \"1\"\n\nB = \"2\"\n",
+            vec![(5, "B has no comment block above it".to_owned())],
+        ),
+        (
+            "[env]\n# Why.\n\nA = \"1\"\n",
+            vec![(4, "A has no comment block above it".to_owned())],
+        ),
+        (
+            "[other]\n# Why.\nA = \"1\"\n\n[env]\n# Why.\nA = \"2\"\n",
+            vec![
+                (3, "A is assigned outside [env]".to_owned()),
+                (7, "A is assigned again; it is already on line 3".to_owned()),
+            ],
+        ),
+        (
+            "[env] # the table\n# How long to wait.\nWAIT = \"900\"\n",
+            vec![(
+                1,
+                "this is not a table header the settings loaders read".to_owned(),
+            )],
+        ),
+        (
+            "[env][env]\n# Why.\nWAIT = \"900\"\n",
+            vec![(
+                1,
+                "this is not a table header the settings loaders read".to_owned(),
+            )],
+        ),
+        (
+            "[env]\n# Why.\nWAIT = \"900\"\n# Again.\nWAIT = \"600\"\n",
+            vec![(
+                5,
+                "WAIT is assigned again; it is already on line 3".to_owned(),
+            )],
+        ),
+        (
+            "[env]\n# A path.\nWAIT = \"base\".tsv\n",
+            vec![(3, not_a_string("WAIT"))],
+        ),
+        (
+            "[env]\n# Why.\nWAIT = \"900\"\n# Again.\nWAIT = 900\n",
+            vec![
+                (
+                    5,
+                    "WAIT is assigned again; it is already on line 3".to_owned(),
+                ),
+                (5, not_a_string("WAIT")),
+            ],
+        ),
+        (
+            "[env]\n# Why.\nA = \"1\"\nB = 2\n",
+            vec![
+                (4, "B has no comment block above it".to_owned()),
+                (4, not_a_string("B")),
+            ],
+        ),
+    ];
+    for (text, findings) in rows {
+        assert_eq!(located(text), findings, "{text:?}");
     }
-}
-
-#[test]
-fn a_duplicate_does_not_hide_the_rest_of_its_own_line() {
-    // Deleting the first WAIT and re-running to be told the second was
-    // never a readable value is a round trip the author should not make.
-    let found = located("[env]\n# Why.\nWAIT = \"900\"\n# Again.\nWAIT = 900\n");
-    assert_eq!(
-        found,
-        [
-            (
-                5,
-                "WAIT is assigned again; it is already on line 3".to_owned()
-            ),
-            (
-                5,
-                "WAIT's default is not a one-line double-quoted string free of \" and \\"
-                    .to_owned()
-            ),
-        ]
-    );
 }
 
 #[test]
@@ -427,24 +427,6 @@ fn a_duplicate_that_is_otherwise_fine_is_one_finding_and_no_row() {
     // The first assignment is the row; the second is a line to delete.
     assert_eq!(read.entries.len(), 1);
     assert_eq!(read.entries[0].value, "900");
-}
-
-#[test]
-fn one_assignment_wrong_two_ways_is_two_findings() {
-    // No comment block AND a value the loaders refuse. Being told about
-    // one, fixing it, and only then hearing about the other is the round
-    // trip every both-defects rule here exists to prevent.
-    let found = located("[env]\n# Why.\nA = \"1\"\nB = 2\n");
-    assert_eq!(
-        found,
-        [
-            (4, "B has no comment block above it".to_owned()),
-            (
-                4,
-                "B's default is not a one-line double-quoted string free of \" and \\".to_owned()
-            ),
-        ]
-    );
 }
 
 #[test]

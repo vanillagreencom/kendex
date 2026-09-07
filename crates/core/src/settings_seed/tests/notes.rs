@@ -22,145 +22,171 @@ fn conflict_notes_all(entries: &[SeededEnv]) -> Vec<String> {
     conflict_notes(entries, &super::nothing(entries), &super::all(entries))
 }
 
-#[test]
-fn one_note_groups_every_owner_and_every_distinct_default() {
-    let notes = conflict_notes_all(&shipped(&[
-        ("alpha", "[env]\n# Wait.\nWAIT = \"900\"\n"),
-        ("beta", "[env]\n# Wait.\nWAIT = \"900\"\n"),
-        ("gamma", "[env]\n# Wait.\nWAIT = \"600\"\n"),
-    ]));
-    assert_eq!(
-        notes,
-        [
-            "kendex.settings.toml WAIT: packages ship different defaults — \"900\" (alpha, beta), \"600\" (gamma) — alpha's is the one written, so set the value yourself if that is not the one you want"
-        ]
-    );
+/// The one conflict note a key gets, whole: the defaults grouped by the
+/// owners shipping each, and the owner whose value is written.
+fn disagreement(key: &str, defaults: &str, written: &str) -> String {
+    format!(
+        "kendex.settings.toml {key}: packages ship different defaults — {defaults} — {written}'s is the one written, so set the value yourself if that is not the one you want"
+    )
 }
 
+/// One row per set of templates sharing a key, and the conflict notes
+/// they get. One note groups every owner and every distinct default, and
+/// names the owner whose value merge actually seeds: alpha's default
+/// carrying a trailing comment, which the loaders read and a stricter
+/// decoder once threw away — dropping alpha from the note and naming beta
+/// as the package whose value lands. A default no decoder reads still
+/// names its owner. Packages agreeing on a shared key, a key only one
+/// package ships, and a trailing comment on the same value say nothing.
+/// Two packages shipping one key with different multiline values do
+/// disagree, and shown from the `=` line alone both read as a bare `"""`
+/// and would group as agreeing, so each value is shown whole on the one
+/// line; two defaults that differ only in what the display collapses (the
+/// display joins a value's lines with a space, so `a\nb` and `a b` render
+/// alike) are still two defaults; and two shipping the same multiline
+/// value still say nothing. Catalog text reaches a note escaped.
 #[test]
-fn packages_agreeing_on_a_shared_key_say_nothing() {
-    let notes = conflict_notes_all(&shipped(&[
+#[allow(
+    clippy::too_many_lines,
+    reason = "one table: eleven template sets judged by one note builder, each row a set of its own"
+)]
+fn a_shared_key_gets_one_conflict_note_or_none() {
+    /// The owners and their templates, and the notes they get.
+    type Row = (Vec<(&'static str, String)>, Vec<String>);
+    let blob = |body: &str| format!("[env]\n# A blob.\nBLOB = \"\"\"\n{body}\n\"\"\"\n");
+    let rows: Vec<Row> = vec![
         (
-            "alpha",
-            "[env]\n# Mode.\nMODE = \"enforce\"\n# Wait.\nWAIT = \"900\"\n",
+            vec![
+                ("alpha", "[env]\n# Wait.\nWAIT = \"900\"\n".to_owned()),
+                ("beta", "[env]\n# Wait.\nWAIT = \"900\"\n".to_owned()),
+                ("gamma", "[env]\n# Wait.\nWAIT = \"600\"\n".to_owned()),
+            ],
+            vec![disagreement(
+                "WAIT",
+                "\"900\" (alpha, beta), \"600\" (gamma)",
+                "alpha",
+            )],
         ),
         (
-            "beta",
-            "[env]\n# Mode.\nMODE = \"enforce\"\n# Wait.\nWAIT = \"900\"\n",
+            vec![
+                (
+                    "alpha",
+                    "[env]\n# Mode.\nMODE = \"enforce\"\n# Wait.\nWAIT = \"900\"\n".to_owned(),
+                ),
+                (
+                    "beta",
+                    "[env]\n# Mode.\nMODE = \"enforce\"\n# Wait.\nWAIT = \"900\"\n".to_owned(),
+                ),
+            ],
+            vec![],
         ),
-    ]));
-    assert!(notes.is_empty(), "{notes:?}");
+        (
+            vec![
+                ("alpha", "[env]\n# Depth.\nDEPTH = \"2\"\n".to_owned()),
+                ("beta", "[env]\n# Width.\nWIDTH = \"3\"\n".to_owned()),
+            ],
+            vec![],
+        ),
+        (
+            vec![
+                (
+                    "alpha",
+                    "[env]\n# Wait.\nWAIT = \"900\" # seconds\n".to_owned(),
+                ),
+                ("beta", "[env]\n# Wait.\nWAIT = \"600\"\n".to_owned()),
+                ("gamma", "[env]\n# Wait.\nWAIT = \"300\"\n".to_owned()),
+            ],
+            vec![disagreement(
+                "WAIT",
+                "\"900\" (alpha), \"600\" (beta), \"300\" (gamma)",
+                "alpha",
+            )],
+        ),
+        (
+            vec![
+                ("alpha", "[env]\n# Wait.\nWAIT = 900\n".to_owned()),
+                ("beta", "[env]\n# Wait.\nWAIT = \"600\"\n".to_owned()),
+            ],
+            vec![disagreement("WAIT", "900 (alpha), \"600\" (beta)", "alpha")],
+        ),
+        (
+            vec![
+                ("alpha", "[env]\n# Wait.\nWAIT = \"900\"\n".to_owned()),
+                (
+                    "beta",
+                    "[env]\n# Wait.\nWAIT = \"900\" # seconds\n".to_owned(),
+                ),
+            ],
+            vec![],
+        ),
+        (
+            vec![
+                (
+                    "alpha",
+                    "[env]\n# Wait.\nWAIT = \"90\u{1b}[31m0\"\n".to_owned(),
+                ),
+                (
+                    "be\u{1b}[31mta",
+                    "[env]\n# Wait.\nWAIT = \"600\"\n".to_owned(),
+                ),
+            ],
+            vec![disagreement(
+                "WAIT",
+                "\"90\\u{1b}[31m0\" (alpha), \"600\" (be\\u{1b}[31mta)",
+                "alpha",
+            )],
+        ),
+        (
+            vec![("a", blob("from a")), ("b", blob("from b"))],
+            vec![disagreement(
+                "BLOB",
+                "\"\"\" from a \"\"\" (a), \"\"\" from b \"\"\" (b)",
+                "a",
+            )],
+        ),
+        (vec![("a", blob("same")), ("b", blob("same"))], vec![]),
+        (
+            vec![("split", blob("a\nb")), ("joined", blob("a b"))],
+            vec![disagreement(
+                "BLOB",
+                "\"\"\" a b \"\"\" (split), \"\"\" a b \"\"\" (joined)",
+                "split",
+            )],
+        ),
+        (vec![("one", blob("a\nb")), ("two", blob("a\nb"))], vec![]),
+    ];
+    for (owners, notes) in rows {
+        let entries: Vec<SeededEnv> = owners
+            .iter()
+            .flat_map(|(owner, template)| seeded(template, owner))
+            .collect();
+        assert_eq!(conflict_notes_all(&entries), notes, "{owners:?}");
+    }
 }
 
+/// The owner the note names is what merge writes: alpha's default, with
+/// its trailing comment, is the value that lands.
 #[test]
-fn a_key_only_one_package_ships_says_nothing() {
-    let notes = conflict_notes_all(&shipped(&[
-        ("alpha", "[env]\n# Depth.\nDEPTH = \"2\"\n"),
-        ("beta", "[env]\n# Width.\nWIDTH = \"3\"\n"),
-    ]));
-    assert!(notes.is_empty(), "{notes:?}");
-}
-
-#[test]
-fn the_note_names_the_owner_whose_value_merge_actually_seeds() {
-    // alpha's default carries a trailing comment, which the loaders read
-    // and a stricter decoder once threw away — dropping alpha from the note
-    // and naming beta as the package whose value lands.
+fn merge_writes_the_value_of_the_owner_the_note_names() {
     let entries = shipped(&[
         ("alpha", "[env]\n# Wait.\nWAIT = \"900\" # seconds\n"),
         ("beta", "[env]\n# Wait.\nWAIT = \"600\"\n"),
         ("gamma", "[env]\n# Wait.\nWAIT = \"300\"\n"),
     ]);
-    let notes = conflict_notes(&entries, &super::nothing(&entries), &super::all(&entries));
-    assert_eq!(
-        notes,
-        [
-            "kendex.settings.toml WAIT: packages ship different defaults — \"900\" (alpha), \"600\" (beta), \"300\" (gamma) — alpha's is the one written, so set the value yourself if that is not the one you want"
-        ]
-    );
-    // And alpha is what merge writes, which is what the note claims.
     let (merged, added) = merge(None, &entries, &super::all(&entries)).unwrap();
     assert_eq!(added, ["WAIT"]);
     assert!(merged.contains("WAIT = \"900\" # seconds"), "{merged}");
 }
 
+/// The display cannot tell `a\nb` from `a b`; the key the note groups on
+/// still must.
 #[test]
-fn a_default_no_decoder_reads_still_names_its_owner() {
-    let notes = conflict_notes_all(&shipped(&[
-        ("alpha", "[env]\n# Wait.\nWAIT = 900\n"),
-        ("beta", "[env]\n# Wait.\nWAIT = \"600\"\n"),
-    ]));
-    assert_eq!(
-        notes,
-        [
-            "kendex.settings.toml WAIT: packages ship different defaults — 900 (alpha), \"600\" (beta) — alpha's is the one written, so set the value yourself if that is not the one you want"
-        ]
-    );
-}
-
-#[test]
-fn a_trailing_comment_is_not_a_different_default() {
-    let notes = conflict_notes_all(&shipped(&[
-        ("alpha", "[env]\n# Wait.\nWAIT = \"900\"\n"),
-        ("beta", "[env]\n# Wait.\nWAIT = \"900\" # seconds\n"),
-    ]));
-    assert!(notes.is_empty(), "{notes:?}");
-}
-
-#[test]
-fn catalog_text_reaches_a_note_escaped() {
-    let notes = conflict_notes_all(&shipped(&[
-        ("alpha", "[env]\n# Wait.\nWAIT = \"90\u{1b}[31m0\"\n"),
-        ("be\u{1b}[31mta", "[env]\n# Wait.\nWAIT = \"600\"\n"),
-    ]));
-    assert_eq!(notes.len(), 1, "{notes:?}");
-    assert!(!notes[0].contains('\u{1b}'), "{notes:?}");
-    assert!(notes[0].contains("\\u{1b}[31m"), "{notes:?}");
-}
-
-/// Two packages shipping one key with different multiline values do
-/// disagree, and the note has to say so. Shown from the `=` line alone
-/// both read as a bare `"""` and the note would group them as agreeing.
-#[test]
-fn two_different_multiline_defaults_are_not_one_default() {
-    let template = |body: &str| format!("[env]\n# A blob.\nBLOB = \"\"\"\n{body}\n\"\"\"\n");
-    let mut shipped = seeded(&template("from a"), "a");
-    shipped.extend(seeded(&template("from b"), "b"));
-    let notes = conflict_notes_all(&shipped);
-    assert_eq!(notes.len(), 1, "{notes:?}");
-    // Each value shown whole on the one line, so the two read as the
-    // different defaults they are.
-    assert!(notes[0].contains("\"\"\" from a \"\"\" (a)"), "{notes:?}");
-    assert!(notes[0].contains("\"\"\" from b \"\"\" (b)"), "{notes:?}");
-
-    // And two shipping the SAME multiline value still say nothing.
-    let mut agreeing = seeded(&template("same"), "a");
-    agreeing.extend(seeded(&template("same"), "b"));
-    assert!(conflict_notes_all(&agreeing).is_empty());
-}
-/// Two defaults that differ only in what the display collapses are still
-/// two defaults. `default_shown` joins a value's lines with a space for
-/// reading, so a multiline holding `a\nb` and one holding `a b` render
-/// alike; grouped on that text the disagreement disappears, which is the
-/// one thing this note exists to catch.
-#[test]
-fn defaults_the_display_collapses_alike_are_still_a_disagreement() {
+fn the_display_collapses_what_the_default_key_keeps_apart() {
     let template = |body: &str| format!("[env]\n# A blob.\nBLOB = \"\"\"\n{body}\n\"\"\"\n");
     let mut shipped = seeded(&template("a\nb"), "split");
     shipped.extend(seeded(&template("a b"), "joined"));
-    // The display cannot tell them apart; the note still must.
     assert_eq!(shipped[0].default_shown(), shipped[1].default_shown());
     assert_ne!(shipped[0].default_key(), shipped[1].default_key());
-
-    let notes = conflict_notes_all(&shipped);
-    assert_eq!(notes.len(), 1, "{notes:?}");
-    assert!(notes[0].contains("(split)"), "{notes:?}");
-    assert!(notes[0].contains("(joined)"), "{notes:?}");
-
-    // Two that really are the same value still say nothing.
-    let mut agreeing = seeded(&template("a\nb"), "one");
-    agreeing.extend(seeded(&template("a\nb"), "two"));
-    assert!(conflict_notes_all(&agreeing).is_empty());
 }
 
 /// A marked key nothing answers, on the ordinary pass: nothing arriving,
@@ -225,7 +251,7 @@ fn the_pass_that_writes_the_key_is_silent_and_the_pass_that_does_not_names_it() 
 
 /// Owner names come from a catalog a download supplied, and the note is
 /// read on a terminal: what reaches it is escaped, the way
-/// `catalog_text_reaches_a_note_escaped` holds the conflict note.
+/// `a_shared_key_gets_one_conflict_note_or_none` holds the conflict note.
 #[test]
 fn catalog_text_reaches_an_unanswered_note_escaped() {
     let notes = unanswered_now(&shipped(&[(

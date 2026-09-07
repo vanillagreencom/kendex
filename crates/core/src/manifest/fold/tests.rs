@@ -193,7 +193,9 @@ fn an_unparsable_document_is_refused() {
 
 /// The tools an agent is denied, as somebody annotates them: a comment after
 /// each of two entries, on the lines those entries sit on.
-const DENIED: &str = "schema = 6\n\n[agent-frontmatter.claude.orch]\ndeny-tools = [\n  \"Bash\",   # no shells\n  \"Write\",   # no writing files\n  \"WebFetch\",\n]\n";
+/// A hand-written list: two values annotated, one not, one per line.
+const ANNOTATED: &str =
+    "[\n  \"Bash\",   # no shells\n  \"Write\",   # no writing files\n  \"WebFetch\",\n]";
 
 /// The tools' own list, with `deny-tools` reached through the model.
 #[allow(clippy::unwrap_used)]
@@ -207,59 +209,6 @@ fn denied(manifest: &mut Manifest) -> &mut Vec<String> {
         .deny_tools
         .as_mut()
         .unwrap()
-}
-
-/// A re-sorted array of VALUES moves each comment with the value it was
-/// written about. TOML keeps the run between one value and the next against
-/// the LOWER value, so an annotation is stored on the entry below the one it
-/// describes; rebuilding from raw decoration hands it to whatever lands in
-/// that slot, and every comment then states something false.
-///
-/// `Manifest::suppress` sorts on every removal and the desktop editor rewrites
-/// these lists wholesale, so this is an ordinary `kendex remove` away.
-#[test]
-fn a_re_sorted_array_of_values_keeps_each_comment_on_its_own_value() {
-    assert_eq!(
-        folding(DENIED, |manifest| denied(manifest).sort()),
-        "schema = 6\n\n[agent-frontmatter.claude.orch]\ndeny-tools = [\n  \"Bash\",   # no shells\n  \"WebFetch\",\n  \"Write\",   # no writing files\n]\n"
-    );
-}
-
-/// A dropped value takes its own comment and leaves every other comment on the
-/// value it was written about — including the entry above it, whose annotation
-/// is stored in the dropped entry's own decoration.
-#[test]
-fn a_dropped_value_takes_its_own_comment_and_no_other() {
-    assert_eq!(
-        folding(DENIED, |manifest| {
-            denied(manifest).remove(1);
-        }),
-        "schema = 6\n\n[agent-frontmatter.claude.orch]\ndeny-tools = [\n  \"Bash\",   # no shells\n  \"WebFetch\",\n]\n"
-    );
-}
-
-/// A gained value takes the shape the list is already in — the indent its
-/// neighbours use and a line of its own — rather than the serializer's, and a
-/// list nothing is left in closes on the bracket it opened on.
-#[test]
-fn a_gained_value_takes_the_shape_the_list_is_in() {
-    assert_eq!(
-        folding(DENIED, |manifest| denied(manifest).push("Edit".to_owned())),
-        DENIED.replace("\"WebFetch\",\n]", "\"WebFetch\",\n  \"Edit\",\n]")
-    );
-    assert_eq!(
-        folding(DENIED, |manifest| denied(manifest).clear()),
-        "schema = 6\n\n[agent-frontmatter.claude.orch]\ndeny-tools = []\n"
-    );
-    // Flat lists keep being flat, and a gained entry is separated once
-    // wherever it lands.
-    let flat =
-        "schema = 6\n\n[agent-frontmatter.claude.orch]\ndeny-tools = [\"Bash\", \"Write\"]\n";
-    assert_eq!(
-        folding(flat, |manifest| denied(manifest)
-            .insert(0, "Agent".to_owned())),
-        flat.replace("[\"Bash\"", "[\"Agent\", \"Bash\"")
-    );
 }
 
 /// Two hooks, each with its own comment and its own `note` — a key the model
@@ -327,34 +276,117 @@ fn deny(list: &str) -> String {
     format!("schema = 6\n\n[agent-frontmatter.claude.orch]\ndeny-tools = {list}\n")
 }
 
-/// A gained entry is placed against what is already there, in every shape a
-/// list can be in when it has nothing to place it against. An empty list has
-/// no entry to take an indent from, one whose first entry shares the opening
-/// line says nothing about the margin, and a list holding only a comment says
-/// it in the whitespace holding its bracket out.
+/// One row per edit of a value list: the list as written, the edit made
+/// through the model, and the list as it comes back — every other byte of
+/// the document untouched. A re-sorted array of VALUES moves each comment
+/// with the value it was written about: TOML keeps the run between one
+/// value and the next against the LOWER value, so an annotation is stored
+/// on the entry below the one it describes; rebuilt from raw decoration it
+/// would go to whatever lands in that slot, and every comment then states
+/// something false (`Manifest::suppress` sorts on every removal and the
+/// desktop editor rewrites these lists wholesale, so this is an ordinary
+/// `kendex remove` away). A dropped value takes its own comment and no
+/// other, including the entry above it, whose annotation is stored in the
+/// dropped entry's own decoration. A gained value takes the shape the list
+/// is already in — the indent its neighbours use and a line of its own —
+/// rather than the serializer's; placed against what is already there in
+/// every shape a list can be in when it has nothing to place it against
+/// (an empty list has no entry to take an indent from, one whose first
+/// entry shares the opening line says nothing about the margin, and a list
+/// holding only a comment says it in the whitespace holding its bracket
+/// out); and flat lists keep being flat, a gained entry separated once
+/// wherever it lands. The run before `]` belongs to the bracket: an entry
+/// promoted to last by a removal must not bring the separator that led to
+/// the neighbour after it. Emptying a list keeps what was written about
+/// the list, in both spellings of the closing run (which slot holds the
+/// bytes before `]` turns on a trailing comma), while the lines the
+/// entries stood on are theirs and go with them, which is why a list
+/// carrying nothing but whitespace between its brackets closes as `[]`.
 #[test]
-fn a_gained_value_is_placed_against_the_list_it_lands_in() {
-    let one = |list: &str, add: &[&str]| {
-        folding(&deny(list), |manifest| {
-            denied(manifest).extend(add.iter().map(|tool| (*tool).to_owned()));
-        })
-    };
-    assert_eq!(one("[]", &["Bash"]), deny("[\"Bash\"]"));
-    assert_eq!(one("[]", &["aaa", "zzz"]), deny("[\"aaa\", \"zzz\"]"));
-    assert_eq!(
-        one("[\n  # nothing yet\n]", &["Bash"]),
-        deny("[\n  \"Bash\"\n  # nothing yet\n]")
-    );
-    assert_eq!(
-        one("[\"Bash\",\n  \"Write\",\n]", &["Edit"]),
-        deny("[\"Bash\",\n  \"Write\",\n  \"Edit\",\n]")
-    );
-    assert_eq!(
-        folding(&deny("[\n  \"Bash\",\n  \"Write\",\n]"), |manifest| {
-            denied(manifest).insert(0, "Agent".to_owned());
-        }),
-        deny("[\n  \"Agent\",\n  \"Bash\",\n  \"Write\",\n]")
-    );
+#[allow(clippy::too_many_lines)]
+fn a_value_list_folds_each_edit_into_the_shape_it_was_written_in() {
+    type Edit = fn(&mut Vec<String>);
+    let rows: [(&str, Edit, &str); 16] = [
+        (
+            ANNOTATED,
+            |list| list.sort(),
+            "[\n  \"Bash\",   # no shells\n  \"WebFetch\",\n  \"Write\",   # no writing files\n]",
+        ),
+        (
+            ANNOTATED,
+            |list| {
+                list.remove(1);
+            },
+            "[\n  \"Bash\",   # no shells\n  \"WebFetch\",\n]",
+        ),
+        (
+            ANNOTATED,
+            |list| list.push("Edit".to_owned()),
+            "[\n  \"Bash\",   # no shells\n  \"Write\",   # no writing files\n  \"WebFetch\",\n  \"Edit\",\n]",
+        ),
+        (ANNOTATED, |list| list.clear(), "[]"),
+        (
+            "[\"Bash\", \"Write\"]",
+            |list| list.insert(0, "Agent".to_owned()),
+            "[\"Agent\", \"Bash\", \"Write\"]",
+        ),
+        ("[]", |list| list.push("Bash".to_owned()), "[\"Bash\"]"),
+        (
+            "[]",
+            |list| list.extend(["aaa".to_owned(), "zzz".to_owned()]),
+            "[\"aaa\", \"zzz\"]",
+        ),
+        (
+            "[\n  # nothing yet\n]",
+            |list| list.push("Bash".to_owned()),
+            "[\n  \"Bash\"\n  # nothing yet\n]",
+        ),
+        (
+            "[\"Bash\",\n  \"Write\",\n]",
+            |list| list.push("Edit".to_owned()),
+            "[\"Bash\",\n  \"Write\",\n  \"Edit\",\n]",
+        ),
+        (
+            "[\n  \"Bash\",\n  \"Write\",\n]",
+            |list| list.insert(0, "Agent".to_owned()),
+            "[\n  \"Agent\",\n  \"Bash\",\n  \"Write\",\n]",
+        ),
+        (
+            "[\"Bash\", \"Write\"]",
+            |list| {
+                list.pop();
+            },
+            "[\"Bash\"]",
+        ),
+        (
+            "[   # what we deny\n  \"Bash\",\n]",
+            |list| list.clear(),
+            "[   # what we deny\n]",
+        ),
+        (
+            "[   # what we deny\n  \"Bash\"\n]",
+            |list| list.clear(),
+            "[   # what we deny\n]",
+        ),
+        (
+            "[\n  \"Bash\",\n  # keep this\n]",
+            |list| list.clear(),
+            "[\n  # keep this\n]",
+        ),
+        (
+            "[\n  \"Bash\"\n  # keep this\n]",
+            |list| list.clear(),
+            "[\n  # keep this\n]",
+        ),
+        ("[\n  \"Bash\",\n]", |list| list.clear(), "[]"),
+    ];
+    for (current, edit, expected) in rows {
+        assert_eq!(
+            folding(&deny(current), |manifest| edit(denied(manifest))),
+            deny(expected),
+            "{current:?}"
+        );
+    }
 }
 
 /// The run before `]` belongs to the bracket. An entry that stood mid-list
@@ -363,16 +395,11 @@ fn a_gained_value_is_placed_against_the_list_it_lands_in() {
 /// bracket would be a separator to nothing.
 #[test]
 fn removing_the_last_entry_leaves_no_separator_behind() {
-    assert_eq!(
-        folding(&deny("[\"Bash\", \"Write\"]"), |manifest| {
-            denied(manifest).pop();
-        }),
-        deny("[\"Bash\"]")
-    );
-    // The same in the other spelling, and the same run one level in: the
-    // spacing before an inline table's brace sits on whichever key is last, so
-    // an entry that loses that key must hand the run back to the brace. Here
-    // `matcher` is written last and is what the strip takes.
+    // The deny-list spelling is a row of the list table; here the same run
+    // one level in: the spacing before an inline table's brace sits on
+    // whichever key is last, so an entry that loses that key must hand the
+    // run back to the brace. Here `matcher` is written last and is what
+    // the strip takes.
     let inline = "schema = 6\ncustom-hooks = [{ event = \"A\", command = \"c\", matcher = \"x\" }, { event = \"B\", command = \"d\" }]\n";
     assert_eq!(
         folding(inline, |manifest| {
@@ -480,37 +507,4 @@ fn the_keys_in_a_slot_go_only_where_the_slot_was_not_the_entrys_own() {
         }),
         "schema = 6\n\n# about A\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./g2.sh\"\nnote = \"a note\"\n\n# about B\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n"
     );
-}
-
-/// A comment after the `[` or before the `]` is about the list, not about any
-/// entry in it, so emptying the list keeps it. The lines the entries stood on
-/// are theirs and go with them, which is why a list carrying nothing but
-/// whitespace between its brackets closes as `[]`.
-///
-/// Both halves in both spellings of the closing run, since which slot holds
-/// the bytes before `]` turns on a trailing comma.
-#[test]
-fn emptying_a_list_keeps_what_was_written_about_the_list() {
-    let empty = |list: &str| {
-        folding(&deny(list), |manifest| {
-            denied(manifest).clear();
-        })
-    };
-    assert_eq!(
-        empty("[   # what we deny\n  \"Bash\",\n]"),
-        deny("[   # what we deny\n]")
-    );
-    assert_eq!(
-        empty("[   # what we deny\n  \"Bash\"\n]"),
-        deny("[   # what we deny\n]")
-    );
-    assert_eq!(
-        empty("[\n  \"Bash\",\n  # keep this\n]"),
-        deny("[\n  # keep this\n]")
-    );
-    assert_eq!(
-        empty("[\n  \"Bash\"\n  # keep this\n]"),
-        deny("[\n  # keep this\n]")
-    );
-    assert_eq!(empty("[\n  \"Bash\",\n]"), deny("[]"));
 }
