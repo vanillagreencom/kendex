@@ -6,6 +6,7 @@ import { groupScopes } from "@/lib/derive";
 import type { Draft } from "@/lib/editor-draft";
 import { type PlaceMark, packageMark } from "@/lib/place-marks";
 import { scopeKey } from "@/lib/scope";
+import { rowsKnown } from "@/lib/updates-read-state";
 import { useEditorStore } from "@/stores/editor";
 import { useUpdatesStore } from "@/stores/updates";
 
@@ -13,8 +14,8 @@ import { useUpdatesStore } from "@/stores/updates";
  *
  *  No place is passed in on purpose: the page names a place, but the mark
  *  is about the package. Answering for the one place the page happened to
- *  open at would let the Library and this page state two different facts
- *  under the same words. */
+ *  open at would let this page and the Customize page state two different
+ *  facts under the same words. */
 export function markFor(
   saved: Record<string, Draft>,
   rows: UpdateRow[],
@@ -45,7 +46,7 @@ export function usePackageMark(group: ItemGroup | null): PlaceMark | null {
   const settings = useEditorStore((s) => s.savedSettings);
   const loadPlaces = useEditorStore((s) => s.loadPlaces);
   const rows = useUpdatesStore((s) => s.rows);
-  const updatesLoaded = useUpdatesStore((s) => s.read.status === "landed");
+  const updatesLoaded = useUpdatesStore(rowsKnown);
   // The scan rebuilds the group on every read, so what is held onto is
   // which places those are, not the array they arrived in.
   const scopes = group ? groupScopes(group) : [];

@@ -8,6 +8,7 @@ import {
 } from "@/lib/customized-places";
 import type { Draft } from "@/lib/editor-draft";
 import { scopeKey } from "@/lib/scope";
+import { rowsKnown } from "@/lib/updates-read-state";
 import { useEditorStore } from "@/stores/editor";
 import { useUpdatesStore } from "@/stores/updates";
 
@@ -27,7 +28,7 @@ export function useCustomizedHere(
   const settings = useEditorStore((s) => s.savedSettings);
   const edits = useEditorStore((s) => s.settingsEdits);
   const rows = useUpdatesStore((s) => s.rows);
-  const updatesLoaded = useUpdatesStore((s) => s.read.status === "landed");
+  const updatesLoaded = useUpdatesStore(rowsKnown);
   return useMemo(
     () =>
       customizedHere(

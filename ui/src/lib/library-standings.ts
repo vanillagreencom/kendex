@@ -7,14 +7,15 @@ import {
 } from "@/lib/customized-places";
 import type { ItemGroup } from "@/lib/derive";
 import { groupScopes } from "@/lib/derive";
+import { rowsKnown } from "@/lib/updates-read-state";
 import { useEditorStore } from "@/stores/editor";
 import { useUpdatesStore } from "@/stores/updates";
 
 /** How every package on screen stands in every place it is installed.
  *
  *  Built once for the whole table rather than per row: reading a place's
- *  customizations walks its whole manifest, and the mark, the fork badges
- *  and the legend all ask the same question of the same rows. */
+ *  customizations walks its whole manifest, and the fork badges and the
+ *  edited facet ask the same question of the same rows. */
 export function useLibraryStandings(groups: ItemGroup[]): {
   standingsFor: (group: ItemGroup) => PlaceStanding[];
   /** Whether the package's installed files were edited on disk in any
@@ -27,7 +28,7 @@ export function useLibraryStandings(groups: ItemGroup[]): {
   const saved = useEditorStore((s) => s.saved);
   const savedSettings = useEditorStore((s) => s.savedSettings);
   const updateRows = useUpdatesStore((s) => s.rows);
-  const updatesLoaded = useUpdatesStore((s) => s.read.status === "landed");
+  const updatesLoaded = useUpdatesStore(rowsKnown);
   const places = useMemo(
     () => placesSource(saved, updateRows, updatesLoaded, savedSettings),
     [saved, updateRows, updatesLoaded, savedSettings],

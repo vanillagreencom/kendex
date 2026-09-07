@@ -3,7 +3,6 @@ import type { ItemKind, Tag } from "@/bindings";
 import { InstalledRow } from "@/components/library/installed-row";
 import { InstalledSkeleton } from "@/components/library/installed-skeleton";
 import { LibraryFilters } from "@/components/library/library-filters";
-import { LibraryLegend } from "@/components/library/library-legend";
 import { TableEmptyRow } from "@/components/library/table-empty";
 import {
   applyLibraryView,
@@ -27,7 +26,6 @@ import {
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { isNarrowed, UNFILTERED } from "@/lib/library-handoff";
 import { useLibraryStandings } from "@/lib/library-standings";
-import { packageMark } from "@/lib/place-marks";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
 import {
@@ -104,10 +102,9 @@ export function InstalledView() {
     () => (result ? groupItems(result.items) : []),
     [result],
   );
-  // Read from those, never from the filtered set: a mark answers for the
-  // package, so narrowing the table to one project must not change what it
-  // says. Read from `groups`, a package customized in two projects would
-  // say "Customized in vg" here and name both on its own page.
+  // Read from those, never from the filtered set: a standing answers for
+  // the package, so narrowing the table to one project must not change
+  // which places a fork badge names.
   const { standingsFor, editedAnywhere } = useLibraryStandings(everywhere);
   const groups = useMemo(() => {
     if (!result) return [];
@@ -200,9 +197,6 @@ export function InstalledView() {
             ref={scroller}
             className="min-w-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]"
           >
-            {groups.some((g) => packageMark(standingsFor(g))) ? (
-              <LibraryLegend />
-            ) : null}
             <Table>
               <TableHeader>
                 <TableRow>
@@ -229,7 +223,6 @@ export function InstalledView() {
                         group.name,
                         groupScopes(group),
                       )}
-                      mark={packageMark(standingsFor(group))}
                       forkedIn={standingsFor(group)
                         .filter((s) => s.why === "forked")
                         .map((s) => s.scope)}

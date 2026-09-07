@@ -1,0 +1,1 @@
+- A skill read through a tool's link to a shared tree is warned about once, and the Library's edited facet keeps the rows a failed re-check left behind instead of waiting on it.

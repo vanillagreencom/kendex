@@ -167,8 +167,7 @@ export const CUSTOMIZED_UPDATES_UNCHECKED =
   "Hand-edited and forked packages may be missing: the check for updates failed. Try it again from Updates.";
 export const REMOVE_CUSTOMIZATION = "Remove";
 
-// What a package's row is marked with, in the Library's legend and on it.
-export const AS_INSTALLED_MARK = "As the author wrote it";
+// The customize surface's word for a value the person has set.
 export const CUSTOMIZED_MARK = "Customized by you";
 export const STATUS_LABELS: Record<GroupStatus, string> = {
   active: "Active",
