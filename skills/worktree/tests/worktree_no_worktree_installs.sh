@@ -1,254 +1,219 @@
 #!/usr/bin/env bash
-# No worktree command runs a package-manager install: installs run only in the
-# main checkout, and only when the lockfile changed. A worktree gets its
-# dependencies through a WORKTREE_SYMLINKS entry for node_modules; when a JS
-# repo has nothing linked, create warns and names the main checkout as the
-# place to run the install.
-#
-# Asserted here:
-#   1. no package manager (npm, pnpm, yarn, bun) is ever invoked by create;
-#   2. a JS worktree with no node_modules gets the warning, and the warning
-#      names the main checkout — on fix-links as well as on create, since the
-#      check lives in setup_worktree_links and every caller reaches it;
-#   3. a WORKTREE_SYMLINKS node_modules entry satisfies the check silently;
-#   4. a repo without a root package.json gets no warning;
-#   5. a nested node_modules entry (ui-style) with no main-checkout source
-#      warns on create, and fix-links links it once the install exists;
-#   6. a root node_modules entry with no source warns exactly once, and that
-#      one warning is the configured-entry message, not the generic fallback;
-#   7. repair-links, the git-hook path, warns too when the main-checkout
-#      source disappears after the worktree was created;
-#   8. a configured node_modules entry with no package.json beside it in the
-#      worktree stays silent.
+# No worktree command runs a package-manager install: a worktree gets its
+# dependencies through a WORKTREE_SYMLINKS entry for node_modules, and when a
+# JS worktree has nothing linked the setup warns and names the main checkout
+# as the place to run the install. The check lives in setup_worktree_links,
+# so create, fix-links and repair-links all reach it. One table, a row per
+# scenario: the fixture is a word list of steps that builds a checkout with
+# its bare origin, its package files, its installed modules and its config,
+# the command runs from the checkout under a PATH whose package managers
+# only record their invocation, and the row pins its exit status, its
+# stdout, its stderr and what is left: every package-manager call, and every
+# entry of the worktree (a link with its target).
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$SKILL_DIR/scripts/worktree}"
+WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 PASS=0
 FAIL=0
 
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
+assert_eq() {
+  local got="$1" want="$2" name="$3"
+  if [[ "$got" == "$want" ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
+  fi
+}
 
-# Stubs: gh quiet; every package manager records its invocation — any entry in
-# the call log is a failure.
+# gh is quiet; every package manager, and the two launchers that reach one,
+# records its argv and its cwd in the row's log. The log is read after the
+# command returns, so a manager the command forked and did not wait for is
+# outside this suite; create has no such path.
 mkdir -p "$TMP_ROOT/bin"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP_ROOT/bin/gh"
-for pm in npm pnpm yarn bun; do
-  printf '#!/usr/bin/env bash\necho "%s $* in $PWD" >>"$PM_CALL_LOG"\nexit 0\n' "$pm" \
-    >"$TMP_ROOT/bin/$pm"
+chmod +x "$TMP_ROOT/bin/gh"
+# shellcheck disable=SC2016
+for pm in npm pnpm yarn bun corepack npx; do
+  printf '#!/usr/bin/env bash\necho "%s $* in $PWD" >>"$PM_CALL_LOG"\nexit 0\n' "$pm" >"$TMP_ROOT/bin/$pm"
+  chmod +x "$TMP_ROOT/bin/$pm"
 done
-chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/npm" "$TMP_ROOT/bin/pnpm" \
-  "$TMP_ROOT/bin/yarn" "$TMP_ROOT/bin/bun"
 export PATH="$TMP_ROOT/bin:$PATH"
-export PM_CALL_LOG="$TMP_ROOT/pm-calls.log"
-: >"$PM_CALL_LOG"
 
-make_repo() { # ROOT NAME — main checkout with a bare origin
-  local root="$1" name="$2"
-  mkdir -p "$root/$name"
-  git -C "$root/$name" init -q -b main
-  git -C "$root/$name" config user.email test@example.com
-  git -C "$root/$name" config user.name Test
-  git -C "$root/$name" config commit.gpgsign false
-  printf 'base\n' >"$root/$name/base.txt"
-  git -C "$root/$name" add base.txt
-  git -C "$root/$name" commit -q -m base
-  git init -q --bare "$root/origin-$name.git"
-  git -C "$root/$name" remote add origin "$root/origin-$name.git"
-  git -C "$root/$name" push -q -u origin main
+# --- fixtures -----------------------------------------------------------------
+# Every row's world lives under its own ROOT: the checkout at ROOT/repo, its
+# bare origin, and the worktree the default layout puts at
+# ROOT/.worktrees/repo/<id>.
+
+ROOT=""
+MAIN=""
+WT=""
+
+make_repo() {
+  mkdir -p "$MAIN"
+  git -C "$MAIN" init -q -b main
+  git -C "$MAIN" config user.email test@example.com
+  git -C "$MAIN" config user.name Test
+  git -C "$MAIN" config commit.gpgsign false
+  printf 'base\n' >"$MAIN/base.txt"
+  git -C "$MAIN" add base.txt
+  git -C "$MAIN" commit -q -m base
+  git init -q --bare "$ROOT/origin.git"
+  git -C "$MAIN" remote add origin "$ROOT/origin.git"
+  git -C "$MAIN" push -q -u origin main
 }
 
-# The log is cumulative and every caller checks it after the worktree command
-# has already returned, so one read covers everything that ran: a manager the
-# command forked and did not wait for is a defect this suite is not the place
-# to catch — `create` has no such path, and if it grew one the install would
-# be unsequenced against the caller regardless.
-assert_no_pm_calls() { # NAME — fail if any package manager has been invoked
-  local name="$1"
-  if [ -s "$PM_CALL_LOG" ]; then
-    bad "$name" "$(cat "$PM_CALL_LOG")"
-    return 1
+# A file committed on main and pushed, so a worktree created from it carries it.
+tracked() {
+  mkdir -p "$(dirname "$MAIN/$1")"
+  printf '%s\n' "$2" >"$MAIN/$1"
+  git -C "$MAIN" add "$1"
+  git -C "$MAIN" commit -q -m "$1"
+  git -C "$MAIN" push -q origin main
+}
+
+tool() {
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" "$@" >/dev/null 2>&1) || true
+}
+
+# The step vocabulary. `repo` builds the world; the rest shape it.
+step() {
+  case "$1" in
+    repo) make_repo ;;
+    # The package files that make the checkout, or a directory of it, a JS package.
+    npm) tracked package.json '{ "name": "app", "devDependencies": {} }'; tracked package-lock.json '{}' ;;
+    pnpm) tracked package.json '{ "name": "app", "packageManager": "pnpm@10.33.2" }'; tracked pnpm-lock.yaml 'lockfileVersion: "9.0"' ;;
+    pkg) tracked package.json '{ "name": "app", "devDependencies": {} }' ;;
+    ui-pkg) tracked ui/package.json '{ "name": "ui", "devDependencies": {} }' ;;
+    # An install that already ran in the main checkout.
+    installed) mkdir -p "$MAIN/node_modules/dep" ;;
+    ui-installed) mkdir -p "$MAIN/ui/node_modules/dep" ;;
+    ui-uninstalled) rm -rf "$MAIN/ui/node_modules" ;;
+    # The symlink entry that hands a worktree the main checkout's install.
+    link:*) printf 'WORKTREE_SYMLINKS="%s"\n' "${1#link:}" >"$MAIN/.env.local" ;;
+    # A worktree created before the row's command; its own output is not the row's.
+    create:*)
+      WT="$ROOT/.worktrees/repo/${1#create:}"
+      tool create "${1#create:}"
+      [[ -d "$WT" ]] || { echo "FIXTURE: create ${1#create:} left no worktree in $ROOT" >&2; exit 2; }
+      ;;
+    *)
+      echo "UNKNOWN-STEP: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+build() {
+  local word
+  ROOT="$TMP_ROOT/$1"
+  shift
+  MAIN="$ROOT/repo"
+  WT=""
+  mkdir -p "$ROOT"
+  export PM_CALL_LOG="$ROOT/pm-calls.log"
+  : >"$PM_CALL_LOG"
+  for word in "$@"; do
+    step "$word"
+  done
+}
+
+# --- rendering ------------------------------------------------------------------
+
+alias_text() {
+  sed -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" |
+    paste -s -d ';' -
+}
+
+# Every package-manager call, then every entry of the worktree the row names
+# (or the one its command created): a link as `path->target`, anything else
+# by name; git's own directory is left out.
+state() {
+  local pm="" entries="" path
+  pm="$(alias_text <"$PM_CALL_LOG")"
+  if [[ -n "$WT" && -d "$WT" ]]; then
+    entries="$(cd "$WT" && find . -mindepth 1 \( -path ./.git -prune \) -o -print | LC_ALL=C sort | while IFS= read -r path; do
+      if [[ -L "$path" ]]; then printf '%s->%s,' "${path#./}" "$(readlink "$path" | sed -e "s|$MAIN|<main>|" -e "s|$ROOT|<root>|")"
+      else printf '%s,' "${path#./}"; fi
+    done | sed 's/,$//')"
   fi
-  ok "$name"
+  printf 'pm=%s wt=%s' "${pm:--}" "${entries:--}"
 }
 
-echo "=== an npm repo gets no install and a warning naming the main checkout ==="
-ROOT="$TMP_ROOT/npm"
-make_repo "$ROOT" repo
-printf '{ "name": "app", "devDependencies": {} }\n' >"$ROOT/repo/package.json"
-printf '{}\n' >"$ROOT/repo/package-lock.json"
-git -C "$ROOT/repo" add package.json package-lock.json
-git -C "$ROOT/repo" commit -q -m "js: npm app"
-git -C "$ROOT/repo" push -q origin main
-STDERR_NPM="$TMP_ROOT/npm-stderr.log"
-(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-npm >/dev/null 2>"$STDERR_NPM")
-assert_no_pm_calls "npm repo: create invoked no package manager" || true
-if grep -q "dependencies were not installed" "$STDERR_NPM" &&
-  grep -qF "$ROOT/repo" "$STDERR_NPM"; then
-  ok "warning names the main checkout as the place to run the install"
-else
-  bad "missing-dependency warning" "stderr: $(cat "$STDERR_NPM")"
-fi
+run() {
+  local -a argv
+  local rc=0
+  read -r -a argv <<<"${1//<wt>/$WT}"
+  if [[ "${argv[0]}" == create ]]; then WT="$ROOT/.worktrees/repo/${argv[1]}"; fi
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  printf 'rc=%s out=%s err=%s %s' "$rc" "$(alias_text <"$ROOT/out")" "$(alias_text <"$ROOT/err")" "$(state)"
+}
 
-echo "=== a pnpm workspace gets no install and stays clean ==="
-ROOT="$TMP_ROOT/pnpm"
-make_repo "$ROOT" repo
-printf '{ "name": "app", "packageManager": "pnpm@10.33.2" }\n' >"$ROOT/repo/package.json"
-printf 'lockfileVersion: "9.0"\n' >"$ROOT/repo/pnpm-lock.yaml"
-git -C "$ROOT/repo" add package.json pnpm-lock.yaml
-git -C "$ROOT/repo" commit -q -m "js: pnpm workspace"
-git -C "$ROOT/repo" push -q origin main
-STDERR_PNPM="$TMP_ROOT/pnpm-stderr.log"
-(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-pnpm >/dev/null 2>"$STDERR_PNPM")
-assert_no_pm_calls "pnpm repo: create invoked no package manager" || true
-WT_PNPM="$ROOT/.worktrees/repo/issue-pnpm"
-[ ! -e "$WT_PNPM/package-lock.json" ] && ok "no stray package-lock.json in the pnpm worktree" \
-  || bad "no stray package-lock.json" "package-lock.json exists"
-if grep -q "dependencies were not installed" "$STDERR_PNPM"; then
-  ok "unlinked pnpm worktree gets the warning"
-else
-  bad "pnpm warning" "stderr: $(cat "$STDERR_PNPM")"
-fi
-# The fallback lives in setup_worktree_links, so every caller reaches it, not
-# just create. fix-links pins one of the other invocation modes.
-STDERR_PNPM_FIX="$TMP_ROOT/pnpm-fixlinks-stderr.log"
-(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" fix-links "$WT_PNPM" >/dev/null 2>"$STDERR_PNPM_FIX")
-if grep -q "dependencies were not installed" "$STDERR_PNPM_FIX"; then
-  ok "fix-links warns on an unlinked JS worktree too, not only create"
-else
-  bad "fix-links fallback warning" "stderr: $(cat "$STDERR_PNPM_FIX")"
-fi
+# --- the expected text ----------------------------------------------------------
 
-echo "=== a WORKTREE_SYMLINKS node_modules entry satisfies the check silently ==="
-ROOT="$TMP_ROOT/linked"
-make_repo "$ROOT" repo
-printf '{ "name": "app", "devDependencies": {} }\n' >"$ROOT/repo/package.json"
-git -C "$ROOT/repo" add package.json
-git -C "$ROOT/repo" commit -q -m "js: linked deps"
-git -C "$ROOT/repo" push -q origin main
-mkdir -p "$ROOT/repo/node_modules/dep"
-printf 'WORKTREE_SYMLINKS="node_modules"\n' >"$ROOT/repo/.env.local"
-STDERR_LINKED="$TMP_ROOT/linked-stderr.log"
-(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-linked >/dev/null 2>"$STDERR_LINKED")
-WT_LINKED="$ROOT/.worktrees/repo/issue-linked"
-[ -L "$WT_LINKED/node_modules" ] && ok "node_modules is linked from the main checkout" \
-  || bad "node_modules link" "no symlink at $WT_LINKED/node_modules"
-if grep -q "dependencies were not installed" "$STDERR_LINKED"; then
-  bad "linked worktree stays silent" "stderr: $(cat "$STDERR_LINKED")"
-else
-  ok "linked worktree gets no warning"
-fi
-assert_no_pm_calls "linked repo: create invoked no package manager" || true
+# The two warnings, held once: the generic fallback for a JS worktree with
+# nothing linked, and the configured-entry one naming the missing source.
+err_text() {
+  case "$1" in
+    -) printf '' ;;
+    generic) printf 'Warning: dependencies were not installed — installs run only in the main checkout. Run the install in <main>, then link its node_modules into worktrees with a WORKTREE_SYMLINKS entry.' ;;
+    no-source:*) printf "Warning: dependencies were not installed — WORKTREE_SYMLINKS entry '%s' has no source at <main>/%s. Run the install in the main checkout (<main>), then rerun fix-links to link it." "${1#no-source:}" "${1#no-source:}" ;;
+    *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
+  esac
+}
 
-echo "=== a nested node_modules entry with no source warns, then fix-links links it ==="
-ROOT="$TMP_ROOT/nested"
-make_repo "$ROOT" repo
-mkdir -p "$ROOT/repo/ui"
-printf '{ "name": "ui", "devDependencies": {} }\n' >"$ROOT/repo/ui/package.json"
-git -C "$ROOT/repo" add ui/package.json
-git -C "$ROOT/repo" commit -q -m "js: nested ui package"
-git -C "$ROOT/repo" push -q origin main
-printf 'WORKTREE_SYMLINKS="ui/node_modules"\n' >"$ROOT/repo/.env.local"
-STDERR_NESTED="$TMP_ROOT/nested-stderr.log"
-(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-nested >/dev/null 2>"$STDERR_NESTED")
-WT_NESTED="$ROOT/.worktrees/repo/issue-nested"
-if grep -q "dependencies were not installed" "$STDERR_NESTED" &&
-  grep -qF "$ROOT/repo/ui/node_modules" "$STDERR_NESTED"; then
-  ok "missing nested source warns and names the main-checkout path"
-else
-  bad "nested missing-source warning" "stderr: $(cat "$STDERR_NESTED")"
-fi
-mkdir -p "$ROOT/repo/ui/node_modules/dep"
-STDERR_FIXLINKS="$TMP_ROOT/nested-fixlinks-stderr.log"
-(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" fix-links "$WT_NESTED" >/dev/null 2>"$STDERR_FIXLINKS")
-[ -L "$WT_NESTED/ui/node_modules" ] && ok "fix-links links the source once it exists" \
-  || bad "fix-links links nested node_modules" "no symlink at $WT_NESTED/ui/node_modules"
-if grep -q "dependencies were not installed" "$STDERR_FIXLINKS"; then
-  bad "linked nested worktree stays silent" "stderr: $(cat "$STDERR_FIXLINKS")"
-else
-  ok "no warning once the nested source is linked"
-fi
-assert_no_pm_calls "nested repo: no package manager invoked" || true
+out_text() {
+  case "$1" in
+    -) printf '' ;;
+    wt:*) printf '<root>/.worktrees/repo/%s' "${1#wt:}" ;;
+    restored) printf 'Restored symlinks in %s' "$WT" | sed -e "s|$ROOT|<root>|" ;;
+    *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
+  esac
+}
 
-echo "=== a root node_modules entry with no source warns exactly once ==="
-ROOT="$TMP_ROOT/rootentry"
-make_repo "$ROOT" repo
-printf '{ "name": "app", "devDependencies": {} }\n' >"$ROOT/repo/package.json"
-git -C "$ROOT/repo" add package.json
-git -C "$ROOT/repo" commit -q -m "js: root entry"
-git -C "$ROOT/repo" push -q origin main
-printf 'WORKTREE_SYMLINKS="node_modules"\n' >"$ROOT/repo/.env.local"
-STDERR_ROOT="$TMP_ROOT/rootentry-stderr.log"
-(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-rootentry >/dev/null 2>"$STDERR_ROOT")
-WARN_COUNT="$(grep -c "dependencies were not installed" "$STDERR_ROOT" || true)"
-if [ "$WARN_COUNT" = "1" ]; then
-  ok "configured root entry with no source warns exactly once"
-else
-  bad "single warning for a configured root entry" "count=$WARN_COUNT stderr: $(cat "$STDERR_ROOT")"
-fi
-# Both messages contain the counted substring, so the count alone cannot tell
-# them apart: name the one that must be there and the one that must not.
-if grep -qF "WORKTREE_SYMLINKS entry 'node_modules' has no source at $ROOT/repo/node_modules" "$STDERR_ROOT" &&
-  ! grep -qF "installs run only in the main checkout" "$STDERR_ROOT"; then
-  ok "that one warning is the configured-entry message, not the generic fallback"
-else
-  bad "configured-entry message identity" "stderr: $(cat "$STDERR_ROOT")"
-fi
+# --- the rows ---------------------------------------------------------------------
+# label|fixture|command|rc|out|err|state
+ROWS='an npm checkout gets no install and a warning naming the main checkout|repo npm|create issue-npm|0|wt:issue-npm|generic|pm=- wt=base.txt,package-lock.json,package.json
+a pnpm checkout gets no install, the warning, and no stray lockfile|repo pnpm|create issue-pnpm|0|wt:issue-pnpm|generic|pm=- wt=base.txt,package.json,pnpm-lock.yaml
+fix-links warns on the unlinked JS worktree too, not only create|repo pnpm create:issue-pnpm|fix-links <wt>|0|restored|generic|pm=- wt=base.txt,package.json,pnpm-lock.yaml
+a node_modules entry linked from the main checkout satisfies the check silently|repo pkg installed link:node_modules|create issue-linked|0|wt:issue-linked|-|pm=- wt=base.txt,node_modules-><main>/node_modules,package.json
+a nested entry with no source warns naming the main-checkout path|repo ui-pkg link:ui/node_modules|create issue-nested|0|wt:issue-nested|no-source:ui/node_modules|pm=- wt=base.txt,ui,ui/package.json
+fix-links links the nested source once it exists, and the warning stops|repo ui-pkg link:ui/node_modules create:issue-nested ui-installed|fix-links <wt>|0|restored|-|pm=- wt=base.txt,ui,ui/node_modules-><main>/ui/node_modules,ui/package.json
+a root entry with no source warns once, with the configured-entry message and not the generic one|repo pkg link:node_modules|create issue-rootentry|0|wt:issue-rootentry|no-source:node_modules|pm=- wt=base.txt,package.json
+repair-links warns when the main-checkout source has since disappeared|repo ui-pkg ui-installed link:ui/node_modules create:issue-repair ui-uninstalled|repair-links <wt>|0|-|no-source:ui/node_modules|pm=- wt=base.txt,ui,ui/node_modules-><main>/ui/node_modules,ui/package.json
+a configured entry with no package.json beside it stays silent|repo link:ui/node_modules|create issue-nopkg|0|wt:issue-nopkg|-|pm=- wt=base.txt
+a checkout without package.json gets no warning|repo|create issue-plain|0|wt:issue-plain|-|pm=- wt=base.txt
+'
 
-echo "=== repair-links warns when the main-checkout source disappears ==="
-ROOT="$TMP_ROOT/repair"
-make_repo "$ROOT" repo
-mkdir -p "$ROOT/repo/ui/node_modules/dep"
-printf '{ "name": "ui", "devDependencies": {} }\n' >"$ROOT/repo/ui/package.json"
-git -C "$ROOT/repo" add ui/package.json
-git -C "$ROOT/repo" commit -q -m "js: nested ui package"
-git -C "$ROOT/repo" push -q origin main
-printf 'WORKTREE_SYMLINKS="ui/node_modules"\n' >"$ROOT/repo/.env.local"
-(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-repair >/dev/null 2>&1)
-WT_REPAIR="$ROOT/.worktrees/repo/issue-repair"
-[ -L "$WT_REPAIR/ui/node_modules" ] && ok "repair case starts from a linked worktree" \
-  || bad "repair case starts linked" "no symlink at $WT_REPAIR/ui/node_modules"
-rm -rf "$ROOT/repo/ui/node_modules"
-STDERR_REPAIR="$TMP_ROOT/repair-stderr.log"
-(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" repair-links "$WT_REPAIR" >/dev/null 2>"$STDERR_REPAIR")
-if grep -q "dependencies were not installed" "$STDERR_REPAIR" &&
-  grep -qF "$ROOT/repo/ui/node_modules" "$STDERR_REPAIR"; then
-  ok "repair-links warns instead of skipping the vanished source in silence"
-else
-  bad "repair-links missing-source warning" "stderr: $(cat "$STDERR_REPAIR")"
-fi
-assert_no_pm_calls "repair repo: no package manager invoked" || true
+echo "=== no worktree command installs dependencies ==="
+n=0
+while IFS= read -r row; do
+  [[ -n "$row" ]] || continue
+  IFS='|' read -r label fixture command rc out err want_state <<<"$row"
+  for field in "$label" "$fixture" "$command" "$rc" "$out" "$err" "$want_state"; do
+    [[ -n "$field" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+  done
+  n=$((n + 1))
+  # shellcheck disable=SC2086
+  build "row-$n" $fixture
+  # A rendering aid for writing rows: prints what each row produces instead of
+  # asserting it. A run that asserted no row is refused after the loop.
+  if [[ "${WORKTREE_TABLE_PROBE:-}" == 1 ]]; then
+    printf '%s => %s\n' "$label" "$(run "$command")"
+    continue
+  fi
+  assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
+done <<<"$ROWS"
+[[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 
-echo "=== a configured entry with no package.json beside it stays silent ==="
-ROOT="$TMP_ROOT/nopkg"
-make_repo "$ROOT" repo
-printf 'WORKTREE_SYMLINKS="ui/node_modules"\n' >"$ROOT/repo/.env.local"
-STDERR_NOPKG="$TMP_ROOT/nopkg-stderr.log"
-(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-nopkg >/dev/null 2>"$STDERR_NOPKG")
-if grep -q "dependencies were not installed" "$STDERR_NOPKG"; then
-  bad "no package.json means no dependency warning" "stderr: $(cat "$STDERR_NOPKG")"
-else
-  ok "a configured node_modules entry with no ui/package.json stays silent"
-fi
-
-echo "=== a repo without package.json gets no warning ==="
-ROOT="$TMP_ROOT/plain"
-make_repo "$ROOT" repo
-STDERR_PLAIN="$TMP_ROOT/plain-stderr.log"
-(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-plain >/dev/null 2>"$STDERR_PLAIN")
-if grep -q "dependencies were not installed" "$STDERR_PLAIN"; then
-  bad "non-JS repo stays silent" "stderr: $(cat "$STDERR_PLAIN")"
-else
-  ok "non-JS repo gets no warning"
-fi
-
-printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
-[ "$FAIL" -eq 0 ]
+echo
+printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+[[ "$FAIL" -eq 0 ]]
