@@ -1,23 +1,20 @@
 #!/usr/bin/env bash
-# Behavioral tests for the policy-blocked restack replay engine.
-#
-# `create <ID> --reuse --replay` / `--restack --replay` must produce the same
-# rebased history as the rebase engine from ordered plain cherry-picks — no
-# rebase porcelain at any level, proven here by a PATH shim that fails any git
-# invocation carrying a `rebase` argument. The replay must refuse dirty trees
-# and merge commits before mutating anything, move the branch ref only after
-# the whole replay succeeds, pause conflicts into the same guarded state the
-# rebase engine uses (same `restack continue|skip|abort` controls, same state
-# token binding), and record the same pinned force-with-lease authorization
-# that `worktree push` consumes and the remote lease model fails closed on.
+# `worktree create --reuse/--restack --replay`, the policy-blocked twin of the
+# rebase engine: ordered plain cherry-picks that must leave the same rebased
+# history, pause into the same guarded state with the same controls, and
+# record the same pinned push authorization. One table, a row per scenario,
+# on the same step vocabulary and renderer as worktree_create_restack.sh.
+# Every row's command runs behind a PATH shim that fails any git invocation
+# carrying a `rebase` argument, so rebase porcelain anywhere under the tool
+# reds the row: passing execution policies that reject `git rebase` is the
+# point of the engine.
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$SKILL_DIR/scripts/worktree}"
+WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -32,9 +29,7 @@ STUB
 chmod +x "$TMP_ROOT/bin/gh"
 export PATH="$TMP_ROOT/bin:$PATH"
 
-# The point of --replay is passing execution policies that reject `git rebase`.
-# Replay-path invocations run with this shim first on PATH, so any rebase
-# porcelain anywhere under the tool fails the command (and the test).
+# The real git, resolved before the shim goes ahead of it.
 REAL_GIT="$(command -v git)"
 mkdir -p "$TMP_ROOT/norebase"
 cat >"$TMP_ROOT/norebase/git" <<STUB
@@ -64,79 +59,18 @@ assert_eq() {
   fi
 }
 
-assert_ne() {
-  local got="$1" unwanted="$2" name="$3"
-  if [[ "$got" != "$unwanted" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected value to differ from: %s\n' "$name" "$unwanted"
-  fi
-}
+# --- fixtures -----------------------------------------------------------------
+# Every row's world lives under its own ROOT: the main checkout at ROOT/main,
+# the bare origin at ROOT/origin.git, the issue worktree at ROOT/trees/topic.
 
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  fi
-}
-
-assert_path_exists() {
-  local path="$1" name="$2"
-  if [[ -e "$path" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        missing path: %s\n' "$name" "$path"
-  fi
-}
-
-assert_is_ancestor() {
-  local repo="$1" ancestor="$2" descendant="$3" name="$4"
-  if git -C "$repo" merge-base --is-ancestor "$ancestor" "$descendant"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        %s is not an ancestor of %s\n' "$name" "$ancestor" "$descendant"
-  fi
-}
-
-sequencer_dir() {
-  local wt="$1" path=""
-  path="$(git -C "$wt" rev-parse --git-path sequencer 2>/dev/null)" || return 1
-  [[ "$path" == /* ]] || path="$wt/$path"
-  [[ -d "$path" ]] || return 1
-  printf '%s\n' "$path"
-}
-
-assert_replay_paused() {
-  local wt="$1" name="$2"
-  if sequencer_dir "$wt" >/dev/null; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        no cherry-pick sequencer state in: %s\n' "$name" "$wt"
-  fi
-}
-
-assert_no_replay_paused() {
-  local wt="$1" name="$2"
-  if sequencer_dir "$wt" >/dev/null; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        cherry-pick sequencer state still present in: %s\n' "$name" "$wt"
-  else
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  fi
-}
+ISSUE=topic
+ROOT=""
+MAIN=""
+WT=""
+PRE=""        # the branch tip the world was built with, before any tool step
+BASE=""       # origin/main at the end of the fixture
+END=""        # HEAD at the end of the fixture
+EXTERNAL=""   # a commit an outsider pushed to the remote branch
 
 make_repo() {
   local repo="$1"
@@ -145,367 +79,334 @@ make_repo() {
   git -C "$repo" config user.email test@example.com
   git -C "$repo" config user.name Test
   git -C "$repo" config commit.gpgsign false
-  printf 'orig\n' > "$repo/file.txt"
-  git -C "$repo" add file.txt
+  printf 'orig\n' >"$repo/file.txt"
+  printf 'orig\n' >"$repo/other.txt"
+  git -C "$repo" add file.txt other.txt
   git -C "$repo" commit -q -m base
-  printf 'WORKTREE_BASE_DIR="../trees"\n' > "$repo/.env.local"
+  printf 'WORKTREE_BASE_DIR="../trees"\n' >"$repo/.env.local"
 }
 
-# Feature edit on a non-conflicting file; main advances on another file, so the
-# replay onto the moved base is clean.
-make_clean_pair() {
-  local root="$1" issue="$2"
-  make_repo "$root/main"
-  git init -q --bare "$root/origin.git"
-  git -C "$root/main" remote add origin "$root/origin.git"
-  git -C "$root/main" push -q -u origin main
-  (cd "$root/main" && "$WORKTREE_SCRIPT" create "$issue" >/dev/null 2>&1)
-  local wt="$root/trees/$issue"
-  printf 'feature\n' > "$wt/feature.txt"
-  git -C "$wt" add feature.txt
-  git -C "$wt" commit -q -m 'feature edit'
-  git -C "$wt" push -q origin "HEAD:refs/heads/$issue"
-  printf 'advanced\n' > "$root/main/main-advanced.txt"
-  git -C "$root/main" add main-advanced.txt
-  git -C "$root/main" commit -q -m 'advance main'
-  git -C "$root/main" push -q origin main
+# A main+origin pair whose issue worktree was created through the script.
+make_pair() {
+  make_repo "$MAIN"
+  git init -q --bare "$ROOT/origin.git"
+  git -C "$MAIN" remote add origin "$ROOT/origin.git"
+  git -C "$MAIN" push -q -u origin main
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" >/dev/null 2>&1)
 }
 
-# Both sides edit the same line of file.txt, so the replay genuinely conflicts.
-make_conflict_pair() {
-  local root="$1" issue="$2"
-  make_repo "$root/main"
-  git init -q --bare "$root/origin.git"
-  git -C "$root/main" remote add origin "$root/origin.git"
-  git -C "$root/main" push -q -u origin main
-  (cd "$root/main" && "$WORKTREE_SCRIPT" create "$issue" >/dev/null 2>&1)
-  local wt="$root/trees/$issue"
-  printf 'feature\n' > "$wt/file.txt"
-  git -C "$wt" add file.txt
-  git -C "$wt" commit -q -m 'feature edit'
-  printf 'main-side\n' > "$root/main/file.txt"
-  git -C "$root/main" add file.txt
-  git -C "$root/main" commit -q -m 'main edit'
-  git -C "$root/main" push -q origin main
+commit_main() {
+  local file="$1" content="$2"
+  printf '%s\n' "$content" >"$MAIN/$file"
+  git -C "$MAIN" add "$file"
+  git -C "$MAIN" commit -q -m "main: $file"
+  git -C "$MAIN" push -q origin main
 }
 
-echo "=== worktree restack --replay (policy-blocked rebase engine) ==="
+commit_wt() {
+  local file="$1" content="$2"
+  printf '%s\n' "$content" >"$WT/$file"
+  git -C "$WT" add "$file"
+  git -C "$WT" commit -q -m "wt: $file"
+}
 
-# --- Happy path: clean replay onto a moved base, no rebase porcelain ---------
-HAPPY_ROOT="$TMP_ROOT/happy"
-make_clean_pair "$HAPPY_ROOT" issue-replay-happy
-HAPPY_WT="$HAPPY_ROOT/trees/issue-replay-happy"
-happy_pre_head="$(git -C "$HAPPY_WT" rev-parse HEAD)"
-happy_remote_before="$(git --git-dir="$HAPPY_ROOT/origin.git" rev-parse refs/heads/issue-replay-happy)"
-set +e
-happy_out="$(cd "$HAPPY_ROOT/main" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" create issue-replay-happy --reuse --replay 2>"$HAPPY_ROOT/create.err")"
-happy_code=$?
-set -e
-assert_eq "$happy_code" "0" "clean replay exits 0 with rebase porcelain fenced off"
-assert_eq "$happy_out" "$HAPPY_WT" "clean replay prints the worktree path"
-assert_ne "$(git -C "$HAPPY_WT" rev-parse HEAD)" "$happy_pre_head" "clean replay rewrote HEAD onto the moved base"
-assert_is_ancestor "$HAPPY_WT" origin/main HEAD "replayed branch contains origin/main"
-assert_path_exists "$HAPPY_WT/feature.txt" "replayed branch keeps the feature commit"
-assert_path_exists "$HAPPY_WT/main-advanced.txt" "replayed branch picked up the advanced main content"
-assert_eq "$(git -C "$HAPPY_WT" branch --show-current)" "issue-replay-happy" "replay reattaches the issue branch after moving it"
-assert_eq "$(git -C "$HAPPY_WT" status --porcelain)" "" "replay leaves the worktree clean"
-assert_no_replay_paused "$HAPPY_WT" "clean replay leaves no sequencer state"
-assert_eq "$(git -C "$HAPPY_WT" config --worktree --get kendex-restack.expectedRemoteOid)" "$happy_remote_before" "replay preserves the exact pre-rewrite remote lease"
-assert_eq "$(git -C "$HAPPY_WT" config --worktree --get kendex-restack.authorizedHead)" "$(git -C "$HAPPY_WT" rev-parse HEAD)" "replay authorizes only its exact rewritten head"
-assert_eq "$(git -C "$HAPPY_WT" config --worktree --get kendex-restack.mode 2>/dev/null || true)" "" "completed replay clears its engine marker"
+# A tool step of the fixture runs behind the same shim as the row's command.
+tool() {
+  (cd "$MAIN" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" "$@" >/dev/null 2>&1) || true
+}
 
-set +e
-(cd "$HAPPY_ROOT/main" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" push issue-replay-happy >/dev/null 2>"$HAPPY_ROOT/push.err")
-happy_push_code=$?
-set -e
-assert_eq "$happy_push_code" "0" "replayed branch pushes with its exact force-with-lease"
-assert_eq "$(git --git-dir="$HAPPY_ROOT/origin.git" rev-parse refs/heads/issue-replay-happy)" "$(git -C "$HAPPY_WT" rev-parse HEAD)" "lease push publishes the replayed head"
-assert_eq "$(git -C "$HAPPY_WT" config --worktree --get kendex-restack.authorizedHead 2>/dev/null || true)" "" "successful push consumes replay authorization"
+remote_oid() {
+  git --git-dir="$ROOT/origin.git" rev-parse -q --verify "refs/heads/$ISSUE" 2>/dev/null || true
+}
 
-# --- Dirty tree is refused before any mutation --------------------------------
-DIRTY_ROOT="$TMP_ROOT/dirty"
-make_clean_pair "$DIRTY_ROOT" issue-replay-dirty
-DIRTY_WT="$DIRTY_ROOT/trees/issue-replay-dirty"
-printf 'uncommitted\n' >> "$DIRTY_WT/file.txt"
-dirty_pre_head="$(git -C "$DIRTY_WT" rev-parse HEAD)"
-set +e
-(cd "$DIRTY_ROOT/main" && "$WORKTREE_SCRIPT" create issue-replay-dirty --reuse --replay >/dev/null 2>"$DIRTY_ROOT/create.err")
-dirty_code=$?
-set -e
-assert_eq "$dirty_code" "1" "dirty-tree replay exits 1"
-assert_contains "$(cat "$DIRTY_ROOT/create.err")" "uncommitted changes" "dirty-tree refusal names the cause"
-assert_eq "$(git -C "$DIRTY_WT" rev-parse HEAD)" "$dirty_pre_head" "dirty-tree refusal leaves HEAD unchanged"
-assert_eq "$(git -C "$DIRTY_WT" branch --show-current)" "issue-replay-dirty" "dirty-tree refusal leaves the branch checked out"
-assert_ne "$(git -C "$DIRTY_WT" status --porcelain)" "" "dirty-tree refusal preserves the uncommitted change"
+# An outsider's commit on top of the remote branch: the tree it already has,
+# a parent the local branch never saw as a tip.
+external_commit() {
+  local old="" tree=""
+  old="$(remote_oid)"
+  tree="$(git --git-dir="$ROOT/origin.git" rev-parse "${old}^{tree}")"
+  GIT_AUTHOR_NAME=External GIT_AUTHOR_EMAIL=external@example.com \
+    GIT_COMMITTER_NAME=External GIT_COMMITTER_EMAIL=external@example.com \
+    git --git-dir="$ROOT/origin.git" commit-tree "$tree" -p "$old" -m 'external movement'
+}
 
-# --- Merge commits in the range are refused up front ---------------------------
-MERGE_ROOT="$TMP_ROOT/merge"
-make_clean_pair "$MERGE_ROOT" issue-replay-merge
-MERGE_WT="$MERGE_ROOT/trees/issue-replay-merge"
-git -C "$MERGE_WT" checkout -q -b side
-printf 'side\n' > "$MERGE_WT/side.txt"
-git -C "$MERGE_WT" add side.txt
-git -C "$MERGE_WT" commit -q -m 'side edit'
-git -C "$MERGE_WT" checkout -q issue-replay-merge
-git -C "$MERGE_WT" merge -q --no-ff --no-edit side
-git -C "$MERGE_WT" branch -q -D side
-merge_pre_head="$(git -C "$MERGE_WT" rev-parse HEAD)"
-set +e
-(cd "$MERGE_ROOT/main" && "$WORKTREE_SCRIPT" create issue-replay-merge --reuse --replay >/dev/null 2>"$MERGE_ROOT/create.err")
-merge_code=$?
-set -e
-assert_eq "$merge_code" "1" "merge-commit replay exits 1"
-assert_contains "$(cat "$MERGE_ROOT/create.err")" "merge commits" "merge refusal names the unrepresentable history"
-assert_contains "$(cat "$MERGE_ROOT/create.err")" "--reuse" "merge refusal routes to the rebase engine"
-assert_eq "$(git -C "$MERGE_WT" rev-parse HEAD)" "$merge_pre_head" "merge refusal leaves HEAD unchanged"
-assert_no_replay_paused "$MERGE_WT" "merge refusal leaves no sequencer state"
+# The paused engine's state directory: the cherry-pick sequencer for a replay,
+# the rebase directories for the engine this suite must never reach.
+paused_state_dir() {
+  local state path
+  for state in sequencer rebase-merge rebase-apply; do
+    path="$(git -C "$WT" rev-parse --git-path "$state" 2>/dev/null)" || continue
+    [[ "$path" == /* ]] || path="$WT/$path"
+    if [[ -d "$path" ]]; then
+      printf '%s\n' "$path"
+      return 0
+    fi
+  done
+  return 1
+}
 
-# --- Conflict under bare --reuse --replay aborts back to a clean state ---------
-ABORTING_ROOT="$TMP_ROOT/aborting"
-make_conflict_pair "$ABORTING_ROOT" issue-replay-aborting
-ABORTING_WT="$ABORTING_ROOT/trees/issue-replay-aborting"
-aborting_pre_head="$(git -C "$ABORTING_WT" rev-parse HEAD)"
-set +e
-(cd "$ABORTING_ROOT/main" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" create issue-replay-aborting --reuse --replay >/dev/null 2>"$ABORTING_ROOT/create.err")
-aborting_code=$?
-set -e
-aborting_err="$(cat "$ABORTING_ROOT/create.err")"
-assert_eq "$aborting_code" "1" "conflicting bare replay exits 1"
-assert_contains "$aborting_err" "Conflicting files:" "bare replay reports the captured conflict list"
-assert_contains "$aborting_err" "file.txt" "bare replay names the conflicting file"
-assert_contains "$aborting_err" "aborted" "bare replay says the replay was aborted"
-assert_contains "$aborting_err" "--restack --replay" "bare replay routes conflicts to the pausing replay mode"
-assert_no_replay_paused "$ABORTING_WT" "bare replay leaves no sequencer state"
-assert_eq "$(git -C "$ABORTING_WT" rev-parse HEAD)" "$aborting_pre_head" "bare replay restores the pre-replay HEAD"
-assert_eq "$(git -C "$ABORTING_WT" branch --show-current)" "issue-replay-aborting" "bare replay reattaches the issue branch"
-assert_eq "$(git -C "$ABORTING_WT" status --porcelain)" "" "bare replay leaves the worktree clean"
+# The step vocabulary. The first word of a fixture builds the world; the
+# rest drive it.
+step() {
+  case "$1" in
+    # The issue worktree and origin/main edit the same line of file.txt, so
+    # a replay genuinely conflicts.
+    conflict)
+      make_pair
+      commit_wt file.txt feature
+      commit_main file.txt main-side
+      ;;
+    # The issue branch is published and main advanced on a file it never
+    # touched: a replay is clean.
+    clean)
+      make_pair
+      commit_wt feature.txt feature
+      git -C "$WT" push -q origin "HEAD:refs/heads/$ISSUE"
+      commit_main main-advanced.txt advanced
+      ;;
+    # The first issue commit is already represented on main with a further
+    # edit; a refresh-only commit follows it. A skip drops the represented
+    # commit whatever the index holds, so no row resolves it first.
+    merged)
+      make_pair
+      commit_wt file.txt 'already merged'
+      commit_wt refresh-only.txt 'refresh only'
+      git -C "$WT" push -q origin "HEAD:refs/heads/$ISSUE"
+      commit_main file.txt 'already merged plus main follow-up'
+      ;;
+    # An unpublished branch with one commit behind an advanced main.
+    plain)
+      make_pair
+      commit_wt fix.txt fix
+      commit_main main-advanced.txt advanced
+      ;;
+    publish) git -C "$WT" push -q origin "HEAD:refs/heads/$ISSUE" ;;
+    replay) tool create "$ISSUE" --reuse --replay ;;
+    restack-replay) tool create "$ISSUE" --restack --replay ;;
+    continue) tool restack continue "$ISSUE" ;;
+    push) tool push "$ISSUE" ;;
+    resolve)
+      printf 'resolved\n' >"$WT/file.txt"
+      git -C "$WT" add file.txt
+      ;;
+    dirty) printf 'uncommitted\n' >>"$WT/file.txt" ;;
+    # A merge commit in the range: history an ordered cherry-pick cannot represent.
+    merge)
+      git -C "$WT" checkout -q -b side
+      commit_wt side.txt side
+      git -C "$WT" checkout -q "$ISSUE"
+      git -C "$WT" merge -q --no-ff --no-edit side
+      git -C "$WT" branch -q -D side
+      ;;
+    second) commit_wt second.txt second ;;
+    raw-checkout) git -C "$WT" checkout -f "$ISSUE" >/dev/null 2>&1 ;;
+    raw-quit) git -C "$WT" cherry-pick --quit ;;
+    raw-abort) git -C "$WT" cherry-pick --abort ;;
+    move-remote)
+      EXTERNAL="$(external_commit)"
+      git --git-dir="$ROOT/origin.git" update-ref "refs/heads/$ISSUE" "$EXTERNAL"
+      ;;
+    *)
+      echo "UNKNOWN-STEP: $1" >&2
+      exit 2
+      ;;
+  esac
+}
 
-# --- Conflict under --restack --replay pauses the guarded state, then continue -
-PAUSE_ROOT="$TMP_ROOT/pause"
-make_conflict_pair "$PAUSE_ROOT" issue-replay-pause
-PAUSE_WT="$PAUSE_ROOT/trees/issue-replay-pause"
-git -C "$PAUSE_WT" push -q origin HEAD:refs/heads/issue-replay-pause
-pause_pre_head="$(git -C "$PAUSE_WT" rev-parse HEAD)"
-pause_remote_before="$(git --git-dir="$PAUSE_ROOT/origin.git" rev-parse refs/heads/issue-replay-pause)"
-set +e
-(cd "$PAUSE_ROOT/main" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" create issue-replay-pause --restack --replay >/dev/null 2>"$PAUSE_ROOT/create.err")
-pause_code=$?
-set -e
-pause_err="$(cat "$PAUSE_ROOT/create.err")"
-assert_eq "$pause_code" "1" "pausing replay with conflict exits 1"
-assert_replay_paused "$PAUSE_WT" "--restack --replay leaves the cherry-pick paused"
-assert_eq "$(git -C "$PAUSE_WT" diff --name-only --diff-filter=U)" "file.txt" "paused replay leaves file.txt unmerged for resolution"
-assert_contains "$pause_err" "restack continue" "paused replay documents the guarded continue command"
-assert_contains "$pause_err" "restack skip" "paused replay documents the guarded skip command"
-assert_contains "$pause_err" "restack abort" "paused replay documents the guarded abort escape hatch"
-assert_eq "$(git -C "$PAUSE_WT" config --worktree --get kendex-restack.mode)" "replay" "paused replay records the replay engine marker"
-assert_eq "$(git -C "$PAUSE_WT" branch --show-current 2>/dev/null || true)" "" "paused replay keeps HEAD detached"
-assert_eq "$(git -C "$PAUSE_WT" rev-parse refs/heads/issue-replay-pause)" "$pause_pre_head" "paused replay has not moved the branch ref"
-PAUSE_SEQ_DIR="$(sequencer_dir "$PAUSE_WT")"
-assert_eq "$(cat "$PAUSE_SEQ_DIR/kendex-restack-token")" "$(git -C "$PAUSE_WT" config --worktree --get kendex-restack.stateToken)" "paused replay binds config to the Git sequencer state"
+build() {
+  local word
+  ROOT="$TMP_ROOT/$1"
+  shift
+  MAIN="$ROOT/main"
+  WT="$ROOT/trees/$ISSUE"
+  PRE="" BASE="" END="" EXTERNAL=""
+  for word in "$@"; do
+    step "$word"
+    [[ -n "$PRE" ]] || PRE="$(git -C "$WT" rev-parse HEAD)"
+  done
+  BASE="$(git -C "$MAIN" rev-parse origin/main)"
+  END="$(git -C "$WT" rev-parse HEAD)"
+}
 
-printf 'resolved\n' > "$PAUSE_WT/file.txt"
-git -C "$PAUSE_WT" add file.txt
-pause_continue_out="$(cd "$PAUSE_ROOT/main" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" restack continue issue-replay-pause 2>"$PAUSE_ROOT/continue.err")"
-assert_contains "$pause_continue_out" "Completed guarded restack" "guarded continue completes the resolved replay"
-assert_eq "$(git -C "$PAUSE_WT" branch --show-current)" "issue-replay-pause" "completed replay moves and reattaches the issue branch"
-assert_is_ancestor "$PAUSE_WT" origin/main HEAD "completed replay contains origin/main"
-assert_eq "$(cat "$PAUSE_WT/file.txt")" "resolved" "completed replay keeps the manual resolution"
-assert_no_replay_paused "$PAUSE_WT" "completed replay clears the sequencer state"
-assert_eq "$(git -C "$PAUSE_WT" config --worktree --get kendex-restack.expectedRemoteOid)" "$pause_remote_before" "completed replay preserves the exact pre-rewrite remote lease"
-assert_eq "$(git -C "$PAUSE_WT" config --worktree --get kendex-restack.authorizedHead)" "$(git -C "$PAUSE_WT" rev-parse HEAD)" "completed replay authorizes only its exact rewritten head"
+# --- rendering ------------------------------------------------------------------
 
-set +e
-(cd "$PAUSE_ROOT/main" && "$WORKTREE_SCRIPT" push issue-replay-pause >/dev/null 2>"$PAUSE_ROOT/push.err")
-pause_push_code=$?
-set -e
-assert_eq "$pause_push_code" "0" "resolved replay pushes with its exact force-with-lease"
-assert_eq "$(git --git-dir="$PAUSE_ROOT/origin.git" rev-parse refs/heads/issue-replay-pause)" "$(git -C "$PAUSE_WT" rev-parse HEAD)" "resolved replay push publishes the rewritten head"
+oid_name() {
+  local oid="$1"
+  if [[ -z "$oid" ]]; then printf -- '-'
+  elif [[ "$oid" == "$PRE" ]]; then printf 'pre'
+  elif [[ "$oid" == "$BASE" ]]; then printf 'base'
+  elif [[ -n "$EXTERNAL" && "$oid" == "$EXTERNAL" ]]; then printf 'external'
+  elif [[ "$oid" == "$END" ]]; then printf 'end'
+  elif [[ "$oid" == "$(git -C "$WT" rev-parse HEAD)" ]]; then printf 'head'
+  else printf '%s' "$oid"
+  fi
+}
 
-# --- Empty pick: guarded skip drops it and replays the rest --------------------
-SKIP_ROOT="$TMP_ROOT/skip"
-make_repo "$SKIP_ROOT/main"
-git init -q --bare "$SKIP_ROOT/origin.git"
-git -C "$SKIP_ROOT/main" remote add origin "$SKIP_ROOT/origin.git"
-git -C "$SKIP_ROOT/main" push -q -u origin main
-(cd "$SKIP_ROOT/main" && "$WORKTREE_SCRIPT" create issue-replay-skip >/dev/null 2>&1)
-SKIP_WT="$SKIP_ROOT/trees/issue-replay-skip"
-printf 'already merged\n' > "$SKIP_WT/file.txt"
-git -C "$SKIP_WT" add file.txt
-git -C "$SKIP_WT" commit -q -m 'already merged edit'
-printf 'refresh only\n' > "$SKIP_WT/refresh-only.txt"
-git -C "$SKIP_WT" add refresh-only.txt
-git -C "$SKIP_WT" commit -q -m 'refresh only edit'
-printf 'already merged plus follow-up\n' > "$SKIP_ROOT/main/file.txt"
-git -C "$SKIP_ROOT/main" add file.txt
-git -C "$SKIP_ROOT/main" commit -q -m 'merge equivalent and follow up'
-git -C "$SKIP_ROOT/main" push -q origin main
-set +e
-(cd "$SKIP_ROOT/main" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" create issue-replay-skip --restack --replay >/dev/null 2>"$SKIP_ROOT/create.err")
-skip_pause_code=$?
-set -e
-assert_eq "$skip_pause_code" "1" "represented-commit replay pauses on the conflict"
-cp "$SKIP_ROOT/main/file.txt" "$SKIP_WT/file.txt"
-git -C "$SKIP_WT" add file.txt
-skip_out="$(cd "$SKIP_ROOT/main" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" restack skip issue-replay-skip 2>"$SKIP_ROOT/skip.err")"
-assert_contains "$skip_out" "Completed guarded restack" "guarded skip drops the represented pick and completes the replay"
-assert_eq "$(cat "$SKIP_WT/file.txt")" "already merged plus follow-up" "guarded skip preserves exact current-main bytes"
-assert_eq "$(cat "$SKIP_WT/refresh-only.txt")" "refresh only" "guarded skip replays the later refresh-only commit"
-assert_eq "$(git -C "$SKIP_WT" branch --show-current)" "issue-replay-skip" "guarded skip reattaches the issue branch"
-assert_is_ancestor "$SKIP_WT" origin/main HEAD "guarded skip result contains current main"
+# Paths and commits by their names. Git's own push report is not the tool's
+# clause and is dropped. The lines the tool relays from git under its "git:"
+# prefix collapse to one marker, their wording being git's, except a line
+# naming the conflicting path: that the relay names the path is the tool's
+# own contract. A literal semicolon is escaped before the lines are joined
+# on it.
+alias_text() {
+  sed \
+    -e "s|$WT|<wt>|g" \
+    -e "s|$ROOT|<root>|g" \
+    -e "s|$WORKTREE_SCRIPT|<worktree>|g" \
+    -e "s|$PRE|<pre>|g" \
+    -e "s|$BASE|<base>|g" \
+    -e "s|${EXTERNAL:-NONE}|<external>|g" \
+    -e '/^To <root>\/origin\.git$/d' \
+    -e '/^error: failed to push/d' \
+    -e '/^hint: /d' \
+    -e "/^branch '.*' set up to track/d" \
+    -e '/^ [!*+] /d' \
+    -e '/^   [0-9a-f][0-9a-f]*\.\.[0-9a-f][0-9a-f]* /d' \
+    -e 's|^  git: .*file\.txt.*|  git:<file.txt>|' \
+    -e 's/^  git: .*/  git:.../' \
+    -e 's/;/\\;/g' |
+    awk 'BEGIN { prev = "" } { if ($0 ~ /^  git:/ && prev == $0) next; prev = $0; print }' |
+    paste -s -d ';' -
+}
 
-# --- Guarded abort restores the pre-replay branch (unpublished branch) ---------
-ABORT_ROOT="$TMP_ROOT/abort"
-make_conflict_pair "$ABORT_ROOT" issue-replay-abort
-ABORT_WT="$ABORT_ROOT/trees/issue-replay-abort"
-abort_pre_head="$(git -C "$ABORT_WT" rev-parse HEAD)"
-set +e
-(cd "$ABORT_ROOT/main" && "$WORKTREE_SCRIPT" create issue-replay-abort --restack --replay >/dev/null 2>"$ABORT_ROOT/create.err")
-abort_pause_code=$?
-set -e
-assert_eq "$abort_pause_code" "1" "unpublished replay pauses on conflict"
-assert_eq "$(git -C "$ABORT_WT" config --worktree --get kendex-restack.pending)" "true" "unpublished paused replay records the explicit pending marker"
-abort_out="$(cd "$ABORT_ROOT/main" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" restack abort issue-replay-abort 2>"$ABORT_ROOT/abort.err")"
-assert_contains "$abort_out" "Aborted guarded restack" "guarded abort reports the restored branch"
-assert_no_replay_paused "$ABORT_WT" "guarded abort clears the sequencer state"
-assert_eq "$(git -C "$ABORT_WT" rev-parse HEAD)" "$abort_pre_head" "guarded abort restores the recorded original HEAD"
-assert_eq "$(git -C "$ABORT_WT" branch --show-current)" "issue-replay-abort" "guarded abort reattaches the issue branch"
-assert_eq "$(git -C "$ABORT_WT" status --porcelain)" "" "guarded abort leaves the worktree clean"
-assert_eq "$(git -C "$ABORT_WT" config --worktree --get-regexp '^kendex-restack\.' 2>/dev/null || true)" "" "guarded abort clears pending state without authorization"
+worktree_head() {
+  local head
+  head="$(git -C "$WT" rev-parse HEAD)"
+  if [[ "$head" == "$PRE" ]]; then printf 'pre'
+  elif [[ "$head" == "$BASE" ]]; then printf 'base'
+  elif [[ "$head" == "$END" ]]; then printf 'end'
+  elif git -C "$WT" merge-base --is-ancestor "$BASE" "$head"; then printf 'rebased'
+  else printf 'other'
+  fi
+}
 
-# --- A paused replay whose HEAD moved onto the branch still aborts -------------
-# The replay cross-check asserts HEAD is detached. continue and skip pick onto
-# that detach point and still need it; abort does not, and refusing there left
-# no guarded exit. A two-commit branch is what reaches this: a one-commit range
-# never pauses with a second pick outstanding.
-ONBRANCH_ROOT="$TMP_ROOT/onbranch"
-make_conflict_pair "$ONBRANCH_ROOT" issue-replay-onbranch
-ONBRANCH_WT="$ONBRANCH_ROOT/trees/issue-replay-onbranch"
-printf 'second\n' > "$ONBRANCH_WT/second.txt"
-git -C "$ONBRANCH_WT" add second.txt
-git -C "$ONBRANCH_WT" commit -q -m 'second commit'
-onbranch_pre_head="$(git -C "$ONBRANCH_WT" rev-parse HEAD)"
-set +e
-(cd "$ONBRANCH_ROOT/main" && "$WORKTREE_SCRIPT" create issue-replay-onbranch --restack --replay >/dev/null 2>&1)
-set -e
-assert_replay_paused "$ONBRANCH_WT" "the two-commit replay pauses on the first conflict"
-git -C "$ONBRANCH_WT" checkout -f issue-replay-onbranch >/dev/null 2>&1
-assert_eq "$(git -C "$ONBRANCH_WT" branch --show-current)" "issue-replay-onbranch" "the raw checkout moved HEAD onto the branch"
-set +e
-(cd "$ONBRANCH_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-replay-onbranch >/dev/null 2>"$ONBRANCH_ROOT/continue.err")
-onbranch_continue_code=$?
-onbranch_out="$(cd "$ONBRANCH_ROOT/main" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" restack abort issue-replay-onbranch 2>"$ONBRANCH_ROOT/abort.err")"
-onbranch_abort_code=$?
-set -e
-assert_eq "$onbranch_continue_code" "1" "guarded continue still requires the detached replay HEAD"
-assert_contains "$(cat "$ONBRANCH_ROOT/continue.err")" "not the replay recorded by the worktree tool" "the continue refusal names the moved HEAD"
-assert_eq "$onbranch_abort_code" "0" "guarded abort exits 0 with HEAD moved onto the branch"
-assert_contains "$onbranch_out" "Aborted guarded restack" "guarded abort reports the restored branch"
-assert_no_replay_paused "$ONBRANCH_WT" "guarded abort clears the sequencer state"
-assert_eq "$(git -C "$ONBRANCH_WT" rev-parse HEAD)" "$onbranch_pre_head" "guarded abort restores the recorded original head"
-assert_eq "$(git -C "$ONBRANCH_WT" config --worktree --get-regexp '^kendex-restack\.' 2>/dev/null || true)" "" "guarded abort leaves no kendex-restack key to unset by hand"
+restack_keys() {
+  local marker="" key value out=""
+  marker="$(head -n 1 "$(paused_state_dir)/kendex-restack-token" 2>/dev/null || true)"
+  while IFS=' ' read -r key value; do
+    [[ -n "$key" ]] || continue
+    key="${key#kendex-restack.}"
+    case "$key" in
+      expectedremoteoid) key=expected; value="$(oid_name "$value")" ;;
+      originalhead) key=orig; value="$(oid_name "$value")" ;;
+      baseoid) key=base; value="$(oid_name "$value")" ;;
+      authorizedhead) key=authorized; value="$(oid_name "$value")" ;;
+      statetoken)
+        key=token
+        if [[ -n "$marker" && "$marker" == "$value" ]]; then value=bound; else value=unbound; fi
+        ;;
+    esac
+    out="$out,$key:$value"
+  done <<<"$(git -C "$WT" config --worktree --get-regexp '^kendex-restack\.' 2>/dev/null || true)"
+  printf '%s' "${out:-,-}" | cut -c2-
+}
 
-# `cherry-pick --quit` drops the sequencer and leaves the index unmerged, so the
-# orphan path cannot reattach. It refuses with Git's reason rather than forcing
-# the checkout over the resolver's staged work.
-REPLAY_QUIT_ROOT="$TMP_ROOT/replay-quit"
-make_conflict_pair "$REPLAY_QUIT_ROOT" issue-replay-quit
-REPLAY_QUIT_WT="$REPLAY_QUIT_ROOT/trees/issue-replay-quit"
-set +e
-(cd "$REPLAY_QUIT_ROOT/main" && "$WORKTREE_SCRIPT" create issue-replay-quit --restack --replay >/dev/null 2>&1)
-set -e
-git -C "$REPLAY_QUIT_WT" cherry-pick --quit
-assert_no_replay_paused "$REPLAY_QUIT_WT" "the out-of-band quit removed the sequencer state"
-assert_ne "$(git -C "$REPLAY_QUIT_WT" ls-files -u)" "" "the quit left the index unmerged"
-set +e
-(cd "$REPLAY_QUIT_ROOT/main" && "$WORKTREE_SCRIPT" restack abort issue-replay-quit >/dev/null 2>"$REPLAY_QUIT_ROOT/abort.err")
-replay_quit_code=$?
-set -e
-replay_quit_err="$(cat "$REPLAY_QUIT_ROOT/abort.err")"
-assert_eq "$replay_quit_code" "1" "an unreattachable replay refuses instead of forcing the checkout"
-assert_contains "$replay_quit_err" "git: " "the refusal carries Git's own reason"
-assert_contains "$replay_quit_err" "restack abort" "the refusal names the next step"
-assert_eq "$(git -C "$REPLAY_QUIT_WT" config --worktree --get kendex-restack.pending)" "true" "the refused abort preserves the recorded state"
+# engine is the paused state directory's owner: replay for the cherry-pick
+# sequencer, rebase for the rebase engine, none when nothing is paused.
+state() {
+  local engine=none branch ref ahead dirty tree paused
+  if paused="$(paused_state_dir)"; then
+    case "$paused" in
+      */sequencer) engine=replay ;;
+      *) engine=rebase ;;
+    esac
+  fi
+  branch="$(git -C "$WT" branch --show-current)"
+  ahead="$(git -C "$WT" rev-list --count "$BASE..HEAD" 2>/dev/null || true)"
+  dirty="$(git -C "$WT" status --porcelain | paste -s -d ',' -)"
+  tree="$(git -C "$WT" ls-tree -r --name-only HEAD | while read -r name; do
+    body="$(git -C "$WT" cat-file -p "HEAD:$name")"
+    printf '%s:%s,' "$name" "${body%%$'\n'*}"
+  done)"
+  ref="$(git -C "$WT" rev-parse -q --verify "refs/heads/$ISSUE" 2>/dev/null || true)"
+  printf 'engine=%s branch=%s head=%s ref=%s ahead=%s dirty=%s tree=%s restack=%s remote=%s' \
+    "$engine" "${branch:-detached}" "$(worktree_head)" "$(oid_name "$ref")" "${ahead:--}" \
+    "${dirty:--}" "${tree%,}" "$(restack_keys)" "$(oid_name "$(remote_oid)")"
+}
 
-# --- An orphaned record is cleared from the detached replay base ---------------
-# A replay never moves the branch, so a sequencer state that disappears out of
-# band leaves HEAD detached at the base with the tool's record still standing.
-# The guarded exit has to reattach the recorded branch.
-DETACHED_ROOT="$TMP_ROOT/detached"
-make_conflict_pair "$DETACHED_ROOT" issue-replay-detached
-DETACHED_WT="$DETACHED_ROOT/trees/issue-replay-detached"
-detached_pre_head="$(git -C "$DETACHED_WT" rev-parse HEAD)"
-set +e
-(cd "$DETACHED_ROOT/main" && "$WORKTREE_SCRIPT" create issue-replay-detached --restack --replay >/dev/null 2>&1)
-set -e
-git -C "$DETACHED_WT" cherry-pick --abort
-assert_no_replay_paused "$DETACHED_WT" "the out-of-band cherry-pick abort removed the sequencer state"
-assert_eq "$(git -C "$DETACHED_WT" branch --show-current)" "" "the out-of-band abort leaves HEAD detached at the replay base"
-set +e
-detached_out="$(cd "$DETACHED_ROOT/main" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" restack abort issue-replay-detached 2>"$DETACHED_ROOT/abort.err")"
-detached_code=$?
-set -e
-assert_eq "$detached_code" "0" "guarded abort exits 0 when only the tool's record is left"
-assert_contains "$detached_out" "cleared the recorded restack state" "guarded abort clears the orphaned replay record"
-assert_eq "$(git -C "$DETACHED_WT" branch --show-current)" "issue-replay-detached" "guarded abort reattaches the recorded branch"
-assert_eq "$(git -C "$DETACHED_WT" rev-parse HEAD)" "$detached_pre_head" "guarded abort leaves the branch at its recorded original head"
-assert_eq "$(git -C "$DETACHED_WT" config --worktree --get-regexp '^kendex-restack\.' 2>/dev/null || true)" "" "guarded abort leaves no kendex-restack key to unset by hand"
+# The command runs from the main checkout behind the no-rebase shim.
+run() {
+  local -a argv
+  local rc=0
+  read -r -a argv <<<"$1"
+  (cd "$MAIN" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  printf 'rc=%s out=%s err=%s %s' "$rc" \
+    "$(alias_text <"$ROOT/out")" "$(alias_text <"$ROOT/err")" "$(state)"
+}
 
-# --- Remote movement while paused refuses continuation, abort still works ------
-MOVED_ROOT="$TMP_ROOT/moved"
-make_conflict_pair "$MOVED_ROOT" issue-replay-moved
-MOVED_WT="$MOVED_ROOT/trees/issue-replay-moved"
-git -C "$MOVED_WT" push -q origin HEAD:refs/heads/issue-replay-moved
-set +e
-(cd "$MOVED_ROOT/main" && "$WORKTREE_SCRIPT" create issue-replay-moved --restack --replay >/dev/null 2>"$MOVED_ROOT/create.err")
-moved_pause_code=$?
-set -e
-assert_eq "$moved_pause_code" "1" "moved-remote fixture pauses the replay"
-printf 'resolved\n' > "$MOVED_WT/file.txt"
-git -C "$MOVED_WT" add file.txt
-moved_old_oid="$(git --git-dir="$MOVED_ROOT/origin.git" rev-parse refs/heads/issue-replay-moved)"
-moved_old_tree="$(git --git-dir="$MOVED_ROOT/origin.git" rev-parse "${moved_old_oid}^{tree}")"
-moved_external="$(GIT_AUTHOR_NAME=External GIT_AUTHOR_EMAIL=external@example.com GIT_COMMITTER_NAME=External GIT_COMMITTER_EMAIL=external@example.com git --git-dir="$MOVED_ROOT/origin.git" commit-tree "$moved_old_tree" -p "$moved_old_oid" -m 'external movement while paused')"
-git --git-dir="$MOVED_ROOT/origin.git" update-ref refs/heads/issue-replay-moved "$moved_external"
-set +e
-(cd "$MOVED_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-replay-moved >/dev/null 2>"$MOVED_ROOT/continue.err")
-moved_continue_code=$?
-set -e
-assert_eq "$moved_continue_code" "1" "remote movement while paused refuses guarded continuation"
-assert_contains "$(cat "$MOVED_ROOT/continue.err")" "changed while the supported restack was paused" "moved-remote refusal names the invalidated continuation"
-assert_replay_paused "$MOVED_WT" "moved-remote refusal leaves the replay paused"
-(cd "$MOVED_ROOT/main" && "$WORKTREE_SCRIPT" restack abort issue-replay-moved >/dev/null 2>&1)
-assert_no_replay_paused "$MOVED_WT" "guarded abort remains available after remote movement"
+# --- the expected text ----------------------------------------------------------
+# Each spec word expands to the tool's whole message for that terminal path.
 
-# --- A push outside the recorded lease fails closed ----------------------------
-LEASE_ROOT="$TMP_ROOT/lease"
-make_clean_pair "$LEASE_ROOT" issue-replay-lease
-LEASE_WT="$LEASE_ROOT/trees/issue-replay-lease"
-(cd "$LEASE_ROOT/main" && "$WORKTREE_SCRIPT" create issue-replay-lease --reuse --replay >/dev/null 2>"$LEASE_ROOT/create.err")
-lease_old_oid="$(git --git-dir="$LEASE_ROOT/origin.git" rev-parse refs/heads/issue-replay-lease)"
-lease_old_tree="$(git --git-dir="$LEASE_ROOT/origin.git" rev-parse "${lease_old_oid}^{tree}")"
-lease_external="$(GIT_AUTHOR_NAME=External GIT_AUTHOR_EMAIL=external@example.com GIT_COMMITTER_NAME=External GIT_COMMITTER_EMAIL=external@example.com git --git-dir="$LEASE_ROOT/origin.git" commit-tree "$lease_old_tree" -p "$lease_old_oid" -m 'external movement after authorization')"
-git --git-dir="$LEASE_ROOT/origin.git" update-ref refs/heads/issue-replay-lease "$lease_external"
-set +e
-(cd "$LEASE_ROOT/main" && "$WORKTREE_SCRIPT" push issue-replay-lease >/dev/null 2>"$LEASE_ROOT/push.err")
-lease_push_code=$?
-set -e
-assert_eq "$lease_push_code" "1" "remote movement after replay authorization rejects the push"
-assert_eq "$(git --git-dir="$LEASE_ROOT/origin.git" rev-parse refs/heads/issue-replay-lease)" "$lease_external" "pinned lease preserves the externally advanced remote"
-assert_contains "$(cat "$LEASE_ROOT/push.err")" "force-with-lease expectation" "outside-lease push reports the exact-lease rejection"
+restore_lines() {
+  printf '%s' "To restore the pre-restack branch: <worktree> restack abort \"<wt>\";Recorded branch: topic"
+}
 
-# --- --replay requires an engine to modify -------------------------------------
-BAREFLAG_ROOT="$TMP_ROOT/bareflag"
-make_repo "$BAREFLAG_ROOT/main"
-git init -q --bare "$BAREFLAG_ROOT/origin.git"
-git -C "$BAREFLAG_ROOT/main" remote add origin "$BAREFLAG_ROOT/origin.git"
-git -C "$BAREFLAG_ROOT/main" push -q -u origin main
-set +e
-(cd "$BAREFLAG_ROOT/main" && "$WORKTREE_SCRIPT" create issue-replay-bare --replay >/dev/null 2>"$BAREFLAG_ROOT/create.err")
-bareflag_code=$?
-set -e
-assert_eq "$bareflag_code" "1" "--replay without --reuse/--restack is refused"
-assert_contains "$(cat "$BAREFLAG_ROOT/create.err")" "--reuse/--restack" "bare --replay refusal names the required engines"
+err_text() {
+  local spec="$1"
+  case "$spec" in
+    *+*) printf '%s;%s' "$(err_text "${spec%%+*}")" "$(err_text "${spec#*+}")" ;;
+    -) printf '' ;;
+    skip-rebase) printf '%s' "→ origin/main already contained in topic\; skipping rebase" ;;
+    dirty) printf '%s' "Error: <wt> has uncommitted changes\; refusing to replay over them.;Commit or discard them, then retry." ;;
+    merges) printf '%s' "Error: The replay range origin/main..topic in <wt> contains merge commits, which an ordered cherry-pick replay cannot represent.;Use the rebase engine (<worktree> create topic --reuse) or reconcile the merge manually." ;;
+    aborted) printf '%s' "Error: Cherry-pick replay onto origin/main failed for <wt> (conflicts).;Conflicting files:;  file.txt;The replay was aborted\; the worktree is back on its pre-replay state with no conflicts left to resolve.;Recovery options:;  1. Redo the replay and stop in the conflict state to resolve it:;       <worktree> create topic --restack --replay;  2. Discard local divergence and recreate fresh from origin/main:;       <worktree> remove topic && <worktree> create topic" ;;
+    paused) printf '%s' "Error: Cherry-pick replay onto origin/main stopped on conflicts in <wt>.;Conflicting files:;  file.txt;The replay is paused in the worktree so the conflicts can be resolved:;  1. Edit each conflicting file to remove the conflict markers.;  2. git -C \"<wt>\" add <file>    (each resolved file);  3. <worktree> restack continue \"<wt>\"    (repeat if it stops again);     If the resolved commit is empty: <worktree> restack skip \"<wt>\";To back out instead: <worktree> restack abort \"<wt>\"" ;;
+    refusal:*) printf '%s' "Error: Restack state for <wt> is ${spec#refusal:}\; refusing to run a rebase control command.;Only an exact paused state created by 'worktree create <ID> --restack' can be continued, skipped, or aborted." ;;
+    unreattachable) printf '%s' "  git:...;  git:<file.txt>;Error: Could not reattach <wt> to 'topic'\; the recorded restack state was preserved.;A 'rebase --quit' or 'cherry-pick --quit' leaves the conflicted index in place: stage or discard the paths Git names above.;Then re-run: <worktree> restack abort \"<wt>\"" ;;
+    remote-moved) printf '%s' "Error: Remote 'origin/topic' changed while the supported restack was paused\; refusing to continue or skip.;Abort the guarded restack before reconciling the moved remote." ;;
+    lease-rejected) printf '%s' "Error: Push rejected. Remote 'origin/topic' may have changed since the force-with-lease expectation\; fetch and rebase/merge before retrying." ;;
+    bare-flag) printf '%s' "Error: --replay selects the restack engine for --reuse/--restack\; combine it with one of them." ;;
+    *) printf 'UNKNOWN-ERR-SPEC:%s' "$spec" ;;
+  esac
+}
+
+out_text() {
+  case "$1" in
+    -) printf '' ;;
+    wt) printf '<wt>' ;;
+    completed) printf 'Completed guarded restack for topic: <wt>' ;;
+    aborted) printf 'Aborted guarded restack and restored topic: <wt>' ;;
+    cleared) printf 'No restack was paused\; cleared the recorded restack state for topic: <wt>' ;;
+    *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
+  esac
+}
+
+# --- the rows ---------------------------------------------------------------------
+# label|fixture|command|rc|out|err|state
+ROWS='a clean replay rewrites the branch onto the moved base and authorizes its exact head|clean|create topic --reuse --replay|0|wt|-|engine=none branch=topic head=rebased ref=head ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre
+push after a clean replay publishes the head with the original lease|clean replay|push topic|0|-|skip-rebase|engine=none branch=topic head=end ref=end ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=- remote=end
+a dirty tree is refused before any mutation|clean dirty|create topic --reuse --replay|1|-|dirty|engine=none branch=topic head=pre ref=pre ahead=1 dirty= M file.txt tree=feature.txt:feature,file.txt:orig,other.txt:orig restack=- remote=pre
+a merge commit in the range is refused and routed to the rebase engine|clean merge|create topic --reuse --replay|1|-|merges|engine=none branch=topic head=end ref=end ahead=3 dirty=- tree=feature.txt:feature,file.txt:orig,other.txt:orig,side.txt:side restack=- remote=pre
+--reuse --replay over a conflict aborts back to the pre-replay branch and names both recovery paths|conflict|create topic --reuse --replay|1|-|aborted|engine=none branch=topic head=pre ref=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=-
+--restack --replay over a published branch pauses the sequencer with a bound token and the branch unmoved|conflict publish|create topic --restack --replay|1|-|paused|engine=replay branch=detached head=base ref=pre ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:bound,mode:replay remote=pre
+--restack --replay over an unpublished branch pauses with no remote lease|conflict|create topic --restack --replay|1|-|paused|engine=replay branch=detached head=base ref=pre ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:bound,mode:replay remote=-
+continue completes the resolved replay and authorizes its exact head|conflict publish restack-replay resolve|restack continue topic|0|completed|-|engine=none branch=topic head=rebased ref=head ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre
+push after a completed replay publishes the rewritten head|conflict publish restack-replay resolve continue|push topic|0|-|skip-rebase|engine=none branch=topic head=end ref=end ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=- remote=end
+skip drops the represented commit and replays the refresh-only commit|merged restack-replay|restack skip topic|0|completed|-|engine=none branch=topic head=rebased ref=head ahead=1 dirty=- tree=file.txt:already merged plus main follow-up,other.txt:orig,refresh-only.txt:refresh only restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre
+abort restores the pre-replay branch and clears the record|conflict restack-replay|restack abort topic|0|aborted|-|engine=none branch=topic head=pre ref=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=-
+continue with HEAD checked out onto the branch is refused|conflict second restack-replay raw-checkout|restack continue topic|1|-|refusal:not the replay recorded by the worktree tool|engine=replay branch=topic head=end ref=end ahead=2 dirty=- tree=file.txt:feature,other.txt:orig,second.txt:second restack=remote:origin,branch:topic,expected:-,orig:end,base:base,pending:true,token:bound,mode:replay remote=-
+abort with HEAD checked out onto the branch restores it|conflict second restack-replay raw-checkout|restack abort topic|0|aborted|-|engine=none branch=topic head=end ref=end ahead=2 dirty=- tree=file.txt:feature,other.txt:orig,second.txt:second restack=- remote=-
+abort after a hand cherry-pick quit refuses to force the checkout over the unmerged index|conflict restack-replay raw-quit|restack abort topic|1|-|unreattachable|engine=none branch=detached head=base ref=pre ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:unbound,mode:replay remote=-
+abort after a hand cherry-pick abort clears the orphaned record and reattaches the branch|conflict restack-replay raw-abort|restack abort topic|0|cleared|-|engine=none branch=topic head=pre ref=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=-
+remote movement while paused refuses continue and leaves the replay paused|conflict publish restack-replay resolve move-remote|restack continue topic|1|-|remote-moved|engine=replay branch=detached head=base ref=pre ahead=0 dirty=M  file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:bound,mode:replay remote=external
+abort stays available after remote movement|conflict publish restack-replay resolve move-remote|restack abort topic|0|aborted|-|engine=none branch=topic head=pre ref=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=external
+remote movement after authorization fails the exact lease|clean replay move-remote|push topic|1|-|skip-rebase+lease-rejected|engine=none branch=topic head=end ref=end ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:end remote=external
+--replay without an engine to modify is refused|plain|create topic --replay|1|-|bare-flag|engine=none branch=topic head=pre ref=pre ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,other.txt:orig restack=- remote=-
+'
+
+echo "=== worktree create --replay (the policy-blocked restack engine) ==="
+n=0
+while IFS='|' read -r label fixture command rc out err want_state; do
+  [[ -n "$label$fixture$command$rc$out$err$want_state" ]] || continue
+  n=$((n + 1))
+  # shellcheck disable=SC2086
+  build "row-$n" $fixture
+  if [[ "${PROBE:-}" == 1 ]]; then
+    printf '%s => %s\n' "$label" "$(run "$command")"
+    continue
+  fi
+  assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
+done <<<"$ROWS"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
