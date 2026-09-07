@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Lifecycle integration between `worktree` and `worktree-session-guard`.
+# Lifecycle integration between `worktree` and `worktree-session-guard`: the
+# verbs against a lease as one table, then the guard's own surfaces.
 #
 # The shape under test is Option C from the issue: claiming is NOT automatic —
 # `create` never takes a lease — while the DESTRUCTIVE operations all respect
@@ -69,14 +70,6 @@ assert_contains() {
   fi
 }
 
-assert_path_exists() {
-  [[ -e "$1" ]] && pass "$2" || fail "$2 (missing: $1)"
-}
-
-assert_path_absent() {
-  [[ ! -e "$1" ]] && pass "$2" || fail "$2 (still exists: $1)"
-}
-
 # Exit code of `guard status`: 0 ours, 3 no lock, 4 non-guard lock, 75 foreign.
 guard_status_code() {
   local wt="$1" repo="$2" rc=0
@@ -85,9 +78,27 @@ guard_status_code() {
   printf '%s' "$rc"
 }
 
+mkdir -p "$TMP_ROOT/bin"
+cat >"$TMP_ROOT/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}:${2:-}" in
+  pr:list) ;;
+  pr:view) printf 'issue-x\n' ;;
+esac
+STUB
+chmod +x "$TMP_ROOT/bin/gh"
+export PATH="$TMP_ROOT/bin:$PATH"
+
+# A scripts directory whose guard cannot run.
+NOGUARD_SCRIPTS="$TMP_ROOT/noguard-scripts"
+mkdir -p "$NOGUARD_SCRIPTS"
+cp -R "$WORKTREE_PACKAGE_DIR/scripts/." "$NOGUARD_SCRIPTS/"
+chmod -x "$NOGUARD_SCRIPTS/worktree-session-guard"
+
 make_repo() {
   local root="$1"
-  mkdir -p "$root/main" "$root/bin" "$root/gh-state"
+  mkdir -p "$root/main" "$root/gh-state"
   git -C "$root/main" init -q -b main
   git -C "$root/main" config user.email test@example.com
   git -C "$root/main" config user.name Test
@@ -99,347 +110,238 @@ make_repo() {
   git init -q --bare "$root/origin.git"
   git -C "$root/main" remote add origin "$root/origin.git"
   git -C "$root/main" push -q -u origin main
-
-  cat >"$root/bin/gh" <<'STUB'
-#!/usr/bin/env bash
-set -euo pipefail
-case "${1:-}:${2:-}" in
-  pr:list) ;;
-  pr:view) printf 'issue-x\n' ;;
-esac
-STUB
-  chmod +x "$root/bin/gh"
 }
+
+# --- the lifecycle verbs against a lease: one table -----------------------------
+# A row builds its own checkout from a step word list (a worktree the script
+# created, a merged tree, a second merged tree, a zero-commit tree, a lease
+# claimed under an owner), names the session identity in the environment, runs
+# one command line from the main checkout, and pins the exit status, stdout
+# (usage text by its first line), stderr whole, and what is left: each tree of
+# the fixture with the owner of its lease.
+
+ROOT=""
+MAIN=""
+TREES=""
+ROW_SCRIPT=""
+ROW_ENV=()
 
 # A merged worktree that `cleanup` would collect if nothing held it. The
 # branch carries a unique commit that reached main through a merge commit's
 # side parent: ancestry alone is not enough for collection — a zero-commit
 # branch sitting on the mainline is pending work and must survive.
 add_merged_tree() {
-  local root="$1" name="$2"
-  git -C "$root/main" worktree add -q -b "$name" "$root/trees/$name" main
-  printf '%s\n' "$name" >"$root/trees/$name/$name.txt"
-  git -C "$root/trees/$name" add "$name.txt"
-  git -C "$root/trees/$name" commit -q -m "$name: work"
-  git -C "$root/main" merge -q --no-ff -m "merge $name" "$name"
-  git -C "$root/main" push -q origin main
+  local name="$1"
+  git -C "$MAIN" worktree add -q -b "$name" "$ROOT/trees/$name" main
+  printf '%s\n' "$name" >"$ROOT/trees/$name/$name.txt"
+  git -C "$ROOT/trees/$name" add "$name.txt"
+  git -C "$ROOT/trees/$name" commit -q -m "$name: work"
+  git -C "$MAIN" merge -q --no-ff -m "merge $name" "$name"
+  git -C "$MAIN" push -q origin main
+  TREES="$TREES $name"
 }
 
-echo "=== create does not claim ==="
-
-ROOT="$TMP_ROOT/create"
-make_repo "$ROOT"
-export PATH="$ROOT/bin:$PATH"
-export GH_STATE="$ROOT/gh-state"
-export KENDEX_SESSION_OWNER="ISSUE-1"
-
-(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-1 >/dev/null 2>&1)
-CREATED="$ROOT/trees/issue-1"
-assert_path_exists "$CREATED" "create made the worktree"
-# 3 is "no lock at all". Anything else means create took a lease, which would
-# make cleanup lease-aware-but-useless for every consumer.
-assert_eq "$(guard_status_code "$CREATED" "$ROOT/main")" "3" \
-  "create leaves the worktree unclaimed"
-
-echo "=== remove releases its own lease ==="
-
-"$GUARD_SCRIPT" claim "$CREATED" --owner ISSUE-1 >/dev/null
-assert_eq "$(guard_status_code "$CREATED" "$ROOT/main" --owner ISSUE-1)" "0" \
-  "the lease is held before remove"
-set +e
-remove_out=$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" remove issue-1 2>"$ROOT/remove.err")
-remove_code=$?
-set -e
-assert_eq "$remove_code" "0" "remove of a self-claimed worktree exits 0"
-assert_contains "$remove_out" "Removed: $CREATED" "remove reports the removal"
-assert_contains "$(cat "$ROOT/remove.err")" "Released session guard lease (owner=ISSUE-1)" \
-  "remove says it released the lease rather than doing it silently"
-assert_path_absent "$CREATED" "the self-claimed worktree is gone"
-
-echo "=== remove refuses a foreign lease ==="
-
-FOREIGN_ROOT="$TMP_ROOT/foreign"
-make_repo "$FOREIGN_ROOT"
-add_merged_tree "$FOREIGN_ROOT" "issue-foreign"
-FOREIGN_WT="$FOREIGN_ROOT/trees/issue-foreign"
-"$GUARD_SCRIPT" claim "$FOREIGN_WT" --owner OTHER-SESSION >/dev/null
-set +e
-foreign_out=$(cd "$FOREIGN_ROOT/main" && "$WORKTREE_SCRIPT" remove issue-foreign 2>"$FOREIGN_ROOT/foreign.err")
-foreign_code=$?
-set -e
-foreign_err="$(cat "$FOREIGN_ROOT/foreign.err")"
-assert_eq "$foreign_code" "1" "remove of a foreign-claimed worktree exits nonzero"
-assert_contains "$foreign_err" "locked worktree" "the refusal names the lock"
-assert_contains "$foreign_err" "OTHER-SESSION" "the refusal names the owning session"
-assert_contains "$foreign_err" "Nothing in the worktree was modified." \
-  "the refusal states the tree was left intact"
-assert_path_exists "$FOREIGN_WT" "the foreign-claimed worktree survives"
-assert_eq "$(guard_status_code "$FOREIGN_WT" "$FOREIGN_ROOT/main" --owner OTHER-SESSION)" "0" \
-  "the foreign lease is left in place"
-if grep -qF "Removed:" <<<"$foreign_out"; then
-  fail "remove of a foreign-claimed worktree does not report a removal"
-else
-  pass "remove of a foreign-claimed worktree does not report a removal"
-fi
-
-echo "=== issue-addressed calls derive the owner (default install) ==="
-
-# The orchestrating workflow claims with `--owner ISSUE_ID`, and a default
-# install sets no session-owner env var — so `remove <ID>` must derive that same
-# identity from its own argument, or claim and release never agree.
-DERIVE_ROOT="$TMP_ROOT/derive"
-make_repo "$DERIVE_ROOT"
-export GH_STATE="$DERIVE_ROOT/gh-state"
-add_merged_tree "$DERIVE_ROOT" "issue-d1"
-D1="$DERIVE_ROOT/trees/issue-d1"
-"$GUARD_SCRIPT" claim "$D1" --owner issue-d1 >/dev/null
-set +e
-(cd "$DERIVE_ROOT/main" && env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER \
-  "$WORKTREE_SCRIPT" remove issue-d1 >/dev/null 2>"$DERIVE_ROOT/derive.err")
-derive_code=$?
-set -e
-assert_eq "$derive_code" "0" "remove <ID> releases the issue-keyed lease with no session env"
-assert_contains "$(cat "$DERIVE_ROOT/derive.err")" "Released session guard lease (owner=issue-d1)" \
-  "the released identity is the issue ID the command was addressed with"
-assert_path_absent "$D1" "the issue-claimed worktree is gone"
-
-# The session env identity is still honoured when it, not the issue ID, owns
-# the lease — the derivation adds an identity, it does not remove one.
-add_merged_tree "$DERIVE_ROOT" "issue-d2"
-D2="$DERIVE_ROOT/trees/issue-d2"
-"$GUARD_SCRIPT" claim "$D2" --owner SESSION-X >/dev/null
-set +e
-(cd "$DERIVE_ROOT/main" && env -u HT_SESSION_OWNER KENDEX_SESSION_OWNER=SESSION-X \
-  "$WORKTREE_SCRIPT" remove issue-d2 >/dev/null 2>"$DERIVE_ROOT/derive2.err")
-derive2_code=$?
-set -e
-assert_eq "$derive2_code" "0" "remove <ID> still honours the session env identity"
-assert_contains "$(cat "$DERIVE_ROOT/derive2.err")" "(owner=SESSION-X)" \
-  "the env-owned lease is released as the env identity"
-assert_path_absent "$D2" "the env-claimed worktree is gone"
-
-# `create <ID> --reuse` derives the same identity, so the session that claimed
-# under the orchestrating workflow can re-enter its own worktree without env plumbing.
-env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER bash -c \
-  "cd '$DERIVE_ROOT/main' && '$WORKTREE_SCRIPT' create issue-d3" >/dev/null 2>&1
-D3="$DERIVE_ROOT/trees/issue-d3"
-assert_path_exists "$D3" "derivation reuse fixture was created"
-"$GUARD_SCRIPT" claim "$D3" --owner issue-d3 >/dev/null
-set +e
-env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER bash -c \
-  "cd '$DERIVE_ROOT/main' && '$WORKTREE_SCRIPT' create issue-d3 --reuse" >/dev/null 2>"$DERIVE_ROOT/derive3.err"
-derive3_code=$?
-set -e
-assert_eq "$derive3_code" "0" "create <ID> --reuse refreshes the issue-keyed lease with no session env"
-assert_eq "$(guard_status_code "$D3" "$DERIVE_ROOT/main" --owner issue-d3)" "0" \
-  "the issue-keyed lease survives the reuse"
-
-echo "=== cleanup is lease-aware ==="
-
-CLEAN_ROOT="$TMP_ROOT/cleanup"
-make_repo "$CLEAN_ROOT"
-add_merged_tree "$CLEAN_ROOT" "issue-free"
-add_merged_tree "$CLEAN_ROOT" "issue-held"
-HELD="$CLEAN_ROOT/trees/issue-held"
-FREE="$CLEAN_ROOT/trees/issue-free"
-"$GUARD_SCRIPT" claim "$HELD" --owner LIVE-SESSION >/dev/null
-
-set +e
-clean_out=$(cd "$CLEAN_ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$CLEAN_ROOT/cleanup.err")
-clean_code=$?
-set -e
-clean_err="$(cat "$CLEAN_ROOT/cleanup.err")"
-assert_eq "$clean_code" "0" "cleanup exits 0 with a held worktree present"
-assert_contains "$clean_out" "Cleaned: $FREE" "cleanup still collects unclaimed merged worktrees"
-assert_path_absent "$FREE" "the unclaimed merged worktree is gone"
-assert_path_exists "$HELD" "the claimed worktree survives cleanup"
-assert_contains "$clean_err" "Skipped (a session holds a guard lease): $HELD" \
-  "cleanup reports the skip instead of silently passing over it"
-assert_contains "$clean_err" "--stale" "the skip message names the recovery path"
-assert_eq "$(guard_status_code "$HELD" "$CLEAN_ROOT/main" --owner LIVE-SESSION)" "0" \
-  "cleanup does not release the lease it skipped"
-
-echo "=== cleanup --stale respects the TTL ==="
-
-# A fresh lease is not stale at any sane TTL, so --stale must still refuse it.
-set +e
-fresh_out=$(cd "$CLEAN_ROOT/main" && "$WORKTREE_SCRIPT" cleanup --stale 2>"$CLEAN_ROOT/fresh.err")
-fresh_code=$?
-set -e
-assert_eq "$fresh_code" "0" "cleanup --stale exits 0 with only a fresh lease"
-assert_path_exists "$HELD" "cleanup --stale leaves a fresh lease alone"
-assert_contains "$(cat "$CLEAN_ROOT/fresh.err")" "not past the" \
-  "cleanup --stale explains that the lease is too young"
-if grep -qF "Cleaned: $HELD" <<<"$fresh_out"; then
-  fail "cleanup --stale does not collect a fresh lease"
-else
-  pass "cleanup --stale does not collect a fresh lease"
-fi
-
-# --ttl-minutes 0 makes every lease stale, which is the abandoned-session path.
-set +e
-stale_out=$(cd "$CLEAN_ROOT/main" && "$WORKTREE_SCRIPT" cleanup --stale --ttl-minutes 0 2>"$CLEAN_ROOT/stale.err")
-stale_code=$?
-set -e
-assert_eq "$stale_code" "0" "cleanup --stale --ttl-minutes 0 exits 0"
-assert_contains "$stale_out" "Cleaned: $HELD" "cleanup --stale collects a past-TTL lease"
-assert_path_absent "$HELD" "the abandoned worktree is collected"
-assert_contains "$(cat "$CLEAN_ROOT/stale.err")" "Released stale session guard lease: $HELD" \
-  "cleanup --stale says which lease it released"
-
-echo "=== cleanup skips zero-commit worktrees ==="
-
-# A freshly created branch has no commits of its own, so origin/main trivially
-# contains it and ancestry counts it as merged — which is how cleanup destroyed
-# a worktree seconds after `create`, inside the create→claim window.
-ZC_ROOT="$TMP_ROOT/zero-commit"
-make_repo "$ZC_ROOT"
-add_merged_tree "$ZC_ROOT" "issue-merged"
-git -C "$ZC_ROOT/main" worktree add -q -b issue-pending "$ZC_ROOT/trees/issue-pending" main
-ZC_MERGED="$ZC_ROOT/trees/issue-merged"
-ZC_PENDING="$ZC_ROOT/trees/issue-pending"
-
-set +e
-zc_out=$(cd "$ZC_ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$ZC_ROOT/zc.err")
-zc_code=$?
-set -e
-zc_err="$(cat "$ZC_ROOT/zc.err")"
-assert_eq "$zc_code" "0" "cleanup exits 0 with a zero-commit worktree present"
-assert_contains "$zc_out" "Cleaned: $ZC_MERGED" "cleanup still collects a genuinely merged worktree"
-assert_path_absent "$ZC_MERGED" "the merged worktree is gone"
-assert_path_exists "$ZC_PENDING" "the zero-commit worktree survives cleanup"
-assert_contains "$zc_err" "Skipped (branch 'issue-pending' has no commits of its own — pending work, not merged): $ZC_PENDING" \
-  "the skip is reported and names the worktree"
-if git -C "$ZC_ROOT/main" show-ref --verify --quiet refs/heads/issue-pending; then
-  pass "the zero-commit branch survives cleanup"
-else
-  fail "the zero-commit branch survives cleanup"
-fi
-
-# --stale is the abandoned-SESSION path, not an abandoned-WORK path: a
-# zero-commit worktree is pending work even when its lease has aged out, so
-# --stale neither collects it nor releases the lease as a side effect.
-"$GUARD_SCRIPT" claim "$ZC_PENDING" --owner GONE-SESSION >/dev/null
-set +e
-(cd "$ZC_ROOT/main" && "$WORKTREE_SCRIPT" cleanup --stale --ttl-minutes 0 \
-  >"$ZC_ROOT/zc-stale.out" 2>"$ZC_ROOT/zc-stale.err")
-zc_stale_code=$?
-set -e
-assert_eq "$zc_stale_code" "0" "cleanup --stale exits 0 with a claimed zero-commit worktree"
-assert_path_exists "$ZC_PENDING" "cleanup --stale does not collect a zero-commit worktree past the TTL"
-assert_contains "$(cat "$ZC_ROOT/zc-stale.err")" "no commits of its own" \
-  "cleanup --stale reports the zero-commit skip"
-assert_eq "$(guard_status_code "$ZC_PENDING" "$ZC_ROOT/main" --owner GONE-SESSION)" "0" \
-  "cleanup --stale leaves the pending worktree's lease in place"
-
-echo "=== cleanup option handling ==="
-
-set +e
-bogus_err=$(cd "$CLEAN_ROOT/main" && "$WORKTREE_SCRIPT" cleanup --bogus 2>&1 >/dev/null)
-bogus_code=$?
-set -e
-assert_eq "$bogus_code" "1" "cleanup rejects an unknown option"
-assert_contains "$bogus_err" "unknown option '--bogus'" "cleanup names the unknown option"
-
-set +e
-ttl_err=$(cd "$CLEAN_ROOT/main" && "$WORKTREE_SCRIPT" cleanup --stale --ttl-minutes abc 2>&1 >/dev/null)
-ttl_code=$?
-set -e
-assert_eq "$ttl_code" "1" "cleanup rejects a non-numeric --ttl-minutes"
-assert_contains "$ttl_err" "non-negative integer" "the --ttl-minutes refusal says what is required"
-
-help_out=$(cd "$CLEAN_ROOT/main" && "$WORKTREE_SCRIPT" cleanup --help)
-assert_contains "$help_out" "--stale" "cleanup --help documents --stale"
-assert_contains "$help_out" "never collected" "cleanup --help states the lease guarantee"
-
-echo "=== an unavailable guard degrades loudly ==="
-
-# A guard that cannot run must be announced, not silently skipped: the
-# lifecycle integrations returning 0 with no probe is how cleanup would
-# collect live worktrees again. Once per invocation, not per worktree.
-NOGUARD_ROOT="$TMP_ROOT/noguard"
-make_repo "$NOGUARD_ROOT"
-add_merged_tree "$NOGUARD_ROOT" "issue-ng1"
-add_merged_tree "$NOGUARD_ROOT" "issue-ng2"
-NOGUARD_SCRIPTS="$TMP_ROOT/noguard-scripts"
-mkdir -p "$NOGUARD_SCRIPTS"
-cp -R "$WORKTREE_PACKAGE_DIR/scripts/." "$NOGUARD_SCRIPTS/"
-chmod -x "$NOGUARD_SCRIPTS/worktree-session-guard"
-set +e
-noguard_out=$(cd "$NOGUARD_ROOT/main" && "$NOGUARD_SCRIPTS/worktree" cleanup 2>"$NOGUARD_ROOT/noguard.err")
-noguard_code=$?
-set -e
-noguard_err="$(cat "$NOGUARD_ROOT/noguard.err")"
-assert_eq "$noguard_code" "0" "cleanup proceeds when the guard is unavailable"
-assert_contains "$noguard_err" "unguarded" \
-  "the unavailable guard is announced, not silently skipped"
-assert_contains "$noguard_out" "Cleaned: $NOGUARD_ROOT/trees/issue-ng1" \
-  "cleanup still collects merged worktrees without the guard"
-noguard_warns="$(grep -c "not executable" "$NOGUARD_ROOT/noguard.err" || true)"
-assert_eq "$noguard_warns" "1" "the degradation warning appears once per invocation"
-
-echo "=== create --reuse and leases ==="
-
-REUSE_ROOT="$TMP_ROOT/reuse"
-make_repo "$REUSE_ROOT"
-export GH_STATE="$REUSE_ROOT/gh-state"
-KENDEX_SESSION_OWNER="ISSUE-R" \
-  bash -c "cd '$REUSE_ROOT/main' && '$WORKTREE_SCRIPT' create issue-r" >/dev/null 2>&1
-REUSE_WT="$REUSE_ROOT/trees/issue-r"
-
-# Another session holds it: reuse must refuse by name and change nothing.
-"$GUARD_SCRIPT" claim "$REUSE_WT" --owner OTHER-R >/dev/null
-set +e
-reuse_err=$(KENDEX_SESSION_OWNER="ISSUE-R" bash -c \
-  "cd '$REUSE_ROOT/main' && '$WORKTREE_SCRIPT' create issue-r --reuse" 2>&1 >/dev/null)
-reuse_code=$?
-set -e
-assert_eq "$reuse_code" "75" "reuse of a foreign-claimed worktree exits 75 (active work)"
-assert_contains "$reuse_err" "claimed by another session" "the reuse refusal is explicit"
-assert_contains "$reuse_err" "OTHER-R" "the reuse refusal names the owning session"
-assert_path_exists "$REUSE_WT" "the foreign-claimed worktree survives a refused reuse"
-
-# Our own lease: reuse must REFRESH the heartbeat, not merely tolerate the
-# lease. A reuse cycle longer than the TTL would otherwise be swept as
-# abandoned while it is still working.
-"$GUARD_SCRIPT" release "$REUSE_WT" --owner OTHER-R --force >/dev/null 2>&1
-"$GUARD_SCRIPT" claim "$REUSE_WT" --owner ISSUE-R >/dev/null 2>&1
-lease_heartbeat() {
-  "$GUARD_SCRIPT" status "$REUSE_WT" --repo "$REUSE_ROOT/main" --owner ISSUE-R 2>/dev/null \
-    | jq -r '.heartbeat_at'
+claim() {
+  "$GUARD_SCRIPT" claim "$ROOT/trees/$1" --owner "$2" >/dev/null
 }
-before_heartbeat="$(lease_heartbeat)"
-before_claimed="$("$GUARD_SCRIPT" status "$REUSE_WT" --repo "$REUSE_ROOT/main" --owner ISSUE-R 2>/dev/null | jq -r '.claimed_at')"
-sleep 1
-set +e
-KENDEX_SESSION_OWNER="ISSUE-R" bash -c \
-  "cd '$REUSE_ROOT/main' && '$WORKTREE_SCRIPT' create issue-r --reuse" >/dev/null 2>"$REUSE_ROOT/reuse-own.err"
-reuse_own_code=$?
-set -e
-after_heartbeat="$(lease_heartbeat)"
-after_claimed="$("$GUARD_SCRIPT" status "$REUSE_WT" --repo "$REUSE_ROOT/main" --owner ISSUE-R 2>/dev/null | jq -r '.claimed_at')"
-assert_eq "$reuse_own_code" "0" "reuse of a self-claimed worktree succeeds"
-assert_eq "$(guard_status_code "$REUSE_WT" "$REUSE_ROOT/main" --owner ISSUE-R)" "0" \
-  "reuse leaves our own lease in place"
-if [[ -n "$before_heartbeat" && "$after_heartbeat" > "$before_heartbeat" ]]; then
-  pass "reuse refreshes the lease heartbeat"
-else
-  fail "reuse refreshes the lease heartbeat (before=$before_heartbeat after=$after_heartbeat)"
-fi
-# `refresh` extends the heartbeat without ever unlocking; a re-claim would reset
-# claimed_at and momentarily drop the lock, which is what this pins against.
-assert_eq "$after_claimed" "$before_claimed" \
-  "reuse refreshes in place rather than re-claiming (lock never drops)"
+
+step() {
+  case "$1" in
+    # `create` through the script, under the self identity.
+    created)
+      (cd "$MAIN" && env KENDEX_SESSION_OWNER=ISSUE-1 "$WORKTREE_SCRIPT" create topic >/dev/null 2>&1)
+      TREES="$TREES topic"
+      ;;
+    merged) add_merged_tree topic ;;
+    free) add_merged_tree free ;;
+    pending)
+      git -C "$MAIN" worktree add -q -b pending "$ROOT/trees/pending" main
+      TREES="$TREES pending"
+      ;;
+    claim-self) claim topic ISSUE-1 ;;
+    claim-other) claim topic OTHER-SESSION ;;
+    claim-issue) claim topic topic ;;
+    claim-x) claim topic SESSION-X ;;
+    claim-pending) claim pending GONE-SESSION ;;
+    no-guard) ROW_SCRIPT="$NOGUARD_SCRIPTS/worktree" ;;
+    *)
+      echo "UNKNOWN-STEP: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+build() {
+  local word
+  ROOT="$TMP_ROOT/$1"
+  shift
+  MAIN="$ROOT/main"
+  TREES="" ROW_SCRIPT="$WORKTREE_SCRIPT"
+  ROW_ENV=()
+  make_repo "$ROOT"
+  for word in "$@"; do step "$word"; done
+}
+
+# The env column: the session identity the command runs under. The script's
+# ladder ends at $USER (a login, not a session), so `none` unsets that too:
+# the only identity such a command can carry is the issue ID it names.
+session_env() {
+  case "$1" in
+    none) ROW_ENV=(-u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER -u USER) ;;
+    self) ROW_ENV=(-u HT_SESSION_OWNER KENDEX_SESSION_OWNER=ISSUE-1) ;;
+    x) ROW_ENV=(-u HT_SESSION_OWNER KENDEX_SESSION_OWNER=SESSION-X) ;;
+    *)
+      echo "UNKNOWN-ENV-SPEC: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+# Each fixture tree as name=<present|absent>/<branch|no-branch>/<lease>: the
+# directory, its branch ref in the main checkout, and the lease owner, or the
+# guard's own status code when no guard lease is held (3 no lock, 4 a lock
+# taken outside the guard, 1 no worktree there at all).
+state() {
+  local name out="" presence branch owner rc
+  for name in $TREES; do
+    presence=absent
+    [[ -e "$ROOT/trees/$name" ]] && presence=present
+    branch=no-branch
+    git -C "$MAIN" show-ref --verify --quiet "refs/heads/$name" && branch=branch
+    rc=0
+    owner="$("$GUARD_SCRIPT" status "$ROOT/trees/$name" --repo "$MAIN" 2>/dev/null | jq -r '.owner // empty')" || rc=$?
+    out="$out $name=$presence/$branch/${owner:-$rc}"
+  done
+  printf '%s' "${out# }"
+}
+
+alias_text() {
+  sed -e "s|$ROOT/trees/topic|<topic>|g" -e "s|$ROOT/trees/free|<free>|g" -e "s|$ROOT/trees/pending|<pending>|g" \
+    -e "s|$NOGUARD_SCRIPTS/worktree-session-guard|<guard>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" -e "s|$MAIN|<main>|g" \
+    -e 's/Lock reason: kendex-session-guard v1 owner=\([^ ]*\) pid=.*/Lock reason: <lease owner=\1>/' \
+    -e '/^Usage: /q' -e 's/;/\\;/g' | paste -s -d ';' -
+}
+
+run() {
+  local -a argv
+  local rc=0
+  read -r -a argv <<<"$1"
+  (cd "$MAIN" && env "${ROW_ENV[@]}" GH_STATE="$ROOT/gh-state" "$ROW_SCRIPT" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  printf 'rc=%s out=%s err=%s %s' "$rc" "$(alias_text <"$ROOT/out")" "$(alias_text <"$ROOT/err")" "$(state)"
+}
+
+out_text() {
+  case "$1" in
+    -) printf '' ;;
+    path) printf '<topic>' ;;
+    removed) printf 'Removed: <topic>' ;;
+    cleaned-free) printf 'Cleaned: <free>' ;;
+    cleaned-topic) printf 'Cleaned: <topic>' ;;
+    cleaned-both) printf 'Cleaned: <free>;Cleaned: <topic>' ;;
+    usage) printf 'Usage: worktree cleanup [--stale] [--ttl-minutes N]' ;;
+    *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
+  esac
+}
+
+LOCKED_TAIL='Nothing in the worktree was modified.;A lock usually means a live session owns this worktree\; confirm it is finished first.;To release the lock and retry:;  git -C "<main>" worktree unlock "<topic>"'
+
+err_text() {
+  case "$1" in
+    -) printf '' ;;
+    released:*) printf "Released session guard lease (owner=%s): <topic>;Deleted branch 'topic' — merged into origin/main." "${1#released:}" ;;
+    locked-other) printf '%s' "Error: <topic> is a locked worktree\; refusing to remove it.;  Worktree: <topic>;  Lock reason: <lease owner=OTHER-SESSION>;$LOCKED_TAIL" ;;
+    held) printf '%s' 'Skipped (a session holds a guard lease): <topic>;  Let that session release it, or pass --stale to collect leases past the 720m TTL.' ;;
+    fresh) printf '%s' 'Skipped (guard lease is not past the 720m TTL): <topic>' ;;
+    stale-released) printf '%s' 'Released stale session guard lease: <topic>' ;;
+    pending-skip) printf '%s' "Skipped (branch 'pending' has no commits of its own — pending work, not merged): <pending>;  Zero-commit worktrees are never collected\; drop it explicitly with: <worktree> remove \"<pending>\"" ;;
+    unknown-option) printf '%s' "Error: unknown option '--bogus' for cleanup;Run: <worktree> cleanup --help" ;;
+    ttl-nan) printf '%s' 'Error: --ttl-minutes must be a non-negative integer of at most 10 digits' ;;
+    unguarded) printf '%s' 'Warning: worktree-session-guard is not executable at <guard>\; session leases were NOT checked or released, so worktrees are unguarded.' ;;
+    reuse-foreign:*) printf 'Error: <topic> is claimed by another session\\; refusing to reuse it.;  worktree-session-guard: <topic> is claimed by owner=%s;Coordinate with the owning session instead of reusing its worktree.' "${1#reuse-foreign:}" ;;
+    *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
+  esac
+}
+
+# label|fixture|env|command|rc|out|err|state
+ROWS='
+create claims nothing|created|self|-|-|-|-|topic=present/branch/3
+remove releases its own lease and says so|created claim-self|self|remove topic|0|removed|released:ISSUE-1|topic=absent/no-branch/1
+remove refuses a foreign lease by its owner and leaves it in place|merged claim-other|self|remove topic|1|-|locked-other|topic=present/branch/OTHER-SESSION
+remove <ID> derives the issue identity with no session env|merged claim-issue|none|remove topic|0|removed|released:topic|topic=absent/no-branch/1
+remove <ID> still honours the session env identity|merged claim-x|x|remove topic|0|removed|released:SESSION-X|topic=absent/no-branch/1
+create <ID> --reuse keeps the issue-keyed lease with no session env|created claim-issue|none|create topic --reuse|0|path|-|topic=present/branch/topic
+create <ID> --reuse with no session env refuses a session-keyed lease|created claim-self|none|create topic --reuse|75|-|reuse-foreign:ISSUE-1|topic=present/branch/ISSUE-1
+cleanup collects the unclaimed merged tree and names the held one|merged free claim-other|self|cleanup|0|cleaned-free|held|topic=present/branch/OTHER-SESSION free=absent/no-branch/1
+cleanup --stale leaves a fresh lease alone|merged claim-other|self|cleanup --stale|0|-|fresh|topic=present/branch/OTHER-SESSION
+cleanup --stale --ttl-minutes 0 releases a past-TTL lease and collects|merged claim-other|self|cleanup --stale --ttl-minutes 0|0|cleaned-topic|stale-released|topic=absent/no-branch/1
+cleanup skips a zero-commit tree and names it|merged pending|self|cleanup|0|cleaned-topic|pending-skip|topic=absent/no-branch/1 pending=present/branch/3
+cleanup --stale neither collects a zero-commit tree nor releases its lease|pending claim-pending|self|cleanup --stale --ttl-minutes 0|0|-|pending-skip|pending=present/branch/GONE-SESSION
+cleanup rejects an unknown option|merged|self|cleanup --bogus|1|-|unknown-option|topic=present/branch/3
+cleanup rejects a non-numeric --ttl-minutes|merged|self|cleanup --stale --ttl-minutes abc|1|-|ttl-nan|topic=present/branch/3
+cleanup --help prints usage and collects nothing|merged|self|cleanup --help|0|usage|-|topic=present/branch/3
+an unavailable guard is announced once and cleanup proceeds unguarded|merged free no-guard|self|cleanup|0|cleaned-both|unguarded|topic=absent/no-branch/1 free=absent/no-branch/1
+create --reuse refuses a foreign lease as active work|created claim-other|self|create topic --reuse|75|-|reuse-foreign:OTHER-SESSION|topic=present/branch/OTHER-SESSION
+create --reuse under its own lease succeeds and keeps it|created claim-self|self|create topic --reuse|0|path|-|topic=present/branch/ISSUE-1
+'
+
+echo "=== the lifecycle verbs against a lease ==="
+n=0
+while IFS='|' read -r label fixture envspec command rc out err want_state; do
+  [[ -n "$label$fixture$envspec$command$rc$out$err$want_state" ]] || continue
+  n=$((n + 1))
+  # shellcheck disable=SC2086
+  build "row-$n" $fixture
+  session_env "$envspec"
+  if [[ "$command" == - ]]; then
+    assert_eq "$(state)" "$want_state" "$label"
+    continue
+  fi
+  assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
+done <<<"$ROWS"
+
+# `create --reuse` under our own lease REFRESHES the heartbeat rather than
+# re-claiming: a reuse cycle longer than the TTL would otherwise be swept as
+# abandoned while still working, and a re-claim would reset claimed_at and
+# momentarily drop the lock. The guard reads the wall clock with no override,
+# so the refresh is pinned as an interval: the heartbeat after a one-second
+# wait is later, the claim time is not. Once per identity rung the reuse can
+# own the lease through: the issue ID with no session env, then the env.
+lease_stamp() {
+  "$GUARD_SCRIPT" status "$ROOT/trees/topic" --repo "$MAIN" --owner "$1" 2>/dev/null | jq -r ".$2"
+}
+heartbeat_pins() {
+  local owner="$1" envspec="$2" before_heartbeat before_claimed
+  session_env "$envspec"
+  before_heartbeat="$(lease_stamp "$owner" heartbeat_at)"
+  before_claimed="$(lease_stamp "$owner" claimed_at)"
+  sleep 1
+  (cd "$MAIN" && env "${ROW_ENV[@]}" "$WORKTREE_SCRIPT" create topic --reuse >/dev/null 2>&1)
+  if [[ -n "$before_heartbeat" && "$(lease_stamp "$owner" heartbeat_at)" > "$before_heartbeat" ]]; then
+    pass "reuse under the $envspec env refreshes the $owner lease heartbeat"
+  else
+    fail "reuse under the $envspec env refreshes the $owner lease heartbeat (before=$before_heartbeat after=$(lease_stamp "$owner" heartbeat_at))"
+  fi
+  assert_eq "$(lease_stamp "$owner" claimed_at)" "$before_claimed" \
+    "reuse under the $envspec env refreshes in place rather than re-claiming (lock never drops)"
+}
+build heartbeat-issue created claim-issue
+heartbeat_pins topic none
+build heartbeat created claim-self
+heartbeat_pins ISSUE-1 self
+
+# --- the guard's own surfaces ---------------------------------------------------
+REUSE_ROOT="$ROOT"
+REUSE_WT="$ROOT/trees/topic"
 
 echo "=== list and sweep ==="
 
 list_out="$("$GUARD_SCRIPT" list --repo "$REUSE_ROOT/main")"
 assert_contains "$list_out" "\"path\":\"$REUSE_WT\"" "list includes the linked worktree"
-assert_contains "$list_out" '"owner":"ISSUE-R"' "list includes the lease owner"
+assert_contains "$list_out" '"owner":"ISSUE-1"' "list includes the lease owner"
 
 dry_sweep_out="$("$GUARD_SCRIPT" sweep --repo "$REUSE_ROOT/main" --ttl-minutes 0 --dry-run)"
 assert_contains "$dry_sweep_out" "would release $REUSE_WT" "sweep dry-run reports the stale lease"
-assert_eq "$(guard_status_code "$REUSE_WT" "$REUSE_ROOT/main" --owner ISSUE-R)" "0" \
+assert_eq "$(guard_status_code "$REUSE_WT" "$REUSE_ROOT/main" --owner ISSUE-1)" "0" \
   "sweep dry-run leaves the lease in place"
 
 sweep_out="$("$GUARD_SCRIPT" sweep --repo "$REUSE_ROOT/main" --ttl-minutes 0)"
@@ -455,7 +357,7 @@ echo "=== claim serializes on the guard mutex ==="
 # a mid-claim guard process holds it proves a second owner cannot get behind it.
 MUTEX_ROOT="$TMP_ROOT/mutex"
 make_repo "$MUTEX_ROOT"
-add_merged_tree "$MUTEX_ROOT" "issue-m"
+MAIN="$MUTEX_ROOT/main"; ROOT="$MUTEX_ROOT"; add_merged_tree issue-m
 MUTEX_WT="$MUTEX_ROOT/trees/issue-m"
 exec 8>"$MUTEX_ROOT/main/.git/kendex-worktree-session-guard.lock"
 flock -x 8
@@ -492,7 +394,7 @@ echo "=== registrations resolve without a cwd or a directory ==="
 
 REG_ROOT="$TMP_ROOT/registration"
 make_repo "$REG_ROOT"
-add_merged_tree "$REG_ROOT" "issue-rel"
+MAIN="$REG_ROOT/main"; ROOT="$REG_ROOT"; add_merged_tree issue-rel
 REL_WT="$REG_ROOT/trees/issue-rel"
 "$GUARD_SCRIPT" claim "$REL_WT" --owner REL-OWNER >/dev/null
 # git accepts a relative gitdir registration, and it is relative to the
@@ -560,7 +462,7 @@ fi
 
 RACE_ROOT="$TMP_ROOT/mkdir-race"
 make_repo "$RACE_ROOT"
-add_merged_tree "$RACE_ROOT" "issue-race"
+MAIN="$RACE_ROOT/main"; ROOT="$RACE_ROOT"; add_merged_tree issue-race
 RACE_WT="$RACE_ROOT/trees/issue-race"
 RACE_GO="$RACE_ROOT/go"
 RACE_OUT="$RACE_ROOT/out"
