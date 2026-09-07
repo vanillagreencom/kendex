@@ -218,17 +218,24 @@ remove refuses the main checkout by its direct path and leaves it intact|repo|re
 
 echo "=== path boundaries ==="
 n=0
-while IFS='|' read -r label fixture command rc out err want_state; do
-  [[ -n "$label$fixture$command$rc$out$err$want_state" ]] || continue
+while IFS= read -r row; do
+  [[ -n "$row" ]] || continue
+  IFS='|' read -r label fixture command rc out err want_state <<<"$row"
+  for field in "$label" "$fixture" "$command" "$rc" "$out" "$err" "$want_state"; do
+    [[ -n "$field" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+  done
   n=$((n + 1))
   # shellcheck disable=SC2086
   build "row-$n" $fixture
-  if [[ "${PROBE:-}" == 1 ]]; then
+  # A rendering aid for writing rows: prints what each row produces instead of
+  # asserting it. A run that asserted no row is refused after the loop.
+  if [[ "${WORKTREE_TABLE_PROBE:-}" == 1 ]]; then
     printf '%s => %s\n' "$label" "$(run "$command")"
     continue
   fi
   assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
+[[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
