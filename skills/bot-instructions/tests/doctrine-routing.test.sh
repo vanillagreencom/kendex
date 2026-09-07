@@ -378,6 +378,10 @@ done <<'EOF'
 Report an input only after establishing that a shipped producer emits it in normal use; a full disk or a value past 2^53 is not one.
 Name the user-visible consequence in every finding.
 Report a gap only after establishing that nothing already covers it: a required CI context, a shipped hook, the file's own stated contract, or the platform's documentation.
+Request a tighter assertion only when the row's named claim can regress without it reddening; an incidental finding the fixture also produces, or a state pin restating a refusal the exit status carries, is not a gap.
+Do not ask a script to copy a verb another file owns, such as an ancestor walk or a parser; name the owner and ask for a call to it or an escalation, since a second copy is a twin.
+Before reporting an output as missing or hard-coded, read the full line and the lines it prints; a value already emitted there answers the finding.
+Before reporting coverage or a reference as missing on a branch, check main and the sibling PRs the body names; a series lands its halves in separate PRs and a branch cut from an earlier main lacks the sibling's files by construction.
 EOF
 
 bi_summary
