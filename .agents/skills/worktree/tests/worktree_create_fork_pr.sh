@@ -144,7 +144,8 @@ step() {
       git -C "$MAIN" add base.txt
       git -C "$MAIN" commit -q -m base
       printf 'WORKTREE_BASE_DIR="../trees"\n' >"$MAIN/.env.local"
-      git init -q --bare "$ROOT/origin.git"
+      # HEAD names main so the clone checks it out whatever the host's default branch is.
+      git init -q --bare -b main "$ROOT/origin.git"
       git -C "$MAIN" remote add origin "$ROOT/origin.git"
       git -C "$MAIN" push -q -u origin main
       OIDS="$OIDS base=$(git -C "$MAIN" rev-parse HEAD)"
