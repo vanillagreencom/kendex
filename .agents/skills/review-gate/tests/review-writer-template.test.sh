@@ -43,15 +43,6 @@ assert_eq() {
   fi
 }
 
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        missing: %s\n' "$name" "$needle"
-  fi
-}
-
 RELAY_JITTER_MAX=0
 
 # ------------------------------------------------------------- the copies ---
@@ -126,11 +117,13 @@ chmod +x "$RELAY_BIN/sleep"
 # The step bounds each dispatch with `timeout 60 gh api ...`. GNU `timeout` is
 # coreutils, absent from a default macOS — which this suite must run on (Bash
 # 3.2). Without a shim every attempt exits 127 before reaching the gh stub and
-# 56 assertions fail there and only there. Pass-through, not a real timer: the
-# stub answers instantly, and the timeout-killed case is modelled by GH_CODES
-# handing back 124, which this propagates like the real command does.
+# every dispatch row fails there and only there. Pass-through, not a real
+# timer, recording the bound it was handed: the stub answers instantly, and
+# the timeout-killed case is modelled by GH_CODES handing back 124, which this
+# propagates like the real command does.
 cat > "$RELAY_BIN/timeout" <<'RELAY_TIMEOUT'
 #!/usr/bin/env bash
+echo "$1" >> "$TIMEOUT_LOG"
 shift
 exec "$@"
 RELAY_TIMEOUT
@@ -154,6 +147,7 @@ chmod +x "$RELAY_BIN/date"
 
 RELAY_LOG="$TMP_ROOT/relay-gh.log"
 SLEEP_LOG="$TMP_ROOT/relay-sleep.log"
+TIMEOUT_LOG="$TMP_ROOT/relay-timeout.log"
 
 # THE SHELLS THE RUNNER ACTUALLY USES. A `run:` block with no `shell:` key
 # gets `bash -e {0}`; an explicit `shell: bash` gets
@@ -170,7 +164,7 @@ RELAY_SHELLS=("-e" "-eo pipefail")
 # and a red here is a failed check on a PR head, permanently, on every event.
 RELAY_DROP=""
 _relay_once() { # shell-flags, step-path, read_only, ref, codes, event, headers, check_name
-  : > "$RELAY_LOG"; : > "$SLEEP_LOG"
+  : > "$RELAY_LOG"; : > "$SLEEP_LOG"; : > "$TIMEOUT_LOG"
   local env_kv=(
     "WRITER_READ_ONLY=$3"
     "WORKFLOW_REF=$4"
@@ -186,13 +180,14 @@ _relay_once() { # shell-flags, step-path, read_only, ref, codes, event, headers,
   done
   set +e
   RELAY_OUT="$(env -u WRITER_READ_ONLY -u WORKFLOW_REF -u EVENT_NAME -u GH_REPO -u DISPATCH_REF -u CHECK_NAME \
-    GH_LOG="$RELAY_LOG" SLEEP_LOG="$SLEEP_LOG" GH_CODES="$5" GH_HEADERS="${7:-}" \
+    GH_LOG="$RELAY_LOG" SLEEP_LOG="$SLEEP_LOG" TIMEOUT_LOG="$TIMEOUT_LOG" GH_CODES="$5" GH_HEADERS="${7:-}" \
     FAKE_NOW="$FAKE_NOW" PATH="$RELAY_BIN:$PATH" "${keep[@]}" \
     bash $1 "$2" 2>&1)"
   RELAY_RC=$?
   set -e
   RELAY_CALLS="$(cat "$RELAY_LOG")"
   RELAY_SLEEPS="$(cat "$SLEEP_LOG")"
+  RELAY_BOUNDS="$(sort -u "$TIMEOUT_LOG" | paste -sd, -)"
   # The step announces the CLAMPED wait and its JITTER separately and sleeps
   # their sum. Split them back out. The clamp is the whole deterministic
   # computation — it is what every case asserts and what the two shells are
@@ -316,6 +311,7 @@ headers_of() { # NAME -> the scripted response; `none` is a transport failure
     403-spent-reset-past) printf '%s\n' "HTTP/2.0 403 Forbidden" "$RL_SPENT" "X-Ratelimit-Reset: 1000000000" ;;
     403-spent-no-reset)  printf '%s\n' "HTTP/2.0 403 Forbidden" "$RL_SPENT" ;;
     403-spent-reset-soon) printf '%s\n' "HTTP/2.0 403 Forbidden" "$RL_SPENT" "X-Ratelimit-Reset: soon" ;;
+    403-spent-reset-long) printf '%s\n' "HTTP/2.0 403 Forbidden" "$RL_SPENT" "X-Ratelimit-Reset: 17000000000" ;;
     403-retry-soon-spent-reset+70) printf '%s\n' "HTTP/2.0 403 Forbidden" "retry-after: soon" "$RL_SPENT" "X-Ratelimit-Reset: $(( FAKE_NOW + 70 ))" ;;
     403-secondary-body)  printf '%s\n' "HTTP/2.0 403 Forbidden" "$RL_OK" '{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}' ;;
     403-permissions-body) printf '%s\n' "HTTP/2.0 403 Forbidden" "$RL_OK" '{"message":"Resource not accessible by integration"}' ;;
@@ -347,6 +343,9 @@ ref_of() { # NAME -> the github.workflow_ref the step derives its file from
 #   wait     the clamped wait the step announced (the jitter is asserted
 #            against the recorded sleep per run in relay_run), or none
 #   sleeps   sleep calls the stub recorded
+#   bound    the distinct per-attempt bounds the timeout shim was handed, or
+#            none: the shim passes through, so the bound is proven here and
+#            the timeout-killed shape is modelled by an exit of 124
 #   note     the annotation level(s) the step emitted: warning, error,
 #            warning+error, or none
 #   says~<t> whether the output carries <t>, `+` read as a space: the one
@@ -371,6 +370,7 @@ relay_observe() {
         value="${value#,}"; value="${value:-none}" ;;
       wait) value="${RELAY_WAIT:-none}" ;;
       sleeps) value="$(grep -c . <<<"$RELAY_SLEEPS" || true)" ;;
+      bound) value="${RELAY_BOUNDS:-none}" ;;
       note)
         value=""
         grep -qF '::warning::' <<<"$RELAY_OUT" && value="warning"
@@ -396,8 +396,15 @@ relay_row() {
   local label ro ref codes event headers check drop expect
   IFS='|' read -r label ro ref codes event headers check drop expect <<<"$1"
   [[ -n "$expect" ]] || { printf 'relay_row: a row with no expect asserts nothing: %s\n' "$1" >&2; exit 1; }
+  # Resolved into locals first: an unknown fixture name exits inside a
+  # command substitution, which `set -e` ignores in an argument position, and
+  # the row would run against empty headers and could pass as the
+  # no-response shape.
+  local resolved_ref resolved_headers
+  resolved_ref="$(ref_of "$ref")"
+  resolved_headers="$(headers_of "$headers")"
   RELAY_DROP="$drop"
-  relay_run "$RELAY_STEP" "$ro" "$(ref_of "$ref")" "$codes" "$event" "$(headers_of "$headers")" "$check"
+  relay_run "$RELAY_STEP" "$ro" "$resolved_ref" "$codes" "$event" "$resolved_headers" "$check"
   RELAY_DROP=""
   assert_eq "$(relay_observe "$expect")" "$expect" "[$RELAY_TAG] $label"
 }
@@ -422,7 +429,7 @@ relay_battery() { # step script, label
   # leave the gate stale, which the cron floor owns; a red would pin the PR
   # at UNSTABLE, the defect the split removed.
   for row in \
-    "an ordinary PR-attached leg dispatches THIS workflow's file on the default branch, exactly once|0|main|0||none|||rc=0 calls=dispatch:review-gate-writer.yml sleeps=0 note=none" \
+    "an ordinary PR-attached leg dispatches THIS workflow's file on the default branch, exactly once, under the per-attempt bound|0|main|0||none|||rc=0 calls=dispatch:review-gate-writer.yml bound=60 sleeps=0 note=none" \
     "a RENAMED consumer copy dispatches its own file|0|renamed|0||none|||rc=0 calls=dispatch:gate.yml sleeps=0 note=none" \
     "a read-only token (fork pull_request_review) is a green no-op that dispatches nothing|1|main|0||none|||rc=0 calls=none sleeps=0 note=none" \
     "an underivable workflow_ref dispatches NOTHING and warns, never a garbage path|0|empty|0||none|||rc=0 calls=none sleeps=0 note=warning says~could+not+derive+this+workflow's+file+name=true" \
@@ -447,14 +454,15 @@ relay_battery() { # step script, label
   # arithmetic.
   for row in \
     "a failure with NO response retries in 5s and names the cause|0|main|1 0||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 says~no+HTTP+response,+gh+exit+1=true" \
-    "a dispatch killed by its own per-attempt bound retries in 5s and is reported as a timeout|0|main|124 0||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 says~did+not+respond+within=true" \
+    "a dispatch killed by its own per-attempt bound retries in 5s and is reported as a timeout|0|main|124 0||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml bound=60 wait=5 sleeps=1 says~did+not+respond+within=true" \
     "retry-after is honored (secondary limit) and the warning names the status|0|main|1 0||403-retry-77|||rc=0 wait=77 sleeps=1 says~HTTP+403,+gh+exit+1=true" \
     "a window beyond the job's budget is NOT slept and the second attempt is skipped|0|main|1 0||403-retry-4000|||rc=0 calls=dispatch:review-gate-writer.yml wait=none sleeps=0 note=warning says~beyond+this+job's+budget=true" \
     "an EXHAUSTED window honors its reset epoch|0|main|1 0||403-spent-reset+90|||rc=0 wait=90 sleeps=1" \
-    "a healthy window's reset epoch is not a wait instruction: a 5xx takes the quick retry|0|main|1 0||502|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1" \
+    "a healthy window's reset epoch is not a wait instruction: a 5xx takes the quick retry|0|main|1 0||502|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 says~HTTP+502,+gh+exit+1=true" \
     "a reset epoch in the PAST falls to the floor, never a negative sleep|0|main|1 0||403-spent-reset-past|||rc=0 wait=60 sleeps=1" \
     "an exhausted window with NO reset header takes the floor|0|main|1 0||403-spent-no-reset|||rc=0 wait=60 sleeps=1" \
     "a NON-NUMERIC reset is discarded before the arithmetic|0|main|1 0||403-spent-reset-soon|||rc=0 wait=60 sleeps=1" \
+    "an over-long reset epoch is discarded before the arithmetic|0|main|1 0||403-spent-reset-long|||rc=0 wait=60 sleeps=1" \
     "a sub-minute retry-after is raised to the 60s floor|0|main|1 0||403-retry-3|||rc=0 wait=60 sleeps=1" \
     "a secondary-limit 403 with no retry-after is recognized from its body and takes the floor|0|main|1 0||403-secondary-body|||rc=0 wait=60 sleeps=1" \
     "an HTTP 429 with a healthy window and no retry-after is a rate limit and takes the floor|0|main|1 0||429|||rc=0 wait=60 sleeps=1" \
