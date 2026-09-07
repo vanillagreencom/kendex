@@ -1,65 +1,65 @@
 #!/usr/bin/env bash
 # Pins for scripts/changelog-entries, the one judge of a repository's
-# changelog over two scopes: a fragment is a real text file under a section
+# changelog fragments: a fragment is a real text file under a section
 # directory holding exactly one list item within the character cap, every
-# other tracked path in the fragment tree is refused, and the collated record
-# gains no line under [Unreleased] that HEAD does not carry. Its --collate
-# write path is pinned next door in changelog-collate.test.sh.
-# The configured globs decide what is read and content comes from the index;
-# the index readers this family of checks shares are pinned once, in
-# index-reads.test.sh and lane-readers.test.sh. Every green assertion is
-# paired with a control that proves it can fail.
+# other tracked path in the fragment tree is refused, and the configured
+# globs decide what is read, from the index. One table: a row builds its own
+# repository, stages what it means, runs the judge once under its settings
+# and reads back the exit status with every line printed, so a verdict, the
+# file it names, the length it measured, the remedy and the summary are one
+# pin. The --collate write path is changelog-collate.test.sh; the index
+# readers this family shares are index-reads.test.sh and lane-readers.test.sh.
 set -euo pipefail
-
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 CE="$SKILL_DIR/scripts/changelog-entries"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
-
-# Hermetic: a leaked setting would mask every case below.
+# Hermetic: a leaked setting would mask every row below.
 unset COMMIT_GUARDS_CHANGELOG_CAP COMMIT_GUARDS_CHANGELOG_PATHS \
   COMMIT_GUARDS_CHANGELOG_RECORD COMMIT_GUARDS_CHANGELOG_COLLATE \
   COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
 FAIL=0
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
+assert_eq() { # LABEL EXPECT ACTUAL
+  if [ "$2" = "$3" ]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$1"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        want: %s\n        got:  %s\n' "$1" "$2" "$3"
+  fi
+}
 
-new_repo() { # NAME — fresh fixture repo in $R
+# One line for a run in the row's repository: the exit status, then every
+# line printed, in order, joined by ';'. ENVS is a comma-separated list of
+# assignments; ARGS are passed through.
+R=""
+run() { # ENVS ARGS
+  local envs=() rc=0 out=""
+  [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
+  # shellcheck disable=SC2086
+  out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$CE" $2 2>&1)" || rc=$?
+  printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
+}
+
+# Fixture vocabulary. Every fixture builds its own repository and stages
+# what it wrote; a name used twice is refused.
+repo() { # NAME
   R="$TMP/$1"
+  [ ! -e "$R" ] || { echo "harness: fixture $1 already exists" >&2; exit 2; }
   mkdir -p "$R"
   git -C "$R" -c init.defaultBranch=main init -q
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
 }
-
-run_ce() { # [args...] — run in $R; sets OUT and RC
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && "$CE" "$@" 2>&1)" || RC=$?
-}
-
-run_ce_env() { # KEY=VALUE... — run in $R under those settings; sets OUT and RC
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && env "$@" "$CE" 2>&1)" || RC=$?
-}
-
+put() { mkdir -p "$R/$(dirname "$1")"; printf '%b' "$2" >"$R/$1"; } # PATH CONTENT (printf %b)
 stage() { git -C "$R" add -A; }
-
-frag() { # SECTION NAME — content on stdin, written and staged
-  mkdir -p "$R/changelog.d/$1"
-  cat >"$R/changelog.d/$1/$2"
-  stage
-}
-
-# N copies of a character, so a fixture states the length it means instead of
-# carrying a literal nobody can count. The loop counts copies rather than
-# measuring the string: ${#out} is characters or bytes depending on the
-# caller's locale, which would make every multibyte fixture below a different
-# size under LC_ALL=C than under a UTF-8 locale.
+frag() { put "changelog.d/$1/$2" "$3"; stage; } # SECTION NAME CONTENT
+# N copies of a character, so a fixture states the length it means; the
+# loop counts copies rather than measuring the string, whose length in
+# ${#var} depends on the caller's locale for a multibyte character.
 rep() { # CHAR N
   local c="$1" n="$2" i=0 out=""
   while [ "$i" -lt "$n" ]; do
@@ -69,635 +69,338 @@ rep() { # CHAR N
   printf '%s' "$out"
 }
 
-echo "=== control: a repo with no fragments passes, saying nothing matched ==="
-new_repo nofragments
-printf 'fn main() {}\n' >"$R/ok.rs"
-stage
-run_ce
-[ "$RC" -eq 0 ] && case "$OUT" in *"no tracked file matches"*"changelog.d"*) true ;; *) false ;; esac \
-  && ok "no fragment tree is a clean pass naming the paths it looked for" \
-  || bad "no fragment tree is a clean pass naming the paths it looked for" "rc=$RC out=$OUT"
+# The lines the judge prints, as functions of what a row put in.
+DEFAULT_GLOB='changelog.d/*/*.md'
+SECTIONS="added changed deprecated removed fixed security"
+REMEDIES="  remedies: state the outcome and stop; a Breaking migration note stays inline, and the reasoning belongs in the commit"
+ERR="::error::changelog-entries: "
+NOMATCH="changelog-entries: OK — no tracked file matches COMMIT_GUARDS_CHANGELOG_PATHS ($DEFAULT_GLOB)"
+within() { printf 'changelog-entries: OK — %s fragment(s) within the cap (%s characters)' "$1" "${2:-200}"; } # MEASURED [CAP]
+summary() { printf 'changelog-entries: %s violation(s) — cap %s characters, %s fragment(s) measured' "$1" "${3:-200}" "$2"; } # VIOLATIONS MEASURED [CAP]
+long() { printf 'changelog-entries FAIL long entry: %s — %s characters (cap %s);  entry: %s;%s' "$1" "$2" "${4:-200}" "$3" "$REMEDIES"; } # PATH CHARS FIRST-LINE [CAP]
+stray() { printf 'changelog-entries FAIL %s is in the fragment tree but is not a fragment;  a fragment matches one of: %s' "$1" "${2:-$DEFAULT_GLOB}"; } # PATH [GLOBS]
+nosection() { printf 'changelog-entries FAIL %s names no section;  a fragment sits where its pattern places it, <section>/<name> at that pattern'"'"'s own depth — section one of: %s' "$1" "$SECTIONS"; } # PATH
+# The three shapes the grammar refuses, each with its remedy on the line.
+NO_ENTRY='has no entry in it — a fragment is the Markdown list item it becomes'
+NO_MARKER='does not open with a list marker — a fragment is the Markdown list item it becomes, opening with a hyphen and a space'
+MORE_THAN_ONE='holds more than the one entry it becomes — every line after the first indents under it'
+shape() { printf 'changelog-entries FAIL %s %s' "$1" "$2"; } # PATH COMPLAINT
+X198="$(rep x 198)"
+X205="$(rep x 205)"
+X250="$(rep x 250)"
+A60="$(rep a 60)"
 
-echo "=== a fragment over the cap fails; one under it passes ==="
-new_repo cap
-printf -- '- A short entry.\n' | frag fixed short.md
-printf -- '- %s\n' "$(rep x 205)" | frag fixed long.md
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"FAIL long entry: changelog.d/fixed/long.md — 207 characters (cap 200)"*) true ;; *) false ;; esac \
-  && ok "an over-cap fragment fails, naming file, length and cap" \
-  || bad "an over-cap fragment fails, naming file, length and cap" "rc=$RC out=$OUT"
-case "$OUT" in *"entry: - xxx"*) ok "the diagnostic quotes the entry's first line" ;; *) bad "the diagnostic quotes the entry's first line" "$OUT" ;; esac
-case "$OUT" in *"remedies: state the outcome and stop"*) ok "the diagnostic carries the remediation" ;; *) bad "the diagnostic carries the remediation" "$OUT" ;; esac
-case "$OUT" in *short.md*) bad "the short fragment is not named" "$OUT" ;; *) ok "the short fragment is not named" ;; esac
-case "$OUT" in *"changelog-entries: OK"*) bad "no OK verdict may accompany a violation" "$OUT" ;; *) ok "no OK verdict accompanies the violation" ;; esac
+run_rows() { # label | fixture | env | args | expect
+  local row label fx env args expect
+  for row in "$@"; do
+    IFS='|' read -r label fx env args expect <<<"$row"
+    R=""
+    "$fx"
+    assert_eq "$label" "$expect" "$(run "$env" "$args")"
+  done
+}
 
-echo "=== the boundary is exact: cap passes, cap+1 fails ==="
-new_repo boundary
-printf -- '- %s\n' "$(rep x 198)" | frag fixed b.md
-run_ce
-[ "$RC" -eq 0 ] && case "$OUT" in *"1 fragment(s) within the cap (200 characters)"*) true ;; *) false ;; esac \
-  && ok "an entry of exactly 200 characters passes" \
-  || bad "an entry of exactly 200 characters passes" "rc=$RC out=$OUT"
-printf -- '- %s\n' "$(rep x 199)" | frag fixed b.md
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"201 characters (cap 200)"*) true ;; *) false ;; esac \
-  && ok "one character past the cap fails" \
-  || bad "one character past the cap fails" "rc=$RC out=$OUT"
-
-echo "=== the cap is the whole length rule: no line count ==="
-new_repo lines
-{
-  printf -- '- Six short lines\n'
-  printf '  second\n  third\n  fourth\n  fifth\n  sixth.\n'
-} | frag fixed six.md
-run_ce
-[ "$RC" -eq 0 ] && ok "a six-line entry inside the cap passes" \
-  || bad "a six-line entry inside the cap passes" "rc=$RC out=$OUT"
-# The control: the same shape past the cap does fail, so the pass above is
-# the length answering and not the check declining to look.
-{
-  printf -- '- Six long lines\n'
-  printf '  %s\n' "$(rep y 60)" "$(rep y 60)" "$(rep y 60)" "$(rep y 60)"
-} | frag fixed six.md
-run_ce
-[ "$RC" -eq 1 ] && ok "control: the same shape past the cap fails" \
-  || bad "control: the same shape past the cap fails" "rc=$RC out=$OUT"
-
-echo "=== wrapping spends no cap: the same text joins to the same length ==="
-new_repo wrapping
-{
-  printf -- '- %s\n' "$(rep a 60)"
-  printf '  %s\n' "$(rep a 60)" "$(rep a 60)"
-  printf '\n'
-  printf '  %s\n' "$(rep a 15)"
-} | frag fixed wrapped.md
-run_ce
-[ "$RC" -eq 0 ] && ok "a wrapped entry with an indented second paragraph is measured whole and passes" \
-  || bad "a wrapped entry with an indented second paragraph is measured whole and passes" "rc=$RC out=$OUT"
-# 2 for the marker, four runs joined by three collapsed spaces: 2 + 60*3 + 3 + 16.
-{
-  printf -- '- %s\n' "$(rep a 60)"
-  printf '  %s\n' "$(rep a 60)" "$(rep a 60)"
-  printf '\n'
-  printf '  %s\n' "$(rep a 16)"
-} | frag fixed wrapped.md
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"201 characters (cap 200)"*) true ;; *) false ;; esac \
-  && ok "control: one more real character in the same shape fails at 201" \
-  || bad "control: one more real character in the same shape fails at 201" "rc=$RC out=$OUT"
-# The same characters unwrapped onto one line must measure identically.
-printf -- '- %s %s %s %s\n' "$(rep a 60)" "$(rep a 60)" "$(rep a 60)" "$(rep a 16)" | frag fixed wrapped.md
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"201 characters (cap 200)"*) true ;; *) false ;; esac \
-  && ok "the same text unwrapped onto one line measures identically" \
-  || bad "the same text unwrapped onto one line measures identically" "rc=$RC out=$OUT"
-
-echo "=== whitespace runs collapse; CR is stripped; trailing space spends nothing ==="
-new_repo whitespace
-printf -- '- %s\r\n' "$(rep x 198)" | frag fixed cr.md
-run_ce
-[ "$RC" -eq 0 ] && ok "a CR at the end of a line is not a character" \
-  || bad "a CR at the end of a line is not a character" "rc=$RC out=$OUT"
-printf -- '- %s   \t  \n' "$(rep x 198)" | frag fixed trail.md
-run_ce
-[ "$RC" -eq 0 ] && ok "trailing whitespace spends no cap" \
-  || bad "trailing whitespace spends no cap" "rc=$RC out=$OUT"
-printf -- '- %s     %s\n' "$(rep x 100)" "$(rep x 97)" | frag fixed runs.md
-run_ce
-[ "$RC" -eq 0 ] && ok "an interior whitespace run collapses to one character" \
-  || bad "an interior whitespace run collapses to one character" "rc=$RC out=$OUT"
-printf -- '- %s     %s\n' "$(rep x 100)" "$(rep x 98)" | frag fixed runs.md
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"201 characters"*) true ;; *) false ;; esac \
-  && ok "control: the collapsed run leaves exactly one character to overflow" \
-  || bad "control: the collapsed run leaves exactly one character to overflow" "rc=$RC out=$OUT"
-
-echo "=== characters, not bytes: a multibyte entry counts once per character ==="
-new_repo utf8
-printf -- '- %s\n' "$(rep '—' 198)" | frag fixed dash.md
-run_ce
-[ "$RC" -eq 0 ] && ok "200 em dashes are 200 characters, not 596 bytes" \
-  || bad "200 em dashes are 200 characters, not 596 bytes" "rc=$RC out=$OUT"
-printf -- '- %s\n' "$(rep '—' 199)" | frag fixed dash.md
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"201 characters (cap 200)"*) true ;; *) false ;; esac \
-  && ok "control: one em dash more is one character more" \
-  || bad "control: one em dash more is one character more" "rc=$RC out=$OUT"
-# A run of stray continuation bytes has no character count to take: measured
-# as "bytes that are not continuation bytes" it would come out at almost
-# nothing and pass whatever its length.
-mkdir -p "$R/changelog.d/fixed"
-{
-  printf -- '- valid\n'
-  printf '  '
-  LC_ALL=C awk 'BEGIN { for (i = 0; i < 300; i++) printf "%c", 191 }'
-  printf '\n'
-} >"$R/changelog.d/fixed/stray.md"
-stage
-run_ce
-[ "$RC" -eq 2 ] && case "$OUT" in *"line 2 is not valid UTF-8"*) true ;; *) false ;; esac \
-  && ok "a line that is not valid UTF-8 is a collection error naming the line" \
-  || bad "a line that is not valid UTF-8 is a collection error naming the line" "rc=$RC out=$OUT"
-case "$OUT" in *"changelog-entries: OK"*) bad "no OK verdict may accompany unmeasurable text" "$OUT" ;; *) ok "no OK verdict accompanies unmeasurable text" ;; esac
-rm -f "$R/changelog.d/fixed/stray.md"
-stage
+echo "=== the cap is the whole length rule, measured in characters over the joined entry ==="
+fx_none() { repo none; put ok.rs 'fn main() {}\n'; stage; }
+fx_over() { repo over; frag fixed short.md '- A short entry.\n'; frag fixed long.md "- $X205\n"; }
+fx_at_cap() { repo at-cap; frag fixed b.md "- $X198\n"; }
+fx_past_cap() { repo past-cap; frag fixed b.md "- $(rep x 199)\n"; }
+fx_six_short() { repo six-short; frag fixed six.md '- Six short lines\n  second\n  third\n  fourth\n  fifth\n  sixth.\n'; }
+fx_six_long() { repo six-long; frag fixed six.md "- Six long lines\n  $(rep y 60)\n  $(rep y 60)\n  $(rep y 60)\n  $(rep y 60)\n"; }
+# 2 for the marker, four runs joined by three collapsed spaces: 2 + 60*3 + 3 + 15.
+fx_wrapped() { repo wrapped; frag fixed w.md "- $A60\n  $A60\n  $A60\n\n  $(rep a 15)\n"; }
+fx_wrapped_over() { repo wrapped-over; frag fixed w.md "- $A60\n  $A60\n  $A60\n\n  $(rep a 16)\n"; }
+fx_unwrapped_over() { repo unwrapped-over; frag fixed w.md "- $A60 $A60 $A60 $(rep a 16)\n"; }
+fx_cr() { repo cr; frag fixed cr.md "- $X198\r\n"; }
+fx_trailing() { repo trailing; frag fixed t.md "- $X198   \t  \n"; }
+fx_runs() { repo runs; frag fixed r.md "- $(rep x 100)     $(rep x 97)\n"; }
+fx_blank_first() { repo blank-first; frag fixed b.md "   \n- $X205\n"; }
+fx_runs_over() { repo runs-over; frag fixed r.md "- $(rep x 100)     $(rep x 98)\n"; }
+fx_dashes() { repo dashes; frag fixed d.md "- $(rep '—' 198)\n"; }
+fx_dashes_over() { repo dashes-over; frag fixed d.md "- $(rep '—' 199)\n"; }
+fx_stray_bytes() {
+  repo stray-bytes
+  mkdir -p "$R/changelog.d/fixed"
+  { printf -- '- valid\n  '; LC_ALL=C awk 'BEGIN { for (i = 0; i < 300; i++) printf "%c", 191 }'; printf '\n'; } >"$R/changelog.d/fixed/stray.md"
+  stage
+}
+# The two forms the UTF-8 grammar refuses that carry no stray byte at all: a
+# surrogate (ED A0 80) and an overlong two-byte encoding (C0 80), each a
+# sequence a byte-range check would accept.
+fx_surrogate() { repo surrogate; frag fixed s.md '- valid\n  \0355\0240\0200\n'; }
+fx_overlong() { repo overlong; frag fixed o.md '- valid\n  \0300\0200\n'; }
+fx_two_bad() { repo two-bad; frag fixed t.md '- valid\n  \0277\n  \0277\n'; }
+run_rows \
+  "no fragment tree is a clean pass naming the paths it looked for|fx_none|||rc=0 $NOMATCH" \
+  "an over-cap fragment fails naming file, length and cap, quotes its first line, carries the remedy, and the short one beside it is only counted|fx_over|||rc=1 $(long changelog.d/fixed/long.md 207 "- $X205");$(summary 1 2)" \
+  "an entry of exactly the cap passes|fx_at_cap|||rc=0 $(within 1)" \
+  "one character past the cap fails|fx_past_cap|||rc=1 $(long changelog.d/fixed/b.md 201 "- $(rep x 199)");$(summary 1 1)" \
+  "a six-line entry inside the cap passes: no line count|fx_six_short|||rc=0 $(within 1)" \
+  "control: the same shape past the cap fails|fx_six_long|||rc=1 $(long changelog.d/fixed/six.md 260 '- Six long lines');$(summary 1 1)" \
+  "a wrapped entry with an indented second paragraph is measured whole|fx_wrapped|||rc=0 $(within 1)" \
+  "control: one more real character in the same shape fails at 201|fx_wrapped_over|||rc=1 $(long changelog.d/fixed/w.md 201 "- $A60");$(summary 1 1)" \
+  "the same text unwrapped onto one line measures identically|fx_unwrapped_over|||rc=1 $(long changelog.d/fixed/w.md 201 "- $A60 $A60 $A60 $(rep a 16)");$(summary 1 1)" \
+  "a CR at the end of a line is not a character|fx_cr|||rc=0 $(within 1)" \
+  "trailing whitespace spends no cap|fx_trailing|||rc=0 $(within 1)" \
+  "an interior whitespace run collapses to one character|fx_runs|||rc=0 $(within 1)" \
+  "control: the collapsed run leaves exactly one character to overflow, and the quoted first line keeps its raw spacing|fx_runs_over|||rc=1 $(long changelog.d/fixed/r.md 201 "- $(rep x 100)     $(rep x 98)");$(summary 1 1)" \
+  "a whitespace-only line above the entry is not the quoted line|fx_blank_first|||rc=1 $(long changelog.d/fixed/b.md 207 "- $X205");$(summary 1 1)" \
+  "200 em dashes are 200 characters, not 596 bytes|fx_dashes|||rc=0 $(within 1)" \
+  "control: one em dash more is one character more|fx_dashes_over|||rc=1 $(long changelog.d/fixed/d.md 201 "- $(rep '—' 199)");$(summary 1 1)" \
+  "a line that is not valid UTF-8 has no character count: a collection error naming the line, never a measurement|fx_stray_bytes|||rc=2 ${ERR}changelog.d/fixed/stray.md line 2 is not valid UTF-8 — text with no character count cannot be measured" \
+  "a UTF-16 surrogate encoded as three bytes is not valid UTF-8|fx_surrogate|||rc=2 ${ERR}changelog.d/fixed/s.md line 2 is not valid UTF-8 — text with no character count cannot be measured" \
+  "an overlong two-byte encoding is not valid UTF-8|fx_overlong|||rc=2 ${ERR}changelog.d/fixed/o.md line 2 is not valid UTF-8 — text with no character count cannot be measured" \
+  "the first invalid line is named, and only it|fx_two_bad|||rc=2 ${ERR}changelog.d/fixed/t.md line 2 is not valid UTF-8 — text with no character count cannot be measured"
 
 echo "=== a fragment is exactly one list item, or it is refused ==="
-new_repo shape
-: | frag fixed empty.md
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/empty.md has no entry in it"*) true ;; *) false ;; esac \
-  && ok "a zero-byte fragment is refused, naming it" \
-  || bad "a zero-byte fragment is refused, naming it" "rc=$RC out=$OUT"
-printf '\n\n' | frag fixed empty.md
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"has no entry in it"*) true ;; *) false ;; esac \
-  && ok "a whitespace-only fragment is refused" \
-  || bad "a whitespace-only fragment is refused" "rc=$RC out=$OUT"
-printf -- '- \n' | frag fixed empty.md
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"has no entry in it"*) true ;; *) false ;; esac \
-  && ok "a marker with nothing after it is refused" \
-  || bad "a marker with nothing after it is refused" "rc=$RC out=$OUT"
-printf 'Not a list item.\n' | frag fixed empty.md
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"does not open with a list marker"*) true ;; *) false ;; esac \
-  && ok "a fragment opening with prose is refused" \
-  || bad "a fragment opening with prose is refused" "rc=$RC out=$OUT"
-printf -- '- First entry.\n- Second entry.\n' | frag fixed empty.md
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"holds more than the one entry"*) true ;; *) false ;; esac \
-  && ok "two list items in one fragment are refused" \
-  || bad "two list items in one fragment are refused" "rc=$RC out=$OUT"
-printf -- '- An entry.\n\n## [9.9.9] - 2026-01-01\n' | frag fixed empty.md
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"holds more than the one entry"*) true ;; *) false ;; esac \
-  && ok "a heading inside a fragment is refused rather than ending the section it folds into" \
-  || bad "a heading inside a fragment is refused" "rc=$RC out=$OUT"
-printf -- '- An entry\n  continued over\n  three lines.\n' | frag fixed empty.md
-run_ce
-[ "$RC" -eq 0 ] && ok "control: indented continuation lines are the one entry" \
-  || bad "control: indented continuation lines are the one entry" "rc=$RC out=$OUT"
+fx_empty() { repo empty; frag fixed e.md ''; }
+fx_blank() { repo blank; frag fixed e.md '\n\n'; }
+fx_marker_only() { repo marker-only; frag fixed e.md '- \n'; }
+fx_prose() { repo prose; frag fixed e.md 'Not a list item.\n'; }
+fx_no_space() { repo no-space; frag fixed e.md '-No space after the hyphen.\n'; }
+fx_two_items() { repo two-items; frag fixed e.md '- First entry.\n- Second entry.\n'; }
+fx_heading() { repo heading; frag fixed e.md '- An entry.\n\n## [9.9.9] - 2026-01-01\n'; }
+fx_continued() { repo continued; frag fixed e.md '- An entry\n  continued over\n  three lines.\n'; }
+fx_tab_continued() { repo tab-continued; frag fixed e.md '- An entry\n\tcontinued under a tab.\n'; }
+run_rows \
+  "a zero-byte fragment is refused, naming it|fx_empty|||rc=1 $(shape changelog.d/fixed/e.md "$NO_ENTRY");$(summary 1 0)" \
+  "a whitespace-only fragment is refused|fx_blank|||rc=1 $(shape changelog.d/fixed/e.md "$NO_ENTRY");$(summary 1 0)" \
+  "a marker with nothing after it is refused|fx_marker_only|||rc=1 $(shape changelog.d/fixed/e.md "$NO_ENTRY");$(summary 1 0)" \
+  "a fragment opening with prose is refused|fx_prose|||rc=1 $(shape changelog.d/fixed/e.md "$NO_MARKER");$(summary 1 0)" \
+  "a hyphen with no space after it is not a list marker|fx_no_space|||rc=1 $(shape changelog.d/fixed/e.md "$NO_MARKER");$(summary 1 0)" \
+  "two list items in one fragment are refused|fx_two_items|||rc=1 $(shape changelog.d/fixed/e.md "$MORE_THAN_ONE");$(summary 1 0)" \
+  "a heading inside a fragment is refused rather than ending the section it folds into|fx_heading|||rc=1 $(shape changelog.d/fixed/e.md "$MORE_THAN_ONE");$(summary 1 0)" \
+  "control: indented continuation lines are the one entry|fx_continued|||rc=0 $(within 1)" \
+  "a tab-indented continuation line is the one entry too|fx_tab_continued|||rc=0 $(within 1)"
 
-echo "=== a fragment sits directly under a section directory ==="
-new_repo sections
-sections_ok=1
+echo "=== a fragment sits directly under a section directory, at its pattern's depth ==="
 # Keep a Changelog's six, written out rather than read from the check's own
 # list: a set derived from the subject cannot catch that set being narrowed.
-for sec in added changed deprecated removed fixed security; do
-  printf -- '- An entry filed under %s.\n' "$sec" | frag "$sec" ken-1.md
-done
-run_ce
-[ "$RC" -eq 0 ] && ok "a fragment under each of the six sections passes" \
-  || bad "a fragment under each of the six sections passes" "rc=$RC out=$OUT"
-printf -- '- Wrong section.\n' | frag bogus ken-1.md
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/bogus/ken-1.md names no section"*"added changed deprecated removed fixed security"*) true ;; *) false ;; esac \
-  && ok "an unknown section directory is refused, naming the accepted set" \
-  || bad "an unknown section directory is refused, naming the accepted set" "rc=$RC out=$OUT"
-git -C "$R" rm -rq --cached changelog.d/bogus
-rm -rf "$R/changelog.d/bogus"
-printf -- '- Deeper.\n' | frag fixed/deeper ken-2.md
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/deeper/ken-2.md names no section"*) true ;; *) false ;; esac \
-  && ok "a fragment below a section directory is refused" \
-  || bad "a fragment below a section directory is refused" "rc=$RC out=$OUT"
-git -C "$R" rm -rq --cached changelog.d/fixed/deeper
-rm -rf "$R/changelog.d/fixed/deeper"
-# The shape the glob DOES match and the grammar does not: `*` crosses `/`, so
-# changelog.d/*/*.md reaches changelog.d/archive/fixed/x.md, whose immediate
-# parent is a real section name. Depth is counted from the root the pattern
-# roots at, or this reads as a fixed entry and is folded in.
-printf -- '- Nested under a real section name.\n' | frag archive/fixed ken-3.md
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/archive/fixed/ken-3.md names no section"*) true ;; *) false ;; esac \
-  && ok "a path two directories below the root is refused, though its parent names a section" \
-  || bad "a path two directories below the root is refused" "rc=$RC out=$OUT"
-case "$OUT" in *"at that pattern's own depth"*) ok "and the remedy states whose depth decides" ;;
-  *) bad "and the remedy states whose depth decides" "$OUT" ;; esac
-# The control: the same file one directory up is a fragment, so the refusal
-# above is the depth and not the name.
-git -C "$R" rm -rq --cached changelog.d/archive
-rm -rf -- "${R:?}/changelog.d/archive"
-printf -- '- Nested under a real section name.\n' | frag fixed ken-3.md
-run_ce
-[ "$RC" -eq 0 ] && ok "control: the same entry directly under the section passes" \
-  || bad "control: the same entry directly under the section passes" "rc=$RC out=$OUT"
-git -C "$R" rm -q --cached changelog.d/fixed/ken-3.md
-rm -f "$R/changelog.d/fixed/ken-3.md"
-stage
-printf -- '- Flat.\n' >"$R/flat.md"
-stage
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_PATHS=flat.md'
-[ "$RC" -eq 1 ] && case "$OUT" in *"flat.md names no section"*) true ;; *) false ;; esac \
-  && ok "a fragment in no directory at all names no section either" \
-  || bad "a fragment in no directory at all names no section either" "rc=$RC out=$OUT"
+fx_six_sections() { repo six-sections; local s; for s in added changed deprecated removed fixed security; do frag "$s" ken-1.md "- An entry filed under $s.\n"; done; }
+fx_bogus() { repo bogus; frag bogus ken-1.md '- Wrong section.\n'; }
+fx_deeper() { repo deeper; frag fixed/deeper ken-2.md '- Deeper.\n'; }
+# `*` crosses `/`, so changelog.d/*/*.md reaches changelog.d/archive/fixed/x.md,
+# whose immediate parent is a real section name; depth is counted from the
+# root the pattern roots at.
+fx_archive() { repo archive; frag archive/fixed ken-3.md '- Nested under a real section name.\n'; }
+fx_archive_control() { repo archive-control; frag fixed ken-3.md '- Nested under a real section name.\n'; }
+fx_flat() { repo flat; put flat.md '- Flat.\n'; stage; }
+# The section list is space-separated, so a directory whose name spans two
+# adjacent words is a substring of the list's text and a member of nothing in it.
+fx_two_words() { repo two-words; frag 'added changed' x.md '- Two words.\n'; }
+run_rows \
+  "a fragment under each of the six sections passes|fx_six_sections|||rc=0 $(within 6)" \
+  "an unknown section directory is refused, naming the accepted set|fx_bogus|||rc=1 $(nosection changelog.d/bogus/ken-1.md);$(summary 1 0)" \
+  "a fragment below a section directory is refused|fx_deeper|||rc=1 $(nosection changelog.d/fixed/deeper/ken-2.md);$(summary 1 0)" \
+  "a path two directories below the root is refused though its parent names a section, and the remedy states whose depth decides|fx_archive|||rc=1 $(nosection changelog.d/archive/fixed/ken-3.md);$(summary 1 0)" \
+  "control: the same entry directly under the section passes|fx_archive_control|||rc=0 $(within 1)" \
+  "a fragment in no directory at all names no section either|fx_flat|COMMIT_GUARDS_CHANGELOG_PATHS=flat.md||rc=1 $(nosection flat.md);$(summary 1 0)" \
+  "a directory naming two sections at once names none|fx_two_words|||rc=1 $(nosection 'changelog.d/added\ changed/x.md');$(summary 1 0)"
 
-echo "=== every other tracked path in the fragment tree is refused ==="
-new_repo tree
-printf -- '- A fragment.\n' | frag fixed ken-1.md
-printf '# changelog.d\n\n- Format notes running past what an entry may say, at length.\n' >"$R/changelog.d/README.md"
-stage
-run_ce
-[ "$RC" -eq 0 ] && ok "control: the tree with only fragments and its README is clean" \
-  || bad "control: the tree with only fragments and its README is clean" "rc=$RC out=$OUT"
-# A path in a section directory the globs do not cover: nothing would ever
-# fold it in, and nothing else in the chain would ever look at it.
-printf 'whatever\n' >"$R/changelog.d/fixed/notes"
-stage
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/notes is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
-  && ok "a path in a section directory that no glob covers is refused, naming the globs" \
-  || bad "a path in a section directory that no glob covers is refused" "rc=$RC out=$OUT"
-case "$OUT" in *"changelog.d/*/*.md"*) ok "the refusal names what a fragment must match" ;; *) bad "the refusal names what a fragment must match" "$OUT" ;; esac
-git -C "$R" rm -q --cached changelog.d/fixed/notes
-rm -f "$R/changelog.d/fixed/notes"
-# A symlink there is refused the same way, so its target's bytes are never
-# published by something that folds the path in unjudged.
-ln -s ../../CHANGELOG.md "$R/changelog.d/fixed/notes"
-stage
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/notes is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
-  && ok "a symlink the globs do not cover is refused too" \
-  || bad "a symlink the globs do not cover is refused too" "rc=$RC out=$OUT"
-git -C "$R" rm -q --cached changelog.d/fixed/notes
-rm -f "$R/changelog.d/fixed/notes"
-# A stray at the top of the tree, which matches no two-segment glob.
-printf -- '- Stray.\n' >"$R/changelog.d/oops.md"
-stage
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/oops.md is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
-  && ok "a stray at the top of the tree is refused" \
-  || bad "a stray at the top of the tree is refused" "rc=$RC out=$OUT"
-git -C "$R" rm -q --cached changelog.d/oops.md
-rm -f "$R/changelog.d/oops.md"
-# The README beside it is the one exemption, and only directly under a root.
-stage
-run_ce
-[ "$RC" -eq 0 ] && ok "control: the README directly under the root stays exempt" \
-  || bad "control: the README directly under the root stays exempt" "rc=$RC out=$OUT"
-printf '# notes\n' >"$R/changelog.d/fixed/README.md"
-stage
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/README.md"*) true ;; *) false ;; esac \
-  && ok "a README below a section directory is not exempt" \
-  || bad "a README below a section directory is not exempt" "rc=$RC out=$OUT"
-git -C "$R" rm -q --cached changelog.d/fixed/README.md
-rm -f "$R/changelog.d/fixed/README.md"
-stage
+echo "=== every other tracked path in the fragment tree is refused; a README directly under a root and the record are exempt ==="
+tree() { repo "$1"; frag fixed ken-1.md '- A fragment.\n'; put changelog.d/README.md '# changelog.d\n\n- Format notes running past what an entry may say, at length.\n'; stage; } # NAME
+fx_tree_clean() { tree tree-clean; }
+fx_tree_notes() { tree tree-notes; put changelog.d/fixed/notes 'whatever\n'; stage; }
+fx_tree_symlink() { tree tree-symlink; ln -s ../../CHANGELOG.md "$R/changelog.d/fixed/notes"; stage; }
+fx_tree_top() { tree tree-top; put changelog.d/oops.md '- Stray.\n'; stage; }
+fx_tree_orig() { tree tree-orig; put changelog.d/fixed/ken-1.md.orig '- A fragment.\n'; stage; }
+fx_tree_sibling() { tree tree-sibling; put changelog.d-archive/old.md '- Not under the root.\n'; stage; }
+fx_tree_readme_below() { tree tree-readme-below; put changelog.d/fixed/README.md '# notes\n'; stage; }
 # A pattern carrying no glob names one file, and naming one file is not
-# naming the directory it sits in — so it roots nowhere and sweeps nothing,
-# slash or no slash. The pattern below sits two directories deep, which is the
-# shape a leading-run derivation would give a root to.
-new_repo exactpath
-mkdir -p "$R/changelog.d/added"
-printf -- '- %s\n' "$(rep x 250)" >"$R/changelog.d/added/only.md"
-printf 'not a fragment at all\n' >"$R/changelog.d/added/beside.txt"
-stage
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/added/only.md'
-[ "$RC" -eq 1 ] \
-  && case "$OUT" in *"is not a fragment"*) false ;; *) true ;; esac \
-  && case "$OUT" in *"long entry: changelog.d/added/only.md"*) true ;; *) false ;; esac \
-  && ok "an exact-path pattern carrying a slash roots nowhere and sweeps nothing beside it" \
-  || bad "an exact-path pattern carrying a slash roots nowhere" "rc=$RC out=$OUT"
-# The control: a globbed pattern over that same directory DOES root there, and
-# then the neighbour is refused — so the pass above is the exact-path rule and
-# not a sweep that never runs.
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/added/*.md'
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/added/beside.txt is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
-  && ok "control: a globbed pattern over the same directory does root there" \
-  || bad "control: a globbed pattern over the same directory does root there" "rc=$RC out=$OUT"
-
-# The README exemption wins over every root, not merely the last one checked:
-# with a nested pair, the deeper root exempts its own README while the
-# shallower one still contains it.
-new_repo nestedroots
-mkdir -p "$R/changelog.d/nested/fixed"
-printf -- '- A nested entry.\n' >"$R/changelog.d/nested/fixed/a.md"
-printf '# nested\n\n- Format notes.\n' >"$R/changelog.d/nested/README.md"
-stage
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/nested/*/*.md changelog.d/*/legacy/*.md'
-[ "$RC" -eq 0 ] && ok "a README under the deeper of two nested roots is exempt" \
-  || bad "a README under the deeper of two nested roots is exempt" "rc=$RC out=$OUT"
-# The control: any other name in its place is swept by the shallower root.
-mv "$R/changelog.d/nested/README.md" "$R/changelog.d/nested/NOTES.md"
-stage
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/nested/*/*.md changelog.d/*/legacy/*.md'
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/nested/NOTES.md is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
-  && ok "control: the same file under any other name is swept" \
-  || bad "control: the same file under any other name is swept" "rc=$RC out=$OUT"
-
-echo "=== what is not a fragment is settled before any pattern is consulted ==="
-# An exemption that only takes effect when no pattern reaches the path is an
-# exemption whose meaning turns on the pattern shape. These pin it from the
-# other side: the same file, exempt or judged according to where the ROOT
-# falls, not according to whether some glob happened to match it first.
-new_repo exemptions
-printf -- '- A proper entry.\n' | frag fixed x.md
-printf '# changelog.d/fixed\n\nHow to write one of these.\n' >"$R/changelog.d/fixed/README.md"
-printf '# changelog.d\n\nHow to write one of these.\n' >"$R/changelog.d/README.md"
-stage
-# Narrowed to one section: the root IS changelog.d/fixed, so the README
-# directly under it documents the format — and it matches the glob, which is
-# what would get it judged as a fragment instead.
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/fixed/*.md'
-[ "$RC" -eq 0 ] && ok "a README under the root a narrowed pattern derives is exempt, though the glob reaches it" \
-  || bad "a README under the root a narrowed pattern derives is exempt" "rc=$RC out=$OUT"
-# The default: that same file is root+2, a fragment position, and is judged.
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/README.md"*) true ;; *) false ;; esac \
-  && ok "control: under the default pattern the same file is a fragment position and is judged" \
-  || bad "control: under the default pattern the same file is judged" "rc=$RC out=$OUT"
-case "$OUT" in *"changelog.d/README.md"*) bad "and the README at the default root stays exempt" "$OUT" ;;
-  *) ok "and the README at the default root stays exempt" ;; esac
-# The configured record is the file fragments are folded INTO. A root drawn
-# around it must not make it a stray in its own tree.
-new_repo recordinside
-printf -- '- A proper entry.\n' | frag fixed x.md
-printf '# Changelog\n\n## [Unreleased]\n' >"$R/changelog.d/CHANGELOG.md"
-stage
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_RECORD=changelog.d/CHANGELOG.md'
-[ "$RC" -eq 0 ] && ok "a record configured inside the fragment tree is not swept as a stray" \
-  || bad "a record configured inside the fragment tree is not swept as a stray" "rc=$RC out=$OUT"
-# The control: any other file in its place IS a stray, so the pass above is
-# the record and not the sweep going quiet.
-git -C "$R" rm -q --cached changelog.d/CHANGELOG.md
-rm -f "$R/changelog.d/CHANGELOG.md"
-printf '# Notes\n' >"$R/changelog.d/NOTES.md"
-stage
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_RECORD=changelog.d/CHANGELOG.md'
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/NOTES.md is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
-  && ok "control: another file in that same place is swept" \
-  || bad "control: another file in that same place is swept" "rc=$RC out=$OUT"
+# naming the directory it sits in, so it roots nowhere and sweeps nothing.
+fx_exact_path() { repo exact-path; put changelog.d/added/only.md "- $X250\n"; put changelog.d/added/beside.txt 'not a fragment at all\n'; stage; }
+fx_exact_path_control() { repo exact-path-control; put changelog.d/added/only.md "- $X250\n"; put changelog.d/added/beside.txt 'not a fragment at all\n'; stage; }
+# The README exemption wins over every root, not merely the last one
+# checked: with a nested pair, the deeper root exempts its own README while
+# the shallower one still contains it.
+NESTED='COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/nested/*/*.md changelog.d/*/legacy/*.md'
+fx_nested_readme() { repo nested-readme; put changelog.d/nested/fixed/a.md '- A nested entry.\n'; put changelog.d/nested/README.md '# nested\n\n- Format notes.\n'; stage; }
+fx_nested_notes() { repo nested-notes; put changelog.d/nested/fixed/a.md '- A nested entry.\n'; put changelog.d/nested/NOTES.md '# nested\n\n- Format notes.\n'; stage; }
+# What is not a fragment is settled before any pattern is consulted: the
+# same file, exempt or judged according to where the ROOT falls, not
+# according to whether some glob happened to match it first.
+exemptions() { repo "$1"; frag fixed x.md '- A proper entry.\n'; put changelog.d/fixed/README.md '# changelog.d/fixed\n\nHow to write one of these.\n'; put changelog.d/README.md '# changelog.d\n\nHow to write one of these.\n'; stage; } # NAME
+fx_narrowed_readme() { exemptions narrowed-readme; }
+fx_default_readme() { exemptions default-readme; }
+fx_record_inside() { repo record-inside; frag fixed x.md '- A proper entry.\n'; put changelog.d/CHANGELOG.md '# Changelog\n\n## [Unreleased]\n'; stage; }
+fx_record_inside_control() { repo record-inside-control; frag fixed x.md '- A proper entry.\n'; put changelog.d/NOTES.md '# Notes\n'; stage; }
+run_rows \
+  "control: the tree with only fragments and its README is clean|fx_tree_clean|||rc=0 $(within 1)" \
+  "a path in a section directory that no glob covers is refused, naming what a fragment must match|fx_tree_notes|||rc=1 $(stray changelog.d/fixed/notes);$(summary 1 1)" \
+  "a symlink the globs do not cover is refused the same way, never followed|fx_tree_symlink|||rc=1 $(stray changelog.d/fixed/notes);$(summary 1 1)" \
+  "a stray at the top of the tree is refused|fx_tree_top|||rc=1 $(stray changelog.d/oops.md);$(summary 1 1)" \
+  "a name that merely begins like a fragment's is a stray: the glob matches the whole path|fx_tree_orig|||rc=1 $(stray changelog.d/fixed/ken-1.md.orig);$(summary 1 1)" \
+  "a sibling directory sharing the root's prefix is outside the tree|fx_tree_sibling|||rc=0 $(within 1)" \
+  "a README below a section directory is a fragment position and is judged|fx_tree_readme_below|||rc=1 $(shape changelog.d/fixed/README.md "$NO_MARKER");$(summary 1 1)" \
+  "an exact-path pattern roots nowhere and sweeps nothing beside it|fx_exact_path|COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/added/only.md||rc=1 $(long changelog.d/added/only.md 252 "- $X250");$(summary 1 1)" \
+  "control: a globbed pattern over the same directory does root there and sweeps the neighbour|fx_exact_path_control|COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/added/*.md||rc=1 $(stray changelog.d/added/beside.txt 'changelog.d/added/*.md');$(long changelog.d/added/only.md 252 "- $X250");$(summary 2 1)" \
+  "a README under the deeper of two nested roots is exempt|fx_nested_readme|$NESTED||rc=0 $(within 1)" \
+  "control: the same file under any other name is swept by the shallower root|fx_nested_notes|$NESTED||rc=1 $(stray changelog.d/nested/NOTES.md 'changelog.d/nested/*/*.md changelog.d/*/legacy/*.md');$(summary 1 1)" \
+  "a README under the root a narrowed pattern derives is exempt, though the glob reaches it|fx_narrowed_readme|COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/fixed/*.md||rc=0 $(within 1)" \
+  "control: under the default pattern the same file is a fragment position and is judged, and the README at the default root stays exempt|fx_default_readme|||rc=1 $(shape changelog.d/fixed/README.md "$NO_MARKER");$(summary 1 1)" \
+  "a record configured inside the fragment tree is not swept as a stray|fx_record_inside|COMMIT_GUARDS_CHANGELOG_RECORD=changelog.d/CHANGELOG.md||rc=0 $(within 1)" \
+  "control: another file in that same place is swept|fx_record_inside_control|COMMIT_GUARDS_CHANGELOG_RECORD=changelog.d/CHANGELOG.md||rc=1 $(stray changelog.d/NOTES.md);$(summary 1 1)"
 
 echo "=== the pattern says where the section sits, and at what depth ==="
 # One rule for every pattern shape: a pattern is <root...>/<section>/<name>,
 # so its own last two segments place a path and its own depth decides which
-# paths it places. A count applied after the root would make each additional
-# pattern shape a separate defect.
-new_repo shapes
-printf -- '- A proper entry.\n' | frag fixed x.md
-mkdir -p "$R/changelog.d/archive/fixed"
-printf -- '- Nested under a real section name.\n' >"$R/changelog.d/archive/fixed/y.md"
-stage
-# 1. The default: two globbed segments, rooted at changelog.d.
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/*/*.md'
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/archive/fixed/y.md names no section"*) true ;; *) false ;; esac \
-  && ok "the two-glob pattern places changelog.d/fixed and refuses a path a directory deeper" \
-  || bad "the two-glob pattern refuses a path a directory deeper" "rc=$RC out=$OUT"
-case "$OUT" in *"changelog.d/fixed/x.md"*) bad "and places the entry at its own depth" "$OUT" ;;
-  *) ok "and places the entry at its own depth" ;; esac
-# 2. Narrowed to ONE section: the section segment is literal, and a valid
-#    entry under it is still placed — the shape the derived-root count broke.
-git -C "$R" rm -rq --cached changelog.d/archive
-rm -rf -- "${R:?}/changelog.d/archive"
-stage
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/fixed/*.md'
-[ "$RC" -eq 0 ] && ok "a pattern narrowed to one section still places its entries" \
-  || bad "a pattern narrowed to one section still places its entries" "rc=$RC out=$OUT"
-mkdir -p "$R/changelog.d/fixed/deeper"
-printf -- '- Deeper still.\n' >"$R/changelog.d/fixed/deeper/z.md"
-stage
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/fixed/*.md'
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/deeper/z.md names no section"*) true ;; *) false ;; esac \
-  && ok "and refuses a path a directory deeper than it" \
-  || bad "and refuses a path a directory deeper than it" "rc=$RC out=$OUT"
-git -C "$R" rm -rq --cached changelog.d/fixed/deeper
-rm -rf -- "${R:?}/changelog.d/fixed/deeper"
-stage
-# 3. A glob in the MIDDLE: the section is literal and sits one deeper, so the
-#    pattern places four-segment paths and nothing else.
-mkdir -p "$R/changelog.d/team/fixed"
-printf -- '- Under a middle glob.\n' >"$R/changelog.d/team/fixed/w.md"
-stage
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/*/fixed/*.md'
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/x.md is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
-  && ok "a pattern with a glob in the middle places paths at ITS depth, not two past its root" \
-  || bad "a pattern with a glob in the middle places paths at its depth" "rc=$RC out=$OUT"
-case "$OUT" in *"changelog.d/team/fixed/w.md"*) bad "and the four-segment path under it is placed" "$OUT" ;;
-  *) ok "and the four-segment path under it is placed" ;; esac
-git -C "$R" rm -rq --cached changelog.d/team
-rm -rf -- "${R:?}/changelog.d/team"
-stage
+# paths it places.
+fx_two_glob() { repo two-glob; frag fixed x.md '- A proper entry.\n'; put changelog.d/archive/fixed/y.md '- Nested under a real section name.\n'; stage; }
+fx_narrowed() { repo narrowed; frag fixed x.md '- A proper entry.\n'; }
+fx_narrowed_deeper() { repo narrowed-deeper; frag fixed x.md '- A proper entry.\n'; put changelog.d/fixed/deeper/z.md '- Deeper still.\n'; stage; }
+fx_middle_glob() { repo middle-glob; frag fixed x.md '- A proper entry.\n'; put changelog.d/team/fixed/w.md '- Under a middle glob.\n'; stage; }
+run_rows \
+  "the two-glob pattern places changelog.d/fixed and refuses a path a directory deeper|fx_two_glob|COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/*/*.md||rc=1 $(nosection changelog.d/archive/fixed/y.md);$(summary 1 1)" \
+  "a pattern narrowed to one section still places its entries|fx_narrowed|COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/fixed/*.md||rc=0 $(within 1)" \
+  "and refuses a path a directory deeper than it|fx_narrowed_deeper|COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/fixed/*.md||rc=1 $(nosection changelog.d/fixed/deeper/z.md);$(summary 1 1)" \
+  "a pattern with a glob in the middle places paths at ITS depth, not two past its root|fx_middle_glob|COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/*/fixed/*.md||rc=1 $(stray changelog.d/fixed/x.md 'changelog.d/*/fixed/*.md');$(summary 1 1)"
 
 echo "=== a matched path that is not changelog text is refused, never skipped ==="
-new_repo notext
-printf -- '- A real entry.\n' | frag fixed real.md
-ln -s real.md "$R/changelog.d/fixed/link.md"
-stage
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/link.md is tracked as a symlink"*) true ;; *) false ;; esac \
-  && ok "a tracked symlink is refused, not followed and not skipped" \
-  || bad "a tracked symlink is refused" "rc=$RC out=$OUT"
-case "$OUT" in *"not measured"*) bad "a refused path is not reported as merely unmeasured" "$OUT" ;; *) ok "a refused path is not reported as merely unmeasured" ;; esac
-rm -f "$R/changelog.d/fixed/link.md"
-stage
-run_ce
-[ "$RC" -eq 0 ] && ok "control: the same tree without the link passes" \
-  || bad "control: the same tree without the link passes" "rc=$RC out=$OUT"
-
-new_repo binary
-# Every byte value, so a NUL falls inside the sample git classifies on. awk
-# writes them, under LC_ALL=C so a value is a byte and not a character: the
-# shell's printf %c stops at the first NUL.
+fx_symlink() { repo symlink; frag fixed real.md '- A real entry.\n'; ln -s real.md "$R/changelog.d/fixed/link.md"; stage; }
+fx_symlink_control() { repo symlink-control; frag fixed real.md '- A real entry.\n'; }
+# A gitlink is an index entry with no blob behind it in this repository, so
+# the fixture writes the entry directly; the object need not exist.
+fx_gitlink() { repo gitlink; frag fixed real.md '- A real entry.\n'; git -C "$R" update-index --add --cacheinfo 160000,4b825dc642cb6eb9a060e54bf8d69288fbee4904,changelog.d/fixed/sub.md; }
+# Every byte value, so a NUL falls inside the sample git classifies on; awk
+# writes them under LC_ALL=C so a value is a byte and not a character.
+fx_binary() { repo binary; mkdir -p "$R/changelog.d/fixed"; { printf -- '- '; LC_ALL=C awk 'BEGIN { for (i = 0; i < 256; i++) printf "%c", i }'; } >"$R/changelog.d/fixed/bin.md"; stage; }
+# git classifies on the leading 8000 bytes alone, and so does this check: a
+# NUL at byte offset 8000, the first past that sample, is a blob both call
+# text, refused as the byte it is; one at offset 7999, the sample's last
+# byte, is binary. The marker takes two bytes, so the run of x is two short.
+nul_at() { mkdir -p "$R/changelog.d/added"; { printf -- '- '; rep x "$(($1 - 2))"; LC_ALL=C awk 'BEGIN { printf "%c", 0 }'; printf 'tail\n'; } >"$R/changelog.d/added/$2"; } # OFFSET NAME
+fx_late_nul() { repo late-nul; nul_at 8000 late-nul.md; stage; }
+fx_last_nul() { repo last-nul; nul_at 7999 last-nul.md; stage; }
+fx_high_bytes() { repo high-bytes; frag fixed h.md "- $(rep '—' 250)\n"; }
+run_rows \
+  "a tracked symlink is refused, not followed and not skipped|fx_symlink|||rc=1 changelog-entries FAIL changelog.d/fixed/link.md is tracked as a symlink;  a fragment is a file of its own;$(summary 1 1)" \
+  "control: the same tree without the link passes|fx_symlink_control|||rc=0 $(within 1)" \
+  "a submodule gitlink is refused, not read as a file|fx_gitlink|||rc=1 changelog-entries FAIL changelog.d/fixed/sub.md is tracked as a submodule gitlink;  a fragment is a file of its own;$(summary 1 1)" \
+  "a binary blob is refused, not measured as text|fx_binary|||rc=1 changelog-entries FAIL changelog.d/fixed/bin.md holds binary content;  a fragment is the Markdown list item it becomes;$(summary 1 0)" \
+  "a blob git calls text, its NUL the first byte past the sample, is read as text, and the byte is refused rather than the file|fx_late_nul|||rc=2 ${ERR}changelog.d/added/late-nul.md line 1 is not valid UTF-8 — text with no character count cannot be measured" \
+  "control: a NUL at the sample's last byte is binary|fx_last_nul|||rc=1 changelog-entries FAIL changelog.d/added/last-nul.md holds binary content;  a fragment is the Markdown list item it becomes;$(summary 1 0)" \
+  "control: NUL-free high bytes are text and are measured|fx_high_bytes|||rc=1 $(long changelog.d/fixed/h.md 252 "- $(rep '—' 250)");$(summary 1 1)"
+# git itself calls the leading-NUL and last-byte blobs binary and the
+# first-past blob text, which is the agreement the three rows above pin.
+repo git-classifies
 mkdir -p "$R/changelog.d/fixed"
-printf -- '- ' >"$R/changelog.d/fixed/bin.md"
-LC_ALL=C awk 'BEGIN { for (i = 0; i < 256; i++) printf "%c", i }' >>"$R/changelog.d/fixed/bin.md"
+{ printf -- '- '; LC_ALL=C awk 'BEGIN { for (i = 0; i < 256; i++) printf "%c", i }'; } >"$R/changelog.d/fixed/bin.md"
+nul_at 7999 last-nul.md
+nul_at 8000 late-nul.md
 stage
-[ -z "$(git -C "$R" grep --cached -I -l . -- changelog.d)" ] \
-  && ok "fixture: git itself calls the blob binary, so its --cached scans skip it" \
-  || bad "fixture: git itself calls the blob binary" "git grep listed it"
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/bin.md holds binary content"*) true ;; *) false ;; esac \
-  && ok "a binary blob is refused, not measured as text" \
-  || bad "a binary blob is refused" "rc=$RC out=$OUT"
-case "$OUT" in *"characters (cap"*) bad "no length may be reported for a binary blob" "$OUT" ;; *) ok "no length is reported for a binary blob" ;; esac
-# git classifies on the leading bytes alone, and so does this check: a NUL
-# past that sample is a blob both call text. Sizing the sample differently
-# would make one of them disagree with the other.
-mkdir -p "$R/changelog.d/added"
-{
-  printf -- '- '
-  rep x 8100
-  LC_ALL=C awk 'BEGIN { printf "%c", 0 }'
-  printf 'tail\n'
-} >"$R/changelog.d/added/late-nul.md"
-stage
-[ -n "$(git -C "$R" grep --cached -I -l . -- changelog.d/added)" ] \
-  && ok "fixture: git calls a blob with its only NUL past the sample text" \
-  || bad "fixture: git calls a blob with its only NUL past the sample text" "git grep skipped it"
-run_ce
-# Read as text, so the NUL in it is a byte with no character count — the
-# text-scope refusal, never the binary one. A sample sized past that byte
-# would call the same blob binary and disagree with git about it.
-[ "$RC" -eq 2 ] && case "$OUT" in *"late-nul.md line 1 is not valid UTF-8"*) true ;; *) false ;; esac \
-  && ok "so this check reads it as text too, and refuses the byte rather than the file" \
-  || bad "so this check reads it as text too" "rc=$RC out=$OUT"
-case "$OUT" in *"binary content"*) bad "no blob git calls text may be refused as binary" "$OUT" ;;
-  *) ok "no blob git calls text is refused as binary" ;; esac
-git -C "$R" rm -q --cached changelog.d/added/late-nul.md
-rm -f "$R/changelog.d/added/late-nul.md"
-# The control: high bytes carrying no NUL are text to git and to this check
-# alike, so the refusal above is the NUL classification and not a file the
-# check declines to read for having bytes over 127 in it.
-printf -- '- %s\n' "$(rep '—' 250)" >"$R/changelog.d/fixed/bin.md"
-stage
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"binary content"*) false ;; *"252 characters (cap 200)"*) true ;; *) false ;; esac \
-  && ok "control: NUL-free high bytes are text and are measured" \
-  || bad "control: NUL-free high bytes are measured" "rc=$RC out=$OUT"
+assert_eq "fixture: git calls the leading-NUL and last-byte blobs binary and the first-past blob text" "changelog.d/added/late-nul.md" "$(git -C "$R" grep --cached -I -l . -- changelog.d)"
 
 echo "=== control bytes never reach the terminal through a diagnostic ==="
-new_repo controls
-printf -- '- An escape \033[31mred\033[0m and a CR \rhere %s\n' "$(rep z 220)" | frag fixed ctrl.md
-run_ce
-[ "$RC" -eq 1 ] && ok "control: the entry with control bytes is over the cap" \
-  || bad "control: the entry with control bytes is over the cap" "rc=$RC out=$OUT"
-case "$OUT" in
-  *"?[31mred?[0m"*"CR ?here"*) ok "escape and carriage-return bytes are replaced in the quoted entry" ;;
-  *) bad "escape and carriage-return bytes are replaced in the quoted entry" "$OUT" ;;
-esac
-printf 'x%s' "$OUT" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\037\177]')" \
-  && bad "no C0 control byte may survive into the diagnostic" "$OUT" \
-  || ok "no C0 control byte survives into the diagnostic"
+# Every C0 control except tab, and DEL: a tab is whitespace the entry may
+# carry, so it reaches the quoted line as itself. Measured: 65 characters of
+# words and control bytes, the tab collapsed to one space, and 220 z.
+TAB="$(printf '\t')"
+fx_controls() { repo controls; frag fixed c.md "- An escape \033[31mred\033[0m, a CR \rhere, a tab\there and a DEL \177here $(rep z 220)\n"; }
+run_rows \
+  "escape, carriage-return and DEL bytes are replaced in the quoted entry, and a tab is kept|fx_controls|||rc=1 $(long changelog.d/fixed/c.md 285 "- An escape ?[31mred?[0m, a CR ?here, a tab${TAB}here and a DEL ?here $(rep z 220)");$(summary 1 1)"
 
-echo "=== the cap is configurable ==="
-new_repo capcfg
-printf -- '- %s\n' "$(rep x 250)" | frag fixed long.md
-run_ce
-[ "$RC" -eq 1 ] && ok "control: the entry fails the default cap" \
-  || bad "control: the entry fails the default cap" "rc=$RC out=$OUT"
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_CAP=400'
-[ "$RC" -eq 0 ] && case "$OUT" in *"cap (400 characters)"*) true ;; *) false ;; esac \
-  && ok "a raised cap passes it, and the verdict names the cap in force" \
-  || bad "a raised cap passes it" "rc=$RC out=$OUT"
-caps_rejected=1
-for badcap in 0 -1 abc 12.5 ""; do
-  run_ce_env "COMMIT_GUARDS_CHANGELOG_CAP=$badcap"
-  [ "$RC" -eq 2 ] && case "$OUT" in *"must be a positive integer"*) true ;; *) false ;; esac \
-    || { caps_rejected=0; bad "a cap of '$badcap' is a config error" "rc=$RC out=$OUT"; }
-done
-[ "$caps_rejected" -eq 1 ] && ok "every cap that is not a positive integer is a config error"
+echo "=== the cap and the paths are configurable, and validated ==="
+fx_cap() { repo cap; frag fixed long.md "- $X250\n"; }
+fx_cap_raised() { repo cap-raised; frag fixed long.md "- $X250\n"; }
+fx_cap_zero() { repo cap-zero; frag fixed long.md "- $X250\n"; }
+fx_cap_negative() { repo cap-negative; frag fixed long.md "- $X250\n"; }
+fx_cap_word() { repo cap-word; frag fixed long.md "- $X250\n"; }
+fx_cap_fraction() { repo cap-fraction; frag fixed long.md "- $X250\n"; }
+fx_cap_empty() { repo cap-empty; frag fixed long.md "- $X250\n"; }
+paths() { repo "$1"; frag fixed ken-1.md "- $X250\n"; put changelog.d/README.md "# changelog.d\n\n- A README bullet explaining the format at $(rep w 220) length.\n"; stage; } # NAME
+fx_paths_default() { paths paths-default; }
+fx_paths_readme() { paths paths-readme; }
+fx_paths_none() { paths paths-none; }
+fx_paths_second() { paths paths-second; }
+fx_paths_absolute() { paths paths-absolute; }
+fx_paths_escape() { paths paths-escape; }
+fx_paths_empty() { paths paths-empty; }
+fx_record_absolute() { paths record-absolute; }
+fx_record_in_globs() { paths record-in-globs; }
+fx_unknown_arg() { paths unknown-arg; }
+bad_cap() { printf "%sCOMMIT_GUARDS_CHANGELOG_CAP must be a positive integer, got '%s'" "$ERR" "$1"; } # VALUE
+run_rows \
+  "control: the entry fails the default cap|fx_cap|||rc=1 $(long changelog.d/fixed/long.md 252 "- $X250");$(summary 1 1)" \
+  "a raised cap passes it, and the verdict names the cap in force|fx_cap_raised|COMMIT_GUARDS_CHANGELOG_CAP=400||rc=0 $(within 1 400)" \
+  "a cap of 0 is a config error|fx_cap_zero|COMMIT_GUARDS_CHANGELOG_CAP=0||rc=2 $(bad_cap 0)" \
+  "a cap of -1 is a config error|fx_cap_negative|COMMIT_GUARDS_CHANGELOG_CAP=-1||rc=2 $(bad_cap -1)" \
+  "a cap of abc is a config error|fx_cap_word|COMMIT_GUARDS_CHANGELOG_CAP=abc||rc=2 $(bad_cap abc)" \
+  "a cap of 12.5 is a config error|fx_cap_fraction|COMMIT_GUARDS_CHANGELOG_CAP=12.5||rc=2 $(bad_cap 12.5)" \
+  "an empty cap is a config error|fx_cap_empty|COMMIT_GUARDS_CHANGELOG_CAP=||rc=2 $(bad_cap "")" \
+  "the default glob reaches the fragment tree and keeps the README out|fx_paths_default|||rc=1 $(long changelog.d/fixed/ken-1.md 252 "- $X250");$(summary 1 1)" \
+  "control: named directly, the README is judged and refused|fx_paths_readme|COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/README.md||rc=1 $(nosection changelog.d/README.md);$(summary 1 0)" \
+  "configured paths matching no tracked file are a clean pass|fx_paths_none|COMMIT_GUARDS_CHANGELOG_PATHS=docs/*/*.md||rc=0 changelog-entries: OK — no tracked file matches COMMIT_GUARDS_CHANGELOG_PATHS (docs/*/*.md)" \
+  "the SECOND glob of the list reaches the fragment the first does not, and measures it|fx_paths_second|COMMIT_GUARDS_CHANGELOG_PATHS=docs/*/*.md changelog.d/*/*.md||rc=1 $(long changelog.d/fixed/ken-1.md 252 "- $X250");$(summary 1 1)" \
+  "an absolute path is a config error|fx_paths_absolute|COMMIT_GUARDS_CHANGELOG_PATHS=/etc/CHANGELOG.md||rc=2 ${ERR}changelog path must be repo-root-relative, got absolute: /etc/CHANGELOG.md" \
+  "a path escaping the repository is a config error|fx_paths_escape|COMMIT_GUARDS_CHANGELOG_PATHS=../CHANGELOG.md||rc=2 ${ERR}changelog path escapes the repository or normalizes empty: ../CHANGELOG.md" \
+  "an empty path list is a config error naming how to switch the check off|fx_paths_empty|COMMIT_GUARDS_CHANGELOG_PATHS=   ||rc=2 ${ERR}COMMIT_GUARDS_CHANGELOG_PATHS names no path — name at least one, or drop this check from COMMIT_GUARDS_CHECKS" \
+  "an absolute record path is a config error|fx_record_absolute|COMMIT_GUARDS_CHANGELOG_RECORD=/etc/CHANGELOG.md||rc=2 ${ERR}changelog-record path must be repo-root-relative, got absolute: /etc/CHANGELOG.md" \
+  "a record inside the fragment globs is a config error: the two scopes judge by opposite rules|fx_record_in_globs|COMMIT_GUARDS_CHANGELOG_RECORD=changelog.d/fixed/ken-1.md||rc=2 ${ERR}COMMIT_GUARDS_CHANGELOG_RECORD (changelog.d/fixed/ken-1.md) is also matched by COMMIT_GUARDS_CHANGELOG_PATHS — the collated record is not a fragment" \
+  "an unknown argument is a config error|fx_unknown_arg||--all|rc=2 ${ERR}unknown argument --all (see --help)"
 
-echo "=== the paths are configurable globs matched against tracked paths ==="
-new_repo paths
-printf -- '- %s\n' "$(rep x 250)" | frag fixed ken-1.md
-printf '# changelog.d\n\n- A README bullet explaining the format at %s length.\n' "$(rep w 220)" >"$R/changelog.d/README.md"
-stage
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/ken-1.md"*) true ;; *) false ;; esac \
-  && ok "the default glob reaches the fragment tree" \
-  || bad "the default glob reaches the fragment tree" "rc=$RC out=$OUT"
-case "$OUT" in *"changelog.d/README.md"*) bad "the two-segment glob keeps the README out" "$OUT" ;; *) ok "the two-segment glob keeps the README out" ;; esac
-# The control: the README really would be refused if the glob reached it, so
-# the pass above is the glob and not a file that would have passed anyway.
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_PATHS=changelog.d/README.md'
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/README.md"*) true ;; *) false ;; esac \
-  && ok "control: named directly, the README is judged and refused" \
-  || bad "control: named directly, the README is judged and refused" "rc=$RC out=$OUT"
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_PATHS=docs/*/*.md'
-[ "$RC" -eq 0 ] && case "$OUT" in *"no tracked file matches"*"docs"*) true ;; *) false ;; esac \
-  && ok "configured paths matching no tracked file are a clean pass" \
-  || bad "configured paths matching no tracked file are a clean pass" "rc=$RC out=$OUT"
-# Every glob in the list is matched, not the first: only the second one here
-# reaches the over-cap fragment.
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_PATHS=docs/*/*.md changelog.d/*/*.md'
-[ "$RC" -eq 1 ] && case "$OUT" in *"long entry: changelog.d/fixed/ken-1.md"*) true ;; *) false ;; esac \
-  && ok "the SECOND glob of the list reaches the fragment the first does not, and measures it" \
-  || bad "the second glob of the list reaches and measures the fragment" "rc=$RC out=$OUT"
-
-echo "=== a configured path is validated, never quietly matched against nothing ==="
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_PATHS=/etc/CHANGELOG.md'
-[ "$RC" -eq 2 ] && case "$OUT" in *"must be repo-root-relative"*) true ;; *) false ;; esac \
-  && ok "an absolute path is a config error" \
-  || bad "an absolute path is a config error" "rc=$RC out=$OUT"
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_PATHS=../CHANGELOG.md'
-[ "$RC" -eq 2 ] && case "$OUT" in *"escapes the repository"*) true ;; *) false ;; esac \
-  && ok "a path escaping the repository is a config error" \
-  || bad "a path escaping the repository is a config error" "rc=$RC out=$OUT"
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_PATHS=   '
-[ "$RC" -eq 2 ] && case "$OUT" in *"names no path"*"COMMIT_GUARDS_CHECKS"*) true ;; *) false ;; esac \
-  && ok "an empty path list is a config error naming how to switch the check off" \
-  || bad "an empty path list is a config error" "rc=$RC out=$OUT"
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_RECORD=/etc/CHANGELOG.md'
-[ "$RC" -eq 2 ] && case "$OUT" in *"must be repo-root-relative"*) true ;; *) false ;; esac \
-  && ok "an absolute record path is a config error" \
-  || bad "an absolute record path is a config error" "rc=$RC out=$OUT"
-run_ce_env 'COMMIT_GUARDS_CHANGELOG_RECORD=changelog.d/fixed/ken-1.md'
-[ "$RC" -eq 2 ] && case "$OUT" in *"is also matched by COMMIT_GUARDS_CHANGELOG_PATHS"*) true ;; *) false ;; esac \
-  && ok "a record inside the fragment globs is a config error — the two scopes judge by opposite rules" \
-  || bad "a record inside the fragment globs is a config error" "rc=$RC out=$OUT"
-run_ce --all
-[ "$RC" -eq 2 ] && case "$OUT" in *"unknown argument --all"*) true ;; *) false ;; esac \
-  && ok "an unknown argument is a config error" \
-  || bad "an unknown argument is a config error" "rc=$RC out=$OUT"
-
-echo "=== a configured glob reaches index paths, never the work tree ==="
-new_repo glob_scope
-printf -- '- A short fragment.\n' | frag fixed ok.md
-printf -- '- %s\n' "$(rep x 250)" | frag fixed long.md
-# The over-cap fragment leaves the WORK TREE while the index keeps it. A glob
-# expanded by the shell would reach ok.md alone and call the commit clean.
-rm -f "$R/changelog.d/fixed/long.md"
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/long.md"*) true ;; *) false ;; esac \
-  && ok "a staged fragment absent from the work tree is still measured" \
-  || bad "a staged fragment absent from the work tree is still measured" "rc=$RC out=$OUT"
-# The other direction: an untracked file the same glob would match changes
-# no verdict.
-printf -- '- %s\n' "$(rep y 300)" >"$R/changelog.d/fixed/decoy.md"
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *decoy.md*) false ;; *"changelog.d/fixed/long.md"*) true ;; *) false ;; esac \
-  && ok "an untracked decoy under the same glob is never measured" \
-  || bad "an untracked decoy under the same glob is never measured" "rc=$RC out=$OUT"
-
-echo "=== the index is what is judged ==="
-new_repo index
-printf -- '- A short entry.\n' | frag fixed a.md
-git -C "$R" commit -qm base
-printf -- '- %s\n' "$(rep x 250)" >"$R/changelog.d/fixed/a.md"
-run_ce
-[ "$RC" -eq 0 ] && ok "an unstaged worktree edit is not judged" \
-  || bad "an unstaged worktree edit is not judged" "rc=$RC out=$OUT"
-stage
-run_ce
-[ "$RC" -eq 1 ] && ok "control: staging the same edit does fail it" \
-  || bad "control: staging the same edit does fail it" "rc=$RC out=$OUT"
+echo "=== the index is what is judged: a configured glob reaches index paths, never the work tree ==="
+fx_staged_gone() { repo staged-gone; frag fixed ok.md '- A short fragment.\n'; frag fixed long.md "- $X250\n"; rm -f "$R/changelog.d/fixed/long.md"; }
+fx_untracked_decoy() { repo untracked-decoy; frag fixed ok.md '- A short fragment.\n'; frag fixed long.md "- $X250\n"; rm -f "$R/changelog.d/fixed/long.md"; put changelog.d/fixed/decoy.md "- $(rep y 300)\n"; }
+fx_unstaged_edit() { repo unstaged-edit; frag fixed a.md '- A short entry.\n'; git -C "$R" commit -qm base; put changelog.d/fixed/a.md "- $X250\n"; }
+fx_staged_edit() { repo staged-edit; frag fixed a.md '- A short entry.\n'; git -C "$R" commit -qm base; put changelog.d/fixed/a.md "- $X250\n"; stage; }
+# ls-files -s lists an unmerged path once per stage, so the walk would read
+# the rival blobs as separate fragments; the judge refuses the index first.
+fx_unmerged() {
+  repo unmerged
+  frag fixed a.md '- Base.\n'
+  git -C "$R" commit -qm base
+  git -C "$R" checkout -qb other
+  frag fixed a.md '- Theirs.\n'
+  git -C "$R" commit -qm theirs
+  git -C "$R" checkout -q main
+  frag fixed a.md '- Ours.\n'
+  git -C "$R" commit -qm ours
+  git -C "$R" merge -q other >/dev/null 2>&1 || true
+}
+# The refusal is index-wide: an unmerged path no glob reaches still stops
+# the run, since every record of the index passes through the walk.
+fx_unmerged_outside() {
+  repo unmerged-outside
+  frag fixed a.md '- Fine.\n'
+  put notes.txt 'base\n'
+  stage
+  git -C "$R" commit -qm base
+  git -C "$R" checkout -qb other
+  put notes.txt 'theirs\n'
+  stage
+  git -C "$R" commit -qm theirs
+  git -C "$R" checkout -q main
+  put notes.txt 'ours\n'
+  stage
+  git -C "$R" commit -qm ours
+  git -C "$R" merge -q other >/dev/null 2>&1 || true
+}
+run_rows \
+  "a staged fragment absent from the work tree is still measured|fx_staged_gone|||rc=1 $(long changelog.d/fixed/long.md 252 "- $X250");$(summary 1 2)" \
+  "an untracked decoy under the same glob is never measured|fx_untracked_decoy|||rc=1 $(long changelog.d/fixed/long.md 252 "- $X250");$(summary 1 2)" \
+  "an unstaged worktree edit is not judged|fx_unstaged_edit|||rc=0 $(within 1)" \
+  "control: staging the same edit does fail it|fx_staged_edit|||rc=1 $(long changelog.d/fixed/a.md 252 "- $X250");$(summary 1 1)" \
+  "an unmerged fragment is refused before the walk, never read stage by stage|fx_unmerged|||rc=2 changelog.d/fixed/a.md;${ERR}the index carries 1 unmerged path(s) (listed above) and a --cached scan skips them silently — finish or abort the merge, then re-run" \
+  "an unmerged path outside every glob refuses the run the same way|fx_unmerged_outside|||rc=2 notes.txt;${ERR}the index carries 1 unmerged path(s) (listed above) and a --cached scan skips them silently — finish or abort the merge, then re-run"
 
 echo "=== hostile bytes in a name or a pattern never leave their line ==="
-new_repo hostile
-# A tracked filename carrying a newline and an ESC: both are legal bytes in a
-# path, and both decide what a message does if they reach one raw.
-HOSTILE="$(printf 'KEN\n1\033X.md')"
-mkdir -p "$R/changelog.d/fixed"
-printf -- '- %s\n' "$(rep x 250)" >"$R/changelog.d/fixed/$HOSTILE"
-stage
-[ "$(git -C "$R" ls-files | wc -l)" -eq 1 ] \
-  && ok "fixture: the hostile name is the one tracked path" \
-  || bad "fixture: the hostile name is the one tracked path" "$(git -C "$R" ls-files)"
-run_ce
-[ "$RC" -eq 1 ] && ok "the entry under the hostile name is measured and fails" \
-  || bad "the entry under the hostile name is measured and fails" "rc=$RC out=$OUT"
-# Four lines exactly: the FAIL line, its entry, its remedies, the summary. A
-# raw newline in the name would split one of them and hide the rest from a
-# caller reading the first.
-[ "$(printf '%s\n' "$OUT" | grep -c .)" -eq 4 ] \
-  && ok "the verdict stays on its four lines despite the newline in the name" \
-  || bad "the verdict stays on its four lines" "lines=$(printf '%s\n' "$OUT" | grep -c .) out=$OUT"
-printf '%s' "$OUT" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\037\177]')" \
-  && bad "no control byte from the name may reach the output" "$OUT" \
-  || ok "no control byte from the name reaches the output"
-# The same for a configured pattern, which is somebody's bytes too.
-run_ce_env "$(printf 'COMMIT_GUARDS_CHANGELOG_PATHS=no\033match.md')"
-[ "$RC" -eq 0 ] && case "$OUT" in *"no tracked file matches"*) true ;; *) false ;; esac \
-  && ok "a pattern matching nothing is still a clean pass" \
-  || bad "a pattern matching nothing is still a clean pass" "rc=$RC out=$OUT"
-[ "$(printf '%s\n' "$OUT" | grep -c .)" -eq 1 ] \
-  && ok "the nothing-matched verdict is one line" \
-  || bad "the nothing-matched verdict is one line" "out=$OUT"
-printf '%s' "$OUT" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\037\177]')" \
-  && bad "no control byte from the pattern may reach the output" "$OUT" \
-  || ok "no control byte from the pattern reaches the output"
+# A tracked filename carrying a newline, an ESC and a tab: all three are
+# legal bytes in a path; the first two decide what a message does if they
+# reach one raw, and the tab is the byte that ends the path field of an
+# ls-files record, so a walk splitting on the wrong tab loses the file. The
+# name reaches the verdict through %q, so the four lines stay four.
+HOSTILE="$(printf 'KEN\n1\033X\t.md')"
+fx_hostile_name() { repo hostile-name; mkdir -p "$R/changelog.d/fixed"; printf -- '- %s\n' "$X250" >"$R/changelog.d/fixed/$HOSTILE"; stage; }
+fx_hostile_stray() { repo hostile-stray; mkdir -p "$R/changelog.d/fixed"; printf -- '- Fine.\n' >"$R/changelog.d/fixed/${HOSTILE%.md}"; stage; }
+fx_hostile_pattern() { repo hostile-pattern; frag fixed ok.md '- Fine.\n'; }
+run_rows \
+  "the entry under the hostile name is measured, and the verdict stays on its four lines|fx_hostile_name|||rc=1 $(long "\$'changelog.d/fixed/KEN\\n1\\EX\\t.md'" 252 "- $X250");$(summary 1 1)" \
+  "a refusal names the hostile path the same way, on its own line|fx_hostile_stray|||rc=1 $(stray "\$'changelog.d/fixed/KEN\\n1\\EX\\t'");$(summary 1 0)" \
+  "a pattern carrying ESC that matches nothing is a clean pass on one line, the byte scrubbed|fx_hostile_pattern|$(printf 'COMMIT_GUARDS_CHANGELOG_PATHS=no\033match.md')||rc=0 changelog-entries: OK — no tracked file matches COMMIT_GUARDS_CHANGELOG_PATHS (no?match.md)"
+
+echo "=== the usage is answered ==="
+repo help
+assert_eq "--help prints the usage and exits 0" "rc=0 usage: changelog-entries [--collate]" "$(run "" --help | cut -d';' -f1)"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
