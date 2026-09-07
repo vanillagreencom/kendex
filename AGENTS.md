@@ -12,6 +12,7 @@ Desktop app and thin CLI (Rust + Tauri + React) for managing AI coding-harness c
 
 ## Conventions
 
+- Before writing or changing code, load the code-quality skill.
 - Open work lives in Linear (team KEN); scratch goes to `tmp/` (gitignored), never `/tmp`.
 - A change under `crates/` or `ui/` ships a changelog fragment, one consumer-facing list item in `changelog.d/<section>/<name>.md` per `changelog.d/README.md`, or says `[no-changelog]` in the subject; the commit-guards commit-msg gate holds it, and `changelog-entries --collate` folds the fragments in at release.
 - A source with a tracked render (`skills/`, `agents/<n>.md`, `hooks/<n>`) lands the render in the same commit; the rule is in `skills/AGENTS.md`.
