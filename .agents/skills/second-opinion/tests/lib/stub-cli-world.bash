@@ -472,7 +472,8 @@ run() {
   [[ -z "$W_HOME" ]] || env_args+=(SECOND_OPINION_ARTIFACT_DIR="$W_HOME")
   [[ -z "$W_FAKEHOME" ]] || env_args+=(HOME="$ROW/fakehome")
   [[ -z "$W_UNSET_HOME" ]] || W_UNSET+=(-u HOME)
-  [[ -z "$W_NOJQ" ]] || env_args+=(PATH="$NOJQ_BIN")
+  # the no-jq farm still hides the harness: the fake ps stays first
+  [[ -z "$W_NOJQ" ]] || env_args+=(PATH="$TMP_ROOT/psbin:$NOJQ_BIN")
   if [[ -n "$W_DASHTMP" ]]; then cwd="$ROW/dashrun"; env_args+=(TMPDIR=-dashtmp); fi
   if [[ "$W_CWD" == dash ]]; then
     mkdir -p "$ROW/dashpaths/-dashcwd"; printf 'MY PROMPT TEXT\n' >"$ROW/dashpaths/-dash-prompt.txt"; cwd="$ROW/dashpaths"
