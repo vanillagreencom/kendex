@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
-# the Linear CLI must never substitute a guessed team.
+# The Linear CLI never substitutes a guessed team.
 #
 # A team name resolves inside whatever workspace LINEAR_API_KEY reaches, so a
 # hardcoded default silently targets another project's tracker. With no team
-# configured, writes must refuse before any API call, reads must drop the team
-# filter, and auth-check must report the target it would use.
+# configured, a write refuses before any API call, a read drops the team
+# filter, and auth-check reports the target it would use.
+#
+# One table. A row names the project's settings file, the exported LINEAR_TEAM,
+# the command, and everything the command left behind, rendered as one line:
+# the exit status, the count of API calls, every call's operation with the
+# team it scoped to (`SyncCycles(teamName="Configured")`; `ListIssues()` is a
+# call that named no team anywhere in its variables or its document), then
+# stderr whole, or for an auth-check row its report's fields and warnings whole.
 
 set -euo pipefail
 
@@ -21,7 +28,6 @@ cp -R "$SKILL_DIR" "$PROJECT/.agents/skills/linear"
 
 LINEAR="$PROJECT/.agents/skills/linear/scripts/linear.sh"
 CURL_LOG="$TMP_ROOT/curl-payloads.jsonl"
-ERR_FILE="$TMP_ROOT/stderr.txt"
 
 cat >"$PROJECT/bin/curl" <<'SH'
 #!/usr/bin/env bash
@@ -74,334 +80,200 @@ esac
 SH
 chmod +x "$PROJECT/bin/curl"
 
-OUT=""
-ERR=""
-RC=0
-
-# assert_log DESC FILTER — FILTER must select a true value over the logged
-# curl payloads, read as a stream.
-assert_log() {
-  assert "$1" jq -s -e "$2" "$CURL_LOG"
+# --- the fixture vocabulary --------------------------------------------------
+# settings: what kendex.settings.toml holds when the command runs.
+settings() {
+  case "$1" in
+  none) rm -f "$PROJECT/kendex.settings.toml" ;;
+  blank) printf '[env]\nLINEAR_TEAM = ""\n' >"$PROJECT/kendex.settings.toml" ;;
+  dup) printf '[env]\nLINEAR_TEAM = "Partial"\nDUP = "a"\nDUP = "b"\n' >"$PROJECT/kendex.settings.toml" ;;
+  *) printf '[env]\nLINEAR_TEAM = "%s"\n' "$1" >"$PROJECT/kendex.settings.toml" ;;
+  esac
 }
 
-# Run the CLI inside the temp project with LINEAR_TEAM absent from the process
-# environment (parent env wins over project files, so it must be cleared).
-run_linear() {
+# --- the renderer -------------------------------------------------------------
+# Every payload the fake curl logged, as `Operation(path=value,...)`: the
+# operation is the document's named operation, or its first field for an
+# anonymous one; the values are every variable whose path mentions a team, the
+# top-level name a lookup resolves, the body or title a write carries, and
+# `inline-team` when the document itself carries a team filter, which is where
+# sync puts its scoping. `ListIssues()` is a call that named no team anywhere.
+wire() {
+  jq -r '
+    def op: (.query | capture("^[[:space:]]*(query|mutation)[[:space:]]+(?<n>[A-Za-z_]+)").n)
+      // (.query | capture("\\{[[:space:]]*(?<n>[A-Za-z_]+)").n);
+    def shown: [(.variables // {}) as $v | $v | paths(scalars) as $p
+      | select(($p | map(tostring) | any(test("team"; "i")))
+          or $p == ["name"] or $p == ["input", "body"] or $p == ["input", "title"])
+      | "\($p | map(tostring) | join("."))=\($v | getpath($p) | tojson)"]
+      + (if (.query | test("team[A-Za-z]*[[:space:]]*:"; "i")) then ["inline-team"] else [] end)
+      + (if (tostring | test("claude"; "i")) then ["guessed-name"] else [] end);
+    "\(op)(\(shown | join(",")))"' "$CURL_LOG" | paste -sd, -
+}
+
+# An auth-check report as its fields, then its warnings whole.
+auth_view() {
+  jq -r '"ok=\(.ok) team=\(.team) source=\(.team_source) file=\(.team_source_file) key=\(.api_key_source) writes=\(.writes_enabled)",
+    .warnings[]' <<<"$1" | paste -sd';' -
+}
+
+# run SETTINGS ENV VIEW ARGS... — one command in the project, rendered as one
+# line: the status, the call count, then the view. ENV is `-` (LINEAR_TEAM
+# absent from the process) or the exported value, the empty string included.
+# VIEW: `err` is the wire and stderr whole; `wire` is the wire alone (sync's
+# progress line carries an elapsed time); `out` is the first stdout line (help
+# prints one document); `auth` is the report's fields and warnings.
+run() {
+  local fixture="$1" envteam="$2" view="$3" rc=0 out err calls
+  shift 3
+  settings "$fixture"
   : >"$CURL_LOG"
-  RC=0
-  OUT="$(cd "$PROJECT" && env -u LINEAR_TEAM \
-    PATH="$PROJECT/bin:$PATH" \
-    LINEAR_API_KEY=test-token \
-    CURL_LOG="$CURL_LOG" \
-    bash "$LINEAR" "$@" 2>"$ERR_FILE")" || RC=$?
-  ERR="$(cat "$ERR_FILE")"
+  if [ "$envteam" = "-" ]; then
+    out="$(cd "$PROJECT" && env -u LINEAR_TEAM PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY=test-token \
+      CURL_LOG="$CURL_LOG" bash "$LINEAR" "$@" 2>"$TMP_ROOT/err")" || rc=$?
+  else
+    out="$(cd "$PROJECT" && env LINEAR_TEAM="$envteam" PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY=test-token \
+      CURL_LOG="$CURL_LOG" bash "$LINEAR" "$@" 2>"$TMP_ROOT/err")" || rc=$?
+  fi
+  err="$(sed "s#$PROJECT#<project>#g" "$TMP_ROOT/err" | paste -sd';' -)"
+  calls="$(wc -l <"$CURL_LOG" | tr -d ' ')"
+  case "$view" in
+  auth) printf 'rc=%s calls=%s %s' "$rc" "$calls" "$(auth_view "$out")" ;;
+  out) printf 'rc=%s calls=%s %s' "$rc" "$calls" "$(printf '%s\n' "$out" | head -1)" ;;
+  wire) printf 'rc=%s calls=%s wire=%s' "$rc" "$calls" "$(wire)" ;;
+  err) printf 'rc=%s calls=%s wire=%s%s' "$rc" "$calls" "$(wire)" "${err:+ $err}" ;;
+  *) printf 'UNKNOWN-VIEW:%s' "$view" ;;
+  esac
 }
 
-# Same, with LINEAR_TEAM exported by the caller.
-run_linear_env_team() {
-  local team="$1"
-  shift
+# graphql MODE — the wire backstop: graphql_query sourced with no dispatcher
+# guard in front of it, no team configured.
+graphql() {
+  local doc rc=0 err
+  case "$1" in
+  mutation) doc='mutation UnregisteredWrite($input: IssueCreateInput!) { issueCreate(input: $input) { success } }' ;;
+  read) doc='query Ping { viewer { id } }' ;;
+  esac
+  settings none
   : >"$CURL_LOG"
-  RC=0
-  OUT="$(cd "$PROJECT" && env \
-    PATH="$PROJECT/bin:$PATH" \
-    LINEAR_API_KEY=test-token \
-    LINEAR_TEAM="$team" \
-    CURL_LOG="$CURL_LOG" \
-    bash "$LINEAR" "$@" 2>"$ERR_FILE")" || RC=$?
-  ERR="$(cat "$ERR_FILE")"
+  (cd "$PROJECT" && env -u LINEAR_TEAM PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY=test-token CURL_LOG="$CURL_LOG" \
+    bash -c 'source .agents/skills/linear/scripts/lib/common.sh; graphql_query "$1" "{}"' _ "$doc" >/dev/null 2>"$TMP_ROOT/err") || rc=$?
+  err="$(paste -sd';' "$TMP_ROOT/err")"
+  printf 'rc=%s calls=%s wire=%s%s' "$rc" "$(wc -l <"$CURL_LOG" | tr -d ' ')" "$(wire)" "${err:+ $err}"
 }
 
-set_settings_team() {
-  printf '[env]\nLINEAR_TEAM = "%s"\n' "$1" >"$PROJECT/kendex.settings.toml"
+# --- the expected lines --------------------------------------------------------
+REFUSAL='{"error": "No Linear team configured for this project - refusing to write. A team name resolves inside whatever workspace LINEAR_API_KEY reaches, so writing without one can land in another project tracker. Fix: set LINEAR_TEAM in this project kendex.settings.toml [env] (committed, non-secret) or .env.local. The create actions that take a team (issues, projects, cycles, labels) also accept --team <name> for one call. Verify with: linear.sh auth-check --strict"}'
+REDIRECT='Error: Comments are a separate resource. Use:;  linear.sh comments create [ISSUE_ID] --body "Your comment";  linear.sh cache comments list [ISSUE_ID]'
+W_NOTEAM='No LINEAR_TEAM configured: Linear writes are refused. Set LINEAR_TEAM in kendex.settings.toml [env] (committed, non-secret) or .env.local.'
+W_ENVKEY='LINEAR_API_KEY comes from the process environment (a machine-wide key reaches every workspace it owns) while this project names no team. Until LINEAR_TEAM is set, this project has no Linear target of its own.'
+w_shadow() { printf 'LINEAR_TEAM from the process environment ("%s") overrides the project value ("%s"). Writes go to the environment value.' "$1" "$2"; }
+w_empty() { printf 'LINEAR_TEAM is exported as an empty value, which overrides the project value ("%s"). Unset it in the environment to use project configuration.' "$1"; }
+
+# expected SPEC — the line a row expects, from its spec:
+#   refused            the gate's line, before any call
+#   redirect           the issues-comment redirect, before any call
+#   help               one help document, no call
+#   ok-parse           the action's own unknown-option line for --help, no call
+#   ok WIRE            exit 0, one call per operation in WIRE
+#   auth RC TEAM SOURCE FILE WRITES [WARNING...]   the report (one call);
+#                      a warning is noteam, envkey, shadow:ENV:PROJECT or
+#                      empty:PROJECT
+#   settings-refused   the loader's refusal of the settings file
+expected() {
+  local spec="$1" wire w
+  case "$spec" in
+  refused) printf 'rc=1 calls=0 wire= %s' "$REFUSAL" ;;
+  redirect) printf 'rc=1 calls=0 wire= %s' "$REDIRECT" ;;
+  help) printf 'rc=0 calls=0 Issue Operations' ;;
+  ok-parse) printf 'rc=1 calls=0 wire= {"error": "Unknown option: --help. Run --help for valid options."}' ;;
+  ok\ *)
+    wire="${spec#ok }"
+    printf 'rc=0 calls=%s wire=%s' "$(printf '%s' "$wire" | tr -cd ')' | wc -c | tr -d ' ')" "$wire"
+    ;;
+  auth\ *)
+    # shellcheck disable=SC2086  # the spec's fields are its words
+    set -- ${spec#auth }
+    printf 'rc=%s calls=1 ok=true team=%s source=%s file=%s key=environment writes=%s' "$1" "$2" "$3" "$4" "$5"
+    shift 5
+    for w in "$@"; do
+      case "$w" in
+      noteam) printf ';%s' "$W_NOTEAM" ;;
+      envkey) printf ';%s' "$W_ENVKEY" ;;
+      shadow:*) printf ';%s' "$(w_shadow "$(cut -d: -f2 <<<"$w")" "$(cut -d: -f3 <<<"$w")")" ;;
+      empty:*) printf ';%s' "$(w_empty "${w#empty:}")" ;;
+      esac
+    done
+    ;;
+  settings-refused)
+    printf 'rc=1 calls=0 wire= ::error::<project>/kendex.settings.toml: DUP is assigned more than once in [env] (each key must be unique in the table)'
+    ;;
+  *) printf 'UNKNOWN-SPEC:%s' "$spec" ;;
+  esac
 }
 
-clear_settings() {
-  rm -f "$PROJECT/kendex.settings.toml"
-}
+# --- the table ------------------------------------------------------------------
+# label|settings|env|view|args|expect
+# settings: none, blank (the seeded template's empty value), dup (a file the
+# loader refuses), or the team name the file declares. env: `-` for no
+# LINEAR_TEAM in the process, else the exported value. args is one command
+# line, quoted as a shell would. expect is a spec for `expected`.
+ROWS='
+issues create is refused|none|-|err|issues create --title "Cross-workspace write"|refused
+issues update is refused|none|-|err|issues update TEAM-1 --state Done|refused
+issues complete is refused|none|-|err|issues complete TEAM-1|refused
+issues archive is refused|none|-|err|issues archive TEAM-1|refused
+issues add-relation is refused|none|-|err|issues add-relation TEAM-1 --blocks TEAM-2|refused
+comments create is refused|none|-|err|comments create TEAM-1 --body hello|refused
+projects create is refused|none|-|err|projects create --name "New project"|refused
+cycles create is refused|none|-|err|cycles create --start 2026-08-01 --end 2026-08-15|refused
+labels create is refused|none|-|err|labels create --name backend|refused
+milestones create is refused|none|-|err|milestones create --project P --name Alpha|refused
+initiatives create is refused|none|-|err|initiatives create --name "Phase 1"|refused
+a --team=CC comment body is free text, not a target|none|-|err|comments create TEAM-1 --body "--team=CC"|refused
+a bare --team comment body is free text|none|-|err|comments create TEAM-1 --body "--team"|refused
+--team inside comment prose is free text|none|-|err|comments create TEAM-1 --body "see --team CC for context"|refused
+a bare --team title on update is free text|none|-|err|issues update TEAM-1 --title "--team" --state Done|refused
+a --team=CC title on update is free text|none|-|err|issues update TEAM-1 --title "--team=CC" --state Done|refused
+a --team=CC title on create is free text|none|-|err|issues create --title "--team=CC"|refused
+the issues comment redirect makes no call|none|-|err|issues comment TEAM-1 --body "--team=CC"|redirect
+a blank configured value stays unset|blank|-|err|issues create --title "Blank team"|refused
+an exported empty LINEAR_TEAM shadows the project file and refuses|Configured||err|issues create --title "Empty export"|refused
+issues --help needs no team, whatever the action (issues answers it before the gate)|none|-|out|issues update --help|help
+the --help of a guarded action passes the dispatcher gate to its own parser|none|-|err|cycles update --help|ok-parse
+an explicit --team resolves that team and creates under it|none|-|err|issues create --title "Explicit target" --team Explicit|ok GetTeam(name="Explicit"),CreateIssue(input.title="Explicit target",input.teamId="team-uuid")
+a configured LINEAR_TEAM is the team resolved|Configured|-|err|issues create --title "Configured target"|ok GetTeam(name="Configured"),CreateIssue(input.title="Configured target",input.teamId="team-uuid")
+comments create reaches the API with a configured team|Configured|-|err|comments create TEAM-1 --body hello|ok CreateComment(input.body="hello\n")
+a --team-shaped body is written verbatim under a configured team|Configured|-|err|comments create TEAM-1 --body "--team=CC"|ok CreateComment(input.body="--team=CC\n")
+projects create --team resolves its target after parsing|none|-|err|projects create --name P --team Explicit|ok GetTeam(name="Explicit"),CreateProject(input.teamIds.0="team-uuid")
+cycles create --team resolves its target after parsing|none|-|err|cycles create --start 2026-08-01 --end 2026-08-15 --team Explicit|ok GetTeam(name="Explicit"),CreateCycle(input.teamId="team-uuid")
+labels create --team resolves its target after parsing|none|-|err|labels create --name backend --team Explicit|ok GetTeam(name="Explicit"),CreateLabel(input.teamId="team-uuid")
+labels create with no --team scopes the label to no team it was not asked for|Configured|-|err|labels create --name backend|ok CreateLabel()
+statuses list sends no guessed team|none|-|err|statuses list|ok ListStates()
+cycles list resolves no team and filters on none|none|-|err|cycles list --type current|ok ListCycles()
+statuses get sends no guessed team|none|-|err|statuses get --name "In Progress"|ok GetState()
+issues list sends no guessed team|none|-|err|issues list --limit 5|ok ListIssues()
+cycles list scopes to the configured team|Configured|-|err|cycles list --type current|ok GetTeam(name="Configured"),ListCycles(filter.team.id.eq="team-uuid")
+statuses list scopes to the configured team|Configured|-|err|statuses list|ok ListStates(filter.team.name.eq="Configured")
+sync inlines no team into any document with no team configured|none|-|wire|sync --full --no-attachments|ok SyncIssues(),SyncComments(),SyncProjects(),SyncCycles(),SyncInitiatives(),SyncLabels()
+sync scopes cycles to the configured team, in the document and its variables|Configured|-|wire|sync --full --no-attachments|ok SyncIssues(),SyncComments(),SyncProjects(),SyncCycles(teamName="Configured",inline-team),SyncInitiatives(),SyncLabels()
+auth-check reports an unresolved team and the global key|none|-|auth|auth-check|auth 0 null unset null false noteam envkey
+auth-check --strict fails on an unresolved team|none|-|auth|auth-check --strict|auth 1 null unset null false noteam envkey
+auth-check --strict names the configured team and its file|Configured|-|auth|auth-check --strict|auth 0 Configured project-config kendex.settings.toml true
+an exported team is reported from the environment, shadowing the file|Configured|EnvTeam|auth|auth-check|auth 0 EnvTeam environment null true shadow:EnvTeam:Configured
+an exported empty team is unset, names no file, and says what it shadows|Configured||auth|auth-check|auth 0 null unset null false noteam empty:Configured envkey
+a refused settings file runs no command|dup|-|err|auth-check|settings-refused
+'
 
-api_calls() {
-  wc -l <"$CURL_LOG" | tr -d ' '
-}
+while IFS='|' read -r label fixture envteam view args spec; do
+  [ -n "$label" ] || continue
+  eval "set -- $args"
+  assert_eq "$label" "$(run "$fixture" "$envteam" "$view" "$@")" "$(expected "$spec")"
+done <<<"$ROWS"
 
-assert_no_guessed_team() {
-  local label="$1"
-  assert_log "$label sends no team filter with no configured team" \
-    'all(.[]; (.variables | tostring | contains("team")) | not)'
-  # sync builds team scoping into the query document itself, where a variables-
-  # only check cannot see it.
-  assert_log "$label inlines no team filter into the query document" \
-    'all(.[]; (.query | test("team[[:space:]]*:")) | not)'
-  assert_not "$label carries no guessed team name" grep -riq "claude" "$CURL_LOG"
-}
-
-assert_refused() {
-  local label="$1"
-  assert_ne "$label is refused" "$RC" 0
-  assert_contains "$label carries the refusal message" "$ERR" "No Linear team configured"
-  assert_contains "$label refusal names LINEAR_TEAM" "$ERR" "LINEAR_TEAM"
-  assert_contains "$label refusal names kendex.settings.toml" "$ERR" "kendex.settings.toml"
-  assert_contains "$label refusal names the per-call override" "$ERR" "--team"
-  # The message may only offer --team where a parser actually accepts it.
-  assert_contains "$label refusal names the actions that take --team" \
-    "$ERR" "issues, projects, cycles, labels"
-  assert_eq "$label refuses before any API call" "$(api_calls)" "0"
-}
-
-echo "=== writes refuse when no team is configured ==="
-
-clear_settings
-
-run_linear issues create --title "Cross-workspace write"
-assert_refused "issues create"
-
-run_linear issues update TEAM-1 --state Done
-assert_refused "issues update"
-
-run_linear issues complete TEAM-1
-assert_refused "issues complete"
-
-run_linear issues archive TEAM-1
-assert_refused "issues archive"
-
-run_linear issues add-relation TEAM-1 --blocks TEAM-2
-assert_refused "issues add-relation"
-
-run_linear comments create TEAM-1 --body "hello"
-assert_refused "comments create"
-
-run_linear projects create --name "New project"
-assert_refused "projects create"
-
-run_linear cycles create --start 2026-08-01 --end 2026-08-15
-assert_refused "cycles create"
-
-run_linear labels create --name backend
-assert_refused "labels create"
-
-run_linear milestones create --project P --name Alpha
-assert_refused "milestones create"
-
-run_linear initiatives create --name "Phase 1"
-assert_refused "initiatives create"
-
-echo "=== free text is not a team target ==="
-
-# The guard must not read a team out of unparsed argv: a `--team` token in a
-# comment body or an issue title is ordinary user text, and honoring it would
-# let any write open its own gate.
-clear_settings
-
-run_linear comments create TEAM-1 --body "--team=CC"
-assert_refused "comments create with --team=CC as the body"
-
-run_linear comments create TEAM-1 --body "--team"
-assert_refused "comments create with a bare --team body"
-
-run_linear comments create TEAM-1 --body "see --team CC for context"
-assert_refused "comments create with --team inside prose"
-
-run_linear issues update TEAM-1 --title "--team" --state Done
-assert_refused "issues update with a bare --team title"
-
-run_linear issues update TEAM-1 --title "--team=CC" --state Done
-assert_refused "issues update with --team=CC as the title"
-
-run_linear issues create --title "--team=CC"
-assert_refused "issues create with --team=CC as the title"
-
-run_linear issues comment TEAM-1 --body "--team=CC"
-assert_ne "issues comment redirect fails" "$RC" 0
-assert_eq "the issues comment redirect" "$(api_calls)" "0"
-
-echo "=== a blank configured value stays unset (seeded template is inert) ==="
-
-set_settings_team ""
-run_linear issues create --title "Blank team"
-assert_refused "issues create with blank LINEAR_TEAM"
-
-echo "=== help never needs a team target ==="
-
-clear_settings
-run_linear issues create --help
-assert_eq "issues create --help exits zero" "$RC" 0
-assert_contains "issues create --help prints its help" "$OUT" "Create Options:"
-
-# `update` is guarded at the dispatcher, so its help path is the one that needs
-# the exemption.
-run_linear issues update --help
-assert_eq "issues update --help exits zero" "$RC" 0
-assert_contains "issues update --help prints its help" "$OUT" "Update Options:"
-assert_eq "issues update --help" "$(api_calls)" "0"
-
-echo "=== explicit --team satisfies the requirement ==="
-
-clear_settings
-run_linear issues create --title "Explicit target" --team Explicit
-assert_eq "issues create --team exits zero" "$RC" 0
-assert_log "an explicit --team resolves the team" \
-  'any(.[]; (.query | contains("teams(filter:")) and .variables.name == "Explicit")'
-assert_log "issueCreate carries the resolved team id" \
-  'any(.[]; (.query | contains("issueCreate")) and .variables.input.teamId == "team-uuid")'
-
-echo "=== configured LINEAR_TEAM proceeds ==="
-
-set_settings_team "Configured"
-run_linear issues create --title "Configured target"
-assert_eq "issues create with configured team exits zero" "$RC" 0
-assert_log "a configured LINEAR_TEAM is used" \
-  'any(.[]; (.query | contains("teams(filter:")) and .variables.name == "Configured")'
-
-run_linear comments create TEAM-1 --body "hello"
-assert_eq "comments create with configured team exits zero" "$RC" 0
-assert_log "comments create reaches the API with a configured team" \
-  'any(.[]; .query | contains("commentCreate"))'
-
-# Free text stays free text: a configured project still writes the body as-is.
-run_linear comments create TEAM-1 --body "--team=CC"
-assert_eq "comments create with a --team-shaped body exits zero" "$RC" 0
-assert_log "the comment body is preserved verbatim" \
-  'any(.[]; (.query | contains("commentCreate")) and (.variables.input.body | startswith("--team=CC")))'
-
-# Every create action that parses --team resolves its target after parsing.
-clear_settings
-for create_case in "projects create --name P --team Explicit:projectCreate" \
-  "cycles create --start 2026-08-01 --end 2026-08-15 --team Explicit:cycleCreate" \
-  "labels create --name backend --team Explicit:issueLabelCreate"; do
-  args="${create_case%:*}"
-  op="${create_case##*:}"
-  # shellcheck disable=SC2086
-  run_linear $args
-  assert_eq "$args exits zero" "$RC" 0
-  assert "$args reaches $op" \
-    jq -s -e --arg op "$op" 'any(.[]; .query | contains($op))' "$CURL_LOG"
-done
-
-# labels create takes an optional --team; with none passed it still needs a
-# configured target, and it must not invent a team scope for the label.
-set_settings_team "Configured"
-run_linear labels create --name backend
-assert_eq "labels create with configured team exits zero" "$RC" 0
-assert_log "labels create scopes the label to no team it was not asked for" \
-  'any(.[]; (.query | contains("issueLabelCreate")) and (.variables.input | has("teamId") | not))'
-
-echo "=== reads never send a guessed team ==="
-
-clear_settings
-
-run_linear statuses list
-assert_eq "statuses list exits zero" "$RC" 0
-assert_no_guessed_team "statuses list"
-
-run_linear cycles list --type current
-assert_eq "cycles list exits zero" "$RC" 0
-assert_log "cycles list resolves no team when none is configured" \
-  'all(.[]; (.query | contains("teams(filter:")) | not)'
-assert_no_guessed_team "cycles list"
-
-run_linear statuses get --name "In Progress"
-assert_eq "statuses get exits zero" "$RC" 0
-assert_no_guessed_team "statuses get"
-
-run_linear issues list --limit 5
-assert_eq "issues list exits zero" "$RC" 0
-assert_no_guessed_team "issues list"
-
-# The team filter is still applied when one is configured.
-set_settings_team "Configured"
-run_linear cycles list --type current
-assert_eq "cycles list with configured team exits zero" "$RC" 0
-assert_log "cycles list did not resolve the configured team" \
-  'any(.[]; (.query | contains("teams(filter:")) and .variables.name == "Configured")'
-assert_log "cycles list scopes to the configured team" \
-  'any(.[]; .variables.filter.team.id.eq == "team-uuid")'
-
-run_linear statuses list
-assert_log "statuses list scopes to the configured team" \
-  'any(.[]; .variables.filter.team.name.eq == "Configured")'
-clear_settings
-
-run_linear sync --full --no-attachments
-assert_ne "sync issues requests, so the check below is not vacuous" "$(api_calls)" "0"
-assert_no_guessed_team "sync"
-assert_log "sync queries cycles" \
-  'any(.[]; .query | contains("SyncCycles"))'
-
-set_settings_team "Configured"
-run_linear sync --full --no-attachments
-assert_log "sync scopes cycles to the configured team" \
-  'any(.[]; (.query | contains("SyncCycles")) and .variables.teamName == "Configured")'
-clear_settings
-
-echo "=== graphql_query refuses any mutation without a target ==="
-
-: >"$CURL_LOG"
-backstop_rc=0
-backstop_err="$(cd "$PROJECT" && env -u LINEAR_TEAM \
-  PATH="$PROJECT/bin:$PATH" \
-  LINEAR_API_KEY=test-token \
-  CURL_LOG="$CURL_LOG" \
-  bash -c 'source .agents/skills/linear/scripts/lib/common.sh
-graphql_query "
-    mutation UnregisteredWrite(\$input: IssueCreateInput!) { issueCreate(input: \$input) { success } }" "{}"' 2>&1)" || backstop_rc=$?
-assert_ne "graphql_query refuses a mutation with no team target" "$backstop_rc" 0
-assert_contains "the graphql_query refusal names the missing team" "$backstop_err" "No Linear team configured"
-assert_eq "graphql_query" "$(api_calls)" "0"
-
-: >"$CURL_LOG"
-read_rc=0
-(cd "$PROJECT" && env -u LINEAR_TEAM \
-  PATH="$PROJECT/bin:$PATH" \
-  LINEAR_API_KEY=test-token \
-  CURL_LOG="$CURL_LOG" \
-  bash -c 'source .agents/skills/linear/scripts/lib/common.sh
-graphql_query "query Ping { viewer { id } }" "{}"' >/dev/null 2>&1) || read_rc=$?
-assert_eq "graphql_query allows a read with no team target" "$read_rc" 0
-assert_eq "the read query reaches the API" "$(api_calls)" "1"
-
-echo "=== auth-check reports the target ==="
-
-clear_settings
-run_linear auth-check
-assert_eq "auth-check exits zero" "$RC" 0
-assert_jq "auth-check reports an unresolved team" "$OUT" '.ok == true and .team == null and .team_source == "unset" and .writes_enabled == false'
-assert_jq "auth-check attributes the API key to the environment" "$OUT" '.api_key_source == "environment"'
-assert_jq "auth-check warns about the missing team" "$OUT" '[.warnings[] | select(contains("LINEAR_TEAM"))] | length > 0'
-assert_jq "auth-check flags a global key with no project team" "$OUT" '[.warnings[] | select(contains("process environment"))] | length > 0'
-
-run_linear auth-check --strict
-assert_ne "auth-check --strict fails" "$RC" 0
-
-set_settings_team "Configured"
-run_linear auth-check --strict
-assert_eq "auth-check --strict exits zero" "$RC" 0
-assert_jq "auth-check reports the configured team" "$OUT" '.team == "Configured" and .team_source == "project-config" and .writes_enabled == true and (.warnings | length) == 0'
-assert_jq "auth-check names the file that set the team" "$OUT" '.team_source_file == "kendex.settings.toml"'
-
-run_linear_env_team "EnvTeam" auth-check
-assert_eq "auth-check exits zero" "$RC" 0
-assert_jq "auth-check reports the exported team" "$OUT" '.team == "EnvTeam" and .team_source == "environment" and .writes_enabled == true'
-assert_jq "auth-check names no project file for an environment-sourced team" "$OUT" '.team_source_file == null'
-assert_jq "auth-check warns that the environment shadows project config" "$OUT" '[.warnings[] | select(contains("overrides the project value"))] | length > 0'
-
-# An exported-but-empty LINEAR_TEAM wins over the project file (parent env
-# beats project config) and resolves to nothing. Attribution must say so
-# instead of naming a file that supplied nothing.
-run_linear_env_team "" auth-check
-assert_eq "auth-check exits zero" "$RC" 0
-assert_jq "auth-check attribution is consistent for an exported empty team" "$OUT" '.team == null and .team_source == "unset" and .team_source_file == null and .writes_enabled == false'
-assert_jq "auth-check warns that an empty export shadows project config" "$OUT" '[.warnings[] | select(contains("exported as an empty value"))] | length > 0'
-
-run_linear_env_team "" issues create --title "Empty export"
-assert_refused "issues create with an exported empty LINEAR_TEAM"
-clear_settings
-
-# A malformed settings file refuses the whole CLI at startup: no command
-# runs on a partial read, so team provenance can never quote a value from a
-# file the loader rejected.
-printf '[env]\nLINEAR_TEAM = "Partial"\nDUP = "a"\nDUP = "b"\n' >"$PROJECT/kendex.settings.toml"
-run_linear auth-check
-assert_ne "auth-check does not run on a refused settings load" "$RC" 0
-assert_file_contains "the refusal names the settings defect" "$ERR_FILE" "assigned more than once"
-clear_settings
-
+# The backstop sits under every dispatcher: a mutation reaching graphql_query
+# with no target is refused at the wire, a read is not.
+assert_eq "graphql_query refuses a mutation with no team target" \
+  "$(graphql mutation)" "$(expected refused)"
+assert_eq "graphql_query lets a read through with no team target" \
+  "$(graphql read)" "rc=0 calls=1 wire=Ping()"
