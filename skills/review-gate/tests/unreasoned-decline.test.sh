@@ -171,7 +171,9 @@ echo "=== the two thread terms over hand-written threads ==="
 # under the cap, tracked separately` is the reply that is why: it names no
 # issue, and reading it as a disposition there would clear the claim instead
 # of failing it. `Fixed in abc123` is six hex characters, one short of a
-# sha, so it is a tracking reply and not a disposition.
+# sha, so it is a tracking reply and not a disposition. A path INSIDE a
+# mechanism is untouched by the path strip: it takes the name and leaves the
+# sentence, the same way the count strip takes one token.
 thread_of() { # thread_of SPEC -> one reviewThreads node
   local flags="${1%%:*}" rest="${1#*:}" resolved=true next=false nodes="" c
   case "$flags" in u*) resolved=false ;; esac
@@ -222,9 +224,9 @@ for row in \
   "a later Fixed in <sha> reply clears a naked claim|0 0 0 false END|r:H=Out of scope, tracked. + H=Fixed in abc1234" \
   "a later Tracked: <id> reply clears a naked claim|0 0 0 false END|r:H=Out of scope, tracked. + H=Tracked: KEN-637" \
   "a Fixed in reply is never a claim, whatever its prose|0 0 0 false END|r:H=Fixed in abc1234, every tracked caller now runs" \
-  "a bot reply does not move the disposition|0 1 0 false END|r:H=Out of scope, tracked. + B=Thanks, noted" \
+  "a bot reply does not move the disposition, even one that would clear the claim|0 1 0 false END|r:H=Out of scope, tracked. + B=Tracked: KEN-9" \
   "a resolved thread whose last reply is a naked claim still counts|0 1 0 false END|r:H=Fixed in abc1234 + H=the rest is tracked for later" \
-  "a reply that is neither claim nor disposition does not move it|0 2 0 false END|r:H=Out of scope, tracked. + H=ok|r:H=Out of scope, tracked. + H=Which issue?" \
+  "a reply that is neither claim nor disposition does not move it, even one naming an issue|0 2 0 false END|r:H=Out of scope, tracked. + H=ok, see KEN-42|r:H=Out of scope, tracked. + H=Which issue? KEN-43?" \
   "Fixed in without a sha is not a disposition|0 1 0 false END|r:H=Fixed in a follow-up, tracked separately" \
   "a Declined: reply with a naked track-word is never a claim|0 0 0 false END|r:H=Declined: the caller is tracked by the loader already" \
   "a path inside a mechanism still passes|0 0 0 false END|r:H=Declined: crates/core/src/lock.rs refuses that shape before the branch you name runs." \
