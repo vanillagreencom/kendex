@@ -198,3 +198,33 @@ fn the_collapsed_reading_answers_no_where_it_cannot_tell() {
         }
     }
 }
+
+/// The two spellings of one root reach one citation.
+///
+/// A source opened through a symlinked parent — which is every standard
+/// temp location on macOS, through `/var` — canonicalizes its root while
+/// callers keep building paths from the spelling they were handed. Both
+/// have to name the same catalog file, or a plan preview cites an
+/// absolute host path where it means `skills/gh/SKILL.md`.
+#[cfg(unix)]
+#[test]
+fn a_catalog_path_is_the_same_under_either_root_spelling() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let real = tmp.path().join("real");
+    std::fs::create_dir_all(real.join("skills/gh")).expect("mkdir");
+    std::fs::write(real.join("skills/gh/SKILL.md"), "---\nname: gh\n---\n").expect("write");
+    let linked = tmp.path().join("linked");
+    std::os::unix::fs::symlink(&real, &linked).expect("symlink");
+
+    let sealed = SealedSource::open(&linked).expect("open");
+    assert_eq!(
+        sealed.catalog_path(&linked.join("skills/gh/SKILL.md")),
+        "skills/gh/SKILL.md",
+        "the spelling the caller was handed"
+    );
+    assert_eq!(
+        sealed.catalog_path(&sealed.root().join("skills/gh/SKILL.md")),
+        "skills/gh/SKILL.md",
+        "the canonical spelling open() resolved to"
+    );
+}

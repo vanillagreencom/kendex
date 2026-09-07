@@ -32,6 +32,7 @@ function row(
     name: "github",
     targets: [{ harness, location: "github" }],
     scope: GLOBAL,
+    source: null,
     findings,
     skipped: [],
     safety: { score, deductions: [] },

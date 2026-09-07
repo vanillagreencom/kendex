@@ -68,6 +68,7 @@ const gh: ItemSafety = {
   name: "gh",
   targets: [{ harness: "claude", location: "" }],
   scope: GLOBAL,
+  source: null,
   findings: [
     {
       rule: "dangerous-commands",

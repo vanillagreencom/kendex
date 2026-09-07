@@ -66,6 +66,7 @@ mod unmanaged;
 pub use unmanaged::unmanaged_here;
 mod written;
 
+pub use desired::CatalogSource;
 pub(crate) use desired_agent::contributes_to_agent;
 pub use expansion::{NO_PER_PACKAGE_UPDATE, plans_per_package};
 pub use item_source::ItemSource;

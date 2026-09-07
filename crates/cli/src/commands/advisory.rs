@@ -1,7 +1,7 @@
 //! One advisory block, in the one shape every verb that scores content
 //! prints it, and the key that decides when two rows share one.
 
-use kendex_core::engine::{EngineReport, ItemSafety, SafetyTarget};
+use kendex_core::engine::{CatalogSource, EngineReport, ItemSafety, SafetyTarget};
 use kendex_core::model::ItemKind;
 use kendex_core::quality::Finding;
 
@@ -14,7 +14,10 @@ pub fn print_safety(report: &EngineReport) {
         print_advisory(
             row.kind,
             &row.name,
-            ScoredAt::Targets(&targets),
+            ScoredAt::Planned {
+                targets: &targets,
+                source: row.source.as_ref(),
+            },
             &row.advisory,
         );
     }
@@ -72,20 +75,25 @@ struct PrintedFinding {
 }
 
 fn safety_block(row: &ItemSafety) -> SafetyBlock {
-    let root = row.targets.first().map_or("", |at| at.location.as_str());
     let advisory = &row.advisory;
     SafetyBlock {
         score: advisory.safety.score,
         findings: advisory
             .findings
             .iter()
-            .map(|finding| PrintedFinding {
-                severity: finding.severity.name(),
-                message: finding.message.clone(),
-                location: within(&finding.location, root)
-                    .unwrap_or(&finding.location)
-                    .to_owned(),
-                line: finding.line,
+            .map(|finding| {
+                // Exactly what the line will say. Two renderings of one
+                // item can agree on every finding and still be cited
+                // differently — one a verbatim copy, the other rewritten
+                // — and folding those would let the first row decide
+                // whether the other's line prints.
+                let (location, line) = cited(finding, &row.targets, row.source.as_ref());
+                PrintedFinding {
+                    severity: finding.severity.name(),
+                    message: finding.message.clone(),
+                    location,
+                    line,
+                }
             })
             .collect(),
         skipped: advisory
@@ -141,8 +149,12 @@ fn also_at(finding: &Finding, targets: &[SafetyTarget]) -> Vec<String> {
 /// hand-building a subject string, so every score line is worded the same
 /// way.
 pub enum ScoredAt<'a> {
-    /// The harness renderings whose audit results share this block.
-    Targets(&'a [kendex_core::engine::SafetyTarget]),
+    /// The harness renderings whose audit results share this block, and
+    /// the catalog file they were rendered from where one backs them.
+    Planned {
+        targets: &'a [kendex_core::engine::SafetyTarget],
+        source: Option<&'a CatalogSource>,
+    },
     /// The item's own path within the catalog. Empty for a repository
     /// that is one skill: its path is the catalog, so there is no segment
     /// to name and the score line leaves it out.
@@ -168,9 +180,10 @@ pub fn print_advisory(
     at: ScoredAt<'_>,
     advisory: &kendex_core::quality::AuditResult,
 ) {
-    let (targets, at) = match at {
-        ScoredAt::Targets(targets) => (
+    let (targets, source, at) = match at {
+        ScoredAt::Planned { targets, source } => (
             targets,
+            source,
             format!(
                 " for {}",
                 targets
@@ -180,8 +193,8 @@ pub fn print_advisory(
                     .join(", ")
             ),
         ),
-        ScoredAt::CatalogPath("") => (&[][..], String::new()),
-        ScoredAt::CatalogPath(path) => (&[][..], format!(" at {}", path)),
+        ScoredAt::CatalogPath("") => (&[][..], None, String::new()),
+        ScoredAt::CatalogPath(path) => (&[][..], None, format!(" at {}", path)),
     };
     say(&format!(
         "safety: {} {}{at} scores {}/100",
@@ -194,10 +207,11 @@ pub fn print_advisory(
         // no place to name; the claim still prints, without empty parens.
         // `PATH:LINE` is composed here and nowhere earlier: this is the end
         // of the line, where nothing has to read it back.
-        let at = match (finding.location.is_empty(), finding.line) {
+        let (place, line) = cited(finding, targets, source);
+        let at = match (place.is_empty(), line) {
             (true, _) => String::new(),
-            (false, None) => format!(" ({})", finding.location),
-            (false, Some(line)) => format!(" ({}:{line})", finding.location),
+            (false, None) => format!(" ({})", place),
+            (false, Some(line)) => format!(" ({}:{line})", place),
         };
         say(&format!(
             "  [{}] {}{at}",
@@ -209,6 +223,66 @@ pub fn print_advisory(
         }
     }
     print_skipped(advisory);
+}
+
+/// Where this finding is cited, and at which line of it.
+///
+/// A plan scores what it would write, and prints before it writes any of
+/// it: the destination the rule fired in is a file the reader cannot open
+/// yet, so the citation is the catalog file those bytes came from — the
+/// same one `check --catalog` names for the same content. The finding's
+/// own location is left alone, because that is what places it among the
+/// renderings this block covers.
+///
+/// The line survives only where the rendering is the catalog file's own
+/// bytes. Writing is not always copying — an agent is restated in each
+/// tool's own words, a skill can carry the instructions the project adds
+/// to it — and a line counted in a rewrite is a line of no file at all.
+///
+/// Everything else keeps what the rules said: an installed reading, and a
+/// row no catalog file backs, are already at a place a reader can open.
+fn cited(
+    finding: &Finding,
+    targets: &[SafetyTarget],
+    source: Option<&CatalogSource>,
+) -> (String, Option<u32>) {
+    let unchanged = || (finding.location.clone(), finding.line);
+    let Some(source) = source else {
+        return unchanged();
+    };
+    let root = targets.first().map_or("", |at| at.location.as_str());
+    let Some(place) = within(&finding.location, root) else {
+        return unchanged();
+    };
+    // A place inside a rendered tree is a position the catalog holds only
+    // where the catalog is a tree too. A single file a harness stores as
+    // a skill is rendered into one, and joining `/SKILL.md` onto the file
+    // would name a path nobody can open. A sub-location — a hook's
+    // ` (command)`, an entry's ` (entry)` — is a label on the same
+    // artifact and rejoins whatever shape the catalog holds it in.
+    let inside_a_tree = place.starts_with('/');
+    // Switching a skill off renames exactly one file, and no catalog
+    // holds the parked spelling, so the rename is undone before the
+    // join. Only that file: a catalog is free to ship a
+    // `references/old.disabled` of its own, and that is its real name.
+    // The pair is the renderer's, read from it rather than respelled.
+    let [named, parked] = kendex_core::render::skill::NAME_FILES;
+    let undone;
+    let place = match place.strip_suffix(parked) {
+        Some(head) => {
+            undone = format!("{head}{named}");
+            undone.as_str()
+        }
+        None => place,
+    };
+    let path = match (inside_a_tree && !source.tree, source.path.is_empty()) {
+        (true, _) => source.path.clone(),
+        // A repository that is one skill has no path inside itself, so
+        // the place is the whole citation and joins to nothing.
+        (false, true) => place.trim_start_matches('/').to_owned(),
+        (false, false) => format!("{}{place}", source.path),
+    };
+    (path, finding.line.filter(|_| source.verbatim))
 }
 
 /// The rules that apply to this kind and had no bytes to read here.
@@ -240,6 +314,11 @@ mod tests {
     /// What a block prints is the caller's, what it does not is fixed
     /// here, so a split or a fold names the printed part that caused it.
     fn skill(harness: HarnessId, message: &str, skipped: &[&str]) -> ItemSafety {
+        sourced(harness, message, skipped, true)
+    }
+
+    /// The same rendering, saying whether it is the catalog's own bytes.
+    fn sourced(harness: HarnessId, message: &str, skipped: &[&str], verbatim: bool) -> ItemSafety {
         let root = format!("/home/one/.{}/skills/deploy", harness.name());
         ItemSafety {
             kind: ItemKind::Skill,
@@ -249,6 +328,11 @@ mod tests {
                 location: root.clone(),
             }],
             scope: Scope::Global,
+            source: Some(CatalogSource {
+                path: "skills/deploy".to_owned(),
+                verbatim,
+                tree: true,
+            }),
             advisory: AuditResult {
                 findings: vec![Finding {
                     rule: "rce".to_owned(),
@@ -379,6 +463,92 @@ mod tests {
         assert!(
             also_at(&row.advisory.findings[0], &targets).is_empty(),
             "a place outside the rendering claims no other position"
+        );
+    }
+
+    /// Two renderings can find the same thing and still be cited
+    /// differently: one is the catalog's own bytes and prints a line, the
+    /// other was rewritten on the way in and cannot. Folding them would
+    /// let whichever row came first decide the other's subtext.
+    #[test]
+    fn a_different_citation_stays_two_blocks() {
+        let rows = [
+            sourced(Claude, PIPES, &[], true),
+            sourced(Codex, PIPES, &[], false),
+        ];
+        assert_eq!(blocks(&rows), [[Claude], [Codex]]);
+    }
+
+    /// A place inside a rendered tree is a position only a catalog tree
+    /// holds. A command a harness stores as a skill is one catalog FILE
+    /// rendered into a tree, so the citation is that file — never a
+    /// `/SKILL.md` joined onto it, which names nothing.
+    #[test]
+    fn a_file_rendered_into_a_tree_is_cited_as_the_file() {
+        let mut row = skill(Claude, PIPES, &[]);
+        row.kind = ItemKind::Command;
+        row.name = "ship".to_owned();
+        row.targets[0].location = "/home/one/.claude/skills/ship".to_owned();
+        row.advisory.findings[0].location = "/home/one/.claude/skills/ship/SKILL.md".to_owned();
+        row.source = Some(CatalogSource {
+            path: "commands/ship.md".to_owned(),
+            verbatim: false,
+            tree: false,
+        });
+
+        assert_eq!(
+            cited(&row.advisory.findings[0], &row.targets, row.source.as_ref()),
+            ("commands/ship.md".to_owned(), None),
+        );
+    }
+
+    /// Switching a skill off parks its rendered `SKILL.md` under
+    /// `SKILL.md.disabled`. That spelling is kendex's, not the catalog's,
+    /// so the citation names the file the catalog actually holds.
+    #[test]
+    fn a_parked_rendering_is_cited_at_the_file_the_catalog_holds() {
+        let mut row = skill(Claude, PIPES, &[]);
+        row.advisory.findings[0].location =
+            "/home/one/.claude/skills/deploy/SKILL.md.disabled".to_owned();
+
+        assert_eq!(
+            cited(&row.advisory.findings[0], &row.targets, row.source.as_ref()).0,
+            "skills/deploy/SKILL.md",
+        );
+    }
+
+    /// The rename is undone for the one file that takes it, and for no
+    /// other: a catalog may ship a file whose own name ends that way,
+    /// and cutting the suffix off it would name nothing.
+    #[test]
+    fn only_the_parked_skill_file_has_its_rename_undone() {
+        let mut row = skill(Claude, PIPES, &[]);
+        row.advisory.findings[0].location =
+            "/home/one/.claude/skills/deploy/references/old.disabled".to_owned();
+
+        assert_eq!(
+            cited(&row.advisory.findings[0], &row.targets, row.source.as_ref()).0,
+            "skills/deploy/references/old.disabled",
+        );
+    }
+
+    /// A sub-location is a label on the artifact, not a path inside it,
+    /// so it rejoins a catalog file the same way it would a tree.
+    #[test]
+    fn a_sub_location_rejoins_a_catalog_file() {
+        let mut row = skill(Claude, PIPES, &[]);
+        row.kind = ItemKind::Hook;
+        row.targets[0].location = "/home/one/.claude/settings.json".to_owned();
+        row.advisory.findings[0].location = "/home/one/.claude/settings.json (command)".to_owned();
+        row.source = Some(CatalogSource {
+            path: "hooks/guard.sh".to_owned(),
+            verbatim: true,
+            tree: false,
+        });
+
+        assert_eq!(
+            cited(&row.advisory.findings[0], &row.targets, row.source.as_ref()).0,
+            "hooks/guard.sh (command)",
         );
     }
 

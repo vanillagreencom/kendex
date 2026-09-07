@@ -97,6 +97,16 @@ impl SealedSource {
             .ok()
     }
 
+    /// `path` as the catalog names it: `/`-spelled and relative to the
+    /// catalog root. Every surface that cites where a rule read something
+    /// prints this — the authoring check, the marketplace preview, and a
+    /// plan's advisory rows — so one catalog file is one string wherever
+    /// it is named. A path outside the root keeps its own spelling; a
+    /// caller holding one has not read it through this source.
+    pub fn catalog_path(&self, path: &Path) -> String {
+        crate::paths::slashed(self.relative(path).unwrap_or(path))
+    }
+
     /// The containment check every read goes through: the path must sit
     /// beneath the root — under either spelling of it — and no component
     /// below the root may be a symlink. Also asked of a path about to be

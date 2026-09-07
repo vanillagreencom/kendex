@@ -16,6 +16,7 @@ fn a_scored_row_serves_its_advisory_fields_at_the_top_level() {
             location: "skills/gh".to_owned(),
         }],
         scope: Scope::Global,
+        source: None,
         advisory: crate::quality::sample::populated(),
     };
 
@@ -31,7 +32,7 @@ fn a_scored_row_serves_its_advisory_fields_at_the_top_level() {
         keys,
         [
             "findings", "kind", "name", "quality", "ruleset", "safety", "scope", "skipped",
-            "targets"
+            "source", "targets"
         ],
         "{json}"
     );
@@ -141,9 +142,16 @@ fn desired_document(
             path: format!("/{}/deploy.md", harness.name()).into(),
             bytes: bytes.to_vec(),
         },
+        Some(crate::engine::desired::CatalogSource {
+            path: format!("{}s/{name}.md", kind.name()),
+            verbatim: true,
+            tree: false,
+        }),
     )
 }
 
+/// A hook the declaration itself carries: no catalog file behind it, the
+/// shape `desired_custom_hooks` builds.
 fn desired_hook(harness: HarnessId, event: &str, command: &str) -> crate::engine::desired::Desired {
     item(
         ItemKind::Hook,
@@ -161,6 +169,7 @@ fn desired_hook(harness: HarnessId, event: &str, command: &str) -> crate::engine
                 },
             )],
         },
+        None,
     )
 }
 
@@ -169,6 +178,7 @@ fn item(
     name: &str,
     harness: HarnessId,
     artifact: crate::engine::desired::Artifact,
+    source: Option<crate::engine::desired::CatalogSource>,
 ) -> crate::engine::desired::Desired {
     crate::engine::desired::Desired {
         key: format!("{}:{name}:{}", kind.name(), harness.name()),
@@ -182,6 +192,7 @@ fn item(
         source_commit: None,
         recorded_fork: false,
         hash: String::new(),
+        source,
         upstream_skills: None,
         emitted: None,
         reasons: std::collections::BTreeSet::new(),

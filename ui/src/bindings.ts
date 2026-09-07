@@ -944,6 +944,36 @@ export type CatalogGroupMeta = {
  */
 export type CatalogMode = "plugin-registry" | "explicit" | "discovered" | "unusable";
 
+/**
+ *  Where a rendering's bytes came from in the catalog, and whether the
+ *  rendering is those bytes unchanged.
+ * 
+ *  A plan scores what it would write, and writing is not always copying:
+ *  an agent is restated in each tool's own words, a skill can carry the
+ *  instructions the project adds to it. The path is worth citing either
+ *  way — it is a file the reader can open while the destination does not
+ *  exist yet, and `check --catalog` names the same one — but a line read
+ *  off the rendering is a line of that file only where the two are the
+ *  same bytes.
+ */
+export type CatalogSource = {
+	/**  The item's path within the catalog, `/`-spelled. */
+	path: string,
+	/**
+	 *  Whether the rendering is the catalog's bytes unchanged, which is
+	 *  what makes a line read off the rendering a line of `path`.
+	 */
+	verbatim: boolean,
+	/**
+	 *  Whether the catalog holds this item as a directory. A place inside
+	 *  a rendering maps back onto `path` only where the catalog has a
+	 *  tree to hold it: a single file rendered into a tree — a command a
+	 *  harness stores as a skill — has no `/SKILL.md` inside itself, and
+	 *  joining one on would name a path that does not exist.
+	 */
+	tree: boolean,
+};
+
 export type CatalogSummary = {
 	/**
 	 *  What the catalog is, as its declaration spelled it: `owner/repo`
@@ -1889,6 +1919,16 @@ export type ItemSafety = {
 	/**  Groups equal plan content; installed rows describe one scan. */
 	targets: SafetyTarget[],
 	scope: Scope,
+	/**
+	 *  The catalog file these renderings came from, where one does. A
+	 *  finding's own `location` is where the rule fired in the bytes that
+	 *  were read — the rendering, at its destination — and that is what
+	 *  places it among `targets`. This is where those bytes came from,
+	 *  which is what a preview cites: the destination does not exist
+	 *  until the plan is applied. `None` for a row no catalog file backs,
+	 *  and for an installed row, whose bytes are the artifact itself.
+	 */
+	source: CatalogSource | null,
 } & AuditResult;
 
 export type ItemSource = {

@@ -36,6 +36,9 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
                 location: crate::paths::slashed(&item.path),
             }],
             scope: item.scope.clone(),
+            // Installed bytes are the artifact itself: the finding's own
+            // location is already the file a reader opens.
+            source: None,
             advisory: result,
         })
         .collect())

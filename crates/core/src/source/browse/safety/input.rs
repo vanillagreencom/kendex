@@ -31,7 +31,7 @@ pub(super) fn input_for(
     item: &Item,
 ) -> Result<AuditInput> {
     let path = &item.path;
-    let location = crate::paths::slashed(path.strip_prefix(browsed.sealed.root()).unwrap_or(path));
+    let location = browsed.sealed.catalog_path(path);
     let content = match kind {
         // Through the same constructor the plan reads a tree with, over
         // the tree this project would install — the rendering every tool
