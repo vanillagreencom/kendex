@@ -13,7 +13,8 @@
 # later words overriding earlier ones (each suite prepends its own defaults);
 # `build ROW words...` makes it, `run ARGV` prints one line:
 #   rc=N out=<stdout> err=<record log> calls=N files=<the output dir> home=<the artifact home> tmp=N paths=<probes>
-# PROBE=1 prints every row's rendered line instead of asserting.
+# SECOND_OPINION_TABLE_PROBE=1 prints every row's rendered line instead of asserting it; a run
+# that asserted no row exits 2, and a row with an empty field is refused.
 #
 # Deliberate collapses: every caller-owned file renders as the class `mine`
 # (the sweep never rewrites a file it keeps, so byte identity adds nothing),
@@ -643,10 +644,14 @@ refused_candidates() {
 
 # run_table TITLE DEFAULTS ROWS
 run_table() {
-  local title="$1" defaults="$2" rows="$3" n=0 label world argv rc out err want got
+  local title="$1" defaults="$2" rows="$3" n=0 label world argv rc out err want got row field
   echo "=== $title ==="
-  while IFS='|' read -r label world argv rc out err want; do
-    [[ -n "$label$world$argv$rc$out$err$want" ]] || continue
+  while IFS= read -r row; do
+    [[ -n "$row" ]] || continue
+    IFS='|' read -r label world argv rc out err want <<<"$row"
+    for field in "$label" "$world" "$argv" "$rc" "$out" "$err" "$want"; do
+      [[ -n "$field" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+    done
     n=$((n + 1))
     # shellcheck disable=SC2086
     build "row-$n" $defaults $world
@@ -659,12 +664,14 @@ run_table() {
       continue
     fi
     got="$(run "$argv")"
-    if [[ "${PROBE:-}" == 1 ]]; then
+    # A rendering aid for writing rows; the run is refused after the loop.
+    if [[ "${SECOND_OPINION_TABLE_PROBE:-}" == 1 ]]; then
       printf '%s => %s\n' "$label" "$got"
       continue
     fi
     assert_eq "$got" "rc=$rc out=$out err=$(err_text "$err") $want" "$label"
   done <<<"$rows"
+  [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 }
 
 finish() {

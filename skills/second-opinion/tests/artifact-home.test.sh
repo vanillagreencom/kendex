@@ -25,7 +25,7 @@ HOME_OK="home=mode=700,review-claude-failed=$FAILED,ignore=*"
 
 # label|world|argv|rc|out|err|calls files home tmp [probes] dirty
 ROWS="
-the default home is created owner-only under --cwd, seeded with a * .gitignore, and dirties nothing||review|5|-|$IN_HOME|calls=1 files=- $HOME_OK tmp=0 dirty=-
+the default home is created owner-only under --cwd, seeded with a * .gitignore, and dirties nothing|-|review|5|-|$IN_HOME|calls=1 files=- $HOME_OK tmp=0 dirty=-
 a symlink at the home pointing inside the repo is rejected and nothing lands under its target|prepare:link-inside home:tmp/second-opinion|review|5|-|header:review home-rejected:inside $IN_TEMP|calls=1 files=- home=link tmp=1 elsewhere=1 dirty=-
 a relative path escaping --cwd is rejected lexically and nothing is created outside|home:../outside/second-opinion|review|5|-|header:review home-rejected:escape $IN_TEMP|calls=1 files=- home=absent tmp=1 dirty=-
 a symlinked parent pointing at a not-yet-existing outside path is rejected before mkdir could create it|prepare:link-parent home:tmp/link-parent/second-opinion|review|5|-|header:review home-rejected:parent $IN_TEMP|calls=1 files=- home=absent tmp=1 dirty=-
