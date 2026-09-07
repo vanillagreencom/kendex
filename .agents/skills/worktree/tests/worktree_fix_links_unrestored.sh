@@ -1,181 +1,271 @@
 #!/usr/bin/env bash
-# `fix-links` printed "Restored symlinks" and exited 0 for paths it had
-# not restored. The sync errors that name fix-links as their remediation are
-# re-triggered by exactly those paths, so the operator looped on a command that
-# reported success and changed nothing.
-#
-# Ways a path survives a pass unrestored, all silent before this:
-#   1. no such path in the MAIN checkout — setup skips the entry outright;
-#   2. a materialized child holding data git does not track — the safety check
-#      refuses to destroy it and leaves the real path in place;
-#   3. a WORKTREE_RELATIVE_SYMLINKS entry the pass could not create at all;
-#   4. a link that exists but resolves somewhere other than its configured
-#      target.
-# Each must now name the path and exit non-zero, and a healthy worktree must
-# still report success (the must-fail control for the check itself).
-#
-# 3 and 4 are also the two shapes a materialization detector cannot see: it
-# reports an untracked child only when one EXISTS as a non-symlink, so an
-# absent link and a wrong-target link both read healthy through it.
+# `fix-links`: the pass that re-asserts every configured entry of a worktree
+# and says so only when every entry is healthy. A path can survive a pass
+# unrestored four ways: no such path in the main checkout (setup skips the
+# entry), a materialized child holding data git does not track (the safety
+# check leaves the real path in place), a relative entry the pass could not
+# create, and a link resolving somewhere other than its configured target.
+# Each names the path and exits non-zero; so does a setup step that failed
+# before it reached the links (a mkdir entry under a tracked file), with
+# every link healthy and nothing to name; a healthy worktree reports success.
+# One table, a row per scenario: the fixture is a word list of steps that
+# builds a checkout with its bare origin, its configured entries and its
+# worktree and drives them to the state under test, the command runs from the
+# checkout, and the row pins its exit status, its stdout, its stderr and what
+# is left: every entry of the worktree (a link with its target, a file with
+# its first line, an empty directory with a slash) and git's status of it.
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$SKILL_DIR/scripts/worktree}"
+WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+trap 'chmod -R u+w "$TMP_ROOT" 2>/dev/null; rm -rf "$TMP_ROOT"' EXIT
 
 PASS=0
 FAIL=0
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
+SKIP=0
 
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then ok "$name"; else bad "$name" "wanted: $needle"; fi
-}
-assert_lacks() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then bad "$name" "unexpected: $needle"; else ok "$name"; fi
-}
-
-write_base_env() {
-  printf '%s\n%s\n' \
-    'WORKTREE_SYMLINKS="harness runtime"' \
-    'WORKTREE_RELATIVE_SYMLINKS=".claude/POINTER.md=../AGENTS.md"' >"$MAIN/.env.local"
+assert_eq() {
+  local got="$1" want="$2" name="$3"
+  if [[ "$got" == "$want" ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
+  fi
 }
 
+# gh is quiet: no row asks about a pull request.
 mkdir -p "$TMP_ROOT/bin"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP_ROOT/bin/gh"
 chmod +x "$TMP_ROOT/bin/gh"
 export PATH="$TMP_ROOT/bin:$PATH"
 
-ROOT="$TMP_ROOT/repo"
-MAIN="$ROOT/main"
-mkdir -p "$MAIN"
-git -C "$MAIN" init -q -b main
-git -C "$MAIN" config user.email test@example.com
-git -C "$MAIN" config user.name Test
-git -C "$MAIN" config commit.gpgsign false
-printf 'base\n' >"$MAIN/base.txt"
-git -C "$MAIN" add base.txt
-git -C "$MAIN" commit -q -m base
-git init -q --bare "$ROOT/origin.git"
-git -C "$MAIN" remote add origin "$ROOT/origin.git"
-git -C "$MAIN" push -q -u origin main
+# --- fixtures -----------------------------------------------------------------
+# Every row's world lives under its own ROOT: the checkout at ROOT/main, its
+# bare origin, and the worktree at ROOT/trees/<id>.
 
-# harness/ mixes untracked kendex-installed content with a tracked file, so it
-# is provisioned as a real directory with per-child links; runtime/ is
-# untracked-only, a plain parent symlink. absent-here is configured further
-# down but never created in the main checkout.
-mkdir -p "$MAIN/harness/skills" "$MAIN/runtime"
-printf 'harness/**\n!harness/tracked.md\nruntime/\n' >"$MAIN/.gitignore"
-printf 'installed\n' >"$MAIN/harness/skills/installed.txt"
-printf 'tracked\n' >"$MAIN/harness/tracked.md"
-printf 'state\n' >"$MAIN/runtime/state.json"
-# AGENTS.md is the relative entry's target, resolved from inside the worktree.
-# notes.md is a tracked regular FILE, used further down as a parent no link can
-# be created under.
-printf 'agents\n' >"$MAIN/AGENTS.md"
-printf 'notes\n' >"$MAIN/notes.md"
-write_base_env
-git -C "$MAIN" add .gitignore harness/tracked.md AGENTS.md notes.md
-git -C "$MAIN" commit -q -m harness
-git -C "$MAIN" push -q origin main
+ROOT=""
+MAIN=""
+WT=""
 
-WT="$(cd "$MAIN" && "$WORKTREE_SCRIPT" create fix-links-check 2>/dev/null | tail -1)"
-
-run_fix_links() {
-  set +e
-  OUT="$( (cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT") 2>&1 )"
-  RC=$?
-  set -e
+make_repo() {
+  mkdir -p "$MAIN"
+  git -C "$MAIN" init -q -b main
+  git -C "$MAIN" config user.email test@example.com
+  git -C "$MAIN" config user.name Test
+  git -C "$MAIN" config commit.gpgsign false
+  printf 'base\n' >"$MAIN/base.txt"
+  git -C "$MAIN" add base.txt
+  git -C "$MAIN" commit -q -m base
+  git init -q --bare "$ROOT/origin.git"
+  git -C "$MAIN" remote add origin "$ROOT/origin.git"
+  git -C "$MAIN" push -q -u origin main
+  printf 'WORKTREE_BASE_DIR="../trees"\n' >"$MAIN/.env.local"
 }
 
-echo "=== a healthy worktree still reports success ==="
-run_fix_links
-if [[ "$RC" == 0 ]]; then ok "exit 0 when every entry is healthy"; else bad "exit 0 when every entry is healthy" "rc=$RC: $OUT"; fi
-assert_contains "$OUT" "Restored symlinks in $WT" "success message on a healthy worktree"
-if [[ "$(readlink "$WT/.claude/POINTER.md" 2>/dev/null || true)" == "../AGENTS.md" ]]; then
-  ok "the relative entry is set up, and reads healthy"
-else
-  bad "the relative entry is set up, and reads healthy" "readlink: $(readlink "$WT/.claude/POINTER.md" 2>/dev/null || echo absent)"
-fi
+must() {
+  "$@" || { echo "FIXTURE: '$*' failed in $ROOT" >&2; exit 2; }
+}
 
-echo "=== an entry with no source in the main checkout is named, not skipped ==="
-printf '%s\n%s\n' \
-  'WORKTREE_SYMLINKS="harness runtime absent-here"' \
-  'WORKTREE_RELATIVE_SYMLINKS=".claude/POINTER.md=../AGENTS.md"' >"$MAIN/.env.local"
-run_fix_links
-if [[ "$RC" != 0 ]]; then ok "nonzero exit for an entry missing from the main checkout"; else bad "nonzero exit for an entry missing from the main checkout" "rc=0: $OUT"; fi
-assert_contains "$OUT" "absent-here" "names the skipped entry"
-assert_contains "$OUT" "no such path in the main checkout" "explains why it was skipped"
-assert_lacks "$OUT" "Restored symlinks" "no success message when an entry was skipped"
-write_base_env
+# The main checkout's entries: harness/ mixes untracked installed content with
+# a tracked file, so a worktree gets it as a real directory with per-child
+# links; runtime/ is untracked only, a plain parent link; AGENTS.md is the
+# relative entry's target; notes.md is a tracked regular file no link can be
+# created under.
+harness() {
+  mkdir -p "$MAIN/harness/skills" "$MAIN/runtime"
+  printf 'harness/**\n!harness/tracked.md\nruntime/\n' >"$MAIN/.gitignore"
+  printf 'installed\n' >"$MAIN/harness/skills/installed.txt"
+  printf 'tracked\n' >"$MAIN/harness/tracked.md"
+  printf 'state\n' >"$MAIN/runtime/state.json"
+  printf 'agents\n' >"$MAIN/AGENTS.md"
+  printf 'notes\n' >"$MAIN/notes.md"
+  must git -C "$MAIN" add .gitignore harness/tracked.md AGENTS.md notes.md
+  must git -C "$MAIN" commit -q -m harness
+  must git -C "$MAIN" push -q origin main
+}
 
-echo "=== a child left materialized by the safety check is named ==="
-# Replace the per-child link with a real directory holding a file git does not
-# track: the repair refuses to destroy it and leaves the path real.
-rm -f "$WT/harness/skills"
-mkdir -p "$WT/harness/skills"
-printf 'work in progress\n' >"$WT/harness/skills/untracked-work.txt"
-run_fix_links
-if [[ "$RC" != 0 ]]; then ok "nonzero exit for an unsafe materialized child"; else bad "nonzero exit for an unsafe materialized child" "rc=0: $OUT"; fi
-assert_contains "$OUT" "harness/skills" "names the blocked child"
-assert_lacks "$OUT" "Restored symlinks" "no success message while a path stays materialized"
-if [[ -f "$WT/harness/skills/untracked-work.txt" ]]; then ok "untracked data is left intact"; else bad "untracked data is left intact"; fi
+# The configured entries. `base` is the harness layout's; the others are one
+# row's each.
+config() {
+  local symlinks="" relative="" mkdirs=""
+  case "$1" in
+    base) symlinks="harness runtime"; relative=".claude/POINTER.md=../AGENTS.md" ;;
+    absent-entry) symlinks="harness runtime absent-here"; relative=".claude/POINTER.md=../AGENTS.md" ;;
+    relative-under-file) symlinks="harness runtime"; relative="notes.md/link=../base.txt" ;;
+    mkdir-under-file) symlinks="harness runtime"; relative=".claude/POINTER.md=../AGENTS.md"; mkdirs="notes.md/dir" ;;
+    files-and-dir) symlinks=".env.local .claude/settings.json .claude/agents"; relative=".claude/POINTER.md=../AGENTS.md" ;;
+    none) symlinks="" ;;
+  esac
+  printf 'WORKTREE_BASE_DIR="../trees"\nWORKTREE_SYMLINKS="%s"\n' "$symlinks" >"$MAIN/.env.local"
+  [[ -n "$relative" ]] && printf 'WORKTREE_RELATIVE_SYMLINKS="%s"\n' "$relative" >>"$MAIN/.env.local"
+  [[ -n "$mkdirs" ]] && printf 'WORKTREE_MKDIRS="%s"\n' "$mkdirs" >>"$MAIN/.env.local"
+  return 0
+}
 
-echo "=== clearing the blocker makes the same command succeed ==="
-rm -rf "$WT/harness/skills"
-run_fix_links
-if [[ "$RC" == 0 ]]; then ok "exit 0 once the blocker is cleared"; else bad "exit 0 once the blocker is cleared" "rc=$RC: $OUT"; fi
-assert_contains "$OUT" "Restored symlinks in $WT" "success message once every entry is healthy"
-if [[ -L "$WT/harness/skills" ]]; then ok "the child link is restored"; else bad "the child link is restored"; fi
+# The step vocabulary. `repo` builds the world; the rest shape it.
+step() {
+  case "$1" in
+    repo) make_repo ;;
+    harness) harness; config base ;;
+    # A tracked settings file and an untracked agents directory beside AGENTS.md.
+    settings)
+      mkdir -p "$MAIN/.claude/agents"
+      printf 'agents\n' >"$MAIN/AGENTS.md"
+      printf '{"hooks":{}}\n' >"$MAIN/.claude/settings.json"
+      must git -C "$MAIN" add AGENTS.md .claude/settings.json
+      must git -C "$MAIN" commit -q -m agents
+      must git -C "$MAIN" push -q origin main
+      ;;
+    config:*) config "${1#config:}" ;;
+    # The worktree, set up by the tool (create) or registered bare (add).
+    create)
+      WT="$ROOT/trees/fix-links-check"
+      (cd "$MAIN" && "$WORKTREE_SCRIPT" create fix-links-check >/dev/null 2>&1) || true
+      [[ -d "$WT" ]] || { echo "FIXTURE: create left no worktree in $ROOT" >&2; exit 2; }
+      ;;
+    add) WT="$ROOT/trees/issue-links"; must git -C "$MAIN" worktree add -q -b issue-links "$WT" main ;;
+    # A per-child link replaced by a real directory holding data git does not track.
+    materialized:*)
+      rm -f "$WT/${1#materialized:}"
+      mkdir -p "$WT/${1#materialized:}"
+      printf 'work in progress\n' >"$WT/${1#materialized:}/untracked-work.txt"
+      ;;
+    # A link removed, so the pass has something to restore.
+    unlinked:*) rm -f "$WT/${1#unlinked:}" ;;
+    # The relative entry pointing at the wrong target under a parent the pass
+    # cannot write, so the judgement, not the repair, is what shows.
+    wrong-target)
+      rm -f "$WT/.claude/POINTER.md"
+      ln -s ../notes.md "$WT/.claude/POINTER.md"
+      chmod a-w "$WT/.claude"
+      ;;
+    *)
+      echo "UNKNOWN-STEP: $1" >&2
+      exit 2
+      ;;
+  esac
+}
 
-echo "=== a relative entry the pass could not create is named ==="
-# notes.md is a tracked regular file, so notes.md/link cannot be created: the
-# mkdir and the ln both fail. Those two calls were unchecked, and fix-links
-# invokes setup on the left of || — which disables errexit inside it — so the
-# exclude update that followed supplied the exit status and the run read as
-# clean. The postcondition inspected WORKTREE_SYMLINKS only, so it said nothing
-# either.
-printf '%s\n%s\n' \
-  'WORKTREE_SYMLINKS="harness runtime"' \
-  'WORKTREE_RELATIVE_SYMLINKS="notes.md/link=../base.txt"' >"$MAIN/.env.local"
-run_fix_links
-if [[ "$RC" != 0 ]]; then ok "nonzero exit for a relative entry that could not be created"; else bad "nonzero exit for a relative entry that could not be created" "rc=0: $OUT"; fi
-assert_contains "$OUT" "notes.md/link" "names the relative entry"
-assert_lacks "$OUT" "Restored symlinks" "no success message for an uncreated relative entry"
-write_base_env
+build() {
+  local word
+  ROOT="$TMP_ROOT/$1"
+  shift
+  MAIN="$ROOT/main"
+  WT=""
+  mkdir -p "$ROOT"
+  for word in "$@"; do
+    step "$word"
+  done
+}
 
-echo "=== a link resolving somewhere other than its configured target is named ==="
-if [[ "${EUID:-$(id -u)}" == 0 ]]; then
-  echo "  skip  wrong-target case needs an unwritable directory (running as root)"
-else
-  # Point the link at the wrong target and take write permission off its
-  # parent so the pass cannot rewrite it. Without the read-only parent setup
-  # simply relinks and the state is healthy again — what is being proved is
-  # that a wrong-target link is JUDGED unhealthy, not that fix-links fails to
-  # repair one.
-  rm -f "$WT/.claude/POINTER.md"
-  ln -s ../notes.md "$WT/.claude/POINTER.md"
-  chmod a-w "$WT/.claude"
-  run_fix_links
-  chmod u+w "$WT/.claude"
-  if [[ "$RC" != 0 ]]; then ok "nonzero exit for a link with the wrong target"; else bad "nonzero exit for a link with the wrong target" "rc=0: $OUT"; fi
-  assert_contains "$OUT" ".claude/POINTER.md" "names the wrong-target link"
-  assert_contains "$OUT" "expected ../AGENTS.md" "states the target it expected"
-  assert_lacks "$OUT" "Restored symlinks" "no success message for a wrong-target link"
-  rm -f "$WT/.claude/POINTER.md"
-fi
+# --- rendering ------------------------------------------------------------------
 
-echo "=== the worktree is healthy again once nothing blocks the pass ==="
-run_fix_links
-if [[ "$RC" == 0 ]]; then ok "exit 0 after the blockers are cleared"; else bad "exit 0 after the blockers are cleared" "rc=$RC: $OUT"; fi
-assert_contains "$OUT" "Restored symlinks in $WT" "success message once every entry is healthy again"
+# Paths by their names. A coreutils line keeps its path and errno and loses
+# the vendor's phrasing: GNU says `mkdir: cannot create directory 'p': cause`,
+# BSD says `mkdir: p: cause`, and the macOS CI leg runs Apple's userland.
+alias_text() {
+  sed -e "s|^mkdir: cannot create directory '\(.*\)': |mkdir: \1: |" \
+      -e "s|^rm: cannot remove '\(.*\)': |rm: \1: |" \
+      -e "s|$WT|<wt>|g" -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" |
+    paste -s -d ';' -
+}
 
-printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
-[[ "$FAIL" == 0 ]]
+# Every entry of the worktree: a link as `path->target`, a file as
+# `path:first-line`, an empty directory as `path/`; git's own file is left
+# out and links are not followed. Then git's status of the worktree.
+state() {
+  local entries="" status="" path
+  entries="$(cd "$WT" && find . -mindepth 1 \( -path ./.git -prune \) -o \( -type f -o -type l -o \( -type d -empty \) \) -print | LC_ALL=C sort | while IFS= read -r path; do
+    if [[ -L "$path" ]]; then printf '%s->%s,' "${path#./}" "$(readlink "$path" | sed -e "s|$MAIN|<main>|" -e "s|$ROOT|<root>|")"
+    elif [[ -d "$path" ]]; then printf '%s/,' "${path#./}"
+    else printf '%s:%s,' "${path#./}" "$(head -1 "$path")"; fi
+  done | sed 's/,$//')"
+  status="$(git -C "$WT" status --short 2>/dev/null | paste -s -d ',' -)" || status='<git-failed>'
+  printf 'wt=%s status=%s' "${entries:--}" "${status:--}"
+}
+
+run() {
+  local -a argv
+  local rc=0
+  read -r -a argv <<<"${1//<wt>/$WT}"
+  (cd "$MAIN" && LC_ALL=C "$WORKTREE_SCRIPT" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  chmod u+w "$WT/.claude" 2>/dev/null || true
+  printf 'rc=%s out=%s err=%s %s' "$rc" "$(alias_text <"$ROOT/out")" "$(alias_text <"$ROOT/err")" "$(state)"
+}
+
+# --- the expected text ----------------------------------------------------------
+
+# The production text, held once: every refusal ends in the not-restored
+# report, whose "Still unhealthy" list names the entry and its state.
+not_restored_tail() {
+  printf '%s' ';  Any warning above names why. A path holding data git does not track is;  left in place deliberately: move it into '\''<main>'\'' (or delete it),;  then re-run this command.'
+}
+
+err_text() {
+  case "$1" in
+    -) printf '' ;;
+    absent) printf '%s%s' 'Error: fix-links did not restore every configured path in <wt>.;  Still unhealthy:;    - absent-here (no such path in the main checkout — create it there, or drop it from WORKTREE_SYMLINKS)' "$(not_restored_tail)" ;;
+    materialized) printf '%s%s' 'Warning: '\''harness/skills'\'' in <wt> should be a symlink to '\''<main>/harness/skills'\'' but is a real path holding 1 entr(y/ies) git does not track or that differ from the index:;  - harness/skills/untracked-work.txt;  Auto-repair refuses to destroy untracked data. Move it into '\''<main>/harness/skills'\'' (or delete it),;  then restore the link from the main checkout:;    cd '\''<main>'\'' && <worktree> fix-links '\''<wt>'\'';Warning: WORKTREE_SYMLINKS entry '\''harness'\'' shadows tracked paths and these children could not be resolved:;  - harness/skills (linking failed or blocked — see warning above);  Tracked paths were left to git; narrow the entry to the untracked subpaths to silence this.;Error: fix-links did not restore every configured path in <wt>.;  Still unhealthy:;    - harness/skills (still a real path, not a link)' "$(not_restored_tail)" ;;
+    relative-parent) printf '%s%s' 'Error: could not create the parent directory for relative symlink '\''notes.md/link'\'' in <wt>.;Error: fix-links did not restore every configured path in <wt>.;  Still unhealthy:;    - notes.md/link (absent)' "$(not_restored_tail)" ;;
+    mkdir-parent) printf '%s%s' 'mkdir: <wt>/notes.md: Not a directory;Error: fix-links did not restore every configured path in <wt>.' "$(not_restored_tail)" ;;
+    wrong-target) printf '%s%s' 'rm: <wt>/.claude/POINTER.md: Permission denied;Error: could not create relative symlink '\''.claude/POINTER.md'\'' -> '\''../AGENTS.md'\'' in <wt>.;Error: fix-links did not restore every configured path in <wt>.;  Still unhealthy:;    - .claude/POINTER.md (a symlink to ../notes.md, expected ../AGENTS.md)' "$(not_restored_tail)" ;;
+    *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
+  esac
+}
+
+out_text() {
+  case "$1" in
+    -) printf '' ;;
+    restored) printf 'Restored symlinks in <wt>' ;;
+    *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
+  esac
+}
+
+# --- the rows ---------------------------------------------------------------------
+# label|fixture|command|rc|out|err|state
+ROWS='a healthy worktree reports success, with the relative entry in place|repo harness create|fix-links <wt>|0|restored|-|wt=.claude/POINTER.md->../AGENTS.md,.gitignore:harness/**,AGENTS.md:agents,base.txt:base,harness/skills-><main>/harness/skills,harness/tracked.md:tracked,notes.md:notes,runtime-><main>/runtime status=-
+an entry with no source in the main checkout is named, not skipped|repo harness create config:absent-entry|fix-links <wt>|1|-|absent|wt=.claude/POINTER.md->../AGENTS.md,.gitignore:harness/**,AGENTS.md:agents,base.txt:base,harness/skills-><main>/harness/skills,harness/tracked.md:tracked,notes.md:notes,runtime-><main>/runtime status=-
+a child left materialized by the safety check is named and its untracked data left intact|repo harness create materialized:harness/skills|fix-links <wt>|1|-|materialized|wt=.claude/POINTER.md->../AGENTS.md,.gitignore:harness/**,AGENTS.md:agents,base.txt:base,harness/skills/untracked-work.txt:work in progress,harness/tracked.md:tracked,notes.md:notes,runtime-><main>/runtime status=-
+a removed child link is restored|repo harness create unlinked:harness/skills|fix-links <wt>|0|restored|-|wt=.claude/POINTER.md->../AGENTS.md,.gitignore:harness/**,AGENTS.md:agents,base.txt:base,harness/skills-><main>/harness/skills,harness/tracked.md:tracked,notes.md:notes,runtime-><main>/runtime status=-
+a relative entry the pass could not create is named|repo harness create config:relative-under-file|fix-links <wt>|1|-|relative-parent|wt=.claude/POINTER.md->../AGENTS.md,.gitignore:harness/**,AGENTS.md:agents,base.txt:base,harness/skills-><main>/harness/skills,harness/tracked.md:tracked,notes.md:notes,runtime-><main>/runtime status=-
+a link resolving somewhere other than its configured target is named|repo harness create wrong-target|fix-links <wt>|1|-|wrong-target|wt=.claude/POINTER.md->../notes.md,.gitignore:harness/**,AGENTS.md:agents,base.txt:base,harness/skills-><main>/harness/skills,harness/tracked.md:tracked,notes.md:notes,runtime-><main>/runtime status=-
+a setup step that failed before the links fails the pass with every link healthy and nothing to name|repo harness create config:mkdir-under-file|fix-links <wt>|1|-|mkdir-parent|wt=.claude/POINTER.md->../AGENTS.md,.gitignore:harness/**,AGENTS.md:agents,base.txt:base,harness/skills-><main>/harness/skills,harness/tracked.md:tracked,notes.md:notes,runtime-><main>/runtime status=-
+a bare-registered worktree gets its configured file, directory and relative links, and the tracked file link is hidden from git status|repo settings config:files-and-dir add|fix-links <wt>|0|restored|-|wt=.claude/POINTER.md->../AGENTS.md,.claude/agents-><main>/.claude/agents,.claude/settings.json-><main>/.claude/settings.json,.env.local-><main>/.env.local,AGENTS.md:agents,base.txt:base status=-
+an empty WORKTREE_SYMLINKS links nothing, .env.local included|repo config:none add|fix-links <wt>|0|restored|-|wt=base.txt:base status=-
+'
+
+echo "=== fix-links reports what it could not restore ==="
+n=0
+while IFS= read -r row; do
+  [[ -n "$row" ]] || continue
+  IFS='|' read -r label fixture command rc out err want_state <<<"$row"
+  for field in "$label" "$fixture" "$command" "$rc" "$out" "$err" "$want_state"; do
+    [[ -n "$field" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+  done
+  n=$((n + 1))
+  if [[ "$fixture" == *wrong-target* && "${EUID:-$(id -u)}" == 0 ]]; then
+    SKIP=$((SKIP + 1))
+    printf '  skip  %s (an unwritable directory does not bind root)\n' "$label"
+    continue
+  fi
+  # shellcheck disable=SC2086
+  build "row-$n" $fixture
+  # A rendering aid for writing rows: prints what each row produces instead of
+  # asserting it. A run that asserted no row is refused after the loop.
+  if [[ "${WORKTREE_TABLE_PROBE:-}" == 1 ]]; then
+    printf '%s => %s\n' "$label" "$(run "$command")"
+    continue
+  fi
+  assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
+done <<<"$ROWS"
+[[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
+
+echo
+printf 'pass: %d   fail: %d   skip: %d\n' "$PASS" "$FAIL" "$SKIP"
+[[ "$FAIL" -eq 0 ]]

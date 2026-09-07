@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# `worktree remove`: the table below. The blocks after it (fix-links, the
-# Codex hooks) are other surfaces that move to their own suites as those are
-# reshaped.
+# `worktree remove`: the table below. The Codex-hook block after it is another
+# surface that moves to its own suite as that is reshaped.
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
@@ -38,28 +37,6 @@ assert_contains() {
   fi
 }
 
-assert_not_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        unexpected substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  else
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  fi
-}
-
-assert_path_absent() {
-  local path="$1" name="$2"
-  if [[ ! -e "$path" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        still exists: %s\n' "$name" "$path"
-  fi
-}
-
 assert_path_exists() {
   local path="$1" name="$2"
   if [[ -e "$path" ]]; then
@@ -92,19 +69,6 @@ assert_symlink_target() {
     local got="<missing>"
     [[ -e "$path" || -L "$path" ]] && got="$(readlink "$path" 2>/dev/null || printf '<not symlink>')"
     printf '  FAIL  %s\n        expected symlink target: %s\n        got:                     %s\n' "$name" "$want" "$got"
-  fi
-}
-
-assert_git_status_clean_for_path() {
-  local repo="$1" path="$2" name="$3"
-  local status
-  status=$(git -C "$repo" status --short -- "$path")
-  if [[ -z "$status" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        git status: %s\n' "$name" "$status"
   fi
 }
 
@@ -317,28 +281,6 @@ while IFS='|' read -r label fixture args rc out err want_state; do
   assert_eq "$(run_remove "$args")" "rc=$rc out=$(remove_out "$out") err=$(remove_err "$err") $want_state" "$label"
 done <<<"$REMOVE_ROWS"
 
-# Relative symlinks: create link inside worktree with target resolved from the
-# worktree path, not from the main checkout.
-LINK_ROOT="$TMP_ROOT/links"
-make_repo "$LINK_ROOT/main"
-printf 'agents\n' > "$LINK_ROOT/main/AGENTS.md"
-mkdir -p "$LINK_ROOT/main/.claude/agents"
-printf '{"hooks":{}}\n' > "$LINK_ROOT/main/.claude/settings.json"
-git -C "$LINK_ROOT/main" add AGENTS.md .claude/settings.json
-git -C "$LINK_ROOT/main" commit -q -m agents
-cat > "$LINK_ROOT/main/.env.local" <<'ENV'
-WORKTREE_SYMLINKS=".env.local .claude/settings.json .claude/agents"
-WORKTREE_RELATIVE_SYMLINKS=".claude/POINTER.md=../AGENTS.md"
-ENV
-git -C "$LINK_ROOT/main" worktree add -q -b issue-links "$LINK_ROOT/trees/issue-links" main
-links_out=$(cd "$LINK_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$LINK_ROOT/trees/issue-links")
-assert_eq "$links_out" "Restored symlinks in $LINK_ROOT/trees/issue-links" "fix-links reports restored symlinks"
-assert_symlink_target "$LINK_ROOT/trees/issue-links/.env.local" "$LINK_ROOT/main/.env.local" ".env.local symlink points to main checkout"
-assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/settings.json" "$LINK_ROOT/main/.claude/settings.json" "configured file symlink points to main checkout"
-assert_git_status_clean_for_path "$LINK_ROOT/trees/issue-links" ".claude/settings.json" "configured tracked file symlink is hidden from git status"
-assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/agents" "$LINK_ROOT/main/.claude/agents" "configured dir symlink points to main checkout"
-assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/POINTER.md" "../AGENTS.md" "relative symlink keeps worktree-local AGENTS target"
-
 # Codex Desktop owns worktree lifecycle. codex-setup applies project setup to
 # an already-created app worktree; codex-cleanup is a non-destructive hook and
 # leaves worktree/branch deletion to the app.
@@ -381,18 +323,6 @@ assert_eq "$codex_branch_out" "Codex worktree branch ready: cc-999 ($CODEX_BRANC
 assert_eq "$(git -C "$CODEX_BRANCH_ROOT/trees/app-managed" branch --show-current)" "cc-999" "codex-branch renames app branch to issue branch"
 assert_branch_absent "$CODEX_BRANCH_ROOT/main" "app-managed-branch" "codex-branch removes old app branch name"
 assert_path_exists "$CODEX_BRANCH_ROOT/trees/app-managed/tmp" "codex-branch reapplies setup after branch normalization"
-
-# .env.local is not special-cased. It is only linked when listed in
-# WORKTREE_SYMLINKS.
-NOENV_ROOT="$TMP_ROOT/noenv"
-make_repo "$NOENV_ROOT/main"
-cat > "$NOENV_ROOT/main/.env.local" <<'ENV'
-WORKTREE_SYMLINKS=""
-ENV
-git -C "$NOENV_ROOT/main" worktree add -q -b issue-noenv "$NOENV_ROOT/trees/issue-noenv" main
-noenv_out=$(cd "$NOENV_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$NOENV_ROOT/trees/issue-noenv")
-assert_eq "$noenv_out" "Restored symlinks in $NOENV_ROOT/trees/issue-noenv" "fix-links works without .env.local symlink"
-assert_path_absent "$NOENV_ROOT/trees/issue-noenv/.env.local" ".env.local not linked unless configured"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
