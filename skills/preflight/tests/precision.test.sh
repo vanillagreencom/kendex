@@ -582,6 +582,37 @@ fires "an executable file in a lib tree is a program and still fails" "scripts/l
 fires "a swallowed status inside a sourced lib still fails" "scripts/lib/common.sh:6: [fail-open] grep || true swallows exit 2"
 fires "an unchecked mktemp inside a sourced lib still fails" "scripts/lib/common.sh:7: [fail-open] unchecked mktemp"
 
+echo "=== a test-<name> suite outside a tests/ tree sets its own rules ==="
+seed toolsuite
+mkdir -p "$R/.github/workflows" "$R/tools" "$R/tests/fixtures" "$R/docs"
+printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: for t in tools/test-*; do "$t"; done\n' >"$R/.github/workflows/ci.yml"
+cat >"$R/tools/test-lexer" <<'EOF2'
+#!/usr/bin/env bash
+# Observes a guard's exit status; errexit would abort the suite at the first
+# must-fire case.
+set -uo pipefail
+status=0
+"$1" || status=$?
+echo "$status"
+EOF2
+chmod +x "$R/tools/test-lexer"
+# The same bytes as fixture material a suite reads, and a plain-text file
+# whose name alone looks like a suite: neither is one.
+cp "$R/tools/test-lexer" "$R/tests/fixtures/test-input"
+printf 'cases to run by hand\n' >"$R/docs/test-plan"
+git -C "$R" add -A
+run_pf
+clean "a new tools/test-<name> suite without errexit, wired by a tools/test-* glob, is not a finding; a fixture and a text file of that name are not suites"
+
+echo "=== control: the same bytes under a non-suite name, and a suite the glob does not reach, still fail ==="
+cp "$R/tools/test-lexer" "$R/tools/lexer"
+mkdir -p "$R/scripts"
+cp "$R/tools/test-lexer" "$R/scripts/test-orphan"
+git -C "$R" add -A
+run_pf
+fires "a new non-suite script without strict mode still fails" "tools/lexer:0: [fail-open] new shell file without strict mode"
+fires "a test-<name> suite no runner reaches is unwired" "scripts/test-orphan:0: [unwired-suite]"
+
 echo "=== staged scope reads the bit the index carries ==="
 seed stagedlib
 mkdir -p "$R/scripts/lib"
