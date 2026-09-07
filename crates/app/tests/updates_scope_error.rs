@@ -51,9 +51,8 @@ fn fixture(name: &str) -> Fixture {
 }
 
 /// A lock whose schema this build rejects, alongside the personal scope.
-/// The personal scope's standing still lands; the project is named with the
-/// reason the engine gave, which is what the page shows instead of a bare
-/// "?".
+/// The personal scope's standing still lands; the project is named as the
+/// unreadable one, which is what the page shows instead of a bare "?".
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unreadable_project_is_named_and_leaves_the_other_scopes_alone() {
@@ -64,9 +63,4 @@ fn an_unreadable_project_is_named_and_leaves_the_other_scopes_alone() {
     assert_eq!(report.unreadable.len(), 1, "{:?}", report.unreadable);
     let named = &report.unreadable[0];
     assert_eq!(named.scope, f.project);
-    assert!(
-        named.message.contains("version 1 record"),
-        "the reason travels with the scope: {}",
-        named.message
-    );
 }

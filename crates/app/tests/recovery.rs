@@ -32,9 +32,10 @@ fn launch_recovery_rolls_back_pending_journals_in_registered_projects() {
     let messages = kendex_app::recovery::recover_on_launch(&env);
     assert_eq!(fs::read_to_string(&victim).unwrap(), "original");
     assert!(!journal::pending(&dir));
-    assert!(
-        messages.iter().any(|m| m.contains("recovered")),
-        "{messages:?}"
+    assert_eq!(
+        messages.len(),
+        1,
+        "one recovery, reported once: {messages:?}"
     );
 
     // Nothing pending: the next launch is silent.

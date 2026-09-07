@@ -279,52 +279,80 @@ mod tests {
         manifest
     }
 
+    /// Which agents reach `automatic`, and with what: each agent's recorded
+    /// assignment, from its own lock entry. Only an agent is assigned skills,
+    /// so a list recorded under any other kind is not an assignment; an agent
+    /// with nothing recorded is absent, not empty (the editor prints "the
+    /// catalog gives this agent no skills" for an empty list, and an
+    /// unrecorded assignment is a different fact); an absent lock records
+    /// nothing. One row per shape of lock.
     #[test]
     #[allow(clippy::unwrap_used)]
-    fn reads_each_agents_recorded_assignment() {
-        let (_tmp, env, scope) = scope_with(vec![
-            entry(ItemKind::Agent, "orch", Some(&["dev", "github"])),
-            // Only an agent is assigned skills. A list recorded under any
-            // other kind is not an assignment and is not reported as one.
-            entry(ItemKind::Skill, "dev", Some(&["worktree"])),
-        ]);
-        let automatic = agent_skill_facts(&env, &scope, None).unwrap().automatic;
-        assert_eq!(
-            automatic.get("orch").map(Vec::as_slice),
-            Some(&["dev".to_owned(), "github".to_owned()][..])
+    fn the_automatic_assignments_are_the_agents_own_lock_entries() {
+        type Row<'a> = (
+            &'a str,
+            Option<Vec<LockEntry>>,
+            &'a [(&'a str, &'a [&'a str])],
         );
-        assert!(!automatic.contains_key("dev"));
+        let rows: [Row; 3] = [
+            (
+                "an agent's list, and a list under another kind",
+                Some(vec![
+                    entry(ItemKind::Agent, "orch", Some(&["dev", "github"])),
+                    entry(ItemKind::Skill, "dev", Some(&["worktree"])),
+                ]),
+                &[("orch", &["dev", "github"])],
+            ),
+            (
+                "an agent with nothing recorded",
+                Some(vec![entry(ItemKind::Agent, "scout", None)]),
+                &[],
+            ),
+            ("no lock at all", None, &[]),
+        ];
+        for (what, entries, expected) in rows {
+            let (_tmp, env, scope) = match entries {
+                Some(entries) => scope_with(entries),
+                None => {
+                    let tmp = tempfile::tempdir().unwrap();
+                    let env = Env::fake(tmp.path(), FakeOs::Linux);
+                    let root = tmp.path().join("dev/app");
+                    std::fs::create_dir_all(&root).unwrap();
+                    (tmp, env, Scope::Project { root })
+                }
+            };
+            let facts = agent_skill_facts(&env, &scope, None).unwrap();
+            let expected: std::collections::BTreeMap<String, Vec<String>> = expected
+                .iter()
+                .map(|(agent, skills)| {
+                    (
+                        (*agent).to_owned(),
+                        skills.iter().map(|s| (*s).to_owned()).collect(),
+                    )
+                })
+                .collect();
+            assert_eq!(facts.automatic, expected, "{what}");
+            assert!(
+                facts.declared.is_empty(),
+                "{what}: nothing declared without a manifest"
+            );
+        }
     }
 
-    // An agent with nothing recorded is absent, not empty: the editor
-    // prints "the catalog gives this agent no skills" for an empty list,
-    // and an unrecorded assignment is a different fact from that one.
+    /// An unreadable lock is a parse error, not an empty record.
     #[test]
     #[allow(clippy::unwrap_used)]
-    fn leaves_an_unrecorded_agent_out_rather_than_calling_it_empty() {
-        let (_tmp, env, scope) = scope_with(vec![entry(ItemKind::Agent, "scout", None)]);
-        let automatic = agent_skill_facts(&env, &scope, None).unwrap().automatic;
-        assert!(!automatic.contains_key("scout"));
-    }
-
-    /// An absent lock records nothing. An unreadable lock is a parse error.
-    #[test]
-    #[allow(clippy::unwrap_used)]
-    fn absent_and_unreadable_locks_are_distinct() {
+    fn an_unreadable_lock_is_an_error() {
         let tmp = tempfile::tempdir().unwrap();
         let env = Env::fake(tmp.path(), FakeOs::Linux);
         let root = tmp.path().join("dev/app");
         std::fs::create_dir_all(&root).unwrap();
-        let scope = Scope::Project { root: root.clone() };
-
-        let facts = agent_skill_facts(&env, &scope, None).unwrap();
-        assert!(facts.automatic.is_empty() && facts.declared.is_empty());
-
         std::fs::write(
             root.join(".kendex-lock.json"),
             r#"{"version":1,"entries":{}}"#,
         )
         .unwrap();
+        let scope = Scope::Project { root };
         assert!(agent_skill_facts(&env, &scope, None).is_err());
     }
 

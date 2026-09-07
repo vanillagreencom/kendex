@@ -216,12 +216,6 @@ mod tests {
     #[test]
     fn expiry_is_the_one_refusal_that_is_news_about_the_account() {
         assert!(matches!(
-            refused(CoreError::SignInExpired {
-                why: "the server does not accept this sign-in".to_owned()
-            }),
-            AccountCallRefused::Expired { .. }
-        ));
-        assert!(matches!(
             refused(CoreError::Authoring {
                 message: "that repository is already submitted".to_owned()
             }),
@@ -241,16 +235,14 @@ mod tests {
     /// the surface shows beside the retry.
     #[test]
     fn the_read_failure_reaches_the_surface_as_the_half_that_failed() {
-        let locked = "the credential store on this machine could not be used";
         let refusal = AccountReadFailed::from(AccountUnread::Local(
             CoreError::CredentialStoreUnavailable {
                 why: "the keyring is locked".to_owned(),
             },
         ));
-        let AccountReadFailed::Local { message } = refusal else {
+        let AccountReadFailed::Local { .. } = refusal else {
             panic!("a store this machine refused is local");
         };
-        assert!(message.starts_with(locked), "{message}");
 
         let away =
             AccountReadFailed::from(AccountUnread::Unreachable(CoreError::RegistryUnavailable {

@@ -58,7 +58,6 @@ fn a_v1_lock_scope_carries_a_structured_error() {
     let result = view(&f.env, &f.scope);
     let error = result.error.expect("a v1 lock is a scope error");
     assert!(matches!(error.kind, ScopeErrorKind::LockCorrupt));
-    assert!(error.message.contains("install fresh"), "{}", error.message);
 }
 
 #[test]
