@@ -185,6 +185,10 @@ step() {
       git -C "$MAIN" commit -q -m 'topic: work (squashed)'
       git -C "$MAIN" push -q origin main
       MERGED="$(git -C "$MAIN" rev-parse refs/heads/topic)"
+      if ! git -C "$MAIN" cat-file -e origin/main:topic.txt; then
+        echo "FIXTURE: the squash did not land on origin/main" >&2
+        exit 2
+      fi
       # Ancestry must genuinely fail, or a row proves nothing about the
       # pull-request lookup: it would pass on the ancestry arm alone.
       if git -C "$MAIN" merge-base --is-ancestor topic origin/main; then
@@ -253,9 +257,12 @@ gh_env() {
 
 # --- rendering ------------------------------------------------------------------
 
+# Paths and commits by their names; a literal semicolon is escaped before the
+# lines are joined on it.
 alias_text() {
   sed -e "s|$WT|<wt>|g" -e "s|${OTHER:-NONE}|<other>|g" -e "s|$MAIN|<main>|g" \
-    -e "s|$WORKTREE_SCRIPT|<worktree>|g" -e "s|$TIP|<tip>|g" -e "s|${MERGED:-NONE}|<merged>|g" |
+    -e "s|$WORKTREE_SCRIPT|<worktree>|g" -e "s|${TIP:-NONE}|<tip>|g" -e "s|${MERGED:-NONE}|<merged>|g" \
+    -e 's/;/\\;/g' |
     paste -s -d ';' -
 }
 
@@ -290,8 +297,8 @@ run() {
 # --- the expected text ----------------------------------------------------------
 
 UNMERGED='not an ancestor of origin/main, and no pull request merged into main carries this branch name'
-MOVED='carries work past its merged pull request (merged under this name: #42; none has this tip <tip> as its head)'
-UNDETERMINED='  A lookup that cannot answer never authorizes a removal; restore the gh query and re-run cleanup.'
+MOVED='carries work past its merged pull request (merged under this name: #42\; none has this tip <tip> as its head)'
+UNDETERMINED='  A lookup that cannot answer never authorizes a removal\; restore the gh query and re-run cleanup.'
 MANUAL='  After verifying it is safe, delete manually with: git -C "<main>" branch -D "topic"'
 
 skip() { printf 'Skipped (%s): %s' "$1" "$2"; }
@@ -316,7 +323,7 @@ err_text() {
     undetermined:*) printf '%s;%s' "$(skip "merge status of branch 'topic' could not be determined: ${1#undetermined:}" '<wt>')" "$UNDETERMINED" ;;
     detached) printf '%s;%s' "$(skip 'no branch checked out — detached HEAD, so there is nothing to prove merged' '<wt>')" "$(drop '<wt>')" ;;
     no-ref) printf '%s;%s' "$(skip "branch 'topic' has no ref in the main checkout" '<wt>')" "$(drop '<wt>')" ;;
-    enumeration-failed) printf '%s' "fatal: not a git repository (stubbed failure);Error: 'git -C \"<main>\" worktree list --porcelain -z' failed (exit 128).;  No worktree was inspected and none was collected; this is not a clean sweep." ;;
+    enumeration-failed) printf '%s' "fatal: not a git repository (stubbed failure);Error: 'git -C \"<main>\" worktree list --porcelain -z' failed (exit 128).;  No worktree was inspected and none was collected\; this is not a clean sweep." ;;
     deleted) printf "Deleted branch 'topic' — squash-merged in pull request #42." ;;
     kept-unmerged) kept "Not merged into origin/main, and no pull request merged into main carries this branch name" ;;
     kept-moved) kept "Not merged into origin/main, and $MOVED" ;;
