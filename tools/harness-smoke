@@ -11,10 +11,12 @@
 # MCP server and the Pi extension write when the harness runs them.
 #
 # One row per harness per question, and only for the kinds that harness
-# installs: skill, agent and hook everywhere; command on Claude, Codex,
-# OpenCode, Pi and Gemini; mcp on every harness but Pi; pi-ext on Pi alone.
-# Plugin has no row anywhere — `Plugin` has `install: NONE` on all eight
-# harnesses, so kendex renders no plugin for one to load. A row is `pass`,
+# installs: skill and hook everywhere; agent everywhere but Antigravity;
+# command on Claude, Codex, OpenCode, Pi and Gemini; mcp on every harness but
+# Pi; pi-ext on Pi alone. Plugin has no row anywhere — `Plugin` has `install:
+# NONE` on all eight harnesses, so kendex renders no plugin for one to load —
+# and Antigravity has no agent row for the same reason: agy reads agents from
+# its global root alone, so kendex renders no project agent for it. A row is `pass`,
 # `fail`, `advisory` (the harness runs no hooks; kendex installs text, and
 # the row checks the harness lists that text), `unanswerable` (this machine
 # or this harness cannot answer, with the reason), or `skipped` (left out by
@@ -39,17 +41,19 @@
 # only after `cursor-agent mcp enable`, which records the approval under
 # HOME, so its mcp row runs under an isolated HOME; Pi's carrier dispatches
 # only the tool_call listener, so its hook row asks the model for one tool
-# call. Antigravity is the one harness with no config-root knob at all — its
-# root is a fixed `~/.gemini/config` and a copied credential set makes agy
-# hang on its login flow — so its row runs against the operator's real root
-# and leaves one project record and one log file there per run.
+# call. Antigravity reads a project's `.agents/` only for a folder the session
+# attaches as a workspace, so every agy run carries `--add-dir` naming the
+# scratch project; it has no config-root knob, its root is a fixed `~/.gemini`
+# and every run writes conversation state under it, so its runs go through an
+# isolated HOME holding a whole copy of `~/.gemini` (a partial copy makes agy
+# hang on its login flow).
 #
 # Exit 0 when every row passed (advisory and skipped included), 1 when any
 # row failed, 2 when the fixture could not be installed or `kendex verify`
 # refused it, 3 when nothing failed but a row was unanswerable, so a harness
 # that died on the render never reads as a clean run. Model turns: three on
-# claude, one each on codex, pi, gemini, copilot and antigravity, one on
-# cursor when logged in.
+# claude, two on antigravity, one each on codex, pi, gemini and copilot, one
+# on cursor when logged in.
 set -euo pipefail
 
 usage() {
@@ -155,6 +159,10 @@ description: "Harness smoke fixture command: proves a kendex-rendered command lo
 
 $COMMAND_BODY
 EOF
+# Both hooks name every harness: Antigravity is reached only by a hook whose
+# `harnesses:` line names it (its payload is `toolCall.args`, not
+# `tool_input`), and an unnamed hook installs nothing there with a note.
+HOOK_HARNESSES='[claude-code, codex, opencode, cursor, pi, gemini, copilot, antigravity]'
 hook_body() { # EVENT — the shared body every fixture hook runs
   cat <<EOF
 set -euo pipefail
@@ -164,7 +172,7 @@ exit 0
 EOF
 }
 {
-  cat <<'EOF'
+  cat <<EOF
 #!/usr/bin/env bash
 # ---
 # name: smoke-session
@@ -172,12 +180,13 @@ EOF
 # description: Harness smoke fixture hook; appends its event and path to smoke-fired at the project root when the harness runs it.
 # safety: Writes one file at the project root and nothing else.
 # timeout: 10
+# harnesses: $HOOK_HARNESSES
 # ---
 EOF
   hook_body SessionStart
 } >"$CATALOG/hooks/smoke-session.sh"
 {
-  cat <<'EOF'
+  cat <<EOF
 #!/usr/bin/env bash
 # ---
 # name: smoke-tool
@@ -185,6 +194,7 @@ EOF
 # description: Harness smoke fixture hook; appends its event and path to smoke-fired at the project root before a tool runs.
 # safety: Writes one file at the project root and nothing else; never refuses a tool.
 # timeout: 10
+# harnesses: $HOOK_HARNESSES
 # ---
 EOF
   hook_body PreToolUse
@@ -269,7 +279,10 @@ add_flags() { # HARNESS — the kendex add flags for the kinds it installs
   # `crates/core/src/harness/caps.rs::capabilities` is the source: a harness
   # whose `install` is NONE for a kind has no render to ask about, so the
   # kind is left out here and the harness gets no row for it below.
-  printf '%s' '--skill smoke-skill --agent smoke-agent --hook smoke-session,smoke-tool'
+  printf '%s' '--skill smoke-skill --hook smoke-session,smoke-tool'
+  case "$1" in
+    claude | codex | opencode | cursor | pi | gemini | copilot) printf ' %s' '--agent smoke-agent' ;;
+  esac
   case "$1" in
     claude | codex | opencode | pi | gemini) printf ' %s' '--command smoke-command' ;;
   esac
@@ -429,6 +442,7 @@ questions() { # HARNESS — the rows this harness answers, in the order it answe
     opencode | gemini) printf '%s' 'skill agent hook command mcp' ;;
     codex) printf '%s' 'skill command agent hook mcp' ;;
     pi) printf '%s' 'skill agent command pi-ext hook' ;;
+    antigravity) printf '%s' 'skill hook mcp' ;;
     *) printf '%s' 'skill agent hook mcp' ;;
   esac
 }
@@ -678,23 +692,53 @@ copilot_rows() {
   judge copilot mcp '^ +smoke-mcp \(local\)' '' 'copilot mcp list'
 }
 
-# Antigravity: the agy CLI reads the shared .agents/skills tree, and a slash
-# invocation in print mode expands the skill. `-p` swallows the next word, so
-# the prompt is attached to it and every other flag comes first. Its agent,
-# hook and MCP registries answer from the global root alone, so asking those
-# three would mean installing the fixture into the operator's own Antigravity
-# configuration; whether agy also reads the project renders kendex writes for
-# them is an open adapter question, so they are unanswerable here rather than
-# asked at a scope that cannot answer.
+# Antigravity: agy reads a project's `.agents/` only for a folder the session
+# attaches, so every run carries --add-dir naming the scratch project; without
+# it a run resolves the default project, which lists no folder, and loads no
+# skill, hook or server from the render. A slash invocation in print mode
+# expands the skill; `-p` swallows the next word, so the prompt is attached to
+# it and every other flag comes first. One run with a tool call answers hook
+# and mcp together: agy loads the attached folder's hooks.json and starts its
+# MCP servers before the model is reached, and --log-file records both, so
+# the mcp row stands and a render agy never read reads as a fail even where
+# the model call fails. `agy mcp list` reads the user-level file alone and
+# cannot name a project server, so the mcp row's proof is the server's own
+# marker line. No agent row: kendex renders no project agent for Antigravity.
 antigravity_rows() {
   have agy || { absent antigravity agy; return; }
   install_for antigravity
-  run agy-skill agy --dangerously-skip-permissions -p=/smoke-skill
-  judge antigravity skill '^SMOKE-SKILL-LOADED$' '' 'agy -p=/smoke-skill'
-  local why='agy answers for agents, hooks and MCP servers from its global root alone, and this check installs no fixture into the real Antigravity configuration that would answer them; whether agy also reads the project renders kendex writes for them is an open adapter question'
-  row antigravity agent unanswerable "$why"
-  row antigravity hook unanswerable "$why"
-  row antigravity mcp unanswerable "$why"
+  local home startup
+  home="$DIR/agy-home"
+  mkdir -p "$home"
+  if [ -d "$HOME/.gemini" ]; then
+    cp -a "$HOME/.gemini" "$home/.gemini"
+  else
+    local q
+    for q in $(questions antigravity); do
+      row antigravity "$q" unanswerable 'agy has no ~/.gemini to copy: not logged in on this machine'
+    done
+    return
+  fi
+  run agy-skill env HOME="$home" agy --add-dir "$PROJECT" --dangerously-skip-permissions -p=/smoke-skill
+  judge antigravity skill '^SMOKE-SKILL-LOADED$' '' 'agy --add-dir -p=/smoke-skill'
+  rm -f -- "$MARKER"
+  startup="$LOGS/agy-hook-mcp.startup.log"
+  run agy-hook-mcp env HOME="$home" agy --add-dir "$PROJECT" --log-file "$startup" --dangerously-skip-permissions \
+    -p='Run the shell command true with your terminal tool, then reply with exactly: ok'
+  if grep -qF 'loaded 0 named hooks' "$startup" 2>/dev/null; then
+    row antigravity hook fail "agy --add-dir loaded 0 named hooks from 0 hooks.json file(s): it never read .agents/hooks.json (marker: $(marker_text))"
+  else
+    fired antigravity PreToolUse .agents/hooks/smoke-tool.sh 'agy --add-dir -p (one tool call)'
+  fi
+  if [ -f "$MARKER" ] && grep -qF -- "McpStart $PROJECT" "$MARKER"; then
+    row antigravity mcp pass "agy --add-dir started the server on startup, and the fixture wrote 'McpStart $PROJECT'"
+  elif grep -qF 'empty component: prompt section "mcp_servers"' "$startup" 2>/dev/null; then
+    row antigravity mcp fail "agy --add-dir resolved no MCP server on startup: it never read .agents/mcp_config.json (marker: $(marker_text))"
+  elif [ "$STATUS" -ne 0 ]; then
+    row antigravity mcp unanswerable "agy --add-dir -p exited $STATUS before starting the server: $(clip "$(last_line)")"
+  else
+    row antigravity mcp fail "agy --add-dir -p never started the server (marker: $(marker_text))"
+  fi
 }
 
 printf '%-11s %-8s %-12s %s\n' harness row result evidence

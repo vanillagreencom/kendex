@@ -40,7 +40,7 @@ An agent is the one kind the global root holds alone. `agy agents` lists a file 
 
 ## Hooks
 
-Two gates stand in front of every Antigravity hook, before any of the shape below applies:
+Two gates stand in front of every hook registration on Antigravity, before any of the shape below applies. A custom hook scoped to named agents reaches neither gate: it is advisory prose in a global agent file (Agent scoping, below).
 
 - The hook's `harnesses:` header must name `antigravity` (`HarnessId::hooks_by_name_only`, `HookSpec::applies_to`). What differs is the payload: the command arrives as `toolCall.args.CommandLine`, not `tool_input.command`, so a hook written for the other tools reads no command here. An unnamed hook installs nothing on Antigravity and the plan says so in a note.
 - Only `PreToolUse`, `PostToolUse` and `Stop` are mapped (`crates/core/src/harness/antigravity.rs`). `PreInvocation` and `PostInvocation` wrap a model call, which no fleet event means, so they stay unmapped. A hook on any other fleet event, `SessionStart` most often, registers nothing here: a catalog script installs nothing and the plan says the event has no Antigravity counterpart (`crates/core/src/engine/antigravity.rs`), while a custom hook carrying a command falls back to advisory prose in the agent file with a warning that nothing enforces it there (`crates/core/src/hook/delivery.rs`).
