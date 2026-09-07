@@ -8,6 +8,7 @@ use std::process::Command;
 
 use kendex_core::engine::ops;
 use kendex_core::env::{Env, FakeOs};
+use kendex_core::error::CoreError;
 use kendex_core::model::Scope;
 use kendex_core::{apply, remote, source_ops};
 
@@ -86,7 +87,10 @@ fn installing_into_a_project_is_atomic_with_its_subscription() {
             ..ops::AddRequest::default()
         },
     );
-    assert!(refused.is_err(), "a missing package must be refused");
+    assert!(
+        matches!(&refused, Err(CoreError::ItemNotInSource { name, source_name }) if name == "nope" && source_name == "mkt"),
+        "a missing package must be refused: {refused:?}"
+    );
     assert!(
         !project_path.exists() || !fs::read_to_string(&project_path).unwrap().contains("mkt"),
         "the project must not be left subscribed to a marketplace it installed nothing from"

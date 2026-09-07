@@ -96,10 +96,15 @@ fn keeping_a_pinned_item_leaves_the_scope_plannable() {
         !written.contains("rev ="),
         "the pin was carried onto a source that has no revisions:\n{written}"
     );
-    let after = engine::audit(&env, &scope);
+    let after = engine::audit(&env, &scope).unwrap_or_else(|error| {
+        panic!("the scope cannot be planned after keeping the files: {error:?}")
+    });
     assert!(
-        after.is_ok(),
-        "the scope cannot be planned after keeping the files: {:?}",
-        after.err()
+        after
+            .drift
+            .iter()
+            .all(|row| row.state != kendex_core::engine::DriftState::Conflict),
+        "the kept files are still in the way: {:?}",
+        after.drift
     );
 }

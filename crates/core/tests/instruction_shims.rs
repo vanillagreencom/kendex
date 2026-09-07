@@ -17,6 +17,7 @@ use kendex_core::engine::{
     observe_instruction_shims, plan_apply,
 };
 use kendex_core::env::{Env, FakeOs};
+use kendex_core::error::CoreError;
 use kendex_core::model::{HarnessId, ItemKind, Scope};
 use kendex_core::process::Hardened;
 
@@ -288,7 +289,12 @@ fn a_hand_written_claude_file_is_a_conflict_the_take_over_settles() {
     // plan read, so the apply refuses rather than trashing an edit nobody
     // looked at (invariant 7).
     fs::write(&shim, "# edited since\n").unwrap();
-    assert!(apply::execute(&f.env, &taken.plan).is_err());
+    let error = apply::execute(&f.env, &taken.plan).unwrap_err();
+    assert!(
+        matches!(&error, CoreError::RolledBack { cause, .. }
+            if matches!(**cause, CoreError::PlanStale { .. })),
+        "{error:?}"
+    );
     assert_eq!(shim_bytes(&shim), "# edited since\n");
 
     let taken = take_over(&f);

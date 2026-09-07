@@ -305,19 +305,38 @@ fn the_fixture_unlinked_body_reads_as_no_github_login() {
     }
 }
 
+/// A warm cache answers for a directory that could not settle an identity,
+/// one row per answer: the network away, the fixture's database-unavailable
+/// status, and a body that is not the directory's at all.
 #[test]
-fn network_away_serves_the_cached_identity_as_offline() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let env = env_in(dir.path());
-    let store = MemoryStore::signed_in();
-    let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
-    me::load(&env, &first, &store).expect("first load");
+fn a_directory_that_cannot_answer_serves_the_cached_identity_as_offline() {
+    type Answer = fn() -> Result<FetchResponse>;
+    let rows: [(&str, Answer); 3] = [
+        ("network away", away),
+        ("database unavailable", || {
+            ok(
+                fixture_status(&["errors", "database_unavailable", "status"]),
+                None,
+                &fixture_body(&["errors", "database_unavailable", "body"]),
+            )
+        }),
+        ("a malformed answer", || ok(200, None, "<!doctype html>")),
+    ];
+    for (what, answer) in rows {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = rooted(&dir);
+        let env = env_in(&home);
+        let store = MemoryStore::signed_in();
+        let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+        me::load(&env, &first, &store).expect("first load");
 
-    let down = Canned::new(vec![away()]);
-    let state = me::load(&env, &down, &store).expect("offline load");
-    match state {
-        AccountState::Offline { identity, .. } => assert_eq!(identity.name, "Ada Lovelace"),
-        other => panic!("expected offline, got {other:?}"),
+        let then = Canned::new(vec![answer()]);
+        match me::load(&env, &then, &store).expect("offline load") {
+            AccountState::Offline { identity, .. } => {
+                assert_eq!(identity.name, "Ada Lovelace", "{what}");
+            }
+            other => panic!("{what}: expected offline, got {other:?}"),
+        }
     }
 }
 
@@ -502,26 +521,11 @@ fn an_expiry_survives_a_cache_that_cannot_be_dropped() {
 fn network_away_with_nothing_cached_is_an_error() {
     let dir = tempfile::tempdir().expect("tempdir");
     let down = Canned::new(vec![away()]);
-    assert!(me::load(&env_in(dir.path()), &down, &MemoryStore::signed_in()).is_err());
-}
-
-#[test]
-fn the_fixture_database_status_rides_the_offline_ladder() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let env = env_in(dir.path());
-    let store = MemoryStore::signed_in();
-    let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
-    me::load(&env, &first, &store).expect("first load");
-
-    let hurt = Canned::new(vec![ok(
-        fixture_status(&["errors", "database_unavailable", "status"]),
-        None,
-        &fixture_body(&["errors", "database_unavailable", "body"]),
-    )]);
-    assert!(matches!(
-        me::load(&env, &hurt, &store).expect("load"),
-        AccountState::Offline { .. }
-    ));
+    let refused = me::load(&env_in(dir.path()), &down, &MemoryStore::signed_in()).unwrap_err();
+    assert!(
+        matches!(refused, AccountUnread::Unreachable(_)),
+        "the request went out and nothing stands in: {refused:?}"
+    );
 }
 
 #[test]
@@ -616,21 +620,6 @@ fn revalidation_sends_the_etag_and_304_keeps_the_identity() {
 }
 
 #[test]
-fn a_malformed_answer_serves_the_cache_as_offline() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let env = env_in(dir.path());
-    let store = MemoryStore::signed_in();
-    let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
-    me::load(&env, &first, &store).expect("first load");
-
-    let garbled = Canned::new(vec![ok(200, None, "<!doctype html>")]);
-    assert!(matches!(
-        me::load(&env, &garbled, &store).expect("load"),
-        AccountState::Offline { .. }
-    ));
-}
-
-#[test]
 fn a_cache_from_another_endpoint_is_never_served() {
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
@@ -651,9 +640,10 @@ fn a_cache_from_another_endpoint_is_never_served() {
     )
     .expect("write");
     let down = Canned::new(vec![away()]);
+    let refused = me::load(&env, &down, &MemoryStore::signed_in()).unwrap_err();
     assert!(
-        me::load(&env, &down, &MemoryStore::signed_in()).is_err(),
-        "another endpoint's identity must not stand in"
+        matches!(refused, AccountUnread::Unreachable(_)),
+        "another endpoint's identity must not stand in: {refused:?}"
     );
 }
 
@@ -689,7 +679,11 @@ fn a_failed_revocation_keeps_credential_and_cache_for_retry() {
     let cache = env.registry_cache_dir().join("me.cache.json");
 
     let refused = Canned::new(vec![ok(503, None, r#"{"error":"down"}"#)]);
-    assert!(me::sign_out(&env, &refused, &store).is_err());
+    let error = me::sign_out(&env, &refused, &store).unwrap_err();
+    assert!(
+        matches!(error, CoreError::RegistryUnavailable { .. }),
+        "{error:?}"
+    );
     assert!(store.load().expect("load").is_some());
     assert!(cache.exists(), "still signed in, so still remembered");
 }
@@ -756,8 +750,9 @@ fn an_oversized_identity_cache_reads_as_no_cache() {
     );
     write_cache(&env, &body, None, Some(ADA));
     let down = Canned::new(vec![away()]);
+    let refused = me::load(&env, &down, &MemoryStore::signed_in()).unwrap_err();
     assert!(
-        me::load(&env, &down, &MemoryStore::signed_in()).is_err(),
-        "a cache past the cap is never read, however well-formed"
+        matches!(refused, AccountUnread::Unreachable(_)),
+        "a cache past the cap is never read, however well-formed: {refused:?}"
     );
 }

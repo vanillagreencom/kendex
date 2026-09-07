@@ -147,10 +147,11 @@ fn a_dead_refresh_grant_signs_this_machine_out() {
         (401, r#"{"error":"invalid_grant"}"#),
     ]);
     let store = MemoryStore::signed_in();
-    let refused = submit(&fetch, &store, "jane/skills")
-        .unwrap_err()
-        .to_string();
-    assert!(refused.contains("run `kendex login` again"), "{refused}");
+    let refused = submit(&fetch, &store, "jane/skills").unwrap_err();
+    assert!(
+        matches!(refused, CoreError::SignInExpired { .. }),
+        "{refused:?}"
+    );
     assert!(
         store.load().unwrap().is_none(),
         "a dead credential must not be kept for endless retries"
@@ -162,10 +163,8 @@ fn a_dead_refresh_grant_signs_this_machine_out() {
 fn signed_out_asks_for_login_before_any_network_call() {
     let fetch = Canned::new(vec![]);
     let store = MemoryStore(RefCell::new(None));
-    let refused = submit(&fetch, &store, "jane/skills")
-        .unwrap_err()
-        .to_string();
-    assert!(refused.contains("not signed in"), "{refused}");
+    let refused = submit(&fetch, &store, "jane/skills").unwrap_err();
+    assert!(matches!(refused, CoreError::NotSignedIn), "{refused:?}");
     assert!(fetch.bearers.borrow().is_empty());
 }
 
@@ -200,42 +199,23 @@ fn submissions_parse_the_versioned_rows() {
     );
 }
 
+/// A refresh the server could not serve is not a dead grant: the server
+/// down (503), a timeout (408) and a rate limit (429) each keep the
+/// credential for the next attempt, one row per status.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_transient_refresh_failure_keeps_the_credential() {
-    // 401 on the call, then the refresh endpoint answers 503 (server down)
-    // — a transient failure must not sign the machine out.
-    let fetch = Canned::new(vec![
-        (401, r#"{"error":"invalid_token"}"#),
-        (503, r#"{"error":"upstream unavailable"}"#),
-    ]);
-    let store = MemoryStore::signed_in();
-    let refused = submit(&fetch, &store, "jane/skills")
-        .unwrap_err()
-        .to_string();
-    assert!(!refused.contains("run `kendex login`"), "{refused}");
-    assert!(
-        store.load().unwrap().is_some(),
-        "a transient refresh failure must keep the credential"
-    );
-}
-
-#[test]
-#[allow(clippy::unwrap_used)]
-fn rate_limit_and_timeout_refresh_failures_keep_the_credential() {
-    for status in [408, 429] {
+    for status in [503, 408, 429] {
         let fetch = Canned::new(vec![
             (401, r#"{"error":"invalid_token"}"#),
             (status, r#"{"error":"try again later"}"#),
         ]);
         let store = MemoryStore::signed_in();
-        let refused = submit(&fetch, &store, "jane/skills")
-            .unwrap_err()
-            .to_string();
+        let refused = submit(&fetch, &store, "jane/skills").unwrap_err();
 
         assert!(
-            !refused.contains("run `kendex login`"),
-            "{status}: {refused}"
+            !matches!(refused, CoreError::SignInExpired { .. }),
+            "{status}: {refused:?}"
         );
         assert!(
             store.load().unwrap().is_some(),
@@ -484,9 +464,9 @@ fn logout_while_waiting_for_refresh_does_not_resurrect_the_credential() {
     observed.recv().unwrap();
     store.clear().unwrap();
     drop(held);
-    let refused = worker.join().unwrap().unwrap_err().to_string();
+    let refused = worker.join().unwrap().unwrap_err();
 
-    assert!(refused.contains("not signed in"), "{refused}");
+    assert!(matches!(refused, CoreError::NotSignedIn), "{refused:?}");
     assert_eq!(fetch.refresh_calls.load(Ordering::SeqCst), 0);
     assert!(store.load().unwrap().is_none());
 }

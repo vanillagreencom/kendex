@@ -526,7 +526,7 @@ fn a_keep_is_not_offered_where_the_tools_copies_disagree() {
             "deploy",
             &[HarnessId::Claude, HarnessId::Codex],
         )
-        .is_err()
+        .is_err_and(|error| matches!(error, CoreError::AdoptedCopiesDiffer { .. }))
     );
 
     // The control: the same two places agreeing are one copy, and keeping

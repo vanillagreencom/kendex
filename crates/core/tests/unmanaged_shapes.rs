@@ -16,6 +16,7 @@ use kendex_core::apply;
 use kendex_core::engine::adopt::adopt;
 use kendex_core::engine::{DriftCause, DriftState, PlanOptions, audit, plan_apply};
 use kendex_core::env::{Env, FakeOs};
+use kendex_core::error::CoreError;
 use kendex_core::model::{HarnessId, ItemKind, Scope};
 
 const BEFORE: &str = "laid out by the tool that came before";
@@ -224,7 +225,7 @@ fn a_file_where_a_folder_goes_is_never_offered_the_keep() {
             "deploy",
             &[HarnessId::Claude]
         )
-        .is_err(),
+        .is_err_and(|error| matches!(error, CoreError::ItemNotInSource { .. })),
         "the gate and what adoption can take have drifted apart"
     );
 }
@@ -253,7 +254,10 @@ fn a_folder_where_a_file_goes_is_never_offered_the_keep() {
             "scout",
             &[HarnessId::Claude]
         )
-        .is_err(),
+        // Refused, though by the read tripping over the directory rather
+        // than by a typed refusal: the accident this pins is the one the
+        // verb refuses by today.
+        .is_err_and(|error| matches!(error, CoreError::Io { .. })),
         "the gate and what adoption can take have drifted apart"
     );
 }

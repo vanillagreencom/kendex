@@ -254,14 +254,12 @@ fn two_rejected_concurrent_tokens_end_the_bounded_retry() {
         refresh_calls: AtomicUsize::new(0),
     };
 
-    let refused = submit(&fetch, store.as_ref(), "jane/skills")
-        .unwrap_err()
-        .to_string();
-
+    let error = submit(&fetch, store.as_ref(), "jane/skills").unwrap_err();
     assert!(
-        refused.contains("server does not accept this sign-in"),
-        "{refused}"
+        matches!(error, CoreError::SignInExpired { .. }),
+        "the server's refusal must reach the caller as the expired sign-in: {error:?}"
     );
+
     assert_eq!(
         fetch.bearers.lock().unwrap().as_slice(),
         ["kxa_old", "kxa_newer-one", "kxa_newer-two"]
@@ -327,17 +325,14 @@ fn a_rotation_the_server_still_rejects_clears_the_sign_in() {
         logout_on_rotated: false,
     };
 
-    let refused = submit(&fetch, store.as_ref(), "jane/skills")
-        .unwrap_err()
-        .to_string();
+    let error = submit(&fetch, store.as_ref(), "jane/skills").unwrap_err();
+    let CoreError::SignInExpired { why: refused } = &error else {
+        panic!("the server's refusal must reach the caller as the expired sign-in: {error:?}");
+    };
 
     assert!(
-        refused.contains("server does not accept this sign-in"),
-        "{refused}"
-    );
-    assert!(
-        refused.contains("— run `kendex login` again"),
-        "with the credential gone, signing in again is what works: {refused}"
+        !refused.contains("could not be removed"),
+        "with the credential gone, the remedy is the plain one: {refused}"
     );
     assert!(
         store.load().unwrap().is_none(),
@@ -354,14 +349,11 @@ fn a_logout_landing_after_rotation_still_answers_expired() {
         logout_on_rotated: true,
     };
 
-    let refused = submit(&fetch, store.as_ref(), "jane/skills")
-        .unwrap_err()
-        .to_string();
+    let error = submit(&fetch, store.as_ref(), "jane/skills").unwrap_err();
+    let CoreError::SignInExpired { why: refused } = &error else {
+        panic!("the server's refusal must reach the caller as the expired sign-in: {error:?}");
+    };
 
-    assert!(
-        refused.contains("server does not accept this sign-in"),
-        "{refused}"
-    );
     assert!(
         !refused.contains("could not be removed"),
         "nothing was left to remove: {refused}"
@@ -380,14 +372,11 @@ fn a_store_that_will_not_open_still_answers_expired() {
         logout_on_rotated: false,
     };
 
-    let refused = submit(&fetch, store.as_ref(), "jane/skills")
-        .unwrap_err()
-        .to_string();
+    let error = submit(&fetch, store.as_ref(), "jane/skills").unwrap_err();
+    let CoreError::SignInExpired { why: refused } = &error else {
+        panic!("the server's refusal must reach the caller as the expired sign-in: {error:?}");
+    };
 
-    assert!(
-        refused.contains("server does not accept this sign-in"),
-        "a store failure must not stand in for the server's refusal: {refused}"
-    );
     assert!(
         refused.contains("the local copy could not be removed: credential refresh is busy"),
         "the user learns the sign-in is dead and still installed: {refused}"
@@ -404,14 +393,11 @@ fn a_store_that_will_not_delete_still_answers_expired() {
         logout_on_rotated: false,
     };
 
-    let refused = submit(&fetch, store.as_ref(), "jane/skills")
-        .unwrap_err()
-        .to_string();
+    let error = submit(&fetch, store.as_ref(), "jane/skills").unwrap_err();
+    let CoreError::SignInExpired { why: refused } = &error else {
+        panic!("the server's refusal must reach the caller as the expired sign-in: {error:?}");
+    };
 
-    assert!(
-        refused.contains("server does not accept this sign-in"),
-        "a delete failure must not stand in for the server's refusal: {refused}"
-    );
     assert!(
         refused.contains("the local copy could not be removed"),
         "the user learns the credential is still installed: {refused}"

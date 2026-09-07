@@ -257,7 +257,13 @@ fn no_cache_and_no_network_is_an_error() {
     let down = Canned::new(vec![Err(CoreError::RegistryUnavailable {
         why: "no route".into(),
     })]);
-    assert!(cache::load(&env, &down, false).is_err());
+    let Err(error) = cache::load(&env, &down, false) else {
+        panic!("a directory nothing can read was served");
+    };
+    assert!(
+        matches!(&error, CoreError::RegistryUnavailable { why } if why == "no route"),
+        "the network's own refusal reaches the caller: {error:?}"
+    );
 }
 
 #[test]

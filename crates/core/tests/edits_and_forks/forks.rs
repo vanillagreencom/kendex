@@ -87,7 +87,12 @@ fn an_edited_install_deleted_after_planning_fails_the_fork() {
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
     fs::remove_dir_all(w.home.join("app/.agents/skills/gh")).unwrap();
 
-    assert!(apply::execute(&w.env, &plan).is_err());
+    let error = apply::execute(&w.env, &plan).unwrap_err();
+    assert!(
+        matches!(&error, CoreError::RolledBack { cause, .. }
+            if matches!(**cause, CoreError::PlanStale { .. })),
+        "{error:?}"
+    );
     assert!(
         !w.home.join("app/.kendex-local/skills/gh").exists(),
         "no fork made of bytes the disk no longer has"
@@ -381,9 +386,13 @@ fn forking_a_codex_agent_is_refused_with_the_fix_named() {
     let error =
         kendex_core::engine::fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Codex)
             .unwrap_err();
+    let CoreError::ItemNotInSource { name, source_name } = &error else {
+        panic!("{error:?}");
+    };
+    assert_eq!(name, "rev");
     assert!(
-        error.to_string().contains("Claude"),
-        "the refusal names the fix: {error}"
+        source_name.contains("fork the Claude copy instead"),
+        "the refusal names the fix: {source_name}"
     );
 }
 

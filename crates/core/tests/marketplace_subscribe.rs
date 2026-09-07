@@ -187,7 +187,10 @@ fn an_offline_tree_url_is_refused_before_any_write() {
         None,
     )
     .unwrap_err();
-    assert!(!error.to_string().is_empty());
+    assert!(
+        matches!(&error, CoreError::GitFailed { command, .. } if command.starts_with("git clone")),
+        "the clone is what refuses: {error:?}"
+    );
     assert_eq!(
         fs::read_to_string(project.join("kendex.toml")).unwrap(),
         existing,

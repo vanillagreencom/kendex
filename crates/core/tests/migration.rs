@@ -64,59 +64,64 @@ fn fixture(schema: &str) -> Fixture {
     }
 }
 
-/// A v0.1 manifest is not read, not converted, and not written over. The
-/// refusal names it as an older schema and says what to do with it.
+/// A manifest this build cannot read is refused and left byte for byte
+/// where the person put it, one row per schema: a v0.1 manifest is not
+/// read, not converted and not written over, the refusal naming the
+/// schema it found; the schema this build writes is the schema it reads,
+/// so the same file one number back is refused for the same reason; a
+/// manifest naming no schema at all gets the same refusal, saying that
+/// nothing here can tell what shape the file is; and a newer schema is
+/// its own refusal, naming the format found.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_v01_manifest_is_refused_and_left_byte_identical() {
-    let f = fixture("1");
-    let error = audit(&f.env, &f.scope).unwrap_err();
-    assert!(matches!(error, CoreError::LegacyManifest { .. }), "{error}");
-    let said = error.to_string();
-    assert!(said.contains("schema 1"), "{said}");
-    assert!(said.contains("install fresh"), "{said}");
-    assert_eq!(
-        fs::read_to_string(&f.manifest_path).unwrap(),
-        f.original,
-        "a refusal writes nothing"
-    );
-    assert!(!f.scope_lock().exists(), "and installs nothing");
-}
+fn a_manifest_this_build_cannot_read_is_refused_and_left_byte_identical() {
+    enum Refusal {
+        Legacy(String),
+        TooNew(i64),
+    }
+    let one_below = (MANIFEST_SCHEMA - 1).to_string();
+    let rows: [(&str, Option<&str>, Refusal); 4] = [
+        (
+            "schema 1",
+            Some("1"),
+            Refusal::Legacy("schema 1".to_owned()),
+        ),
+        (
+            "one below current",
+            Some(&one_below),
+            Refusal::Legacy(format!("schema {one_below} manifest")),
+        ),
+        ("no schema", None, Refusal::Legacy("no schema".to_owned())),
+        ("schema 99", Some("99"), Refusal::TooNew(99)),
+    ];
+    for (what, schema, refusal) in rows {
+        let f = fixture(schema.unwrap_or("1"));
+        if schema.is_none() {
+            fs::write(&f.manifest_path, f.original.replace("schema = 1\n", "")).unwrap();
+        }
+        let before = fs::read_to_string(&f.manifest_path).unwrap();
 
-/// The schema this build writes is the schema it reads, so the same file
-/// one number back is refused for the same reason as a v0.1 one.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn the_schema_one_below_current_is_refused_too() {
-    let f = fixture(&(MANIFEST_SCHEMA - 1).to_string());
-    let error = audit(&f.env, &f.scope).unwrap_err();
-    assert!(matches!(error, CoreError::LegacyManifest { .. }), "{error}");
-    assert_eq!(fs::read_to_string(&f.manifest_path).unwrap(), f.original);
-}
+        let error = audit(&f.env, &f.scope).unwrap_err();
 
-/// A manifest naming no schema at all: the same refusal, saying that
-/// nothing here can tell what shape the file is.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_manifest_naming_no_schema_is_refused() {
-    let f = fixture("1");
-    let unversioned = f.original.replace("schema = 1\n", "");
-    fs::write(&f.manifest_path, &unversioned).unwrap();
-    let error = audit(&f.env, &f.scope).unwrap_err();
-    assert!(matches!(error, CoreError::LegacyManifest { .. }), "{error}");
-    assert!(error.to_string().contains("no schema"), "{error}");
-    assert_eq!(fs::read_to_string(&f.manifest_path).unwrap(), unversioned);
-}
-
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_newer_schema_refuses_to_load() {
-    let f = fixture("99");
-    assert!(matches!(
-        audit(&f.env, &f.scope),
-        Err(CoreError::SchemaTooNew { found: 99, .. })
-    ));
-    assert_eq!(fs::read_to_string(&f.manifest_path).unwrap(), f.original);
+        match (&refusal, &error) {
+            (Refusal::Legacy(clause), CoreError::LegacyManifest { message, .. }) => {
+                assert!(message.contains(clause), "{what}: {message}");
+            }
+            (Refusal::TooNew(expected), CoreError::SchemaTooNew { found, .. }) => {
+                assert_eq!(found, expected, "{what}");
+            }
+            _ => panic!("{what}: {error:?}"),
+        }
+        assert_eq!(
+            fs::read_to_string(&f.manifest_path).unwrap(),
+            before,
+            "{what}: a refusal writes nothing"
+        );
+        assert!(
+            !f.scope_lock().exists(),
+            "{what}: a refusal installs nothing"
+        );
+    }
 }
 
 /// An apply interrupted at any op boundary rolls the whole scope back:
@@ -257,16 +262,17 @@ fn recording_existing_refuses_a_render_that_does_not_match() {
 fn recovery_requires_the_whole_declared_set() {
     for extra in [
         "\n[bundles.missing]\nsource = \"cat\"\n",
-        "\n[plugins.\"fmt@main\"]\nenabled = true\nharness = \"codex\"\n",
+        "\n[plugins.\"fmt@main\"]\nenabled = true\nharness = \"claude\"\n",
     ] {
         let f = fixture(&MANIFEST_SCHEMA.to_string());
         let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
         apply::execute(&f.env, &install.plan).unwrap();
         fs::remove_file(f.scope_lock()).unwrap();
         fs::write(&f.manifest_path, format!("{}{extra}", f.original)).unwrap();
+        let error = plan_record_existing(&f.env, &f.scope).unwrap_err();
         assert!(
-            plan_record_existing(&f.env, &f.scope).is_err(),
-            "incomplete declaration accepted: {extra}"
+            matches!(error, CoreError::RecordExistingRefused { .. }),
+            "incomplete declaration accepted: {extra}: {error}"
         );
         assert!(!f.scope_lock().exists());
     }
@@ -281,7 +287,8 @@ fn recovery_rechecks_render_bytes_before_recording() {
     let recovery = plan_record_existing(&f.env, &f.scope).unwrap();
     let rendered = f.project().join(".agents/skills/gh/SKILL.md");
     fs::write(&rendered, "edited during confirmation\n").unwrap();
-    assert!(apply::execute(&f.env, &recovery.plan).is_err());
+    let error = apply::execute(&f.env, &recovery.plan).unwrap_err();
+    assert!(matches!(error, CoreError::RolledBack { .. }), "{error}");
     assert!(!f.scope_lock().exists());
     assert_eq!(
         fs::read_to_string(rendered).unwrap(),
@@ -333,7 +340,11 @@ fn recovery_refuses_an_unresolved_required_dependency() {
     apply::execute(&f.env, &install.plan).unwrap();
     assert!(f.project().join(".agents/skills/gh/SKILL.md").is_file());
     fs::remove_file(f.scope_lock()).unwrap();
-    assert!(plan_record_existing(&f.env, &f.scope).is_err());
+    let error = plan_record_existing(&f.env, &f.scope).unwrap_err();
+    assert!(
+        matches!(error, CoreError::RecordExistingRefused { .. }),
+        "{error}"
+    );
     assert!(!f.scope_lock().exists());
 }
 
