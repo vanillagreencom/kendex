@@ -151,7 +151,7 @@ fn a_global_skill_lands_in_the_shared_tree_and_only_non_readers_link_at_it() {
     fs::write(
         &manifest,
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\", \"antigravity\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\", \"antigravity\", \"opencode\", \"gemini\", \"copilot\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )
@@ -163,10 +163,20 @@ fn a_global_skill_lands_in_the_shared_tree_and_only_non_readers_link_at_it() {
     let shared = home.join(".agents/skills/gh");
     assert!(shared.join("SKILL.md").is_file());
     assert!(!shared.is_symlink(), "the shared tree holds the bytes");
-    // Codex and Pi read that tree themselves, so a link in their own
-    // directory would be a second position for one definition.
-    assert!(!home.join(".codex/skills/gh").exists());
-    assert!(!home.join(".pi/agent/skills/gh").exists());
+    // Every tool that reads that tree reads it itself, so a link in its own
+    // directory would be a second position for one definition. All five are
+    // named: each is a surface this change moved, and a regression in any
+    // one of them would otherwise sit behind a test that only knew two.
+    for own in [
+        ".codex/skills/gh",
+        ".pi/agent/skills/gh",
+        ".config/opencode/skills/gh",
+        ".gemini/skills/gh",
+        ".copilot/skills/gh",
+    ] {
+        let path = home.join(own);
+        assert!(!path.exists() && !path.is_symlink(), "{own} was written");
+    }
     // Claude Code and Antigravity read neither shared tree, so each one's
     // own directory holds a link — the harnesses that demand one, and the
     // only ones that get one.

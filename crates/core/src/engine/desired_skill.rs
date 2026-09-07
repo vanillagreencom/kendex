@@ -132,7 +132,6 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
             ),
         }
     }
-    cross_read_note(ctx, method, state);
     if ctx.harnesses.contains(&HarnessId::Copilot) {
         super::copilot::switched_off_elsewhere(ctx, ItemKind::Skill, state);
     }
@@ -150,6 +149,13 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
         .iter()
         .position(|group| group.native == base)
         .unwrap_or(0);
+    // Only once the tree that would sit in the shared place is known to
+    // render: a refused group installs nothing there, and saying what is
+    // installed here reaches other tools would name a tree that is about
+    // to be removed.
+    if !variants[owner].refused {
+        cross_read_note(ctx, method, state);
+    }
     for (index, group) in groups.iter().enumerate() {
         let variant = &variants[index];
         if variant.refused {
