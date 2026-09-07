@@ -101,7 +101,9 @@ line_rows \
   "a CSS hex colour opening with digits is not an issue reference|Swatches #123abc, #1234ab, #0088cc and #3366ff are colours.|rc=0 $(clean 1)" \
   "all-digit shorthand still fails: #900 is also how issue 900 is written|The brand red is #900 and the accent is #369.|rc=1 $(hit SKILL.md 1 'The brand red is #900 and the accent is #369.');$(failed 1 1)" \
   "control: a reference followed by punctuation or a space still fails, one hit per line|Landed in #1204) and #228, per #999.|rc=1 $(hit SKILL.md 1 'Landed in #1204) and #228, per #999.');$(failed 1 1)" \
-  "an ATX heading is not an issue reference|### Heading with 4 words|rc=0 $(clean 1)" \
+  "a reference ending its line still fails|Landed in #1204|rc=1 $(hit SKILL.md 1 'Landed in #1204');$(failed 1 1)" \
+  "ordinary wording passes: a bare year and a year-month|The 2026 roadmap and the 2026-08 window.|rc=0 $(clean 1)" \
+  "an ATX heading whose text is a number is not an issue reference|#### 1204 items|rc=0 $(clean 1)" \
   "a decision ID, a code-span D042 § Context and a four-digit ID all pass|Decided in D042; the reason is in \`D042 § Context\`, and D1234 is the same kind.|rc=0 $(clean 1)" \
   "control: the same digits after '#' are still an issue reference|Decided in #042.|rc=1 $(hit SKILL.md 1 'Decided in #042.');$(failed 1 1)" \
   "two hits on two lines are two lines and one count each|First 2026-08-12.\nSecond #228.|rc=1 $(hit SKILL.md 1 'First 2026-08-12.');$(hit SKILL.md 2 'Second #228.');$(failed 2 1)"
@@ -123,11 +125,13 @@ echo "=== scope: each default name is scanned, the architecture docs under scope
 SCOPED="SKILL.md AGENTS.md CLAUDE.md skills/dev/SKILL.md skills/dev/AGENTS.md skills/dev/CLAUDE.md workflows/ship.md skills/dev/workflows/ship.md agents/rust.md .claude/agents/rust.md"
 ARCH="docs/architecture/overview.md docs/architecture/topic.md"
 UNSCOPED="README.md CHECKS.md docs/design.md CHANGELOG.md skills/dev/references/api.md notes/workflows.md"
+UNSCOPED_GLOBS="README.md CHECKS.md docs/*.md CHANGELOG.md skills/dev/references/*.md notes/*.md"
+UNSCOPED_SORTED="CHANGELOG.md CHECKS.md README.md docs/design.md notes/workflows.md skills/dev/references/api.md" # index order
 scoped() { repo "scoped-${1//\//_}"; put "$1" "$SEEDED"; } # PATH — the one tracked file, seeded
 fx_arch() { repo "$1"; put SKILL.md 'clean\n'; put docs/architecture/overview.md "$SEEDED"; }
-fx_unscoped() { # every scoped path clean, every unscoped one seeded
+fx_unscoped() { # NAME — every scoped path clean, every unscoped one seeded
   local f
-  repo unscoped
+  repo "$1"
   for f in $SCOPED; do put "$f" 'clean\n'; done
   for f in $UNSCOPED; do put "$f" 'Seeded 2026-08-12, reverted in #1204.\n'; done
 }
@@ -141,7 +145,8 @@ done
 run_rows "${rows[@]}" \
   "under COMMIT_GUARDS_MD_SCOPE=touched the architecture docs are not yet in scope|fx_arch arch-touched|||rc=0 $(clean 1)" \
   "control: under scope all the same file fails|fx_arch arch-all|COMMIT_GUARDS_MD_SCOPE=all||rc=1 $(hit docs/architecture/overview.md 1 'Seeded 2026-08-12.');$(failed 1 2 "$PATHS_ALL")" \
-  "README, CHECKS, docs, CHANGELOG, references and a workflows-named file keep their history, with the ten scoped files still read|fx_unscoped|||rc=0 $(clean 10)" \
+  "README, CHECKS, docs, CHANGELOG, references and a workflows-named file keep their history, with the ten scoped files still read|fx_unscoped unscoped|||rc=0 $(clean 10)" \
+  "control: the same six files fail once a path list names them|fx_unscoped unscoped-named|COMMIT_GUARDS_PROSE_PATHS=$UNSCOPED_GLOBS||rc=1 $(for f in $UNSCOPED_SORTED; do hit "$f" 1 'Seeded 2026-08-12, reverted in #1204.'; printf ';'; done)$(failed 6 6 "$UNSCOPED_GLOBS")" \
   "an unknown scope is exit 2, quoting it|fx_arch scope-unknown|COMMIT_GUARDS_MD_SCOPE=sometimes||rc=2 ${ERR}COMMIT_GUARDS_MD_SCOPE must be 'touched' or 'all', got 'sometimes'"
 
 echo "=== the markdown excludes list carves a vendored skill out ==="
@@ -164,10 +169,11 @@ run_rows \
   "a path escaping the repository is exit 2|override escaping|COMMIT_GUARDS_PROSE_PATHS=../outside/*.md||rc=2 ${ERR}prose path escapes the repository or normalizes empty: ../outside/*.md" \
   "an unknown flag is exit 2, quoting it|override unknown-flag||--no-such-flag|rc=2 ${ERR}unknown argument '--no-such-flag' (see --help)"
 assert_eq "--help prints usage at exit 0" "rc=0 usage: prose" "$(run '' --help | LC_ALL=C cut -d';' -f1)"
+assert_eq "--help documents the scope-all list as the default" "(default $PATHS_ALL)" "$(run '' --help | LC_ALL=C sed -n 's/.*(\(default SKILL.md[^)]*\)).*/(\1)/p')"
 
 echo "=== a configured path that is not markdown is named, never counted clean ==="
 fx_regular() { repo regular; put notes/target.md "$SEEDED"; put skills/dev/SKILL.md "$SEEDED"; }
-fx_symlink() { repo symlink; put notes/target.md "$SEEDED"; mkdir -p "$R/skills/dev"; ln -s ../../notes/target.md "$R/skills/dev/SKILL.md"; git -C "$R" add -A; }
+fx_symlink() { repo "$1"; put notes/target.md "$SEEDED"; mkdir -p "$R/skills/dev"; ln -s ../../notes/target.md "$R/skills/dev/SKILL.md"; git -C "$R" add -A; } # NAME
 # Two scoped links chained to one tracked file: a root CLAUDE.md linking to
 # AGENTS.md, and a .claude/CLAUDE.md linking back to the root.
 chain() { repo "$1"; put AGENTS.md "$2"; ln -s AGENTS.md "$R/CLAUDE.md"; mkdir -p "$R/.claude"; ln -s ../CLAUDE.md "$R/.claude/CLAUDE.md"; git -C "$R" add -A; } # NAME AGENTS-CONTENT
@@ -184,19 +190,23 @@ fx_index_both() { repo "$1"; put workflows/a.md 'clean\n'; put workflows/b.md "$
 fx_index_glob() { fx_index_both index-glob; rm "$R/workflows/b.md"; } # b.md still in the index, gone from the checkout
 run_rows \
   "control: the same content as a REGULAR file at the scoped path fails|fx_regular|||rc=1 $(hit skills/dev/SKILL.md 1 'Seeded 2026-08-12.');$(failed 1 1)" \
-  "a scoped symlink is named as unmeasured and counted apart: no clean verdict, no 'nothing matched' line|fx_symlink|||rc=0 $(skip skills/dev/SKILL.md 'tracked as a symlink, not markdown');$NONE$(unmeasured 1)" \
+  "a scoped symlink is named as unmeasured and counted apart: no clean verdict, no 'nothing matched' line|fx_symlink symlink|||rc=0 $(skip skills/dev/SKILL.md 'tracked as a symlink, not markdown');$NONE$(unmeasured 1)" \
   "a repo whose CLAUDE.md links to AGENTS.md and back exits 0, naming both links|fx_chain_clean|||rc=0 $(skip .claude/CLAUDE.md 'tracked as a symlink, not markdown');$(skip CLAUDE.md 'tracked as a symlink, not markdown');$(clean 1 "$(unmeasured 2)")" \
   "control: a reference in the file the links point at still fails, naming it|fx_chain_seeded|||rc=1 $(skip .claude/CLAUDE.md 'tracked as a symlink, not markdown');$(skip CLAUDE.md 'tracked as a symlink, not markdown');$(hit AGENTS.md 1 'Seeded 2026-08-12.');$(failed 1 1 "$PATHS_CORE" "$(unmeasured 2)")" \
   "a gitlink at a scoped path is named as unmeasured, not read as markdown|fx_gitlink|||rc=0 $(skip vendor/AGENTS.md 'tracked as a submodule gitlink, not markdown');$(clean 1 "$(unmeasured 1)")" \
   "a binary blob at a scoped path is named as unmeasured, with no clean file count over it|fx_binary|||rc=0 $(skip AGENTS.md 'binary content, not markdown');$NONE$(unmeasured 1)" \
   "control: both tracked workflows are scanned while both sit in the work tree|fx_index_both index-both|||rc=1 $(hit workflows/b.md 1 'Seeded 2026-08-12.');$(failed 1 2)" \
   "a tracked file absent from the work tree is still scanned: the glob is matched against the index|fx_index_glob|||rc=1 $(hit workflows/b.md 1 'Seeded 2026-08-12.');$(failed 1 2)"
-# The premise of the symlink skip: `git grep --cached` finds nothing at all
-# in a symlink index entry, spending no status and no stderr on it.
-fx_symlink_premise() { repo symlink-premise; put notes/target.md "$SEEDED"; mkdir -p "$R/skills/dev"; ln -s ../../notes/target.md "$R/skills/dev/SKILL.md"; git -C "$R" add -A; }
-fx_symlink_premise
+# The premises the rows above rest on. The symlink skip: `git grep --cached`
+# finds nothing at all in a symlink index entry, spending no status and no
+# stderr on it. The index glob: b.md really is gone from the work tree while
+# the index still names it.
+fx_symlink symlink-premise
 assert_eq "fixture: a bare --cached grep over the symlink entry finds nothing" "rc=1 mode=120000" \
   "$(cd "$R" && git grep --cached -n -I -E '2026' -- skills/dev/SKILL.md >/dev/null 2>&1; printf 'rc=%s mode=%s' "$?" "$(git ls-files -s skills/dev/SKILL.md | cut -d' ' -f1)")"
+R="$TMP/index-glob"
+assert_eq "fixture: workflows/b.md is absent from the work tree and still in the index" "work-tree=absent index=workflows/b.md" \
+  "$(printf 'work-tree=%s index=%s' "$([ -e "$R/workflows/b.md" ] && echo present || echo absent)" "$(git -C "$R" ls-files workflows/b.md)")"
 
 echo "=== the skill's own shipped markdown does not trip the lane ==="
 fx_shipped() { # NAME — the four shipped documents
@@ -212,6 +222,8 @@ fx_shipped_planted() { fx_shipped shipped-planted; put skills/commit-guards/work
 run_rows \
   "the shipped SKILL.md scans clean beside its unscanned siblings|fx_shipped shipped|||rc=0 $(clean 1)" \
   "control: a planted reference fails while the shipped SKILL.md stays unnamed|fx_shipped_planted|||rc=1 $(hit skills/commit-guards/workflows/ship.md 1 'Seeded 2026-08-12.');$(failed 1 2)"
+R="$TMP/shipped"
+assert_eq "fixture: the four shipped documents are tracked beside each other" "4" "$(git -C "$R" ls-files | wc -l | tr -d ' ')"
 
 echo "=== the shared glob loader refuses a caller running without set -f ==="
 COMMON="$SKILL_DIR/scripts/lib/common.sh"
