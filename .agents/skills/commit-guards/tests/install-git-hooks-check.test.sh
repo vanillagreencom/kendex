@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # `--check` over the shims this installer writes: armed, drifted, absent, or
-# unverifiable — and never a silent pass. It writes nothing, and install
-# refuses to overwrite what it could not vouch for. core.hooksPath stands
-# this whole verdict down, which is the -hookspath suite.
+# unverifiable, and never a silent pass. One table: a row builds its own
+# consumer repository, drifts one thing in it, and reads back the exit status
+# with the one verdict line, then the hooks directory as one line, which is
+# how "--check writes nothing" is measured. The install rows here are the
+# refusals that keep an install from reporting what the very next --check
+# would contradict. core.hooksPath stands this whole verdict down, which is
+# install-git-hooks-hookspath.test.sh; --check answering armed from a linked
+# worktree that carries its own render is a row of install-git-hooks.test.sh.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/harness.bash
@@ -10,354 +15,184 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/install-hooks.bash
 . "$TEST_DIR/lib/install-hooks.bash"
 
-echo "=== --check answers whether the shims are armed, and modifies nothing on disk ==="
-R32="$(new_repo checkmode)"
-install_in "$R32"
-check_in "$R32"
-[ "$RC" -eq 0 ] && ok "an armed install checks 0" || bad "armed checks 0" "rc=$RC out=$OUT"
-case "$OUT" in
-  *"armed — pre-commit and commit-msg"*) ok "and the verdict line says armed" ;;
-  *) bad "verdict says armed" "out=$OUT" ;;
-esac
+# The three verdict shapes. A NOT armed verdict names every drifted
+# component, then where it looked, then the remedy; could-not-determine
+# names what it could not measure and nothing else.
+ARMED_CHECK="commit-guards git hooks: armed — pre-commit and commit-msg gate commits in <repo>/.git/hooks"
+NA="commit-guards git hooks: NOT armed — "
+REARM=" (<repo>/.git/hooks); run 'kendex guard install' (or this installer) to re-arm"
+REARM_WT=" (<repo>/.git/hooks); run 'kendex guard install' (or this installer) from the main checkout to re-arm"
+CND="commit-guards git hooks: could not determine whether the shims are armed — "
+UNVERIFIED="helper kendex-guards is not the one this installer generates, so what it runs cannot be verified"
+STUB='#!/bin/sh\n# kendex commit-guards git hooks\nexit 0\n'
+HELPER_NOEXEC="$RW:ours['<repo>/.agents/skills/commit-guards/scripts']"
+rebake() { edit "$R/.git/hooks/kendex-guards" "s|^installed_scripts=.*|installed_scripts=$1|"; }
 
-rm "$R32/.git/hooks/pre-commit"
-check_in "$R32"
-[ "$RC" -eq 1 ] && ok "an absent hook file checks 1" || bad "absent hook checks 1" "rc=$RC out=$OUT"
-case "$OUT" in
-  *"pre-commit is missing"*) ok "and the missing hook is named" ;;
-  *) bad "missing hook named" "out=$OUT" ;;
-esac
-[ -e "$R32/.git/hooks/pre-commit" ] && bad "--check must not write the hook back" || ok "--check did not write the hook back"
+echo "=== each hook is read where git runs it ==="
+fx_armed() { armed check-armed; }
+fx_pre_missing() { armed pre-missing; rm "$R/.git/hooks/pre-commit"; }
+fx_msg_missing() { armed msg-missing; rm "$R/.git/hooks/commit-msg"; }
+fx_pre_stripped() { armed pre-stripped; foreign pre-commit '#!/bin/sh\nexit 0\n'; }
+fx_pre_noexec() { armed pre-noexec; chmod -x "$R/.git/hooks/pre-commit"; }
+fx_pre_dir() { armed pre-dir; rm "$R/.git/hooks/pre-commit"; mkdir "$R/.git/hooks/pre-commit"; }
+fx_pre_dangling() { armed pre-dangling; rm "$R/.git/hooks/pre-commit"; ln -s "$TMP/nowhere" "$R/.git/hooks/pre-commit"; }
+fx_pre_linked() { armed pre-linked; mv "$R/.git/hooks/pre-commit" "$TMP/linked-shim"; ln -s "$TMP/linked-shim" "$R/.git/hooks/pre-commit"; }
+fx_pre_python() { armed pre-python; foreign pre-commit '#!/usr/bin/env python3\nraise SystemExit(0)\n'; }
+fx_pre_cr() { armed pre-cr; edit "$R/.git/hooks/pre-commit" $'1s|.*|#!/bin/sh\r|'; }
+run_rows \
+  "a fresh install is armed|fx_armed||check||rc=0 $ARMED_CHECK|$FRESH" \
+  "a missing pre-commit is not armed, and is not written back|fx_pre_missing||check||rc=1 ${NA}pre-commit is missing$REARM|helper=$OURS pre-commit=absent commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "a missing commit-msg is not armed|fx_msg_missing||check||rc=1 ${NA}commit-msg is missing$REARM|helper=$OURS pre-commit=$SHIM_PRE commit-msg=absent hooksPath=<unset>" \
+  "a hook without the guard line is not armed, and is not repaired|fx_pre_stripped||check||rc=1 ${NA}pre-commit does not carry the guard line at line 2$REARM|helper=$OURS pre-commit=$X:#!/bin/sh~exit 0 commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "a cleared execute bit is not armed: git ignores the hook|fx_pre_noexec||check||rc=1 ${NA}pre-commit is not executable, so git ignores it$REARM|helper=$OURS pre-commit=$RW:#!/bin/sh~@PRE@~@CREATED@ commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "a directory at the hook path is not a file git can run|fx_pre_dir||check||rc=1 ${NA}pre-commit is not a file git can run$REARM|helper=$OURS pre-commit=dir commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "a dangling symlink at the hook path is not a file git can run|fx_pre_dangling||check||rc=1 ${NA}pre-commit is not a file git can run$REARM|helper=$OURS pre-commit=symlink-><root>/nowhere[dangling] commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "control: a symlink to a well-formed shim is armed, because git runs what it resolves to|fx_pre_linked||check||rc=0 $ARMED_CHECK|helper=$OURS pre-commit=symlink-><root>/linked-shim[#!/bin/sh~@PRE@~@CREATED@] commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "a hook under a non-shell interpreter cannot run the guard line|fx_pre_python||check||rc=1 ${NA}pre-commit is not a POSIX-shell script, so the guard line cannot run$REARM|helper=$OURS pre-commit=$X:#!/usr/bin/env python3~raise SystemExit(0) commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "a control character in the shebang means git cannot exec the hook|fx_pre_cr||check||rc=1 ${NA}pre-commit has a control character in its shebang, so git cannot exec it$REARM|"
 
-install_in "$R32"
-printf '#!/bin/sh\nexit 0\n' >"$R32/.git/hooks/pre-commit"
-chmod +x "$R32/.git/hooks/pre-commit"
-check_in "$R32"
-[ "$RC" -eq 1 ] && ok "a hook without the marked line checks 1" || bad "stripped line checks 1" "rc=$RC out=$OUT"
-case "$OUT" in
-  *"does not carry the guard line"*) ok "and the dropped guard line is named" ;;
-  *) bad "dropped guard line named" "out=$OUT" ;;
-esac
-grep -qF 'kendex-guards' "$R32/.git/hooks/pre-commit" && bad "--check must not repair the hook" || ok "--check did not repair the hook"
+echo "=== the helper is ours by its bytes, and what it would run has to be runnable ==="
+fx_helper_missing() { armed helper-missing; rm "$R/.git/hooks/kendex-guards"; }
+fx_helper_dir() { armed helper-dir; rm "$R/.git/hooks/kendex-guards"; mkdir "$R/.git/hooks/kendex-guards"; }
+fx_helper_symlink() { armed helper-symlink; mv "$R/.git/hooks/kendex-guards" "$TMP/helper-target"; ln -s "$TMP/helper-target" "$R/.git/hooks/kendex-guards"; }
+fx_helper_foreign() { armed helper-foreign; printf '#!/bin/sh\nexit 0\n' >"$R/.git/hooks/kendex-guards"; }
+fx_helper_noexec() { armed helper-noexec; chmod -x "$R/.git/hooks/kendex-guards"; }
+fx_helper_stub() { armed helper-stub; foreign kendex-guards "$STUB"; }
+fx_helper_stub_commit() { armed helper-stub-commit; foreign kendex-guards "$STUB"; stage_marker; }
+# The head names this checkout's own scripts directory, and a scripts
+# directory whose lane programs are not runnable is not recognised as this
+# project's, so the verdict is unverifiable before the lane check that would
+# have said "blocked rather than guarded" is reached.
+fx_lane_missing() { armed lane-missing; rm "$R/.agents/skills/commit-guards/scripts/pre-commit"; }
+fx_drift_and_unknown() { armed drift-and-unknown; foreign kendex-guards "$STUB"; rm "$R/.git/hooks/pre-commit"; }
+run_rows \
+  "a missing helper is not armed|fx_helper_missing||check||rc=1 ${NA}helper kendex-guards is missing$REARM|helper=absent pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "a directory at the helper path is not a regular file|fx_helper_dir||check||rc=1 ${NA}helper kendex-guards is not a regular file$REARM|helper=dir pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "a symlink at the helper path is not a regular file, whatever it points at|fx_helper_symlink||check||rc=1 ${NA}helper kendex-guards is not a regular file$REARM|helper=symlink-><root>/helper-target[ours['<repo>/.agents/skills/commit-guards/scripts']] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "a file without the marker was not written by this installer|fx_helper_foreign||check||rc=1 ${NA}helper kendex-guards was not written by this installer$REARM|helper=$X:#!/bin/sh~exit 0 pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "a helper without its execute bit blocks every commit, so it is not armed|fx_helper_noexec||check||rc=1 ${NA}helper kendex-guards is not executable (commits are blocked, not guarded)$REARM|helper=$HELPER_NOEXEC pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "a marker-carrying stub in place of the helper is unverifiable, not armed|fx_helper_stub||check||rc=2 $CND$UNVERIFIED|helper=$X:#!/bin/sh~# kendex commit-guards git hooks~exit 0 pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "and that stub really does let a violation through every guard|fx_helper_stub_commit|$ONE|commit|feat: add b|rc=0|" \
+  "a helper whose pre-commit program is gone is never armed|fx_lane_missing||check||rc=2 $CND$UNVERIFIED|" \
+  "a provably missing shim outranks an unverifiable helper, and both are named|fx_drift_and_unknown||check||rc=1 $NA$UNVERIFIED; pre-commit is missing$REARM|"
 
-install_in "$R32"
-chmod -x "$R32/.git/hooks/pre-commit"
-check_in "$R32"
-[ "$RC" -eq 1 ] && ok "a cleared executable bit checks 1" || bad "cleared exec bit checks 1" "rc=$RC out=$OUT"
-case "$OUT" in
-  *"not executable"*) ok "and says git ignores it" ;;
-  *) bad "exec bit named" "out=$OUT" ;;
-esac
-chmod +x "$R32/.git/hooks/pre-commit"
+echo "=== the hooks directory itself ==="
+fx_hooks_gone() { armed hooks-gone; rm -rf -- "${R:?}/.git/hooks"; }
+fx_hooks_file() { armed hooks-file; rm -rf -- "${R:?}/.git/hooks"; : >"$R/.git/hooks"; }
+run_rows \
+  "no hooks directory is not armed|fx_hooks_gone||check||rc=1 ${NA}<repo>/.git/hooks does not exist$REARM|helper=absent pre-commit=absent commit-msg=absent hooksPath=<unset>" \
+  "a file where the hooks directory belongs is not armed|fx_hooks_file||check||rc=1 ${NA}<repo>/.git/hooks is not a directory$REARM|"
 
-printf '#!/bin/sh\nexit 0\n' >"$R32/.git/hooks/kendex-guards"
-check_in "$R32"
-[ "$RC" -eq 1 ] && ok "a foreign file at the helper path checks 1" || bad "foreign helper checks 1" "rc=$RC out=$OUT"
-case "$OUT" in
-  *"not written by this installer"*) ok "and the foreign helper is named" ;;
-  *) bad "foreign helper named" "out=$OUT" ;;
-esac
-rm "$R32/.git/hooks/kendex-guards"
-install_in "$R32"
-
+echo "=== what cannot be read is could-not-determine, never a pass ==="
+# Permission bits mean nothing to root, so these rows run as anyone else.
+fx_hooks_unreadable() { armed hooks-unreadable; chmod 000 "$R/.git/hooks"; UNDO="chmod 755 '$R/.git/hooks'"; }
+fx_helper_unreadable() { armed helper-unreadable; chmod 0300 "$R/.git/hooks/kendex-guards"; }
+fx_pre_unreadable() { armed pre-unreadable; chmod 0300 "$R/.git/hooks/pre-commit"; }
 if [ "$(id -u)" != "0" ]; then
-  chmod 000 "$R32/.git/hooks"
-  check_in "$R32"
-  chmod 755 "$R32/.git/hooks"
-  [ "$RC" -eq 2 ] && ok "an unreadable hooks directory checks 2, never a pass" \
-    || bad "unreadable hooks dir checks 2" "rc=$RC out=$OUT"
-  case "$OUT" in
-    *"could not determine"*) ok "and the verdict says it could not determine" ;;
-    *) bad "could-not-determine stated" "out=$OUT" ;;
-  esac
+  run_rows \
+    "an unreadable hooks directory is could-not-determine|fx_hooks_unreadable||check||rc=2 $CND<repo>/.git/hooks cannot be read|" \
+    "an unreadable helper is could-not-determine|fx_helper_unreadable||check||rc=2 ${CND}helper kendex-guards could not be read|helper=-wx------:unreadable pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
+    "an unreadable hook is could-not-determine|fx_pre_unreadable||check||rc=2 ${CND}pre-commit could not be read|helper=$OURS pre-commit=-wx------:unreadable commit-msg=$SHIM_MSG hooksPath=<unset>"
 else
-  ok "unreadable hooks dir case skipped (running as root)"
-  ok "unreadable hooks dir wording skipped (running as root)"
+  ok "the three unreadable rows are skipped (running as root)"
 fi
 
-echo "=== install refuses what --check could not vouch for ==="
+echo "=== an interpreter this check cannot vouch for: install refuses, --check is unverifiable ==="
 # Installing under a shebang the check calls unverifiable would report a
-# successful install that the very next `kendex check` contradicts.
-R43="$(new_repo installshebangparity)"
-mkdir -p "$R43/.git/hooks"
-printf '#!/usr/bin/env bash\necho existing\n' >"$R43/.git/hooks/pre-commit"
-chmod +x "$R43/.git/hooks/pre-commit"
-install_in "$R43"
-case "$OUT" in
-  *"cannot be verified"*) ok "install says why it did not wire the hook" ;;
-  *) bad "install refuses unverifiable shebang" "out=$OUT" ;;
-esac
-[ "$(sed -n '2p' "$R43/.git/hooks/pre-commit")" = "echo existing" ] \
-  && ok "and it left the consumer's hook untouched" \
-  || bad "install left the hook untouched" "line2=$(sed -n '2p' "$R43/.git/hooks/pre-commit")"
-check_in "$R43"
-[ "$RC" -ne 0 ] && ok "and --check agrees rather than contradicting the install" \
-  || bad "check agrees with install" "rc=$RC out=$OUT"
-
-# The same refusal for a hook THIS INSTALLER wrote: ownership buys no licence
-# to rewrite the interpreter someone since chose. An install that reported
-# success here would be one `kendex check` calls unverifiable.
-R44="$(new_repo installstaleshebang)"
-install_in "$R44"
-{
-  printf '#!/usr/local/bin/bash\n'
-  tail -n +2 "$R44/.git/hooks/pre-commit"
-} >"$TMP/reshebanged" && mv "$TMP/reshebanged" "$R44/.git/hooks/pre-commit"
-chmod +x "$R44/.git/hooks/pre-commit"
-grep -qF -- "kendex_gg_h" "$R44/.git/hooks/pre-commit" \
-  && ok "control: the fixture is our own shim under an untrusted interpreter" \
-  || bad "fixture carries the guard line" "$(sed -n '2p' "$R44/.git/hooks/pre-commit")"
-BEFORE44="$(cat "$R44/.git/hooks/pre-commit")"
-install_in "$R44"
-case "$OUT" in
-  *"cannot be verified"*) ok "install refuses a shim of ours under an untrusted interpreter" ;;
-  *) bad "install refuses our own untrusted shim" "out=$OUT" ;;
-esac
-[ "$(cat "$R44/.git/hooks/pre-commit")" = "$BEFORE44" ] \
-  && ok "and leaves it byte for byte, shebang included" \
-  || bad "our untrusted shim was rewritten" "$(cat "$R44/.git/hooks/pre-commit")"
-check_in "$R44"
-[ "$RC" -eq 2 ] && ok "and --check calls it unverifiable, not merely not armed" \
-  || bad "check calls our untrusted shim unverifiable" "rc=$RC out=$OUT"
+# successful install that the very next `kendex check` contradicts, and
+# ownership of the shim buys no licence to rewrite an interpreter somebody
+# since chose. The same predicate decides both.
+UNVERIFIED_SHEBANG="not modifying it — the pre-commit guard is NOT installed. Use a #! naming a shell in /bin or /usr/bin directly."
+env_bash() { R="$(new_repo "$1")"; foreign pre-commit '#!/usr/bin/env bash\necho existing\n'; }
+reshebanged() { armed "$1"; edit "$R/.git/hooks/pre-commit" "1s|.*|$2|"; } # NAME LINE1
+fx_env_bash() { env_bash env-bash; }
+fx_env_bash_check() { env_bash env-bash-check; "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true; }
+fx_our_shim_reshebanged() { reshebanged our-shim-reshebanged '#!/usr/local/bin/bash'; }
+fx_our_shim_reshebanged_check() { reshebanged our-shim-reshebanged-check '#!/usr/local/bin/bash'; }
+fx_sh_n() { reshebanged sh-n '#!/bin/sh -n'; }
+fx_sh_n_commit() { reshebanged sh-n-commit '#!/bin/sh -n'; stage_marker; }
+fx_nonexistent() { reshebanged nonexistent '#!/nonexistent/sh'; }
+run_rows \
+  "install leaves a consumer's env-bash hook alone and says why|fx_env_bash||install||rc=1 $WARN <repo>/.git/hooks/pre-commit runs under an interpreter that cannot be verified (\\#\\!/usr/bin/env\\ bash); $UNVERIFIED_SHEBANG;$INCOMPLETE|helper=$OURS pre-commit=$X:#!/usr/bin/env bash~echo existing commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "and --check agrees rather than contradicting the install|fx_env_bash_check||check||rc=2 ${CND}pre-commit runs under an interpreter this check cannot vouch for (\\#\\!/usr/bin/env\\ bash)|" \
+  "install refuses a shim of ours under an untrusted interpreter and leaves it byte for byte|fx_our_shim_reshebanged||install||rc=1 $WARN <repo>/.git/hooks/pre-commit runs under an interpreter that cannot be verified (\\#\\!/usr/local/bin/bash); $UNVERIFIED_SHEBANG;$INCOMPLETE|helper=$OURS pre-commit=$X:#!/usr/local/bin/bash~@PRE@~@CREATED@ commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "and --check calls it unverifiable, not merely not armed|fx_our_shim_reshebanged_check||check||rc=2 ${CND}pre-commit runs under an interpreter this check cannot vouch for (\\#\\!/usr/local/bin/bash)|" \
+  "a shebang option that stops the body running is unverifiable|fx_sh_n||check||rc=2 ${CND}pre-commit runs under an interpreter this check cannot vouch for (\\#\\!/bin/sh\\ -n)|" \
+  "and that shim really does let a violation through: the chain never runs|fx_sh_n_commit|$ONE|commit|feat: add b|rc=0 $MSG_OK feat: add b|" \
+  "an interpreter that is not on this host is unverifiable|fx_nonexistent||check||rc=2 ${CND}pre-commit runs under an interpreter this check cannot vouch for (\\#\\!/nonexistent/sh)|"
 
 echo "=== a shim carrying the guard line elsewhere is unverifiable, not ungated ==="
 # --check writes nothing, so it does not get to assume the shim in front of
 # it is the one the installer last wrote. A shim that still gates must never
-# be reported as NOT gated — the same false answer, pointing the other way.
-R42="$(new_repo checkshimguardline)"
-install_in "$R42"
-python3 - "$R42/.git/hooks/pre-commit" <<'PYMOVE'
-import sys
-p = sys.argv[1]
-lines = open(p).read().split("\n")
-lines.insert(1, "# a comment someone added")
-open(p, "w").write("\n".join(lines))
-PYMOVE
-check_in "$R42"
-[ "$RC" -eq 2 ] && ok "a shim whose guard line moved is unverifiable" \
-  || bad "moved guard line unverifiable" "rc=$RC out=$OUT"
-printf '# %s: finish this\n' "$TD" >"$R42/gl.py"
-git -C "$R42" add gl.py
-commit_in "$R42" "feat: add gl"
-[ "$RC" -ne 0 ] && ok "and that shim really does still gate, so 2 is not 'ungated'" \
-  || bad "moved guard line still gates" "rc=$RC out=$OUT"
-git -C "$R42" rm -q --cached gl.py
-rm -f "$R42/gl.py"
-# Control: with the guard line gone entirely, it is a verdict again.
-python3 - "$R42/.git/hooks/pre-commit" <<'PYDEL'
-import sys
-p = sys.argv[1]
-lines = [l for l in open(p).read().split("\n") if "kendex_gg_h" not in l]
-open(p, "w").write("\n".join(lines))
-PYDEL
-check_in "$R42"
-[ "$RC" -eq 1 ] && ok "control: with the guard line gone it is not armed" \
-  || bad "absent guard line not armed" "rc=$RC out=$OUT"
+# be reported as NOT gated: the same false answer, pointing the other way.
+line_moved() { armed "$1"; edit "$R/.git/hooks/pre-commit" $'1a\\\n# a comment someone added'; }
+fx_line_moved() { line_moved line-moved; }
+fx_line_moved_commit() { line_moved line-moved-commit; stage_marker; }
+run_rows \
+  "the guard line below a comment is unverifiable|fx_line_moved||check||rc=2 ${CND}pre-commit carries the guard line, but not at line 2 where this check can confirm it runs|helper=$OURS pre-commit=$X:#!/bin/sh~# a comment someone added~@PRE@~@CREATED@ commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "and that shim really does still gate, so 2 is not ungated|fx_line_moved_commit|$ONE|commit|feat: add b|rc=1 $BLOCKED|"
 
-echo "=== a tampered shebang in the DEFAULT hooks directory is not armed ==="
-# The interpreter decides whether the guard line runs at all, and --check
-# writes nothing, so the shim it is reading is not assumed to be the one the
-# installer last wrote.
-R41="$(new_repo checkshimshebang)"
-install_in "$R41"
-tail -n +2 "$R41/.git/hooks/pre-commit" >"$TMP/shimbody"
-reshebang() { # LINE1
-  { printf '%s\n' "$1"; cat "$TMP/shimbody"; } >"$R41/.git/hooks/pre-commit"
-  chmod +x "$R41/.git/hooks/pre-commit"
-}
-check_in "$R41"
-[ "$RC" -eq 0 ] && ok "control: the intact shim is armed" || bad "intact shim armed" "rc=$RC out=$OUT"
-
-reshebang '#!/bin/sh -n'
-check_in "$R41"
-[ "$RC" -eq 2 ] && ok "a shim whose shebang stops the body running is not armed" \
-  || bad "shim -n not armed" "rc=$RC out=$OUT"
-printf '# %s: finish this\n' "$TD" >"$R41/sn.py"
-git -C "$R41" add sn.py
-commit_in "$R41" "feat: add sn"
-[ "$RC" -eq 0 ] && ok "and that shim really does let a violation through" \
-  || bad "shim -n bypasses" "rc=$RC out=$OUT"
-git -C "$R41" rm -q --cached sn.py
-rm -f "$R41/sn.py"
-
-reshebang '#!/nonexistent/sh'
-check_in "$R41"
-[ "$RC" -eq 2 ] && ok "a shim naming an interpreter that is not here is not armed" \
-  || bad "shim absent interpreter" "rc=$RC out=$OUT"
-
-reshebang "$(printf '#!/bin/sh\r')"
-check_in "$R41"
-[ "$RC" -eq 1 ] && ok "a shim with a CR shebang is not armed" \
-  || bad "shim CR shebang" "rc=$RC out=$OUT"
-
-reshebang '#!/bin/sh'
-check_in "$R41"
-[ "$RC" -eq 0 ] && ok "control: restoring the shebang makes it armed again" \
-  || bad "shim restored armed" "rc=$RC out=$OUT"
-
-echo "=== a tampered helper in the DEFAULT hooks directory is not armed ==="
-# --check is read-only, so "the installer rewrites this file" says nothing
-# about the copy sitting there now. The marker is a comment anything can
-# carry, and this is the ordinary, non-redirected install.
-R40="$(new_repo checkhelperbytes)"
-install_in "$R40"
-check_in "$R40"
-[ "$RC" -eq 0 ] && ok "control: the intact install is armed" \
-  || bad "intact install armed" "rc=$RC out=$OUT"
-printf '#!/bin/sh\n# kendex commit-guards git hooks\nexit 0\n' >"$R40/.git/hooks/kendex-guards"
-chmod +x "$R40/.git/hooks/kendex-guards"
-check_in "$R40"
-[ "$RC" -eq 2 ] && ok "a helper replaced by a marker-carrying stub is not armed" \
-  || bad "tampered helper not armed" "rc=$RC out=$OUT"
-case "$OUT" in
-  *"not the one this installer generates"*) ok "and the verdict names what it could not verify" ;;
-  *) bad "tampered helper verdict names the cause" "out=$OUT" ;;
-esac
-printf '# %s: finish this\n' "$TD" >"$R40/th.py"
-git -C "$R40" add th.py
-commit_in "$R40" "feat: add th"
-[ "$RC" -eq 0 ] && ok "and that stub really does bypass every guard" \
-  || bad "tampered helper bypasses" "rc=$RC out=$OUT"
-
-echo "=== a helper another checkout of this repository armed is armed here ==="
+echo "=== one repository, one helper: another checkout of this project reads it, another project does not ==="
 # A linked worktree shares one hooks directory with the checkout that armed
-# it, and carries its own render, so the helper it would write names its own
-# scripts directory. Compared whole, every worktree reported its own armed
-# hooks as unverifiable.
-R42="$(new_repo checkotherckout)"
-git -C "$R42" add -A >/dev/null 2>&1
-commit_in "$R42" "chore: seed"
-install_in "$R42"
-W42="$TMP/checkotherckout-wt"
-git -C "$R42" worktree add -q -b wt "$W42" >/dev/null 2>&1
-check_in "$W42"
-[ "$RC" -eq 0 ] && ok "a linked worktree recognizes the helper the main checkout armed" \
-  || bad "worktree recognizes armed helper" "rc=$RC out=$OUT"
-
-# An unarmed verdict ends in the remedy that arms, and from a linked work
-# tree the installer refuses — so the bare sentence would send the reader
-# round that refusal. Named only where it is true: from the main checkout
-# there is no other tree to send them to.
-rm -f "$R42/.git/hooks/pre-commit"
-check_in "$W42"
-case "$OUT" in
-  *"from the main checkout to re-arm"*)
-    ok "an unarmed linked worktree is told where the arming can be run" ;;
-  *) bad "worktree re-arm remedy names the main checkout" "rc=$RC out=$OUT" ;;
-esac
-check_in "$R42"
-case "$OUT" in
-  *"from the main checkout"*)
-    bad "main checkout remedy sends the reader elsewhere" "rc=$RC out=$OUT" ;;
-  *"to re-arm"*)
-    ok "control: from the main checkout the remedy names no other tree" ;;
-  *) bad "main checkout re-arm remedy" "rc=$RC out=$OUT" ;;
-esac
-
-HELPER42="$R42/.git/hooks/kendex-guards"
-# Every case below must answer non-zero: each is a helper this installer
-# would not have written, and blessing one is what lets something other than
-# this repository's own lanes run as its gate.
-rebake() { # LINE — put LINE in place of the helper's installed_scripts
-  perl -i -pe "BEGIN { \$r = shift } s{^installed_scripts=.*\$}{\$r}" "$1" "$HELPER42"
+# it and carries its own render, so the helper it would write names its own
+# scripts directory; compared whole, every worktree reported its own armed
+# hooks as unverifiable. A second project inside the repository stands at
+# another place in the same checkout, and reading A's helper as B's consent
+# would run B's own lanes as the repository's gate.
+fx_wt_unarmed() { # a repository whose render is committed, armed, then a linked worktree of it
+  R="$(new_repo wt-unarmed)"
+  git -C "$R" add -A
+  seed
+  "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true
+  W="$TMP/wt-unarmed-wt"
+  git -C "$R" worktree add -q -b wt "$W"
+  rm "$R/.git/hooks/pre-commit"
 }
+fx_two_projects() { armed two-projects; mkdir "$R/sub"; cp -R "$R/.agents" "$R/sub/.agents"; W="$R/sub"; }
+NOTOURS=""
+fx_other_repo() { armed other-repo; NOTOURS="$(new_repo not-ours)"; rebake "'$NOTOURS/.agents/skills/commit-guards/scripts'"; }
+run_rows \
+  "an unarmed verdict from a linked worktree sends the reader to the main checkout, where the installer does not refuse|fx_wt_unarmed||check-wt||rc=1 ${NA}pre-commit is missing$REARM_WT|" \
+  "project B does not read project A's helper as its own consent|fx_two_projects||check-wt||rc=2 $CND$UNVERIFIED|" \
+  "the same layout in another repository is not this project's|fx_other_repo||check||rc=2 $CND$UNVERIFIED|"
 
-install_in "$R42"
-rebake "installed_scripts='/tmp/x'; echo PWNED >&2; :'"
-check_in "$R42"
-[ "$RC" -ne 0 ] && ok "a payload after the closing quote is not armed" \
-  || bad "quote-escape payload refused" "rc=$RC out=$OUT"
+echo "=== the helper's head: one per-checkout value, held to the quoter that wrote it ==="
+# The head is compared around the one value that may differ between
+# checkouts, and that value has to be one this installer's own quoter would
+# have written: a value that closes its quote and appends a command rebuilds
+# differently and is refused rather than blessed by a comparison assembled
+# out of the bytes it is judging. Every other baked value and every line of
+# the program is compared byte for byte.
+fx_payload_quote() { armed payload-quote; rebake "'/tmp/x'; echo PWNED >\\&2; :'"; }
+fx_payload_reopen() { armed payload-reopen; rebake "'/nope'; touch \"\$TMPDIR/PWNED-\$\$\" 2>/dev/null; installed_scripts='/nope'"; }
+fx_payload_project_rel() { armed payload-project-rel; edit "$R/.git/hooks/kendex-guards" "s|^project_rel='.*'\$|project_rel='x'; echo PWNED >\\&2; :'|"; }
+fx_skill_roots_changed() { armed skill-roots-changed; edit "$R/.git/hooks/kendex-guards" "s|^skill_roots='.*'\$|skill_roots='.somewhere'|"; }
+fx_program_changed() { armed program-changed; edit "$R/.git/hooks/kendex-guards" 's|^mode=.*$|mode=pre-commit|'; }
+fx_baked_line_missing() { armed baked-line-missing; edit "$R/.git/hooks/kendex-guards" "/^installed_scripts='/d"; }
+# A checkout path carrying an apostrophe goes through the POSIX escape, so
+# the check has to read that escape as the quoter writes it; the same
+# directory spelled with a bare apostrophe names the right place and is the
+# shape a shell reads as an unterminated quote.
+fx_apostrophe() { armed "check o'brien"; }
+fx_apostrophe_bare() { armed "bare o'brien"; rebake "'$R/.agents/skills/commit-guards/scripts'"; }
+run_rows \
+  "a payload after the closing quote is unverifiable|fx_payload_quote||check||rc=2 $CND$UNVERIFIED|" \
+  "a value that closes and reopens its quoting is unverifiable|fx_payload_reopen||check||rc=2 $CND$UNVERIFIED|" \
+  "a payload on project_rel is unverifiable|fx_payload_project_rel||check||rc=2 $CND$UNVERIFIED|" \
+  "a changed skill_roots is unverifiable|fx_skill_roots_changed||check||rc=2 $CND$UNVERIFIED|" \
+  "a changed line of the program is unverifiable|fx_program_changed||check||rc=2 $CND$UNVERIFIED|" \
+  "a helper missing a baked line is unverifiable|fx_baked_line_missing||check||rc=2 $CND$UNVERIFIED|" \
+  "a checkout path carrying an apostrophe is armed through the escape the quoter writes|fx_apostrophe||check||rc=0 commit-guards git hooks: armed — pre-commit and commit-msg gate commits in <root>/check\\ o\\'brien/.git/hooks|helper=$X:ours['<root>/check o'\\''brien/.agents/skills/commit-guards/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "a bare apostrophe where the escape belongs is unverifiable|fx_apostrophe_bare||check||rc=2 $CND$UNVERIFIED|"
 
-install_in "$R42"
-rebake "installed_scripts='/nope'; touch \"\$TMPDIR/PWNED-\$\$\" 2>/dev/null; installed_scripts='/nope'"
-check_in "$R42"
-[ "$RC" -ne 0 ] && ok "a value that closes and reopens its quoting is not armed" \
-  || bad "reopened quote refused" "rc=$RC out=$OUT"
+echo "=== usage ==="
+fx_fresh() { R="$(new_repo fresh)"; }
+fx_not_git() { R="$TMP/not-git"; mkdir "$R"; }
+run_rows \
+  "--check and --uninstall are mutually exclusive|fx_fresh||check|--uninstall|rc=2 ::error::install-git-hooks: --uninstall and --check are mutually exclusive|" \
+  "--check outside a git work tree is a usage error|fx_not_git||check||rc=2 ::error::install-git-hooks: not inside a git work tree: <repo>|"
 
-install_in "$R42"
-perl -i -pe "s{^project_rel='.*'\$}{project_rel='x'; echo PWNED >&2; :'}" "$HELPER42"
-check_in "$R42"
-[ "$RC" -ne 0 ] && ok "a payload on project_rel is not armed" \
-  || bad "project_rel payload refused" "rc=$RC out=$OUT"
-
-install_in "$R42"
-# Another repository, with this project's own layout inside it: it stands at
-# the same place its checkout, so only the repository tells the two apart.
-NOTOURS="$(new_repo checknotours)"
-rebake "installed_scripts='$NOTOURS/.agents/skills/commit-guards/scripts'"
-check_in "$R42"
-[ "$RC" -ne 0 ] && ok "the same layout in another repository is not armed" \
-  || bad "foreign repo scripts dir refused" "rc=$RC out=$OUT"
-
-# The exclusion is that one value and nothing else: the program is still
-# compared byte for byte, and so is every value this package bakes.
-install_in "$R42"
-perl -i -pe "s{^skill_roots='.*'\$}{skill_roots='.somewhere'}" "$HELPER42"
-check_in "$R42"
-[ "$RC" -eq 2 ] && ok "a changed skill_roots is still unverifiable" \
-  || bad "changed roots unverifiable" "rc=$RC out=$OUT"
-
-install_in "$R42"
-perl -i -pe 's{^mode=.\$\{1-\}.$}{mode=pre-commit}' "$HELPER42"
-check_in "$R42"
-[ "$RC" -eq 2 ] && ok "and so is a changed line of the program itself" \
-  || bad "changed program unverifiable" "rc=$RC out=$OUT"
-
-install_in "$R42"
-perl -i -ne "print unless /^installed_scripts='/" "$HELPER42"
-check_in "$R42"
-[ "$RC" -eq 2 ] && ok "a helper missing a baked line is unverifiable" \
-  || bad "missing baked line unverifiable" "rc=$RC out=$OUT"
-
-echo "=== two projects in one repository share one helper, and it licenses one ==="
-# The helper is what says a session may run a checkout-supplied installer.
-# One repository holds one helper, so a second project finding it would read
-# it as consent it was never given and run its OWN lanes as this
-# repository's gate. What tells them apart is project_rel.
-R43="$(new_repo checktwoproj)"
-mkdir -p "$R43/sub"
-cp -R "$R43/.agents" "$R43/sub/.agents"
-[ -x "$R43/sub/.agents/skills/commit-guards/scripts/install-git-hooks" ] \
-  || bad "two-project fixture has B's own installer" "missing"
-install_in "$R43"
-[ "$RC" -eq 0 ] && ok "control: project A arms the repository" \
-  || bad "two-project A armed" "rc=$RC out=$OUT"
-check_in "$R43"
-[ "$RC" -eq 0 ] && ok "control: and A reads its own helper as armed" \
-  || bad "two-project A checks armed" "rc=$RC out=$OUT"
-check_in "$R43/sub"
-[ "$RC" -ne 0 ] && ok "project B does not read A's helper as its own consent" \
-  || bad "two-project B refused" "rc=$RC out=$OUT"
-
-echo "=== a checkout path carrying an apostrophe installs and checks ==="
-# The value goes through the POSIX escape, so the check has to read that
-# escape as the quoter writes it and not as some other tool's.
-R44="$(new_repo "check o'brien")"
-install_in "$R44"
-[ "$RC" -eq 0 ] && ok "control: an apostrophe in the path installs" \
-  || bad "apostrophe installs" "rc=$RC out=$OUT"
-check_in "$R44"
-[ "$RC" -eq 0 ] && ok "and the helper it wrote is recognized as armed" \
-  || bad "apostrophe checks armed" "rc=$RC out=$OUT"
-
-# The same directory, spelled with a bare apostrophe instead of the POSIX
-# escape. The value reads back as the real scripts directory, so every test
-# about WHERE it points passes; what refuses it is that the quoter would
-# never have written the line, which is the shape a shell reads as an
-# unterminated quote and a checker must not bless.
-perl -i -pe "BEGIN { \$r = shift } s{^installed_scripts=.*\$}{\$r}" \
-  "installed_scripts='$R44/.agents/skills/commit-guards/scripts'" \
-  "$R44/.git/hooks/kendex-guards"
-check_in "$R44"
-[ "$RC" -ne 0 ] && ok "but a bare apostrophe where the escape belongs is not armed" \
-  || bad "unescaped apostrophe refused" "rc=$RC out=$OUT"
-
-echo "=== --check usage lanes ==="
-OUT=""; RC=0; OUT="$("$INSTALL" --check --uninstall 2>&1)" || RC=$?
-[ "$RC" -eq 2 ] && ok "--check with --uninstall is exit 2" || bad "check+uninstall is exit 2" "rc=$RC out=$OUT"
-mkdir -p "$TMP/checknotgit"
-OUT=""; RC=0; OUT="$("$INSTALL" --repo "$TMP/checknotgit" --check 2>&1)" || RC=$?
-[ "$RC" -eq 2 ] && ok "--check outside a git work tree is exit 2" || bad "check outside work tree" "rc=$RC out=$OUT"
+assert_eq "every seeded fixture landed its seed commit" "" "$SEEDS_FAILED"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
