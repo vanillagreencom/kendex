@@ -62,16 +62,23 @@ stub "$TMP/$FULL" bot-instructions "install bot-instructions ran" 0
 
 # One line for a run in the row's repository from the named install: the
 # exit status, then every line printed, in order, joined by ';', with the
-# row's repository aliased as <repo> and the scratch root as <root>. ENVS
-# is a comma-separated list of assignments; ARGS are passed through. The
-# batch runs one check, so its lines are one shape: its composition is
+# row's repository aliased as <repo> and the scratch root as <root>, each
+# in its physical form first (the chain prints where it resolved to, which
+# under a symlinked temp root such as macOS's /var is not the spelling the
+# fixture was built with) and then its logical one. ENVS is a
+# comma-separated list of assignments; ARGS are passed through. The batch
+# runs one check, so its lines are one shape: its composition is
 # dispatcher's subject.
 R=""
+TMP_P="$(cd "$TMP" && pwd -P)"
 run() { # ENVS INSTALL ARGS
-  local envs=() rc=0 out=""
+  local envs=() rc=0 out="" r_p
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
+  r_p="$(cd "$R" && pwd -P)"
   # shellcheck disable=SC2086
   out="$(cd "$R" && env COMMIT_GUARDS_CHECKS=todo-ban ${envs[@]+"${envs[@]}"} "$TMP/$2/commit-guards/scripts/pre-commit" $3 2>&1)" || rc=$?
+  out="${out//"$r_p"/<repo>}"
+  out="${out//"$TMP_P"/<root>}"
   out="${out//"$R"/<repo>}"
   out="${out//"$TMP"/<root>}"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
