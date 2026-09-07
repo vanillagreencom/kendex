@@ -150,7 +150,7 @@ stdout_of() {
     stale) printf '%s' "$STALE" ;;
     answer) printf 'ANSWER' ;;
     # the response shapes the gate sorts: a blocker; prose claiming an earlier
-    # turn; the review inside a json fence; a self-reported no-review, and
+    # turn; the review inside a json fence, and inside a bare one; a self-reported no-review, and
     # one that says it reviewed; no qa_metadata; the finding arrays lost;
     # blockers as a string
     blocker) printf '%s' "$BLOCKER" ;;
@@ -158,6 +158,7 @@ stdout_of() {
     prose:sql) printf '%s\n' "$PROSE_SQL" ;;
     prose:previously) printf '%s\n' "$PROSE_PREVIOUSLY" ;;
     fenced) printf 'Here is my review of the changes:\n\n%s\n%s\n%s\n' '```json' "$GOOD" '```' ;;
+    fenced-bare) printf 'Here is my review of the changes:\n\n%s\n%s\n%s\n' '```' "$GOOD" '```' ;;
     noreview) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"No review performed","blockers":[],"suggestions":[],"questions":["Which diff, branch, or PR should be reviewed?"],"qa_metadata":{"review_performed":false,"reason":"no_scope_provided"}}' ;;
     performed) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"Reviewed the diff, no issues","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{"review_performed":true}}' ;;
     noqa) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"Nothing to evaluate","blockers":[],"suggestions":[],"questions":[]}' ;;
