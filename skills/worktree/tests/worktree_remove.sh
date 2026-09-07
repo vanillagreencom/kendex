@@ -168,7 +168,6 @@ case "${1:-}:${2:-}" in
 esac
 STUB
 chmod +x "$TMP_ROOT/bin/gh"
-export PATH="$TMP_ROOT/bin:$PATH"
 
 ROOT=""
 MAIN=""
@@ -198,7 +197,10 @@ step() {
       ;;
     lock) git -C "$MAIN" worktree lock "$WT" --reason "session guard: owner=topic" ;;
     unlock) git -C "$MAIN" worktree unlock "$WT" ;;
-    # git itself refuses the removal after every precheck passed.
+    # git itself refuses the removal after every precheck passed: the lock
+    # precheck is a racy diagnostic, and only "nothing is stripped before git
+    # runs" keeps the links whole here, so this row and the locked one are
+    # two mechanisms, not one.
     git-refuses)
       mkdir -p "$ROOT/bin"
       cat >"$ROOT/bin/git" <<'STUB'
@@ -210,7 +212,7 @@ fi
 exec "$REAL_GIT_BIN" "$@"
 STUB
       chmod +x "$ROOT/bin/git"
-      ROW_PATH="$ROOT/bin:$PATH"
+      ROW_PATH="$ROOT/bin:$ROW_PATH"
       ;;
     *)
       echo "UNKNOWN-STEP: $1" >&2
@@ -225,7 +227,7 @@ build() {
   shift
   MAIN="$ROOT/main"
   WT="$ROOT/trees/topic"
-  ROW_PATH="$PATH"
+  ROW_PATH="$TMP_ROOT/bin:$PATH"
   for word in "$@"; do step "$word"; done
 }
 
@@ -238,16 +240,20 @@ link_targets() {
   printf '%s' "${out:-,-}" | cut -c2-
 }
 
+# The worktree as the main checkout registers it and as the worktree itself
+# answers (live: its own .git resolves), the branch, the trees/ directory and
+# every configured symlink's target.
 remove_state() {
-  local worktree=absent branch=absent dirs
+  local worktree=absent live=no branch=absent dirs
+  git -C "$WT" rev-parse --git-dir >/dev/null 2>&1 && live=yes
   if git -C "$MAIN" worktree list --porcelain | grep -qx "worktree $WT"; then
     worktree=registered
   elif [[ -e "$WT" ]]; then
     worktree=unregistered
   fi
   git -C "$MAIN" show-ref --verify --quiet refs/heads/topic && branch=present
-  dirs="$(find "$ROOT/trees" -mindepth 1 -maxdepth 1 2>/dev/null | sed 's|.*/||' | sort | paste -s -d ',' -)"
-  printf 'worktree=%s branch=%s dirs=%s links=%s' "$worktree" "$branch" "${dirs:--}" "$(link_targets)"
+  dirs="$(find "$ROOT/trees" -mindepth 1 -maxdepth 1 2>/dev/null | sed 's|.*/||' | sort | paste -s -d ',' - || true)"
+  printf 'worktree=%s/%s branch=%s dirs=%s links=%s' "$worktree" "$live" "$branch" "${dirs:--}" "$(link_targets)"
 }
 
 REAL_GIT_BIN="$(command -v git)"
@@ -301,14 +307,14 @@ LINKS='.env.local-><main>/.env.local,.agents-><main>/.agents,.claude/agents-><ma
 
 # label|fixture|args|rc|out|err|state
 REMOVE_ROWS='
-a merged branch: the worktree and the branch both go|tree|TOPIC|0|removed|deleted|worktree=absent branch=absent dirs=- links=-
---help prints usage and removes nothing|tree|--help|0|usage|-|worktree=registered branch=present dirs=topic links=-
-the short help flag prints usage and removes nothing|tree|-h|0|usage|-|worktree=registered branch=present dirs=topic links=-
-an option-looking argument is refused before it becomes a path|tree|--bogus|1|-|unknown-option|worktree=registered branch=present dirs=topic links=-
-an unmerged branch: the worktree goes, the branch stays, the diagnostic names the manual delete|tree commit|TOPIC|1|removed|unmerged|worktree=absent branch=present dirs=- links=-
-a locked worktree is refused with its owner and the unlock command, links intact|tree links lock|TOPIC|1|-|locked|worktree=registered branch=present dirs=topic links=LINKS
-the same worktree unlocked is removed|tree links lock unlock|TOPIC|0|removed|deleted|worktree=absent branch=absent dirs=- links=-
-a removal git refuses after every precheck leaves the worktree, branch and links intact|tree links git-refuses|TOPIC|1|-|refused|worktree=registered branch=present dirs=topic links=LINKS
+a merged branch: the worktree and the branch both go|tree|TOPIC|0|removed|deleted|worktree=absent/no branch=absent dirs=- links=-
+--help prints usage and removes nothing|tree|--help|0|usage|-|worktree=registered/yes branch=present dirs=topic links=-
+the short help flag prints usage and removes nothing|tree|-h|0|usage|-|worktree=registered/yes branch=present dirs=topic links=-
+an option-looking argument is refused before it becomes a path|tree|--bogus|1|-|unknown-option|worktree=registered/yes branch=present dirs=topic links=-
+an unmerged branch: the worktree goes, the branch stays, the diagnostic names the manual delete|tree commit|TOPIC|1|removed|unmerged|worktree=absent/no branch=present dirs=- links=-
+a locked worktree is refused with its owner and the unlock command, links intact|tree links lock|TOPIC|1|-|locked|worktree=registered/yes branch=present dirs=topic links=LINKS
+the same worktree unlocked is removed|tree links lock unlock|TOPIC|0|removed|deleted|worktree=absent/no branch=absent dirs=- links=-
+a removal git refuses after every precheck leaves the worktree, branch and links intact|tree links git-refuses|TOPIC|1|-|refused|worktree=registered/yes branch=present dirs=topic links=LINKS
 '
 
 echo "=== worktree remove ==="
