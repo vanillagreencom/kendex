@@ -202,10 +202,14 @@ run_files \
   "a hash glued to a word is not a comment|a.sh|echo \$# \${x#$W} url#$W\n|||rc=0 $(ok_idx 1)" \
   "control: a hash after whitespace opens a comment|a.sh|foo # $W\n|||rc=1 $(hit "$ID" a.sh 1 " $W");$(idx 1 1)" \
   "a shebang is not a comment; the line after it is|a.sh|#!/bin/bash $W\n# $W\n|||rc=1 $(hit "$ID" a.sh 2 " $W");$(idx 1 1)" \
+  "only line 1 is a shebang: a second #! line is a comment|a.sh|#!/bin/bash\n#!second $W\n|||rc=1 $(hit "$ID" a.sh 2 "!second $W");$(idx 1 1)" \
   "a backslash in a single-quoted shell string escapes nothing|a.sh|echo 'a\\\\' # $W\n|||rc=1 $(hit "$ID" a.sh 1 " $W");$(idx 1 1)" \
   "a backslash in \$'...' does escape, so the comment after the string is judged|a.sh|echo \$'a\\\\'b' # $W\n|||rc=1 $(hit "$ID" a.sh 1 " $W");$(idx 1 1)" \
   "a heredoc body is not judged; the line after its terminator is|a.sh|cat <<EOF\n# $W\nEOF\n# $W\n|||rc=1 $(hit "$ID" a.sh 4 " $W");$(idx 1 1)" \
   "a quoted <<- heredoc ends at its tab-indented terminator|a.sh|cat <<-'EOF'\n\t# $W\n\tEOF\n# $W\n|||rc=1 $(hit "$ID" a.sh 4 " $W");$(idx 1 1)" \
+  "a plain << heredoc is not ended by a tab-indented terminator: it never closes|a.sh|cat <<EOF\n# $W\n\tEOF\n# $W\n|||rc=2 $(skip a.sh 'comment text could not be extracted: a heredoc (terminator EOF) opened at line 1 is never closed ');$(incomplete 1 0 0)$(unread 1)" \
+  "an unquoted heredoc word stops at an operator|a.sh|cat <<EOF;echo\n# $W\nEOF\n# $W\n|||rc=1 $(hit "$ID" a.sh 4 " $W");$(idx 1 1)" \
+  "a backslash-quoted heredoc word loses its backslash|a.sh|cat <<\\\\EOF\n# $W\nEOF\n# $W\n|||rc=1 $(hit "$ID" a.sh 4 " $W");$(idx 1 1)" \
   "a shift is not a heredoc|a.sh|x=\$((1<<2)) # $W\n|||rc=1 $(hit "$ID" a.sh 1 " $W");$(idx 1 1)" \
   "a shift by a name inside ((...)) opens no heredoc, so the next line is judged|a.sh|x=\$(( 1 << n ))\n# $W\n|||rc=1 $(hit "$ID" a.sh 2 " $W");$(idx 1 1)" \
   "a heredoc word is taken whole, so END-OF terminates the body|a.sh|cat <<END-OF\n# $W\nEND-OF\n# $W\n|||rc=1 $(hit "$ID" a.sh 4 " $W");$(idx 1 1)" \
@@ -213,10 +217,13 @@ run_files \
   "a quote inside a quoted command substitution does not hide the following comment|a.sh|out=\"\$(printf '\"')\"\n# $W\n|||rc=1 $(hit "$ID" a.sh 2 " $W");$(idx 1 1)" \
   "a comment inside a quoted command substitution is judged as shell code|a.sh|out=\"\$(\n# $W\nprintf ok\n)\"\n|||rc=1 $(hit "$ID" a.sh 2 " $W");$(idx 1 1)" \
   "a quoted command substitution stays extractable when its comments are clean|a.sh|out=\"\$(printf '\"$W\"')\"\n|||rc=0 $(ok_idx 1)" \
+  "a quoted command substitution never closed is reported at its opener|a.sh|out=\"\$(\n# $W\n|||rc=2 $(skip a.sh 'comment text could not be extracted: a command substitution opened at line 1 is never closed ');$(incomplete 1 0 0)$(unread 1)" \
   "a heredoc token inside an embedded heredoc does not hide the following comment|a.sh|out=\"\$(python3 - <<'PY'\nprint(\"<<'MANIFEST_EOF'\")\nPY\n)\"\n# $W\n|||rc=1 $(hit "$ID" a.sh 5 " $W");$(idx 1 1)" \
   "a heredoc in a quoted command substitution stays extractable when its comments are clean|a.sh|out=\"\$(python3 - <<'PY'\nprint(\"<<'MANIFEST_EOF' $W\")\nPY\n)\"\n|||rc=0 $(ok_idx 1)" \
   "a triple-quoted Python string is one string|a.py|\"\"\"\n# $W\n\"\"\"\n# $W\n|||rc=1 $(hit "$ID" a.py 4 " $W");$(idx 1 1)" \
   "TOML: a hash in a string is not a comment, one after a value is|a.toml|key = \"a # $W\"\nother = 1 # $W\n|||rc=1 $(hit "$ID" a.toml 2 " $W");$(idx 1 1)" \
+  "TOML: a triple-quoted string spans lines|a.toml|key = \"\"\"\n# $W\n\"\"\"\n# $W\n|||rc=1 $(hit "$ID" a.toml 4 " $W");$(idx 1 1)" \
+  "Ruby: a backslash escapes inside single quotes, so the comment after the string is judged|a.rb|s = 'don\\\\'t' # $W\n|||rc=1 $(hit "$ID" a.rb 1 " $W");$(idx 1 1)" \
   "YAML: a doubled quote ends nothing, and the trailing comment is judged|a.yml|key: 'don''t' # $W\n|||rc=1 $(hit "$ID" a.yml 1 " $W");$(idx 1 1)" \
   "a Makefile is judged by its basename|Makefile|all: # $W\n|||rc=1 $(hit "$ID" Makefile 1 " $W");$(idx 1 1)" \
   "a nested Dockerfile is judged by its basename|sub/Dockerfile|# $W\n|||rc=1 $(hit "$ID" sub/Dockerfile 1 " $W");$(idx 1 1)"
@@ -286,6 +293,7 @@ run_files \
   "control: a string that does close is a string, and the comment after it is judged|a.rs|let s = \"spans\nlines\";\n// $W\n|||rc=1 $(hit "$ID" a.rs 3 " $W");$(idx 1 1)" \
   "an extensionless file the list names is judged under the grammar its shebang picks|run|#!/usr/bin/env bash\n# $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=1 $(hit "$ID" run 2 " $W");$(idx 1 1)" \
   "a python shebang picks the python grammar, where a backslash escapes inside single quotes|run|#!/usr/bin/env python3\ns = 'don\\\\'t' # $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=1 $(hit "$ID" run 2 " $W");$(idx 1 1)" \
+  "a node shebang picks the C family with template literals|run|#!/usr/bin/env node\n// $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=1 $(hit "$ID" run 2 " $W");$(idx 1 1)" \
   "a first line naming a shell without #! is not a shebang|run|# start with bash\n# $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=0 $(skip run 'no comment grammar for this path (CHECKS.md § comments)');comments: OK — nothing measurable to scan$(unread 1)" \
   "the same file with no shebang is named as unmeasured, and nothing measurable was scanned|run|# $W\necho hi\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=0 $(skip run 'no comment grammar for this path (CHECKS.md § comments)');comments: OK — nothing measurable to scan$(unread 1)" \
   "an extension the table does not carry is named, not guessed at|notes.txt|# $W\n|COMMIT_GUARDS_COMMENT_PATHS=*.txt||rc=0 $(skip notes.txt 'no comment grammar for this path (CHECKS.md § comments)');comments: OK — nothing measurable to scan$(unread 1)"
@@ -337,6 +345,7 @@ fx_exc_no_reason() { planted exc-no-reason; put $EXCL 'vendor/*\n'; stage; }
 fx_exc_alt() { planted exc-alt; put alt 'vendor/*\tvendored\ngen/*\tgenerated\n'; stage; }
 fx_exc_alt_flag() { planted exc-alt-flag; put alt 'vendor/*\tvendored\ngen/*\tgenerated\n'; stage; }
 fx_exc_alt_eq() { planted exc-alt-eq; put alt 'vendor/*\tvendored\ngen/*\tgenerated\n'; stage; }
+fx_exc_alt_hit() { planted exc-alt-hit; put alt 'vendor/*\tvendored\n'; stage; }
 run_rows \
   "control: both planted files fail without a row, in index order|fx_exc_none|||rc=1 $(hit "$ID" gen/out.ts 1 " $W");$(hit "$ID" vendor/lib.rs 1 " $W");$(idx 2 2)" \
   "the row silences exactly the vendored tree|fx_exc_row|||rc=1 $(hit "$ID" gen/out.ts 1 " $W");$(idx 1 1)" \
@@ -344,6 +353,7 @@ run_rows \
   "a row without a reason is a config error naming the line|fx_exc_no_reason|||rc=2 ${ERR}$EXCL:1: expected 'pattern<TAB>reason' (every exclusion carries its justification)" \
   "the list path resolves through the environment key, and the remedy would name it|fx_exc_alt|COMMIT_GUARDS_COMMENT_EXCLUDES=alt||rc=0 comments: OK — no tracked file matches COMMIT_GUARDS_COMMENT_PATHS ($(sed -n 's/^GG_COMMENT_PATHS_DEFAULT="\(.*\)"$/\1/p' "$SKILL_DIR/scripts/lib/comment-text.sh"))" \
   "--excludes names the same list|fx_exc_alt_flag||--excludes alt|rc=0 comments: OK — no tracked file matches COMMIT_GUARDS_COMMENT_PATHS ($(sed -n 's/^GG_COMMENT_PATHS_DEFAULT="\(.*\)"$/\1/p' "$SKILL_DIR/scripts/lib/comment-text.sh"))" \
+  "the remedy and the summary name the list in force|fx_exc_alt_hit||--excludes alt|rc=1 $(hit "$ID" gen/out.ts 1 " $W" alt);$(idx 1 1 alt)" \
   "--excludes=PATH is the same flag|fx_exc_alt_eq||--excludes=alt|rc=0 comments: OK — no tracked file matches COMMIT_GUARDS_COMMENT_PATHS ($(sed -n 's/^GG_COMMENT_PATHS_DEFAULT="\(.*\)"$/\1/p' "$SKILL_DIR/scripts/lib/comment-text.sh"))"
 
 SECTION=staged
@@ -362,6 +372,7 @@ fx_stg_moved() { seeded stg-moved; git -C "$R" mv fixture.rs moved.rs; put moved
 fx_stg_first() { repo stg-first; put a.rs "// $W\n"; stage; }
 fx_stg_first_clean() { repo stg-first-clean; put a.rs '// clean\n'; stage; }
 fx_stg_md() { repo stg-md; put notes.md "# $W\n"; stage; }
+fx_stg_nogrammar() { repo stg-nogrammar; put run "# $W\necho hi\n"; stage; }
 fx_stg_vendor() { repo stg-vendor; put vendor/v.rs "// $W\n"; put $EXCL 'vendor/*\tvendored\n'; stage; }
 fx_stg_vendor_none() { repo stg-vendor-none; put vendor/v.rs "// $W\n"; stage; }
 run_rows \
@@ -376,6 +387,7 @@ run_rows \
   "on a repository's first commit the whole staged tree reads as added|fx_stg_first||--staged|rc=1 $(hit "$ID" a.rs 1 " $W");$(stg 1)" \
   "control: a clean first commit passes, not exit 2 for want of a HEAD|fx_stg_first_clean||--staged|rc=0 $(ok_stg 1)" \
   "--staged honours the path list: markdown is not read|fx_stg_md||--staged|rc=0 $(ok_stg 0)" \
+  "--staged names a path with no grammar as unmeasured, never judged|fx_stg_nogrammar|COMMIT_GUARDS_COMMENT_PATHS=run|--staged|rc=0 $(skip run 'no comment grammar for this path (CHECKS.md § comments)');$(ok_stg 0)$(unread 1)" \
   "--staged honours the exclusion list|fx_stg_vendor||--staged|rc=0 $(ok_stg 0)" \
   "control: without the row the staged vendored comment fails|fx_stg_vendor_none||--staged|rc=1 $(hit "$ID" vendor/v.rs 1 " $W");$(stg 1)"
 
@@ -386,7 +398,9 @@ BIN="$GG"
 fx_dispatch
 assert_eq "'commit-guards comments' reaches the lane" "rc=1 $(hit "$ID" a.rs 1 " $W");$(idx 1 2)" "$(run "" comments)"
 assert_eq "the batch hands comments --staged at commit scope" "rc=1 === commit-guards: comments --staged;$(hit "$ID" a.rs 1 " $W");$(stg 1);commit-guards: violations — see the failures above" "$(run COMMIT_GUARDS_CHECKS=comments 'all --staged')"
-assert_eq "the default batch does not run the lane" "" "$(run "" "" | tr ';' '\n' | grep 'commit-guards: comments' || true)"
+DEFAULT_BATCH="$(run "" "")"
+assert_eq "the default batch passes on this tree" "rc=0" "${DEFAULT_BATCH%% *}"
+assert_eq "and does not run the lane" "" "$(printf '%s' "$DEFAULT_BATCH" | tr ';' '\n' | grep 'commit-guards: comments' || true)"
 BIN="$CM"
 
 echo "=== the usage is answered ==="
