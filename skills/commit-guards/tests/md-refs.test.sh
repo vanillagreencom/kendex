@@ -12,6 +12,8 @@
 # verdict, the file and line it names, the reference it quotes, the count it
 # judged, the remedy and the summary are one pin.
 set -euo pipefail
+# No globbing: a row's ARGS column is word-split into the judge's arguments.
+set -f
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 MDR="$SKILL_DIR/scripts/md-refs"
@@ -69,7 +71,7 @@ world_refs() {
   put skills/x/SKILL.md '# X\n'
   put pic.png 'not really'
 }
-world_dec() { world_refs "$1"; put docs/decisions/D001-first.md '# D001\n\n## Context\n'; put docs/decisions/INDEX.md '| D001 |\n'; }
+world_dec() { world_refs "$1"; put docs/decisions/D001-first.md '# D001\n\n## Context\n'; }
 world_adr() { world_dec "$1"; put docs/decisions/ADR-0007-x.md '# ADR-0007\n'; }
 world_install() { repo "$1"; put guide.md '# Guide\n\n## Install\n'; }
 world_numbered() { repo "$1"; put guide.md '# Guide\n\n## 1. Install\n\n### 1.1.1 Choose a path\n'; }
@@ -347,7 +349,7 @@ fx_shipped() { # the four shipped documents beside the consumer files they cite 
 }
 # The shipped documents' own reference count is theirs to change: the pin is
 # the verdict over the two, then the four, files read, with N for that count.
-counted() { LC_ALL=C sed 's/\(OK — \|among \)[0-9][0-9]* /\1N /'; }
+counted() { LC_ALL=C sed -e 's/OK — [0-9][0-9]* /OK — N /' -e 's/among [0-9][0-9]* /among N /'; }
 fx_shipped shipped
 assert_eq "the shipped SKILL.md's references resolve (beside the fixture's CLAUDE.md shim)" "rc=0 $(clean N 2)" "$(run '' --all | counted)"
 assert_eq "and so do README.md, CHECKS.md and DEVELOPMENT.md when named" "rc=0 $(clean N 4)" "$(run 'COMMIT_GUARDS_MD_REFS_PATHS=*/commit-guards/*.md' --all | counted)"
