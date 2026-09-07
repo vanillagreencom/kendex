@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# Pins for scripts/commit-guards (the dispatcher): the batch runs exactly
-# the enabled checks and aggregates fail-closed (any incomplete check is
-# exit 2, any violation exit 1), --staged reaches the checks that take it and
-# no others, single-check invocation passes flags and exit codes through, and
-# the check-list configuration is validated.
+# Pins for scripts/commit-guards, the dispatcher: the batch runs exactly the
+# checks COMMIT_GUARDS_CHECKS names, in order, each announced with the scope
+# flag it takes (--all or --base REF to the full-scoped check, --staged to
+# the staged-scoped ones, nothing to the rest), and aggregates fail-closed
+# (any check that could not complete is exit 2 and named, any violation
+# exit 1); a single check runs alone with its flags passed through; the
+# check list and the scope flags are validated. Two tables: the batch,
+# pinned by the exit status with every line the DISPATCHER prints (the
+# step lines, the incompletion lines and the summary; a check's own lines
+# are that check's suite's), and the single-check invocations, pinned by
+# the exit status and the first line the named check printed.
 #
 # Marker words are assembled from split tokens so this file never contains
 # a marker shape itself.
@@ -12,8 +18,9 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 GG="$SKILL_DIR/scripts/commit-guards"
+# shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
-
+# Hermetic: a leaked setting would change every batch below.
 unset COMMIT_GUARDS_CHECKS COMMIT_GUARDS_TODO_EXCLUDES COMMIT_GUARDS_BYTE_CEILING_KB \
   COMMIT_GUARDS_BYTE_EXCLUDES COMMIT_GUARDS_SUPPRESSION_EXCLUDES \
   COMMIT_GUARDS_SUPPRESSION_BASELINE COMMIT_GUARDS_CONFLICT_EXCLUDES \
@@ -25,180 +32,151 @@ TD="TO""DO"
 
 PASS=0
 FAIL=0
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
+assert_eq() { # LABEL EXPECT ACTUAL
+  if [ "$2" = "$3" ]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$1"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        want: %s\n        got:  %s\n' "$1" "$2" "$3"
+  fi
+}
 
-new_repo() { # NAME
+# Two lines for a run in the row's repository under ENVS (comma-separated
+# assignments) with ARGS: `batch` keeps the exit status and the dispatcher's
+# own lines, in order, joined by ';'; `single` keeps the exit status and the
+# first line printed. STDIN is fed to the run when given.
+R=""
+run_raw() { # ENVS ARGS [STDIN]
+  local envs=()
+  [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
+  # shellcheck disable=SC2086
+  (cd "$R" && printf '%b' "${3-}" | env ${envs[@]+"${envs[@]}"} "$GG" $2 2>&1)
+}
+batch() { # ENVS ARGS
+  local rc=0 out=""
+  out="$(run_raw "$1" "$2")" || rc=$?
+  out="$(printf '%s\n' "$out" | LC_ALL=C grep -E '^(=== commit-guards:|commit-guards:|::error::commit-guards:)' || true)"
+  printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
+}
+single() { # ENVS ARGS [STDIN]
+  local rc=0 out=""
+  out="$(run_raw "$1" "$2" "${3-}")" || rc=$?
+  printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | head -n 1)}"
+}
+
+# The lines the dispatcher prints, as functions of what a row asked for.
+KNOWN="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs comments commit-msg"
+DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs"
+STAGED_SCOPED="todo-ban byte-ceiling md-format md-refs comments"
+ERR="::error::commit-guards: "
+steps() { # MODE CHECKS [INCOMPLETE] — one step line per check with its scope flag; the incompletion line after INCOMPLETE's step
+  local mode="$1" c flag
+  for c in $2; do
+    flag=""
+    case "$mode" in
+      all) [ "$c" != byte-ceiling ] || flag=" --all" ;;
+      staged) case " $STAGED_SCOPED " in *" $c "*) flag=" --staged" ;; esac ;;
+      base:*) [ "$c" != byte-ceiling ] || flag=" --base ${mode#base:}" ;;
+    esac
+    printf '=== commit-guards: %s%s;' "$c" "$flag"
+    [ "$c" != "${3-}" ] || printf "commit-guards: check '%s' did not complete (exit 2);" "$c"
+  done
+}
+ok() { printf 'commit-guards: OK — enabled checks clean (%s)' "${1:-$DEFAULT}"; } # [CHECKS]
+VIOLATIONS="commit-guards: violations — see the failures above"
+INCOMPLETE="commit-guards: could not complete every check — fix the errors above before trusting any verdict"
+
+# Fixture vocabulary. Every fixture builds its own repository; a name used
+# twice is refused.
+repo() { # NAME
   R="$TMP/$1"
+  [ ! -e "$R" ] || { echo "harness: fixture $1 already exists" >&2; exit 2; }
   mkdir -p "$R"
   git -C "$R" -c init.defaultBranch=main init -q
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
-  printf '[]\n' >"$R/.kendex-generated.json"
-  git -C "$R" add .kendex-generated.json
 }
+put() { mkdir -p "$R/$(dirname "$1")"; printf '%b' "$2" >"$R/$1"; git -C "$R" add -A; } # PATH CONTENT (printf %b), staged
+commit() { git -C "$R" commit -qm "${1:-seed}"; }
+clean() { repo "$1"; put ok.rs 'fn main() {}\n'; } # NAME — one clean staged file
+planted() { clean "$1"; put planted.rs "// $TD: planted for the dispatcher\n"; } # NAME — a staged work marker
+fx_settings_checks() { clean settings-checks; put kendex.settings.toml '[env]\nCOMMIT_GUARDS_CHECKS = "conflict-markers"\n'; }
+fx_settings_bad() { clean settings-bad; put kendex.settings.toml '[env\nCOMMIT_GUARDS_CHECKS = "conflict-markers"\n'; } # an unclosed table header
+staged_batch() { # NAME — a committed marker, and a staged change that adds none
+  clean "$1"; commit; put fixture.rs "// $TD: committed in a fixture\n"; commit fixture
+  # The staged lane reads a non-empty diff; what it prints about it is
+  # its own suite's, so no row here can tell this change from none.
+  printf 'fn other() {}\n' >>"$R/ok.rs"; git -C "$R" add ok.rs
+}
+fx_staged_md() { staged_batch staged-md; put doc.md 'Wrapped\ntext.\n'; }
+full_scope() { repo "$1"; put big.txt "$(head -c 2048 /dev/zero | tr '\0' a)"; commit 'feat: seed'; git -C "$R" tag base; } # NAME — a committed 2 KB file, tagged base
+grown() { full_scope "$1"; printf 'x' >>"$R/big.txt"; git -C "$R" add -A; commit 'feat: grow'; } # NAME — and one byte of growth since base
 
-run_gg() { # [VAR=val] -- [args...] — run in $R; sets OUT and RC
-  local envs=() args=()
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --)
-        shift
-        args=("$@")
-        break
-        ;;
-      *) envs+=("$1") ;;
-    esac
-    shift
+run_rows() { # label | fixture | envs | args | expect — through `batch`
+  local row label fx envs args expect words
+  for row in "$@"; do
+    IFS='|' read -r label fx envs args expect <<<"$row"
+    R=""
+    read -ra words <<<"$fx"
+    "${words[@]}"
+    assert_eq "$label" "$expect" "$(batch "$envs" "$args")"
   done
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$GG" ${args[@]+"${args[@]}"} 2>&1)" || RC=$?
 }
 
-echo "=== batch: a clean repo runs every default check and passes ==="
-new_repo clean
-printf 'fn main() {}\n' >"$R/ok.rs"
-git -C "$R" add -A
-run_gg
-[ "$RC" -eq 0 ] \
-  && case "$OUT" in *"commit-guards: todo-ban"*"commit-guards: byte-ceiling"*"commit-guards: suppression-ban"*"commit-guards: conflict-markers"*"commit-guards: changelog-entries"*"commit-guards: prose"*"commit-guards: md-format"*"commit-guards: md-refs"*"commit-guards: OK"*) true ;; *) false ;; esac \
-  && ok "the batch runs todo-ban, byte-ceiling, suppression-ban, conflict-markers, changelog-entries, prose, md-format, md-refs and reports OK" \
-  || bad "batch runs the eight default checks" "rc=$RC out=$OUT"
-run_gg -- all
-[ "$RC" -eq 0 ] && ok "'all' is the same batch" || bad "'all' is the same batch" "rc=$RC out=$OUT"
+echo "=== the batch runs the enabled checks in order and aggregates fail-closed ==="
+BC=COMMIT_GUARDS_BYTE_CEILING_KB
+run_rows \
+  "a clean repository runs the eight default checks, byte-ceiling with --all, and reports them clean|clean clean-1|||rc=0 $(steps all "$DEFAULT")$(ok)" \
+  "'all' is the same batch|clean clean-2||all|rc=0 $(steps all "$DEFAULT")$(ok)" \
+  "one violating check makes the batch exit 1 after every check ran|planted planted-1|||rc=1 $(steps all "$DEFAULT")$VIOLATIONS" \
+  "COMMIT_GUARDS_CHECKS narrows the batch: with byte-ceiling alone the planted marker is not judged|planted planted-2|COMMIT_GUARDS_CHECKS=byte-ceiling||rc=0 $(steps all byte-ceiling)$(ok byte-ceiling)" \
+  "the check list resolves from kendex.settings.toml|fx_settings_checks|||rc=0 $(steps all conflict-markers)$(ok conflict-markers)" \
+  "a check list that cannot be read is exit 2 before any check runs; the loader's own error is the only line|fx_settings_bad|||rc=2" \
+  "a check outside the default batch runs when named, with its staged scope|clean comments-staged|COMMIT_GUARDS_CHECKS=comments|--staged|rc=0 $(steps staged comments)$(ok comments)" \
+  "commit-msg in the batch list is exit 2 with the hook pointer|clean list-commit-msg|COMMIT_GUARDS_CHECKS=conflict-markers commit-msg||rc=2 ${ERR}commit-msg reads a message and cannot run in the batch; wire 'commit-guards commit-msg \"\$1\"' into the commit-msg hook instead" \
+  "an unknown name in the check list is exit 2 naming the known set|clean list-unknown|COMMIT_GUARDS_CHECKS=conflict-markers no-such-check||rc=2 ${ERR}COMMIT_GUARDS_CHECKS names unknown check 'no-such-check' (known: $KNOWN)" \
+  "a blank check list is exit 2|clean list-blank|COMMIT_GUARDS_CHECKS= ||rc=2 ${ERR}COMMIT_GUARDS_CHECKS resolved empty — name at least one check or unset it" \
+  "a check that exits 2 is named as incomplete, the batch still runs the rest and exits 2|clean incomplete|$BC=abc||rc=2 $(steps all "$DEFAULT" byte-ceiling)$INCOMPLETE" \
+  "a batch carrying a violation and an incomplete check reports the incompletion, not the violations|planted planted-3|$BC=abc||rc=2 $(steps all "$DEFAULT" byte-ceiling)$INCOMPLETE" \
+  "'all' with a flag a check would take is exit 2: flags go to a single check|clean all-extra||all --extra|rc=2 ${ERR}'all' takes only --staged or --base REF; invoke a single check to pass flags"
 
-echo "=== batch: one violating check makes the batch exit 1 ==="
-printf '// %s: planted for the dispatcher\n' "$TD" >"$R/planted.rs"
-git -C "$R" add -A
-run_gg
-[ "$RC" -eq 1 ] && case "$OUT" in *"commit-guards: violations"*) true ;; *) false ;; esac \
-  && ok "a todo-ban violation aggregates to batch exit 1" \
-  || bad "violation aggregates to exit 1" "rc=$RC out=$OUT"
+echo "=== --staged and --base REF name the batch's scope; each check gets the flag it takes ==="
+run_rows \
+  "'all --staged' hands --staged to the staged-scoped checks and no other, so a commit adding no marker passes|staged_batch staged-1||all --staged|rc=0 $(steps staged "$DEFAULT")$(ok)" \
+  "control: a hard-wrapped markdown file staged beside the code fails the staged batch|fx_staged_md||all --staged|rc=1 $(steps staged "$DEFAULT")$VIOLATIONS" \
+  "'--staged' without 'all' is the same batch|staged_batch staged-2||--staged|rc=0 $(steps staged "$DEFAULT")$(ok)" \
+  "control: the index-wide batch still refuses the committed marker|staged_batch staged-3|||rc=1 $(steps all "$DEFAULT")$VIOLATIONS" \
+  "a check outside the staged-scoped set runs unflagged under --staged|staged_batch staged-4|COMMIT_GUARDS_CHECKS=conflict-markers|all --staged|rc=0 $(steps staged conflict-markers)$(ok conflict-markers)" \
+  "'all' hands byte-ceiling --all, so a committed oversized file fails the full batch|full_scope full-1|$BC=1,COMMIT_GUARDS_CHECKS=byte-ceiling|all|rc=1 $(steps all byte-ceiling)$VIOLATIONS" \
+  "control: 'all --staged' hands byte-ceiling --staged and judges only the staged diff|full_scope full-2|$BC=1,COMMIT_GUARDS_CHECKS=byte-ceiling|all --staged|rc=0 $(steps staged byte-ceiling)$(ok byte-ceiling)" \
+  "'all --base REF' hands byte-ceiling --base REF, so growth since the base fails|grown base-1|$BC=1,COMMIT_GUARDS_CHECKS=byte-ceiling|all --base base|rc=1 $(steps base:base byte-ceiling)$VIOLATIONS" \
+  "--base=REF without 'all' is the same scope|grown base-2|$BC=1,COMMIT_GUARDS_CHECKS=byte-ceiling|--base=base|rc=1 $(steps base:base byte-ceiling)$VIOLATIONS" \
+  "a check outside the full-scoped set runs unflagged under --base|grown base-3|COMMIT_GUARDS_CHECKS=conflict-markers|all --base base|rc=0 $(steps base:base conflict-markers)$(ok conflict-markers)" \
+  "'--base' without a ref is exit 2|grown base-4||all --base|rc=2 ${ERR}--base requires a ref" \
+  "'--staged' with '--base' is exit 2: one scope per batch|grown base-5||all --staged --base base|rc=2 ${ERR}--staged and --base name different scopes; pass one" \
+  "an unknown base ref is a check that could not complete|grown base-6|COMMIT_GUARDS_CHECKS=byte-ceiling|all --base no-such-ref|rc=2 $(steps base:no-such-ref byte-ceiling byte-ceiling)$INCOMPLETE"
 
-echo "=== COMMIT_GUARDS_CHECKS narrows the batch (and that is provable) ==="
-run_gg COMMIT_GUARDS_CHECKS=byte-ceiling --
-[ "$RC" -eq 0 ] && case "$OUT" in *todo-ban*) false ;; *"commit-guards: byte-ceiling"*) true ;; *) false ;; esac \
-  && ok "with only byte-ceiling enabled, the planted marker no longer fails the batch" \
-  || bad "narrowed batch skips todo-ban" "rc=$RC out=$OUT"
-run_gg
-[ "$RC" -eq 1 ] && ok "control: the default batch still fails on the same fixture" \
-  || bad "control: default batch fails on the fixture" "rc=$RC out=$OUT"
-git -C "$R" rm -q --cached planted.rs
-rm "$R/planted.rs"
-
-echo "=== check-list validation fails loud ==="
-run_gg COMMIT_GUARDS_CHECKS=commit-msg --
-[ "$RC" -eq 2 ] && case "$OUT" in *"cannot run in the batch"*) true ;; *) false ;; esac \
-  && ok "commit-msg in the batch list is exit 2 with the hook pointer" \
-  || bad "commit-msg in the batch list is exit 2" "rc=$RC out=$OUT"
-run_gg COMMIT_GUARDS_CHECKS=no-such-check --
-[ "$RC" -eq 2 ] && case "$OUT" in *"unknown check 'no-such-check'"*) true ;; *) false ;; esac \
-  && ok "an unknown name in the check list is exit 2" \
-  || bad "unknown name in the check list is exit 2" "rc=$RC out=$OUT"
-run_gg "COMMIT_GUARDS_CHECKS= " --
-[ "$RC" -eq 2 ] && ok "an empty check list is exit 2" || bad "empty check list is exit 2" "rc=$RC out=$OUT"
-
-echo "=== batch aggregation is fail-closed: an incomplete check is exit 2 ==="
-run_gg COMMIT_GUARDS_BYTE_CEILING_KB=abc --
-[ "$RC" -eq 2 ] && case "$OUT" in *"did not complete (exit 2)"*"could not complete every check"*) true ;; *) false ;; esac \
-  && ok "a check that exits 2 makes the whole batch exit 2, named in the summary" \
-  || bad "incomplete check aggregates to exit 2" "rc=$RC out=$OUT"
-
-echo "=== single-check invocation: exit codes and flags pass through ==="
-run_gg -- todo-ban
-[ "$RC" -eq 0 ] && case "$OUT" in "todo-ban: OK"*) true ;; *) false ;; esac \
-  && ok "a single check runs alone with its own output" || bad "single check runs alone" "rc=$RC out=$OUT"
-run_gg -- byte-ceiling --all
-[ "$RC" -eq 0 ] && case "$OUT" in *"full sweep"*) true ;; *) false ;; esac \
-  && ok "flags pass through to the named check (--all reached byte-ceiling)" \
-  || bad "flags pass through" "rc=$RC out=$OUT"
-OUT="$(cd "$R" && printf 'feat: dispatched\n' | "$GG" commit-msg 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 0 ] && ok "commit-msg IS invocable by name (only the batch refuses it)" \
-  || bad "commit-msg invocable by name" "rc=$RC out=$OUT"
-run_gg -- no-such-check
-[ "$RC" -eq 2 ] && case "$OUT" in *"unknown check 'no-such-check'"*) true ;; *) false ;; esac \
-  && ok "an unknown check name is exit 2 naming the known set" \
-  || bad "unknown check name is exit 2" "rc=$RC out=$OUT"
-run_gg -- all --extra
-[ "$RC" -eq 2 ] && ok "'all' with extra arguments is exit 2" || bad "'all' with extras is exit 2" "rc=$RC out=$OUT"
-run_gg -- --help
-[ "$RC" -eq 0 ] && case "$OUT" in *"usage: commit-guards"*) true ;; *) false ;; esac \
-  && ok "--help prints usage at exit 0" || bad "--help prints usage" "rc=$RC out=$OUT"
-
-echo "=== 'all --staged' runs the batch at commit scope ==="
-new_repo stagedbatch
-printf 'fn main() {}\n' >"$R/ok.rs"
-git -C "$R" add -A
-git -C "$R" commit -qm seed
-printf '// %s: committed in a fixture\n' "$TD" >"$R/fixture.rs"
-git -C "$R" add -A
-git -C "$R" commit -qm fixture
-printf 'fn other() {}\n' >>"$R/ok.rs"
-git -C "$R" add ok.rs
-run_gg -- all --staged
-[ "$RC" -eq 0 ] && case "$OUT" in *"commit-guards: todo-ban --staged"*) true ;; *) false ;; esac \
-  && ok "the batch hands todo-ban --staged, so a commit adding no marker passes" \
-  || bad "batch forwards --staged to todo-ban" "rc=$RC out=$OUT"
-case "$OUT" in *"commit-guards: md-format --staged"*"commit-guards: md-refs --staged"*) ok "and hands md-format and md-refs --staged too" ;; *) bad "batch forwards --staged to the markdown lanes" "$OUT" ;; esac
-printf 'Wrapped\ntext.\n' >"$R/doc.md"
-git -C "$R" add doc.md
-run_gg -- all --staged
-[ "$RC" -eq 1 ] && case "$OUT" in *"md-format FAIL format: doc.md:2:"*) true ;; *) false ;; esac \
-  && ok "control: a hard-wrapped markdown file staged beside the code fails the staged batch" \
-  || bad "control: staged batch reaches md-format" "rc=$RC out=$OUT"
-git -C "$R" rm -q --cached doc.md
-rm "$R/doc.md"
-run_gg -- --staged
-[ "$RC" -eq 0 ] && ok "'--staged' without 'all' is the same batch" \
-  || bad "'--staged' alone is the same batch" "rc=$RC out=$OUT"
-run_gg
-[ "$RC" -eq 1 ] && case "$OUT" in *"work marker: fixture.rs"*) true ;; *) false ;; esac \
-  && ok "control: the index-wide batch (CI) still refuses the committed marker" \
-  || bad "control: index-wide batch refuses the marker" "rc=$RC out=$OUT"
-
-# A check that takes no --staged is never handed one: it would exit 2 on the
-# unknown argument, and the batch would fail closed on a lane that was fine.
-run_gg COMMIT_GUARDS_CHECKS=conflict-markers -- all --staged
-[ "$RC" -eq 0 ] && case "$OUT" in *"conflict-markers --staged"*) false ;; *) true ;; esac \
-  && ok "a check outside the staged-scoped set runs unflagged" \
-  || bad "unflagged check outside the staged-scoped set" "rc=$RC out=$OUT"
-
-echo "=== the full batch sweeps byte-ceiling over every tracked file; --base scopes it to a branch ==="
-new_repo fullscope
-head -c 2048 /dev/zero | tr '\0' 'a' >"$R/big.txt"
-git -C "$R" add -A
-git -C "$R" commit -qm 'feat: seed'
-run_gg COMMIT_GUARDS_BYTE_CEILING_KB=1 COMMIT_GUARDS_CHECKS=byte-ceiling -- all
-[ "$RC" -eq 1 ] && case "$OUT" in *"commit-guards: byte-ceiling --all"*"oversized file: big.txt"*) true ;; *) false ;; esac \
-  && ok "'all' hands byte-ceiling --all, so a committed oversized file fails the full batch" \
-  || bad "full batch sweeps byte-ceiling" "rc=$RC out=$OUT"
-run_gg COMMIT_GUARDS_BYTE_CEILING_KB=1 COMMIT_GUARDS_CHECKS=byte-ceiling -- all --staged
-[ "$RC" -eq 0 ] && case "$OUT" in *"commit-guards: byte-ceiling --staged"*"0 staged file(s) checked"*) true ;; *) false ;; esac \
-  && ok "control: 'all --staged' hands byte-ceiling --staged and judges only the staged diff" \
-  || bad "staged batch scopes byte-ceiling to the diff" "rc=$RC out=$OUT"
-git -C "$R" tag base
-printf 'x' >>"$R/big.txt"
-git -C "$R" add -A
-git -C "$R" commit -qm 'feat: grow'
-run_gg COMMIT_GUARDS_BYTE_CEILING_KB=1 COMMIT_GUARDS_CHECKS=byte-ceiling -- all --base base
-[ "$RC" -eq 1 ] && case "$OUT" in *"commit-guards: byte-ceiling --base base"*"oversized file grew: big.txt"*) true ;; *) false ;; esac \
-  && ok "'all --base REF' hands byte-ceiling --base REF, so growth since the base fails" \
-  || bad "base batch scopes byte-ceiling to the branch" "rc=$RC out=$OUT"
-run_gg COMMIT_GUARDS_BYTE_CEILING_KB=1 COMMIT_GUARDS_CHECKS=byte-ceiling -- all --base=base
-[ "$RC" -eq 1 ] && ok "--base=REF is the same scope" || bad "--base=REF spelling" "rc=$RC out=$OUT"
-run_gg COMMIT_GUARDS_CHECKS=conflict-markers -- all --base base
-[ "$RC" -eq 0 ] && case "$OUT" in *"conflict-markers --"*) false ;; *) true ;; esac \
-  && ok "a check outside the full-scoped set runs unflagged under --base" \
-  || bad "unflagged check outside the full-scoped set under --base" "rc=$RC out=$OUT"
-run_gg -- all --base
-[ "$RC" -eq 2 ] && ok "'--base' without a ref is exit 2" || bad "--base without a ref" "rc=$RC out=$OUT"
-run_gg -- all --staged --base base
-[ "$RC" -eq 2 ] && ok "'--staged' with '--base' is exit 2 (one scope per batch)" || bad "two scopes refused" "rc=$RC out=$OUT"
-run_gg COMMIT_GUARDS_CHECKS=byte-ceiling -- all --base no-such-ref
-[ "$RC" -eq 2 ] && case "$OUT" in *"did not complete"*) true ;; *) false ;; esac \
-  && ok "an unknown base ref is a check that could not complete (exit 2)" \
-  || bad "unknown base ref fails closed" "rc=$RC out=$OUT"
+echo "=== a single check runs alone, flags and exit status passed through; a batch announces before the check speaks ==="
+single_rows() { # label | fixture | envs | args | stdin | expect — through `single`
+  local row label fx envs args stdin expect words
+  for row in "$@"; do
+    IFS='|' read -r label fx envs args stdin expect <<<"$row"
+    R=""
+    read -ra words <<<"$fx"
+    "${words[@]}"
+    assert_eq "$label" "$expect" "$(single "$envs" "$args" "$stdin")"
+  done
+}
+single_rows \
+  "a single check runs alone with its own output|clean single-1||todo-ban||rc=0 todo-ban: OK — no work markers in tracked files" \
+  "flags pass through to the named check|clean single-2|$BC=7|byte-ceiling --all||rc=0 byte-ceiling: OK — 1 tracked file(s) (full sweep) checked, ceiling 7 KB" \
+  "the step line precedes the check's own output: a batch's first line is the announcement|clean order-1|COMMIT_GUARDS_CHECKS=conflict-markers|||rc=0 === commit-guards: conflict-markers" \
+  "control: the named check's exit status is the run's|planted single-3||todo-ban||rc=1 todo-ban FAIL work marker: planted.rs:1:// $TD: planted for the dispatcher" \
+  "commit-msg is invocable by name over stdin: only the batch refuses it|clean single-4||commit-msg|feat: dispatched\n|rc=0 commit-msg: OK — conventional header: feat: dispatched" \
+  "an unknown check name is exit 2 naming the known set|clean single-5||no-such-check||rc=2 ${ERR}unknown check 'no-such-check' (known: $KNOWN)" \
+  "--help prints usage at exit 0|clean help||--help||rc=0 usage: commit-guards [all] [--staged | --base REF] | CHECK [ARGS...]" \
+  "-h is --help|clean help-h||-h||rc=0 usage: commit-guards [all] [--staged | --base REF] | CHECK [ARGS...]"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
