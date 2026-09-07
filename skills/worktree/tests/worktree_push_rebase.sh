@@ -1,25 +1,36 @@
 #!/usr/bin/env bash
-# Tests for `worktree push` auto-rebase behavior.
-#
-# Core failure: a feature branch that already contains
-# origin/<default> as an ancestor (e.g. it merged the latest main) must NOT be
-# rebased before push. A plain rebase flattens the merge commit and re-replays
-# the merged edits, reintroducing conflicts the merge already resolved, which
-# aborts the push. The fix guards both rebase sites with
-# `merge-base --is-ancestor origin/<default> HEAD` and skips the rebase when the
-# base is already contained. Rebase must still run when the branch is genuinely
-# behind (does not contain the base as an ancestor).
+# `worktree push`: the auto-rebase and its skip, the rebase map, the argument
+# parser, the target resolution, the force-with-lease expectation and the git
+# invocation it delegates: one table, a row per scenario. A row's fixture is a
+# word list of steps that builds a fresh main+origin pair with its issue
+# worktree and drives it to the state under test; the command then runs from
+# the main checkout (or the worktree, for the rows that push by issue ID from
+# inside one), and the row pins its exit status, its stdout, the tool's own
+# stderr, and what is left: the head, the commits ahead of origin/main, every
+# tracked file with its first line, each remote's branch ref, the upstream
+# the branch tracks, and the push argv when a shim captured it.
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Default to the real script; allow override so the unguarded failure can be
-# demonstrated against a temporarily-modified copy.
-WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
+PACKAGE_DIR="$(cd "$TEST_DIR/.." && pwd)"
+WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$PACKAGE_DIR/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+
+mkdir -p "$TMP_ROOT/bin"
+cat >"$TMP_ROOT/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}:${2:-}" in
+  pr:list) ;;
+esac
+STUB
+chmod +x "$TMP_ROOT/bin/gh"
+export PATH="$TMP_ROOT/bin:$PATH"
+REAL_GIT="$(command -v git)"
 
 PASS=0
 FAIL=0
@@ -35,71 +46,21 @@ assert_eq() {
   fi
 }
 
-assert_ne() {
-  local got="$1" unwanted="$2" name="$3"
-  if [[ "$got" != "$unwanted" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected value to differ from: %s\n' "$name" "$unwanted"
-  fi
-}
+# --- fixtures -----------------------------------------------------------------
+# Every row's world lives under its own ROOT: the main checkout at ROOT/main,
+# the bare origin at ROOT/origin.git, the issue worktree at ROOT/trees/topic.
 
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  fi
-}
-
-assert_not_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        unwanted substring present: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  else
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  fi
-}
-
-assert_path_exists() {
-  local path="$1" name="$2"
-  if [[ -e "$path" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        missing path: %s\n' "$name" "$path"
-  fi
-}
-
-assert_path_absent() {
-  local path="$1" name="$2"
-  if [[ ! -e "$path" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        still exists: %s\n' "$name" "$path"
-  fi
-}
-
-assert_is_ancestor() {
-  local repo="$1" ancestor="$2" descendant="$3" name="$4"
-  if git -C "$repo" merge-base --is-ancestor "$ancestor" "$descendant"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        %s is not an ancestor of %s\n' "$name" "$ancestor" "$descendant"
-  fi
-}
+ISSUE=topic
+ROOT=""
+MAIN=""
+WT=""
+BASE=""       # origin/main at the end of the fixture
+END=""        # HEAD at the end of the fixture
+END1=""       # HEAD~1 at the end of the fixture
+EXTERNAL=""   # a commit an outsider pushed to the remote branch
+ROW_SCRIPT="" # the package copy a row runs instead of the script under test
+ROW_PATH=""   # a PATH prefix holding a row's git shim
+ROW_CWD=""    # the directory a row's command runs from, when not the main checkout
 
 make_repo() {
   local repo="$1"
@@ -108,275 +69,354 @@ make_repo() {
   git -C "$repo" config user.email test@example.com
   git -C "$repo" config user.name Test
   git -C "$repo" config commit.gpgsign false
-  printf 'orig\n' > "$repo/f"
-  git -C "$repo" add f
+  printf 'orig\n' >"$repo/file.txt"
+  git -C "$repo" add file.txt
   git -C "$repo" commit -q -m base
+  printf 'WORKTREE_BASE_DIR="../trees"\n' >"$repo/.env.local"
 }
 
-echo "=== worktree push auto-rebase ==="
+# A main+origin pair whose issue worktree was created through the script.
+make_pair() {
+  make_repo "$MAIN"
+  git init -q --bare "$ROOT/origin.git"
+  git -C "$MAIN" remote add origin "$ROOT/origin.git"
+  git -C "$MAIN" push -q -u origin main
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" >/dev/null 2>&1)
+}
 
-# --- Core case -------------------------------------------------
-# Feature branch merged origin/main and resolved a same-line conflict, so it
-# already contains origin/main as an ancestor. A plain rebase would re-replay
-# the feature edit onto main-edit and conflict. push must skip the rebase and
-# publish the merge commit unchanged.
-ANCESTOR_ROOT="$TMP_ROOT/already-ancestor"
-make_repo "$ANCESTOR_ROOT/main"
-git init -q --bare "$ANCESTOR_ROOT/origin.git"
-git -C "$ANCESTOR_ROOT/main" remote add origin "$ANCESTOR_ROOT/origin.git"
-git -C "$ANCESTOR_ROOT/main" push -q -u origin main
-git -C "$ANCESTOR_ROOT/main" worktree add -q -b issue-ancestor "$ANCESTOR_ROOT/trees/issue-ancestor" main
-# Feature edits the shared line.
-printf 'feature\n' > "$ANCESTOR_ROOT/trees/issue-ancestor/f"
-git -C "$ANCESTOR_ROOT/trees/issue-ancestor" add f
-git -C "$ANCESTOR_ROOT/trees/issue-ancestor" commit -q -m 'feature edit'
-# main edits the same line differently and advances origin.
-printf 'main-side\n' > "$ANCESTOR_ROOT/main/f"
-git -C "$ANCESTOR_ROOT/main" add f
-git -C "$ANCESTOR_ROOT/main" commit -q -m 'main edit'
-git -C "$ANCESTOR_ROOT/main" push -q origin main
-# Feature merges origin/main and resolves the conflict — now it contains
-# origin/main as an ancestor, and a plain rebase WOULD conflict.
-git -C "$ANCESTOR_ROOT/trees/issue-ancestor" fetch -q origin
-git -C "$ANCESTOR_ROOT/trees/issue-ancestor" merge origin/main >/dev/null 2>&1 || true
-printf 'merged\n' > "$ANCESTOR_ROOT/trees/issue-ancestor/f"
-git -C "$ANCESTOR_ROOT/trees/issue-ancestor" add f
-git -C "$ANCESTOR_ROOT/trees/issue-ancestor" commit -q -m 'merge origin/main'
-ancestor_pre_head="$(git -C "$ANCESTOR_ROOT/trees/issue-ancestor" rev-parse HEAD)"
-set +e
-(
-  cd "$ANCESTOR_ROOT/main" && \
-    "$WORKTREE_SCRIPT" push "$ANCESTOR_ROOT/trees/issue-ancestor" --set-upstream \
-      >"$ANCESTOR_ROOT/push.out" 2>"$ANCESTOR_ROOT/push.err"
-)
-ancestor_code=$?
-set -e
-ancestor_post_head="$(git -C "$ANCESTOR_ROOT/trees/issue-ancestor" rev-parse HEAD)"
-assert_eq "$ancestor_code" "0" "push succeeds when origin/main already merged into branch"
-assert_not_contains "$(cat "$ANCESTOR_ROOT/push.err")" "Rebase onto origin/main failed" "push does not hit the spurious rebase-conflict error"
-assert_contains "$(cat "$ANCESTOR_ROOT/push.err")" "skipping rebase" "push reports it skipped the unnecessary rebase"
-assert_eq "$ancestor_post_head" "$ancestor_pre_head" "HEAD is unchanged (no rebase happened)"
-assert_eq "$(git --git-dir="$ANCESTOR_ROOT/origin.git" rev-parse refs/heads/issue-ancestor)" "$ancestor_pre_head" "feature branch lands on remote at the merge commit"
-assert_not_contains "$(cat "$ANCESTOR_ROOT/push.out")" "rebase-map:" "skipped rebase emits no rebase-map lines"
+commit_main() {
+  local file="$1" content="$2"
+  printf '%s\n' "$content" >"$MAIN/$file"
+  git -C "$MAIN" add "$file"
+  git -C "$MAIN" commit -q -m "main: $file"
+  git -C "$MAIN" push -q origin main
+}
 
-# --- Rebase still happens when genuinely behind -------------------------------
-# Feature does NOT contain origin/main as an ancestor (main advanced after the
-# branch point) and there are no conflicts. push must rebase and fast-forward
-# the base before pushing, proving the skip only triggers on the ancestor case.
-BEHIND_ROOT="$TMP_ROOT/behind"
-make_repo "$BEHIND_ROOT/main"
-git init -q --bare "$BEHIND_ROOT/origin.git"
-git -C "$BEHIND_ROOT/main" remote add origin "$BEHIND_ROOT/origin.git"
-git -C "$BEHIND_ROOT/main" push -q -u origin main
-git -C "$BEHIND_ROOT/main" worktree add -q -b issue-behind "$BEHIND_ROOT/trees/issue-behind" main
-# main advances on an unrelated file and pushes.
-printf 'advanced\n' > "$BEHIND_ROOT/main/main-advanced.txt"
-git -C "$BEHIND_ROOT/main" add main-advanced.txt
-git -C "$BEHIND_ROOT/main" commit -q -m 'advance main'
-git -C "$BEHIND_ROOT/main" push -q origin main
-# Feature adds its own (non-conflicting) files on the old base — two commits,
-# so the rebase map must pair each rewritten commit by position.
-printf 'fix\n' > "$BEHIND_ROOT/trees/issue-behind/fix.txt"
-git -C "$BEHIND_ROOT/trees/issue-behind" add fix.txt
-git -C "$BEHIND_ROOT/trees/issue-behind" commit -q -m 'review fix'
-printf 'fix2\n' > "$BEHIND_ROOT/trees/issue-behind/fix2.txt"
-git -C "$BEHIND_ROOT/trees/issue-behind" add fix2.txt
-git -C "$BEHIND_ROOT/trees/issue-behind" commit -q -m 'second review fix'
-git -C "$BEHIND_ROOT/trees/issue-behind" fetch -q origin
-# Precondition: branch does NOT yet contain the advanced origin/main.
-set +e
-git -C "$BEHIND_ROOT/trees/issue-behind" merge-base --is-ancestor origin/main HEAD
-behind_precond=$?
-set -e
-assert_eq "$behind_precond" "1" "behind branch does not contain origin/main before push"
-behind_pre_head="$(git -C "$BEHIND_ROOT/trees/issue-behind" rev-parse HEAD)"
-behind_pre_c1="$(git -C "$BEHIND_ROOT/trees/issue-behind" rev-parse HEAD~1)"
-behind_pre_c2="$behind_pre_head"
-set +e
-(
-  cd "$BEHIND_ROOT/main" && \
-    "$WORKTREE_SCRIPT" push "$BEHIND_ROOT/trees/issue-behind" --set-upstream \
-      >"$BEHIND_ROOT/push.out" 2>"$BEHIND_ROOT/push.err"
-)
-behind_code=$?
-set -e
-behind_post_head="$(git -C "$BEHIND_ROOT/trees/issue-behind" rev-parse HEAD)"
-assert_eq "$behind_code" "0" "push succeeds for a genuinely-behind branch"
-assert_ne "$behind_post_head" "$behind_pre_head" "rebase rewrote HEAD (rebase actually ran)"
-assert_path_exists "$BEHIND_ROOT/trees/issue-behind/main-advanced.txt" "rebase moved the base onto advanced origin/main"
-assert_is_ancestor "$BEHIND_ROOT/trees/issue-behind" origin/main HEAD "origin/main is contained after rebase"
-assert_eq "$(git --git-dir="$BEHIND_ROOT/origin.git" rev-parse refs/heads/issue-behind)" "$behind_post_head" "remote branch matches rebased local head"
+commit_wt() {
+  local file="$1" content="$2"
+  printf '%s\n' "$content" >"$WT/$file"
+  git -C "$WT" add "$file"
+  git -C "$WT" commit -q -m "wt: $file"
+}
 
-# --- the rebase prints an old→new commit map -----------------------------
-# Both branch commits were rewritten; push stdout must carry one
-# `rebase-map: <old-sha> <new-sha>` line per commit, paired by position.
-behind_post_c1="$(git -C "$BEHIND_ROOT/trees/issue-behind" rev-parse HEAD~1)"
-behind_post_c2="$behind_post_head"
-behind_push_out="$(cat "$BEHIND_ROOT/push.out")"
-assert_contains "$behind_push_out" "rebase-map: $behind_pre_c1 $behind_post_c1" "rebase map pairs the first rewritten commit"
-assert_contains "$behind_push_out" "rebase-map: $behind_pre_c2 $behind_post_c2" "rebase map pairs the second rewritten commit"
-assert_eq "$(grep -c '^rebase-map: ' <<<"$behind_push_out")" "2" "rebase map emits exactly one line per rewritten commit"
-assert_contains "$(cat "$BEHIND_ROOT/push.err")" "rebase-map lines follow (kendex#728)" "rebase map announces itself on stderr"
+tool() {
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" "$@" >/dev/null 2>&1) || true
+}
 
-# --- --no-rebase skips the rebase (unchanged behavior) ------------------------
-# A behind branch pushed with --no-rebase must not be rebased: HEAD stays put
-# and the advanced main file is absent from the worktree.
-NOREBASE_ROOT="$TMP_ROOT/no-rebase"
-make_repo "$NOREBASE_ROOT/main"
-git init -q --bare "$NOREBASE_ROOT/origin.git"
-git -C "$NOREBASE_ROOT/main" remote add origin "$NOREBASE_ROOT/origin.git"
-git -C "$NOREBASE_ROOT/main" push -q -u origin main
-git -C "$NOREBASE_ROOT/main" worktree add -q -b issue-norebase "$NOREBASE_ROOT/trees/issue-norebase" main
-printf 'advanced\n' > "$NOREBASE_ROOT/main/main-advanced.txt"
-git -C "$NOREBASE_ROOT/main" add main-advanced.txt
-git -C "$NOREBASE_ROOT/main" commit -q -m 'advance main'
-git -C "$NOREBASE_ROOT/main" push -q origin main
-printf 'fix\n' > "$NOREBASE_ROOT/trees/issue-norebase/fix.txt"
-git -C "$NOREBASE_ROOT/trees/issue-norebase" add fix.txt
-git -C "$NOREBASE_ROOT/trees/issue-norebase" commit -q -m 'review fix'
-norebase_pre_head="$(git -C "$NOREBASE_ROOT/trees/issue-norebase" rev-parse HEAD)"
-set +e
-(
-  cd "$NOREBASE_ROOT/main" && \
-    "$WORKTREE_SCRIPT" push "$NOREBASE_ROOT/trees/issue-norebase" --set-upstream --no-rebase \
-      >"$NOREBASE_ROOT/push.out" 2>"$NOREBASE_ROOT/push.err"
-)
-norebase_code=$?
-set -e
-norebase_post_head="$(git -C "$NOREBASE_ROOT/trees/issue-norebase" rev-parse HEAD)"
-assert_eq "$norebase_code" "0" "--no-rebase push succeeds"
-assert_eq "$norebase_post_head" "$norebase_pre_head" "--no-rebase leaves HEAD unchanged"
-assert_path_absent "$NOREBASE_ROOT/trees/issue-norebase/main-advanced.txt" "--no-rebase does not pull in advanced main"
-assert_not_contains "$(cat "$NOREBASE_ROOT/push.out")" "rebase-map:" "--no-rebase emits no rebase-map lines"
+remote_oid() {
+  git --git-dir="$ROOT/$1.git" rev-parse -q --verify "refs/heads/$ISSUE" 2>/dev/null || true
+}
 
-# --- push rejects unknown flags ---------------------------------------
-# The argument loop would end in a catch-all shift, so a typo'd flag was
-# dropped and the caller got a default-behavior push it never asked for. An
-# unrecognized flag must now be a usage error, which is what lets orch's
-# worktree-push wrapper pass flags through instead of keeping its own copy of
-# this vocabulary.
-run_push_args() {
-  local label="$1"
+# An outsider's commit on top of the remote branch: the tree it already has,
+# a parent the local branch never saw as a tip.
+external_commit() {
+  local old="" tree=""
+  old="$(remote_oid origin)"
+  if [[ -z "$old" ]]; then
+    echo "FIXTURE: no remote branch to move in $ROOT" >&2
+    exit 2
+  fi
+  tree="$(git --git-dir="$ROOT/origin.git" rev-parse "${old}^{tree}")"
+  GIT_AUTHOR_NAME=External GIT_AUTHOR_EMAIL=external@example.com \
+    GIT_COMMITTER_NAME=External GIT_COMMITTER_EMAIL=external@example.com \
+    git --git-dir="$ROOT/origin.git" commit-tree "$tree" -p "$old" -m 'external movement'
+}
+
+# A git ahead of the real one on PATH. `race` moves the remote branch to an
+# outsider's commit the first time the tool runs a rebase, after the lease
+# was captured. `capture` records the argv of the tool's push and answers
+# success without a remote (the rows with a GitHub URL for a remote).
+git_shim() {
+  mkdir -p "$ROOT/bin"
+  case "$1" in
+    race)
+      cat >"$ROOT/bin/git" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "\$@"; do
+  if [[ "\$arg" == rebase && ! -e "$ROOT/raced" ]]; then
+    touch "$ROOT/raced"
+    "$REAL_GIT" --git-dir="$ROOT/origin.git" update-ref "refs/heads/$ISSUE" "$EXTERNAL"
+    break
+  fi
+done
+exec "$REAL_GIT" "\$@"
+EOF
+      ;;
+    capture)
+      cat >"$ROOT/bin/git" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "\$@"; do
+  if [[ "\$arg" == push ]]; then
+    printf '%s\n' "\$*" >"$ROOT/push.args"
+    exit 0
+  fi
+done
+exec "$REAL_GIT" "\$@"
+EOF
+      ;;
+  esac
+  chmod +x "$ROOT/bin/git"
+  ROW_PATH="$ROOT/bin"
+}
+
+# The step vocabulary. The first word of a fixture builds the world; the
+# rest drive it.
+step() {
+  case "$1" in
+    pair) make_pair ;;
+    # The issue worktree is registered outside the configured trees base:
+    # the layout an app that owns worktree creation leaves.
+    outside)
+      make_repo "$MAIN"
+      git init -q --bare "$ROOT/origin.git"
+      git -C "$MAIN" remote add origin "$ROOT/origin.git"
+      git -C "$MAIN" push -q -u origin main
+      printf 'WORKTREE_BASE_DIR="../registry-trees"\n' >"$MAIN/.env.local"
+      # Something sits at the configured path, so only the current checkout
+      # can answer the ID: the registered-branch fallback would take this.
+      mkdir -p "$ROOT/registry-trees/$ISSUE"
+      WT="$ROOT/app-worktrees/$ISSUE"
+      git -C "$MAIN" worktree add -q -b "$ISSUE" "$WT" main
+      ROW_CWD="$WT"
+      ;;
+    # The remote is a GitHub URL nothing here can reach; the push is captured.
+    github)
+      make_repo "$MAIN"
+      git -C "$MAIN" remote add origin git@github.com:owner/repo.git
+      git -C "$MAIN" worktree add -q -b "$ISSUE" "$WT" main
+      git_shim capture
+      ;;
+    # The issue worktree and origin/main edit the same line of file.txt, and
+    # the worktree merged origin/main and resolved it: origin/main is an
+    # ancestor of the branch, and a rebase would replay the resolved edit.
+    merged)
+      commit_wt file.txt feature
+      commit_main file.txt main-side
+      git -C "$WT" fetch -q origin
+      git -C "$WT" merge origin/main >/dev/null 2>&1 || true
+      printf 'merged\n' >"$WT/file.txt"
+      git -C "$WT" add file.txt
+      git -C "$WT" commit -q -m 'merge origin/main'
+      ;;
+    advance) commit_main main-advanced.txt advanced ;;
+    fix) commit_wt fix.txt fix ;;
+    fix2) commit_wt fix2.txt fix2 ;;
+    # The branch's patch that main lands independently under another subject.
+    dup) commit_wt dup.txt dup ;;
+    dup-main) commit_main dup.txt dup ;;
+    publish) tool push "$ISSUE" --set-upstream ;;
+    move-remote)
+      EXTERNAL="$(external_commit)"
+      git --git-dir="$ROOT/origin.git" update-ref "refs/heads/$ISSUE" "$EXTERNAL"
+      ;;
+    # The main checkout fetched the remote branch after the outsider moved it.
+    observe) git -C "$MAIN" fetch -q origin "+refs/heads/$ISSUE:refs/remotes/origin/$ISSUE" ;;
+    race) EXTERNAL="$(external_commit)"; git_shim race ;;
+    # An outsider published the branch before this checkout ever fetched it:
+    # the first push's empty lease must refuse rather than overwrite.
+    foreign)
+      EXTERNAL="$(GIT_AUTHOR_NAME=External GIT_AUTHOR_EMAIL=external@example.com \
+        GIT_COMMITTER_NAME=External GIT_COMMITTER_EMAIL=external@example.com \
+        git --git-dir="$ROOT/origin.git" commit-tree \
+          "$(git --git-dir="$ROOT/origin.git" rev-parse 'refs/heads/main^{tree}')" \
+          -p refs/heads/main -m 'external branch')"
+      git --git-dir="$ROOT/origin.git" update-ref "refs/heads/$ISSUE" "$EXTERNAL"
+      ;;
+    bot-remote)
+      git init -q --bare "$ROOT/bot.git"
+      git -C "$MAIN" remote add bot "$ROOT/bot.git"
+      printf 'BOT_REMOTE_NAME="bot"\n' >>"$MAIN/.env.local"
+      ;;
+    broken-remote)
+      git -C "$MAIN" remote add broken "$ROOT/missing.git"
+      printf 'BOT_REMOTE_NAME="broken"\n' >>"$MAIN/.env.local"
+      ;;
+    # A copy of the package alone, or beside a sibling GitHub package whose
+    # helper marks the git invocation it owns.
+    standalone)
+      mkdir -p "$ROOT/pkg"
+      cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
+      ROW_SCRIPT="$ROOT/pkg/worktree/scripts/worktree"
+      ;;
+    with-helper)
+      step standalone
+      mkdir -p "$ROOT/pkg/github/scripts/lib"
+      printf 'kendex_github_git() {\n  git -c kendex.test-github-helper=loaded "$@"\n}\n' >"$ROOT/pkg/github/scripts/lib/gh-auth.sh"
+      ;;
+    *)
+      echo "UNKNOWN-STEP: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+build() {
+  local word
+  ROOT="$TMP_ROOT/$1"
   shift
-  set +e
-  (
-    cd "$NOREBASE_ROOT/main" && \
-      "$WORKTREE_SCRIPT" push "$@" \
-        >"$NOREBASE_ROOT/$label.out" 2>"$NOREBASE_ROOT/$label.err"
-  )
-  PUSH_ARGS_RC=$?
-  set -e
+  MAIN="$ROOT/main"
+  WT="$ROOT/trees/$ISSUE"
+  BASE="" END="" END1="" EXTERNAL="" ROW_SCRIPT="" ROW_PATH="" ROW_CWD=""
+  for word in "$@"; do
+    step "$word"
+  done
+  BASE="$(git -C "$MAIN" rev-parse -q --verify origin/main 2>/dev/null || git -C "$MAIN" rev-parse main)"
+  END="$(git -C "$WT" rev-parse HEAD)"
+  END1="$(git -C "$WT" rev-parse HEAD~1)"
 }
 
-typo_pre_head="$(git -C "$NOREBASE_ROOT/trees/issue-norebase" rev-parse HEAD)"
-run_push_args typo "$NOREBASE_ROOT/trees/issue-norebase" --no-rebse
-assert_eq "$PUSH_ARGS_RC" "1" "a typo'd flag is a usage error, not a silent default push"
-assert_contains "$(cat "$NOREBASE_ROOT/typo.err")" "unknown option '--no-rebse' for push" "the rejected flag is named"
-assert_eq "$(git -C "$NOREBASE_ROOT/trees/issue-norebase" rev-parse HEAD)" "$typo_pre_head" "a rejected flag pushes and rebases nothing"
+# --- rendering ------------------------------------------------------------------
 
-# The known flags still parse ahead of the positional, so a flag-first call is
-# not mistaken for an issue ID. Exit 0 alone proves nothing here: dropping the
-# positional falls back to $PWD, the main checkout, whose push also succeeds.
-# The branch must arrive on the remote at the named tree's head, which only
-# happens if the trailing positional became the target.
-FLAGFIRST_ROOT="$TMP_ROOT/flag-first"
-make_repo "$FLAGFIRST_ROOT/main"
-git init -q --bare "$FLAGFIRST_ROOT/origin.git"
-git -C "$FLAGFIRST_ROOT/main" remote add origin "$FLAGFIRST_ROOT/origin.git"
-git -C "$FLAGFIRST_ROOT/main" push -q -u origin main
-git -C "$FLAGFIRST_ROOT/main" worktree add -q -b issue-flagfirst "$FLAGFIRST_ROOT/trees/issue-flagfirst" main
-printf 'advanced\n' > "$FLAGFIRST_ROOT/main/main-advanced.txt"
-git -C "$FLAGFIRST_ROOT/main" add main-advanced.txt
-git -C "$FLAGFIRST_ROOT/main" commit -q -m 'advance main'
-git -C "$FLAGFIRST_ROOT/main" push -q origin main
-printf 'fix\n' > "$FLAGFIRST_ROOT/trees/issue-flagfirst/fix.txt"
-git -C "$FLAGFIRST_ROOT/trees/issue-flagfirst" add fix.txt
-git -C "$FLAGFIRST_ROOT/trees/issue-flagfirst" commit -q -m 'flag-first fix'
-flagfirst_pre_head="$(git -C "$FLAGFIRST_ROOT/trees/issue-flagfirst" rev-parse HEAD)"
-set +e
-(
-  cd "$FLAGFIRST_ROOT/main" && \
-    "$WORKTREE_SCRIPT" push --no-rebase --set-upstream "$FLAGFIRST_ROOT/trees/issue-flagfirst" \
-      >"$FLAGFIRST_ROOT/push.out" 2>"$FLAGFIRST_ROOT/push.err"
-)
-flagfirst_code=$?
-set -e
-assert_eq "$flagfirst_code" "0" "flags may precede the ID or path"
-assert_eq "$(git --git-dir="$FLAGFIRST_ROOT/origin.git" rev-parse refs/heads/issue-flagfirst)" "$flagfirst_pre_head" "the trailing positional is the pushed target, not \$PWD"
-assert_eq "$(git -C "$FLAGFIRST_ROOT/trees/issue-flagfirst" rev-parse HEAD)" "$flagfirst_pre_head" "the flag-first --no-rebase left HEAD unchanged"
-assert_path_absent "$FLAGFIRST_ROOT/trees/issue-flagfirst/main-advanced.txt" "the flag-first --no-rebase did not pull in advanced main"
+oid_name() {
+  local oid="$1"
+  if [[ -z "$oid" ]]; then printf -- '-'
+  elif [[ "$oid" == "$BASE" ]]; then printf 'base'
+  elif [[ "$oid" == "$END" ]]; then printf 'end'
+  elif [[ -n "$EXTERNAL" && "$oid" == "$EXTERNAL" ]]; then printf 'external'
+  elif [[ "$oid" == "$(git -C "$WT" rev-parse HEAD)" ]]; then printf 'head'
+  else printf '%s' "$oid"
+  fi
+}
 
-# The rejection arm shares its loop with --help, and the error it prints
-# advertises `push --help` as the recovery. That the global pre-scan answers
-# --help before this case is what keeps the advice true; nothing else here
-# holds it.
-run_push_args help --help
-assert_eq "$PUSH_ARGS_RC" "0" "the advertised recovery command still exits 0"
-assert_contains "$(cat "$NOREBASE_ROOT/help.out")" "Usage: worktree push" "push --help prints the push usage"
+# Paths and commits by their names. Git's own push report (the remote's
+# path, the ref lines, the rejection, its hint) is not the tool's clause and
+# is dropped. A literal semicolon is escaped before the lines are joined on
+# it; usage text is cut at its first line.
+alias_text() {
+  local head head1
+  head="$(git -C "$WT" rev-parse HEAD)"
+  head1="$(git -C "$WT" rev-parse HEAD~1)"
+  sed \
+    -e "s|$WT|<wt>|g" \
+    -e "s|$ROOT|<root>|g" \
+    -e "s|${ROW_SCRIPT:-$WORKTREE_SCRIPT}|<worktree>|g" \
+    -e "s|$END1|<end~1>|g" \
+    -e "s|$END|<end>|g" \
+    -e "s|$head1|<head~1>|g" \
+    -e "s|$head|<head>|g" \
+    -e "s|${EXTERNAL:-NONE}|<external>|g" \
+    -e '/^To <root>\/[a-z]*\.git$/d' \
+    -e '/^To git@github\.com/d' \
+    -e '/^error: failed to push/d' \
+    -e '/^hint: /d' \
+    -e "/^branch '.*' set up to track/d" \
+    -e '/^ [!*+] /d' \
+    -e '/^   [0-9a-f][0-9a-f]*\.\.[0-9a-f][0-9a-f]* /d' \
+    -e 's/;/\\;/g' |
+    awk '/^Usage: / { print; exit } { print }' |
+    paste -s -d ';' -
+}
 
-run_push_args twoargs "$NOREBASE_ROOT/trees/issue-norebase" issue-norebase
-assert_eq "$PUSH_ARGS_RC" "1" "a second positional is a usage error"
-assert_contains "$(cat "$NOREBASE_ROOT/twoargs.err")" "takes a single issue ID or path" "the duplicate positional is reported"
+worktree_head() {
+  local head
+  head="$(git -C "$WT" rev-parse HEAD)"
+  if [[ "$head" == "$END" ]]; then printf 'end'
+  elif git -C "$WT" merge-base --is-ancestor "$BASE" "$head"; then printf 'rebased'
+  else printf 'other'
+  fi
+}
 
-# An EMPTY positional is not "no target": resolution would fall back to $PWD
-# and push the current checkout — the unintended default push this parser
-# exists to prevent, one unset caller variable away. Seen-ness is tracked
-# apart from the value, so an empty first argument still counts against the
-# single-target rule.
-empty_pre_head="$(git -C "$NOREBASE_ROOT/trees/issue-norebase" rev-parse HEAD)"
-run_push_args emptyarg ""
-assert_eq "$PUSH_ARGS_RC" "1" "an empty positional is a usage error, not a fallback to \$PWD"
-assert_contains "$(cat "$NOREBASE_ROOT/emptyarg.err")" "push target is empty" "the empty target is reported"
+state() {
+  local ahead tree remotes="" name push="-"
+  ahead="$(git -C "$WT" rev-list --count "$BASE..HEAD" 2>/dev/null || true)"
+  tree="$(git -C "$WT" ls-tree -r --name-only HEAD | while read -r name; do
+    body="$(git -C "$WT" cat-file -p "HEAD:$name")"
+    printf '%s:%s,' "$name" "${body%%$'\n'*}"
+  done)"
+  for name in origin bot; do
+    [[ -d "$ROOT/$name.git" ]] && remotes="$remotes,$name:$(oid_name "$(remote_oid "$name")")"
+  done
+  [[ -f "$ROOT/push.args" ]] && push="$(alias_text <"$ROOT/push.args")"
+  printf 'head=%s ahead=%s tree=%s remote=%s upstream=%s push=%s' \
+    "$(worktree_head)" "${ahead:--}" "${tree%,}" "${remotes:-,-}" \
+    "$(git -C "$WT" config "branch.$ISSUE.remote" 2>/dev/null || printf -- '-')" "$push"
+}
 
-run_push_args emptythenreal "" "$NOREBASE_ROOT/trees/issue-norebase"
-assert_eq "$PUSH_ARGS_RC" "1" "an empty positional followed by a real one is still refused"
+# The command runs from the main checkout (or the row's directory) under the
+# row's PATH prefix and script; @wt names the worktree's path.
+run() {
+  local -a argv
+  local rc=0 i
+  read -r -a argv <<<"$1"
+  for i in "${!argv[@]}"; do
+    [[ "${argv[i]}" == @wt ]] && argv[i]="$WT"
+    [[ "${argv[i]}" == @empty ]] && argv[i]=""
+  done
+  (cd "${ROW_CWD:-$MAIN}" && PATH="${ROW_PATH:+$ROW_PATH:}$PATH" "${ROW_SCRIPT:-$WORKTREE_SCRIPT}" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  printf 'rc=%s out=%s err=%s %s' "$rc" \
+    "$(alias_text <"$ROOT/out")" "$(alias_text <"$ROOT/err")" "$(state | sed 's/remote=,/remote=/')"
+}
 
-run_push_args realthenempty "$NOREBASE_ROOT/trees/issue-norebase" ""
-assert_eq "$PUSH_ARGS_RC" "1" "a real positional followed by an empty one is a duplicate, not a silent second target"
-assert_contains "$(cat "$NOREBASE_ROOT/realthenempty.err")" "takes a single issue ID or path" "the empty second positional is reported as a duplicate"
-assert_eq "$(git -C "$NOREBASE_ROOT/trees/issue-norebase" rev-parse HEAD)" "$empty_pre_head" "an empty-target refusal pushes and rebases nothing"
+# --- the expected text ----------------------------------------------------------
+# Each spec word expands to the tool's whole message for that terminal path.
 
-# --- a commit dropped by the rebase maps to "dropped" ------------------
-# The branch carries a commit whose patch main already merged (different SHA,
-# same patch-id) plus its own fix. The rebase drops the duplicated commit, so
-# pre/post counts differ and the map must pair by subject: the surviving commit
-# maps old→new, and the vanished one maps old→dropped.
-DROP_ROOT="$TMP_ROOT/dropped"
-make_repo "$DROP_ROOT/main"
-git init -q --bare "$DROP_ROOT/origin.git"
-git -C "$DROP_ROOT/main" remote add origin "$DROP_ROOT/origin.git"
-git -C "$DROP_ROOT/main" push -q -u origin main
-git -C "$DROP_ROOT/main" worktree add -q -b issue-dropped "$DROP_ROOT/trees/issue-dropped" main
-# Branch commit 1: the patch main will independently merge.
-printf 'dup\n' > "$DROP_ROOT/trees/issue-dropped/dup.txt"
-git -C "$DROP_ROOT/trees/issue-dropped" add dup.txt
-git -C "$DROP_ROOT/trees/issue-dropped" commit -q -m 'duplicated change'
-# Branch commit 2: the branch's own fix.
-printf 'fix\n' > "$DROP_ROOT/trees/issue-dropped/fix.txt"
-git -C "$DROP_ROOT/trees/issue-dropped" add fix.txt
-git -C "$DROP_ROOT/trees/issue-dropped" commit -q -m 'review fix'
-# main lands the same patch under another subject and advances origin.
-printf 'dup\n' > "$DROP_ROOT/main/dup.txt"
-git -C "$DROP_ROOT/main" add dup.txt
-git -C "$DROP_ROOT/main" commit -q -m 'main landed the dup patch'
-git -C "$DROP_ROOT/main" push -q origin main
-drop_pre_c1="$(git -C "$DROP_ROOT/trees/issue-dropped" rev-parse HEAD~1)"
-drop_pre_c2="$(git -C "$DROP_ROOT/trees/issue-dropped" rev-parse HEAD)"
-set +e
-(
-  cd "$DROP_ROOT/main" && \
-    "$WORKTREE_SCRIPT" push "$DROP_ROOT/trees/issue-dropped" --set-upstream \
-      >"$DROP_ROOT/push.out" 2>"$DROP_ROOT/push.err"
-)
-drop_code=$?
-set -e
-drop_post_head="$(git -C "$DROP_ROOT/trees/issue-dropped" rev-parse HEAD)"
-drop_push_out="$(cat "$DROP_ROOT/push.out")"
-assert_eq "$drop_code" "0" "push succeeds when the rebase drops a duplicated commit"
-assert_eq "$(git -C "$DROP_ROOT/trees/issue-dropped" rev-list --count origin/main..HEAD)" "1" "rebase dropped the duplicated commit"
-assert_contains "$drop_push_out" "rebase-map: $drop_pre_c1 dropped" "rebase map reports the vanished commit as dropped"
-assert_contains "$drop_push_out" "rebase-map: $drop_pre_c2 $drop_post_head" "rebase map pairs the surviving commit by subject"
-assert_eq "$(grep -c '^rebase-map: ' <<<"$drop_push_out")" "2" "dropped-commit rebase map covers both pre-rebase commits"
+err_text() {
+  local spec="$1"
+  case "$spec" in
+    *+*) printf '%s;%s' "$(err_text "${spec%%+*}")" "$(err_text "${spec#*+}")" ;;
+    -) printf '' ;;
+    skip-rebase) printf '%s' "→ origin/main already contained in topic\; skipping rebase" ;;
+    map:*) printf '%s' "→ auto-rebase rewrote ${spec#map:} branch commit(s)\; rebase-map lines follow (kendex#728)" ;;
+    unknown:*) printf '%s' "Error: unknown option '${spec#unknown:}' for push;Run: <worktree> push --help" ;;
+    two:*) printf '%s' "Error: push takes a single issue ID or path (got '${spec#two:}')" ;;
+    empty) printf '%s' "Error: push target is empty — pass an issue ID or path, or no argument at all to push the current checkout" ;;
+    lease-rejected) printf '%s' "Error: Push rejected. Remote 'origin/topic' may have changed since the force-with-lease expectation\; fetch and rebase/merge before retrying." ;;
+    not-contained) printf '%s' "Error: Remote 'origin/topic' points at <external>, which is not contained in local branch 'topic'.;Fetch and rebase/merge 'origin/topic' before using worktree push." ;;
+    fetch-failed) printf '%s' "Error: Could not fetch remote branch 'topic' from remote 'broken' for force-with-lease.;  fatal: '<root>/missing.git' does not appear to be a git repository;  fatal: Could not read from remote repository.;  ;  Please make sure you have the correct access rights;  and the repository exists." ;;
+    *) printf 'UNKNOWN-ERR-SPEC:%s' "$spec" ;;
+  esac
+}
+
+out_text() {
+  case "$1" in
+    -) printf '' ;;
+    usage) printf 'Usage: worktree push [ID|/path] [--set-upstream|-u] [--no-rebase]' ;;
+    map2) printf '%s' "rebase-map: <end~1> <head~1>;rebase-map: <end> <head>" ;;
+    map-dropped) printf '%s' "rebase-map: <end~1> dropped;rebase-map: <end> <head>" ;;
+    *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
+  esac
+}
+
+# --- the rows ---------------------------------------------------------------------
+# label|fixture|command|rc|out|err|state
+ROWS='a branch that already contains origin/main is pushed unrebased, with no map|pair merged|push @wt --set-upstream|0|-|skip-rebase|head=end ahead=2 tree=file.txt:merged remote=origin:end upstream=origin push=-
+a behind branch is rebased onto the advanced base and the map pairs each rewritten commit by position|pair advance fix fix2|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:head upstream=origin push=-
+--no-rebase pushes the behind branch where it stands|pair advance fix|push @wt --set-upstream --no-rebase|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=-
+an unknown flag is a usage error that pushes and rebases nothing|pair advance fix|push @wt --no-rebse|1|-|unknown:--no-rebse|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
+flags before the target still make the trailing positional the pushed tree, not the checkout|pair advance fix|push --no-rebase --set-upstream @wt|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=-
+push --help, the advertised recovery, prints the push usage|pair fix|push --help|0|usage|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
+a second positional is a usage error|pair fix|push @wt topic|1|-|two:<wt>'"'"' and '"'"'topic|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
+an empty positional is refused, not resolved to the current checkout|pair fix|push @empty|1|-|empty|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
+an empty positional before a real one is still refused|pair fix|push @empty @wt|1|-|empty|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
+an empty positional after a real one is a duplicate, not a silent second target|pair fix|push @wt @empty|1|-|two:<wt>'"'"' and '"'"'|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
+a commit whose patch main already landed is dropped by the rebase and mapped as dropped|pair dup fix dup-main|push @wt --set-upstream|0|map-dropped|map:2|head=rebased ahead=1 tree=dup.txt:dup,file.txt:orig,fix.txt:fix remote=origin:head upstream=origin push=-
+an issue ID names the current checkout when it is an issue worktree outside the trees base|outside fix|push TOPIC --no-rebase|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=-
+a first push by issue ID creates the remote branch and sets its upstream|pair fix|push TOPIC --set-upstream|0|-|skip-rebase|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=-
+an unobserved remote branch is not overwritten by a first push|pair fix foreign|push TOPIC --set-upstream|1|-|skip-rebase+lease-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:external upstream=- push=-
+a rebased push over a published branch replaces the remote under its lease|pair fix publish advance fix2|push TOPIC|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:head upstream=origin push=-
+a remote moved after the lease was captured is not overwritten|pair fix publish advance fix2 race|push TOPIC|1|map2|map:2+lease-rejected|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:external upstream=origin push=-
+a remote already observed to diverge is refused before any rebase|pair fix publish move-remote observe fix2|push TOPIC|1|-|not-contained|head=end ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2 remote=origin:external upstream=origin push=-
+a lease fetch that fails for a reason other than a missing branch aborts the push|pair fix broken-remote|push TOPIC|1|-|fetch-failed|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
+the configured bot remote takes the lease and the push|pair bot-remote fix publish advance fix2|push TOPIC|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:-,bot:head upstream=bot push=-
+the package alone pushes through plain git|github fix standalone|push TOPIC --no-rebase --set-upstream|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=- upstream=- push=-C <wt> push -u origin HEAD:refs/heads/topic
+a sibling GitHub helper, when present, owns the git invocation|github fix with-helper|push TOPIC --no-rebase --set-upstream|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=- upstream=- push=-c kendex.test-github-helper=loaded -C <wt> push -u origin HEAD:refs/heads/topic
+'
+
+echo "=== worktree push ==="
+n=0
+while IFS='|' read -r label fixture command rc out err want_state; do
+  [[ -n "$label$fixture$command$rc$out$err$want_state" ]] || continue
+  n=$((n + 1))
+  # shellcheck disable=SC2086
+  build "row-$n" $fixture
+  if [[ "${PROBE:-}" == 1 ]]; then
+    printf '%s => %s\n' "$label" "$(run "$command")"
+    continue
+  fi
+  assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
+done <<<"$ROWS"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
