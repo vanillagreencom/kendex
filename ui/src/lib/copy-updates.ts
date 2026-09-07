@@ -168,7 +168,7 @@ export const UPDATES_ONE_AT_A_TIME_NOTE =
 // project would be a plain untruth about the one place that is not one.
 export const UPDATES_UNREADABLE_TITLE = "Some places couldn't be read";
 export const unreadablePlacesLabel = (names: string[]): string =>
-  `No update standing for ${names.join(", ")}.`;
+  `kendex can't read the install record for ${names.join(", ")}, so those packages aren't counted here.`;
 /** One place's line where there is room for the reason the read gave —
  * the note on the Updates page. The badge tooltip and Home's row have a
  * line each and name the places only. Which kind of failure it was is

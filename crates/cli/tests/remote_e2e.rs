@@ -414,3 +414,40 @@ fn updates_refuses_a_whole_place_apply_beside_a_named_package() {
         "the refused run applied something: {printed}"
     );
 }
+
+/// An install edited on disk is a standing fact the listing says, with or
+/// without a newer version behind it: Home counts every edited package,
+/// and a listing that stayed silent about one with nothing newer would
+/// disagree with it about the same scope.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_edited_install_is_listed_even_with_nothing_newer() {
+    let tmp = fixture();
+    let home = tmp.path();
+    let proj = home.join("proj");
+    fs::create_dir_all(&proj).unwrap();
+    let output = kendex(home, &proj, &["add", "--skill", "gh", "-y"]);
+    assert!(output.status.success(), "{}", said(&output));
+
+    let clean = said(&kendex(home, &proj, &["updates"]));
+    assert!(
+        clean.contains("everything is on its latest version"),
+        "{clean}"
+    );
+
+    fs::write(
+        proj.join(".agents/skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: github flows\n---\nMy edit.\n",
+    )
+    .unwrap();
+    let edited = said(&kendex(home, &proj, &["updates"]));
+    let line = edited
+        .lines()
+        .find(|line| line.contains("skill gh"))
+        .unwrap_or_else(|| panic!("no gh line in {edited}"));
+    assert!(line.contains("[edited on disk"), "{line}");
+    assert!(
+        !edited.contains("everything is on its latest version"),
+        "{edited}"
+    );
+}

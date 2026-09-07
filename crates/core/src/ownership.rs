@@ -161,7 +161,9 @@ pub fn find(
         None => {
             scanned =
                 crate::scan::scan_scopes(env, &settings.harness_roots, std::slice::from_ref(scope));
-            records.warnings.extend(scanned.warnings.iter().cloned());
+            records
+                .warnings
+                .extend(scanned.warnings.iter().map(ToString::to_string));
             scanned.items.as_slice()
         }
     };

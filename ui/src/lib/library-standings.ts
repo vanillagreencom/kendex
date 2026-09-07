@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import {
   type PlaceStanding,
+  placeFacts,
   placeStandings,
   placesSource,
 } from "@/lib/customized-places";
@@ -14,9 +15,15 @@ import { useUpdatesStore } from "@/stores/updates";
  *  Built once for the whole table rather than per row: reading a place's
  *  customizations walks its whole manifest, and the mark, the fork badges
  *  and the legend all ask the same question of the same rows. */
-export function useLibraryStandings(
-  groups: ItemGroup[],
-): (group: ItemGroup) => PlaceStanding[] {
+export function useLibraryStandings(groups: ItemGroup[]): {
+  standingsFor: (group: ItemGroup) => PlaceStanding[];
+  /** Whether the package's installed files were edited on disk in any
+   *  place — the same per-place fact the standings read, asked on its
+   *  own because a fork or a settings overlay outranks it in a standing.
+   *  Null until the updates read has landed: nothing has been counted
+   *  yet, which is not the same as nothing edited. */
+  editedAnywhere: ((group: ItemGroup) => boolean) | null;
+} {
   const saved = useEditorStore((s) => s.saved);
   const savedSettings = useEditorStore((s) => s.savedSettings);
   const updateRows = useUpdatesStore((s) => s.rows);
@@ -34,5 +41,20 @@ export function useLibraryStandings(
       );
     return out;
   }, [groups, places]);
-  return (group: ItemGroup) => byKey.get(group.key) ?? [];
+  const editedAnywhere = useMemo(
+    () =>
+      updatesLoaded
+        ? (group: ItemGroup) =>
+            groupScopes(group).some(
+              (scope) =>
+                placeFacts(places, group.kind, group.name, scope).edited ===
+                true,
+            )
+        : null,
+    [places, updatesLoaded],
+  );
+  return {
+    standingsFor: (group: ItemGroup) => byKey.get(group.key) ?? [],
+    editedAnywhere,
+  };
 }

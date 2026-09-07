@@ -7,7 +7,13 @@ import {
 } from "./library-handoff";
 
 const EVERYTHING: LibraryView = {
-  filters: { kind: "any", harness: "any", tag: "any", from: "any" },
+  filters: {
+    kind: "any",
+    harness: "any",
+    tag: "any",
+    from: "any",
+    edited: "any",
+  },
   search: "",
   scope: "all",
 };
@@ -27,6 +33,16 @@ describe("libraryViewFromHandoff", () => {
       ...EVERYTHING,
       filters: { ...EVERYTHING.filters, harness: "claude" },
     });
+  });
+
+  // Home's edited row lands on the edited packages and nothing wider; a
+  // link that asked for them must not open the whole Library.
+  it("narrows to edited packages when the link asked for those", () => {
+    expect(libraryViewFromHandoff({ edited: true })).toEqual({
+      ...EVERYTHING,
+      filters: { ...EVERYTHING.filters, edited: "edited" },
+    });
+    expect(libraryViewFromHandoff({ edited: false })).toEqual(EVERYTHING);
   });
 
   it("looks where the link asked", () => {
@@ -54,7 +70,7 @@ describe("isNarrowed", () => {
   });
 
   it("counts every picker on the strip", () => {
-    for (const name of ["kind", "harness", "tag", "from"] as const) {
+    for (const name of ["kind", "harness", "tag", "from", "edited"] as const) {
       expect(
         isNarrowed({
           ...EVERYTHING,

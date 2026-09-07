@@ -5,7 +5,7 @@ use specta::Type;
 
 use crate::env::Env;
 use crate::harness::{HarnessAdapter, Surface, all_adapters};
-use crate::model::{DetectedHarness, FileState, ItemKind, ObservedItem, Scope};
+use crate::model::{DetectedHarness, FileState, HarnessId, ItemKind, ObservedItem, Scope};
 use crate::settings::AppSettings;
 
 pub(crate) mod antigravity;
@@ -27,7 +27,107 @@ pub struct ScanResult {
     /// Registered projects whose directory is gone — flagged, never dropped.
     pub missing_projects: Vec<PathBuf>,
     /// Unreadable or unparsable surfaces; truth the scan could not reach.
-    pub warnings: Vec<String>,
+    pub warnings: Vec<ScanWarning>,
+}
+
+/// One surface the scan could not read as the document it expects, with
+/// the tool and kind the surface belongs to: a reader deciding what to do
+/// about a broken file needs to know whose file it is, and the path alone
+/// says that only to someone who already knows every tool's layout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanWarning {
+    pub harness: HarnessId,
+    pub kind: ItemKind,
+    pub path: PathBuf,
+    pub problem: ScanProblem,
+}
+
+/// What kept a surface from being read, by shape rather than by parser
+/// message: an empty file and a file with a stray comma are one parser
+/// error and two different remedies.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum ScanProblem {
+    /// A document was expected and the file holds nothing: zero bytes,
+    /// whitespace, or comments alone. Another tool leaves such a file
+    /// behind when it creates its config before writing to it.
+    EmptyFile,
+    /// The text is not the format the surface reads; the parser's own
+    /// message says where it stopped.
+    InvalidJson {
+        message: String,
+    },
+    InvalidToml {
+        message: String,
+    },
+    /// A directory or file the scan could not read at all.
+    Unreadable {
+        message: String,
+    },
+    /// A word in a document's tags that names no tag.
+    UnknownTag {
+        message: String,
+    },
+}
+
+impl std::fmt::Display for ScanProblem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ScanProblem::EmptyFile => f.write_str("the file is empty"),
+            ScanProblem::InvalidJson { message } => write!(f, "not valid JSON: {message}"),
+            ScanProblem::InvalidToml { message } => write!(f, "not valid TOML: {message}"),
+            ScanProblem::Unreadable { message } => write!(f, "unreadable — {message}"),
+            ScanProblem::UnknownTag { message } => f.write_str(message),
+        }
+    }
+}
+
+impl std::fmt::Display for ScanWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} {} {}: {}",
+            self.harness.display_name(),
+            self.kind.name(),
+            self.path.display(),
+            self.problem
+        )
+    }
+}
+
+/// Say a warning once per file. Several surfaces read one file — Claude's
+/// settings.json is a hook surface and a plugin surface, `~/.claude.json`
+/// is the MCP surface of the personal scope and of every project — and a
+/// file that cannot be read fails every one of them the same way. The
+/// first surface to say so names the file; a second saying of the same
+/// path and problem is the same fact, and dropped.
+pub(crate) fn push_warning(warnings: &mut Vec<ScanWarning>, warning: ScanWarning) {
+    let said = warnings
+        .iter()
+        .any(|known| known.path == warning.path && known.problem == warning.problem);
+    if !said {
+        warnings.push(warning);
+    }
+}
+
+/// The tool and kind a surface is scanned for, stamped on every warning
+/// the surface's files raise.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SurfaceOwner {
+    pub(crate) harness: HarnessId,
+    pub(crate) kind: ItemKind,
+}
+
+impl SurfaceOwner {
+    pub(crate) fn warning(self, path: PathBuf, problem: ScanProblem) -> ScanWarning {
+        ScanWarning {
+            harness: self.harness,
+            kind: self.kind,
+            path,
+            problem,
+        }
+    }
 }
 
 /// Read-only truth of this machine: every kind, every harness, global scope
@@ -168,14 +268,18 @@ fn scan_surface(
     provenance: &mut provenance::OriginCache,
     result: &mut ScanResult,
 ) {
+    let owner = SurfaceOwner {
+        harness: adapter.id(),
+        kind,
+    };
     match surface {
         Surface::FileDir {
             dir,
             exts,
             prefixes,
         } => {
-            for found in files::scan_file_dir(dir, exts, prefixes, &mut result.warnings) {
-                warn_unknown_tags(&found, result);
+            for found in files::scan_file_dir(dir, exts, prefixes, owner, &mut result.warnings) {
+                warn_unknown_tags(&found, owner, result);
                 result.items.push(ObservedItem {
                     kind,
                     name: found.name,
@@ -193,8 +297,8 @@ fn scan_surface(
             }
         }
         Surface::SubdirPerItem { dir, marker } => {
-            for found in files::scan_subdirs(dir, marker, &mut result.warnings) {
-                warn_unknown_tags(&found, result);
+            for found in files::scan_subdirs(dir, marker, owner, &mut result.warnings) {
+                warn_unknown_tags(&found, owner, result);
                 result.items.push(ObservedItem {
                     kind,
                     name: found.name,
@@ -213,12 +317,12 @@ fn scan_surface(
         }
         Surface::Structured { path, reader } => {
             if path.exists() {
-                scan_structured_file(adapter, kind, &scope, path, reader, env, result);
+                scan_structured_file(adapter, owner, &scope, path, reader, env, result);
             }
         }
         Surface::StructuredDir { dir, ext, reader } => {
-            for path in files::scan_documents(dir, ext, &mut result.warnings) {
-                scan_structured_file(adapter, kind, &scope, &path, reader, env, result);
+            for path in files::scan_documents(dir, ext, owner, &mut result.warnings) {
+                scan_structured_file(adapter, owner, &scope, &path, reader, env, result);
             }
         }
     }
@@ -229,29 +333,26 @@ fn scan_surface(
 // thinking the item is tagged when it is not, so the scan says so and names
 // the vocabulary.
 
-fn warn_unknown_tags(found: &files::FoundFile, result: &mut ScanResult) {
+fn warn_unknown_tags(found: &files::FoundFile, owner: SurfaceOwner, result: &mut ScanResult) {
     let Some(message) = found.meta.unknown_warning() else {
         return;
     };
-    // One file read through two tools' folders is one mistake, not two: the
-    // paths differ (each tool links to the shared folder its own way) and
-    // the complaint is identical, so it is said once.
-    let warning = format!("{}: {message}", found.path.display());
-    if !result.warnings.contains(&warning) {
-        result.warnings.push(warning);
-    }
+    push_warning(
+        &mut result.warnings,
+        owner.warning(found.path.clone(), ScanProblem::UnknownTag { message }),
+    );
 }
 
-#[allow(clippy::too_many_arguments)]
 fn scan_structured_file(
     adapter: &dyn HarnessAdapter,
-    kind: ItemKind,
+    owner: SurfaceOwner,
     scope: &Scope,
     path: &std::path::Path,
     reader: &crate::harness::Reader,
     env: &Env,
     result: &mut ScanResult,
 ) {
+    let kind = owner.kind;
     match readers::read_structured(path, reader, env) {
         Ok(entries) => {
             for entry in entries {
@@ -284,9 +385,10 @@ fn scan_structured_file(
                 });
             }
         }
-        Err(message) => result
-            .warnings
-            .push(format!("{}: {message}", path.display())),
+        Err(problem) => push_warning(
+            &mut result.warnings,
+            owner.warning(path.to_path_buf(), problem),
+        ),
     }
 }
 

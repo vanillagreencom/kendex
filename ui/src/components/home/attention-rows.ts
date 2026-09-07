@@ -1,20 +1,29 @@
-import type { ScanResult, UnreadableScope, UpdateRow } from "@/bindings";
+import type {
+  ScanResult,
+  ScanWarning,
+  UnreadableScope,
+  UpdateRow,
+} from "@/bindings";
 import type { AttentionRow } from "@/components/home/attention-section";
 import {
   AUDIT_ATTENTION_DETAIL,
   AUDIT_ATTENTION_TITLE,
-  FORKED_ATTENTION_DETAIL,
-  forkedAttentionTitle,
+  EDITED_ATTENTION_ACTION,
+  editedAttentionDetail,
+  editedAttentionTitle,
+  namesInWords,
   TRY_AGAIN_LABEL,
   UPDATES_ATTENTION_DETAIL,
   UPDATES_ATTENTION_TITLE,
 } from "@/lib/copy";
 import { SEE_PROBLEMS_LABEL } from "@/lib/copy-marketplaces";
+import { unreadableFileDetail, unreadableFileTitle } from "@/lib/copy-scan";
 import {
   UPDATES_UNREADABLE_TITLE,
   unreadablePlacesLabel,
 } from "@/lib/copy-updates";
 import { scopeNames } from "@/lib/labels";
+import { scopeKey } from "@/lib/scope";
 
 /** Everything Home's attention list is derived from, with the way into
  *  each row's destination handed in — the derivation emits the rows in a
@@ -37,9 +46,32 @@ export interface AttentionSource {
   onProjects: () => void;
   onProblems: () => void;
   onUpdates: () => void;
-  onLibrary: () => void;
+  /** The Library narrowed to the edited packages, and nothing wider. */
+  onEditedPackages: () => void;
   onPackage: (row: UpdateRow) => void;
   onAuditRetry: () => void;
+}
+
+/** The edited packages by place: "gh in vg; dev and orch in hyprtrade".
+ *  Grouped by place rather than listed flat, so three names in one
+ *  project read as three and not as one package in three places. */
+export function editedPackagesByPlace(rows: UpdateRow[]): string {
+  const byPlace = new Map<
+    string,
+    { scope: UpdateRow["scope"]; names: string[] }
+  >();
+  for (const row of rows) {
+    const key = scopeKey(row.scope);
+    const entry = byPlace.get(key) ?? { scope: row.scope, names: [] };
+    entry.names.push(row.name);
+    byPlace.set(key, entry);
+  }
+  const places = [...byPlace.values()];
+  // Two projects with one folder name are told apart by their path.
+  const labels = scopeNames(places.map((place) => place.scope));
+  return places
+    .map(({ names }, index) => `${namesInWords(names)} in ${labels[index]}`)
+    .join("; ");
 }
 
 export function attentionRows(source: AttentionSource): AttentionRow[] {
@@ -53,12 +85,15 @@ export function attentionRows(source: AttentionSource): AttentionRow[] {
     rows.push({
       key: "edited",
       tone: "warning",
-      title: forkedAttentionTitle(editedPackages.length),
-      detail: FORKED_ATTENTION_DETAIL,
+      title: editedAttentionTitle(editedPackages.length),
+      detail: editedAttentionDetail(editedPackagesByPlace(editedPackages)),
       action:
         editedPackages.length === 1 && first
           ? { label: first.name, onClick: () => source.onPackage(first) }
-          : { label: "Library", onClick: source.onLibrary },
+          : {
+              label: EDITED_ATTENTION_ACTION,
+              onClick: source.onEditedPackages,
+            },
     });
   }
   if (missing.length > 0) {
@@ -108,16 +143,23 @@ export function attentionRows(source: AttentionSource): AttentionRow[] {
       action: { label: SEE_PROBLEMS_LABEL, onClick: source.onProblems },
     });
   }
-  if (result && result.warnings.length > 0) {
-    rows.push({
-      key: "warnings",
-      tone: "warning",
-      title:
-        result.warnings.length === 1
-          ? "1 file couldn't be read"
-          : `${result.warnings.length} files couldn't be read`,
-      detail: result.warnings[0],
-    });
+  // One row per file, not one row for the count: each names its own tool,
+  // path and remedy, and Problems carries the same file with the buttons.
+  for (const warning of result?.warnings ?? []) {
+    rows.push(unreadableFileRow(warning, source.onProblems));
   }
   return rows;
+}
+
+function unreadableFileRow(
+  warning: ScanWarning,
+  onProblems: () => void,
+): AttentionRow {
+  return {
+    key: `unreadable-file:${warning.path}`,
+    tone: "warning",
+    title: unreadableFileTitle(warning),
+    detail: unreadableFileDetail(warning),
+    action: { label: SEE_PROBLEMS_LABEL, onClick: onProblems },
+  };
 }

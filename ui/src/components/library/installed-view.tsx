@@ -56,12 +56,15 @@ export function InstalledView() {
     harness,
     tag,
     from,
+    edited,
     setKind,
     setHarness,
     setTag,
     setFrom,
+    setEdited,
     setScrollTop,
   } = useLibraryViewStore();
+
   const provenance = useProvenanceStore((s) => s.rows);
   const loadProvenance = useProvenanceStore((s) => s.load);
   // Kept in nav rather than here so leaving for a package page and coming
@@ -96,25 +99,6 @@ export function InstalledView() {
     return () => setScrollTop(node.scrollTop);
   }, [replaced, setScrollTop]);
 
-  const groups = useMemo(() => {
-    if (!result) return [];
-    const filtered = filterItems(result.items, {
-      scope,
-      kind: kind === "any" ? undefined : (kind as ItemKind),
-      harness: harness === "any" ? undefined : harness,
-      tag: tag === "any" ? undefined : (tag as Tag),
-      search,
-    });
-    const grouped = groupItems(filtered);
-    if (from === "any") return grouped;
-    return grouped.filter(
-      (group) =>
-        originLabel(
-          originFor(provenance, group.kind, group.name, groupScopes(group)),
-        ) === from,
-    );
-  }, [result, scope, kind, harness, tag, from, search, provenance]);
-
   // Every group the scan holds, before any narrowing.
   const everywhere = useMemo(
     () => (result ? groupItems(result.items) : []),
@@ -124,7 +108,46 @@ export function InstalledView() {
   // package, so narrowing the table to one project must not change what it
   // says. Read from `groups`, a package customized in two projects would
   // say "Customized in vg" here and name both on its own page.
-  const standingsFor = useLibraryStandings(everywhere);
+  const { standingsFor, editedAnywhere } = useLibraryStandings(everywhere);
+  const groups = useMemo(() => {
+    if (!result) return [];
+    const filtered = filterItems(result.items, {
+      scope,
+      kind: kind === "any" ? undefined : (kind as ItemKind),
+      harness: harness === "any" ? undefined : harness,
+      tag: tag === "any" ? undefined : (tag as Tag),
+      search,
+    });
+    let grouped = groupItems(filtered);
+    if (from !== "any") {
+      grouped = grouped.filter(
+        (group) =>
+          originLabel(
+            originFor(provenance, group.kind, group.name, groupScopes(group)),
+          ) === from,
+      );
+    }
+    // The edited narrowing reads the same per-place fact Home's edited
+    // row counts, so the row's link lands on exactly those packages.
+    // Before the updates read lands the fact is unknown, and the table
+    // shows its skeleton rather than an empty list claiming none.
+    if (edited === "edited") {
+      grouped = editedAnywhere ? grouped.filter(editedAnywhere) : [];
+    }
+    return grouped;
+  }, [
+    result,
+    scope,
+    kind,
+    harness,
+    tag,
+    from,
+    edited,
+    search,
+    provenance,
+    editedAnywhere,
+  ]);
+
   // The count the filtered total is measured against: every row the table
   // could show, not the ones left after the current narrowing. Shared with
   // Home's Installed tile so the two can never disagree.
@@ -136,9 +159,12 @@ export function InstalledView() {
     [provenance],
   );
   // Nothing has been counted yet — distinct from "counted, found nothing".
-  const scanning = result === null;
+  // Narrowed to edited packages, the count also waits on the updates read
+  // that says which are edited.
+  const scanning =
+    result === null || (edited === "edited" && editedAnywhere === null);
   const hasAnyItems = (result?.items.length ?? 0) > 0;
-  const filters: FilterSelection = { kind, harness, tag, from };
+  const filters: FilterSelection = { kind, harness, tag, from, edited };
   const filtered = isNarrowed({ filters, search, scope });
 
   const clearFilters = () => applyLibraryView(UNFILTERED);
@@ -157,6 +183,8 @@ export function InstalledView() {
         from={from}
         onFromChange={setFrom}
         fromOptions={fromOptions}
+        edited={edited}
+        onEditedChange={setEdited}
         scope={scope}
         onScopeChange={setScope}
         projects={projects}

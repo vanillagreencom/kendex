@@ -88,9 +88,16 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
     let report = kendex_core::package::updates::updates(env, &scope)?;
     let mut shown = 0;
     for row in &report.rows {
-        // Mixed installs and packages gone upstream are standing facts worth
-        // a line even when no newer version exists to move to.
-        if !row.update_available && !row.mixed && !row.removed_upstream {
+        // Mixed installs, packages gone upstream and installs edited on
+        // disk are standing facts worth a line even when no newer version
+        // exists to move to: the edit is what stands between the package
+        // and its next update, and Home counts it, so the listing must
+        // say it too.
+        if !row.update_available
+            && !row.mixed
+            && !row.removed_upstream
+            && !row.blocked_by_local_edit
+        {
             continue;
         }
         shown += 1;
@@ -106,6 +113,9 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
         }
         if row.removed_upstream {
             notes.push("no longer in its source");
+        }
+        if row.blocked_by_local_edit {
+            notes.push("edited on disk — keep it as a fork, or refresh with edits discarded");
         }
         let notes = if notes.is_empty() {
             String::new()

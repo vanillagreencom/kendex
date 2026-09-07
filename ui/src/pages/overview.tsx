@@ -122,7 +122,7 @@ export function OverviewPage() {
     onProjects: () => goTo("projects"),
     onProblems: () => goTo("problems"),
     onUpdates: () => setPage("updates"),
-    onLibrary: () => goToLibrary(),
+    onEditedPackages: () => goToLibrary({ edited: true }),
     onPackage: (row) =>
       goToPackage({ kind: row.kind, name: row.name, scope: row.scope }),
     onAuditRetry: () => void auditRefresh({ force: true }),

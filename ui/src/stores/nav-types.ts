@@ -38,6 +38,8 @@ export type MarketplacesTab = "subscribed" | "packages" | "community" | "mine";
  * count exactly the rows its own link lands on. */
 export interface LibraryFilter extends ItemPlace {
   kind?: ItemKind;
+  /** Only packages whose installed files were edited on disk. */
+  edited?: boolean;
 }
 
 /** The package a package page is showing — everything a backend query

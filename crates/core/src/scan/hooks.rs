@@ -66,12 +66,12 @@ impl Registration {
 /// `{"hooks": {"<Event>": [{matcher?, hooks: [{command}]} | {command}]}}` —
 /// claude settings.json and codex/cursor hooks.json share this shape; cursor
 /// omits `matcher` and nests no handler array.
-pub fn read(path: &Path) -> Result<Vec<RawEntry>, String> {
+pub fn read(path: &Path) -> Result<Vec<RawEntry>, super::ScanProblem> {
     Ok(rows(registrations(read_json(path)?)))
 }
 
 /// Every registration in one document, in its parts.
-pub(crate) fn read_registrations(path: &Path) -> Result<Vec<Registration>, String> {
+pub(crate) fn read_registrations(path: &Path) -> Result<Vec<Registration>, super::ScanProblem> {
     Ok(registrations(read_json(path)?))
 }
 

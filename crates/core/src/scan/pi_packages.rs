@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use super::RawEntry;
 use super::readers::read_json;
 
-pub(super) fn pi_packages(path: &Path) -> Result<Vec<RawEntry>, String> {
+pub(super) fn pi_packages(path: &Path) -> Result<Vec<RawEntry>, super::ScanProblem> {
     let value = read_json(path)?;
     let Some(packages) = value.get("packages").and_then(|p| p.as_array()) else {
         return Ok(Vec::new());

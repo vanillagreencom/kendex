@@ -8,7 +8,7 @@ use crate::fs::read_if_exists;
 
 /// `~/.claude/plugins/installed_plugins.json` (`{"plugins": {"name@mkt": …}}`)
 /// joined with `enabledPlugins` from `~/.claude/settings.json`.
-pub fn claude_registry(path: &Path, env: &Env) -> Result<Vec<RawEntry>, String> {
+pub fn claude_registry(path: &Path, env: &Env) -> Result<Vec<RawEntry>, super::ScanProblem> {
     let value = read_json(path)?;
     let Some(registry) = value.get("plugins").and_then(|p| p.as_object()) else {
         return Ok(Vec::new());
@@ -34,7 +34,7 @@ fn claude_enabled_map(settings: &Path) -> Option<serde_json::Map<String, serde_j
 }
 
 /// Project `.claude/settings*.json` `enabledPlugins` entries.
-pub fn claude_settings(path: &Path) -> Result<Vec<RawEntry>, String> {
+pub fn claude_settings(path: &Path) -> Result<Vec<RawEntry>, super::ScanProblem> {
     let value = read_json(path)?;
     let Some(map) = value.get("enabledPlugins").and_then(|p| p.as_object()) else {
         return Ok(Vec::new());
@@ -53,7 +53,7 @@ pub fn claude_settings(path: &Path) -> Result<Vec<RawEntry>, String> {
 /// `<root>/plugins/cache/<marketplace>/<plugin>/<version>/.codex-plugin/plugin.json`,
 /// newest version wins; disabled via `[plugins."name@mkt"] enabled = false`
 /// in the sibling config.toml.
-pub fn codex_cache(plugins_dir: &Path) -> Result<Vec<RawEntry>, String> {
+pub fn codex_cache(plugins_dir: &Path) -> Result<Vec<RawEntry>, super::ScanProblem> {
     let mut entries = Vec::new();
     let disabled = codex_disabled_set(plugins_dir);
     let cache = plugins_dir.join("cache");

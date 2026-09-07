@@ -5,6 +5,7 @@ import { PlaceCard } from "@/components/place-card";
 import { ProblemCard } from "@/components/problem-card";
 import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
+import { UnreadableFileCard } from "@/components/unreadable-file-card";
 import {
   AUDIT_ATTENTION_DETAIL,
   AUDIT_ATTENTION_TITLE,
@@ -16,7 +17,11 @@ import { scopeName, scopePath } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount, useAuditStore } from "@/stores/audit";
-import { useBlockedPlaces, useProblems } from "@/stores/problems";
+import {
+  useBlockedPlaces,
+  useProblems,
+  useUnreadableFiles,
+} from "@/stores/problems";
 
 export function ProblemsPage() {
   // Every problem on this page is something the audit or the scan found;
@@ -27,6 +32,7 @@ export function ProblemsPage() {
   // the reader's own files, so an unconfirmed reading is not one to draw
   // them from — and the page says so rather than reporting itself clean.
   const blocked = useBlockedPlaces();
+  const unreadableFiles = useUnreadableFiles();
   const busy = useAuditStore((s) => s.busy);
   const refresh = useAuditStore((s) => s.refresh);
   const adopt = useAuditStore((s) => s.adopt);
@@ -39,6 +45,9 @@ export function ProblemsPage() {
         <div className={cn("space-y-4", CONTENT_WIDTH)}>
           {problems.map((problem) => (
             <ProblemCard key={problem.key} problem={problem} />
+          ))}
+          {unreadableFiles.map((warning) => (
+            <UnreadableFileCard key={warning.path} warning={warning} />
           ))}
           {blocked === null ? (
             <StatusNote
@@ -83,7 +92,9 @@ export function ProblemsPage() {
               </PlaceCard>
             ))
           )}
-          {problems.length === 0 && blocked?.length === 0 ? (
+          {problems.length === 0 &&
+          unreadableFiles.length === 0 &&
+          blocked?.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-16 text-center">
               <CheckCircle2 className="size-8 text-muted-foreground" />
               <p className="font-medium">{PROBLEMS_EMPTY}</p>

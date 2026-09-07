@@ -9,6 +9,7 @@ mod agent_settings;
 mod agent_tables;
 mod available;
 mod beside;
+mod customized;
 mod disabled;
 mod edited_harness;
 mod vacant;

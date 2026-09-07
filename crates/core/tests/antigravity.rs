@@ -327,7 +327,7 @@ fn a_registered_hook_is_read_back_from_the_registry() {
         &std::collections::BTreeMap::new(),
         std::slice::from_ref(&f.scope),
     );
-    assert_eq!(scanned.warnings, Vec::<String>::new());
+    assert_eq!(scanned.warnings, Vec::new());
     let hooks: Vec<_> = scanned
         .items
         .iter()

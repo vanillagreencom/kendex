@@ -1,0 +1,1 @@
+- A config file several surfaces read is warned about once, so Home, Problems and the footer count one broken file as one.

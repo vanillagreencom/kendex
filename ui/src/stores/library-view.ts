@@ -7,6 +7,9 @@ export interface FilterSelection {
   harness: string;
   tag: string;
   from: string;
+  /** "edited" narrows to packages whose installed files were edited on
+   *  disk somewhere — the rows Home's edited row counts. */
+  edited: string;
 }
 
 /** Narrowed by nothing. The one definition of an unfiltered strip, so the
@@ -17,6 +20,7 @@ export const NO_FILTERS: FilterSelection = {
   harness: "any",
   tag: "any",
   from: "any",
+  edited: "any",
 };
 
 /** The Installed table's view state, kept outside the component so opening
@@ -32,6 +36,7 @@ interface LibraryViewState extends FilterSelection {
   setHarness: (harness: string) => void;
   setTag: (tag: string) => void;
   setFrom: (from: string) => void;
+  setEdited: (edited: string) => void;
   setScrollTop: (scrollTop: number) => void;
   /** Adopt a whole narrowing at once — a link's, or the empty one behind
    * Clear. Taken as one object rather than field by field, so a filter the
@@ -46,6 +51,7 @@ export const useLibraryViewStore = create<LibraryViewState>((set) => ({
   setHarness: (harness) => set({ harness }),
   setTag: (tag) => set({ tag }),
   setFrom: (from) => set({ from }),
+  setEdited: (edited) => set({ edited }),
   setScrollTop: (scrollTop) => set({ scrollTop }),
   setFilters: (filters) => set(filters),
 }));

@@ -49,6 +49,7 @@ export function libraryViewFromHandoff(
       ...NO_FILTERS,
       kind: handoff.kind ?? NO_FILTERS.kind,
       harness: handoff.harness ?? NO_FILTERS.harness,
+      edited: handoff.edited ? "edited" : NO_FILTERS.edited,
     },
     search: UNFILTERED.search,
     scope: handoff.scope ?? UNFILTERED.scope,
