@@ -98,16 +98,6 @@ unreasoned() { local _unresolved _untracked f _rest; read -r _unresolved _untrac
 counted()     { [ "$(unreasoned "$1")" = 1 ]; }
 not_counted() { [ "$(unreasoned "$1")" = 0 ]; }
 
-check() { # check WANT LABEL BODY
-  local want="$1" label="$2" out
-  out=$(page "$(thread true "$(human "$3")")")
-  if [ "$want" = counted ]; then
-    counted "$out" && ok "$label" || bad "$label" "$out"
-  else
-    not_counted "$out" && ok "$label" || bad "$label" "$out"
-  fi
-}
-
 CORPUS="$SCRIPT_DIR/corpus"
 
 # THE CORPUS IS THE CONTRACT. Every fixture below is a line in one of three
@@ -169,95 +159,77 @@ sweep "$CORPUS/declines-reasoned.txt" clean
 echo "=== the corpus: the boundary, pinned ==="
 sweep "$CORPUS/declines-known-limit.txt" limit
 
-echo "=== the colon is not what makes it a decline ==="
-
-check counted "a no-colon decline with nothing after the word" \
-  'Declined.'
-check counted "a no-colon decline that is only a label" \
-  'Declined, out of scope.'
-check clean "a no-colon decline naming the passing state" \
-  'Declined — the caller already guards the empty case, so that branch cannot run.'
-
-echo "=== the term does not disturb the others ==="
-
-check clean "a Fixed in reply is not a decline" \
-  'Fixed in abc1234'
-check clean "a Tracked reply is not a decline" \
-  'Tracked: KEN-885'
-# The untracked-claim term keeps the narrow `Declined:` form, and this is
-# the reply that is why: it names no issue, and reading it as a disposition
-# there would clear the claim instead of failing it. Field 2 is that term.
-out=$(page "$(thread true "$(human 'Declined under the cap, tracked separately')")")
-case "$out" in "0 1 "*) ok "a no-colon decline still trips the untracked-claim term";; *) bad "a no-colon decline still trips the untracked-claim term" "$out";; esac
-
-out=$(page "$(thread true "$(bot 'Declined: frozen')")")
-not_counted "$out" && ok "a bot decline never moves the disposition" || bad "a bot decline never moves the disposition" "$out"
-
-out=$(page "$(thread true "$(human 'Declined: frozen')"),$(thread true "$(human 'Declined: pre-existing')")")
-[ "$(unreasoned "$out")" = 2 ] && ok "every offending thread is counted" || bad "every offending thread is counted" "$out"
-
-out=$(page "$(thread true "$(human 'Declined: frozen'),$(human 'Declined: the caller guards it, so that branch cannot run')")")
-not_counted "$out" && ok "a later real reason clears an earlier bare decline" || bad "a later real reason clears an earlier bare decline" "$out"
-
-out=$(page "$(thread true "$(human 'Declined: the caller guards it, so that branch cannot run'),$(human 'Declined: frozen')")")
-counted "$out" && ok "a later bare decline is counted over an earlier real one" || bad "a later bare decline is counted over an earlier real one" "$out"
-
-out=$(page "$(thread true "$(human 'Out of scope, tracked.')")")
-case "$out" in "0 1 0 "*) ok "an untracked claim is still counted, and is not a decline";; *) bad "an untracked claim is still counted, and is not a decline" "$out";; esac
-
-out=$(page "$(thread false "$(human 'looking')")")
-case "$out" in "1 0 0 "*) ok "unresolved counting unchanged";; *) bad "unresolved counting unchanged" "$out";; esac
-
-echo "=== the untracked-claim term: a claim naming no issue, judged on the standing reply ==="
-# Field 2 throughout. Each thread is judged by its newest non-bot comment that
-# is a `Fixed in <sha>`/`Declined:` reply or carries a track-word: a claim with
-# no issue id counts, such a reply never does, and later replies of any other
-# kind, bot replies and resolving the thread do not move it.
-
-out=$(page "$(thread true "$(human 'Out of scope for this PR, tracked.')")")
-case "$out" in "0 1 "*) ok "issue-less tracking claim counts";; *) bad "issue-less tracking claim counts" "$out";; esac
-
-out=$(page "$(thread true "$(human 'Tracked: KEN-12oops')"),$(thread true "$(human 'tracked in #34abc')")")
-case "$out" in "0 2 "*) ok "a malformed id does not anchor a claim";; *) bad "a malformed id does not anchor a claim" "$out";; esac
-
-out=$(page "$(thread true "$(human 'Tracked: KEN-536')"),$(thread true "$(human 'Tracked: DRV-12')"),$(thread true "$(human 'Fixed in abc123, tracked as #77')")")
-case "$out" in "0 0 "*) ok "claims naming KEN-/other-prefix/#id pass";; *) bad "claims naming KEN-/other-prefix/#id pass" "$out";; esac
-
-out=$(page "$(thread true "$(bot 'this should be tracked somewhere')")")
-case "$out" in "0 0 "*) ok "bot comments are exempt";; *) bad "bot comments are exempt" "$out";; esac
-
-out=$(page "$(thread true "$(human 'Declined: probe is intentional')")")
-case "$out" in "0 0 "*) ok "a decline is not a claim";; *) bad "a decline is not a claim" "$out";; esac
-
-out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(human 'Declined: probe is intentional')")")
-case "$out" in "0 0 "*) ok "a later Declined: reply clears a naked claim";; *) bad "a later Declined: reply clears a naked claim" "$out";; esac
-
-out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(human 'Fixed in abc1234')")")
-case "$out" in "0 0 "*) ok "a later Fixed in <sha> reply clears a naked claim";; *) bad "a later Fixed in <sha> reply clears a naked claim" "$out";; esac
-
-out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(human 'Tracked: KEN-637')")")
-case "$out" in "0 0 "*) ok "a later Tracked: <id> reply clears a naked claim";; *) bad "a later Tracked: <id> reply clears a naked claim" "$out";; esac
-
-out=$(page "$(thread true "$(human 'Fixed in abc1234, every tracked caller now runs')")")
-case "$out" in "0 0 "*) ok "a Fixed in reply is never a claim, whatever its prose";; *) bad "a Fixed in reply is never a claim, whatever its prose" "$out";; esac
-
-out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(bot 'Thanks, noted')")")
-case "$out" in "0 1 "*) ok "a bot reply does not move the disposition";; *) bad "a bot reply does not move the disposition" "$out";; esac
-
-out=$(page "$(thread true "$(human 'Fixed in abc1234'),$(human 'the rest is tracked for later')")")
-case "$out" in "0 1 "*) ok "a resolved thread with a naked last reply still counts";; *) bad "a resolved thread with a naked last reply still counts" "$out";; esac
-
-out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(human 'ok')"),$(thread true "$(human 'Out of scope, tracked.'),$(human 'Which issue?')")")
-case "$out" in "0 2 "*) ok "a reply that is neither claim nor disposition does not move it";; *) bad "a reply that is neither claim nor disposition does not move it" "$out";; esac
-
-out=$(page "$(thread true "$(human 'Fixed in a follow-up, tracked separately')")")
-case "$out" in "0 1 "*) ok "Fixed in without a sha is not a disposition";; *) bad "Fixed in without a sha is not a disposition" "$out";; esac
-
-out=$(page "$(thread true "$(human 'Declined: the caller is tracked by the loader already')")")
-case "$out" in "0 0 "*) ok "a Declined: reply with a naked track-word is never a claim";; *) bad "a Declined: reply with a naked track-word is never a claim" "$out";; esac
-
-out=$(page "$(thread true "$(human 'Tracked: KEN-1')" true)")
-case "$out" in malformed) ok "a 50+-comment thread fails closed as malformed";; *) bad "a 50+-comment thread fails closed as malformed" "$out";; esac
+echo "=== the two thread terms over hand-written threads ==="
+# One page per row, pinned as the WHOLE line the jq prints —
+# `unresolved untracked unreasoned hasNext cursor`, or `malformed` — so a row
+# that moves one term cannot pass on a neighbouring term's count. A row is
+# `label|line|thread...`; a thread is `r:` (resolved) or `u:` (unresolved),
+# `r+:` for a comments page the program cannot finish, then its comments
+# oldest first, ` + ` apart, each `H=` (a person) or `B=` (a bot).
+#
+# The untracked-claim term keeps the narrow `Declined:` form, and `Declined
+# under the cap, tracked separately` is the reply that is why: it names no
+# issue, and reading it as a disposition there would clear the claim instead
+# of failing it. `Fixed in abc123` is six hex characters, one short of a
+# sha, so it is a tracking reply and not a disposition.
+thread_of() { # thread_of SPEC -> one reviewThreads node
+  local flags="${1%%:*}" rest="${1#*:}" resolved=true next=false nodes="" c
+  case "$flags" in u*) resolved=false ;; esac
+  case "$flags" in *+) next=true ;; esac
+  while :; do
+    case "$rest" in *' + '*) c="${rest%% + *}"; rest="${rest#* + }" ;; *) c="$rest"; rest="" ;; esac
+    case "$c" in
+      H=*) nodes="$nodes${nodes:+,}$(human "${c#H=}")" ;;
+      B=*) nodes="$nodes${nodes:+,}$(bot "${c#B=}")" ;;
+      *) echo "thread_of: a comment names no author: $c" >&2; exit 1 ;;
+    esac
+    [ -n "$rest" ] || break
+  done
+  thread "$resolved" "$nodes" "$next"
+}
+page_row() { # page_row ROW — one page, one assertion on the whole line
+  local row="$1" label want rest nodes="" spec out
+  label="${row%%|*}"; rest="${row#*|}"
+  want="${rest%%|*}"; rest="${rest#*|}"
+  [ -n "$want" ] && [ "$rest" != "$want" ] || { echo "page_row: a row with no threads asserts nothing: $row" >&2; exit 1; }
+  while :; do
+    case "$rest" in *'|'*) spec="${rest%%|*}"; rest="${rest#*|}" ;; *) spec="$rest"; rest="" ;; esac
+    nodes="$nodes${nodes:+,}$(thread_of "$spec")"
+    [ -n "$rest" ] || break
+  done
+  out=$(page "$nodes")
+  [ "$out" = "$want" ] && ok "$label" || bad "$label" "$out (wanted: $want)"
+}
+for row in \
+  "a no-colon decline with nothing after the word is counted|0 0 1 false END|r:H=Declined." \
+  "a no-colon decline that is only a label is counted|0 0 1 false END|r:H=Declined, out of scope." \
+  "a no-colon decline naming the passing state passes|0 0 0 false END|r:H=Declined — the caller already guards the empty case, so that branch cannot run." \
+  "a Fixed in reply is not a decline|0 0 0 false END|r:H=Fixed in abc1234" \
+  "a Tracked reply is not a decline|0 0 0 false END|r:H=Tracked: KEN-885" \
+  "a no-colon decline trips the untracked-claim term and the unreasoned term|0 1 1 false END|r:H=Declined under the cap, tracked separately" \
+  "a bot decline never moves the disposition|0 0 0 false END|r:B=Declined: frozen" \
+  "every offending thread is counted|0 0 2 false END|r:H=Declined: frozen|r:H=Declined: pre-existing" \
+  "a later real reason clears an earlier bare decline|0 0 0 false END|r:H=Declined: frozen + H=Declined: the caller guards it, so that branch cannot run" \
+  "a later bare decline is counted over an earlier real one|0 0 1 false END|r:H=Declined: the caller guards it, so that branch cannot run + H=Declined: frozen" \
+  "an untracked claim is counted by its own term, and is not a decline|0 1 0 false END|r:H=Out of scope, tracked." \
+  "unresolved counting is untouched by either term|1 0 0 false END|u:H=looking" \
+  "an issue-less tracking claim counts|0 1 0 false END|r:H=Out of scope for this PR, tracked." \
+  "a malformed id does not anchor a claim|0 2 0 false END|r:H=Tracked: KEN-12oops|r:H=tracked in #34abc" \
+  "claims naming KEN-, another prefix, or #id pass|0 0 0 false END|r:H=Tracked: KEN-536|r:H=Tracked: DRV-12|r:H=Fixed in abc123, tracked as #77" \
+  "a bot's track-word is exempt|0 0 0 false END|r:B=this should be tracked somewhere" \
+  "a decline naming its mechanism is not a claim|0 0 0 false END|r:H=Declined: probe is intentional" \
+  "a later Declined: reply clears a naked claim|0 0 0 false END|r:H=Out of scope, tracked. + H=Declined: probe is intentional" \
+  "a later Fixed in <sha> reply clears a naked claim|0 0 0 false END|r:H=Out of scope, tracked. + H=Fixed in abc1234" \
+  "a later Tracked: <id> reply clears a naked claim|0 0 0 false END|r:H=Out of scope, tracked. + H=Tracked: KEN-637" \
+  "a Fixed in reply is never a claim, whatever its prose|0 0 0 false END|r:H=Fixed in abc1234, every tracked caller now runs" \
+  "a bot reply does not move the disposition|0 1 0 false END|r:H=Out of scope, tracked. + B=Thanks, noted" \
+  "a resolved thread whose last reply is a naked claim still counts|0 1 0 false END|r:H=Fixed in abc1234 + H=the rest is tracked for later" \
+  "a reply that is neither claim nor disposition does not move it|0 2 0 false END|r:H=Out of scope, tracked. + H=ok|r:H=Out of scope, tracked. + H=Which issue?" \
+  "Fixed in without a sha is not a disposition|0 1 0 false END|r:H=Fixed in a follow-up, tracked separately" \
+  "a Declined: reply with a naked track-word is never a claim|0 0 0 false END|r:H=Declined: the caller is tracked by the loader already" \
+  "a path inside a mechanism still passes|0 0 0 false END|r:H=Declined: crates/core/src/lock.rs refuses that shape before the branch you name runs." \
+  "a 50+-comment thread fails closed as malformed|malformed|r+:H=Tracked: KEN-1"
+do page_row "$row"; done
 
 echo
 echo "--- must-fail probe: the term, reverted ---"
@@ -583,11 +555,6 @@ else
   out=$(page_with "$SPACED" "$(thread true "$(human "$t")")")
   not_counted "$out" && ok "tightened: the name survives — the spaces are this regex's" || bad "tightened: the name survives — the spaces are this regex's" "$out"
 fi
-
-# A path INSIDE a mechanism is untouched by the path strip: it takes the name
-# and leaves the sentence, the same way the count strip takes one token.
-check clean "a path inside a mechanism still passes" \
-  'Declined: crates/core/src/lock.rs refuses that shape before the branch you name runs.'
 
 echo
 echo "--- every pass of reason_left is measured by a fixture ---"
