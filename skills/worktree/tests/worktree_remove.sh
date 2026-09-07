@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Tests for worktree remove diagnostics and branch cleanup.
+# `worktree remove`: the table below. The blocks after it (fix-links, the
+# Codex hooks, push, the configured base directory) are other surfaces that
+# move to their own suites as those are reshaped.
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
@@ -151,82 +153,180 @@ make_repo() {
   git -C "$repo" commit -q -m base
 }
 
+# --- remove: one table ------------------------------------------------------------
+# A row builds its own main checkout with an issue worktree at trees/topic,
+# runs one `remove` command line from the main checkout, and pins the exit
+# status, stdout (usage text by its first line), stderr whole and what is left:
+# the worktree's registration, the branch, the directories under trees/ and
+# every configured symlink's target.
+mkdir -p "$TMP_ROOT/bin"
+cat >"$TMP_ROOT/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}:${2:-}" in
+  pr:list) ;;
+esac
+STUB
+chmod +x "$TMP_ROOT/bin/gh"
+
+ROOT=""
+MAIN=""
+WT=""
+ROW_PATH=""
+
+step() {
+  case "$1" in
+    tree)
+      make_repo "$MAIN"
+      git -C "$MAIN" worktree add -q -b topic "$WT" main
+      ;;
+    commit)
+      printf 'branch-only\n' >>"$WT/file.txt"
+      git -C "$WT" add file.txt
+      git -C "$WT" commit -q -m 'branch only'
+      ;;
+    links)
+      printf 'agents\n' >"$MAIN/AGENTS.md"
+      mkdir -p "$MAIN/.agents" "$MAIN/.claude/agents"
+      printf 'lib\n' >"$MAIN/.agents/lib.sh"
+      git -C "$MAIN" add AGENTS.md
+      git -C "$MAIN" commit -q -m agents
+      printf '%s\n' 'WORKTREE_SYMLINKS=".env.local .agents .claude/agents"' \
+        'WORKTREE_RELATIVE_SYMLINKS=".claude/POINTER.md=../AGENTS.md"' >"$MAIN/.env.local"
+      (cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT") >/dev/null
+      ;;
+    lock) git -C "$MAIN" worktree lock "$WT" --reason "session guard: owner=topic" ;;
+    unlock) git -C "$MAIN" worktree unlock "$WT" ;;
+    # git itself refuses the removal after every precheck passed: the lock
+    # precheck is a racy diagnostic, and only "nothing is stripped before git
+    # runs" keeps the links whole here, so this row and the locked one are
+    # two mechanisms, not one.
+    git-refuses)
+      mkdir -p "$ROOT/bin"
+      cat >"$ROOT/bin/git" <<'STUB'
+#!/usr/bin/env bash
+if [[ " $* " == *" worktree remove --force "* ]]; then
+  echo "simulated worktree removal failure" >&2
+  exit 1
+fi
+exec "$REAL_GIT_BIN" "$@"
+STUB
+      chmod +x "$ROOT/bin/git"
+      ROW_PATH="$ROOT/bin:$ROW_PATH"
+      ;;
+    *)
+      echo "UNKNOWN-STEP: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+build() {
+  local word
+  ROOT="$TMP_ROOT/$1"
+  shift
+  MAIN="$ROOT/main"
+  WT="$ROOT/trees/topic"
+  ROW_PATH="$TMP_ROOT/bin:$PATH"
+  for word in "$@"; do step "$word"; done
+}
+
+link_targets() {
+  local rel out=""
+  for rel in .env.local .agents .claude/agents .claude/POINTER.md; do
+    [[ -L "$WT/$rel" ]] || continue
+    out="$out,$rel->$(readlink "$WT/$rel" | sed -e "s|$MAIN|<main>|")"
+  done
+  printf '%s' "${out:-,-}" | cut -c2-
+}
+
+# The worktree as the main checkout registers it and as the worktree itself
+# answers (live: its own .git resolves), the branch, the trees/ directory and
+# every configured symlink's target.
+remove_state() {
+  local worktree=absent live=no branch=absent dirs
+  git -C "$WT" rev-parse --git-dir >/dev/null 2>&1 && live=yes
+  if git -C "$MAIN" worktree list --porcelain | grep -qx "worktree $WT"; then
+    worktree=registered
+  elif [[ -e "$WT" ]]; then
+    worktree=unregistered
+  fi
+  git -C "$MAIN" show-ref --verify --quiet refs/heads/topic && branch=present
+  dirs="$(find "$ROOT/trees" -mindepth 1 -maxdepth 1 2>/dev/null | sed 's|.*/||' | sort | paste -s -d ',' - || true)"
+  printf 'worktree=%s/%s branch=%s dirs=%s links=%s' "$worktree" "$live" "$branch" "${dirs:--}" "$(link_targets)"
+}
+
+REAL_GIT_BIN="$(command -v git)"
+
+run_remove() {
+  local -a argv
+  local rc=0
+  read -r -a argv <<<"$1"
+  (cd "$MAIN" && PATH="$ROW_PATH" REAL_GIT_BIN="$REAL_GIT_BIN" \
+    "$WORKTREE_SCRIPT" remove "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  printf 'rc=%s out=%s err=%s %s' "$rc" \
+    "$(sed -e "s|$WT|<wt>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" -e '/^Usage: /q' "$ROOT/out" | paste -s -d ';' -)" \
+    "$(sed -e "s|$WT|<wt>|g" -e "s|$MAIN|<main>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" "$ROOT/err" | paste -s -d ';' -)" \
+    "$(remove_state)"
+}
+
+locked_block() {
+  printf '%s' "Error: <wt> is a locked worktree; refusing to remove it.;  Worktree: <wt>;  Lock reason: session guard: owner=topic;Nothing in the worktree was modified.;A lock usually means a live session owns this worktree; confirm it is finished first.;To release the lock and retry:;  git -C \"<main>\" worktree unlock \"<wt>\""
+}
+
+refused_block() {
+  printf '%s' "Error: Git could not remove the worktree; preserving it for manual recovery: <wt>;  git: simulated worktree removal failure;  Branch: topic (not deleted);Nothing was removed before Git ran, so a refusal made before deletion started (a lock, for example) leaves the worktree exactly as it was.;Git's deletion is not atomic: if it failed partway through, the worktree may be partially removed — inspect its contents before retrying, and restore links with: <worktree> fix-links \"<wt>\""
+}
+
+unmerged_block() {
+  printf '%s' "Error: Removed worktree but could not delete local branch 'topic'.;  Remaining branch: topic;  Worktree path removed/pruned: <wt>;  Not merged into main, and no pull request merged into main carries this branch name;  After verifying it is safe, delete manually with: git -C \"<main>\" branch -D \"topic\""
+}
+
+remove_out() {
+  case "$1" in
+    -) printf '' ;;
+    removed) printf 'Removed: <wt>' ;;
+    usage) printf 'Usage: worktree remove [ID|/path]' ;;
+    *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
+  esac
+}
+
+remove_err() {
+  case "$1" in
+    -) printf '' ;;
+    deleted) printf "Deleted branch 'topic' — merged into main." ;;
+    unknown-option) printf '%s' "Error: unknown option '--bogus' for remove;Run: <worktree> remove --help" ;;
+    unmerged) unmerged_block ;;
+    locked) locked_block ;;
+    refused) refused_block ;;
+    *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
+  esac
+}
+
+LINKS='.env.local-><main>/.env.local,.agents-><main>/.agents,.claude/agents-><main>/.claude/agents,.claude/POINTER.md->../AGENTS.md'
+
+# label|fixture|args|rc|out|err|state
+REMOVE_ROWS='
+a merged branch: the worktree and the branch both go|tree|TOPIC|0|removed|deleted|worktree=absent/no branch=absent dirs=- links=-
+--help prints usage and removes nothing|tree|--help|0|usage|-|worktree=registered/yes branch=present dirs=topic links=-
+the short help flag prints usage and removes nothing|tree|-h|0|usage|-|worktree=registered/yes branch=present dirs=topic links=-
+an option-looking argument is refused before it becomes a path|tree|--bogus|1|-|unknown-option|worktree=registered/yes branch=present dirs=topic links=-
+an unmerged branch: the worktree goes, the branch stays, the diagnostic names the manual delete|tree commit|TOPIC|1|removed|unmerged|worktree=absent/no branch=present dirs=- links=-
+a locked worktree is refused with its owner and the unlock command, links intact|tree links lock|TOPIC|1|-|locked|worktree=registered/yes branch=present dirs=topic links=LINKS
+the same worktree unlocked is removed|tree links lock unlock|TOPIC|0|removed|deleted|worktree=absent/no branch=absent dirs=- links=-
+a removal git refuses after every precheck leaves the worktree, branch and links intact|tree links git-refuses|TOPIC|1|-|refused|worktree=registered/yes branch=present dirs=topic links=LINKS
+'
+
 echo "=== worktree remove ==="
-
-# Merged/no-extra-commit branch: worktree and branch both disappear, exit 0.
-MERGED_ROOT="$TMP_ROOT/merged"
-make_repo "$MERGED_ROOT/main"
-git -C "$MERGED_ROOT/main" worktree add -q -b issue-merged "$MERGED_ROOT/trees/issue-merged" main
-merged_out=$(cd "$MERGED_ROOT/main" && "$WORKTREE_SCRIPT" remove ISSUE-MERGED 2>"$MERGED_ROOT/merged.err")
-assert_eq "$merged_out" "Removed: $MERGED_ROOT/trees/issue-merged" "merged branch removal exits cleanly"
-assert_path_absent "$MERGED_ROOT/trees/issue-merged" "merged branch worktree removed"
-assert_branch_absent "$MERGED_ROOT/main" "issue-merged" "merged branch deleted"
-
-# remove --help / -h print usage, exit 0, and never delete or report a removal.
-HELP_ROOT="$TMP_ROOT/help"
-make_repo "$HELP_ROOT/main"
-git -C "$HELP_ROOT/main" worktree add -q -b issue-help "$HELP_ROOT/trees/issue-help" main
-set +e
-help_out=$(cd "$HELP_ROOT/main" && "$WORKTREE_SCRIPT" remove --help 2>"$HELP_ROOT/help.err")
-help_code=$?
-set -e
-assert_eq "$help_code" "0" "remove --help exits 0"
-assert_contains "$help_out" "Usage: " "remove --help prints usage"
-if grep -qF -- "Removed:" <<<"$help_out"; then
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  %s\n' "remove --help does not report a removal"
-else
-  PASS=$((PASS + 1))
-  printf '  ok    %s\n' "remove --help does not report a removal"
-fi
-assert_path_exists "$HELP_ROOT/trees/issue-help" "remove --help does not delete the worktree"
-assert_branch_exists "$HELP_ROOT/main" "issue-help" "remove --help does not delete the branch"
-
-set +e
-help_short_out=$(cd "$HELP_ROOT/main" && "$WORKTREE_SCRIPT" remove -h 2>"$HELP_ROOT/help-short.err")
-help_short_code=$?
-set -e
-assert_eq "$help_short_code" "0" "remove -h exits 0"
-assert_contains "$help_short_out" "Usage: " "remove -h prints usage"
-assert_path_exists "$HELP_ROOT/trees/issue-help" "remove -h does not delete the worktree"
-
-# Unknown option-looking argument fails with nonzero exit and no removal.
-BOGUS_ROOT="$TMP_ROOT/bogus"
-make_repo "$BOGUS_ROOT/main"
-git -C "$BOGUS_ROOT/main" worktree add -q -b issue-bogus "$BOGUS_ROOT/trees/issue-bogus" main
-set +e
-bogus_out=$(cd "$BOGUS_ROOT/main" && "$WORKTREE_SCRIPT" remove --bogus 2>"$BOGUS_ROOT/bogus.err")
-bogus_code=$?
-set -e
-assert_eq "$bogus_code" "1" "remove --bogus exits nonzero"
-assert_contains "$(cat "$BOGUS_ROOT/bogus.err")" "unknown option '--bogus'" "remove --bogus reports unknown option"
-if grep -qF -- "Removed:" <<<"$bogus_out"; then
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  %s\n' "remove --bogus does not report a removal"
-else
-  PASS=$((PASS + 1))
-  printf '  ok    %s\n' "remove --bogus does not report a removal"
-fi
-assert_path_exists "$BOGUS_ROOT/trees/issue-bogus" "remove --bogus does not delete an unrelated worktree"
-assert_path_absent "$BOGUS_ROOT/trees/--bogus" "remove --bogus never computes a trees/--bogus path"
-
-# Unmerged branch: worktree is removed, branch remains, exit 1 includes diagnostic.
-UNMERGED_ROOT="$TMP_ROOT/unmerged"
-make_repo "$UNMERGED_ROOT/main"
-git -C "$UNMERGED_ROOT/main" worktree add -q -b issue-unmerged "$UNMERGED_ROOT/trees/issue-unmerged" main
-printf 'branch-only\n' >> "$UNMERGED_ROOT/trees/issue-unmerged/file.txt"
-git -C "$UNMERGED_ROOT/trees/issue-unmerged" add file.txt
-git -C "$UNMERGED_ROOT/trees/issue-unmerged" commit -q -m 'branch only'
-set +e
-unmerged_out=$(cd "$UNMERGED_ROOT/main" && "$WORKTREE_SCRIPT" remove ISSUE-UNMERGED 2>"$UNMERGED_ROOT/unmerged.err")
-unmerged_code=$?
-set -e
-assert_eq "$unmerged_code" "1" "unmerged branch removal exits nonzero"
-assert_eq "$unmerged_out" "Removed: $UNMERGED_ROOT/trees/issue-unmerged" "unmerged branch still reports removed worktree"
-assert_path_absent "$UNMERGED_ROOT/trees/issue-unmerged" "unmerged branch worktree removed"
-assert_branch_exists "$UNMERGED_ROOT/main" "issue-unmerged" "unmerged branch retained"
-assert_contains "$(cat "$UNMERGED_ROOT/unmerged.err")" "could not delete local branch 'issue-unmerged'" "unmerged branch diagnostic names failed cleanup step"
-assert_contains "$(cat "$UNMERGED_ROOT/unmerged.err")" "branch -D \"issue-unmerged\"" "unmerged branch diagnostic gives manual recovery command"
+n=0
+while IFS='|' read -r label fixture args rc out err want_state; do
+  [[ -n "$label$fixture$args$rc$out$err$want_state" ]] || continue
+  n=$((n + 1))
+  # shellcheck disable=SC2086
+  build "remove-$n" $fixture
+  want_state="${want_state//LINKS/$LINKS}"
+  assert_eq "$(run_remove "$args")" "rc=$rc out=$(remove_out "$out") err=$(remove_err "$err") $want_state" "$label"
+done <<<"$REMOVE_ROWS"
 
 # Relative symlinks: create link inside worktree with target resolved from the
 # worktree path, not from the main checkout.
@@ -249,97 +349,6 @@ assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/settings.json" "$LIN
 assert_git_status_clean_for_path "$LINK_ROOT/trees/issue-links" ".claude/settings.json" "configured tracked file symlink is hidden from git status"
 assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/agents" "$LINK_ROOT/main/.claude/agents" "configured dir symlink points to main checkout"
 assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/POINTER.md" "../AGENTS.md" "relative symlink keeps worktree-local AGENTS target"
-
-# Locked worktree: `git worktree remove --force` cannot override a lock, so
-# removal fails here. TWO mechanisms are asserted below, and they are not the
-# same thing:
-#   1. Symlink preservation comes from never pre-stripping — the tree stays
-#      intact until git itself starts deleting, so a refusal issued before that
-#      point (including a lock raced in after the precheck) leaves it whole.
-#      This is the actual safety net. Git's deletion is not atomic, so it does
-#      not extend to a failure partway THROUGH removal.
-#   2. The lock precheck is a DIAGNOSTIC: it names the owning session and the
-#      unlock command, which git's own refusal does not. It is racy by nature
-#      and is not what protects the symlinks.
-LOCKED_ROOT="$TMP_ROOT/locked"
-make_repo "$LOCKED_ROOT/main"
-printf 'agents\n' > "$LOCKED_ROOT/main/AGENTS.md"
-mkdir -p "$LOCKED_ROOT/main/.agents" "$LOCKED_ROOT/main/.claude/agents"
-printf 'lib\n' > "$LOCKED_ROOT/main/.agents/lib.sh"
-git -C "$LOCKED_ROOT/main" add AGENTS.md
-git -C "$LOCKED_ROOT/main" commit -q -m agents
-cat > "$LOCKED_ROOT/main/.env.local" <<'ENV'
-WORKTREE_SYMLINKS=".env.local .agents .claude/agents"
-WORKTREE_RELATIVE_SYMLINKS=".claude/POINTER.md=../AGENTS.md"
-ENV
-git -C "$LOCKED_ROOT/main" worktree add -q -b issue-locked "$LOCKED_ROOT/trees/issue-locked" main
-(cd "$LOCKED_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$LOCKED_ROOT/trees/issue-locked") >/dev/null
-git -C "$LOCKED_ROOT/main" worktree lock "$LOCKED_ROOT/trees/issue-locked" --reason "session guard: owner=issue-locked"
-set +e
-locked_out=$(cd "$LOCKED_ROOT/main" && "$WORKTREE_SCRIPT" remove ISSUE-LOCKED 2>"$LOCKED_ROOT/locked.err")
-locked_code=$?
-set -e
-assert_eq "$locked_code" "1" "locked worktree removal exits nonzero"
-assert_contains "$(cat "$LOCKED_ROOT/locked.err")" "session guard: owner=issue-locked" "locked removal diagnostic names the owning session"
-assert_contains "$(cat "$LOCKED_ROOT/locked.err")" "worktree unlock" "locked removal diagnostic gives the unlock command"
-assert_not_contains "$locked_out" "Removed:" "locked removal does not report a removal"
-assert_git_worktree "$LOCKED_ROOT/trees/issue-locked" "locked worktree survives refused removal"
-assert_branch_exists "$LOCKED_ROOT/main" "issue-locked" "locked branch survives refused removal"
-assert_symlink_target "$LOCKED_ROOT/trees/issue-locked/.env.local" "$LOCKED_ROOT/main/.env.local" "refused removal leaves .env.local symlink intact"
-assert_symlink_target "$LOCKED_ROOT/trees/issue-locked/.agents" "$LOCKED_ROOT/main/.agents" "refused removal leaves .agents symlink intact"
-assert_symlink_target "$LOCKED_ROOT/trees/issue-locked/.claude/agents" "$LOCKED_ROOT/main/.claude/agents" "refused removal leaves configured dir symlink intact"
-assert_symlink_target "$LOCKED_ROOT/trees/issue-locked/.claude/POINTER.md" "../AGENTS.md" "refused removal leaves relative symlink intact"
-
-# The guard refuses only while the lock is held: unlocking restores the normal
-# removal path, symlink cleanup included.
-git -C "$LOCKED_ROOT/main" worktree unlock "$LOCKED_ROOT/trees/issue-locked"
-unlocked_out=$(cd "$LOCKED_ROOT/main" && "$WORKTREE_SCRIPT" remove ISSUE-LOCKED 2>"$LOCKED_ROOT/unlocked.err")
-assert_eq "$unlocked_out" "Removed: $LOCKED_ROOT/trees/issue-locked" "unlocked worktree removal exits cleanly"
-assert_path_absent "$LOCKED_ROOT/trees/issue-locked" "unlocked worktree removed"
-assert_branch_absent "$LOCKED_ROOT/main" "issue-locked" "unlocked merged branch deleted"
-
-# The load-bearing case: the lock precheck PASSES (nothing is locked) and git
-# itself refuses the removal. Only "leave the tree intact until git succeeds"
-# can preserve the symlinks here — reintroducing a pre-strip after the precheck
-# would fail these assertions while the locked case above still passed. Mirrors
-# the fake-`git` pattern worktree_base_dir.sh uses for `cleanup`.
-RMFAIL_ROOT="$TMP_ROOT/remove-failure"
-make_repo "$RMFAIL_ROOT/main"
-printf 'agents\n' > "$RMFAIL_ROOT/main/AGENTS.md"
-mkdir -p "$RMFAIL_ROOT/main/.agents" "$RMFAIL_ROOT/main/.claude/agents"
-git -C "$RMFAIL_ROOT/main" add AGENTS.md
-git -C "$RMFAIL_ROOT/main" commit -q -m agents
-cat > "$RMFAIL_ROOT/main/.env.local" <<'ENV'
-WORKTREE_SYMLINKS=".env.local .agents .claude/agents"
-WORKTREE_RELATIVE_SYMLINKS=".claude/POINTER.md=../AGENTS.md"
-ENV
-git -C "$RMFAIL_ROOT/main" worktree add -q -b issue-rmfail "$RMFAIL_ROOT/trees/issue-rmfail" main
-(cd "$RMFAIL_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$RMFAIL_ROOT/trees/issue-rmfail") >/dev/null
-mkdir -p "$RMFAIL_ROOT/bin"
-cat > "$RMFAIL_ROOT/bin/git" <<'STUB'
-#!/usr/bin/env bash
-if [[ " $* " == *" worktree remove --force "* && "$*" == *"issue-rmfail"* ]]; then
-  echo "simulated worktree removal failure" >&2
-  exit 1
-fi
-exec "$REAL_GIT_BIN" "$@"
-STUB
-chmod +x "$RMFAIL_ROOT/bin/git"
-REAL_GIT_BIN="$(command -v git)"
-set +e
-(cd "$RMFAIL_ROOT/main" && PATH="$RMFAIL_ROOT/bin:$PATH" REAL_GIT_BIN="$REAL_GIT_BIN" \
-  "$WORKTREE_SCRIPT" remove ISSUE-RMFAIL >"$RMFAIL_ROOT/out" 2>"$RMFAIL_ROOT/err")
-rmfail_code=$?
-set -e
-assert_eq "$rmfail_code" "1" "git-refused removal exits nonzero"
-assert_contains "$(cat "$RMFAIL_ROOT/err")" "preserving it for manual recovery" "git-refused removal explains the worktree was preserved"
-assert_contains "$(cat "$RMFAIL_ROOT/err")" "simulated worktree removal failure" "git-refused removal surfaces git's own message"
-assert_path_exists "$RMFAIL_ROOT/trees/issue-rmfail/.git" "git-refused removal preserves the worktree"
-assert_branch_exists "$RMFAIL_ROOT/main" "issue-rmfail" "git-refused removal preserves the branch"
-assert_symlink_target "$RMFAIL_ROOT/trees/issue-rmfail/.env.local" "$RMFAIL_ROOT/main/.env.local" "git-refused removal leaves .env.local symlink intact"
-assert_symlink_target "$RMFAIL_ROOT/trees/issue-rmfail/.agents" "$RMFAIL_ROOT/main/.agents" "git-refused removal leaves .agents symlink intact"
-assert_symlink_target "$RMFAIL_ROOT/trees/issue-rmfail/.claude/agents" "$RMFAIL_ROOT/main/.claude/agents" "git-refused removal leaves configured dir symlink intact"
-assert_symlink_target "$RMFAIL_ROOT/trees/issue-rmfail/.claude/POINTER.md" "../AGENTS.md" "git-refused removal leaves relative symlink intact"
 
 # Codex Desktop owns worktree lifecycle. codex-setup applies project setup to
 # an already-created app worktree; codex-cleanup is a non-destructive hook and
