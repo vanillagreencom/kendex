@@ -435,7 +435,22 @@ if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
     done
   fi
   cargo doc --no-deps --document-private-items --workspace --quiet || say "cargo doc failed"
-  cargo test --workspace --quiet || say "tests failed"
+  # A test binary that dies by a signal is not a test verdict: the runner
+  # reports the executable's death, and no assertion was reached. A binary
+  # whose code pages come back wrong from disk dies this way; rebuilding
+  # that artifact answers it, re-running the suite does not. Reported apart
+  # from "tests failed" so a red chain names the artifact instead of the
+  # branch.
+  tests_log=$(mktemp)
+  if ! cargo test --workspace --quiet 2>&1 | tee "$tests_log"; then
+    death=$(grep -m1 -o "process didn't exit successfully: .*(signal: [^)]*)" "$tests_log")
+    if [ -n "$death" ]; then
+      say "a test binary died by a signal, which is not a test verdict: ${death#*successfully: }; delete that artifact under target/ and rebuild before reading the suite as red"
+    else
+      say "tests failed"
+    fi
+  fi
+  rm -f "$tests_log"
 fi
 if [ "$ui_changed" -eq 1 ] && [ -f ui/package.json ]; then
   npm run --prefix ui check:types || say "tsc failed"
