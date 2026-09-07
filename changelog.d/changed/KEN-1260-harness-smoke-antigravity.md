@@ -1,0 +1,1 @@
+- `tools/harness-smoke` asks Antigravity for its rendered project hook and MCP server with the scratch project attached as a workspace, and drops the agent row kendex renders nothing for.
