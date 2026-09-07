@@ -91,6 +91,20 @@ describe("the edited packages row", () => {
     expect(onEditedPackages).not.toHaveBeenCalled();
   });
 
+  it("tells two same-named projects apart by their path", () => {
+    const rows = attentionRows(
+      source({
+        editedPackages: [
+          edited("gh", VG),
+          edited("dev", { scope: "project", root: "/other/vg" }),
+        ],
+      }),
+    );
+    expect(row(rows, "edited").detail).toContain(
+      "gh in /work/vg; dev in /other/vg.",
+    );
+  });
+
   it("is absent with nothing edited", () => {
     expect(attentionRows(source({})).some((r) => r.key === "edited")).toBe(
       false,

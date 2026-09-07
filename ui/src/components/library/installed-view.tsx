@@ -28,7 +28,6 @@ import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { isNarrowed, UNFILTERED } from "@/lib/library-handoff";
 import { useLibraryStandings } from "@/lib/library-standings";
 import { packageMark } from "@/lib/place-marks";
-import { sameScope } from "@/lib/scope";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
 import {
@@ -42,7 +41,6 @@ import {
   useProvenanceStore,
 } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
-import { useUpdatesStore } from "@/stores/updates";
 
 /** "Installed": everything on this machine, filterable. A row opens the
  *  package's own page; the filters and scroll position live in a store so
@@ -66,9 +64,7 @@ export function InstalledView() {
     setEdited,
     setScrollTop,
   } = useLibraryViewStore();
-  // The edited narrowing reads the same rows Home's edited row counts, so
-  // the row's link lands on exactly the packages it counted.
-  const updateRows = useUpdatesStore((s) => s.rows);
+
   const provenance = useProvenanceStore((s) => s.rows);
   const loadProvenance = useProvenanceStore((s) => s.load);
   // Kept in nav rather than here so leaving for a package page and coming
@@ -103,6 +99,16 @@ export function InstalledView() {
     return () => setScrollTop(node.scrollTop);
   }, [replaced, setScrollTop]);
 
+  // Every group the scan holds, before any narrowing.
+  const everywhere = useMemo(
+    () => (result ? groupItems(result.items) : []),
+    [result],
+  );
+  // Read from those, never from the filtered set: a mark answers for the
+  // package, so narrowing the table to one project must not change what it
+  // says. Read from `groups`, a package customized in two projects would
+  // say "Customized in vg" here and name both on its own page.
+  const { standingsFor, editedAnywhere } = useLibraryStandings(everywhere);
   const groups = useMemo(() => {
     if (!result) return [];
     const filtered = filterItems(result.items, {
@@ -121,16 +127,12 @@ export function InstalledView() {
           ) === from,
       );
     }
+    // The edited narrowing reads the same per-place fact Home's edited
+    // row counts, so the row's link lands on exactly those packages.
+    // Before the updates read lands the fact is unknown, and the table
+    // shows its skeleton rather than an empty list claiming none.
     if (edited === "edited") {
-      grouped = grouped.filter((group) =>
-        updateRows.some(
-          (row) =>
-            row.blockedByLocalEdit &&
-            row.kind === group.kind &&
-            row.name === group.name &&
-            groupScopes(group).some((where) => sameScope(where, row.scope)),
-        ),
-      );
+      grouped = editedAnywhere ? grouped.filter(editedAnywhere) : [];
     }
     return grouped;
   }, [
@@ -143,19 +145,9 @@ export function InstalledView() {
     edited,
     search,
     provenance,
-    updateRows,
+    editedAnywhere,
   ]);
 
-  // Every group the scan holds, before any narrowing.
-  const everywhere = useMemo(
-    () => (result ? groupItems(result.items) : []),
-    [result],
-  );
-  // Read from those, never from the filtered set: a mark answers for the
-  // package, so narrowing the table to one project must not change what it
-  // says. Read from `groups`, a package customized in two projects would
-  // say "Customized in vg" here and name both on its own page.
-  const standingsFor = useLibraryStandings(everywhere);
   // The count the filtered total is measured against: every row the table
   // could show, not the ones left after the current narrowing. Shared with
   // Home's Installed tile so the two can never disagree.
@@ -167,7 +159,10 @@ export function InstalledView() {
     [provenance],
   );
   // Nothing has been counted yet — distinct from "counted, found nothing".
-  const scanning = result === null;
+  // Narrowed to edited packages, the count also waits on the updates read
+  // that says which are edited.
+  const scanning =
+    result === null || (edited === "edited" && editedAnywhere === null);
   const hasAnyItems = (result?.items.length ?? 0) > 0;
   const filters: FilterSelection = { kind, harness, tag, from, edited };
   const filtered = isNarrowed({ filters, search, scope });

@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ObservedItem, Scope } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
-import { READ_LANDED } from "@/lib/read-state";
+import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
 import { useEditorStore } from "@/stores/editor";
 import { useLibraryViewStore } from "@/stores/library-view";
 import { useNavStore } from "@/stores/nav";
@@ -138,6 +138,22 @@ describe("the Library narrowed to packages edited on disk", () => {
       edited: "edited",
     });
     expect(names(mount(<InstalledView />))).toEqual(["gh"]);
+  });
+
+  // Before the updates read lands nothing has been counted: an empty
+  // table there would claim no package is edited.
+  it("holds the skeleton until the updates read says which are edited", () => {
+    useUpdatesStore.setState({ rows: [], read: READ_PENDING });
+    useLibraryViewStore.setState({
+      kind: "any",
+      harness: "any",
+      tag: "any",
+      from: "any",
+      edited: "edited",
+    });
+    const host = mount(<InstalledView />);
+    expect(names(host).filter((name) => name !== undefined)).toEqual([]);
+    expect(host.querySelector('[data-slot="skeleton"]')).not.toBeNull();
   });
 
   it("shows every package when the facet is off", () => {

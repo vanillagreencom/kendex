@@ -22,7 +22,7 @@ import {
   UPDATES_UNREADABLE_TITLE,
   unreadablePlacesLabel,
 } from "@/lib/copy-updates";
-import { scopeName, scopeNames } from "@/lib/labels";
+import { scopeNames } from "@/lib/labels";
 import { scopeKey } from "@/lib/scope";
 
 /** Everything Home's attention list is derived from, with the way into
@@ -56,18 +56,21 @@ export interface AttentionSource {
  *  Grouped by place rather than listed flat, so three names in one
  *  project read as three and not as one package in three places. */
 export function editedPackagesByPlace(rows: UpdateRow[]): string {
-  const byPlace = new Map<string, { place: string; names: string[] }>();
+  const byPlace = new Map<
+    string,
+    { scope: UpdateRow["scope"]; names: string[] }
+  >();
   for (const row of rows) {
     const key = scopeKey(row.scope);
-    const entry = byPlace.get(key) ?? {
-      place: scopeName(row.scope),
-      names: [],
-    };
+    const entry = byPlace.get(key) ?? { scope: row.scope, names: [] };
     entry.names.push(row.name);
     byPlace.set(key, entry);
   }
-  return [...byPlace.values()]
-    .map(({ place, names }) => `${namesInWords(names)} in ${place}`)
+  const places = [...byPlace.values()];
+  // Two projects with one folder name are told apart by their path.
+  const labels = scopeNames(places.map((place) => place.scope));
+  return places
+    .map(({ names }, index) => `${namesInWords(names)} in ${labels[index]}`)
     .join("; ");
 }
 

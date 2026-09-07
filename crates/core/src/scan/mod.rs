@@ -96,6 +96,21 @@ impl std::fmt::Display for ScanWarning {
     }
 }
 
+/// Say a warning once per file. Several surfaces read one file — Claude's
+/// settings.json is a hook surface and a plugin surface, `~/.claude.json`
+/// is the MCP surface of the personal scope and of every project — and a
+/// file that cannot be read fails every one of them the same way. The
+/// first surface to say so names the file; a second saying of the same
+/// path and problem is the same fact, and dropped.
+pub(crate) fn push_warning(warnings: &mut Vec<ScanWarning>, warning: ScanWarning) {
+    let said = warnings
+        .iter()
+        .any(|known| known.path == warning.path && known.problem == warning.problem);
+    if !said {
+        warnings.push(warning);
+    }
+}
+
 /// The tool and kind a surface is scanned for, stamped on every warning
 /// the surface's files raise.
 #[derive(Debug, Clone, Copy)]
@@ -322,17 +337,10 @@ fn warn_unknown_tags(found: &files::FoundFile, owner: SurfaceOwner, result: &mut
     let Some(message) = found.meta.unknown_warning() else {
         return;
     };
-    // One file read through two tools' folders is one mistake, not two: the
-    // paths differ (each tool links to the shared folder its own way) and
-    // the complaint is identical, so it is said once.
-    let warning = owner.warning(found.path.clone(), ScanProblem::UnknownTag { message });
-    let said = result
-        .warnings
-        .iter()
-        .any(|known| known.path == warning.path && known.problem == warning.problem);
-    if !said {
-        result.warnings.push(warning);
-    }
+    push_warning(
+        &mut result.warnings,
+        owner.warning(found.path.clone(), ScanProblem::UnknownTag { message }),
+    );
 }
 
 fn scan_structured_file(
@@ -377,9 +385,10 @@ fn scan_structured_file(
                 });
             }
         }
-        Err(problem) => result
-            .warnings
-            .push(owner.warning(path.to_path_buf(), problem)),
+        Err(problem) => push_warning(
+            &mut result.warnings,
+            owner.warning(path.to_path_buf(), problem),
+        ),
     }
 }
 

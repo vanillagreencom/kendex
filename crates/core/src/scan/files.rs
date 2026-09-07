@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use super::metadata;
-use super::{ScanProblem, ScanWarning, SurfaceOwner};
+use super::{ScanProblem, ScanWarning, SurfaceOwner, push_warning};
 use crate::model::FileState;
 
 pub struct FoundFile {
@@ -62,12 +62,15 @@ fn warn_unreadable(
     warnings: &mut Vec<ScanWarning>,
 ) {
     if error.kind() != std::io::ErrorKind::NotFound {
-        warnings.push(owner.warning(
-            dir.to_path_buf(),
-            ScanProblem::Unreadable {
-                message: error.to_string(),
-            },
-        ));
+        push_warning(
+            warnings,
+            owner.warning(
+                dir.to_path_buf(),
+                ScanProblem::Unreadable {
+                    message: error.to_string(),
+                },
+            ),
+        );
     }
 }
 

@@ -275,6 +275,31 @@ fn an_unreadable_config_names_its_tool_kind_path_and_problem_shape() {
     }
 }
 
+/// One file, several surfaces, one warning: Claude's settings.json is
+/// read for hooks and again for plugins, and an empty one would otherwise
+/// be said twice — two rows on Home and two units of the footer's count
+/// for one file.
+#[test]
+fn a_file_two_surfaces_read_is_warned_about_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let env = Env::fake(home, FakeOs::Linux);
+    let project = home.join("dev/app");
+    let settings = project.join(".claude/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(&settings, "").unwrap();
+
+    let result = scan_scopes(&env, &BTreeMap::new(), &[Scope::Project { root: project }]);
+
+    let about: Vec<_> = result
+        .warnings
+        .iter()
+        .filter(|w| w.path == settings)
+        .collect();
+    assert_eq!(about.len(), 1, "{about:?}");
+    assert_eq!(about[0].problem, ScanProblem::EmptyFile);
+}
+
 /// A pi package registered by a relative spec is a folder of its own, so it
 /// can say what it is and when it changed. One registered by name is only a
 /// line in a shared config file, and has neither.
