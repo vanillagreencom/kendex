@@ -1,14 +1,13 @@
-# One mutation per behaviour the suite claims, and every expectation below is
-# what that arm reddens with ALL of them applied — the harness applies the
-# roster at once (KEN-1177). Arms 1 and 8 remove the issues and labels team
-# stages outright, so arm 9 is the only one the E assertions for those two can
-# still reach; its expectation names the cycles one, the read no other arm
-# touches.
+# One mutation per behaviour the suite claims, each on its own copy. Arms 1
+# and 8 remove the issues and labels team stages outright, so arm 9 names the
+# cycles read for the unfiltered listing; arms 11 and 12 narrow the issues and
+# labels reads when no team is asked for, which is what their unfiltered rows
+# refuse.
 
 # 1. Neutralize the team stage `cache issues list --team` composes into its
 #    filter. The flag is still bound and still exits 0, so every team's issues
 #    come back — the symptom the deleted consume-and-ignore arm produced.
-control_expect "A: --team KEN returns exactly KEN's issues"
+control_expect "A: --team KEN returns exactly KEN issues"
 control_replace scripts/commands/cache-query.sh 1 \
     '    jq_filter="$jq_filter$(cache_team_stage "$team")"' \
     '    : # control: the flag is bound and the cache goes through unfiltered'
@@ -16,9 +15,7 @@ control_replace scripts/commands/cache-query.sh 1 \
 # 2. Restore consume-and-ignore on the issues arm, the shape the deleted
 #    `--team | --assignee | --created-since) shift 2` arm had: a filter the
 #    cache does not implement is swallowed and the full listing comes back.
-control_expect "B: --assignee does not exit 0"
 control_expect "B: --assignee is refused, named as itself on the issues command"
-control_expect "B: --created-since does not exit 0"
 control_expect "B: --created-since is refused, named as itself on the issues command"
 control_replace scripts/commands/cache-query.sh 1 \
     '        -*) cache_unknown_flag "issues list" "issue" "$1"; return 1 ;;' \
@@ -26,7 +23,6 @@ control_replace scripts/commands/cache-query.sh 1 \
 
 # 3. Restore `*) shift ;;` on the labels arm, so the inline `--team=X` spelling
 #    is swallowed and every team's labels come back at rc 0.
-control_expect "C: labels --team=KEN does not exit 0"
 control_expect "C: labels --team=KEN is refused, named as itself on the labels command"
 control_replace scripts/commands/cache-query.sh 1 \
     '        -*) cache_unknown_flag "labels list" "label" "$1"; return 1 ;;' \
@@ -34,7 +30,6 @@ control_replace scripts/commands/cache-query.sh 1 \
 
 # 4. Restore `*) shift ;;` on the cycles arm, so an unknown flag is swallowed
 #    and every cycle comes back at rc 0.
-control_expect "D: cycles --bogus does not exit 0"
 control_expect "D: cycles --bogus is refused, named as itself on the cycles command"
 control_replace scripts/commands/cache-query.sh 1 \
     '        -*) cache_unknown_flag "cycles list" "cycle" "$1"; return 1 ;;' \
@@ -44,13 +39,9 @@ control_replace scripts/commands/cache-query.sh 1 \
 #    workspace at rc 0 on all three listings. The guard above it survives, so
 #    the G assertions still answer in the JSON shape and this claims none of
 #    them.
-control_expect "F: --team with an empty value does not exit 0"
 control_expect "F: --team with an empty value refuses instead of returning every team"
-control_expect "F: labels --team with an empty value does not exit 0"
 control_expect "F: labels --team with an empty value refuses too"
-control_expect "F: cycles --team with an empty value does not exit 0"
 control_expect "F: cycles --team with an empty value refuses too"
-control_expect "F: cycles --team= with an empty value does not exit 0"
 control_expect "F: cycles --team= with an empty value refuses too"
 control_replace scripts/commands/cache-query.sh 1 \
     '    [[ -n "$2" ]] && return 0' \
@@ -69,7 +60,7 @@ control_replace scripts/commands/cache-query.sh 1 \
 
 # 7. Resolve the cycle keyword against every team's cycles again, so
 #    `--team KEN --cycle current` picks OTHER's cycle and prints nothing.
-control_expect "H: --team KEN --cycle current resolves KEN's cycle, not OTHER's"
+control_expect "H: --team KEN --cycle current resolves KEN cycle, not OTHER"
 control_replace scripts/commands/cache-query.sh 1 \
     '                all_cycles=$(cache_jq_file "$cycles_file" "[]" ".$(cache_team_stage "$team")") || return 1' \
     '                all_cycles=$(cache_jq_file "$cycles_file" "[]" '"'"'.'"'"') || return 1 # control: team-blind'
@@ -85,15 +76,27 @@ control_replace scripts/commands/cache-query.sh 1 \
 #    composes `select(.team.name == "")` and matches nothing. Arms 1 and 8 have
 #    already removed the issues and labels stages, so the cycles read is where
 #    this still shows.
-control_expect "E: an unfiltered cycles list still returns every team's cycles"
+control_expect "E: an unfiltered cycles list still returns every team"
 control_replace scripts/commands/cache-query.sh 1 \
     '    [[ -n "$1" ]] || return 0' \
     '    : # control: an empty team still emits a stage'
 
 # 10. Bind a flag standing where the value should be, so `--team --max` takes
 #     --max as the team name, swallows the real flag, and answers [] at rc 0.
-control_expect "G: --team followed by another flag does not exit 0"
 control_expect "G: --team followed by another flag is a missing value, not a team named --max"
 control_replace scripts/commands/cache-query.sh 1 \
     '    -*)' \
     '    --this-value-never-arrives)'
+
+# 11. Narrow the issues read to KEN when no team is asked for, so the unfiltered
+#     listing loses OTHER's issue while every filtered row still answers.
+control_expect "E: an unfiltered issues list still returns every team"
+control_replace scripts/commands/cache-query.sh 1 \
+    '    jq_filter="$jq_filter$(cache_team_stage "$team")"' \
+    '    jq_filter="$jq_filter$(cache_team_stage "${team:-KEN}")" # control: narrowed unasked'
+
+# 12. The same for the labels read.
+control_expect "E: an unfiltered labels list still returns every team"
+control_replace scripts/commands/cache-query.sh 1 \
+    '    labels=$(cache_jq_file "$CACHE_DIR/labels.json" "[]" ".$(cache_team_stage "$team")") || return 1' \
+    '    labels=$(cache_jq_file "$CACHE_DIR/labels.json" "[]" ".$(cache_team_stage "${team:-KEN}")") || return 1 # control: narrowed unasked'

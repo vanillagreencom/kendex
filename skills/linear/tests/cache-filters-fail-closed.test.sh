@@ -13,26 +13,20 @@
 # `--assignee` and `--created-since` are real filters on the live issues path,
 # and the cache refuses them because it does not implement them.
 #
-# This locks in:
-#   A. `issues list --team X` returns only that team's issues.
-#   B. `--assignee` and `--created-since` refuse, each naming itself.
-#   C. `labels list --team=X` refuses, the spelling the live twin rejects with
-#      "Unknown option"; the space form still filters.
-#   D. `cycles list` refuses an unknown flag instead of returning every cycle.
-#   E. An unfiltered listing is unaffected by the fail-closed arms.
-#   F. `--team ""` refuses instead of degrading to an unfiltered list.
-#   G. `--team` standing last answers with the file's JSON error shape, not a
-#      bash unbound-variable abort under set -u.
-#   H. `--team X --cycle current` resolves the keyword inside X's cycles, not
-#      against whichever team started a cycle most recently.
-#
-# Every refusal is matched on the whole "Unknown flag for cache <command>: <flag>"
-# prefix, not the shared two words: the three call sites pass their own command
-# name and noun into one helper and can be wrong independently.
+# One table over the three listings. A row names the command, its arguments
+# and what came back, rendered as one line: the exit status, the sorted names
+# or identifiers of a listing that answered, then stderr whole, so a refusal is
+# pinned on its entire line (the three call sites pass their own command name
+# and noun into one helper and can be wrong independently) and a listing on
+# exactly the rows it returned.
 #
 # `issues list --team=X` is NOT asserted here: it already reached the
 # fail-closed arm before this change (the deleted arm named `--team`, not
-# `--team=`), and `cache-issues-no-project.test.sh` § C owns that arm.
+# `--team=`), and `cache-issues-no-project.test.sh` § C owns that arm. Two
+# more surfaces the table leaves out are owned elsewhere: the value the cycles
+# `--team=X` normalisation forwards (cache-cycles-team-filter.test.sh) and the
+# resolved `--cycle` keyword applied as a predicate
+# (cache-date-comparison-utc.test.sh).
 #
 # Fully offline — pure cache read, no curl needed.
 
@@ -108,114 +102,67 @@ cat >"$TMP_ROOT/.cache/linear/cycles.json" <<'JSON'
 ]
 JSON
 
-run_issues() { cd "$TMP_ROOT" && bash "$LINEAR" cache issues list "$@"; }
-run_labels() { cd "$TMP_ROOT" && bash "$LINEAR" cache labels list "$@"; }
-run_cycles() { cd "$TMP_ROOT" && bash "$LINEAR" cache cycles list "$@"; }
+# --- the renderer -------------------------------------------------------------
+# run COMMAND ARGS... — `cache COMMAND list ARGS`, as one line: the status, the
+# listing as its sorted identifiers or names in brackets (a JSON array on
+# stdout; the `ids` format prints one identifier per line), then stderr whole.
+run() {
+  local cmd="$1" rc=0 out err listing
+  shift
+  (cd "$TMP_ROOT" && bash "$LINEAR" cache "$cmd" list "$@" >"$TMP_ROOT/out" 2>"$TMP_ROOT/err") || rc=$?
+  err="$(paste -sd';' "$TMP_ROOT/err")"
+  if listing="$(jq -er 'if type == "array" then [.[] | .identifier // .name] | sort | join(",") else empty end' "$TMP_ROOT/out" 2>/dev/null)"; then
+    out="[$listing]"
+  else
+    out="[$(sort "$TMP_ROOT/out" | paste -sd, -)]"
+  fi
+  printf 'rc=%s %s%s' "$rc" "$out" "${err:+ $err}"
+}
 
-# A refusal is written to stderr, and run_output captures only the subject's
-# stdout — redirecting at the run_output call would merge the harness's stderr,
-# not the subject's. The merge belongs inside the subject.
-msg_issues() { run_issues "$@" 2>&1; }
-msg_labels() { run_labels "$@" 2>&1; }
-msg_cycles() { run_cycles "$@" 2>&1; }
+# --- the expected lines --------------------------------------------------------
+# unknown COMMAND NOUN FLAG   the unknown-flag refusal for that listing
+# empty                        the given-but-empty team refusal
+# novalue                      the missing-value refusal, in the JSON shape
+# list IDS                     a listing that answered with exactly IDS
+expected() {
+  case "$1" in
+  unknown) printf 'rc=1 [] {"error":"Unknown flag for cache %s: %s. A filter the cache cannot honor must fail, not silently return every %s. Run '"'"'cache %s --help'"'"'."}' "$2 list" "$4" "$3" "$2 list" ;;
+  empty) printf 'rc=1 [] {"error": "--team requires a non-empty team name: an empty value would return every team, not the one named"}' ;;
+  novalue) printf 'rc=1 [] {"error":"--team requires a value"}' ;;
+  list) printf 'rc=0 [%s]' "${2:-}" ;;
+  esac
+}
 
-ids() { jq -r '[.[].id] | sort | join(",")' <<<"$1"; }
-names() { jq -r '[.[].name] | sort | join(",")' <<<"$1"; }
+# --- the table ------------------------------------------------------------------
+# label|command|args|expect
+# `--team X` on issues resolves the keyword `current` inside X's cycles; OTHER's
+# cycle starts later, so a team-blind resolution picks it and answers []. The
+# unfiltered rows are what the fail-closed arms must leave alone. `issues list
+# --team=X` is not here: cache-issues-no-project.test.sh owns that arm.
+ROWS='
+A: --team KEN returns exactly KEN issues|issues|--team KEN --max --format=ids|list KEN-1
+B: --assignee is refused, named as itself on the issues command|issues|--assignee alice --max --format=ids|unknown issues issue --assignee
+B: --created-since is refused, named as itself on the issues command|issues|--created-since 1d --max --format=ids|unknown issues issue --created-since
+C: labels --team=KEN is refused, named as itself on the labels command|labels|--team=KEN|unknown labels label --team=KEN
+C: labels --team KEN, the space form, still filters|labels|--team KEN|list ken-label
+D: cycles --bogus is refused, named as itself on the cycles command|cycles|--bogus x|unknown cycles cycle --bogus
+E: an unfiltered issues list still returns every team|issues|--max --format=ids|list KEN-1,OTH-1
+E: an unfiltered labels list still returns every team|labels||list ken-label,other-label
+E: an unfiltered cycles list still returns every team|cycles||list ken-cycle,other-cycle
+F: --team with an empty value refuses instead of returning every team|issues|--team "" --max --format=ids|empty
+F: labels --team with an empty value refuses too|labels|--team ""|empty
+F: cycles --team with an empty value refuses too|cycles|--team ""|empty
+F: cycles --team= with an empty value refuses too|cycles|--team=|empty
+G: a valueless --team answers with a JSON error, not a bash abort|issues|--max --format=ids --team|novalue
+G: a valueless labels --team answers with a JSON error too|labels|--team|novalue
+G: a valueless cycles --team answers with a JSON error too|cycles|--team|novalue
+G: --team followed by another flag is a missing value, not a team named --max|issues|--team --max --format=ids|novalue
+H: --team KEN --cycle current resolves KEN cycle, not OTHER|issues|--team KEN --cycle current --max --format=ids|list KEN-1
+'
 
-# --- A: issues list --team filters -------------------------------------------
-outA="$(run_issues --team KEN --max --format=compact 2>/dev/null)"
-assert_eq "A: --team KEN returns exactly KEN's issues" \
-  "$(ids "$outA")" "KEN-1"
-
-# --- B: the two filters the cache does not implement refuse -------------------
-run_output assignee_out assignee_rc msg_issues --assignee alice --max --format=ids
-assert_ne "B: --assignee does not exit 0" "$assignee_rc" 0
-assert_contains "B: --assignee is refused, named as itself on the issues command" \
-  "$assignee_out" "Unknown flag for cache issues list: --assignee"
-
-run_output created_out created_rc msg_issues --created-since 1d --max --format=ids
-assert_ne "B: --created-since does not exit 0" "$created_rc" 0
-assert_contains "B: --created-since is refused, named as itself on the issues command" \
-  "$created_out" "Unknown flag for cache issues list: --created-since"
-
-# --- C: labels list refuses the inline spelling, filters on the space form ----
-run_output labels_inline_out labels_inline_rc msg_labels --team=KEN
-assert_ne "C: labels --team=KEN does not exit 0" "$labels_inline_rc" 0
-assert_contains "C: labels --team=KEN is refused, named as itself on the labels command" \
-  "$labels_inline_out" "Unknown flag for cache labels list: --team=KEN"
-assert_eq "C: labels --team KEN, the space form, still filters" \
-  "$(names "$(run_labels --team KEN 2>/dev/null)")" "ken-label"
-
-# --- D: cycles list refuses an unknown flag ----------------------------------
-run_output cycles_out cycles_rc msg_cycles --bogus x
-assert_ne "D: cycles --bogus does not exit 0" "$cycles_rc" 0
-assert_contains "D: cycles --bogus is refused, named as itself on the cycles command" \
-  "$cycles_out" "Unknown flag for cache cycles list: --bogus"
-
-# --- E: unfiltered listings are unaffected -----------------------------------
-assert_eq "E: an unfiltered issues list still returns every team's issues" \
-  "$(printf '%s\n' "$(run_issues --max --format=ids 2>/dev/null)" | sort | tr '\n' ',')" \
-  "KEN-1,OTH-1,"
-assert_eq "E: an unfiltered labels list still returns every team's labels" \
-  "$(names "$(run_labels 2>/dev/null)")" "ken-label,other-label"
-assert_eq "E: an unfiltered cycles list still returns every team's cycles" \
-  "$(names "$(run_cycles 2>/dev/null)")" "ken-cycle,other-cycle"
-
-# --- F: a given-but-empty team refuses, on every command that takes the flag --
-# Reached by a workflow interpolating --team "$LINEAR_TEAM" with nothing in it.
-# All three listings are checked: one command refusing while its siblings return
-# the workspace is the same fail-open shape, one function over.
-run_output empty_out empty_rc msg_issues --team "" --max --format=ids
-assert_ne "F: --team with an empty value does not exit 0" "$empty_rc" 0
-assert_jq "F: --team with an empty value refuses instead of returning every team" \
-  "$empty_out" '.error | test("--team requires a non-empty team name")'
-
-run_output empty_labels_out empty_labels_rc msg_labels --team ""
-assert_ne "F: labels --team with an empty value does not exit 0" "$empty_labels_rc" 0
-assert_jq "F: labels --team with an empty value refuses too" \
-  "$empty_labels_out" '.error | test("--team requires a non-empty team name")'
-
-run_output empty_cycles_out empty_cycles_rc msg_cycles --team ""
-assert_ne "F: cycles --team with an empty value does not exit 0" "$empty_cycles_rc" 0
-assert_jq "F: cycles --team with an empty value refuses too" \
-  "$empty_cycles_out" '.error | test("--team requires a non-empty team name")'
-
-# The inline spelling cycles accepts is normalized onto the space arm, so the
-# same guard reaches it rather than a second binding it could be missing from.
-run_output empty_inline_out empty_inline_rc msg_cycles --team=
-assert_ne "F: cycles --team= with an empty value does not exit 0" "$empty_inline_rc" 0
-assert_jq "F: cycles --team= with an empty value refuses too" \
-  "$empty_inline_out" '.error | test("--team requires a non-empty team name")'
-
-# --- G: --team standing last answers in the file's error shape ----------------
-run_output last_out last_rc msg_issues --max --format=ids --team
-assert_ne "G: a valueless --team does not exit 0" "$last_rc" 0
-assert_jq "G: a valueless --team answers with a JSON error, not a bash abort" \
-  "$last_out" '.error | test("--team requires a value")'
-
-run_output last_labels_out last_labels_rc msg_labels --team
-assert_ne "G: a valueless labels --team does not exit 0" "$last_labels_rc" 0
-assert_jq "G: a valueless labels --team answers with a JSON error too" \
-  "$last_labels_out" '.error | test("--team requires a value")'
-
-run_output last_cycles_out last_cycles_rc msg_cycles --team
-assert_ne "G: a valueless cycles --team does not exit 0" "$last_cycles_rc" 0
-assert_jq "G: a valueless cycles --team answers with a JSON error too" \
-  "$last_cycles_out" '.error | test("--team requires a value")'
-
-# Reached by --team $LINEAR_TEAM --max unquoted with the variable empty: the
-# next flag lands where the value should be. Binding it would swallow the real
-# flag and answer [] at rc 0.
-run_output flagval_out flagval_rc msg_issues --team --max --format=ids
-assert_ne "G: --team followed by another flag does not exit 0" "$flagval_rc" 0
-assert_jq "G: --team followed by another flag is a missing value, not a team named --max" \
-  "$flagval_out" '.error | test("--team requires a value")'
-
-# --- H: the cycle keyword resolves inside the requested team ------------------
-# OTHER's cycle starts later, so a team-blind resolution picks it and this
-# returns nothing at rc 0 — a silently empty answer to a well-formed request,
-# while `cycles list --team KEN --type current` names KEN's cycle off the same
-# file.
-outH="$(run_issues --team KEN --cycle current --max --format=ids 2>/dev/null)"
-assert_eq "H: --team KEN --cycle current resolves KEN's cycle, not OTHER's" \
-  "$(printf '%s\n' "$outH" | sort | tr '\n' ',')" "KEN-1,"
+while IFS='|' read -r label cmd args spec; do
+  [ -n "$label$cmd$args$spec" ] || continue
+  eval "set -- $args"
+  # shellcheck disable=SC2086  # the spec's fields are its words
+  assert_eq "$label" "$(run "$cmd" "$@")" "$(expected $spec)"
+done <<<"$ROWS"
