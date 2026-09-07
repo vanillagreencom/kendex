@@ -9,6 +9,12 @@
 # reported "Milestone not found" — the wrong cause. The fixture returns the
 # foreign milestone first whenever the query arrives unscoped, which is the
 # order the old code got wrong.
+#
+# One table. A row is one command line and what it left behind, rendered as
+# one line: the exit status, every logged operation with the milestone
+# reference it carried (a lookup's name and project scope, a mutation's
+# projectMilestoneId), then stderr whole, so a refusal is pinned on its entire
+# line and a proceed on the milestone it filed under and the lookups it made.
 
 set -euo pipefail
 
@@ -102,136 +108,76 @@ esac
 SH
 chmod +x "$PROJECT/bin/curl"
 
-run_linear() {
-  ( cd "$PROJECT" \
-    && CURL_LOG="$CURL_LOG" PATH="$PROJECT/bin:$PATH" \
-       LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam \
-       "$LINEAR" "$@" ) >"$TMP_ROOT/out.txt" 2>"$ERR_FILE"
+# --- the renderer -------------------------------------------------------------
+# Every payload the fake curl logged, as `Operation(key=value,...)`: the named
+# operation, with the lookup's name and projectId, the mutation's
+# projectMilestoneId, and `upload` for a file upload, so the order of a
+# refusal against an upload is on the line.
+wire() {
+  jq -r '
+    def op: (.query | capture("^[[:space:]]*(query|mutation)[[:space:]]+(?<n>[A-Za-z_]+)").n)
+      // (.query | capture("\\{[[:space:]]*(?<n>[A-Za-z_]+)").n);
+    def shown: [(.variables // {}) as $v | $v | paths(scalars) as $p
+      | select($p == ["name"] or $p == ["projectId"] or $p == ["input", "projectMilestoneId"])
+      | "\($p | join("."))=\($v | getpath($p))"];
+    "\(op)(\(shown | join(",")))"' "$CURL_LOG" | paste -sd, -
 }
 
-create_with_milestone() {
-  run_linear issues create --title t --team TestTeam --project Dup \
-    --labels agent:rust --priority 3 --description d --milestone "$1"
+# run ARGS... — one command in the project, rendered.
+run() {
+  local rc=0 err
+  : >"$CURL_LOG"
+  (cd "$PROJECT" && CURL_LOG="$CURL_LOG" PATH="$PROJECT/bin:$PATH" \
+    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam "$LINEAR" "$@") >"$TMP_ROOT/out.txt" 2>"$TMP_ROOT/err" || rc=$?
+  err="$(sed "s#$TMP_ROOT#<root>#g" "$TMP_ROOT/err" | paste -sd';' -)"
+  printf 'rc=%s wire=%s%s' "$rc" "$(wire)" "${err:+ $err}"
 }
 
-update_with_milestone() {
-  run_linear issues update ISS-1 --project Dup --milestone "$1"
+# --- the expected lines --------------------------------------------------------
+# expected RC WIRE MESSAGE — the line a row expects. MESSAGE is `-` (nothing
+# on stderr), or one of ambiguous:NAME, unscoped:NAME, failed:NAME,
+# notfound:NAME, unreadable:FILE, each the resolver's or the preflight's line.
+expected() {
+  local msg
+  case "$3" in
+  -) msg="" ;;
+  ambiguous:*) msg="$(printf ' {"error":"Milestone name is ambiguous within the project: \\"%s\\" matches twin-one, twin-two; pass a milestone UUID to target one)"}' "${3#*:}")" ;;
+  unscoped:*) msg="$(printf ' {"error":"Cannot resolve milestone \\"%s\\" without a project: the same milestone name exists in other projects. Pass --project, or pass the milestone UUID."}' "${3#*:}")" ;;
+  failed:*) msg="$(printf ' {"error":"Rate limited"};{"error":"Could not resolve milestone \\"%s\\": Linear API request failed (see previous error)"}' "${3#*:}")" ;;
+  notfound:*) msg="$(printf ' {"error":"Milestone not found: %s"}' "${3#*:}")" ;;
+  unreadable:*) msg="$(printf ' {"error":"--attach path not readable: <root>/%s"}' "${3#*:}")" ;;
+  esac
+  printf 'rc=%s wire=%s%s' "$1" "$2" "$msg"
 }
 
-# Surface: create resolves the milestone inside the project it just resolved.
-: >"$CURL_LOG"
-run_status create_rc create_with_milestone Alpha
-assert_eq "issues create succeeds with a project-scoped milestone name" "$create_rc" 0
-assert "issues create files the issue under the project's own milestone" \
-  jq -s -e 'any(.[]; (.query | contains("issueCreate")) and .variables.input.projectMilestoneId == "alpha-here")' \
-  "$CURL_LOG" >/dev/null
-
-# Surface: update resolves the milestone inside the project it just resolved.
-: >"$CURL_LOG"
-run_status update_rc update_with_milestone Alpha
-assert_eq "issues update succeeds with a project-scoped milestone name" "$update_rc" 0
-assert "--project wins over the project the issue is already in" \
-  jq -s -e 'any(.[]; (.query | contains("issueUpdate")) and .variables.input.projectMilestoneId == "alpha-here")' \
-  "$CURL_LOG" >/dev/null
-
-# Surface: two milestones of that name in the project is a refusal, not a pick.
-: >"$CURL_LOG"
-run_status twin_rc create_with_milestone Twin
-assert_ne "an ambiguous milestone name refuses the create" "$twin_rc" 0
-assert_file_contains "the ambiguity refusal names the first candidate UUID" "$ERR_FILE" "twin-one"
-assert_file_contains "the ambiguity refusal names the second candidate UUID" "$ERR_FILE" "twin-two"
-assert_file_lacks "no issue is created for an ambiguous milestone" "$CURL_LOG" "issueCreate"
-
-# Surface: a failed lookup is an API failure, a successful empty one is a miss.
-: >"$CURL_LOG"
-run_status boom_rc create_with_milestone Boom
-assert_ne "a failed milestone lookup refuses the create" "$boom_rc" 0
-assert_file_contains "a failed lookup reports the API failure" "$ERR_FILE" "Could not resolve milestone"
-
-: >"$CURL_LOG"
-run_status ghost_rc create_with_milestone Ghost
-assert_ne "an unmatched milestone name refuses the create" "$ghost_rc" 0
-assert_file_contains "an unmatched name reports a miss, not an API failure" "$ERR_FILE" "Milestone not found"
-
-# Surface: a milestone name with no project to scope it is refused.
-: >"$CURL_LOG"
-run_status unscoped_rc run_linear issues create --title t --team TestTeam \
-  --labels agent:rust --priority 3 --description d --milestone Alpha
-assert_ne "a milestone name without a project refuses the create" "$unscoped_rc" 0
-assert_file_contains "the refusal names the missing project" "$ERR_FILE" "without a project"
-assert_file_lacks "no milestone lookup is sent without a project to scope it" \
-  "$CURL_LOG" "projectMilestones"
-
-# Surface: on update, the issue's own project scopes the name. Asking for
-# --project to name the project the issue is already in would move it to
-# satisfy a lookup.
-: >"$CURL_LOG"
-run_status own_project_rc run_linear issues update ISS-1 --milestone Alpha
-assert_eq "issues update succeeds without --project on an issue that has one" "$own_project_rc" 0
-assert "issues update scopes the name to the issue's own project" \
-  jq -s -e 'any(.[]; (.query | contains("issueUpdate")) and .variables.input.projectMilestoneId == "alpha-old")' \
-  "$CURL_LOG" >/dev/null
-
-# Surface: a milestone UUID resolves with no project at all. It names one
-# milestone already, and refusing it would take `--milestone <uuid>` with it.
-: >"$CURL_LOG"
-run_status uuid_rc run_linear issues update ISS-2 \
-  --milestone 11111111-2222-3333-4444-555555555555
-assert_eq "a milestone UUID needs no project" "$uuid_rc" 0
-assert "the UUID reaches the mutation as given" \
-  jq -s -e 'any(.[]; (.query | contains("issueUpdate")) and .variables.input.projectMilestoneId == "11111111-2222-3333-4444-555555555555")' \
-  "$CURL_LOG" >/dev/null
-assert_file_lacks "a milestone UUID is not looked up by name" "$CURL_LOG" "projectMilestones"
-
-# Surface: the refusal is decided from the arguments, so it lands before
-# --attach uploads. A refusal after an upload strands the asset in Linear
-# storage with no issue referencing it.
+# --- the table ------------------------------------------------------------------
+# label|args|rc|wire|message
+# CREATE is the create up to its milestone; the fixture answers the project
+# lookup first because the resolvers are hoisted ahead of the team and label
+# ones. --attach rows put an asset behind the resolution: a refusal that lands
+# after the upload strands the asset in Linear storage with no issue
+# referencing it. The ambiguity rows need the lookup, not just the arguments,
+# so they are the ones proving the whole resolution runs ahead of the upload.
+CREATE='issues create --title t --team TestTeam --labels agent:rust --priority 3 --description d'
 printf 'x' >"$TMP_ROOT/asset.bin"
+ROWS='
+issues create files the issue under the project own milestone|$CREATE --project Dup --milestone Alpha|0|GetProject(name=Dup),GetMilestone(name=Alpha,projectId=live-uuid),GetTeam(name=TestTeam),GetLabel(name=agent:rust),CreateIssue(input.projectMilestoneId=alpha-here)|-
+--project wins over the project the issue is already in|issues update ISS-1 --project Dup --milestone Alpha|0|GetIssue(),GetProject(name=Dup),GetMilestone(name=Alpha,projectId=live-uuid),UpdateIssue(input.projectMilestoneId=alpha-here)|-
+two milestones of that name in the project is a refusal, not a pick|$CREATE --project Dup --milestone Twin|1|GetProject(name=Dup),GetMilestone(name=Twin,projectId=live-uuid)|ambiguous:Twin
+a failed lookup reports the API failure, not a miss|$CREATE --project Dup --milestone Boom|1|GetProject(name=Dup),GetMilestone(name=Boom,projectId=live-uuid)|failed:Boom
+an unmatched name reports a miss, not an API failure|$CREATE --project Dup --milestone Ghost|1|GetProject(name=Dup),GetMilestone(name=Ghost,projectId=live-uuid)|notfound:Ghost
+a milestone name with no project to scope it is refused before any lookup|$CREATE --milestone Alpha|1||unscoped:Alpha
+issues update scopes the name to the issue own project|issues update ISS-1 --milestone Alpha|0|GetIssue(),GetMilestone(name=Alpha,projectId=old-uuid),UpdateIssue(input.projectMilestoneId=alpha-old)|-
+a milestone UUID needs no project and no lookup|issues update ISS-2 --milestone 11111111-2222-3333-4444-555555555555|0|GetIssue(),UpdateIssue(input.projectMilestoneId=11111111-2222-3333-4444-555555555555)|-
+a project-less name refuses the create before its upload|$CREATE --milestone Alpha --attach $TMP_ROOT/asset.bin|1||unscoped:Alpha
+a name refuses the update of an issue in no project before its upload|issues update ISS-2 --milestone Alpha --attach $TMP_ROOT/asset.bin|1|GetIssue()|unscoped:Alpha
+an unreadable --attach path refuses before any lookup|$CREATE --project Dup --milestone Alpha --attach $TMP_ROOT/nope.bin|1||unreadable:nope.bin
+an ambiguous name refuses the create before its upload|$CREATE --project Dup --milestone Twin --attach $TMP_ROOT/asset.bin|1|GetProject(name=Dup),GetMilestone(name=Twin,projectId=live-uuid)|ambiguous:Twin
+an ambiguous name refuses the update before its upload|issues update ISS-1 --project Dup --milestone Twin --attach $TMP_ROOT/asset.bin|1|GetIssue(),GetProject(name=Dup),GetMilestone(name=Twin,projectId=live-uuid)|ambiguous:Twin
+'
 
-: >"$CURL_LOG"
-run_status create_attach_rc run_linear issues create --title t --team TestTeam \
-  --labels agent:rust --priority 3 --description d --milestone Alpha \
-  --attach "$TMP_ROOT/asset.bin"
-assert_ne "a project-less milestone name refuses the create that carries --attach" \
-  "$create_attach_rc" 0
-assert_file_lacks "no upload is sent before the create refusal" "$CURL_LOG" "fileUpload"
-
-: >"$CURL_LOG"
-run_status update_attach_rc run_linear issues update ISS-2 --milestone Alpha \
-  --attach "$TMP_ROOT/asset.bin"
-assert_ne "a milestone name refuses the update of an issue in no project" \
-  "$update_attach_rc" 0
-assert_file_lacks "no upload is sent before the update refusal" "$CURL_LOG" "fileUpload"
-
-# Hoisting the resolvers above the upload must not hoist them above the
-# --attach preflight: `--help` promises an unreadable path refuses before any
-# API call, and the existing preflight case passes no --project, so nothing
-# else reaches this ordering.
-: >"$CURL_LOG"
-run_status missing_attach_rc run_linear issues create --title t --team TestTeam \
-  --labels agent:rust --priority 3 --description d --project Dup --milestone Alpha \
-  --attach "$TMP_ROOT/nope.bin"
-assert_ne "a missing --attach path refuses the create" "$missing_attach_rc" 0
-assert_file_lacks "no project lookup precedes the missing-path refusal" \
-  "$CURL_LOG" "projects(filter:"
-assert_file_lacks "no milestone lookup precedes the missing-path refusal" \
-  "$CURL_LOG" "projectMilestones"
-
-# The ambiguity refusal needs the lookup, not just the arguments, so it is the
-# one that proves the whole resolution runs ahead of the upload.
-: >"$CURL_LOG"
-run_status create_twin_attach_rc run_linear issues create --title t --team TestTeam \
-  --labels agent:rust --priority 3 --description d --project Dup --milestone Twin \
-  --attach "$TMP_ROOT/asset.bin"
-assert_ne "an ambiguous milestone name refuses the create that carries --attach" \
-  "$create_twin_attach_rc" 0
-assert_file_lacks "no upload is sent before the create ambiguity refusal" \
-  "$CURL_LOG" "fileUpload"
-
-: >"$CURL_LOG"
-run_status update_twin_attach_rc run_linear issues update ISS-1 --project Dup \
-  --milestone Twin --attach "$TMP_ROOT/asset.bin"
-assert_ne "an ambiguous milestone name refuses the update that carries --attach" \
-  "$update_twin_attach_rc" 0
-assert_file_lacks "no upload is sent before the update ambiguity refusal" \
-  "$CURL_LOG" "fileUpload"
+while IFS='|' read -r label args rc wire msg; do
+  [ -n "$label" ] || continue
+  eval "set -- $args"
+  assert_eq "$label" "$(run "$@")" "$(expected "$rc" "$wire" "$msg")"
+done <<<"$ROWS"
