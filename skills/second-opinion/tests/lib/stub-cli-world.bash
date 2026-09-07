@@ -95,7 +95,9 @@ fi
 # The fake CLI: STUB_RC, STUB_STDOUT, STUB_STDERR, STUB_SLEEP, STUB_STDOUT2
 # (what the second call prints instead), STUB_PROMPT_DIR (each call's prompt
 # kept as prompt-N.txt; both single-lane only, since the counter is shared
-# across lanes), and two mid-run side effects (a directory locked
+# across lanes), STUB_SIGNAL (the signal it dies to after its last words, an
+# external killer as seen from inside the CLI's own process group), and two
+# mid-run side effects (a directory locked
 # read-only once the script's own temp files exist; an entry planted at a
 # record path after the pre-flight clearing). Appends a line per invocation
 # (lanes run concurrently).
@@ -112,6 +114,7 @@ if [[ -n "${STUB_PROMPT_DIR:-}" ]]; then cat >"$STUB_PROMPT_DIR/prompt-$n.txt"; 
 [[ "${STUB_SLEEP:-0}" != "0" ]] && sleep "$STUB_SLEEP"
 [[ -n "${STUB_STDERR:-}" ]] && printf '%s\n' "$STUB_STDERR" >&2
 [[ -n "${STUB_STDOUT:-}" ]] && printf '%s' "$STUB_STDOUT"
+[[ -z "${STUB_SIGNAL:-}" ]] || kill -s "$STUB_SIGNAL" $$
 exit "${STUB_RC:-0}"
 SH
 chmod +x "$STUB"
@@ -134,10 +137,11 @@ BLOCKER='{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict"
 PROSE_DELIVERED='My review is complete; the final JSON verdict was already delivered above.'
 PROSE_SQL='I found a critical SQL injection in login(); the JSON verdict was already delivered above.'
 PROSE_PREVIOUSLY='As I said, the review is done and the JSON was provided previously.'
+KILLED='killed from outside'
 
 # --- the world -----------------------------------------------------------------
 ROW="" WORK="" OUT="" HOME_DIR="" ROW_TMP=""
-W_OUTPUT="" W_RC="" W_STDOUT="" W_STDOUT2="" W_STDERR="" W_SLEEP="" W_LOCK="" W_PLANT="" W_CAPTURE="" W_DIFF=""
+W_OUTPUT="" W_RC="" W_STDOUT="" W_STDOUT2="" W_STDERR="" W_SLEEP="" W_LOCK="" W_PLANT="" W_CAPTURE="" W_DIFF="" W_SIGNAL=""
 HEAD_SHA=""
 W_HOME="" W_FAKEHOME="" W_UNSET_HOME="" W_CWD="" W_NOJQ="" W_DASHTMP="" W_SKIP="" W_TARGET=""
 W_ENV=()
@@ -267,8 +271,11 @@ word() {
     # the reviewed repository with nothing uncommitted: an empty --range HEAD
     diff:empty) W_DIFF=empty ;;
     stderr:quota) W_STDERR="$QUOTA" ;;
+    stderr:killed) W_STDERR="$KILLED" ;;
     stderr:-) W_STDERR="" ;;
     sleep:*) W_SLEEP="${1#sleep:}" ;;
+    # the signal the CLI dies to after its last words
+    signal:*) W_SIGNAL="${1#signal:}" ;;
     timeout:*) W_ENV+=("SECOND_OPINION_TIMEOUT=${1#timeout:}") ;;
     lock) W_LOCK=1 ;;
     plant-record) W_PLANT=1 ;;
@@ -321,7 +328,7 @@ build() {
   git -C "$WORK" checkout -q -b scope-branch
   HEAD_SHA="$(git -C "$WORK" rev-parse HEAD)"
   OUT="$ROW/out/review.json"
-  W_OUTPUT=out W_RC=0 W_STDOUT=good W_STDOUT2="" W_STDERR="" W_SLEEP=0 W_LOCK="" W_PLANT="" W_CAPTURE="" W_DIFF=""
+  W_OUTPUT=out W_RC=0 W_STDOUT=good W_STDOUT2="" W_STDERR="" W_SLEEP=0 W_LOCK="" W_PLANT="" W_CAPTURE="" W_DIFF="" W_SIGNAL=""
   W_HOME="" W_FAKEHOME="" W_UNSET_HOME="" W_CWD="" W_NOJQ="" W_DASHTMP="" W_SKIP="" W_TARGET=claude W_SCRIPT=""
   W_ENV=()
   W_UNSET=()
@@ -443,7 +450,7 @@ content_class() {
     "$PROSE_PREVIOUSLY") printf 'prose:previously' ;;
     ANSWER) printf 'answer' ;;
     "{"*)
-      jq -r 'if .error then "failed(" + (.reason // "?") + "|" + ((.cause_source // "") | if . == "" then "-" else . end) + "|" + (if (.cause // "") | test("hit your usage limit") then "quota" elif (.cause // "") == "" then "-" else "other" end) + ")"
+      jq -r 'if .error then (if (.error | startswith("external CLI was killed")) then "killed(" else "failed(" end) + (.reason // "?") + "|" + ((.cause_source // "") | if . == "" then "-" else . end) + "|" + (if (.cause // "") | test("hit your usage limit") then "quota" elif (.cause // "") == "" then "-" else "other" end) + ")"
              elif .agent then "review:" + ((.agent // "null") | tostring) + ":" + ((.summary // "?") | if startswith("Union of ") then "union" else . end) + (if .qa_metadata.review_performed? == false then ":" + ((.qa_metadata.reason // "-") | tostring) else "" end) else "json:" + (.summary // "?") end' "$f" 2>/dev/null || printf 'json?'
       ;;
     "") printf 'empty' ;;
@@ -527,6 +534,7 @@ run() {
     STUB_RC="$W_RC" STUB_STDOUT="$(stdout_of "$W_STDOUT")" STUB_STDERR="$W_STDERR" STUB_SLEEP="$W_SLEEP")
   [[ -z "$W_TARGET" ]] || env_args+=(SECOND_OPINION_TARGET="$W_TARGET")
   [[ -z "$W_STDOUT2" ]] || env_args+=(STUB_STDOUT2="$(stdout_of "$W_STDOUT2")")
+  [[ -z "$W_SIGNAL" ]] || env_args+=(STUB_SIGNAL="$W_SIGNAL")
   [[ -z "$W_CAPTURE" ]] || env_args+=(STUB_PROMPT_DIR="$ROW/prompts")
   [[ -z "$W_LOCK" ]] || env_args+=(STUB_LOCK_DIR="$ROW_TMP")
   [[ -z "$W_PLANT" ]] || env_args+=(STUB_PLANT_DIR="$OUT.failed.json")
@@ -580,7 +588,10 @@ err_word() {
     failed:exit:*) printf 'error=claude exited with code %s — refusing to write a review artifact response=%s\n→ external CLI failed: claude exited with code %s\n' "$c" "$(record_path "$b")" "$c" ;;
     failed:empty:*) printf 'error=claude returned an empty response on a zero exit — check CLI auth and configuration — refusing to write a review artifact response=%s\n→ external CLI failed: claude returned an empty response on a zero exit — check CLI auth and configuration\n' "$(record_path "$b")" ;;
     failed:timeout:*) printf 'error=claude timed out after %ss — refusing to write a review artifact response=%s\n→ external CLI failed: claude timed out after %ss\n' "$c" "$(record_path "$b")" "$c" ;;
+    # a signal death: killed:<where>:<signal>:<exit>
+    killed:*) printf 'error=claude was killed by %s (exit %s) — refusing to write a review artifact response=%s\n→ external CLI was killed: claude was killed by %s (exit %s)\n' "$b" "$c" "$(record_path "$a")" "$b" "$c" ;;
     cause:stderr) printf -- '--- cause (claude stderr) ---\n<quota>\n' ;;
+    cause:stderr:killed) printf -- '--- cause (claude stderr) ---\n%s\n' "$KILLED" ;;
     cause:stdout) printf -- '--- cause (claude stdout) ---\n<quota>\n' ;;
     preserved:*) printf '→ failed invocation preserved: %s\n' "$(record_path "$a")" ;;
     not-preserved) printf '→ failed invocation could not be preserved anywhere — the cause above is the whole record\n' ;;

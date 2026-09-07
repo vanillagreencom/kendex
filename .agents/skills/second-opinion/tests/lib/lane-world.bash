@@ -258,6 +258,39 @@ if [[ $# -ge 4 ]]; then
 fi
 cat "$1"
 SH
+# lane-kill <pattern>: reads its prompt, then sends TERM to the outermost
+# ancestor whose argv carries <pattern>: the lane child running this stub
+# (its argv names the lane's own --output, which nothing else on the host
+# does; the timeout and group-run processes between carry it too, and are
+# left to the lane's own teardown, as an external killer would leave them).
+# It stays alive until that child is gone, so its own exit never races the
+# parent's classification. The ancestors are walked by pid, since macOS's
+# pattern kill excludes the caller's own ancestors; /bin/ps by path, since
+# the ps on PATH is this world's stand-in.
+cat >"$BIN/lane-kill" <<'SH'
+#!/usr/bin/env bash
+cat >/dev/null
+pid=$PPID
+target=""
+while [ "$pid" -gt 1 ]; do
+  case "$(/bin/ps -o args= -p "$pid")" in
+    *"$1"*) target="$pid" ;;
+  esac
+  pid=$(/bin/ps -o ppid= -p "$pid" | tr -d ' ')
+  [ -n "$pid" ] || break
+done
+[ -n "$target" ] || { echo "handshake never happened: no ancestor carries $1" >&2; exit 1; }
+kill -TERM "$target"
+for _ in $(seq 50); do kill -0 "$target" 2>/dev/null || break; sleep 0.1; done
+SH
+# lane-die: reads its prompt, says its last words, dies to TERM: the lane's
+# CLI taken by an external killer, seen by the lane child.
+cat >"$BIN/lane-die" <<'SH'
+#!/usr/bin/env bash
+cat >/dev/null
+echo "killed from outside" >&2
+kill -s TERM $$
+SH
 chmod +x "$BIN"/lane-*
 
 # The mktemp shim: `mktemp -d` answers with the row's fixed scratch path, so
@@ -311,7 +344,8 @@ word() {
 # The lane stub for a spec: answer:<claude|codex|codex-blocker|prose>,
 # fail:<text>:<rc>, reap[:wait], reap-files:<scratch|home>, sabotage:<action>:<rc>
 # (the sibling's lane artifact beside --output), probe-perms, plant-locked,
-# plant-dir, cli-state:<prefix>[:reappear]
+# plant-dir, cli-state:<prefix>[:reappear], kill (the lane child running the
+# stub is killed by TERM), die (the lane's CLI dies to TERM)
 lane_cmd() {
   local lane="$1" spec="$2" a b sibling
   a="${spec#*:}"; b="${a#*:}"; a="${a%%:*}"
@@ -330,6 +364,8 @@ lane_cmd() {
     plant-dir) printf '%s %s %s' "$BIN/lane-plant-dir" "$TMP_ROOT/resp-$lane.json" "$HOME_DIR" ;;
     cli-state:*:reappear) printf '%s %s %s %s %s.%s.json' "$BIN/lane-cli-state" "$TMP_ROOT/resp-$lane.json" "$STATE_DIR" "$a" "$OUT" "$lane" ;;
     cli-state:*) printf '%s %s %s %s' "$BIN/lane-cli-state" "$TMP_ROOT/resp-$lane.json" "$STATE_DIR" "$a" ;;
+    kill) printf '%s --output=%s.%s.json' "$BIN/lane-kill" "$OUT" "$lane" ;;
+    die) printf '%s' "$BIN/lane-die" ;;
     *) echo "UNKNOWN-LANE-SPEC: $spec" >&2; exit 2 ;;
   esac
 }
@@ -417,9 +453,9 @@ parent_log() {
   done
 }
 
-# Each lane's relayed lines reduced to its outcome: `written`, `failed` with
-# the cause the CLI printed, `raw-preserved`, `-` when nothing was relayed for
-# that lane.
+# Each lane's relayed lines reduced to its outcome: `written`, `failed` or
+# `killed` with the cause the CLI printed, `raw-preserved`, `-` when nothing
+# was relayed for that lane.
 relay() {
   local lane out="" line outcome cause
   for lane in codex claude; do
@@ -428,6 +464,7 @@ relay() {
       case "$line" in
         "[$lane] → Written:"*) outcome="written" ;;
         "[$lane] → external CLI failed:"*) outcome="failed" ;;
+        "[$lane] → external CLI was killed:"*) outcome="killed" ;;
         "[$lane] → raw response preserved:"*) outcome="raw-preserved" ;;
         "[$lane] --- cause"*) cause="next" ;;
         "[$lane] "*) [[ "$cause" != next ]] || cause="${line#"[$lane] "}" ;;
@@ -565,6 +602,9 @@ err_word() {
     union:*) printf '→ Written: <out> (union of %s lanes)\n' "$a" ;;
     written) printf '→ Written: <out>\n' ;;
     lane-failed:*) printf '→ lane failed: %s (exit %s)\n' "$a" "$b" ;;
+    lane-killed:*) printf '→ lane killed: %s (%s, exit %s) — an external signal, not a review refusal\n' "$a" "$b" "${f[3]:-}" ;;
+    lane-cli-killed:*) printf "→ lane killed: %s (exit %s) — its CLI died to a signal; the lane's own log above names it\n" "$a" "$b" ;;
+    all-killed:*) printf 'all-failed every review lane failed — no external verdict lanes=codex:killed:%s,claude:killed:%s\n' "$a" "$b" ;;
     replay-lost:*) printf '→ lane stderr replay unavailable (scratch capture unreadable): %s\n' "$a" ;;
     unusable:*) printf '→ lane produced an unusable artifact: %s (%s)\n' "$a" "$(unusable_reason "$b")" ;;
     no-artifact:*) printf '→ lane exited 0 without a usable artifact: %s\n' "$a" ;;
