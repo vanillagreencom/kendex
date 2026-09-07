@@ -55,7 +55,8 @@ load_rows \
   "two arrays are refused: a stream is not one inventory|[] []|rc=2 paths=<> $ONE" \
   "text that is not JSON is refused with jq's parse error ahead of the cause|invalid|rc=2 paths=<> <jq parse error>;$REFUSED" \
   "an object is refused: not an array|{}|rc=2 paths=<> $ARRAY" \
-  "a null entry is refused: not a string|[null]|rc=2 paths=<> $ARRAY" \
+  "a null entry is refused: it has no length|[null]|rc=2 paths=<> $ARRAY" \
+  "a number entry is refused: not a string|[1]|rc=2 paths=<> $ARRAY" \
   "an empty entry is refused|[\"\"]|rc=2 paths=<> $ARRAY" \
   "an entry carrying a newline is refused: the list is newline-delimited|[\"a\\\\nb\"]|rc=2 paths=<> $ARRAY" \
   "an entry carrying a NUL is refused|[\"a\\\\u0000b\"]|rc=2 paths=<> $ARRAY"
@@ -76,6 +77,7 @@ contains_rows \
   "a path the listed glob would match is not in the list|$TWO|.agents/skills/abc/x.md|no" \
   "a glob in the asked path matches nothing: the ask is literal too|$TWO|.agents/*|no" \
   "a suffix of a listed path is not in the list|$TWO|name.md|no" \
+  "a prefix of a listed path is not in the list: a generated file does not exclude the source it is named after|$TWO|.agents|no" \
   "a newline-bearing path is never in the list, even spelling two adjacent entries|$TWO|.agents/skills/a*/x.md\\nspace name.md|no" \
   "the empty path is not in an empty list: the delimiters around nothing are not an entry|[]||no"
 
