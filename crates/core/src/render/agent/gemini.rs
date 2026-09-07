@@ -1,6 +1,6 @@
 use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, hooks_prose, skills_prose};
 use crate::harness::models::resolve_model;
-use crate::model::{HarnessId, Scope};
+use crate::model::HarnessId;
 use crate::render::permission::PermissionIntent;
 use crate::render::vocab::{gemini_tool_name, rewrite_prose};
 use crate::render::{RenderWarning, yaml_quoted, yaml_scalar};
@@ -68,10 +68,7 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     body.push('\n');
     // Neither skills nor per-agent hooks are subagent frontmatter fields, so
     // both travel as prose the system prompt carries (matrix §1).
-    let skill_root = match agent.scope {
-        Scope::Global => "~/.gemini/skills",
-        Scope::Project { .. } => ".agents/skills",
-    };
+    let skill_root = super::skill_root(HarnessId::Gemini, agent.scope);
     if let Some(skills) = skills_prose(agent, skill_root) {
         body.push_str(&format!("\n{skills}"));
     }
@@ -105,6 +102,7 @@ mod tests {
     use super::super::{SourceAgent, parse_source_agent};
     use super::*;
     use crate::manifest::{CustomHook, FrontmatterOverrides, HookAgents};
+    use crate::model::Scope;
 
     fn engineer() -> SourceAgent {
         parse_source_agent(
@@ -155,7 +153,7 @@ mod tests {
         assert!(text.contains(
             "tools:\n  - read_file\n  - run_shell_command\n  - google_web_search\n---\n"
         ));
-        assert!(text.contains("- dev: ~/.gemini/skills/dev/SKILL.md"));
+        assert!(text.contains("- dev: ~/.agents/skills/dev/SKILL.md"));
 
         agent.permissions = PermissionIntent::allow_only(vec![]);
         assert!(generate(&agent).text.contains("tools: []\n"));
