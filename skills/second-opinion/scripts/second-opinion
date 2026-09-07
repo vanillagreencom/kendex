@@ -2364,15 +2364,17 @@ extract_json() {
   # Extract from first ```json ... ``` code fence (stop at first closing fence)
   local fenced
   # One expression per command: BSD sed reads a label to the end of its
-  # expression, so the one-line form never closes its brace there.
-  if fenced=$(printf '%s' "$input" | sed -n -e '/^```json/{' -e 'n' -e ':a' -e '/^```$/q' -e 'p' -e 'n' -e 'ba' -e '}') \
+  # expression, so the one-line form never closes its brace there. A
+  # here-string, not a pipe: sed quits at the closing fence, and a writer
+  # still filling the pipe would take SIGPIPE and fail the condition.
+  if fenced=$(sed -n -e '/^```json/{' -e 'n' -e ':a' -e '/^```$/q' -e 'p' -e 'n' -e 'ba' -e '}' <<<"$input") \
     && [[ -n "$fenced" ]] && printf '%s' "$fenced" | jq -e . >/dev/null 2>&1; then
     printf '%s' "$fenced" | jq .
     return 0
   fi
 
   # Extract from first ``` ... ``` fence (no language tag)
-  if fenced=$(printf '%s' "$input" | sed -n -e '/^```$/{' -e 'n' -e ':a' -e '/^```$/q' -e 'p' -e 'n' -e 'ba' -e '}') \
+  if fenced=$(sed -n -e '/^```$/{' -e 'n' -e ':a' -e '/^```$/q' -e 'p' -e 'n' -e 'ba' -e '}' <<<"$input") \
     && [[ -n "$fenced" ]] && printf '%s' "$fenced" | jq -e . >/dev/null 2>&1; then
     printf '%s' "$fenced" | jq .
     return 0
