@@ -126,11 +126,19 @@ content() { # FILE
     *$'\n') raw="${raw%$'\n'}" ;;
     *) tail='<noeol>' ;;
   esac
-  if [ "$(printf '%s\n' "$raw" | sed 3d)" = "$REF_HELPER" ]; then
-    line3="$(printf '%s\n' "$raw" | sed -n 3p)"
-    printf 'ours[%s]%s' "$(aliased "${line3#installed_scripts=}")" "$tail"
-    return 0
-  fi
+  # The comparison runs inside a command substitution, which strips every
+  # trailing newline, so a helper carrying blank lines after its program is
+  # kept off this path and rendered whole instead.
+  case "$raw" in
+    *$'\n') ;;
+    *)
+      if [ "$(printf '%s\n' "$raw" | sed 3d)" = "$REF_HELPER" ]; then
+        line3="$(printf '%s\n' "$raw" | sed -n 3p)"
+        printf 'ours[%s]%s' "$(aliased "${line3#installed_scripts=}")" "$tail"
+        return 0
+      fi
+      ;;
+  esac
   raw="${raw//"$PRE_LINE"/@PRE@}"
   raw="${raw//"$MSG_LINE"/@MSG@}"
   raw="${raw//"$CREATED"/@CREATED@}"
