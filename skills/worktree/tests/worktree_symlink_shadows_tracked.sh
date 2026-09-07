@@ -151,8 +151,12 @@ step() {
       ;;
     create) tool create topic ;;
     repair) tool repair-links "$WT" ;;
+    # A commit of the worktree's own, away from the entry, for a rebase to carry.
+    feature) printf 'branch work\n' >"$WT/feature.txt"; git -C "$WT" add feature.txt; git -C "$WT" commit -q -m 'feature work' ;;
     # The vendored file advances on main.
     advance) printf 'engine v2\n' >"$MAIN/.agents/skills/review-gate/engine.md"; commit_main .agents/skills/review-gate/engine.md ;;
+    # Main starts tracking a child the worktree holds as a link.
+    track-link-child) commit_main .agents/skills/deep-research/SKILL.md ;;
     # A child lands under the entry on main only.
     late) printf 'late\n' >"$MAIN/.agents/skills/late.md"; commit_main .agents/skills/late.md ;;
     merge)
@@ -258,6 +262,8 @@ NEXT_IGNORE='file:node_modules/'
 ROWS="
 an entry shadowing a tracked subtree gets per-child links, not a parent link over assume-unchanged files|shadow|create topic|0|wt|-|$SHADOW_V1
 git can write the tracked subtree: a merge advancing the vendored file lands beside the links|shadow create advance|@merge|0|-|-|$SHADOW_V2
+create --reuse rebases the branch through the advanced vendored file and keeps the per-child layout|shadow create feature advance|create topic --reuse|0|wt|-|$SHADOW_V2
+the reuse refresh restores links the rebase dropped when main starts tracking a child under the entry|predated create feature track-link-child|create topic --reuse|0|wt|-|.agents=dir .agents/skills=dir .agents/skills/deep-research=dir .agents/skills/deep-research/SKILL.md=file:installed skill .agents/state.json=link(<main>/.agents/state.json) assume=- status=-
 fix-links on the per-child layout is idempotent and quiet|shadow create advance merge|fix-links @wt|0|restored|-|$SHADOW_V2
 a legacy parent link over tracked files heals to the per-child layout and clears the stale bit|shadow create advance merge legacy-link|fix-links @wt|0|restored|-|$SHADOW_V2
 a fully untracked entry keeps the plain parent symlink|untracked|create topic|0|wt|-|runtime=link(<main>/runtime) assume=- status=-
