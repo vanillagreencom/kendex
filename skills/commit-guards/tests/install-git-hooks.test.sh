@@ -10,6 +10,10 @@
 # core.hooksPath stand-down install-git-hooks-hookspath.test.sh, `--check`
 # install-git-hooks-check.test.sh.
 set -euo pipefail
+# Bash 5.2 reads '&' and a backslash in a substitution's replacement as
+# operators; the serializer below writes backslashes into one, so the
+# replacement is taken literally on every Bash, as 3.2 takes it.
+shopt -u patsub_replacement 2>/dev/null || true
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
@@ -118,6 +122,7 @@ run() { # ENVS ACTION ARG
 # helper whose every line but the baked scripts directory is the one the
 # reference install wrote reads as ours[<that line's value>].
 JOIN='~'
+BS='\'
 content() { # FILE
   local raw="" tail="" line3=""
   raw="$(cat -- "$1" 2>/dev/null && printf x)" || { printf 'unreadable'; return 0; }
@@ -142,8 +147,13 @@ content() { # FILE
   raw="${raw//"$PRE_LINE"/@PRE@}"
   raw="${raw//"$MSG_LINE"/@MSG@}"
   raw="${raw//"$CREATED"/@CREATED@}"
-  # The replacement is unquoted: Bash 3.2 keeps the quotes of a quoted one
-  # as literal bytes, and a literal '~' there is the caller's home.
+  # Injective: a backslash and the join character in the file are escaped
+  # before newlines become the join character, so a line holding one cannot
+  # read as a line boundary. The replacements are unquoted: Bash 3.2 keeps
+  # the quotes of a quoted one as literal bytes, and a literal '~' there is
+  # the caller's home.
+  raw="${raw//"$BS"/$BS$BS}"
+  raw="${raw//"$JOIN"/$BS$JOIN}"
   printf '%s%s' "$(aliased "${raw//$'\n'/$JOIN}")" "$tail"
 }
 
