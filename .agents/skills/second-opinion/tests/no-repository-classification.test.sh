@@ -154,5 +154,36 @@ case "$err" in
   *) bad "that refusal names the directory too" "err=$err" ;;
 esac
 
+# Git names the parents it searched a second way when discovery stops at a
+# filesystem boundary: `not a git repository (or any parent up to mount point
+# ...)`. That is still the absence of a repository, so it must degrade. A real
+# second mount is not portable across the platforms this suite runs on, so the
+# diagnostic is delivered by a git that answers with it — the tool the script
+# calls, not the branch under test.
+mkdir -p "$TMP_ROOT/mountbin"
+for tool in bash env sed grep dirname cat mktemp; do
+  resolved="$(command -v "$tool" 2>/dev/null)" || continue
+  ln -sf "$resolved" "$TMP_ROOT/mountbin/$tool"
+done
+cat >"$TMP_ROOT/mountbin/git" <<'GITSH'
+#!/usr/bin/env bash
+printf 'fatal: not a git repository (or any parent up to mount point /mnt)\n' >&2
+printf 'Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).\n' >&2
+exit 128
+GITSH
+chmod +x "$TMP_ROOT/mountbin/git"
+
+status=0
+out=$(PATH="$TMP_ROOT/mountbin" LC_ALL=C "$SECOND_OPINION" --mode no-such-mode 2>"$TMP_ROOT/mount.err") || status=$?
+err=$(cat "$TMP_ROOT/mount.err")
+case "$err" in
+  *"could not resolve a repository"*) bad "a mount-point boundary is the absence of a repository, not a refusal" "err=$err" ;;
+  *) ok "a mount-point boundary is the absence of a repository, not a refusal" ;;
+esac
+case "$err" in
+  *"unknown argument"*) ok "it degrades past the lookup into option parsing" ;;
+  *) bad "it degrades past the lookup into option parsing" "status=$status err=$err" ;;
+esac
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
