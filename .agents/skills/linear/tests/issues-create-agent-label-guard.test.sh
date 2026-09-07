@@ -29,7 +29,6 @@ cp -R "$SKILL_DIR" "$PROJECT/.agents/skills/linear"
 
 LINEAR="$PROJECT/.agents/skills/linear/scripts/linear.sh"
 CURL_LOG="$TMP_ROOT/curl-payloads.jsonl"
-ERR_FILE="$TMP_ROOT/stderr.txt"
 
 cat >"$PROJECT/bin/curl" <<'SH'
 #!/usr/bin/env bash
@@ -65,14 +64,16 @@ chmod +x "$PROJECT/bin/curl"
 
 # --- the renderer -------------------------------------------------------------
 # Every logged payload as `Operation(path=value,...)`: a lookup's name (as
-# JSON, so a stray space shows) and the create's title and labelIds.
+# JSON, so a stray space shows) and the create's title and labelIds, an empty
+# list rendered as `input.labelIds=[]` so it is told from no key.
 wire() {
   jq -r '
     def op: (.query | capture("^[[:space:]]*(query|mutation)[[:space:]]+(?<n>[A-Za-z_]+)").n)
       // (.query | capture("\\{[[:space:]]*(?<n>[A-Za-z_]+)").n);
     def shown: [(.variables // {}) as $v | $v | paths(scalars) as $p
       | select($p == ["name"] or $p == ["input", "title"] or ($p[0:2] == ["input", "labelIds"]))
-      | "\($p | map(tostring) | join("."))=\($v | getpath($p) | tojson)"];
+      | "\($p | map(tostring) | join("."))=\($v | getpath($p) | tojson)"]
+      + (if (.variables.input.labelIds? // null) == [] then ["input.labelIds=[]"] else [] end);
     "\(op)(\(shown | join(",")))"' "$CURL_LOG" | paste -sd, -
 }
 
@@ -80,7 +81,8 @@ wire() {
 # settings declare TAXONOMY (`none`: no LINEAR_AGENT_LABELS key; `empty`: the
 # key with no value; else the declared list), with LINEAR_TEAM and
 # LINEAR_AGENT_LABELS absent from the process (parent env wins over project
-# files). VIEW `err` renders the wire and stderr; `out` the first stdout line.
+# files). VIEW `err` renders the wire and stderr; `out` the first stdout line;
+# `doc` stdout whole.
 run() {
   local taxonomy="$1" view="$2" rc=0 out err
   shift 2
@@ -96,6 +98,8 @@ run() {
   case "$view" in
   out) printf 'rc=%s calls=%s %s' "$rc" "$(wc -l <"$CURL_LOG" | tr -d ' ')" "$(printf '%s\n' "$out" | head -1)" ;;
   err) printf 'rc=%s wire=%s%s' "$rc" "$(wire)" "${err:+ $err}" ;;
+  doc) printf '%s' "$out" ;;
+  *) printf 'UNKNOWN-VIEW:%s' "$view" ;;
   esac
 }
 
@@ -127,6 +131,7 @@ expected() {
     printf "rc=0 wire=%s,%s %sSkipped label '%s' — not found; the create proceeds without it" "$TEAM" "${spec% warn *}" "$(warned "${spec##* warn }")" "${spec##* warn }" ;;
   created\ *) printf 'rc=0 wire=%s,%s' "$TEAM" "${spec#created }" ;;
   help) printf 'rc=0 calls=0 Issue Operations' ;;
+  *) printf 'UNKNOWN-SPEC:%s' "$spec" ;;
   esac
 }
 
@@ -139,6 +144,7 @@ ROWS='
 bare create is refused|agent:generalist, agent:rust|err|--title "Unrouted follow-up"|unrouted agent:generalist, agent:rust
 a create with only non-agent labels is refused|agent:generalist, agent:rust|err|--title "Unrouted follow-up" --labels "bug,docs"|unrouted agent:generalist, agent:rust
 a typoed agent label is refused, naming it and the declared set|agent:generalist, agent:rust|err|--title Typo --labels "agent:generalst"|unknown agent:generalst~agent:generalist, agent:rust
+two typoed agent labels are both named|agent:generalist, agent:rust|err|--title Typo --labels "agent:generalst,agent:rustt"|unknown agent:generalst, agent:rustt~agent:generalist, agent:rust
 a declared agent label passes and every label resolves onto the create|agent:generalist, agent:rust|err|--title Routed --labels "bug,agent:rust"|created GetLabel(name="bug"),GetLabel(name="agent:rust"),CreateIssue(input.title="Routed",input.labelIds.0="label-uuid",input.labelIds.1="label-uuid")
 a declared agent label passes through --label|agent:generalist, agent:rust|err|--title "Routed single" --label "agent:generalist"|created GetLabel(name="agent:generalist"),CreateIssue(input.title="Routed single",input.labelIds.0="label-uuid")
 --no-agent-label permits a deliberate bare create|agent:generalist, agent:rust|err|--title "Intake mirror" --no-agent-label|created CreateIssue(input.title="Intake mirror")
@@ -159,4 +165,4 @@ done <<<"$ROWS"
 
 # The help document names the escape hatch.
 assert_contains "issues create --help documents --no-agent-label" \
-  "$(cd "$PROJECT" && bash "$LINEAR" issues create --help)" "--no-agent-label"
+  "$(run "agent:generalist, agent:rust" doc --help)" "--no-agent-label"
