@@ -250,6 +250,9 @@ err_text() {
 SHADOW_V1='.agents=dir .agents/skills=dir .agents/skills/deep-research=link(<main>/.agents/skills/deep-research) .agents/skills/review-gate=dir .agents/skills/review-gate/engine.md=file:engine v1 .agents/state.json=link(<main>/.agents/state.json) assume=- status=-'
 SHADOW_V2="${SHADOW_V1/engine v1/engine v2}"
 IGNORING='.opencode=dir .opencode/.gitignore=file:bun.lock .opencode/agents=dir .opencode/agents/dev.md=file:agent .opencode/bun.lock=link(<main>/.opencode/bun.lock) assume=- status=-'
+# The copy's first line after main's .gitignore changed; held apart so the
+# expectation carries no escape a shell version could read differently.
+NEXT_IGNORE='file:node_modules/'
 
 # label|fixture|command|rc|out|err|layout
 ROWS="
@@ -265,7 +268,7 @@ an entry tracked only on main so far takes the real-directory shape before the m
 the merge into that shape writes the child beside the links|predated create late repair|@merge|0|-|-|.agents=dir .agents/skills=dir .agents/skills/deep-research=link(<main>/.agents/skills/deep-research) .agents/skills/late.md=file:late .agents/state.json=link(<main>/.agents/state.json) assume=- status=-
 an untracked .gitignore under a tracked-content entry is copied, and the worktree ignores what main ignores|ignoring|create topic|0|wt|-|$IGNORING
 push reads the copy as the expected shape, not a materialized link|ignoring create|push topic --no-rebase -u|0|-|-|$IGNORING
-the copy follows main on the next pass|ignoring create edit-ignore|fix-links @wt|0|restored|-|${IGNORING/file:bun.lock/file:node_modules\/}
+the copy follows main on the next pass|ignoring create edit-ignore|fix-links @wt|0|restored|-|${IGNORING/file:bun.lock/$NEXT_IGNORE}
 a legacy linked .gitignore heals to a copy|ignoring create legacy-ignore-link|fix-links @wt|0|restored|-|$IGNORING
 a worktree edit to the copy is overwritten by main's file|ignoring create edit-copy|fix-links @wt|0|restored|-|$IGNORING
 a locked index during the legacy heal reports failure, not a swallowed success|engine create legacy-link index-lock|repair-links @wt|1|-|index-locked|.agents=dir assume=.agents/engine.md status=-
