@@ -1145,3 +1145,31 @@ fn a_fork_tree_holding_both_skill_files_is_not_absorbed() {
     assert_eq!(fs::read_to_string(fork_source(&w)).unwrap(), source_before);
     assert!(off.is_file(), "and neither copy was taken");
 }
+
+/// A skill tree whose SKILL.md is gone has no form the source can be read
+/// back from. Absorbing it would put a tree discovery cannot see under the
+/// fork's name and trash the source that worked, so it keeps the hold.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_tree_with_no_skill_file_is_not_absorbed() {
+    let (w, _) = edited_fork();
+    resettle(&w);
+    resettle(&w);
+    let source_before = fs::read_to_string(fork_source(&w)).unwrap();
+
+    fs::remove_file(skill_file(&w)).unwrap();
+    fs::write(
+        w.home.join("app/.agents/skills/gh/notes.md"),
+        "still a directory",
+    )
+    .unwrap();
+
+    let report = audit(&w.env, &w.scope).unwrap();
+    assert!(report.fork_edits.is_empty(), "{:?}", report.fork_edits);
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert_eq!(
+        fs::read_to_string(fork_source(&w)).unwrap(),
+        source_before,
+        "the source that reads as a skill is still there"
+    );
+}

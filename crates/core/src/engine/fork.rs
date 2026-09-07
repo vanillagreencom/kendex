@@ -177,8 +177,10 @@ enum Capture {
 struct Captured {
     files: Capture,
     /// What the captured bytes render back to, beside the bytes they were
-    /// captured from. `None` only where the capture has no text a renderer
-    /// touches.
+    /// captured from. Both kinds a fork admits have such a text, so `None`
+    /// says the capture found none to compare — a skill tree whose
+    /// SKILL.md is gone — which an absorb refuses like any other bytes the
+    /// source cannot hold.
     rendering: Option<(String, String)>,
     carry: Option<crate::engine::agent_carry::AgentCarry>,
     /// The catalog revision an agent's bytes were read at, `None` for a
@@ -420,11 +422,7 @@ pub(super) fn absorb_ops(
     // leave the two disagreeing for good: the same never-settling state
     // this whole path exists to end. Asked of the renderer's own output,
     // never of a list of the fields that can be lost.
-    if captured
-        .rendering
-        .as_ref()
-        .is_some_and(|(rendered, on_disk)| rendered != on_disk)
-    {
+    if !matches!(&captured.rendering, Some((rendered, on_disk)) if rendered == on_disk) {
         return Err(CoreError::ForkWidensAccess {
             name: crate::names::shown(name),
             problem: "the edit changes something its source form cannot hold".into(),
