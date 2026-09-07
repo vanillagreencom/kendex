@@ -156,7 +156,7 @@ fn a_global_link_into_the_shared_tree_adopts() {
     fs::create_dir_all(env.home.join(".claude/skills")).unwrap();
     std::os::unix::fs::symlink(&shared, env.home.join(".claude/skills/gh")).unwrap();
 
-    adopt(
+    let plan = adopt(
         &env,
         &Scope::Global,
         ItemKind::Skill,
@@ -164,6 +164,24 @@ fn a_global_link_into_the_shared_tree_adopts() {
         &[HarnessId::Claude],
     )
     .unwrap();
+    crate::apply::execute(&env, &plan).unwrap();
+
+    // Global scope captures into the local source rather than in place, so
+    // the folder itself goes and the link that read it is cleared.
+    assert!(!shared.exists());
+    assert!(!env.home.join(".claude/skills/gh").is_symlink());
+
+    // The follow-up apply restores the sharing from kendex's copy: the tree
+    // back in the shared place, Claude Code reading it through its link.
+    let report = crate::engine::audit(&env, &Scope::Global).unwrap();
+    crate::apply::execute(&env, &report.plan).unwrap();
+    assert!(shared.join("SKILL.md").is_file());
+    let through_claude = fs::read_to_string(env.home.join(".claude/skills/gh/SKILL.md")).unwrap();
+    assert!(through_claude.contains("Theirs."));
+    assert_eq!(
+        crate::engine::audit(&env, &Scope::Global).unwrap().drift,
+        vec![]
+    );
 }
 
 /// Only this skill's own place in the shared tree is the finished shape.
