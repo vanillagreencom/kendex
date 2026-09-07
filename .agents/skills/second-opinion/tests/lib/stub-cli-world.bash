@@ -20,6 +20,9 @@
 
 set -euo pipefail
 
+# A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which would point every
+# git call at the real repository instead of the row's.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 unset CLAUDECODE CLAUDE_CODE CLAUDE_PROJECT_DIR CODEX_SANDBOX \
       CODEX_SANDBOX_NETWORK_DISABLED PI_CODING_AGENT_DIR OPENCODE \
       CURSOR_AGENT CURSOR_TRACE_ID
