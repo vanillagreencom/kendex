@@ -288,7 +288,7 @@ word() {
     mode:deny) W_SKIP=mode ;;
     # the mktemp shim with a directory planted where the claude lane's stderr
     # capture wants a file
-    capture:blocked) W_SHIM=1; W_SKIP=mode ;;
+    capture:blocked) W_SHIM=1 ;;
     # a previous run's 0644 lane family beside --output, and a caller's file
     stale:family) W_STALE=1 ;;
     # the single-lane control: roster codex, count 1
@@ -357,9 +357,10 @@ build() {
     printf 'my own notes\n' >"$OUT.codex.json.notes"
   fi
   if [[ "$W_HOME" == ro ]]; then mkdir -p "$ROW/ro-home"; chmod 555 "$ROW/ro-home"; fi
-  # unreadable as well as unwritable: BSD sed reads a directory as empty
-  # where GNU sed refuses it, so the replay's own refusal needs the mode
-  if [[ -n "$W_SHIM" ]]; then mkdir -p "$ROW/fixed-scratch/lane-claude.stderr"; chmod 000 "$ROW/fixed-scratch/lane-claude.stderr"; fi
+  # a link into a directory that does not exist: the capture's open and the
+  # replay's read both fail on every platform (BSD sed reads a directory as
+  # empty where GNU sed refuses it), and the cleanup removes the link
+  if [[ -n "$W_SHIM" ]]; then mkdir -p "$ROW/fixed-scratch"; ln -s "$ROW/nowhere/lane-claude.stderr" "$ROW/fixed-scratch/lane-claude.stderr"; fi
 }
 
 alias_text() {
