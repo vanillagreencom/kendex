@@ -227,7 +227,11 @@ mod tests {
             source,
             harness: HarnessId::Codex,
             scope,
-            skills: vec!["dev".into()],
+            skills: vec![crate::render::agent::linked_skill(
+                "dev",
+                HarnessId::Codex,
+                scope,
+            )],
             overrides: FrontmatterOverrides::default(),
             permissions: PermissionIntent::Unspecified,
             launch_instructions: None,

@@ -1,3 +1,6 @@
+use std::path::Path;
+
+use crate::env::Env;
 use crate::manifest::{CustomHook, FrontmatterOverrides, HookAgents, Manifest, Method};
 use crate::model::{HarnessId, ItemKind, Scope};
 
@@ -15,14 +18,17 @@ mod source;
 
 pub use source::{Role, SourceAgent, default_pane, parse_source_agent};
 
-/// One skill an agent requires, with the delivery that decides where it
-/// was written. The method rides with the name because a scope's default
-/// is not the answer: a declaration sets its own, and an agent naming two
-/// skills delivered two ways reads them from two directories.
+/// One skill an agent requires, with the directory the agent is told to
+/// read it from. The place rides with the name because it is not derivable
+/// from the harness and scope alone: a declaration sets its own delivery,
+/// an agent naming two skills delivered two ways reads them from two
+/// directories, and a relocation variable can move either of them.
+/// Resolved once by `desired_agent::required_skills`, which is where the
+/// `Env` that answers all three lives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequiredSkill {
     pub name: String,
-    pub method: Method,
+    pub root: String,
 }
 
 impl RequiredSkill {
@@ -33,15 +39,20 @@ impl RequiredSkill {
     }
 }
 
-/// A name delivered the scope's own default way. Every installation
-/// resolves the real method through `desired_agent::required_skills`; this
-/// is for naming a skill where the delivery is not what is under test.
-impl From<&str> for RequiredSkill {
-    fn from(name: &str) -> Self {
-        Self {
-            name: name.to_owned(),
-            method: Method::default(),
-        }
+/// A required skill placed the way the default delivery places it, for a
+/// fixture whose subject is not the place. It asks `skill_root` rather
+/// than spelling a directory, so a fixture cannot assert against a rule
+/// the renderers no longer follow.
+#[cfg(test)]
+pub(crate) fn linked_skill(name: &str, harness: HarnessId, scope: &Scope) -> RequiredSkill {
+    RequiredSkill {
+        name: name.to_owned(),
+        root: skill_root(
+            &Env::fake("/h", crate::env::FakeOs::Linux),
+            harness,
+            scope,
+            Method::Symlink,
+        ),
     }
 }
 
@@ -275,48 +286,56 @@ pub fn file_name(harness: HarnessId, agent_name: &str) -> String {
     }
 }
 
-/// Skills prose section for harnesses without a native skills field.
-/// Where an agent is told to read its required skills: the directory this
-/// skill's own delivery wrote, for this harness at this scope.
+/// The shared tree a project's default delivery writes, which every tool
+/// but Claude Code and Antigravity reads directly and those two are linked
+/// into. No relocation variable moves it.
+pub const PROJECT_SHARED_SKILLS: &str = ".agents/skills";
+
+/// Where an agent is told to read a required skill: the directory this
+/// skill's own delivery wrote, in the short spelling an agent reads.
 ///
 /// One owner, because five renderers each spelling it is five chances to
 /// name a place the install stopped writing. A symlink delivery writes the
 /// shared tree, which every tool but Claude Code and Antigravity reads;
-/// those two read only their own directory and are linked into it. A copy
-/// is a tree only one tool reads, so it is written in that tool's own
-/// directory and nowhere else — a different answer at both scopes, and the
-/// one an agent must be given or it is sent to a path nothing wrote.
-///
-/// The copy answers are the adapters' own `own_dir`, held to it by
-/// `the_copy_roots_are_the_places_a_copy_delivery_writes`.
-pub fn skill_root(harness: HarnessId, scope: &Scope, method: Method) -> &'static str {
-    match (method, scope) {
-        (Method::Copy, Scope::Project { .. }) => match harness {
-            HarnessId::Claude => ".claude/skills",
-            HarnessId::Cursor => ".cursor/skills",
-            HarnessId::Gemini => ".gemini/skills",
-            HarnessId::Copilot => ".github/skills",
-            HarnessId::Opencode => ".opencode/skills",
-            HarnessId::Codex | HarnessId::Pi | HarnessId::Antigravity => ".agents/skills",
+/// those two read only their own directory and are linked into it, and no
+/// relocation variable moves any of the three. A copy is a tree only one
+/// tool reads, written in that tool's own directory — which four adapters
+/// let a variable relocate (`Env::HARNESS_VARS`), so it is asked of
+/// `own_dir` rather than spelled here. Naming a literal would send an
+/// agent to the unrelocated path on any machine that sets one.
+pub fn skill_root(env: &Env, harness: HarnessId, scope: &Scope, method: Method) -> String {
+    match method {
+        Method::Copy => match crate::engine::desired::own_dir(env, scope, harness, ItemKind::Skill)
+        {
+            Some(dir) => shown(&dir, env, scope),
+            // Cursor holds no global skills, so a copy writes nothing and
+            // the shared tree is the only honest thing to name.
+            None => format!("~/{}", PROJECT_SHARED_SKILLS),
         },
-        (Method::Copy, Scope::Global) => match harness {
-            HarnessId::Claude => "~/.claude/skills",
-            HarnessId::Codex => "~/.codex/skills",
-            HarnessId::Pi => "~/.pi/agent/skills",
-            HarnessId::Gemini => "~/.gemini/skills",
-            HarnessId::Copilot => "~/.copilot/skills",
-            HarnessId::Antigravity => "~/.gemini/config/skills",
-            HarnessId::Opencode => "~/.config/opencode/skills",
-            // Cursor holds no global skills at all, so nothing is written
-            // and the shared tree is the only honest thing to name.
-            HarnessId::Cursor => "~/.agents/skills",
+        Method::Symlink => match scope {
+            Scope::Project { .. } => PROJECT_SHARED_SKILLS.to_owned(),
+            Scope::Global => match harness {
+                HarnessId::Claude => "~/.claude/skills".to_owned(),
+                HarnessId::Antigravity => "~/.gemini/config/skills".to_owned(),
+                _ => format!("~/{}", PROJECT_SHARED_SKILLS),
+            },
         },
-        (Method::Symlink, Scope::Project { .. }) => ".agents/skills",
-        (Method::Symlink, Scope::Global) => match harness {
-            HarnessId::Claude => "~/.claude/skills",
-            HarnessId::Antigravity => "~/.gemini/config/skills",
-            _ => "~/.agents/skills",
-        },
+    }
+}
+
+/// An absolute install path as an agent reads it: relative to the project
+/// it is in, or under `~` for anything below the home directory. A path
+/// under neither is left absolute, which is what a relocation variable
+/// pointing outside both produces.
+fn shown(path: &Path, env: &Env, scope: &Scope) -> String {
+    if let Scope::Project { root } = scope
+        && let Ok(rest) = path.strip_prefix(root)
+    {
+        return rest.display().to_string();
+    }
+    match path.strip_prefix(&env.home) {
+        Ok(rest) => format!("~/{}", rest.display()),
+        Err(_) => path.display().to_string(),
     }
 }
 
@@ -326,8 +345,7 @@ pub fn skills_prose(agent: &EffectiveAgent) -> Option<String> {
     }
     let mut out = String::from("## Required Skills\n\nRead each before acting:\n\n");
     for skill in &agent.skills {
-        let root = skill_root(agent.harness, agent.scope, skill.method);
-        let name = &skill.name;
+        let RequiredSkill { name, root } = skill;
         out.push_str(&format!("- {name}: {root}/{name}/SKILL.md\n"));
     }
     Some(out)
@@ -522,20 +540,20 @@ mod tests {
         );
     }
 
-    /// The path an agent is told to read a skill from is the one the
-    /// install writes. Under the default symlink delivery that is the
-    /// shared tree for every tool that reads it, and its own directory for
-    /// the two that do not; a project's is the shared tree for all of
-    /// them. A renderer naming a tool's own global directory would send
-    /// the agent to a path this delivery no longer creates.
+    /// The linked delivery's places, which no relocation variable moves:
+    /// the shared tree for every tool that reads it, and its own directory
+    /// for the two that do not. The copy delivery is `own_dir`'s answer,
+    /// proved end to end against what an install actually wrote in
+    /// `tests/agent_skill_roots.rs`.
     #[test]
     fn an_agent_reads_a_linked_skill_from_the_shared_tree() {
+        let env = crate::env::Env::fake("/h", crate::env::FakeOs::Linux);
         let project = Scope::Project {
             root: std::path::PathBuf::from("/p"),
         };
         for harness in HarnessId::ALL {
             assert_eq!(
-                skill_root(harness, &project, Method::Symlink),
+                skill_root(&env, harness, &project, Method::Symlink),
                 ".agents/skills",
                 "{harness:?} in a project"
             );
@@ -548,53 +566,23 @@ mod tests {
             HarnessId::Copilot,
         ] {
             assert_eq!(
-                skill_root(harness, &Scope::Global, Method::Symlink),
+                skill_root(&env, harness, &Scope::Global, Method::Symlink),
                 "~/.agents/skills",
                 "{harness:?} reads the shared global tree"
             );
         }
         assert_eq!(
-            skill_root(HarnessId::Claude, &Scope::Global, Method::Symlink),
+            skill_root(&env, HarnessId::Claude, &Scope::Global, Method::Symlink),
             "~/.claude/skills"
         );
         assert_eq!(
-            skill_root(HarnessId::Antigravity, &Scope::Global, Method::Symlink),
+            skill_root(
+                &env,
+                HarnessId::Antigravity,
+                &Scope::Global,
+                Method::Symlink
+            ),
             "~/.gemini/config/skills"
-        );
-    }
-
-    /// The other delivery, which the shared tree is the wrong answer for.
-    /// A copy is a tree only one tool reads, written in that tool's own
-    /// directory, so an agent is sent there instead — at both scopes. The
-    /// must-fail half is the pair: wherever a copy writes somewhere other
-    /// than the linked delivery, naming the linked place would be naming a
-    /// path this install never wrote.
-    #[test]
-    fn an_agent_reads_a_copied_skill_from_the_directory_only_that_tool_reads() {
-        let project = Scope::Project {
-            root: std::path::PathBuf::from("/p"),
-        };
-        assert_eq!(
-            skill_root(HarnessId::Claude, &project, Method::Copy),
-            ".claude/skills"
-        );
-        assert_eq!(
-            skill_root(HarnessId::Codex, &Scope::Global, Method::Copy),
-            "~/.codex/skills"
-        );
-        // Both differ from what the linked delivery answers, which is the
-        // must-fail half: a `skill_root` that ignored the method would
-        // return the shared tree here and send the agent to a path a copy
-        // never wrote. The whole matrix is held to the adapters' own
-        // `own_dir` by `the_copy_roots_are_the_places_a_copy_delivery_writes`
-        // in `tests/agent_skill_roots.rs`.
-        assert_ne!(
-            skill_root(HarnessId::Claude, &project, Method::Copy),
-            skill_root(HarnessId::Claude, &project, Method::Symlink)
-        );
-        assert_ne!(
-            skill_root(HarnessId::Codex, &Scope::Global, Method::Copy),
-            skill_root(HarnessId::Codex, &Scope::Global, Method::Symlink)
         );
     }
 }

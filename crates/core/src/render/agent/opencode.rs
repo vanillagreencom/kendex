@@ -377,7 +377,11 @@ mod tests {
             root: "/tmp/proj".into(),
         };
         let mut agent = effective(&source, &scope);
-        agent.skills = vec!["dev".into()];
+        agent.skills = vec![crate::render::agent::linked_skill(
+            "dev",
+            HarnessId::Opencode,
+            &scope,
+        )];
         agent.additional_instructions = Some("end here".into());
         let text = generate(&agent).text;
         assert!(text.contains("- dev: .agents/skills/dev/SKILL.md"));

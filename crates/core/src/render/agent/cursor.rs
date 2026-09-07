@@ -72,7 +72,11 @@ mod tests {
             source,
             harness: HarnessId::Cursor,
             scope,
-            skills: vec!["dev".into()],
+            skills: vec![crate::render::agent::linked_skill(
+                "dev",
+                HarnessId::Cursor,
+                scope,
+            )],
             overrides: FrontmatterOverrides {
                 model: Some("sonnet".into()),
                 color: Some("blue".into()),

@@ -327,7 +327,11 @@ mod tests {
             root: "/tmp/proj".into(),
         };
         let mut agent = effective(&source, &scope);
-        agent.skills = vec!["dev".into()];
+        agent.skills = vec![crate::render::agent::linked_skill(
+            "dev",
+            HarnessId::Pi,
+            &scope,
+        )];
         agent.overrides = FrontmatterOverrides {
             model: Some("inherit".into()),
             allowed_subagents: Some(vec!["scout".into(), " Scout ".into(), "researcher".into()]),

@@ -1,0 +1,1 @@
+- The note saying which other tools already see an installed skill no longer names a tool whose loader would reject the skill's name.

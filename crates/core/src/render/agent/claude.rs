@@ -178,7 +178,10 @@ mod tests {
             source,
             harness: HarnessId::Claude,
             scope,
-            skills: vec!["dev".into(), "rust-perf".into()],
+            skills: vec![
+                crate::render::agent::linked_skill("dev", HarnessId::Claude, scope),
+                crate::render::agent::linked_skill("rust-perf", HarnessId::Claude, scope),
+            ],
             overrides: FrontmatterOverrides::default(),
             permissions: PermissionIntent::Unspecified,
             launch_instructions: Some("start here".into()),

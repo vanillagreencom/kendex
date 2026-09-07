@@ -113,7 +113,11 @@ mod tests {
             source,
             harness: HarnessId::Copilot,
             scope,
-            skills: vec!["dev".into()],
+            skills: vec![crate::render::agent::linked_skill(
+                "dev",
+                HarnessId::Copilot,
+                scope,
+            )],
             overrides: FrontmatterOverrides::default(),
             permissions: PermissionIntent::Unspecified,
             launch_instructions: None,

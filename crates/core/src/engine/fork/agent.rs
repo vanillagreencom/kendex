@@ -49,6 +49,9 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
     } = published(of)?;
     let around = Around {
         skills: crate::engine::desired_agent::required_skills(
+            env,
+            scope,
+            harness,
             manifest,
             &carry.as_ref().map(AgentCarry::skills).unwrap_or_default(),
         ),

@@ -119,7 +119,11 @@ mod tests {
             source,
             harness: HarnessId::Gemini,
             scope,
-            skills: vec!["dev".into()],
+            skills: vec![crate::render::agent::linked_skill(
+                "dev",
+                HarnessId::Gemini,
+                scope,
+            )],
             overrides: FrontmatterOverrides::default(),
             permissions: PermissionIntent::Unspecified,
             launch_instructions: None,
