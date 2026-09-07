@@ -7,6 +7,7 @@ import { MarkdownView } from "@/components/markdown-view";
 import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PATH_COPIED_TOAST } from "@/lib/copy";
 
 type PreviewState =
   | { status: "loading" }
@@ -103,7 +104,7 @@ export function FileContent({
 
   const copyPath = () => {
     void navigator.clipboard.writeText(path).then(() => {
-      toast.success("Path copied");
+      toast.success(PATH_COPIED_TOAST);
     });
   };
 

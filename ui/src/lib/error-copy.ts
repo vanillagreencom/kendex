@@ -26,9 +26,10 @@ import type { ProblemKind } from "@/stores/problems";
 // away, a manifest is what the person wrote.
 export const PROBLEM_HEADLINES: Record<ProblemKind, string> = {
   "lock-corrupt": "A kendex file can't be read",
-  "manifest-outdated": "This manifest comes from an older version",
+  "manifest-outdated":
+    "The file listing what to install comes from an older version",
   "schema-too-new": "These kendex files come from a newer version",
-  "manifest-invalid": "This manifest has a problem",
+  "manifest-invalid": "The file listing what to install has a problem",
   other: "Something went wrong here",
   "scan-failure": "kendex couldn't scan this machine",
 };
@@ -36,12 +37,12 @@ export const PROBLEM_HEADLINES: Record<ProblemKind, string> = {
 export const PROBLEM_STEPS: Record<ProblemKind, string[]> = {
   "lock-corrupt": [
     "Rescan to retry",
-    "If it keeps failing, the file named above is damaged or from an older version of kendex. Move it aside and apply again to write a fresh one",
-    "Keep the file you moved. It is the only record naming a pi hooks.json or hooks/ beside the same root, so move those aside as well",
+    "If it keeps failing, the file named above is damaged or from an older version of kendex. Move it aside and run kendex apply again to write a fresh one",
+    "Keep the file you moved. It is the only record naming a Pi hooks.json or hooks/ folder beside the same root, so move those aside as well",
   ],
   "manifest-outdated": [
     "Move the file named above aside. Nothing converts it, and kendex leaves it exactly as you wrote it",
-    "Declare what you want again and apply; the file you moved is there to copy from",
+    "Write what you want installed into a new file of the same name and run kendex apply; the file you moved is there to copy from",
   ],
   "schema-too-new": [
     "Update kendex to the latest version",
@@ -76,9 +77,9 @@ export const PROBLEM_LEADS: Record<
   "lock-corrupt": (place) =>
     `The file is kendex's record of what it installed in ${place}.`,
   "manifest-outdated": (place) =>
-    `The file is where ${place} declares what it wants installed.`,
+    `The file is where ${place} lists what it wants installed.`,
   "manifest-invalid": (place) =>
-    `The file is where ${place} declares what it wants installed.`,
+    `The file is where ${place} lists what it wants installed.`,
   "schema-too-new": null,
   other: null,
   "scan-failure": null,

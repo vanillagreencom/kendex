@@ -12,6 +12,7 @@ import { commands } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { unmanagedHereLabel } from "@/lib/copy";
+import { SESSION_NOTE_LABEL, SESSION_NOTE_ON } from "@/lib/copy-session-note";
 import { kindLabel } from "@/lib/labels";
 import { READ_LANDED } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
@@ -145,6 +146,39 @@ describe("a project added while the list is on screen", () => {
     expect(vi.mocked(commands.auditAll).mock.calls.length).toBeGreaterThan(
       beforeRegistering,
     );
+  });
+});
+
+// The note's line is the card's, wired to the scan the list already
+// reads: a project whose settings run the hook says so, Personal carries
+// no such line. The words are the copy's own, so a relabel fails here.
+describe("the start-of-session note on a project's card", () => {
+  it("names the state the scan shows, on the project's card only", async () => {
+    useSettingsStore.setState({
+      settings: { projects: ["/work/acme"] } as never,
+    });
+    useScanStore.setState({
+      scanning: false,
+      error: null,
+      result: {
+        ...emptyScan,
+        items: [
+          installed({
+            kind: "hook",
+            name: "SessionStart:*:kendex-drift",
+            scope: ACME,
+            path: "/work/acme/.claude/settings.json",
+          }),
+        ],
+      },
+    });
+    const host = mount(<ProjectList />);
+    await settle();
+    const cards = [...host.querySelectorAll<HTMLElement>('[data-slot="card"]')];
+    const personal = cards.find((el) => el.textContent?.startsWith("Personal"));
+    const acme = cards.find((el) => el.textContent?.startsWith("acme"));
+    expect(acme?.textContent).toContain(SESSION_NOTE_ON);
+    expect(personal?.textContent).not.toContain(SESSION_NOTE_LABEL);
   });
 });
 

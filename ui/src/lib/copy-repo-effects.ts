@@ -20,7 +20,7 @@ export const REPO_EFFECTS_COMPANIONS_LABEL = "Companion packages";
 export const COMPANION_INSTALLED = "installed";
 export const COMPANION_NOT_INSTALLED = "not installed";
 export const REPO_EFFECTS_UNDO_LABEL = "To undo";
-export const REPO_EFFECTS_NO_UNDO = "The package declares no way to undo it.";
+export const REPO_EFFECTS_NO_UNDO = "The package gives no way to undo it.";
 
 export const REPO_EFFECTS_APPLY_LABEL = "Apply repository changes";
 export const REPO_EFFECTS_DECLINE_LABEL = "Not now";

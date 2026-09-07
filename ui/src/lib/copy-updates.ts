@@ -22,7 +22,7 @@ export const lastCheckedLabel = (
 
 export const FOLLOW_SOURCE_COLUMN = "Follow source";
 export const FOLLOW_SOURCE_HELP =
-  "On, this package takes the newest version when you press Update, and moves with everything else here when the place refreshes; off, it stays on this version until you choose one.";
+  "On, this package takes the newest version when you press Update, and moves with everything else here when this place is updated; off, it stays on this version until you choose one.";
 export const heldInLabel = (held: number, total: number): string =>
   `Held in ${held} of ${total}`;
 export const followSourceLabel = (name: string, place: string): string =>

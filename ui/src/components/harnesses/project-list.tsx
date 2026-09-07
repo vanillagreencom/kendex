@@ -5,6 +5,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AddProjectDialog } from "@/components/harnesses/add-project-dialog";
 import { ProjectCard } from "@/components/harnesses/project-card";
 import { ScanFolderDialog } from "@/components/harnesses/scan-folder-dialog";
+import { SessionNoteRow } from "@/components/harnesses/session-note-row";
 import { Button } from "@/components/ui/button";
 import { unmanagedCount } from "@/lib/audit-counts";
 import {
@@ -17,6 +18,7 @@ import {
 import { type ItemPlace, installedCountByKind } from "@/lib/derive";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { sameScope } from "@/lib/scope";
+import { sessionNoteState } from "@/lib/session-note";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount, useAuditStore } from "@/stores/audit";
 import { useCommitOfferStore } from "@/stores/commit-offer";
@@ -145,6 +147,18 @@ export function ProjectList() {
                 onKindClick={(kind) => goToLibrary({ ...place, kind })}
                 unmanaged={notManaged(scope)}
                 onUnmanaged={() => goToUnmanaged(scope)}
+                // Not drawn until the scan has answered: a card saying the
+                // note is off before anything was read would be claiming a
+                // state the app has not checked.
+                note={
+                  result ? (
+                    <SessionNoteRow
+                      name={name}
+                      root={root}
+                      state={sessionNoteState(result.items, views, root)}
+                    />
+                  ) : null
+                }
                 action={
                   <Button
                     variant="ghost"

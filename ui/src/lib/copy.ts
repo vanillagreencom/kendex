@@ -124,7 +124,7 @@ export const FOLLOW_SOURCE_LABEL = "Follow the source again";
 export const INSTALLED_VERSION_TAG = "installed";
 export const HELD_VERSION_TAG = "held here";
 export const NO_VERSIONS_NOTE =
-  "No version history yet — refresh the source to fetch it.";
+  "No version history yet — check for updates to fetch it.";
 export const BACK_TO_FILES_LABEL = "Back to files";
 export const DIFF_TRUNCATED_NOTE =
   "This comparison is long; only the first part is shown.";
