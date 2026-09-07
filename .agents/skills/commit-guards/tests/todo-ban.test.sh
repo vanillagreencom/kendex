@@ -87,6 +87,7 @@ run_rows() { # label | fixture | shim | env | args | expect
   local row label fx shim env args expect
   for row in "$@"; do
     IFS='|' read -r label fx shim env args expect <<<"$row"
+    [ -n "$expect" ] || { echo "harness: row has fewer than six fields: $row" >&2; exit 2; }
     R=""
     "$fx"
     assert_eq "$label" "$expect" "$(run "$shim" "$env" "$args")"
@@ -101,7 +102,10 @@ fx_block() { repo block; put a.rs "code(); /* $HK: inline block */\n"; stage; }
 fx_hash() { repo hash; put a.rs "# $TD implement the frobnicator\n"; stage; }
 fx_glued() { repo glued; put a.rs "//$XX no space before the word\n"; stage; }
 fx_leaders() { repo leaders; put a.rs "; $TD after a semicolon\n<!-- $FX after an HTML leader\n"; stage; }
-fx_four() { repo four; put a.rs "// $TD: one\n// $FX: two\n// $HK: three\n// $XX: four\n"; stage; }
+# Each odd line reaches only the annotated arm (no leader), each even line
+# only the after-a-leader arm (no colon), and line 6 is the one place the
+# block-comment opener is the leader.
+fx_four() { repo four; put a.rs "$TD: one\n//$TD two\n$FX(x): three\n//$FX four\n$HK: five\n/*$HK six\n$XX: seven\n//$XX eight\n"; stage; }
 fx_prose() { repo prose; put a.rs "The $TD marker is banned in this repo.\n"; stage; }
 fx_backticks() { repo backticks; put a.md "the \`$TD:\` shape and \`$FX(\` shape are banned\n"; stage; }
 fx_joined() { repo joined; put a.sh "emit \"$TD:/$FX( marker without an issue reference\"\n"; stage; }
@@ -117,7 +121,7 @@ run_rows \
   "a bare marker after a hash leader fails|fx_hash||||rc=1 $(hit a.rs 1 "# $TD implement the frobnicator");$(idx 1)" \
   "a bare marker glued to a slash leader fails|fx_glued||||rc=1 $(hit a.rs 1 "//$XX no space before the word");$(idx 1)" \
   "a semicolon and an HTML comment are leaders too|fx_leaders||||rc=1 $(hit a.rs 1 "; $TD after a semicolon");$(hit a.rs 2 "<!-- $FX after an HTML leader");$(idx 2)" \
-  "each of the four words is a marker, and every hit is numbered|fx_four||||rc=1 $(hit a.rs 1 "// $TD: one");$(hit a.rs 2 "// $FX: two");$(hit a.rs 3 "// $HK: three");$(hit a.rs 4 "// $XX: four");$(idx 4)" \
+  "each of the four words is a marker in each shape alone, and every hit is numbered|fx_four||||rc=1 $(hit a.rs 1 "$TD: one");$(hit a.rs 2 "//$TD two");$(hit a.rs 3 "$FX(x): three");$(hit a.rs 4 "//$FX four");$(hit a.rs 5 "$HK: five");$(hit a.rs 6 "/*$HK six");$(hit a.rs 7 "$XX: seven");$(hit a.rs 8 "//$XX eight");$(idx 8)" \
   "a bare word mid-prose, with no colon and no adjacent leader, passes|fx_prose||||rc=0 $OK_IDX" \
   "backtick-quoted marker shapes in a document pass|fx_backticks||||rc=0 $OK_IDX" \
   "quote- and slash-joined marker names in a string pass|fx_joined||||rc=0 $OK_IDX" \
@@ -131,6 +135,8 @@ vendored() { repo "$1"; put vendor/lib.rs "// $TD: vendored upstream marker\n"; 
 fx_vendored() { vendored vendored; }
 fx_vendored_row() { vendored vendored-row; excl 'vendor/*\tvendored third-party code\n'; }
 fx_no_reason() { vendored no-reason; excl 'vendor/*\n'; }
+fx_comment_rows() { vendored comment-rows; excl '# a note\n\nvendor/*\tvendored third-party code'; }
+fx_empty_pattern() { vendored empty-pattern; excl '\ta reason with no pattern\n'; }
 fx_alt_env() { vendored alt-env; put alt-excludes 'vendor/*\tvendored third-party code\n'; stage; }
 fx_alt_flag() { vendored alt-flag; put alt-excludes 'vendor/*\tvendored third-party code\n'; stage; }
 fx_alt_eq() { vendored alt-eq; put alt-excludes 'vendor/*\tvendored third-party code\n'; stage; }
@@ -167,6 +173,8 @@ run_rows \
   "control: the vendored marker fails without a row, and the remedy names the default list|fx_vendored||||rc=1 $(hit vendor/lib.rs 1 "// $TD: vendored upstream marker");$(idx 1)" \
   "the row silences exactly the vendored tree|fx_vendored_row||||rc=0 $OK_IDX" \
   "a row without a tab-separated reason is a config error naming the line|fx_no_reason||||rc=2 ${ERR}$EXCL:1: $NO_REASON" \
+  "a comment row and a blank row are skipped, and the last row is read without its newline|fx_comment_rows||||rc=0 $OK_IDX" \
+  "a reason with no pattern before its tab is the same config error|fx_empty_pattern||||rc=2 ${ERR}$EXCL:1: $NO_REASON" \
   "the list path resolves through the environment key, and the verdict names that list|fx_alt_env||$ALT||rc=0 $OK_IDX" \
   "--excludes names the same list|fx_alt_flag|||--excludes alt-excludes|rc=0 $OK_IDX" \
   "--excludes=PATH is the same flag|fx_alt_eq|||--excludes=alt-excludes|rc=0 $OK_IDX" \
@@ -194,6 +202,9 @@ fx_scope_adds() { scoped scope-adds; add ok.rs "// $FX: added by this commit\n";
 # second marker is numbered past the first insertion.
 fx_two_hunks() { repo two-hunks; local i; for i in 1 2 3 4 5 6 7 8 9 10; do add ten.rs "fn f$i() {}\n"; done; stage; commit; put ten.rs "fn f1() {}\nfn f2() {}\n// $TD: after two\nfn f3() {}\nfn f4() {}\nfn f5() {}\nfn f6() {}\nfn f7() {}\nfn f8() {}\n// $HK: after eight\nfn f9() {}\nfn f10() {}\n"; stage; }
 walked() { seeded "$1"; add ok.rs "// $TD: staged\n"; git -C "$R" add ok.rs; put ok.rs 'fn main() {}\n'; } # NAME — the work tree walks it back; the index still carries it
+# The index blob keeps a second marker so the path stays a carrier and the
+# parser really runs over a hunk that only removes.
+fx_removed() { seeded removed; add ok.rs "// $TD: one\n// $TD: two\n"; stage; commit two; put ok.rs "fn main() {}\n// $TD: two\n"; git -C "$R" add ok.rs; }
 fx_walked() { walked walked; }
 fx_walked_staged() { walked walked-staged; git -C "$R" add ok.rs; }
 fx_first() { repo first; put a.rs "// $TD: in the very first commit\n"; stage; }
@@ -205,8 +216,8 @@ staged_vendored() { seeded "$1"; put vendor/lib.rs "// $TD: vendored upstream ma
 fx_staged_vendored() { staged_vendored staged-vendored; }
 fx_staged_vendored_row() { staged_vendored staged-vendored-row; excl 'vendor/*\tvendored third-party code\n'; }
 # A symlink's blob is its target path and a gitlink has no blob here; the
-# pre-filter never lists either (git grep reads no symlink), so neither
-# reaches the per-file read, whatever the target spells.
+# pre-filter never lists either (git grep reads no symlink and no gitlink),
+# so the walk's mode arm is never reached and these pin the verdict alone.
 fx_staged_link() { seeded staged-link; ln -s "$TD: target" "$R/link.rs"; stage; }
 fx_staged_gitlink() { seeded staged-gitlink; git -C "$R" update-index --add --cacheinfo 160000,4b825dc642cb6eb9a060e54bf8d69288fbee4904,sub; }
 # ls-files -s lists an unmerged path once per stage; the lane refuses the
@@ -230,6 +241,7 @@ run_rows \
   "a second hunk is numbered from its own header|fx_two_hunks|||--staged|rc=1 $(hit ten.rs 3 "// $TD: after two");$(hit ten.rs 10 "// $HK: after eight");$(stg 2)" \
   "staged bytes decide, whatever the work tree says now|fx_walked|||--staged|rc=1 $(hit ok.rs 2 "// $TD: staged");$(stg 1)" \
   "control: staging the walked-back file clears it|fx_walked_staged|||--staged|rc=0 $OK_STG" \
+  "a marker the commit removes is not a line it adds|fx_removed|||--staged|rc=0 $OK_STG" \
   "with no HEAD to diff against, the whole staged tree reads as added|fx_first|||--staged|rc=1 $(hit a.rs 1 "// $TD: in the very first commit");$(stg 1)" \
   "control: a clean first commit passes rather than erroring for want of a HEAD|fx_first_clean|||--staged|rc=0 $OK_STG" \
   "a lowercase word the commit adds to a marker-carrying file is prose in this scope too|fx_staged_lower|||--staged|rc=0 $OK_STG" \
@@ -266,6 +278,10 @@ fx_attr_clean() { attributed attr-clean; commit "the marker, now committed"; add
 # NULs are text, and text is read whatever it is called.
 fx_binary() { seeded binary; put asset.png "\\0211PNG\\r\\n\\032\\n\\0000\\0000 $TD: in the pixels\\n"; git -C "$R" add asset.png; }
 fx_binary_control() { seeded binary-control; put asset.png "\\0211PNG\\r\\n\\032\\n $TD: in the pixels\\n"; git -C "$R" add asset.png; }
+# A violation and a skipped carrier in one run: the qualifier rides on the
+# violation summary too, in each lane.
+fx_binary_beside() { seeded binary-beside; put asset.png "\\0211PNG\\r\\n\\032\\n\\0000\\0000 $TD: in the pixels\\n"; add ok.rs "// $TD: beside the asset\\n"; stage; }
+fx_binary_beside_index() { seeded binary-beside-index; put asset.png "\\0211PNG\\r\\n\\032\\n\\0000\\0000 $TD: in the pixels\\n"; add ok.rs "// $TD: beside the asset\\n"; stage; }
 # git's window is 8000 bytes: a NUL past it leaves the blob text for git
 # (`diff --numstat` counts lines rather than printing '-'), so the sniff
 # must read it too, or a marker that fails the index scan passes the commit.
@@ -294,6 +310,8 @@ run_rows \
   "control: a clean addition to a marker-carrying file under the same rule passes, the committed marker out of this commit's verdict|fx_attr_clean|||--staged|rc=0 $OK_STG" \
   "a genuinely binary blob whose bytes spell a marker is named as unmeasured and carried into the verdict|fx_binary|||--staged|rc=0 todo-ban: not measured: asset.png — binary content, not text;$OK_STG; 1 matched path(s) not measured" \
   "control: the same bytes without a NUL are text, and fire|fx_binary_control|||--staged|rc=1 $(hit asset.png 3 " $TD: in the pixels");$(stg 1)" \
+  "a skipped carrier qualifies a violation verdict too|fx_binary_beside|||--staged|rc=1 todo-ban: not measured: asset.png — binary content, not text;$(hit ok.rs 2 "// $TD: beside the asset");$(stg 1); 1 matched path(s) not measured" \
+  "and the index lane's violation verdict the same way|fx_binary_beside_index||||rc=1 todo-ban: not measured: asset.png — binary content, not text;$(hit ok.rs 2 "// $TD: beside the asset");$(idx 1); 1 matched path(s) not measured" \
   "a NUL past git's 8000-byte window leaves the blob text, and it fires|fx_late_nul|||--staged|rc=1 $(hit late-nul.rs 2 "// $TD: past the 8000-byte window");$(stg 1)" \
   "a type change to a clean regular file passes: a marker shape in the path is not content|fx_type_clean|||--staged|rc=0 $OK_STG" \
   "a marker in the new regular file fires at its own line, the section header and the clean line beside it never records|fx_type_marker|||--staged|rc=1 $(hit "a $TD: x.md" 1 "// $FX: added with the regular file");$(stg 1)" \
@@ -342,6 +360,18 @@ done
 exec "$REAL_AWK" "\$@"
 EOF
 chmod +x "$TMP/awk-shim/awk"
+# The per-file grep exits 2 on purpose: 1 is "no marker in this file's
+# additions", so a 2 read as a 1 would skip the file silently.
+REAL_GREP="$(command -v grep)"
+mkdir -p "$TMP/grep-shim"
+cat >"$TMP/grep-shim/grep" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  [ "\$a" != "-aE" ] || { echo "grep: simulated scan failure" >&2; exit 2; }
+done
+exec "$REAL_GREP" "\$@"
+EOF
+chmod +x "$TMP/grep-shim/grep"
 fx_shim_clean() { seeded shim-clean; add ok.rs 'fn other() {}\n'; git -C "$R" add ok.rs; }
 fx_shim_raw() { seeded shim-raw; add ok.rs 'fn other() {}\n'; git -C "$R" add ok.rs; }
 # The per-file read and the parser are reached only for a path the
@@ -350,6 +380,7 @@ marked() { seeded "$1"; add ok.rs "// $TD: staged for the per-file read\n"; git 
 fx_shim_control() { marked shim-control; }
 fx_shim_hunk() { marked shim-hunk; }
 fx_shim_awk() { marked shim-awk; }
+fx_shim_grep() { marked shim-grep; }
 # The carriers pre-filter is chunked at 256 paths; a chunk that overwrote
 # its predecessors would drop the carrier named by a prior one and print
 # OK. This repository's render-propagation commits stage several hundred
@@ -361,11 +392,13 @@ run_rows \
   "shim-free control: the staged marker fires with the real tools|fx_shim_control|||--staged|rc=1 $(hit ok.rs 2 "// $TD: staged for the per-file read");$(stg 1)" \
   "a file whose added lines cannot be read is exit 2, naming it|fx_shim_hunk|$TMP/hunk-shim||--staged|rc=2 git diff: simulated execution failure;${ERR}could not read the staged additions in 'ok.rs' (git diff exit 128)" \
   "a hunk parser that fails is exit 2 naming the file, with no violation and no OK|fx_shim_awk|$TMP/awk-shim||--staged|rc=2 awk: simulated hunk-parser failure;${ERR}could not parse the staged additions in 'ok.rs' (awk exit 1)" \
+  "a per-file scan that fails is exit 2 naming the file, never a file skipped|fx_shim_grep|$TMP/grep-shim||--staged|rc=2 grep: simulated scan failure;${ERR}could not scan the staged additions in 'ok.rs' (grep exit 2)" \
   "a marker in the first of 300 staged paths survives every later chunk|fx_chunked|||--staged|rc=1 $(hit a000.rs 1 "// $TD: in the first chunk");$(stg 1)"
 
 echo "=== the usage is answered ==="
 repo help
 assert_eq "--help prints the usage and exits 0" "rc=0 usage: todo-ban [--staged] [--excludes FILE]" "$(run "" "" --help | cut -d';' -f1)"
+assert_eq "-h is the same flag" "$(run "" "" --help)" "$(run "" "" -h)"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
