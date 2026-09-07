@@ -127,14 +127,15 @@ fires "a condition piping echo into grep -q fails as early-close-pipe" "scripts/
 
 echo "=== lane fail-open: a bare command-substitution assignment under errexit ==="
 seed bareassign
-# The keyword spelling, and the guard at the far edge of the look-ahead
-# window: the assignment is on line 3 and the test of $ROOT on line 7, four
-# lines below it. A narrower window, or a keyword strip that leaves the
-# variable named `readonly ROOT`, stops finding this.
+# The guard sits at the far edge of the look-ahead window: the assignment is
+# on line 3 and the test of $ROOT on line 7, four lines below it. A narrower
+# window stops finding this. The assignment is bare on purpose — a `readonly`
+# or `local` in front would mask the substitution's status and the script
+# would survive, which is the masked-returns lane's shape, not this one's.
 {
   printf '#!/usr/bin/env bash\n'
   printf 'set -euo pipefail\n'
-  printf 'readonly ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"\n'
+  printf 'ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"\n'
   printf 'log() {\n'
   printf '  printf "%%s\\n" "$1" >&2\n'
   printf '}\n'

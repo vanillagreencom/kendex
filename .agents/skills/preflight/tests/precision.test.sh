@@ -114,6 +114,19 @@ echo "=== benign patterns across every lane stay clean ==="
 seed benign
 # mktemp is fine under errexit; a new script that declares strict mode is fine.
 printf '#!/usr/bin/env bash\nset -euo pipefail\nTMP="$(mktemp -d)"\ntrap %s EXIT\necho "$TMP"\n' "'rm -rf \"\$TMP\"'" >"$R/scripts/strict.sh"
+# Inside a `set +e` window a bare assignment ends nothing and the guard below
+# it does run, so a file that turns errexit back off is not judged at all.
+cat >"$R/scripts/window.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+set +e
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+set -e
+if [ -z "$ROOT" ]; then
+  exit 1
+fi
+echo "$ROOT"
+EOF
 # A test-tree script sets its own rules — including the fixture path it cites.
 printf '#!/usr/bin/env bash\n# fixture: docs/gone.md\necho helper\n' >"$R/tests/helper.sh"
 # Every benign doc-citation shape a source file can carry.
@@ -243,6 +256,11 @@ while [ "$tries" -lt 3 ]; do
 done
 # Naming the shape is not writing it: HERE="$(cmd)" with [ -z "$HERE" ] under it.
 echo "$ROOT"
+# A guard written in a comment runs nothing, so the deliberate fatal above it
+# stands and is not this lane's shape.
+FATAL="$(date +%s)"
+# if [ -z "$FATAL" ]; then exit 1; fi
+echo "$FATAL"
 [ -z "$STAMP" ] || echo "still set"
 EOF
 git -C "$R" add -A
