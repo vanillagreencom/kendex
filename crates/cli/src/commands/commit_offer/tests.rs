@@ -71,49 +71,59 @@ fn the_head_line_carries_the_scope_and_the_count() {
 
 /// The four choices in the design's order, renumbered as the preconditions
 /// remove them, `leave` always last; an open pull request rewords `push`
-/// and takes `pr` away.
+/// and takes `pr` away. One row per precondition.
 #[test]
 fn the_choices_are_numbered_in_order_skipping_the_removed_ones() {
-    assert_eq!(
-        labels(&block::choices(&offer())),
-        [
-            "commit them",
-            "commit them and push to origin/main",
-            "commit them on a new branch and open a pull request",
-            "leave them as diffs",
-        ]
-    );
-    let mut no_remote = offer();
-    no_remote.remote = None;
-    no_remote.push = Err(Unavailable::NoRemote);
-    no_remote.pull_request = Err(Unavailable::NoRemote);
-    assert_eq!(
-        labels(&block::choices(&no_remote)),
-        ["commit them", "leave them as diffs"]
-    );
-    let mut no_gh = offer();
-    no_gh.pull_request = Err(Unavailable::GhMissing);
-    assert_eq!(
-        labels(&block::choices(&no_gh)),
-        [
-            "commit them",
-            "commit them and push to origin/main",
-            "leave them as diffs",
-        ]
-    );
-    let mut open = offer();
-    open.open = Some(OpenPullRequest {
-        number: 41,
-        url: "https://github.com/acme/site/pull/41".to_owned(),
-    });
-    assert_eq!(
-        labels(&block::choices(&open)),
-        [
-            "commit them",
-            "commit them and add a commit to pull request #41",
-            "leave them as diffs",
-        ]
-    );
+    type Shape = fn(&mut Offer);
+    let rows: [(&str, Shape, &[&str]); 4] = [
+        (
+            "everything available",
+            |_| {},
+            &[
+                "commit them",
+                "commit them and push to origin/main",
+                "commit them on a new branch and open a pull request",
+                "leave them as diffs",
+            ],
+        ),
+        (
+            "no remote",
+            |offer| {
+                offer.remote = None;
+                offer.push = Err(Unavailable::NoRemote);
+                offer.pull_request = Err(Unavailable::NoRemote);
+            },
+            &["commit them", "leave them as diffs"],
+        ),
+        (
+            "gh missing",
+            |offer| offer.pull_request = Err(Unavailable::GhMissing),
+            &[
+                "commit them",
+                "commit them and push to origin/main",
+                "leave them as diffs",
+            ],
+        ),
+        (
+            "a pull request already open",
+            |offer| {
+                offer.open = Some(OpenPullRequest {
+                    number: 41,
+                    url: "https://github.com/acme/site/pull/41".to_owned(),
+                });
+            },
+            &[
+                "commit them",
+                "commit them and add a commit to pull request #41",
+                "leave them as diffs",
+            ],
+        ),
+    ];
+    for (what, shape, want) in rows {
+        let mut shaped = offer();
+        shape(&mut shaped);
+        assert_eq!(labels(&block::choices(&shaped)), want, "{what}");
+    }
     assert_eq!(
         labels(&block::without_pull_request(&offer())),
         [
@@ -128,62 +138,95 @@ fn the_choices_are_numbered_in_order_skipping_the_removed_ones() {
 /// same row a flag naming that choice is refused with.
 #[test]
 fn a_removed_choice_prints_its_reason() {
-    let mut no_remote = offer();
-    no_remote.push = Err(Unavailable::NoRemote);
-    no_remote.pull_request = Err(Unavailable::NoRemote);
-    assert_eq!(
-        block::reasons(&no_remote),
-        [
-            "no push: this repository has no remote",
-            "no pull request: this repository has no remote",
-        ]
+    type Shape = fn(&mut Offer);
+    type Row = (
+        &'static str,
+        Shape,
+        &'static [&'static str],
+        &'static [(Choice, Option<&'static str>)],
     );
-    let mut several = offer();
-    several.push = Err(Unavailable::RemoteNotDecidable);
-    several.pull_request = Err(Unavailable::RemoteNotDecidable);
-    assert_eq!(
-        block::reasons(&several),
-        [
-            "no push: this branch tracks no remote and the repository has more than one",
-            "no pull request: this branch tracks no remote and the repository has more than one",
-        ]
-    );
-    let mut missing = offer();
-    missing.pull_request = Err(Unavailable::GhMissing);
-    assert_eq!(
-        block::reasons(&missing),
-        ["no pull request: gh is not installed"]
-    );
-    let mut said = offer();
-    said.pull_request = Err(Unavailable::GhSaid(
-        "To get started with GitHub CLI, please run:  gh auth login".to_owned(),
-    ));
-    assert_eq!(
-        block::reasons(&said),
-        ["no pull request: gh said: To get started with GitHub CLI, please run:  gh auth login"]
-    );
-    assert_eq!(block::reasons(&offer()), [] as [&str; 0]);
-
-    assert_eq!(block::not_on_offer(&offer(), Choice::Push), None);
-    assert_eq!(block::not_on_offer(&offer(), Choice::Pr), None);
-    assert_eq!(
-        block::not_on_offer(&missing, Choice::Pr).as_deref(),
-        Some("no pull request: gh is not installed")
-    );
-    assert_eq!(
-        block::not_on_offer(&several, Choice::Push).as_deref(),
-        Some("no push: this branch tracks no remote and the repository has more than one")
-    );
-    let mut open = offer();
-    open.open = Some(OpenPullRequest {
-        number: 41,
-        url: String::new(),
-    });
-    assert_eq!(
-        block::not_on_offer(&open, Choice::Pr).as_deref(),
-        Some("no pull request: pull request #41 is already open for this branch")
-    );
-    assert_eq!(block::not_on_offer(&open, Choice::Push), None);
+    let rows: [Row; 6] = [
+        (
+            "everything available",
+            |_| {},
+            &[],
+            &[(Choice::Push, None), (Choice::Pr, None)],
+        ),
+        (
+            "no remote",
+            |offer| {
+                offer.push = Err(Unavailable::NoRemote);
+                offer.pull_request = Err(Unavailable::NoRemote);
+            },
+            &[
+                "no push: this repository has no remote",
+                "no pull request: this repository has no remote",
+            ],
+            &[],
+        ),
+        (
+            "several remotes, none tracked",
+            |offer| {
+                offer.push = Err(Unavailable::RemoteNotDecidable);
+                offer.pull_request = Err(Unavailable::RemoteNotDecidable);
+            },
+            &[
+                "no push: this branch tracks no remote and the repository has more than one",
+                "no pull request: this branch tracks no remote and the repository has more than one",
+            ],
+            &[(
+                Choice::Push,
+                Some("no push: this branch tracks no remote and the repository has more than one"),
+            )],
+        ),
+        (
+            "gh missing",
+            |offer| offer.pull_request = Err(Unavailable::GhMissing),
+            &["no pull request: gh is not installed"],
+            &[(Choice::Pr, Some("no pull request: gh is not installed"))],
+        ),
+        (
+            "gh said why",
+            |offer| {
+                offer.pull_request = Err(Unavailable::GhSaid(
+                    "To get started with GitHub CLI, please run:  gh auth login".to_owned(),
+                ));
+            },
+            &[
+                "no pull request: gh said: To get started with GitHub CLI, please run:  gh auth login",
+            ],
+            &[],
+        ),
+        (
+            "a pull request already open",
+            |offer| {
+                offer.open = Some(OpenPullRequest {
+                    number: 41,
+                    url: String::new(),
+                });
+            },
+            &[],
+            &[
+                (
+                    Choice::Pr,
+                    Some("no pull request: pull request #41 is already open for this branch"),
+                ),
+                (Choice::Push, None),
+            ],
+        ),
+    ];
+    for (what, shape, reasons, refused) in rows {
+        let mut shaped = offer();
+        shape(&mut shaped);
+        assert_eq!(block::reasons(&shaped), reasons, "{what}");
+        for (choice, reason) in refused {
+            assert_eq!(
+                block::not_on_offer(&shaped, *choice).as_deref(),
+                *reason,
+                "{what}: {choice:?}"
+            );
+        }
+    }
 }
 
 /// An answer that is not one of the printed numbers is `leave`: a typo, a

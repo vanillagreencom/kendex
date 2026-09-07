@@ -401,8 +401,16 @@ fn updates_refuses_a_whole_place_apply_beside_a_named_package() {
     );
     let printed = said(&refused);
     assert!(!refused.status.success(), "{printed}");
+    // Neither ask ran: the package is not muted, and nothing was applied.
+    let listed = kendex(home, &proj, &["updates"]);
+    let rows = said(&listed);
+    assert!(listed.status.success(), "{rows}");
     assert!(
-        printed.contains("--apply brings the whole place current"),
-        "{printed}"
+        !rows.contains("ignored"),
+        "the refused run muted the package: {rows}"
+    );
+    assert!(
+        !printed.contains("updated"),
+        "the refused run applied something: {printed}"
     );
 }

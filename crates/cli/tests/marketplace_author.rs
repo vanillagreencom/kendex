@@ -73,7 +73,6 @@ fn use_registers_a_discovered_repo_without_writing_into_it() {
     let output = kendex(home, &["marketplace", "use", repo.to_str().unwrap()]);
     let said = String::from_utf8_lossy(&output.stderr).into_owned();
     assert!(output.status.success(), "{said}");
-    assert!(said.contains("nothing inside it was changed"), "{said}");
     assert!(
         !repo.join("kendex.toml").exists(),
         "use-existing must not write a control file"

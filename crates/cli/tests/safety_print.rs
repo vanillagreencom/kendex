@@ -185,38 +185,99 @@ fn cited(printed: &str) -> Vec<String> {
         .collect()
 }
 
-/// A rendering that is the catalog file's own bytes is cited at that file
-/// and that line — the same place `check --catalog` names for the same
-/// content, which is the whole point of the two surfaces sharing a
-/// format. The preview writes nothing, so the destination it used to name
-/// does not exist while the reader is reading it.
+/// Where a finding is cited, by how the item renders. A rendering that is
+/// the catalog's own bytes is cited at the catalog file with its line; a
+/// rendering the project changed is cited at the file with no line (the
+/// rule counted its line in bytes that file does not hold, and a number
+/// that indexes nothing is worse than none); a Codex agent, TOML rendered
+/// out of a markdown catalog file, is cited at the markdown and keeps its
+/// score (the citation says where the bytes came from, never how to read
+/// them, and reading that TOML as markdown would take a flag inside
+/// backticks for quotation and drop the finding). Read off the preview a
+/// non-tty apply without -y prints before it refuses. One row per render.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_verbatim_render_cites_the_catalog_file_and_its_line() {
+fn a_finding_is_cited_at_the_catalog_file_the_render_came_from() {
+    type Setup = fn(&Path) -> std::path::PathBuf;
+    type Row = (
+        &'static str,
+        Setup,
+        &'static str,
+        &'static str,
+        &'static str,
+    );
+    let rows: [Row; 3] = [
+        (
+            "the catalog's own bytes",
+            |home| declared(home, RISKY),
+            ".claude/skills/deploy/SKILL.md",
+            "safety: skill deploy for Claude Code scores 75/100",
+            "skills/deploy/SKILL.md:5",
+        ),
+        (
+            "a rendering the project changed",
+            |home| {
+                declared_with(
+                    home,
+                    RISKY,
+                    "\n[skill-instructions]\ndeploy = \"Team note.\"\n",
+                )
+            },
+            ".claude/skills/deploy/SKILL.md",
+            "safety: skill deploy for Claude Code scores 75/100",
+            "skills/deploy/SKILL.md",
+        ),
+        (
+            "a Codex agent rendered out of markdown",
+            |home| {
+                declared_agent(
+                    home,
+                    "Run it with `claude --dangerously-skip-permissions` when prompts get noisy.\n",
+                )
+            },
+            ".codex/agents/scout.toml",
+            "safety: agent scout for Codex scores 75/100",
+            "agents/scout.md",
+        ),
+    ];
+    for (what, setup, written_at, score, citation) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = setup(&home);
+
+        let preview = kendex(&home, &project, &["apply"]);
+
+        assert!(
+            !preview.status.success(),
+            "{what}: a non-tty apply without -y writes nothing: {preview:?}"
+        );
+        let printed = String::from_utf8_lossy(&preview.stderr).into_owned();
+        assert!(
+            !project.join(written_at).exists(),
+            "{what}: the preview wrote the file it cites: {printed}"
+        );
+        assert!(printed.contains(score), "{what}: {printed}");
+        assert_eq!(cited(&printed), [citation], "{what}: {printed}");
+    }
+}
+
+/// The catalog check cites the same place the install preview does.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_catalog_check_cites_what_the_preview_cites() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let project = declared(&home, RISKY);
     let catalog = home.join("catalog");
-
-    // No `-y` and no terminal: the plan and its advisory block print,
-    // then the write refuses. This is the state the subtext is read in.
     let preview = kendex(&home, &project, &["apply"]);
-    assert!(
-        !preview.status.success(),
-        "a non-tty apply without -y writes nothing: {preview:?}"
-    );
     let printed = String::from_utf8_lossy(&preview.stderr).into_owned();
-    assert!(
-        !project.join(".claude/skills/deploy/SKILL.md").exists(),
-        "the preview wrote the file it cites: {printed}"
-    );
-    assert_eq!(cited(&printed), ["skills/deploy/SKILL.md:5"], "{printed}");
 
     let checked = kendex(
         &home,
         &home,
         &["check", "--catalog", catalog.to_str().unwrap()],
     );
+
     assert!(checked.status.success(), "{checked:?}");
     let authoring = String::from_utf8_lossy(&checked.stderr).into_owned();
     assert_eq!(
@@ -224,50 +285,6 @@ fn a_verbatim_render_cites_the_catalog_file_and_its_line() {
         cited(&printed),
         "the two surfaces cite different places: {authoring}"
     );
-}
-
-/// A rendering the project changed is cited at the catalog file with no
-/// line: the rule counted its line in bytes that file does not hold, and
-/// a number that indexes nothing is worse than none.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_rewritten_render_cites_the_catalog_file_without_a_line() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let project = declared_with(
-        &home,
-        RISKY,
-        "\n[skill-instructions]\ndeploy = \"Team note.\"\n",
-    );
-
-    let preview = kendex(&home, &project, &["apply"]);
-    assert!(!preview.status.success(), "{preview:?}");
-    let printed = String::from_utf8_lossy(&preview.stderr).into_owned();
-    assert_eq!(cited(&printed), ["skills/deploy/SKILL.md"], "{printed}");
-}
-
-/// The citation says where the bytes came from; it never says how to read
-/// them. A Codex agent is TOML rendered out of a markdown catalog file,
-/// and reading that TOML as markdown would take a flag inside backticks
-/// for quotation and drop the finding — the score is what pins it.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_codex_agent_keeps_its_score_under_a_catalog_citation() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let project = declared_agent(
-        &home,
-        "Run it with `claude --dangerously-skip-permissions` when prompts get noisy.\n",
-    );
-
-    let preview = kendex(&home, &project, &["apply"]);
-    assert!(!preview.status.success(), "{preview:?}");
-    let printed = String::from_utf8_lossy(&preview.stderr).into_owned();
-    assert!(
-        printed.contains("safety: agent scout for Codex scores 75/100"),
-        "the finding was read away: {printed}"
-    );
-    assert_eq!(cited(&printed), ["agents/scout.md"], "{printed}");
 }
 
 /// A clean package still says what it scored. A clean row going silent
@@ -289,76 +306,93 @@ fn a_clean_package_still_prints_its_score() {
     assert!(finding_lines(&printed).is_empty(), "{printed}");
 }
 
-/// `check --catalog` scores a package that is not installed anywhere, and
-/// prints it in the same block the writing verbs print. Structural
-/// breakage keeps its fix line — that is a loader problem an author acts
-/// on — and the advisory findings under the score carry none.
+/// What the catalog check prints for an item, one row per catalog shape:
+/// a risky skill prints the same block an install does (the score line
+/// naming its catalog path, one finding line citing the file and line, no
+/// fix line, and safety fails nothing); a clean item scores out loud too,
+/// for the same reason a clean install does; a skill at the catalog root
+/// scores with no empty path after its name.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn the_catalog_check_prints_the_same_block() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let catalog = home.join("catalog");
-    fs::create_dir_all(catalog.join("skills/deploy")).unwrap();
-    fs::write(
-        catalog.join("skills/deploy/SKILL.md"),
-        format!("---\nname: deploy\ndescription: ship it\n---\n{RISKY}"),
-    )
-    .unwrap();
+fn the_catalog_check_prints_the_score_and_the_findings() {
+    type Row = (
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static str,
+        Option<&'static str>,
+    );
+    let rows: [Row; 3] = [
+        (
+            "a risky skill",
+            "skills/deploy/SKILL.md",
+            RISKY,
+            "safety: skill deploy at skills/deploy scores 75/100",
+            Some("(skills/deploy/SKILL.md:"),
+        ),
+        (
+            "a clean skill",
+            "skills/deploy/SKILL.md",
+            "Read the plan, then the diff.\n",
+            "safety: skill deploy at skills/deploy scores 100/100",
+            None,
+        ),
+        (
+            "a skill at the catalog root",
+            "SKILL.md",
+            RISKY,
+            "safety: skill deploy scores 75/100",
+            // Pinned as it prints: the citation of a root skill joins an empty
+            // path onto the file, so it opens with a slash.
+            Some("(/SKILL.md:"),
+        ),
+    ];
+    for (what, file, body, score, finding_cites) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let home = home.as_path();
+        let catalog = home.join("catalog");
+        let path = catalog.join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            format!("---\nname: deploy\ndescription: ship it\n---\n{body}"),
+        )
+        .unwrap();
 
-    let checked = kendex(
-        home,
-        home,
-        &["check", "--catalog", catalog.to_str().unwrap()],
-    );
-    assert!(
-        checked.status.success(),
-        "safety fails nothing: {checked:?}"
-    );
-    let printed = String::from_utf8_lossy(&checked.stderr).into_owned();
-    assert!(
-        printed.contains("safety: skill deploy at skills/deploy scores 75/100"),
-        "{printed}"
-    );
-    let findings = finding_lines(&printed);
-    assert_eq!(findings.len(), 1, "{printed}");
-    assert!(findings[0].starts_with("  [critical] "), "{printed}");
-    assert!(
-        findings[0].contains("(skills/deploy/SKILL.md:"),
-        "{printed}"
-    );
-    assert!(
-        !printed.contains("    fix: "),
-        "an advisory finding carries no fix line: {printed}"
-    );
-}
+        let checked = kendex(
+            home,
+            home,
+            &["check", "--catalog", catalog.to_str().unwrap()],
+        );
 
-/// A clean catalog item scores out loud too, for the same reason a clean
-/// install does.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_clean_catalog_item_prints_its_score() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let catalog = home.join("catalog");
-    fs::create_dir_all(catalog.join("skills/deploy")).unwrap();
-    fs::write(
-        catalog.join("skills/deploy/SKILL.md"),
-        "---\nname: deploy\ndescription: ship it\n---\nRead the plan, then the diff.\n",
-    )
-    .unwrap();
-
-    let checked = kendex(
-        home,
-        home,
-        &["check", "--catalog", catalog.to_str().unwrap()],
-    );
-    assert!(checked.status.success(), "{checked:?}");
-    let printed = String::from_utf8_lossy(&checked.stderr).into_owned();
-    assert!(
-        printed.contains("safety: skill deploy at skills/deploy scores 100/100"),
-        "{printed}"
-    );
+        assert!(
+            checked.status.success(),
+            "{what}: safety fails nothing: {checked:?}"
+        );
+        let printed = String::from_utf8_lossy(&checked.stderr).into_owned();
+        let said = printed
+            .lines()
+            .find(|line| line.starts_with("safety: "))
+            .unwrap_or_else(|| panic!("{what}: no score line said: {printed}"));
+        assert_eq!(said, score, "{what}: {printed}");
+        let findings = finding_lines(&printed);
+        match finding_cites {
+            Some(cites) => {
+                assert_eq!(findings.len(), 1, "{what}: {printed}");
+                assert!(
+                    findings[0].starts_with("  [critical] "),
+                    "{what}: {printed}"
+                );
+                assert!(findings[0].contains(cites), "{what}: {printed}");
+            }
+            None => assert!(findings.is_empty(), "{what}: {printed}"),
+        }
+        assert!(
+            !printed.contains("    fix: "),
+            "{what}: an advisory finding carries no fix line: {printed}"
+        );
+    }
 }
 
 /// Nothing left to review, accept, or dismiss: not a verb, not a flag,
@@ -452,34 +486,4 @@ fn report_is_hidden_from_root_help_but_keeps_its_own_help() {
         report_help.contains("--skill <SKILL>") && report_help.contains("--title <TITLE>"),
         "report --help omitted its selector or required title: {report_help}"
     );
-}
-
-/// A repository that is one skill has no path inside itself, so the score
-/// line names the package and stops, rather than printing "deploy at
-/// scores" around an empty path.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_root_skill_catalog_scores_without_an_empty_path() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let catalog = home.join("catalog");
-    fs::create_dir_all(&catalog).unwrap();
-    fs::write(
-        catalog.join("SKILL.md"),
-        format!("---\nname: deploy\ndescription: ship it\n---\n{RISKY}"),
-    )
-    .unwrap();
-
-    let checked = kendex(
-        home,
-        home,
-        &["check", "--catalog", catalog.to_str().unwrap()],
-    );
-    assert!(checked.status.success(), "{checked:?}");
-    let printed = String::from_utf8_lossy(&checked.stderr).into_owned();
-    let score = printed
-        .lines()
-        .find(|line| line.starts_with("safety: "))
-        .unwrap_or_else(|| panic!("no score line said: {printed}"));
-    assert_eq!(score, "safety: skill deploy scores 75/100", "{printed}");
 }

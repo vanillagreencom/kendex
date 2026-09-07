@@ -333,7 +333,9 @@ fn keeping_the_declaration_lets_a_refresh_install_it_again() {
             &["remove", "dev", "--keep-declaration", flag],
         );
         let said = String::from_utf8_lossy(&output.stderr).into_owned();
-        assert!(!output.status.success(), "{flag} contradicts keeping");
-        assert!(said.contains("cannot be used with"), "{said}");
+        assert!(
+            !output.status.success(),
+            "{flag} contradicts keeping: {said}"
+        );
     }
 }

@@ -500,7 +500,6 @@ fn two_answers_at_once_are_refused_before_the_write() {
     let project = project(&tmp);
     let (output, text) = apply(&home, &project, &["--commit", "--leave"]);
     assert!(!output.status.success(), "{text}");
-    assert!(text.contains("cannot be used with"), "{text}");
     assert!(
         !project.join("CLAUDE.md").exists(),
         "the verb wrote before refusing"

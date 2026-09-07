@@ -7,7 +7,7 @@ Both shells read one public release feed and replace themselves from it. What th
 ## Boundaries
 
 - Discovery is unsigned; one pinned key covers a per-target document binding each download to its release and target. A signature over a download proves the bytes and nothing else, so `digests-<target>.json` is signed under the release key and an update installs nothing whose hash it does not name. Enforced by the tests in `crates/core/src/release_digests/tests.rs` and `crates/cli/tests/compat.rs::update_over_a_local_feed_refuses_a_command_it_cannot_verify`.
-- The app and the CLI pin one updater key and ship one version. Enforced by `crates/app/tests/tauri_config.rs::the_app_and_the_cli_pin_one_updater_key` and `::the_app_and_the_cli_ship_one_version`.
+- The app and the CLI pin one updater key and ship one version. Enforced by `crates/app/tests/tauri_config.rs::the_app_and_the_cli_pin_one_updater_key` and `::the_settings_the_window_and_the_release_path_lean_on`.
 
 ## Invariants
 

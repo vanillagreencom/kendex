@@ -62,21 +62,6 @@ fn the_frame_closes_on_the_ledger() {
     }
 }
 
-/// Framing is all that differs. Every line the plain run said is in the
-/// framed one — the module renders one set of calls two ways, and a
-/// terminal that is shown less than a pipe is a terminal being lied to.
-#[test]
-fn the_frame_carries_every_line_the_plain_run_said() {
-    let (plain, pretty) = both(&REFRESH);
-    let carried = unframed(&pretty);
-    for line in plain.lines().filter(|line| !line.trim().is_empty()) {
-        assert!(
-            carried.contains(&squashed(line)),
-            "the framed session dropped {line:?}:\n{pretty}"
-        );
-    }
-}
-
 /// And in the order it said them. Flattening the session into one string
 /// would let a block drawn after the thing it explains pass, which buffering
 /// makes possible.

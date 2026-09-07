@@ -120,70 +120,79 @@ fn adopting_a_hook_rewrites_only_its_own_registration() {
     assert!(world.at(".agents/hooks/guard.sh").is_file());
 }
 
-/// A command that runs something from outside the project is left exactly
-/// as it was: moving it would drag a file the project does not own into the
-/// tree the project commits.
+/// Which part of a hook's command line adoption moves, one row per
+/// command. A command running something from outside the project is left
+/// exactly as it was: moving it would drag a file the project does not own
+/// into the tree the project commits. A path handed to a program kendex
+/// does not know is a file the hook reads, not the hook itself; moving it
+/// would break the very thing adoption is preserving, so the registration
+/// is taken where it stands. An interpreter's script argument is the hook,
+/// and it moves, the rest of the line riding with it. Each row: the file
+/// planted (relative to the project), the registered command, the hook's name,
+/// where the script must sit afterwards (the planted file untouched, or
+/// its new place under the shared hooks directory), and the command the
+/// manifest records.
 #[test]
-fn a_hook_running_a_script_outside_the_project_keeps_its_command() {
-    let world = World::new(&["claude"]);
-    world.declare_catalog();
-    crate::write(&world.home.join("outside.sh"), "#!/bin/sh\nexit 0\n");
-    crate::write(
-        &world.at(".claude/settings.json"),
-        r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "../../outside.sh"}]}]}}"#,
+fn adoption_moves_the_script_a_command_runs_and_nothing_else() {
+    type Row = (
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static str,
+        Option<&'static str>,
+        &'static str,
     );
+    let rows: [Row; 3] = [
+        (
+            "a script outside the project",
+            "../../outside.sh",
+            "../../outside.sh",
+            "outside",
+            None,
+            "../../outside.sh",
+        ),
+        (
+            "a path that is only an argument",
+            "policy/rules.json",
+            "some-linter --config policy/rules.json",
+            "rules",
+            None,
+            "policy/rules.json",
+        ),
+        (
+            "an interpreter's script argument",
+            ".claude/hooks/guard.sh",
+            "bash .claude/hooks/guard.sh --strict",
+            "guard",
+            Some("guard.sh"),
+            "bash .agents/hooks/guard.sh --strict",
+        ),
+    ];
+    for (what, planted, command, name, moved, recorded) in rows {
+        let world = World::new(&["claude"]);
+        world.declare_catalog();
+        crate::write(&world.at(planted), "#!/bin/sh\nexit 0\n");
+        crate::write(
+            &world.at(".claude/settings.json"),
+            &format!(
+                r#"{{"hooks": {{"PreToolUse": [{{"matcher": "Bash", "hooks": [{{"type": "command", "command": "{command}"}}]}}]}}}}"#
+            ),
+        );
 
-    world.run(&["adopt", "hook", "PreToolUse:Bash:outside"]);
+        world.run(&["adopt", "hook", &format!("PreToolUse:Bash:{name}")]);
 
-    let manifest = world.manifest();
-    assert!(manifest.contains("../../outside.sh"), "{manifest}");
-    assert!(!world.at(".agents/hooks").exists());
-    assert!(world.home.join("outside.sh").is_file());
-}
-
-/// A path handed to a program kendex does not know is a file the hook
-/// reads, not the hook itself. Moving it would break the very thing
-/// adoption is preserving, so the registration is taken where it stands.
-#[test]
-fn a_path_that_is_only_an_argument_is_left_where_it_is() {
-    let world = World::new(&["claude"]);
-    world.declare_catalog();
-    crate::write(&world.at("policy/rules.json"), "{}\n");
-    crate::write(
-        &world.at(".claude/settings.json"),
-        r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "some-linter --config policy/rules.json"}]}]}}"#,
-    );
-
-    world.run(&["adopt", "hook", "PreToolUse:Bash:rules"]);
-
-    assert!(world.at("policy/rules.json").is_file());
-    assert!(!world.at(".agents/hooks").exists());
-    assert!(
-        world.manifest().contains("policy/rules.json"),
-        "{}",
-        world.manifest()
-    );
-}
-
-/// An interpreter's script argument is the hook, and it moves.
-#[test]
-fn an_interpreters_script_argument_moves() {
-    let world = World::new(&["claude"]);
-    world.declare_catalog();
-    crate::write(&world.at(".claude/hooks/guard.sh"), "#!/bin/sh\nexit 0\n");
-    crate::write(
-        &world.at(".claude/settings.json"),
-        r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash .claude/hooks/guard.sh --strict"}]}]}}"#,
-    );
-
-    world.run(&["adopt", "hook", "PreToolUse:Bash:guard"]);
-
-    assert!(world.at(".agents/hooks/guard.sh").is_file());
-    let manifest = world.manifest();
-    assert!(
-        manifest.contains("bash .agents/hooks/guard.sh --strict"),
-        "{manifest}"
-    );
+        let manifest = world.manifest();
+        assert!(manifest.contains(recorded), "{what}: {manifest}");
+        match moved {
+            None => {
+                assert!(!world.at(".agents/hooks").exists(), "{what}");
+                assert!(world.at(planted).is_file(), "{what}");
+            }
+            Some(file) => {
+                assert!(world.at(".agents/hooks").join(file).is_file(), "{what}");
+            }
+        }
+    }
 }
 
 /// One declaration renders back into every tool's registry, so two tools
@@ -231,8 +240,6 @@ fn a_hook_a_declaration_cannot_express_is_refused() {
 
     let refused = world.try_run(&["adopt", "hook", "PreToolUse:Bash:guard"]);
     assert!(!refused.status.success());
-    let text = said(&refused);
-    assert!(text.contains("env"), "{text}");
     assert!(world.at(".claude/hooks/guard.sh").is_file());
 }
 

@@ -7,7 +7,7 @@
 
 #[path = "../../../test_util.rs"]
 mod test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::collections::BTreeSet;
 use std::fs;

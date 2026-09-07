@@ -63,108 +63,103 @@ fn planned_block() -> Vec<&'static str> {
     ]
 }
 
-fn expect(got: Vec<String>, want: Vec<&str>) {
-    assert_eq!(got, want, "the plain lines changed");
-}
-
-/// A preview says what it found and what it would do, and names no
-/// command as the way out: every conflict line above it carries its own.
+/// The plain lines each verb prints over one blocked project, one row per
+/// verb. A preview says what it found and what it would do, and names no
+/// command as the way out (every conflict line above it carries its own);
+/// add closes on the verb that was typed, counting changes, and a run whose
+/// only change is its declaration writes something rather than installing
+/// anything; verify's verdict closes the run with the footnote about content
+/// nothing manages above it, and a scope whose manifest asks for items with
+/// no install record still measures the current manifest and render bytes,
+/// naming each declaration with no matching installation; check's verdict
+/// counts the lines the reader was shown and points at them only where every
+/// one says what to run; a removal names what it did before it says how much
+/// of it there was.
 #[test]
-fn apply_plan() {
-    let mut want = planned_block();
-    want.extend([
-        "plan: 3 changes",
-        "  - Write skill tidy's files for Claude Code",
-        "  - Write skill tidy's files for Codex",
-        "  - Update the install record",
-        "<project>: planned 3 changes · skipped 1 item on conflict · flagged 2 items on safety",
-    ]);
-    expect(shape(&[], &["apply", "--plan", "--scope", "project"]), want);
-}
-
-/// add closes on the verb that was typed: the count is of changes, and a
-/// run whose only change is its declaration writes something rather than
-/// installing anything.
-#[test]
-fn add() {
-    let mut want = planned_block();
-    want.extend([
-        "plan: 4 changes",
-        "  - Save kendex.toml",
-        "  - Write skill tidy's files for Claude Code",
-        "  - Write skill tidy's files for Codex",
-        "  - Update the install record",
-        "<project>: added 4 changes · skipped 1 item on conflict · flagged 2 items on safety",
-        "  skipped — kendex apply --replace-unmanaged, or the kendex adopt line under each conflict above",
-        "  flagged — the safety lines above",
-    ]);
-    expect(
-        shape(&[], &["add", "{catalog}", "--skill", "tidy", "-y"]),
-        want,
+fn each_verb_prints_its_plain_lines() {
+    fn planned(tail: &[&'static str]) -> Vec<&'static str> {
+        let mut want = planned_block();
+        want.extend(tail.iter().copied());
+        want
+    }
+    type Row = (
+        &'static [&'static str],
+        &'static [&'static str],
+        Vec<&'static str>,
     );
-}
-
-/// The verdict closes the run, and the footnote about content nothing
-/// manages stands above it rather than after it.
-///
-/// A scope whose manifest asks for items and whose install record is not
-/// there closes the run non-zero. The current manifest and render bytes are
-/// still measured, so the output names each declaration with no matching
-/// installation.
-#[test]
-fn verify() {
-    expect(
-        shape(
+    let rows: [Row; 6] = [
+        (
+            &[],
+            &["apply", "--plan", "--scope", "project"],
+            planned(&[
+                "plan: 3 changes",
+                "  - Write skill tidy's files for Claude Code",
+                "  - Write skill tidy's files for Codex",
+                "  - Update the install record",
+                "<project>: planned 3 changes · skipped 1 item on conflict · flagged 2 items on safety",
+            ]),
+        ),
+        (
+            &[],
+            &["add", "{catalog}", "--skill", "tidy", "-y"],
+            planned(&[
+                "plan: 4 changes",
+                "  - Save kendex.toml",
+                "  - Write skill tidy's files for Claude Code",
+                "  - Write skill tidy's files for Codex",
+                "  - Update the install record",
+                "<project>: added 4 changes · skipped 1 item on conflict · flagged 2 items on safety",
+                "  skipped — kendex apply --replace-unmanaged, or the kendex adopt line under each conflict above",
+                "  flagged — the safety lines above",
+            ]),
+        ),
+        (
             &["refresh", "-y", "--scope", "project"],
             &["verify", "--scope", "project"],
+            vec![
+                "✓ skill tidy [claude]",
+                "✓ skill tidy [codex]",
+                "2 checked, 2 OK, 0 failed",
+            ],
         ),
-        vec![
-            "✓ skill tidy [claude]",
-            "✓ skill tidy [codex]",
-            "2 checked, 2 OK, 0 failed",
-        ],
-    );
-    expect(
-        shape(&[], &["verify", "--scope", "project"]),
-        vec![
-            "! <project>: no install record at <project>/.kendex-lock.json — checking current manifest and render bytes",
-            "<project>: 2 items declared and not in the install record",
-            "  - skill commit-guards — kendex apply records it",
-            "  - skill tidy — kendex apply records it",
-            "nothing checked",
-        ],
-    );
-}
-
-/// check's verdict counts the lines the reader was shown and points at
-/// them only where every one of them says what to run.
-#[test]
-fn check() {
-    expect(
-        shape(&[], &["check", "--scope", "project"]),
-        vec!["2 items need attention — each line above says what to run"],
-    );
-}
-
-/// A removal names what it did before it says how much of it there was.
-#[test]
-fn remove() {
-    expect(
-        shape(
+        (
+            &[],
+            &["verify", "--scope", "project"],
+            vec![
+                "! <project>: no install record at <project>/.kendex-lock.json — checking current manifest and render bytes",
+                "<project>: 2 items declared and not in the install record",
+                "  - skill commit-guards — kendex apply records it",
+                "  - skill tidy — kendex apply records it",
+                "nothing checked",
+            ],
+        ),
+        (
+            &[],
+            &["check", "--scope", "project"],
+            vec!["2 items need attention — each line above says what to run"],
+        ),
+        (
             &["refresh", "-y", "--scope", "project"],
             &["remove", "tidy", "--no-sweep", "--scope", "project"],
+            vec![
+                "removing skill tidy for Claude Code — no longer declared here",
+                "removing skill tidy for Codex — no longer declared here",
+                "changes:",
+                "  - Save kendex.toml",
+                "  - Move skill tidy's files to the trash",
+                "  - Move skill tidy's files to the trash",
+                "  - Update the install record",
+                "<project>: removed 4 changes",
+            ],
         ),
-        vec![
-            "removing skill tidy for Claude Code — no longer declared here",
-            "removing skill tidy for Codex — no longer declared here",
-            "changes:",
-            "  - Save kendex.toml",
-            "  - Move skill tidy's files to the trash",
-            "  - Move skill tidy's files to the trash",
-            "  - Update the install record",
-            "<project>: removed 4 changes",
-        ],
-    );
+    ];
+    for (setup, args, want) in rows {
+        assert_eq!(
+            shape(setup, args),
+            want,
+            "{args:?} after {setup:?}: the plain lines changed"
+        );
+    }
 }
 
 /// A name off a tree kendex did not write reaches the terminal as its own
