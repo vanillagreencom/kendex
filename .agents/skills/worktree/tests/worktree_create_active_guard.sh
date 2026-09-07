@@ -145,6 +145,16 @@ step() {
       ;;
     # A branch on the remote only.
     remote:*) remote_only "${1#remote:}" ;;
+    # A second remote that cannot be reached, or one that holds the branch.
+    flaky-remote) git -C "$MAIN" remote add flaky "$ROOT/does-not-exist.git" ;;
+    second:*)
+      git init -q --bare -b main "$ROOT/second.git"
+      git -C "$MAIN" remote add second "$ROOT/second.git"
+      git -C "$MAIN" branch "${1#second:}" main
+      git -C "$MAIN" push -q second "${1#second:}"
+      git -C "$MAIN" branch -D "${1#second:}" >/dev/null
+      ;;
+    no-origin) git -C "$MAIN" remote remove origin ;;
     # A local branch beside main.
     local:*) git -C "$MAIN" branch "${1#local:}" main ;;
     # The topic branch checked out in the main checkout itself.
@@ -309,6 +319,7 @@ duplicate() {
     pr) printf 'open pull request (#42)' ;;
     local) printf 'existing local branch' ;;
     remote) printf 'existing remote branch (origin/%s)' "$branch" ;;
+    second) printf 'existing remote branch (second/%s)' "$branch" ;;
   esac
   printf ';No worktree was created and no local branch was rebased or modified.;Inspect or monitor the existing work instead of spawning another implementer.;'
   if [[ "$signal" == pr ]]; then
@@ -329,6 +340,11 @@ err_text() {
     incomplete) printf "Active or incomplete worktree path already exists for 'topic': <topic>;The exact path is not a registered worktree of <main>.;Refusing to delete, replace, or reuse it automatically. Inspect it, then remove it explicitly if abandoned." ;;
     gh-fail) printf "Error: Could not query open pull requests for branch 'topic'\\; refusing to assume it is unowned.;  simulated gh failure" ;;
     fetch-fail) printf "Error: Could not refresh remote 'origin' for authoritative worktree ownership discovery.;  simulated fetch failure" ;;
+    # `+` composes two specs: discovery runs before and after the claim lock, so
+    # its warning prints once per pass.
+    *+*) err_text "${1%%+*}"; printf ';'; err_text "${1#*+}" ;;
+    skipped-remote:*) printf "warning: skipping unreachable remote '%s' for ownership discovery" "${1#skipped-remote:}" ;;
+    no-origin) printf "Error: Remote 'origin' is required for authoritative worktree ownership discovery." ;;
     remote-fail) printf "Error: Could not query remote 'origin' for authoritative worktree ownership discovery.;  fatal: '<root>/missing-origin.git' does not appear to be a git repository;  fatal: Could not read from remote repository.;  ;  Please make sure you have the correct access rights;  and the repository exists." ;;
     unknown-option) printf "Error: unknown option '--bogus' for create;Run: <worktree> create --help" ;;
     default-branch) printf "Error: 'main' is the default branch and cannot be claimed as an issue work branch.;To base new work on it, run: <worktree> create topic --base main" ;;
@@ -344,6 +360,9 @@ an open PR still owns the branch after its checkout is dropped|wt push open-pr d
 --pr checks the PR head out for inspection|wt push open-pr dropped pr-json|create topic --pr 42|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@topic@pre branches=topic dirty=-
 dirty, unpublished local work is ownership on its own|wt local-work|create topic|75|-|implicit:topic:dirty,noup|main=main@end/clean cfg=true trees=topic:reg@topic@pre branches=topic dirty=?? dirty.txt
 a remote branch is ownership with no PR and no checkout|remote:topic|create topic|75|-|dup:topic:remote|main=main@end/clean cfg=- trees= branches=- dirty=-
+an unreachable secondary remote is skipped with a warning and the claim proceeds|flaky-remote|create topic|0|topic|skipped-remote:flaky+skipped-remote:flaky|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
+a branch on a reachable secondary remote is ownership, naming that remote|flaky-remote second:topic|create topic|75|-|skipped-remote:flaky+dup:topic:second|main=main@end/clean cfg=- trees= branches=- dirty=-
+no origin remote at all refuses before any write|no-origin|create topic|1|-|no-origin|main=main@end/clean cfg=- trees= branches=- dirty=-
 an unregistered target directory is preserved, not replaced|orphan|create topic|75|-|incomplete|main=main@end/clean cfg=- trees=topic:dir[owner-marker:keep] branches=- dirty=-
 --reuse of an unregistered target inside the checkout registers nothing and keeps its bytes|in-repo orphan|create topic --reuse|75|-|incomplete|main=main@end/?? trees/ cfg=- trees=topic:dir[owner-marker:keep] branches=- dirty=-
 --from is stopped by a remote branch before a divergent checkout exists|remote:topic|create topic --from main|75|-|dup:topic:remote|main=main@end/clean cfg=- trees= branches=- dirty=-
