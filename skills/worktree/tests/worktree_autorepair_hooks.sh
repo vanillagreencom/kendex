@@ -2,19 +2,14 @@
 # A git operation (rebase/merge/checkout) can re-materialize a
 # WORKTREE_SYMLINKS-managed symlink as a real directory holding only the
 # tracked skeleton. `create` and `fix-links` install shared
-# post-checkout/post-merge/post-rewrite hooks in the MAIN checkout's hooks dir
-# (worktrees resolve hooks there, so one install covers every worktree and
-# every harness) that run `repair-links`.
-#
-# Asserted here:
-#   1. create installs the three hooks plus the owned helper, composing with
-#      existing shell hook content instead of overwriting, skipping non-shell
-#      hooks, and staying idempotent across repeated installs;
-#   2. a materialized symlink holding ONLY the tracked skeleton is silently
-#      re-linked by the next git operation;
-#   3. a materialized path holding data git does not track is NEVER clobbered —
-#      the hook warns loudly and names fix-links instead;
-#   4. repair-links is quiet and safe when addressed at the main checkout.
+# post-checkout/post-merge/post-rewrite hooks in the MAIN checkout's hooks
+# dir (worktrees resolve hooks there, so one install covers every worktree
+# and every harness) that run `repair-links`: the install composes with
+# existing shell hooks, skips non-shell and symlinked ones, stays idempotent,
+# and its composed line keeps the consumer hook's exit status; the repair
+# re-links a materialized path holding only the tracked skeleton and never
+# clobbers one holding data git does not track. One table, a row per
+# scenario.
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
@@ -34,20 +29,16 @@ export GIT_CONFIG_GLOBAL=/dev/null
 
 PASS=0
 FAIL=0
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then ok "$name"; else bad "$name" "wanted: $needle"; fi
-}
-assert_lacks() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then bad "$name" "unexpected: $needle"; else ok "$name"; fi
-}
-assert_file_contains() {
-  local file="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" "$file" 2>/dev/null; then ok "$name"; else bad "$name" "wanted '$needle' in $file"; fi
+assert_eq() {
+  local got="$1" want="$2" name="$3"
+  if [[ "$got" == "$want" ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
+  fi
 }
 
 mkdir -p "$TMP_ROOT/bin"
@@ -58,342 +49,288 @@ STUB
 chmod +x "$TMP_ROOT/bin/gh"
 export PATH="$TMP_ROOT/bin:$PATH"
 
-ROOT="$TMP_ROOT/repo"
-MAIN="$ROOT/main"
-mkdir -p "$MAIN"
-git -C "$MAIN" init -q -b main
-git -C "$MAIN" config user.email test@example.com
-git -C "$MAIN" config user.name Test
-git -C "$MAIN" config commit.gpgsign false
-printf 'base\n' >"$MAIN/base.txt"
-git -C "$MAIN" add base.txt
-git -C "$MAIN" commit -q -m base
-git init -q --bare "$ROOT/origin.git"
-git -C "$MAIN" remote add origin "$ROOT/origin.git"
-git -C "$MAIN" push -q -u origin main
-
-# Two entries cover both provisioning modes: harness/ mixes ignored runtime
-# content with one tracked file (per-child links); runtime/ is
-# untracked-only (plain parent symlink — the shape the safety check
-# still guards).
-mkdir -p "$MAIN/harness/skills" "$MAIN/runtime"
-printf 'harness/**\n!harness/tracked.md\nruntime/\n' >"$MAIN/.gitignore"
-printf 'installed\n' >"$MAIN/harness/skills/installed.txt"
-printf 'tracked\n' >"$MAIN/harness/tracked.md"
-printf 'state\n' >"$MAIN/runtime/state.json"
-printf 'WORKTREE_SYMLINKS="harness runtime"\n' >"$MAIN/.env.local"
-git -C "$MAIN" add .gitignore harness/tracked.md
-git -C "$MAIN" commit -q -m harness
-git -C "$MAIN" push -q origin main
-
-# The hook helper resolves this script through the main checkout's installed
-# skill path, exactly like a consumer repo.
-mkdir -p "$MAIN/.agents/skills"
-ln -s "$SKILL_DIR" "$MAIN/.agents/skills/worktree"
-
-HOOKS_DIR="$MAIN/.git/hooks"
 MARKER="kendex-worktree-autorepair"
 
-# Pre-existing hooks: a shell post-merge that must be composed with, and a
-# non-shell post-rewrite that must be left alone.
-cat >"$HOOKS_DIR/post-merge" <<'SH'
-#!/bin/sh
-echo consumer-post-merge-ran
-SH
-chmod +x "$HOOKS_DIR/post-merge"
-cat >"$HOOKS_DIR/post-rewrite" <<'PY'
-#!/usr/bin/env python3
-pass
-PY
-chmod +x "$HOOKS_DIR/post-rewrite"
+# --- the auto-repair hooks: one table ------------------------------------------
+# A row builds its own checkout from a step word list (the first word shapes
+# main; the rest drive the hooks and the worktree), runs one command from the
+# main checkout (or git's own checkout round trip in the worktree, which is
+# what fires the hooks), and pins the exit status, stdout, stderr whole, and
+# what is left: the layout under each configured entry in the worktree, the
+# hooks in the main checkout's hooks dir, the entries of the main checkout,
+# and the file a symlinked hook pointed at.
 
-echo "=== create installs the shared auto-repair hooks ==="
-set +e
-create_err="$( (cd "$MAIN" && "$WORKTREE_SCRIPT" create hook-check >"$TMP_ROOT/create.out") 2>&1)"
-set -e
-WT="$(tail -1 "$TMP_ROOT/create.out")"
-if [[ -d "$WT/harness" && ! -L "$WT/harness" && -L "$WT/harness/skills" && -L "$WT/runtime" ]]; then
-  ok "worktree created with per-child harness links and a runtime symlink"
-else
-  bad "worktree created with per-child harness links and a runtime symlink" "WT=$WT"
-fi
+ROOT=""
+MAIN=""
+WT=""
+HOOKS=""
+ENTRIES=""
 
-if [[ -x "$HOOKS_DIR/$MARKER" ]]; then ok "helper installed and executable"; else bad "helper installed and executable"; fi
-if [[ -x "$HOOKS_DIR/post-checkout" ]]; then ok "post-checkout created executable"; else bad "post-checkout created executable"; fi
-assert_file_contains "$HOOKS_DIR/post-checkout" "$MARKER" "post-checkout carries the marker line"
-assert_file_contains "$HOOKS_DIR/post-merge" "$MARKER" "existing shell post-merge was composed with"
-assert_file_contains "$HOOKS_DIR/post-merge" "consumer-post-merge-ran" "existing post-merge content preserved"
-if grep -qF "$MARKER" "$HOOKS_DIR/post-rewrite"; then
-  bad "non-shell post-rewrite left alone" "marker was appended to a python hook"
-else
-  ok "non-shell post-rewrite left alone"
-fi
-assert_contains "$create_err" "post-rewrite is not a shell script" "install warns about the skipped non-shell hook"
+make_repo() {
+  mkdir -p "$MAIN"
+  git -C "$MAIN" init -q -b main
+  git -C "$MAIN" config user.email test@example.com
+  git -C "$MAIN" config user.name Test
+  git -C "$MAIN" config commit.gpgsign false
+  printf 'base\n' >"$MAIN/base.txt"
+  git -C "$MAIN" add base.txt
+  git -C "$MAIN" commit -q -m base
+  git init -q --bare "$ROOT/origin.git"
+  git -C "$MAIN" remote add origin "$ROOT/origin.git"
+  git -C "$MAIN" push -q -u origin main
+  printf 'WORKTREE_BASE_DIR="../trees"\n' >"$MAIN/.env.local"
+  HOOKS="$MAIN/.git/hooks"
+}
 
-echo "=== repeated install is idempotent ==="
-(cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
-marker_count="$(grep -cF "$MARKER" "$HOOKS_DIR/post-merge" || true)"
-if [[ "$marker_count" -eq 1 ]]; then ok "fix-links does not duplicate the marker line"; else bad "fix-links does not duplicate the marker line" "count=$marker_count"; fi
+# A tool step of the fixture; a failure is a fixture failure, not a pin.
+tool() {
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" "$@" >/dev/null 2>"$ROOT/fixture.err") && return 0
+  echo "FIXTURE: $* failed: $(cat "$ROOT/fixture.err")" >&2
+  exit 2
+}
 
-echo "=== a symlinked hook is never written through ==="
-# Live or dangling, a symlink points at content the install does not own —
-# a dangling one even passes `! -e` and would otherwise materialize its
-# target via the fresh-write branch.
-printf '#!/bin/sh\nexternal-managed\n' >"$TMP_ROOT/external-hook"
-external_before="$(cat "$TMP_ROOT/external-hook")"
-mv "$HOOKS_DIR/post-checkout" "$TMP_ROOT/post-checkout.real"
-ln -s "$TMP_ROOT/external-hook" "$HOOKS_DIR/post-checkout"
-sym_out="$( (cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT") 2>&1 || true)"
-if [[ "$(cat "$TMP_ROOT/external-hook")" == "$external_before" ]]; then
-  ok "live symlink target untouched"
-else
-  bad "live symlink target untouched" "$(cat "$TMP_ROOT/external-hook")"
-fi
-assert_contains "$sym_out" "is a symlink; not modifying its target" "warning names the symlinked hook"
-rm -f "$HOOKS_DIR/post-checkout"
-ln -s "$TMP_ROOT/does-not-exist" "$HOOKS_DIR/post-checkout"
-(cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1 || true)
-if [[ ! -e "$TMP_ROOT/does-not-exist" ]]; then
-  ok "dangling symlink target not materialized"
-else
-  bad "dangling symlink target not materialized"
-fi
-rm -f "$HOOKS_DIR/post-checkout"
-mv "$TMP_ROOT/post-checkout.real" "$HOOKS_DIR/post-checkout"
+# git's checkout round trip in the worktree: what fires post-checkout.
+checkout_round_trip() {
+  git -C "$WT" checkout -q --detach && git -C "$WT" checkout -q topic
+}
 
-echo "=== composed line is exit-status transparent ==="
-# post-checkout's exit status becomes git's exit status, so the appended line
-# must re-assert the consumer hook's own final status — nonzero stays nonzero,
-# zero stays zero. Exercise the exact line the installer wrote.
-installed_line="$(grep -F "$MARKER" "$HOOKS_DIR/post-merge")"
-printf '#!/bin/sh\nfalse\n%s\n' "$installed_line" >"$TMP_ROOT/failing-hook"
-printf '#!/bin/sh\ntrue\n%s\n' "$installed_line" >"$TMP_ROOT/passing-hook"
-chmod +x "$TMP_ROOT/failing-hook" "$TMP_ROOT/passing-hook"
-set +e
-(cd "$WT" && "$TMP_ROOT/failing-hook" >/dev/null 2>&1)
-failing_rc=$?
-(cd "$WT" && "$TMP_ROOT/passing-hook" >/dev/null 2>&1)
-passing_rc=$?
-set -e
-if [[ "$failing_rc" -ne 0 ]]; then ok "a consumer hook ending nonzero still exits nonzero"; else bad "a consumer hook ending nonzero still exits nonzero" "rc=0 after composition"; fi
-if [[ "$passing_rc" -eq 0 ]]; then ok "a consumer hook ending zero still exits zero"; else bad "a consumer hook ending zero still exits zero" "rc=$passing_rc"; fi
+step() {
+  case "$1" in
+    # Two entries cover both provisioning modes: harness/ mixes ignored
+    # runtime content with one tracked file (per-child links); runtime/ is
+    # untracked-only (a plain parent symlink, the shape the safety check
+    # guards). The hook helper resolves the script through the main
+    # checkout's installed skill path, as in a consumer repo. Two hooks
+    # pre-exist: a shell post-merge to compose with, a python post-rewrite to
+    # leave alone.
+    two-entries)
+      mkdir -p "$MAIN/harness/skills" "$MAIN/runtime" "$MAIN/.agents/skills"
+      printf 'harness/**\n!harness/tracked.md\nruntime/\n' >"$MAIN/.gitignore"
+      printf 'installed\n' >"$MAIN/harness/skills/installed.txt"
+      printf 'tracked\n' >"$MAIN/harness/tracked.md"
+      printf 'state\n' >"$MAIN/runtime/state.json"
+      printf 'WORKTREE_SYMLINKS="harness runtime"\n' >>"$MAIN/.env.local"
+      ENTRIES="harness runtime"
+      git -C "$MAIN" add .gitignore harness/tracked.md
+      git -C "$MAIN" commit -q -m harness
+      git -C "$MAIN" push -q origin main
+      ln -s "$SKILL_DIR" "$MAIN/.agents/skills/worktree"
+      printf '#!/bin/sh\necho consumer-post-merge-ran\n' >"$HOOKS/post-merge"
+      printf '#!/usr/bin/env python3\npass\n' >"$HOOKS/post-rewrite"
+      chmod +x "$HOOKS/post-merge" "$HOOKS/post-rewrite"
+      ;;
+    # An untracked-only entry whose name begins with '-': a bare find would
+    # read it as an expression. The worktree is git's own, not the tool's.
+    dash)
+      mkdir -p "$MAIN/-dash" "$MAIN/.agents/skills"
+      printf -- '-dash/\n' >"$MAIN/.gitignore"
+      printf 'runtime\n' >"$MAIN/-dash/runtime.md"
+      printf 'WORKTREE_SYMLINKS="-dash"\n' >>"$MAIN/.env.local"
+      ENTRIES="-dash"
+      git -C "$MAIN" add .gitignore
+      git -C "$MAIN" commit -q -m dash
+      git -C "$MAIN" worktree add -q "$WT" -b topic
+      mkdir -p "$WT/-dash"
+      ;;
+    create) tool create topic ;;
+    fix) tool fix-links "$WT" ;;
+    # A hook that is a symlink: live, to a file the install does not own, or
+    # dangling.
+    link-hook) rm -f "$HOOKS/post-checkout"; printf '#!/bin/sh\nexternal-managed\n' >"$ROOT/external-hook"; ln -s "$ROOT/external-hook" "$HOOKS/post-checkout" ;;
+    dangling-hook) rm -f "$HOOKS/post-checkout"; ln -s "$ROOT/does-not-exist" "$HOOKS/post-checkout" ;;
+    # What a checkout leaves for an untracked-only entry: a bare real directory.
+    materialize:*) rm -f "$WT/${1#materialize:}"; mkdir -p "$WT/${1#materialize:}" ;;
+    rm:*) rm -rf -- "${WT:?}/${1#rm:}" ;;
+    data:*) printf 'precious\n' >"$WT/${1#data:}/user-data.txt" ;;
+    empty-sub:*) mkdir -p "$WT/${1#empty-sub:}/empty-sub" ;;
+    newline:*) printf 'sneaky\n' >"$WT/${1#newline:}/"$'\n' ;;
+    noperm:*) mkdir -p "$WT/${1#noperm:}/noperm"; printf 'hidden\n' >"$WT/${1#noperm:}/noperm/data.txt"; chmod 000 "$WT/${1#noperm:}/noperm" ;;
+    edit-tracked) printf 'tracked WITH LOCAL EDITS\n' >"$WT/harness/tracked.md" ;;
+    *)
+      echo "UNKNOWN-STEP: $1" >&2
+      exit 2
+      ;;
+  esac
+}
 
-echo "=== a git operation auto-repairs a materialized parent link ==="
-# What a checkout leaves for an untracked-only entry: a bare real directory.
-rm -f "$WT/runtime"
-mkdir -p "$WT/runtime"
-set +e
-repair_out="$(git -C "$WT" checkout -q --detach 2>&1; git -C "$WT" checkout -q hook-check 2>&1)"
-set -e
-if [[ -L "$WT/runtime" ]]; then ok "post-checkout re-linked the materialized dir"; else bad "post-checkout re-linked the materialized dir" "$repair_out"; fi
-if [[ -f "$WT/runtime/state.json" ]]; then ok "installed content reachable through the restored link"; else bad "installed content reachable through the restored link"; fi
-assert_contains "$repair_out" "auto-repair: restored symlink" "the repair is reported"
+build() {
+  local word
+  ROOT="$TMP_ROOT/$1"
+  shift
+  MAIN="$ROOT/main"
+  WT="$ROOT/trees/topic"
+  ENTRIES=""
+  make_repo
+  for word in "$@"; do step "$word"; done
+}
 
-echo "=== a git operation heals a per-child entry's missing links ==="
-# Damage to the tracked-content entry is a lost CHILD link, not a lost parent.
-rm -f "$WT/harness/skills"
-set +e
-child_out="$(git -C "$WT" checkout -q --detach 2>&1; git -C "$WT" checkout -q hook-check 2>&1)"
-set -e
-if [[ -L "$WT/harness/skills" && -f "$WT/harness/skills/installed.txt" ]]; then
-  ok "post-checkout re-linked the missing child"
-else
-  bad "post-checkout re-linked the missing child" "$child_out"
-fi
-if [[ -f "$WT/harness/tracked.md" && ! -L "$WT/harness/tracked.md" ]]; then
-  ok "the tracked file stays a real file through the heal"
-else
-  bad "the tracked file stays a real file through the heal"
-fi
+# Every path under the configured entries in the worktree: dir, file:<first
+# line>, or link(<target>).
+layout() {
+  local entry path rel out=""
+  for entry in $ENTRIES; do
+    [[ -e "$WT/$entry" || -L "$WT/$entry" ]] || { out="$out $entry=absent"; continue; }
+    while IFS= read -r -d '' path; do
+      rel="${path#"$WT"/}"
+      rel="${rel//$'\n'/\\n}"
+      if [[ -L "$path" ]]; then
+        out="$out $rel=link($(readlink "$path" | sed -e "s|$MAIN|<main>|"))"
+      elif [[ -d "$path" ]]; then
+        out="$out $rel=dir"
+      elif [[ -e "$path" ]]; then
+        out="$out $rel=file:$(head -n 1 "$path" 2>/dev/null || printf '?')"
+      fi
+    done < <(find "$WT/$entry" -mindepth 0 -print0 2>/dev/null | LC_ALL=C sort -z)
+  done
+  printf '%s' "${out# }"
+}
 
-echo "=== untracked data under a materialized dir is never clobbered ==="
-rm -f "$WT/runtime"
-mkdir -p "$WT/runtime"
-printf 'precious\n' >"$WT/runtime/user-data.txt"
-set +e
-refuse_out="$(git -C "$WT" checkout -q --detach 2>&1; git -C "$WT" checkout -q hook-check 2>&1)"
-set -e
-if [[ -d "$WT/runtime" && ! -L "$WT/runtime" ]]; then ok "materialized dir with untracked data left in place"; else bad "materialized dir with untracked data left in place"; fi
-if [[ "$(cat "$WT/runtime/user-data.txt" 2>/dev/null)" == "precious" ]]; then ok "untracked data intact"; else bad "untracked data intact"; fi
-assert_contains "$refuse_out" "runtime/user-data.txt" "the warning names the untracked file"
-assert_contains "$refuse_out" "refuses to destroy untracked data" "the warning states the refusal"
-assert_contains "$refuse_out" "fix-links" "the warning names the manual recovery command"
+# Each hook of the install as exec/m<marker lines>[/consumer|/python], a
+# link with its target, or absent; the helper; then the entries of the main
+# checkout by kind, and the file a symlinked hook pointed at.
+hooks() {
+  local name path out="" kind entry
+  for name in post-checkout post-merge post-rewrite "$MARKER"; do
+    path="$HOOKS/$name"
+    if [[ -L "$path" ]]; then
+      kind="link($(readlink "$path" | sed -e "s|$ROOT|<root>|"))"
+    elif [[ -x "$path" ]]; then
+      kind="exec/m$(grep -cF "$MARKER" "$path" || true)"
+      grep -qF consumer-post-merge-ran "$path" && kind="$kind/consumer"
+      grep -qF python3 "$path" && kind="$kind/python"
+    elif [[ -e "$path" ]]; then
+      kind="file"
+    else
+      kind=absent
+    fi
+    out="$out $name=$kind"
+  done
+  out="$out main="
+  for entry in $ENTRIES; do
+    if [[ -L "$MAIN/$entry" ]]; then out="${out}$entry:link,"; elif [[ -d "$MAIN/$entry" ]]; then out="${out}$entry:dir,"; else out="${out}$entry:absent,"; fi
+  done
+  out="${out%,}"
+  [[ -e "$ROOT/external-hook" ]] && out="$out external=$(sed -n 2p "$ROOT/external-hook")/m$(grep -cF "$MARKER" "$ROOT/external-hook" || true)"
+  [[ -e "$ROOT/does-not-exist" ]] && out="$out dangling=materialized"
+  printf '%s' "${out# }"
+}
 
-echo "=== hook does not break the git operation it runs after ==="
-set +e
-git -C "$WT" checkout -q hook-check 2>/dev/null
-checkout_rc=$?
-set -e
-if [[ "$checkout_rc" -eq 0 ]]; then ok "checkout exits 0 despite the blocked repair"; else bad "checkout exits 0 despite the blocked repair" "rc=$checkout_rc"; fi
+# Paths by their names; the script's installed path, which the hook helper
+# resolves through the main checkout, is <worktree> like the direct one.
+alias_text() {
+  sed -e "s|$MAIN/.agents/skills/worktree/scripts/worktree|<worktree>|g" -e "s|$WT|<wt>|g" -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" \
+    -e 's/;/\\;/g' | paste -s -d ';' -
+}
 
-echo "=== repair-links is quiet and safe on the main checkout ==="
-set +e
-main_out="$(cd "$MAIN" && "$WORKTREE_SCRIPT" repair-links "$MAIN" 2>&1)"
-main_rc=$?
-set -e
-if [[ "$main_rc" -eq 0 && -z "$main_out" ]]; then ok "repair-links no-ops quietly for main"; else bad "repair-links no-ops quietly for main" "rc=$main_rc out=$main_out"; fi
-if [[ -d "$MAIN/harness" && ! -L "$MAIN/harness" && ! -L "$MAIN/harness/skills" ]]; then ok "main harness untouched"; else bad "main harness untouched"; fi
-if [[ -d "$MAIN/runtime" && ! -L "$MAIN/runtime" ]]; then ok "main runtime untouched"; else bad "main runtime untouched"; fi
+# The command runs from the main checkout; @wt and @main name paths; @checkout
+# is git's checkout round trip in the worktree; @hook:<true|false> runs a
+# consumer hook ending in that command with the installed line appended.
+run() {
+  local -a argv
+  local rc=0 i line
+  read -r -a argv <<<"$1"
+  case "${argv[0]}" in
+    @checkout)
+      (checkout_round_trip >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+      ;;
+    @hook:*)
+      line="$(grep -F "$MARKER" "$HOOKS/post-merge")"
+      printf '#!/bin/sh\n%s\n%s\n' "${argv[0]#@hook:}" "$line" >"$ROOT/consumer-hook"
+      chmod +x "$ROOT/consumer-hook"
+      (cd "$WT" && "$ROOT/consumer-hook" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+      ;;
+    *)
+      for i in "${!argv[@]}"; do
+        [[ "${argv[i]}" == @wt ]] && argv[i]="$WT"
+        [[ "${argv[i]}" == @main ]] && argv[i]="$MAIN"
+      done
+      (cd "$MAIN" && "$WORKTREE_SCRIPT" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+      ;;
+  esac
+  printf 'rc=%s out=%s err=%s %s %s' "$rc" "$(alias_text <"$ROOT/out")" "$(alias_text <"$ROOT/err")" "$(layout)" "$(hooks)"
+}
 
-echo "=== manual fix-links remains the way out of the blocked state ==="
-rm -rf "$WT/runtime"
-(cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
-if [[ -L "$WT/runtime" ]]; then ok "fix-links restores the link after the data is dealt with"; else bad "fix-links restores the link after the data is dealt with"; fi
-rm -rf "$WT/harness"
-(cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
-if [[ -d "$WT/harness" && ! -L "$WT/harness" && -L "$WT/harness/skills" && -f "$WT/harness/tracked.md" ]]; then
-  ok "fix-links rebuilds a deleted per-child entry (tracked file restored, children linked)"
-else
-  bad "fix-links rebuilds a deleted per-child entry (tracked file restored, children linked)"
-fi
+out_text() {
+  case "$1" in
+    -) printf '' ;;
+    wt) printf '<wt>' ;;
+    restored) printf 'Restored symlinks in <wt>' ;;
+    *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
+  esac
+}
 
-echo "=== a '-'-leading configured path cannot bypass the untracked-data guard ==="
-# Config normalization permits an entry beginning with '-'; a bare find would
-# parse it as an expression, discard the error, and report "no untracked
-# files" — letting the repair clobber real data. The ./ prefix pins this.
-DASH_MAIN="$TMP_ROOT/dash-main"
-mkdir -p "$DASH_MAIN/-dash"
-git -C "$DASH_MAIN" init -q -b main
-git -C "$DASH_MAIN" config user.email test@example.com
-git -C "$DASH_MAIN" config user.name Test
-git -C "$DASH_MAIN" config commit.gpgsign false
-# Untracked-only, so the entry keeps the parent-link shape whose safety check
-# scan the '-' guard protects.
-printf -- '-dash/\n' >"$DASH_MAIN/.gitignore"
-printf 'runtime\n' >"$DASH_MAIN/-dash/runtime.md"
-printf 'WORKTREE_SYMLINKS="-dash"\n' >"$DASH_MAIN/.env.local"
-git -C "$DASH_MAIN" add .gitignore
-git -C "$DASH_MAIN" commit -q -m base
-git -C "$DASH_MAIN" worktree add -q "$TMP_ROOT/dash-wt" -b dash-probe
-mkdir -p "$TMP_ROOT/dash-wt/-dash"
-printf 'precious\n' >"$TMP_ROOT/dash-wt/-dash/user-data.txt"
-set +e
-dash_out="$(cd "$DASH_MAIN" && "$WORKTREE_SCRIPT" repair-links "$TMP_ROOT/dash-wt" 2>&1)"
-set -e
-if [[ -d "$TMP_ROOT/dash-wt/-dash" && ! -L "$TMP_ROOT/dash-wt/-dash" ]]; then
-  ok "dash-path dir with untracked data left in place"
-else
-  bad "dash-path dir with untracked data left in place" "$dash_out"
-fi
-if [[ "$(cat "$TMP_ROOT/dash-wt/-dash/user-data.txt" 2>/dev/null)" == "precious" ]]; then
-  ok "dash-path untracked data intact"
-else
-  bad "dash-path untracked data intact"
-fi
-assert_contains "$dash_out" "user-data.txt" "dash-path warning names the untracked file"
+# The refusal for a materialized entry holding what git does not track.
+refusal() {
+  local path="$1" entries="$2" count="$3"
+  printf "Warning: '%s' in <wt> should be a symlink to '<main>/%s' but is a real path holding %s entr(y/ies) git does not track or that differ from the index:;%s;  Auto-repair refuses to destroy untracked data. Move it into '<main>/%s' (or delete it),;  then restore the link from the main checkout:;    cd '<main>' && <worktree> fix-links '<wt>'" "$path" "$path" "$count" "$entries" "$path"
+}
 
-echo "=== non-file entries block the repair ==="
-# Empty untracked directories are data the old file-only inventory missed.
-rm -f "$WT/runtime"
-mkdir -p "$WT/runtime/empty-sub"
-set +e
-empty_out="$(cd "$MAIN" && "$WORKTREE_SCRIPT" repair-links "$WT" 2>&1)"
-empty_rc=$?
-set -e
-if [[ -d "$WT/runtime" && ! -L "$WT/runtime" && -d "$WT/runtime/empty-sub" ]]; then
-  ok "empty untracked subdir blocks and survives"
-else
-  bad "empty untracked subdir blocks and survives" "$empty_out"
-fi
-assert_contains "$empty_out" "empty untracked directory" "warning names the empty dir"
-if [[ "$empty_rc" -ne 0 ]]; then ok "blocked repair exits nonzero"; else bad "blocked repair exits nonzero" "rc=0"; fi
+err_text() {
+  case "$1" in
+    *+*) printf '%s;%s' "$(err_text "${1%%+*}")" "$(err_text "${1#*+}")" ;;
+    -) printf '' ;;
+    python-skipped) printf 'Warning: <main>/.git/hooks/post-rewrite is not a shell script\; not appending the auto-repair line.;  Have it run: <worktree> repair-links' ;;
+    symlink-skipped) printf 'Warning: <main>/.git/hooks/post-checkout is a symlink\; not modifying its target.;  Have it run: <worktree> repair-links' ;;
+    repaired:*) printf 'worktree auto-repair: restored symlink(s) in <wt>: %s' "${1#repaired:}" ;;
+    refuse-data:*) refusal "${1#refuse-data:}" "  - ${1#refuse-data:}/user-data.txt" 1 ;;
+    refuse-empty) refusal runtime '  - runtime/empty-sub (empty untracked directory)' 1 ;;
+    refuse-newline) refusal runtime '  - [scan mismatch: 1 entries by NUL count vs 0 reconstructed line entries — a name this listing cannot represent]' 1 ;;
+    refuse-noperm) refusal -dash '  - [scan failed: could not enumerate entries under -dash (exit 1)]' 1 ;;
+    unresolved:*) printf "Warning: WORKTREE_SYMLINKS entry 'harness' shadows tracked paths and these children could not be resolved:;  - %s (linking failed or blocked — see warning above);  Tracked paths were left to git\\; narrow the entry to the untracked subpaths to silence this." "${1#unresolved:}" ;;
+    *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
+  esac
+}
 
-rm -rf "$WT/runtime"
-(cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
+HEALTHY='harness=dir harness/skills=link(<main>/harness/skills) harness/tracked.md=file:tracked runtime=link(<main>/runtime)'
+INSTALLED="post-checkout=exec/m1 post-merge=exec/m1/consumer post-rewrite=exec/m0/python $MARKER=exec/m0 main=harness:dir,runtime:dir"
 
-echo "=== a materialized PER-CHILD link with untracked data is not deleted (#1317) ==="
-# The child-link path needs the same check as a top-level link: link_untracked_children
-# called symlink_into_worktree directly for each untracked child, and that
-# function's directory branch does an unconditional rm -rf on a materialized
-# destination. A rebase or checkout that leaves harness/skills materialized
-# with untracked user data underneath must be reported and left in place, the
-# same as a materialized top-level entry — never silently deleted.
-rm -f "$WT/harness/skills"
-mkdir -p "$WT/harness/skills"
-printf 'precious\n' >"$WT/harness/skills/user-data.txt"
-set +e
-child_out="$(cd "$MAIN" && "$WORKTREE_SCRIPT" repair-links "$WT" 2>&1)"
-child_rc=$?
-set -e
-if [[ -d "$WT/harness/skills" && ! -L "$WT/harness/skills" ]]; then
-  ok "materialized per-child link left in place"
-else
-  bad "materialized per-child link left in place" "$child_out"
-fi
-if [[ "$(cat "$WT/harness/skills/user-data.txt" 2>/dev/null)" == "precious" ]]; then
-  ok "per-child untracked data intact"
-else
-  bad "per-child untracked data intact"
-fi
-assert_contains "$child_out" "user-data.txt" "warning names the untracked child file"
-if [[ "$child_rc" -ne 0 ]]; then ok "blocked child repair exits nonzero"; else bad "blocked child repair exits nonzero" "rc=0"; fi
-rm -rf "$WT/harness/skills"
-(cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
-if [[ -L "$WT/harness/skills" && -f "$WT/harness/skills/installed.txt" ]]; then
-  ok "per-child link restored after materialized-data test"
-else
-  bad "per-child link restored after materialized-data test"
-fi
+# label|fixture|command|rc|out|err|layout hooks
+ROWS="
+create lays the per-child and parent links and installs the hooks, composing with the shell hook and skipping the python one|two-entries|create topic|0|wt|python-skipped|$HEALTHY $INSTALLED
+a repeated install does not duplicate the marker line|two-entries create|fix-links @wt|0|restored|python-skipped|$HEALTHY $INSTALLED
+a live symlinked hook is left alone and named|two-entries create link-hook|fix-links @wt|0|restored|symlink-skipped+python-skipped|$HEALTHY post-checkout=link(<root>/external-hook) post-merge=exec/m1/consumer post-rewrite=exec/m0/python $MARKER=exec/m0 main=harness:dir,runtime:dir external=external-managed/m0
+a dangling symlinked hook is not materialized|two-entries create dangling-hook|fix-links @wt|0|restored|symlink-skipped+python-skipped|$HEALTHY post-checkout=link(<root>/does-not-exist) post-merge=exec/m1/consumer post-rewrite=exec/m0/python $MARKER=exec/m0 main=harness:dir,runtime:dir
+the composed line keeps a consumer hook's nonzero exit and still repairs|two-entries create materialize:runtime|@hook:false|1|-|repaired:runtime|$HEALTHY $INSTALLED
+the composed line keeps a consumer hook's zero exit and repairs|two-entries create materialize:runtime|@hook:true|0|-|repaired:runtime|$HEALTHY $INSTALLED
+a checkout re-links a materialized parent holding only the skeleton|two-entries create materialize:runtime|@checkout|0|-|repaired:runtime|$HEALTHY $INSTALLED
+a checkout heals a per-child entry's missing link and keeps the tracked file real|two-entries create rm:harness/skills|@checkout|0|-|-|$HEALTHY $INSTALLED
+a checkout never clobbers untracked data under a materialized dir, and still exits 0 (the round trip fires the hook twice)|two-entries create materialize:runtime data:runtime|@checkout|0|-|refuse-data:runtime+refuse-data:runtime|harness=dir harness/skills=link(<main>/harness/skills) harness/tracked.md=file:tracked runtime=dir runtime/user-data.txt=file:precious $INSTALLED
+repair-links is quiet and safe on the main checkout|two-entries create|repair-links @main|0|-|-|$HEALTHY $INSTALLED
+fix-links restores the link once the data is gone|two-entries create materialize:runtime data:runtime rm:runtime|fix-links @wt|0|restored|python-skipped|$HEALTHY $INSTALLED
+fix-links rebuilds a deleted per-child entry|two-entries create rm:harness|fix-links @wt|0|restored|python-skipped|$HEALTHY $INSTALLED
+a '-'-leading entry cannot bypass the untracked-data guard|dash data:-dash|repair-links @wt|1|-|refuse-data:-dash|-dash=dir -dash/user-data.txt=file:precious post-checkout=absent post-merge=absent post-rewrite=absent $MARKER=absent main=-dash:dir
+an empty untracked directory blocks the repair|two-entries create materialize:runtime empty-sub:runtime|repair-links @wt|1|-|refuse-empty|harness=dir harness/skills=link(<main>/harness/skills) harness/tracked.md=file:tracked runtime=dir runtime/empty-sub=dir $INSTALLED
+a materialized per-child link with untracked data is left in place|two-entries create rm:harness/skills materialize:harness/skills data:harness/skills|repair-links @wt|1|-|refuse-data:harness/skills+unresolved:harness/skills|harness=dir harness/skills=dir harness/skills/user-data.txt=file:precious harness/tracked.md=file:tracked runtime=link(<main>/runtime) $INSTALLED
+fix-links restores the per-child link once its data is gone|two-entries create materialize:harness/skills data:harness/skills rm:harness/skills|fix-links @wt|0|restored|python-skipped|$HEALTHY $INSTALLED
+the per-child heal never reverts a locally edited tracked file|two-entries create edit-tracked|repair-links @wt|0|-|-|harness=dir harness/skills=link(<main>/harness/skills) harness/tracked.md=file:tracked WITH LOCAL EDITS runtime=link(<main>/runtime) $INSTALLED
+a newline-named file blocks the repair as a scan mismatch|two-entries create materialize:runtime newline:runtime|repair-links @wt|1|-|refuse-newline|harness=dir harness/skills=link(<main>/harness/skills) harness/tracked.md=file:tracked runtime=dir runtime/\\n=file:sneaky $INSTALLED
+an unreadable subdirectory blocks the repair as a failed scan|dash noperm:-dash|repair-links @wt|1|-|refuse-noperm|-dash=dir -dash/noperm=dir post-checkout=absent post-merge=absent post-rewrite=absent $MARKER=absent main=-dash:dir survived=hidden
+"
 
-echo "=== the per-child heal never reverts locally edited tracked files ==="
-# Restoration is for MISSING tracked files only; a branch's genuine edit to a
-# tracked file under the entry must ride through the heal untouched.
-printf 'tracked WITH LOCAL EDITS\n' >"$WT/harness/tracked.md"
-set +e
-edit_out="$(cd "$MAIN" && "$WORKTREE_SCRIPT" repair-links "$WT" 2>&1)"
-set -e
-if [[ "$(cat "$WT/harness/tracked.md")" == "tracked WITH LOCAL EDITS" ]]; then
-  ok "locally-edited tracked file survives the heal"
-else
-  bad "locally-edited tracked file survives the heal" "$edit_out"
-fi
-git -C "$WT" checkout -q -- harness/tracked.md
-
-echo "=== a newline-named file cannot slip through the line inventory ==="
-# A filename that is (or contains) a newline shreds the line-delimited
-# listing; the NUL-count cross-check must block rather than read it as empty.
-rm -f "$WT/runtime"
-mkdir -p "$WT/runtime"
-printf 'sneaky\n' >"$WT/runtime/"$'\n'
-set +e
-nl_out="$(cd "$MAIN" && "$WORKTREE_SCRIPT" repair-links "$WT" 2>&1)"
-set -e
-if [[ -d "$WT/runtime" && ! -L "$WT/runtime" && -f "$WT/runtime/"$'\n' ]]; then
-  ok "newline-named file blocks and survives"
-else
-  bad "newline-named file blocks and survives" "$nl_out"
-fi
-assert_contains "$nl_out" "scan mismatch" "warning names the representation mismatch"
-rm -rf "$WT/runtime"
-(cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
-
-echo "=== a failed scan blocks the repair instead of reading as empty ==="
-# find exiting nonzero (unreadable subdirectory) must fail closed: "cannot
-# prove safe to replace", never "no untracked files". Root sees through
-# permission bits, so skip there (CI runners and dev shells are non-root).
-if [[ "$EUID" -eq 0 ]]; then
-  ok "skipped: running as root, permission-based scan failure cannot be simulated"
-else
-  rm -f "$TMP_ROOT/dash-wt/-dash/user-data.txt"
-  mkdir -p "$TMP_ROOT/dash-wt/-dash/noperm"
-  printf 'hidden\n' >"$TMP_ROOT/dash-wt/-dash/noperm/data.txt"
-  chmod 000 "$TMP_ROOT/dash-wt/-dash/noperm"
-  set +e
-  scan_out="$(cd "$DASH_MAIN" && "$WORKTREE_SCRIPT" repair-links "$TMP_ROOT/dash-wt" 2>&1)"
-  set -e
-  chmod 755 "$TMP_ROOT/dash-wt/-dash/noperm"
-  if [[ -d "$TMP_ROOT/dash-wt/-dash" && ! -L "$TMP_ROOT/dash-wt/-dash" ]]; then
-    ok "unreadable subdir: dir left in place"
-  else
-    bad "unreadable subdir: dir left in place" "$scan_out"
+echo "=== the auto-repair hooks ==="
+n=0
+while IFS='|' read -r label fixture command rc out err want; do
+  [[ -n "$label$fixture$command$rc$out$err$want" ]] || continue
+  n=$((n + 1))
+  # Root sees through permission bits, so the failed-scan row cannot be built
+  # there (CI runners and dev shells are non-root).
+  if [[ "$fixture" == *noperm* && "$EUID" -eq 0 ]]; then
+    printf '  skip  %s (root reads through permission bits)\n' "$label"
+    continue
   fi
-  if [[ "$(cat "$TMP_ROOT/dash-wt/-dash/noperm/data.txt" 2>/dev/null)" == "hidden" ]]; then
-    ok "unreadable subdir: data intact"
-  else
-    bad "unreadable subdir: data intact"
+  # shellcheck disable=SC2086
+  build "row-$n" $fixture
+  got="$(run "$command")"
+  # The unreadable directory is opened after the command so the data it hid
+  # renders: the refusal must have left it in place.
+  [[ "$fixture" == *noperm* ]] && { chmod 755 "$WT/-dash/noperm"; got="$got survived=$(head -n 1 "$WT/-dash/noperm/data.txt" 2>/dev/null || printf '?')"; }
+  if [[ "${PROBE:-}" == 1 ]]; then
+    printf '%s => %s\n' "$label" "$got"
+    continue
   fi
-  assert_contains "$scan_out" "scan failed" "warning names the failed scan"
-fi
+  assert_eq "$got" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want" "$label"
+done <<<"$ROWS"
 
-printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+echo
+printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
