@@ -326,10 +326,16 @@ alias_text() {
   out_re="$(printf '%s' "$OUT" | sed 's/[][\.*^$]/\\&/g')"
   sed -e "s|$out_re|<out>|g" -e "s|$ROW/out|<outdir>|g" -e "s|$ROW/work-link|<work-link>|g" -e "s|$WORK|<work>|g" \
     -e "s|$ROW_TMP|<tmp>|g" -e "s|$ROW/fakehome|<home>|g" -e "s|$ROW|<row>|g" -e "s|$TMP_ROOT|<root>|g" \
-    -e "s|$QUOTA|<quota>|g" -e 's/\(tmp\|failed\|second-opinion\)\.[A-Za-z0-9]\{6\}\([^A-Za-z0-9]\|$\)/\1.*\2/g' \
-    -e "s|$SECOND_OPINION: line [0-9]*:|<script>: line *:|g" \
+    -e "s|$QUOTA|<quota>|g" -e "s|$SECOND_OPINION: line [0-9]*:|<script>: line *:|g" \
     -e "s|rm: cannot remove '\(.*\)': |rm: \1: |" -e "s|mkdir: cannot create directory [‘']\(.*\)[’']: |mkdir: \1: |" \
-    -e 's/;/\\;/g' | paste -s -d ';' -
+    -e 's/;/\\;/g' | mktemp_wildcard | paste -s -d ';' -
+}
+
+# A mktemp suffix on a temp name becomes `*`. Extended syntax, and the end of
+# the line as its own expression: BSD sed's basic syntax has no alternation.
+mktemp_wildcard() {
+  sed -E -e 's/(tmp|failed|second-opinion)\.[A-Za-z0-9]{6}([^A-Za-z0-9])/\1.*\2/g' \
+    -e 's/(tmp|failed|second-opinion)\.[A-Za-z0-9]{6}$/\1.*/'
 }
 
 # The record log: what the gate, the home resolution and the clearing wrote,
