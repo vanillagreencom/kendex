@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Tests for active-work ownership guards.
+# `worktree create` against active work: the ownership guards, the option
+# parsing and `--base <default>` as one table, then the concurrent claim.
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
@@ -9,6 +10,8 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+# The real git, resolved before any row puts a stub ahead of it on PATH.
+REAL_GIT="$(command -v git)"
 
 PASS=0
 FAIL=0
@@ -24,72 +27,10 @@ assert_eq() {
   fi
 }
 
-assert_ne() {
-  local got="$1" unwanted="$2" name="$3"
-  if [[ "$got" != "$unwanted" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected value to differ from: %s\n' "$name" "$unwanted"
-  fi
-}
-
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  fi
-}
-
-assert_not_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if ! grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        unwanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  fi
-}
-
-assert_path_exists() {
-  local path="$1" name="$2"
-  if [[ -e "$path" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        missing path: %s\n' "$name" "$path"
-  fi
-}
-
-assert_path_absent() {
-  local path="$1" name="$2"
-  if [[ ! -e "$path" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        unexpected path: %s\n' "$name" "$path"
-  fi
-}
-
-assert_branch_absent() {
-  local repo="$1" branch="$2" name="$3"
-  if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        unexpected branch: %s\n' "$name" "$branch"
-  else
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  fi
-}
-
+# A checkout with a bare origin, the sibling trees/ base, and a `gh` stub that
+# answers `pr list` from GH_STATE (an open PR #42 when open-pr exists, a
+# failure when fail-gh does, a pause when slow-gh does) and `pr view` from the
+# stored document pr-42.json.
 make_repo() {
   local root="$1"
   mkdir -p "$root/main" "$root/bin" "$root/gh-state"
@@ -100,9 +41,8 @@ make_repo() {
   printf 'base\n' >"$root/main/base.txt"
   git -C "$root/main" add base.txt
   git -C "$root/main" commit -q -m base
-  # Pin the historical sibling trees/ base so this file's path assertions stay
-  # explicit; default base-dir resolution is covered by worktree_base_dir.sh.
   printf 'WORKTREE_BASE_DIR="../trees"\n' >"$root/main/.env.local"
+  printf '.env.local\n' >>"$root/main/.git/info/exclude"
   git init -q --bare "$root/origin.git"
   git -C "$root/main" remote add origin "$root/origin.git"
   git -C "$root/main" push -q -u origin main
@@ -141,429 +81,325 @@ STUB
   chmod +x "$root/bin/gh"
 }
 
-ROOT="$TMP_ROOT/active"
-make_repo "$ROOT"
-export PATH="$ROOT/bin:$PATH"
-export GH_STATE="$ROOT/gh-state"
+# --- create against active work: one table -------------------------------------
+# A row builds its own checkout from a step word list, runs one `create` line
+# from the main checkout under the row's environment, and pins the exit
+# status, stdout (usage text by its first line), stderr whole, and what is
+# left: the main checkout's branch, head and dirty files, the per-worktree
+# config, every directory under the trees base with its registration, branch
+# and head, the local branches beside main, and the topic worktree's dirty
+# files.
 
-echo "=== worktree create active-work guard ==="
+ROOT=""
+MAIN=""
+TREES_DIR=""
+WT=""
+PRE=""
+END=""
+ROW_ENV=()
 
-# Create and publish a normal issue branch, then advance main so the historical
-# implicit-reuse path would have rebased and rewritten its HEAD.
-(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-active >/dev/null)
-WT="$ROOT/trees/issue-active"
-printf 'feature\n' >"$WT/feature.txt"
-git -C "$WT" add feature.txt
-git -C "$WT" commit -q -m feature
-git -C "$WT" push -q -u origin issue-active
+# Create the topic worktree through the script itself, so its shape is the
+# one `create` leaves rather than a hand-built approximation.
+fixture_create() {
+  (cd "$MAIN" && env PATH="$ROOT/bin:$PATH" GH_STATE="$ROOT/gh-state" "$WORKTREE_SCRIPT" create "$@" >/dev/null 2>"$ROOT/fixture.err") && return 0
+  echo "FIXTURE: create $* failed: $(cat "$ROOT/fixture.err")" >&2
+  exit 2
+}
 
-printf 'main advance\n' >"$ROOT/main/main-advance.txt"
-git -C "$ROOT/main" add main-advance.txt
-git -C "$ROOT/main" commit -q -m 'advance main'
-git -C "$ROOT/main" push -q origin main
-
-touch "$GH_STATE/open-pr"
-git -C "$ROOT/main" worktree lock --reason 'owner session is active' "$WT"
-pre_head="$(git -C "$WT" rev-parse HEAD)"
-
-set +e
-(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-active >"$ROOT/guard.out" 2>"$ROOT/guard.err")
-guard_code=$?
-set -e
-guard_err="$(cat "$ROOT/guard.err")"
-
-assert_eq "$guard_code" "75" "bare create exits 75 when an issue worktree is active"
-assert_contains "$guard_err" "Active work already exists" "guard clearly reports active ownership"
-assert_contains "$guard_err" "Open PR: #42" "guard reports the open PR signal"
-assert_contains "$guard_err" "owner session is active" "guard reports the worktree lock signal"
-assert_contains "$guard_err" "--reuse" "guard names the explicit owner override"
-assert_eq "$(git -C "$WT" rev-parse HEAD)" "$pre_head" "guard leaves the active branch HEAD unchanged"
-assert_eq "$(git -C "$WT" status --porcelain)" "" "guard leaves the active worktree clean"
-assert_path_absent "$WT/main-advance.txt" "guard does not rebase main advancement into active work"
-
-# The confirmed owner can still opt in to the established reuse/rebase behavior.
-git -C "$ROOT/main" worktree unlock "$WT"
-reuse_out="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-active --reuse)"
-assert_eq "$reuse_out" "$WT" "--reuse returns the existing owned worktree"
-assert_ne "$(git -C "$WT" rev-parse HEAD)" "$pre_head" "--reuse intentionally rebases the owned branch"
-if git -C "$WT" merge-base --is-ancestor origin/main HEAD; then
-  PASS=$((PASS + 1))
-  printf '  ok    --reuse contains current origin/main\n'
-else
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  --reuse does not contain current origin/main\n'
-fi
-
-# Removing the checkout does not make an open PR unowned. Bare create must
-# still stop before recreating it; --pr is the explicit inspection path.
-git -C "$ROOT/main" worktree remove "$WT"
-git -C "$ROOT/main" branch -D issue-active >/dev/null
-set +e
-(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-active >"$ROOT/pr-guard.out" 2>"$ROOT/pr-guard.err")
-pr_guard_code=$?
-set -e
-pr_guard_err="$(cat "$ROOT/pr-guard.err")"
-assert_eq "$pr_guard_code" "75" "bare create exits 75 for an open PR without a local worktree"
-assert_contains "$pr_guard_err" "open pull request (#42)" "branch guard reports the PR ownership signal"
-assert_path_absent "$WT" "open-PR guard creates no duplicate checkout"
-
-printf '{"headRefName":"issue-active","headRefOid":"%s","isCrossRepository":false}\n' \
-  "$(git -C "$ROOT/main" rev-parse origin/issue-active)" >"$GH_STATE/pr-42.json"
-pr_out="$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-active --pr 42)"
-assert_eq "$pr_out" "$WT" "--pr explicitly creates an inspection worktree"
-assert_path_exists "$WT/.git" "explicit PR checkout is a registered worktree"
-
-# Dirty and unpublished local work is independently sufficient ownership.
-rm -f "$GH_STATE/open-pr"
-(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-local >/dev/null)
-LOCAL_WT="$ROOT/trees/issue-local"
-printf 'local commit\n' >"$LOCAL_WT/local.txt"
-git -C "$LOCAL_WT" add local.txt
-git -C "$LOCAL_WT" commit -q -m 'unpublished local work'
-printf 'dirty\n' >"$LOCAL_WT/dirty.txt"
-local_pre_head="$(git -C "$LOCAL_WT" rev-parse HEAD)"
-set +e
-(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-local >"$ROOT/local-guard.out" 2>"$ROOT/local-guard.err")
-local_guard_code=$?
-set -e
-local_guard_err="$(cat "$ROOT/local-guard.err")"
-assert_eq "$local_guard_code" "75" "bare create exits 75 for dirty unpublished local work"
-assert_contains "$local_guard_err" "Working tree: dirty" "guard reports dirty state"
-assert_contains "$local_guard_err" "branch is unpublished" "guard reports unpublished branch state"
-assert_eq "$(git -C "$LOCAL_WT" rev-parse HEAD)" "$local_pre_head" "guard leaves unpublished branch HEAD unchanged"
-assert_path_exists "$LOCAL_WT/dirty.txt" "guard preserves uncommitted work"
-
-# A remote branch is also ownership even when GitHub lookup is unavailable or
-# no PR is open.
-git -C "$ROOT/main" branch issue-remote main
-git -C "$ROOT/main" push -q origin issue-remote
-git -C "$ROOT/main" branch -D issue-remote >/dev/null
-set +e
-(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-remote >"$ROOT/remote-guard.out" 2>"$ROOT/remote-guard.err")
-remote_guard_code=$?
-set -e
-remote_guard_err="$(cat "$ROOT/remote-guard.err")"
-assert_eq "$remote_guard_code" "75" "bare create exits 75 for an existing remote branch"
-assert_contains "$remote_guard_err" "existing remote branch" "remote-branch guard reports its ownership signal"
-assert_path_absent "$ROOT/trees/issue-remote" "remote-branch guard creates no duplicate checkout"
-
-# Never delete a target directory merely because it lacks a .git pointer; it
-# may be a concurrent or interrupted creator.
-mkdir -p "$ROOT/trees/issue-orphan"
-printf 'keep\n' >"$ROOT/trees/issue-orphan/owner-marker"
-set +e
-(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-orphan >"$ROOT/orphan.out" 2>"$ROOT/orphan.err")
-orphan_code=$?
-set -e
-assert_eq "$orphan_code" "75" "bare create exits 75 for an incomplete target directory"
-assert_path_exists "$ROOT/trees/issue-orphan/owner-marker" "guard preserves incomplete/concurrent directory contents"
-
-# A relative worktree base inside the checkout must never let `git -C` search
-# upward and reinterpret an incomplete target as the main checkout. Explicit
-# reuse is subject to the same exact registration/common-dir proof.
-IN_REPO_ROOT="$TMP_ROOT/in-repo"
-make_repo "$IN_REPO_ROOT"
-cat >"$IN_REPO_ROOT/main/.env.local" <<'ENV'
-WORKTREE_BASE_DIR="trees"
-ENV
-mkdir -p "$IN_REPO_ROOT/main/trees/issue-incomplete"
-printf 'preserve these bytes\n' >"$IN_REPO_ROOT/main/trees/issue-incomplete/owner-marker"
-in_repo_pre_head="$(git -C "$IN_REPO_ROOT/main" rev-parse HEAD)"
-in_repo_pre_config="$(git -C "$IN_REPO_ROOT/main" config --get extensions.worktreeConfig 2>/dev/null || true)"
-in_repo_pre_marker="$(cat "$IN_REPO_ROOT/main/trees/issue-incomplete/owner-marker")"
-export GH_STATE="$IN_REPO_ROOT/gh-state"
-set +e
-(cd "$IN_REPO_ROOT/main" && "$WORKTREE_SCRIPT" create issue-incomplete --reuse >"$IN_REPO_ROOT/reuse.out" 2>"$IN_REPO_ROOT/reuse.err")
-in_repo_code=$?
-set -e
-assert_eq "$in_repo_code" "75" "--reuse exits 75 for an in-repo incomplete target"
-assert_eq "$(git -C "$IN_REPO_ROOT/main" rev-parse HEAD)" "$in_repo_pre_head" "incomplete-target reuse preserves main HEAD"
-assert_eq "$(git -C "$IN_REPO_ROOT/main" config --get extensions.worktreeConfig 2>/dev/null || true)" "$in_repo_pre_config" "incomplete-target reuse preserves repository config"
-assert_eq "$(cat "$IN_REPO_ROOT/main/trees/issue-incomplete/owner-marker")" "$in_repo_pre_marker" "incomplete-target reuse preserves target bytes"
-assert_path_absent "$IN_REPO_ROOT/main/trees/issue-incomplete/.git" "incomplete-target reuse does not register the target"
-
-# --from creates a branch; it is not an inspection escape hatch. Existing target
-# ownership on the remote must stop it before a divergent checkout is created.
-export GH_STATE="$ROOT/gh-state"
-git -C "$ROOT/main" branch issue-from-remote main
-git -C "$ROOT/main" push -q origin issue-from-remote
-git -C "$ROOT/main" branch -D issue-from-remote >/dev/null
-set +e
-(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-from-remote --from main >"$ROOT/from-remote.out" 2>"$ROOT/from-remote.err")
-from_remote_code=$?
-set -e
-assert_eq "$from_remote_code" "75" "--from exits 75 for an existing remote target branch"
-assert_contains "$(cat "$ROOT/from-remote.err")" "existing remote branch" "--from reports remote ownership"
-assert_path_absent "$ROOT/trees/issue-from-remote" "--from creates no duplicate worktree"
-assert_branch_absent "$ROOT/main" "issue-from-remote" "--from creates no duplicate local branch"
-
-# BOT_NAME/<issue> is an equal ownership candidate even when no PR exists.
-git -C "$ROOT/main" branch robot/issue-bot-local main
-set +e
-(cd "$ROOT/main" && BOT_NAME=robot BOT_EMAIL=robot@example.test "$WORKTREE_SCRIPT" create issue-bot-local >"$ROOT/bot-local.out" 2>"$ROOT/bot-local.err")
-bot_local_code=$?
-set -e
-assert_eq "$bot_local_code" "75" "bare create exits 75 for a bot-prefixed local branch"
-assert_contains "$(cat "$ROOT/bot-local.err")" "robot/issue-bot-local" "bot local guard identifies the candidate branch"
-assert_path_absent "$ROOT/trees/issue-bot-local" "bot local guard creates no worktree"
-
-git -C "$ROOT/main" branch robot/issue-bot-remote main
-git -C "$ROOT/main" push -q origin robot/issue-bot-remote
-git -C "$ROOT/main" branch -D robot/issue-bot-remote >/dev/null
-set +e
-(cd "$ROOT/main" && BOT_NAME=robot BOT_EMAIL=robot@example.test "$WORKTREE_SCRIPT" create issue-bot-remote >"$ROOT/bot-remote.out" 2>"$ROOT/bot-remote.err")
-bot_remote_code=$?
-set -e
-assert_eq "$bot_remote_code" "75" "bare create exits 75 for a bot-prefixed remote branch"
-assert_contains "$(cat "$ROOT/bot-remote.err")" "origin/robot/issue-bot-remote" "bot remote guard identifies the remote candidate"
-assert_path_absent "$ROOT/trees/issue-bot-remote" "bot remote guard creates no worktree"
-
-# A failed GitHub ownership query is uncertainty, not absence. The script must
-# fail before enabling per-worktree config or creating any branch/path.
-GH_FAIL_ROOT="$TMP_ROOT/gh-failure"
-make_repo "$GH_FAIL_ROOT"
-touch "$GH_FAIL_ROOT/gh-state/fail-gh"
-export GH_STATE="$GH_FAIL_ROOT/gh-state"
-gh_fail_pre_head="$(git -C "$GH_FAIL_ROOT/main" rev-parse HEAD)"
-gh_fail_pre_config="$(git -C "$GH_FAIL_ROOT/main" config --get extensions.worktreeConfig 2>/dev/null || true)"
-set +e
-(cd "$GH_FAIL_ROOT/main" && "$WORKTREE_SCRIPT" create issue-gh-failure >"$GH_FAIL_ROOT/create.out" 2>"$GH_FAIL_ROOT/create.err")
-gh_fail_code=$?
-set -e
-assert_eq "$gh_fail_code" "1" "gh ownership failure exits 1"
-assert_contains "$(cat "$GH_FAIL_ROOT/create.err")" "refusing to assume it is unowned" "gh failure reports fail-closed ownership discovery"
-assert_eq "$(git -C "$GH_FAIL_ROOT/main" rev-parse HEAD)" "$gh_fail_pre_head" "gh failure preserves main HEAD"
-assert_eq "$(git -C "$GH_FAIL_ROOT/main" config --get extensions.worktreeConfig 2>/dev/null || true)" "$gh_fail_pre_config" "gh failure preserves repository config"
-assert_branch_absent "$GH_FAIL_ROOT/main" "issue-gh-failure" "gh failure creates no local branch"
-assert_path_absent "$GH_FAIL_ROOT/trees/issue-gh-failure" "gh failure creates no worktree path"
-
-# A final fetch can fail after the read-only remote/PR probes succeeded. Keep
-# that failure before branch/worktree/config mutation too.
-FETCH_FAIL_ROOT="$TMP_ROOT/fetch-failure"
-make_repo "$FETCH_FAIL_ROOT"
-REAL_GIT="$(command -v git)"
-cat >"$FETCH_FAIL_ROOT/bin/git" <<'STUB'
+step() {
+  case "$1" in
+    wt) fixture_create topic ;;
+    # The topic branch has a commit of its own and is published.
+    push)
+      printf 'feature\n' >"$WT/feature.txt"
+      git -C "$WT" add feature.txt
+      git -C "$WT" commit -q -m feature
+      git -C "$WT" push -q -u origin topic
+      ;;
+    # A commit of its own, never pushed, and an uncommitted file beside it.
+    local-work)
+      printf 'local commit\n' >"$WT/local.txt"
+      git -C "$WT" add local.txt
+      git -C "$WT" commit -q -m 'unpublished local work'
+      printf 'dirty\n' >"$WT/dirty.txt"
+      ;;
+    # main moves on after the topic branch, so an implicit reuse would rebase.
+    advance)
+      printf 'main advance\n' >"$MAIN/main-advance.txt"
+      git -C "$MAIN" add main-advance.txt
+      git -C "$MAIN" commit -q -m 'advance main'
+      git -C "$MAIN" push -q origin main
+      ;;
+    open-pr) touch "$ROOT/gh-state/open-pr" ;;
+    pr-json)
+      printf '{"headRefName":"topic","headRefOid":"%s","isCrossRepository":false}\n' \
+        "$(git -C "$MAIN" rev-parse origin/topic)" >"$ROOT/gh-state/pr-42.json"
+      ;;
+    lock) git -C "$MAIN" worktree lock --reason 'owner session is active' "$WT" ;;
+    # The checkout and its local branch are gone; only the remote and the PR remain.
+    dropped)
+      git -C "$MAIN" worktree remove "$WT"
+      git -C "$MAIN" branch -D topic >/dev/null
+      ;;
+    # A branch on the remote only.
+    remote:*) remote_only "${1#remote:}" ;;
+    # A local branch beside main.
+    local:*) git -C "$MAIN" branch "${1#local:}" main ;;
+    # The topic branch checked out in the main checkout itself.
+    main-checkout) git -C "$MAIN" checkout -q -b topic ;;
+    # A worktree for another branch, published.
+    other-wt)
+      fixture_create other
+      git -C "$TREES_DIR/other" push -q -u origin other
+      ;;
+    # The target directory exists with no .git: a concurrent or interrupted creator.
+    orphan)
+      mkdir -p "$WT"
+      printf 'keep\n' >"$WT/owner-marker"
+      ;;
+    # The trees base inside the checkout, where `git -C` could search upward.
+    in-repo)
+      printf 'WORKTREE_BASE_DIR="trees"\n' >"$MAIN/.env.local"
+      TREES_DIR="$MAIN/trees"
+      WT="$TREES_DIR/topic"
+      ;;
+    fail-gh) touch "$ROOT/gh-state/fail-gh" ;;
+    # A git whose every `fetch` fails, ahead of the real one on the row's PATH.
+    fail-fetch)
+      cat >"$ROOT/bin/git" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 for arg in "$@"; do
-  if [[ "$arg" == "fetch" && -f "${GIT_STATE:?}/fail-fetch" ]]; then
+  if [[ "$arg" == "fetch" ]]; then
     printf 'simulated fetch failure\n' >&2
     exit 42
   fi
 done
 exec "${GIT_REAL:?}" "$@"
 STUB
-chmod +x "$FETCH_FAIL_ROOT/bin/git"
-touch "$FETCH_FAIL_ROOT/gh-state/fail-fetch"
-export GH_STATE="$FETCH_FAIL_ROOT/gh-state"
-fetch_fail_pre_head="$(git -C "$FETCH_FAIL_ROOT/main" rev-parse HEAD)"
-fetch_fail_pre_config="$(git -C "$FETCH_FAIL_ROOT/main" config --get extensions.worktreeConfig 2>/dev/null || true)"
-set +e
-(cd "$FETCH_FAIL_ROOT/main" && PATH="$FETCH_FAIL_ROOT/bin:$PATH" GIT_REAL="$REAL_GIT" GIT_STATE="$FETCH_FAIL_ROOT/gh-state" "$WORKTREE_SCRIPT" create issue-fetch-failure >"$FETCH_FAIL_ROOT/create.out" 2>"$FETCH_FAIL_ROOT/create.err")
-fetch_fail_code=$?
-set -e
-assert_eq "$fetch_fail_code" "1" "final fetch failure exits 1"
-assert_contains "$(cat "$FETCH_FAIL_ROOT/create.err")" "Could not refresh remote 'origin'" "fetch failure reports authoritative refresh failure"
-assert_eq "$(git -C "$FETCH_FAIL_ROOT/main" rev-parse HEAD)" "$fetch_fail_pre_head" "fetch failure preserves main HEAD"
-assert_eq "$(git -C "$FETCH_FAIL_ROOT/main" config --get extensions.worktreeConfig 2>/dev/null || true)" "$fetch_fail_pre_config" "fetch failure preserves repository config"
-assert_branch_absent "$FETCH_FAIL_ROOT/main" "issue-fetch-failure" "fetch failure creates no local branch"
-assert_path_absent "$FETCH_FAIL_ROOT/trees/issue-fetch-failure" "fetch failure creates no worktree path"
+      chmod +x "$ROOT/bin/git"
+      ROW_ENV+=(GIT_REAL="$REAL_GIT")
+      ;;
+    bad-origin) git -C "$MAIN" remote set-url origin "$ROOT/missing-origin.git" ;;
+    bot) ROW_ENV+=(BOT_NAME=robot BOT_EMAIL=robot@example.test) ;;
+    *)
+      echo "UNKNOWN-STEP: $1" >&2
+      exit 2
+      ;;
+  esac
+}
 
-# Remote discovery itself must also fail closed before the claim lock/path.
-REMOTE_FAIL_ROOT="$TMP_ROOT/remote-failure"
-make_repo "$REMOTE_FAIL_ROOT"
-git -C "$REMOTE_FAIL_ROOT/main" remote set-url origin "$REMOTE_FAIL_ROOT/missing-origin.git"
-export GH_STATE="$REMOTE_FAIL_ROOT/gh-state"
-remote_fail_pre_config="$(git -C "$REMOTE_FAIL_ROOT/main" config --get extensions.worktreeConfig 2>/dev/null || true)"
-set +e
-(cd "$REMOTE_FAIL_ROOT/main" && "$WORKTREE_SCRIPT" create issue-remote-failure >"$REMOTE_FAIL_ROOT/create.out" 2>"$REMOTE_FAIL_ROOT/create.err")
-remote_fail_code=$?
-set -e
-assert_eq "$remote_fail_code" "1" "remote ownership discovery failure exits 1"
-assert_contains "$(cat "$REMOTE_FAIL_ROOT/create.err")" "Could not query remote 'origin'" "remote discovery failure is explicit"
-assert_eq "$(git -C "$REMOTE_FAIL_ROOT/main" config --get extensions.worktreeConfig 2>/dev/null || true)" "$remote_fail_pre_config" "remote discovery failure preserves repository config"
-assert_branch_absent "$REMOTE_FAIL_ROOT/main" "issue-remote-failure" "remote discovery failure creates no local branch"
-assert_path_absent "$REMOTE_FAIL_ROOT/trees/issue-remote-failure" "remote discovery failure creates no worktree path"
+remote_only() {
+  git -C "$MAIN" branch "$1" main
+  git -C "$MAIN" push -q origin "$1"
+  git -C "$MAIN" branch -D "$1" >/dev/null
+}
 
-# Concurrent claimers both pass their read-only preliminary discovery. The
-# repository-local issue lock makes exactly one add; the waiter reruns the
-# final checks and exits 75 without duplicate mutation.
-RACE_ROOT="$TMP_ROOT/concurrent"
-make_repo "$RACE_ROOT"
-touch "$RACE_ROOT/gh-state/slow-gh"
-export GH_STATE="$RACE_ROOT/gh-state"
+build() {
+  local word
+  ROOT="$TMP_ROOT/$1"
+  shift
+  MAIN="$ROOT/main"
+  TREES_DIR="$ROOT/trees"
+  WT="$TREES_DIR/topic"
+  ROW_ENV=()
+  make_repo "$ROOT"
+  for word in "$@"; do step "$word"; done
+  PRE="$(topic_head)"
+  END="$(git -C "$MAIN" rev-parse HEAD)"
+}
+
+# The topic branch's head: the registered worktree's, else the remote's, else
+# none. A bare directory is never asked, since `git -C` would search upward
+# from it and answer for the main checkout.
+topic_head() {
+  if [[ -e "$WT/.git" ]]; then
+    git -C "$WT" rev-parse HEAD 2>/dev/null || { echo "FIXTURE: the topic worktree at $WT has no readable HEAD" >&2; exit 2; }
+  else
+    git -C "$MAIN" rev-parse origin/topic 2>/dev/null || true
+  fi
+}
+
+# An oid by name: main's head at fixture end, the topic head the row was
+# built with, a commit built on main's head, or other.
+head_alias() {
+  local oid="$1"
+  if [[ "$oid" == "$END" ]]; then
+    printf 'end'
+  elif [[ "$oid" == "$PRE" ]]; then
+    printf 'pre'
+  elif [[ "$(git -C "$MAIN" rev-parse "$oid~1" 2>/dev/null)" == "$END" ]]; then
+    printf 'on-end'
+  else
+    printf 'other'
+  fi
+}
+
+# main=<branch>@<head>/<porcelain> cfg=<extensions.worktreeConfig> trees=<dir:reg@branch@head|dir:dir[file:line]>,... branches=<beside main> dirty=<topic porcelain>
+state() {
+  local trees="" name dir dirty branches main_dirty
+  for dir in "$TREES_DIR"/*; do
+    [[ -e "$dir" ]] || continue
+    name="${dir##*/}"
+    if git -C "$MAIN" worktree list --porcelain | grep -qxF "worktree $dir"; then
+      trees="$trees,$name:reg@$(git -C "$dir" branch --show-current)@$(head_alias "$(git -C "$dir" rev-parse HEAD)")"
+    else
+      trees="$trees,$name:dir[$(for f in "$dir"/* "$dir"/.[!.]*; do [[ -e "$f" ]] || continue; printf '%s:%s' "${f##*/}" "$(head -1 "$f" 2>/dev/null || printf dir)"; done)]"
+    fi
+  done
+  branches="$(git -C "$MAIN" for-each-ref --format='%(refname)' refs/heads | sed 's|^refs/heads/||' | grep -vx main | paste -s -d ',' -)"
+  dirty=""
+  [[ -e "$WT/.git" ]] && dirty="$(git -C "$WT" status --porcelain | paste -s -d ',' -)"
+  main_dirty="$(git -C "$MAIN" status --porcelain | paste -s -d ',' -)"
+  printf 'main=%s@%s/%s cfg=%s trees=%s branches=%s dirty=%s' \
+    "$(git -C "$MAIN" branch --show-current)" "$(head_alias "$(git -C "$MAIN" rev-parse HEAD)")" "${main_dirty:-clean}" \
+    "$(git -C "$MAIN" config --get extensions.worktreeConfig 2>/dev/null || printf '%s' -)" \
+    "${trees#,}" "${branches:--}" "${dirty:--}"
+}
+
+# Paths by their names; stdout is cut at its first Usage line, which pins
+# which usage text printed without pinning the help body.
+alias_text() {
+  { if [[ "${1:-}" == usage ]]; then sed '/^Usage: /q'; else cat; fi; } |
+    sed -e "s|$WT|<topic>|g" -e "s|$TREES_DIR/other|<other>|g" -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" \
+      -e 's/;/\\;/g' | paste -s -d ';' -
+}
+
+run() {
+  local -a argv
+  local rc=0
+  read -r -a argv <<<"$1"
+  (cd "$MAIN" && env PATH="$ROOT/bin:$PATH" GH_STATE="$ROOT/gh-state" ${ROW_ENV[@]+"${ROW_ENV[@]}"} "$WORKTREE_SCRIPT" ${argv[@]+"${argv[@]}"} >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  printf 'rc=%s out=%s err=%s %s' "$rc" "$(alias_text usage <"$ROOT/out")" "$(alias_text <"$ROOT/err")" "$(state)"
+}
+
+out_text() {
+  case "$1" in
+    -) printf '' ;;
+    topic) printf '<topic>' ;;
+    other) printf '<other>' ;;
+    usage) printf 'Usage: worktree create <ID> [BRANCH] [options]' ;;
+    *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
+  esac
+}
+
+# The implicit-reuse refusal of the topic worktree for an issue, with the
+# lines its state adds: `clean|dirty`, `up` (a tracking upstream) or `noup`,
+# `pr` (the open PR), `lock`.
+implicit_reuse() {
+  local issue="$1" tree="$2" upstream="$3" pr="${4:-}" lock="${5:-}"
+  printf "Active work already exists for '%s'\\; refusing implicit reuse.;  Worktree: <topic>;  Branch: topic;  Working tree: %s" "$issue" "$tree"
+  case "$upstream" in
+    up) printf ';  Upstream: origin/topic (ahead 0, behind 0)' ;;
+    noup) printf ';  Upstream: none (branch is unpublished or not tracking a remote)' ;;
+  esac
+  [[ "$pr" == pr ]] && printf ';  Open PR: #42 https://example.test/pull/42'
+  [[ "$lock" == lock ]] && printf ';  Worktree lock: owner session is active'
+  printf ';No local branch was rebased or modified.;Inspect or monitor the existing work instead of spawning another implementer.;If this session owns the worktree, opt in explicitly:;  <worktree> create %s --reuse;Use --restack instead only when intentionally resolving a rebase conflict.' "$issue"
+}
+
+# The duplicate-branch refusal for a branch with a signal: `pr`, `local`, or
+# `remote`.
+duplicate() {
+  local branch="$1" signal="$2"
+  printf "Active work already exists for 'topic'\\; refusing to create a duplicate worktree.;  Branch: %s;  Signal: " "$branch"
+  case "$signal" in
+    pr) printf 'open pull request (#42)' ;;
+    local) printf 'existing local branch' ;;
+    remote) printf 'existing remote branch (origin/%s)' "$branch" ;;
+  esac
+  printf ';No worktree was created and no local branch was rebased or modified.;Inspect or monitor the existing work instead of spawning another implementer.;'
+  if [[ "$signal" == pr ]]; then
+    printf 'To inspect that PR in a worktree intentionally, pass --pr <number>.'
+  else
+    printf 'To check out that branch intentionally, pass --base %s.' "$branch"
+  fi
+}
+
+err_text() {
+  local spec a b c d
+  case "$1" in
+    -) printf '' ;;
+    # implicit:<issue>:<tree>,<upstream>[,pr][,lock]
+    implicit:*) spec="${1#implicit:}"; IFS=, read -r a b c d <<<"${spec#*:}"; implicit_reuse "${spec%%:*}" "$a" "$b" "${c:-}" "${d:-}" ;;
+    dup:*) spec="${1#dup:}"; duplicate "${spec%:*}" "${spec##*:}" ;;
+    main-checkout) printf "Active work already exists for 'topic'\\; refusing to create a duplicate worktree.;  Branch: topic;  Signal: checked out in the main checkout (<main>);No worktree was created and no local branch was rebased or modified.;The main checkout is never issue work and the branch cannot be checked out twice.;Move that work off the main checkout (or pick another issue id), then retry." ;;
+    incomplete) printf "Active or incomplete worktree path already exists for 'topic': <topic>;The exact path is not a registered worktree of <main>.;Refusing to delete, replace, or reuse it automatically. Inspect it, then remove it explicitly if abandoned." ;;
+    gh-fail) printf "Error: Could not query open pull requests for branch 'topic'\\; refusing to assume it is unowned.;  simulated gh failure" ;;
+    fetch-fail) printf "Error: Could not refresh remote 'origin' for authoritative worktree ownership discovery.;  simulated fetch failure" ;;
+    remote-fail) printf "Error: Could not query remote 'origin' for authoritative worktree ownership discovery.;  fatal: '<root>/missing-origin.git' does not appear to be a git repository;  fatal: Could not read from remote repository.;  ;  Please make sure you have the correct access rights;  and the repository exists." ;;
+    unknown-option) printf "Error: unknown option '--bogus' for create;Run: <worktree> create --help" ;;
+    default-branch) printf "Error: 'main' is the default branch and cannot be claimed as an issue work branch.;To base new work on it, run: <worktree> create topic --base main" ;;
+    *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
+  esac
+}
+
+# label|fixture|command|rc|out|err|state
+ROWS='
+a published, locked, PR-backed worktree refuses implicit reuse with every signal and moves nothing|wt push advance open-pr lock|create topic|75|-|implicit:topic:clean,up,pr,lock|main=main@end/clean cfg=true trees=topic:reg@topic@pre branches=topic dirty=-
+--reuse rebases the owned branch onto the advanced main|wt push advance open-pr|create topic --reuse|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@topic@on-end branches=topic dirty=-
+an open PR still owns the branch after its checkout is dropped|wt push open-pr dropped|create topic|75|-|dup:topic:pr|main=main@end/clean cfg=true trees= branches=- dirty=-
+--pr checks the PR head out for inspection|wt push open-pr dropped pr-json|create topic --pr 42|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@topic@pre branches=topic dirty=-
+dirty, unpublished local work is ownership on its own|wt local-work|create topic|75|-|implicit:topic:dirty,noup|main=main@end/clean cfg=true trees=topic:reg@topic@pre branches=topic dirty=?? dirty.txt
+a remote branch is ownership with no PR and no checkout|remote:topic|create topic|75|-|dup:topic:remote|main=main@end/clean cfg=- trees= branches=- dirty=-
+an unregistered target directory is preserved, not replaced|orphan|create topic|75|-|incomplete|main=main@end/clean cfg=- trees=topic:dir[owner-marker:keep] branches=- dirty=-
+--reuse of an unregistered target inside the checkout registers nothing and keeps its bytes|in-repo orphan|create topic --reuse|75|-|incomplete|main=main@end/?? trees/ cfg=- trees=topic:dir[owner-marker:keep] branches=- dirty=-
+--from is stopped by a remote branch before a divergent checkout exists|remote:topic|create topic --from main|75|-|dup:topic:remote|main=main@end/clean cfg=- trees= branches=- dirty=-
+BOT_NAME/<id> as a local branch is a candidate|local:robot/topic bot|create topic|75|-|dup:robot/topic:local|main=main@end/clean cfg=- trees= branches=robot/topic dirty=-
+BOT_NAME/<id> on the remote is a candidate|remote:robot/topic bot|create topic|75|-|dup:robot/topic:remote|main=main@end/clean cfg=- trees= branches=- dirty=-
+a failed PR query is uncertainty: nothing is created|fail-gh|create topic|1|-|gh-fail|main=main@end/clean cfg=- trees= branches=- dirty=-
+a failed final fetch stops before any mutation|fail-fetch|create topic|1|-|fetch-fail|main=main@end/clean cfg=- trees= branches=- dirty=-
+an unreachable origin stops before the claim lock|bad-origin|create topic|1|-|remote-fail|main=main@end/clean cfg=- trees= branches=- dirty=-
+--help prints usage and creates nothing||create --help|0|usage|-|main=main@end/clean cfg=- trees= branches=- dirty=-
+-h prints usage and creates nothing||create -h|0|usage|-|main=main@end/clean cfg=- trees= branches=- dirty=-
+an option-looking issue id is refused before it becomes a path||create --bogus|1|-|unknown-option|main=main@end/clean cfg=- trees= branches=- dirty=-
+an unknown flag after the id creates neither branch nor worktree||create topic --bogus|1|-|unknown-option|main=main@end/clean cfg=- trees= branches=- dirty=-
+a positional branch name is accepted beside the id||create topic custom-branch-name|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@custom-branch-name@end branches=custom-branch-name dirty=-
+--base <default> with no prior work checks out a new issue branch on origin/<default>||create topic --base main|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
+--base origin/<default> does the same||create topic --base origin/main|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
+a positional work branch named as the default branch is refused loudly||create topic main|1|-|default-branch|main=main@end/clean cfg=- trees= branches=- dirty=-
+--base <default> for an owned issue still refuses, naming the issue worktree (the registered worktree stops it before --base is read; the row guards the composite #1034 regression)|wt|create topic --base main|75|-|implicit:topic:clean,noup|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
+the topic branch checked out in the main checkout blocks the id without offering --reuse|main-checkout|create topic|75|-|main-checkout|main=topic@end/clean cfg=- trees= branches=topic dirty=-
+a local branch literally named origin/<default> keeps its ownership checks|local:origin/main|create topic origin/main|75|-|dup:origin/main:local|main=main@end/clean cfg=- trees= branches=origin/main dirty=-
+a non-default --base with a live worktree refuses with that worktree|wt push|create other --base topic|75|-|implicit:other:clean,up|main=main@end/clean cfg=true trees=topic:reg@topic@pre branches=topic dirty=-
+a non-default --base of an unclaimed remote branch checks that branch out|remote:feature|create other --base feature|0|other|-|main=main@end/clean cfg=true trees=other:reg@feature@end branches=feature dirty=-
+'
+
+echo "=== create against active work ==="
+n=0
+while IFS='|' read -r label fixture command rc out err want_state; do
+  [[ -n "$label$fixture$command$rc$out$err$want_state" ]] || continue
+  n=$((n + 1))
+  # shellcheck disable=SC2086
+  build "row-$n" $fixture
+  if [[ "${PROBE:-}" == 1 ]]; then
+    printf '%s => %s\n' "$label" "$(run "$command")"
+    continue
+  fi
+  assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
+done <<<"$ROWS"
+
+# --- the concurrent claim -------------------------------------------------------
+# Two claimers both pass their read-only preliminary discovery (the gh stub
+# pauses so they overlap). The repository-local issue lock makes exactly one
+# add; the waiter reruns the final checks and exits 75 without a duplicate
+# mutation. Which one wins is not deterministic, so this stays beside the table.
+build concurrent
+touch "$ROOT/gh-state/slow-gh"
 set +e
-(cd "$RACE_ROOT/main" && "$WORKTREE_SCRIPT" create issue-race >"$RACE_ROOT/a.out" 2>"$RACE_ROOT/a.err") &
+(cd "$MAIN" && env PATH="$ROOT/bin:$PATH" GH_STATE="$ROOT/gh-state" "$WORKTREE_SCRIPT" create topic >"$ROOT/a.out" 2>"$ROOT/a.err") &
 race_pid_a=$!
-(cd "$RACE_ROOT/main" && "$WORKTREE_SCRIPT" create ISSUE-RACE >"$RACE_ROOT/b.out" 2>"$RACE_ROOT/b.err") &
+(cd "$MAIN" && env PATH="$ROOT/bin:$PATH" GH_STATE="$ROOT/gh-state" "$WORKTREE_SCRIPT" create TOPIC >"$ROOT/b.out" 2>"$ROOT/b.err") &
 race_pid_b=$!
 wait "$race_pid_a"
 race_code_a=$?
 wait "$race_pid_b"
 race_code_b=$?
 set -e
-if [[ "$race_code_a:$race_code_b" == "0:75" || "$race_code_a:$race_code_b" == "75:0" ]]; then
-  PASS=$((PASS + 1))
-  printf '  ok    concurrent claim has one success and one active-work exit\n'
-else
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  concurrent claim exit codes\n        expected: 0:75 or 75:0\n        got:      %s:%s\n' "$race_code_a" "$race_code_b"
-fi
-assert_path_exists "$RACE_ROOT/trees/issue-race/.git" "concurrent claim creates one registered target"
-assert_eq "$(git -C "$RACE_ROOT/main" worktree list --porcelain | grep -c '^branch refs/heads/issue-race$')" "1" "concurrent claim registers the issue branch once"
-assert_eq "$(git -C "$RACE_ROOT/main" config --get extensions.worktreeConfig)" "true" "concurrent loser does not prevent successful setup"
-
-echo "=== worktree create option/help parsing (#621) ==="
-
-# --help / -h print create-specific usage, exit 0, and create nothing. This is
-# both create parse sites must handle these flags.
-CREATE_HELP_ROOT="$TMP_ROOT/create-help"
-make_repo "$CREATE_HELP_ROOT"
-export GH_STATE="$CREATE_HELP_ROOT/gh-state"
-set +e
-create_help_out=$(cd "$CREATE_HELP_ROOT/main" && "$WORKTREE_SCRIPT" create --help 2>"$CREATE_HELP_ROOT/help.err")
-create_help_code=$?
-set -e
-assert_eq "$create_help_code" "0" "create --help exits 0"
-assert_contains "$create_help_out" "Usage: " "create --help prints usage"
-assert_contains "$create_help_out" "--restack" "create --help lists the create-specific options"
-assert_path_absent "$CREATE_HELP_ROOT/trees" "create --help creates no worktree tree"
-
-set +e
-create_help_short_out=$(cd "$CREATE_HELP_ROOT/main" && "$WORKTREE_SCRIPT" create -h 2>"$CREATE_HELP_ROOT/help-short.err")
-create_help_short_code=$?
-set -e
-assert_eq "$create_help_short_code" "0" "create -h exits 0"
-assert_contains "$create_help_short_out" "Usage: " "create -h prints usage"
-assert_path_absent "$CREATE_HELP_ROOT/trees" "create -h creates no worktree tree"
-
-# Parse site 1: an option-looking first positional ($2) must fail, not become
-# the ISSUE and a trees/<id> path.
-set +e
-create_optid_out=$(cd "$CREATE_HELP_ROOT/main" && "$WORKTREE_SCRIPT" create --bogus 2>"$CREATE_HELP_ROOT/optid.err")
-create_optid_code=$?
-set -e
-assert_eq "$create_optid_code" "1" "create --bogus (option-looking issue ID) exits nonzero"
-assert_contains "$(cat "$CREATE_HELP_ROOT/optid.err")" "unknown option '--bogus'" "option-looking issue ID reports unknown option"
-assert_path_absent "$CREATE_HELP_ROOT/trees/--bogus" "option-looking issue ID never computes a trees/--bogus path"
-
-# Parse site 2: an unknown --flag in the option loop must fail, not be silently
-# captured as a branch name.
-set +e
-create_flag_out=$(cd "$CREATE_HELP_ROOT/main" && "$WORKTREE_SCRIPT" create issue-flagcheck --bogus 2>"$CREATE_HELP_ROOT/flag.err")
-create_flag_code=$?
-set -e
-assert_eq "$create_flag_code" "1" "create <id> --bogus exits nonzero"
-assert_contains "$(cat "$CREATE_HELP_ROOT/flag.err")" "unknown option '--bogus'" "unknown flag in the option loop reports unknown option"
-assert_path_absent "$CREATE_HELP_ROOT/trees/issue-flagcheck" "unknown flag creates no worktree"
-assert_branch_absent "$CREATE_HELP_ROOT/main" "issue-flagcheck" "unknown flag creates no branch"
-
-# Over-rejection guard: a legitimate positional branch name (not leading with
-# '-') must STILL be accepted alongside the issue ID.
-create_branch_out=$(cd "$CREATE_HELP_ROOT/main" && "$WORKTREE_SCRIPT" create issue-legit custom-branch-name)
-assert_eq "$create_branch_out" "$CREATE_HELP_ROOT/trees/issue-legit" "create <id> <branch> returns the worktree path"
-assert_path_exists "$CREATE_HELP_ROOT/trees/issue-legit/.git" "create <id> <branch> registers the worktree"
-assert_eq "$(git -C "$CREATE_HELP_ROOT/trees/issue-legit" branch --show-current)" "custom-branch-name" "create <id> <branch> uses the positional branch name"
-
-echo "=== worktree create --base <default-branch> (#1034) ==="
-
-# The default branch is expected repository state, never issue-ownership
-# evidence: it is always checked out in the main checkout, so treating it as
-# an owned worktree refused every `create <id> --base <default>` and
-# recommended --reuse INTO the main checkout.
-BASE1034_ROOT="$TMP_ROOT/base-1034"
-make_repo "$BASE1034_ROOT"
-export GH_STATE="$BASE1034_ROOT/gh-state"
-
-# (a) The exact failure: --base <default> with no prior work must succeed
-# and check out a fresh issue branch based on the default branch.
-base_default_out="$(cd "$BASE1034_ROOT/main" && "$WORKTREE_SCRIPT" create issue-base-default --base main 2>"$BASE1034_ROOT/base-default.err")"
-assert_eq "$base_default_out" "$BASE1034_ROOT/trees/issue-base-default" "--base <default> with no prior work returns the new worktree path"
-assert_path_exists "$BASE1034_ROOT/trees/issue-base-default/.git" "--base <default> registers a real worktree"
-assert_eq "$(git -C "$BASE1034_ROOT/trees/issue-base-default" branch --show-current)" "issue-base-default" "--base <default> checks out a new issue branch, not the default branch"
-assert_eq "$(git -C "$BASE1034_ROOT/trees/issue-base-default" rev-parse HEAD)" "$(git -C "$BASE1034_ROOT/main" rev-parse origin/main)" "--base <default> bases the new branch on origin/<default>"
-assert_eq "$(git -C "$BASE1034_ROOT/main" branch --show-current)" "main" "--base <default> leaves the main checkout untouched"
-
-# The remote-qualified spelling of the default branch behaves the same.
-base_origin_out="$(cd "$BASE1034_ROOT/main" && "$WORKTREE_SCRIPT" create issue-base-origin --base origin/main 2>"$BASE1034_ROOT/base-origin.err")"
-assert_eq "$base_origin_out" "$BASE1034_ROOT/trees/issue-base-origin" "--base origin/<default> also succeeds"
-assert_eq "$(git -C "$BASE1034_ROOT/trees/issue-base-origin" branch --show-current)" "issue-base-origin" "--base origin/<default> checks out a new issue branch"
-
-# A positional work-branch name equal to the default branch can never be
-# created; it must fail loudly, not die inside the suppressed worktree add.
-set +e
-(cd "$BASE1034_ROOT/main" && "$WORKTREE_SCRIPT" create issue-posmain main >"$BASE1034_ROOT/posmain.out" 2>"$BASE1034_ROOT/posmain.err")
-posmain_code=$?
-set -e
-assert_eq "$posmain_code" "1" "positional default-branch work branch exits 1"
-assert_contains "$(cat "$BASE1034_ROOT/posmain.err")" "is the default branch" "positional default-branch guard explains the refusal"
-assert_path_absent "$BASE1034_ROOT/trees/issue-posmain" "positional default-branch guard creates no worktree"
-
-# (b) A genuinely-owned issue still refuses under --base <default>, and the
-# refusal names the issue worktree — never the main checkout.
-set +e
-(cd "$BASE1034_ROOT/main" && "$WORKTREE_SCRIPT" create issue-base-default --base main >"$BASE1034_ROOT/owned.out" 2>"$BASE1034_ROOT/owned.err")
-owned_code=$?
-set -e
-owned_err="$(cat "$BASE1034_ROOT/owned.err")"
-assert_eq "$owned_code" "75" "--base <default> for an owned issue still exits 75"
-assert_contains "$owned_err" "Active work already exists" "owned-issue refusal still fires"
-assert_contains "$owned_err" "Worktree: $BASE1034_ROOT/trees/issue-base-default" "owned-issue refusal names the issue worktree"
-assert_not_contains "$owned_err" "Worktree: $BASE1034_ROOT/main" "owned-issue refusal never names the main checkout"
-
-# A candidate branch checked out in the main checkout still blocks the id,
-# but the refusal must say so plainly: never render the main checkout as a
-# reusable worktree or recommend --reuse into it.
-MAINCO_ROOT="$TMP_ROOT/main-checkout-branch"
-make_repo "$MAINCO_ROOT"
-export GH_STATE="$MAINCO_ROOT/gh-state"
-git -C "$MAINCO_ROOT/main" checkout -q -b issue-mainco
-set +e
-(cd "$MAINCO_ROOT/main" && "$WORKTREE_SCRIPT" create issue-mainco >"$MAINCO_ROOT/mainco.out" 2>"$MAINCO_ROOT/mainco.err")
-mainco_code=$?
-set -e
-mainco_err="$(cat "$MAINCO_ROOT/mainco.err")"
-assert_eq "$mainco_code" "75" "candidate branch checked out in the main checkout exits 75"
-assert_contains "$mainco_err" "checked out in the main checkout" "main-checkout candidate refusal names the actual situation"
-assert_contains "$mainco_err" "Move that work off the main checkout" "main-checkout candidate refusal gives the actionable remedy"
-assert_not_contains "$mainco_err" "refusing implicit reuse" "main-checkout candidate is never rendered as a reusable worktree"
-assert_not_contains "$mainco_err" "--reuse" "main-checkout candidate never recommends --reuse"
-export GH_STATE="$BASE1034_ROOT/gh-state"
-
-# A local branch literally named "origin/<default>" is a legal (if
-# pathological) positional branch name, not the remote-qualified --base
-# spelling: it must keep its full ownership checks instead of being filtered
-# out of the candidate list.
-git -C "$BASE1034_ROOT/main" branch "origin/main" main 2>/dev/null
-set +e
-(cd "$BASE1034_ROOT/main" && "$WORKTREE_SCRIPT" create issue-ambig "origin/main" >"$BASE1034_ROOT/ambig.out" 2>"$BASE1034_ROOT/ambig.err")
-ambig_code=$?
-set -e
-assert_eq "$ambig_code" "75" "positional branch literally named origin/<default> exits 75"
-assert_contains "$(cat "$BASE1034_ROOT/ambig.err")" "existing local branch" "literal origin/<default> branch keeps its ownership checks"
-assert_path_absent "$BASE1034_ROOT/trees/issue-ambig" "literal origin/<default> branch creates no worktree"
-git -C "$BASE1034_ROOT/main" branch -D "origin/main" >/dev/null
-
-# (c) Control: a non-default --base whose branch has a live worktree still
-# refuses with the real owning worktree.
-git -C "$BASE1034_ROOT/trees/issue-base-default" push -q -u origin issue-base-default
-set +e
-(cd "$BASE1034_ROOT/main" && "$WORKTREE_SCRIPT" create issue-inspect --base issue-base-default >"$BASE1034_ROOT/inspect.out" 2>"$BASE1034_ROOT/inspect.err")
-inspect_code=$?
-set -e
-inspect_err="$(cat "$BASE1034_ROOT/inspect.err")"
-assert_eq "$inspect_code" "75" "non-default --base with a live worktree still exits 75"
-assert_contains "$inspect_err" "Worktree: $BASE1034_ROOT/trees/issue-base-default" "non-default --base refusal names the owning worktree"
-assert_path_absent "$BASE1034_ROOT/trees/issue-inspect" "non-default --base refusal creates no duplicate checkout"
-
-# Control: non-default --base inspection of an unclaimed remote branch keeps
-# its checkout-the-branch semantics.
-git -C "$BASE1034_ROOT/main" branch feature-inspect main
-git -C "$BASE1034_ROOT/main" push -q origin feature-inspect
-git -C "$BASE1034_ROOT/main" branch -D feature-inspect >/dev/null
-inspect2_out="$(cd "$BASE1034_ROOT/main" && "$WORKTREE_SCRIPT" create issue-inspect2 --base feature-inspect 2>"$BASE1034_ROOT/inspect2.err")"
-assert_eq "$inspect2_out" "$BASE1034_ROOT/trees/issue-inspect2" "non-default --base still creates the inspection worktree"
-assert_eq "$(git -C "$BASE1034_ROOT/trees/issue-inspect2" branch --show-current)" "feature-inspect" "non-default --base still checks out the named branch"
+race_codes="$race_code_a:$race_code_b"
+[[ "$race_codes" == "75:0" ]] && race_codes="0:75"
+assert_eq "$race_codes $(state)" "0:75 main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-" \
+  "a concurrent claim makes one registered worktree and one active-work exit"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
