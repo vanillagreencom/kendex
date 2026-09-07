@@ -142,6 +142,8 @@ W_HOME="" W_FAKEHOME="" W_UNSET_HOME="" W_CWD="" W_NOJQ="" W_DASHTMP="" W_SKIP="
 W_ENV=()
 W_UNSET=()
 W_PLANTS=()
+# the script a row runs when a suite points it at a hermetic copy
+W_SCRIPT=""
 
 stdout_of() {
   case "$1" in
@@ -289,9 +291,16 @@ word() {
     # SECOND_OPINION_TARGET: claude unless the row says target:- (unset)
     target:-) W_TARGET="" ;;
     env:*) W_ENV+=("${1#env:}") ;;
-    *) echo "UNKNOWN-WORD: $1" >&2; exit 2 ;;
+    # the world with nothing added
+    -) ;;
+    *) suite_word "$1" ;;
   esac
 }
+# A suite's own words, its per-row reset, and its state after the fixed
+# probes (` key=value...` or nothing); the defaults refuse and add nothing.
+suite_word() { echo "UNKNOWN-WORD: $1" >&2; exit 2; }
+suite_reset() { :; }
+extra_state() { :; }
 
 build() {
   local w
@@ -312,10 +321,11 @@ build() {
   HEAD_SHA="$(git -C "$WORK" rev-parse HEAD)"
   OUT="$ROW/out/review.json"
   W_OUTPUT=out W_RC=0 W_STDOUT=good W_STDOUT2="" W_STDERR="" W_SLEEP=0 W_LOCK="" W_PLANT="" W_CAPTURE="" W_DIFF=""
-  W_HOME="" W_FAKEHOME="" W_UNSET_HOME="" W_CWD="" W_NOJQ="" W_DASHTMP="" W_SKIP="" W_TARGET=claude
+  W_HOME="" W_FAKEHOME="" W_UNSET_HOME="" W_CWD="" W_NOJQ="" W_DASHTMP="" W_SKIP="" W_TARGET=claude W_SCRIPT=""
   W_ENV=()
   W_UNSET=()
   W_PLANTS=()
+  suite_reset
   for w in "$@"; do word "$w"; done
   [[ "$W_DIFF" == empty ]] || printf 'world\n' >>"$WORK/file.txt"
   [[ -z "$W_CAPTURE" ]] || mkdir -p "$ROW/prompts"
@@ -529,13 +539,10 @@ run() {
     mkdir -p "$ROW/dashpaths/-dashcwd"; printf 'MY PROMPT TEXT\n' >"$ROW/dashpaths/-dash-prompt.txt"; cwd="$ROW/dashpaths"
     env_args+=(SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/echo-cli")
   fi
-  (cd "$cwd" && env ${W_UNSET[@]+"${W_UNSET[@]}"} "${env_args[@]}" ${W_ENV[@]+"${W_ENV[@]}"} "$SECOND_OPINION" "${argv[@]}" >"$ROW/stdout" 2>"$ROW/stderr") || rc=$?
+  (cd "$cwd" && env ${W_UNSET[@]+"${W_UNSET[@]}"} "${env_args[@]}" ${W_ENV[@]+"${W_ENV[@]}"} "${W_SCRIPT:-$SECOND_OPINION}" "${argv[@]}" >"$ROW/stdout" 2>"$ROW/stderr") || rc=$?
   printf 'rc=%s out=%s err=%s calls=%s files=%s home=%s %s%s' "$rc" "$(stdout_text)" "$(record_log <"$ROW/stderr" | alias_text)" \
     "$(wc -l <"$ROW/counter" | tr -d ' ')" "$(files)" "$(home)" "$(paths)" "$(extra_state)"
 }
-
-# A suite's own state after the fixed probes, ` key=value...` or nothing.
-extra_state() { :; }
 
 stdout_text() {
   local text
@@ -596,9 +603,11 @@ err_word() {
     no-jq) printf '→ jq not found — the designated output was cleared, but sibling lane artifacts cannot be checked for ownership and are left as they are\nError: jq is required but not found\n' ;;
     same:*) printf '→ skipping %s: runs the same model as this session (%s) — a second opinion must be cross-model\n' "$a" "$b" ;;
     refused:*) printf 'error=no eligible cross-model target — refusing to run a second opinion current_model=%s candidates=%s\n' "$a" "$(refused_candidates "$b")" ;;
-    *) printf 'UNKNOWN-ERR-SPEC:%s\n' "$1" ;;
+    *) suite_err_word "$1" ;;
   esac
 }
+# A suite's own err words; the default refuses.
+suite_err_word() { printf 'UNKNOWN-ERR-SPEC:%s\n' "$1"; }
 # where a record landed: out (the sidecar), home (the row's home), tmp (the
 # fallback), none
 record_path() {

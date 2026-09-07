@@ -56,7 +56,7 @@ extra_state() {
 }
 
 # The err words this table adds to the world's.
-gate_word() {
+suite_err_word() {
   local -a f
   IFS=: read -r -a f <<<"$1"
   local a="${f[1]:-}" b="${f[2]:-}" c="${f[3]:-}"
@@ -71,7 +71,7 @@ gate_word() {
     rejected:noreview:*) printf 'error=claude self-reported that no review was performed (%s) — refusing to write a review artifact response=<out>.noreview.json\n→ rejected response preserved: <out>.noreview.json\n' "$b" ;;
     rejected:noqa) printf 'error=claude returned non-conforming JSON with no qa_metadata object (missing_qa_metadata) — refusing to write a review artifact response=<out>.noreview.json\n→ rejected response preserved: <out>.noreview.json\n' ;;
     rejected:incomplete) printf 'error=claude returned structurally incomplete JSON after retry — verdict and the blockers/suggestions/questions arrays are required (incomplete_schema) — refusing to write a review artifact response=<out>.incomplete.json\n→ rejected response preserved: <out>.incomplete.json\n' ;;
-    *) err_word_base "$1" ;;
+    *) printf 'UNKNOWN-ERR-SPEC:%s\n' "$1" ;;
   esac
 }
 # where a raw or retry record landed: out (the sidecar) or home (the row's home)
@@ -82,9 +82,6 @@ gate_record() {
     *) printf 'UNKNOWN-RECORD-PATH:%s' "$1" ;;
   esac
 }
-eval "err_word_base() $(declare -f err_word | sed '1d')"
-err_word() { gate_word "$1"; }
-
 DEFAULTS="capture"
 run_table "the response gate" "$DEFAULTS" "\
 a review that parses and attests is written, stamped with the wrapper's clock and the raw byte count|stdout:good|review|0|<out>|header:review written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=- art=external-claude:pass:Clean:b=:ts=$CLOCK:raw=160:retry=-:head=<head> scope=scope-branch/<head>/file.txt/git diff <head> retry=-
