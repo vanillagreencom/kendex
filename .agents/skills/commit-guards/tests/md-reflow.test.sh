@@ -128,6 +128,7 @@ corpus_rows \
   "front matter keeps its lines|---\ntitle: x\nwrapped:\n  y\n---\n\nPara\n|---\ntitle: x\nwrapped:\n  y\n---\n\nPara\n" \
   "reference definitions keep their lines|[a]: https://x\n[b]: y.md\n|[a]: https://x\n[b]: y.md\n" \
   "a setext heading keeps its underline, and a wrapped one joins above it|Heading\n=======\n\nPara\n\nTwo line\nheading\n---\n|Heading\n=======\n\nPara\n\nTwo line heading\n---\n" \
+  "a setext underline followed by prose is a heading, and the prose gets its blank line|Two line\nheading\n---\nNext para\n|Two line heading\n---\n\nNext para\n" \
   "a file without a trailing newline stays without one|Para|Para"
 
 # Table two: FIXTURE (a function and its words) builds the repository; the
@@ -177,18 +178,21 @@ run_rows \
   "a missing path is exit 2, named as resolved from the invoking directory|clean_file absent||absent.md||rc=2 ${ERR}$TMP/absent/absent.md is not a file" \
   "no path and no scope is exit 2|clean_file no-path||||rc=2 ${ERR}name the files to reflow, or pass --staged or --all (see --help)" \
   "a path beside --staged is exit 2|clean_file path-and-scope||--staged clean.md||rc=2 ${ERR}PATH arguments and --staged/--all are exclusive" \
-  "an unknown flag is exit 2, quoting it|clean_file unknown-flag||--no-such-flag||rc=2 ${ERR}unknown argument '--no-such-flag' (see --help)"
+  "an unknown flag is exit 2, quoting it|clean_file unknown-flag||--no-such-flag||rc=2 ${ERR}unknown argument '--no-such-flag' (see --help)" \
+  "-- ends the options, and what follows is a path|clean_file dashdash||-- clean.md||rc=0 $(unchanged 1)"
 # The usage text carries a '|', which a row cannot: its first line and the
 # exit status, beside the table.
 assert_eq "--help prints usage at exit 0" "rc=0 usage: md-reflow [--check] PATH... | [--check] --staged | [--check] --all" "$(run '' --help | LC_ALL=C cut -d';' -f1)"
+assert_eq "-h is --help" "rc=0 usage: md-reflow [--check] PATH... | [--check] --staged | [--check] --all" "$(run '' -h | LC_ALL=C cut -d';' -f1)"
 
 echo "=== a path is taken from the invoking directory, inside the repository ==="
 fx_deep() { repo deep; write docs/deep.md "$WRAPPED"; R="$R/docs"; } # the run happens in docs/
-fx_outside() { repo outside; write "../outside-$1.md" "$WRAPPED"; }
+fx_outside() { repo "outside-$1"; write "../outside-$1.md" "$WRAPPED"; } # NAME — the file sits beside the repository, not in it
 st_deep() { bytes deep.md; }
 run_rows \
   "a relative path resolves from where md-reflow was run, and is named repo-relative|fx_deep||deep.md|st_deep|rc=0 $(reflowed 1 1 docs/deep.md) / deep.md=$(q 'Wrapped text.\n')" \
-  "a path outside the repository is refused, named as resolved|fx_outside 1||../outside-1.md||rc=2 ${ERR}$TMP/outside/../outside-1.md is outside this repository"
+  "an absolute path outside the repository is refused, named as given|fx_outside abs||$TMP/outside-abs.md||rc=2 ${ERR}$TMP/outside-abs.md is outside this repository" \
+  "a relative path climbing out of the repository is refused, named as resolved|fx_outside rel||../outside-rel.md||rc=2 ${ERR}$TMP/outside-rel/../outside-rel.md is outside this repository"
 
 echo "=== --staged and --all select the files md-format would judge ==="
 selection() { # NAME — three wrapped files, the vendored one excluded, one.md re-wrapped and staged
@@ -218,10 +222,12 @@ fx_failing_mv() { # NAME — a PATH whose mv refuses, ahead of the real one
   printf '#!/usr/bin/env bash\nset -euo pipefail\nprintf %s >&2 "injected rename failure\\n"\nexit 1\n' >"$R/fail-bin/mv"
   chmod +x "$R/fail-bin/mv"
 }
+fx_stray() { repo stray; write doc.md "$WRAPPED"; write stray.txt 'x\n'; } # a file beside doc.md the leftovers reader must see
 st_replacement() { bytes doc.md; printf ' '; leftovers; }
 run_rows \
   "a rename failure is an error naming the cause, preserves the original bytes and removes the staging file|fx_failing_mv failing-mv|PATH=$TMP/failing-mv/fail-bin:$PATH|doc.md|st_replacement|rc=2 ${ERR}could not replace the reflowed markdown at doc.md (injected rename failure) — inspect the file before trusting it / doc.md=$(q "$WRAPPED") leftovers=" \
-  "control: the same file reflows when rename succeeds|fx_failing_mv working-mv||doc.md|st_replacement|rc=0 $(reflowed 1 1 doc.md) / doc.md=$(q 'Wrapped text.\n') leftovers="
+  "control: the same file reflows when rename succeeds|fx_failing_mv working-mv||doc.md|st_replacement|rc=0 $(reflowed 1 1 doc.md) / doc.md=$(q 'Wrapped text.\n') leftovers=" \
+  "control: the leftovers reader names a file beside doc.md|fx_stray||doc.md|st_replacement|rc=0 $(reflowed 1 1 doc.md) / doc.md=$(q 'Wrapped text.\n') leftovers=$TMP/stray/stray.txt"
 
 echo "=== the skill's own shipped markdown is a fixed point ==="
 fx_shipped() { # the four shipped documents
