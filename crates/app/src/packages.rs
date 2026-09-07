@@ -269,41 +269,52 @@ mod tests {
     use super::*;
     use kendex_core::model::ItemKind;
 
-    // The two the page draws nothing for and reports nothing about. Both are
-    // answers about the manifest: a derived member or an unmanaged copy is in
-    // no declared map, and a fork, path or local install has no repository to
-    // take revisions from.
+    // Which refusals the page draws nothing for and reports nothing about:
+    // the two answers about the manifest (a derived member or an unmanaged
+    // copy is in no declared map; a fork, path or local install has no
+    // repository to take revisions from). Everything else is a read that
+    // went wrong, and the page says so with a way to run it again: a lock
+    // this build refuses is the same shape as the two and a real failure,
+    // and an unfetched source is its own shape (below). One row per variant.
     #[test]
-    fn no_managed_package_covers_the_manifest_answers() {
-        assert!(no_managed_package(&CoreError::NotDeclared {
-            kind: ItemKind::Skill,
-            name: "gh".to_owned(),
-        }));
-        assert!(no_managed_package(&CoreError::ItemRevUnsupported {
-            source_name: "local".to_owned(),
-        }));
+    fn only_the_two_manifest_answers_are_no_managed_package() {
+        let rows = [
+            (
+                CoreError::NotDeclared {
+                    kind: ItemKind::Skill,
+                    name: "gh".to_owned(),
+                },
+                true,
+            ),
+            (
+                CoreError::ItemRevUnsupported {
+                    source_name: "local".to_owned(),
+                },
+                true,
+            ),
+            (
+                CoreError::LockCorrupt {
+                    path: "lock".into(),
+                    message: "unparsable".to_owned(),
+                },
+                false,
+            ),
+            (
+                CoreError::SourcePending {
+                    name: "tools".to_owned(),
+                },
+                false,
+            ),
+        ];
+        for (error, expected) in rows {
+            assert_eq!(no_managed_package(&error), expected, "{error:?}");
+        }
     }
 
-    // Everything else is a read that went wrong, and the page says so with a
-    // way to run it again. A lock this build refuses is the case that must
-    // not be swallowed: it is the same shape as the two above and a real
-    // failure.
-    #[test]
-    fn a_read_that_failed_is_not_one_of_them() {
-        assert!(!no_managed_package(&CoreError::LockCorrupt {
-            path: "lock".into(),
-            message: "unparsable".to_owned(),
-        }));
-    }
-
-    // An unfetched source is neither of them and not a failure either: it
-    // reaches the page as its own shape, naming the source, and every other
-    // refusal keeps core's words.
+    // An unfetched source reaches the page as its own shape, naming the
+    // source, and every other refusal keeps core's words.
     #[test]
     fn an_unfetched_source_is_its_own_shape() {
-        assert!(!no_managed_package(&CoreError::SourcePending {
-            name: "tools".to_owned(),
-        }));
         assert!(matches!(
             timeline_refused(CoreError::SourcePending {
                 name: "tools".to_owned(),

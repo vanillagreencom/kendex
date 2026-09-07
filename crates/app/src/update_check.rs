@@ -132,37 +132,40 @@ mod tests {
     }
 
     /// The scopes are drawn together under one hint, so it answers when this
-    /// view last reached the network — the newest of them.
+    /// view last reached the network: the newest of them. A project just
+    /// registered, or one whose sources are all local paths, has never
+    /// fetched, and global is folded first, so an oldest-wins rule would let
+    /// that scope drag the header to "Not checked for updates yet" while
+    /// every other scope fetched minutes ago; nothing fetched anywhere says
+    /// so rather than naming an instant. One row per shape of scope list.
     #[test]
-    fn the_page_is_dated_by_the_newest_scope() {
-        assert_eq!(
-            merge([dated(Some(1_000)), dated(Some(2_000)), dated(Some(1_500))]).last_fetched,
-            Some(2_000)
-        );
-    }
-
-    /// A project just registered, or one whose sources are all local paths,
-    /// has never fetched. Global is folded first, so an oldest-wins rule
-    /// would let that scope drag the header to "Not checked for updates yet"
-    /// while every other scope fetched minutes ago.
-    #[test]
-    fn a_scope_that_never_fetched_does_not_drag_the_page_back() {
-        assert_eq!(
-            merge([dated(Some(2_000)), dated(None)]).last_fetched,
-            Some(2_000)
-        );
-        assert_eq!(
-            merge([dated(None), dated(Some(2_000))]).last_fetched,
-            Some(2_000),
-            "the fold cannot depend on which scope comes first"
-        );
-    }
-
-    /// Nothing anywhere has ever fetched: the page says so rather than
-    /// naming an instant.
-    #[test]
-    fn all_scopes_unfetched_stays_unfetched() {
-        assert_eq!(merge([dated(None), dated(None)]).last_fetched, None);
-        assert_eq!(merge([]).last_fetched, None);
+    fn the_page_is_dated_by_the_newest_scope_that_fetched() {
+        type Row<'a> = (&'a str, Vec<Option<u32>>, Option<u32>);
+        let rows: [Row; 5] = [
+            (
+                "the newest of three",
+                vec![Some(1_000), Some(2_000), Some(1_500)],
+                Some(2_000),
+            ),
+            (
+                "an unfetched scope after a fetched one",
+                vec![Some(2_000), None],
+                Some(2_000),
+            ),
+            (
+                "an unfetched scope before a fetched one",
+                vec![None, Some(2_000)],
+                Some(2_000),
+            ),
+            ("every scope unfetched", vec![None, None], None),
+            ("no scope at all", vec![], None),
+        ];
+        for (what, scopes, expected) in rows {
+            assert_eq!(
+                merge(scopes.into_iter().map(dated)).last_fetched,
+                expected,
+                "{what}"
+            );
+        }
     }
 }

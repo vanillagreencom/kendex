@@ -194,83 +194,101 @@ fn the_appimage_stops_pinning_the_window_to_xwayland() {
     );
 }
 
-/// GDK already tries Wayland before X11 when the variable is unset, so
-/// pushing the same order onto a deb, an rpm, or a source build buys
-/// nothing and costs a relaunch.
+/// Which `GDK_BACKEND` the plan pushes, one row per shape of session. GDK
+/// already tries Wayland before X11 when the variable is unset, so only the
+/// AppImage (whose bundled hook pins x11) is pushed off it; a choice the
+/// person made, by our variable or by GDK's own, is heard and never
+/// overridden, even on a deb that inherited both variables from an AppImage
+/// launched in the same terminal.
 #[test]
-fn no_other_packaging_is_pushed_onto_a_backend() {
-    assert_eq!(backend(wayland()), None);
-    assert!(
-        plan(Session {
-            webkit: Some("0"),
-            ..wayland()
-        })
-        .is_empty()
-    );
-}
-
-#[test]
-fn our_variable_chooses_a_backend_the_appimage_would_not_let_through() {
-    for chosen in ["wayland", "broadway"] {
-        assert_eq!(
-            backend(Session {
-                ours: Some(chosen),
+fn the_backend_the_plan_pushes_is_decided_by_who_set_what() {
+    let other_appimage = Some(OsStr::new("/home/me/other.AppImage"));
+    let other_appdir = Some(OsStr::new("/tmp/.mount_otherXyz"));
+    let deb = Some(Path::new("/usr/bin/kendex-app"));
+    let inherited = |appimage, appdir| Session {
+        in_appimage: in_appimage(appimage, appdir, deb),
+        gdk: Some("x11"),
+        ..wayland()
+    };
+    let rows = [
+        ("a deb on Wayland is not pushed", wayland(), None),
+        (
+            "our variable chooses wayland on the AppImage",
+            Session {
+                ours: Some("wayland"),
                 ..appimage()
-            }),
-            Some(chosen.to_owned()),
-            "{chosen}"
-        );
+            },
+            Some("wayland"),
+        ),
+        (
+            "our variable chooses broadway on the AppImage",
+            Session {
+                ours: Some("broadway"),
+                ..appimage()
+            },
+            Some("broadway"),
+        ),
+        (
+            "our variable naming what the bundle already set changes nothing",
+            Session {
+                ours: Some("x11"),
+                ..appimage()
+            },
+            None,
+        ),
+        (
+            "GDK's own variable naming what it already has changes nothing",
+            Session {
+                gdk: Some("broadway"),
+                ..wayland()
+            },
+            None,
+        ),
+        (
+            "our variable is heard on a session that is not Wayland",
+            Session {
+                session_type: Some("x11"),
+                ours: Some("wayland"),
+                ..Session::default()
+            },
+            Some("wayland"),
+        ),
+        (
+            "a backend the person chose is left alone",
+            Session {
+                gdk: Some("x11"),
+                ..wayland()
+            },
+            None,
+        ),
+        (
+            "a blank of ours beside the person's choice is no choice",
+            Session {
+                ours: Some(" "),
+                gdk: Some("x11"),
+                ..wayland()
+            },
+            None,
+        ),
+        (
+            "a deb that inherited APPIMAGE keeps the person's backend",
+            inherited(other_appimage, None),
+            None,
+        ),
+        (
+            "a deb that inherited APPDIR keeps the person's backend",
+            inherited(None, other_appdir),
+            None,
+        ),
+        (
+            "a deb that inherited both keeps the person's backend",
+            inherited(other_appimage, other_appdir),
+            None,
+        ),
+    ];
+    for (what, session, expected) in rows {
+        assert_eq!(backend(session), expected.map(str::to_owned), "{what}");
     }
-}
-
-/// The one value that needs no push: it is already what the bundle set.
-#[test]
-fn choosing_the_backend_the_environment_already_has_changes_nothing() {
-    assert_eq!(
-        backend(Session {
-            ours: Some("x11"),
-            ..appimage()
-        }),
-        None
-    );
-    assert_eq!(
-        backend(Session {
-            gdk: Some("broadway"),
-            ..wayland()
-        }),
-        None
-    );
-}
-
-#[test]
-fn our_variable_is_heard_on_a_session_that_is_not_wayland() {
-    assert_eq!(
-        backend(Session {
-            session_type: Some("x11"),
-            ours: Some("wayland"),
-            ..Session::default()
-        }),
-        Some("wayland".to_owned())
-    );
-}
-
-#[test]
-fn a_backend_the_person_chose_is_left_alone() {
-    assert_eq!(
-        backend(Session {
-            gdk: Some("x11"),
-            ..wayland()
-        }),
-        None
-    );
-    assert_eq!(
-        backend(Session {
-            ours: Some(" "),
-            gdk: Some("x11"),
-            ..wayland()
-        }),
-        None
-    );
 }
 
 /// What stops a relaunch looping: applying the plan leaves nothing to do.
@@ -338,28 +356,6 @@ fn only_an_ignored_bundle_pin_is_explained() {
         );
     }
     assert!(!explained(wayland()));
-}
-
-/// The whole point of the narrower signal: a deb launched from a terminal
-/// that came out of an AppImage inherits both variables, and must still
-/// treat GDK_BACKEND as the person's word.
-#[test]
-fn a_deb_that_inherited_the_variables_keeps_the_backend_the_person_set() {
-    for (appimage, appdir) in [
-        (Some(OsStr::new("/home/me/other.AppImage")), None),
-        (None, Some(OsStr::new("/tmp/.mount_otherXyz"))),
-        (
-            Some(OsStr::new("/home/me/other.AppImage")),
-            Some(OsStr::new("/tmp/.mount_otherXyz")),
-        ),
-    ] {
-        let session = Session {
-            in_appimage: in_appimage(appimage, appdir, Some(Path::new("/usr/bin/kendex-app"))),
-            gdk: Some("x11"),
-            ..wayland()
-        };
-        assert_eq!(backend(session), None, "{appimage:?} {appdir:?}");
-    }
 }
 
 /// A stand-in for a login shell: a script that ignores `-l -c` and does

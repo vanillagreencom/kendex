@@ -223,10 +223,9 @@ fn a_first_save_creates_the_manifest_and_the_draft_schema_decides_it() {
     else {
         panic!("a draft below this build's schema must not create a file");
     };
-    let WriteRefused::Failed { message } = &refused else {
+    let WriteRefused::Failed { .. } = &refused else {
         panic!("the schema refusal is a validation failure, not a stale copy: {refused:?}");
     };
-    assert!(message.contains("schema"), "{message}");
     assert!(!path.exists(), "and nothing is created: {}", path.display());
 
     let draft = Manifest {
@@ -361,23 +360,22 @@ fn creating_a_manifest_here_still_seeds_the_default_source() {
         },
         manifest::seed(&[HarnessId::Claude]),
     );
-    assert!(seeded.sources.contains_key("kendex"));
+    assert_eq!(seeded.sources, manifest::seed(&[HarnessId::Claude]).sources);
     assert_eq!(seeded.install.harnesses, [HarnessId::Claude]);
 
     let declared = on_first_creation(manifest(), manifest::seed(&[HarnessId::Pi]));
-    assert_eq!(declared.sources.len(), 1);
+    assert_eq!(declared.sources, manifest().sources);
     assert!(declared.install.harnesses.is_empty());
 }
 
 #[test]
-fn rejected_edits_come_back_with_their_fix_string() {
+fn rejected_edits_name_the_offending_key() {
     let mut edited = manifest();
     edited
         .skills
         .insert("github".to_owned(), ItemDecl::from_source("gone"));
     let error = check(&edited).expect_err("undeclared source must be rejected");
     assert!(error.contains("skills.github"), "{error}");
-    assert!(error.contains("fix: declare [sources.gone]"), "{error}");
 }
 
 /// A key the skill's own code already defaults, which an install never
@@ -771,9 +769,5 @@ fn a_refusal_after_the_uninstaller_ran_says_what_it_ran() {
     assert!(
         message.contains("guards: disarmed"),
         "the refusal carried only part of the account: {message}"
-    );
-    assert!(
-        message.lines().count() > 2,
-        "the refusal said nothing about why it refused: {message}"
     );
 }

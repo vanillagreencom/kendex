@@ -187,46 +187,87 @@ mod tests {
         path
     }
 
+    /// Which editor a `PATH` resolves to: the first candidate of the
+    /// built-in list that is executable there, or the override when one is
+    /// named, whether by name on that `PATH` or by an absolute path. One row
+    /// per shape of directory and override; `Named` is what the row expects
+    /// back, by the name it was written under.
     #[cfg(unix)]
     #[test]
-    fn resolves_the_first_candidate_present_on_path() {
-        let tmp = tempfile::tempdir().unwrap();
-        write_non_executable(tmp.path(), "codium");
-        let code = write_executable(tmp.path(), "code");
-
-        let found = resolve_editor_at(tmp.path().to_str().unwrap(), None).unwrap();
-        assert_eq!(found, code);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn skips_non_executable_matches() {
-        let tmp = tempfile::tempdir().unwrap();
-        write_non_executable(tmp.path(), "codium");
-        write_non_executable(tmp.path(), "code");
-
-        assert_eq!(resolve_editor_at(tmp.path().to_str().unwrap(), None), None);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn kendex_editor_override_wins_over_the_built_in_list() {
-        let tmp = tempfile::tempdir().unwrap();
-        write_executable(tmp.path(), "code");
-        let hx = write_executable(tmp.path(), "hx");
-
-        let found = resolve_editor_at(tmp.path().to_str().unwrap(), Some("hx")).unwrap();
-        assert_eq!(found, hx);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn kendex_editor_override_accepts_an_absolute_path() {
-        let tmp = tempfile::tempdir().unwrap();
-        let hx = write_executable(tmp.path(), "hx");
-
-        let found = resolve_editor_at("", Some(hx.to_str().unwrap())).unwrap();
-        assert_eq!(found, hx);
+    fn the_editor_is_the_first_executable_candidate_or_the_override() {
+        enum Override {
+            None,
+            Name(&'static str),
+            AbsolutePathOf(&'static str),
+        }
+        type Row<'a> = (
+            &'a str,
+            &'a [&'a str],
+            &'a [&'a str],
+            Override,
+            Option<&'a str>,
+        );
+        let rows: [Row; 5] = [
+            (
+                "the first candidate present and executable wins",
+                &["code"],
+                &["codium"],
+                Override::None,
+                Some("code"),
+            ),
+            (
+                "a candidate that is not executable is skipped",
+                &[],
+                &["codium", "code"],
+                Override::None,
+                None,
+            ),
+            (
+                "an override by name wins over the built-in list",
+                &["code", "hx"],
+                &[],
+                Override::Name("hx"),
+                Some("hx"),
+            ),
+            (
+                "an override by absolute path needs no PATH",
+                &["hx"],
+                &[],
+                Override::AbsolutePathOf("hx"),
+                Some("hx"),
+            ),
+            (
+                "no candidate on the PATH is none",
+                &[],
+                &[],
+                Override::None,
+                None,
+            ),
+        ];
+        for (what, executables, non_executables, override_, expected) in rows {
+            let tmp = tempfile::tempdir().unwrap();
+            let mut written = std::collections::BTreeMap::new();
+            for name in executables {
+                written.insert(*name, write_executable(tmp.path(), name));
+            }
+            for name in non_executables {
+                write_non_executable(tmp.path(), name);
+            }
+            let on_path = tmp.path().to_str().unwrap().to_owned();
+            let (path_var, override_) = match override_ {
+                Override::None => (on_path, None),
+                Override::Name(name) => (on_path, Some(name.to_owned())),
+                Override::AbsolutePathOf(name) => (
+                    String::new(),
+                    Some(written[name].to_str().unwrap().to_owned()),
+                ),
+            };
+            assert_eq!(
+                resolve_editor_at(&path_var, override_.as_deref()),
+                expected.map(|name| written[name].clone()),
+                "{what}"
+            );
+        }
     }
 
     #[test]
@@ -236,12 +277,5 @@ mod tests {
             ["code", "code.com", "code.exe", "code.cmd"]
         );
         assert_eq!(spellings("code", None), ["code"]);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn none_found_when_no_candidate_is_on_path() {
-        let tmp = tempfile::tempdir().unwrap();
-        assert_eq!(resolve_editor_at(tmp.path().to_str().unwrap(), None), None);
     }
 }

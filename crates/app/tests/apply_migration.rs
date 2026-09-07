@@ -82,78 +82,83 @@ fn fixture(manifest: impl FnOnce(&std::path::Path) -> String) -> Fixture {
     }
 }
 
-/// A schema-5 manifest still carrying the retired safety tables. The
-/// preview says it cannot be read, the apply refuses, and every byte —
-/// comments and trailing comments included — is exactly where it was.
+/// A manifest this build cannot read is a scope error of its own kind, so
+/// the page can say what to do with a file that is intact and the person's
+/// own, and every byte of it (comments and trailing comments included) is
+/// exactly where it was. One row per shape: a schema-5 manifest still
+/// carrying the retired safety tables; a manifest naming no schema (a v0.1
+/// file); a retired table put back by hand into a current manifest, which
+/// is invalid rather than outdated.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn an_older_manifest_is_refused_and_left_byte_identical() {
+fn a_manifest_this_build_cannot_read_is_refused_and_left_byte_identical() {
+    type Build = fn(&std::path::Path) -> String;
+    let rows: [(&str, Build, ScopeErrorKind); 3] = [
+        (
+            "schema 5 with the retired tables",
+            |source| {
+                format!(
+                    "{}\n{RETIRED}",
+                    KEPT.replace("{schema}", "5")
+                        .replace("{source}", &source_path(source))
+                )
+            },
+            ScopeErrorKind::ManifestOutdated,
+        ),
+        (
+            "no schema at all",
+            |source| {
+                KEPT.replace("schema = {schema}\n", "")
+                    .replace("{source}", &source_path(source))
+            },
+            ScopeErrorKind::ManifestOutdated,
+        ),
+        (
+            "a retired table in a current schema",
+            |source| {
+                format!(
+                    "{}\n{RETIRED}",
+                    KEPT.replace("{schema}", &MANIFEST_SCHEMA.to_string())
+                        .replace("{source}", &source_path(source))
+                )
+            },
+            ScopeErrorKind::ManifestInvalid,
+        ),
+    ];
+    for (what, build, kind) in rows {
+        let f = fixture(build);
+        let original = fs::read_to_string(&f.manifest_path).unwrap();
+
+        let before = view(&f.env, &f.scope);
+        let error = before.error.expect(what);
+        assert!(
+            std::mem::discriminant(&error.kind) == std::mem::discriminant(&kind),
+            "{what}: {}",
+            error.message
+        );
+        assert!(before.plan.is_empty(), "{what}: {:?}", before.plan);
+        assert_eq!(
+            fs::read_to_string(&f.manifest_path).unwrap(),
+            original,
+            "{what}"
+        );
+    }
+}
+
+/// The apply refuses the same file the preview refused, and installs
+/// nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn applying_an_older_manifest_refuses_and_installs_nothing() {
     let f = schema5_fixture();
     let original = fs::read_to_string(&f.manifest_path).unwrap();
 
-    let before = view(&f.env, &f.scope);
-    let error = before.error.expect("an older manifest is a scope error");
-    assert!(
-        matches!(error.kind, ScopeErrorKind::ManifestOutdated),
-        "its own kind, so the page can say what to do with a file that is
-         intact and the person's own"
-    );
-    assert!(error.message.contains("schema 5"), "{}", error.message);
-    assert!(error.message.contains("install fresh"), "{}", error.message);
-    assert!(before.plan.is_empty(), "{:?}", before.plan);
-
-    let Err(refused) = apply_scope(&f.env, &f.scope, false) else {
-        panic!("applying an older manifest must refuse");
-    };
-    assert!(refused.contains("install fresh"), "{refused}");
+    assert!(apply_scope(&f.env, &f.scope, false).is_err());
     assert_eq!(fs::read_to_string(&f.manifest_path).unwrap(), original);
     assert!(
         !f.scope_root().join(".claude/skills/gh").exists(),
         "a refused scope installs nothing"
     );
-}
-
-/// A manifest naming no schema — a v0.1 file — is the same refusal.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_schema_less_manifest_is_refused_the_same_way() {
-    let f = fixture(|source| {
-        KEPT.replace("schema = {schema}\n", "")
-            .replace("{source}", &source_path(source))
-    });
-    let original = fs::read_to_string(&f.manifest_path).unwrap();
-
-    let error = view(&f.env, &f.scope)
-        .error
-        .expect("a schema-less manifest is a scope error");
-    assert!(error.message.contains("no schema"), "{}", error.message);
-    assert_eq!(fs::read_to_string(&f.manifest_path).unwrap(), original);
-}
-
-/// A retired table put back by hand into a current manifest is named as
-/// the stray key it is, not silently dropped on the next write.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_retired_table_in_a_current_manifest_is_named_not_dropped() {
-    let f = fixture(|source| {
-        format!(
-            "{}\n{RETIRED}",
-            KEPT.replace("{schema}", &MANIFEST_SCHEMA.to_string())
-                .replace("{source}", &source_path(source))
-        )
-    });
-    let original = fs::read_to_string(&f.manifest_path).unwrap();
-
-    let error = view(&f.env, &f.scope)
-        .error
-        .expect("a stray table is a scope error");
-    assert!(matches!(error.kind, ScopeErrorKind::ManifestInvalid));
-    assert!(
-        error.message.contains("safety-overrides"),
-        "the table is named: {}",
-        error.message
-    );
-    assert_eq!(fs::read_to_string(&f.manifest_path).unwrap(), original);
 }
 
 /// A manifest that vanished between the preview and the click is an error

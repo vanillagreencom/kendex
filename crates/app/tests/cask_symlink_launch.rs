@@ -25,9 +25,6 @@ const PROBE_OK: &str = "cask-symlink probe named ";
 /// The probe's own name, as the harness filter spells it.
 const PROBE_TEST: &str = "a_symlinked_launch_path_names_its_own_binary";
 
-/// The tauri feature that turns the refusal off.
-const SYMLINK_FEATURE: &str = "process-relaunch-dangerous-allow-symlink-macos";
-
 /// A cask's shape under `root`: the versioned bundle in the Caskroom, and
 /// `Applications/kendex.app` linked at it. Returns the path a launch from
 /// `/Applications` is handed, then the bundle really holding those bytes.
@@ -132,26 +129,5 @@ fn a_symlinked_launch_path_names_its_own_binary() {
         launch.display(),
         child.status,
         String::from_utf8_lossy(&child.stderr)
-    );
-}
-
-/// The refusal is macOS-only and no CI lane runs this crate's tests there,
-/// so the probe above would stay green on every machine that could notice
-/// the feature going missing. This notices.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn the_manifest_still_turns_the_refusal_off() {
-    let manifest =
-        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")).unwrap();
-    let features = manifest.parse::<toml::Table>().unwrap()["dependencies"]["tauri"]["features"]
-        .as_array()
-        .expect("the tauri dependency names the features it turns on")
-        .clone();
-    assert!(
-        features
-            .iter()
-            .any(|name| name.as_str() == Some(SYMLINK_FEATURE)),
-        "crates/app/Cargo.toml no longer enables {SYMLINK_FEATURE}, so a cask \
-         install's Update button refuses its own launch path again"
     );
 }

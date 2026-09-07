@@ -247,37 +247,40 @@ pub fn write_nothing_leaving(env: &Env, report: &EngineReport) -> Result<(), Str
 mod tests {
     use super::after_writing;
 
-    /// The shape every post-write read shares: the account rides on the
-    /// failure, and the failure is not swallowed to carry it.
+    /// The shape every post-write read shares: the account of what the write
+    /// undid rides on a failed read, the failure is not swallowed to carry
+    /// it, a write that undid nothing adds nothing, and a read that worked
+    /// is handed straight back. One row per pair.
     #[test]
-    fn a_read_that_fails_after_the_write_carries_the_account_and_the_error() {
+    fn the_account_of_the_write_rides_on_a_failed_read_only() {
         let undone = ["guards: running scripts/arm --uninstall".to_owned()];
-        let refused: Result<(), String> = Err("the source list could not be read".to_owned());
-
-        let Err(message) = after_writing(&undone, refused) else {
-            panic!("a failed read must stay a failure");
-        };
-
-        assert_eq!(
-            message,
-            "guards: running scripts/arm --uninstall\nthe source list could not be read"
+        let refused = || Err::<u8, String>("the source list could not be read".to_owned());
+        type Row<'a> = (
+            &'a str,
+            &'a [String],
+            Result<u8, String>,
+            Result<u8, String>,
         );
-    }
-
-    /// Nothing left the scope, so there is nothing to add to the failure.
-    #[test]
-    fn a_read_that_fails_after_a_write_that_removed_nothing_says_only_why() {
-        let refused: Result<(), String> = Err("the source list could not be read".to_owned());
-        let Err(message) = after_writing(&[], refused) else {
-            panic!("a failed read must stay a failure");
-        };
-        assert_eq!(message, "the source list could not be read");
-    }
-
-    /// A read that worked is handed straight back.
-    #[test]
-    fn a_read_that_worked_is_untouched() {
-        let undone = ["guards: running scripts/arm --uninstall".to_owned()];
-        assert_eq!(after_writing(&undone, Ok::<u8, String>(7)), Ok(7));
+        let rows: [Row; 3] = [
+            (
+                "a failed read after a write that undid something",
+                &undone,
+                refused(),
+                Err(
+                    "guards: running scripts/arm --uninstall\nthe source list could not be read"
+                        .to_owned(),
+                ),
+            ),
+            (
+                "a failed read after a write that undid nothing",
+                &[],
+                refused(),
+                Err("the source list could not be read".to_owned()),
+            ),
+            ("a read that worked", &undone, Ok(7), Ok(7)),
+        ];
+        for (what, undone, read, expected) in rows {
+            assert_eq!(after_writing(undone, read), expected, "{what}");
+        }
     }
 }

@@ -231,32 +231,41 @@ mod tests {
         }
     }
 
-    /// The saved size has to be the size the window is given, and it has to
-    /// arrive before the window does: the whole reason the window is built
-    /// hidden is that the person never sees it at the wrong size.
+    /// The size the window is given at the reveal is the saved one, as a
+    /// scale factor, and it arrives before the window does: the whole reason
+    /// the window is built hidden is that the person never sees it at the
+    /// wrong size. Full size is what an unreadable settings file falls back
+    /// to, so a reveal that always applied it would look right in exactly
+    /// the case nothing was saved; and the scaling clamps whatever it is
+    /// handed, so the record holds the size the window was put at, not the
+    /// raw number, at both ends of the range. One row per saved size.
     #[test]
-    fn the_saved_size_reaches_the_window_before_it_is_shown() {
-        let window = Recorder::default();
-
-        let zoom = reveal_at(&window, 150).unwrap();
-
-        assert_eq!(zoom.read(), state(150, false));
-        assert_eq!(
-            window.told.into_inner(),
-            [Told::ScaleTo(1.5), Told::Unhide],
-            "the saved percent, as a scale factor, then the reveal"
-        );
-    }
-
-    /// Full size is what an unreadable settings file falls back to, so a
-    /// reveal that always applied it would look right in exactly the case
-    /// nothing was saved.
-    #[test]
-    fn a_size_away_from_full_is_the_one_applied() {
-        for (percent, factor) in [(50u16, 0.5), (100, 1.0), (200, 2.0)] {
+    fn the_saved_size_reaches_the_window_before_it_is_shown_and_is_what_is_recorded() {
+        let rows = [
+            (150u16, 150u16, 1.5),
+            (50, 50, 0.5),
+            (100, 100, 1.0),
+            (200, 200, 2.0),
+            (
+                5000,
+                kendex_core::settings::ZOOM.max,
+                kendex_core::settings::zoom_scale(kendex_core::settings::ZOOM.max),
+            ),
+            (
+                1,
+                kendex_core::settings::ZOOM.min,
+                kendex_core::settings::zoom_scale(kendex_core::settings::ZOOM.min),
+            ),
+        ];
+        for (asked, recorded, factor) in rows {
             let window = Recorder::default();
-            reveal_at(&window, percent).unwrap();
-            assert_eq!(window.told.into_inner()[0], Told::ScaleTo(factor));
+            let zoom = reveal_at(&window, asked).unwrap();
+            assert_eq!(zoom.read(), state(recorded, false), "asked {asked}");
+            assert_eq!(
+                window.told.into_inner(),
+                [Told::ScaleTo(factor), Told::Unhide],
+                "asked {asked}: the recorded percent, as a scale factor, then the reveal"
+            );
         }
     }
 
@@ -291,27 +300,20 @@ mod tests {
         assert_eq!(zoom.read(), state(150, false));
     }
 
-    /// The scaling clamps whatever it is handed, so a record taken from the
-    /// raw number would claim a size the window was never put at — and the
-    /// page that reloads believes the record. Both ends of the range, and
-    /// both ways in: the opening and a resize.
+    /// The same clamp on the way in by a resize: the page that reloads
+    /// believes the record, so it holds the size the window was given.
     #[test]
-    fn a_size_outside_the_range_is_recorded_as_the_one_the_window_was_given() {
+    fn a_resize_outside_the_range_is_recorded_as_the_one_the_window_was_given() {
         for (asked, given) in [
             (5000u16, kendex_core::settings::ZOOM.max),
             (1, kendex_core::settings::ZOOM.min),
         ] {
             let window = Recorder::default();
-            let zoom = reveal_at(&window, asked).unwrap();
-            assert_eq!(zoom.read(), state(given, false), "the opening");
-            assert_eq!(
-                window.told.borrow()[0],
-                Told::ScaleTo(kendex_core::settings::zoom_scale(given)),
-                "the opening put the window at a different size than it recorded"
-            );
+            let zoom = reveal_at(&window, 100).unwrap();
 
             resize(&window, &zoom, asked).unwrap();
-            assert_eq!(zoom.read(), state(given, false), "a resize");
+
+            assert_eq!(zoom.read(), state(given, false), "asked {asked}");
             assert_eq!(
                 window.told.borrow().last(),
                 Some(&Told::ScaleTo(kendex_core::settings::zoom_scale(given))),

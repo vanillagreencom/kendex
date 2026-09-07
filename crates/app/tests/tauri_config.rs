@@ -12,29 +12,44 @@ fn config() -> serde_json::Value {
         .expect("tauri.conf.json parses")
 }
 
-/// The saved zoom is applied in `setup`, which runs after the window is
-/// built. A window that is visible by then shows one frame at full size and
-/// re-lays out the whole app in front of the person.
+/// The settings the window and the release path lean on, one row per JSON
+/// pointer, each held to the value the code expects (a constant the app or
+/// core owns wherever there is one).
+///
+/// - `visible: false`: the saved zoom is applied in `setup`, after the window
+///   is built; a window visible by then shows one frame at full size.
+/// - `label: "main"`: the label the reveal looks up; left to tauri's default,
+///   a hidden window would never be shown if that default changed.
+/// - the deep-link schemes: the plugin registers only what this file
+///   declares and drops a link in any other scheme before the app sees it.
+/// - `version`: the publish job reads the version out of the built CLI and
+///   refuses a tag naming another; left to drift, the updater reads the app
+///   bundle as current or as older than a release it cannot find.
+/// - the updater endpoints: exactly one, the release channel, so an install
+///   that stopped overriding it falls back to full releases; a second
+///   endpoint the install does not choose is one nothing holds to a channel.
 #[test]
-fn the_window_opens_hidden_so_the_saved_zoom_lands_first() {
-    let window = &config()["app"]["windows"][0];
-    assert_eq!(window["visible"].as_bool(), Some(false));
-    // The label the reveal looks up. Left to tauri's default, a hidden
-    // window would simply never be shown if that default ever changed.
-    assert_eq!(window["label"].as_str(), Some("main"));
-}
-
-/// The scheme the website's "Open in app" links carry. The deep-link
-/// plugin registers only the schemes this file declares, and a link in a
-/// scheme it does not know is dropped before the app sees it, so the
-/// parser's own name for the scheme and the declaration are held together.
-#[test]
-fn the_deep_link_scheme_is_declared_for_the_desktop() {
-    let schemes = &config()["plugins"]["deep-link"]["desktop"]["schemes"];
-    assert_eq!(
-        schemes.as_array().map(Vec::as_slice),
-        Some(&[serde_json::Value::from(kendex_app::deep_link::SCHEME)][..])
-    );
+fn the_settings_the_window_and_the_release_path_lean_on() {
+    let config = config();
+    let rows = [
+        ("/app/windows/0/visible", serde_json::Value::from(false)),
+        ("/app/windows/0/label", serde_json::Value::from("main")),
+        (
+            "/plugins/deep-link/desktop/schemes",
+            serde_json::Value::from(vec![kendex_app::deep_link::SCHEME]),
+        ),
+        (
+            "/version",
+            serde_json::Value::from(env!("CARGO_PKG_VERSION")),
+        ),
+        (
+            "/plugins/updater/endpoints",
+            serde_json::Value::from(vec![kendex_core::update_channel::RELEASE_MANIFEST_URL]),
+        ),
+    ];
+    for (pointer, expected) in rows {
+        assert_eq!(config.pointer(pointer), Some(&expected), "{pointer}");
+    }
 }
 
 /// The app's updater reads its key from this file at build time, so the
@@ -77,39 +92,5 @@ fn the_app_and_the_cli_pin_one_updater_key() {
     assert_eq!(
         key_id, "C922C89178B7C6CC",
         "the pin carries a key id the release signing key does not"
-    );
-}
-
-/// The app bundle and the CLI carry their versions in different files, and
-/// the release is held to one of them: the publish job reads the version
-/// back out of the built CLI and refuses a tag that names another. Left to
-/// drift, a tag matching the CLI would ship an app bundle of some other
-/// version, which the updater then reads as already current or as older
-/// than a release it cannot find.
-#[test]
-fn the_app_and_the_cli_ship_one_version() {
-    assert_eq!(
-        config()["version"].as_str(),
-        Some(env!("CARGO_PKG_VERSION"))
-    );
-}
-
-/// The plugin needs a configured endpoint, and the install hands it core's
-/// choice on top. The configured one is the release channel, so an install
-/// that ever stopped overriding it falls back to full releases rather than
-/// to whatever a stale edit left here — and a build that is not a release
-/// candidate finds the two already equal.
-#[test]
-fn the_configured_endpoint_is_the_release_channel() {
-    assert_eq!(
-        config()["plugins"]["updater"]["endpoints"][0].as_str(),
-        Some(kendex_core::update_channel::RELEASE_MANIFEST_URL)
-    );
-    assert_eq!(
-        config()["plugins"]["updater"]["endpoints"]
-            .as_array()
-            .map(Vec::len),
-        Some(1),
-        "a second endpoint the install does not choose is one nothing holds to a channel"
     );
 }
