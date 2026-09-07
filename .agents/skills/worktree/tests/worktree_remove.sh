@@ -250,11 +250,13 @@ remove_state() {
   printf 'worktree=%s branch=%s dirs=%s links=%s' "$worktree" "$branch" "${dirs:--}" "$(link_targets)"
 }
 
+REAL_GIT_BIN="$(command -v git)"
+
 run_remove() {
   local -a argv
   local rc=0
   read -r -a argv <<<"$1"
-  (cd "$MAIN" && PATH="$ROW_PATH" REAL_GIT_BIN="$(command -v git)" \
+  (cd "$MAIN" && PATH="$ROW_PATH" REAL_GIT_BIN="$REAL_GIT_BIN" \
     "$WORKTREE_SCRIPT" remove "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
   printf 'rc=%s out=%s err=%s %s' "$rc" \
     "$(sed -e "s|$WT|<wt>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" -e '/^Usage: /q' "$ROOT/out" | paste -s -d ';' -)" \
