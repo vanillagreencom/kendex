@@ -141,6 +141,18 @@ impl DriftRow {
     }
 }
 
+/// A fork whose installed bytes are its own — the person edited the copy
+/// the fork made theirs, and that edit is the fork's content now. Not
+/// drift and never a conflict: apply keeps the bytes and records them, so
+/// nothing has to be decided. The Library reads it as the "edited" half of
+/// a fork's state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForkEdit {
+    pub kind: ItemKind,
+    pub name: String,
+    pub harness: HarnessId,
+}
+
 /// A per-item render or parse warning, with the fix when there is one —
 /// shown in plan previews, the CLI, and the Audit page.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -210,6 +222,9 @@ pub struct EngineReport {
     /// ones included. Drift rows carry only what is not in sync; `verify`
     /// reports each shim as a row of its own beside the lock rows.
     pub instruction_shims: Vec<super::ShimStanding>,
+    /// The forks this pass found edited on disk. They are not in `drift`:
+    /// there is nothing to fix and nothing to decide.
+    pub fork_edits: Vec<ForkEdit>,
 }
 
 /// One name a removal was asked for, with the kind it must be when the

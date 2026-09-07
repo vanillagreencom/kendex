@@ -19,12 +19,15 @@ use super::{
 /// One pass over the desired items, with the two holds that outrank
 /// planning: a revision conflict writes nothing, and an edited install
 /// writes nothing unless the caller asked for edits to be discarded.
+/// Returns the fork edits this pass took into their own local sources,
+/// which are the item pass's alone to find and are not drift.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn plan_items(
     env: &Env,
     state: &desired::DesiredState,
     scope: &Scope,
     lock: &Lock,
+    manifest: &crate::manifest::Manifest,
     options: &PlanOptions,
     owned_paths: &BTreeSet<PathBuf>,
     drift: &mut Vec<DriftRow>,
@@ -32,10 +35,14 @@ pub(super) fn plan_items(
     config_edits: &mut config_edits::ConfigEditPlan,
     new_lock: &mut Lock,
     written: &mut written::Written,
-) -> Result<()> {
+) -> Result<Vec<super::ForkEdit>> {
+    let mut absorbed = std::collections::BTreeMap::new();
+    let mut fork_edits = Vec::new();
     for item in &state.items {
         let mut sink = item_plan::PlanSink {
             drift,
+            fork_edits: &mut fork_edits,
+            absorbed: &mut absorbed,
             ops,
             config_edits,
             new_lock,
@@ -49,7 +56,7 @@ pub(super) fn plan_items(
             options.overwrite_edited,
             &options.overwrite_edited_names,
         );
-        if !discard && holds::hold_local_edit(env, item, scope, lock, &mut sink) {
+        if !discard && holds::hold_local_edit(env, item, scope, lock, manifest, &mut sink) {
             continue;
         }
         let replace = named(
@@ -59,7 +66,7 @@ pub(super) fn plan_items(
         );
         plan_item(env, item, scope, lock, owned_paths, replace, &mut sink)?;
     }
-    Ok(())
+    Ok(fork_edits)
 }
 
 /// Whether an override reaches this item: the scope-wide form, or the

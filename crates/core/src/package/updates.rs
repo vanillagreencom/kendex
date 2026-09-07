@@ -101,6 +101,11 @@ pub struct UpdateRow {
     pub required_by: Vec<String>,
     /// This package is a local fork of a catalog item.
     pub forked: bool,
+    /// A fork whose installed files the person has since edited by hand.
+    /// Nothing is blocked and there is nothing to decide — the edit is the
+    /// fork's content, which apply keeps and records. It is a state the
+    /// package page says out loud, beside `forked`.
+    pub fork_edited: bool,
     /// Installations of this package disagree on their source commit.
     pub mixed: bool,
     /// The source's tracked tip does not carry this package at all.
@@ -197,15 +202,18 @@ pub fn updates(env: &Env, scope: &Scope) -> Result<UpdatesReport> {
         });
     };
     let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
+    let facts = edit_facts(env, scope, &manifest, &lock);
     let eval = Eval {
         env,
         scope,
         ignored: settings::load(env)?.ignored_updates,
         scope_key: scope_key(scope),
-        // What the planner will actually hold as an edit — the
-        // authoritative signal, so the "edited by you" flag can never
-        // disagree with what clicking Update does. One plan for the scope.
-        edited: edited_items(env, scope, &manifest, &lock),
+        // What the planner will actually hold as an edit, and the forks
+        // whose edits it absorbs — the authoritative signal, so the
+        // "edited by you" flag can never disagree with what clicking
+        // Update does. One plan for the scope.
+        edited: facts.edited,
+        fork_edited: facts.fork_edited,
         manifest: &manifest,
         lock: &lock,
     };
@@ -225,17 +233,26 @@ pub fn updates(env: &Env, scope: &Scope) -> Result<UpdatesReport> {
     Ok(report)
 }
 
-/// The items the planner would hold as hand-edited — read straight from a
-/// plan of the scope, so this matches exactly what an update attempt does.
-/// A plan that cannot be produced (a broken manifest) blocks nothing here;
-/// the audit surfaces that separately.
-fn edited_items(
+/// What one plan of the scope says about hand edits: the installations it
+/// would hold as edited, and the forks whose edits it absorbs instead.
+struct EditFacts {
+    edited: std::collections::BTreeMap<(ItemKind, String), Vec<HarnessId>>,
+    fork_edited: std::collections::BTreeSet<(ItemKind, String)>,
+}
+
+/// Both readings of one plan of the scope, so each matches exactly what an
+/// update attempt does: what the planner would hold as hand-edited, and
+/// the forks whose edits it absorbs instead — which hold nothing and are
+/// only a state to say. A plan that cannot be produced (a broken manifest)
+/// blocks nothing here; the audit surfaces that separately.
+fn edit_facts(
     env: &Env,
     scope: &Scope,
     manifest: &crate::manifest::Manifest,
     lock: &crate::lock::Lock,
-) -> std::collections::BTreeMap<(ItemKind, String), Vec<HarnessId>> {
+) -> EditFacts {
     let mut edited = std::collections::BTreeMap::<(ItemKind, String), Vec<HarnessId>>::new();
+    let mut fork_edited = std::collections::BTreeSet::new();
     let rows: Vec<(ItemKind, String, HarnessId)> = match crate::engine::plan_scope(
         env,
         scope,
@@ -243,22 +260,35 @@ fn edited_items(
         lock,
         &crate::engine::PlanOptions::default(),
     ) {
-        Ok(report) => report
-            .drift
-            .into_iter()
-            .filter(|row| {
-                matches!(
-                    row.cause,
-                    Some(crate::engine::DriftCause::LocalEdit | crate::engine::DriftCause::Both)
-                )
-            })
-            .map(|row| (row.kind, row.name, row.harness))
-            .collect(),
+        Ok(report) => {
+            fork_edited.extend(
+                report
+                    .fork_edits
+                    .iter()
+                    .map(|edit| (edit.kind, edit.name.clone())),
+            );
+            report
+                .drift
+                .into_iter()
+                .filter(|row| {
+                    matches!(
+                        row.cause,
+                        Some(
+                            crate::engine::DriftCause::LocalEdit | crate::engine::DriftCause::Both
+                        )
+                    )
+                })
+                .map(|row| (row.kind, row.name, row.harness))
+                .collect()
+        }
         // A plan the scope cannot produce (a broken manifest, an
         // unreadable source) must not fail open — reporting nothing edited
         // is exactly when edit detection could not run. Fall back to the
         // conservative per-entry hold, which holds whatever a record
-        // cannot prove clean.
+        // cannot prove clean. `fork_edited` has no fallback and stays
+        // empty: it withholds nothing and offers nothing, so a scope that
+        // cannot be planned costs a word on the page until the next good
+        // read, never a decision made on a guess.
         Err(_) => lock
             .entries
             .values()
@@ -278,7 +308,10 @@ fn edited_items(
             harnesses.push(harness);
         }
     }
-    edited
+    EditFacts {
+        edited,
+        fork_edited,
+    }
 }
 
 /// Whether two tools read one item from the same files on disk.
@@ -307,6 +340,7 @@ fn unversioned_row(
     name: &str,
     decl: &crate::manifest::ItemDecl,
     forked: bool,
+    fork_edited: bool,
 ) -> UpdateRow {
     UpdateRow {
         scope: scope.clone(),
@@ -329,6 +363,7 @@ fn unversioned_row(
         derived: false,
         required_by: Vec::new(),
         forked,
+        fork_edited,
         mixed: false,
         removed_upstream: false,
         no_per_package_update: no_per_package_update(kind),

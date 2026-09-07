@@ -28,5 +28,5 @@ A source is a repository or folder of packages; the store materializes each reso
 
 - Any repository holding skills is a marketplace; there is no registration step, and a repository-root `SKILL.md` is a one-skill repository named by its validated frontmatter.
 - Every offered item is dated by the newest commit that touched what it contains, never by the bare tip, so the About tab can never read older than a package beside it (`crates/core/src/source/browse/updated.rs`).
-- Updates rows are per package per scope; an edited place is never updated over, and the fork-or-discard choice lives on the package page.
+- Updates rows are per package per scope; an edited place is never updated over, and the fork-or-discard choice lives on the package page. A fork's own edit is not that choice: it reads as state on the package page and withholds nothing.
 - The detached `kendex source refresh --stale` a read spawns has a six-hour TTL, a per-mirror lock, no stdio, and is never waited on.

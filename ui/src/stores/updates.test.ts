@@ -56,6 +56,7 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
     derived: false,
     requiredBy: [],
     forked: false,
+    forkEdited: false,
     mixed: false,
     removedUpstream: false,
     noPerPackageUpdate: null,

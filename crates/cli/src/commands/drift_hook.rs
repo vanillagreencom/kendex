@@ -42,6 +42,7 @@ pub fn install(env: &Env, scope: &Scope, yes: bool) -> CliResult {
             kept: Vec::new(),
             safety: Vec::new(),
             instruction_shims: Vec::new(),
+            fork_edits: Vec::new(),
         };
         confirm_and_execute(env, &report, yes)?;
     }

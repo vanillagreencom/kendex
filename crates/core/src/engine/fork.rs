@@ -176,6 +176,12 @@ enum Capture {
 /// rendering from outside its own file.
 struct Captured {
     files: Capture,
+    /// What the captured bytes render back to, beside the bytes they were
+    /// captured from. Both kinds a fork admits have such a text, so `None`
+    /// says the capture found none to compare — a skill tree whose
+    /// SKILL.md is gone — which an absorb refuses like any other bytes the
+    /// source cannot hold.
+    rendering: Option<(String, String)>,
     carry: Option<crate::engine::agent_carry::AgentCarry>,
     /// The catalog revision an agent's bytes were read at, `None` for a
     /// skill: a skill's tree is one capture no per-tool rendering derives
@@ -199,19 +205,25 @@ struct ForkOf<'a> {
 
 fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
     Ok(match of.kind {
-        ItemKind::Skill => Captured {
-            files: Capture::Tree(source_form(crate::capture::read_tree(edited)?)),
-            carry: None,
-            read_at: None,
-        },
+        ItemKind::Skill => {
+            let files = source_form(crate::capture::read_tree(edited)?);
+            Captured {
+                rendering: skill_round_trip(of, &files),
+                files: Capture::Tree(files),
+                carry: None,
+                read_at: None,
+            }
+        }
         // Every other kind is turned away by `edited_rendering` first, so
         // what reaches here is an agent.
         _ => {
             let captured = capture_agent(of, edited)?;
+            let on_disk = std::fs::read_to_string(edited).map_err(|e| CoreError::io(edited, e))?;
             Captured {
                 files: Capture::File(captured.bytes),
                 carry: captured.carry,
                 read_at: captured.read_at,
+                rendering: Some((captured.rendering, on_disk)),
             }
         }
     })
@@ -277,6 +289,30 @@ fn capture_ops(
     edited: &std::path::Path,
     captured: Capture,
 ) -> Result<Vec<PlannedOp>> {
+    let mut ops = into_local_source(env, scope, kind, name, captured)?;
+    ops.push(PlannedOp {
+        description: format!("clear the edited install of {name} for re-render").into(),
+        op: Op::Trash {
+            absent_is_done: false,
+            pre: Pre::HashIs {
+                hash: crate::hash::hash_tree(edited)?,
+            },
+            path: edited.to_path_buf(),
+        },
+    });
+    Ok(ops)
+}
+
+/// The half of [`capture_ops`] that moves bytes into the local source: a
+/// previous local copy goes to the trash (never overwritten in place) and
+/// the captured bytes land under the same name.
+fn into_local_source(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    captured: Capture,
+) -> Result<Vec<PlannedOp>> {
     let local_item = local_item(env, scope, kind, name);
     if let Some(escape) = crate::source::slot_escapes(env, scope, &local_item)? {
         return Err(escape);
@@ -310,17 +346,102 @@ fn capture_ops(
         description: format!("keep the edited {} {name} as a local fork", kind.name()).into(),
         op: capture,
     });
-    ops.push(PlannedOp {
-        description: format!("clear the edited install of {name} for re-render").into(),
-        op: Op::Trash {
-            absent_is_done: false,
-            pre: Pre::HashIs {
-                hash: crate::hash::hash_tree(edited)?,
-            },
-            path: edited.to_path_buf(),
-        },
-    });
     Ok(ops)
+}
+
+/// Take an edit made to a fork's own installation into the fork's source,
+/// leaving the installation exactly where it is. A fork is already the
+/// person's copy, so its edit is its new content rather than a divergence
+/// to settle: [`capture_ops`] clears the install because a fork's first
+/// capture has to re-render it, and here those bytes are already what the
+/// fork renders to.
+///
+/// Refuses everything `fork` refuses, and one thing more: catalog values
+/// that shaped the rendering from outside its own file would have to move
+/// into the manifest to survive, and a plan absorbing an edit writes no
+/// manifest. Each refusal returns the item to the edit hold, which is the
+/// conflict and the two named ways out it had before.
+pub(super) fn absorb_ops(
+    env: &Env,
+    scope: &Scope,
+    manifest: &manifest::Manifest,
+    kind: ItemKind,
+    name: &str,
+    harness: HarnessId,
+    edited: &std::path::Path,
+) -> Result<Vec<PlannedOp>> {
+    forkable_kind(kind, name)?;
+    // The same format gate `edited_rendering` puts on a fork's capture,
+    // asked here because an absorb reaches the capture without it. A
+    // rendering the source parser cannot read back is not a rendering the
+    // source can be written from: taken anyway, a codex agent's toml would
+    // land in the local source as the agent's own prose.
+    if !forkable_harness(kind, harness) {
+        return Err(CoreError::ItemNotInSource {
+            name: name.to_owned(),
+            source_name: format!(
+                "{}'s copy of this {} is not in a form its source can hold",
+                harness.display_name(),
+                kind.name()
+            ),
+        });
+    }
+    // The other gate `edited_rendering` puts on a skill, asked here for the
+    // same reason: `source_form` gives both spellings of SKILL.md the one
+    // name, so a tree holding both would go into the source as whichever
+    // the write reached last.
+    if kind == ItemKind::Skill && ambiguous_skill_tree(edited) {
+        return Err(CoreError::ForkAmbiguous {
+            name: name.to_owned(),
+        });
+    }
+    let Some(decl) = manifest.declared(kind).get(name) else {
+        return Err(CoreError::NotDeclared {
+            kind,
+            name: name.to_owned(),
+        });
+    };
+    let captured = capture(
+        &ForkOf {
+            env,
+            scope,
+            manifest,
+            decl,
+            kind,
+            name,
+            installed_as: name,
+            harness,
+        },
+        edited,
+    )?;
+    // The capture has to hold the whole edit. A rendering carries fields
+    // its source form has nowhere to keep — an agent's `description:` and
+    // `tags:` have no override table to ride into — and a fork answers
+    // that by re-rendering the install over them. An absorb keeps the
+    // install, so a capture that renders back to anything else would
+    // leave the two disagreeing for good: the same never-settling state
+    // this whole path exists to end. Asked of the renderer's own output,
+    // never of a list of the fields that can be lost.
+    if !matches!(&captured.rendering, Some((rendered, on_disk)) if rendered == on_disk) {
+        return Err(CoreError::ForkWidensAccess {
+            name: crate::names::shown(name),
+            problem: "the edit changes something its source form cannot hold".into(),
+        });
+    }
+    // A carry the manifest already holds changes nothing and is no reason
+    // to refuse: a fork's own carry is mostly what its first capture wrote
+    // there, and reading the carry's presence as work outstanding would
+    // leave every forked agent with skills at the conflict this absorb
+    // exists to end. What decides it is whether applying it would move the
+    // manifest, asked of `apply` itself rather than of a second reading of
+    // its rule.
+    if carry_needs_writing(manifest, name, captured.carry) {
+        return Err(CoreError::ForkWidensAccess {
+            name: crate::names::shown(name),
+            problem: "its catalog settings would have to be written to kendex.toml first".into(),
+        });
+    }
+    into_local_source(env, scope, kind, name, captured.files)
 }
 
 /// The path an agent's rendering stands at: a switched-off installation
@@ -331,4 +452,43 @@ fn existing_or_disabled(path: PathBuf) -> PathBuf {
     }
     let disabled = PathBuf::from(format!("{}.disabled", path.display()));
     if disabled.exists() { disabled } else { path }
+}
+
+/// Whether this carry still has something to write into the manifest. The
+/// plan that absorbs an edit writes no manifest, so a carry that would
+/// move one has to stop the absorb; one the manifest already holds is
+/// already recorded and stops nothing.
+fn carry_needs_writing(
+    manifest: &manifest::Manifest,
+    name: &str,
+    carry: Option<crate::engine::agent_carry::AgentCarry>,
+) -> bool {
+    let Some(carry) = carry else {
+        return false;
+    };
+    let mut after = manifest.clone();
+    carry.apply(&mut after, name);
+    after.agent_skills != manifest.agent_skills
+        || after.agent_frontmatter != manifest.agent_frontmatter
+}
+
+/// A captured skill tree beside what it renders back to. A skill's tree is
+/// nearly its own source form, but not quite: the renderer strips and
+/// re-injects the project-instructions block in `SKILL.md`, so bytes
+/// written inside that block are not bytes a source can hold. Source and
+/// disk carry the same `SKILL.md` here — the capture only renames it — so
+/// what the round trip asks is whether those bytes are already what this
+/// project renders.
+fn skill_round_trip(of: &ForkOf, files: &[(PathBuf, Vec<u8>)]) -> Option<(String, String)> {
+    let bytes = files
+        .iter()
+        .find(|(rel, _)| rel == std::path::Path::new("SKILL.md"))
+        .map(|(_, bytes)| bytes)?;
+    let text = String::from_utf8(bytes.clone()).ok()?;
+    let instructions =
+        crate::render::agent::merged_instructions(&of.manifest.skill_instructions, of.name);
+    Some((
+        crate::render::skill::inject_instructions(&text, instructions.as_deref()),
+        text,
+    ))
 }

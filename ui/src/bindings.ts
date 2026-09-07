@@ -3340,6 +3340,13 @@ export type UpdateRow = {
 	requiredBy: string[],
 	/**  This package is a local fork of a catalog item. */
 	forked: boolean,
+	/**
+	 *  A fork whose installed files the person has since edited by hand.
+	 *  Nothing is blocked and there is nothing to decide — the edit is the
+	 *  fork's content, which apply keeps and records. It is a state the
+	 *  package page says out loud, beside `forked`.
+	 */
+	forkEdited: boolean,
 	/**  Installations of this package disagree on their source commit. */
 	mixed: boolean,
 	/**  The source's tracked tip does not carry this package at all. */

@@ -146,6 +146,7 @@ const row = (
   derived: false,
   requiredBy: [],
   forked: false,
+  forkEdited: false,
   mixed: false,
   removedUpstream: false,
   noPerPackageUpdate: null,

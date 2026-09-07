@@ -24,6 +24,7 @@ import {
   unfetchedNote,
 } from "@/lib/package-read-state";
 import {
+  packageForkEdited,
   packageRequiredBy,
   packageUpdateNote,
   updatesReadNote,
@@ -107,6 +108,9 @@ export function PackagePage() {
   // that requires it, named. A string, so this selector answers the same
   // value on every render that changes nothing.
   const requiredBy = useUpdatesStore((s) => packageRequiredBy(s, ref));
+  // A fork the person has since edited by hand: part of what the package
+  // is, said beside the fork badge rather than as something to settle.
+  const forkEdited = useUpdatesStore((s) => packageForkEdited(s, ref));
 
   const mark = usePackageMark(group);
   // The package can still be installed elsewhere while this place has no
@@ -205,6 +209,7 @@ export function PackagePage() {
         displayName={displayName}
         description={group.description}
         forked={meta?.fork != null}
+        forkEdited={forkEdited}
         mark={mark}
         requiredBy={requiredBy}
         action={

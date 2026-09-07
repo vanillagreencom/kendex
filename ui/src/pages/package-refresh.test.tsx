@@ -101,6 +101,7 @@ const rowAt = (commit: string, waiting: boolean): UpdateRow => ({
   derived: false,
   requiredBy: [],
   forked: false,
+  forkEdited: false,
   mixed: false,
   removedUpstream: false,
   noPerPackageUpdate: null,

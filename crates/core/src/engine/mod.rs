@@ -103,7 +103,8 @@ pub use compared::Comparison;
 mod repo_effects;
 mod report_types;
 pub use report_types::{
-    DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, ItemWarning, PlanOptions,
+    DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, ForkEdit, ItemWarning,
+    PlanOptions,
 };
 
 /// Compute drift and the plan that would fix it — the Audit page and
@@ -141,14 +142,14 @@ pub fn plan_scope(
     let mut written = written::Written::default();
     let mut config_edits = config_edits::ConfigEditPlan::default();
 
-    let base = options.manifest_base.as_ref();
-    plan_manifest_write(env, scope, base, &state, &mut ops)?;
+    plan_manifest_write(env, scope, options.manifest_base.as_ref(), &state, &mut ops)?;
 
-    plan_pass::plan_items(
+    let fork_edits = plan_pass::plan_items(
         env,
         &state,
         scope,
         lock,
+        &manifest,
         options,
         &owned::paths(env, scope, lock),
         &mut drift,
@@ -238,6 +239,7 @@ pub fn plan_scope(
         kept,
         safety,
         instruction_shims,
+        fork_edits,
     };
     report.notes.extend(scope_notes);
     unmanaged_rows(env, scope, &manifest, lock, &state.items, &mut report.drift)?;
@@ -351,6 +353,7 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
         repo_effects: Vec::new(),
         repo_effects_leaving: Vec::new(),
         instruction_shims: Vec::new(),
+        fork_edits: Vec::new(),
     };
     let empty = Manifest::default();
     unmanaged_rows(env, scope, &empty, &lock, &[], &mut report.drift)?;
