@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
-# Path-boundary tests for worktree issue IDs, setup config, and direct
-# path arguments. These cases must fail before writing outside the intended
-# worktree or mutating another repository's registered worktree.
+# The path boundaries: an issue ID that would escape the base directory, a
+# setup path that would write outside the worktree or through a symlink, a
+# leaf the setup would have to delete, and a direct path naming another
+# repository's worktree or the main checkout. Every refusal lands before a
+# write. One table, a row per scenario: the fixture is a word list of steps
+# that builds a checkout, its worktree and the shape under test, the command
+# runs from the checkout, and the row pins its exit status, its stdout, its
+# stderr and what is left: every file under the root with its first line,
+# every link with its target, every empty directory, the checkout's branches,
+# the worktree's index flags and the shared exclude file's lines.
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
@@ -26,308 +33,202 @@ assert_eq() {
   fi
 }
 
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  fi
-}
+# --- fixtures -----------------------------------------------------------------
+# Every row's world lives under its own ROOT: the checkout at ROOT/main and
+# its worktree, when the row has one, at ROOT/trees/<id>.
 
-assert_path_exists() {
-  local path="$1" name="$2"
-  if [[ -e "$path" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        missing path: %s\n' "$name" "$path"
-  fi
-}
-
-assert_path_absent() {
-  local path="$1" name="$2"
-  if [[ ! -e "$path" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        unexpected path: %s\n' "$name" "$path"
-  fi
-}
-
-assert_file_lacks_line() {
-  local path="$1" line="$2" name="$3"
-  if [[ ! -f "$path" ]] || ! grep -qxF -- "$line" "$path"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        unexpected line in %s: %s\n' "$name" "$path" "$line"
-  fi
-}
-
-assert_branch_absent() {
-  local repo="$1" branch="$2" name="$3"
-  if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        unexpected branch: %s\n' "$name" "$branch"
-  else
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  fi
-}
+ROOT=""
+MAIN=""
+WT=""
 
 make_repo() {
-  local root="$1" name="${2:-main}"
-  mkdir -p "$root/$name"
-  git -C "$root/$name" init -q -b main
-  git -C "$root/$name" config user.email test@example.com
-  git -C "$root/$name" config user.name Test
-  git -C "$root/$name" config commit.gpgsign false
-  printf 'base\n' >"$root/$name/base.txt"
-  git -C "$root/$name" add base.txt
-  git -C "$root/$name" commit -q -m base
+  local dir="$1"
+  mkdir -p "$dir"
+  git -C "$dir" init -q -b main
+  git -C "$dir" config user.email test@example.com
+  git -C "$dir" config user.name Test
+  git -C "$dir" config commit.gpgsign false
+  printf 'base\n' >"$dir/base.txt"
+  git -C "$dir" add base.txt
+  git -C "$dir" commit -q -m base
 }
 
-run_from_main() {
-  local root="$1"
+must() {
+  "$@" || { echo "FIXTURE: '$*' failed in $ROOT" >&2; exit 2; }
+}
+
+# A file committed in main before the worktree is added, so both carry it.
+tracked() {
+  mkdir -p "$(dirname "$MAIN/$1")"
+  printf '%s\n' "$2" >"$MAIN/$1"
+  git -C "$MAIN" add "$1"
+  git -C "$MAIN" commit -q -m "$1"
+}
+
+# The step vocabulary. `repo` builds the world; the rest shape it.
+step() {
+  case "$1" in
+    repo) make_repo "$MAIN" ;;
+    # A worktree of the checkout, registered directly with git.
+    wt:*) WT="$ROOT/trees/${1#wt:}"; must git -C "$MAIN" worktree add -q -b "${1#wt:}" "$WT" main ;;
+    # A tracked file, in main only or in both when it precedes the worktree.
+    config-file) tracked config/local.txt main-config ;;
+    tool-file) tracked tool main-tool ;;
+    # A setup config line.
+    mkdirs-escape) printf 'WORKTREE_MKDIRS="../escape"\n' >>"$MAIN/.env.local" ;;
+    mkdirs-glob) printf 'WORKTREE_MKDIRS="tmp/*"\n' >>"$MAIN/.env.local" ;;
+    symlinks-config) printf 'WORKTREE_SYMLINKS="config"\n' >>"$MAIN/.env.local" ;;
+    symlinks-config-file) printf 'WORKTREE_SYMLINKS="config/local.txt"\n' >>"$MAIN/.env.local" ;;
+    symlinks-tool) printf 'WORKTREE_SYMLINKS="tool"\n' >>"$MAIN/.env.local" ;;
+    copies-config-file) printf 'WORKTREE_COPIES="config/local.txt"\n' >>"$MAIN/.env.local" ;;
+    relative-local-link) printf 'WORKTREE_RELATIVE_SYMLINKS="local-link=../target"\n' >>"$MAIN/.env.local" ;;
+    # A directory in main that a glob in the config would expand against.
+    glob-dir) mkdir -p "$MAIN/tmp/expanded" ;;
+    # The worktree's config dir replaced by a link to main's.
+    wt-config-linked) rm -rf "$WT/config"; ln -s "$MAIN/config" "$WT/config" ;;
+    # The worktree's config file replaced by a link to main's.
+    wt-config-file-linked) rm -f "$WT/config/local.txt"; ln -s "$MAIN/config/local.txt" "$WT/config/local.txt" ;;
+    # The worktree's tool replaced by a link to a directory outside.
+    wt-tool-links-outside) mkdir -p "$ROOT/outside-dir"; rm -f "$WT/tool"; ln -s "$ROOT/outside-dir" "$WT/tool" ;;
+    # The worktree's tool replaced by a directory holding a file.
+    wt-tool-is-dir) rm -f "$WT/tool"; mkdir -p "$WT/tool"; printf 'keep\n' >"$WT/tool/preserved.txt" ;;
+    # A directory holding a file where the relative link would go.
+    wt-local-link-is-dir) mkdir -p "$WT/local-link"; printf 'keep-relative\n' >"$WT/local-link/preserved.txt" ;;
+    # Another repository with its own worktree beside this checkout.
+    other-repo)
+      make_repo "$ROOT/other/main"
+      must git -C "$ROOT/other/main" worktree add -q -b issue-foreign "$ROOT/foreign/issue-foreign" main
+      ;;
+    *)
+      echo "UNKNOWN-STEP: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+build() {
+  local word
+  ROOT="$TMP_ROOT/$1"
   shift
-  set +e
-  (cd "$root/main" && "$WORKTREE_SCRIPT" "$@") >"$root/out" 2>"$root/err"
-  local rc=$?
-  set -e
-  return "$rc"
+  MAIN="$ROOT/main"
+  WT=""
+  mkdir -p "$ROOT"
+  for word in "$@"; do
+    step "$word"
+  done
 }
 
-echo "=== issue IDs cannot escape the configured base dir ==="
+# --- rendering ------------------------------------------------------------------
 
-ID_ROOT="$TMP_ROOT/id"
-make_repo "$ID_ROOT"
-set +e
-(cd "$ID_ROOT/main" && "$WORKTREE_SCRIPT" path ../escape) >"$ID_ROOT/path.out" 2>"$ID_ROOT/path.err"
-path_rc=$?
-set -e
-assert_eq "$path_rc" "1" "path rejects traversal issue ID"
-assert_contains "$(cat "$ID_ROOT/path.err")" "invalid issue ID" "path traversal diagnostic names invalid issue ID"
+alias_text() {
+  sed -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" |
+    paste -s -d ';' -
+}
 
-set +e
-(cd "$ID_ROOT/main" && "$WORKTREE_SCRIPT" exists /absolute) >"$ID_ROOT/exists.out" 2>"$ID_ROOT/exists.err"
-exists_rc=$?
-set -e
-assert_eq "$exists_rc" "1" "exists rejects absolute issue ID"
-assert_contains "$(cat "$ID_ROOT/exists.err")" "invalid issue ID" "exists absolute diagnostic names invalid issue ID"
+# Every file under the root with its first line, every link with its target,
+# every empty directory with a trailing slash; git's own directories, the
+# config file and the captured streams are left out.
+state() {
+  local files="" branches="" index="" exclude="" foreign="" path
+  files="$(cd "$ROOT" && find . -mindepth 1 \( -path '*/.git' -prune \) -o \( -type f -o -type l -o \( -type d -empty \) \) -print |
+    grep -v -e '^\./out$' -e '^\./err$' -e '/\.env\.local$' | LC_ALL=C sort | while IFS= read -r path; do
+      if [[ -L "$path" ]]; then printf '%s->%s,' "${path#./}" "$(readlink "$path" | sed -e "s|$MAIN|<main>|" -e "s|$ROOT|<root>|")"
+      elif [[ -d "$path" ]]; then printf '%s/,' "${path#./}"
+      else printf '%s:%s,' "${path#./}" "$(head -1 "$path")"; fi
+    done | sed 's/,$//')"
+  branches="$(git -C "$MAIN" for-each-ref --format='%(refname:short)' refs/heads | paste -s -d ',' -)"
+  if [[ -n "$WT" && -d "$WT" ]]; then
+    index="$(git -C "$WT" ls-files -v | paste -s -d ',' -)"
+    exclude="$(grep -v '^#' "$(git -C "$WT" rev-parse --git-common-dir)/info/exclude" 2>/dev/null | paste -s -d ',' -)"
+  fi
+  if [[ -d "$ROOT/foreign/issue-foreign" ]]; then
+    foreign=" foreign=$(git -C "$ROOT/foreign/issue-foreign" branch --show-current)"
+  fi
+  printf 'files=%s branches=%s index=%s exclude=%s%s' "${files:--}" "${branches:--}" "${index:--}" "${exclude:--}" "$foreign"
+}
 
-set +e
-(cd "$ID_ROOT/main" && "$WORKTREE_SCRIPT" create ../escape --from main) >"$ID_ROOT/create.out" 2>"$ID_ROOT/create.err"
-create_rc=$?
-set -e
-assert_eq "$create_rc" "1" "create rejects traversal issue ID before mutation"
-assert_contains "$(cat "$ID_ROOT/create.err")" "invalid issue ID" "create traversal diagnostic names invalid issue ID"
-assert_path_absent "$ID_ROOT/escape" "create traversal does not create escaped path"
-assert_branch_absent "$ID_ROOT/main" "../escape" "create traversal does not create escaped branch"
+run() {
+  local -a argv
+  local rc=0
+  read -r -a argv <<<"${1//<root>/$ROOT}"
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  printf 'rc=%s out=%s err=%s %s' "$rc" "$(alias_text <"$ROOT/out")" "$(alias_text <"$ROOT/err")" "$(state)"
+}
 
-echo "=== setup config rejects traversal and symlink-parent writes ==="
+# --- the expected text ----------------------------------------------------------
 
-CONFIG_ROOT="$TMP_ROOT/config"
-make_repo "$CONFIG_ROOT"
-git -C "$CONFIG_ROOT/main" worktree add -q -b issue-config "$CONFIG_ROOT/trees/issue-config" main
-printf 'WORKTREE_MKDIRS="../escape"\n' >"$CONFIG_ROOT/main/.env.local"
-set +e
-(cd "$CONFIG_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$CONFIG_ROOT/trees/issue-config") >"$CONFIG_ROOT/fix-invalid.out" 2>"$CONFIG_ROOT/fix-invalid.err"
-invalid_config_rc=$?
-set -e
-assert_eq "$invalid_config_rc" "1" "fix-links rejects traversal mkdir config"
-assert_contains "$(cat "$CONFIG_ROOT/fix-invalid.err")" "invalid WORKTREE_MKDIRS" "traversal mkdir diagnostic names config variable"
-assert_path_absent "$CONFIG_ROOT/escape" "traversal mkdir does not create outside worktree"
+# The production text, held once; `a+b` is spec a's lines then spec b's.
+# fix-links closes every refusal with its not-restored report, so those rows
+# compose `not-restored:<wt>` (or `unhealthy:<wt>:<entry>` when the report
+# lists the entry left as a real path) after the refusal's own line.
+err_text() {
+  local spec="$1" rest="" a="" b=""
+  case "$spec" in
+    -) printf '' ;;
+    relocated+*) printf 'Relocated cwd to <main>;%s' "$(err_text "${spec#relocated+}")" ;;
+    *+*) printf '%s;%s' "$(err_text "${spec%%+*}")" "$(err_text "${spec#*+}")" ;;
+    invalid-id:*) printf "Error: invalid issue ID '%s'. Use letters, numbers, '.', '_', or '-' only; start with a letter/number and do not include '..'." "${spec#invalid-id:}" ;;
+    invalid-mkdirs:*) printf "Error: invalid WORKTREE_MKDIRS entry '%s'. Use a worktree-relative path without '.', '..', absolute, backslash, or glob metacharacter components." "${spec#invalid-mkdirs:}" ;;
+    inside-symlink) printf "Error: configured worktree path 'config/local.txt' is inside symlink path 'config'; refusing setup to avoid following the symlink target." ;;
+    both) printf "Error: configured worktree path 'config/local.txt' is both a symlink target (WORKTREE_SYMLINKS) and a WORKTREE_COPIES entry; refusing setup to avoid following the symlink target." ;;
+    through-symlink:*) rest="${spec#through-symlink:}"; a="${rest%%:*}"; b="${rest#*:}"
+      printf "Error: refusing to write 'config/local.txt' in %s because '%s/%s' is a symlink." "$a" "$a" "$b" ;;
+    non-file:*) rest="${spec#non-file:}"; a="${rest%%:*}"; b="${rest#*:}"
+      printf "Error: refusing to replace non-file worktree path '%s' with a %s symlink." "$a" "$b" ;;
+    not-restored:*) printf "Error: fix-links did not restore every configured path in %s.;  Any warning above names why. A path holding data git does not track is;  left in place deliberately: move it into '<main>' (or delete it),;  then re-run this command." "${spec#not-restored:}" ;;
+    unhealthy:*) rest="${spec#unhealthy:}"; a="${rest%%:*}"; b="${rest#*:}"
+      printf "Error: fix-links did not restore every configured path in %s.;  Still unhealthy:;    - %s (still a real path, not a link);  Any warning above names why. A path holding data git does not track is;  left in place deliberately: move it into '<main>' (or delete it),;  then re-run this command." "$a" "$b" ;;
+    unregistered:*) rest="${spec#unregistered:}"; a="${rest%%:*}"; b="${rest#*:}"
+      printf 'Error: %s is not a registered worktree of <main>; refusing to %s.' "$a" "$b" ;;
+    main-checkout:*) printf 'Error: <main> is the main checkout for <main>; refusing to %s.' "${spec#main-checkout:}" ;;
+    *) printf 'UNKNOWN-ERR-SPEC:%s' "$spec" ;;
+  esac
+}
 
-OVERLAP_ROOT="$TMP_ROOT/overlap"
-make_repo "$OVERLAP_ROOT"
-mkdir -p "$OVERLAP_ROOT/main/config"
-printf 'main-config\n' >"$OVERLAP_ROOT/main/config/local.txt"
-git -C "$OVERLAP_ROOT/main" add config/local.txt
-git -C "$OVERLAP_ROOT/main" commit -q -m config
-git -C "$OVERLAP_ROOT/main" worktree add -q -b issue-overlap "$OVERLAP_ROOT/trees/issue-overlap" main
-cat >"$OVERLAP_ROOT/main/.env.local" <<'ENV'
-WORKTREE_SYMLINKS="config"
-WORKTREE_COPIES="config/local.txt"
-ENV
-set +e
-(cd "$OVERLAP_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$OVERLAP_ROOT/trees/issue-overlap") >"$OVERLAP_ROOT/overlap.out" 2>"$OVERLAP_ROOT/overlap.err"
-overlap_rc=$?
-set -e
-assert_eq "$overlap_rc" "1" "setup rejects child path under configured symlink path"
-assert_contains "$(cat "$OVERLAP_ROOT/overlap.err")" "inside symlink path 'config'" "overlap diagnostic names symlink parent"
-assert_eq "$(cat "$OVERLAP_ROOT/main/config/local.txt")" "main-config" "overlap setup does not rewrite main checkout file"
+out_text() {
+  case "$1" in
+    -) printf '' ;;
+    restored:*) printf 'Restored symlinks in %s' "${1#restored:}" ;;
+    *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
+  esac
+}
 
-EQUAL_ROOT="$TMP_ROOT/equal"
-make_repo "$EQUAL_ROOT"
-mkdir -p "$EQUAL_ROOT/main/config"
-printf 'main-config\n' >"$EQUAL_ROOT/main/config/local.txt"
-git -C "$EQUAL_ROOT/main" add config/local.txt
-git -C "$EQUAL_ROOT/main" commit -q -m config
-git -C "$EQUAL_ROOT/main" worktree add -q -b issue-equal "$EQUAL_ROOT/trees/issue-equal" main
-cat >"$EQUAL_ROOT/main/.env.local" <<'ENV'
-WORKTREE_SYMLINKS="config/local.txt"
-WORKTREE_COPIES="config/local.txt"
-ENV
-set +e
-(cd "$EQUAL_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$EQUAL_ROOT/trees/issue-equal") >"$EQUAL_ROOT/equal.out" 2>"$EQUAL_ROOT/equal.err"
-equal_rc=$?
-set -e
-assert_eq "$equal_rc" "1" "setup rejects same path across symlink and copy config"
-assert_contains "$(cat "$EQUAL_ROOT/equal.err")" "both a symlink target" "equal-path diagnostic names cross-operation conflict"
+# --- the rows ---------------------------------------------------------------------
+# label|fixture|command|rc|out|err|state
+ROWS='path rejects an issue ID that traverses out of the base dir|repo|path ../escape|1|-|invalid-id:../escape|files=main/base.txt:base branches=main index=- exclude=-
+exists rejects an absolute issue ID|repo|exists /absolute|1|-|invalid-id:/absolute|files=main/base.txt:base branches=main index=- exclude=-
+create rejects a traversing issue ID before any write: no path, no branch|repo|create ../escape --from main|1|-|invalid-id:../escape|files=main/base.txt:base branches=main index=- exclude=-
+a traversing WORKTREE_MKDIRS is refused by name and creates nothing outside the worktree|repo wt:issue-config mkdirs-escape|fix-links <root>/trees/issue-config|1|-|invalid-mkdirs:../escape+not-restored:<root>/trees/issue-config|files=main/base.txt:base,trees/issue-config/base.txt:base branches=issue-config,main index=H base.txt exclude=-
+a copy path inside a configured symlink path is refused naming the symlink parent, and main'"'"'s file stands|repo config-file wt:issue-overlap symlinks-config copies-config-file|fix-links <root>/trees/issue-overlap|1|-|inside-symlink+not-restored:<root>/trees/issue-overlap|files=main/base.txt:base,main/config/local.txt:main-config,trees/issue-overlap/base.txt:base,trees/issue-overlap/config/local.txt:main-config branches=issue-overlap,main index=H base.txt,H config/local.txt exclude=-
+the same path as both a symlink and a copy is refused naming the conflict|repo config-file wt:issue-equal symlinks-config-file copies-config-file|fix-links <root>/trees/issue-equal|1|-|both+not-restored:<root>/trees/issue-equal|files=main/base.txt:base,main/config/local.txt:main-config,trees/issue-equal/base.txt:base,trees/issue-equal/config/local.txt:main-config branches=issue-equal,main index=H base.txt,H config/local.txt exclude=-
+a copy through a parent that is already a symlink is refused naming the symlink, and main'"'"'s file stands|repo config-file wt:issue-follow wt-config-linked copies-config-file|fix-links <root>/trees/issue-follow|1|-|through-symlink:<root>/trees/issue-follow:config+not-restored:<root>/trees/issue-follow|files=main/base.txt:base,main/config/local.txt:main-config,trees/issue-follow/base.txt:base,trees/issue-follow/config-><main>/config branches=issue-follow,main index=H base.txt,H config/local.txt exclude=-
+a copy over a leaf that is already a symlink is refused naming the symlink, and main'"'"'s file stands|repo config-file wt:issue-leaf wt-config-file-linked copies-config-file|fix-links <root>/trees/issue-leaf|1|-|through-symlink:<root>/trees/issue-leaf:config/local.txt+not-restored:<root>/trees/issue-leaf|files=main/base.txt:base,main/config/local.txt:main-config,trees/issue-leaf/base.txt:base,trees/issue-leaf/config/local.txt-><main>/config/local.txt branches=issue-leaf,main index=H base.txt,H config/local.txt exclude=-
+a glob metacharacter in a setup path is refused before pathname expansion|repo glob-dir wt:issue-glob mkdirs-glob|fix-links <root>/trees/issue-glob|1|-|invalid-mkdirs:tmp/*+not-restored:<root>/trees/issue-glob|files=main/base.txt:base,main/tmp/expanded/,trees/issue-glob/base.txt:base branches=issue-glob,main index=H base.txt exclude=-
+a file symlink replaces a leaf that is a symlink to a directory without dereferencing it|repo tool-file wt:issue-file-link wt-tool-links-outside symlinks-tool|fix-links <root>/trees/issue-file-link|0|restored:<root>/trees/issue-file-link|-|files=main/base.txt:base,main/tool:main-tool,outside-dir/,trees/issue-file-link/base.txt:base,trees/issue-file-link/tool-><main>/tool branches=issue-file-link,main index=H base.txt,h tool exclude=tool,!tool/
+a file symlink refuses to delete a leaf that is a directory, leaving the index flags and the shared excludes alone|repo tool-file wt:issue-file-dir wt-tool-is-dir symlinks-tool|fix-links <root>/trees/issue-file-dir|1|-|non-file:tool:file+unhealthy:<root>/trees/issue-file-dir:tool|files=main/base.txt:base,main/tool:main-tool,trees/issue-file-dir/base.txt:base,trees/issue-file-dir/tool/preserved.txt:keep branches=issue-file-dir,main index=H base.txt,H tool exclude=-
+a relative symlink refuses to delete a leaf that is a directory|repo wt:issue-relative-dir wt-local-link-is-dir relative-local-link|fix-links <root>/trees/issue-relative-dir|1|-|non-file:local-link:relative+unhealthy:<root>/trees/issue-relative-dir:local-link|files=main/base.txt:base,trees/issue-relative-dir/base.txt:base,trees/issue-relative-dir/local-link/preserved.txt:keep-relative branches=issue-relative-dir,main index=H base.txt exclude=-
+fix-links refuses another repository'"'"'s worktree|repo other-repo|fix-links <root>/foreign/issue-foreign|1|-|unregistered:<root>/foreign/issue-foreign:restore links in it|files=foreign/issue-foreign/base.txt:base,main/base.txt:base,other/main/base.txt:base branches=main index=- exclude=- foreign=issue-foreign
+codex-setup refuses another repository'"'"'s worktree|repo other-repo|codex-setup <root>/foreign/issue-foreign|1|-|unregistered:<root>/foreign/issue-foreign:configure it|files=foreign/issue-foreign/base.txt:base,main/base.txt:base,other/main/base.txt:base branches=main index=- exclude=- foreign=issue-foreign
+claude-setup refuses another repository'"'"'s worktree|repo other-repo|claude-setup <root>/foreign/issue-foreign|1|-|unregistered:<root>/foreign/issue-foreign:configure it|files=foreign/issue-foreign/base.txt:base,main/base.txt:base,other/main/base.txt:base branches=main index=- exclude=- foreign=issue-foreign
+codex-branch refuses another repository'"'"'s worktree and leaves its branch alone|repo other-repo|codex-branch ISSUE-FOREIGN <root>/foreign/issue-foreign|1|-|unregistered:<root>/foreign/issue-foreign:normalize its branch|files=foreign/issue-foreign/base.txt:base,main/base.txt:base,other/main/base.txt:base branches=main index=- exclude=- foreign=issue-foreign
+push refuses another repository'"'"'s worktree|repo other-repo|push <root>/foreign/issue-foreign --no-rebase|1|-|unregistered:<root>/foreign/issue-foreign:push it|files=foreign/issue-foreign/base.txt:base,main/base.txt:base,other/main/base.txt:base branches=main index=- exclude=- foreign=issue-foreign
+fix-links refuses the main checkout by its direct path|repo|fix-links <root>/main|1|-|main-checkout:restore links in it|files=main/base.txt:base branches=main index=- exclude=-
+remove refuses the main checkout by its direct path and leaves it intact|repo|remove <root>/main|1|-|relocated+main-checkout:remove it|files=main/base.txt:base branches=main index=- exclude=-
+'
 
-FOLLOW_ROOT="$TMP_ROOT/follow"
-make_repo "$FOLLOW_ROOT"
-mkdir -p "$FOLLOW_ROOT/main/config"
-printf 'main-config\n' >"$FOLLOW_ROOT/main/config/local.txt"
-git -C "$FOLLOW_ROOT/main" add config/local.txt
-git -C "$FOLLOW_ROOT/main" commit -q -m config
-git -C "$FOLLOW_ROOT/main" worktree add -q -b issue-follow "$FOLLOW_ROOT/trees/issue-follow" main
-rm -rf "$FOLLOW_ROOT/trees/issue-follow/config"
-ln -s "$FOLLOW_ROOT/main/config" "$FOLLOW_ROOT/trees/issue-follow/config"
-printf 'WORKTREE_COPIES="config/local.txt"\n' >"$FOLLOW_ROOT/main/.env.local"
-set +e
-(cd "$FOLLOW_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$FOLLOW_ROOT/trees/issue-follow") >"$FOLLOW_ROOT/follow.out" 2>"$FOLLOW_ROOT/follow.err"
-follow_rc=$?
-set -e
-assert_eq "$follow_rc" "1" "setup rejects writing through existing symlink parent"
-assert_contains "$(cat "$FOLLOW_ROOT/follow.err")" "is a symlink" "symlink-parent diagnostic names the symlink"
-assert_eq "$(cat "$FOLLOW_ROOT/main/config/local.txt")" "main-config" "symlink-parent setup does not rewrite main checkout file"
-
-LEAF_ROOT="$TMP_ROOT/leaf"
-make_repo "$LEAF_ROOT"
-mkdir -p "$LEAF_ROOT/main/config"
-printf 'main-config\n' >"$LEAF_ROOT/main/config/local.txt"
-git -C "$LEAF_ROOT/main" add config/local.txt
-git -C "$LEAF_ROOT/main" commit -q -m config
-git -C "$LEAF_ROOT/main" worktree add -q -b issue-leaf "$LEAF_ROOT/trees/issue-leaf" main
-mkdir -p "$LEAF_ROOT/trees/issue-leaf/config"
-rm -f "$LEAF_ROOT/trees/issue-leaf/config/local.txt"
-ln -s "$LEAF_ROOT/main/config/local.txt" "$LEAF_ROOT/trees/issue-leaf/config/local.txt"
-printf 'WORKTREE_COPIES="config/local.txt"\n' >"$LEAF_ROOT/main/.env.local"
-set +e
-(cd "$LEAF_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$LEAF_ROOT/trees/issue-leaf") >"$LEAF_ROOT/leaf.out" 2>"$LEAF_ROOT/leaf.err"
-leaf_rc=$?
-set -e
-assert_eq "$leaf_rc" "1" "copy setup rejects an existing leaf symlink"
-assert_contains "$(cat "$LEAF_ROOT/leaf.err")" "is a symlink" "leaf-symlink diagnostic names the symlink"
-assert_eq "$(cat "$LEAF_ROOT/main/config/local.txt")" "main-config" "leaf-symlink copy does not rewrite main checkout file"
-
-GLOB_ROOT="$TMP_ROOT/glob"
-make_repo "$GLOB_ROOT"
-mkdir -p "$GLOB_ROOT/main/tmp/expanded"
-git -C "$GLOB_ROOT/main" worktree add -q -b issue-glob "$GLOB_ROOT/trees/issue-glob" main
-printf 'WORKTREE_MKDIRS="tmp/*"\n' >"$GLOB_ROOT/main/.env.local"
-set +e
-(cd "$GLOB_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$GLOB_ROOT/trees/issue-glob") >"$GLOB_ROOT/glob.out" 2>"$GLOB_ROOT/glob.err"
-glob_rc=$?
-set -e
-assert_eq "$glob_rc" "1" "setup rejects glob metacharacters before pathname expansion"
-assert_contains "$(cat "$GLOB_ROOT/glob.err")" "glob metacharacter" "glob diagnostic names metacharacter rejection"
-assert_path_absent "$GLOB_ROOT/trees/issue-glob/tmp/expanded" "glob config does not expand caller-cwd matches into worktree paths"
-
-FILE_LINK_ROOT="$TMP_ROOT/file-link"
-make_repo "$FILE_LINK_ROOT"
-printf 'main-tool\n' >"$FILE_LINK_ROOT/main/tool"
-git -C "$FILE_LINK_ROOT/main" add tool
-git -C "$FILE_LINK_ROOT/main" commit -q -m tool
-git -C "$FILE_LINK_ROOT/main" worktree add -q -b issue-file-link "$FILE_LINK_ROOT/trees/issue-file-link" main
-mkdir -p "$FILE_LINK_ROOT/outside-dir"
-rm -f "$FILE_LINK_ROOT/trees/issue-file-link/tool"
-ln -s "$FILE_LINK_ROOT/outside-dir" "$FILE_LINK_ROOT/trees/issue-file-link/tool"
-printf 'WORKTREE_SYMLINKS="tool"\n' >"$FILE_LINK_ROOT/main/.env.local"
-set +e
-(cd "$FILE_LINK_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$FILE_LINK_ROOT/trees/issue-file-link") >"$FILE_LINK_ROOT/file-link.out" 2>"$FILE_LINK_ROOT/file-link.err"
-file_link_rc=$?
-set -e
-assert_eq "$file_link_rc" "0" "file symlink setup replaces a symlink-to-directory leaf"
-assert_eq "$(readlink "$FILE_LINK_ROOT/trees/issue-file-link/tool")" "$FILE_LINK_ROOT/main/tool" "file symlink points at main checkout file"
-assert_path_absent "$FILE_LINK_ROOT/outside-dir/tool" "file symlink setup does not dereference old symlink-to-directory leaf"
-
-FILE_DIR_ROOT="$TMP_ROOT/file-dir"
-make_repo "$FILE_DIR_ROOT"
-printf 'main-tool\n' >"$FILE_DIR_ROOT/main/tool"
-git -C "$FILE_DIR_ROOT/main" add tool
-git -C "$FILE_DIR_ROOT/main" commit -q -m tool
-git -C "$FILE_DIR_ROOT/main" worktree add -q -b issue-file-dir "$FILE_DIR_ROOT/trees/issue-file-dir" main
-rm -f "$FILE_DIR_ROOT/trees/issue-file-dir/tool"
-mkdir -p "$FILE_DIR_ROOT/trees/issue-file-dir/tool"
-printf 'keep\n' >"$FILE_DIR_ROOT/trees/issue-file-dir/tool/preserved.txt"
-printf 'WORKTREE_SYMLINKS="tool"\n' >"$FILE_DIR_ROOT/main/.env.local"
-file_dir_index_before="$(git -C "$FILE_DIR_ROOT/trees/issue-file-dir" ls-files -v tool)"
-file_dir_common="$(git -C "$FILE_DIR_ROOT/trees/issue-file-dir" rev-parse --git-common-dir)"
-set +e
-(cd "$FILE_DIR_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$FILE_DIR_ROOT/trees/issue-file-dir") >"$FILE_DIR_ROOT/file-dir.out" 2>"$FILE_DIR_ROOT/file-dir.err"
-file_dir_rc=$?
-set -e
-assert_eq "$file_dir_rc" "1" "file symlink setup refuses to delete an existing directory leaf"
-assert_contains "$(cat "$FILE_DIR_ROOT/file-dir.err")" "refusing to replace non-file" "directory-leaf diagnostic names the refusal"
-assert_eq "$(cat "$FILE_DIR_ROOT/trees/issue-file-dir/tool/preserved.txt")" "keep" "file symlink setup preserves an existing directory leaf"
-assert_eq "$(git -C "$FILE_DIR_ROOT/trees/issue-file-dir" ls-files -v tool)" "$file_dir_index_before" "rejected file symlink leaves index flags unchanged"
-assert_file_lacks_line "$file_dir_common/info/exclude" "tool" "rejected file symlink leaves shared excludes unchanged"
-
-REL_DIR_ROOT="$TMP_ROOT/relative-dir"
-make_repo "$REL_DIR_ROOT"
-git -C "$REL_DIR_ROOT/main" worktree add -q -b issue-relative-dir "$REL_DIR_ROOT/trees/issue-relative-dir" main
-mkdir -p "$REL_DIR_ROOT/trees/issue-relative-dir/local-link"
-printf 'keep-relative\n' >"$REL_DIR_ROOT/trees/issue-relative-dir/local-link/preserved.txt"
-printf 'WORKTREE_RELATIVE_SYMLINKS="local-link=../target"\n' >"$REL_DIR_ROOT/main/.env.local"
-set +e
-(cd "$REL_DIR_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$REL_DIR_ROOT/trees/issue-relative-dir") >"$REL_DIR_ROOT/relative-dir.out" 2>"$REL_DIR_ROOT/relative-dir.err"
-relative_dir_rc=$?
-set -e
-assert_eq "$relative_dir_rc" "1" "relative symlink setup refuses to delete an existing directory leaf"
-assert_contains "$(cat "$REL_DIR_ROOT/relative-dir.err")" "refusing to replace non-file" "relative directory-leaf diagnostic names the refusal"
-assert_eq "$(cat "$REL_DIR_ROOT/trees/issue-relative-dir/local-link/preserved.txt")" "keep-relative" "relative symlink setup preserves an existing directory leaf"
-
-echo "=== direct path commands refuse foreign worktrees and main checkout ==="
-
-DIRECT_ROOT="$TMP_ROOT/direct"
-make_repo "$DIRECT_ROOT"
-make_repo "$DIRECT_ROOT/other"
-git -C "$DIRECT_ROOT/other/main" worktree add -q -b issue-foreign "$DIRECT_ROOT/foreign/issue-foreign" main
-
-set +e
-(cd "$DIRECT_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$DIRECT_ROOT/foreign/issue-foreign") >"$DIRECT_ROOT/fix-foreign.out" 2>"$DIRECT_ROOT/fix-foreign.err"
-fix_foreign_rc=$?
-set -e
-assert_eq "$fix_foreign_rc" "1" "fix-links refuses another repository's worktree"
-assert_contains "$(cat "$DIRECT_ROOT/fix-foreign.err")" "not a registered worktree" "fix-links foreign diagnostic names registration boundary"
-
-set +e
-(cd "$DIRECT_ROOT/main" && "$WORKTREE_SCRIPT" codex-setup "$DIRECT_ROOT/foreign/issue-foreign") >"$DIRECT_ROOT/setup-foreign.out" 2>"$DIRECT_ROOT/setup-foreign.err"
-setup_foreign_rc=$?
-set -e
-assert_eq "$setup_foreign_rc" "1" "codex-setup refuses another repository's worktree"
-assert_contains "$(cat "$DIRECT_ROOT/setup-foreign.err")" "not a registered worktree" "codex-setup foreign diagnostic names registration boundary"
-
-foreign_branch_before="$(git -C "$DIRECT_ROOT/foreign/issue-foreign" branch --show-current)"
-set +e
-(cd "$DIRECT_ROOT/main" && "$WORKTREE_SCRIPT" codex-branch ISSUE-FOREIGN "$DIRECT_ROOT/foreign/issue-foreign") >"$DIRECT_ROOT/branch-foreign.out" 2>"$DIRECT_ROOT/branch-foreign.err"
-branch_foreign_rc=$?
-set -e
-assert_eq "$branch_foreign_rc" "1" "codex-branch refuses another repository's worktree"
-assert_eq "$(git -C "$DIRECT_ROOT/foreign/issue-foreign" branch --show-current)" "$foreign_branch_before" "codex-branch leaves foreign branch unchanged"
-
-set +e
-(cd "$DIRECT_ROOT/main" && "$WORKTREE_SCRIPT" push "$DIRECT_ROOT/foreign/issue-foreign" --no-rebase) >"$DIRECT_ROOT/push-foreign.out" 2>"$DIRECT_ROOT/push-foreign.err"
-push_foreign_rc=$?
-set -e
-assert_eq "$push_foreign_rc" "1" "push refuses another repository's worktree"
-assert_contains "$(cat "$DIRECT_ROOT/push-foreign.err")" "not a registered worktree" "push foreign diagnostic names registration boundary"
-
-set +e
-(cd "$DIRECT_ROOT/main" && "$WORKTREE_SCRIPT" remove "$DIRECT_ROOT/main") >"$DIRECT_ROOT/remove-main.out" 2>"$DIRECT_ROOT/remove-main.err"
-remove_main_rc=$?
-set -e
-assert_eq "$remove_main_rc" "1" "remove refuses the main checkout by direct path"
-assert_contains "$(cat "$DIRECT_ROOT/remove-main.err")" "main checkout" "remove-main diagnostic names main checkout"
-assert_path_exists "$DIRECT_ROOT/main/.git" "remove-main leaves main checkout intact"
+echo "=== path boundaries ==="
+n=0
+while IFS='|' read -r label fixture command rc out err want_state; do
+  [[ -n "$label$fixture$command$rc$out$err$want_state" ]] || continue
+  n=$((n + 1))
+  # shellcheck disable=SC2086
+  build "row-$n" $fixture
+  if [[ "${PROBE:-}" == 1 ]]; then
+    printf '%s => %s\n' "$label" "$(run "$command")"
+    continue
+  fi
+  assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
+done <<<"$ROWS"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
