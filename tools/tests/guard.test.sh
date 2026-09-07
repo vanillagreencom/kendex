@@ -781,5 +781,61 @@ run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
   && ok "shared Rust inputs compile the workspace without running tests" \
   || bad "shared Rust input scheduling" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
 
+echo "=== a test binary's death by a signal is named apart from a failing test ==="
+FULL_GUARD=1
+# The compile-scheduling stub above is put back at the end of the block.
+cp "$R/fake-bin/cargo" "$TMP/compile-cargo"
+cat >"$R/fake-bin/cargo" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$*" = "test --workspace --quiet" ] || exit 0
+printf '%s\n' "$CARGO_TEST_STDERR" >&2
+exit 101
+SH
+chmod +x "$R/fake-bin/cargo"
+# cargo's own report of a runner whose executable died, as it prints it.
+DEATH="$(printf '%s\n' \
+  'error: test failed, to rerun pass `-p kendex-core --test review_fixes`' \
+  '' \
+  'Caused by:' \
+  '  process didn'"'"'t exit successfully: `target/debug/deps/review_fixes-ff58 --quiet` (signal: 11, SIGSEGV: invalid memory reference)')"
+ASSERTION="$(printf '%s\n' \
+  'test a_case ... FAILED' \
+  'error: test failed, to rerun pass `-p kendex-core --test review_fixes`')"
+# The same death line for a compiler cargo launched, under cargo's compile
+# failure rather than its test failure.
+COMPILER_DEATH="$(printf '%s\n' \
+  'error: could not compile `kendex-core` (lib test)' \
+  '' \
+  'Caused by:' \
+  '  process didn'"'"'t exit successfully: `rustc --crate-name kendex_core ...` (signal: 9, SIGKILL: kill)')"
+run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" COMPILE_LOG="$COMPILE_LOG" CARGO_TEST_STDERR="$DEATH"
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: a test binary died by a signal"*"review_fixes-ff58"*"SIGSEGV"* ]] \
+  && [[ "$OUT" != *"guard: tests failed"* ]] \
+  && ok "a runner killed by a signal is reported as the artifact's death, not a failing test" \
+  || bad "a runner killed by a signal is reported as the artifact's death, not a failing test" "rc=$RC out=$OUT"
+run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" COMPILE_LOG="$COMPILE_LOG" CARGO_TEST_STDERR="$ASSERTION"
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: tests failed"* ]] && [[ "$OUT" != *"died by a signal"* ]] \
+  && ok "a failing assertion still reads as tests failed" \
+  || bad "a failing assertion still reads as tests failed" "rc=$RC out=$OUT"
+run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" COMPILE_LOG="$COMPILE_LOG" CARGO_TEST_STDERR="$COMPILER_DEATH"
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: tests failed"* ]] && [[ "$OUT" != *"died by a signal"* ]] \
+  && ok "a compiler killed by a signal is not named as a test binary's death" \
+  || bad "a compiler killed by a signal is not named as a test binary's death" "rc=$RC out=$OUT"
+if mutant_guard 's/if \[ -n "\$death" \]; then/if false; then/'; then
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" COMPILE_LOG="$COMPILE_LOG" CARGO_TEST_STDERR="$DEATH" "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
+  [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: tests failed"* ]] && [[ "$OUT" != *"died by a signal"* ]] \
+    && ok "control: with the death check removed the same death reads as tests failed" \
+    || bad "control: with the death check removed the same death reads as tests failed" "rc=$RC out=$OUT"
+else
+  bad "control: the death check could not be removed from a guard copy"
+fi
+cp "$TMP/compile-cargo" "$R/fake-bin/cargo"
+git -C "$R" reset -q HEAD -- Cargo.toml
+git -C "$R" checkout -q -- Cargo.toml
+FULL_GUARD=0
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
