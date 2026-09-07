@@ -52,21 +52,7 @@ assert_contains() {
   fi
 }
 
-# EXACT on the clamped wait the step computed and announced (RELAY_WAIT), not
-# on the number handed to sleep — that one carries the step's random jitter.
-# The relationship between the two is asserted per run in relay_run, so
-# nothing is lost by pinning the deterministic half here. Nothing below reads
-# a clock: the step's is stubbed, so no case is time-dependent.
 RELAY_JITTER_MAX=0
-assert_sleep() { # base, tag, name
-  local base="$1" tag="$2" name="$3"
-  if [[ "$RELAY_WAIT" == "$base" ]]; then
-    PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "$name"
-  else
-    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n        expected a %ss wait, got: %s (slept [%s])\n' \
-      "$tag" "$name" "$base" "${RELAY_WAIT:-<no retry warning>}" "$RELAY_SLEEPS"
-  fi
-}
 
 # ------------------------------------------------------------- the copies ---
 
@@ -307,262 +293,209 @@ relay_extract() { # file, label — appends the step and its label, on success
   fi
 }
 
+# The responses a fixture answers with. EVERY GitHub response — 404s, 422s
+# and 5xx included — carries the x-ratelimit headers, so every fixture below
+# does, and the rate-limit shapes differ from the ordinary ones only where
+# GitHub differs: x-ratelimit-remaining, retry-after, a 429 status, or the
+# secondary-limit body. `FAKE_NOW` is the stubbed clock the step reads, so a
+# reset epoch built from it means exactly what the step computes.
+RL_OK="X-Ratelimit-Limit: 5000
+X-Ratelimit-Remaining: 4947
+X-Ratelimit-Reset: $(( FAKE_NOW + 1400 ))
+X-Ratelimit-Resource: core"
+RL_SPENT="X-Ratelimit-Limit: 5000
+X-Ratelimit-Remaining: 0
+X-Ratelimit-Resource: core"
+headers_of() { # NAME -> the scripted response; `none` is a transport failure
+  case "$1" in
+    none) ;;
+    403-retry-77)        printf '%s\n' "HTTP/2.0 403 Forbidden" "retry-after: 77" "$RL_OK" ;;
+    403-retry-4000)      printf '%s\n' "HTTP/2.0 403 Forbidden" "retry-after: 4000" "$RL_OK" ;;
+    403-retry-3)         printf '%s\n' "HTTP/2.0 403 Forbidden" "retry-after: 3" "$RL_OK" ;;
+    403-spent-reset+90)  printf '%s\n' "HTTP/2.0 403 Forbidden" "$RL_SPENT" "X-Ratelimit-Reset: $(( FAKE_NOW + 90 ))" ;;
+    403-spent-reset-past) printf '%s\n' "HTTP/2.0 403 Forbidden" "$RL_SPENT" "X-Ratelimit-Reset: 1000000000" ;;
+    403-spent-no-reset)  printf '%s\n' "HTTP/2.0 403 Forbidden" "$RL_SPENT" ;;
+    403-spent-reset-soon) printf '%s\n' "HTTP/2.0 403 Forbidden" "$RL_SPENT" "X-Ratelimit-Reset: soon" ;;
+    403-retry-soon-spent-reset+70) printf '%s\n' "HTTP/2.0 403 Forbidden" "retry-after: soon" "$RL_SPENT" "X-Ratelimit-Reset: $(( FAKE_NOW + 70 ))" ;;
+    403-secondary-body)  printf '%s\n' "HTTP/2.0 403 Forbidden" "$RL_OK" '{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}' ;;
+    403-permissions-body) printf '%s\n' "HTTP/2.0 403 Forbidden" "$RL_OK" '{"message":"Resource not accessible by integration"}' ;;
+    429)                 printf '%s\n' "HTTP/2.0 429 Too Many Requests" "$RL_OK" ;;
+    502)                 printf '%s\n' "HTTP/2.0 502 Bad Gateway" "$RL_OK" ;;
+    502-retry-soon)      printf '%s\n' "HTTP/2.0 502 Bad Gateway" "retry-after: soon" "$RL_OK" ;;
+    502-retry-huge)      printf '%s\n' "HTTP/2.0 502 Bad Gateway" "retry-after: 999999999" "$RL_OK" ;;
+    404)                 printf '%s\n' "HTTP/2.0 404 Not Found" "$RL_OK" ;;
+    422)                 printf '%s\n' "HTTP/2.0 422 Unprocessable Entity" "$RL_OK" ;;
+    *) printf 'headers_of: no fixture named %s\n' "$1" >&2; exit 1 ;;
+  esac
+}
+ref_of() { # NAME -> the github.workflow_ref the step derives its file from
+  case "$1" in
+    main)    printf '%s' "o/r/.github/workflows/review-gate-writer.yml@refs/heads/main" ;;
+    renamed) printf '%s' "o/r/.github/workflows/gate.yml@refs/heads/trunk" ;;
+    empty)   ;;
+    *) printf 'ref_of: no ref named %s\n' "$1" >&2; exit 1 ;;
+  esac
+}
+
+# relay_observe EXPECT — prints the run's value of every `name=` field EXPECT
+# names, in EXPECT's order, so a row fails on the field it names:
+#   rc       the step's exit status (the invariant asserts 0 on every run
+#            under both shells; the row pins it where the reader looks)
+#   calls    every gh call, in order, as `dispatch:<file>` for the exact
+#            dispatch the step is meant to make and `other:<argv>` for
+#            anything else, or none
+#   wait     the clamped wait the step announced (the jitter is asserted
+#            against the recorded sleep per run in relay_run), or none
+#   sleeps   sleep calls the stub recorded
+#   note     the annotation level(s) the step emitted: warning, error,
+#            warning+error, or none
+#   says~<t> whether the output carries <t>, `+` read as a space: the one
+#            phrase that tells two shapes with the same wait and calls apart
+relay_observe() {
+  local got="" token name value line
+  for token in $1; do
+    name="${token%%=*}"
+    case "$name" in
+      rc) value="$RELAY_RC" ;;
+      calls)
+        value=""
+        while IFS= read -r line; do
+          [ -n "$line" ] || continue
+          case "$line" in
+            "gh api -i -X POST repos/o/r/actions/workflows/"*"/dispatches -f ref=main")
+              line="${line#gh api -i -X POST repos/o/r/actions/workflows/}"
+              value="$value,dispatch:${line%/dispatches -f ref=main}" ;;
+            *) value="$value,other:$line" ;;
+          esac
+        done <<<"$RELAY_CALLS"
+        value="${value#,}"; value="${value:-none}" ;;
+      wait) value="${RELAY_WAIT:-none}" ;;
+      sleeps) value="$(grep -c . <<<"$RELAY_SLEEPS" || true)" ;;
+      note)
+        value=""
+        grep -qF '::warning::' <<<"$RELAY_OUT" && value="warning"
+        grep -qF '::error::' <<<"$RELAY_OUT" && value="${value:+$value+}error"
+        value="${value:-none}" ;;
+      says~*)
+        line="${name#says~}"; line="${line//+/ }"
+        value="$(grep -qF -- "$line" <<<"$RELAY_OUT" && echo true || echo false)" ;;
+      *) value=UNKNOWN_FIELD ;;
+    esac
+    got="$got $name=$value"
+  done
+  printf '%s' "${got# }"
+}
+
+# relay_row ROW — one run under both shells, one assertion on the fields the
+# row names: `label|read_only|ref|codes|event|headers|check_name|drop|expect`.
+# `codes` is gh's exit status per attempt; an empty event is the PR-attached
+# leg; `drop` names one env: binding left unset for the run.
+RELAY_STEP=""
+RELAY_TAG=""
+relay_row() {
+  local label ro ref codes event headers check drop expect
+  IFS='|' read -r label ro ref codes event headers check drop expect <<<"$1"
+  [[ -n "$expect" ]] || { printf 'relay_row: a row with no expect asserts nothing: %s\n' "$1" >&2; exit 1; }
+  RELAY_DROP="$drop"
+  relay_run "$RELAY_STEP" "$ro" "$(ref_of "$ref")" "$codes" "$event" "$(headers_of "$headers")" "$check"
+  RELAY_DROP=""
+  assert_eq "$(relay_observe "$expect")" "$expect" "[$RELAY_TAG] $label"
+}
+
 relay_battery() { # step script, label
-  local step="$1" tag="$2"
-  local ref="o/r/.github/workflows/review-gate-writer.yml@refs/heads/main"
-  # Read from the step, not hardcoded: every wait assertion below is stated as
-  # an exact clamp plus this bound, so a retuned jitter must move them with it.
-  RELAY_JITTER_MAX="$(grep -oE '^jitter_max=[0-9]+' "$step" | head -n 1 | cut -d= -f2 || true)"
+  RELAY_STEP="$1"; RELAY_TAG="$2"
+  # Read from the step, not hardcoded: every wait a row pins is an exact
+  # clamp plus this bound, so a retuned jitter must move them with it.
+  RELAY_JITTER_MAX="$(grep -oE '^jitter_max=[0-9]+' "$1" | head -n 1 | cut -d= -f2 || true)"
   if [[ -z "$RELAY_JITTER_MAX" ]]; then
-    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "relay: could not read jitter_max from the extracted step — every wait assertion below would be unbounded"
+    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$2" "relay: could not read jitter_max from the extracted step — every wait assertion below would be unbounded"
     return
   fi
 
-  relay_run "$step" 0 "$ref" "0"
-  assert_eq "$RELAY_RC" "0" "[$tag] relay1: an ordinary PR-attached leg exits 0"
-  assert_eq "$RELAY_CALLS" \
-    "gh api -i -X POST repos/o/r/actions/workflows/review-gate-writer.yml/dispatches -f ref=main" \
-    "[$tag] relay1: dispatches THIS workflow's file on the default branch, exactly once"
+  # The dispatch, and the three guards in front of it: a renamed consumer
+  # copy dispatches its own file (github.workflow_ref is read, never a
+  # hardcoded name), a read-only token is a green no-op the cron floor
+  # converges, an underivable ref dispatches nothing rather than a garbage
+  # path, and the step's own loop breaker refuses the converge legs even if
+  # the job if: was mis-edited. A double failure exits GREEN with a warning
+  # and never an error: the relay holds no statuses scope, so it can only
+  # leave the gate stale, which the cron floor owns; a red would pin the PR
+  # at UNSTABLE, the defect the split removed.
+  for row in \
+    "an ordinary PR-attached leg dispatches THIS workflow's file on the default branch, exactly once|0|main|0||none|||rc=0 calls=dispatch:review-gate-writer.yml sleeps=0 note=none" \
+    "a RENAMED consumer copy dispatches its own file|0|renamed|0||none|||rc=0 calls=dispatch:gate.yml sleeps=0 note=none" \
+    "a read-only token (fork pull_request_review) is a green no-op that dispatches nothing|1|main|0||none|||rc=0 calls=none sleeps=0 note=none" \
+    "an underivable workflow_ref dispatches NOTHING and warns, never a garbage path|0|empty|0||none|||rc=0 calls=none sleeps=0 note=warning says~could+not+derive+this+workflow's+file+name=true" \
+    "a transient dispatch failure is retried once and succeeds: exactly two attempts|0|main|1 0||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 note=warning" \
+    "two failed dispatches stop after two attempts and exit GREEN with a warning, never an error|0|main|1 1||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 note=warning says~after+two+attempts=true" \
+    "the workflow_dispatch leg is refused by the step's own loop breaker, and says so|0|main|0|workflow_dispatch|none|||rc=0 calls=none sleeps=0 note=warning says~CONVERGE+leg=true" \
+    "the schedule leg is refused by the same guard|0|main|0|schedule|none|||rc=0 calls=none sleeps=0 note=warning says~CONVERGE+leg=true"
+  do relay_row "$row"; done
 
-  # Control for the derivation: a repo that renamed its copy must dispatch
-  # the renamed file. Without this, relay1 would also pass against a
-  # hardcoded name.
-  relay_run "$step" 0 "o/r/.github/workflows/gate.yml@refs/heads/trunk" "0"
-  assert_eq "$RELAY_CALLS" \
-    "gh api -i -X POST repos/o/r/actions/workflows/gate.yml/dispatches -f ref=main" \
-    "[$tag] relay2: a RENAMED consumer copy dispatches its own file (github.workflow_ref is read, not a hardcoded name — nothing to edit on rename)"
+  # The retry ladder against real response shapes. A failure with no answer
+  # or a 5xx retries quickly: the 60s floor belongs to the rate-limit shapes.
+  # retry-after is honored and clamped to the floor; a window beyond the
+  # job's budget is not slept, since retrying inside a window the server
+  # named is a guaranteed failure bought with a paid runner hold. An
+  # exhausted window (remaining 0) honors its reset epoch, falls to the floor
+  # on a past, missing or non-numeric reset, and a healthy window's reset is
+  # not a wait instruction. A secondary limit without retry-after is read
+  # from its body, and a 429 is a rate limit on its status alone. Permanent
+  # answers — 404, 422, and the permissions 403 that is byte-for-byte a 403
+  # with a healthy window — are not slept on and not retried. Non-numeric or
+  # out-of-range values are discarded before they can reach sleep or the
+  # arithmetic.
+  for row in \
+    "a failure with NO response retries in 5s and names the cause|0|main|1 0||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 says~no+HTTP+response,+gh+exit+1=true" \
+    "a dispatch killed by its own per-attempt bound retries in 5s and is reported as a timeout|0|main|124 0||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 says~did+not+respond+within=true" \
+    "retry-after is honored (secondary limit) and the warning names the status|0|main|1 0||403-retry-77|||rc=0 wait=77 sleeps=1 says~HTTP+403,+gh+exit+1=true" \
+    "a window beyond the job's budget is NOT slept and the second attempt is skipped|0|main|1 0||403-retry-4000|||rc=0 calls=dispatch:review-gate-writer.yml wait=none sleeps=0 note=warning says~beyond+this+job's+budget=true" \
+    "an EXHAUSTED window honors its reset epoch|0|main|1 0||403-spent-reset+90|||rc=0 wait=90 sleeps=1" \
+    "a healthy window's reset epoch is not a wait instruction: a 5xx takes the quick retry|0|main|1 0||502|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1" \
+    "a reset epoch in the PAST falls to the floor, never a negative sleep|0|main|1 0||403-spent-reset-past|||rc=0 wait=60 sleeps=1" \
+    "an exhausted window with NO reset header takes the floor|0|main|1 0||403-spent-no-reset|||rc=0 wait=60 sleeps=1" \
+    "a NON-NUMERIC reset is discarded before the arithmetic|0|main|1 0||403-spent-reset-soon|||rc=0 wait=60 sleeps=1" \
+    "a sub-minute retry-after is raised to the 60s floor|0|main|1 0||403-retry-3|||rc=0 wait=60 sleeps=1" \
+    "a secondary-limit 403 with no retry-after is recognized from its body and takes the floor|0|main|1 0||403-secondary-body|||rc=0 wait=60 sleeps=1" \
+    "an HTTP 429 with a healthy window and no retry-after is a rate limit and takes the floor|0|main|1 0||429|||rc=0 wait=60 sleeps=1" \
+    "a 404 is a settled answer: no sleep, one attempt, the permanent status named|0|main|1 0||404|||rc=0 calls=dispatch:review-gate-writer.yml wait=none sleeps=0 note=warning says~refused+permanently+(HTTP+404)=true" \
+    "a 422 (bad ref) is not slept on either|0|main|1 0||422|||rc=0 calls=dispatch:review-gate-writer.yml wait=none sleeps=0 note=warning" \
+    "a PERMISSIONS 403 is permanent: no wait, one attempt, the likely cause named|0|main|1 0||403-permissions-body|||rc=0 calls=dispatch:review-gate-writer.yml wait=none sleeps=0 note=warning says~actions:write=true" \
+    "a non-numeric retry-after is discarded, not passed to sleep|0|main|1 0||502-retry-soon|||rc=0 wait=5 sleeps=1" \
+    "a non-numeric retry-after is discarded but an EXHAUSTED window still governs|0|main|1 0||403-retry-soon-spent-reset+70|||rc=0 wait=70 sleeps=1" \
+    "an out-of-range retry-after is discarded before it can overflow the arithmetic|0|main|1 0||502-retry-huge|||rc=0 wait=5 sleeps=1"
+  do relay_row "$row"; done
 
-  relay_run "$step" 1 "$ref" "0"
-  assert_eq "$RELAY_RC" "0" "[$tag] relay3: fork pull_request_review (read-only token) is a GREEN no-op, never a red run"
-  assert_eq "$RELAY_CALLS" "" "[$tag] relay3: the read-only leg dispatches NOTHING — the cron floor converges fork review evidence"
+  # The check_run opt-in's self-amplification breaker: the relay's if: is a
+  # negative list, so with check_run enabled this workflow's own job
+  # completions are relayable events, and the relay holds no concurrency
+  # group. Its own jobs are refused by name; a reviewer's check run relays.
+  for row in \
+    "a check_run naming the relay's OWN job dispatches nothing, and says so|0|main|0|check_run|none|Request a gate convergence pass||rc=0 calls=none sleeps=0 note=warning" \
+    "the write job's own check run is refused by the same guard|0|main|0|check_run|none|Evaluate and write the review gate||rc=0 calls=none sleeps=0 note=warning" \
+    "a REVIEWER's check run still relays|0|main|0|check_run|none|CodeRabbit||rc=0 calls=dispatch:review-gate-writer.yml sleeps=0 note=none"
+  do relay_row "$row"; done
 
-  relay_run "$step" 0 "" "0"
-  assert_eq "$RELAY_CALLS" "" "[$tag] relay4: an underivable workflow_ref dispatches NOTHING — never a garbage path (fail-closed)"
-  assert_contains "$RELAY_OUT" "::warning::could not derive this workflow's file name" "[$tag] relay4: and warns instead of reddening — this is a PERMANENT condition, so a red here would pin every open PR at UNSTABLE forever while the cron floor keeps converging them anyway"
-
-  relay_run "$step" 0 "$ref" "1 0"
-  assert_eq "$RELAY_RC" "0" "[$tag] relay5: a transient dispatch failure is retried once and succeeds"
-  assert_eq "$(grep -c . <<<"$RELAY_CALLS")" "2" "[$tag] relay5: exactly two attempts — one bounded retry, not a loop"
-
-  # GREEN on double failure, deliberately: the relay holds no statuses
-  # scope, so it cannot make the gate look converged — only leave it stale,
-  # which the cron floor owns. A red here would pin the PR at UNSTABLE, the
-  # exact defect the split removes.
-  relay_run "$step" 0 "$ref" "1 1"
-  assert_eq "$RELAY_RC" "0" "[$tag] relay6: two failed dispatches exit GREEN — reddening would recreate the UNSTABLE pin for a fault the cron floor recovers from"
-  assert_eq "$(grep -c . <<<"$RELAY_CALLS")" "2" "[$tag] relay6: the double-failure path still stops after two attempts"
-  assert_contains "$RELAY_OUT" "::warning::could not request a converge pass after two attempts" "[$tag] relay6: the double failure is announced as a WARNING — the annotation is the per-run trace, gate staleness is the detector of record"
-  rc=0; grep -qF -- "::error::" <<<"$RELAY_OUT" || rc=$?
-  case "$rc" in
-    1) PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "relay6: and NOT as an error — an error annotation on a green job is the shape a future 'restore fail-loud' edit leaves behind" ;;
-    0) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "relay6: the double-failure path emitted ::error:: — decide one way: green+warning (current) or red, not a mixed signal" ;;
-    *) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "relay6: the relay output could not be read (grep error)" ;;
-  esac
-
-  # --- the loop breaker, independent of the job if: --------------------
-  relay_run "$step" 0 "$ref" "0" workflow_dispatch
-  assert_eq "$RELAY_RC" "0" "[$tag] relay7: a relay that ran on the workflow_dispatch leg exits 0"
-  assert_eq "$RELAY_CALLS" "" "[$tag] relay7: and dispatches NOTHING — the step's own guard breaks a self-dispatch loop even if the job if: was mis-edited"
-  assert_contains "$RELAY_OUT" "::warning::" "[$tag] relay7: the mis-edit is announced, not silently absorbed"
-  relay_run "$step" 0 "$ref" "0" schedule
-  assert_eq "$RELAY_CALLS" "" "[$tag] relay8: the schedule converge leg is refused by the same guard"
-
-  # --- backoff: the retry must be able to outlast the limit it retries --
-  # --- the retry ladder, against REAL response shapes ------------------
-  # EVERY GitHub response — including 404s, 422s and 5xx — carries the five
-  # x-ratelimit headers. Fixtures that omit them model a response GitHub does
-  # not send, and the difference is not cosmetic: reading x-ratelimit-reset
-  # whenever retry-after is absent fires on every failure, produces an
-  # hour-scale wait, trips the budget refusal, and leaves the relay making
-  # exactly one attempt in production while a header-less fixture stays green.
-  # So every fixture below carries a realistic header set, and the rate-limit
-  # cases differ from the ordinary ones only where GitHub differs:
-  # x-ratelimit-remaining, retry-after, a 429 status, or the secondary-limit
-  # body. `now` is the STUBBED clock the step reads, so a reset epoch built
-  # from it means exactly what the step computes.
-  local rl_ok rl_spent now
-  now="$FAKE_NOW"
-  rl_ok="X-Ratelimit-Limit: 5000
-X-Ratelimit-Remaining: 4947
-X-Ratelimit-Reset: $(( now + 1400 ))
-X-Ratelimit-Resource: core"
-  rl_spent="X-Ratelimit-Limit: 5000
-X-Ratelimit-Remaining: 0
-X-Ratelimit-Resource: core"
-
-  # No response at all — a transport failure, not an HTTP answer.
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target
-  assert_sleep 5 "$tag" "relay9: a failure with NO response at all retries quickly — the 60s floor belongs to the rate-limit shapes, not to every failure"
-  assert_contains "$RELAY_OUT" "no HTTP response, gh exit 1" "[$tag] relay9: and the warning names the cause — this job's whole run log is that warning, so one naming no cause has nowhere to send its reader"
-
-  # `timeout` kills the attempt: not an API answer at all, and the one cause
-  # whose fix (the bound itself) is in this file rather than at GitHub.
-  relay_run "$step" 0 "$ref" "124 0" pull_request_target
-  assert_sleep 5 "$tag" "relay9b: a dispatch killed by its own per-attempt bound retries quickly"
-  assert_contains "$RELAY_OUT" "the dispatch API did not respond within" "[$tag] relay9b: and is reported as a timeout, not as an HTTP answer"
-
-  # SECONDARY limit, the shape that sends retry-after.
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
-retry-after: 77
-$rl_ok"
-  assert_sleep 77 "$tag" "relay10: retry-after is honored (secondary limit)"
-  assert_contains "$RELAY_OUT" "HTTP 403, gh exit 1" "[$tag] relay10: and the warning names the status it backed off from"
-
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
-retry-after: 4000
-$rl_ok"
-  assert_eq "$RELAY_SLEEPS" "" "[$tag] relay11: a window beyond the job's budget is NOT slept — retrying inside a window the server named is a guaranteed failure bought with a paid runner hold"
-  assert_eq "$(grep -c . <<<"$RELAY_CALLS")" "1" "[$tag] relay11: and the second attempt is skipped entirely"
-  assert_contains "$RELAY_OUT" "beyond this job's budget" "[$tag] relay11: the deferral names its reason"
-
-  # PRIMARY limit: the window is SPENT (remaining 0) and a reset epoch says
-  # when it refills. Exact against the stubbed clock.
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
-$rl_spent
-X-Ratelimit-Reset: $(( now + 90 ))"
-  assert_sleep 90 "$tag" "relay12: an EXHAUSTED window (remaining 0) honors its reset epoch"
-
-  # The same reset epoch with the window HEALTHY is an ordinary header, not
-  # rate-limit evidence.
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 502 Bad Gateway
-$rl_ok"
-  assert_sleep 5 "$tag" "relay12b: a healthy window's reset epoch is not a wait instruction — a 5xx still takes the quick transient retry"
-  assert_eq "$(grep -c . <<<"$RELAY_CALLS")" "2" "[$tag] relay12b: and the retry actually happens"
-
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
-$rl_spent
-X-Ratelimit-Reset: 1000000000"
-  assert_sleep 60 "$tag" "relay13: a reset epoch in the PAST falls to the floor, never a negative sleep"
-
-  # An exhausted window whose reset header is missing or unusable: the
-  # sanitizer must drop it and leave the floor, never pass it to sleep.
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
-$rl_spent"
-  assert_sleep 60 "$tag" "relay13b: an exhausted window with NO reset header takes the floor — the derivation is skipped, not attempted against an empty value"
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
-$rl_spent
-X-Ratelimit-Reset: soon"
-  assert_sleep 60 "$tag" "relay13c: and a NON-NUMERIC reset is discarded before it can reach the arithmetic"
-
-  # The clamp direction relay10 cannot reach.
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
-retry-after: 3
-$rl_ok"
-  assert_sleep 60 "$tag" "relay14: a sub-minute retry-after is raised to the 60s floor — obeying 3s verbatim retries back inside the limit"
-
-  # SECONDARY limit without retry-after: the body is the only evidence left.
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
-$rl_ok
-{\"message\":\"You have exceeded a secondary rate limit. Please wait a few minutes before you try again.\"}"
-  assert_sleep 60 "$tag" "relay15: a secondary-limit 403 that sends no retry-after is recognized from its body and takes the floor"
-
-  # The status the secondary limit is documented to use, carrying neither a
-  # retry-after nor a spent window: classified as a rate limit, or it would be
-  # retried in 5s inside the window it was just refused by.
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 429 Too Many Requests
-$rl_ok"
-  assert_sleep 60 "$tag" "relay15b: an HTTP 429 with a healthy window and no retry-after is still a rate limit and takes the floor"
-
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 502 Bad Gateway
-$rl_ok"
-  assert_sleep 5 "$tag" "relay16: a 5xx blip retries QUICKLY — a minute of paid runner hold buys nothing against a transient"
-
-  # PERMANENT answers buy nothing by waiting: no sleep, no second attempt.
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 404 Not Found
-$rl_ok"
-  assert_eq "$RELAY_SLEEPS" "" "[$tag] relay19: a 404 is not slept on — a missing workflow file is a settled answer, and this job holds a runner on a PR head"
-  assert_eq "$(grep -c . <<<"$RELAY_CALLS")" "1" "[$tag] relay19: and the second attempt is skipped"
-  assert_contains "$RELAY_OUT" "refused permanently (HTTP 404)" "[$tag] relay19: the deferral names the permanent status"
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 422 Unprocessable Entity
-$rl_ok"
-  assert_eq "$RELAY_SLEEPS" "" "[$tag] relay20: a 422 (bad ref) is not slept on either"
-
-  # THE PERMISSIONS 403 — the most reachable permanent failure this job has,
-  # since it is the only one needing actions:write in a hand-edited file. It
-  # is byte-for-byte a 403 with a healthy window and no retry-after, which a
-  # ladder treating any 403 as a rate limit spends 60s on and then retries
-  # into a certain failure, on every event, forever.
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
-$rl_ok
-{\"message\":\"Resource not accessible by integration\"}"
-  assert_eq "$RELAY_SLEEPS" "" "[$tag] relay21: a PERMISSIONS 403 is permanent — no wait, no retry (it is not a rate limit)"
-  assert_eq "$(grep -c . <<<"$RELAY_CALLS")" "1" "[$tag] relay21: and only one attempt is made"
-  assert_contains "$RELAY_OUT" "actions:write" "[$tag] relay21: the annotation names the likely cause instead of leaving a silent adoption failure"
-
-  # Sanitizers: neither a non-numeric nor an out-of-range value may reach sleep.
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 502 Bad Gateway
-retry-after: soon
-$rl_ok"
-  assert_sleep 5 "$tag" "relay17: a non-numeric retry-after is discarded, not passed to sleep"
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
-retry-after: soon
-$rl_spent
-X-Ratelimit-Reset: $(( now + 70 ))"
-  assert_sleep 70 "$tag" "relay17b: a non-numeric retry-after is discarded but an EXHAUSTED window still governs"
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 502 Bad Gateway
-retry-after: 999999999
-$rl_ok"
-  assert_sleep 5 "$tag" "relay18: an out-of-range retry-after is discarded before it can overflow the arithmetic or reach sleep"
-
-  # --- the check_run opt-in's self-amplification breaker ----------------
-  # The relay's if: is a NEGATIVE list, so a repo that adds the check_run
-  # trigger makes THIS workflow's own job completions relayable events — and
-  # the relay holds no concurrency group to throttle what follows.
-  relay_run "$step" 0 "$ref" "0" check_run "" "Request a gate convergence pass"
-  assert_eq "$RELAY_CALLS" "" "[$tag] relay23: a check_run naming the relay's OWN job dispatches NOTHING — the relay does not relay its own check runs"
-  assert_contains "$RELAY_OUT" "::warning::" "[$tag] relay23: and says so, rather than absorbing the event silently"
-  relay_run "$step" 0 "$ref" "0" check_run "" "Evaluate and write the review gate"
-  assert_eq "$RELAY_CALLS" "" "[$tag] relay23b: the write job's own check run is refused by the same guard"
-  relay_run "$step" 0 "$ref" "0" check_run "" "CodeRabbit"
-  assert_eq "$RELAY_CALLS" \
-    "gh api -i -X POST repos/o/r/actions/workflows/review-gate-writer.yml/dispatches -f ref=main" \
-    "[$tag] relay23c: a REVIEWER's check run still relays — the guard names this workflow's jobs, not every check run"
-
-  # --- the invariant over the step's ENVIRONMENT ------------------------
-  # The step runs under `set -u`, so its never-reds guarantee is only as good
-  # as its env: block. Every binding sits in repo-owned YAML a consumer may
-  # touch — the check_run opt-in uncomments trigger lines a few lines above
-  # this job, and nothing stops a hand-edit reaching the block itself — so a
-  # dropped line is a live class, not a hypothetical. Unbound, each of these
-  # kills the step before it prints anything, on every PR-attached run,
-  # permanently. relay_run asserts rc 0 under both shells for each.
-  local dropped
-  for dropped in EVENT_NAME WRITER_READ_ONLY WORKFLOW_REF GH_REPO DISPATCH_REF CHECK_NAME; do
-    RELAY_DROP="$dropped"
-    relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 502 Bad Gateway
-$rl_ok"
-    RELAY_DROP=""
-  done
-  # EVENT_NAME unbound is the one drop that changes nothing about the
-  # dispatch: the step goes on to relay, with its second loop breaker unable
-  # to confirm the leg. That is a deliberate choice (the job if: still guards
-  # it) and it must be announced, or the breaker is silently off.
-  RELAY_DROP=EVENT_NAME
-  relay_run "$step" 0 "$ref" "0" pull_request_target
-  assert_contains "$RELAY_OUT" "EVENT_NAME is unbound" "[$tag] relay24: an unbound EVENT_NAME warns that the step's loop breaker cannot verify the leg"
-  assert_eq "$RELAY_CALLS" \
-    "gh api -i -X POST repos/o/r/actions/workflows/review-gate-writer.yml/dispatches -f ref=main" \
-    "[$tag] relay24: and the dispatch still happens — the job if: is the remaining guard, so this degrades loudly rather than closing"
-  RELAY_DROP=""
-  # And the three bindings the dispatch itself is built from must fail CLOSED
-  # when unbound — degrading to green must not mean degrading to a dispatch
-  # against a garbage target, and must not mean SIMULATING one either. Two of
-  # them expand inside a command substitution, where `set -u` kills only the
-  # subshell: gh is never reached, and a step that did not guard would sail on
-  # to warn, sleep, "retry" and report an API answer it never received. So
-  # each case asserts BOTH that nothing was dispatched and that nothing was
-  # waited on, plus a warning that names the binding a maintainer must restore.
-  local drop_case
-  for drop_case in "WORKFLOW_REF|could not derive this workflow's file name|relay22: an unbound WORKFLOW_REF" \
-                   "GH_REPO|env: block is missing GH_REPO|relay22b: an unbound GH_REPO" \
-                   "DISPATCH_REF|env: block is missing DISPATCH_REF|relay22c: an unbound DISPATCH_REF"; do
-    RELAY_DROP="${drop_case%%|*}"
-    relay_run "$step" 0 "$ref" "1 0" pull_request_target
-    assert_eq "$RELAY_CALLS" "" "[$tag] ${drop_case##*|} dispatches NOTHING — it lands on a warn-and-defer path, not on a garbage target"
-    assert_eq "$RELAY_SLEEPS" "" "[$tag] ${drop_case##*|} waits for NOTHING — a guard that let the step reach the retry ladder would be reporting an API answer that never arrived"
-    assert_contains "$RELAY_OUT" "$(cut -d'|' -f2 <<<"$drop_case")" "[$tag] ${drop_case##*|} names the binding in its warning — the whole output of this run is that one line"
-    RELAY_DROP=""
-  done
+  # The invariant over the step's ENVIRONMENT. The step runs under `set -u`,
+  # and every binding sits in repo-owned YAML a consumer may hand-edit, so a
+  # dropped line is a live class: unbound, each would kill the step before it
+  # prints anything, on every PR-attached run, permanently. An unbound
+  # EVENT_NAME is the one drop that changes nothing about the dispatch — the
+  # job if: still guards the leg — and it must be announced or the breaker is
+  # silently off. The three bindings the dispatch is built from fail CLOSED:
+  # two expand inside a command substitution, where `set -u` kills only the
+  # subshell, so a step that did not guard would sail on to warn, sleep,
+  # "retry" and report an API answer it never received; each row pins that
+  # nothing was dispatched, nothing was waited on, and the binding is named.
+  for row in \
+    "an unbound EVENT_NAME warns that the loop breaker cannot verify the leg, and the dispatch still happens|0|main|0||none||EVENT_NAME|rc=0 calls=dispatch:review-gate-writer.yml sleeps=0 note=warning says~EVENT_NAME+is+unbound=true" \
+    "an unbound EVENT_NAME on the retry path still retries|0|main|1 0||502||EVENT_NAME|rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 note=warning" \
+    "an unbound WRITER_READ_ONLY reads as not read-only|0|main|1 0||502||WRITER_READ_ONLY|rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 note=warning" \
+    "an unbound CHECK_NAME is no check_run of our own|0|main|1 0||502||CHECK_NAME|rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 note=warning" \
+    "an unbound WORKFLOW_REF dispatches nothing, waits for nothing, and is named|0|main|1 0||none||WORKFLOW_REF|rc=0 calls=none wait=none sleeps=0 note=warning says~could+not+derive+this+workflow's+file+name=true" \
+    "an unbound GH_REPO dispatches nothing, waits for nothing, and is named|0|main|1 0||none||GH_REPO|rc=0 calls=none wait=none sleeps=0 note=warning says~env:+block+is+missing+GH_REPO=true" \
+    "an unbound DISPATCH_REF dispatches nothing, waits for nothing, and is named|0|main|1 0||none||DISPATCH_REF|rc=0 calls=none wait=none sleeps=0 note=warning says~env:+block+is+missing+DISPATCH_REF=true"
+  do relay_row "$row"; done
 }
 
 echo "=== relay step behavior (request-converge, VST-210) ==="
@@ -572,8 +505,8 @@ done
 
 # The battery runs ONCE, against the first copy that EXTRACTED — which is the
 # template unless its extraction failed, so the label travels with the step
-# rather than being re-derived from a position. It is 40 cases run under both
-# entries of RELAY_SHELLS, 80 step executions and 221 checks, and the
+# rather than being re-derived from a position. Every row runs under both
+# entries of RELAY_SHELLS, and the
 # byte-identity check below proves the other copy's step is the SAME BYTES —
 # so a second battery would execute one script twice and call the agreement a
 # result. Identity is the stronger claim of the two, and it is the one that
