@@ -783,6 +783,8 @@ run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
 
 echo "=== a test binary's death by a signal is named apart from a failing test ==="
 FULL_GUARD=1
+# The compile-scheduling stub above is put back at the end of the block.
+cp "$R/fake-bin/cargo" "$TMP/compile-cargo"
 cat >"$R/fake-bin/cargo" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -800,25 +802,28 @@ DEATH="$(printf '%s\n' \
 ASSERTION="$(printf '%s\n' \
   'test a_case ... FAILED' \
   'error: test failed, to rerun pass `-p kendex-core --test review_fixes`')"
-run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TEST_STDERR="$DEATH"
+run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" COMPILE_LOG="$COMPILE_LOG" CARGO_TEST_STDERR="$DEATH"
 [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: a test binary died by a signal"*"review_fixes-ff58"*"SIGSEGV"* ]] \
   && [[ "$OUT" != *"guard: tests failed"* ]] \
   && ok "a runner killed by a signal is reported as the artifact's death, not a failing test" \
   || bad "a runner killed by a signal is reported as the artifact's death, not a failing test" "rc=$RC out=$OUT"
-run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TEST_STDERR="$ASSERTION"
+run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" COMPILE_LOG="$COMPILE_LOG" CARGO_TEST_STDERR="$ASSERTION"
 [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: tests failed"* ]] && [[ "$OUT" != *"died by a signal"* ]] \
   && ok "a failing assertion still reads as tests failed" \
   || bad "a failing assertion still reads as tests failed" "rc=$RC out=$OUT"
 if mutant_guard 's/if \[ -n "\$death" \]; then/if false; then/'; then
   OUT=""
   RC=0
-  OUT="$(cd "$R" && PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TEST_STDERR="$DEATH" "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
+  OUT="$(cd "$R" && PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" COMPILE_LOG="$COMPILE_LOG" CARGO_TEST_STDERR="$DEATH" "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
   [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: tests failed"* ]] && [[ "$OUT" != *"died by a signal"* ]] \
     && ok "control: with the death check removed the same death reads as tests failed" \
     || bad "control: with the death check removed the same death reads as tests failed" "rc=$RC out=$OUT"
 else
   bad "control: the death check could not be removed from a guard copy"
 fi
+cp "$TMP/compile-cargo" "$R/fake-bin/cargo"
+git -C "$R" reset -q HEAD -- Cargo.toml
+git -C "$R" checkout -q -- Cargo.toml
 FULL_GUARD=0
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
