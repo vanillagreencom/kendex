@@ -27,6 +27,18 @@ fn plan(scope: Scope, ops: Vec<PlannedOp>) -> Plan {
     Plan::landed(scope, ops).expect("a plan whose targets stay in their scope")
 }
 
+/// The rollback a precondition that no longer holds produces, its cause
+/// the stale path.
+fn assert_stale(error: &CoreError, at: &Path) {
+    match error {
+        CoreError::RolledBack { cause, .. } => match &**cause {
+            CoreError::PlanStale { path } => assert_eq!(path, at),
+            other => panic!("expected a stale plan, got {other:?}"),
+        },
+        other => panic!("expected a rollback, got {other:?}"),
+    }
+}
+
 /// A refusal part-way through takes the ops before it back with it: the
 /// first op's bytes are restored, and the bytes the refusal protected are
 /// left exactly as the outside writer left them.
@@ -67,7 +79,7 @@ fn a_refusal_part_way_through_rolls_back_what_ran_before_it() {
     fs::write(&second, "not kendex's").unwrap();
 
     let error = execute(&env, &plan).unwrap_err();
-    assert!(matches!(error, CoreError::RolledBack { .. }));
+    assert_stale(&error, &second);
     assert_eq!(fs::read_to_string(&target).unwrap(), "before");
     assert_eq!(fs::read_to_string(&second).unwrap(), "not kendex's");
 
@@ -111,40 +123,191 @@ fn an_edit_over_bytes_that_are_not_utf8_refuses_and_leaves_them() {
     assert_eq!(fs::read(&path).unwrap(), held, "the bytes are as they were");
 }
 
-/// A refused write makes nothing on its way to refusing.
-///
-/// The order is load-bearing, not tidy: `mutated_before_failure` reads a
-/// `PlanStale` as proof the op ran nothing, so a directory chain the op
-/// created before refusing is journaled absent, left out of the restore
-/// set, and survives the rollback. What is left is the empty `.claude/`
-/// that harness and project detection read as an installation.
-#[test]
-fn a_refused_write_makes_no_directory_and_a_passing_one_does() {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = env_in(tmp.path());
-    let root = tmp.path().join(".claude");
-    let target = root.join("skills/ship/SKILL.md");
+/// Why one op was refused: its precondition no longer held at the path,
+/// or the path could not be read at all.
+enum Cause {
+    Stale,
+    #[cfg_attr(
+        not(unix),
+        allow(dead_code, reason = "built only by the permission-bit row")
+    )]
+    Unreadable,
+}
 
-    // Nothing is at the path, so a precondition binding to bytes refuses.
-    let refused = execute(
-        &env,
-        &write_plan(
-            Scope::Global,
-            target.clone(),
-            "body",
-            Pre::HashIs {
-                hash: "not the bytes at that path".to_owned(),
+/// One row per op the transaction refuses and rolls back, the cause named
+/// and the bytes at the path left as the outside writer left them. A
+/// write binding to bytes that are not there, a write over a file that
+/// arrived since the plan, and a removal of a copy whose bytes are not
+/// the ones the plan proved it could take are each a stale plan. A path
+/// the apply cannot read is not a path it may call removed: the record
+/// would go while the files stayed installed, and only absence the stat
+/// proves is the end state a removal asked for; that row runs where
+/// permission bits are the access control and steps aside for root, whom
+/// they do not bind.
+///
+/// A refused write also makes nothing on its way to refusing. The order
+/// is load-bearing, not tidy: `mutated_before_failure` reads a `PlanStale`
+/// as proof the op ran nothing, so a directory chain the op created
+/// before refusing is journaled absent, left out of the restore set, and
+/// survives the rollback. What is left is the empty `.claude/` that
+/// harness and project detection read as an installation. The passing
+/// half of that row, the same write with a precondition that holds, is
+/// `a_write_whose_precondition_holds_makes_its_chain`.
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one table: four refused ops rolled back by one transaction, each row an op of its own"
+)]
+fn a_refused_op_rolls_back_naming_its_cause_and_leaves_the_bytes() {
+    /// The op, the path whose bytes must survive with what they were (or
+    /// an absent path whose chain must stay absent), and a directory
+    /// whose mode is put back after the call.
+    struct Planted {
+        op: Op,
+        at: PathBuf,
+        left: Option<&'static str>,
+        #[cfg_attr(
+            not(unix),
+            allow(dead_code, reason = "set only by the permission-bit row")
+        )]
+        restore: Option<PathBuf>,
+    }
+    type Plant = fn(&Path) -> Option<Planted>;
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut rows: Vec<(&str, Cause, Plant)> = vec![
+        (
+            "a write binding to bytes that are not there",
+            Cause::Stale,
+            |tmp| {
+                let target = tmp.join(".claude/skills/ship/SKILL.md");
+                Some(Planted {
+                    op: Op::WriteFile {
+                        path: target.clone(),
+                        bytes: b"body".to_vec(),
+                        pre: Pre::HashIs {
+                            hash: "not the bytes at that path".to_owned(),
+                        },
+                    },
+                    at: target,
+                    left: None,
+                    restore: None,
+                })
             },
         ),
-    )
-    .unwrap_err();
-    assert!(matches!(refused, CoreError::RolledBack { .. }));
-    assert!(
-        !root.exists(),
-        "a refused write left the chain it would have needed"
-    );
+        (
+            "a write over a file that arrived since the plan",
+            Cause::Stale,
+            |tmp| {
+                let target = tmp.join("file.md");
+                fs::write(&target, "changed since plan").unwrap();
+                Some(Planted {
+                    op: Op::WriteFile {
+                        path: target.clone(),
+                        bytes: b"overwrite".to_vec(),
+                        pre: Pre::Absent,
+                    },
+                    at: target,
+                    left: Some("changed since plan"),
+                    restore: None,
+                })
+            },
+        ),
+        ("a removal of a copy that changed", Cause::Stale, |tmp| {
+            let edited = tmp.join("edited.md");
+            fs::write(&edited, "not what the plan read").unwrap();
+            Some(Planted {
+                op: Op::Trash {
+                    absent_is_done: true,
+                    path: edited.clone(),
+                    pre: Pre::HashIs {
+                        hash: "what the plan read".into(),
+                    },
+                },
+                at: edited,
+                left: Some("not what the plan read"),
+                restore: None,
+            })
+        }),
+    ];
+    #[cfg(unix)]
+    rows.push((
+        "a removal of a copy nothing can read",
+        Cause::Unreadable,
+        |tmp| {
+            use std::os::unix::fs::PermissionsExt as _;
+            let sealed = tmp.join("sealed");
+            let victim = sealed.join("SKILL.md");
+            fs::create_dir_all(&sealed).unwrap();
+            fs::write(&victim, "content").unwrap();
+            fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).unwrap();
+            if fs::symlink_metadata(&victim).is_ok() {
+                // Permissions do not bind this user (root): the read cannot be
+                // made to fail here.
+                fs::set_permissions(&sealed, fs::Permissions::from_mode(0o700)).unwrap();
+                return None;
+            }
+            Some(Planted {
+                op: Op::Trash {
+                    absent_is_done: true,
+                    path: victim.clone(),
+                    pre: Pre::Any,
+                },
+                at: victim,
+                left: Some("content"),
+                restore: Some(sealed),
+            })
+        },
+    ));
 
-    // The same write with a precondition that holds does make it.
+    for (label, cause, plant) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        let Some(planted) = plant(tmp.path()) else {
+            continue;
+        };
+        let plan = plan(
+            Scope::Global,
+            vec![PlannedOp {
+                description: label.into(),
+                op: planted.op,
+            }],
+        );
+
+        // Unlocked before anything can panic: a sealed directory outlives
+        // the TempDir that cannot remove it.
+        let outcome = execute(&env, &plan);
+        #[cfg(unix)]
+        if let Some(dir) = &planted.restore {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let error = outcome.unwrap_err();
+
+        match (&cause, &error) {
+            (Cause::Stale, _) => assert_stale(&error, &planted.at),
+            (Cause::Unreadable, CoreError::RolledBack { cause, .. }) => match &**cause {
+                CoreError::Io { path, .. } => assert_eq!(path, &planted.at, "{label}"),
+                other => panic!("{label}: expected the unreadable copy, got {other:?}"),
+            },
+            (Cause::Unreadable, other) => panic!("{label}: expected a rollback, got {other:?}"),
+        }
+        match planted.left {
+            Some(bytes) => assert_eq!(fs::read_to_string(&planted.at).unwrap(), bytes, "{label}"),
+            None => assert!(
+                !tmp.path().join(".claude").exists(),
+                "{label}: a refused write left the chain it would have needed"
+            ),
+        }
+    }
+}
+
+/// The same write the first row above refuses, with a precondition that
+/// holds, does make its chain.
+#[test]
+fn a_write_whose_precondition_holds_makes_its_chain() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = env_in(tmp.path());
+    let target = tmp.path().join(".claude/skills/ship/SKILL.md");
     let outcome = execute(
         &env,
         &write_plan(Scope::Global, target.clone(), "body", Pre::Absent),
@@ -152,19 +315,6 @@ fn a_refused_write_makes_no_directory_and_a_passing_one_does() {
     .unwrap();
     assert_eq!(outcome.applied, 1);
     assert_eq!(fs::read_to_string(&target).unwrap(), "body");
-}
-
-#[test]
-fn stale_precondition_aborts_and_rolls_back() {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = env_in(tmp.path());
-    let target = tmp.path().join("file.md");
-    fs::write(&target, "changed since plan").unwrap();
-
-    let plan = write_plan(Scope::Global, target.clone(), "overwrite", Pre::Absent);
-    let error = execute(&env, &plan).unwrap_err();
-    assert!(matches!(error, CoreError::RolledBack { .. }));
-    assert_eq!(fs::read_to_string(&target).unwrap(), "changed since plan");
 }
 
 #[test]
@@ -380,77 +530,4 @@ fn a_link_crosses_a_filesystem_boundary_into_the_trash() {
     assert!(!link.is_symlink());
     let held = fs::read_dir(env.trash_dir()).unwrap().flatten().next();
     assert_eq!(fs::read_link(held.unwrap().path()).unwrap(), gone);
-}
-
-/// A path the apply cannot read is not a path it may call removed: the
-/// record would go while the files stayed installed. Only absence the
-/// stat proves is the end state a removal asked for.
-#[cfg(unix)]
-#[test]
-fn a_copy_that_cannot_be_read_stops_the_removal() {
-    use std::os::unix::fs::PermissionsExt as _;
-    let tmp = tempfile::tempdir().unwrap();
-    let env = env_in(tmp.path());
-    let sealed = tmp.path().join("sealed");
-    let victim = sealed.join("SKILL.md");
-    fs::create_dir_all(&sealed).unwrap();
-    fs::write(&victim, "content").unwrap();
-    fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).unwrap();
-    let unlock = || fs::set_permissions(&sealed, fs::Permissions::from_mode(0o700)).unwrap();
-    if fs::symlink_metadata(&victim).is_ok() {
-        // Permissions do not bind this user (root): the read cannot be
-        // made to fail here.
-        unlock();
-        return;
-    }
-
-    let plan = plan(
-        Scope::Global,
-        vec![PlannedOp {
-            description: "remove the copy nothing can read".into(),
-            op: Op::Trash {
-                absent_is_done: true,
-                path: victim.clone(),
-                pre: Pre::Any,
-            },
-        }],
-    );
-
-    // Unlocked before anything can panic: a sealed directory outlives the
-    // TempDir that cannot remove it.
-    let outcome = execute(&env, &plan);
-    unlock();
-    assert!(matches!(outcome.unwrap_err(), CoreError::RolledBack { .. }));
-    assert_eq!(fs::read_to_string(&victim).unwrap(), "content");
-}
-
-/// The other half of the same rule: a copy that is still there, and
-/// not the bytes the plan proved it could take, stops the apply.
-#[test]
-fn a_copy_that_changed_still_stops_the_removal() {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = env_in(tmp.path());
-    let edited = tmp.path().join("edited.md");
-    fs::write(&edited, "not what the plan read").unwrap();
-
-    let plan = plan(
-        Scope::Global,
-        vec![PlannedOp {
-            description: "remove the edited copy".into(),
-            op: Op::Trash {
-                absent_is_done: true,
-                path: edited.clone(),
-                pre: Pre::HashIs {
-                    hash: "what the plan read".into(),
-                },
-            },
-        }],
-    );
-
-    let error = execute(&env, &plan).unwrap_err();
-    assert!(matches!(error, CoreError::RolledBack { .. }));
-    assert_eq!(
-        fs::read_to_string(&edited).unwrap(),
-        "not what the plan read"
-    );
 }

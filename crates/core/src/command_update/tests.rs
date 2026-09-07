@@ -94,30 +94,108 @@ fn a_release_under_a_name_a_url_reserves_is_still_fetched() {
     assert_eq!(std::fs::read(&installed).unwrap(), OFFERED);
 }
 
-/// Skew, driven from both sides: the app installing a release the feed is
-/// behind, and one the feed is ahead of. Either way the pair would come out
-/// split by version rather than by failure, so nothing is written and the
-/// app's own version stays behind, which is what brings the card back to
-/// try both halves again. Build metadata is not skew — SemVer keeps it out
-/// of precedence, and the release job stamps one version into both.
+/// One row per reason the command half refuses, each moving neither half:
+/// nothing is written, the command already installed is exactly as it
+/// was, and no staged file is left. Skew, driven from both sides — the app
+/// installing a release the feed is behind, and one the feed is ahead of:
+/// either way the pair would come out split by version rather than by
+/// failure, and the app's own version staying behind is what brings the
+/// card back to try both halves again. A release that publishes no
+/// command for this machine cannot move the command installed on it, and
+/// the refusal names the target because that is the only part a person
+/// can act on. A download that fails verification, in both shapes a bad
+/// download takes, is named as the command half's: read off a card that
+/// has just been pressed, a bare signature error says nothing about which
+/// of the two halves it came from.
 #[test]
-fn a_feed_on_another_release_moves_neither_half() {
-    for offered in ["9.9.8", "10.0.0"] {
+fn the_command_half_refuses_by_name_and_moves_neither_half() {
+    /// A change to the machine the release is out on, the target and
+    /// release the app asks for, and the refusal: the whole message, or
+    /// everything of it up to the verifier's or decoder's own words.
+    type Plant = fn(&Path) -> (&'static str, &'static str);
+    type Row = (&'static str, Plant, fn() -> String, bool);
+    let rows: [Row; 5] = [
+        (
+            "the feed behind the app",
+            |_| (TARGET, "9.9.8"),
+            || {
+                format!(
+                    "the desktop app installs 9.9.8 and the release feed offers the kendex command at {RELEASE}; nothing was updated"
+                )
+            },
+            true,
+        ),
+        (
+            "the feed ahead of the app",
+            |_| (TARGET, "10.0.0"),
+            || {
+                format!(
+                    "the desktop app installs 10.0.0 and the release feed offers the kendex command at {RELEASE}; nothing was updated"
+                )
+            },
+            true,
+        ),
+        (
+            "no command for this target",
+            |_| ("sparc-unknown-none-elf", RELEASE),
+            || {
+                format!(
+                    "release {RELEASE} publishes no kendex command for sparc-unknown-none-elf, so the command installed here would be left behind; nothing was updated"
+                )
+            },
+            true,
+        ),
+        (
+            "bytes the signature does not cover",
+            |home| {
+                std::fs::write(home.join("new-command"), b"kendex AppImage bytes, and more")
+                    .unwrap();
+                (TARGET, RELEASE)
+            },
+            || {
+                "the kendex command could not be updated: the download does not verify under the pinned release key: ".to_owned()
+            },
+            false,
+        ),
+        (
+            "a body that is no signature at all",
+            |home| {
+                std::fs::write(home.join("new-command.sig"), b"not a signature").unwrap();
+                (TARGET, RELEASE)
+            },
+            || {
+                "the kendex command could not be updated: the download does not verify under the pinned release key: the signature is not base64: ".to_owned()
+            },
+            false,
+        ),
+    ];
+    for (label, plant, refusal, whole) in rows {
         let dir = tempfile::tempdir().unwrap();
         let (feed_url, installed) = a_release_is_out(&dir);
+        let (target, release) = plant(dir.path());
 
-        let refused =
-            across(&CommandBeside::Ours(installed.clone()), &feed_url, offered).unwrap_err();
+        let refused = bring_command_across(
+            &CommandBeside::Ours(installed.clone()),
+            &feed_url,
+            release,
+            target,
+            TEST_KEY,
+        )
+        .unwrap_err();
 
-        assert!(refused.contains(offered), "{offered}: {refused}");
-        assert!(refused.contains(RELEASE), "{offered}: {refused}");
-        assert!(
-            refused.contains("nothing was updated"),
-            "{offered}: {refused}"
-        );
-        assert_eq!(std::fs::read(&installed).unwrap(), INSTALLED, "{offered}");
+        match whole {
+            true => assert_eq!(refused, refusal(), "{label}"),
+            false => assert!(refused.starts_with(&refusal()), "{label}: {refused}"),
+        }
+        assert_eq!(std::fs::read(&installed).unwrap(), INSTALLED, "{label}");
+        assert!(!staged_path(&installed).exists(), "{label}");
     }
+}
 
+/// Build metadata is not skew — SemVer keeps it out of precedence, and the
+/// release job stamps one version into both.
+#[test]
+fn build_metadata_on_the_release_is_not_skew() {
     let dir = tempfile::tempdir().unwrap();
     let (feed_url, installed) = a_release_is_out(&dir);
     let build_metadata = format!("{RELEASE}+ci");
@@ -125,29 +203,6 @@ fn a_feed_on_another_release_moves_neither_half() {
         across(&CommandBeside::Ours(installed), &feed_url, &build_metadata).unwrap(),
         CommandHalf::Moved
     );
-}
-
-/// A release that publishes no command for this machine cannot move the
-/// command that is installed on it, so it moves neither half rather than
-/// leaving one behind. The refusal names the target, because that is the
-/// only part a person can act on.
-#[test]
-fn a_release_with_no_command_for_this_target_stops_the_family() {
-    let dir = tempfile::tempdir().unwrap();
-    let (feed_url, installed) = a_release_is_out(&dir);
-
-    let refused = bring_command_across(
-        &CommandBeside::Ours(installed.clone()),
-        &feed_url,
-        RELEASE,
-        "sparc-unknown-none-elf",
-        TEST_KEY,
-    )
-    .unwrap_err();
-
-    assert!(refused.contains("sparc-unknown-none-elf"), "{refused}");
-    assert!(refused.contains("nothing was updated"), "{refused}");
-    assert_eq!(std::fs::read(&installed).unwrap(), INSTALLED);
 }
 
 /// Absence is not failure. A dmg or msi with no command beside it is the
@@ -168,32 +223,6 @@ fn no_command_or_one_another_installer_owns_lets_the_app_go_alone() {
             "{beside:?}"
         );
         assert_eq!(std::fs::read(&installed).unwrap(), INSTALLED, "{beside:?}");
-    }
-}
-
-/// The command half is signed for the same reason the app half is: the feed
-/// names a host, so a run has to be able to be handed bytes and refuse them.
-/// Driven by both shapes a bad download takes, and either way the command
-/// already installed is exactly as it was.
-#[test]
-fn a_command_binary_that_fails_verification_is_never_written() {
-    for (file, corrupt) in [
-        ("new-command", b"kendex AppImage bytes, and more".as_slice()),
-        ("new-command.sig", b"not a signature".as_slice()),
-    ] {
-        let dir = tempfile::tempdir().unwrap();
-        let (feed_url, installed) = a_release_is_out(&dir);
-        std::fs::write(dir.path().join(file), corrupt).unwrap();
-
-        let refused =
-            across(&CommandBeside::Ours(installed.clone()), &feed_url, RELEASE).unwrap_err();
-
-        assert!(
-            refused.contains("the kendex command could not be updated"),
-            "{file}: {refused}"
-        );
-        assert_eq!(std::fs::read(&installed).unwrap(), INSTALLED, "{file}");
-        assert!(!staged_path(&installed).exists(), "{file}");
     }
 }
 
