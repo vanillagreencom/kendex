@@ -115,14 +115,14 @@ impl HarnessAdapter for Gemini {
         ]
     }
 
-    fn global_surfaces(&self, kind: ItemKind, root: &Path, _env: &Env) -> Vec<Surface> {
+    fn global_surfaces(&self, kind: ItemKind, root: &Path, env: &Env) -> Vec<Surface> {
         match kind {
             // An installed extension is a directory carrying its manifest.
             ItemKind::Plugin => vec![Surface::SubdirPerItem {
                 dir: root.join("extensions"),
                 marker: "gemini-extension.json",
             }],
-            other => surfaces(other, root, None),
+            other => surfaces(other, root, Some(&env.global_skills_dir())),
         }
     }
 

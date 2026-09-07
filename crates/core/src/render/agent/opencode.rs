@@ -1,7 +1,7 @@
 use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, Role, hooks_prose, skills_prose};
 use crate::harness::models::resolve_model;
 use crate::manifest::FrontmatterOverrides;
-use crate::model::{HarnessId, Scope};
+use crate::model::HarnessId;
 use crate::render::permission::PermissionIntent;
 use crate::render::vocab::{opencode_permission, rewrite_prose};
 use crate::render::yaml_scalar;
@@ -162,10 +162,7 @@ fn body(agent: &EffectiveAgent, warnings: &mut Vec<crate::render::RenderWarning>
     warnings.extend(reworded);
     out.push_str(&prose);
     out.push('\n');
-    let skill_root = match agent.scope {
-        Scope::Global => "~/.config/opencode/skills",
-        Scope::Project { .. } => ".agents/skills",
-    };
+    let skill_root = super::skill_root(HarnessId::Opencode, agent.scope);
     if let Some(skills) = skills_prose(agent, skill_root) {
         out.push_str(&format!("\n{skills}"));
     }
@@ -189,7 +186,7 @@ fn is_none_value(value: &str) -> bool {
 mod tests {
     use super::super::{SourceAgent, parse_source_agent};
     use super::*;
-    use crate::model::HarnessId;
+    use crate::model::{HarnessId, Scope};
 
     fn source(name: &str) -> SourceAgent {
         parse_source_agent(&format!(

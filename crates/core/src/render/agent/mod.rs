@@ -246,6 +246,27 @@ pub fn file_name(harness: HarnessId, agent_name: &str) -> String {
 }
 
 /// Skills prose section for harnesses without a native skills field.
+/// Where an agent is told to read its required skills: the directory the
+/// install writes for this harness at this scope.
+///
+/// One owner, because five renderers each spelling it is five chances to
+/// name a place the install stopped writing. Every tool but Claude Code
+/// and Antigravity reads the shared tree, so that is where their skills
+/// are; those two read only their own directory and are linked into it.
+/// A `method = "copy"` delivery writes each tool's own directory instead,
+/// which this does not distinguish — the prose has never said so, at
+/// either scope.
+pub fn skill_root(harness: HarnessId, scope: &Scope) -> &'static str {
+    match scope {
+        Scope::Project { .. } => ".agents/skills",
+        Scope::Global => match harness {
+            HarnessId::Claude => "~/.claude/skills",
+            HarnessId::Antigravity => "~/.gemini/config/skills",
+            _ => "~/.agents/skills",
+        },
+    }
+}
+
 pub fn skills_prose(agent: &EffectiveAgent, skill_root_hint: &str) -> Option<String> {
     if agent.skills.is_empty() {
         return None;
@@ -443,6 +464,47 @@ mod tests {
         assert_eq!(
             merged.deny_tools,
             Some(vec!["WebSearch".into(), "WebFetch".into()])
+        );
+    }
+
+    /// The path an agent is told to read a skill from is the one the
+    /// install writes. Globally that is the shared tree for every tool
+    /// that reads it, and its own directory for the two that do not; a
+    /// project's is the shared tree for all of them. A renderer naming a
+    /// tool's own global directory would send the agent to a path the
+    /// default delivery no longer creates.
+    #[test]
+    fn an_agent_reads_its_skills_from_the_place_the_install_writes() {
+        let project = Scope::Project {
+            root: std::path::PathBuf::from("/p"),
+        };
+        for harness in HarnessId::ALL {
+            assert_eq!(
+                skill_root(harness, &project),
+                ".agents/skills",
+                "{harness:?} in a project"
+            );
+        }
+        for harness in [
+            HarnessId::Codex,
+            HarnessId::Pi,
+            HarnessId::Opencode,
+            HarnessId::Gemini,
+            HarnessId::Copilot,
+        ] {
+            assert_eq!(
+                skill_root(harness, &Scope::Global),
+                "~/.agents/skills",
+                "{harness:?} reads the shared global tree"
+            );
+        }
+        assert_eq!(
+            skill_root(HarnessId::Claude, &Scope::Global),
+            "~/.claude/skills"
+        );
+        assert_eq!(
+            skill_root(HarnessId::Antigravity, &Scope::Global),
+            "~/.gemini/config/skills"
         );
     }
 }

@@ -1,6 +1,6 @@
 use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, Role, hooks_prose, skills_prose};
 use crate::harness::models::resolve_model;
-use crate::model::{HarnessId, Scope};
+use crate::model::HarnessId;
 use crate::render::permission::PermissionIntent;
 use crate::render::vocab::rewrite_prose;
 
@@ -161,10 +161,7 @@ fn instructions(
     warnings.extend(reworded);
     out.push_str(&prose);
     out.push('\n');
-    let skill_root = match agent.scope {
-        Scope::Global => "$CODEX_HOME/skills",
-        Scope::Project { .. } => ".agents/skills",
-    };
+    let skill_root = super::skill_root(HarnessId::Codex, agent.scope);
     if let Some(skills) = skills_prose(agent, skill_root) {
         out.push_str(&format!("\n{skills}"));
     }
@@ -217,7 +214,7 @@ mod tests {
     use super::super::{SourceAgent, parse_source_agent};
     use super::*;
     use crate::manifest::FrontmatterOverrides;
-    use crate::model::HarnessId;
+    use crate::model::{HarnessId, Scope};
 
     fn source(name: &str, role: &str) -> SourceAgent {
         parse_source_agent(&format!(
@@ -344,7 +341,7 @@ mod tests {
             "nickname_candidates = [\"Reviewer-Arch-Atlas\", \"Reviewer-Arch-Delta\", \"Reviewer-Arch-Echo\", \"Reviewer-Arch-Nova\", \"Reviewer-Arch-Orion\", \"Reviewer-Arch-Vector\"]"
         ));
         assert!(tpm.contains("\"TPM-Atlas\""));
-        assert!(tpm.contains("- dev: $CODEX_HOME/skills/dev/SKILL.md"));
+        assert!(tpm.contains("- dev: ~/.agents/skills/dev/SKILL.md"));
     }
 
     #[test]

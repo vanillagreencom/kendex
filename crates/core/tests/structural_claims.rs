@@ -93,7 +93,7 @@ fn refresh_reads_each_installs_own_recorded_source_across_scopes() {
     apply_scope(&w, &global);
     apply_scope(&w, &project);
 
-    let global_body = fs::read_to_string(w.env.rendered_skills_dir().join("gh/SKILL.md")).unwrap();
+    let global_body = fs::read_to_string(w.env.global_skills_dir().join("gh/SKILL.md")).unwrap();
     let project_body = fs::read_to_string(w.project.join(".agents/skills/gh/SKILL.md")).unwrap();
     assert!(global_body.contains("A, revised."), "{global_body}");
     assert!(project_body.contains("B, revised."), "{project_body}");

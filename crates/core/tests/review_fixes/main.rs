@@ -264,20 +264,23 @@ fn narrowing_harnesses_orphans_the_stranded_installation() {
         "[skills.gh]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n",
     );
     apply_now(&w, &scope);
-    let codex_link = w.home.join(".codex/skills/gh");
-    assert!(codex_link.is_symlink());
+    // Codex reads `~/.agents/skills` itself, so the shared tree is its
+    // installation; Claude Code reads only its own directory, and the link
+    // sitting there is what narrowing strands.
+    let claude_link = w.home.join(".claude/skills/gh");
+    assert!(claude_link.is_symlink());
 
     declare(
         &w,
         &scope,
-        "[skills.gh]\nsource = \"cat\"\nharnesses = [\"claude\"]\n",
+        "[skills.gh]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
     );
     let report = audit(&w.env, &scope).unwrap();
     assert!(
         report
             .drift
             .iter()
-            .any(|row| row.harness == HarnessId::Codex && row.state == DriftState::Orphaned)
+            .any(|row| row.harness == HarnessId::Claude && row.state == DriftState::Orphaned)
     );
 
     let report = plan_scope(
@@ -294,8 +297,9 @@ fn narrowing_harnesses_orphans_the_stranded_installation() {
     .unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
 
-    assert!(!codex_link.is_symlink() && !codex_link.exists());
-    assert!(w.home.join(".claude/skills/gh").is_symlink());
+    assert!(!claude_link.is_symlink() && !claude_link.exists());
+    // The shared tree stays: Codex still reads it.
+    assert!(w.env.global_skills_dir().join("gh/SKILL.md").is_file());
     assert_eq!(audit(&w.env, &scope).unwrap().drift, vec![]);
 }
 

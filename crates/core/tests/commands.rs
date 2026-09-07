@@ -165,7 +165,9 @@ fn a_command_installs_as_a_skill_at_global_scope_too() {
     let report = audit(&f.env, &Scope::Global).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
 
-    let skill = f.env.home.join(".codex/skills/ship/SKILL.md");
+    // Codex reads `~/.agents/skills` globally, so that is where the
+    // generated skill lands, not in a directory of its own.
+    let skill = f.env.global_skills_dir().join("ship/SKILL.md");
     assert!(
         fs::read_to_string(&skill)
             .unwrap()

@@ -82,7 +82,7 @@ impl HarnessAdapter for Opencode {
 
     fn global_surfaces(&self, kind: ItemKind, root: &Path, env: &Env) -> Vec<Surface> {
         let config = global_config_file(root, env);
-        surfaces(kind, root, config, None)
+        surfaces(kind, root, config, Some(&env.global_skills_dir()))
     }
 
     fn project_surfaces(&self, kind: ItemKind, project: &Path, _env: &Env) -> Vec<Surface> {

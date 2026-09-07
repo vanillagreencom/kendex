@@ -129,13 +129,14 @@ impl HarnessAdapter for Pi {
         &[ProjectMarker::Dir(".pi"), ProjectMarker::Dir(".agents")]
     }
 
-    fn global_surfaces(&self, kind: ItemKind, root: &Path, _env: &Env) -> Vec<Surface> {
+    fn global_surfaces(&self, kind: ItemKind, root: &Path, env: &Env) -> Vec<Surface> {
         match kind {
             ItemKind::Agent => vec![Surface::files(root.join("agents"), &["md"])],
-            ItemKind::Skill => vec![Surface::SubdirPerItem {
-                dir: root.join("skills"),
-                marker: "SKILL.md",
-            }],
+            // Pi loads `~/.agents/skills` as well as its own global tree, so
+            // the shared one leads here as it does in a project.
+            ItemKind::Skill => {
+                super::shared_first(Some(&env.global_skills_dir()), root.join("skills"))
+            }
             // Hooks ride the pi-hooks carrier: the registry kendex renders
             // is what the carrier's listeners execute. pi has no MCP.
             ItemKind::Hook => hook_surfaces(root),

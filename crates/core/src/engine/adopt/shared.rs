@@ -12,6 +12,7 @@ use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::local_source_root;
 
 use super::{destination, position};
+use crate::engine::desired::skill_canonical;
 
 // Adopting a shared folder through the link a tool reads it by: the
 // boundary that decides what a link may be adopted through, and the ops
@@ -32,11 +33,11 @@ pub(super) struct SharedTarget {
 
 /// What a live link may be adopted through. The target must be a real
 /// skill folder — the `SKILL.md` marker is what keeps a link at `$HOME` or
-/// `/etc` refused — and must sit outside kendex's own machinery: the
-/// rendered canonical and variant trees, the trash, the source cache, the
-/// journal, and the local source the capture would write into (a managed
-/// tree is already ours, and capturing it under another name would steal
-/// it; capturing the destination would recurse). Everything is compared
+/// `/etc` refused — and must sit outside kendex's own machinery: the trash,
+/// the source cache, the journal, the local source the capture would write
+/// into, and, from a project, the global shared tree (a managed tree is
+/// already ours, and capturing it under another name would steal it;
+/// capturing the destination would recurse). Everything is compared
 /// resolved by `crate::paths::canonical`, so a `..`-laden link cannot
 /// dress one side up as the other, and a boundary derived from the scope
 /// root is held against a target spelled the way that root was. That rule
@@ -69,17 +70,21 @@ pub(super) fn shared_target(
     }
     let canon = |path: PathBuf| crate::paths::canonical(&path).unwrap_or(path);
     let mut ours = vec![
-        env.rendered_skills_dir(),
         env.trash_dir(),
         env.source_cache_dir(),
         env.journal_dir(),
         local_source_root(env, scope),
     ];
-    ours.extend(
-        HarnessId::ALL
-            .iter()
-            .map(|h| env.rendered_skill_variants_dir(h.name())),
-    );
+    // The global shared tree holds this skill's own place at global scope
+    // and every other skill's at either scope. The one place adoption
+    // would put THIS skill is the finished shape — a folder written there
+    // by hand with tools linking at it — and is settled below. Every other
+    // name in that tree is a second skill's content, and capturing it
+    // under this name would move it; a project link reaching any of it
+    // names a global install this scope's lock cannot see.
+    if canon(skill_canonical(env, scope, name)) != target {
+        ours.push(env.global_skills_dir());
+    }
     if ours.into_iter().any(|root| target.starts_with(canon(root))) {
         return Err(refuse());
     }

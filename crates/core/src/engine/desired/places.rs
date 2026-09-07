@@ -88,13 +88,14 @@ fn item_dirs(
         .collect()
 }
 
-/// The shared tree several tools read one skill from. Its name holds the
-/// plugin a plugin-registry catalog put the skill in, joined the way the
-/// directory itself spells it.
+/// The shared tree several tools read one skill from: `.agents/skills`
+/// under the scope's own root, the project's or the home directory's. Its
+/// name holds the plugin a plugin-registry catalog put the skill in, joined
+/// the way the directory itself spells it.
 pub fn skill_canonical(env: &Env, scope: &Scope, name: &str) -> PathBuf {
     let name = crate::harness::canonical_name(name);
     match scope {
-        Scope::Global => env.rendered_skills_dir().join(name),
+        Scope::Global => env.global_skills_dir().join(name),
         Scope::Project { root } => root.join(".agents/skills").join(name),
     }
 }

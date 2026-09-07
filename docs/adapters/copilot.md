@@ -16,7 +16,7 @@ Project markers: `.github/copilot-instructions.md`, or a `.github/agents`, `.git
 | Kind | Global | Project | Caps |
 |---|---|---|---|
 | agent | `~/.copilot/agents/*.agent.md` | `.github/agents/*.agent.md` | managed, both |
-| skill | `~/.copilot/skills/<name>/SKILL.md` | `.agents/skills/<name>/SKILL.md`, or `.github/skills/<name>/SKILL.md` for a copy delivery | managed, both |
+| skill | `~/.agents/skills/<name>/SKILL.md`, or `~/.copilot/skills/<name>/SKILL.md` for a copy delivery | `.agents/skills/<name>/SKILL.md`, or `.github/skills/<name>/SKILL.md` for a copy delivery | managed, both |
 | hook | `~/.copilot/hooks/*.json`, each file a document, plus `~/.copilot/settings.json` → `hooks` | `.github/hooks/*.json`, plus `.github/copilot/settings.json` and `settings.local.json` → `hooks` | managed, both, enforced |
 | mcp-server | `~/.copilot/mcp-config.json` | `.github/mcp.json` | managed, both |
 | plugin | `~/.copilot/settings.json` → `enabledPlugins` | `.github/copilot/settings.json` and `settings.local.json` → `enabledPlugins` | observe and toggle, both |

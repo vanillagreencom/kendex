@@ -9,6 +9,7 @@
 use super::super::*;
 use crate::engine::audit;
 use crate::env::FakeOs;
+use crate::test_util::rooted;
 use std::fs;
 
 use super::trash_is_empty;
@@ -99,18 +100,19 @@ fn a_link_at_a_folder_without_the_marker_still_refuses() {
     assert!(elsewhere.join("notes.txt").is_file());
 }
 
-/// A link the user repointed into kendex's own store is not theirs to
-/// adopt: capturing a managed tree under another name would steal it.
+/// A project link reaching the global shared tree is not this scope's to
+/// adopt: what sits there is a global install, which the project's lock
+/// cannot see, and capturing it under another name would steal it.
 #[cfg(unix)]
 #[test]
-fn a_link_into_kendexs_own_trees_refuses() {
+fn a_project_link_into_the_global_tree_refuses() {
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), FakeOs::Linux);
     let project = tmp.path().join("app");
     let scope = Scope::Project {
         root: project.clone(),
     };
-    let managed = env.rendered_skills_dir().join("other");
+    let managed = env.global_skills_dir().join("other");
     fs::create_dir_all(&managed).unwrap();
     fs::write(
         managed.join("SKILL.md"),
@@ -130,6 +132,88 @@ fn a_link_into_kendexs_own_trees_refuses() {
     .unwrap_err();
     assert!(matches!(error, CoreError::ForeignSymlink { .. }));
     assert!(managed.join("SKILL.md").is_file());
+}
+
+/// The same folder at the scope it belongs to is a sharing layout, not a
+/// refusal. `~/.agents/skills/<name>` is where a global install lands and
+/// where a person building this by hand puts the real folder, because
+/// Claude Code reads no shared tree and has to link at one. Adoption is
+/// the exit that keeps it; refusing would leave Replace, which sets the
+/// person's own folder aside into the trash.
+#[cfg(unix)]
+#[test]
+fn a_global_link_into_the_shared_tree_adopts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let shared = env.global_skills_dir().join("gh");
+    fs::create_dir_all(&shared).unwrap();
+    fs::write(
+        shared.join("SKILL.md"),
+        "---\nname: gh\ndescription: written by hand\n---\nTheirs.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(env.home.join(".claude/skills")).unwrap();
+    std::os::unix::fs::symlink(&shared, env.home.join(".claude/skills/gh")).unwrap();
+
+    let plan = adopt(
+        &env,
+        &Scope::Global,
+        ItemKind::Skill,
+        "gh",
+        &[HarnessId::Claude],
+    )
+    .unwrap();
+    crate::apply::execute(&env, &plan).unwrap();
+
+    // Global scope captures into the local source rather than in place, so
+    // the folder itself goes and the link that read it is cleared.
+    assert!(!shared.exists());
+    assert!(!env.home.join(".claude/skills/gh").is_symlink());
+
+    // The follow-up apply restores the sharing from kendex's copy: the tree
+    // back in the shared place, Claude Code reading it through its link.
+    let report = crate::engine::audit(&env, &Scope::Global).unwrap();
+    crate::apply::execute(&env, &report.plan).unwrap();
+    assert!(shared.join("SKILL.md").is_file());
+    let through_claude = fs::read_to_string(env.home.join(".claude/skills/gh/SKILL.md")).unwrap();
+    assert!(through_claude.contains("Theirs."));
+    assert_eq!(
+        crate::engine::audit(&env, &Scope::Global).unwrap().drift,
+        vec![]
+    );
+}
+
+/// Only this skill's own place in the shared tree is the finished shape.
+/// A link at one name pointing at another name's folder there would have
+/// adoption capture that folder under this name and move the original,
+/// taking a second skill's content with it.
+#[cfg(unix)]
+#[test]
+fn a_global_link_across_names_in_the_shared_tree_refuses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let other = env.global_skills_dir().join("other");
+    fs::create_dir_all(&other).unwrap();
+    fs::write(
+        other.join("SKILL.md"),
+        "---\nname: other\ndescription: a second skill\n---\nTheirs.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(env.home.join(".claude/skills")).unwrap();
+    std::os::unix::fs::symlink(&other, env.home.join(".claude/skills/alias")).unwrap();
+
+    let error = adopt(
+        &env,
+        &Scope::Global,
+        ItemKind::Skill,
+        "alias",
+        &[HarnessId::Claude],
+    )
+    .unwrap_err();
+    assert!(matches!(error, CoreError::ForeignSymlink { .. }));
+    assert!(other.join("SKILL.md").is_file());
 }
 
 /// The folder changing between the plan and the apply aborts the whole

@@ -18,7 +18,7 @@ The config file for a scope is `opencode.jsonc` when it exists, else `opencode.j
 | Kind | Path | Caps |
 |---|---|---|
 | agent | `<base>/agents/*.md` | managed, both |
-| skill | `.agents/skills/<name>/SKILL.md` in a project; `<base>/skills/<name>/SKILL.md` globally and for a copy delivery | managed, both |
+| skill | `.agents/skills/<name>/SKILL.md` in a project, `~/.agents/skills/<name>/SKILL.md` globally; `<base>/skills/<name>/SKILL.md` for a copy delivery | managed, both |
 | hook | `<base>/instructions/kendex-hook-<name>.md` | managed, both, advisory |
 | command | `<base>/commands/*.md`, plus the legacy singular `<base>/command/*.md` for what is already there | managed, both |
 | mcp-server | config `mcp` key, jsonc tolerated on read, per-entry `enabled` | managed, both |

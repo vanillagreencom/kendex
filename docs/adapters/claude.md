@@ -25,7 +25,7 @@ Project markers: a `.claude/` directory, or a `.mcp.json` file at the repo root.
 
 MCP servers are written to `~/.claude.json` at global scope and to the repository's `.mcp.json` at project scope (`mcp_registry`, `crates/core/src/engine/targets.rs`). `settings.local.json` is observed and never written. Only the plugin enable flip is written.
 
-A project skill lives in the shared `.agents/skills/<name>` tree, and `.claude/skills/<name>` is a relative link onto it (`../../.agents/skills/<name>`) when the bytes match, committed once and resolving in every clone; an absolute link from an older install is drift and is rewritten on the next apply. Global variants live under the app data directory (`rendered_skills_dir`, `crates/core/src/env.rs`).
+Claude Code reads no shared skills tree at either scope, so its own directory holds a link onto one. A project skill lives in the shared `.agents/skills/<name>` tree, and `.claude/skills/<name>` is a relative link onto it (`../../.agents/skills/<name>`) when the bytes match, committed once and resolving in every clone; an absolute link from an older install is drift and is rewritten on the next apply. A global skill lives in `~/.agents/skills/<name>` and `~/.claude/skills/<name>` is an absolute link onto it (`global_skills_dir`, `crates/core/src/env.rs`).
 
 ## Format
 

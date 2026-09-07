@@ -229,20 +229,13 @@ impl Env {
         self.data_dir.join(APP_DIR).join("local-source")
     }
 
-    /// Rendered canonical trees for global-scope skills — the stable target
-    /// native dirs link to (never the source cache, which refresh resets).
-    pub fn rendered_skills_dir(&self) -> PathBuf {
-        self.data_dir.join(APP_DIR).join("rendered/skills")
-    }
-
-    /// Home of a per-tool skill variant that diverged from the shared
-    /// rendering. A sibling of `rendered/skills`, keyed by harness, so a
-    /// skill name can never collide with a variant directory.
-    pub fn rendered_skill_variants_dir(&self, harness: &str) -> PathBuf {
-        self.data_dir
-            .join(APP_DIR)
-            .join("rendered/variants")
-            .join(harness)
+    /// The shared skills tree at global scope — `.agents/skills` under the
+    /// home directory, the same layout a project has under its own root, and
+    /// the one every tool but Claude Code and Antigravity reads there. It is
+    /// nobody's private store: a global install lands where those tools
+    /// already look, so nothing has to be linked at it for them to see it.
+    pub fn global_skills_dir(&self) -> PathBuf {
+        self.home.join(".agents/skills")
     }
 
     pub fn project_manifest_file(project_root: &Path) -> PathBuf {

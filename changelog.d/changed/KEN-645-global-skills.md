@@ -1,0 +1,1 @@
+- **Breaking:** a global skill installs into `~/.agents/skills/<name>`, the tree Codex, OpenCode, Pi, Gemini and Copilot read; Claude Code and Antigravity link at it. Reinstall global skills once.

@@ -342,8 +342,10 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
         (Cursor, Agent) => managed(PROJECT),
         // Cursor reads the shared `.agents/skills` tree, which is where a
         // project skill goes; `.cursor/skills` is the directory only Cursor
-        // reads, for a copy delivery. No documented global skills path, so
-        // global stays unsupported.
+        // reads, for a copy delivery. Its global pair, `~/.agents/skills` and
+        // `~/.cursor/skills`, is not modelled, so global stays unsupported; a
+        // global skill installed there for another tool reaches Cursor
+        // through the shared tree all the same.
         (Cursor, Skill) => managed(PROJECT),
         // A cursor hook is a `.mdc` rule with no registration behind it.
         (Cursor, Hook) => advisory(KindCaps {

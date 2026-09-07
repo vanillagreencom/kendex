@@ -50,7 +50,7 @@ A surface is one of four shapes, declared per kind and scope by each adapter (`S
 - `Structured`: items are entries inside one structured file; a `Reader` names the on-disk format.
 - `StructuredDir`: every `*.<ext>` in a directory is a document holding entries; a document holding none reports none.
 
-Every harness but Claude Code reads a project's `.agents/skills`, so one rendered tree serves them all and a per-harness directory stays on the surface list for what is already there and for a copy delivery. Claude's own `.claude/skills/<name>` collapses onto the shared tree through a relative link when the bytes match. An adapter claims only its own namespace; a cross-read is reported as an input to effective state, never as a second installation.
+The shared skills tree is `.agents/skills` under the scope's own root: the project's, or the home directory. Every harness but Claude Code reads the project's, and every one but Claude Code and Antigravity reads `~/.agents/skills`, so one rendered tree serves them all at either scope and a per-harness directory stays on the surface list for what is already there and for a copy delivery. A harness that does not read the shared tree gets a link in its own directory onto it when the bytes match — relative in a project, absolute globally. An adapter claims only its own namespace; a cross-read is reported as an input to effective state, never as a second installation.
 
 ## Hook commands
 

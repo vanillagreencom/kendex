@@ -18,7 +18,7 @@ Project markers: a `.pi/` or `.agents/` directory.
 | Kind | Global | Project | Caps |
 |---|---|---|---|
 | agent | `~/.pi/agent/agents/*.md` | `.pi/agents/*.md` | managed, both |
-| skill | `~/.pi/agent/skills/<name>/SKILL.md` | `.agents/skills/<name>/SKILL.md`, shared with Codex and Antigravity | managed, both |
+| skill | `~/.agents/skills/<name>/SKILL.md`, shared with Codex, OpenCode, Gemini and Copilot; `~/.pi/agent/skills/<name>/SKILL.md` for a copy delivery | `.agents/skills/<name>/SKILL.md`, shared with Codex and Antigravity | managed, both |
 | command | `~/.pi/agent/prompts/*.md` | `.pi/prompts/*.md` | managed, both |
 | hook | `~/.pi/agent/kendex/hooks/<name>.sh` plus `kendex/hooks.json` | `.pi/kendex/hooks/<name>.sh` plus `.pi/kendex/hooks.json` | managed, both; enforced while the `pi-hooks` carrier is registered |
 | mcp-server | — | — | unsupported |

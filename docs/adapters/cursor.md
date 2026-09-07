@@ -23,7 +23,7 @@ Project marker: a `.cursor/` directory.
 | plugin | `~/.cursor/plugins/{local,cache}` with `.cursor-plugin/plugin.json` | — | observe only, global |
 | pi-extension | — | — | unsupported |
 
-Cursor has no global rules directory and no documented global skills path, so both stay unsupported at global scope while the global command and plugin surfaces are scanned. `hooks.json` is observed at both scopes and never written.
+Cursor has no global rules directory, so agents stay unsupported at global scope while the global command and plugin surfaces are scanned. Cursor documents `~/.agents/skills` and `~/.cursor/skills`, but kendex models neither, so a global skill is never installed for Cursor; one installed there for another tool reaches it through the shared tree. `hooks.json` is observed at both scopes and never written.
 
 ## Format
 

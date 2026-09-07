@@ -20,7 +20,7 @@ A project root reaches a session only through a folder that session is attached 
 | Kind | Global | Project | Caps |
 |---|---|---|---|
 | agent | `~/.gemini/config/agents/*.md` | — | managed, global |
-| skill | `~/.gemini/config/skills/<name>/SKILL.md` | `.agents/skills/<name>/SKILL.md`, shared with Codex and Pi | managed, both |
+| skill | `~/.gemini/config/skills/<name>/SKILL.md`, a link onto `~/.agents/skills/<name>` | `.agents/skills/<name>/SKILL.md`, shared with Codex and Pi | managed, both |
 | command | — | — | unsupported: a skill is the slash command |
 | hook | `~/.gemini/config/hooks.json`, scripts under `~/.gemini/config/hooks/` | `.agents/hooks.json`, scripts under `.agents/hooks/` | managed, both, enforced |
 | mcp-server | `~/.gemini/config/mcp_config.json` | `.agents/mcp_config.json` | managed, both |

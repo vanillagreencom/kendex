@@ -1,0 +1,1 @@
+- A globally installed agent is told to read its required skills from the directory they are installed in. It named its harness's own directory, where the default delivery no longer writes them.

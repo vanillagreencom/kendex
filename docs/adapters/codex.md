@@ -16,7 +16,7 @@ Project markers: a `.codex/` or `.agents/` directory.
 | Kind | Global | Project | Caps |
 |---|---|---|---|
 | agent | `~/.codex/agents/*.toml` | `.codex/agents/*.toml` | managed, both |
-| skill | `~/.codex/skills/<name>/SKILL.md` | `.agents/skills/<name>/SKILL.md`, shared with Pi and Antigravity | managed, both |
+| skill | `~/.agents/skills/<name>/SKILL.md`, shared with Pi, OpenCode, Gemini and Copilot; `~/.codex/skills/<name>/SKILL.md` read back only | `.agents/skills/<name>/SKILL.md`, shared with Pi and Antigravity | managed, both |
 | command | — | — | install, toggle, remove, refresh both; `installs_as: skill` |
 | hook | `~/.codex/hooks.json` | `.codex/hooks.json` | managed, both, enforced |
 | mcp-server | `~/.codex/config.toml` `[mcp_servers.<name>]` | `.codex/config.toml` | managed, both |
@@ -24,6 +24,8 @@ Project markers: a `.codex/` or `.agents/` directory.
 | pi-extension | — | — | unsupported |
 
 Codex removed custom prompts in 0.118 (2026-03), so `~/.codex/prompts` is read by nothing and kendex neither scans nor writes it; a command is a skill there, invoked as `$name` or through `/skills`.
+
+`$HOME/.agents/skills` is the only user-level skills location Codex documents, so a global install lands there and `~/.codex/skills` is read back only. A global copy delivery still writes `~/.codex/skills`, which Codex does not read: it is the only directory of Codex's own, and what a copy should do instead is open.
 
 ## Format
 

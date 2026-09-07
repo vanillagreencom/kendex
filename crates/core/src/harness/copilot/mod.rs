@@ -85,14 +85,16 @@ impl HarnessAdapter for Copilot {
         ]
     }
 
-    fn global_surfaces(&self, kind: ItemKind, root: &Path, _env: &Env) -> Vec<Surface> {
+    fn global_surfaces(&self, kind: ItemKind, root: &Path, env: &Env) -> Vec<Surface> {
         let settings = root.join("settings.json");
         match kind {
             ItemKind::Agent => vec![Surface::files(root.join("agents"), &["agent.md"])],
-            ItemKind::Skill => vec![Surface::SubdirPerItem {
-                dir: root.join("skills"),
-                marker: "SKILL.md",
-            }],
+            // A personal skill lives in `~/.copilot/skills` or
+            // `~/.agents/skills`; the shared one leads, as it does in a
+            // project.
+            ItemKind::Skill => {
+                super::shared_first(Some(&env.global_skills_dir()), root.join("skills"))
+            }
             // Each file under `hooks/` is a whole `{version, hooks}`
             // document, and the settings file carries a `hooks` key of the
             // same entries. Both are read; only the files are written, since

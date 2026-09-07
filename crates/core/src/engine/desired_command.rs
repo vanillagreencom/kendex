@@ -152,19 +152,35 @@ fn as_skill(
             remediation: Some(finding.remediation.clone()),
         });
     }
-    // Pi reads the same project skill directory Codex does, so the generated
-    // skill shows up there too. Saying so beats the user finding a command
-    // they never declared for Pi in Pi's skill list.
-    if native_dir(ctx.env, ctx.scope, HarnessId::Pi, ItemKind::Skill).as_ref() == Some(&dir) {
+    // The generated tree lands in a directory other tools read as well —
+    // the project's shared tree, and the home one at global scope — so
+    // they offer the command too. Which tools is derived from the same
+    // surface declarations the write used, never a list spelled here:
+    // saying "Pi" while three more tools also read it is the surprise this
+    // warning exists to prevent.
+    let also: Vec<&str> = HarnessId::ALL
+        .into_iter()
+        .filter(|other| *other != harness)
+        .filter(|other| {
+            native_dir(ctx.env, ctx.scope, *other, ItemKind::Skill).as_ref() == Some(&dir)
+        })
+        .map(HarnessId::display_name)
+        .collect();
+    if !also.is_empty() {
+        let reads = match also.len() {
+            1 => "reads",
+            _ => "read",
+        };
         state.warnings.push(ItemWarning {
             kind: ItemKind::Command,
             name: ctx.name.to_owned(),
             harness: Some(harness),
             message: format!(
-                "installed as skill {name} in a directory Pi also reads, so Pi offers it too"
+                "installed as skill {name} in a directory {} also {reads}, so it is offered there too",
+                also.join(", ")
             ),
             remediation: Some(format!(
-                "drop {} from this command's harnesses if Pi must not see it",
+                "drop {} from this command's harnesses if they must not see it",
                 harness.display_name()
             )),
         });
