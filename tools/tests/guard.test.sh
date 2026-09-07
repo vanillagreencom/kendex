@@ -802,6 +802,13 @@ DEATH="$(printf '%s\n' \
 ASSERTION="$(printf '%s\n' \
   'test a_case ... FAILED' \
   'error: test failed, to rerun pass `-p kendex-core --test review_fixes`')"
+# The same death line for a compiler cargo launched, under cargo's compile
+# failure rather than its test failure.
+COMPILER_DEATH="$(printf '%s\n' \
+  'error: could not compile `kendex-core` (lib test)' \
+  '' \
+  'Caused by:' \
+  '  process didn'"'"'t exit successfully: `rustc --crate-name kendex_core ...` (signal: 9, SIGKILL: kill)')"
 run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" COMPILE_LOG="$COMPILE_LOG" CARGO_TEST_STDERR="$DEATH"
 [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: a test binary died by a signal"*"review_fixes-ff58"*"SIGSEGV"* ]] \
   && [[ "$OUT" != *"guard: tests failed"* ]] \
@@ -811,6 +818,10 @@ run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" COMPILE_LOG=
 [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: tests failed"* ]] && [[ "$OUT" != *"died by a signal"* ]] \
   && ok "a failing assertion still reads as tests failed" \
   || bad "a failing assertion still reads as tests failed" "rc=$RC out=$OUT"
+run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" COMPILE_LOG="$COMPILE_LOG" CARGO_TEST_STDERR="$COMPILER_DEATH"
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: tests failed"* ]] && [[ "$OUT" != *"died by a signal"* ]] \
+  && ok "a compiler killed by a signal is not named as a test binary's death" \
+  || bad "a compiler killed by a signal is not named as a test binary's death" "rc=$RC out=$OUT"
 if mutant_guard 's/if \[ -n "\$death" \]; then/if false; then/'; then
   OUT=""
   RC=0
