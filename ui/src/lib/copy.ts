@@ -98,7 +98,7 @@ export const SCAN_FAILED_TITLE = "Couldn't scan this machine";
 export const SCAN_STALE_TITLE = "These are the last figures kendex could check";
 export const UPDATES_ATTENTION_TITLE = "Couldn't check for updates";
 export const UPDATES_ATTENTION_DETAIL =
-  "Anything new since the last check isn't counted here.";
+  "Anything new since the last check isn't counted here. Check again from Updates.";
 export const AUDIT_ATTENTION_TITLE = "Couldn't check installed content";
 export const AUDIT_ATTENTION_DETAIL =
   "Problems and pending changes may be missing here.";
@@ -195,12 +195,20 @@ export const DISCARD_EDITS_CONFIRM_LABEL = "Discard edits";
 export const FORK_ERROR_TITLE = "Couldn't keep the edits";
 export const forkedToastLabel = (name: string): string =>
   `${name} is yours now — updates are paused`;
-export const forkedAttentionTitle = (count: number): string =>
+// Home's row for installs whose files no longer match what kendex wrote:
+// which packages, where, what that means, and the two ways out. The row
+// never says who edited them — a commit in the project's own repository
+// changes the files the same as a hand does.
+export const editedAttentionTitle = (count: number): string =>
   count === 1
-    ? "You've edited an installed package"
-    : `You've edited ${count} installed packages`;
-export const FORKED_ATTENTION_DETAIL =
-  "Your changes are safe — nothing will overwrite them. Decide whether to keep each as your own copy.";
+    ? "1 installed package was edited on disk"
+    : `${count} installed packages were edited on disk`;
+/** `named` is the packages by place: "gh in vg; dev and orch in hyprtrade". */
+export const editedAttentionDetail = (named: string): string =>
+  `${named}. A file kendex installed no longer matches its source, so updates are paused there. Keep each as your own copy, or discard the edits.`;
+export const EDITED_ATTENTION_ACTION = "Library";
+/** The Library's narrowing to those packages, in the filter strip. */
+export const EDITED_ON_DISK_LABEL = "Edited on disk";
 
 export const FOLLOW_SOURCE_TOAST = "Now following its source";
 

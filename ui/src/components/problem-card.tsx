@@ -3,6 +3,7 @@ import { commands } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PlaceCard } from "@/components/place-card";
 import { Button } from "@/components/ui/button";
+import { RESCAN_LABEL, SHOW_IN_FILE_BROWSER_LABEL } from "@/lib/copy-scan";
 import {
   PROBLEM_HEADLINES,
   PROBLEM_LEADS,
@@ -51,7 +52,7 @@ export function ProblemCard({ problem }: { problem: Problem }) {
           variant="outline"
           onClick={() => void rescanEverything({ announce: true })}
         >
-          Rescan
+          {RESCAN_LABEL}
         </Button>
         {projectRoot ? (
           <Button
@@ -59,7 +60,7 @@ export function ProblemCard({ problem }: { problem: Problem }) {
             variant="outline"
             onClick={() => void commands.revealPath(projectRoot)}
           >
-            Show in file browser
+            {SHOW_IN_FILE_BROWSER_LABEL}
           </Button>
         ) : null}
         {projectRoot ? (

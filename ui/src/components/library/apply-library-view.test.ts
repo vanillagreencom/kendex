@@ -19,7 +19,13 @@ describe("applyLibraryView", () => {
 
   it("puts every part of a view where that part is kept", () => {
     applyLibraryView({
-      filters: { kind: "hook", harness: "claude", tag: "any", from: "any" },
+      filters: {
+        kind: "hook",
+        harness: "claude",
+        tag: "any",
+        from: "any",
+        edited: "any",
+      },
       search: "deploy",
       scope: { project: "/x" },
     });

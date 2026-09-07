@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { create } from "zustand";
-import type { AuditView, Scope, ScopeErrorKind } from "@/bindings";
+import type { AuditView, ScanWarning, Scope, ScopeErrorKind } from "@/bindings";
 import { type BlockedPlace, blockedPlaces } from "@/lib/audit-counts";
 import { useAuditStore } from "./audit";
 import { useScanStore } from "./scan";
@@ -55,6 +55,15 @@ export function useProblems(): Problem[] {
   const views = useAuditStore((s) => s.views);
   const scanError = useScanStore((s) => s.error);
   return useMemo(() => deriveProblems(views, scanError), [views, scanError]);
+}
+
+const NO_WARNINGS: ScanWarning[] = [];
+
+/** Every file the scan could not read as the document its surface
+ *  expects. Read straight off the last scan: a file that is fixed is gone
+ *  from the next result, and one that is not is still there. */
+export function useUnreadableFiles(): ScanWarning[] {
+  return useScanStore((s) => s.result?.warnings ?? NO_WARNINGS);
 }
 
 /** Every place holding a declared item whose files were already on disk,

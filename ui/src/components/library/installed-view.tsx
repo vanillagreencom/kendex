@@ -28,6 +28,7 @@ import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { isNarrowed, UNFILTERED } from "@/lib/library-handoff";
 import { useLibraryStandings } from "@/lib/library-standings";
 import { packageMark } from "@/lib/place-marks";
+import { sameScope } from "@/lib/scope";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
 import {
@@ -41,6 +42,7 @@ import {
   useProvenanceStore,
 } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
+import { useUpdatesStore } from "@/stores/updates";
 
 /** "Installed": everything on this machine, filterable. A row opens the
  *  package's own page; the filters and scroll position live in a store so
@@ -56,12 +58,17 @@ export function InstalledView() {
     harness,
     tag,
     from,
+    edited,
     setKind,
     setHarness,
     setTag,
     setFrom,
+    setEdited,
     setScrollTop,
   } = useLibraryViewStore();
+  // The edited narrowing reads the same rows Home's edited row counts, so
+  // the row's link lands on exactly the packages it counted.
+  const updateRows = useUpdatesStore((s) => s.rows);
   const provenance = useProvenanceStore((s) => s.rows);
   const loadProvenance = useProvenanceStore((s) => s.load);
   // Kept in nav rather than here so leaving for a package page and coming
@@ -105,15 +112,39 @@ export function InstalledView() {
       tag: tag === "any" ? undefined : (tag as Tag),
       search,
     });
-    const grouped = groupItems(filtered);
-    if (from === "any") return grouped;
-    return grouped.filter(
-      (group) =>
-        originLabel(
-          originFor(provenance, group.kind, group.name, groupScopes(group)),
-        ) === from,
-    );
-  }, [result, scope, kind, harness, tag, from, search, provenance]);
+    let grouped = groupItems(filtered);
+    if (from !== "any") {
+      grouped = grouped.filter(
+        (group) =>
+          originLabel(
+            originFor(provenance, group.kind, group.name, groupScopes(group)),
+          ) === from,
+      );
+    }
+    if (edited === "edited") {
+      grouped = grouped.filter((group) =>
+        updateRows.some(
+          (row) =>
+            row.blockedByLocalEdit &&
+            row.kind === group.kind &&
+            row.name === group.name &&
+            groupScopes(group).some((where) => sameScope(where, row.scope)),
+        ),
+      );
+    }
+    return grouped;
+  }, [
+    result,
+    scope,
+    kind,
+    harness,
+    tag,
+    from,
+    edited,
+    search,
+    provenance,
+    updateRows,
+  ]);
 
   // Every group the scan holds, before any narrowing.
   const everywhere = useMemo(
@@ -138,7 +169,7 @@ export function InstalledView() {
   // Nothing has been counted yet — distinct from "counted, found nothing".
   const scanning = result === null;
   const hasAnyItems = (result?.items.length ?? 0) > 0;
-  const filters: FilterSelection = { kind, harness, tag, from };
+  const filters: FilterSelection = { kind, harness, tag, from, edited };
   const filtered = isNarrowed({ filters, search, scope });
 
   const clearFilters = () => applyLibraryView(UNFILTERED);
@@ -157,6 +188,8 @@ export function InstalledView() {
         from={from}
         onFromChange={setFrom}
         fromOptions={fromOptions}
+        edited={edited}
+        onEditedChange={setEdited}
         scope={scope}
         onScopeChange={setScope}
         projects={projects}

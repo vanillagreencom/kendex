@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { TAGS_ROW_LABEL } from "@/lib/copy";
+import { EDITED_ON_DISK_LABEL, TAGS_ROW_LABEL } from "@/lib/copy";
 import type { ScopeSelection } from "@/lib/derive";
 import { harnessName, KINDS, kindLabel, TAG_LABELS } from "@/lib/labels";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
@@ -44,6 +44,8 @@ export function LibraryFilters({
   from,
   onFromChange,
   fromOptions,
+  edited,
+  onEditedChange,
   scope,
   onScopeChange,
   projects,
@@ -65,6 +67,8 @@ export function LibraryFilters({
   onFromChange: (value: string) => void;
   /** The origins the provenance join actually carries, already labelled. */
   fromOptions: string[];
+  edited: string;
+  onEditedChange: (value: string) => void;
   scope: ScopeSelection;
   onScopeChange: (scope: ScopeSelection) => void;
   projects: string[];
@@ -146,6 +150,13 @@ export function LibraryFilters({
             value={from}
             onChange={onFromChange}
             options={fromOptions.map((label) => [label, label])}
+          />
+          <FacetSelect
+            label="Files"
+            empty="Any files"
+            value={edited}
+            onChange={onEditedChange}
+            options={[["edited", EDITED_ON_DISK_LABEL]]}
           />
         </div>
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">

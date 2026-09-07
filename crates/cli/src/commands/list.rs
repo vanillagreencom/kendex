@@ -54,7 +54,7 @@ pub fn run(env: &Env, filter: ScopeFilter, harness: Option<String>) -> CliResult
         }
     }
     for warning in &result.warnings {
-        say(&format!("warning: {}", warning));
+        say(&format!("warning: {warning}"));
     }
     Ok(())
 }

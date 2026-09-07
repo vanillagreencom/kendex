@@ -87,3 +87,67 @@ describe("the Library's mark under a Where filter", () => {
     expect(host.querySelectorAll("tbody tr")).toHaveLength(1);
   });
 });
+
+// Home's edited row lands here narrowed to the packages it counted: the
+// facet reads the same update rows, so a package edited on disk is on
+// the page and one that is not is off it.
+describe("the Library narrowed to packages edited on disk", () => {
+  const other = {
+    ...installed(VG),
+    name: "orch",
+    path: "/work/vg/.claude/skills/orch",
+  };
+  const editedRow = {
+    kind: "skill",
+    name: "gh",
+    scope: VG,
+    blockedByLocalEdit: true,
+    editedHarnesses: ["claude"],
+  };
+
+  beforeEach(() => {
+    vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useUpdatesStore.setState({
+      rows: [editedRow as never],
+      read: READ_LANDED,
+    });
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [installed(VG), other],
+        missingProjects: [],
+        warnings: [],
+      } as never,
+    });
+    useNavStore.setState({ libraryScope: "all", search: "" });
+  });
+
+  const names = (host: HTMLElement) =>
+    [...host.querySelectorAll("tbody tr td:first-child")].map((cell) =>
+      cell.querySelector("button")?.textContent?.trim(),
+    );
+
+  it("shows the edited package and drops the rest", () => {
+    useLibraryViewStore.setState({
+      kind: "any",
+      harness: "any",
+      tag: "any",
+      from: "any",
+      edited: "edited",
+    });
+    expect(names(mount(<InstalledView />))).toEqual(["gh"]);
+  });
+
+  it("shows every package when the facet is off", () => {
+    useLibraryViewStore.setState({
+      kind: "any",
+      harness: "any",
+      tag: "any",
+      from: "any",
+      edited: "any",
+    });
+    expect(names(mount(<InstalledView />))).toEqual(["gh", "orch"]);
+  });
+});

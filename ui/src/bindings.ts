@@ -2983,13 +2983,48 @@ export type Said = {
 	stderr: string[],
 };
 
+/**
+ *  What kept a surface from being read, by shape rather than by parser
+ *  message: an empty file and a file with a stray comma are one parser
+ *  error and two different remedies.
+ */
+export type ScanProblem = 
+/**
+ *  A document was expected and the file holds nothing: zero bytes,
+ *  whitespace, or comments alone. Another tool leaves such a file
+ *  behind when it creates its config before writing to it.
+ */
+{ kind: "empty-file" } | 
+/**
+ *  The text is not the format the surface reads; the parser's own
+ *  message says where it stopped.
+ */
+{ kind: "invalid-json"; message: string } | { kind: "invalid-toml"; message: string } | 
+/**  A directory or file the scan could not read at all. */
+{ kind: "unreadable"; message: string } | 
+/**  A word in a document's tags that names no tag. */
+{ kind: "unknown-tag"; message: string };
+
 export type ScanResult = {
 	harnesses: DetectedHarness[],
 	items: ObservedItem[],
 	/**  Registered projects whose directory is gone — flagged, never dropped. */
 	missingProjects: string[],
 	/**  Unreadable or unparsable surfaces; truth the scan could not reach. */
-	warnings: string[],
+	warnings: ScanWarning[],
+};
+
+/**
+ *  One surface the scan could not read as the document it expects, with
+ *  the tool and kind the surface belongs to: a reader deciding what to do
+ *  about a broken file needs to know whose file it is, and the path alone
+ *  says that only to someone who already knows every tool's layout.
+ */
+export type ScanWarning = {
+	harness: HarnessId,
+	kind: ItemKind,
+	path: string,
+	problem: ScanProblem,
 };
 
 export type Scope = { scope: "global" } | { scope: "project"; root: string };

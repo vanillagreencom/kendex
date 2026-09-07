@@ -30,6 +30,7 @@ describe("library view store", () => {
       harness: "claude",
       tag: "any",
       from: "any",
+      edited: "any",
     });
 
     const state = useLibraryViewStore.getState();

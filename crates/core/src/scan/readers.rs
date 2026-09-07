@@ -1,11 +1,15 @@
 use std::path::Path;
 
-use super::{RawEntry, antigravity, copilot, hooks, jsonc, plugins};
+use super::{RawEntry, ScanProblem, antigravity, copilot, hooks, jsonc, plugins};
 use crate::env::Env;
 use crate::fs::read_if_exists;
 use crate::harness::Reader;
 
-pub fn read_structured(path: &Path, reader: &Reader, env: &Env) -> Result<Vec<RawEntry>, String> {
+pub fn read_structured(
+    path: &Path,
+    reader: &Reader,
+    env: &Env,
+) -> Result<Vec<RawEntry>, ScanProblem> {
     match reader {
         Reader::McpServersJson | Reader::ClaudeUserMcp => {
             Ok(mcp_object(read_json(path)?.get("mcpServers")))
@@ -35,11 +39,27 @@ pub fn read_structured(path: &Path, reader: &Reader, env: &Env) -> Result<Vec<Ra
 }
 
 /// jsonc-tolerant read: comments and trailing commas never block a scan.
-pub fn read_json(path: &Path) -> Result<serde_json::Value, String> {
-    let text = read_if_exists(path)
-        .map_err(|e| e.to_string())?
-        .ok_or("file vanished mid-scan")?;
-    serde_json::from_str(&jsonc::to_json(&text)).map_err(|e| e.to_string())
+/// A file with nothing in it once the comments are gone is said as empty,
+/// not as the parser's "EOF at line 1": the remedy differs.
+pub fn read_json(path: &Path) -> Result<serde_json::Value, ScanProblem> {
+    let text = read_text(path)?;
+    let json = jsonc::to_json(&text);
+    if json.trim().is_empty() {
+        return Err(ScanProblem::EmptyFile);
+    }
+    serde_json::from_str(&json).map_err(|e| ScanProblem::InvalidJson {
+        message: e.to_string(),
+    })
+}
+
+fn read_text(path: &Path) -> Result<String, ScanProblem> {
+    read_if_exists(path)
+        .map_err(|e| ScanProblem::Unreadable {
+            message: e.to_string(),
+        })?
+        .ok_or_else(|| ScanProblem::Unreadable {
+            message: "file vanished mid-scan".to_owned(),
+        })
 }
 
 fn mcp_object(servers: Option<&serde_json::Value>) -> Vec<RawEntry> {
@@ -85,7 +105,7 @@ fn mcp_summary(entry: &serde_json::Value) -> Option<String> {
 /// `mcp.excluded` list gates them too — so a server a project declared can
 /// still be off, and reading the declaration alone would say otherwise
 /// (matrix §1). Nothing said about a server means Gemini's own default: on.
-fn gemini_mcp(path: &Path, env: &Env) -> Result<Vec<RawEntry>, String> {
+fn gemini_mcp(path: &Path, env: &Env) -> Result<Vec<RawEntry>, ScanProblem> {
     let settings = read_json(path)?;
     let state = crate::harness::gemini::settings::mcp_enablement_file(env);
     let state = read_if_exists(&state)
@@ -119,11 +139,13 @@ fn gemini_mcp(path: &Path, env: &Env) -> Result<Vec<RawEntry>, String> {
         .collect())
 }
 
-fn mcp_toml(path: &Path) -> Result<Vec<RawEntry>, String> {
-    let text = read_if_exists(path)
-        .map_err(|e| e.to_string())?
-        .ok_or("file vanished mid-scan")?;
-    let value: toml::Table = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
+fn mcp_toml(path: &Path) -> Result<Vec<RawEntry>, ScanProblem> {
+    let text = read_text(path)?;
+    let value: toml::Table =
+        text.parse()
+            .map_err(|e: toml::de::Error| ScanProblem::InvalidToml {
+                message: e.to_string(),
+            })?;
     let Some(servers) = value.get("mcp_servers").and_then(|s| s.as_table()) else {
         return Ok(Vec::new());
     };
@@ -148,7 +170,7 @@ fn mcp_toml(path: &Path) -> Result<Vec<RawEntry>, String> {
         .collect())
 }
 
-fn opencode_mcp(path: &Path) -> Result<Vec<RawEntry>, String> {
+fn opencode_mcp(path: &Path) -> Result<Vec<RawEntry>, ScanProblem> {
     let value = read_json(path)?;
     let Some(map) = value.get("mcp").and_then(|m| m.as_object()) else {
         return Ok(Vec::new());
@@ -169,7 +191,7 @@ fn opencode_mcp(path: &Path) -> Result<Vec<RawEntry>, String> {
         .collect())
 }
 
-fn opencode_plugin_refs(path: &Path) -> Result<Vec<RawEntry>, String> {
+fn opencode_plugin_refs(path: &Path) -> Result<Vec<RawEntry>, ScanProblem> {
     let value = read_json(path)?;
     let Some(refs) = value.get("plugin").and_then(|p| p.as_array()) else {
         return Ok(Vec::new());

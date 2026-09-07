@@ -10,7 +10,11 @@ import { problemsFooterLabel } from "@/lib/error-copy";
 import { exactTime, relativeTime } from "@/lib/relative-time";
 import { useNowTick } from "@/lib/use-now-tick";
 import { useNavStore } from "@/stores/nav";
-import { useBlockedPlaces, useProblems } from "@/stores/problems";
+import {
+  useBlockedPlaces,
+  useProblems,
+  useUnreadableFiles,
+} from "@/stores/problems";
 import { useScanStore } from "@/stores/scan";
 
 // A persistent strip across the whole window, not just the content pane —
@@ -25,7 +29,9 @@ export function StatusFooter() {
   // here too: the Problems page is where both are answered, and the count
   // is the only thing on screen that says so from anywhere in the app.
   const blocked = useBlockedPlaces();
-  const waiting = problems.length + blockedCount(blocked);
+  const unreadableFiles = useUnreadableFiles();
+  const waiting =
+    problems.length + unreadableFiles.length + blockedCount(blocked);
   const goTo = useNavStore((s) => s.goTo);
 
   // "Scanned Nm ago" goes stale on its own; nothing else re-renders this

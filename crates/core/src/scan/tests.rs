@@ -65,7 +65,7 @@ fn scans_a_realistic_machine() {
 
     let result = scan(&env, &settings);
 
-    assert_eq!(result.warnings, Vec::<String>::new());
+    assert_eq!(result.warnings, Vec::new());
     assert_eq!(result.missing_projects, [home.join("dev/vanished")]);
 
     let detected: Vec<_> = result.harnesses.iter().map(|h| h.harness).collect();
@@ -162,7 +162,7 @@ fn sees_gemini_and_copilot_without_double_counting_claude_files() {
     settings.projects.push(project.clone());
     let result = scan(&env, &settings);
 
-    assert_eq!(result.warnings, Vec::<String>::new());
+    assert_eq!(result.warnings, Vec::new());
     let detected: Vec<_> = result.harnesses.iter().map(|h| h.harness).collect();
     assert!(detected.contains(&HarnessId::Gemini) && detected.contains(&HarnessId::Copilot));
 
@@ -218,9 +218,61 @@ fn a_skill_s_tags_are_scanned_and_a_bad_one_is_reported() {
     let warning = result
         .warnings
         .iter()
-        .find(|w| w.contains("reviewer"))
+        .find(|w| w.path == skill)
         .expect("nothing said the tag was wrong");
-    assert!(warning.contains("did you mean `testing`?"), "{warning}");
+    assert_eq!(
+        (warning.harness, warning.kind),
+        (HarnessId::Claude, ItemKind::Skill)
+    );
+    let ScanProblem::UnknownTag { message } = &warning.problem else {
+        panic!("{warning}");
+    };
+    assert!(message.contains("did you mean `testing`?"), "{warning}");
+}
+
+/// A structured surface that cannot be read says whose file it is and the
+/// shape of what is wrong — an empty file and a malformed one are one
+/// parser error and two remedies, so the scan tells them apart before
+/// anything downstream words a remedy off the result.
+#[test]
+fn an_unreadable_config_names_its_tool_kind_path_and_problem_shape() {
+    type Expect = Option<fn(&ScanProblem) -> bool>;
+    let rows: [(&str, Expect); 4] = [
+        ("", Some(|problem| *problem == ScanProblem::EmptyFile)),
+        (
+            "   \n// only a comment\n",
+            Some(|problem| *problem == ScanProblem::EmptyFile),
+        ),
+        (
+            "{\"mcpServers\": {",
+            Some(|problem| matches!(problem, ScanProblem::InvalidJson { .. })),
+        ),
+        ("{\"mcpServers\": {}}", None),
+    ];
+    for (text, expected) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let env = Env::fake(home, FakeOs::Linux);
+        let config = home.join(".gemini/config/mcp_config.json");
+        fs::create_dir_all(config.parent().unwrap()).unwrap();
+        fs::write(&config, text).unwrap();
+
+        let result = scan_scopes(&env, &BTreeMap::new(), &[Scope::Global]);
+
+        let about = result.warnings.iter().find(|w| w.path == config);
+        match (about, expected) {
+            (Some(warning), Some(expected)) => {
+                assert_eq!(
+                    (warning.harness, warning.kind),
+                    (HarnessId::Antigravity, ItemKind::McpServer),
+                    "{text:?}: {warning}"
+                );
+                assert!(expected(&warning.problem), "{text:?}: {warning}");
+            }
+            (None, None) => {}
+            (found, _) => panic!("{text:?}: {found:?}"),
+        }
+    }
 }
 
 /// A pi package registered by a relative spec is a folder of its own, so it

@@ -18,7 +18,7 @@ use crate::hook::command_stem;
 /// `disableAllHooks` switches every entry in the file off, and that is what
 /// the scan reports — a hook that will not run must not read as one that
 /// will.
-pub fn read(path: &Path) -> Result<Vec<RawEntry>, String> {
+pub fn read(path: &Path) -> Result<Vec<RawEntry>, super::ScanProblem> {
     let value = read_json(path)?;
     let Some(events) = value.get("hooks").and_then(Value::as_object) else {
         return Ok(Vec::new());
@@ -94,7 +94,7 @@ fn action(entry: &Value) -> Option<String> {
 /// bool}`, a clean boolean flip at either scope
 /// ([CLI plugin reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-plugin-reference),
 /// matrix §2).
-pub fn plugins(path: &Path) -> Result<Vec<RawEntry>, String> {
+pub fn plugins(path: &Path) -> Result<Vec<RawEntry>, super::ScanProblem> {
     let value = read_json(path)?;
     let Some(plugins) = value.get("enabledPlugins").and_then(Value::as_object) else {
         return Ok(Vec::new());

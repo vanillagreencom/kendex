@@ -1,10 +1,16 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AuditView, DriftRow, RowExits, Scope } from "@/bindings";
+import type {
+  AuditView,
+  DriftRow,
+  RowExits,
+  ScanWarning,
+  Scope,
+} from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
-import { AUDIT_ATTENTION_TITLE } from "@/lib/copy";
+import { AUDIT_ATTENTION_TITLE, COPY_PATH_LABEL } from "@/lib/copy";
 import {
   KEEP_FILES_LABEL,
   MANAGE_CONFIRM_BODY,
@@ -17,6 +23,7 @@ import {
 import { PROBLEMS_EMPTY } from "@/lib/error-copy";
 import { READ_LANDED, readFailed } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
+import { useScanStore } from "@/stores/scan";
 import { mount, settle } from "@/test/dom";
 import { ProblemsPage } from "./problems";
 
@@ -413,5 +420,47 @@ describe("a check that failed", () => {
 
     expect(host.textContent).not.toContain(AUDIT_ATTENTION_TITLE);
     expect(button(host, REPLACE_FILES_LABEL)).toBeDefined();
+  });
+});
+
+// A file the scan could not read gets a card of its own: whose it is,
+// where, what is wrong and the buttons that get the reader to the fix.
+// Nothing on the audit knows about it, so the page reads it off the scan.
+describe("a file the scan could not read", () => {
+  const stageScan = (warnings: ScanWarning[]) =>
+    act(() => {
+      useScanStore.setState({
+        result: { harnesses: [], items: [], missingProjects: [], warnings },
+        error: null,
+      });
+    });
+
+  it("draws the card with the remedy and the path to copy", () => {
+    stage([]);
+    stageScan([
+      {
+        harness: "antigravity",
+        kind: "mcp-server",
+        path: "/h/.gemini/config/mcp_config.json",
+        problem: { kind: "empty-file" },
+      },
+    ]);
+    const host = mount(<ProblemsPage />);
+    expect(cards(host)).toHaveLength(1);
+    expect(host.textContent).toContain(
+      "Antigravity's MCP servers file is empty",
+    );
+    expect(host.textContent).toContain("/h/.gemini/config/mcp_config.json");
+    expect(host.textContent).toContain("Delete it, or put {} in it");
+    expect(button(host, COPY_PATH_LABEL)).toBeDefined();
+    expect(host.textContent).not.toContain(PROBLEMS_EMPTY);
+  });
+
+  it("draws no card and reports no problems once the scan reads clean", () => {
+    stage([]);
+    stageScan([]);
+    const host = mount(<ProblemsPage />);
+    expect(cards(host)).toHaveLength(0);
+    expect(host.textContent).toContain(PROBLEMS_EMPTY);
   });
 });

@@ -13,7 +13,7 @@ use super::readers::read_json;
 /// hooks guide, <https://antigravity.google/docs/hooks>). A name switched off
 /// by `enabled: false` is read with every handler off — a hook that will not
 /// run must not read as one that will.
-pub fn read(path: &Path) -> Result<Vec<RawEntry>, String> {
+pub fn read(path: &Path) -> Result<Vec<RawEntry>, super::ScanProblem> {
     let value = read_json(path)?;
     let Some(named) = value.as_object() else {
         return Ok(Vec::new());
