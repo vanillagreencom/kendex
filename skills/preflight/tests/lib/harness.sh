@@ -156,6 +156,10 @@ EOF
     pf_world $world || { printf 'the world could not be built: %s\n' "$row" >&2; exit 1; }
     brace_r='{R}'
     argv="${argv//$brace_r/$R}"
+    # `says` takes the same substitution, so a row can pin a VALUE the fixture
+    # path supplies. Without it a row could only pin the key half of a
+    # `key=value` line and would pass while the value regressed.
+    says="${says//$brace_r/$R}"
     if [ "$argv" = - ]; then
       run_pf
     else

@@ -206,14 +206,14 @@ an untouched branch has nothing in the default scope|everything|-|-|0|-|prefligh
 --base main sees the commit made on the branch|based|--base main|-|1|docs/loose.md:3: [docs-cited-paths]|-
 --base HEAD compares against itself and finds nothing|based|--base HEAD|-|0|-|preflight: clean
 --repo relocates the run without a cd|repo-relocate|--repo {R} --base main|-|1|docs/loose.md:3: [docs-cited-paths]|-
-an unknown flag is a usage error|based|--nonsense|-|2|-|unknown argument
-a --base ref that resolves to nothing is an environment error|based|--base does-not-exist|-|2|-|does not resolve to a commit
-a path outside any repository is an environment error|not-a-repo|--repo {R}|-|2|-|not inside a git repository
-a --repo path that does not exist is an environment error|no-such-directory|--repo {R}|-|2|-|--repo path is not a directory
+an unknown flag is a usage error|based|--nonsense|-|2|-|preflight: usage=--nonsense
+a --base ref that resolves to nothing is an environment error|based|--base does-not-exist|-|2|-|preflight: base-ref=does-not-exist
+a path outside any repository is an environment error|not-a-repo|--repo {R}|-|2|-|preflight: not-a-repo={R}
+a --repo path that does not exist is an environment error|no-such-directory|--repo {R}|-|2|-|preflight: repo-path={R}
 origin/HEAD names the default branch|base-origin-head|-|-|1|docs/loose.md:3: [docs-cited-paths]|-
 a repository whose origin/HEAD was never set falls back to origin/main|base-origin-main|-|-|1|docs/loose.md:3: [docs-cited-paths]|-
 with no remote-tracking refs left, the local main branch is the last fallback|base-local-main|-|-|1|docs/loose.md:3: [docs-cited-paths]|-
-with nothing left to compare against, the run fails closed instead of reporting clean|base-none|-|-|2|-|could not resolve a default diff base
+with nothing left to compare against, the run fails closed instead of reporting clean|base-none|-|-|2|-|preflight: base-unresolved=origin/HEAD,origin/main,main
 ROWS
 pf_table "what each scope may speak about" "$rows"
 
