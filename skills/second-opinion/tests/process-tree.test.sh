@@ -312,8 +312,8 @@ RUNTIME_PATH="$RUNTIME" bash -c '
   stop_process_group 4242 1
 ' > "$TMP_ROOT/term-fail.stdout" 2> "$TMP_ROOT/term-fail.stderr" || rc=$?
 assert_rc "$rc" 1 "a TERM failure is reported"
-assert_contains "$TMP_ROOT/term-fail.stderr" "could not send TERM to process group 4242" \
-  "the TERM failure names the signal and group"
+assert_contains "$TMP_ROOT/term-fail.stderr" "could-not-send-TERM: group=4242" \
+  "the TERM failure key names the signal and group"
 
 printf '100\n' > "$TMP_ROOT/kill-fail.clock"
 rc=0
@@ -332,12 +332,14 @@ RUNTIME_PATH="$RUNTIME" TEST_CLOCK="$TMP_ROOT/kill-fail.clock" bash -c '
   stop_process_group 4292 1
 ' > "$TMP_ROOT/kill-fail.stdout" 2> "$TMP_ROOT/kill-fail.stderr" || rc=$?
 assert_rc "$rc" 1 "a KILL failure after TERM is reported"
-assert_contains "$TMP_ROOT/kill-fail.stderr" "could not send KILL to process group 4292" \
-  "the KILL failure names the signal and group"
+assert_contains "$TMP_ROOT/kill-fail.stderr" "could-not-send-KILL: group=4292" \
+  "the KILL failure key names the signal and group"
 
 KILL_FAILURE_MUTANT="$TMP_ROOT/kill-failure-mutant-runtime"
 awk '
-  /could not send KILL to process group/ {
+  /could-not-send-KILL:/ {
+    print
+    if (getline <= 0) exit 8
     print
     if (getline <= 0 || $0 !~ /return 1/) exit 8
     sub(/return 1/, "return 0")
@@ -389,8 +391,8 @@ RUNTIME_PATH="$RUNTIME" TEST_CLOCK="$TMP_ROOT/final-live.clock" \
   stop_process_group 4343 1
 ' > "$TMP_ROOT/final-live.stdout" 2> "$TMP_ROOT/final-live.stderr" || rc=$?
 assert_rc "$rc" 1 "a process group still alive after KILL is reported"
-assert_contains "$TMP_ROOT/final-live.stderr" "process group 4343 is still alive after KILL" \
-  "the final-liveness failure names the group and signal"
+assert_contains "$TMP_ROOT/final-live.stderr" "process-group-still-alive: group=4343 signal=KILL" \
+  "the final-liveness failure key names the group and signal"
 [[ ! -e "$TMP_ROOT/final-live.wait-called" ]] \
   || fail "post-KILL cleanup entered wait while the group was still alive"
 ok "post-KILL cleanup stays inside its bounded liveness loop"

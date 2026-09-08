@@ -51,6 +51,7 @@ stop_process_group() {
   process_group_alive "$leader" || return 0
   if ! kill -TERM -- "-$leader" 2>/dev/null; then
     process_group_alive "$leader" || return 0
+    printf 'could-not-send-TERM: group=%s\n' "$leader" >&2
     echo "second-opinion-runtime: could not send TERM to process group $leader" >&2
     return 1
   fi
@@ -60,6 +61,7 @@ stop_process_group() {
     if [[ $now -ge $end ]]; then
       if ! kill -KILL -- "-$leader" 2>/dev/null; then
         process_group_alive "$leader" || return 0
+        printf 'could-not-send-KILL: group=%s\n' "$leader" >&2
         echo "second-opinion-runtime: could not send KILL to process group $leader" >&2
         return 1
       fi
@@ -67,6 +69,7 @@ stop_process_group() {
       while process_group_alive "$leader"; do
         now=$(date +%s)
         if [[ $now -ge $end ]]; then
+          printf 'process-group-still-alive: group=%s signal=KILL\n' "$leader" >&2
           echo "second-opinion-runtime: process group $leader is still alive after KILL" >&2
           return 1
         fi
