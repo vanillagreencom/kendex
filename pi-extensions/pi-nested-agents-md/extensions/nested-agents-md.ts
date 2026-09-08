@@ -6,6 +6,12 @@ import { getBool, projectRoot, readConfig, recordProjectTrust } from "./config.j
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-nested-agents-md.installed");
 
+const messages = {
+	attached: (path: string, content: string) => `instructions_path=${path}\n${content}`,
+	outsideRoot: (file: string, root: string) => `outside_root=${file}\nThe directory walk started outside ${root}.`,
+	unreadable: (path: string, reason: string) => `unreadable_path=${path}\nThe instructions could not be read: ${reason.replace(/\s+/g, " ").trim()}`,
+};
+
 /** The one file name the walk looks for. Pi's own loader also takes
  * `AGENTS.override.md` and `CLAUDE.md`; the shim convention kendex renders
  * puts a directory's instructions in this file, so it is the only one here. */
@@ -13,8 +19,7 @@ export const INSTRUCTIONS_FILE = "AGENTS.md";
 
 /** One instructions file the walk reached: `path` is what the session now
  * counts as attached, `text` the block that goes into the read result — the
- * file's content under a line naming it, or the one line saying why there is
- * none. */
+ * file's content under a line naming it, or a diagnostic naming the missing instructions. */
 export interface Attachment {
 	path: string;
 	text: string;
@@ -54,7 +59,7 @@ export function directoriesBetween(file: string, root: string): string[] {
 		dirs.push(current);
 		const parent = dirname(current);
 		if (parent === current) {
-			throw new Error(`pi-nested-agents-md: ${file} is not under ${root}; the walk was started outside the project`);
+			throw Object.assign(new Error(messages.outsideRoot(file, root)), { code: "OUTSIDE_ROOT", path: file, root });
 		}
 		current = parent;
 	}
@@ -70,7 +75,7 @@ function loadedByPi(dir: string, cwd: string): boolean {
 
 /**
  * The content of one instructions file as the block that carries it, or the
- * one line that stands in for it. A file the extension cannot read is not a
+ * diagnostic that stands in for it. A file the extension cannot read is not a
  * throw: a `read` that succeeded stays succeeded, and the model is told which
  * instructions it did not get.
  */
@@ -80,9 +85,9 @@ function block(path: string): string {
 		content = readFileSync(path, "utf8");
 	} catch (error) {
 		const reason = error instanceof Error ? error.message : String(error);
-		return `[pi-nested-agents-md: ${path} could not be read (${reason.replace(/\s+/g, " ").trim()}); its instructions are not attached]`;
+		return messages.unreadable(path, reason);
 	}
-	return `[Directory instructions from ${path}]\n${content}`;
+	return messages.attached(path, content);
 }
 
 /**
