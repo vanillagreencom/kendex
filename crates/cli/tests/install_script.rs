@@ -13,6 +13,10 @@ use std::process::Command;
 mod test_util;
 use test_util::{SUDO_STUB, install_stub, rooted};
 
+#[path = "support/installer_message.rs"]
+mod installer_message;
+use installer_message::value;
+
 #[allow(clippy::unwrap_used)]
 fn write_exe(path: &Path, body: &str) {
     fs::write(path, body).unwrap();
@@ -188,38 +192,53 @@ fn release_matrix_and_feed_name_the_same_targets() {
     assert_eq!(lanes, feed);
 }
 
-/// curl exits 22 on an HTTP error: the release exists but has no such asset.
+/// An HTTP asset failure names the release target; a connection failure
+/// retains its own exit code without blaming a missing release build.
 #[test]
-fn a_release_without_this_target_says_so_instead_of_a_bare_curl_error() {
-    let (output, _) = run_install("Darwin", "x86_64", Some(("kendex-x86_64-apple-darwin", 22)));
-    assert_eq!(output.status.code(), Some(1));
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("could not download kendex-x86_64-apple-darwin from"),
-        "{stderr}"
-    );
-    assert!(
-        stderr.contains("release v9.9.9 may have no build for x86_64-apple-darwin"),
-        "{stderr}"
-    );
-    // The script stops at its own message; a crash on the next step would
-    // exit 1 too, but through chmod complaining about the missing file.
-    assert!(!stderr.contains("chmod"), "{stderr}");
+fn download_failures_report_their_exit_code_and_release_target() {
+    for (exit, target) in [(22, Some("x86_64-apple-darwin")), (7, None)] {
+        let (output, _) = run_install(
+            "Darwin",
+            "x86_64",
+            Some(("kendex-x86_64-apple-darwin", exit)),
+        );
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        assert_eq!(
+            value(&output.stderr, "command-download-failed"),
+            Some(exit.to_string().as_str())
+        );
+        assert_eq!(value(&output.stderr, "release-asset-unavailable"), target);
+        assert_eq!(value(&output.stdout, "command-installed"), None);
+    }
 }
 
-/// curl exits 7 when it cannot connect: the release is not to blame, so
-/// the no-build hint stays out.
+/// Invalid options fail before downloads; help answers without installing.
 #[test]
-fn a_network_failure_does_not_blame_the_release() {
-    let (output, _) = run_install("Darwin", "x86_64", Some(("kendex-x86_64-apple-darwin", 7)));
-    assert_eq!(output.status.code(), Some(1));
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("could not download kendex-x86_64-apple-darwin from"),
-        "{stderr}"
-    );
-    assert!(!stderr.contains("may have no build"), "{stderr}");
-    assert!(!stderr.contains("chmod"), "{stderr}");
+fn installer_options_report_a_stable_key_and_value() {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
+    for (args, code, key, expected) in [
+        (&["--unknown"][..], 2, "unknown-option", "--unknown"),
+        (&["--version"][..], 2, "missing-option-value", "--version"),
+        (&["--help"][..], 0, "usage", "install.sh"),
+    ] {
+        let output = Command::new("sh")
+            .arg(&script)
+            .args(args)
+            .output()
+            .expect("installer runs");
+        assert_eq!(output.status.code(), Some(code), "{output:?}");
+        let channel = if code == 0 {
+            &output.stdout
+        } else {
+            &output.stderr
+        };
+        assert_eq!(value(channel, key), Some(expected), "{output:?}");
+        assert!(
+            std::str::from_utf8(channel)
+                .expect("message is UTF-8")
+                .starts_with(&format!("install.sh: {key}="))
+        );
+    }
 }
 
 /// Every directory `install.sh` can install the command into, read out of
@@ -378,10 +397,8 @@ fn path_order_does_not_decide_where_a_re_run_lands() {
         "install.sh reached past the fixture: {stderr}"
     );
     let said = String::from_utf8_lossy(&output.stdout);
-    let installed = said
-        .lines()
-        .find_map(|line| line.strip_prefix("Installed the kendex command to "))
-        .unwrap_or_else(|| panic!("install.sh did not say where it installed:\n{said}"));
+    let installed = value(&output.stdout, "command-installed")
+        .unwrap_or_else(|| panic!("install.sh did not report its installed path:\n{said}"));
     assert_eq!(
         PathBuf::from(installed),
         home.join(".local/bin/kendex"),
@@ -397,10 +414,8 @@ fn path_order_does_not_decide_where_a_re_run_lands() {
 fn where_a_real_install_puts_the_command_is_a_candidate() {
     let (output, _) = run_install("Linux", "x86_64", None);
     let said = String::from_utf8_lossy(&output.stdout);
-    let installed = said
-        .lines()
-        .find_map(|line| line.strip_prefix("Installed the kendex command to "))
-        .unwrap_or_else(|| panic!("install.sh did not say where it installed:\n{said}"));
+    let installed = value(&output.stdout, "command-installed")
+        .unwrap_or_else(|| panic!("install.sh did not report its installed path:\n{said}"));
     let home = PathBuf::from(installed)
         .parent()
         .unwrap()
@@ -442,10 +457,8 @@ fn install_sh_records_the_command_it_installed() {
         String::from_utf8_lossy(&output.stderr)
     );
     let said = String::from_utf8_lossy(&output.stdout);
-    let installed = said
-        .lines()
-        .find_map(|line| line.strip_prefix("Installed the kendex command to "))
-        .unwrap_or_else(|| panic!("install.sh did not say where it installed:\n{said}"));
+    let installed = value(&output.stdout, "command-installed")
+        .unwrap_or_else(|| panic!("install.sh did not report its installed path:\n{said}"));
 
     // Asked of the resolver rather than spelled a second time: the data
     // directory differs by platform and a second spelling agrees until it
@@ -484,12 +497,13 @@ fn install_sh_says_when_it_cannot_record_the_command() {
         "a record that would not be written cost the install itself:\n{said}"
     );
     assert!(
-        String::from_utf8_lossy(&output.stdout).contains("Installed the kendex command to"),
+        value(&output.stdout, "command-installed")
+            == Some(home.join(".local/bin/kendex").to_str().unwrap()),
         "the command was never installed, so the record is not what this proves:\n{}",
         String::from_utf8_lossy(&output.stdout)
     );
     assert!(
-        said.contains("could not record the command's identity"),
+        value(&output.stderr, "command-record-failed") == env.installed_command_file().to_str(),
         "the run said nothing about the record it did not write:\n{said}"
     );
     assert_eq!(
@@ -591,10 +605,7 @@ fn the_privileged_branch_installs_with_flags_bsd_install_reads_alike() {
     // Asked first: a run that took the writable branch would install
     // perfectly well and prove nothing about the one under test.
     assert!(
-        said.contains(&format!(
-            "Installing to {} needs elevated permissions.",
-            bindir.display()
-        )),
+        value(&output.stdout, "privilege-required") == bindir.to_str(),
         "install.sh did not take the branch that needs privilege:\n{said}{stderr}"
     );
     assert!(
@@ -648,7 +659,7 @@ fn the_privileged_branch_makes_the_bindir_it_could_not_make_unprivileged() {
     let said = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        said.contains("needs elevated permissions."),
+        value(&output.stdout, "privilege-required") == home.join(".local/bin").to_str(),
         "install.sh did not take the branch that needs privilege:\n{said}{stderr}"
     );
     assert!(

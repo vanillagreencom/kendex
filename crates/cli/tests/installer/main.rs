@@ -6,6 +6,9 @@
 mod desktop;
 mod icons;
 
+#[path = "../support/installer_message.rs"]
+mod installer_message;
+
 #[path = "../../../test_util.rs"]
 mod test_util;
 use test_util::{SUDO_STUB, install_stub};
@@ -219,11 +222,10 @@ fn installer_output(
 #[test]
 fn a_release_lookup_that_answers_with_nothing_stops_the_install() {
     let (tmp, output) = installer_output(&repo_root(), CURL_WITHOUT_RELEASES, DATA_DIR, |_| {});
-    assert!(!output.status.success(), "the install carried on");
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("could not resolve the latest release"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert_eq!(
+        installer_message::value(&output.stderr, "release-unavailable"),
+        Some("latest")
     );
     assert!(
         !tmp.path().join(".local/bin/kendex").exists(),

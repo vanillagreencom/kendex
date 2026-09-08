@@ -68,8 +68,9 @@ fn list_sees_global_and_current_project_scopes() {
 fn scope_project_outside_a_project_is_an_error() {
     let tmp = fixture_home();
     let home = tmp.path();
-    let output = kendex(home, home, &["list", "--scope", "project"]);
-    assert!(!output.status.success());
+    // The filesystem root has no parent whose harness markers can leak into this case.
+    let output = kendex(home, Path::new("/"), &["list", "--scope", "project"]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
 }
 
 #[test]
