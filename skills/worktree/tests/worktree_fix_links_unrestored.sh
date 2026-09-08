@@ -214,10 +214,11 @@ run() {
 err_text() {
   case "$1" in
     -) printf '' ;;
-    absent|mkdir-parent) printf 'worktree-links-unrestored: <wt>' ;;
+    absent) printf 'worktree-links-unrestored: <wt>' ;;
+    mkdir-parent) printf 'worktree-mkdir-failed: <wt>/notes.md/dir;worktree-links-unrestored: <wt>' ;;
     materialized) printf 'worktree-link-data-preserved: path=<wt>/harness/skills count=1;worktree-child-links-unresolved: harness;worktree-links-unrestored: <wt>' ;;
     relative-parent) printf 'worktree-relative-parent-failed: <wt>/notes.md/link;worktree-links-unrestored: <wt>' ;;
-    wrong-target) printf 'worktree-relative-link-failed: <wt>/.claude/POINTER.md;worktree-links-unrestored: <wt>' ;;
+    wrong-target) printf 'worktree-relative-remove-failed: <wt>/.claude/POINTER.md;worktree-links-unrestored: <wt>' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }

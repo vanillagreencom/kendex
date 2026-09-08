@@ -1108,7 +1108,10 @@ ensure_worktree_path_safe() {
 mkdir_inside_worktree() {
   local wt="$1" path="$2"
   ensure_worktree_path_safe "$wt" "$path" true || return 1
-  mkdir -p "$wt/$path"
+  if ! mkdir -p "$wt/$path" 2>/dev/null; then
+    worktree_message mkdir-failed "$wt/$path" "Error: could not create worktree directory '$path' in $wt." >&2
+    return 1
+  fi
 }
 
 resolve_worktree_base_dir() {
@@ -2395,7 +2398,10 @@ setup_worktree_links() {
       return 1
     fi
     if [[ -L "$wt/$path" || -f "$wt/$path" ]]; then
-      rm -f "$wt/$path"
+      if ! rm -f "$wt/$path" 2>/dev/null; then
+        worktree_message relative-remove-failed "$wt/$path" "Error: could not remove the existing relative symlink '$path' in $wt." >&2
+        return 1
+      fi
     fi
     if ! ln -s "$target" "$wt/$path" 2>/dev/null; then
       worktree_message relative-link-failed "$wt/$path" "Error: could not create relative symlink '$path' -> '$target' in $wt." >&2
@@ -2770,11 +2776,11 @@ resolve_restack_worktree() {
 
 report_paused_restack() {
   local wt="$1" branch="$2" output="$3" conflict_files="" unstaged_files=""
-  [[ -n "$output" ]] && sed 's/^/  git: /' <<<"$output" >&2
   conflict_files="$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null || true)"
   unstaged_files="$(git -C "$wt" diff --name-only 2>/dev/null || true)"
   if [[ -n "$conflict_files" ]]; then
     worktree_message restack-conflicts "$conflict_files" "Restack stopped on conflicts:" >&2
+    [[ -n "$output" ]] && sed 's/^/  git: /' <<<"$output" >&2
     sed 's/^/  /' <<<"$conflict_files" >&2
     echo "Resolve and stage each file, then run: $0 restack continue \"$wt\"" >&2
   elif [[ -n "$unstaged_files" ]]; then
@@ -2783,10 +2789,12 @@ report_paused_restack() {
     # repeating that sends the resolver back to files already staged, and the
     # empty-commit skip below would drop the commit they just resolved.
     worktree_message restack-unstaged "$unstaged_files" "Restack stopped on unstaged changes, not on unresolved conflicts:" >&2
+    [[ -n "$output" ]] && sed 's/^/  git: /' <<<"$output" >&2
     sed 's/^/  /' <<<"$unstaged_files" >&2
     echo "Stage or discard them, then run: $0 restack continue \"$wt\"" >&2
   else
     worktree_message restack-empty "$wt" "The current replayed commit may be empty; inspect it, then run: $0 restack skip \"$wt\"" >&2
+    [[ -n "$output" ]] && sed 's/^/  git: /' <<<"$output" >&2
   fi
   echo "To restore the pre-restack branch: $0 restack abort \"$wt\"" >&2
   echo "Recorded branch: $branch" >&2
@@ -2841,8 +2849,8 @@ abort_orphaned_restack_record() {
   fi
   if [[ "$(git -C "$wt" branch --show-current 2>/dev/null || true)" != "$branch" ]] && \
      ! checkout_err="$(git -C "$wt" checkout "$branch" 2>&1)"; then
-    [[ -n "$checkout_err" ]] && sed 's/^/  git: /' <<<"$checkout_err" >&2
     worktree_message restack-reattach-failed "$wt" "Error: Could not reattach $wt to '$branch'; the recorded restack state was preserved." >&2
+    [[ -n "$checkout_err" ]] && sed 's/^/  git: /' <<<"$checkout_err" >&2
     echo "A 'rebase --quit' or 'cherry-pick --quit' leaves the conflicted index in place: stage or discard the paths Git names above." >&2
     echo "Then re-run: $0 restack abort \"$wt\"" >&2
     return 1
@@ -3399,7 +3407,7 @@ reuse_respects_session_lease() {
       75) continue ;;
       *)
         worktree_message lease-read-failed "path=$wt exit=$rc" "Error: could not read the session guard state of $wt (exit $rc); refusing to reuse it." >&2
-        [[ -n "$SESSION_GUARD_PROBE_ERR" ]] && printf '%s\n' "$SESSION_GUARD_PROBE_ERR" | sed 's/^/  /' >&2
+        [[ -n "$SESSION_GUARD_PROBE_ERR" ]] && printf '%s\n' "$SESSION_GUARD_PROBE_ERR" >&2
         return 1
         ;;
     esac
@@ -3409,7 +3417,7 @@ reuse_respects_session_lease() {
     # nothing was probed; proceed rather than refusing on silence.
     [[ "$rc" -eq 75 ]] || return 0
     worktree_message lease-foreign "$wt" "Error: $wt is claimed by another session; refusing to reuse it." >&2
-    [[ -n "$SESSION_GUARD_PROBE_ERR" ]] && printf '%s\n' "$SESSION_GUARD_PROBE_ERR" | sed 's/^/  /' >&2
+    [[ -n "$SESSION_GUARD_PROBE_ERR" ]] && printf '%s\n' "$SESSION_GUARD_PROBE_ERR" >&2
     echo "Coordinate with the owning session instead of reusing its worktree." >&2
     return 1
   fi
@@ -4360,10 +4368,12 @@ case "${1:-}" in
       exit 1
     fi
     CLEANUP_LIST_RC=0
-    git -C "$PROJECT_ROOT" worktree list --porcelain -z >"$CLEANUP_LIST_FILE" || CLEANUP_LIST_RC=$?
+    CLEANUP_LIST_ERR_FILE="${CLEANUP_LIST_FILE}.err"
+    git -C "$PROJECT_ROOT" worktree list --porcelain -z >"$CLEANUP_LIST_FILE" 2>"$CLEANUP_LIST_ERR_FILE" || CLEANUP_LIST_RC=$?
     if [[ "$CLEANUP_LIST_RC" -ne 0 ]]; then
-      rm -f "$CLEANUP_LIST_FILE"
       worktree_message cleanup-enumeration-failed "$CLEANUP_LIST_RC" "Error: 'git -C \"$PROJECT_ROOT\" worktree list --porcelain -z' failed (exit $CLEANUP_LIST_RC)." >&2
+      [[ -s "$CLEANUP_LIST_ERR_FILE" ]] && sed 's/^/  git: /' <"$CLEANUP_LIST_ERR_FILE" >&2
+      rm -f "$CLEANUP_LIST_FILE" "$CLEANUP_LIST_ERR_FILE" 2>/dev/null || true
       echo "  No worktree was inspected and none was collected; this is not a clean sweep." >&2
       exit 1
     fi
@@ -4374,7 +4384,7 @@ case "${1:-}" in
       same_canonical_dir "$CLEANUP_WT" "$PROJECT_ROOT" && continue
       CLEANUP_TREES+=("$CLEANUP_WT")
     done <"$CLEANUP_LIST_FILE"
-    rm -f "$CLEANUP_LIST_FILE"
+    rm -f "$CLEANUP_LIST_FILE" "$CLEANUP_LIST_ERR_FILE"
     for wt in ${CLEANUP_TREES[@]+"${CLEANUP_TREES[@]}"}; do
       # Every arm below either removes the worktree or says on stderr why it is
       # keeping it. Nothing falls through silently: the help promises that a
