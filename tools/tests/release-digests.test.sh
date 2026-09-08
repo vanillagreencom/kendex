@@ -114,7 +114,9 @@ out_text() { # CLAUSE — the run's output reduced, `-` when empty
 doc_text() { # TARGET — the document's fields, `absent`, or `unparsed:<text>`
   local doc="$DIST/digests-$1.json" fields
   [[ -e "$doc" ]] || { printf 'absent'; return; }
-  if fields="$(jq -r '"schema=\(.schema) version=\(.version) target=\(.target) command=\(.command) app=\(.app)"' "$doc" 2>/dev/null)"; then
+  # schema keeps its JSON type: a client reads it as a number, so a quoted
+  # "1" renders with its quotes and reddens the row.
+  if fields="$(jq -r '"schema=\(.schema|tojson) version=\(.version) target=\(.target) command=\(.command) app=\(.app)"' "$doc" 2>/dev/null)"; then
     printf '%s' "$fields"
   else
     printf 'unparsed:%s' "$(paste -s -d ';' - <"$doc")"
