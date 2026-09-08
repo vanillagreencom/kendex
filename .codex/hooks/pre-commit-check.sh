@@ -14,17 +14,15 @@ set -euo pipefail
 MARKER="# kendex-guards-hook"
 
 # Every line this hook writes, and the only place its text lives. The first
-# line is the contract a reader parses, `pre-commit-check: <key>=<value>`: a
-# stable key for the condition and the value acted on — the missing tool, the
-# word that would skip the armed hooks, whether this repository is armed, or
-# the directory this lane judged. The English explanation and the rewrites
-# follow on later lines. Only the caller decides the status: `judged` is a
-# notice beside an allowed command, the rest are refusals.
+# line is the contract a reader parses: the keys and values are the fixed set
+# hooks/AGENTS.md names, and the English explanation and the rewrites follow on
+# later lines. Only the caller decides the status: `judged` is the notice
+# beside a command this hook allows, the rest are refusals.
 message() { # KEY VALUE
   printf 'pre-commit-check: %s=%s\n' "$1" "$2" >&2
   case "$1=$2" in
-    tools=*)
-      echo "$2 is required to read the hook payload; refusing rather than skipping the guard" >&2
+    missing-tools=*)
+      echo "the commands ${2//,/, } are required to read the hook payload and are not on PATH; refusing rather than skipping the guard" >&2
       ;;
     payload=invalid-json)
       echo "the hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
@@ -42,8 +40,8 @@ message() { # KEY VALUE
     # One message, because the flat rule has one failure: not armed. Which of an
     # empty core.hooksPath, a redirect, a foreign hook or half a pair it was is
     # the taxonomy that kept answering wrongly; `kendex guard check` does know.
-    armed=no)
-      echo "this repository's git hooks are not armed by kendex in $PWD, so nothing checks this commit — run 'kendex guard install' (this hook does not run a repository's own scripts on its behalf), 'kendex guard check' says what the package makes of it, or remove this hook" >&2
+    unarmed=*)
+      echo "this repository's git hooks are not armed by kendex in $2, so nothing checks this commit — run 'kendex guard install' (this hook does not run a repository's own scripts on its behalf), 'kendex guard check' says what the package makes of it, or remove this hook" >&2
       ;;
     judged=*)
       echo "the command moves repositories (-C, --git-dir, --work-tree, cd, GIT_DIR, or GIT_WORK_TREE); this hook judged $2 only — the target repository is gated by its own armed git pre-commit hook, if any (kendex guard install there)" >&2
@@ -53,11 +51,13 @@ message() { # KEY VALUE
 
 # jq is the only reader of the payload, and grep is what reads the marker out of
 # a hook file. Without them the command cannot be read, or an armed repository
-# cannot be told from an unarmed one, and this hook refuses either way. jq leads
-# so the world with no tools at all names it.
+# cannot be told from an unarmed one, and this hook refuses either way. The value
+# names every one of them the PATH is missing, in the order checked.
+MISSING=""
 for dependency in jq cat grep; do
-  command -v "$dependency" >/dev/null 2>&1 || { message tools "$dependency"; exit 2; }
+  command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
 done
+[ -z "$MISSING" ] || { message missing-tools "${MISSING#,}"; exit 2; }
 
 INPUT=$(cat)
 
@@ -184,8 +184,10 @@ fi
 
 [ -n "$COMMIT" ] || exit 0
 
-# This lane never follows a repository-moving word: where it cannot defer it
-# names the directory it judged and leaves the target to the target's own hook.
+# This lane never follows a repository-moving word. Where there is nothing to
+# defer to and nothing to refuse — no git directory to read at all — it says
+# which directory it judged and leaves the target to the target's own hook.
+# Where it refuses, the refusal's own value is that directory.
 elsewhere_notice() {
   [ -z "$MOVES" ] && return 0
   message judged "$PWD"
@@ -227,8 +229,6 @@ fi
 # the one act that says a person wants this repository's committed scripts run
 # on their commits, and it is local: git clones no hooks, so running one here
 # would put execution behind a checkout nobody armed. The commit is refused
-# instead, and the refusal names the command that fixes it. The verdict leads
-# and the directory notice follows it, so the first line is the refusal's.
-message armed no
-elsewhere_notice
+# instead, and the refusal names the command that fixes it.
+message unarmed "$PWD"
 exit 2

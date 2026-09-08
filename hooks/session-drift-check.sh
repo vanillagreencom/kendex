@@ -24,7 +24,7 @@ OUTPUT=""
 notice() { # KEY VALUE [DETAIL]
   printf 'session-drift-check: %s=%s\n' "$1" "$2"
   case "$1=$2" in
-    tools=*) printf 'kendex drift check skipped: %s is not on PATH\n' "$2" ;;
+    missing-tools=*) printf 'kendex drift check skipped: %s is not on PATH\n' "${2//,/, }" ;;
     payload=invalid-json) echo "kendex drift check skipped: the session payload is not valid JSON" ;;
     path=*) printf 'kendex check could not run: project directory %s is not accessible; drift status unknown\n' "$2" ;;
     drift=found) printf '%s\n' "$OUTPUT" ;;
@@ -69,7 +69,7 @@ fi
 # unread payload cannot be shown to be a fresh start, so the report is skipped
 # rather than repeated on every compact.
 if ! command -v jq >/dev/null 2>&1; then
-  notice tools jq
+  notice missing-tools jq
   exit 0
 fi
 if ! SOURCE=$(printf '%s' "$INPUT" | jq -r '.source // ""' 2>/dev/null); then
@@ -85,7 +85,7 @@ esac
 # The hook only exists because kendex installed it, so a missing binary is
 # almost always a PATH gap worth one line — never a blocker.
 if ! command -v kendex >/dev/null 2>&1; then
-  notice tools kendex
+  notice missing-tools kendex
   exit 0
 fi
 

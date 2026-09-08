@@ -31,8 +31,8 @@ refuse() { # KEY VALUE [DETAIL]
   {
     printf 'reviewer-stop-check: %s=%s\n' "$1" "$2"
     case "$1=$2" in
-      tools=*)
-        echo "$2 is required to read the hook payload and the worktree; refusing rather than skipping the guard"
+      missing-tools=*)
+        echo "the commands ${2//,/, } are required to read the hook payload and the worktree and are not on PATH; refusing rather than skipping the guard"
         ;;
       payload=unreadable)
         echo "the hook payload could not be read from stdin"
@@ -69,11 +69,13 @@ refuse() { # KEY VALUE [DETAIL]
   exit 2
 }
 
-# jq reads the payload and git answers for the worktree. jq leads so the world
-# with no tools at all names it.
+# jq reads the payload and git answers for the worktree. The value names every
+# one of them the PATH is missing, in the order checked.
+MISSING=""
 for dependency in jq git; do
-  command -v "$dependency" >/dev/null 2>&1 || refuse tools "$dependency"
+  command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
 done
+[ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 
 # cat's own diagnostic is dropped so the refusal's keyed line is the first
 # line of this hook's stderr, as it is for every other condition.

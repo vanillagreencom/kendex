@@ -36,9 +36,11 @@
 #   first    the first line of stderr, the hook's own name stripped: every hook
 #            opens a refusal with `<hook-name>: <key>=<value>`, and the reader's
 #            own keys are the same in every hook, so `payload=invalid-json` and
-#            `tools=jq` are pinned here as the values themselves. `refusal` is
-#            any other key, the hook's own refusal of a command it read, which
-#            the hook's suite pins; `-` is silence
+#            `missing-tools=jq` are pinned here as the values themselves.
+#            `{tools}` stands for PAYLOAD_TOOLS, the whole dependency list of
+#            the hook under test, which is what the world with no tools at all
+#            leaves missing. `refusal` is any other key, the hook's own refusal
+#            of a command it read, which the hook's suite pins; `-` is silence
 #
 # Every row runs the hook under `env -i` with HOME, PWD and the world's PATH
 # and nothing else, so a passing row proves the hook read the payload with
@@ -101,7 +103,7 @@ payload_first() { # -> the first stderr line's key=value, or `refusal`
   [ -n "$line" ] || { printf -- '-'; return; }
   kv="${line#*: }"
   case "$kv" in
-    tools=* | payload=*) printf '%s' "$kv" ;;
+    missing-tools=* | payload=*) printf '%s' "$kv" ;;
     *) printf 'refusal' ;;
   esac
 }
@@ -130,14 +132,18 @@ a Copilot toolArgs object is read|copilot-object|refusing|tools|2|refusal
 a Copilot toolArgs JSON string is read|copilot-string|refusing|tools|2|refusal
 the passing command under toolArgs passes, so the shape is read rather than refused|copilot-object|passing|tools|0|-
 a toolArgs string that is not JSON is refused unread rather than skipping the guard|copilot-text|-|tools|2|payload=invalid-json
-without jq the refusing command is refused unread rather than guessed at|harness|refusing|no-jq|2|tools=jq
-without jq even the passing command is refused: nothing was read|harness|passing|no-jq|2|tools=jq
-without cat the passing command is refused unread rather than dying at the read|harness|passing|no-cat|2|tools=cat
-with no tools at all the passing command is refused unread, jq being the first tool it asks for|harness|passing|none|2|tools=jq
+without jq the refusing command is refused unread rather than guessed at|harness|refusing|no-jq|2|missing-tools=jq
+without jq even the passing command is refused: nothing was read|harness|passing|no-jq|2|missing-tools=jq
+without cat the passing command is refused unread rather than dying at the read|harness|passing|no-cat|2|missing-tools=cat
+with no tools at all the passing command is refused unread, naming every tool it asks for|harness|passing|none|2|missing-tools={tools}
 "
 
+# PAYLOAD_TOOLS is the hook's whole dependency list, comma-joined in the order
+# it checks them: the row for a world with no tools at all pins that list, and
+# it is the one expectation these shared rows cannot hold themselves.
 payload_table() { # hook refusing passing [dir]
   local hook="$1" refusing="$2" passing="$3" dir="${4:-$PWD}"
+  [ -n "${PAYLOAD_TOOLS:-}" ] || { echo 'payload-rows: the suite must set PAYLOAD_TOOLS, the dependency list of the hook under test' >&2; exit 2; }
   local label shape command world rc first row field text path got before=$((PASS + FAIL))
   PAYLOAD_BASH="$(command -v bash)"
   PAYLOAD_ROOT="${TMP_ROOT:?}/payload-rows"
@@ -179,7 +185,7 @@ payload_table() { # hook refusing passing [dir]
       printf '%s => %s\n' "$label" "$got"
       continue
     fi
-    assert_eq "$got" "rc=$rc first=$first" "$label"
+    assert_eq "$got" "rc=$rc first=${first//\{tools\}/$PAYLOAD_TOOLS}" "$label"
   done <<<"$PAYLOAD_ROWS"
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 }

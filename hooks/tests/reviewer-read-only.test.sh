@@ -213,7 +213,7 @@ for tool in cat sed grep dirname git; do
   ln -sf "$real" "$NOJQ_BIN/$tool"
 done
 run_payload '{"agent_type":"generalist","tool_name":"Edit","tool_input":{"file_path":"x"}}' "$NOJQ_BIN"
-assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: tools=jq" \
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: missing-tools=jq" \
   "no jq refuses rather than guessing at the payload, whoever the agent is, and names it"
 
 echo

@@ -279,7 +279,7 @@ run_exact_path() { # payload PATH
 }
 run_exact_path '{"session_id":"s","hook_event_name":"SessionStart","source":"startup"}' "$NOJQ_BIN"
 assert_eq "$rc" 0 "without jq the session still starts"
-assert_eq "$out" "session-drift-check: tools=jq"$'\n'"kendex drift check skipped: jq is not on PATH" \
+assert_eq "$out" "session-drift-check: missing-tools=jq"$'\n'"kendex drift check skipped: jq is not on PATH" \
   "without jq the skip names jq rather than reading as a clean install"
 assert_eq "$(cat "$ARGS_LOG")" "" "without jq the check never runs"
 
@@ -344,7 +344,7 @@ out="$(env -i HOME="$HOME" PATH="$NOKENDEX_BIN" "$(command -v bash)" "$HOOK" <<<
 rc=$?
 set -e
 assert_eq "$rc" 0 "exits 0 without a kendex binary"
-assert_eq "$out" "session-drift-check: tools=kendex"$'\n'"kendex drift check skipped: kendex is not on PATH" \
+assert_eq "$out" "session-drift-check: missing-tools=kendex"$'\n'"kendex drift check skipped: kendex is not on PATH" \
   "says why it skipped without a kendex binary"
 
 echo

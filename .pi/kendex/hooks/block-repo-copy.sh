@@ -20,8 +20,8 @@ COMMAND=""
 refuse() { # KEY VALUE
   printf 'block-repo-copy: %s=%s\n' "$1" "$2" >&2
   case "$1=$2" in
-    tools=*)
-      echo "$2 is required to read the hook payload; refusing rather than skipping the guard" >&2
+    missing-tools=*)
+      echo "the commands ${2//,/, } are required to read the hook payload and are not on PATH; refusing rather than skipping the guard" >&2
       ;;
     payload=invalid-json)
       echo "the hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
@@ -45,11 +45,13 @@ refuse() { # KEY VALUE
 }
 
 # jq is the only reader of the payload. Without it the command cannot be read,
-# and a command this hook has not read cannot be shown not to be the copy. jq
-# leads so the world with no tools at all names it.
+# and a command this hook has not read cannot be shown not to be the copy. The value
+# names every one of them the PATH is missing, in the order checked.
+MISSING=""
 for dependency in jq cat; do
-  command -v "$dependency" >/dev/null 2>&1 || refuse tools "$dependency"
+  command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
 done
+[ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 
 INPUT=$(cat)
 

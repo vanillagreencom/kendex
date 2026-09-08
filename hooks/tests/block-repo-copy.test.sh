@@ -62,6 +62,10 @@ run_payload() { # raw-json -> rc, stderr in ERR_FILE
 # shellcheck source=lib/first-line.sh
 . "$TEST_DIR/lib/first-line.sh"
 
+# The hook's dependency list, in the order it checks them: the shared table
+# pins it as the value of the world that has none of them.
+PAYLOAD_TOOLS=jq,cat
+
 # shellcheck source=lib/payload-rows.sh
 . "$TEST_DIR/lib/payload-rows.sh"
 

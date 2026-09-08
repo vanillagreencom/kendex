@@ -99,6 +99,10 @@ run_hook() { # command -> rc, stderr in ERR_FILE
 # shellcheck source=lib/first-line.sh
 . "$TEST_DIR/lib/first-line.sh"
 
+# The hook's dependency list, in the order it checks them: the shared table
+# pins it as the value of the world that has none of them.
+PAYLOAD_TOOLS=jq,git,cat
+
 # shellcheck source=lib/payload-rows.sh
 . "$TEST_DIR/lib/payload-rows.sh"
 
@@ -283,7 +287,8 @@ for tool in bash cat jq; do
   target="$(command -v "$tool" 2>/dev/null)" && ln -sf "$target" "$NOGIT_BIN/$tool"
 done
 run_payload '{"tool_input":{"command":"kendex refresh"}}' "$NOGIT_BIN"
-assert_eq "$rc" 2 'without git the guard refuses rather than skipping'
+assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=block-worktree-refresh: missing-tools=git' \
+  'without git the guard refuses rather than skipping, and the value names git alone'
 
 echo
 echo "block-worktree-refresh: $PASS passed, $FAIL failed"

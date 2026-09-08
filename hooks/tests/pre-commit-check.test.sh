@@ -15,11 +15,11 @@
 # included. Both directions are pinned below; the two expectation columns are
 # where the armed and unarmed answers differ.
 #
-# Every refusal opens with `pre-commit-check: <key>=<value>`, and that line is
-# the contract: a row pins it whole in both fixtures beside the exit status.
-# The armed refusal's value is the bypass word the hook read, which is what the
-# bypass column carries; the unarmed one is `armed=no` whatever the command
-# said, since nothing gates the commit there.
+# Every refusal opens with `pre-commit-check: <key>=<value>`, the fixed set
+# hooks/AGENTS.md names, and a row pins that line whole in both fixtures beside
+# the exit status. The armed refusal's value is the bypass word the hook read,
+# which is what the bypass column carries; the unarmed one is the directory it
+# judged, whatever the command said, since nothing gates the commit there.
 #
 # HOOK_UNDER_TEST runs this suite against another hook file, which is how the
 # must-fail control checks that these assertions can go red.
@@ -35,6 +35,10 @@ HOOK="${HOOK_UNDER_TEST:-$HOOKS_DIR/pre-commit-check.sh}"
 
 # shellcheck source=lib/pre-commit-world.sh
 . "$HOOKS_DIR/tests/lib/pre-commit-world.sh"
+
+# The hook's dependency list, in the order it checks them: the shared table
+# pins it as the value of the world that has none of them.
+PAYLOAD_TOOLS=jq,cat,grep
 
 # shellcheck source=lib/payload-rows.sh
 . "$HOOKS_DIR/tests/lib/payload-rows.sh"
@@ -62,7 +66,7 @@ both_table() { # ROWS
     assert_eq "rc=$rc first=$(first_line)" "rc=$armed first=$want" "armed: $label"
     run_hook "$UNARMED" "$(payload "$form")"
     want="-"
-    [[ "$unarmed" == 0 ]] || want="pre-commit-check: armed=no"
+    [[ "$unarmed" == 0 ]] || want="pre-commit-check: unarmed=$UNARMED"
     assert_eq "rc=$rc first=$(first_line)" "rc=$unarmed first=$want" "unarmed: $label"
   done <<<"$1"
   [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "both: no row was asserted" >&2; exit 2; }

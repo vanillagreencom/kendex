@@ -22,7 +22,7 @@ refuse() { # KEY VALUE
   {
     printf 'command-safety: %s=%s\n' "$1" "$2"
     case "$1=$2" in
-      tools=*) echo "$2 is required" ;;
+      missing-tools=*) echo "the commands ${2//,/, } are required and are not on PATH" ;;
       payload=unreadable) echo "the hook input could not be read" ;;
       payload=invalid-json) echo "the hook input is not valid JSON, or names no command this hook can read" ;;
       payload=invalid-cwd) echo "the payload's working directory is not a string" ;;
@@ -45,9 +45,11 @@ refuse() { # KEY VALUE
 # inside a command substitution even when the substitution stands on the left
 # of `||`, which reads the settings loader's guarded probes as failures.
 trap 'rc=$?; case $rc in 0 | 2) ;; *) refuse exit "$rc" ;; esac' EXIT
+MISSING=""
 for dependency in jq git grep cat; do
-  command -v "$dependency" >/dev/null 2>&1 || refuse tools "$dependency"
+  command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
 done
+[ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 input="$(cat)" || refuse payload unreadable
 command_text="$(jq -r '
   def command_arg:

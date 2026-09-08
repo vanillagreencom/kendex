@@ -26,8 +26,8 @@ REASON=""
 refuse() { # KEY VALUE
   printf 'block-worktree-refresh: %s=%s\n' "$1" "$2" >&2
   case "$1=$2" in
-    tools=*)
-      echo "$2 is required to read the hook payload and the worktree; refusing rather than skipping the guard" >&2
+    missing-tools=*)
+      echo "the commands ${2//,/, } are required to read the hook payload and the worktree and are not on PATH; refusing rather than skipping the guard" >&2
       ;;
     payload=unreadable)
       echo "the hook payload could not be read from stdin; refusing rather than skipping the guard" >&2
@@ -65,11 +65,13 @@ refuse() { # KEY VALUE
 }
 
 # jq reads the payload and git answers the one question. Without either the
-# command cannot be judged, and an unjudged command is refused. jq leads so the
-# world with no tools at all names it.
+# command cannot be judged, and an unjudged command is refused. The value names
+# every one of them the PATH is missing, in the order checked.
+MISSING=""
 for dependency in jq git cat; do
-  command -v "$dependency" >/dev/null 2>&1 || refuse tools "$dependency"
+  command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
 done
+[ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 
 # cat's own diagnostic is dropped so the refusal's keyed line is the first
 # line of this hook's stderr, as it is for every other condition.

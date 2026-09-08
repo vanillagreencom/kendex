@@ -21,8 +21,8 @@ COMMAND=""
 refuse() { # KEY VALUE
   printf 'block-argv-kill: %s=%s\n' "$1" "$2" >&2
   case "$1=$2" in
-    tools=*)
-      echo "$2 is required to read the hook payload; refusing rather than skipping the guard" >&2
+    missing-tools=*)
+      echo "the commands ${2//,/, } are required to read the hook payload and are not on PATH; refusing rather than skipping the guard" >&2
       ;;
     payload=unreadable)
       echo "the hook payload could not be read from stdin; refusing rather than skipping the guard" >&2
@@ -47,11 +47,13 @@ refuse() { # KEY VALUE
 }
 
 # jq is the only reader of the payload. Without it the command cannot be read,
-# and a command this hook has not read cannot be shown to name a PID. jq leads
-# so the world with no tools at all names it.
+# and a command this hook has not read cannot be shown to name a PID. The value
+# names every one of them the PATH is missing, in the order checked.
+MISSING=""
 for dependency in jq cat; do
-  command -v "$dependency" >/dev/null 2>&1 || refuse tools "$dependency"
+  command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
 done
+[ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 
 # cat's own diagnostic is dropped so the refusal's keyed line is the first
 # line of this hook's stderr, as it is for every other condition.

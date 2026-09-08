@@ -315,7 +315,7 @@ for tool in cat sed grep tail dirname git; do
   ln -sf "$real" "$NOJQ_BIN/$tool"
 done
 run_payload "{\"agent_type\":\"generalist\",\"agent_id\":\"h1\",\"transcript_path\":\"$T\"}" "$NOJQ_BIN"
-assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: tools=jq" \
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: missing-tools=jq" \
   "no jq refuses rather than guessing at the payload, and names it"
 
 echo
