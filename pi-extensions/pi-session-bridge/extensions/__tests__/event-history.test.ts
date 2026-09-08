@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { BridgeHistory, cleanupStaleSpills, type HistoryEnvelope, type HistoryLimits } from "../event-history.js";
-import { defaultLimits, dir, makeEnvelope, spillPath, warnings, useHistoryFixture } from "./lib/history-fixture.ts";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { BridgeHistory, type HistoryEnvelope, type HistoryLimits } from "../event-history.js";
+import { defaultLimits, makeEnvelope, spillPath, warnings, useHistoryFixture } from "./lib/history-fixture.ts";
 
 useHistoryFixture();
 
