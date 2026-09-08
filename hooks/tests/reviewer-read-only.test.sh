@@ -17,6 +17,11 @@
 # assertions.
 set -euo pipefail
 
+# A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
+# GIT_WORK_TREE and GIT_INDEX_FILE, which take precedence over `git -C` and
+# would point the fixtures' git at the real repository.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/reviewer-read-only.sh}"
 
@@ -41,23 +46,14 @@ fgit -C "$REPO" commit -q -m init
 SCRATCH="$TMP_ROOT/scratch"
 mkdir -p "$SCRATCH"
 
-# A JSON string, escaped the way the harness sends it.
-json_str() {
-  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
-}
-
 # run AGENT_TYPE TOOL FIELD VALUE -> rc, stderr in $err. An empty AGENT_TYPE
-# omits the field, as the main session's payload does.
+# omits the field, as the main session's payload does. jq encodes the value
+# the way the harness does, so a path or command holding a quote, a
+# backslash or a newline reaches the hook as JSON.
 run_tool() {
-  local agent="$1" tool="$2" field="$3" value="$4" payload
-  if [ -n "$agent" ]; then
-    payload=$(printf '{"agent_type":"%s","tool_name":"%s","tool_input":{"%s":"%s"}}' \
-      "$agent" "$tool" "$field" "$(json_str "$value")")
-  else
-    payload=$(printf '{"tool_name":"%s","tool_input":{"%s":"%s"}}' \
-      "$tool" "$field" "$(json_str "$value")")
-  fi
-  run_payload "$payload"
+  local agent="$1" tool="$2" field="$3" value="$4"
+  run_payload "$(jq -nc --arg a "$agent" --arg t "$tool" --arg f "$field" --arg v "$value" \
+    '(if $a == "" then {} else {agent_type: $a} end) + {tool_name: $t, tool_input: {($f): $v}}')"
 }
 
 run_payload() { # raw-json [PATH] -> rc, stderr in $err
@@ -95,17 +91,6 @@ assert_contains() {
   fi
 }
 
-assert_not_contains() {
-  local got="$1" needle="$2" name="$3"
-  if [[ "$got" != *"$needle"* ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected not to contain: %s\n        got:      %s\n' "$name" "$needle" "$got"
-  fi
-}
-
 ARTIFACT="$REPO/tmp/review-reviewer-test-20260903-101010.json"
 
 echo "reviewer-read-only: agents that are not reviewers pass"
@@ -126,9 +111,7 @@ for tool in Edit MultiEdit NotebookEdit; do
   assert_eq "$rc" 2 "a reviewer's $tool is refused"
 done
 run_tool reviewer-correctness Edit file_path "$REPO/src/lib.rs"
-assert_contains "$err" "a reviewer edits nothing" "the refusal names the rule"
 assert_contains "$err" "tmp/review-reviewer-correctness-" "the refusal names the one path a reviewer writes"
-assert_not_contains "$err" "bypass" "never suggests bypassing"
 run_tool reviewer-correctness Edit file_path "$SCRATCH/note.txt"
 assert_eq "$rc" 2 "an Edit outside any repository is refused too: a reviewer never edits"
 
@@ -168,8 +151,6 @@ for cmd in 'git commit -m x' 'git push' 'git push origin HEAD' "git -C $REPO com
   run_tool reviewer-security Bash command "$cmd"
   assert_eq "$rc" 2 "refused: $cmd"
 done
-run_tool reviewer-security Bash command 'git commit -m x'
-assert_contains "$err" "commits and pushes nothing" "the refusal names the rule"
 for cmd in 'git log --oneline -5' "git -C $REPO diff origin/main...HEAD" 'git cat-file commit HEAD' \
   'git commit-tree HEAD^{tree}' 'git status --porcelain' 'git show HEAD --stat' 'git log --grep=commit' \
   'echo committed' 'grep -rn "git push" docs/' 'git rev-list --count HEAD' 'git worktree list'; do

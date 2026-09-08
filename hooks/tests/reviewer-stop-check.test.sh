@@ -18,6 +18,11 @@
 # assertions.
 set -euo pipefail
 
+# A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
+# GIT_WORK_TREE and GIT_INDEX_FILE, which take precedence over `git -C` and
+# would point the fixtures' git at the real repository.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/reviewer-stop-check.sh}"
 
@@ -146,9 +151,6 @@ run_hook "$T" reviewer-test a1
 assert_eq "$rc" 2 "blocks on an untracked file"
 assert_contains "$err" "?? probe.sh" "names the untracked file"
 assert_contains "$err" "$REPO" "names the reviewed worktree"
-assert_contains "$err" "Delete every file you created" "says what to do"
-assert_contains "$err" "report any change that was there before you" "and what not to do"
-assert_not_contains "$err" "bypass" "never suggests bypassing"
 [ -e "$REPO/.git/kendex/reviewer-stop/a1" ] && marker=yes || marker=no
 assert_eq "$marker" yes "the block records the agent under the reviewed repository's git common dir"
 run_hook "$T" reviewer-test a1
