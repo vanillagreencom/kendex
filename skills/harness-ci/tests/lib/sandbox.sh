@@ -6,6 +6,8 @@
 # sourcing suite to have set it, which is also what every suite here sets.
 set -euo pipefail
 
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GITHUB_OUTPUT
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd)"
 HARNESS_ONLY="$(cd "$TEST_DIR/../scripts" && pwd)/harness-only"
 
@@ -22,16 +24,20 @@ fi
 cleanup() { rm -rf "$SANDBOX" 2>/dev/null || true; }
 trap cleanup EXIT
 
+write_inventory() { # REPO
+  # Fixture writer output. Product paths remain absent even inside a harness.
+  printf '%s\n' '[".kendex-generated.json",".agents/skills/orch/SKILL.md",".agents/skills/orch/app.ts",".agents/skills/orch/renamed.ts",".agents/skills/review-gate/scripts/lib/settings.sh",".claude/agents/rust.md",".codex/agents/rust.md",".opencode/agent/rust.md",".cursor/rules/rust.mdc",".pi/kendex/hooks/guard.ts",".pi/settings.json","opencode.json","opencode.jsonc",".gemini/settings.json",".github/agents/rust.agent.md","CLAUDE.md","runtime/agent.conf"]' >"$1/.kendex-generated.json"
+}
+
 # Fixture repositories carry their own identity and default branch so the
 # suite reads the same on a runner with no global git config.
 new_repo() { # NAME -> prints the repo path
   local repo="$SANDBOX/$1"
-  mkdir -p "$repo"
-  git -C "$repo" init -q -b main
-  git -C "$repo" config user.email harness-ci@example.invalid
-  git -C "$repo" config user.name "harness-ci tests"
-  # Fixture writer output. Product paths remain absent even inside a harness.
-  printf '%s\n' '[".kendex-generated.json",".agents/skills/orch/SKILL.md",".agents/skills/orch/app.ts",".agents/skills/orch/renamed.ts",".agents/skills/review-gate/scripts/lib/settings.sh",".claude/agents/rust.md",".codex/agents/rust.md",".opencode/agent/rust.md",".cursor/rules/rust.mdc",".pi/kendex/hooks/guard.ts",".pi/settings.json","opencode.json","opencode.jsonc",".gemini/settings.json",".github/agents/rust.agent.md","CLAUDE.md","runtime/agent.conf"]' >"$repo/.kendex-generated.json"
+  mkdir -p "$repo" || return
+  git -C "$repo" init -q -b main || return
+  git -C "$repo" config user.email harness-ci@example.invalid || return
+  git -C "$repo" config user.name "harness-ci tests" || return
+  write_inventory "$repo" || return
   printf '%s' "$repo"
 }
 
@@ -63,10 +69,22 @@ assert_eq() { # LABEL EXPECTED ACTUAL
   fi
 }
 
+require_rows() { # TABLE COUNT
+  if [ "$2" -eq 0 ]; then
+    printf 'FAIL: %s table executed no rows\n' "$1" >&2
+    exit 1
+  fi
+}
+
 assert_verdict() { # LABEL true|false ARGS...
-  local label="$1" expected="$2"
+  local label="$1" expected="$2" out status
   shift 2
-  assert_eq "$label" "harness_only=$expected" "$(classify "$@")"
+  if out="$(classify "$@")"; then
+    status=0
+  else
+    status=$?
+  fi
+  assert_eq "$label" "harness_only=$expected exit 0" "$out exit $status"
 }
 
 report() { # SUITE

@@ -1,47 +1,47 @@
 #!/usr/bin/env bash
-# --no-renames is load-bearing. Moving a product file INTO a render tree
-# deletes source; with rename detection on, git lists only the post-image and
-# the diff reads as render-only, so the lanes that would have judged the
-# deletion never run.
+# Rename detection must stay off. A product file moved into a generated path
+# still deletes product source and must run product checks.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
 
 repo="$(new_repo rename)"
-commit_paths "$repo" "baseline" src/app.ts .agents/skills/orch/SKILL.md
-base="$(git -C "$repo" rev-parse HEAD)"
+commit_paths "$repo" baseline src/app.ts .agents/skills/orch/SKILL.md
+product_base="$(git -C "$repo" rev-parse HEAD)"
 
 mkdir -p "$repo/.agents/skills/orch"
 git -C "$repo" mv src/app.ts .agents/skills/orch/app.ts
-git -C "$repo" commit -q -m "move a product file into the render"
+git -C "$repo" commit -q -m "move product into generated output"
+product_to_generated="$(git -C "$repo" rev-parse HEAD)"
 
-assert_verdict "a product file moved into the render answers false" false \
-  --repo "$repo" --event push --base "$base" --head HEAD
-
-# The control: with rename detection left on, the same diff lists one path and
-# every path it lists is a render path. That is the wrong answer this flag
-# exists to prevent, so the suite pins it rather than trusting the comment.
-detected="$(git -C "$repo" diff --name-only "$base" HEAD)"
-assert_eq "rename detection alone would list only the post-image" \
+detected="$(git -C "$repo" diff --name-only "$product_base" "$product_to_generated")"
+assert_eq product-to-generated-rename-view \
   ".agents/skills/orch/app.ts" "$detected"
 
-undetected="$(git -C "$repo" diff --name-only --no-renames "$base" HEAD | sort | tr '\n' ' ')"
-assert_eq "--no-renames lists the deletion too" \
+undetected="$(git -C "$repo" diff --name-only --no-renames "$product_base" "$product_to_generated" | sort | tr '\n' ' ')"
+assert_eq product-to-generated-no-renames-view \
   ".agents/skills/orch/app.ts src/app.ts " "$undetected"
 
-# A move that stays inside the render is still render-only.
-inside_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" mv .agents/skills/orch/app.ts .agents/skills/orch/renamed.ts
-git -C "$repo" commit -q -m "move inside the render"
-assert_verdict "a move within the render stays true" true \
-  --repo "$repo" --event push --base "$inside_base" --head HEAD
+git -C "$repo" commit -q -m "move inside generated output"
+generated_to_generated="$(git -C "$repo" rev-parse HEAD)"
 
-# And a render file moved OUT to a product path is a product change.
-out_base="$(git -C "$repo" rev-parse HEAD)"
 mkdir -p "$repo/src"
 git -C "$repo" mv .agents/skills/orch/renamed.ts src/renamed.ts
-git -C "$repo" commit -q -m "move out of the render"
-assert_verdict "a move out of the render answers false" false \
-  --repo "$repo" --event push --base "$out_base" --head HEAD
+git -C "$repo" commit -q -m "move generated output to product"
+generated_to_product="$(git -C "$repo" rev-parse HEAD)"
+
+# label | verdict | base | head
+move_row_count=0
+while IFS='|' read -r label expected case_base case_head; do
+  move_row_count=$((move_row_count + 1))
+  assert_verdict "$label" "$expected" \
+    --repo "$repo" --event push --base "$case_base" --head "$case_head"
+done <<CASES
+product-to-generated|false|$product_base|$product_to_generated
+generated-to-generated|true|$product_to_generated|$generated_to_generated
+generated-to-product|false|$generated_to_generated|$generated_to_product
+CASES
+require_rows move "$move_row_count"
 
 report rename-into-render

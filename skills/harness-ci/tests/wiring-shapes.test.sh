@@ -31,15 +31,84 @@ assert_eq "the shapes name one script path" ".agents/skills/harness-ci/scripts/h
 assert_eq "that path is the one this package ships" "yes" \
   "$([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no)"
 
-# Every flag the shapes pass is one the script accepts.
-unknown_flags=""
+# Pass each extracted option to the real parser. A documented unknown option
+# must produce the wiring-error status instead of being accepted by a copy of
+# the parser's option list here.
+parser_repo="$(new_repo wiring-shapes-parser)"
+commit_paths "$parser_repo" baseline README.md
+parser_base="$(git -C "$parser_repo" rev-parse HEAD)"
+commit_paths "$parser_repo" render .agents/skills/orch/SKILL.md
+parser_head="$(git -C "$parser_repo" rev-parse HEAD)"
+probe_value="$SANDBOX/probe-value"
+parser_rejections=""
+documented_option_row_count=0
 for flag in $(printf '%s\n' "$blocks" | grep -oE '(^|[[:space:]])--[a-z-]+' | tr -d ' ' | sort -u); do
-  case "$flag" in
-    --event | --base | --head | --repo | --output) ;;
-    *) unknown_flags="$unknown_flags $flag" ;;
-  esac
+  documented_option_row_count=$((documented_option_row_count + 1))
+  if "$HARNESS_ONLY" --repo "$parser_repo" --event push \
+    --base "$parser_base" --head "$parser_head" "$flag" "$probe_value" \
+    >/dev/null 2>&1; then
+    parser_status=0
+  else
+    parser_status=$?
+  fi
+  if [ "$parser_status" != 0 ]; then
+    parser_rejections="$parser_rejections $flag:$parser_status"
+  fi
 done
-assert_eq "the shapes pass only flags the script accepts" "" "$unknown_flags"
+require_rows documented-option "$documented_option_row_count"
+assert_eq "the shapes pass only flags the script accepts" "" "$parser_rejections"
+
+# A syntactically valid copy with an extractor that matches no options must
+# stop at the row floor. The copy omits this control to avoid nesting.
+# empty-documented-options-control:start
+control_root="$SANDBOX/empty-documented-options"
+cp -R "$TEST_DIR/.." "$control_root"
+control_script="$control_root/tests/wiring-shapes-empty-options.test.sh"
+if ! awk '
+  BEGIN { in_control = 0; option_loops = 0 }
+  /^# empty-documented-options-control:start$/ { in_control = 1; next }
+  /^# empty-documented-options-control:end$/ { in_control = 0; next }
+  in_control { next }
+  /^for flag in / {
+    needle = "--[a-z-]+"
+    position = index($0, needle)
+    if (position == 0) exit 2
+    $0 = substr($0, 1, position - 1) "##[a-z-]+" substr($0, position + length(needle))
+    option_loops += 1
+  }
+  { print }
+  END { if (in_control || option_loops != 1) exit 2 }
+' "$TEST_DIR/wiring-shapes.test.sh" >"$control_script"; then
+  echo "could not build the empty documented-option control" >&2
+  exit 1
+fi
+if cmp -s "$TEST_DIR/wiring-shapes.test.sh" "$control_script"; then
+  echo "the empty documented-option control changed no source" >&2
+  exit 1
+fi
+if bash -n "$control_script"; then
+  control_compile_status=0
+else
+  control_compile_status=$?
+fi
+assert_eq "the empty documented-option control compiles" 0 "$control_compile_status"
+[ "$control_compile_status" -eq 0 ] || exit 1
+control_status=0
+if bash "$control_script" >"$control_root/stdout" 2>"$control_root/stderr"; then
+  control_status=0
+else
+  control_status=$?
+fi
+assert_eq "an empty documented-option table fails itself" 1 "$control_status"
+if control_stderr="$(cat "$control_root/stderr")"; then
+  :
+else
+  echo "could not read the empty documented-option control diagnostic" >&2
+  exit 1
+fi
+assert_eq "the empty documented-option table names its failure" \
+  "FAIL: documented-option table executed no rows" "$control_stderr"
+# empty-documented-options-control:end
 
 # The push endpoints come from the event payload, with `github.sha` LAST. On a
 # branch-deletion push `github.event.after` is the all-zero sha and
@@ -60,9 +129,10 @@ assert_eq "every HEAD expression tries github.event.after before github.sha" "" 
 # assertion that stops at `!= 'success' ||` would not see it.
 doc="$(cat "$WIRING")"
 case "$doc" in
-  *"SECOND gate"*) ;;
-  *) assert_eq "the two-gate variant is documented" "present" "absent" ;;
+  *"SECOND gate"*) second_gate=present ;;
+  *) second_gate=absent ;;
 esac
+assert_eq "the two-gate variant is documented" "present" "$second_gate"
 
 wrong_if="  if: \${{ !cancelled() && needs.changes.outputs.frontend == 'true' && !(needs.changes.result == 'success' && needs.changes.outputs.harness_only == 'true') }}"
 right_if="  if: \${{ !cancelled() && (needs.changes.result != 'success' || (needs.changes.outputs.frontend == 'true' && needs.changes.outputs.harness_only != 'true')) }}"
@@ -77,7 +147,7 @@ assert_eq "the working form is shown verbatim, exactly once" 1 \
 # what is pinned, not just its presence somewhere in the file.
 assert_eq "the WRONG label sits on the line above the fail-open form" \
   "  # WRONG when a family predicate is present" \
-  "$(printf '%s\n' "$doc" | grep -B1 -xF "$wrong_if" | head -1)"
+  "$(awk -v target="$wrong_if" '$0 == target { print previous } { previous = $0 }' "$WIRING")"
 
 # Indentation is checked structurally rather than by parsing: every block here
 # steps by two spaces, so an odd indent or a tab is hand-edit damage. This

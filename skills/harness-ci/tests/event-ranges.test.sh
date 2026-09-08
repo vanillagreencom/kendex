@@ -1,68 +1,66 @@
 #!/usr/bin/env bash
-# Which range each event measures. pull_request takes the merge base, because
-# the base branch moves under an open PR. push and merge_group take the two
-# endpoints, because a force-push leaves the `before` sha off the head's
-# history and a merge base there is a commit the push already discarded.
+# Pull requests use a merge-base range. Pushes and merge groups use their two
+# endpoints so discarded force-push work still runs product checks.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
 
-# --- push: the force-push case ------------------------------------------
 repo="$(new_repo force-push)"
-commit_paths "$repo" "baseline" README.md
+commit_paths "$repo" baseline README.md
 fork="$(git -C "$repo" rev-parse HEAD)"
-
 git -C "$repo" checkout -q -b topic
 commit_paths "$repo" "product work" src/feature.rs
 before="$(git -C "$repo" rev-parse HEAD)"
-
-# The force-push: the product commit is dropped and replaced by a render-only
-# one, so the endpoints share only the fork point.
 git -C "$repo" reset -q --hard "$fork"
 commit_paths "$repo" "render only" .agents/skills/orch/SKILL.md
 after="$(git -C "$repo" rev-parse HEAD)"
 
-assert_verdict "a force-push that discards product work answers false" false \
-  --repo "$repo" --event push --base "$before" --head "$after"
-
 merge_base_view="$(git -C "$repo" diff --name-only --no-renames "$before...$after")"
-assert_eq "the merge-base range would have seen only the render" \
+assert_eq push-discards-product-merge-base-view \
   ".agents/skills/orch/SKILL.md" "$merge_base_view"
 
-# --- pull_request: the moving base branch --------------------------------
 pr="$(new_repo moving-base)"
-commit_paths "$pr" "baseline" README.md
-
+commit_paths "$pr" baseline README.md
 git -C "$pr" checkout -q -b feature
 commit_paths "$pr" "render only" .claude/agents/rust.md
 pr_head="$(git -C "$pr" rev-parse HEAD)"
-
 git -C "$pr" checkout -q main
 commit_paths "$pr" "unrelated product work on main" src/other.rs
 pr_base="$(git -C "$pr" rev-parse HEAD)"
 
-assert_verdict "a render-only PR is unaffected by base-branch commits" true \
-  --repo "$pr" --event pull_request --base "$pr_base" --head "$pr_head"
-
-assert_verdict "the same endpoints read end-to-end pick up the base's work" false \
-  --repo "$pr" --event push --base "$pr_base" --head "$pr_head"
-
-# --- merge_group: the endpoint form ---------------------------------------
 mg="$(new_repo merge-group)"
-commit_paths "$mg" "baseline" README.md
+commit_paths "$mg" baseline README.md
 mg_base="$(git -C "$mg" rev-parse HEAD)"
 commit_paths "$mg" "render only" .codex/agents/rust.md
-mg_head="$(git -C "$mg" rev-parse HEAD)"
-
-assert_verdict "a render-only merge group answers true" true \
-  --repo "$mg" --event merge_group --base "$mg_base" --head "$mg_head"
-
+mg_render_head="$(git -C "$mg" rev-parse HEAD)"
 commit_paths "$mg" "product work" src/main.rs
-assert_verdict "a mixed merge group answers false" false \
-  --repo "$mg" --event merge_group --base "$mg_base" --head HEAD
+mg_mixed_head="$(git -C "$mg" rev-parse HEAD)"
 
-# --head defaults to HEAD rather than requiring the caller to name it.
-assert_verdict "--head defaults to HEAD" false \
-  --repo "$mg" --event merge_group --base "$mg_base"
+# label | verdict | repository | event | base | head
+# A head beginning with default: checks that ref out and omits --head.
+event_row_count=0
+while IFS='|' read -r label expected case_repo event case_base case_head; do
+  event_row_count=$((event_row_count + 1))
+  case "$case_head" in
+    default:*)
+      git -C "$case_repo" checkout -q --detach "${case_head#default:}"
+      assert_verdict "$label" "$expected" \
+        --repo "$case_repo" --event "$event" --base "$case_base"
+      ;;
+    *)
+      assert_verdict "$label" "$expected" \
+        --repo "$case_repo" --event "$event" --base "$case_base" --head "$case_head"
+      ;;
+  esac
+done <<CASES
+push-discards-product|false|$repo|push|$before|$after
+pr-moving-base|true|$pr|pull_request|$pr_base|$pr_head
+push-same-moving-base|false|$pr|push|$pr_base|$pr_head
+merge-group-render|true|$mg|merge_group|$mg_base|$mg_render_head
+merge-group-mixed|false|$mg|merge_group|$mg_base|$mg_mixed_head
+default-head-render|true|$mg|merge_group|$mg_base|default:$mg_render_head
+default-head-mixed|false|$mg|merge_group|$mg_base|default:$mg_mixed_head
+CASES
+require_rows event-ranges "$event_row_count"
 
 report event-ranges

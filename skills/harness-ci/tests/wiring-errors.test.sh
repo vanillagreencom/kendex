@@ -1,19 +1,15 @@
 #!/usr/bin/env bash
-# A wiring error is not a verdict. A bad call exits 2 with nothing on stdout,
-# so the caller's step goes red instead of quietly running every lane forever.
-# And the verdict reaches the file the caller named, beside stdout.
+# Wiring errors exit with no verdict. Successful classifications write the
+# same verdict to stdout and to the selected output file.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
 
 repo="$(new_repo wiring)"
-commit_paths "$repo" "baseline" README.md
+commit_paths "$repo" baseline README.md
 base="$(git -C "$repo" rev-parse HEAD)"
 commit_paths "$repo" "render only" .agents/skills/orch/SKILL.md
 
-# Bounded: an argument loop that fails to consume its input hangs rather than
-# exits, and a hung CI step is the failure this catches. macOS ships no
-# timeout, and the suite still runs there without the bound.
 bounded() { # ARGS...
   if command -v timeout >/dev/null 2>&1; then
     timeout 30 "$@"
@@ -25,96 +21,155 @@ bounded() { # ARGS...
 wiring() { # LABEL ARGS...
   local label="$1" out status
   shift
-  set +e
-  out="$(bounded "$HARNESS_ONLY" "$@" 2>/dev/null)"
-  status=$?
-  set -e
+  if out="$(bounded "$HARNESS_ONLY" "$@" 2>/dev/null)"; then
+    status=0
+  else
+    status=$?
+  fi
   assert_eq "$label" "exit 2 stdout=''" "exit $status stdout='$out'"
 }
 
-wiring "an unknown flag" --repo "$repo" --event push --base "$base" --nope
-wiring "a positional argument" --repo "$repo" --event push "$base"
-wiring "no --event at all" --repo "$repo" --base "$base"
-wiring "an empty --event" --repo "$repo" --event "" --base "$base"
-wiring "--event with no value" --repo "$repo" --base "$base" --event
-wiring "--base with no value" --repo "$repo" --event push --base
-wiring "--head with no value" --repo "$repo" --event push --base "$base" --head
-wiring "--repo with no value" --event push --base "$base" --repo
-wiring "--output with no value" --repo "$repo" --event push --base "$base" --output
-wiring "an empty --head" --repo "$repo" --event push --base "$base" --head ""
+run_argument_case() { # LABEL KIND OPTION VALUE
+  local label="$1" kind="$2" option="$3" value="$4"
+  local args=(--repo "$repo" --event push --base "$base")
+  case "$kind" in
+    unknown) args+=(--nope) ;;
+    positional) args+=("$base") ;;
+    missing-event) args=(--repo "$repo" --base "$base") ;;
+    empty-value) args+=("$option" "") ;;
+    missing-value) args+=("$option") ;;
+    flag-value) args+=("$option" "$value") ;;
+    *) echo "FAIL: unknown argument case '$kind'" >&2; exit 1 ;;
+  esac
+  wiring "$label" "${args[@]}"
+}
 
-# A flag where a value belongs. Consuming it would classify '--base' as an
-# unrecognised event and hand back a verdict for a call that named no event.
-wiring "--event followed by another flag" --repo "$repo" --event --base "$base"
-wiring "--base followed by another flag" --repo "$repo" --event push --base --head
-wiring "--head followed by another flag" \
-  --repo "$repo" --event push --base "$base" --head --output
-wiring "--repo followed by another flag" --repo --event push --base "$base"
-wiring "--output followed by another flag" \
-  --repo "$repo" --event push --base "$base" --output --head
+# label | shape | option under test | value
+argument_row_count=0
+while IFS='|' read -r label kind option value; do
+  argument_row_count=$((argument_row_count + 1))
+  run_argument_case "$label" "$kind" "$option" "$value"
+done <<'CASES'
+unknown-flag|unknown|<none>|<none>
+positional-argument|positional|<none>|<none>
+missing-event|missing-event|--event|<none>
+empty-event|empty-value|--event|<empty>
+missing-event-value|missing-value|--event|<none>
+missing-base-value|missing-value|--base|<none>
+missing-head-value|missing-value|--head|<none>
+missing-repo-value|missing-value|--repo|<none>
+missing-output-value|missing-value|--output|<none>
+empty-head|empty-value|--head|<empty>
+flag-value-event|flag-value|--event|--head
+flag-value-base|flag-value|--base|--head
+flag-value-head|flag-value|--head|--output
+flag-value-repo|flag-value|--repo|--head
+flag-value-output|flag-value|--output|--head
+CASES
+require_rows argument "$argument_row_count"
 
-# A lone dash and a dash-led path are values, not flags: only a flag shape
-# (a dash with something after it) is refused.
-verdict_dash="$(classify --repo "$repo" --event push --base "$base" --head "-" || true)"
-assert_eq "a lone dash is taken as a value" "harness_only=false" "$verdict_dash"
+if verdict_dash="$(classify --repo "$repo" --event push --base "$base" --head -)"; then
+  dash_status=0
+else
+  dash_status=$?
+fi
+assert_eq lone-dash-value "harness_only=false exit 0" \
+  "$verdict_dash exit $dash_status"
 
-# An --output the process cannot append to is wiring, not data: the caller
-# asked for a file and would otherwise get silence.
 unwritable="$SANDBOX/no-such-dir/out.txt"
-wiring "an unwritable --output" \
+wiring output-parent-absent \
   --repo "$repo" --event push --base "$base" --output "$unwritable"
 
-# A file that OPENS and then refuses the write. A zero-length probe passes on
-# /dev/full, so this is the case that proves the verdict reaches the file
-# before stdout rather than after. Linux only; announced when absent.
 if [ -c /dev/full ]; then
-  wiring "an --output that accepts the open and fails the write" \
+  wiring output-write-fails \
     --repo "$repo" --event push --base "$base" --output /dev/full
 else
   echo "  SKIP: no /dev/full, the full-device case did not run"
 fi
 
-# --output appends beside stdout and keeps what the file already held.
-out_file="$SANDBOX/github_output"
-printf 'other_key=kept\n' >"$out_file"
-verdict="$("$HARNESS_ONLY" --repo "$repo" --event push --base "$base" --output "$out_file" 2>/dev/null)"
-assert_eq "--output leaves the verdict on stdout too" "harness_only=true" "$verdict"
-assert_eq "--output appends without clobbering" \
-  "other_key=kept harness_only=true" "$(tr '\n' ' ' <"$out_file" | sed -e 's/ $//')"
+file_bytes() { # FILE
+  od -An -tx1 "$1" | tr -d ' \n'
+}
 
-# With no --output, the file is $GITHUB_OUTPUT — what a workflow step sets.
-env_file="$SANDBOX/env_output"
-: >"$env_file"
-GITHUB_OUTPUT="$env_file" "$HARNESS_ONLY" --repo "$repo" --event push --base "$base" >/dev/null 2>&1
-assert_eq "GITHUB_OUTPUT receives the verdict" "harness_only=true" "$(cat "$env_file")"
+run_output_case() { # LABEL MODE EXPECTED_STDOUT EXPECTED_EXPLICIT EXPECTED_ENV
+  local label="$1" mode="$2" expected_stdout="$3"
+  local expected_explicit="$4" expected_env="$5"
+  local case_dir="$SANDBOX/output-$label" stdout_file explicit_file env_file status actual
+  mkdir -p "$case_dir"
+  stdout_file="$case_dir/stdout"
+  explicit_file="$case_dir/explicit"
+  env_file="$case_dir/env"
+  : >"$explicit_file"
+  : >"$env_file"
 
-override="$SANDBOX/override_output"
-: >"$override"
-: >"$env_file"
-GITHUB_OUTPUT="$env_file" "$HARNESS_ONLY" --repo "$repo" --event push --base "$base" \
-  --output "$override" >/dev/null 2>&1
-assert_eq "--output wins over GITHUB_OUTPUT" "harness_only=true" "$(cat "$override")"
-assert_eq "--output leaves GITHUB_OUTPUT untouched" "" "$(cat "$env_file")"
+  case "$mode" in
+    explicit-append)
+      printf 'other_key=kept\n' >"$explicit_file"
+      if env -u GITHUB_OUTPUT "$HARNESS_ONLY" \
+        --repo "$repo" --event push --base "$base" --output "$explicit_file" \
+        >"$stdout_file" 2>/dev/null; then status=0; else status=$?; fi
+      ;;
+    environment)
+      if GITHUB_OUTPUT="$env_file" "$HARNESS_ONLY" \
+        --repo "$repo" --event push --base "$base" \
+        >"$stdout_file" 2>/dev/null; then status=0; else status=$?; fi
+      ;;
+    explicit-precedence)
+      if GITHUB_OUTPUT="$env_file" "$HARNESS_ONLY" \
+        --repo "$repo" --event push --base "$base" --output "$explicit_file" \
+        >"$stdout_file" 2>/dev/null; then status=0; else status=$?; fi
+      ;;
+    stdout-only)
+      if env -u GITHUB_OUTPUT "$HARNESS_ONLY" \
+        --repo "$repo" --event push --base "$base" \
+        >"$stdout_file" 2>/dev/null; then status=0; else status=$?; fi
+      ;;
+    *) echo "FAIL: unknown output case '$mode'" >&2; exit 1 ;;
+  esac
 
-# With neither, stdout is the whole contract and nothing is written anywhere.
-lone="$(env -u GITHUB_OUTPUT "$HARNESS_ONLY" --repo "$repo" --event push --base "$base" 2>/dev/null)"
-assert_eq "no output file is required" "harness_only=true" "$lone"
+  actual="exit=$status stdout=$(file_bytes "$stdout_file") explicit=$(file_bytes "$explicit_file") env=$(file_bytes "$env_file")"
+  assert_eq "$label" \
+    "exit=0 stdout=$expected_stdout explicit=$expected_explicit env=$expected_env" \
+    "$actual"
+}
 
-# stdout carries the verdict line and nothing else; the changed paths are
-# stderr's, so `$(harness-only …)` is safe to read directly.
-assert_eq "stdout is the verdict line alone" "1" \
-  "$(printf '%s\n' "$lone" | wc -l | tr -d ' ')"
-paths="$("$HARNESS_ONLY" --repo "$repo" --event push --base "$base" 2>&1 >/dev/null)"
+verdict_bytes=6861726e6573735f6f6e6c793d747275650a
+append_bytes=6f746865725f6b65793d6b6570740a6861726e6573735f6f6e6c793d747275650a
+
+# label | mode | stdout bytes | explicit-output bytes | environment-output bytes
+output_row_count=0
+while IFS='|' read -r label mode expected_stdout expected_explicit expected_env; do
+  output_row_count=$((output_row_count + 1))
+  run_output_case "$label" "$mode" "$expected_stdout" "$expected_explicit" "$expected_env"
+done <<CASES
+explicit-output-append|explicit-append|$verdict_bytes|$append_bytes|
+environment-output|environment|$verdict_bytes||$verdict_bytes
+explicit-output-precedence|explicit-precedence|$verdict_bytes|$verdict_bytes|
+stdout-only|stdout-only|$verdict_bytes||
+CASES
+require_rows output "$output_row_count"
+
+if paths="$("$HARNESS_ONLY" --repo "$repo" --event push --base "$base" 2>&1 >/dev/null)"; then
+  paths_status=0
+else
+  paths_status=$?
+fi
 case "$paths" in
-  *"changed: .agents/skills/orch/SKILL.md"*)
-    assert_eq "the changed paths reach stderr" pass pass ;;
-  *) assert_eq "the changed paths reach stderr" pass "$paths" ;;
+  *"changed: .agents/skills/orch/SKILL.md"*) paths_contract=present ;;
+  *) paths_contract="$paths" ;;
 esac
+assert_eq changed-path-stderr "present exit 0" \
+  "$paths_contract exit $paths_status"
 
-help_out="$("$HARNESS_ONLY" --help)"
+if help_out="$("$HARNESS_ONLY" --help)"; then
+  help_status=0
+else
+  help_status=$?
+fi
 case "$help_out" in
-  "Usage: harness-only"*) assert_eq "--help prints the usage" pass pass ;;
-  *) assert_eq "--help prints the usage" pass "$help_out" ;;
+  "Usage: harness-only"*) help_contract=usage ;;
+  *) help_contract="$help_out" ;;
 esac
+assert_eq help "usage exit 0" "$help_contract exit $help_status"
 
 report wiring-errors
