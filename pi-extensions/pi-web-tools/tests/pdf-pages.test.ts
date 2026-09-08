@@ -2,20 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { looksLikeScannedPdf } from "../src/extract/pdf-pages.js";
 
-test("looksLikeScannedPdf flags empty extractions", () => {
-	assert.equal(looksLikeScannedPdf("", 5000), true);
-	assert.equal(looksLikeScannedPdf("   ", 5000), true);
-});
-
-test("looksLikeScannedPdf flags very low text density on large PDFs", () => {
-	assert.equal(looksLikeScannedPdf("page 1", 200_000), true);
-});
-
-test("looksLikeScannedPdf passes regular text-layer PDFs", () => {
-	const text = "lorem ipsum ".repeat(40);
-	assert.equal(looksLikeScannedPdf(text, 200_000), false);
-});
-
-test("looksLikeScannedPdf does not flag tiny PDFs without text", () => {
-	assert.equal(looksLikeScannedPdf("hi", 1000), false);
-});
+for (const { name, text, bytes, scanned } of [
+	{ name: "empty extraction", text: "", bytes: 5000, scanned: true },
+	{ name: "whitespace extraction", text: "   ", bytes: 5000, scanned: true },
+	{ name: "low density", text: "page 1", bytes: 200_000, scanned: true },
+	{ name: "regular text layer", text: "lorem ipsum ".repeat(40), bytes: 200_000, scanned: false },
+	{ name: "small PDF with text", text: "hi", bytes: 1000, scanned: false },
+]) {
+	test(`looksLikeScannedPdf: ${name}`, () => {
+		assert.equal(looksLikeScannedPdf(text, bytes), scanned);
+	});
+}

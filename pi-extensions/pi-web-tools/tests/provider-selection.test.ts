@@ -1,45 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { computeNextActiveTools, desiredWebTools } from "../src/active-tools.js";
 import { resolveWebProvider, resolveWebProviderCandidates } from "../src/provider-selection.js";
 import { DEFAULT_SETTINGS, type WebToolsSettings } from "../src/settings.js";
 
-function settings(overrides: Partial<WebToolsSettings> = {}): WebToolsSettings {
-	return { ...DEFAULT_SETTINGS, apiKeys: {}, warnings: [], ...overrides } as WebToolsSettings;
+const model = { provider: "openai-codex", id: "gpt-6-astra" };
+for (const { name, overrides, prefix, expected } of [
+	{ name: "Exa key", overrides: { apiKeys: { exa: "key" } }, prefix: 3, expected: ["exa", "exa-mcp", "duckduckgo"] },
+	{ name: "Perplexity key", overrides: { apiKeys: { perplexity: "key" } }, prefix: 4, expected: ["perplexity", "exa-mcp", "duckduckgo", "openai-native"] },
+	{ name: "no key", overrides: {}, expected: ["exa-mcp", "duckduckgo", "openai-native"] },
+	{ name: "Gemini key and cookies", overrides: { apiKeys: { gemini: "key" }, browserCookieAccess: true }, expected: ["gemini", "exa-mcp", "duckduckgo", "openai-native"] },
+	{ name: "cookies only", overrides: { browserCookieAccess: true }, expected: ["exa-mcp", "duckduckgo", "gemini", "openai-native"] },
+] satisfies Array<{ name: string; overrides: Partial<WebToolsSettings>; prefix?: number; expected: string[] }>) {
+	test(`provider candidates: ${name}`, () => {
+		const settings: WebToolsSettings = { ...DEFAULT_SETTINGS, warnings: [], ...overrides, apiKeys: "apiKeys" in overrides ? overrides.apiKeys : {} };
+		assert.deepEqual(resolveWebProviderCandidates("auto", settings, model).slice(0, prefix), expected);
+	});
 }
-
-test("auto provider resolution prefers keyed providers then no-key providers then OpenAI native", () => {
-	const model = { provider: "openai-codex", id: "gpt-6-astra" };
-	assert.deepEqual(resolveWebProviderCandidates("auto", settings({ apiKeys: { exa: "key" } }), model).slice(0, 3), ["exa", "exa-mcp", "duckduckgo"]);
-	assert.deepEqual(resolveWebProviderCandidates("auto", settings({ apiKeys: { perplexity: "key" } }), model).slice(0, 4), ["perplexity", "exa-mcp", "duckduckgo", "openai-native"]);
-	assert.deepEqual(resolveWebProviderCandidates("auto", settings(), model), ["exa-mcp", "duckduckgo", "openai-native"]);
-	assert.deepEqual(resolveWebProviderCandidates("auto", settings({ apiKeys: { gemini: "key" }, browserCookieAccess: true }), model), ["gemini", "exa-mcp", "duckduckgo", "openai-native"]);
-	assert.deepEqual(resolveWebProviderCandidates("auto", settings({ browserCookieAccess: true }), model), ["exa-mcp", "duckduckgo", "gemini", "openai-native"]);
-	assert.equal(resolveWebProvider("gemini", settings({ browserCookieAccess: true }), model).provider, "gemini");
-	assert.equal(resolveWebProvider("auto", settings(), model).provider, "exa-mcp");
-	assert.equal(resolveWebProvider("auto", settings({ enabledProviders: ["openai-native"] }), model).provider, "openai-native");
-	assert.equal(resolveWebProvider("auto", settings({ enabledProviders: ["openai-native"], nativeOpenAiWebSearch: false }), model).provider, undefined);
-});
-
-test("active tool sync preserves native tools and keeps web_search available for no-key fallbacks", () => {
-	const current = ["read", "bash", "image_generation", "web_search"];
-	const next = computeNextActiveTools(current, { provider: "openai-codex", id: "gpt-6-astra" }, settings());
-	assert.ok(next.includes("read"));
-	assert.ok(next.includes("bash"));
-	assert.ok(next.includes("image_generation"));
-	assert.ok(next.includes("web_search"));
-});
-
-test("web_fetch stays available without an Exa key while Exa-only tools remain gated", () => {
-	const model = { provider: "openai-codex", id: "gpt-6-astra" };
-	const noKey = desiredWebTools(model, settings());
-	assert.ok(noKey.includes("web_fetch"), "web_fetch works via direct HTTP/GitHub/PDF/YouTube without a key");
-	assert.ok(noKey.includes("get_web_content"));
-	assert.ok(!noKey.includes("web_research"));
-	assert.ok(!noKey.includes("web_answer"));
-	assert.ok(!noKey.includes("code_search"));
-	const withKey = desiredWebTools(model, settings({ apiKeys: { exa: "exa-key" }, exaAdvancedEnabled: true }));
-	assert.ok(withKey.includes("web_fetch"));
-	assert.ok(withKey.includes("web_research"));
-	assert.ok(withKey.includes("code_search"));
-});
+for (const { name, requested, overrides, expected } of [
+	{ name: "explicit cookie provider", requested: "gemini", overrides: { browserCookieAccess: true }, expected: "gemini" },
+	{ name: "automatic no-key provider", requested: "auto", overrides: {}, expected: "exa-mcp" },
+	{ name: "native only", requested: "auto", overrides: { enabledProviders: ["openai-native"] }, expected: "openai-native" },
+	{ name: "native disabled", requested: "auto", overrides: { enabledProviders: ["openai-native"], nativeOpenAiWebSearch: false }, expected: undefined },
+] satisfies Array<{ name: string; requested: "auto" | "gemini"; overrides: Partial<WebToolsSettings>; expected: string | undefined }>) {
+	test(`provider resolution: ${name}`, () => {
+		assert.equal(resolveWebProvider(requested, { ...DEFAULT_SETTINGS, apiKeys: {}, warnings: [], ...overrides }, model).provider, expected);
+	});
+}

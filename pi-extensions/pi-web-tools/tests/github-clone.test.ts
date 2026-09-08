@@ -1,72 +1,54 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { cloneOrUpdateRepo, readBlobFromCache, readReadmeFromCache, readTreeFromCache, summarizeTreeEntries } from "../src/extract/github-clone.js";
+import { isolateEnvironment, tempDir } from "./fixtures.js";
 
-function makeFakeRepo(): string {
-	const cacheDir = mkdtempSync(join(tmpdir(), "pi-gh-cache-"));
-	const repoDir = join(cacheDir, "owner__repo");
-	mkdirSync(repoDir);
-	mkdirSync(join(repoDir, "src"));
-	writeFileSync(join(repoDir, "README.md"), "# Hello\n\nbody");
-	writeFileSync(join(repoDir, "src", "index.ts"), "export const x = 1;\n");
-	mkdirSync(join(repoDir, ".git"));
-	writeFileSync(join(repoDir, ".git", "HEAD"), "ref: refs/heads/main\n");
-	return cacheDir;
+for (const row of [
+	{ name: "blob", read: (repo: string) => readBlobFromCache(repo, "src/index.ts"), expected: { content: "export const x = 1;\n", bytes: 20 } },
+	{ name: "traversal", read: (repo: string) => readBlobFromCache(repo, "../outside.txt"), expected: null },
+	{ name: "tree excludes Git state", read: (repo: string) => readTreeFromCache(repo, "")?.entries.map((entry) => entry.name), expected: ["src", "README.md"] },
+	{ name: "README", read: (repo: string) => readReadmeFromCache(repo), expected: "# Hello\n\nbody" },
+]) {
+	test(`GitHub cache: ${row.name}`, (t) => {
+		const root = tempDir(t);
+		const repo = join(root, "repo");
+		mkdirSync(join(repo, "src"), { recursive: true });
+		mkdirSync(join(repo, ".git"));
+		writeFileSync(join(repo, "README.md"), "# Hello\n\nbody");
+		writeFileSync(join(repo, "src", "index.ts"), "export const x = 1;\n");
+		if (row.name === "traversal") writeFileSync(join(root, "outside.txt"), "outside");
+		assert.deepEqual(row.read(repo), row.expected);
+	});
 }
 
-test("readBlobFromCache returns file content and rejects path traversal", () => {
-	const cacheDir = makeFakeRepo();
-	const repo = join(cacheDir, "owner__repo");
-	const blob = readBlobFromCache(repo, "src/index.ts");
-	assert.ok(blob);
-	assert.match(blob!.content, /export const x = 1/);
-	const escaped = readBlobFromCache(repo, "../../../etc/passwd");
-	assert.equal(escaped, null);
+test("GitHub tree summary retains paths, size, and truncation marker", () => {
+	const result = summarizeTreeEntries([{ name: "src", path: "src", type: "dir" }, { name: "README.md", path: "README.md", type: "file", size: 17 }], true);
+	assert.deepEqual({ directory: result.includes("src/"), file: result.includes("README.md (17 bytes)"), truncated: result.includes("…") }, { directory: true, file: true, truncated: true });
 });
 
-test("readTreeFromCache lists entries and skips .git", () => {
-	const cacheDir = makeFakeRepo();
-	const repo = join(cacheDir, "owner__repo");
-	const tree = readTreeFromCache(repo, "");
-	assert.ok(tree);
-	const names = tree!.entries.map((e) => e.name);
-	assert.ok(names.includes("src"));
-	assert.ok(names.includes("README.md"));
-	assert.ok(!names.includes(".git"));
-});
-
-test("readReadmeFromCache picks README.md", () => {
-	const cacheDir = makeFakeRepo();
-	const repo = join(cacheDir, "owner__repo");
-	const readme = readReadmeFromCache(repo);
-	assert.match(readme ?? "", /# Hello/);
-});
-
-test("summarizeTreeEntries marks directories with trailing slash and notes truncation", () => {
-	const out = summarizeTreeEntries([
-		{ name: "src", path: "src", type: "dir" },
-		{ name: "README.md", path: "README.md", type: "file", size: 17 },
-	], true);
-	assert.match(out, /- src\//);
-	assert.match(out, /- README\.md \(17 bytes\)/);
-	assert.match(out, /truncated/);
-});
-
-test("cloneOrUpdateRepo clones a tiny git repo into the cache", async () => {
-	let gitOk = true;
-	try { execFileSync("git", ["--version"], { stdio: ["ignore", "pipe", "ignore"] }); } catch { gitOk = false; }
-	if (!gitOk) return;
-	const sourceDir = mkdtempSync(join(tmpdir(), "pi-gh-source-"));
-	execFileSync("git", ["init", "-q", "--initial-branch=main", sourceDir]);
-	writeFileSync(join(sourceDir, "README.md"), "# Source repo\n");
-	execFileSync("git", ["-C", sourceDir, "add", "."]);
-	execFileSync("git", ["-C", sourceDir, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "-m", "init"]);
-	const cacheDir = mkdtempSync(join(tmpdir(), "pi-gh-cache-"));
-	const target = join(cacheDir, "fixture__repo");
-	execFileSync("git", ["clone", "--quiet", sourceDir, target]);
-	assert.ok(readBlobFromCache(target, "README.md"));
+test("cloneOrUpdateRepo clones the local fixture through its GitHub URL", async (t) => {
+	isolateEnvironment(t, [...Object.keys(process.env).filter((key) => key.startsWith("GIT_")), "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"]);
+	const root = tempDir(t);
+	const source = join(root, "source");
+	const cache = join(root, "cache");
+	const config = join(root, "gitconfig");
+	process.env.GIT_CONFIG_GLOBAL = config;
+	process.env.GIT_CONFIG_NOSYSTEM = "1";
+	process.env.GIT_CONFIG_COUNT = "1";
+	process.env.GIT_CONFIG_KEY_0 = "core.hooksPath";
+	process.env.GIT_CONFIG_VALUE_0 = join(root, "no-hooks");
+	const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+	git("init", "-q", "--initial-branch=main", source);
+	writeFileSync(join(source, "README.md"), "# Source repo\n");
+	git("-C", source, "add", "README.md");
+	git("-C", source, "-c", "user.email=test@example.com", "-c", "user.name=Test", "-c", "commit.gpgSign=false", "commit", "-q", "-m", "init");
+	const head = git("-C", source, "rev-parse", "HEAD");
+	git("config", "--file", config, `url.${source}.insteadOf`, "https://github.com/fixture/repo.git");
+	const result = await cloneOrUpdateRepo("fixture", "repo", undefined, { cacheDir: cache });
+	assert.deepEqual({ ...result, readme: readBlobFromCache(result.cachePath, "README.md")?.content }, {
+		cachePath: join(cache, "fixture__repo"), headRef: head, cloned: true, updated: false, readme: "# Source repo\n",
+	});
 });
