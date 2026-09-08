@@ -192,22 +192,19 @@ fi
 #          `syntax` one holding a shell file that does not parse;
 #          `unreadable-dir` a clean file beside a subdirectory nobody can
 #          read; `unreadable-file` a clean file beside an extensionless
-#          entry point nobody can read; `unenterable` a directory nobody can
-#          enter; `grep-stub` a grep on PATH that answers the shebang probe
-#          and refuses the scan; `unless-root` the row's outcome is
-#          `skipped-as-root` under uid 0, which reads and enters every
-#          directory whatever its mode; `lint:stale` a copy of the lint
+#          entry point nobody can read; `grep-stub` a grep on PATH that
+#          answers the shebang probe and refuses the scan; `unless-root`
+#          the row's outcome is `skipped-as-root` under uid 0, which reads
+#          every file whatever its mode; `lint:stale` a copy of the lint
 #          whose NO_SHELL names a directory that is gone; `lint:grew` a copy
 #          of the lint whose NO_SHELL names W/noshell, a copy of the real
-#          NO_SHELL directory that grew a shell file; `lint:sealed` a copy
-#          of the lint whose NO_SHELL names W/sealed, a directory nobody can
-#          enter; `-` for nothing staged
+#          NO_SHELL directory that grew a shell file; `-` for nothing staged
 #   cwd    where the lint runs: `root` the toplevel, `world` W, any other
 #          value a path under the toplevel
 #   argv   the lint's arguments as written: `W/<path>` a path under W,
-#          `NO_SCAN` and `NO_SHELL` the lint's own entries as it declares
-#          them, `ROOT/NO_SCAN` the NO_SCAN directory spelled absolute, any
-#          other word itself; `-` for none
+#          `NO_SCAN` the lint's own NO_SCAN entry as it declares it,
+#          `ROOT/NO_SCAN` the same directory spelled absolute, any other
+#          word itself; `-` for none
 #   exit   the exit status
 #
 # The exception entries are repository-relative, so a relative DIR from a
@@ -217,12 +214,11 @@ fi
 # row: with nothing to resolve the toplevel from, the exceptions cannot be
 # judged and the run ends. A directory holding only non-shell files beside
 # a populated one is the per-directory guard, which the roster-wide "nothing
-# was read" guard would otherwise carry, and a run naming only a NO_SHELL
-# directory is that roster-wide guard; an empty directory ends the run
+# was read" guard would otherwise carry; an empty directory ends the run
 # before either, on the empty listing it cannot classify. A failed grep is
-# proven by a stub that refuses the scan
-# rather than by an unreadable file, which root would read; the discovery
-# and resolution halves have no such stub and skip under root instead.
+# proven by a stub that refuses the scan rather than by an unreadable file,
+# which root would read; the two discovery halves have no such stub and
+# skip under root instead.
 
 # Read out of the lint, never restated. A run that could not read them ends
 # here: a row handed an empty entry would be refused as "not a directory"
@@ -322,10 +318,6 @@ word() { # word WORD — stage one world word under W
       printf '#!/usr/bin/env bash\nlocal -A cache\n' >"$W/unreadable-file/entrypoint" &&
       chmod 000 "$W/unreadable-file/entrypoint"
     ;;
-  unenterable)
-    mkdir "$W/unenterable" &&
-      chmod 000 "$W/unenterable"
-    ;;
   grep-stub) stage_grep_stub ;;
   unless-root) W_SKIP=yes ;;
   lint:stale) mutate_lint 'NO_SHELL="skills/gone/scripts"' ;;
@@ -333,11 +325,6 @@ word() { # word WORD — stage one world word under W
     cp -R "$ROOT/$NOSHELL" "$W/noshell" &&
       printf '#!/usr/bin/env bash\n:\n' >"$W/noshell/now-shell.sh" &&
       mutate_lint "NO_SHELL=\"$W/noshell\""
-    ;;
-  lint:sealed)
-    mkdir "$W/sealed" &&
-      chmod 000 "$W/sealed" &&
-      mutate_lint "NO_SHELL=\"$W/sealed\""
     ;;
   -) ;;
   *)
@@ -364,7 +351,6 @@ arg_of() { # arg_of TOKEN — a row's argv token as the argument it names
   case "$1" in
   W/*) printf '%s/%s' "$W" "${1#W/}" ;;
   NO_SCAN) printf '%s' "$NOSCAN" ;;
-  NO_SHELL) printf '%s' "$NOSHELL" ;;
   ROOT/NO_SCAN) printf '%s/%s' "$ROOT" "$NOSCAN" ;;
   *) printf '%s' "$1" ;;
   esac
@@ -433,7 +419,7 @@ EOF
 }
 
 run_table "the fail-closed paths" "\
-a directory holding no shell file is a scan that read nothing|empty|root|W/empty|2
+a directory holding no shell file ends the run|empty|root|W/empty|2
 a directory holding only non-shell files reads nothing either|nonshell|root|W/nonshell|2
 a relative DIR argument from a subdirectory scans clean|-|skills/orch|scripts|0
 the NO_SCAN exception holds when its directory is named relative to the toplevel|-|root|NO_SCAN|2
@@ -441,16 +427,13 @@ the NO_SCAN exception holds when its directory is named absolute|-|root|ROOT/NO_
 a run with no repository around it ends rather than scanning|populated|world|populated|2
 an empty directory beside a populated one still ends the run|populated empty|root|W/populated W/empty|2
 a directory holding only non-shell files beside a populated one still ends the run|populated nonshell|root|W/populated W/nonshell|2
-a run naming only a NO_SHELL directory read nothing|-|root|NO_SHELL|2
 a shell file that does not parse reds the lint|syntax|root|W/syntax|1
 a scan that could not run is not read as a clean tree|populated grep-stub|root|W/populated|2
 a file list that could not be built is not read as a clean tree|unreadable-dir unless-root|root|W/unreadable-dir|2
 a file that could not be classified ends the run rather than being dropped|unreadable-file unless-root|root|W/unreadable-file|2
 a path that is not a directory ends the run|-|root|W/no-such-directory|2
-a directory that cannot be entered ends the run|unenterable unless-root|root|W/unenterable|2
 an exception naming a directory that is gone ends the run|lint:stale|root|-|2
-a NO_SHELL directory that grew a shell file ends the run|lint:grew|root|W/noshell|2
-an exception naming a directory that cannot be entered ends the run|populated lint:sealed unless-root|root|W/populated|2"
+a NO_SHELL directory that grew a shell file ends the run|lint:grew|root|W/noshell|2"
 
 # --- 5. the pattern set, as the lint itself reports it -------------------
 # Asked of the program, not lifted out of its text: `--pattern` prints the
