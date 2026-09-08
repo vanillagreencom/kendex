@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "bun:test";
 import { retrySkillGenerationCompat } from "../extensions/skills-manager/pi-ai-compat.ts";
 
 for (const row of [
@@ -9,7 +9,7 @@ for (const row of [
 ]) {
 	test(row.name, async () => {
 		const response = { stopReason: "stop", content: [] };
-		const signal = new AbortController().signal;
+		const signal = row.notify ? new AbortController().signal : undefined;
 		const notices: unknown[] = [];
 		let calls = 0;
 		let receivedPolicy: unknown;

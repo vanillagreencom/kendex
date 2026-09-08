@@ -10,7 +10,7 @@ for (const [name, value, expected] of [
 	["negative falls back", -4, 14], ["missing falls back", undefined, 14],
 	["NaN falls back", Number.NaN, 14], ["infinity falls back", Number.POSITIVE_INFINITY, 14],
 ] as const) {
-	test(`normalizeListRows: ${name}`, () => expect(normalizeListRows(value, 14)).toBe(expected));
+	test(`normalizeListRows: ${name}`, () => expect(normalizeListRows(value)).toBe(expected));
 }
 
 for (const [name, value, expected] of [

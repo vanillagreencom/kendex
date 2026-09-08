@@ -10,7 +10,7 @@ const { completeSimple } = await import("../extensions/skills-manager/pi-ai-comp
 
 for (const row of [
 	{
-		name: "compat entrypoint fallback", model: {}, context: {}, options: { reasoning: "high" }, deps: {},
+		name: "compat entrypoint fallback", model: {}, context: {}, options: { reasoning: "high" }, deps: undefined,
 		expected: { content: [{ type: "text", text: "generated" }], options: { reasoning: "high" } },
 	},
 	{

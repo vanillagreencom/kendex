@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "bun:test";
 import { resolveSkillDraft } from "../extensions/skills-manager/creation-fallback.ts";
 
 for (const row of [
@@ -17,7 +17,7 @@ for (const row of [
 		let fallbacks = 0;
 		const draft = await resolveSkillDraft(
 			async () => { generated += 1; throw error; },
-			() => { fallbacks += 1; return "fallback"; }, controller.signal,
+			() => { fallbacks += 1; return "fallback"; }, row.kind === "pre-abort" ? controller.signal : undefined,
 			(reason) => { reasons.push(reason); },
 		);
 		assert.equal(draft, row.expected);
