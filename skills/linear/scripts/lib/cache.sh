@@ -128,6 +128,8 @@ cache_worktree_cache_clobbered() {
 
 cache_worktree_clobber_refusal() {
     {
+        printf 'Sync-refused: worktree=%s cache=%s expected=%s\n' \
+            "$CACHE_PROJECT_ROOT" "$CACHE_PROJECT_ROOT/.cache" "$CACHE_WORKTREE_MAIN_ROOT/.cache"
         echo "Sync refused: cache dir is a worktree-local real directory (kendex#1032)."
         echo "  Worktree:       $CACHE_PROJECT_ROOT"
         echo "  Cache dir here: $CACHE_PROJECT_ROOT/.cache (real directory)"
