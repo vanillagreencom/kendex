@@ -18,30 +18,52 @@ bounded() { # ARGS...
   fi
 }
 
-wiring() { # LABEL ARGS...
-  local label="$1" out status
-  shift
-  if out="$(bounded "$HARNESS_ONLY" "$@" 2>/dev/null)"; then
+wiring() { # LABEL EXPECTED-FIRST ARGS...
+  local label="$1" expected_first="$2" out status first
+  local stderr_file="$SANDBOX/wiring-$1.stderr"
+  shift 2
+  if out="$(bounded "$HARNESS_ONLY" "$@" 2>"$stderr_file")"; then
     status=0
   else
     status=$?
   fi
-  assert_eq "$label" "exit 2 stdout=''" "exit $status stdout='$out'"
+  first="$(sed -n '1p' "$stderr_file")"
+  assert_eq "$label" "$expected_first exit 2 stdout=''" \
+    "$first exit $status stdout='$out'"
 }
 
 run_argument_case() { # LABEL KIND OPTION VALUE
-  local label="$1" kind="$2" option="$3" value="$4"
+  local label="$1" kind="$2" option="$3" value="$4" expected=""
   local args=(--repo "$repo" --event push --base "$base")
   case "$kind" in
-    unknown) args+=(--nope) ;;
-    positional) args+=("$base") ;;
-    missing-event) args=(--repo "$repo" --base "$base") ;;
-    empty-value) args+=("$option" "") ;;
-    missing-value) args+=("$option") ;;
-    flag-value) args+=("$option" "$value") ;;
+    unknown)
+      args+=(--nope)
+      expected="wiring-error: cause=unknown-argument argument=--nope"
+      ;;
+    positional)
+      args+=("$base")
+      expected="wiring-error: cause=unknown-argument argument=$base"
+      ;;
+    missing-event)
+      args=(--repo "$repo" --base "$base")
+      expected="wiring-error: cause=missing-event option=--event"
+      ;;
+    empty-value)
+      args+=("$option" "")
+      expected="wiring-error: cause=empty-value option=$option"
+      [ "$option" != --event ] || expected="wiring-error: cause=missing-event option=--event"
+      ;;
+    missing-value)
+      args+=("$option")
+      expected="wiring-error: cause=missing-value option=$option"
+      ;;
+    flag-value)
+      args+=("$option" "$value")
+      expected="wiring-error: cause=flag-used-as-value option=$option value=$value"
+      ;;
     *) echo "FAIL: unknown argument case '$kind'" >&2; exit 1 ;;
   esac
-  wiring "$label" "${args[@]}"
+  wiring "$label" "$expected" "${args[@]}"
 }
 
 # label | shape | option under test | value
@@ -68,16 +90,6 @@ flag-value-output|flag-value|--output|--head
 CASES
 require_rows argument "$argument_row_count"
 
-if missing_event_stderr="$(bounded "$HARNESS_ONLY" --repo "$repo" --base "$base" 2>&1 >/dev/null)"; then
-  missing_event_status=0
-else
-  missing_event_status=$?
-fi
-missing_event_first="$(printf '%s\n' "$missing_event_stderr" | sed -n '1p')"
-assert_eq missing-event-stable-report \
-  "wiring-error: cause=missing-event option=--event exit 2" \
-  "$missing_event_first exit $missing_event_status"
-
 if verdict_dash="$(classify --repo "$repo" --event push --base "$base" --head -)"; then
   dash_status=0
 else
@@ -87,7 +99,7 @@ assert_eq lone-dash-value "harness_only=false exit 0" \
   "$verdict_dash exit $dash_status"
 
 unwritable="$SANDBOX/no-such-dir/out.txt"
-wiring output-parent-absent \
+wiring output-parent-absent "wiring-error: cause=output-write-failed" \
   --repo "$repo" --event push --base "$base" --output "$unwritable"
 
 fallback_write_status=0
@@ -100,7 +112,7 @@ assert_eq fallback-output-write-first \
   "$fallback_write_first exit $fallback_write_status"
 
 if [ -c /dev/full ]; then
-  wiring output-write-fails \
+  wiring output-write-fails "wiring-error: cause=output-write-failed" \
     --repo "$repo" --event push --base "$base" --output /dev/full
 else
   echo "  SKIP: no /dev/full, the full-device case did not run"
@@ -173,12 +185,10 @@ if paths="$("$HARNESS_ONLY" --repo "$repo" --event push --base "$base" 2>&1 >/de
 else
   paths_status=$?
 fi
-case "$paths" in
-  *"changed: .agents/skills/orch/SKILL.md"*) paths_contract=present ;;
-  *) paths_contract="$paths" ;;
-esac
-assert_eq changed-path-stderr "present exit 0" \
-  "$paths_contract exit $paths_status"
+paths_first="$(sed -n '1p' <<<"$paths")"
+assert_eq changed-path-stderr \
+  "changed-path: path=.agents/skills/orch/SKILL.md exit 0" \
+  "$paths_first exit $paths_status"
 
 if help_out="$("$HARNESS_ONLY" --help)"; then
   help_status=0

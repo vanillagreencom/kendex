@@ -41,6 +41,7 @@ base=""
 head="HEAD"
 repo="."
 output="${GITHUB_OUTPUT:-}"
+changed=""
 
 usage() {
   cat <<'USAGE'
@@ -66,6 +67,14 @@ die() { # FIELDS MESSAGE — a wiring error, never a verdict
   printf 'wiring-error: %s\n' "$1" >&2
   echo "harness-only: $2" >&2
   exit 2
+}
+
+report_changed_paths() {
+  local changed_path
+  while IFS= read -r changed_path; do
+    [ -n "$changed_path" ] || continue
+    printf 'changed-path: path=%q\n' "$changed_path" >&2
+  done <<<"${changed:-}"
 }
 
 # `shift 2` past the end of "$@" returns non-zero and shifts nothing. Every
@@ -121,6 +130,7 @@ verdict() { # true|false [FIELDS REASON]
     printf 'fallback: %s\n' "$2" >&2
     echo "harness-only: $3; running every lane" >&2
   fi
+  report_changed_paths
   printf 'harness_only=%s\n' "$1"
   exit 0
 }
@@ -161,12 +171,12 @@ done
 
 if [ "$range_style" = merge_base ]; then
   range="$base...$head"
-  changed="$(git_repo diff --name-only --no-renames "$range")" ||
+  changed="$(git_repo diff --name-only --no-renames "$range" 2>/dev/null)" ||
     verdict false \
       "cause=unreadable-diff range=$(stable_value "$range")" \
       "the diff '$range' is unreadable"
 else
-  changed="$(git_repo diff --name-only --no-renames "$base" "$head")" ||
+  changed="$(git_repo diff --name-only --no-renames "$base" "$head" 2>/dev/null)" ||
     verdict false \
       "cause=unreadable-diff base=$(stable_value "$base") head=$(stable_value "$head")" \
       "the diff '$base' '$head' is unreadable"
@@ -178,8 +188,6 @@ fi
   verdict false \
     "cause=empty-diff base=$(stable_value "$base") head=$(stable_value "$head")" \
     "the diff between '$base' and '$head' is empty"
-
-printf '%s\n' "$changed" | sed -e 's/^/harness-only: changed: /' >&2
 
 # Read the writer's exact output paths at both selected endpoints. A missing
 # inventory runs product checks, including the commit that first installs it.
