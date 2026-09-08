@@ -24,7 +24,7 @@ export function reportTaskPanelPersistenceFailure(where: string, error: unknown,
 	logTaskPanelDiagnostic("persistence failed", { where, error: msg });
 	try {
 		ctx?.ui.notify?.(
-			`Task panel state persistence failed (${where}). Falling back to session history where available.`,
+			`persistence_failure=${where}\nTask panel state persistence failed. Falling back to session history where available.`,
 			"warning",
 		);
 	} catch {
