@@ -158,12 +158,12 @@ export function agentLine(result: HookResult, ctx: ExtensionContext): string | u
 	const outcome = result.outcome;
 	if (!outcome.ran) {
 		return "missing" in outcome
-			? `pi-hooks: ${name} is registered and its rendered script is missing (${outcome.missing}), so it did not run; run kendex refresh.`
-			: `pi-hooks: ${name} timed out after ${outcome.timedOutAfterMs}ms in ${ctx.cwd}, so it did not run to a verdict.`;
+			? `hook-missing=${outcome.missing}\n${name} did not run. Run kendex refresh.`
+			: `hook-timeout-ms=${outcome.timedOutAfterMs}\n${name} did not reach a verdict in ${ctx.cwd}.`;
 	}
 	if (outcome.exitCode === 0) return outcome.stdout === "" ? undefined : outcome.stdout;
-	if (outcome.exitCode === 2) return outcome.stderr === "" ? `pi-hooks: ${name} refused, saying nothing.` : outcome.stderr;
-	return `pi-hooks: ${name} exited ${outcome.exitCode} without reaching a verdict${outcome.stderr === "" ? "." : `: ${outcome.stderr}`}`;
+	if (outcome.exitCode === 2) return outcome.stderr === "" ? `hook-refused=${name}\nThe hook supplied no reason.` : outcome.stderr;
+	return `hook-exit=${outcome.exitCode}\n${name} did not reach a verdict.${outcome.stderr === "" ? "" : `\n${outcome.stderr}`}`;
 }
 
 /** The advisory a hook wrote for the person rather than the agent: stderr
@@ -179,7 +179,7 @@ export function personLine(result: HookResult): string | undefined {
  * hook it named was skipped, and kendex labels those hooks enforced, so it is
  * said rather than read as no hooks installed. */
 export function unreadableLine(listener: string, cause: string): string {
-	return `pi-hooks: the rendered hook registry could not be read, so no ${listener} hook ran. ${cause}`;
+	return `hook-registry-unreadable=${listener}\nNo hook ran. ${cause}`;
 }
 
 /**

@@ -29,22 +29,13 @@ type Verdict = { block: true; reason: string } | undefined;
  * the model.
  */
 export function toolCallVerdict(result: HookResult, ctx: ExtensionContext): Verdict {
-	const name = result.hook.label;
 	const outcome = result.outcome;
-	if (!outcome.ran) {
-		return {
-			block: true,
-			reason: "missing" in outcome
-				? `pi-hooks: ${name} is registered and its rendered script is missing (${outcome.missing}), so this command was not judged; run kendex refresh.`
-				: `pi-hooks: ${name} timed out after ${outcome.timedOutAfterMs}ms in ${ctx.cwd}, so this command was not judged; a guard that did not run does not stand aside.`,
-		};
-	}
-	if (outcome.exitCode === 2) return { block: true, reason: outcome.stderr || `${name} refused this command.` };
-	if (outcome.exitCode !== 0) {
-		return {
-			block: true,
-			reason: `pi-hooks: ${name} exited ${outcome.exitCode} without judging this command${outcome.stderr ? `: ${outcome.stderr}` : "."}`,
-		};
+	if (!outcome.ran || outcome.exitCode !== 0) {
+		// Dispatch owns each diagnostic on every listener. Failed outcomes
+		// always have a message; only a successful silent hook returns none.
+		const reason = agentLine(result, ctx);
+		if (reason === undefined) throw new Error("failed hook outcome has no diagnostic");
+		return { block: true, reason };
 	}
 	return undefined;
 }
@@ -153,7 +144,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 			// ends the process rather than reaching a handler Pi can absorb.
 			// Whichever channel is still alive says what was caught.
 		}).catch((error: unknown) => {
-			const line = `pi-hooks: the ${SESSION_START_LISTENER} hooks were not reported: ${
+			const line = `hook-report-failed=${SESSION_START_LISTENER}\n${
 				error instanceof Error ? error.message : String(error)
 			}`;
 			deliver(speak, line);
@@ -211,7 +202,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 		if (run.unreadable !== undefined) {
 			return {
 				block: true,
-				reason: `pi-hooks: the rendered hook registry could not be read, so this command was not judged; a guard that did not run does not stand aside. ${run.unreadable}`,
+				reason: unreadableLine(TOOL_CALL_LISTENER, run.unreadable),
 			};
 		}
 		// Said whatever the answer is: a guard that let the call through with
@@ -337,8 +328,8 @@ export default function piHooks(pi: ExtensionAPI): void {
 		const outcome = workspaceClippyOutcome(ctx.cwd, getNumber(cfg, "clippyTimeoutMs"));
 		if (outcome.kind === "clean") return undefined;
 		const summary = outcome.kind === "errors"
-			? `pi-hooks: clippy reported ${outcome.lines.length} workspace error(s) at turn end:\n${outcome.lines.slice(0, 5).join("\n")}`
-			: `pi-hooks: end-of-turn clippy proved nothing about the tree: ${outcome.reason}.`;
+			? `clippy-errors=${outcome.lines.length}\n${outcome.lines.slice(0, 5).join("\n")}`
+			: `clippy-${outcome.code}=${outcome.value}\n${outcome.reason}`;
 
 		// Every failing turn reports: an agent that cannot fix an error hears
 		// the same advisory each turn, which is noisy and self-correcting,

@@ -12,21 +12,29 @@ export type ClippyOutcome =
 	| { kind: "errors"; lines: string[] }
 	| { kind: "unavailable"; reason: string };
 
+/** The producer supplies diagnostic details without requiring consumers of
+ * the published ClippyOutcome type to construct those additional fields. */
+type DetailedClippyOutcome = Exclude<ClippyOutcome, { kind: "unavailable" }>
+	| (Extract<ClippyOutcome, { kind: "unavailable" }> & (
+		| { code: "workspace"; value: string }
+		| { code: "timeout-ms" | "exit"; value: number }
+	));
+
 /**
  * Run workspace clippy and report up to 15 error header lines. Used by the
  * end-of-turn check, the one lane that runs clippy: a `.rs` write triggers
  * nothing, so the turn pays for clippy once rather than once per edit.
  */
-export function workspaceClippyOutcome(cwd: string, timeoutMs: number): ClippyOutcome {
+export function workspaceClippyOutcome(cwd: string, timeoutMs: number): DetailedClippyOutcome {
 	const metadataBudget = Math.min(5000, Math.floor(timeoutMs / 4));
 	const root = findCargoWorkspaceRoot(cwd, metadataBudget);
-	if (!root) return { kind: "unavailable", reason: "cargo metadata named no workspace root here" };
+	if (!root) return { kind: "unavailable", code: "workspace", value: cwd, reason: "cargo metadata named no workspace root here" };
 
 	const clippyBudget = Math.max(1, timeoutMs - metadataBudget);
 	const r = runWorkspaceClippy(root, clippyBudget);
-	if (r.timedOut) return { kind: "unavailable", reason: `cargo clippy timed out after ${clippyBudget}ms` };
+	if (r.timedOut) return { kind: "unavailable", code: "timeout-ms", value: clippyBudget, reason: `cargo clippy timed out after ${clippyBudget}ms` };
 	if (r.exitCode === 0) return { kind: "clean" };
 	const lines = filterClippyErrors(`${r.stdout}\n${r.stderr}`);
-	if (lines.length === 0) return { kind: "unavailable", reason: `cargo clippy exited ${r.exitCode} printing no error line` };
+	if (lines.length === 0) return { kind: "unavailable", code: "exit", value: r.exitCode, reason: `cargo clippy exited ${r.exitCode} printing no error line` };
 	return { kind: "errors", lines };
 }

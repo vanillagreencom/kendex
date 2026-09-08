@@ -7,9 +7,9 @@ import { piUserDir } from "./config.js";
  * The registry keys kendex renders hooks under. Pi has no per-hook runner, so
  * kendex restates each hook event as the listener Pi fires
  * (`crates/core/src/harness/caps.rs::pi_listener`) and keys the rendered
- * registry by that name. tests/registry.test.ts holds these to that map: a
- * rename on either side is a registry written under one key and read under
- * another, which is every hook silently off.
+ * registry by that name. crates/core/tests/pi_carrier.rs checks the real
+ * render and drives this carrier. tests/listener-dispatch.test.ts checks
+ * delivery on each listener.
  *
  * Every key `pi_listener` can return is dispatched. A key the carrier does not
  * read is a hook kendex registers and labels enforced and nothing runs, which

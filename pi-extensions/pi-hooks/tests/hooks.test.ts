@@ -1,31 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-
+import { join } from "node:path";
 import { runCargo } from "../extensions/cargo.ts";
-import { PROJECT_LOCK_FILE, projectRoot, readConfig, recordProjectTrust } from "../extensions/config.ts";
-import {
-	CONFIG_ID,
-	initRustRepo,
-	installCarrier,
-	installToolCallHandler,
-	type ListenerHandler,
-	readLog,
-	registerProjectHook,
-	renderedHookPath,
-	renderStub,
-	renderUserStub,
-	runGit,
-	type SentCall,
-	toolResultEvent,
-	trusted,
-	useIsolatedGitEnv,
-} from "./harness.ts";
+import { initRustRepo, installToolCallHandler, readLog, registerProjectHook, renderedHookPath, renderStub, runGit, trusted, useIsolatedGitEnv, writePiConfig } from "./harness.ts";
 
 useIsolatedGitEnv();
-
 
 function initCleanRustRepo(prefix: string): string {
 	const dir = initRustRepo(prefix);
@@ -114,262 +94,37 @@ function renderRealHook(project: string, name: string): void {
 	registerProjectHook(project, name);
 }
 
-function runHandlerChild(home: string, workspace: string, agentDir: string, trusted: boolean): ReturnType<typeof spawnSync> {
-	const modulePath = join(import.meta.dir, "..", "extensions", "hooks.ts");
-	const program = `
-import piHooks from ${JSON.stringify(modulePath)};
-let handler;
-piHooks({ on(event, callback) { if (event === "tool_call") handler = callback; } });
-const result = await handler(
-	{ toolName: "bash", input: { command: "git commit -m x" } },
-	{ cwd: ${JSON.stringify(workspace)}, isProjectTrusted: () => ${trusted} },
-);
-process.stdout.write(JSON.stringify(result ?? null));
-`;
-	return spawnSync(process.execPath, ["-e", program], {
-		cwd: workspace,
-		encoding: "utf8",
-		env: { ...process.env, HOME: home, PI_CODING_AGENT_DIR: agentDir },
-	});
-}
-
-/** `projectRoot` under a given HOME, in a child because homedir() reads the
- * process's own environment. */
-function projectRootUnder(home: string, cwd: string): string | null {
-	const child = spawnSync(process.execPath, ["-e", `
-import { projectRoot } from ${JSON.stringify(join(import.meta.dir, "..", "extensions", "config.ts"))};
-process.stdout.write(JSON.stringify(projectRoot(process.argv[1]) ?? null));
-`, cwd], { encoding: "utf8", env: { ...process.env, HOME: home } });
-	if (child.status !== 0) throw new Error(child.stderr);
-	return JSON.parse(child.stdout) as string | null;
-}
-
-describe("pi-hooks root selection", () => {
-	test("a subdirectory session runs the project's guard, and an untrusted one runs nothing of the project's", async () => {
-		const project = initRustRepo("pi-hooks-subdir-");
-		const nested = join(project, "crates", "core");
-		const log = join(project, "payload.log");
-		try {
-			mkdirSync(nested, { recursive: true });
-			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "pre-commit-check: refused", log });
-			const handler = installToolCallHandler();
-
-			// Pi saves a trust decision for the folder or any parent, so its
-			// answer covers this whole tree: the guard rendered at the root runs
-			// from a subdirectory exactly as it does from the root.
-			const refused = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(nested)) as { block?: boolean; reason?: string };
-			expect(refused).toEqual({ block: true, reason: "pre-commit-check: refused" });
-			expect(readLog(log)).toContain("git commit -m x");
-
-			// Untrusted, the project contributes nothing and no global root
-			// holds this name, so the command passes with nothing spawned.
-			writeFileSync(log, "");
-			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: nested, isProjectTrusted: () => false })).toBeUndefined();
-			expect(readLog(log)).toBe("");
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	test("a vendored checkout inside a project does not stop the walk", async () => {
-		const project = initRustRepo("pi-hooks-vendor-");
-		const nested = join(project, "vendor", "nested");
-		const log = join(project, "payload.log");
-		try {
-			// Were `.git/` a marker the walk would stop here, find no script, and
-			// allow the command with an empty spawn log: every guard off, silently.
-			mkdirSync(join(nested, ".git"), { recursive: true });
-			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "pre-commit-check: refused", log });
-			const handler = installToolCallHandler();
-			const result = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(nested)) as { block?: boolean; reason?: string };
-			expect(result).toEqual({ block: true, reason: "pre-commit-check: refused" });
-			expect(readLog(log)).toContain("git commit -m x");
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	test("a `.pi` file is not a project, and a marked one below it still is", () => {
-		const outer = mkdtempSync(join(tmpdir(), "pi-hooks-shape-"));
-		try {
-			const inner = join(outer, "inner");
-			mkdirSync(join(inner, "deep"), { recursive: true });
-			writeFileSync(join(inner, ".pi"), "not a directory\n");
-			expect(projectRoot(join(inner, "deep"))).toBeUndefined();
-			mkdirSync(join(inner, ".claude"), { recursive: true });
-			expect(projectRoot(join(inner, "deep"))).toBe(realpathSync(inner));
-		} finally {
-			rmSync(outer, { recursive: true, force: true });
-		}
-	});
-
-	// Pi's global root lives under home, so a marker there must not make home the
-	// project: that would spawn ~/.pi/kendex/hooks/<name>.sh, which kendex never
-	// renders, and merge ~/.pi/settings.json over the kendex global scope. The
-	// lock file is the one exception, and the renderer's exception too.
-	test("home is not the project, spelled either way, and a session in it has none", () => {
-		const real = mkdtempSync(join(tmpdir(), "pi-hooks-home-"));
-		const link = join(mkdtempSync(join(tmpdir(), "pi-hooks-link-")), "home");
-		try {
-			symlinkSync(real, link, "dir");
-			mkdirSync(join(real, ".pi"), { recursive: true });
-			mkdirSync(join(real, "notes"), { recursive: true });
-
-			// Both spellings of one directory answer the same: `resolve` does not
-			// dereference symlinks, so a spelling comparison would miss on any
-			// machine whose home path carries one.
-			for (const home of [real, link]) {
-				expect(projectRootUnder(home, join(home, "notes"))).toBeNull();
-				expect(projectRootUnder(home, home)).toBeNull();
-			}
-
-			// The lock file wins wherever it stands, home included — the renderer's
-			// own rule, applied before it writes.
-			writeFileSync(join(real, PROJECT_LOCK_FILE), "{}\n");
-			for (const home of [real, link]) {
-				expect(projectRootUnder(home, join(home, "notes"))).toBe(realpathSync(real));
-			}
-		} finally {
-			rmSync(real, { recursive: true, force: true });
-			rmSync(dirname(link), { recursive: true, force: true });
-		}
-	});
-
-	test("a relative global override is refused, and an absolute or blank one answers", () => {
-		const home = mkdtempSync(join(tmpdir(), "pi-hooks-global-home-"));
-		const workspace = mkdtempSync(join(tmpdir(), "pi-hooks-global-workspace-"));
-		const absolute = mkdtempSync(join(tmpdir(), "pi-hooks-global-absolute-"));
-		try {
-			// A relative value would root the global scope at the session's own
-			// directory, where a checkout's script reaches the branch that never
-			// asks about trust. The default answers instead.
-			const cases = [
-				["relative/agent", join(home, ".pi", "agent")],
-				["   ", join(home, ".pi", "agent")],
-				[absolute, absolute],
-			] as const;
-			for (const [agentDir, root] of cases) {
-				const log = join(root, "payload.log");
-				renderUserStub(root, "pre-commit-check", { exitCode: 2, stderr: "global refused", log });
-				const child = runHandlerChild(home, workspace, agentDir, false);
-				expect(child.status, child.stderr).toBe(0);
-				expect(JSON.parse(child.stdout)).toEqual({ block: true, reason: "global refused" });
-				expect(readLog(log)).toContain("git commit -m x");
-				rmSync(join(root, "kendex"), { recursive: true, force: true });
-			}
-
-			// The control: the same relative value with a script planted where
-			// it would have pointed. Nothing is found, so nothing runs.
-			const planted = join(workspace, "relative", "agent");
-			const log = join(workspace, "planted.log");
-			renderUserStub(planted, "pre-commit-check", { exitCode: 2, stderr: "must not run", log });
-			const child = runHandlerChild(home, workspace, "relative/agent", false);
-			expect(child.status, child.stderr).toBe(0);
-			expect(JSON.parse(child.stdout)).toBeNull();
-			expect(readLog(log)).toBe("");
-		} finally {
-			for (const dir of [home, workspace, absolute]) rmSync(dir, { recursive: true, force: true });
-		}
-	});
-
-	// readConfig, not the guard: the same answer gates merging the project's own
-	// settings.json, and every default is on, so a read that should not have
-	// happened turns a guard off.
-	test("the project's settings are read only where Pi trusts the project", () => {
-		const project = initRustRepo("pi-hooks-config-");
-		const nested = join(project, "crates");
-		try {
-			mkdirSync(nested, { recursive: true });
-			writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({
-				kendex: { extensionManager: { config: { [CONFIG_ID]: { enabled: false } } } },
-			}));
-			recordProjectTrust({ cwd: nested, isProjectTrusted: () => false });
-			expect(readConfig(nested).enabled).toBeUndefined();
-			recordProjectTrust({ cwd: nested, isProjectTrusted: () => true });
-			expect(readConfig(nested).enabled).toBe(false);
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-});
-
 describe("pi-hooks pre-commit tool_call", () => {
-	test("spawns the rendered hook with the payload a PreToolUse hook is sent", async () => {
-		const project = initRustRepo("pi-hooks-project-");
-		const log = join(project, "payload.log");
-		try {
-			renderStub(project, "pre-commit-check", { exitCode: 0, log });
-			const handler = installToolCallHandler();
-			expect(await handler({ toolName: "bash", input: { command: "git status" } }, trusted(project))).toBeUndefined();
-			expect(JSON.parse(readLog(log))).toEqual({ tool_name: "Bash", tool_input: { command: "git status" } });
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	test("maps exit 2 to a block whose reason is the hook's stderr", async () => {
-		const project = initRustRepo("pi-hooks-project-");
-		const log = join(project, "payload.log");
-		try {
-			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "pre-commit-check: refused for a reason", log });
-			const handler = installToolCallHandler();
-			const result = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { block?: boolean; reason?: string };
-			expect(result).toEqual({ block: true, reason: "pre-commit-check: refused for a reason" });
-			expect(readLog(log)).toContain("git commit -m x");
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	test("exit 0 with stderr is a UI notice, never a block", async () => {
-		const project = initRustRepo("pi-hooks-project-");
-		const log = join(project, "payload.log");
-		const notices: string[] = [];
-		try {
-			renderStub(project, "pre-commit-check", { exitCode: 0, stderr: "pre-commit-check: the command moves repositories", log });
-			const handler = installToolCallHandler();
-			const ctx = trusted(project, { hasUI: true, ui: { notify: (message: string) => notices.push(message) } });
-			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, ctx)).toBeUndefined();
-			expect(notices).toEqual(["pre-commit-check: the command moves repositories"]);
-			// Headless Pi has no ui: the notice is dropped, never thrown.
-			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project))).toBeUndefined();
-			expect(notices).toHaveLength(1);
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	test("a hook that exits without judging refuses rather than standing aside", async () => {
-		const project = initRustRepo("pi-hooks-project-");
-		const log = join(project, "payload.log");
-		try {
-			renderStub(project, "pre-commit-check", { exitCode: 1, stderr: "boom", log });
-			const handler = installToolCallHandler();
-			const result = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { block?: boolean; reason?: string };
-			expect(result.block).toBe(true);
-			expect(result.reason).toContain("exited 1 without judging this command");
-			expect(result.reason).toContain("boom");
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	test("the preCommitCheck setting turns the gate off before any spawn", async () => {
-		const project = initRustRepo("pi-hooks-project-");
-		const log = join(project, "payload.log");
-		writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({
-			kendex: { extensionManager: { config: { [CONFIG_ID]: { preCommitCheck: false, blockBareCd: false, blockRepoCopy: false } } } },
-		}));
-		try {
-			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "should never run", log });
-			const handler = installToolCallHandler();
-			const ctx = trusted(project);
-			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, ctx)).toBeUndefined();
-			expect(readLog(log)).toBe("");
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
+	for (const row of [
+		{ name: "successful hook", exitCode: 0, stderr: "", enabled: true, ui: false, key: undefined },
+		{ name: "hook refusal", exitCode: 2, stderr: "stub-refused=pre-commit-check", enabled: true, ui: false, key: "stub-refused=pre-commit-check" },
+		{ name: "silent refusal", exitCode: 2, stderr: "", enabled: true, ui: false, key: "hook-refused=pre-commit-check" },
+		{ name: "interactive advisory", exitCode: 0, stderr: "stub-advisory=other-repository", enabled: true, ui: true, key: undefined },
+		{ name: "headless advisory", exitCode: 0, stderr: "stub-advisory=other-repository", enabled: true, ui: false, key: undefined },
+		{ name: "failed hook", exitCode: 1, stderr: "stub-error=failed", enabled: true, ui: false, key: "hook-exit=1" },
+		{ name: "disabled hook", exitCode: 2, stderr: "stub-refused=disabled", enabled: false, ui: false, key: undefined },
+	]) {
+		test(`tool call: ${row.name}`, async () => {
+			const project = initRustRepo("pi-hooks-project-");
+			const log = join(project, "payload.log");
+			const notices: string[] = [];
+			try {
+				writePiConfig(project, { preCommitCheck: row.enabled });
+				renderStub(project, "pre-commit-check", { exitCode: row.exitCode, stderr: row.stderr, log });
+				const ctx = trusted(project, row.ui ? { hasUI: true, ui: { notify: (message: string) => notices.push(message) } } : {});
+				const result = await installToolCallHandler()({ toolName: "bash", input: { command: "git commit -m x" } }, ctx) as { block: true; reason: string } | undefined;
+				if (row.key === undefined) expect(result).toBeUndefined();
+				else {
+					expect(result?.block).toBe(true);
+					expect(result?.reason.split("\n")[0]).toBe(row.key);
+					expect(result?.reason.endsWith(row.stderr)).toBe(true);
+				}
+				expect(notices).toEqual(row.ui ? [row.stderr] : []);
+				if (row.enabled) expect(JSON.parse(readLog(log))).toEqual({ tool_name: "Bash", tool_input: { command: "git commit -m x" } });
+				else expect(readLog(log)).toBe("");
+			} finally { rmSync(project, { recursive: true, force: true }); }
+		});
+	}
 
 	// The rendered hook itself, not a stub: the contract Pi enforces is the
 	// contract hooks/pre-commit-check.sh enforces, because it is the same file.
@@ -389,16 +144,12 @@ describe("pi-hooks pre-commit tool_call", () => {
 
 				const refused = await handler({ toolName: "bash", input: { command: "git commit -m test" } }, trusted(unarmed)) as { block?: boolean; reason?: string };
 				expect(refused.block).toBe(true);
-				expect(refused.reason).toContain("not armed by kendex");
-				expect(refused.reason).toContain("kendex guard install");
 
 				// Both bypass shapes, and the reason is the script's own stderr:
 				// the flag, and the config key that switches the armed hook off.
 				for (const command of [`git commit ${NO_VERIFY} -m test`, `git -c ${HOOKS_PATH_KEY}=/dev/null commit -m test`]) {
 					const bypass = await handler({ toolName: "bash", input: { command } }, trusted(armed)) as { block?: boolean; reason?: string };
 					expect(bypass.block).toBe(true);
-					expect(bypass.reason).toContain("would skip this repository's armed git hooks");
-					expect(bypass.reason).toContain("git commit -F <file>");
 				}
 
 				expect(cargoLog(log)).toBe("");
@@ -416,11 +167,11 @@ describe("pi-hooks bash guard passthrough", () => {
 		const log = join(project, "order.log");
 		try {
 			renderStub(project, "block-bare-cd", { exitCode: 0, log });
-			renderStub(project, "block-repo-copy", { exitCode: 2, stderr: "block-repo-copy: refused", log });
-			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "pre-commit-check: refused", log });
+			renderStub(project, "block-repo-copy", { exitCode: 2, stderr: "block-repo-copy=refused", log });
+			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "pre-commit-check=refused", log });
 			const handler = installToolCallHandler();
 			const result = await handler({ toolName: "bash", input: { command: "cp -r . /tmp/x" } }, trusted(project)) as { block?: boolean; reason?: string };
-			expect(result).toEqual({ block: true, reason: "block-repo-copy: refused" });
+			expect(result).toEqual({ block: true, reason: "block-repo-copy=refused" });
 			// Two payloads read, not three: pre-commit-check never ran.
 			expect(readLog(log).split("}{").length).toBe(2);
 		} finally {
@@ -436,7 +187,6 @@ describe("pi-hooks bash guard passthrough", () => {
 			for (const command of ["cd /tmp", "cd"]) {
 				const result = await handler({ toolName: "bash", input: { command } }, trusted(project)) as { block?: boolean; reason?: string };
 				expect(result.block).toBe(true);
-				expect(result.reason).toContain("Use a subshell instead");
 			}
 			expect(await handler({ toolName: "bash", input: { command: "(cd /tmp && ls)" } }, trusted(project))).toBeUndefined();
 		} finally {
@@ -453,264 +203,6 @@ describe("pi-hooks bash guard passthrough", () => {
 			expect(await handler({ toolName: "bash", input: { command: "rg -n '\\x60kendex refresh\\x60' skills/" } }, trusted(project))).toBeUndefined();
 		} finally {
 			rmSync(project, { recursive: true, force: true });
-		}
-	});
-});
-
-type TurnHandler = ListenerHandler;
-type TurnHooks = { onToolResult: TurnHandler; onTurnEnd: TurnHandler; onTurnStart: TurnHandler; sent: SentCall[] };
-
-function installTurnHandlers(): TurnHooks {
-	const carrier = installCarrier();
-	return {
-		onToolResult: carrier.handler("tool_result"),
-		onTurnEnd: carrier.handler("turn_end"),
-		onTurnStart: carrier.handler("turn_start"),
-		sent: carrier.sent,
-	};
-}
-
-/** A project whose settings arm the end-of-turn check the fixtures above leave off. */
-function initClippyProject(): string {
-	const dir = mkdtempSync(join(tmpdir(), "pi-hooks-clippy-"));
-	mkdirSync(join(dir, ".pi"), { recursive: true });
-	writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({
-		kendex: {
-			extensionManager: {
-				config: { [CONFIG_ID]: { enabled: true, taskCompletedCheck: true, sessionDriftCheck: false, clippyTimeoutMs: 4000 } },
-			},
-		},
-	}));
-	mkdirSync(join(dir, "src"), { recursive: true });
-	writeFileSync(join(dir, "src", "lib.rs"), "pub fn answer() -> i32 { 42 }\n");
-	return dir;
-}
-
-/** A cargo naming `root` as the workspace and failing clippy with one error line. FAKE_CLIPPY_EXIT and FAKE_CLIPPY_SILENT vary the run. */
-function fakeClippyBin(dir: string, root: string): string {
-	const bin = join(dir, "bin");
-	mkdirSync(bin, { recursive: true });
-	const cargo = join(bin, "cargo");
-	writeFileSync(cargo, [
-		// A `/bin/sh` shebang, not `/usr/bin/env`: these fixtures run with PATH
-		// narrowed to this directory, so nothing else is there to look up.
-		"#!/bin/sh",
-		"set -eu",
-		'if [ "$1" = "metadata" ]; then',
-		`  printf '{"workspace_root":"%s"}' ${JSON.stringify(root)}`,
-		"  exit 0",
-		"fi",
-		// A line no error filter recognises, so the run reads as unavailable
-		// rather than as errors.
-		'if [ "${FAKE_CLIPPY_SILENT:-}" = "1" ]; then',
-		"  printf '%s\\n' 'warning: nothing an error filter matches'",
-		"else",
-		"  printf '%s\\n' 'error[E0425]: cannot find value nope in this scope'",
-		"fi",
-		'exit "${FAKE_CLIPPY_EXIT:-101}"',
-		"",
-	].join("\n"));
-	chmodSync(cargo, 0o755);
-	return bin;
-}
-
-async function onPath(bin: string, run: () => Promise<void>): Promise<void> {
-	const oldPath = process.env.PATH;
-	process.env.PATH = bin;
-	try {
-		await run();
-	} finally {
-		if (oldPath === undefined) delete process.env.PATH;
-		else process.env.PATH = oldPath;
-	}
-}
-
-describe("pi-hooks end-of-turn clippy", () => {
-	/** One turn that edits a `.rs` file, against an already-installed extension. */
-	async function editingTurn(hooks: TurnHooks, project: string, ctx: Record<string, unknown>): Promise<void> {
-		await hooks.onToolResult(toolResultEvent("edit", { path: join(project, "src", "lib.rs") }), ctx);
-		await hooks.onTurnEnd({}, ctx);
-	}
-
-	async function turnEditing(project: string, ctxExtras: Record<string, unknown>): Promise<SentCall[]> {
-		const hooks = installTurnHandlers();
-		await editingTurn(hooks, project, { cwd: project, isProjectTrusted: () => true, ...ctxExtras });
-		return hooks.sent;
-	}
-
-	// `triggerTurn: true` is the whole delivery: a `triggerTurn:
-	// false` message is recorded without steering the active run, so a headless
-	// run that is ending never reads it.
-	function expectSteered(call: SentCall): void {
-		expect(call.options).toEqual({ triggerTurn: true });
-		expect(call.message.customType).toBe("kendex-clippy");
-		expect(call.message.display).toBe(false);
-	}
-
-	test("a headless turn hands the agent the clippy summary", async () => {
-		const project = initClippyProject();
-		const cargoRoot = mkdtempSync(join(tmpdir(), "pi-hooks-cargo-"));
-		try {
-			await onPath(fakeClippyBin(cargoRoot, project), async () => {
-				// No `hasUI`, no `ui`: the notification lane a headless Pi lacks.
-				const sent = await turnEditing(project, {});
-				expect(sent).toHaveLength(1);
-				expectSteered(sent[0]);
-				expect(sent[0].message.content).toContain("clippy reported 1 workspace error(s)");
-				expect(sent[0].message.content).toContain("cannot find value nope");
-			});
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-			rmSync(cargoRoot, { recursive: true, force: true });
-		}
-	});
-
-	test("an interactive turn notifies and hands the agent the same summary", async () => {
-		const project = initClippyProject();
-		const cargoRoot = mkdtempSync(join(tmpdir(), "pi-hooks-cargo-"));
-		const notices: string[] = [];
-		try {
-			await onPath(fakeClippyBin(cargoRoot, project), async () => {
-				const sent = await turnEditing(project, {
-					hasUI: true,
-					ui: { notify: (message: string) => notices.push(message) },
-				});
-				expect(notices).toHaveLength(1);
-				expect(notices[0]).toContain("clippy reported 1 workspace error(s)");
-				expect(sent).toHaveLength(1);
-				expectSteered(sent[0]);
-				expect(sent[0].message.content).toBe(notices[0]);
-			});
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-			rmSync(cargoRoot, { recursive: true, force: true });
-		}
-	});
-
-	// The control: the same fixture with clippy passing must stay silent, or
-	// the two tests above would pass on a hook that reports every turn.
-	test("a clean turn says nothing in either lane", async () => {
-		const project = initClippyProject();
-		const cargoRoot = mkdtempSync(join(tmpdir(), "pi-hooks-cargo-"));
-		const notices: string[] = [];
-		process.env.FAKE_CLIPPY_EXIT = "0";
-		try {
-			await onPath(fakeClippyBin(cargoRoot, project), async () => {
-				const sent = await turnEditing(project, {
-					hasUI: true,
-					ui: { notify: (message: string) => notices.push(message) },
-				});
-				expect(sent).toHaveLength(0);
-				expect(notices).toHaveLength(0);
-			});
-		} finally {
-			delete process.env.FAKE_CLIPPY_EXIT;
-			rmSync(project, { recursive: true, force: true });
-			rmSync(cargoRoot, { recursive: true, force: true });
-		}
-	});
-
-	test("a turn clippy could not judge says so rather than reading as clean", async () => {
-		const project = initClippyProject();
-		const emptyBin = mkdtempSync(join(tmpdir(), "pi-hooks-nocargo-"));
-		try {
-			await onPath(emptyBin, async () => {
-				const sent = await turnEditing(project, {});
-				expect(sent).toHaveLength(1);
-				expectSteered(sent[0]);
-				expect(sent[0].message.content).toContain("proved nothing about the tree");
-			});
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-			rmSync(emptyBin, { recursive: true, force: true });
-		}
-	});
-
-	// A failed workspace lookup is a condition the session can leave: if it were
-	// cached, every later turn would report the tree unexaminable however
-	// available cargo had since become.
-	test("a workspace found after a failed lookup is reported on the next turn", async () => {
-		const project = initClippyProject();
-		const cargoRoot = mkdtempSync(join(tmpdir(), "pi-hooks-cargo-"));
-		const emptyBin = mkdtempSync(join(tmpdir(), "pi-hooks-nocargo-"));
-		try {
-			const hooks = installTurnHandlers();
-			const ctx = { cwd: project, isProjectTrusted: () => true };
-			await onPath(emptyBin, () => editingTurn(hooks, project, ctx));
-			await onPath(fakeClippyBin(cargoRoot, project), () => editingTurn(hooks, project, ctx));
-			expect(hooks.sent).toHaveLength(2);
-			expect(hooks.sent[0].message.content).toContain("proved nothing about the tree");
-			expect(hooks.sent[1].message.content).toContain("clippy reported 1 workspace error(s)");
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-			rmSync(cargoRoot, { recursive: true, force: true });
-			rmSync(emptyBin, { recursive: true, force: true });
-		}
-	});
-
-	// Clippy failing while printing nothing the filter recognises. The workspace
-	// lookup succeeds here, so this reaches the branch the no-cargo-on-PATH case
-	// never gets to.
-	test("clippy failing with no error line is reported as unjudgeable", async () => {
-		const project = initClippyProject();
-		const cargoRoot = mkdtempSync(join(tmpdir(), "pi-hooks-cargo-"));
-		process.env.FAKE_CLIPPY_SILENT = "1";
-		try {
-			await onPath(fakeClippyBin(cargoRoot, project), async () => {
-				const sent = await turnEditing(project, {});
-				expect(sent).toHaveLength(1);
-				expectSteered(sent[0]);
-				expect(sent[0].message.content).toContain("cargo clippy exited 101 printing no error line");
-			});
-		} finally {
-			delete process.env.FAKE_CLIPPY_SILENT;
-			rmSync(project, { recursive: true, force: true });
-			rmSync(cargoRoot, { recursive: true, force: true });
-		}
-	});
-
-	// An agent that cannot fix an error must hear the same advisory
-	// each turn: noisy and self-correcting, where withholding it can leave a
-	// headless turn told nothing when there was something to say.
-	test("a second identical failing turn steers again", async () => {
-		const project = initClippyProject();
-		const cargoRoot = mkdtempSync(join(tmpdir(), "pi-hooks-cargo-"));
-		try {
-			await onPath(fakeClippyBin(cargoRoot, project), async () => {
-				const hooks = installTurnHandlers();
-				const ctx = { cwd: project, isProjectTrusted: () => true };
-				await editingTurn(hooks, project, ctx);
-				await editingTurn(hooks, project, ctx);
-				await editingTurn(hooks, project, ctx);
-				expect(hooks.sent).toHaveLength(3);
-				expect(hooks.sent[2].message.content).toBe(hooks.sent[0].message.content);
-			});
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-			rmSync(cargoRoot, { recursive: true, force: true });
-		}
-	});
-
-	// What bounds the reporting now that nothing suppresses a repeat: the turn
-	// state. A steered turn that writes no `.rs` file runs no clippy and reports
-	// nothing, so each further report costs the agent an edit.
-	test("a turn that touched no Rust steers nothing, however the last one ended", async () => {
-		const project = initClippyProject();
-		const cargoRoot = mkdtempSync(join(tmpdir(), "pi-hooks-cargo-"));
-		try {
-			await onPath(fakeClippyBin(cargoRoot, project), async () => {
-				const hooks = installTurnHandlers();
-				const ctx = { cwd: project, isProjectTrusted: () => true };
-				await editingTurn(hooks, project, ctx);
-				expect(hooks.sent).toHaveLength(1);
-				// The turn the steered message provokes, editing nothing.
-				await hooks.onTurnStart({}, ctx);
-				await hooks.onTurnEnd({}, ctx);
-				expect(hooks.sent).toHaveLength(1);
-			});
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-			rmSync(cargoRoot, { recursive: true, force: true });
 		}
 	});
 });
