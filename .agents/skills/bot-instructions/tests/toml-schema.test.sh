@@ -356,6 +356,8 @@ expect_finding() {
   bi_run "$@"
   if [ "$bi_status" -eq 0 ]; then
     bad "$label" "expected $want to red; the run passed"
+  elif [ "$bi_status" -ne 1 ]; then
+    bad "$label" "expected exit 1 with $want; exited $bi_status"
   elif ! printf '%s\n' "$bi_out" | grep -q "^$want:"; then
     bad "$label" "expected '$want:'; got: $(printf '%s' "$bi_out" | head -1)"
   elif printf '%s\n' "$bi_out" | grep -qF -- "$carries"; then
@@ -603,7 +605,7 @@ expect_green 'source catalog selection also applies with no derived exclusions o
 printf 'schema = 6\nbot-instructions = "text"\n' > "$repo/kendex-local.toml"
 expect_red toml-schema 'a bot configuration scalar is refused as a table error' \
   check --repo "$repo"
-expect_message 'kendex-local.toml [bot-instructions]: expected a table' \
+expect_finding toml-schema 'kendex-local.toml [bot-instructions]: expected a table' \
   'the scalar refusal identifies the selected file and table' check --repo "$repo"
 printf 'schema = 6\n' > "$repo/kendex-local.toml"
 expect_red toml-schema 'a missing bot table is refused' \
