@@ -35,7 +35,7 @@ const defaultOutputSchema = {
 };
 
 function jsonOut(stream, value) { stream.write(`${JSON.stringify(value)}\n`); }
-function fail(key, value, message, extra = {}) { jsonOut(process.stderr, { ok: false, key, value, error: message, ...extra }); process.exit(1); }
+function fail(key, value, message, extra = {}) { jsonOut(process.stderr, { ok: false, key, value: value ?? null, error: message, ...extra }); process.exit(1); }
 
 function helpPayload() {
   return {
@@ -446,11 +446,11 @@ async function validateCommand(options) {
   const problems = [];
   const recordError = (key, value, message, extra = {}) => {
     errors.push(message);
-    problems.push({ level: "error", key, value, ...extra });
+    problems.push({ level: "error", key, value: value ?? null, ...extra });
   };
   const recordWarning = (key, value, message, extra = {}) => {
     warnings.push(message);
-    problems.push({ level: "warning", key, value, ...extra });
+    problems.push({ level: "warning", key, value: value ?? null, ...extra });
   };
 
   let report = "";

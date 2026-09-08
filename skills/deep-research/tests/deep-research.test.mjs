@@ -8,7 +8,11 @@ import test from "node:test";
 const script = new URL("../scripts/deep-research", import.meta.url).pathname;
 
 function diagnostic(result) {
-  return JSON.parse(result.stderr.trim().split(/\r?\n/, 1)[0]);
+  const parsed = JSON.parse(result.stderr.trim().split(/\r?\n/, 1)[0]);
+  assert.equal(parsed.ok, false);
+  assert.equal(typeof parsed.error, "string");
+  assert.notEqual(parsed.error.length, 0);
+  return parsed;
 }
 
 function hasProblem(result, level, key, value) {
@@ -290,6 +294,12 @@ test("validate errors when standard mode lacks synthesis and flags evidence-brie
   const liteJson = JSON.parse(liteValidate.stdout);
   assert.equal(liteJson.ok, true);
   assert.equal(hasProblem(liteJson, "warning", "synthesis-missing", "lite"), true);
+  const unknownModeSidecar = JSON.parse(readFileSync(raw, "utf8"));
+  delete unknownModeSidecar.metadata.researchMode;
+  writeFileSync(raw, JSON.stringify(unknownModeSidecar));
+  const unknownModeValidate = spawnSync(process.execPath, [script, "validate", output, raw], { encoding: "utf8" });
+  assert.equal(unknownModeValidate.status, 0, unknownModeValidate.stderr);
+  assert.equal(hasProblem(JSON.parse(unknownModeValidate.stdout), "warning", "synthesis-missing", null), true);
 });
 
 test("validate errors on queryCount mismatch and missing files", () => {
@@ -306,6 +316,14 @@ test("validate errors on queryCount mismatch and missing files", () => {
   const mismatch = spawnSync(process.execPath, [script, "validate", output, raw], { encoding: "utf8" });
   assert.equal(mismatch.status, 1);
   assert.equal(hasProblem(JSON.parse(mismatch.stdout), "error", "query-count-mismatch", 5), true);
+  delete sidecar.metadata.queryCount;
+  delete sidecar.metadata.additionalQueriesApplied;
+  writeFileSync(raw, JSON.stringify(sidecar));
+  const omitted = spawnSync(process.execPath, [script, "validate", output, raw], { encoding: "utf8" });
+  assert.equal(omitted.status, 1);
+  const omittedJson = JSON.parse(omitted.stdout);
+  assert.equal(hasProblem(omittedJson, "error", "query-count-mismatch", null), true);
+  assert.equal(hasProblem(omittedJson, "error", "additional-queries-applied-invalid", null), true);
   const missing = spawnSync(process.execPath, [script, "validate", join(dir, "nope.md"), join(dir, "nope.json")], { encoding: "utf8" });
   assert.equal(missing.status, 1);
   const missingJson = JSON.parse(missing.stdout);
