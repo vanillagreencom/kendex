@@ -20,6 +20,8 @@ for (const mode of ["lite", "full", "ultra", "micro"] as const) {
 					boundaryNormalForReviews: boundariesOn, boundaryNormalForExternalWrites: boundariesOn,
 				} });
 				const rendered = instructions(mode, fixture.projectDir, clarity);
+				assert.match(rendered, /^You MUST respond in caveman /);
+				assert.doesNotMatch(rendered, /\n\s*\n/);
 				const path = join(SNAP_DIR, `${name}.txt`);
 				if (UPDATE) {
 					mkdirSync(dirname(path), { recursive: true });
