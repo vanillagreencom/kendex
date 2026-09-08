@@ -95,16 +95,47 @@ else
     "$(diff <(printf '%s\n' "$declared") <(printf '%s\n' "$rendered") | head -20 | tr '\n' ' ')"
 fi
 
-# Must-fail: the same document without the surface category — this
-# repository's state before KEN-1057, and the exact regression the control
-# exists to catch. The predicate must reject it.
-without_surface="$(printf '%s' "$declared" |
-  jq 'del(.categories.surface) | .required_categories_for_new_issues -= ["surface"]')"
-if printf '%s' "$without_surface" | jq -e --argjson surfaces "$SURFACES" "$predicate" >/dev/null; then
-  bad "a taxonomy with no surface category is rejected" "the predicate accepted it"
-else
-  ok "a taxonomy with no surface category is rejected"
-fi
+# Must-fail: the regression the header names keeps the category and softens
+# it, so each row plants one softening in the declared document and asks the
+# predicate for its verdict. A row is label|mutation|expected: the mutation is
+# a jq filter over the declared document (no pipe, the field separator), the
+# expected verdict `accepted` or `rejected`. A mutation that does not apply
+# stops the run: an unapplied mutation would read as a rejection.
+run_table() {
+  local title="$1" rows="$2" label mutation expected row field mutated got before=$((PASS + FAIL))
+  echo "=== $title ==="
+  while IFS= read -r row; do
+    [ "$row" != "" ] || continue
+    IFS='|' read -r label mutation expected <<<"$row"
+    for field in "$label" "$mutation" "$expected"; do
+      [ "$field" != "" ] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+    done
+    mutated="$(printf '%s' "$declared" | jq "$mutation")" ||
+      { printf 'the mutation did not apply: %s\n' "$row" >&2; exit 1; }
+    if printf '%s' "$mutated" | jq -e --argjson surfaces "$SURFACES" "$predicate" >/dev/null; then
+      got=accepted
+    else
+      got=rejected
+    fi
+    # A rendering aid for writing rows; the run is refused after the loop.
+    if [ "${TAXONOMY_TABLE_PROBE:-}" = 1 ]; then
+      printf '%s => %s\n' "$label" "$got"
+      continue
+    fi
+    if [ "$got" = "$expected" ]; then
+      ok "$label"
+    else
+      bad "$label" "the predicate said $got"
+    fi
+  done <<<"$rows"
+  [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
+}
+
+run_table "the surface category softened" "\
+surface softened to optional|.categories.surface.required = false|rejected
+surface softened to non-exclusive|.categories.surface.exclusive = false|rejected
+one surface name dropped|del(.categories.surface.labels[0])|rejected
+"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
