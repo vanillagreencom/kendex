@@ -22,6 +22,10 @@ source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LINEAR="$SKILL_DIR/scripts/linear.sh"
 assert_tmpdir TMP_BASE
+TMP_BASE="$(cd "$TMP_BASE" && pwd -P)" || {
+  printf 'FAIL: could not canonicalize the test scratch root\n' >&2
+  exit 1
+}
 
 CURL_LOG="$TMP_BASE/curl.log"
 
