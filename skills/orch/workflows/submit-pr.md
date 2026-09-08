@@ -123,11 +123,14 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
    ## Size
    [The § 1.2 counts, only when the issue states no allowance.]
 
+   ## Proposed rules
+   [Each accepted dev artifact `validate_note` that starts `Proposed rule:`, with the prefix removed.]
+
    ## Test Plan
    [validation steps]
    ```
 
-   Omit empty sections. Decision paths come only from `decisions search --issue [ISSUE_ID]`, each verified with `test -f [DECISION_FILE_PATH]` (one command per path) and omitted on failure. Every published SHA must be post-reconciliation.
+   Omit empty sections. Include each proposed rule once and do not perform it. Decision paths come only from `decisions search --issue [ISSUE_ID]`, each verified with `test -f [DECISION_FILE_PATH]` (one command per path) and omitted on failure. Every published SHA must be post-reconciliation.
 
 4. **Create or update the PR.** Never defer, queue, or gate CI behind bot review activity.
 

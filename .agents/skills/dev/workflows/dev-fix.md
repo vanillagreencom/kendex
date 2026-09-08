@@ -95,4 +95,5 @@ One `--item N DECISION REASONING` per **delegated** item — Applied, Skipped, a
 
 Commits: [SHAS or "none"]
 Validate: [pass or "FAILING: check1, check2"]
+Proposed rule: [proposal or "none"]
 </output_format>

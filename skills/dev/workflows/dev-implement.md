@@ -152,12 +152,14 @@ Update docs when the implementation changes a documented API or architecture.
 
 The validation gate is this complete list:
 
-- The affected suite passes. It consists of installed preflight and doc-limits gates, the delegation's required verification commands in their § 2.4 normalized form, and Visual QA when the issue has the `design` label.
+- The affected suite passes. It consists of installed preflight and doc-limits gates, the delegation's required verification commands in their § 2.4 normalized form, and Visual QA under the current workflow's rule below.
 - One must-fail control per changed surface turns that surface's test red once. A production gate or guard change keeps the per-rule control that [code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards) requires inside this item.
 - The command that `.agents/skills/orch/scripts/orch-env DEV_VALIDATE_CMD ""` prints passes once against the round's final worktree contents. An empty value is a validation failure named `DEV_VALIDATE_CMD`, with the note `DEV_VALIDATE_CMD is empty; set it in kendex.settings.toml [env] to the project's full test, lint and typecheck command`. Run nothing in its place.
 - After the dev agent returns its local result, the orchestrator gets green CI and a passing review gate. The dev agent does not claim or reproduce these downstream results.
 
-Run no proof, rerun, receipt, isolation step, or approval step outside this list. If an agent believes the list misses a rule, it reports the proposed rule once in its return. The orchestrator puts it once in the PR body. Neither role performs the proposed rule.
+For a test-only PR whose validation runs longer than 30 minutes and fails, run the failed target alone once under load. Record both results in `--validate-note` with the prefix `Test-only validation ceiling:`. Report the result and do not extend validation.
+
+Run no proof, rerun, receipt, isolation step, or approval step outside this list. If an agent believes the list misses a rule, it records the proposal once in `--validate-note` with the prefix `Proposed rule:` and in the matching return line. The orchestrator puts it once in the PR body. Neither role performs the proposed rule.
 
 Run preflight when installed (`test -x .agents/skills/preflight/scripts/preflight`):
 
@@ -279,6 +281,7 @@ Branch: [BRANCH_NAME]
 Commit: [SHA]
 QA: [signals or "none"]
 Validate: [pass or "FAILING: check1, check2"]
+Proposed rule: [proposal or "none"]
 Summary: [ISSUE_ID] ✓
 </output_format>
 
