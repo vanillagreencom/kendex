@@ -47,7 +47,7 @@ export function resolveGrammarSampling(tool: Tool, supported: boolean): { format
 	try {
 		return { format: hasLark ? "lark" : "regex", definition: hasLark ? lark : regex, inputProperty: inferGrammarInputProperty(constrainedTool) };
 	} catch (error) {
-		throw new Error(`Tool "${tool.name}" cannot use grammar constrained sampling: ${error instanceof Error ? error.message : String(error)}.`);
+		throw Object.assign(new Error(`grammar_schema=${tool.name}\nTool "${tool.name}" cannot use grammar constrained sampling: ${error instanceof Error ? error.message : String(error)}.`, { cause: error }), { code: "GRAMMAR_SCHEMA", tool: tool.name });
 	}
 }
 
@@ -55,7 +55,7 @@ export function resolveStrictSampling(tool: Tool, supported: boolean): boolean |
 	const config = (tool as ToolWithConstrainedSampling).constrainedSampling;
 	if (!config || config.type !== "json_schema") return undefined;
 	if (supported) return true;
-	if (config.strict === "require") throw new Error(`Tool "${tool.name}" requires JSON-schema constrained sampling, but strict tools are unsupported.`);
+	if (config.strict === "require") throw Object.assign(new Error(`strict_sampling=${tool.name}\nTool "${tool.name}" requires JSON-schema constrained sampling, but strict tools are unsupported.`), { code: "STRICT_SAMPLING_UNSUPPORTED", tool: tool.name });
 	return undefined;
 }
 
@@ -79,7 +79,7 @@ export function appendGrammarToolInputJsonDelta(buffer: GrammarInputBuffer, prop
 		if (close && nextInput === buffer.input) return undefined;
 		throw new Error(`grammar tool input for property "${property}" changed after it was closed`);
 	}
-	if (!nextInput.startsWith(buffer.input)) throw new Error(`grammar tool input for property "${property}" changed non-monotonically`);
+	if (!nextInput.startsWith(buffer.input)) throw Object.assign(new Error(`grammar tool input for property "${property}" changed non-monotonically`), { code: "GRAMMAR_INPUT_NON_MONOTONIC", property });
 	const inputDelta = nextInput.slice(buffer.input.length);
 	if (!close && inputDelta.length === 0) return undefined;
 	let delta = "";

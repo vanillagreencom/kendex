@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- Patch and image validation errors expose stable error codes. Grammar schema and response-header timeout errors include a stable key and value before their explanation.
+
 ### 2.0.1
 
 - Pi 0.85.1 parity: the SSE transport no longer fails with "Stream closed before response.completed" when the backend closes the stream right after the terminal event without a trailing blank line. The last frame is parsed at end of stream.

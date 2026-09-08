@@ -808,7 +808,7 @@ export async function processResponsesStream<TApi extends Api>(
 		}
 	}
 	if (!sawTerminalResponseEvent) {
-		throw new Error("OpenAI Responses stream ended before a terminal response event");
+		throw Object.assign(new Error("OpenAI Responses stream ended before a terminal response event"), { code: "RESPONSES_TERMINAL_MISSING" });
 	}
 }
 

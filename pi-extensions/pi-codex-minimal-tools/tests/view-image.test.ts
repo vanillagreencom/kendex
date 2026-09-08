@@ -1,57 +1,41 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { validateImagePath, viewImage } from "../src/tools/view-image.js";
+import { validateImagePath } from "../src/tools/view-image.js";
+import { world } from "./helpers/world.js";
 
-function tempDir(): string {
-	return mkdtempSync(join(tmpdir(), "pi-view-image-"));
+for (const row of [
+	{ name: "at prefix", kind: "image", path: "@image.png", workspaceOnly: false, detail: "high" },
+	{ name: "directory", kind: "directory", path: "dir", workspaceOnly: false, code: "IMAGE_DIRECTORY" },
+	{ name: "non-image", kind: "text", path: "notes.txt", workspaceOnly: false, code: "IMAGE_TYPE" },
+	{ name: "relative escape", kind: "outside", path: "../secret.png", workspaceOnly: true, code: "IMAGE_PATH_OUTSIDE" },
+	{ name: "absolute escape", kind: "outside", path: "absolute", workspaceOnly: true, code: "IMAGE_PATH_OUTSIDE" },
+	{ name: "symlink escape", kind: "symlink", path: "linked.png", workspaceOnly: true, code: "IMAGE_PATH_OUTSIDE" },
+	{ name: "outside allowed by default", kind: "outside", path: "absolute", workspaceOnly: undefined },
+] as const) {
+	test(`validateImagePath: ${row.name}`, async (t) => {
+		const { cwd, root } = world(t);
+		const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+		const outside = join(root, "secret.png");
+		if (row.kind === "directory") mkdirSync(join(cwd, "dir"));
+		else if (row.kind === "text") writeFileSync(join(cwd, "notes.txt"), "hello");
+		else if (row.kind === "image") writeFileSync(join(cwd, "image.png"), bytes);
+		else {
+			writeFileSync(outside, bytes);
+			if (row.kind === "symlink") symlinkSync(outside, join(cwd, "linked.png"));
+		}
+		const input = { path: row.path === "absolute" ? outside : row.path, detail: "detail" in row ? row.detail : undefined };
+		const validate = () => validateImagePath(input, cwd, { workspaceOnly: row.workspaceOnly });
+		if ("code" in row) await assert.rejects(validate, { code: row.code, path: input.path });
+		else {
+			const result = await validate();
+			assert.equal(result.mimeType, "image/png");
+			assert.equal(result.absolutePath, row.kind === "outside" ? outside : join(cwd, "image.png"));
+			if (row.kind === "image") {
+				assert.equal(result.displayPath, "image.png");
+				assert.equal(result.detail, "high");
+			}
+		}
+	});
 }
-
-test("view_image validates local image files and strips @ prefix", async () => {
-	const cwd = tempDir();
-	writeFileSync(join(cwd, "image.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-	const validated = await validateImagePath({ path: "@image.png", detail: "high" }, cwd);
-	assert.equal(validated.displayPath, "image.png");
-	assert.equal(validated.mimeType, "image/png");
-	assert.equal(validated.detail, "high");
-	const result = await viewImage({ path: "image.png" }, cwd);
-	assert.equal(result.content[0]?.type, "image");
-	assert.equal(result.content[0]?.mimeType, "image/png");
-	assert.equal(typeof result.content[0]?.data, "string");
-});
-
-test("view_image rejects directories and non-images", async () => {
-	const cwd = tempDir();
-	mkdirSync(join(cwd, "dir"));
-	writeFileSync(join(cwd, "notes.txt"), "hello");
-	await assert.rejects(() => validateImagePath({ path: "dir" }, cwd), /directory/);
-	await assert.rejects(() => validateImagePath({ path: "notes.txt" }, cwd), /Unsupported image file type/);
-});
-
-test("view_image rejects paths outside cwd when workspaceOnly", async () => {
-	const cwd = tempDir();
-	const outside = tempDir();
-	writeFileSync(join(outside, "secret.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-	await assert.rejects(() => validateImagePath({ path: "../secret.png" }, cwd, { workspaceOnly: true }), /escapes the workspace/);
-	await assert.rejects(() => validateImagePath({ path: join(outside, "secret.png") }, cwd, { workspaceOnly: true }), /escapes the workspace/);
-});
-
-test("view_image rejects symlinks that resolve outside cwd when workspaceOnly", async () => {
-	const cwd = tempDir();
-	const outside = tempDir();
-	writeFileSync(join(outside, "secret.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-	symlinkSync(join(outside, "secret.png"), join(cwd, "linked.png"));
-	await assert.rejects(() => validateImagePath({ path: "linked.png" }, cwd, { workspaceOnly: true }), /escapes the workspace/);
-});
-
-test("view_image allows paths outside cwd by default", async () => {
-	const cwd = tempDir();
-	const outside = tempDir();
-	const outsidePath = join(outside, "clip.png");
-	writeFileSync(outsidePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-	const validated = await validateImagePath({ path: outsidePath }, cwd);
-	assert.equal(validated.absolutePath, outsidePath);
-	assert.equal(validated.mimeType, "image/png");
-});

@@ -1,16 +1,14 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { existsSync } from "node:fs";
+import { basename } from "node:path";
 import test from "node:test";
 import { saveBase64Image } from "../src/utils/images.js";
 
-function tempDir(): string {
-	return mkdtempSync(join(tmpdir(), "pi-images-util-"));
-}
+import { world } from "./helpers/world.js";
 
-test("saveBase64Image uses unique filenames and writes format-specific latest path", async () => {
-	const cwd = tempDir();
+test("saveBase64Image uses unique filenames and writes format-specific latest path", async (t) => {
+	const { cwd } = world(t);
+	t.mock.timers.enable({ apis: ["Date"], now: 0 });
 	const settings = { imageOutputDir: "images" };
 	const base64 = Buffer.from("image").toString("base64");
 	const first = await saveBase64Image({ base64, callId: "call", cwd, format: "jpeg", responseId: "resp", settings });

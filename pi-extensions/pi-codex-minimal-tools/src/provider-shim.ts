@@ -1,3 +1,5 @@
+// Pi retry classification consumes HTTP status prefixes in errorMessage.
+// withHttpStatusPrefix preserves an existing HTTP <status> prefix verbatim.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readFileSync } from "node:fs";
 import { access } from "node:fs/promises";
@@ -628,7 +630,7 @@ export async function fetchWithResponseHeaderTimeout(
 	const controller = new AbortController();
 	let timedOut = false;
 	let parentAborted = false;
-	const timeoutMessage = `Codex Responses SSE response headers timed out after ${timeoutMs}ms`;
+	const timeoutError = Object.assign(new Error(`response_header_timeout_ms=${timeoutMs}\nCodex Responses SSE response headers timed out after ${timeoutMs}ms`), { code: "RESPONSE_HEADER_TIMEOUT", timeoutMs });
 
 	const onParentAbort = () => {
 		parentAborted = true;
@@ -638,13 +640,13 @@ export async function fetchWithResponseHeaderTimeout(
 	if (parentSignal) parentSignal.addEventListener("abort", onParentAbort, { once: true });
 	const timeout = setTimeout(() => {
 		timedOut = true;
-		controller.abort(new Error(timeoutMessage));
+		controller.abort(timeoutError);
 	}, Math.max(1, timeoutMs));
 
 	try {
 		return await fetch(url, { ...init, signal: controller.signal });
 	} catch (error) {
-		if (timedOut) throw new Error(timeoutMessage);
+		if (timedOut) throw timeoutError;
 		if (parentAborted || parentSignal?.aborted) throw new Error("Request was aborted");
 		throw error;
 	} finally {
