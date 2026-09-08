@@ -125,14 +125,8 @@ spec_table "$rows"
 # on the old id silently reaches nothing. The comparison is against the
 # frozen set, which lives in the implementation.
 spec="$(new_spec renamed-pair)"
-python3 - "$spec/SKILL.md" "$spec/schemas/renders.md" <<'PY'
-import sys
-skill, renders = sys.argv[1], sys.argv[2]
-s = open(skill).read().replace("\n### severity\n", "\n### severity-honesty\n", 1)
-open(skill, "w").write(s)
-r = open(renders).read().replace("| `severity` |", "| `severity-honesty` |", 1)
-open(renders, "w").write(r)
-PY
+spec_edit "$spec/SKILL.md" '\n### severity\n' '\n### severity-honesty\n' || exit 1
+spec_edit "$spec/schemas/renders.md" '| `severity` |' '| `severity-honesty` |' || exit 1
 expect_clause doctrine-routing "block id 'severity' is frozen and the doctrine source no longer defines it" \
   'a heading and its row renamed together, against the frozen set' \
   render --dry-run --repo "$repo" --spec "$spec"
