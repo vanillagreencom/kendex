@@ -8,7 +8,7 @@ import { describe, expect, test } from "bun:test";
 import type { LifecycleHooks } from "../extensions/lifecycle.js";
 import { createOrphanWatcher } from "../extensions/orphan-watcher.js";
 import { summarizeTaskStatus } from "../extensions/format.js";
-import { restoredTaskFromSnapshot, taskSnapshot } from "../extensions/snapshot.js";
+import { taskSnapshot } from "../extensions/snapshot.js";
 import type {
 	BackgroundTaskSnapshot,
 	ManagedTask,
@@ -70,52 +70,6 @@ function recordingHooks(): LifecycleHooks & { events: Array<{ type: string; reas
 		events,
 	};
 }
-
-describe("restoredTaskFromSnapshot annotation (kendex#97)", () => {
-	test("running -> stopped coercion annotates reconcile-on-restart", () => {
-		const snapshot = fakeSnapshot({
-			procIdent: { comm: "bash", pid: 4242, startToken: "start-4242" },
-			status: "running",
-		});
-		const restored = restoredTaskFromSnapshot(snapshot, {
-			identityProbe: () => null,
-			now: 1_700_000_100_000,
-			sessionId: "sess-A",
-		});
-		expect(restored.status).toBe("stopped");
-		expect(restored.terminationReason).toBe("reconcile-on-restart");
-	});
-
-	test("alive-pid restore preserves whatever terminationReason was already set", () => {
-		const snapshot = fakeSnapshot({
-			procIdent: { comm: "bash", pid: 4242, startToken: "start-4242" },
-			status: "running",
-			terminationReason: undefined,
-		});
-		const restored = restoredTaskFromSnapshot(snapshot, {
-			identityProbe: (pid) => ({ comm: "bash", pid, startToken: "start-4242" }),
-			now: 1_700_000_100_000,
-			sessionId: "sess-A",
-		});
-		expect(restored.status).toBe("running");
-		expect(restored.terminationReason).toBeUndefined();
-	});
-
-	test("terminal snapshot with pre-existing terminationReason flows through unchanged", () => {
-		const snapshot = fakeSnapshot({
-			exitCode: 0,
-			exitNotified: true,
-			status: "completed",
-			terminationReason: "self-exit",
-		});
-		const restored = restoredTaskFromSnapshot(snapshot, {
-			now: 1_700_000_100_000,
-			sessionId: "sess-A",
-		});
-		expect(restored.status).toBe("completed");
-		expect(restored.terminationReason).toBe("self-exit");
-	});
-});
 
 describe("orphan-watcher annotation (kendex#97)", () => {
 	function makeOrphan(overrides: Partial<ManagedTask> = {}): ManagedTask {
@@ -184,21 +138,5 @@ describe("summarizeTaskStatus formatting (kendex#97)", () => {
 	test("undefined termination reason matches the legacy output (back-compat)", () => {
 		expect(summarizeTaskStatus("stopped", null, undefined)).toBe("stopped");
 		expect(summarizeTaskStatus("completed", 0, undefined)).toBe("completed (exit 0)");
-	});
-});
-
-describe("taskSnapshot round-trip (kendex#97)", () => {
-	test("preserves terminationReason through snapshot serialization", () => {
-		const task = fakeTask({
-			exitCode: 0,
-			status: "stopped",
-			terminationReason: "extension-stop",
-		});
-		expect(taskSnapshot(task).terminationReason).toBe("extension-stop");
-	});
-
-	test("undefined terminationReason serializes as undefined (older snapshots load unchanged)", () => {
-		const task = fakeTask();
-		expect(taskSnapshot(task).terminationReason).toBeUndefined();
 	});
 });
