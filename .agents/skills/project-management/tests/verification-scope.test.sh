@@ -102,6 +102,7 @@ setup_fixture() {
 }
 
 success_failures=0
+success_rows_executed=0
 
 require_success_result() {
   local case_name="$1" json="$2" expression="$3" description="$4"
@@ -152,6 +153,7 @@ run_success_case() {
 while IFS='^' read -r case_name fixture_kind invocation expression description; do
   run_success_case \
     "$case_name" "$fixture_kind" "$invocation" "$expression" "$description"
+  success_rows_executed=$((success_rows_executed + 1))
 done <<'SUCCESS_ROWS'
 repository-multicrate^workspace^repository^.mode == "repository" and (.source_roots == ["crate-a/src", "crate-b/src"]) and (.verification_paths == ["crate-a/src", "crate-b/src"]) and (.verification_paths | index("src") | not)^repository mode did not return the exact multi-crate scope
 changed-crate-a^workspace^changed-a^.verification_paths == ["crate-a/src/lib.rs"] and (.verification_paths | index("crate-b/src/main.rs") | not)^changed crate A did not retain its independent exact scope
@@ -162,11 +164,14 @@ repository-excludes-renders^render-repository^repository^.source_roots == ["src"
 explicit-render-path^render-repository^explicit-render^.verification_paths == [".agents/skills/alpha/scripts/alpha.sh"]^explicit render path was not preserved exactly
 SUCCESS_ROWS
 
+[[ "$success_rows_executed" -gt 0 ]] \
+  || fail "SUCCESS_ROWS executed no assertion rows"
 if [[ "$success_failures" -ne 0 ]]; then
   exit 1
 fi
 
 refusal_failures=0
+refusal_rows_executed=0
 
 record_refusal_failure() {
   local case_name="$1" description="$2" status="$3"
@@ -246,6 +251,7 @@ while IFS='^' read -r case_name fixture_kind invocation expected_status \
   diagnostic description; do
   run_refusal_case "$case_name" "$fixture_kind" "$invocation" \
     "$expected_status" "$diagnostic" "$description"
+  refusal_rows_executed=$((refusal_rows_executed + 1))
 done <<'REFUSAL_ROWS'
 forced-docs-rejects-code^workspace^forced-docs-code^1^-^forced docs mode did not reject source code with the exact refusal status
 outside-worktree-path^workspace^outside-worktree^1^-^resolver did not reject an outside path with the exact refusal status
@@ -254,6 +260,8 @@ disconnected-base-history^disconnected-history^disconnected-base^1^git diff fail
 ls-files-producer-failure^corrupt-index^corrupt-index^1^git ls-files failed^repository discovery did not return its exact status and producer diagnostic
 REFUSAL_ROWS
 
+[[ "$refusal_rows_executed" -gt 0 ]] \
+  || fail "REFUSAL_ROWS executed no assertion rows"
 if [[ "$refusal_failures" -ne 0 ]]; then
   exit 1
 fi
@@ -283,9 +291,12 @@ run_structural_case() {
   esac
 }
 
+structural_rows_executed=0
+
 while IFS='^' read -r case_name expectation subject_key needle description; do
   run_structural_case \
     "$case_name" "$expectation" "$subject_key" "$needle" "$description"
+  structural_rows_executed=$((structural_rows_executed + 1))
 done <<'STRUCTURAL_ROWS'
 workflow-no-hardcoded-src^absent^workflow^${WORKTREE:-.}/src/^tpm-audit still hardcodes a repository-root src directory
 workflow-resolver-route^present^workflow^scripts/verification-scope^tpm-audit does not invoke verification-scope
@@ -295,4 +306,6 @@ workflow-path-field^present^workflow^verification_paths^tpm-audit does not consu
 workflow-issue-placeholder^present^workflow^VERIFICATION_CONTEXTS[ISSUE_KEY]^tpm-audit does not retain verification context per issue
 STRUCTURAL_ROWS
 
+[[ "$structural_rows_executed" -gt 0 ]] \
+  || fail "STRUCTURAL_ROWS executed no assertion rows"
 echo "all pass"
