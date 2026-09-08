@@ -31,7 +31,8 @@ expect_green "the running copy's own doctrine and routing agree" \
 # One spec mutation per row: `label~file~old~new~verdict`, `~`-separated
 # because the routing rows the mutations edit carry `|`. `old` and `new` are
 # literal text with `\n` for a newline; an `re:` prefix on `old` makes it a
-# regular expression and `new` its replacement (`\g<n>` groups allowed). The
+# regular expression and `new` a `re.sub` template (`\g<n>` groups, and no
+# other backslash escape). The
 # edit asserts exactly one match, so a fixture the running copy has moved
 # away from fails as a fixture rather than passing on a defect never planted.
 # `verdict` is `red:<validator>:<clause>` (exit 1, that validator alone, the
@@ -100,7 +101,10 @@ EOF
 # setext heading in `.github/copilot-instructions.md`, a forged section, and
 # an indented level-4 heading reaches the refusal rather than the section
 # parse, which a level-1 or -2 one would end.
-spec_table "$(cat <<'ROWS'
+# `read -d ''` rather than `$(cat <<'ROWS' ...)`: Bash 3.2 scans a here-document
+# inside a command substitution for quotes, and a row carrying an odd number
+# of double quotes runs its parse past the closing parenthesis.
+IFS= read -r -d '' rows <<'ROWS'
 a doctrine block with no routing row~SKILL.md~\n## Adding a repo\n~\n### unrouted\n\nA block no column carries.\n\n## Adding a repo\n~red:doctrine-routing:doctrine block 'unrouted' has no row in the routing table
 a routing row naming no doctrine heading~schemas/renders.md~| `trust-model` |~| `no-such-block` | – | – | – | – | – | – | – | – |\n| `trust-model` |~red:doctrine-routing:routing table row 'no-such-block' names no `###` heading
 a position repeated inside a column~schemas/renders.md~| `rounds` | 2 |~| `rounds` | 1 |~red:doctrine-routing:column 'AGENTS.md' repeats a position
@@ -113,7 +117,7 @@ two `## Doctrine` sections~SKILL.md~\n## Adding a repo\n~\n## Doctrine\n\n### x\
 a `---` line under text in doctrine, which forges a section~SKILL.md~### scope\n\nRaise a defect~### scope\n\nForged\n---\n\nRaise a defect~msg:heading refusal
 a heading line in doctrine text, which ends the owned region~SKILL.md~### scope\n\nRaise a defect~### scope\n\n  #### Forged\n\nRaise a defect~msg:heading refusal
 ROWS
-)"
+spec_table "$rows"
 
 # The frozen-id invariant, the one mutation that edits both files. Renaming a
 # heading and its row together leaves both sets agreeing, so a comparison of
@@ -131,6 +135,12 @@ open(renders, "w").write(r)
 PY
 expect_clause doctrine-routing "block id 'severity' is frozen and the doctrine source no longer defines it" \
   'a heading and its row renamed together, against the frozen set' \
+  render --dry-run --repo "$repo" --spec "$spec"
+# The other direction of the same comparison, on the same fixture: the new
+# id is outside the frozen set, which is what makes adding a `###` heading a
+# deliberate edit to the constant a reviewer reads.
+expect_clause doctrine-routing "block id 'severity-honesty' is not in the frozen set" \
+  'and the renamed block is not in the frozen set either' \
   render --dry-run --repo "$repo" --spec "$spec"
 
 # The other side of the heading predicate: `#` with NO whitespace after it is
@@ -307,7 +317,9 @@ fi
 # table sends there has to arrive as written. The rows are derived from the
 # spec copy rather than copied here: the column names the blocks, and each
 # block's paragraphs, joined the way the region joins a bullet, must appear
-# in the region. The `reply-contract` block's `<issue>` placeholder becomes
+# in the region, each block after the one the column routes before it, so a
+# dropped, truncated or reordered block shows in its row. The `reply-contract`
+# block's `<issue>` placeholder becomes
 # `<PREFIX>-<n>` under `[bot-instructions.repo] tracker` (`renders.md`
 # § Common rules; the canonical fixture's tracker is `FIX`), so a paragraph
 # is held with that substitution made. The floor is the column's own length:
@@ -326,20 +338,27 @@ if region is None:
 blocks = doctrine.routing["AGENTS.md"]
 if not blocks:
     sys.exit("the AGENTS.md column routes no block")
+at = 0
 for bid in blocks:
     paras = [" ".join(p.split()).replace("<issue>", "<FIX-n>")
              for p in doctrine.blocks[bid].split("\n\n") if p.strip()]
     if not paras:
         sys.exit(f"{bid}: no paragraph to hold against the region")
-    missing = [p for p in paras if p not in region]
-    print(f"{'ok' if not missing else 'missing'}\t{bid}\t{len(paras)}")
+    verdict = "ok"
+    for para in paras:
+        found = region.find(para, at)
+        if found == -1:
+            verdict = "missing-or-out-of-order"
+            break
+        at = found + len(para)
+    print(f"{verdict}\t{bid}\t{len(paras)}")
 PY
   before=$((BI_PASS + BI_FAIL))
   while IFS="$(printf '\t')" read -r verdict bid count; do
     if [ "$verdict" = ok ]; then
-      ok "AGENTS.md § Code Review Rules carries block $bid ($count paragraph(s))"
+      ok "AGENTS.md § Code Review Rules carries block $bid in its routed order ($count paragraph(s))"
     else
-      bad "AGENTS.md § Code Review Rules carries block $bid ($count paragraph(s))"
+      bad "AGENTS.md § Code Review Rules carries block $bid in its routed order ($count paragraph(s))" "$verdict"
     fi
   done < "$BI_TMP/agents-rows"
   [ "$((BI_PASS + BI_FAIL))" -gt "$before" ] || { printf 'no block row was asserted\n' >&2; exit 2; }
