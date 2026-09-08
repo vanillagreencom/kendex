@@ -88,11 +88,11 @@ out=$(run_pr_create --dry-run 2>&1)
 rc=$?
 set -e
 assert_eq "$rc" "0" "stale local main: dry-run passes safety checks"
-assert_contains "$out" "1 commit(s) ahead of origin/main" \
-  "stale local main: counts 1 commit ahead of origin/main"
-assert_not_contains "$out" "3 commit(s)" \
+assert_contains "$out" "Commits-ahead: base=origin/main count=1" \
+  "stale local main: notice key names remote base and count"
+assert_not_contains "$out" "Commits-ahead: base=main count=3 source=local" \
   "stale local main: does not report inflated local-base count"
-assert_not_contains "$out" "may be stale" \
+assert_not_contains "$out" "source=local" \
   "stale local main: no stale-count warning when origin is reachable"
 
 # 2. Branch pointing at the origin/main tip has NO commits to submit. Against the
@@ -104,8 +104,8 @@ out=$(run_pr_create --dry-run 2>&1)
 rc=$?
 set -e
 assert_eq "$rc" "1" "no-new-commits branch: safety checks fail"
-assert_contains "$out" "No commits ahead of origin/main" \
-  "no-new-commits branch: hard failure names remote base"
+assert_contains "$out" "No-commits-ahead: base=origin/main count=0" \
+  "no-new-commits branch: refusal key names remote base and count"
 
 # 3. Offline fallback: origin unreachable and no remote-tracking ref left.
 #    Falls back to local main and labels the count as possibly stale.
@@ -117,8 +117,8 @@ out=$(run_pr_create --dry-run 2>&1)
 rc=$?
 set -e
 assert_eq "$rc" "0" "offline fallback: dry-run still passes (push warning only)"
-assert_contains "$out" "3 commit(s) ahead of local main (origin unreachable; count may be stale)" \
-  "offline fallback: local-base count labeled as possibly stale"
+assert_contains "$out" "Commits-ahead: base=main count=3 source=local" \
+  "offline fallback: notice key names local base, count, and source"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -88,9 +88,15 @@ run_safety_checks() {
     local ahead
     ahead=$(git rev-list --count "$base_ref..$head" 2>/dev/null || echo "0")
     if [ "$ahead" = "0" ]; then
+        printf 'No-commits-ahead: base=%s count=%s\n' "$base_label" "$ahead" >&2
         echo "  ✗ ERROR: No commits ahead of $base_label" >&2
         all_passed=false
     else
+        if [ "$base_ref" = "origin/$base" ]; then
+            printf 'Commits-ahead: base=%s count=%s\n' "$base_ref" "$ahead" >&2
+        else
+            printf 'Commits-ahead: base=%s count=%s source=local\n' "$base_ref" "$ahead" >&2
+        fi
         echo "  ✓ $ahead commit(s) ahead of $base_label" >&2
     fi
 
