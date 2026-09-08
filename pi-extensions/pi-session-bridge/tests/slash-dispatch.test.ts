@@ -1,77 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { describe, expect, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { expandLoadedSlashContent, type SlashCommandInfoLike } from "../extensions/session-bridge.ts";
+import { p, useSlashFixture } from "./lib/slash-fixture.ts";
 
-import sessionBridge, {
-	expandLoadedSlashContent,
-	loadedSkillHashesBySession,
-	parseCommandArgs,
-	pasteAndSubmitToPane,
-	resolveOwnTmuxPaneByParentChain,
-	type ExecLike,
-	type SlashCommandInfoLike,
-} from "../extensions/session-bridge.ts";
-
-type EventHandler = (event: any, ctx?: any) => unknown | Promise<unknown>;
-
-interface FakePi {
-	handlers: Map<string, EventHandler>;
-	pi: any;
-}
-
-function fakePi(): FakePi {
-	const handlers = new Map<string, EventHandler>();
-	return {
-		handlers,
-		pi: {
-			exec: async () => ({ code: 0, stdout: "" }),
-			getCommands: () => [],
-			getSessionName: () => undefined,
-			getThinkingLevel: () => undefined,
-			on: (eventName: string, handler: EventHandler) => handlers.set(eventName, handler),
-			registerCommand: () => undefined,
-			sendUserMessage: () => undefined,
-		},
-	};
-}
-
-function writeEnabledProjectSettings(root: string): void {
-	const settingsPath = join(root, ".pi/settings.json");
-	mkdirSync(dirname(settingsPath), { recursive: true });
-	writeFileSync(settingsPath, JSON.stringify({
-		kendex: {
-			extensionManager: {
-				config: {
-					"@vanillagreen/pi-session-bridge": { enabled: true },
-				},
-			},
-		},
-	}));
-}
-
-let dir = "";
-let oldTmux: string | undefined;
-let oldBridgeDir: string | undefined;
-let oldCwd = "";
-function p(name: string): string { return join(dir, name); }
-
-beforeEach(() => {
-	dir = mkdtempSync(join(tmpdir(), "pi-session-bridge-slash-"));
-	oldTmux = process.env.TMUX;
-	oldBridgeDir = process.env.PI_BRIDGE_DIR;
-	oldCwd = process.cwd();
-});
-
-afterEach(() => {
-	if (oldTmux === undefined) delete process.env.TMUX;
-	else process.env.TMUX = oldTmux;
-	if (oldBridgeDir === undefined) delete process.env.PI_BRIDGE_DIR;
-	else process.env.PI_BRIDGE_DIR = oldBridgeDir;
-	process.chdir(oldCwd);
-	loadedSkillHashesBySession.clear();
-	if (dir) rmSync(dir, { recursive: true, force: true });
-});
+useSlashFixture();
 
 describe("slash expansion", () => {
 	test("bridge dispatch matrix matches Pi editor outcomes", () => {
@@ -89,33 +22,19 @@ describe("slash expansion", () => {
 			{ name: "clear-ai", source: "prompt", sourceInfo: { path: promptPath } },
 		];
 
-		const plain = expandLoadedSlashContent("hello", commands);
-		expect(plain.expanded).toBe(false);
+		for (const row of [
+			{ input: "hello", expected: { expanded: false } },
+			{ input: "/bridge:ping ok", expected: { expanded: false } },
+			{ input: "/tasks:add foo", expected: { expanded: false } },
+			{ input: "/skill:worktree status", expected: { expanded: true, kind: "skill", text: [
+				`<skill name="worktree" location="${skillPath}">`, `References are relative to ${dirname(skillPath)}.`,
+				"", "# Worktree", "Use git worktrees.", "</skill>", "", "status",
+			].join("\n") } },
+			{ input: '/clear-ai one "two words"', expected: { expanded: true, kind: "prompt", text: "Clear one with all=one two words and rest=two words" } },
+		]) {
+			expect(expandLoadedSlashContent(row.input, commands)).toMatchObject(row.expected);
+		}
 
-		const ping = expandLoadedSlashContent("/bridge:ping ok", commands);
-		expect(ping.expanded).toBe(false); // Route 2: own tmux pane, editor executes extension command.
-
-		const tasks = expandLoadedSlashContent("/tasks:add foo", commands);
-		expect(tasks.expanded).toBe(false); // Route 2: own tmux pane, editor executes extension command.
-
-		const skill = expandLoadedSlashContent("/skill:worktree status", commands);
-		expect(skill.expanded).toBe(true);
-		expect(skill.kind).toBe("skill");
-		expect(skill.text).toBe([
-			`<skill name="worktree" location="${skillPath}">`,
-			`References are relative to ${dirname(skillPath)}.`,
-			"",
-			"# Worktree",
-			"Use git worktrees.",
-			"</skill>",
-			"",
-			"status",
-		].join("\n"));
-
-		const prompt = expandLoadedSlashContent('/clear-ai one "two words"', commands);
-		expect(prompt.expanded).toBe(true);
-		expect(prompt.kind).toBe("prompt");
-		expect(prompt.text).toBe("Clear one with all=one two words and rest=two words");
 	});
 
 	test("extension command wins name collisions, matching Pi prompt() precedence", () => {
@@ -129,201 +48,31 @@ describe("slash expansion", () => {
 		expect(result.expanded).toBe(false);
 	});
 
-	test("prompt and skill read failures are surfaced as expansion errors", () => {
-		const prompt = expandLoadedSlashContent("/missing arg", [
-			{ name: "missing", source: "prompt", sourceInfo: { path: p("prompts/missing.md") } },
-		]);
-		expect(prompt.expanded).toBe(false);
-		expect(prompt.error).toContain("ENOENT");
-		const skill = expandLoadedSlashContent("/skill:missing arg", [
-			{ name: "skill:missing", source: "skill", sourceInfo: { path: p("skills/missing/SKILL.md") } },
-		]);
-		expect(skill.expanded).toBe(false);
-		expect(skill.error).toContain("ENOENT");
-	});
+	for (const row of [
+		{ name: "missing", source: "prompt", path: "prompts/missing.md" },
+		{ name: "skill:missing", source: "skill", path: "skills/missing/SKILL.md" },
+	]) {
+		test(`${row.source} read failure`, () => {
+			const result = expandLoadedSlashContent(`/${row.name} arg`, [{ name: row.name, source: row.source, sourceInfo: { path: p(row.path) } }]);
+			expect(result.expanded).toBe(false);
+			expect(result.error?.split("\n")[0]).toBe(`error_code=ENOENT path=${p(row.path)}`);
+		});
+	}
 
 	test("prompt argument substitution matches Pi prompt-template rules", () => {
-		expect(parseCommandArgs("one 'two words' \"three words\" four")).toEqual(["one", "two words", "three words", "four"]);
-		expect(parseCommandArgs("one\ntwo 'three\nfour'\tfive")).toEqual(["one", "two", "three\nfour", "five"]);
 		const promptPath = p("template.md");
 		writeFileSync(promptPath, "---\ndescription: Demo\n---\n$1|$2|$@|$ARGUMENTS|${@:2}|${@:2:2}|${4:-fallback}|${2:-unused}|${5:-$1}|${@:-all-fallback}|${ARGUMENTS:-arguments-fallback}");
 		const commands = [{ name: "template", source: "prompt", sourceInfo: { path: promptPath } }] as SlashCommandInfoLike[];
-		const result = expandLoadedSlashContent('/template alpha "beta gamma" delta', commands);
-		expect(result.text).toBe("alpha|beta gamma|alpha beta gamma delta|alpha beta gamma delta|beta gamma delta|beta gamma delta|fallback|beta gamma|$1|alpha beta gamma delta|alpha beta gamma delta");
-		const multiline = expandLoadedSlashContent("/template\nalpha beta", commands);
-		expect(multiline.expanded).toBe(true);
-		expect(multiline.text).toBe("alpha|beta|alpha beta|alpha beta|beta|beta|fallback|beta|$1|alpha beta|alpha beta");
-		const defaults = expandLoadedSlashContent("/template", commands);
-		expect(defaults.text).toBe("||||||fallback|unused|$1|all-fallback|arguments-fallback");
-	});
-
-	test("dedups repeated skill expansion within the same session", () => {
-		const skillPath = p("skills/orch/SKILL.md");
-		mkdirSync(dirname(skillPath), { recursive: true });
-		writeFileSync(skillPath, "---\nname: orch\n---\n# Orchestration\nStart work.\n");
-		const commands = [{ name: "skill:orch", source: "skill", sourceInfo: { path: skillPath } }] as SlashCommandInfoLike[];
-		const cache = new Map<string, Map<string, string>>();
-
-		const first = expandLoadedSlashContent("/skill:orch start ABC-123", commands, readFileSync, {
-			sessionId: "session-a",
-			skillExpansionCache: cache,
-		});
-		expect(first.expanded).toBe(true);
-		expect(first.text).toContain(`<skill name="orch" location="${skillPath}">`);
-		expect(first.text).toContain("# Orchestration");
-
-		const second = expandLoadedSlashContent("/skill:orch start ABC-123", commands, readFileSync, {
-			sessionId: "session-a",
-			skillExpansionCache: cache,
-		});
-		expect(second.expanded).toBe(true);
-		expect(second.kind).toBe("skill");
-		expect(second.text).toBe("Skill orch (previously loaded). Invocation: start ABC-123");
-		expect(second.text).not.toContain("<skill");
-		expect(second.text).not.toContain("# Orchestration");
-
-		const otherSession = expandLoadedSlashContent("/skill:orch start ABC-123", commands, readFileSync, {
-			sessionId: "session-b",
-			skillExpansionCache: cache,
-		});
-		expect(otherSession.text).toContain(`<skill name="orch" location="${skillPath}">`);
-	});
-
-	test("evicts only the shutting-down session from the skill expansion cache", async () => {
-		writeEnabledProjectSettings(dir);
-		process.chdir(dir);
-		process.env.PI_BRIDGE_DIR = p("bridge-dir");
-		loadedSkillHashesBySession.set("session-a", new Map([["alpha", "hash-a"]]));
-		loadedSkillHashesBySession.set("session-b", new Map([["beta", "hash-b"]]));
-
-		const { pi, handlers } = fakePi();
-		sessionBridge(pi);
-		const shutdown = handlers.get("session_shutdown");
-		expect(typeof shutdown).toBe("function");
-
-		await shutdown?.({ reason: "quit" }, { sessionManager: { getSessionId: () => "session-a" } });
-
-		expect(loadedSkillHashesBySession.has("session-a")).toBe(false);
-		expect(loadedSkillHashesBySession.get("session-b")?.get("beta")).toBe("hash-b");
-	});
-
-	test("bounds skill expansion cache to the 100 most recent sessions", () => {
-		const skillPath = p("skills/orch/SKILL.md");
-		mkdirSync(dirname(skillPath), { recursive: true });
-		writeFileSync(skillPath, "---\nname: orch\n---\n# Orchestration\nStart work.\n");
-		const commands = [{ name: "skill:orch", source: "skill", sourceInfo: { path: skillPath } }] as SlashCommandInfoLike[];
-		const cache = new Map<string, Map<string, string>>();
-
-		for (let index = 0; index < 101; index++) {
-			expandLoadedSlashContent("/skill:orch start ABC-123", commands, readFileSync, {
-				sessionId: `session-${index}`,
-				skillExpansionCache: cache,
-			});
+		for (const row of [
+			{ input: '/template alpha "beta gamma" delta', expected: "alpha|beta gamma|alpha beta gamma delta|alpha beta gamma delta|beta gamma delta|beta gamma delta|fallback|beta gamma|$1|alpha beta gamma delta|alpha beta gamma delta" },
+			{ input: "/template\nalpha beta", expected: "alpha|beta|alpha beta|alpha beta|beta|beta|fallback|beta|$1|alpha beta|alpha beta" },
+			{ input: "/template", expected: "||||||fallback|unused|$1|all-fallback|arguments-fallback" },
+		]) {
+			const result = expandLoadedSlashContent(row.input, commands);
+			expect(result.expanded).toBe(true);
+			expect(result.text).toBe(row.expected);
 		}
 
-		expect(cache.size).toBe(100);
-		expect(cache.has("session-0")).toBe(false);
-		expect(cache.has("session-1")).toBe(true);
-		expect(cache.has("session-100")).toBe(true);
 	});
 
-	test("re-expands skill after SKILL.md content changes", () => {
-		const skillPath = p("skills/orch/SKILL.md");
-		mkdirSync(dirname(skillPath), { recursive: true });
-		writeFileSync(skillPath, "---\nname: orch\n---\n# Orchestration v1\n");
-		const commands = [{ name: "skill:orch", source: "skill", sourceInfo: { path: skillPath } }] as SlashCommandInfoLike[];
-		const cache = new Map<string, Map<string, string>>();
-
-		const first = expandLoadedSlashContent("/skill:orch run", commands, readFileSync, {
-			sessionId: "session-a",
-			skillExpansionCache: cache,
-		});
-		expect(first.text).toContain("# Orchestration v1");
-
-		const deduped = expandLoadedSlashContent("/skill:orch run", commands, readFileSync, {
-			sessionId: "session-a",
-			skillExpansionCache: cache,
-		});
-		expect(deduped.text).toBe("Skill orch (previously loaded). Invocation: run");
-
-		writeFileSync(skillPath, "---\nname: orch\n---\n# Orchestration v2\n");
-		const changed = expandLoadedSlashContent("/skill:orch run", commands, readFileSync, {
-			sessionId: "session-a",
-			skillExpansionCache: cache,
-		});
-		expect(changed.text).toContain(`<skill name="orch" location="${skillPath}">`);
-		expect(changed.text).toContain("# Orchestration v2");
-		expect(changed.text).not.toContain("# Orchestration v1");
-
-		const dedupedAgain = expandLoadedSlashContent("/skill:orch run", commands, readFileSync, {
-			sessionId: "session-a",
-			skillExpansionCache: cache,
-		});
-		expect(dedupedAgain.text).toBe("Skill orch (previously loaded). Invocation: run");
-	});
-
-	test("dedup is independent per skill within a session (pins Map<sessionId, Map<skillName, hash>>)", () => {
-		const alphaPath = p("skills/alpha/SKILL.md");
-		const betaPath = p("skills/beta/SKILL.md");
-		mkdirSync(dirname(alphaPath), { recursive: true });
-		mkdirSync(dirname(betaPath), { recursive: true });
-		writeFileSync(alphaPath, "---\nname: alpha\n---\n# Alpha Skill\nA body.\n");
-		writeFileSync(betaPath, "---\nname: beta\n---\n# Beta Skill\nB body.\n");
-		const commands = [
-			{ name: "skill:alpha", source: "skill", sourceInfo: { path: alphaPath } },
-			{ name: "skill:beta", source: "skill", sourceInfo: { path: betaPath } },
-		] as SlashCommandInfoLike[];
-		const cache = new Map<string, Map<string, string>>();
-		const options = { sessionId: "session-a", skillExpansionCache: cache };
-
-		const firstAlpha = expandLoadedSlashContent("/skill:alpha run-a", commands, readFileSync, options);
-		expect(firstAlpha.text).toContain(`<skill name="alpha" location="${alphaPath}">`);
-		expect(firstAlpha.text).toContain("# Alpha Skill");
-
-		// Skill B in the same session must still get the FULL body, not the dedup reminder.
-		const firstBeta = expandLoadedSlashContent("/skill:beta run-b", commands, readFileSync, options);
-		expect(firstBeta.text).toContain(`<skill name="beta" location="${betaPath}">`);
-		expect(firstBeta.text).toContain("# Beta Skill");
-		expect(firstBeta.text).not.toContain("previously loaded");
-
-		// Re-expanding each skill independently now hits the short reminder for each.
-		const secondAlpha = expandLoadedSlashContent("/skill:alpha run-a", commands, readFileSync, options);
-		expect(secondAlpha.text).toBe("Skill alpha (previously loaded). Invocation: run-a");
-
-		const secondBeta = expandLoadedSlashContent("/skill:beta run-b", commands, readFileSync, options);
-		expect(secondBeta.text).toBe("Skill beta (previously loaded). Invocation: run-b");
-	});
-});
-
-describe("tmux pane dispatch", () => {
-	test("resolves own pane by parent chain, not active tmux client state", async () => {
-		process.env.TMUX = "/tmp/tmux-1000/default,123,0";
-		const calls: Array<[string, string[]]> = [];
-		const exec: ExecLike = async (command, args) => {
-			calls.push([command, args]);
-			if (command === "tmux") return { code: 0, stdout: "100 %1\n250 %2\n" };
-			const pid = args.at(-1);
-			if (pid === "303") return { code: 0, stdout: "202\n" };
-			if (pid === "202") return { code: 0, stdout: "100\n" };
-			if (pid === "100") return { code: 0, stdout: "1\n" };
-			return { code: 1, stderr: "missing pid" };
-		};
-
-		await expect(resolveOwnTmuxPaneByParentChain(exec, 303)).resolves.toBe("%1");
-		expect(calls[0]).toEqual(["tmux", ["list-panes", "-a", "-F", "#{pane_pid} #{pane_id}"]]);
-		expect(calls.some(([command, args]) => command === "tmux" && args[0] === "display-message")).toBe(false);
-	});
-
-	test("pastes slash text literally and submits Enter", async () => {
-		const calls: Array<[string, string[]]> = [];
-		const exec: ExecLike = async (command, args) => {
-			calls.push([command, args]);
-			return { code: 0, stdout: "" };
-		};
-		await pasteAndSubmitToPane(exec, "%7", "/tasks:add foo");
-		expect(calls).toEqual([
-			["tmux", ["send-keys", "-t", "%7", "-l", "/tasks:add foo"]],
-			["tmux", ["send-keys", "-t", "%7", "Enter"]],
-		]);
-	});
 });

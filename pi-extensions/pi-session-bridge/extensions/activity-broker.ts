@@ -168,5 +168,5 @@ function warnBridgePublisherFailure(event: PiActivityEvent, error: unknown): voi
 	if (warnedBridgePublisherFailures.has(key)) return;
 	warnedBridgePublisherFailures.add(key);
 	const message = error instanceof Error ? error.message : String(error);
-	console.warn(`[pi-session-bridge] activity bridge publisher failed type=${event.type} source=${event.source}: ${message}`);
+	console.warn(`publisher_failure=${event.type} source=${event.source} error=${errorName}\nActivity bridge publisher failed: ${message}`);
 }
