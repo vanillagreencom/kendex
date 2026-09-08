@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
-import { finishRetries, providerWorld, runCodexProvider } from "./helpers/provider.js";
+import { providerWorld, runCodexProvider } from "./helpers/provider.js";
 
 test("provider applies the configured response-header deadline", async (t) => {
 	providerWorld(t);
