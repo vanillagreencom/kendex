@@ -439,6 +439,16 @@ assert_eq "rc=$newline_rc record=${newline_err%%$'\n'*}" \
   "rc=75 record=worktree-guard-owner-conflict: path=$NL_ROOT/trees/issue\\nnl owner=NL-OWNER" \
   "a refusal keeps the newline path in one message record"
 
+BROKEN_GUARD_DIR="$TMP_ROOT/broken"$'\n'"guard"
+mkdir -p "$BROKEN_GUARD_DIR"
+cp "$GUARD_SCRIPT" "$BROKEN_GUARD_DIR/worktree-session-guard"
+chmod +x "$BROKEN_GUARD_DIR/worktree-session-guard"
+missing_helper_rc=0
+missing_helper_err=$("$BROKEN_GUARD_DIR/worktree-session-guard" status "$NL_WT" 2>&1 >/dev/null) || missing_helper_rc=$?
+assert_eq "rc=$missing_helper_rc record=${missing_helper_err%%$'\n'*}" \
+  "rc=1 record=worktree-message-library: path=${BROKEN_GUARD_DIR//$'\n'/\\n}/lib/messages.sh recovery=fix-links-from-main" \
+  "a missing helper path containing a newline stays in one bootstrap record"
+
 echo "=== the mkdir mutex serializes claims on a flock-less host ==="
 
 # Stock macOS ships no flock(1), so there the mkdir mutex is not a fallback:

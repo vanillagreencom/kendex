@@ -7,7 +7,17 @@ set -euo pipefail
 MESSAGE_DIR=${BASH_SOURCE[0]%/*}
 [[ "$MESSAGE_DIR" != "${BASH_SOURCE[0]}" ]] || MESSAGE_DIR=.
 if [[ ! -f "$MESSAGE_DIR/lib/messages.sh" ]]; then
-  printf 'worktree-message-library: %s\n' "$MESSAGE_DIR/lib/messages.sh" >&2
+  MESSAGE_LIBRARY_PATH="$MESSAGE_DIR/lib/messages.sh"
+  MESSAGE_LIBRARY_VALUE="$MESSAGE_LIBRARY_PATH"
+  MESSAGE_LIBRARY_VALUE="${MESSAGE_LIBRARY_VALUE//\\/\\\\}"
+  MESSAGE_LIBRARY_VALUE="${MESSAGE_LIBRARY_VALUE//$'\n'/\\n}"
+  MESSAGE_LIBRARY_VALUE="${MESSAGE_LIBRARY_VALUE//$'\r'/\\r}"
+  MESSAGE_LIBRARY_VALUE="${MESSAGE_LIBRARY_VALUE//$'\t'/\\t}"
+  {
+    printf 'worktree-message-library: path=%s recovery=fix-links-from-main\n' "$MESSAGE_LIBRARY_VALUE"
+    printf '  Worktree support library is missing: %s\n' "$MESSAGE_LIBRARY_VALUE"
+    printf '  Recover from the main checkout: cd <main checkout> && .agents/skills/worktree/scripts/worktree fix-links %q\n' "$PWD"
+  } >&2
   exit 1
 fi
 # shellcheck source=lib/messages.sh
